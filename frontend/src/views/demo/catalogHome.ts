@@ -16,14 +16,13 @@
 import type { Team, TeamMember } from '@/types'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
-import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
-import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
-
 import HomeHubView from '@/views/home/HomeHubView.vue'
 import HomeNav from '@/views/home/HomeNav.vue'
 import HomeSidebarView from '@/views/home/HomeSidebarView.vue'
 import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
+import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
+import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
+import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 /** 目录里的字要 i18n，行、按钮、抽屉要 vuetify，带 `to` 的行还要路由（`demoRouter`）。 */
 const NAV_T: CatalogNeed[] = ['vuetify', 'i18n', 'router']

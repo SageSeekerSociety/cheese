@@ -88,12 +88,7 @@ export function useTeamNav() {
   const awaiting = awaitingCount()
 
   // ---- 用邀请码加入空间：问后端、成了进那个空间，和待办页共用 `useJoinSpace`。
-  const {
-    open: joinOpen,
-    busy: joinBusy,
-    error: joinError,
-    join: joinSpace,
-  } = useJoinSpace(() => void loadSpaces())
+  const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = useJoinSpace(() => void loadSpaces())
 
   // ---- 改资料。名字全站唯一，撞名要落在名字那一格，别和「没网」「没权限」混成一句。
   const editing = ref<Team | null>(null)

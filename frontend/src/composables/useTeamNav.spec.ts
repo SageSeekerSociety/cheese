@@ -51,10 +51,9 @@ vi.mock('@/services/ErrorHandler', () => ({
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
 
-import HomeSidebar from '@/views/home/HomeSidebar.vue'
-
 import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
+import HomeSidebar from '@/views/home/HomeSidebar.vue'
 
 const blank = { template: '<div />' }
 
@@ -129,7 +128,20 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
-  for (const fn of [getMyTeams, removeMember, del, getMembers, transferOwner, update, createAvatar, spaceList, spaceJoin, confirm, refreshProjects]) fn.mockReset()
+  for (const fn of [
+    getMyTeams,
+    removeMember,
+    del,
+    getMembers,
+    transferOwner,
+    update,
+    createAvatar,
+    spaceList,
+    spaceJoin,
+    confirm,
+    refreshProjects,
+  ])
+    fn.mockReset()
   getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
   spaceList.mockResolvedValue({ spaces: [{ id: 3, name: '数据分析课' }] })
 })
@@ -224,9 +236,7 @@ describe('解散团队', () => {
     await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
     await fireEvent.click(await screen.findByText('解散团队'))
     await fireEvent.update(await screen.findByLabelText('输入团队名「知是开发组」确认'), '知是开发组')
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: '解散团队' }).hasAttribute('disabled')).toBe(false)
-    )
+    await waitFor(() => expect(screen.getByRole('button', { name: '解散团队' }).hasAttribute('disabled')).toBe(false))
     await fireEvent.click(screen.getByRole('button', { name: '解散团队' }))
 
     await waitFor(() => expect(del).toHaveBeenCalledWith(team('crew', '').id))

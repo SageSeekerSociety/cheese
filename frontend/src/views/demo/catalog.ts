@@ -33,7 +33,6 @@ import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import { DOC_BLOCK_ENTRIES } from './catalogDoc'
 import { DOC_LINE_ENTRIES, LIBRARY_DOC_EDITED } from './catalogDocLine'
-import { HOME_ENTRIES } from './catalogHome'
 import { FEEDBACK_ENTRIES } from './catalogFeedback'
 import {
   ACCEPT_CARD,
@@ -63,6 +62,7 @@ import {
   WANG_CLOSING,
   WANG_LINES,
 } from './catalogFixtures'
+import { HOME_ENTRIES } from './catalogHome'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
