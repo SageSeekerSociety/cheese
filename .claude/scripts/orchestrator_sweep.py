@@ -312,6 +312,31 @@ _TITLE_LINE = re.compile(r"\A#[ \t]+[^\n]*\n+")
 #: mentions a test that reading it as a name cut that whole section away.
 _BARE_LABEL = re.compile(r"^(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!#)"
                          r"(?:\*\*)?([^\n：:*|`]{1,20}?)(?:\*\*)?[ \t]*$", re.M)
+#: A line that opens with a bold name and carries on after it: `**Verification** (branch
+#: merged with `main` at 46f44333).`, `**Tests.** each new test fails on main`,
+#: `**Checked**, in a throwaway container`. The name is not the whole line here and no
+#: colon follows it, so neither `_LABEL` nor `_BARE_LABEL` reads one — and 17 of the 1000
+#: merged bodies in the corpus name their verification half exactly this way, so the half
+#: came back empty and the board said those bodies never wrote it.
+#: What the bold span holds is the name; the half starts right after it, past a trailing
+#: period or comma of the name's own (§ `_is_bold_label` for the two conditions the name
+#: has to meet — a sentence that merely opens with a bold phrase is not a label line, the
+#: same way #3618's is not one). Only the verification half is read this way: a body that
+#: bolds `**Change**` or `**Fix**` says nothing new about where the changes end, while a
+#: bold name taken for the wrong half truncates the one above it.
+_BOLD_LABEL = re.compile(r"^\*\*([^\n*]{1,120}?)\*\*[ \t]*[.。，,]?[ \t]*", re.M)
+#: The words that make a bold name the verification half's, and where they have to sit:
+#: at the name's very start. A bold name has no colon and no whole line to lean on, so it
+#: is the half's name outright (`verification`, `verified`, `tests`, `tested`, `checked`,
+#: `valid`, `validation` — `verif` plus its endings is what makes `verification` and
+#: `verified` one rule and not two). Where the word sits is the other half of the rule:
+#: `_mentions` at the line's head would take `check` inside `checkpoints` (two bodies
+#: write `**Old checkpoints.**` and `**Path checks.**`, sentences about something else),
+#: and a bolded list of changes whose item happens to say `checked` halfway through its
+#: sentence — `**The title that lands is the one the repository checked**` — would cut the
+#: list at that item. Both are a name that does not start with the word.
+_BOLD_NAME = re.compile(r"(?:verif|valid|test|check)(?:s|es|ed|ing|ied|ication|ation)?(?![a-z])"
+                        r"|验证|怎么验|测试|自测", re.I)
 _COMMENT_OPEN, _COMMENT_CLOSE = "<!--", "-->"
 #: Everything from the first of these lines down is the platform's, not the author's.
 _TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
@@ -422,7 +447,8 @@ def brief(desc, limit=400):
     labels = sorted([m for m in _LABEL.finditer(text) if _is_label(text, m)]
                     + [m for m in _LABEL_HEADER.finditer(text) if _is_label_header(text, m)]
                     + [m for m in _BARE_LABEL.finditer(text)
-                       if _names_a_section(m.group(1)) and _stands_alone(text, m)],
+                       if _names_a_section(m.group(1)) and _stands_alone(text, m)]
+                    + [m for m in _BOLD_LABEL.finditer(text) if _is_bold_label(text, m)],
                     key=lambda m: m.start())
     ver = [m for m in labels if _mentions(m.group(1).lower(), _VERIFIED_LABEL_WORDS)]
     verified = _under_heading(text, heads, "verified") or _under_label(text, ver, labels, heads, "verified")
@@ -568,6 +594,20 @@ def _is_label_header(text, m):
     return _starts_a_block(text, m) and _opens_with_a_section_word(m.group(1))
 
 
+def _is_bold_label(text, m):
+    """Whether a line opening with a bold name and carrying on is a label line.
+
+    Two conditions, the same shape as `_is_label_header`'s: the line starts a block, and
+    the name opens with the verification half's own word. Without the first one, a
+    sentence that merely wrapped with its opening in bold (#3618's shape, written in bold
+    instead of plain) would cut the changes above it. Without the second one a body that
+    merely bolds where it is going — `**Old checkpoints.**`, `**Path checks.**` — or bolds
+    a change whose sentence happens to say `checked` would do the same. The half worth
+    reading this way is the verification one; a `**Change**` says nothing a heading has
+    not already said."""
+    return _starts_a_block(text, m) and bool(_BOLD_NAME.match(m.group(1).lstrip()))
+
+
 def _negates(h):
     """Whether a heading names the section by saying it is not that: `没验证的`, `No tests`."""
     low = h.group(2).strip().lower()
@@ -629,19 +669,29 @@ def cut(text, limit):
     return joined if len(joined) <= limit else joined[:limit].rstrip() + " …（截断）"
 
 
-def failing_cases(checks, jobs=2):
+def _job_log(job):
+    """One Actions job's log. "" on a read that failed, which the caller treats as a job
+    with no case names in it rather than as a reason to stop the sweep."""
+    r = subprocess.run(["gh", "api", f"repos/{REPO[0]}/{REPO[1]}/actions/jobs/{job}/logs"],
+                       capture_output=True, text=True)
+    return r.stdout or ""
+
+
+def failing_cases(checks, jobs=2, log_of=None):
     """The case names the failed jobs print, read out of their logs and quoted as they
     are — up to `_CASES_MAX` of them, and nothing about why they failed. A job whose
-    log cannot be read contributes nothing rather than stopping the sweep."""
+    log cannot be read contributes nothing rather than stopping the sweep.
+
+    `log_of` is where a job's log comes from; the default reads it from GitHub. The
+    self-test hands it its own text, so what is read out of a log — and how much of it
+    there can be — is exercised without `gh` and without a network."""
+    read = log_of or _job_log
     out = []
     for check in [c for c in checks if c.get("url")][:jobs]:
         job = _JOB_IN_URL.search(check["url"])
-        if not job:
+        if not job:  # 页面地址里没有 job 号：没有日志可读，不是一次读失败
             continue
-        r = subprocess.run(["gh", "api", f"repos/{REPO[0]}/{REPO[1]}/actions/jobs/"
-                                         f"{job.group(1)}/logs"],
-                           capture_output=True, text=True)
-        for raw in (r.stdout or "").splitlines()[-6000:]:
+        for raw in (read(job.group(1)) or "").splitlines()[-6000:]:
             found = _CASE_LINE.match(_LOG_STAMP.sub("", raw).strip())
             if not found:
                 continue
@@ -1120,6 +1170,170 @@ _SELF_TEST_BODIES = (
     ("一个标题同时点名两半、又只有它一个时，两半读到同一段",
      "## 改动和验证\n\n跑了测试\n",
      "跑了测试", "跑了测试"),
+    #: 这一组是那 17 份正文里被读漏的那种写法：正文自己把验证那一节写成「加粗名字 +
+    #: 后话」，名字不是整行、后面也没有冒号，`_LABEL`、`_BARE_LABEL` 都读不到它。每条前面
+    #: 只留一句改动，名字那行照抄原文 —— 这一条读的就是那一行怎么认出来（#3087、#3122
+    #: 两条连后面那块一起抄，钉住「值从名字之后起算」）。第 17 份 #2647 不在这里：它两段
+    #: 加粗讲的都是改动（前端单测怎么跑、e2e 怎么分片），正文里确实没有验证那一节。
+
+    ("加粗名字那一行：后话是一句话（#3375）",
+     "改动：A。\n"
+     "\n"
+     "**Checked**, in a throwaway container from the current gateway image with this branch's files mounted: `check_config.py` against this config, `test_system_billing_line.py`, `test_chatgpt_session.py`, `test_deepseek_route_order.py` all pass. The new test fails when the hook leaves `system` alone.",
+     "改动：A。", "in a throwaway container from the current gateway image with this branch's files mounted: `check_config.py` against this config, `test_system_billing_line.py`, `test_chatgpt_session.py`, `test_deepseek_route_order.py` all pass. The new test fails when the hook leaves `system` alone."),
+    ("加粗名字那一行：名字带句点，后话用例名起头（#3319）",
+     "改动：A。\n"
+     "\n"
+     "**Test.** `test_renaming_a_task_hands_back_the_task_as_its_page_reads_it`: the rename's answer carries the same `presentation` and `waiting_on` as reading the task. It fails on main (`presentation` is `None`) and passes here",
+     "改动：A。", "`test_renaming_a_task_hands_back_the_task_as_its_page_reads_it`: the rename's answer carries the same `presentation` and `waiting_on` as reading the task. It fails on main (`presentation` is `None`) and passes here"),
+    ("加粗名字那一行：后话是括号，再跟一列分节（#3122）",
+     "改动：A。\n"
+     "\n"
+     "**Verification** (branch merged with `main` at 46f44333).\n"
+     "\n"
+     "\n"
+     "\n"
+     "- Backend: `tests/integration/test_panel_live_refresh.py` and `test_task_naming.py` 39 passed, including the new `test_renaming_a_channel_names_that_channel` and the room-id assertion on the frame the task's own conversation hears; the accept-card, task-page, archive and bulk-switch suites 128 passed. `scripts/check_boundaries.py` 3 contracts kept, 0 broken, no stale entries; `scripts/check_deferred_imports.py` 797 unannotated imports in 175 files, the baseline, unchanged; ruff and ruff-format clean; `check-file-sizes.py` passes for all changed files.\n"
+     "- Frontend: `ChatPanel.siteFrames`, `TopicView.feedbackLive`, `workspace.requests` and `TopicChatColumn` 42 passed; eslint, prettier, the hardcoded-Chinese gate and the boundary, design-token, scene and catalog ratchets are clean. `vue-tsc` passed on the tree before the merge with `main`; on the merged tree this box killed the local run (out of memory), so CI is the authority on it here.\n"
+     "- The same suites run in CI on this PR.",
+     "改动：A。", "(branch merged with `main` at 46f44333).\n\n- Backend: `tests/integration/test_panel_live_refresh.py` and `test_task_naming.py` 39 passed, including the new `test_renaming_a_channel_names_that_channel` and the room-id assertion on the frame the task's own conversation hears; the accept-card, task-page, archive and bulk-switch suites 128 passed. `scripts/check_boundaries.py` 3 contracts kept, 0 broken, no stale entries; `scripts/check_deferred_imports.py` 797 unannotated imports in 175 files, the baseline, unchanged; ruff and ruff-format clean; `check-file-sizes.py` passes for all changed files.\n- Frontend: `ChatPanel.siteFrames`, `TopicView.feedbackLive`, `workspace.requests` and `TopicChatColumn` 42 passed; eslint, prettier, the hardcoded-Chinese gate and the boundary, design-token, scene and catalog ratchets are clean. `vue-tsc` passed on the tree before the merge with `main`; on the merged tree this box killed the local run (out of memory), so CI is the authority on it here.\n- The same suites run in CI on this PR."),
+    ("加粗名字那一行：名字带定语，后话是括号（#3116）",
+     "改动：A。\n"
+     "\n"
+     "**Verified on the owner's Mac** (macOS, arm64), under `sandbox-exec -p '(version 1)(allow default)'` with the connector's Python 3.13:",
+     "改动：A。", "(macOS, arm64), under `sandbox-exec -p '(version 1)(allow default)'` with the connector's Python 3.13:"),
+    ("加粗名字那一行：名字带句点，后话用例名起头（#3110）",
+     "改动：A。\n"
+     "\n"
+     "**Test.** `test_an_own_session_on_a_mac_finds_its_owners_login_keychain` runs the real launcher on a faked Mac (`uname` says Darwin, and a fake `security` records its `HOME`). It checks that the keychain lookup gets the machine's home while the session keeps the room's. Without the fix it fails with the room's home.",
+     "改动：A。", "`test_an_own_session_on_a_mac_finds_its_owners_login_keychain` runs the real launcher on a faked Mac (`uname` says Darwin, and a fake `security` records its `HOME`). It checks that the keychain lookup gets the machine's home while the session keeps the room's. Without the fix it fails with the room's home."),
+    ("加粗名字那一行：后话是括号加冒号（#3097）",
+     "改动：A。\n"
+     "\n"
+     "**Test** (`deploy/tests/test-app-tier-health.sh`, `rollout-rollback-b`): a rollout that starts while `backend-b` serves and then fails its health check. It must log `previous=oldsha`, start the release in `backend`, and roll back by starting the previous images in `backend-b`. On main's script the test fails with \"a release started while backend-b served found no previous release\". The existing `rollout-rollback` test still passes",
+     "改动：A。", "(`deploy/tests/test-app-tier-health.sh`, `rollout-rollback-b`): a rollout that starts while `backend-b` serves and then fails its health check. It must log `previous=oldsha`, start the release in `backend`, and roll back by starting the previous images in `backend-b`. On main's script the test fails with \"a release started while backend-b served found no previous release\". The existing `rollout-rollback` test still passes"),
+    ("加粗名字那一行：后话是括号，值另起一行（#3094）",
+     "改动：A。\n"
+     "\n"
+     "**Tests** (`deploy/tests/test_auto_deploy.py`, `SupersededRelease`, driving `main()` against a fake GitHub API):",
+     "改动：A。", "(`deploy/tests/test_auto_deploy.py`, `SupersededRelease`, driving `main()` against a fake GitHub API):"),
+    ("加粗名字那一行：后话是括号，值另起一行（#3093）",
+     "改动：A。\n"
+     "\n"
+     "**Tests** (`deploy/tests/test_auto_deploy.py`, against a fake `urlopen`):",
+     "改动：A。", "(`deploy/tests/test_auto_deploy.py`, against a fake `urlopen`):"),
+    ("加粗名字那一行：名字带句点，后话用例文件名起头（#3091）",
+     "改动：A。\n"
+     "\n"
+     "**Tests.** `test_a_thread_hears_of_a_task_made_from_its_message.py` follows the dev sequence with the real routes and turn. The teammate answers in a 支线, the person turns the message into a task, and the teammate is asked again. The test checks that the message sent to the resumed session carries the marked task. It fails on main and passes here.",
+     "改动：A。", "`test_a_thread_hears_of_a_task_made_from_its_message.py` follows the dev sequence with the real routes and turn. The teammate answers in a 支线, the person turns the message into a task, and the teammate is asked again. The test checks that the message sent to the resumed session carries the marked task. It fails on main and passes here."),
+    ("加粗名字那一行：名字带句点，后话用例文件名起头（#3089）",
+     "改动：A。\n"
+     "\n"
+     "**Tests.** `test_an_agent_knows_its_own_name.py` renames the room's teammate to Nova, @-s it in a 支线, and checks that the system prompt the session was started with opens with its name. It fails on main and passes here. `tests/unit` passes except 18 failures and 2 errors in network- and port-bound tests (`test_fetch_guard`, `test_preview_instances`, `test_private_egress`, `test_preview_captured_port`, `test_session_host_bounds`, one device-workspace test). The same set fails on unmodified main on the same machine",
+     "改动：A。", "`test_an_agent_knows_its_own_name.py` renames the room's teammate to Nova, @-s it in a 支线, and checks that the system prompt the session was started with opens with its name. It fails on main and passes here. `tests/unit` passes except 18 failures and 2 errors in network- and port-bound tests (`test_fetch_guard`, `test_preview_instances`, `test_private_egress`, `test_preview_captured_port`, `test_session_host_bounds`, one device-workspace test). The same set fails on unmodified main on the same machine"),
+    ("加粗名字那一行：后话是一句总结，底下跟一列用例（#3087）",
+     "改动：A。\n"
+     "\n"
+     "**Tests.** Each new test fails on main and passes here:\n"
+     "\n"
+     "- `test_agent_mentions.py::test_a_person_mentioned_by_a_teammate_is_told_the_teammates_own_name`\n"
+     "- `test_cheese_question_notice.py::test_the_mail_about_a_question_names_the_teammate_that_asked`, which renames the teammate to Nova, asks, and renders the queued mail\n"
+     "- `test_integrations.py::test_the_room_line_names_the_teammate_that_drafted`\n"
+     "- `test_notification_letter.py::test_a_question_mail_calls_the_teammate_by_its_name`",
+     "改动：A。", "Each new test fails on main and passes here:\n\n- `test_agent_mentions.py::test_a_person_mentioned_by_a_teammate_is_told_the_teammates_own_name`\n- `test_cheese_question_notice.py::test_the_mail_about_a_question_names_the_teammate_that_asked`, which renames the teammate to Nova, asks, and renders the queued mail\n- `test_integrations.py::test_the_room_line_names_the_teammate_that_drafted`\n- `test_notification_letter.py::test_a_question_mail_calls_the_teammate_by_its_name`"),
+    ("加粗名字那一行：名字带句点，后话用例文件名起头（#3048）",
+     "改动：A。\n"
+     "\n"
+     "**Tests.** `ChatPanel.summonWhereAnswered.spec.ts` has four cases: main line (fails on main), task conversation, private chat, archived channel. The chat, room and composer specs all pass locally (101 files)",
+     "改动：A。", "`ChatPanel.summonWhereAnswered.spec.ts` has four cases: main line (fails on main), task conversation, private chat, archived channel. The chat, room and composer specs all pass locally (101 files)"),
+    ("加粗名字那一行：名字带句点，后话一句总结（#3039）",
+     "改动：A。\n"
+     "\n"
+     "**Tests.** The new `TaskRelatedList.spec.ts` checks that a mentioned agent reads as `@Nova` and that a handle the roster does not know reads as `@bob`. Both checks fail on main and pass here",
+     "改动：A。", "The new `TaskRelatedList.spec.ts` checks that a mentioned agent reads as `@Nova` and that a handle the roster does not know reads as `@bob`. Both checks fail on main and pass here"),
+    ("加粗名字那一行：名字带句点，后话 pytest 节点名（#3038）",
+     "改动：A。\n"
+     "\n"
+     "**Tests.** `test_doc_edit_notices.py::test_an_ai_teammate_is_named_by_its_handle_like_a_person` stores edits from the room's agent and from a person, then checks that the line carries both handles and not 芝士. It fails on main and passes here",
+     "改动：A。", "`test_doc_edit_notices.py::test_an_ai_teammate_is_named_by_its_handle_like_a_person` stores edits from the room's agent and from a person, then checks that the line carries both handles and not 芝士. It fails on main and passes here"),
+    ("加粗名字那一行：名字带句点，后话一句总结（#3035）",
+     "改动：A。\n"
+     "\n"
+     "**Tests.** `test_task_naming.py` has two new tests. In one, a task is turned from a message and named from it. In the other, the opener says too little and the task is named from what its 支线 said. Both fail on main and pass here",
+     "改动：A。", "`test_task_naming.py` has two new tests. In one, a task is turned from a message and named from it. In the other, the opener says too little and the task is named from what its 支线 said. Both fail on main and pass here"),
+    ("加粗名字那一行：名字带句点，后话一句总结（#3025）",
+     "改动：A。\n"
+     "\n"
+     "**Tests.** The fake bucket in `test_sandbox_idle_stop.py` now speaks the S3 protocol, and the platform reaches it through the real `S3StorageBackend`. Three new tests: a sweep cancelled mid-archive, an archive that outlasts one sweep's wait, and a part the bucket drops. All three fail on main and pass here.",
+     "改动：A。", "The fake bucket in `test_sandbox_idle_stop.py` now speaks the S3 protocol, and the platform reaches it through the real `S3StorageBackend`. Three new tests: a sweep cancelled mid-archive, an archive that outlasts one sweep's wait, and a part the bucket drops. All three fail on main and pass here."),
+    # 验半段写在别的名字底下：`valid` 那一族（§ `_VERIFIED_WORDS`）、说反话的标题
+    # （§ `_NEGATING_PHRASES`）、平台那几行之前的部分（§ `_TRAILER_LINE` 的 `Cheese-`）
+    # —— 三条规则各自的用例，去掉哪条都有一处变红。
+    ("验证段写成 `## Validation` 也读得出",
+     "改动：A。\n"
+     "\n"
+     "## Validation\n"
+     "\n"
+     "跑了 X。",
+     "改动：A。", "跑了 X。"),
+    ("标题说「这里没有改变」的那一节不算改动段（_NEGATING_PHRASES）",
+     "## 改动没有改变的东西\n"
+     "\n"
+     "甲段。\n"
+     "\n"
+     "## Fix\n"
+     "\n"
+     "乙段。",
+     "乙段。", ""),
+    ("平台那几行（`Cheese-Task:`）之前的部分才算正文",
+     "改动：A。\n"
+     "\n"
+     "Cheese-Task: 12\n"
+     "\n"
+     "**Tests.** 全过。",
+     "改动：A。", ""),
+    # 下面四条各自盯住一条规则，原句上改一处就会红（见 `_self_test_patterns` 同一思路）：
+    # 名字里带 `test` 的长名字（§ `_SECTION_NAME_WORDS` 的改动词）、结尾带冒号的列表项
+    # （§ `_LABEL` 的列表项前瞻）、名字后面挂长括号（§ `_label_name_ish`）、正文一上来
+    # 就是验证那一节（§ `brief` 的 `lead`）。
+    ("名字里带 test 的长名字靠改动词才认出是哪一半（#3137 那句 `Each change has one regression test that fails without it. Frontend:`）",
+     "Five readings in the observability reporting chain named the wrong thing, so\n"
+     "each told the platform a story that disagreed with what happened:\n"
+     "\n"
+     "Each change has one regression test that fails without it. Frontend:\n"
+     "\n"
+     "跑了 X。",
+     "Five readings in the observability reporting chain named the wrong thing, so\n"
+     "each told the platform a story that disagreed with what happened:",
+     "跑了 X。"),
+    ("验证那一节底下是一个列表，列表项结尾的冒号不算标签行（#3395）",
+     "改动甲。\n"
+     "\n"
+     "验证：\n"
+     "\n"
+     "- 用真浏览器历史复现了上面两条链子：改动前点下去成环，改动后一路点停在待办。\n"
+     "- `vitest run …`：37 项通过。\n",
+     "改动甲。",
+     "- 用真浏览器历史复现了上面两条链子：改动前点下去成环，改动后一路点停在待办。\n"
+     "- `vitest run …`：37 项通过。"),
+    ("标签行的名字后面挂一长串括号时，括号不算进名字（_label_name_ish）",
+     "改动甲。\n"
+     "\n"
+     "验证：\n"
+     "\n"
+     "跑了 X。\n"
+     "\n"
+     "Locally green (see the CI run):\n"
+     "\n"
+     "别的。\n",
+     "改动甲。",
+     "跑了 X。"),
+    ("正文一上来就是验证那一节时没有改动段（brief 的 lead）",
+     "## Verification\n"
+     "\n"
+     "跑了 X。",
+     "", "跑了 X。"),
 )
 _SELF_TEST_ROLLUPS = (
     ("FAILURE 的 CheckRun 算红", {"contexts": {"nodes": [
@@ -1131,6 +1345,20 @@ _SELF_TEST_ROLLUPS = (
     ("老式 StatusContext 的 FAILURE 也算红", {"contexts": {"nodes": [
         {"__typename": "StatusContext", "context": "ci/old", "state": "FAILURE",
          "targetUrl": "https://github.com/x/y/actions/runs/1/job/3"}]}}, ["ci/old"]),
+    # 判定集合里剩下这三个：不常见，但没跑成的检查不止 FAILURE 一种写法，各有一条用例
+    # 才谈得上它们是这条规则、而不是那句 `in ("FAILURE", "ERROR")` 的另一半。
+    ("TIMED_OUT 的 CheckRun 算红", {"contexts": {"nodes": [
+        {"__typename": "CheckRun", "name": "guards / guards", "conclusion": "TIMED_OUT",
+         "detailsUrl": "https://github.com/x/y/actions/runs/1/job/4"}]}}, ["guards / guards"]),
+    ("STARTUP_FAILURE 的 CheckRun 算红", {"contexts": {"nodes": [
+        {"__typename": "CheckRun", "name": "guards / guards", "conclusion": "STARTUP_FAILURE",
+         "detailsUrl": "https://github.com/x/y/actions/runs/1/job/5"}]}}, ["guards / guards"]),
+    ("ACTION_REQUIRED 的 CheckRun 算红", {"contexts": {"nodes": [
+        {"__typename": "CheckRun", "name": "guards / guards", "conclusion": "ACTION_REQUIRED",
+         "detailsUrl": "https://github.com/x/y/actions/runs/1/job/6"}]}}, ["guards / guards"]),
+    ("没跑完的判定（NEUTRAL）不算红", {"contexts": {"nodes": [
+        {"__typename": "CheckRun", "name": "guards / guards", "conclusion": "NEUTRAL",
+         "detailsUrl": "https://github.com/x/y/actions/runs/1/job/7"}]}}, []),
 )
 _SELF_TEST_LOG_LINES = (
     ("2026-10-13T04:11:00.1234567Z FAILED tests/unit/test_a.py::test_b", "tests/unit/test_a.py::test_b"),
@@ -1139,6 +1367,142 @@ _SELF_TEST_LOG_LINES = (
     ("✕ renders the settings page", "renders the settings page"),
     ("2026-10-13T04:11:00.1234567Z ok, nothing failed here", ""),
 )
+
+#: 看板那句指标从这一份上拼出来，字段就是 `day_metrics` 会返回的那些。
+_SELF_TEST_METRICS = {
+    "date": "2026-10-13",
+    "merge_to_queue": {"samples": 2, "median_min": 4.0, "over_10_min_cards": 1,
+                       "over_10_min": 1, "over_10_min_detail": [("72", 12)]},
+    "failed_turns": {"total": 3, "by_line": {"17": 3}},
+}
+
+
+def _self_pr(desc, **over):
+    """A PR as `gh_pr` returns one, carrying the fields `row` and `stage_of` read."""
+    pr = {"desc": desc, "head": "abcdef1234567890", "ci": "SUCCESS",
+          "review_head": "abcdef1234567890", "merged": False, "mergeQueueEntry": None,
+          "timelineItems": {"nodes": []}, "checks": [], "cases": None}
+    pr.update(over)
+    return pr
+
+
+def _self_row(desc="改动：换了缓存。\n\n**Tests.** 全过。", pr=True, card=True,
+              kind="可采纳未采纳", waited=7, waiting="wangchangxin", number=1, title="甲"):
+    """One row as `sweep` builds it, from a description and little else. `pr=False` is
+    the card whose PR was not read, `card=False` the line that never had one."""
+    t = {"number": number, "title": title, "id": f"t{number}", "agent_handle": "cheese"}
+    c = {"pr_number": 42, "status": "pending"} if card else {}
+    p = _self_pr(desc) if pr is True else (pr if isinstance(pr, dict) else None)
+    return row(kind, f"#{number} {title} @cheese", "细节", t, c, p, waited, waiting,
+               None, None, None, "2026-10-13T00:00:00Z")
+
+
+def _self_test_board():
+    """(name, got, want) for 组装两段那一步：`row` 把一次读到的 PR 装成一行，`details`
+    和 `render` 再把这行摆出来。两段各自加粗一行、正文按 `> ` 引，正文没写的那一段说
+    「没写这一节」，正文读不到的两种情形各说各的，红在哪个检查、哪些用例，表格里 CI
+    用字／审查钉对不上标「（旧）」／没在等的写 `—`，同一个任务只说一次，以及一条
+    信号都没有时的那一句。这几条各有一处变了就红。"""
+    board = lambda rows: render(rows, _SELF_TEST_METRICS, 60,
+                                datetime(2026, 10, 13, 5, 0), "12345678-ab")
+    detail = lambda rows: "\n".join(details(rows)).strip()
+    one = "**#1 甲**｜可采纳未采纳｜递卡后等 CI 审查"
+    return [
+        ("每个待判 PR：两段各自加粗一行，正文按 `> ` 引",
+         detail([_self_row()]),
+         one + "\n\n改了什么：\n> 改动：换了缓存。\n\n怎么验证的：\n> 全过。"),
+        ("每个待判 PR：正文没写的那一段说「没写这一节」",
+         detail([_self_row(desc="改动：A。")]),
+         one + "\n\n改了什么：\n> 改动：A。\n\n怎么验证的：PR 正文里没写这一节"),
+        ("每个待判 PR：还没有 PR 的那条说「还没有 PR」",
+         detail([_self_row(pr=False, card=False)]),
+         "**#1 甲**｜可采纳未采纳｜在做未递卡\n\nPR 正文：还没有 PR"),
+        ("每个待判 PR：GitHub 上查不到的那条说「GitHub 上看不到」",
+         detail([_self_row(pr={"error": "boom"})]),
+         "**#1 甲**｜可采纳未采纳｜GitHub 查不到\n\nPR 正文：GitHub 上看不到"),
+        ("每个待判 PR：红在哪个检查、哪些用例都摆出来",
+         detail([_self_row(pr=_self_pr("改动：A。\n\n**Tests.** 全过。",
+                                       checks=[{"name": "guards / guards", "url": "u"},
+                                               {"name": "unit", "url": "u"}],
+                                       cases=["tests/a.py::b", "tests/c.py::d"]))]),
+         one + "\n\n改了什么：\n> 改动：A。\n\n怎么验证的：\n> 全过。\n"
+         "\n红的是：guards / guards、unit\n失败用例：\n> tests/a.py::b\n> tests/c.py::d"),
+        ("每个待判 PR：同一个任务在两类里只说一次",
+         detail([_self_row(), _self_row(kind="长时间无动静")]).count("**#1 甲**"), 1),
+        ("表格：CI 用字、审查钉对不上标「（旧）」、没在等的写「—」",
+         [ln for ln in board([_self_row(),
+                              _self_row(number=2, title="乙", waited=None, waiting=None,
+                                        pr=_self_pr("改动：B。", head="abcdef1234567890",
+                                                    review_head="0123456789abcdef",
+                                                    ci="FAILURE"))]).split("\n")
+          if ln.startswith("| ") and "| #" in ln],
+         ["| 可采纳未采纳 | #1 | 递卡后等 CI 审查 | 绿 | abcdef12 ✓ | 7 分 | wangchangxin |",
+          "| 可采纳未采纳 | #2 | 递卡后等 CI 审查 | 红 | 01234567（旧） | — | — |"]),
+        ("有信号时：表头、频道那行、每个待判 PR 那一段都在",
+         [ln for ln in board([_self_row()]).split("\n")
+          if ln.startswith(("UTC ", "| 类别", "### "))],
+         ["UTC 2026-10-13 05:00｜信号阈值 60 分钟｜1 条｜频道 12345678",
+          "| 类别 | 任务 | 到哪一步 | CI | 审查钉 | 卡了 | 在等 |",
+          "### 每个待判 PR"]),
+        ("一条信号都没有时：不摆表格，只说一句",
+         board([]),
+         "## 调度看板\n\nUTC 2026-10-13 05:00｜信号阈值 60 分钟｜0 条｜频道 12345678\n"
+         "\n各线无待处理信号。\n\n" + metrics_line(_SELF_TEST_METRICS)),
+    ]
+
+
+def _self_test_patterns():
+    """(name, got, want) for 读段底下那几条规则各自的最小用例：整行名字那两个上界、
+    日志时间戳连着的那个空格、注释的两种情形、抽取那一步的截断和压空行。1000 份正文
+    这一层到不了它们，去掉了也看不出来。"""
+    long_name = lambda n: "Verification " + "f" * (n - 13) + ":"
+    return [
+        ("整行名字 120 个字符，仍算标签行（_LABEL_HEADER 的上界）",
+         bool(_LABEL_HEADER.search("改动：A。\n\n" + long_name(120) + "\n")), True),
+        ("整行名字 121 个字符，不算标签行",
+         bool(_LABEL_HEADER.search("改动：A。\n\n" + long_name(121) + "\n")), False),
+        ("日志行的时间戳连它后面那个空格一起去掉（_LOG_STAMP 的 `\\s?`）",
+         _LOG_STAMP.sub("", "2026-10-13T04:11:00.1234567Z FAILED a::b"), "FAILED a::b"),
+        ("没有闭合的 `<!--` 原样留着（_strip_comments）",
+         _strip_comments("前 <!-- 后"), "前 <!-- 后"),
+        ("闭合的 `<!-- … -->` 连同里面的一起去掉",
+         _strip_comments("前 <!-- 注释 --> 后"), "前  后"),
+        ("超长的那一节截断时说一声（cut）",
+         cut("x" * 30, 10), "x" * 10 + " …（截断）"),
+        ("一节里的空行压成一行（cut）",
+         cut("a\n\n\n\nb", 100), "a\n\nb"),
+    ]
+
+
+def _self_test_jobs():
+    """(name, got, want) for 读失败用例那一步（§ `failing_cases`）：日志从 `log_of`
+    来，所以这一组不开网络、不调 `gh`。顺序、去重、条数上限、页面上没有 job 号的那
+    种检查、只读前两个（`jobs=2`）、以及一次读不到不影响别的检查。"""
+    urls = lambda *jobs: [{"name": f"job {j}",
+                           "url": f"https://github.com/x/y/actions/runs/1/job/{j}"}
+                          for j in jobs]
+    logs = {
+        "11": "\n".join(["2026-10-13T04:11:00.1234567Z FAILED tests/a.py::x",
+                         "FAILED tests/b.py::y",
+                         "2026-10-13T04:11:01.0000000Z FAILED tests/a.py::x"]),
+        "12": "\n".join(f"FAILED tests/j{i}.py::t" for i in range(8)),
+        "13": "##[error]tests/z.py::w",
+    }
+    read = lambda j: logs.get(j, "")
+    return [
+        ("日志里的用例名按出现顺序读，重复的只留一次",
+         failing_cases(urls("11"), log_of=read), ["tests/a.py::x", "tests/b.py::y"]),
+        ("用例名最多留 6 条（_CASES_MAX）",
+         failing_cases(urls("12"), log_of=read), [f"tests/j{i}.py::t" for i in range(6)]),
+        ("检查页面上没有 job 号时不读它的日志（_JOB_IN_URL）",
+         failing_cases([{"name": "x", "url": "https://github.com/x/y/actions/runs/1"}],
+                       log_of=read), []),
+        ("只读前两个检查的日志（jobs=2）",
+         failing_cases(urls("13", "11", "12"), log_of=read),
+         ["tests/z.py::w", "tests/a.py::x", "tests/b.py::y"]),
+        ("一次日志读不到算没有用例，不影响别的检查",
+         failing_cases(urls("14", "13"), log_of=read), ["tests/z.py::w"]),
+    ]
 
 
 def self_test():
@@ -1159,6 +1523,8 @@ def self_test():
         found = _CASE_LINE.match(_LOG_STAMP.sub("", line).strip())
         got = next((g for g in found.groups() if g), "").strip() if found else ""
         check("读用例：" + line, got, want)
+    for name, got, want in _self_test_board() + _self_test_patterns() + _self_test_jobs():
+        check("看板：" + name, got, want)
     for line in bad:
         print("FAIL " + line)
     if bad:
