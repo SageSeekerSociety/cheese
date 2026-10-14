@@ -36,10 +36,15 @@ const setGatewayModelBlocked = vi.fn()
 const getGatewayProjects = vi.fn()
 const setGatewayProjectBudget = vi.fn()
 const getGatewayAudit = vi.fn()
+const addGatewaySource = vi.fn()
+const updateGatewaySource = vi.fn()
+const deleteGatewaySource = vi.fn()
+const setGatewaySourceBlocked = vi.fn()
+const reorderGatewaySources = vi.fn()
 
 // 整块换掉 `@/api`，**不走 `importActual`**：真模块会一路 import 到 i18n 的 barrel，
 // 而那一层要 `createI18n`，与本文件对 vue-i18n 的透传 mock 直接冲突（收集阶段就崩）。
-// 页面和详情抽屉一共用这九个函数，列全即可；漏掉一个它会去打真网络，被
+// 页面和详情抽屉用到的函数列全即可；漏掉一个它会去打真网络，被
 // `setup-network.ts` 判红。
 vi.mock('@/api', () => ({
   getGatewayModels: (...a: unknown[]) => getGatewayModels(...a),
@@ -51,6 +56,11 @@ vi.mock('@/api', () => ({
   getGatewayProjects: (...a: unknown[]) => getGatewayProjects(...a),
   setGatewayProjectBudget: (...a: unknown[]) => setGatewayProjectBudget(...a),
   getGatewayAudit: (...a: unknown[]) => getGatewayAudit(...a),
+  addGatewaySource: (...a: unknown[]) => addGatewaySource(...a),
+  updateGatewaySource: (...a: unknown[]) => updateGatewaySource(...a),
+  deleteGatewaySource: (...a: unknown[]) => deleteGatewaySource(...a),
+  setGatewaySourceBlocked: (...a: unknown[]) => setGatewaySourceBlocked(...a),
+  reorderGatewaySources: (...a: unknown[]) => reorderGatewaySources(...a),
 }))
 const setGatewayModelTier = vi.fn()
 vi.mock('@/api/adminCredits', () => ({ setGatewayModelTier: (...a: unknown[]) => setGatewayModelTier(...a) }))
@@ -185,6 +195,11 @@ beforeEach(() => {
   setGatewayProjectBudget.mockReset().mockResolvedValue({})
   getGatewayAudit.mockReset().mockResolvedValue({ items: [] })
   setGatewayModelTier.mockReset().mockResolvedValue({})
+  addGatewaySource.mockReset().mockResolvedValue({})
+  updateGatewaySource.mockReset().mockResolvedValue({})
+  deleteGatewaySource.mockReset().mockResolvedValue({ deleted: true })
+  setGatewaySourceBlocked.mockReset().mockResolvedValue({ blocked: true })
+  reorderGatewaySources.mockReset().mockResolvedValue({})
 })
 afterEach(cleanup)
 
@@ -499,5 +514,60 @@ describe('模型管理 · 档位', () => {
 
     expect(within(document.body).queryByRole('listbox')).toBeNull()
     expect(setGatewayModelTier).not.toHaveBeenCalled()
+  })
+})
+
+describe('模型管理 · 线路', () => {
+  /** 一条运行时线路（OpenCode Go），挂在 config 声明的模型旁边。 */
+  const goSource = {
+    source_id: 'go-1',
+    origin: 'runtime',
+    blocked: false,
+    order: 1,
+    protocol: 'openai-chat',
+    upstream_model: 'mimo-go',
+    upstream_raw: 'hosted_vllm/mimo-go',
+    host: 'opencode.ai',
+    prices: { input: 1e-6, output: 2e-6 },
+    free: false,
+    priced: true,
+    header_names: ['user-agent'],
+    session_header: 'x-opencode-session',
+  }
+
+  async function openDrawer() {
+    const model = configModel({ sources: [goSource] })
+    getGatewayModels.mockResolvedValue(modelsPayload([model]))
+    getGatewayModel.mockResolvedValue({
+      model,
+      series: [],
+      platform_usage: { calls: 0, tokens: 0, cost_usd: 0, unpriced_tokens: 0 },
+    })
+    const page = mountPage()
+    await page.findByText('MiMo V2.6 Pro')
+    await fireEvent.click(page.getByRole('button', { name: 'models.table.howToEdit' }))
+    await page.findByText('mimo-go')
+    return page
+  }
+
+  it('删除线路先确认，确认之后才删那一条', async () => {
+    const page = await openDrawer()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.source.action.delete' }))
+    expect(deleteGatewaySource).not.toHaveBeenCalled()
+    expect(await page.findByText('models.source.confirm.delete.title')).toBeTruthy()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.confirm.delete.confirm' }))
+    await waitFor(() => expect(deleteGatewaySource).toHaveBeenCalledWith('mimo-v2.6-pro', 'go-1'))
+  })
+
+  it('线路写失败时把服务端原话显示在页面上', async () => {
+    reorderGatewaySources.mockRejectedValue(new Error('这条线路由 config.yaml 声明'))
+    const page = await openDrawer()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.source.action.down' }))
+
+    expect(await page.findByText(/config\.yaml 声明/)).toBeTruthy()
+    expect(reorderGatewaySources).toHaveBeenCalledWith('mimo-v2.6-pro', { 'go-1': 2 })
   })
 })

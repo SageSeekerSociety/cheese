@@ -13,34 +13,45 @@
  *  `createGatewayModel` 的入参过得去。 */
 export interface ModelFormPayload {
   name?: string
-  upstream_model: string
-  api_base?: string
-  api_key?: string
-  api_key_unchanged?: boolean
   label: string
   selectable: boolean
-  prices: {
-    input: number | null
-    output: number | null
-    cache_read: number | null
-    cache_creation: number | null
-  }
   capabilities: {
     reasoning: boolean
     vision: boolean
     adaptive_thinking: boolean
     mid_conversation_system?: boolean
   }
+  /** 只在 `add` 出现：新模型的第一条线路（结构上与 `GatewaySourceFields` 一致）。
+   *  编辑模型不碰线路 —— 一个模型可能有好几条，改哪条得在线路上改。 */
+  source?: {
+    protocol?: 'anthropic' | 'openai-chat' | 'openai-responses' | null
+    upstream_model?: string
+    api_base?: string | null
+    api_key?: string | null
+    api_key_unchanged?: boolean
+    prices?: {
+      input?: number | null
+      output?: number | null
+      cache_read?: number | null
+      cache_creation?: number | null
+    }
+    order?: number
+    free?: boolean
+    upstream_headers?: Record<string, string>
+    session_header?: string
+  }
 }
 </script>
 
 <script setup lang="ts">
+import type { SourceDraft } from '@/lib/adminSources'
+
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { apiBaseAllowed } from '@/utils/apiBase'
-
+import AdminSourceFields from '@/components/admin/models/AdminSourceFields.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import { draftPriced, draftToFields, draftValid, emptySourceDraft } from '@/lib/adminSources'
 
 // 新增 / 编辑一个**运行时**模型的表单（契约 §3.3）。
 //
@@ -48,31 +59,24 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 // 打接口的是页面 —— 因为「失败了表单不关」这条要求需要一个地方同时看到**请求结果**和
 // **表单是否还开着**，而那两样都归页面（这一层拿不到请求的成败）。
 //
-// 三条校验与服务端逐字同源，写在界面上是**为了省一次往返**，不是第二份判据：
+// 新增时收两样：模型自己的（名字、标签、上架、能力）和它的第一条线路（`AdminSourceFields`，
+// 与「添加线路」那个框同一组字段）。编辑只改模型自己的：一个模型可能有好几条线路，上游、
+// 地址、凭据、单价都在线路上改（详情抽屉的「线路」一段）。
+//
+// 校验与服务端同源，写在界面上是**为了省一次往返**，不是第二份判据：
 //
 //   * `name` 1..64、只含 `[A-Za-z0-9._-]`；
-//   * `api_base` 要么空，要么 `https://` 开头（空 = 用上游默认端点），唯一例外是计量代理
-//     的 ChatGPT 入口 `http://metering-proxy:8445/chatgpt/<账号>`（`@/utils/apiBase`）；
-//   * `selectable`（上架）要求**输入与输出两个单价都 > 0** —— 无价模型会让项目的
-//     max_budget 这道刹车静默失效，所以这条闸门在界面上就把它拦住（开关直接灰掉），
-//     而不是等服务端 400。
-//
-// 单价在这一层按「每百万 token 的美元」收，提交时换算回网关的「每 token」。
-// 换算只在这里做一次：网关账本和价目表是两种量纲，让用户对着 4.2e-7 填数字是不现实的，
-// 而价格单元格（`AdminModelPriceCell`）显示的是同一个「每百万」口径 —— 两处一致。
+//   * 线路那组字段的规则在 `lib/adminSources.ts`；
+//   * `selectable`（上架）要求每条线路都有价（输入与输出都 > 0，或标了免费）—— 无价模型
+//     会让项目的 max_budget 这道刹车静默失效，所以开关在界面上就灰掉，而不是等服务端 400。
 
 /** 编辑时要预填的那一行（§3.1 的模型项里这一层用得到的字段）。 */
 interface ModelSeed {
   name: string
   label: string
   selectable: boolean
-  upstream: { model: string }
-  prices: {
-    input?: number | null
-    output?: number | null
-    cache_read?: number | null
-    cache_creation?: number | null
-  }
+  /** 每条在用的线路都有价（或标了免费）。编辑时上架开关的闸门。 */
+  priced: boolean
   capabilities: {
     reasoning?: boolean
     vision?: boolean
@@ -104,18 +108,10 @@ const { t } = useI18n()
 
 const NAME_RE = /^[A-Za-z0-9._-]{1,64}$/
 
-// 表单状态。单价用字符串收（`v-text-field` 给的就是字符串），提交时才解析 ——
-// 用 number 收的话空框会变成 0，而 0 是「确实免费」，和「没填」是两回事。
 const name = ref('')
 const label = ref('')
-const upstreamModel = ref('')
-const apiBase = ref('')
-const apiKey = ref('')
 const selectable = ref(false)
-const priceInput = ref('')
-const priceOutput = ref('')
-const priceCacheRead = ref('')
-const priceCacheCreation = ref('')
+const source = ref<SourceDraft>(emptySourceDraft())
 const reasoning = ref(false)
 const vision = ref(false)
 const adaptiveThinking = ref(false)
@@ -123,22 +119,6 @@ const adaptiveThinking = ref(false)
 // 只有标过、或这次关掉，才写回网关。
 const midConversationSystem = ref(true)
 const midConversationSystemMarked = ref(false)
-
-/** 每百万 → 每 token，空串给 null。 */
-function toPerToken(text: string): number | null {
-  const v = text.trim()
-  if (v === '') return null
-  const n = Number(v)
-  if (!Number.isFinite(n) || n < 0) return null
-  return n / 1_000_000
-}
-
-/** 每 token → 每百万的输入框文本（编辑预填用）。显示成 8 位小数去掉尾零。 */
-function toPerMillionText(v: number | null | undefined): string {
-  if (v === null || v === undefined) return ''
-  const scaled = Number((v * 1_000_000).toFixed(8))
-  return scaled === 0 ? '' : String(scaled)
-}
 
 /** 对话框每次**打开**都从 seed 重填一遍：上一次留下的半截输入不该跟着下一次打开回来，
  *  而编辑的预填值又必须是最新的那一行。 */
@@ -149,14 +129,8 @@ watch(
     const s = props.seed
     name.value = props.mode === 'edit' ? s?.name ?? '' : ''
     label.value = s?.label ?? ''
-    upstreamModel.value = s?.upstream.model ?? ''
-    apiBase.value = ''
-    apiKey.value = ''
     selectable.value = s?.selectable ?? false
-    priceInput.value = toPerMillionText(s?.prices.input)
-    priceOutput.value = toPerMillionText(s?.prices.output)
-    priceCacheRead.value = toPerMillionText(s?.prices.cache_read)
-    priceCacheCreation.value = toPerMillionText(s?.prices.cache_creation)
+    source.value = emptySourceDraft()
     reasoning.value = s?.capabilities.reasoning ?? false
     vision.value = s?.capabilities.vision ?? false
     adaptiveThinking.value = s?.capabilities.adaptive_thinking ?? false
@@ -166,11 +140,8 @@ watch(
   { immediate: true }
 )
 
-const inputNum = computed(() => toPerToken(priceInput.value) ?? 0)
-const outputNum = computed(() => toPerToken(priceOutput.value) ?? 0)
-
-/** 双向都有价才允许上架。这是「无价模型不能上架」那条不变式的界面侧。 */
-const canSelect = computed(() => inputNum.value > 0 && outputNum.value > 0)
+/** 上架的闸门：新增看第一条线路有没有价，编辑看服务端说的整组有没有价。 */
+const canSelect = computed(() => (props.mode === 'add' ? draftPriced(source.value) : !!props.seed?.priced))
 
 // 关了上架再清价没问题，开着上架把价清空则必须跟着关 —— 不关的话界面会停在一个
 // 「勾着上架、却发不出合法请求」的状态，而服务端会 400。
@@ -178,11 +149,20 @@ watch(canSelect, (ok) => {
   if (!ok) selectable.value = false
 })
 
-const nameOk = computed(() => NAME_RE.test(name.value.trim()))
-const upstreamOk = computed(() => upstreamModel.value.trim() !== '')
-const apiBaseOk = computed(() => apiBaseAllowed(apiBase.value))
+// Chat 线路翻成 chat/completions 会丢掉对话中间的 system 消息：服务端会把这一项标成关，
+// 界面先跟着关上，免得保存后看到的和填的不一样。
+watch(
+  () => source.value.protocol,
+  (protocol) => {
+    if (protocol !== 'openai-chat') return
+    midConversationSystem.value = false
+    midConversationSystemMarked.value = true
+  }
+)
 
-const valid = computed(() => upstreamOk.value && apiBaseOk.value && (props.mode === 'edit' || nameOk.value))
+const nameOk = computed(() => NAME_RE.test(name.value.trim()))
+
+const valid = computed(() => props.mode === 'edit' || (nameOk.value && draftValid(source.value)))
 
 function close() {
   emit('update:modelValue', false)
@@ -191,15 +171,8 @@ function close() {
 function submit() {
   if (!valid.value || props.saving) return
   const payload: ModelFormPayload = {
-    upstream_model: upstreamModel.value.trim(),
     label: label.value.trim(),
     selectable: selectable.value,
-    prices: {
-      input: toPerToken(priceInput.value),
-      output: toPerToken(priceOutput.value),
-      cache_read: toPerToken(priceCacheRead.value),
-      cache_creation: toPerToken(priceCacheCreation.value),
-    },
     capabilities: {
       reasoning: reasoning.value,
       vision: vision.value,
@@ -209,13 +182,10 @@ function submit() {
   if (midConversationSystemMarked.value || !midConversationSystem.value) {
     payload.capabilities.mid_conversation_system = midConversationSystem.value
   }
-  if (props.mode === 'add') payload.name = name.value.trim()
-  // api_base / api_key 只在**填了**的时候发出去：编辑时留空表示「不动」
-  // （契约 §3.3：`api_key` 为空且 `api_key_unchanged=true` ⇒ 不改上游凭据）。
-  // 这条「不改动」只对 PATCH 有意义 —— 新增本来就没有已存凭据可留，所以 add 不发它。
-  if (apiBase.value.trim()) payload.api_base = apiBase.value.trim()
-  if (apiKey.value.trim()) payload.api_key = apiKey.value.trim()
-  else if (props.mode === 'edit') payload.api_key_unchanged = true
+  if (props.mode === 'add') {
+    payload.name = name.value.trim()
+    payload.source = draftToFields(source.value, 'add')
+  }
   emit('submit', payload)
 }
 </script>
@@ -252,35 +222,11 @@ function submit() {
         :label="t('models.dialog.field.label')"
         hide-details="auto"
       />
-      <v-text-field
-        v-model="upstreamModel"
-        autocomplete="off"
-        variant="outlined"
-        density="comfortable"
-        :label="t('models.dialog.field.upstreamModel')"
-        :hint="t('models.dialog.field.upstreamModelHint')"
-        hide-details="auto"
-      />
-      <v-text-field
-        v-model="apiBase"
-        autocomplete="off"
-        variant="outlined"
-        density="comfortable"
-        :label="t('models.dialog.field.apiBase')"
-        :hint="t('models.dialog.field.apiBaseHint')"
-        :error="!apiBaseOk"
-        hide-details="auto"
-      />
-      <v-text-field
-        v-model="apiKey"
-        autocomplete="off"
-        type="password"
-        variant="outlined"
-        density="comfortable"
-        :label="t('models.dialog.field.apiKey')"
-        :hint="mode === 'edit' ? t('models.dialog.field.apiKeyKeep') : t('models.dialog.field.apiKeyHint')"
-        hide-details="auto"
-      />
+      <!-- 第一条线路：只在新增时出现。编辑时线路在详情抽屉里一条条改。 -->
+      <template v-if="mode === 'add'">
+        <p class="amf__group t-eyebrow-read">{{ t('models.source.firstSource') }}</p>
+        <AdminSourceFields v-model="source" />
+      </template>
 
       <!-- 上架开关。没价时**灰掉**，并说明为什么 —— 一个能打开却发不出去的开关
                比一个灰掉的开关更容易让人在服务端 400 之后才发现原因。 -->
@@ -296,47 +242,6 @@ function submit() {
         <p v-if="!canSelect" class="amf__hint t-meta-read">
           {{ t('models.dialog.selectableNeedsPrice') }}
         </p>
-      </div>
-
-      <p class="amf__group t-eyebrow-read">{{ t('models.dialog.group.prices') }}</p>
-      <p class="amf__hint t-meta-read">{{ t('models.dialog.priceUnit') }}</p>
-      <div class="amf__prices">
-        <v-text-field
-          v-model="priceInput"
-          autocomplete="off"
-          type="number"
-          variant="outlined"
-          density="comfortable"
-          :label="t('models.price.input')"
-          hide-details
-        />
-        <v-text-field
-          v-model="priceOutput"
-          autocomplete="off"
-          type="number"
-          variant="outlined"
-          density="comfortable"
-          :label="t('models.price.output')"
-          hide-details
-        />
-        <v-text-field
-          v-model="priceCacheRead"
-          autocomplete="off"
-          type="number"
-          variant="outlined"
-          density="comfortable"
-          :label="t('models.price.cacheRead')"
-          hide-details
-        />
-        <v-text-field
-          v-model="priceCacheCreation"
-          autocomplete="off"
-          type="number"
-          variant="outlined"
-          density="comfortable"
-          :label="t('models.price.cacheCreation')"
-          hide-details
-        />
       </div>
 
       <p class="amf__group t-eyebrow-read">{{ t('models.dialog.group.capabilities') }}</p>
@@ -402,12 +307,6 @@ function submit() {
 .amf__hint {
   margin: 0;
   color: var(--muted);
-}
-
-.amf__prices {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
 }
 
 .amf__caps {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChartSeries } from '@/components/admin/AdminLineChart.vue'
+import type { SourceRow } from '@/lib/adminModels'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -9,6 +10,7 @@ import { useGatewayModelDetail } from '@/composables/useGatewayModelDetail'
 
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminModelPriceCell from '@/components/admin/AdminModelPriceCell.vue'
+import AdminModelSources from '@/components/admin/models/AdminModelSources.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { blockedReasonText } from '@/lib/adminModels'
@@ -30,10 +32,20 @@ const props = defineProps<{
   name: string | null
   /** 与页面统一的统计窗口，天。 */
   days: number
+  /** 页面写完一条线路就加一：抽屉开着时跟着重拉，免得画的还是写前的线路。 */
+  reloadKey?: number
+  /** 页面有线路写请求在路上：线路那一段的按钮都灰。 */
+  sourceBusy?: boolean
 }>()
 
+// 线路那一段的动作只往上报：确认框、表单、接口都归页面（同模型表那几个按钮）。
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
+  (e: 'add-source', name: string, nextOrder: number): void
+  (e: 'edit-source', name: string, source: SourceRow): void
+  (e: 'block-source', name: string, source: SourceRow): void
+  (e: 'delete-source', name: string, source: SourceRow): void
+  (e: 'move-source', name: string, source: SourceRow, order: number): void
 }>()
 
 const { t } = useI18n()
@@ -48,7 +60,7 @@ const copied = ref(false)
 
 // 打开时拉一次，窗口变了（用户在页面上切了天数）也重拉 —— 抽屉开着时窗口不该是旧的。
 watch(
-  () => [props.modelValue, props.name, props.days] as const,
+  () => [props.modelValue, props.name, props.days, props.reloadKey] as const,
   ([open]) => {
     if (!open) {
       copied.value = false
@@ -60,6 +72,12 @@ watch(
 )
 
 const model = computed(() => detail.value?.model ?? null)
+
+/** 新加的线路默认排在现有的最后一条之后（上限 100）。 */
+const nextOrder = computed(() => {
+  const orders = (model.value?.sources ?? []).map((s) => s.order ?? 0)
+  return Math.min(100, Math.max(0, ...orders) + 1)
+})
 
 const caps = computed(() => {
   const c = model.value?.capabilities ?? {}
@@ -160,14 +178,17 @@ function close() {
             {{ blockedReasonText(model) }}
           </p>
 
+          <!-- 线路：网关按这个先后试哪几条上游。config 的只读，但照样列出来。 -->
           <section class="amdd__block">
-            <h2 class="amdd__blocktitle t-eyebrow-read">{{ t('models.detail.upstream') }}</h2>
-            <dl class="amdd__kv">
-              <dt>{{ t('models.detail.upstreamModel') }}</dt>
-              <dd class="t-num">{{ model.upstream.model }}</dd>
-              <dt>{{ t('models.detail.upstreamHost') }}</dt>
-              <dd class="t-num">{{ model.upstream.host || '—' }}</dd>
-            </dl>
+            <AdminModelSources
+              :sources="model.sources ?? []"
+              :busy="sourceBusy"
+              @add="emit('add-source', model.name, nextOrder)"
+              @edit="emit('edit-source', model.name, $event)"
+              @block="emit('block-source', model.name, $event)"
+              @delete="emit('delete-source', model.name, $event)"
+              @move="(source, order) => emit('move-source', model!.name, source, order)"
+            />
           </section>
 
           <section class="amdd__block">

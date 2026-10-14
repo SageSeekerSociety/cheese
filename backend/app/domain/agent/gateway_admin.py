@@ -20,6 +20,8 @@ import httpx
 
 from app.core.sentences import say
 from app.domain.agent.gateway import price_is_set
+from app.domain.agent.schemas import split_upstream
+from app.domain.usage.pricing import declared_free
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +50,30 @@ _CAPABILITY_FIELDS = {
     "mid_conversation_system": "supports_mid_conversation_system",
 }
 
+# 一条线路自己的 model_info 键：不跟着模型走，加新线路时也不从别的线路抄。名字与网关
+# 侧读它们的钩子（deploy/gateway 的 upstream_headers.py）逐字一致。
+UPSTREAM_HEADERS = "cheese_upstream_headers"
+SESSION_HEADER = "cheese_session_header"
+FREE = "cheese_free"
+_SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE})
+
+
+def catalogue_info(info: Mapping[str, object]) -> dict[str, object]:
+    """一行 model_info 里属于**模型**、同组每一行必须一字不差的那部分。
+
+    目录读 ``/model/info`` 列出的第一行（上架、名字、档位、思考档、能力都从那一行来），
+    哪一行排第一不由我们定，所以同组每一行都得带同一份。线路自己的键
+    (``_SOURCE_INFO_KEYS``)与网关自己写进去的键(``id``、``db_model``、``blocked``……)
+    都不在内 —— 抄了 ``id`` 就是两行同一个部署 id,一行 429 冷却全组(#3294)。
+    """
+    capability_fields = set(_CAPABILITY_FIELDS.values())
+    return {
+        key: value
+        for key, value in info.items()
+        if (key.startswith("cheese_") and key not in _SOURCE_INFO_KEYS)
+        or key in capability_fields
+    }
+
 
 class GatewayAdminError(Exception):
     """管理动作失败。
@@ -66,6 +92,30 @@ class GatewayUnreachable(GatewayAdminError):
 
 class GatewayRefused(GatewayAdminError):
     """网关答了话,而且拒绝了(4xx/5xx),例如对 config.yaml 里的模型做写操作。"""
+
+
+@dataclass(frozen=True)
+class AdminSource:
+    """一个模型下的一条线路 —— 网关里的一条部署(``/model/info`` 的一行)。
+
+    ``order`` 是 LiteLLM 的优先级(小的先试,相同的一起分流,没有的垫底)。
+    ``header_names`` 只有头名:值可能是凭据一类的东西,页面不该读到。
+    ``catalogue`` 是这一行里属于模型的那份元数据(``catalogue_info``),给「加线路」抄用。
+    """
+
+    source_id: str
+    origin: str  # "config" | "runtime"
+    blocked: bool
+    order: int | None
+    protocol: str | None  # None = 认不出的前缀,``upstream_model`` 是完整模型串
+    upstream_model: str  # LiteLLM 的完整模型串
+    api_base: str | None
+    prices: dict[str, float]
+    free: bool
+    priced: bool
+    header_names: tuple[str, ...]
+    session_header: str | None
+    catalogue: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -96,6 +146,11 @@ class AdminModel:
     prices: dict[str, float]  # input/output/cache_read/cache_creation,缺的键不出现
     capabilities: dict[str, bool]  # 键见 _CAPABILITY_FIELDS
     supports_notes: str | None  # 缺价的原因等人话,priced=False 时给出
+    # 这个模型的全部线路,按网关试它们的先后排好。模型那一层的字段读自
+    # ``/model/info`` 列出的第一行(目录也读那一行);``origin`` 有一行来自
+    # config.yaml 就是 ``config``,``blocked`` 要每一行都停了才算,``priced`` 要每条
+    # 在用的线路都有价 —— 与 ``LlmGateway.models`` 给选择器的答案同一个口径。
+    sources: tuple[AdminSource, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -229,17 +284,14 @@ class GatewayAdmin:
             raise GatewayRefused(
                 say("gatewayMissingList", path="/model/info", field="data")
             )
-        out: list[AdminModel] = []
-        seen: set[str] = set()
+        groups: dict[str, list[dict]] = {}
         for row in rows:
             if not isinstance(row, dict):
                 continue
             name = row.get("model_name")
-            if not isinstance(name, str) or not name or name in seen:
-                continue
-            seen.add(name)
-            out.append(_admin_model(name, row))
-        return out
+            if isinstance(name, str) and name:
+                groups.setdefault(name, []).append(row)
+        return [_admin_model(name, group) for name, group in groups.items()]
 
     async def keys(self) -> list[AdminKey]:
         """全部虚拟 key,分页取完。项目额度这一列就落在这里的 ``max_budget`` 上。"""
@@ -330,24 +382,90 @@ class GatewayAdmin:
         selectable: bool = False,
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
+        order: int | None = None,
+        free: bool | None = None,
+        upstream_headers: Mapping[str, str] | None = None,
+        session_header: str | None = None,
     ) -> str:
-        """新建一条运行时模型,返回网关给的 model_id。
+        """新建一个运行时模型(连同它的第一条线路),返回网关给的 model_id。
 
         ``api_key`` 只进请求体,绝不回显、绝不落日志——它是上游凭据。上游单价「两向
         都要有」这条不变式由服务层守,这里只如实传网关。
         """
-        params: dict[str, object] = {"model": upstream_model}
-        if api_base:
-            params["api_base"] = api_base
-        if api_key:
-            params["api_key"] = api_key
-        params.update(_price_params(prices))
         info: dict[str, object] = dict(_capability_params(capabilities))
         info["cheese_selectable"] = bool(selectable)
         if label is not None:
             info["cheese_label"] = label
         if tier is not None:
             info["cheese_tier"] = tier
+        return await self._new(
+            name,
+            upstream_model=upstream_model,
+            api_base=api_base,
+            api_key=api_key,
+            prices=prices,
+            info=info,
+            order=order,
+            free=free,
+            upstream_headers=upstream_headers,
+            session_header=session_header,
+        )
+
+    async def add_source(
+        self,
+        *,
+        name: str,
+        catalogue: Mapping[str, object],
+        upstream_model: str,
+        order: int,
+        api_base: str | None = None,
+        api_key: str | None = None,
+        prices: Mapping[str, float | None] | None = None,
+        free: bool | None = None,
+        upstream_headers: Mapping[str, str] | None = None,
+        session_header: str | None = None,
+    ) -> str:
+        """给已有模型加一条线路,返回它的 model_id。
+
+        ``catalogue`` 是同组已有那一行里属于模型的元数据(``catalogue_info``),整份
+        抄进新行的 model_info —— 新行自己的一份,不与谁共用(部署 id 由网关新发)。
+        """
+        return await self._new(
+            name,
+            upstream_model=upstream_model,
+            api_base=api_base,
+            api_key=api_key,
+            prices=prices,
+            info=dict(catalogue),
+            order=order,
+            free=free,
+            upstream_headers=upstream_headers,
+            session_header=session_header,
+        )
+
+    async def _new(
+        self,
+        name: str,
+        *,
+        upstream_model: str,
+        api_base: str | None,
+        api_key: str | None,
+        prices: Mapping[str, float | None] | None,
+        info: dict[str, object],
+        order: int | None,
+        free: bool | None,
+        upstream_headers: Mapping[str, str] | None,
+        session_header: str | None,
+    ) -> str:
+        params: dict[str, object] = {"model": upstream_model}
+        if api_base:
+            params["api_base"] = api_base
+        if api_key:
+            params["api_key"] = api_key
+        params.update(_price_params(prices))
+        if order is not None:
+            params["order"] = order
+        info.update(_source_info(free, upstream_headers, session_header))
         response = await self._request(
             "POST",
             "/model/new",
@@ -375,8 +493,12 @@ class GatewayAdmin:
         selectable: bool | None = None,
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
+        order: int | None = None,
+        free: bool | None = None,
+        upstream_headers: Mapping[str, str] | None = None,
+        session_header: str | None = None,
     ) -> None:
-        """改一条运行时模型。``None`` 一律表示「这次不动它」。
+        """改一条运行时部署(一个模型的一条线路)。``None`` 一律表示「这次不动它」。
 
         走 ``PATCH /model/{model_id}/update``,不是 ``POST /model/update``。后者在
         LiteLLM 1.96.0 的 handler(``update_model``)里落库时只写 ``litellm_params``
@@ -401,7 +523,10 @@ class GatewayAdmin:
         if tier is not None:
             info["cheese_tier"] = tier
         info.update(_capability_params(capabilities))
+        info.update(_source_info(free, upstream_headers, session_header))
         params: dict[str, object] = {}
+        if order is not None:
+            params["order"] = order
         if upstream_model is not None:
             params["model"] = upstream_model
         if api_base is not None:
@@ -647,6 +772,27 @@ def _capability_params(
     return out
 
 
+def _source_info(
+    free: bool | None,
+    upstream_headers: Mapping[str, str] | None,
+    session_header: str | None,
+) -> dict[str, object]:
+    """线路自己的那几个 model_info 键。``None`` 是「不动」,所以不出现。
+
+    清空用的是空值而不是 null:网关 PATCH 合并 model_info 时丢掉 null
+    (``exclude_none``),发 null 等于什么都没改。``{}`` 让静态头一个不发,
+    ``""`` 让网关侧的钩子不转会话(它只认非空的头名)。
+    """
+    out: dict[str, object] = {}
+    if free is not None:
+        out[FREE] = bool(free)
+    if upstream_headers is not None:
+        out[UPSTREAM_HEADERS] = dict(upstream_headers)
+    if session_header is not None:
+        out[SESSION_HEADER] = session_header
+    return out
+
+
 def _unpriced_note(params: object, info: object) -> str | None:
     """无价时给人一句人话:缺的是哪一边,以及为什么会坏事。"""
     if price_is_set(params, info):
@@ -665,11 +811,53 @@ def _unpriced_note(params: object, info: object) -> str | None:
     )
 
 
-def _admin_model(name: str, row: dict) -> AdminModel:
-    raw_info = row.get("model_info")
-    info = raw_info if isinstance(raw_info, dict) else {}
-    raw_params = row.get("litellm_params")
-    params = raw_params if isinstance(raw_params, dict) else {}
+def _dict(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _admin_source(row: dict) -> AdminSource:
+    info = _dict(row.get("model_info"))
+    params = _dict(row.get("litellm_params"))
+    upstream = params.get("model")
+    upstream = upstream if isinstance(upstream, str) else ""
+    api_base = params.get("api_base")
+    order = params.get("order", info.get("order"))
+    headers = info.get(UPSTREAM_HEADERS)
+    session = info.get(SESSION_HEADER)
+    model_id = info.get("id")
+    return AdminSource(
+        source_id=model_id if isinstance(model_id, str) and model_id else "",
+        origin="runtime" if info.get("db_model") is True else "config",
+        blocked=info.get("blocked") is True,
+        order=order if isinstance(order, int) and not isinstance(order, bool) else None,
+        protocol=split_upstream(upstream)[0],
+        upstream_model=upstream,
+        api_base=api_base if isinstance(api_base, str) and api_base else None,
+        prices=_read_prices(params, info),
+        free=declared_free(params, info),
+        priced=price_is_set(params, info),
+        header_names=tuple(
+            sorted(k for k in headers if isinstance(k, str))
+            if isinstance(headers, dict)
+            else ()
+        ),
+        session_header=session if isinstance(session, str) and session else None,
+        catalogue=catalogue_info(info),
+    )
+
+
+def _try_order(pair: tuple[int, AdminSource]) -> tuple[bool, int, int]:
+    """网关试线路的先后:有 order 的按数从小到大,没有的垫底,同档按列出的先后。"""
+    index, source = pair
+    return (source.order is None, source.order or 0, index)
+
+
+def _admin_model(name: str, rows: list[dict]) -> AdminModel:
+    """一组同名的行 -> 一个模型。模型层的字段读第一行(目录也读它),能不能用、
+    有没有价看整组,口径见 ``AdminModel.sources``。"""
+    row = rows[0]
+    info = _dict(row.get("model_info"))
+    params = _dict(row.get("litellm_params"))
     upstream = params.get("model")
     api_base = params.get("api_base")
     provider = info.get("litellm_provider")
@@ -683,21 +871,40 @@ def _admin_model(name: str, row: dict) -> AdminModel:
     model_id = info.get("id")
     label = info.get("cheese_label")
     tier = info.get("cheese_tier")
+    sources = tuple(
+        s for _, s in sorted(enumerate(_admin_source(r) for r in rows), key=_try_order)
+    )
+    live = [r for r in rows if _dict(r.get("model_info")).get("blocked") is not True]
+    unpriced = next(
+        (
+            r
+            for r in (live or rows)
+            if not price_is_set(r.get("litellm_params"), _dict(r.get("model_info")))
+        ),
+        None,
+    )
     return AdminModel(
         name=name,
         model_id=model_id if isinstance(model_id, str) and model_id else name,
         label=label if isinstance(label, str) and label else name,
-        origin="runtime" if info.get("db_model") is True else "config",
-        blocked=info.get("blocked") is True,
+        origin="config" if any(s.origin == "config" for s in sources) else "runtime",
+        blocked=not live,
         selectable=info.get("cheese_selectable") is True,
-        priced=price_is_set(params, info),
+        priced=unpriced is None,
         tier=tier if isinstance(tier, str) and tier else "included",
         upstream_model=upstream if isinstance(upstream, str) else "",
         api_base=api_base if isinstance(api_base, str) and api_base else None,
         provider=provider,
         prices=_read_prices(params, info),
         capabilities=_read_capabilities(info),
-        supports_notes=_unpriced_note(params, info),
+        supports_notes=(
+            None
+            if unpriced is None
+            else _unpriced_note(
+                unpriced.get("litellm_params"), _dict(unpriced.get("model_info"))
+            )
+        ),
+        sources=sources,
     )
 
 

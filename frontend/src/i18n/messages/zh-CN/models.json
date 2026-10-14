@@ -97,8 +97,6 @@
     "close": "关闭",
     "loadFailed": "详情加载失败，请重试。",
     "empty": "暂无此模型",
-    "upstream": "上游",
-    "upstreamModel": "上游模型",
     "upstreamHost": "上游地址",
     "trend": "每天用量",
     "platformUsage": "平台侧用量",
@@ -216,7 +214,12 @@
       "subscriptionRefresh": "刷新订阅凭据",
       "subscriptionRevoke": "移除订阅",
       "other": "其它操作",
-      "subscriptionUpdateUpstream": "改订阅的上游模型"
+      "subscriptionUpdateUpstream": "改订阅的上游模型",
+      "sourceAdd": "加线路",
+      "sourceUpdate": "改线路",
+      "sourceDelete": "删线路",
+      "sourceBlocked": "停用/启用线路",
+      "sourceOrder": "调线路优先级"
     },
     "diff": {
       "show": "查看改动",
@@ -241,5 +244,81 @@
       }
     },
     "loadFailed": "最近操作加载失败"
+  },
+  "source": {
+    "section": "线路",
+    "add": "添加线路",
+    "firstSource": "第一条线路",
+    "count": "{n} 条线路",
+    "order": "优先级 {n}",
+    "orderNone": "无优先级（垫底）",
+    "free": "免费",
+    "headers": "请求头",
+    "session": "会话头",
+    "readonly": "配置文件声明，只读",
+    "testSoon": "测试线路要等一致性测试套件上线",
+    "failed": "线路操作失败",
+    "protocol": {
+      "anthropic": "Anthropic Messages",
+      "openaiChat": "OpenAI 兼容 Chat",
+      "openaiResponses": "OpenAI Responses",
+      "other": "其他（填完整模型串）"
+    },
+    "action": {
+      "up": "提前",
+      "down": "延后",
+      "edit": "编辑线路",
+      "block": "停用线路",
+      "unblock": "启用线路",
+      "delete": "删除线路",
+      "test": "测试线路"
+    },
+    "dialog": {
+      "addTitle": "给 {name} 添加线路",
+      "editTitle": "编辑 {name} 的线路"
+    },
+    "field": {
+      "protocol": "协议",
+      "order": "优先级",
+      "orderHint": "1–100，小的先试，相同的一起分流。",
+      "upstreamHint": "上游自己的模型名，例如 kimi-k3；协议前缀由网关拼上。",
+      "apiBaseKeep": "留空则沿用已保存的上游地址。",
+      "free": "免费线路",
+      "freeHint": "上游不按 token 收费（免费模型、包月订阅）：输入与输出单价记为 0，不算没定价。",
+      "zeroNeedsFree": "输入或输出单价写成 0 只能用在免费线路上；免费线路的输入与输出单价只能是 0。",
+      "headers": "静态请求头",
+      "existingHeaders": "现有：{names}（值不回显；重新设置会整份替换）",
+      "noHeaders": "没有请求头。",
+      "editHeaders": "重新设置请求头",
+      "headerName": "头名",
+      "headerValue": "值",
+      "addHeader": "添加请求头",
+      "removeHeader": "移除这个请求头",
+      "headerInvalid": "请求头名或值不合法：认证与传输相关的头不能按线路设置，值里不能有换行。",
+      "session": "会话头名",
+      "sessionHint": "上游按会话路由或缓存时填（如 x-opencode-session），网关把 Claude Code 的会话 id 放进这个头；留空不转。"
+    },
+    "confirm": {
+      "delete": {
+        "title": "删除线路",
+        "body": "{name} 的线路 {source} 会从网关移除，网关不再往那里转请求。只剩这一条时，模型也会一起消失。"
+      },
+      "block": {
+        "title": "停用线路",
+        "body": "{name} 的线路 {source} 停用后网关不再往那里转请求；这个模型别的线路照常可用。"
+      },
+      "unblock": {
+        "title": "启用线路",
+        "body": "{name} 的线路 {source} 启用后，网关按优先级重新往那里转请求。"
+      }
+    },
+    "notice": {
+      "added": "已给 {name} 添加线路",
+      "updated": "已更新 {name} 的线路",
+      "deleted": "已删除 {name} 的一条线路",
+      "blocked": "已停用 {name} 的一条线路",
+      "unblocked": "已启用 {name} 的一条线路",
+      "reordered": "已调整 {name} 的线路优先级"
+    }
   }
 }
