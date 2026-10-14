@@ -60,7 +60,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.project_feed import UNREAD, tell_project_once_committed
 from app.domain.agent.staleness import announce_stale
-from app.domain.agent_instance.adapters import seat_handles
+from app.domain.agent_instance.adapters import seat_handles, seat_project
 from app.domain.conversation.services import room_of
 from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.services import TopicService
@@ -216,6 +216,7 @@ async def upgrade_block(
     room, task = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
         created_by=actor.handle,
+        seat_project=seat_project,
     )
     # 转出来即已开始：审阅人默认就是转它的人，不用再挑一次。
     await start_task_at_once(db, task, by=actor.handle)

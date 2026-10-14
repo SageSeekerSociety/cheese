@@ -75,7 +75,7 @@ from app.domain.topic.models import (
     TopicRole,
     TopicStatus,
 )
-from app.domain.topic.ports import SeatHandles
+from app.domain.topic.ports import SeatHandles, SeatProject
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -905,6 +905,7 @@ class TopicService:
         *,
         block_id: uuid.UUID,
         created_by: str | None = None,
+        seat_project: SeatProject,
     ) -> tuple[Topic, Task]:
         """转为任务: a message in a channel becomes a task in that channel,
         owned by whoever turned it. A message, or the 支线 under it, can become
@@ -930,6 +931,7 @@ class TopicService:
             teammate=recipient_seat((block.meta or {}).get("agent_recipient")),
             origin_block_id=await self._main_line_message(block),
             source_block_id=block.id,
+            seat_project=seat_project,
         )
         return parent, task
 
@@ -1034,6 +1036,7 @@ class TopicService:
         named_by_teammate: bool = False,
         origin_block_id: uuid.UUID | None = None,
         source_block_id: uuid.UUID | None = None,
+        seat_project: SeatProject,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
@@ -1059,6 +1062,9 @@ class TopicService:
         no person is identifiable — the room's owner, then the project's. A task
         belongs to someone; a task nobody owns is one nobody can start or answer
         for. Who reviews its changes is decided when it is started, not here.
+
+        ``seat_project`` 是递进来的口子，落座那一步用它挡住别家的队友；本包在第 2
+        层，读不出「这一席落在哪个项目上」（`app.domain.topic.ports.SeatProject`）。
         """
         place = await PlaceResolver(self._session).resolve(room_id)
         if place is None:
@@ -1107,7 +1113,9 @@ class TopicService:
                 project, teammate
             )
         ):
-            await self._seat_teammate(room.id, teammate, by=created_by)
+            await self._seat_teammate(
+                room.id, teammate, by=created_by, seat_project=seat_project
+            )
             await tasks.give_agent(task, agent_handle=teammate)
         await tasks.ensure_document(task)
         if owner:
@@ -1119,33 +1127,45 @@ class TopicService:
         return task
 
     async def give_task_teammate(
-        self, task: Task, seat: str | None, *, by: str
+        self, task: Task, seat: str | None, *, by: str, seat_project: SeatProject
     ) -> None:
         """Another AI teammate works ``task`` from its next turn: one saved in
         the task's project, named by its seat; None gives it back to its
-        room's. ``by`` is who gives it, who must be able to seat it."""
+        room's. ``by`` is who gives it, who must be able to seat it.
+
+        ``seat_project`` 递到落座那一步（`SeatProject`）。"""
         if seat is not None:
             project = await self._projects.get(task.project_id)
             if project is None or not await AgentInstanceService(
                 self._session
             ).for_seat_handle(project, seat):
                 raise ValidationError(say("teammateHandleNotFound", handle=repr(seat)))
-            await self._seat_teammate(task.room_id, seat, by=by)
+            await self._seat_teammate(
+                task.room_id, seat, by=by, seat_project=seat_project
+            )
         await TaskService(self._session).give_agent(task, agent_handle=seat)
 
     async def _seat_teammate(
-        self, room_id: uuid.UUID, seat: str, *, by: str | None
+        self,
+        room_id: uuid.UUID,
+        seat: str,
+        *,
+        by: str | None,
+        seat_project: SeatProject,
     ) -> None:
         """Seat the teammate a task is given in the task's room, so that it
         works and speaks there as itself (`queries._seat_of`).
 
         Seated the way ``by`` would add it to the room by hand, with the same
         permission: someone who could not add it cannot give it the task
-        either, and is told so."""
+        either, and is told so. 那条落座的路要认「这一席是哪个项目的」，口子从上面
+        递下来（`SeatProject`）。"""
         if seat in await self._members.agent_handles(room_id):
             return
         try:
-            await self._members.add(topic_id=room_id, handle=seat, actor=by or "")
+            await self._members.add(
+                topic_id=room_id, handle=seat, actor=by or "", seat_project=seat_project
+            )
         except ForbiddenError:
             raise ForbiddenError(say("taskTeammateNeedsSeat")) from None
 

@@ -41,6 +41,7 @@ from app.domain.topic.models import (
     TopicStatus,
 )
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.ports import SeatProject
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.schemas import TopicMemberOut
 
@@ -537,7 +538,12 @@ class TopicMemberService:
         return await self.resolve_agent_handle(topic_id, room_id=room_id)
 
     async def add(
-        self, *, topic_id: uuid.UUID, handle: str, actor: str
+        self,
+        *,
+        topic_id: uuid.UUID,
+        handle: str,
+        actor: str,
+        seat_project: SeatProject,
     ) -> TopicMembership:
         topic = await self._brought_in_by(topic_id, actor)
         # Who is an agent is the binding's answer, not the handle's shape (I9):
@@ -550,10 +556,8 @@ class TopicMemberService:
             # keys a memory pool inside ITS project — so another project's
             # teammate must not be seated here: nothing in this project would
             # address it, and its token would write as this room's default.
-            # deferred-import: cycle agent_instance -> topic_membership
-            from app.domain.agent_instance.services import AgentInstanceService
-
-            owner = await AgentInstanceService(self._session).project_of_seat(handle)
+            # 哪一席落在哪个项目上，本包在第 2 层读不出来（`SeatProject`）。
+            owner = await seat_project(self._session, handle)
             if owner is not None and owner != topic.project_id:
                 raise NotFoundError(say("projectAiTeammateNotFound"))
         elif not await self._on_project(topic.project_id, handle):

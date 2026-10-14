@@ -31,3 +31,21 @@ class SeatHandles(Protocol):
     async def __call__(
         self, session: AsyncSession, project_id: uuid.UUID
     ) -> dict[str, str]: ...
+
+
+class SeatProject(Protocol):
+    """``handle`` 这个席位落在哪个项目上，不是任何一个队友的席位就是 ``None``。
+
+    一条活认下一个队友、把它在房间里落座之前，本包要确认这一席确实是**本项目**
+    的：席位 handle 是从实例 id 派生的（`identity.handles.agent_instance_handle`），
+    反过来「这一席属于谁」只有 `agent_instance` 答得出来。递回来的是一个项目 id
+    或者 None，本包拿它跟房间的项目比一比。
+
+    和 `SeatHandles` 问的不是同一件事：那个是「这个项目有哪些席位」，按项目查表；
+    这个是「这一席是哪个项目的」，得全表找，因为「哪儿都不是」也是一个要分开答的
+    答案。
+    """
+
+    async def __call__(
+        self, session: AsyncSession, handle: str
+    ) -> uuid.UUID | None: ...

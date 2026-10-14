@@ -28,6 +28,16 @@ async def seat_handles(session: AsyncSession, project_id: uuid.UUID) -> dict[str
     return {agent_instance_handle(row.id): row.handle for row in rows}
 
 
+async def seat_project(session: AsyncSession, handle: str) -> uuid.UUID | None:
+    """`app.domain.topic.ports.SeatProject` 和
+    `app.domain.topic_membership.ports.SeatProject`：``handle`` 这一席落在哪个项目上。
+
+    两个包各写了一份这个口子 —— `topic` 是一条活认下队友时要对一下项目，
+    `topic_membership` 是落座一个人时要挡住别家的队友 —— 问的是同一件事，所以这里
+    是同一个函数，名字跟两边那个端口叫。"""
+    return await AgentInstanceService(session).project_of_seat(handle)
+
+
 async def task_teammate(
     session: AsyncSession,
     project_id: uuid.UUID,

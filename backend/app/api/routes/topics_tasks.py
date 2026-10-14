@@ -69,6 +69,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.opening import opening_content
+from app.domain.agent_instance.adapters import seat_project
 from app.domain.agent_instance.own import may_work_for
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.idempotency import store as idem
@@ -348,7 +349,10 @@ async def create_task(
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
     task = await TopicService(db).create_task(
-        room_id=place.room_id, created_by=actor.handle, title=body.title
+        room_id=place.room_id,
+        created_by=actor.handle,
+        title=body.title,
+        seat_project=seat_project,
     )
     # 建出来即已开始：审阅人默认就是建它的人。没有那两档可退时留在讨论中，
     # 负责人在任务页点「开始」时看到的是同一句话。
@@ -431,13 +435,17 @@ async def update_task(
             db, place.project_id, given, task.owner_handle, settings_now
         ):
             raise ForbiddenError(say("ownAgentOtherOwnersTask"))
-        await TopicService(db).give_task_teammate(task, given, by=actor.handle)
+        await TopicService(db).give_task_teammate(
+            task, given, by=actor.handle, seat_project=seat_project
+        )
     elif not await may_work_for(
         db, place.project_id, task.agent_handle, task.owner_handle, settings_now
     ):
         # Handed to someone whose own agent it is not (#2991): the task goes
         # back to the project's teammate, and its new owner may give it theirs.
-        await TopicService(db).give_task_teammate(task, None, by=actor.handle)
+        await TopicService(db).give_task_teammate(
+            task, None, by=actor.handle, seat_project=seat_project
+        )
     if body.contributor_handles is not None:
         people = await members.project_people(place.project_id)
         wanted = list(dict.fromkeys(body.contributor_handles))
@@ -570,6 +578,7 @@ async def create_teammate_task(
         named_by_teammate=True,
         origin_block_id=origin.id if origin is not None else None,
         source_block_id=asked.id if asked is not None else None,
+        seat_project=seat_project,
     )
     blocks = (await discussion(db, task))[1]
     why_not = (
