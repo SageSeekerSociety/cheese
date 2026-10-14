@@ -178,22 +178,28 @@ def self_test():
     still reads as one line of output. The exit-code cases drive `main` with `call` stubbed
     out, so the codes the docstring promises are covered without a network."""
 
-    def drive(argv, password="pw", seat="cheese-seat", roster=None, post=None, back=None):
+    def drive(argv, password="pw", seat="cheese-seat", roster=None, post=None, back=None,
+              login=None, task=None):
         """(exit code, stderr, what the stub saw) for one run of `main`.
 
         `roster` is what the room's member list answers with when the task names no seat
         (`None` stands for the task row naming one, so the roster is not read at all).
-        `post`/`back`, when they are exceptions, are raised by the stub in place of that
-        call's answer, so a failure can be put on either call — or on both — offline."""
+        `login`/`task`/`post`/`back`, when they are exceptions, are raised by the stub in
+        place of that call's answer — one per platform call, so a failure can be put on
+        any of the four offline."""
         stubbed = {"calls": []}
 
         def fake_call(method, path, token=None, body=None, timeout=30):
             stubbed["calls"].append(f"{method} {path}")
             if path.endswith("/users/auth/login"):
+                if isinstance(login, BaseException):
+                    raise login
                 return {"data": {"accessToken": "tok"}}
             if path.endswith("/members"):
                 return {"data": {"data": roster if roster is not None else [], "total": 0}}
             if path.endswith("/task"):
+                if isinstance(task, BaseException):
+                    raise task
                 return {"data": {"agent_handle": seat}}
             if method == "POST":
                 stubbed["body"] = body
@@ -263,6 +269,19 @@ def self_test():
         rc, err, _ = drive(["递卡", "正文"], password="")
         return rc, "OKCHEESE_PASS" in err
 
+    def bad_command_line():
+        """A wrong command line is exit 2 too, and no call is made to find that out."""
+        rc, err, seen = drive(["递卡"])
+        return rc, seen["calls"] == []
+
+    def login_refused():
+        rc, err, seen = drive(["递卡", "正文"], login=refused)
+        return rc, "refused" in err, "body" in seen
+
+    def seat_read_refused():
+        rc, err, _ = drive(["递卡", "正文"], task=refused)
+        return rc, "refused" in err
+
     def seat_only():
         rc, err, seen = drive(["--seat"])
         return rc, err, "body" in seen
@@ -290,6 +309,10 @@ def self_test():
         ("退出码：哪一处都点不出一个队友 → 5",
          no_seat_anywhere(), (5, True)),
         ("退出码：环境里没有密码 → 2", no_password(), (2, True)),
+        ("退出码：命令行不对 → 2，且一个调用都不发", bad_command_line(), (2, True)),
+        ("退出码：登录被拒 → 3，什么都没发出去",
+         login_refused(), (3, True, False)),
+        ("退出码：读座位被拒 → 3", seat_read_refused(), (3, True)),
         ("行程：--seat 只打座位，不发消息", seat_only(), (0, "", False)),
         ("行程：--dry-run 只组消息，不发消息", dry_run(), (0, False)),
         ("行程：标签不在四个里也照发，只在 stderr 说一句", unknown_tag(), (0, True, True)),
