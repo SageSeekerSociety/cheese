@@ -1,0 +1,16 @@
+{
+  "back": "返回",
+  "cancel": "取消",
+  "confirm": "确认转让",
+  "failed": "转让失败",
+  "intro": "项目所有者不能直接退出。把项目转让给另一个人后，你就可以退出",
+  "loadFailed": "加载成员失败",
+  "lookupFailed": "没有找到这个账号",
+  "lookupLabel": "用户名或邮箱（要写完整）",
+  "lookupOwn": "输入接手人的用户名或邮箱：",
+  "lookupTeam": "团队里没人可交？直接找一个人：",
+  "movingOut": "转让会把项目整个搬到 {who} 名下。转完你就不再是项目成员，也看不到它的任何频道。",
+  "noCandidates": "暂无可以接手的成员",
+  "submit": "转让",
+  "title": "转让项目"
+}

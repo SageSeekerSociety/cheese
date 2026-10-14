@@ -1,0 +1,22 @@
+{
+  "allTasks": "全部任务 {count}",
+  "collapse": "收起",
+  "date": "{month} 月 {day} 日",
+  "document": "项目目标",
+  "earlier": "查看更早",
+  "edit": "编辑项目目标",
+  "expand": "展开全文",
+  "moreOf": "其余 {count} 个",
+  "myDeadline": "提交截止：{when}",
+  "noDocument": "暂无项目目标。写清楚这个项目要做成什么、什么时候做成、这阶段不做什么。",
+  "noProgress": "最近两周暂无进展",
+  "nobody": "暂无进行中的任务",
+  "people": "谁在做什么",
+  "progress": "最近进展",
+  "progressFailed": "无法读取最近进展",
+  "taskDeadline": "题目截止：{when}",
+  "today": "今天",
+  "versionOf": "{name} 第 {version} 版",
+  "write": "写项目目标",
+  "yesterday": "昨天"
+}

@@ -1,0 +1,6 @@
+{
+  "action": "Archive project",
+  "done": "Archived “{name}”",
+  "hint": "Removes it from every member's list and stops it running. Everything in it is kept",
+  "title": "Archive project"
+}

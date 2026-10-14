@@ -1,0 +1,23 @@
+{
+  "bullet": "无序列表",
+  "callout": "提示框",
+  "canvas": "画布",
+  "chart": "图表",
+  "code": "代码块",
+  "columns": "分栏",
+  "details": "折叠",
+  "diagram": "流程图",
+  "h1": "标题 1",
+  "h2": "标题 2",
+  "h3": "标题 3",
+  "hr": "分割线",
+  "math": "公式",
+  "ordered": "有序列表",
+  "quote": "引用",
+  "stats": "指标卡",
+  "status": "状态标签",
+  "table": "表格",
+  "task": "任务列表",
+  "text": "正文",
+  "timeline": "时间线"
+}

@@ -1,0 +1,9 @@
+{
+  "area": "Show a trend and its total",
+  "bar": "Compare sizes",
+  "horizontal": "Compare sizes with long names or many items",
+  "line": "Show a trend",
+  "pie": "Show shares",
+  "scatter": "Relate two numbers",
+  "stacked": "Compare totals and their parts"
+}

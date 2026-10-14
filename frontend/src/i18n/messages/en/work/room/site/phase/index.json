@@ -1,0 +1,8 @@
+{
+  "environment": "Waiting for environment",
+  "queue": "Queued",
+  "retry": "Retrying",
+  "sep": " · ",
+  "span": "{phase} {span}",
+  "work": "Working"
+}

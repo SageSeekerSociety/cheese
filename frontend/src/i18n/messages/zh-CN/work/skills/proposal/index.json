@@ -1,0 +1,14 @@
+{
+  "absorbs": "保存后删除以下记忆：{memories}",
+  "accepted": "本次结果",
+  "byline": "{name} 提议新增技能",
+  "bylineEdit": "{name} 提议修改技能",
+  "collapse": "收起全文",
+  "decline": "不保存",
+  "expand": "展开全文",
+  "open": "查看",
+  "reason": "修改原因",
+  "related": "与现有技能的区别",
+  "saved": "已保存「{title}」",
+  "taught": "依据"
+}

@@ -1,0 +1,12 @@
+{
+  "autoDetail": "An unnamed task is named after its first message and checked once after the first run. Later it is renamed only when the task clearly changes direction. A task the AI teammate proposed keeps the title it was proposed with and is likewise renamed only when its direction changes",
+  "autoTitle": "Smart names",
+  "fallback": "This deployment can't name tasks automatically, so the AI teammate names a task once it understands it",
+  "intro": "Tasks someone has renamed are never renamed automatically",
+  "label": "Task names",
+  "loadFailed": "Couldn't load task name settings",
+  "manualDetail": "No automatic names. New tasks stay \"New task\" until someone renames them",
+  "manualTitle": "Manual names",
+  "readOnly": "Only project admins can change this",
+  "saveFailed": "Couldn't save task name settings"
+}

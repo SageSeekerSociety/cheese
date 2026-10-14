@@ -1,0 +1,16 @@
+{
+  "back": "Back",
+  "cancel": "Cancel",
+  "confirm": "Confirm transfer",
+  "failed": "Couldn't transfer the project",
+  "intro": "The project owner can't leave directly. Transfer the project to someone else, then you can leave",
+  "loadFailed": "Couldn't load members",
+  "lookupFailed": "No account found",
+  "lookupLabel": "Full username or email",
+  "lookupOwn": "Enter the new owner's username or email:",
+  "lookupTeam": "No one on the team to hand it to? Find a person directly:",
+  "movingOut": "The whole project moves to {who}. Afterwards you are no longer a member and can't see any of its channels.",
+  "noCandidates": "No members can take it over",
+  "submit": "Transfer",
+  "title": "Transfer project"
+}

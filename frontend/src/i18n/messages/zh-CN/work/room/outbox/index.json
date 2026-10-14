@@ -1,0 +1,6 @@
+{
+  "edit": "编辑",
+  "editHint": "放回输入框",
+  "failed": "发送失败：{reason}",
+  "undelivered": "未送达"
+}

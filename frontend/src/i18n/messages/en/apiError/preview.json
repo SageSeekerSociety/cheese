@@ -1,0 +1,14 @@
+{
+  "attachmentMediaOnly": "Only image or video attachments can be read",
+  "attachmentOneSource": "Either upload a file or pick one from the library",
+  "emptyFile": "The file is empty",
+  "previewDisabled": "Document preview isn't enabled on this deployment",
+  "previewFormatUnsupported": "This format can't be converted to a preview",
+  "previewFormatUnsupportedNamed": "This format can't be converted for preview: {format}",
+  "previewNotHtml": "The conversion didn't produce a valid web page",
+  "previewNotPdf": "The conversion didn't produce a valid PDF",
+  "previewOver10Mb": "The file is over 10 MB, so no preview can be made",
+  "previewServiceError": "The document preview service failed",
+  "previewServiceUnreachable": "The document preview service can't be reached right now",
+  "previewTooLarge": "The file is over {mb}MB, so no preview can be made"
+}

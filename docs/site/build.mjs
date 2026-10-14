@@ -38,7 +38,11 @@ for (const f of fs.readdirSync(SCENES).filter((f) => f.endsWith('.json'))) {
 // The product's own interface strings, which a `demo-panel` must quote exactly.
 const UI_STRINGS = path.join(REPO, 'frontend/src/i18n/messages/zh-CN')
 const leaves = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
-registerUiStrings(fs.readdirSync(UI_STRINGS).filter((f) => f.endsWith('.json')).flatMap((f) => leaves(JSON.parse(fs.readFileSync(path.join(UI_STRINGS, f), 'utf8')))))
+// The catalog is a tree of files — `work/` and `apiError/` are directories since
+// the split (docs/i18n.md §2) — so every `.json` under it is read, at any depth.
+const catalogFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+  e.isDirectory() ? catalogFiles(path.join(dir, e.name)) : e.name.endsWith('.json') ? [path.join(dir, e.name)] : [])
+registerUiStrings(catalogFiles(UI_STRINGS).flatMap((f) => leaves(JSON.parse(fs.readFileSync(f, 'utf8')))))
 
 const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: 'Asia/Shanghai' } })
 const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1) }

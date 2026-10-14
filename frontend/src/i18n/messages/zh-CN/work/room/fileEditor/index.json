@@ -1,0 +1,20 @@
+{
+  "changedBy": "{who} 刚刚保存了这份文件（第 {seq} 版）",
+  "changedNote": "：{note}",
+  "close": "关闭",
+  "copyFailed": "复制失败",
+  "copyName": "在频道里存成",
+  "editorError": "编辑器出错了",
+  "history": "历史",
+  "loadNew": "载入新版本",
+  "makeCopy": "复制一份来编辑",
+  "notLoaded": "编辑器没有加载出来",
+  "openFailed": "打不开编辑器",
+  "originalKept": "原件留在资料库里不动。",
+  "readOnly": "只读（这种格式只能查看）",
+  "savedAs": "已保存为第 {seq} 版",
+  "serviceUnreachable": "编辑器服务连不上，稍后再试",
+  "someone": "有人",
+  "staleNote": "你现在看到的是改动之前的内容。载入新版本会丢掉这里还没保存的修改；先保存的话，你的修改会另存一份，不会覆盖。",
+  "unsaved": "有未保存的修改"
+}

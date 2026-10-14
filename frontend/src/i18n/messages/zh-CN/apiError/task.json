@@ -1,0 +1,17 @@
+{
+  "contributorNotInProject": "只能把项目成员加为协作者",
+  "pdfDraftNotOpen": "从 PDF 生成草稿暂未开放，稍后再试。",
+  "pdfScanFallbackFailed": "第 {page} 页是扫描件（没有文字层）：已把这一页渲染成图片发给模型，但模型仍没读出可用内容（{detail}）。",
+  "pdfScannedPageNoVision": "第 {page} 页没有文字层（扫描件/图片页），渲染成图片也读不出来：当前草稿模型 {model} 读不了图片。换一个能读图的草稿模型再试。",
+  "submissionChallengeEnded": "这道题已结束，不能再提交",
+  "submissionClaimNotApproved": "领取获批后才能提交",
+  "submissionPastDeadline": "你的提交截止时间已过，不能再交新的一版，也不能再改已交的版本。需要延期请联系出题人",
+  "taskCreatedByPerson": "只有人可以这样创建任务",
+  "taskOpeningNotFailed": "整理文档那一轮没有失败，不用重试",
+  "taskOwnSessionCloses": "只有任务的负责人，或者这个任务自己的会话，可以关闭它",
+  "taskOwnerNotInProject": "只能转交给项目成员",
+  "taskOwnerOnly": "只有任务的负责人可以这样做",
+  "taskParticipantsOnly": "只有任务的负责人和协作者可以在这里和 AI 队友对话",
+  "taskTitleTooLong": "标题在侧栏一行里放不下：一行约 {limit} 个半角字符宽（一个汉字算 2 个），这个标题是 {now} 个。写短一些再试一次。",
+  "teammateTaskByTeammate": "这里只供 AI 队友创建任务"
+}

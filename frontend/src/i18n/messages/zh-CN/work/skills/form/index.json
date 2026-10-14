@@ -1,0 +1,11 @@
+{
+  "addFile": "添加文件",
+  "bodyTemplate": "## 需要的输入\n\n\n\n## 步骤与规则\n\n\n\n## 输出要求\n\n",
+  "content": "内容",
+  "description": "用途",
+  "name": "调用名",
+  "path": "路径",
+  "removeFile": "移除",
+  "title": "名称",
+  "titlePlaceholder": "例如：项目周报"
+}
