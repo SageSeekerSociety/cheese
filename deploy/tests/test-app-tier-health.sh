@@ -659,6 +659,75 @@ test_rollout_installs_connection_route_without_recreating_api_front() {
   echo "PASS: rollout installs the owner route with a graceful api-front reload"
 }
 
+# Every api-front reload retires the workers carrying the box's device links,
+# terminals and tunnels, so a deploy reloads it only when what api-front would
+# load differs from what it loaded last: not for a comment, and always for a
+# config an earlier deploy wrote to disk but never got to load.
+test_api_front_reloads_only_for_a_new_config() {
+  local run_dir docker_log reloads
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # The running config differs from the release's in a comment only.
+  { printf '# a note that changes nothing\n'; cat "$ROOT/deploy/llm-tunnel/nginx.conf"; } > "$run_dir/nginx.conf"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  ! grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded for a comment"; }
+  cmp -s "$ROOT/deploy/llm-tunnel/nginx.conf" "$run_dir/nginx.conf" \
+    || { rm -rf "$run_dir"; fail "the release's api-front config was not installed"; }
+
+  # A deploy stopped after writing the files and before the reload: what is on
+  # disk is current, what api-front runs is not.
+  printf 'what an interrupted deploy left loaded\n' > "$run_dir/active/.api-front-loaded"
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  reloads="$(grep -cFx 'exec cheese-api-front nginx -s reload' "$docker_log" || true)"
+  [ "$reloads" = 1 ] \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded $reloads times for a config it had not loaded, not once"; }
+
+  # Loaded now: the next release with the same config leaves it alone.
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  ! grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded again for the config it had just loaded"; }
+
+  # Something else wrote and loaded another config since (a release of an older
+  # commit, tls-renew.sh): the record no longer says what api-front runs.
+  sed -i.bak 's/^worker_shutdown_timeout .*/worker_shutdown_timeout 30s;/' "$run_dir/nginx.conf"
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front kept a config another writer loaded, because the record was stale"; }
+  rm -rf "$run_dir"
+  echo "PASS: api-front is reloaded only for a config it has not loaded"
+}
+
+# The certificate renewal re-renders the front door. Without the preview
+# owner's port it would send the preview tunnels back to the rolling frontend
+# until the next deploy put them back.
+test_certificate_renewal_keeps_the_preview_owner_route() {
+  local run_dir docker_log domain=cheese.example
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087 >/dev/null
+  mkdir -p "$run_dir/tls/letsencrypt/live/$domain"
+  : > "$run_dir/tls/cloudflare.ini"
+  printf 'certificate\n' > "$run_dir/tls/letsencrypt/live/$domain/fullchain.pem"
+  printf 'key\n' > "$run_dir/tls/letsencrypt/live/$domain/privkey.pem"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" TLS_STATE_DIR="$run_dir/tls" HOME="$run_dir" \
+    bash "$ROOT/deploy/llm-tunnel/tls-renew.sh" "$run_dir/active" 18080 "$domain" >"$run_dir/renew.log" 2>&1 \
+    || { cat "$run_dir/renew.log"; rm -rf "$run_dir"; fail "certificate renewal failed"; }
+  grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the renewal did not reload api-front"; }
+  grep -F 'proxy_pass http://127.0.0.1:18087;' "$run_dir/active/sites-frontend.conf" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the renewal moved the front door's preview tunnel off the owner"; }
+  rm -rf "$run_dir"
+  echo "PASS: a certificate renewal keeps the front door's preview tunnel on the owner"
+}
+
 test_deploy_retains_ci_service_images() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/ci-service-images.XXXXXX")"
@@ -2172,6 +2241,8 @@ case "$CASE" in
   preview-kill-switch-owner) test_kill_switch_stops_the_running_owner ;;
   preview-owner-release) test_release_preview_connection_requires_interrupt ;;
   owners-behind-schema) test_deploy_releases_owners_behind_the_schema ;;
+  api-front-reload) test_api_front_reloads_only_for_a_new_config ;;
+  tls-renew-owner) test_certificate_renewal_keeps_the_preview_owner_route ;;
   owners-behind-schema-failed-migration) test_failed_migration_resumes_the_drained_owner ;;
   owners-spared) test_deploy_leaves_owners_the_migrations_spare ;;
   owners-behind-database) test_deploy_releases_owners_the_database_left_behind ;;
@@ -2189,6 +2260,8 @@ case "$CASE" in
     test_owner_release_reuses_box_config_and_stops_when_busy
     test_cloud_control_has_an_independent_drained_release
     test_rollout_installs_connection_route_without_recreating_api_front
+    test_api_front_reloads_only_for_a_new_config
+    test_certificate_renewal_keeps_the_preview_owner_route
     test_deploy_warns_when_the_session_base_will_not_survive
     test_deploy_retains_ci_service_images
     test_deploy_delivers_private_executor

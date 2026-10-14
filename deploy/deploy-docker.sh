@@ -459,9 +459,27 @@ ensure_journal_retention() {
   log "journal retention applied from journald-cheese.conf"
 }
 
+# What api-front's configuration says, as one digest: every file it reads that
+# a deploy writes, without the comments, indentation and blank lines that change
+# nothing it does. A reload retires api-front's workers, and with them, once
+# their shutdown deadline passes, every device link, terminal, model tunnel and
+# preview tunnel they carry; so the deploy reloads it only when this differs
+# from the digest it last loaded, kept in .api-front-loaded beside those files.
+# That is what api-front runs, which the files on disk are not when a deploy
+# stopped between writing them and the reload.
+api_front_digest() {
+  local file
+  for file in "$1" "$ACTIVE_BACKEND_DIR/preview-routing.conf" "$ACTIVE_BACKEND_DIR"/sites*.conf \
+    ${ACTIVE_FRONTEND_DIR:+"$ACTIVE_FRONTEND_DIR/sites-frontend.conf"}; do
+    [ -f "$file" ] || continue
+    printf '== %s\n' "${file##*/}"
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d' "$file"
+  done | sha256sum | cut -d ' ' -f 1
+}
+
 ensure_application_router() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
-  local config backup frontend_backup changed=false router_changed=false
+  local config backup frontend_backup router_changed=false loaded rendered
   local owner_port routing_backup sites_backup site_domain
   config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
   [ -f "$config" ] || fail "api-front config not found: $config"
@@ -486,6 +504,19 @@ ensure_application_router() {
       || fail "application router cannot reach the serving frontend"
   fi
 
+  # What api-front runs. The record is trusted only while the files on disk
+  # still match it: anything else that wrote them since (tls-renew.sh, a
+  # release of an older commit, an operator) reloaded api-front without
+  # updating it, or did not reload it at all, so what runs is unknown and the
+  # deploy reloads. A box that never recorded it runs what is on disk, which
+  # is what the deploy compared against before the record existed.
+  loaded="$(cat "$ACTIVE_BACKEND_DIR/.api-front-loaded" 2>/dev/null || true)"
+  if [ -z "$loaded" ]; then
+    loaded="$(api_front_digest "$config")"
+  elif [ "$loaded" != "$(api_front_digest "$config")" ]; then
+    log "api-front's config on disk is not the one it last loaded here; reloading it"
+    loaded=""
+  fi
   # Everything api-front reads that this deploy may rewrite is backed up first,
   # so a rejected config restores all of it together.
   backup="${config}.pre-device-connection"
@@ -515,14 +546,7 @@ ensure_application_router() {
   else
     bash "$HERE/llm-tunnel/configure-preview.sh" legacy "$ACTIVE_BACKEND_DIR"
   fi || fail "could not write the preview routing file"
-  if [ ! -s "$routing_backup" ] \
-    || ! cmp -s "$routing_backup" "$ACTIVE_BACKEND_DIR/preview-routing.conf"; then
-    changed=true
-  fi
-  if ! cmp -s "$HERE/llm-tunnel/nginx.conf" "$config"; then
-    cp "$HERE/llm-tunnel/nginx.conf" "$config"
-    changed=true
-  fi
+  cmp -s "$HERE/llm-tunnel/nginx.conf" "$config" || cp "$HERE/llm-tunnel/nginx.conf" "$config"
   # Preview content hosts are matched by the content domain's wildcard server,
   # and no server_name can beat it (a middle wildcard is invalid; a regex loses).
   # So the split lives inside active/sites.conf, and this re-renders that file
@@ -538,7 +562,6 @@ ensure_application_router() {
       cp "$ACTIVE_BACKEND_DIR/sites.conf" "$sites_backup"
       bash "$HERE/llm-tunnel/configure-sites.sh" "$site_domain" "$ACTIVE_BACKEND_DIR" "$owner_port" \
         || fail "could not write the content-host routing"
-      cmp -s "$sites_backup" "$ACTIVE_BACKEND_DIR/sites.conf" || changed=true
     fi
   fi
   frontend_backup=""
@@ -546,9 +569,10 @@ ensure_application_router() {
     frontend_backup="$ACTIVE_FRONTEND_DIR/sites-frontend.conf.pre-app-router"
     cp "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" "$frontend_backup"
     bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" 18086 "$FRONTEND_PROXY_PORT" "$owner_port"
-    cmp -s "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" || changed=true
   fi
-  if [ "$changed" = false ]; then
+  rendered="$(api_front_digest "$config")"
+  if [ "$rendered" = "$loaded" ]; then
+    printf '%s\n' "$rendered" > "$ACTIVE_BACKEND_DIR/.api-front-loaded"
     rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
     return 0
   fi
@@ -569,6 +593,7 @@ ensure_application_router() {
     rm -f "$backup"
     fail "api-front could not reload the preview/owner route; restored its config"
   fi
+  printf '%s\n' "$rendered" > "$ACTIVE_BACKEND_DIR/.api-front-loaded"
   rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
   log "api-front routes application traffic through app-router; later business switches leave persistent connections untouched"
 }
