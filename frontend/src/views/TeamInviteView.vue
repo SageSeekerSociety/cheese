@@ -5,12 +5,13 @@ import type { Team } from '@/types'
 import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import TeamProfile from './teams/TeamProfile.vue'
+import TeamInviteViewView from './TeamInviteViewView.vue'
 
 import { ApiError, authToken } from '@/api'
 import { TeamsApi } from '@/api/teams'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+
+const props = defineProps<{ token: string }>()
 
 const route = useRoute()
 const router = useRouter()
@@ -33,7 +34,7 @@ async function load() {
   if (needsLogin.value) return
   busy.value = true
   try {
-    const { team: result } = await TeamsApi.detailByJoinLink(String(route.params.token))
+    const { team: result } = await TeamsApi.detailByJoinLink(String(props.token))
     if (sequence === loadSequence) team.value = result
   } catch (e) {
     if (sequence !== loadSequence) return
@@ -45,28 +46,22 @@ async function load() {
 }
 
 async function join(message: string) {
-  const { team: result } = await TeamsApi.joinByJoinLink(String(route.params.token), { message: message || undefined })
+  const { team: result } = await TeamsApi.joinByJoinLink(String(props.token), { message: message || undefined })
   team.value = result
 }
 
-watch(() => route.params.token, load, { immediate: true })
+watch(() => props.token, load, { immediate: true })
 </script>
 
 <template>
-  <v-container class="fill-height justify-center pa-4" fluid>
-    <TeamProfile v-if="team" :team="team" :join="join" />
-    <v-card v-else class="pa-6" max-width="560" width="100%" rounded="lg" flat border>
-      <div class="t-eyebrow c-muted mb-2">{{ t('work.teamProfile.eyebrow') }}</div>
-      <h1 class="t-page-title mb-4">{{ t('work.teamProfile.joinTitle') }}</h1>
-      <template v-if="needsLogin">
-        <p class="t-body c-muted mb-6">{{ t('work.teamProfile.loginHint') }}</p>
-        <BaseButton kind="primary" @click="signIn">{{ t('work.teamProfile.login') }}</BaseButton>
-      </template>
-      <v-alert v-else-if="error" type="error" class="mb-4">{{ error }}</v-alert>
-      <v-progress-linear v-if="busy" indeterminate :aria-label="t('work.teamProfile.loading')" />
-      <BaseButton v-else-if="error && !invalid" kind="secondary" @click="load">{{
-        t('work.teamProfile.retry')
-      }}</BaseButton>
-    </v-card>
-  </v-container>
+  <TeamInviteViewView
+    :team="team"
+    :join="join"
+    :needs-login="needsLogin"
+    :error="error"
+    :busy="busy"
+    :invalid="invalid"
+    @sign-in="signIn"
+    @load="load"
+  />
 </template>

@@ -1064,6 +1064,30 @@ export function analyze(pagePath, opts) {
 // ---------------------------------------------------------------------------
 // Generation
 
+/** The `import type` statement(s) for one module's specs.
+ *
+ * `import type Default, { Named } from 'm'` is a syntax error, and `* as` cannot
+ * share a statement with named bindings either — so a default that has to sit
+ * beside named bindings is written `{ default as Default, Named }`, and a
+ * namespace gets a statement of its own. Emitting the invalid form used to be
+ * enough to make the generated view unparseable.
+ */
+function typeImportLines(source, specs) {
+  let def = null
+  const ns = []
+  const named = []
+  for (const [local, imported] of specs) {
+    if (imported === 'default') def = local
+    else if (imported === '*') ns.push(local)
+    else named.push(imported === local ? local : `${imported} as ${local}`)
+  }
+  const lines = ns.map((name) => `import type * as ${name} from '${source}'`)
+  if (def && named.length) lines.push(`import type { default as ${def}, ${named.join(', ')} } from '${source}'`)
+  else if (named.length) lines.push(`import type { ${named.join(', ')} } from '${source}'`)
+  else if (def) lines.push(`import type ${def} from '${source}'`)
+  return lines
+}
+
 function importLine(source, specs) {
   let def = null
   let ns = null
@@ -1144,7 +1168,7 @@ export function generate(plan, opts = {}) {
     // A name the view also value-imports needs no separate type import.
     const movedHere = plan.moved.find((m) => m.source === from)
     const rest = new Map([...specs].filter(([local]) => !movedHere?.specs.has(local)))
-    if (rest.size) lines.push(importLine(from, rest).replace(/^import /, 'import type '))
+    if (rest.size) lines.push(...typeImportLines(from, rest))
   }
   if (plan.i18n.length) lines.push(`import { useI18n } from 'vue-i18n'`)
   for (const m of plan.moved) lines.push(importLine(m.source, m.specs))
