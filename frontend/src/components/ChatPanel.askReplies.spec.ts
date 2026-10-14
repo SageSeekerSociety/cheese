@@ -14,7 +14,7 @@ import type { Block, Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen, within } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
@@ -177,7 +177,13 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     history = [question('t-open')]
     const { container, getByRole } = await open('t-open')
     // 题目就是卡片的标题，按 markdown 画（渲染器是按需载入的）。
-    await until(() => !!container.querySelector('.ask-replies')?.textContent?.includes('预算按哪个口径统计？'))
+    // 渲染器按需载入，冷的 CI 上要几百毫秒：按时间等，不按空转的次数等。
+    await waitFor(
+      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
+      {
+        timeout: 5_000,
+      }
+    )
     expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？')
     expect(getByRole('button', { name: /按部门/ })).toBeTruthy()
     expect(container.querySelector('.composer')).toBeTruthy()
@@ -198,7 +204,13 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     history = [question('t-closed')]
     const { container, queryByRole } = await open('t-closed', { askClosed: true })
     // 题目就是卡片的标题，按 markdown 画（渲染器是按需载入的）。
-    await until(() => !!container.querySelector('.ask-replies')?.textContent?.includes('预算按哪个口径统计？'))
+    // 渲染器按需载入，冷的 CI 上要几百毫秒：按时间等，不按空转的次数等。
+    await waitFor(
+      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
+      {
+        timeout: 5_000,
+      }
+    )
     expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？')
     expect(queryByRole('button', { name: /按部门/ })).toBeNull()
     expect(container.querySelector('.ask-replies')?.textContent).toContain('已结束，不再等回答')
