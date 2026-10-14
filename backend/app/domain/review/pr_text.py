@@ -144,17 +144,19 @@ def pr_trailers(
     return "\n".join(lines)
 
 
-#: The line that starts an independent review's result in a card body. The delivering seat
-#: pastes the result after its own sections (`.claude/pr-review/render.py` writes this line
-#: first). The patrol board reads it from the card; review results stay off GitHub.
+#: The line that starts an independent review's result in a card body. The seat
+#: delivering the work pastes the result after its own sections; render.py writes
+#: this line first. The patrol board reads the line from the card, while review
+#: results stay off GitHub.
 _REVIEW_BLOCK = re.compile(r"^独立 review：", re.MULTILINE)
 
 
 def without_review_block(body: str) -> str:
-    """`body` up to the line that starts a review result, without that line and what follows.
+    """`body` up to the line that starts a review result, that line excluded.
 
-    The card body is mirrored into the PR body and the squash commit, so this is the
-    one place that keeps the review result from reaching either."""
+    Everything from that line on is dropped too. The card body is mirrored into
+    the PR body and the squash commit, so this is the one place that keeps the
+    review result from reaching either."""
     found = _REVIEW_BLOCK.search(body)
     return body[: found.start()].rstrip() if found else body
 
