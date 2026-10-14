@@ -1623,15 +1623,17 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_types_only_input_widens_types_not_the_test_run(self):
-        # A backend route change regenerates openapi.json and the types-only
-        # src/api/openapi.d.ts. Nothing in frontend/src reads the document at
-        # runtime, so the suite would be checking nothing new; the type check is
-        # what has to widen.
+        # A backend route change carries the frontend suite with it through the
+        # digest of the rebuilt document and the regenerated, types-only
+        # src/api/openapi.d.ts. Nothing in frontend/src reads either at runtime,
+        # so the suite would be checking nothing new; the type check is what has
+        # to widen.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
         self.put("frontend/src/use.ts", "export const x = 1\n")
         plan, omissions = test_plan(
-            self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts", "frontend/src/use.ts"],
+            self.root, ["backend/openapi.sha256", "frontend/src/api/openapi.d.ts",
+                        "frontend/src/use.ts"],
             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")
@@ -1639,9 +1641,10 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(unit["evidence"]["roots"], ["src/use.ts"])
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
         self.assertEqual(omissions, [])
-        # Alone, the regenerated declaration runs no test at all — that is a
+        # Alone, the digest and the declaration run no test at all — that is a
         # stated omission, not a suite-wide run and not an unknown.
-        plan, omissions = test_plan(self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts"],
+        plan, omissions = test_plan(self.root, ["backend/openapi.sha256",
+                                                "frontend/src/api/openapi.d.ts"],
                                     {"frontend": True}, self.root)
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
@@ -1713,24 +1716,33 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_scope_is_the_paths_the_map_routed_there(self):
-        # The path map routes backend/openapi.json into frontend scope, so a
+        # The path map routes the document's digest into frontend scope, so a
         # backend change enters this branch through it. Read from the whole
         # change, its own .py files counted as frontend runtime content and the
         # suite ran in full for a document no test can load.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
-        changed = ["backend/app/api/projects.py", "backend/openapi.json",
+        changed = ["backend/app/api/projects.py", "backend/openapi.sha256",
                    "frontend/src/api/openapi.d.ts"]
         plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root,
-                                    frontend_scope=["backend/openapi.json",
+                                    frontend_scope=["backend/openapi.sha256",
                                                     "frontend/src/api/openapi.d.ts"])
         self.assertEqual([o["id"] for o in omissions], ["frontend-unit"])
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
-        # With no scope from the caller the whole change is read, as before.
+        # With no scope from the caller the whole change is read, and a .py file
+        # beside the digest is not something this branch knows how to rule out:
+        # it runs in full. The path map is what keeps that from happening, and
+        # this is the answer when it has not spoken.
         plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root)
         self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
                          "full")
+        # A frontend source file beside them is still content.
+        self.put("frontend/src/use.ts", "export const x = 1\n")
+        plan, _ = test_plan(self.root, changed + ["frontend/src/use.ts"],
+                            {"frontend": True}, self.root)
+        self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
+                         "related")
 
     def test_read_off_disk_specs_matches_the_specs_that_read_the_tree(self):
         # The tuple is written by hand, and a stale entry is filtered out of

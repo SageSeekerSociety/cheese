@@ -57,7 +57,12 @@ TREE_GUARDS = (
     "test_no_adhoc_auth_helpers.py", "test_local_fs_sharing_guard.py",
 )
 META = {
-    "backend/pyproject.toml", "backend/uv.lock", "backend/openapi.json",
+    "backend/pyproject.toml", "backend/uv.lock",
+    # backend/openapi.json left the repository on 2026-10-14; the frontend
+    # builds it on demand and what stays committed is its digest. Either way a
+    # non-Python input under backend/ hits the rule above, which asks for the
+    # same full run.
+    "backend/openapi.sha256",
     "backend/tests/module_durations.json", "backend/tests/quarantine.txt",
     "backend/tests/slow_tests.txt", "backend/.importlinter",
     "backend/deferred-import-baseline.json", ".pre-commit-config.yaml",

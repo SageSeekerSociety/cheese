@@ -37,14 +37,13 @@ commands and turns each command's report into a verdict nobody can fake:
     6px -> 8px on the padding-left of .doc-status[data-status] left both i18n
     guards green and only docBlocks.spec.ts red. A seedless change that leaves
     the suite nothing to judge — prose, a declaration file, a types-only input
-    like backend/openapi.json — runs the guards alone and reports frontend-unit
+    like the document's digest — runs the guards alone and reports frontend-unit
     as not run rather than expanding to it. A full run must show both i18n guard
     specs actually executed. Whether a change carries frontend runtime content
     is read from the paths the path map routed into frontend scope, not from
-    every changed path: a backend change that regenerates backend/openapi.json
-    carries frontend scope with it, and reading its own .py files as content
-    this suite must execute would run the whole Vitest suite for a document no
-    test can load — the sole reader of it writes types-only.
+    every changed path: a backend change rides into this scope through the
+    digest, and its own .py files are not content this suite can execute — the
+    sole reader of the document writes types-only (FRONTEND_TYPES_META).
   * The read-off-disk spec gets the same treatment without widening: a narrowed
     run is seeded with the changed roots *and* every spec that judges a
     frontend file by reading it (OFF_DISK_SPECS), because those are the specs
@@ -113,11 +112,13 @@ FRONTEND_META = {
     ".pre-commit-config.yaml",
 }
 # Types-only inputs: nothing under frontend/ reads these at runtime — the sole
-# reader of backend/openapi.json is scripts/gen-api-types.mjs, whose output
-# (src/api/openapi.d.ts) the generator writes types-only. So they widen the type
-# check, never the test run: a backend route change used to run all 700+ specs
-# for a document no test can load.
-FRONTEND_TYPES_META = {"backend/openapi.json"}
+# reader of the backend's OpenAPI document is scripts/gen-api-types.mjs, whose
+# output (src/api/openapi.d.ts) the generator writes types-only. So they widen
+# the type check, never the test run: a backend route change used to run all
+# 700+ specs for a document no test can load. Since 2026-10-14 the document is
+# not a file in the repository; the path the frontend suite is selected by is its
+# committed digest, which moves exactly when the document does.
+FRONTEND_TYPES_META = {"backend/openapi.sha256"}
 # What the dangling-import scan reads: every file kind that can hold a module
 # specifier.
 SCAN_SUFFIXES = (".ts", ".tsx", ".vue", ".js", ".jsx", ".mjs", ".cjs",
@@ -325,9 +326,9 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         # content the suite would have to read.
         # Which paths carry that content is the caller's answer when it has one:
         # the paths the path map routed into frontend scope. A backend change
-        # rides into this branch through a regenerated backend/openapi.json, and
-        # its own .py files are not content this suite can execute — the sole
-        # reader of the document writes types-only (FRONTEND_TYPES_META).
+        # rides into this branch through the digest, and its own .py files are
+        # not content this suite can execute — the sole reader of the document
+        # writes types-only (FRONTEND_TYPES_META).
         carries_runtime = any(not p.endswith((".md", ".d.ts"))
                               and p not in FRONTEND_TYPES_META
                               for p in (changed if frontend_scope is None else frontend_scope))
@@ -395,10 +396,11 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                          "cwd": root / "frontend", "evidence": {"kind": "types", "mode": "full-config-fallback"}})
         elif ts_files:
             config = _narrow_config(root, tmp, ts_files)
-            # Both branches go through scripts/typecheck.mjs, which generates
-            # src/api/openapi.d.ts from backend/openapi.json before judging: that
-            # file is not committed, and the narrow project reaches it through
-            # src/cx_types.ts like the full one does.
+            # Both branches go through scripts/typecheck.mjs, which builds the
+            # backend's OpenAPI document and generates src/api/openapi.d.ts from
+            # it before judging: neither half is committed, and the narrow
+            # project reaches the types through src/cx_types.ts like the full
+            # one does.
             plan.append({"id": "frontend-typecheck-changed", "cwd": root / "frontend",
                          "command": ["node", "scripts/typecheck.mjs", "--project", str(config), "--json"],
                          "evidence": {"kind": "types", "files": ts_files,

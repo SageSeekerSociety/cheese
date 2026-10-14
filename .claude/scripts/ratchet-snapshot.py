@@ -249,11 +249,13 @@ CHECKS: tuple[Check, ...] = (
         cwd="frontend",
         rules=(
             "frontend/scripts/typecheck.mjs",
-            # The generator decides the types being judged, so it is a rule
-            # too. `backend/openapi.json` beside it is the subject being
-            # measured, not a rule: it changes with every route, and a rule
-            # that moves on every route change makes every comparison a new run.
+            # The generator decides the types being judged, so it is a rule too,
+            # and so is the exporter behind it: the document the generator reads
+            # is built by `backend/scripts/export_openapi.py` (through `uv run`,
+            # which is not a path the closure can follow), and what that file
+            # renders is what the types are generated from.
             "frontend/scripts/gen-api-types.mjs",
+            "backend/scripts/export_openapi.py",
             "frontend/scripts/tsc-ratchet.mjs",
             "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
@@ -623,10 +625,11 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "vue-tsc": {
         "frontend/tsc-baseline.json": "baseline: the frozen per-file error counts",
-        "backend/openapi.json": (
-            "subject: the schema the generated types are judged against, so every "
-            "edit to it is the measurement and a new comparison run"
-        ),
+        # `backend/openapi.json` was the second entry here — a subject, the
+        # schema the generated types are judged against. It stopped being a file
+        # in the repository (2026-10-14), so there is nothing left to excuse: the
+        # generator asks the backend to build it, and the guard below requires
+        # every excused path to exist.
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",
