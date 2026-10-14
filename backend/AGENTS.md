@@ -36,10 +36,10 @@ is `app`, so a green backend type check cannot clear those outside callers.
 
 ## Generated routes and database predicates
 
-The route index is not committed. `scripts/route_index.json` is git-ignored and
-generated where it is judged — the frontend `request-paths` job and this suite —
-so there is no file to regenerate and no conflict to resolve in it. After adding,
-removing or reordering routes, from `backend/` run
+The route index is not committed. `scripts/route_index.py --emit` prints it to
+stdout, and it is generated where it is judged — the frontend `request-paths`
+job and this suite — so there is no file to regenerate and no conflict to
+resolve in it. After adding, removing or reordering routes, from `backend/` run
 
 - `uv run python -m scripts.route_index --check` — no later route is provably
   shadowed by an earlier one. The frozen pairs in

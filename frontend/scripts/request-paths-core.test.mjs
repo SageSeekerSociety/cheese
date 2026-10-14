@@ -103,9 +103,7 @@ test('a failure names the source, the call site and the counts', () => {
   // One unserved path and one unjudged call, so all three counts differ from
   // one another: a report that transposes the judged and skipped counts, or
   // drops the skipped one, is not this report.
-  const text = report(
-    judge(["request('/topic')", 'request(base)'].join('\n')),
-  )
+  const text = report(judge(["request('/topic')", 'request(base)'].join('\n')))
   // The source is the argument the caller passed, not a literal in here: it is
   // what tells a reader whether the index was read off the app or handed in by
   // the workflow, and the file, line and raw path are what make it actionable.
@@ -119,9 +117,7 @@ test('a failure names the source, the call site and the counts', () => {
 
 test('a clean run names the source and both counts, including the skipped one', () => {
   // Two judged and one skipped, so the two counts are distinct again.
-  const text = report(
-    judge(["request('/topics')", "request('/topics')", 'request(base)'].join('\n')),
-  )
+  const text = report(judge(["request('/topics')", "request('/topics')", 'request(base)'].join('\n')))
   assert.ok(text.includes('the emitted index'), text)
   assert.ok(text.includes('2 call site(s) judged'), text)
   assert.ok(text.includes('1 skipped'), text)

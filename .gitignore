@@ -44,9 +44,10 @@ tmp_frontend.log
 # 持续的那份在 CI 的 job summary 和 artifact 里（docs/manual/dev/arch-metrics.md）。
 /arch-metrics.json
 /arch-metrics.md
-# 路由索引（`backend/scripts/route_index.py --emit`）：每加一条路由就变一次，
-# 进仓库的十二天里被 84 个提交改过（83 个 PR）、合并常撞。CI 现场生成（前端
-# request-paths job、后端契约测试），本地要看就生成到这里，不提交。
+# 路由索引（`backend/scripts/route_index.py --emit`，打印到 stdout）：每加一条
+# 路由就变一次，进仓库的十二天里被 84 个提交改过（83 个 PR）、合并常撞。现在不
+# 进仓库，改在用到它的地方现场生成（前端 request-paths job、后端契约测试）；留着
+# 这条是因为万一有人把它重定向到这里，也不该被提交。
 /backend/scripts/route_index.json
 
 # ---- Tooling / local agent config ----
