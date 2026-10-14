@@ -5,6 +5,8 @@ Usage: OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_
        python3 .claude/scripts/orchestrator_metrics.py --week [<YYYY-MM-DD>|ISO instant>]
        python3 .claude/scripts/orchestrator_metrics.py --self-test   (offline: no token, no network, no gh)
 For that UTC day:
+  行动项核对表  上一份《总调度复盘 …》的行动项原样带出，一列 owner、一列层、一列
+                怎么核；复盘开头先核的就是这张表（工作流 v2 §5 第 1 步、§9 S6）
   等采纳      mergeable (accept_ready) -> entered the merge queue: p50/p90/max, and how many took > 10 min
   未就绪递卡  cards whose first signal was a CI failure, or that took > 20 min to become mergeable
   出队        removals from the queue other than merging, and minutes until re-queued
@@ -26,7 +28,8 @@ import json, re, statistics, subprocess, sys, time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from orchestrator_sweep import REPO, events, login, meta, ts
+from orchestrator_actions import action_table, last_retro
+from orchestrator_sweep import REPO, events, get, login, meta, ts
 
 _cache = {}
 
@@ -351,6 +354,34 @@ def parse_instant(args):
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def action_checklist(tok):
+    """上一份复盘的行动项，原样带出成核对表（工作流 v2 §5 第 1 步、§9 S6）。
+
+    「上一份复盘」是资料库里最新的一份《总调度复盘 …》：这次复盘开头要核的就是
+    它那份列表，所以排在当天的数字前面。周深度复盘是另一份文档、另一套流程
+    （§6），不从这里取。挑哪一份和画表都在 orchestrator_actions 里，那边离线
+    测；这一层只负责读平台。资料库里还没有复盘时说清楚原因，不摆一张空表：
+    「行动项：0 条」读起来像列了 0 条，不像还没写过复盘。
+    """
+    rows = []
+    for project in (get(tok, "/projects") or {}).get("data") or []:
+        cursor = None
+        for _ in range(5):
+            page = get(tok, f"/projects/{project['id']}/documents?limit=50"
+                            + (f"&cursor={cursor}" if cursor else "")) or {}
+            rows += page.get("data") or []
+            cursor = page.get("next")
+            if not cursor:
+                break
+    retro = last_retro(rows)
+    if retro is None:
+        print("行动项核对表：资料库里还没有《总调度复盘 …》")
+        return
+    body = get(tok, f"/documents/{retro['id']}") or {}
+    print(f"行动项核对表（{retro['title']}）")
+    print(action_table(body.get("content") or ""))
+
+
 def main():
     if sys.argv[1:2] == ["--self-test"]:
         return self_test()
@@ -358,6 +389,8 @@ def main():
         return week_report(parse_instant(sys.argv[2:3]))
     room, day = sys.argv[1], sys.argv[2]
     tok = login()
+    action_checklist(tok)
+    print()
     evs = [m for m in events(tok, room, "accept", pages=10) + events(tok, room, "system", pages=10)
            if m["created_at"].startswith(day)]
     evs.sort(key=lambda m: m["created_at"])

@@ -82,6 +82,7 @@ jobs:
         run: |
           python3 .claude/scripts/trace-sweep.py --self-test
           python3 .claude/scripts/trace-sweep.py retro --self-test
+          python3 .claude/scripts/orchestrator_actions.py --self-test
           python3 .claude/scripts/orchestrator_metrics.py --self-test
           python3 .claude/scripts/orchestrator_sweep.py --self-test
           python3 .claude/scripts/wake_orchestrator.py --self-test
