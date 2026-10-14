@@ -62,7 +62,19 @@ def _missing(rows: list[dict]) -> list[str]:
 
 
 def _fmt(value, width, numeric):
-    text = "-" if value is None else (f"{value:g}" if numeric else str(value))
+    """数字右对齐、字左对齐。数是多少就打多少，不用 `:g` —— 它到 1e6 就把
+    `1234567` 打成 `1.23457e+06`，还四舍五入掉一位；计数和秒数按席位 × 模型 × 供给
+    在 7d / 30d 窗口里累加，过百万是常事。"""
+    if value is None:
+        text = "-"
+    elif not numeric:
+        text = str(value)
+    elif isinstance(value, int):
+        text = str(value)
+    elif value.is_integer():
+        text = str(int(value))
+    else:
+        text = f"{value:g}"
     return text.rjust(width) if numeric else text.ljust(width)
 
 

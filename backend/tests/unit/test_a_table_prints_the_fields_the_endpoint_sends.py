@@ -6,9 +6,11 @@
 `turn_seconds`，那两列永远打成 `-`，`--self-test` 的样例行用的也是假名，所以自检
 照绿。
 
-守的是四条能在写代码之前就说出来的规则：表打的是接口送的字段；表打得出聚合算出来
-的数；`--json` 的行是对象不是字符串；载荷里没有的字段要出声，不能默默打成横杠。
-走文档里那条命令的入口 `main()`，所以老代码上红的是断言，不是 import。
+守的是六条能在写代码之前就说出来的规则：表打的是接口送的字段；表打得出聚合算出来
+的数；`--json` 的行是对象不是字符串；载荷里没有的字段要出声，不能默默打成横杠（两
+个脚本各测一次）；没算出来的速率打横杠，那是「这组里没有一轮秒数大于 0」不是缺字
+段；数是多少就打多少，不打科学计数法。走文档里那条命令的入口 `main()`，所以老代码
+上红的是断言，不是 import。
 """
 
 import asyncio
@@ -114,6 +116,49 @@ def test_a_column_the_payload_does_not_send_is_reported_not_blanked():
     """少了字段要出声。默默打成 `-` 骗过一次了，那次 `--self-test` 还是绿的。"""
     with pytest.raises(KeyError, match="output_tokens"):
         _cli().table([{"seat": "cheese"}])
+
+
+class _PartialRow:
+    """漏掉字段的一行。`_plain` 对每行只调 `model_dump()`，形状和真模型一样。"""
+
+    def model_dump(self):
+        return {"seat": "cheese"}
+
+
+def test_the_db_script_reports_a_missing_column_instead_of_blanking_it(
+    monkeypatch, capsys
+):
+    """库里那份出表脚本同样要说「打不了」，那条守卫以前没人走得到。"""
+    monkeypatch.setattr(db_script, "async_session_factory", lambda: _NoSession())
+
+    async def seats(session, window="24h"):
+        return {
+            "window": "24h",
+            "since": "2026-10-13T00:00:00+00:00",
+            "now": "2026-10-14T00:00:00+00:00",
+            "window_seconds": 86400.0,
+            "rows": [_PartialRow()],
+            "seats": [_PartialRow()],
+        }
+
+    monkeypatch.setattr(throughput, "seats", seats)
+    code = asyncio.run(db_script.main("24h", False))
+    assert code == 1, code
+    assert "output_tokens" in capsys.readouterr().err
+
+
+def test_a_count_over_a_million_prints_as_digits():
+    """`1234567` 不是 `1.23457e+06`。数是多少就打多少，读的人才比得了快慢。"""
+    formats = (
+        lambda value, width: db_script._fmt(value, width, True),
+        lambda value, width: _cli().fmt(value, width, True),
+    )
+    for fmt in formats:
+        assert fmt(1234567, 13).strip() == "1234567"
+        assert fmt(1000000, 6).strip() == "1000000"
+        assert fmt(2592000.0, 12).strip() == "2592000"
+        assert fmt(612.5, 12).strip() == "612.5"
+        assert fmt(0.5556, 10).strip() == "0.5556"
 
 
 def test_a_rate_that_was_never_computed_still_renders_as_a_dash():
