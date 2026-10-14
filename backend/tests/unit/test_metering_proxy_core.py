@@ -321,6 +321,27 @@ def test_with_the_cap_on_turns_another_proxy_finishes_count_here(tmp_path):
     ]
 
 
+def test_a_row_waits_while_another_proxy_holds_the_ledger(tmp_path):
+    """Two proxies append to one ledger during a release, and the backend reads
+    it by byte offset: a row goes in only while no other writer holds the
+    ledger, so rows never interleave."""
+    import fcntl
+
+    log = tmp_path / "usage.jsonl"
+    meter = core.Meter(log, cap_window_s=3600)
+    with log.open("a") as other:
+        fcntl.flock(other, fcntl.LOCK_EX)
+        writer = _threading.Thread(
+            target=meter.record, args=("p", "t", {"input_tokens": 1}, "m")
+        )
+        writer.start()
+        writer.join(0.3)
+        assert writer.is_alive() and log.read_text() == ""
+        fcntl.flock(other, fcntl.LOCK_UN)
+    writer.join(5)
+    assert json.loads(log.read_text())["total_tokens"] == 1
+
+
 def test_admission_verdict_carries_the_supply_decision():
     """The same answer says both 'may it run' and 'where does it go' (#243)."""
 

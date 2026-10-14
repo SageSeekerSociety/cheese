@@ -377,9 +377,13 @@ jobs:
           CHEESE_CENTRAL_SESSION_HOST: "1"
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
-      # Cuts no stream: the new proxy starts beside the old one, and the step
-      # waits until the old one has finished what it carries (at most 30 min,
-      # usually a few). A change that would cut streams fails here instead.
+      # The new proxy starts beside the old one, and the step waits until the
+      # old one has finished what it carries, usually a few minutes. What is
+      # still open at the drain limit (30 min per slot; about 95 min in all for
+      # the one-time move off the single container, inside this job's 180) is
+      # cut, as are HTTP/2 client connections and raw tunnels still open then:
+      # a draining proxy can close only HTTP/1 ones. A change to the front
+      # itself, which would cut every connection, fails here instead.
       - name: Release the verified metering image
         if: steps.release.outputs.skip != 'true'
         env:

@@ -119,8 +119,15 @@ one of them runs. A release (`deploy/release-metering-proxy.sh`):
    new connection and lands on the new slot;
 4. stops the old slot once it has no connection open, counted in the slot's own
    network namespace, or after `METERING_DRAIN_SECONDS` (1800) with whatever is
-   still open cut. Clients close idle connections within a few minutes, so a
-   drain usually lasts as long as the longest stream running at the switch.
+   still open cut; the release logs how many. Clients close idle connections
+   within a few minutes, so a drain usually lasts as long as the longest stream
+   running at the switch.
+
+What a release can still cut: a connection open longer than the drain limit,
+and connections a draining slot cannot close. It closes HTTP/1 connections
+only, so an HTTP/2 client connection, or a raw tunnel to a host other than
+Anthropic's, leaves the old slot only when its client closes it, and is cut if
+that comes after the limit.
 
 A slot that fails its health check never receives traffic; rolling back is
 releasing the previous SHA. A slot already serving the same digest with the same
@@ -129,8 +136,12 @@ box-local `.env`: each release labels the slot it starts with a SHA-256 of the
 two (`cheese.metering-proxy.config-sha256`), so a change to either alone is
 released too. Only the hash is stored; the `.env` is never printed or copied.
 
-A change to `front.cfg` is applied by a hitless reload (the slots' state is
-carried over in a server-state file). A change to the front's image or service
+A change to `front.cfg` is applied by a hitless reload. The slots' state is
+written to a server-state file for the new process to start from, and the file
+is deleted once that process runs: HAProxy reads it on every start, so a file
+left behind would bring back the drain flags of that moment after a crash or a
+reboot. A front that starts cold begins with both slots down until their checks
+pass, a few seconds. A change to the front's image or service
 definition recreates the front, which cuts every open connection: the automatic
 deployment refuses it, and the manual workflow runs it only with its
 `interrupt` input set.
@@ -156,8 +167,8 @@ by the requests it finishes.
 
 Before this layout the proxy ran as one container, `cheese-metering-proxy`,
 holding the address and the alias itself, and Docker moves neither while it
-runs. The first release after the change moves the box without cutting a
-session's stream: it starts `slot-blue` and a second front, `front-handover`;
+runs. The first release after the change moves the box off it: it starts
+`slot-blue` and a second front, `front-handover`;
 inserts a NAT rule (`iptables -t nat`, PREROUTING and OUTPUT, comment
 `cheese-metering-handover`) that sends new connections for `172.17.0.1:8444` to
 `front-handover`, while connections the old container already has keep their
@@ -168,6 +179,22 @@ container stops removes the rule and leaves it serving. On the ChatGPT listener
 both the old container and `front-handover` answer the alias meanwhile; the old
 container is stopped at a moment it has no connection open on it when one comes
 within a minute, and a request it is carrying otherwise is cut.
+
+The old container runs code from before the drain flag, so it cannot close its
+own keep-alive connections: they leave when their clients close them, and what
+is still open at the drain limit is cut, as is anything `front-handover` still
+carries at its own limit. The whole move can take about 95 minutes at worst.
+
+The move can be run again. A release that died part-way leaves containers, and
+possibly the rule, behind; the next one starts the old container again if it
+was stopped, keeps a healthy `slot-blue` and `front-handover` instead of
+recreating them while they carry tunnels, removes every rule carrying the
+comment before steering, and finishes a move that died after `front` started.
+
+The old container refreshes credentials without the lock the slots take. The
+move therefore starts only when no Claude or ChatGPT pair is due to refresh
+within twice the drain limit plus 15 minutes; otherwise the release fails, and
+the next one tries again.
 
 After a release, verify a sandbox turn, a usage row attributed to that turn, and
 a budget refusal for a test project whose compute grant is exhausted. Listener

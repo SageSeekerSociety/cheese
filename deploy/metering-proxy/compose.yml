@@ -63,7 +63,8 @@
 # it run two proxies, slot-blue and slot-green, and outside a release only one
 # of them. A release starts the other on the new image, moves new connections
 # to it, lets the old one finish the streams it carries and stops it
-# (deploy/release-metering-proxy.sh), so a release cuts no model stream.
+# (deploy/release-metering-proxy.sh). A stream that ends within the drain
+# limit is not cut; README.md, "Release on the dev box", says what is.
 
 # One proxy; the two slots differ only in their address behind the front.
 x-slot: &slot

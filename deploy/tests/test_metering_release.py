@@ -1,4 +1,4 @@
-"""Exercise the metering proxy's two-slot release against a fake docker, compose and front."""
+"""Exercise the metering proxy's two-slot release against a fake docker, compose, front and iptables."""
 
 import json
 import os
@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 import yaml
@@ -14,10 +15,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "deploy/release-metering-proxy.sh"
 DIGEST = "ghcr.io/sageseekersociety/cheese/metering-proxy@sha256:" + "b" * 64
 LEGACY = "cheese-metering-proxy"
+STEER = "-m comment --comment cheese-metering-handover -j DNAT --to-destination"
 
-# A docker CLI whose containers, front servers and open connections live in a
-# JSON file. Containers are named by their compose service. Every call is
-# appended to CALLS.
+# A docker CLI whose containers, front servers, open connections and NAT rules
+# live in a JSON file. Containers are named by their compose service. Every
+# call is appended to CALLS.
 FAKE = r"""#!/usr/bin/env python3
 import fcntl, json, os, pathlib, sys
 args = sys.argv[1:]
@@ -54,7 +56,22 @@ def proc_tcp(container):
             lines.append(f"   0: 0200A8C0:{port:04X} 0100A8C0:C350 01 00000000:00000000")
     return "\n".join(lines)
 
-if args[0] == "pull":
+if args[0] == "iptables":
+    # The rules the release adds, by chain, in iptables -S form.
+    chain = args[4]
+    spec = " ".join(args[5:] if args[3] != "-I" else args[6:])
+    rules = state["rules"].setdefault(chain, [])
+    if args[3] == "-C":
+        code = 0 if spec in rules else 1
+    elif args[3] == "-I":
+        rules.insert(0, spec)
+    elif args[3] == "-D":
+        code = 0 if spec in rules else 1
+        if spec in rules:
+            rules.remove(spec)
+    elif args[3] == "-S":
+        out = "\n".join(f"-A {chain} {r}" for r in rules)
+elif args[0] == "pull":
     done = state["pulls"]
     state["pulls"] += 1
     code = 1 if done < int(os.environ.get("FAIL_PULLS", "0")) else 0
@@ -70,7 +87,7 @@ elif args[0] == "compose":
     elif sub == "config":
         out = ("front " + os.environ.get("WANTED_FRONT_HASH", "hash")) if "--hash" in args else "haproxy:pinned"
     elif sub == "up":
-        if os.environ.get("FAIL_UP") == service:
+        if os.environ.get("FAIL_UP") == service and "-d" in args:
             code = 1
         elif "--no-start" not in args:
             if service == "front" and state.get("legacy_running"):
@@ -81,11 +98,17 @@ elif args[0] == "compose":
     elif sub in ("stop", "rm"):
         if service in running:
             running.remove(service)
+elif args[0] == "run" and "-c" in args:
+    code = 1 if os.environ.get("FAIL_CHECK") else 0
 elif args[0] == "inspect":
     name = args[1]
     fmt = args[-1]
     if name == LEGACY and len(args) == 2:
         code = 0 if state.get("legacy") else 1
+    elif name == LEGACY and ".State.Running" in fmt:
+        out = "true" if state.get("legacy_running") else "false"
+    elif ".State.Health" in fmt:
+        out = "healthy" if name in running else ""
     elif "project.working_dir" in fmt:
         out = os.environ["METERING_PROXY_HOME"]
     elif "compose.project" in fmt:
@@ -105,7 +128,10 @@ elif args[0] == "stop" and args[-1] == LEGACY:
 elif args[0] == "start" and args[-1] == LEGACY:
     state["legacy_running"] = True
 elif args[0] == "rm" and args[-1] == LEGACY:
-    state["legacy"] = False
+    state["legacy"] = state["legacy_running"] = False
+elif args[0] == "kill" and "USR2" in args:
+    if not os.environ.get("RELOAD_STUCK"):
+        state["pid"] += 1
 elif args[0] == "exec" and "socat" in args:
     container = args[2]
     for command in stdin.strip().split(";"):
@@ -113,19 +139,28 @@ elif args[0] == "exec" and "socat" in args:
         if words[:2] == ["set", "server"]:
             server = words[2].split("/")[1]
             state["admin"].setdefault(container, {})[server] = 8 if words[-1] == "drain" else 0
+        elif words[:2] == ["show", "info"]:
+            out += f"Name: HAProxy\nPid: {state['pid']}\n"
         elif words[:3] == ["show", "servers", "state"]:
+            backend = words[3] if len(words) > 3 else "connect_slots"
+            if backend == "chatgpt_slots":
+                state["chatgpt_polls"] += 1
             out += "1\n# be_id be_name srv_id srv_name srv_addr srv_op_state srv_admin_state\n"
             for color in ("blue", "green"):
                 op = 2 if "slot-" + color in running else 0
+                if backend == "chatgpt_slots" and state["chatgpt_polls"] <= int(os.environ.get("CHATGPT_UP_AFTER", "0")):
+                    op = 0
                 admin = state["admin"].get(container, {}).get("slot-" + color, 0)
                 if os.environ.get("SWITCH_BACK") == color and admin == 8 and state["drain_polls"] > 1:
                     admin = 0
-                out += f"3 connect_slots 1 slot-{color} 10.0.0.1 {op} {admin}\n"
+                out += f"3 {backend} 1 slot-{color} 10.0.0.1 {op} {admin}\n"
         elif words[:2] == ["show", "stat"]:
             state["stot"] += 1
             out += "# pxname,svname,qcur,qmax,scur,smax,slim,stot\n"
             out += f"connect,FRONTEND,0,0,0,0,0,{state['stot']}\n"
             out += f"connect_slots,slot-blue,0,0,{take('front_open', container)},0,0,0\n"
+elif args[0] == "exec" and args[1] == LEGACY and not state.get("legacy_running"):
+    code = 1  # docker refuses to exec into a stopped container
 elif args[0] == "exec" and "cat" in args and "/proc/net/tcp" in args:
     container = args[1]
     if container.startswith("slot-"):
@@ -137,23 +172,31 @@ if out:
 sys.exit(code)
 """
 
-# The host's own tools the release calls: iptables through sudo, and python3
-# for the probe through the steered address.
-SUDO = '#!/bin/sh\necho "$*" >> "$SUDO_CALLS"\n'
-PYTHON = '#!/bin/sh\necho "$*" >> "$PYTHON_CALLS"\nexit "${PROBE_STATUS:-0}"\n'
+# The host's own tools the release calls: iptables through sudo, and python3 for
+# the probe through the steered address (any other python3 use is the real one).
+SUDO = '#!/bin/sh\nexec docker "$@"\n'
+PYTHON = """#!/bin/sh
+if [ "$1" = "-c" ]; then echo "$*" >> "$PYTHON_CALLS"; exit "${PROBE_STATUS:-0}"; fi
+exec %s "$@"
+"""
 
 ENV_TEXT = "TEST_SECRET=private-test-value\n"
 
 
 class MeteringReleaseTest(unittest.TestCase):
-    def release(self, *, running=("front", "slot-blue"), legacy=False, open=None,
-                front_open=None, env_text=ENV_TEXT, **overrides):
+    def release(self, *, running=("front", "slot-blue"), legacy=False, legacy_running=None,
+                open=None, front_open=None, rules=None, env_text=ENV_TEXT, files=None, **overrides):
         with tempfile.TemporaryDirectory() as folder:
             home = Path(folder)
             (home / ".env").write_text(env_text)
+            for path, text in (files or {}).items():
+                (home / path).parent.mkdir(parents=True, exist_ok=True)
+                (home / path).write_text(text)
             # The fake runs on this interpreter: `python3` on its PATH is the shim.
             fake = FAKE.replace("#!/usr/bin/env python3", "#!" + sys.executable, 1)
-            for name, text in (("docker", fake), ("sudo", SUDO), ("python3", PYTHON)):
+            # sudo hands `-n iptables ...` on to the fake as `iptables ...`.
+            sudo = '#!/bin/sh\nshift\nexec "%s" "$@"\n' % (home / "docker")
+            for name, text in (("docker", fake), ("sudo", sudo), ("python3", PYTHON % sys.executable)):
                 (home / name).write_text(text)
                 (home / name).chmod(0o755)
             state = home / "state.json"
@@ -161,13 +204,16 @@ class MeteringReleaseTest(unittest.TestCase):
                 "running": list(running),
                 "started": [],
                 "legacy": legacy,
-                "legacy_running": legacy,
-                "admin": {"front": {"slot-blue": 0}} if "slot-blue" in running else {},
+                "legacy_running": legacy if legacy_running is None else legacy_running,
+                "admin": {"front": {"slot-blue": 0}} if "slot-blue" in running and "front" in running else {},
                 "open": open or {},
                 "front_open": front_open or {},
+                "rules": rules or {},
                 "pulls": 0,
                 "stot": 0,
+                "pid": 7,
                 "drain_polls": 0,
+                "chatgpt_polls": 0,
             }))
             env = dict(
                 os.environ,
@@ -178,7 +224,6 @@ class MeteringReleaseTest(unittest.TestCase):
                 GITHUB_RUN_ATTEMPT="1",
                 STATE=str(state),
                 CALLS=str(home / "calls"),
-                SUDO_CALLS=str(home / "sudo.calls"),
                 PYTHON_CALLS=str(home / "python.calls"),
                 METERING_POLL_SECONDS="0",
                 METERING_DRAIN_SECONDS="3",
@@ -191,7 +236,7 @@ class MeteringReleaseTest(unittest.TestCase):
             )
             read = lambda name: (home / name).read_text().splitlines() if (home / name).exists() else []
             calls = [json.loads(line) for line in read("calls")]
-            self.sudo = read("sudo.calls")
+            self.iptables = [c["args"] for c in calls if c["args"][0] == "iptables"]
             self.state = json.loads(state.read_text())
             self.installed_login = all(
                 (home / name).is_file() and os.access(home / name, os.X_OK)
@@ -215,6 +260,10 @@ class MeteringReleaseTest(unittest.TestCase):
     @staticmethod
     def index(calls, predicate):
         return next(i for i, c in enumerate(calls) if predicate(c["args"]))
+
+    @staticmethod
+    def last(calls, predicate):
+        return max(i for i, c in enumerate(calls) if predicate(c["args"]))
 
     def test_a_release_moves_new_connections_then_stops_the_old_slot_once_drained(self):
         result, calls = self.release(open={"slot-blue:8444": [3, 1, 0]})
@@ -240,6 +289,13 @@ class MeteringReleaseTest(unittest.TestCase):
         self.assertLess(max(polls), stop)
         self.assertEqual(self.state["running"], ["front", "slot-green"])
 
+    def test_the_new_slot_takes_traffic_only_once_both_listeners_see_it_up(self):
+        result, calls = self.release(CHATGPT_UP_AFTER="3")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        ready = next(i for i, c in enumerate(calls) if "slot-green state ready" in c["stdin"])
+        checks = [i for i, c in enumerate(calls) if "show servers state chatgpt_slots" in c["stdin"]]
+        self.assertGreater(len([i for i in checks if i < ready]), 3)
+
     def test_a_slot_that_fails_its_health_check_never_takes_traffic(self):
         result, calls = self.release(FAIL_UP="slot-green")
         self.assertNotEqual(result.returncode, 0)
@@ -248,12 +304,12 @@ class MeteringReleaseTest(unittest.TestCase):
         self.assertIn("slot-blue", self.state["running"])
         self.assertFalse(any("touch" in c["args"] for c in calls))
 
-    def test_the_drain_is_bounded(self):
+    def test_the_drain_is_bounded_and_says_what_it_cut(self):
         result, calls = self.release(
             open={"slot-blue:8444": [5]}, METERING_POLL_SECONDS="1", METERING_DRAIN_SECONDS="2"
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("stopping it cuts them", result.stdout)
+        self.assertIn("still has 5 open connections after 2s; stopping it cuts them", result.stdout)
         self.assertNotIn("slot-blue", self.state["running"])
 
     def test_a_slot_switched_back_during_its_drain_keeps_running(self):
@@ -293,12 +349,31 @@ class MeteringReleaseTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.state["started"][0], "front")
 
-    def test_a_changed_front_configuration_is_reloaded_with_the_slots_state(self):
+    def test_a_reload_starts_from_the_slots_state_and_leaves_none_for_a_later_start(self):
+        # HAProxy reads the state file on every start: one left behind would
+        # bring this moment's drain flags back after a crash or a reboot.
         result, calls = self.release()
         self.assertEqual(result.returncode, 0, result.stderr)
-        saved = self.index(calls, lambda a: "/tmp/server-state" in " ".join(a))
+        state_file = lambda a: "/tmp/server-state" in " ".join(a)
+        saved = self.index(calls, state_file)
         reload = self.index(calls, lambda a: a[:3] == ["kill", "--signal", "USR2"])
         self.assertLess(saved, reload)
+        last = self.last(calls, state_file)
+        self.assertGreater(last, reload)
+        self.assertEqual(calls[last]["args"][-3:], ["rm", "-f", "/tmp/server-state"])
+
+    def test_a_reload_that_never_takes_switches_nothing_and_leaves_no_state(self):
+        result, calls = self.release(RELOAD_STUCK="1")
+        self.assertNotEqual(result.returncode, 0)
+        last = self.last(calls, lambda a: "/tmp/server-state" in " ".join(a))
+        self.assertEqual(calls[last]["args"][-3:], ["rm", "-f", "/tmp/server-state"])
+        self.assertEqual(self.runtime(calls), [])
+
+    def test_an_invalid_front_configuration_is_never_loaded(self):
+        result, calls = self.release(FAIL_CHECK="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(c["args"][:3] == ["kill", "--signal", "USR2"] for c in calls))
+        self.assertFalse(any(c["args"][0] == "compose" and "up" in c["args"] for c in calls))
 
     def test_a_pull_the_registry_drops_is_tried_again(self):
         result, calls = self.release(FAIL_PULLS="2")
@@ -329,25 +404,31 @@ class MeteringReleaseTest(unittest.TestCase):
 
     # ---- the one release that moves the box off the single container ----
 
+    RULE = f"-d 172.17.0.1/32 -p tcp --dport 8444 {STEER} 192.0.2.5:8444"
+
     def cutover(self, **overrides):
-        return self.release(running=(), legacy=True,
-                            open={f"{LEGACY}:8444": [4, 2, 0], f"{LEGACY}:8445": [1, 0]}, **overrides)
+        overrides.setdefault("running", ())
+        overrides.setdefault("open", {f"{LEGACY}:8444": [4, 2, 0], f"{LEGACY}:8445": [1, 0]})
+        return self.release(legacy=True, **overrides)
 
     def test_the_cutover_steers_new_connections_and_lets_the_old_container_finish(self):
         result, calls = self.cutover()
         self.assertEqual(result.returncode, 0, result.stderr)
-        rule = "-d 172.17.0.1/32 -p tcp --dport 8444 -m comment --comment cheese-metering-handover -j DNAT --to-destination 192.0.2.5:8444"
-        self.assertEqual(self.sudo, [
-            f"-n iptables -t nat -I PREROUTING 1 {rule}",
-            f"-n iptables -t nat -I OUTPUT 1 {rule}",
-            f"-n iptables -t nat -D PREROUTING {rule}",
-            f"-n iptables -t nat -D OUTPUT {rule}",
+        inserted = [a for a in self.iptables if a[3] == "-I"]
+        self.assertEqual(inserted, [
+            ["iptables", "-t", "nat", "-I", "PREROUTING", "1", *self.RULE.split()],
+            ["iptables", "-t", "nat", "-I", "OUTPUT", "1", *self.RULE.split()],
         ])
+        self.assertEqual(self.state["rules"], {"PREROUTING": [], "OUTPUT": []})
+        steered = self.index(calls, lambda a: a[0] == "iptables" and a[3] == "-I")
         stopped = self.index(calls, lambda a: a[:2] == ["stop", LEGACY])
         polls = [i for i, c in enumerate(calls) if c["args"][:2] == ["exec", LEGACY]]
+        self.assertLess(steered, min(polls))
         self.assertLess(max(polls), stopped)
         front_up = self.index(calls, lambda a: a[0] == "compose" and "up" in a and "-d" in a and a[-1] == "front")
+        unsteered = self.last(calls, lambda a: a[0] == "iptables" and a[3] == "-D")
         self.assertLess(stopped, front_up)
+        self.assertLess(front_up, unsteered)
         self.assertEqual(self.state["started"], ["slot-blue", "front-handover", "front"])
         self.assertFalse(self.state["legacy"])
         self.assertEqual(self.state["running"], ["slot-blue", "front"])
@@ -355,20 +436,80 @@ class MeteringReleaseTest(unittest.TestCase):
     def test_a_cutover_whose_front_fails_gives_the_address_back(self):
         result, calls = self.cutover(FAIL_UP="front")
         self.assertNotEqual(result.returncode, 0)
+        stopped = self.index(calls, lambda a: a[:2] == ["stop", LEGACY])
+        restarted = self.index(calls, lambda a: a[:2] == ["start", LEGACY])
+        self.assertLess(stopped, restarted)
         self.assertTrue(self.state["legacy_running"])
-        self.assertEqual([line.split()[4] for line in self.sudo], ["-I", "-I", "-D", "-D"])
+        self.assertNotIn("front", self.state["running"])
+        self.assertEqual(self.state["rules"], {"PREROUTING": [], "OUTPUT": []})
 
     def test_a_cutover_whose_steering_misses_the_handover_front_undoes_it(self):
         result, calls = self.cutover(PROBE_STATUS="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual([line.split()[4] for line in self.sudo], ["-I", "-I", "-D", "-D"])
+        self.assertEqual(self.state["rules"], {"PREROUTING": [], "OUTPUT": []})
         self.assertFalse(any(c["args"][:2] == ["stop", LEGACY] for c in calls))
         self.assertTrue(self.state["legacy_running"])
+
+    def test_a_cutover_that_died_after_stopping_the_old_container_is_resumed(self):
+        # The job was lost between stopping the old container and starting
+        # `front`: the old container is stopped, slot-blue and front-handover
+        # carry the traffic, and the steering rules are still in place.
+        result, calls = self.cutover(
+            legacy_running=False,
+            running=("slot-blue", "front-handover"),
+            rules={"PREROUTING": [self.RULE], "OUTPUT": [self.RULE]},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        started = self.index(calls, lambda a: a[:2] == ["start", LEGACY])
+        first_poll = self.index(calls, lambda a: a[:2] == ["exec", LEGACY])
+        self.assertLess(started, first_poll)
+        # What carries traffic is kept, not recreated.
+        self.assertFalse(any(
+            c["args"][0] == "compose" and "up" in c["args"] and c["args"][-1] in ("slot-blue", "front-handover")
+            for c in calls
+        ))
+        self.assertEqual(self.state["rules"], {"PREROUTING": [], "OUTPUT": []})
+        self.assertEqual(self.state["running"], ["slot-blue", "front"])
+
+    def test_steering_rules_a_killed_run_left_behind_are_all_removed(self):
+        stale = f"-d 172.17.0.1/32 -p tcp --dport 8444 {STEER} 192.0.2.99:8444"
+        result, calls = self.cutover(rules={"PREROUTING": [stale, stale, self.RULE], "OUTPUT": [stale]})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state["rules"], {"PREROUTING": [], "OUTPUT": []})
+        # Never two copies of the rule while it steers.
+        inserted = [a for a in self.iptables if a[3] == "-I"]
+        self.assertEqual(len(inserted), 2)
+
+    def test_a_move_that_died_after_front_started_is_finished_by_the_next_release(self):
+        result, calls = self.release(
+            legacy=True, legacy_running=False, running=("front", "slot-blue", "front-handover"),
+            rules={"PREROUTING": [self.RULE], "OUTPUT": [self.RULE]},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.state["rules"], {"PREROUTING": [], "OUTPUT": []})
+        self.assertFalse(self.state["legacy"])
+        self.assertNotIn("front-handover", self.state["running"])
+
+    def test_a_cutover_waits_while_a_credential_is_about_to_refresh(self):
+        # The old container refreshes without the slots' lock, so the move
+        # starts only when no pair refreshes during it.
+        soon = {"claudeAiOauth": {"accessToken": "a", "refreshToken": "r",
+                                  "expiresAt": int((time.time() + 1200) * 1000)}}
+        result, calls = self.cutover(files={"claude-credential/credential": json.dumps(soon)})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refreshes before the move could end", result.stderr)
+        self.assertNotIn("claudeAiOauth", result.stderr + result.stdout)
+        self.assertEqual(self.iptables, [])
+        self.assertEqual(self.state["started"], [])
+        later = dict(soon, claudeAiOauth=dict(soon["claudeAiOauth"], expiresAt=int((time.time() + 6 * 3600) * 1000)))
+        result, calls = self.cutover(files={"claude-credential/credential": json.dumps(later),
+                                            "claude-credential/accounts/x/credential": "sk-ant-oat01-setup"})
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_cutover_never_touches_a_container_of_another_project(self):
         result, calls = self.cutover(FAKE_PROJECT="other")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(self.sudo, [])
+        self.assertEqual(self.iptables, [])
         self.assertFalse(any(c["args"][0] == "compose" and "up" in c["args"] for c in calls))
 
     def test_compose_runs_two_slots_behind_one_front(self):

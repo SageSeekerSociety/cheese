@@ -11,7 +11,7 @@ on:
         description: >-
           Acknowledge interrupting active model streams. Only a change to the
           front itself (its image or service definition) needs it; a release of
-          the proxy moves streams without cutting them.
+          the proxy lets running streams finish, up to the drain limit.
         required: true
         default: false
         type: boolean
@@ -30,9 +30,12 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, cheese-dev]
     environment: dev
-    # The old slot may take up to METERING_DRAIN_SECONDS (30 min) to finish
-    # the streams it carries.
-    timeout-minutes: 45
+    # Above the longest a release can wait. A normal one drains up to two slots
+    # (one left by an interrupted release, then the one it replaces), 30 min
+    # each. The one-time move off the single container waits up to 30 min for
+    # the old container, 30 for front-handover's tunnels and 30 for its soft
+    # stop: about 95 min with pulls and health checks.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
