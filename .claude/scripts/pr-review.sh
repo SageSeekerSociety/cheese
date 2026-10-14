@@ -45,6 +45,21 @@ die() { echo "pr-review: $*" >&2; exit 1; }
 
 head_of() { gh api "repos/$REPO/pulls/$1" -q .head.sha; }
 
+# The --tier flag, but only for a render.py that knows the field. main's copy predates it
+# until this branch merges: handed --tier it answers with its usage and exits 2, so the
+# review of a change would fail to be written because of the change itself — the shape
+# e6abb7cb fixed for tiers.py, and the two call sites below hand it the flag on every
+# review. A copy that does not know the field is asked without it and the conclusion line
+# carries no 档位, the way a card written before the tiers existed reads.
+tier_args() {
+  [ -n "$2" ] || return 0
+  if grep -q -- "--tier" "$1" 2>/dev/null; then
+    printf -- '--tier %s' "$2"
+  else
+    echo "pr-review: $1 predates the 档位, so the conclusion line carries none" >&2
+  fi
+}
+
 # Resolve $2 (full, short or empty) to a full SHA of a commit of PR $1.
 resolve_sha() {
   local pr=$1 want=${2:-} commits
@@ -82,6 +97,17 @@ prepare() {
     git -C "$ROOT" show "origin/main:$METHOD/prompt.md" > "$dir/REVIEW.md"
     git -C "$ROOT" show "origin/main:$METHOD/schema.json" > "$dir/schema.json"
     git -C "$ROOT" show "origin/main:$METHOD/render.py" > "$dir/render.py"
+    # render.py is on main but the 档位 it prints is not, until this branch merges. The
+    # two copies differ in that field and run the same three checks; a review that cannot
+    # print it still gets written, but its line is the one the board reads with no tier.
+    # Use this checkout's copy in that window, the same way tiers.py falls back below, and
+    # only when it is the copy that knows the field. After the merge, main's copy is the
+    # one used and the PR under review cannot loosen its own result check.
+    if ! grep -q -- "--tier" "$dir/render.py" 2>/dev/null \
+      && grep -q -- "--tier" "$ROOT/$METHOD/render.py" 2>/dev/null; then
+      echo "pr-review: origin/main's render.py predates the 档位; using this checkout's copy" >&2
+      cp "$ROOT/$METHOD/render.py" "$dir/render.py"
+    fi
     # tiers.py is newer than the rest of the method: while it is only on this
     # branch, main has no copy of it, and refusing to run would take the review
     # tooling down for every other PR. Use this checkout's copy in that window,
@@ -138,7 +164,8 @@ json.dump({
     "not_covered": [f"整份改动（{why}）都按机械改动免审，没有人读过。"],
 }, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PY
-    python3 "$dir/render.py" "$dir/result.json" "$sha" "$method_rev" --tier "$tier" >/dev/null \
+    python3 "$dir/render.py" "$dir/result.json" "$sha" "$method_rev" \
+      $(tier_args "$dir/render.py" "$tier") >/dev/null \
       || die "the tier G result I wrote does not pass render.py; this is a bug in pr-review.sh"
   fi
   if [ -n "$since" ]; then
@@ -218,7 +245,7 @@ post() {
   fi
   [ -n "$tier" ] || echo "pr-review: 算不出档位，结论行不带档位" >&2
   result=$(python3 "$dir/render.py" "$dir/result.json" "$sha" "$method_rev" \
-    ${since:+--since "$since"} ${tier:+--tier "$tier"}) \
+    ${since:+--since "$since"} $(tier_args "$dir/render.py" "$tier")) \
     || die "$dir/result.json was not accepted; fix it and run post again"
   printf '%s\n' "$result"
   [ "$dry" = --dry-run ] && return

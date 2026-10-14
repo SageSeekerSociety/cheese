@@ -40,6 +40,21 @@ esac
 """
 
 
+#: A stand-in for the render.py on main, until this branch merges: it takes the arguments
+#: it was written for and answers anything else with its usage, exit 2, the way the real
+#: one does. The 档位 is the argument it does not know.
+OLD_RENDER = r'''#!/usr/bin/env python3
+import sys
+args = sys.argv[1:]
+if len(args) == 5 and args[3] == "--since":
+    args = args[:3]
+if len(args) != 3:
+    sys.stderr.write("usage\n")
+    sys.exit(2)
+print("独立 review：head " + args[1][:8] + " 结论 无 blocker/major")
+'''
+
+
 def git(cwd, *args):
     return subprocess.run(
         ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
@@ -300,6 +315,57 @@ class PrReview(unittest.TestCase):
             out.stdout.splitlines()[0],
             f"独立 review：head {self.mixed[:8]} 结论 无 blocker/major｜档位 A",
         )
+
+    def test_post_runs_when_the_pinned_render_py_predates_the_tier(self):
+        # post hands --tier to the render.py prepare took from main, and that copy carries
+        # no 档位 until this branch merges: it answers with its usage and exit 2, so the
+        # review of a change would go unwritten because of the change itself — the shape
+        # the tiers.py fallback above was written for. A prepare directory made before that
+        # fallback is the same case, so the flag is left out for a copy that lacks the
+        # field: the line is the older line, without a tier, and post still writes it.
+        review_md, _ = self.prepare()
+        d = review_md.parent
+        meta = dict(
+            line.split("=", 1) for line in (d / "meta").read_text().splitlines() if "=" in line
+        )
+        sha = meta["sha"].strip("'")
+        (d / "result.json").write_text(json.dumps(result_json(sha, "minor")))
+        (d / "render.py").write_text(OLD_RENDER)
+        out = self.run_script("post", str(d))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(
+            out.stdout.splitlines()[0], f"独立 review：head {sha[:8]} 结论 无 blocker/major"
+        )
+        self.assertIn("predates the 档位", out.stderr)
+
+    def test_prepare_takes_the_checkouts_render_py_when_mains_predates_the_tier(self):
+        # The other half: with main's copy unable to print the tier, prepare takes this
+        # checkout's copy, so the line still carries one. main itself is the fixture here,
+        # and is put back as it was, whatever happens.
+        main = git(self.work, "rev-parse", "origin/main")
+        git(self.work, "checkout", "-q", "-b", "old-main", main)
+        try:
+            (self.work / ".claude/pr-review/render.py").write_text(OLD_RENDER)
+            git(self.work, "commit", "-qam", "an older render")
+            old = git(self.work, "rev-parse", "HEAD")
+            git(self.work, "push", "-q", "-f", "origin", f"{old}:main")
+            # prepare reads the copy in $ROOT, so the checkout must be one that knows the
+            # field — otherwise the fallback would copy the older file back and prove
+            # nothing about which of the two it picks.
+            git(self.work, "checkout", "-q", "pr")
+            review_md, _ = self.prepare()
+            d = review_md.parent
+            self.assertNotEqual((d / "render.py").read_text(), OLD_RENDER)
+            _, out = self.post(review_md, "minor")
+            self.assertEqual(
+                out.splitlines()[0],
+                f"独立 review：head {self.shas[-1][:8]} 结论 无 blocker/major｜档位 B",
+            )
+        finally:
+            git(self.work, "checkout", "-q", "main")
+            git(self.work, "branch", "-qD", "old-main")
+            git(self.work, "push", "-q", "-f", "origin", f"{main}:main")
+            git(self.work, "fetch", "-q", "origin")
 
     #: A green "CI required" check run on the PR head, as `gh api … check-runs --jq` prints
     #: it: one JSON object per line.
