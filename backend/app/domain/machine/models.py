@@ -220,6 +220,12 @@ class CloudHost(UuidPk, Timestamps, Base):
     failed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Since when the disk guard has found the host's disk below its floor, in
+    # bytes or in inodes (``disk_guard``); NULL while it has room. Such a host
+    # takes no new sandbox until a later reading finds room again.
+    disk_full_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Taken out of the pool: no placement sees it, and its provider delete is
     # under way or retried by the sweep until MicroCloud confirms it.
     released_at: Mapped[datetime | None] = mapped_column(
@@ -251,8 +257,9 @@ class SandboxHome(UuidPk, Timestamps, Base):
     Every sandbox has the same lifecycle, whoever's machine it is on: it is
     destroyed once idle for its spec's idle time (``lifecycle``). The row is
     deleted then, when its host is given up, or when its room's cleanup has
-    removed the directory. A session that moves on gives a host's home back at
-    once; a home on a person's computer is left to the same idle sweep.
+    removed the directory. A home its session moved away from is left to the
+    same idle sweep, on any machine, and on a host holds its slot until the
+    sweep has destroyed it there.
     """
 
     __tablename__ = "sandbox_homes"
@@ -368,13 +375,17 @@ def sandboxes_memory_mb(total_mb: int) -> int:
 def capacity(host: CloudHost) -> int:
     """The sandboxes a host runs at once: per core, by the deployment's
     setting, and no more than fit in the memory the host gives its sandboxes,
-    each at its full limit. Counted by cores alone, a 4 GiB host took four 3 GiB
-    sandboxes; two of them were enough to stall it for five hours (dev,
-    2026-10-05). A whole cloud VM has none to give: it is its one session's."""
+    each at its full limit, or on its disk, each at what one is expected to
+    take. Counted by cores alone, a 4 GiB host took four 3 GiB sandboxes; two
+    of them were enough to stall it for five hours (dev, 2026-10-05). A whole
+    cloud VM has none to give: it is its one session's."""
     if host.whole_machine:
         return 0
     by_cores = max(1, int(host.cores)) * settings.cloud_host_slots_per_core
     by_memory = (
         sandboxes_memory_mb(int(host.memory_mb)) // settings.cloud_sandbox_memory_mb
     )
-    return min(by_cores, by_memory)
+    by_disk = (
+        int(host.disk_gb) - settings.cloud_host_disk_reserve_gb
+    ) // settings.cloud_sandbox_disk_gb
+    return max(0, min(by_cores, by_memory, by_disk))

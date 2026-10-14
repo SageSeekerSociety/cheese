@@ -1,28 +1,49 @@
 #!/usr/bin/env python3
 """scene-ratchet.py — a scene that runs standalone may not stop running standalone.
 
-    python3 .claude/scripts/scene-ratchet.py               check (exit 1 on new debt)
-    python3 .claude/scripts/scene-ratchet.py --update      the baseline may only grow
-    python3 .claude/scripts/scene-ratchet.py --list        every scene, its grade, its reasons
-    python3 .claude/scripts/scene-ratchet.py --json        one JSON record on stdout, same exit code
-    python3 .claude/scripts/scene-ratchet.py --self-test   prove it catches what it claims
+    python3 .claude/scripts/scene-ratchet.py                check, against origin/main
+    python3 .claude/scripts/scene-ratchet.py --base <ref>   check against the merge base with <ref>
+    python3 .claude/scripts/scene-ratchet.py --list         every scene, its grade, its reasons
+    python3 .claude/scripts/scene-ratchet.py --json         one JSON record on stdout, same exit code
+    python3 .claude/scripts/scene-ratchet.py --self-test    prove it catches what it claims
 
 WHY A GATE AND NOT A COUNT. `docs/manual/dev/scenes.md` says which scenes can be
 rendered from props alone today. A document is a photograph: it was true when it
 was written and nothing tells you when it stops being true, and the thing that
 makes it false — a page that starts fetching, a panel that starts reading the
-route — is exactly the change nobody notices. So the set is frozen in
-`frontend/scene-baseline.json` and checked instead of described.
+route — is exactly the change nobody notices. So the set is read off the tree
+and checked instead of described.
+
+WHAT IS FROZEN, AND WHERE IT COMES FROM. The tree at `git merge-base HEAD
+--base` (default `origin/main`), graded by this same rule. A scene that is
+standalone-ready IN THAT TREE is frozen `ready` and may not stop being; a scene
+that is not is pre-existing `debt` and may sit there; a scene in neither —
+because that tree does not have it — is NEW and must be standalone-ready from
+its first commit. Nothing here is written down, so there is nothing to edit: a
+branch cannot grandfather a scene by naming it, and there is no `--update`.
+
+  The ledger this check used to keep (`frontend/scene-baseline.json`) was a
+  cache of exactly that set, and it behaved like one: forty-odd commits in
+  ninety days touched it and nearly every branch that split a page had to
+  rewrite it, so two of them in flight at once conflicted on it every time. The
+  repo already judges scene debt against the merge base
+  (`scene-debt-ratchet.py --base origin/main`, and frontend.yml checks out with
+  `fetch-depth: 0` for it), so this is that convention rather than a second one.
+  Reading the merge base also makes the freeze a fact about the branch instead
+  of a file the branch can edit.
+
+  What it costs: the merge base has to be readable. A `--base` that does not
+  resolve, or a tree without `frontend/src`, is exit 2 — never a pass.
 
 THE RULE, in two halves:
 
-  1. A scene that IS standalone-ready today may not stop being. The frozen set
-     may only grow.
-  2. A scene that is NEW — not in the scene set this baseline knows — must be
+  1. A scene that IS standalone-ready in that tree may not stop being. The
+     frozen set may only grow.
+  2. A scene that is NEW — not in the tree the branch started from — must be
      standalone-ready from its first commit. New pages and new panels are the
      only place a ratchet can be a rule instead of a description: the debt that
-     is already here is grandfathered in the `debt` list and may sit there, but
-     nothing new may join it.
+     is already here is grandfathered and may sit there, but nothing new may
+     join it.
 
   A NEW PAGE MAY BE A CONTAINER. A route has to get its data from somewhere,
   and a page is where a route lands: reading the address, fetching, saving —
@@ -51,10 +72,11 @@ THE RULE, in two halves:
   Pages only: a route has to get its data somewhere, a panel does not — a
   panel in the same costume is a panel that fetches.
 
-  Debt is therefore a list, not a count: it is what makes "new" decidable. A
-  scene is new when it is in neither list, and it is pre-existing debt when it
-  is in `debt` — which is also why `--update` may add to `ready` but never to
-  `debt`, and may drop from `debt` but never from `ready`.
+  Debt is therefore a set read off the base tree, not a count: it is what makes
+  "new" decidable. A scene is pre-existing debt when the base tree had it and it
+  was not standalone-ready, and new when the base tree did not have it. Neither
+  set is maintained by hand — both are graded afresh on every run — which is
+  also why nothing can move a scene between them by writing its name down.
 
 WHAT A SCENE IS. Two kinds, both taken from the tree rather than from a list:
 
@@ -88,17 +110,20 @@ is a candidate. It is its own ratchet now, `.claude/scripts/catalog-ratchet.py`
 
 Exit codes: 0 nothing to report, 1 a scene regressed or a new scene is not
 standalone-ready, 2 could not judge (no `frontend/src/` under `--root`, no
-readable baseline, an unreadable scene file). 2 is never a pass.
+merge base with `--base`, a base tree that cannot be read or graded, an
+unreadable scene file). 2 is never a pass.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
+import io
 import json
 import re
 import subprocess
 import sys
+import tarfile
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -114,7 +139,8 @@ ROUTER_DIR = "frontend/src/router"
 VIEWS_DIR = "frontend/src/views/"
 PANELS_DIR = "frontend/src/components/panels"
 
-DEFAULT_BASELINE = "frontend/scene-baseline.json"
+#: Where the frozen set is read from: the merge base with this ref.
+DEFAULT_BASE = "origin/main"
 
 #: A spec file is not a scene and not a router module to walk from.
 SPEC = re.compile(r"\.(spec|test)\.(ts|js|vue)$")
@@ -585,116 +611,118 @@ def judge(
     return verdict
 
 
-def tightened(
-    baseline: Baseline,
-    grades: dict[str, Any],
-    *,
-    bootstrap: bool = False,
-    views: dict[str, str] | None = None,
-) -> tuple[Baseline, list[tuple[str, str]]]:
-    """The baseline `--update` would write, and what it refused to do.
+# ----------------------------------------------------------------- the freeze
 
-    Adding a scene to `ready` is what "the set may only grow" means, and
-    dropping one from `debt` pays debt down. The two refusals are the ratchet:
-    a scene that regressed is NOT dropped from `ready` (that would launder the
-    regression into an edit), and a scene that is not standalone-ready is NOT
-    added to `debt` (that would grandfather today's mistake as tomorrow's
-    precedent). Both come back as refusals and the caller exits 1.
 
-    `bootstrap` is the one exception, and it is a file that does not exist yet:
-    with no baseline at all there is nothing to grandfather — every scene in
-    the tree is by definition pre-existing, which is what the first frozen set
-    says. Deleting the baseline to launder a regression is not available: the
-    check cannot judge without it (exit 2), and the deletion is in the diff.
+def merge_base(root: Path, base: str) -> str:
+    """The commit `HEAD` and `base` last agreed on: where the freeze is read.
 
-    A frozen scene that is gone from the tree is dropped from both lists: the
-    path no longer exists, so it can neither pass nor fail, and a baseline that
-    keeps it grows a list of paths nobody can act on.
+    Not `base` itself — a branch may be behind it, and what a branch is judged
+    against is the tree it actually started from. Nothing about a ref that does
+    not resolve is a guess: it is exit 2.
     """
-    ready = set(baseline.ready)
-    debt = set(baseline.debt)
-    refusals: list[tuple[str, str]] = []
-
-    for scene in sorted(grades):
-        key = key_of(scene)
-        grade = grades[scene]
-        if grade.standalone:
-            ready.add(key)
-            debt.discard(key)
-        elif container_view(scene, grades, views or {}) is not None:
-            # In neither list: its view carries the freeze, and the page is
-            # judged as that view's container on every run.
-            ready.discard(key)
-            debt.discard(key)
-        elif key in baseline.ready:
-            refusals.append((key, f"stopped being standalone-ready (now {grade.letter})"))
-        elif key not in baseline.debt and not bootstrap:
-            refusals.append((key, f"is new and not standalone-ready (grade {grade.letter})"))
-        else:
-            debt.add(key)
-
-    for key in set(ready) | set(debt):
-        if scene_of(key) not in grades:
-            ready.discard(key)
-            debt.discard(key)
-
-    return Baseline(ready=frozenset(ready), debt=frozenset(debt)), refusals
-
-
-# ------------------------------------------------------------------- the I/O
-
-
-def read_baseline(path: Path, *, create_if_missing: bool) -> Baseline:
-    """Parse the baseline. Missing is an error unless we are writing one.
-
-    "Writing one" is the initial freeze: there is no frozen set yet, so the
-    first `--update` writes the tree as it stands. A path that is *there* and
-    unreadable is never a bootstrap — that would turn a corrupt baseline into a
-    licence to rewrite it.
-    """
-    if not path.is_file():
-        if create_if_missing:
-            return Baseline()
+    result = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "HEAD", base],
+        capture_output=True,
+        text=True,
+    )
+    revs = result.stdout.split()
+    if result.returncode or not revs:
+        why = (result.stderr or result.stdout).strip().splitlines()
         raise Unjudgeable(
-            f"no baseline at {path} — this check cannot tell a new scene from "
-            f"an old one without it (run with --update to write the first one)"
+            f"no merge base between HEAD and {base}"
+            + (f": {why[-1]}" if why else "")
+            + " — the frozen set is read from that tree (a fetch may be missing)"
+        )
+    # Several best common ancestors (a criss-cross history) is not a tree to
+    # guess at: any one of them is a real answer, so take the first.
+    return revs[0]
+
+
+def _extract_kwargs() -> dict[str, str]:
+    """`filter="data"` where the interpreter has it.
+
+    It refuses absolute paths and `..` out of the archive — which git does not
+    write, and a corrupted object could. Older interpreters take no filter.
+    """
+    return {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+
+
+def base_tree(root: Path, rev: str, dest: Path) -> Path:
+    """`rev`'s `frontend/`, unpacked under `dest`. Returns `dest`.
+
+    `git archive` into a scratch directory rather than `git worktree add`:
+    this runs from more than one checkout of the same clone at once, and a
+    worktree writes an entry into the shared `.git` that nothing prunes if the
+    run dies before it can remove it.
+    """
+    archive = subprocess.run(
+        ["git", "-C", str(root), "archive", "--format=tar", rev, "frontend"],
+        capture_output=True,
+    )
+    if archive.returncode:
+        why = archive.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise Unjudgeable(
+            f"cannot read frontend/ at {rev}" + (f": {why[-1]}" if why else "")
         )
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise Unjudgeable(f"cannot read {path}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise Unjudgeable(f"{path} is not a JSON object")
-    ready, debt = data.get("ready"), data.get("debt")
-    if not isinstance(ready, list) or not isinstance(debt, list):
-        raise Unjudgeable(f'{path} needs a "ready" and a "debt" list')
-    for key in [*ready, *debt]:
-        if not isinstance(key, str) or not key.startswith("src/"):
-            raise Unjudgeable(f"{path} has a key that is not a frontend-relative scene: {key!r}")
+        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+            tar.extractall(dest, **_extract_kwargs())
+    except (tarfile.TarError, OSError) as exc:
+        raise Unjudgeable(f"cannot unpack the tree at {rev}: {exc}") from exc
+    if not (dest / "frontend" / "src").is_dir():
+        raise Unjudgeable(f"the tree at {rev} has no {SRC_DIR}/ to grade")
+    return dest
+
+
+def classify(grades: dict[str, Any], views: dict[str, str]) -> Baseline:
+    """The frozen set a graded tree implies: grade A is ready, the rest is debt.
+
+    A container page is in neither: it is judged as its view (see `judge`), and
+    its view is the scene that carries the freeze.
+    """
+    ready: set[str] = set()
+    debt: set[str] = set()
+    for scene, grade in grades.items():
+        key = key_of(scene)
+        if not grade.standalone and container_view(scene, grades, views) is not None:
+            continue
+        (ready if grade.standalone else debt).add(key)
     return Baseline(ready=frozenset(ready), debt=frozenset(debt))
 
 
-def write_baseline(path: Path, baseline: Baseline) -> None:
-    """`_comment` first, so the rule travels with the file it governs."""
-    payload = {
-        "_comment": (
-            "Scenes that already run standalone, frozen by "
-            ".claude/scripts/scene-ratchet.py. `ready` may only grow: a scene in "
-            "it that stops being grade A fails the check. `debt` is the "
-            "pre-existing scenes that are not standalone-ready — it may only "
-            "shrink, and a scene in neither list is NEW and must be grade A. "
-            "Regenerate with `pnpm run lint:scenes:update` (it never accepts a "
-            "regression). What a scene is and what grade A means: "
-            "docs/manual/dev/scenes.md."
-        ),
-        "ready": sorted(baseline.ready),
-        "debt": sorted(baseline.debt),
-    }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+def survey(root: Path) -> tuple[dict[str, Any], dict[str, str]]:
+    """Grade every scene under `root`, and pair the pages that render a view."""
+    grade_module = load_frontend_grade()
+    reach = grade_module.api_reach(root)
+    grades = grade_scenes(root, reach)
+    # Pages only: the container rule exists because a ROUTE has to get its data
+    # somewhere, and a panel has no route — a panel with a sibling
+    # `<Panel>View.vue` is a panel that fetches, not a container.
+    views = paired_views(root, {rel for rel in grades if rel.startswith(VIEWS_DIR)}, reach)
+    return grades, views
 
 
-#: The repair, once, for the two branches that name a scene but not how to fix
-#: it (a regression, and an --update refusal). Short on purpose: the page keeps
+def frozen(root: Path, base: str) -> tuple[Baseline, str]:
+    """The frozen set, and a label naming the tree it was read from.
+
+    The base tree is graded by this same rule — one ruler, two trees — so that
+    "the scene dropped below the level it had there" compares two readings of
+    one ruler rather than the readings of two.
+    """
+    rev = merge_base(root, base)
+    with tempfile.TemporaryDirectory(prefix="scene-base-") as scratch:
+        try:
+            grades, views = survey(base_tree(root, rev, Path(scratch)))
+        except LookupError as exc:
+            # The grader refuses a tree without `frontend/src`; `base_tree`
+            # has already checked, so this is the same answer one level down.
+            raise Unjudgeable(f"cannot grade the tree at {rev}: {exc}") from exc
+    return classify(grades, views), f"{base} ({rev[:12]})"
+
+
+#: The repair, for the one branch that names a scene but not how to fix it (a
+#: regression). Short on purpose: the page keeps
 #: the read and the view takes the result, which is the one thing a reader has to
 #: know before the fuller recipe.
 FIX_SLICE = (
@@ -706,8 +734,8 @@ FIX_SLICE = (
 )
 
 
-def format_report(verdict: Verdict, baseline: Baseline) -> str:
-    """The human half: what is wrong, why, and the one command that fixes it."""
+def format_report(verdict: Verdict, baseline: Baseline, origin: str) -> str:
+    """The human half: what is wrong, why, and the one thing that fixes it."""
     lines: list[str] = []
     if verdict.new_debt:
         lines.append("New scenes that are not standalone-ready (this is what the ratchet blocks):")
@@ -727,27 +755,27 @@ def format_report(verdict: Verdict, baseline: Baseline) -> str:
             lines.append(f"  {key}: A -> {letter}")
             lines.extend(f"    - {reason}" for reason in reasons)
         lines.append("")
-        lines.append("These are frozen in frontend/scene-baseline.json because they ran")
-        lines.append("standalone once, so putting the reach-through back is not an option.")
-        lines.append("Fix:")
+        lines.append("These were standalone-ready in the tree this branch started from")
+        lines.append(f"({origin}), so putting the reach-through back is not an option. Fix:")
         lines.append(FIX_SLICE)
         lines.append("")
     if verdict.improvements:
-        lines.append("Better than the baseline says — tighten it:")
+        lines.append("Better than that tree says — nothing to do:")
         for key, why in verdict.improvements:
             lines.append(f"  {key}: {why}")
         lines.append("")
-        lines.append("Run: pnpm run lint:scenes:update  (then commit frontend/scene-baseline.json)")
+        lines.append("The freeze is read from the merge base, so this one is frozen on its own")
+        lines.append("once it is in the tree both branches agree on.")
         lines.append("")
     lines.append(
         f"{len(verdict.ready)} standalone-ready, {len(verdict.containers)} container(s), "
         f"{len(verdict.debt)} pre-existing debt, "
-        f"baseline has {len(baseline.ready)} ready and {len(baseline.debt)} debt"
+        f"frozen from {origin}: {len(baseline.ready)} ready and {len(baseline.debt)} debt"
     )
     if not verdict.ok:
         lines.append("")
-        lines.append("A ratchet that can be satisfied by editing its baseline is not a ratchet:")
-        lines.append("--update only ever adds to `ready` and drops from `debt`.")
+        lines.append(f"There is no list to edit: the freeze is read from {origin} on every")
+        lines.append("run, so the fix has to be in the scene.")
     return "\n".join(lines)
 
 
@@ -775,50 +803,23 @@ def debt_details(
     ]
 
 
-def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
-    """Judge the tree at `root` against `baseline_path` and print the answer."""
+def run(root: Path, base: str, *, listing: bool) -> int:
+    """Judge the tree at `root` against the tree it started from, and report."""
     try:
-        grade_module = load_frontend_grade()
-        reach = grade_module.api_reach(root)
-        grades = grade_scenes(root, reach)
-        # Pages only: the container rule exists because a ROUTE has to get
-        # its data somewhere, and a panel has no route — a panel with a
-        # sibling `<Panel>View.vue` is a panel that fetches, not a container.
-        views = paired_views(
-            root, {rel for rel in grades if rel.startswith(VIEWS_DIR)}, reach
-        )
-        bootstrap = update and not baseline_path.is_file()
-        baseline = read_baseline(baseline_path, create_if_missing=update)
+        grades, views = survey(root)
+        baseline, origin = frozen(root, base)
     except Unjudgeable as exc:
         print(f"cannot judge: {exc}", file=sys.stderr)
         cannot_judge("scene-ratchet", exc)
-
-    if update:
-        next_baseline, refusals = tightened(baseline, grades, bootstrap=bootstrap, views=views)
-        if refusals:
-            print("refusing to update: the baseline may only grow and only shrink debt", file=sys.stderr)
-            for key, why in refusals:
-                print(f"  {key}: {why}", file=sys.stderr)
-            print(
-                "\nFix the scene, or leave the baseline alone:\n" + FIX_SLICE,
-                file=sys.stderr,
-            )
-            return 1
-        write_baseline(baseline_path, next_baseline)
-        print(
-            f"baseline updated: {len(next_baseline.ready)} standalone-ready, "
-            f"{len(next_baseline.debt)} debt — {baseline_path}"
-        )
-        return 0
 
     verdict = judge(baseline, grades, views)
     if as_json():
         # --json keeps stdout the one record line; on failure the same human
         # report (with the recipe) rides on stderr so a JSON caller still sees it.
         if not verdict.ok:
-            print(format_report(verdict, baseline), file=sys.stderr)
+            print(format_report(verdict, baseline, origin), file=sys.stderr)
         # The unit here is a scene, and a scene costs at most one: `frozen` is
-        # 1 for an allowance the baseline carries and `actual` is 0 once the
+        # 1 for an allowance the base tree carries and `actual` is 0 once the
         # scene no longer needs it. A scene that got better without ever being
         # frozen (a brand new standalone-ready one) is not a stale allowance and
         # is left out — there is nothing on the books to clear.
@@ -849,7 +850,7 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
                 for reason in grades[scene].reasons:
                     print(f"    - {reason}")
         print()
-    print(format_report(verdict, baseline))
+    print(format_report(verdict, baseline, origin))
     return 0 if verdict.ok else 1
 
 
@@ -926,22 +927,18 @@ FIXTURE: dict[str, str] = {
     ),
 }
 
-#: The baseline the fixture's own tree deserves: `ready` is what is grade A
-#: today, `debt` is what is not. Written out rather than derived, because a
-#: self-test that recomputes the answer can only agree with itself.
-FIXTURE_BASELINE = {
-    "ready": [
-        "src/components/panels/Plain.vue",
-        "src/views/Home.vue",
-        "src/views/Nested.vue",
-        "src/views/Typed.vue",
-    ],
-    "debt": ["src/components/panels/Wired.vue", "src/views/Heavy.vue"],
-}
-
-
 def _fixture(root: Path, changes: dict[str, str] | None = None) -> None:
-    """Write FIXTURE into `root`, then apply `changes` (a value of '' deletes)."""
+    """Reset `root`'s fixture tree, then apply `changes` (a value of '' deletes).
+
+    Anything the previous case left under `frontend/src` goes first. A leftover
+    page is not a scene unless the router reaches it, but the tree a case
+    commits as its base has to be the tree the case means.
+    """
+    src = root / "frontend" / "src"
+    if src.is_dir():
+        for path in sorted(src.rglob("*"), reverse=True):
+            if path.is_file():
+                path.unlink()
     files = dict(FIXTURE)
     files.update(changes or {})
     for rel, body in files.items():
@@ -953,14 +950,43 @@ def _fixture(root: Path, changes: dict[str, str] | None = None) -> None:
         path.write_text(body, encoding="utf-8")
 
 
-def _fixture_baseline(root: Path, changes: dict[str, list[str]] | None = None) -> Path:
-    """The baseline file for `root`'s fixture, with `changes` applied."""
-    baseline = {kind: list(keys) for kind, keys in FIXTURE_BASELINE.items()}
-    baseline.update(changes or {})
-    path = root / "frontend" / "scene-baseline.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
-    return path
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run git in the fixture repo with this machine's setup kept out of it.
+
+    The self-test commits into a throwaway repo. A global `core.hooksPath`, a
+    global identity or a global ignore file would each make the fixture tree
+    depend on whose machine ran it, so none of the three apply here.
+    """
+    return subprocess.run(
+        [
+            "git", "-C", str(root),
+            "-c", "user.name=scene-ratchet self-test",
+            "-c", "user.email=self-test@example.invalid",
+            "-c", "commit.gpgsign=false",
+            "-c", "core.hooksPath=/dev/null",
+            "-c", "core.excludesFile=/dev/null",
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _freeze(root: Path, changes: dict[str, str] | None = None) -> str:
+    """Commit FIXTURE (+`changes`) as the tree both branches agree on.
+
+    This is the whole of what `frontend/scene-baseline.json` used to be: the
+    freeze is read off a tree now, so a case sets its base by committing one.
+    Returns the commit, which is what `--base HEAD` then resolves to.
+    """
+    _fixture(root, changes)
+    if not (root / ".git").is_dir():
+        _git(root, "init", "-q", "-b", "main")
+    _git(root, "add", "frontend")
+    result = _git(root, "commit", "-q", "--allow-empty", "-m", "fixture")
+    if result.returncode:
+        raise RuntimeError(f"the fixture repo cannot commit: {result.stderr.strip()}")
+    return _git(root, "rev-parse", "HEAD").stdout.strip()
 
 
 def self_test() -> int:
@@ -971,10 +997,10 @@ def self_test() -> int:
         if got != want:
             failures.append(f"{label}: got {got!r}, want {want!r}")
 
-    def run_cli(root: Path, baseline: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    def run_cli(root: Path, *args: str, base: str = "HEAD") -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             [sys.executable, str(Path(__file__).resolve()), "--root", str(root),
-             "--baseline", str(baseline), *args],
+             "--base", base, *args],
             capture_output=True, text=True,
         )
         # A crash is never a result. Without this, an exception inside the CLI
@@ -987,21 +1013,32 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory(prefix="scene-ratchet-selftest-") as raw:
         root = Path(raw)
 
-        # -- the fixture is the tree the baseline describes -----------------
-        _fixture(root)
-        baseline_path = _fixture_baseline(root)
-        result = run_cli(root, baseline_path)
-        check("the fixture's own baseline passes", result.returncode, 0)
-        check("grades the pages the router reaches", "A src/views/Home.vue" in run_cli(
-            root, baseline_path, "--list").stdout, True)
-        check("does not judge a spec file's imports", "src/views/NotAPage.vue" in result.stdout, False)
+        # -- the fixture, and the tree both branches agree on -----------------
+        #    The freeze is a tree now, so every case is a pair: the tree the
+        #    branch started from (a commit), and the tree it leaves behind (the
+        #    working files). `--base HEAD` makes the fixture repo's own history
+        #    that pair. The empty commit below is a tree with no `frontend/`.
+        _git(root, "init", "-q", "-b", "main")
+        _git(root, "commit", "-q", "--allow-empty", "-m", "empty")
+        empty_sha = _git(root, "rev-parse", "HEAD").stdout.strip()
+        base_sha = _freeze(root)
+        result = run_cli(root)
+        check("the fixture's own tree passes", result.returncode, 0)
+        #    `--list` names every scene, the verdict only ever names the ones it
+        #    has something to say about — so the tree's membership is asked of
+        #    the listing. A page reached only through a `.spec.ts` import is not
+        #    a scene; it is A in the fixture, so a report would stay silent about
+        #    it even if the walk had wrongly taken the spec file as an edge.
+        listed = run_cli(root, "--list").stdout
+        check("grades the pages the router reaches", "A src/views/Home.vue" in listed, True)
+        check("does not judge a spec file's imports", "src/views/NotAPage.vue" in listed, False)
 
         # -- 1. a baselined scene that regresses -----------------------------
         _fixture(root, {"frontend/src/views/Home.vue": (
             '<script setup lang="ts">\nimport { api } from \'@/api\'\napi.get()\n</script>\n'
             "<template><div /></template>\n"
         )})
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a baselined scene that regresses fails", result.returncode, 1)
         check("and is named with its old grade", "src/views/Home.vue: A -> C" in result.stdout, True)
         check("and says why", "imports the API layer" in result.stdout, True)
@@ -1012,7 +1049,7 @@ def self_test() -> int:
 
         # --json (what ci:fast calls) stays the one record line on stdout, and
         # carries the same fix on stderr.
-        result = run_cli(root, baseline_path, "--json")
+        result = run_cli(root, "--json")
         check("--json regressing scene stays one line", len(result.stdout.strip().splitlines()), 1)
         check("--json keeps the fix on stderr", "<PageName>View.vue" in result.stderr, True)
 
@@ -1027,13 +1064,13 @@ def self_test() -> int:
             ),
             "frontend/src/router/index.ts": _router(brand),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a new page that is not standalone-ready fails", result.returncode, 1)
         check("and is reported as new", "src/views/Brand.vue: D" in result.stdout, True)
         check("and says why", "reads the route" in result.stdout, True)
-        # The whole point of the two lists: debt is what --update may pay down,
-        # and a new scene is not debt, so nothing offers to freeze it.
-        check("and offers no baseline edit for it", "pnpm run lint:scenes:update" in result.stdout, False)
+        # The freeze is a tree, so a new scene cannot be grandfathered by naming
+        # it anywhere: the only fix the report can offer is in the scene.
+        check("and points at the scene, not a list", "no list to edit" in result.stdout, True)
 
         # -- 3. a new page that IS standalone-ready --------------------------
         _fixture(root)
@@ -1044,13 +1081,13 @@ def self_test() -> int:
             ),
             "frontend/src/router/index.ts": _router(brand),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a new page that is standalone-ready passes", result.returncode, 0)
         check("and is offered to the baseline", "src/views/Brand.vue: is new and standalone-ready" in result.stdout, True)
 
         # -- 4. pre-existing debt --------------------------------------------
         _fixture(root)
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("pre-existing debt passes", result.returncode, 0)
         check("and is not offered as an improvement", "Heavy.vue: was debt" in result.stdout, False)
 
@@ -1059,14 +1096,14 @@ def self_test() -> int:
         #    type-only one is graded A. Without the control this case would pass
         #    for a grader that never looked at Typed.vue at all.
         _fixture(root)
-        result = run_cli(root, baseline_path, "--list")
+        result = run_cli(root, "--list")
         check("a type-only import is not reach", "A src/views/Typed.vue" in result.stdout, True)
         check("the same import as a value is reach", "C src/views/Heavy.vue" in result.stdout, True)
         _fixture(root, {"frontend/src/views/Typed.vue": (
             '<script setup lang="ts">\nimport { api } from \'@/api\'\napi.get()\n</script>\n'
             "<template><div /></template>\n"
         )})
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("so a plain import of the same module still fails", result.returncode, 1)
         check("for the same scene the type-only one passed", "src/views/Typed.vue: A -> C" in result.stdout, True)
 
@@ -1088,11 +1125,12 @@ def self_test() -> int:
             ),
             "frontend/src/router/index.ts": _router(wrapped),
         })
-        result = run_cli(root, baseline_path, "--list")
+        result = run_cli(root, "--list")
         check("the page that renders a fetching child is graded C",
               "C src/views/Wrapped.vue" in result.stdout, True)
-        result = run_cli(root, baseline_path)
-        check("so it is not frozen as ready", "src/views/Wrapped.vue: is new and standalone-ready" in result.stdout, False)
+        result = run_cli(root)
+        check("so a new scene below ready is refused", result.returncode, 1)
+        check("and no list can freeze it", "no list to edit" in result.stdout, True)
 
         # -- 9. a new page that is a container ---------------------------------
         #    It fetches and reads the route, which is a page's job, and renders
@@ -1117,30 +1155,38 @@ def self_test() -> int:
             "frontend/src/views/SettleView.vue": pure_view,
             "frontend/src/router/index.ts": _router(settle),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a new container page with a standalone view passes", result.returncode, 0)
         check("and its view is offered to the baseline",
               "src/views/SettleView.vue: is new and standalone-ready" in result.stdout, True)
-        listing = run_cli(root, baseline_path, "--list").stdout
+        listing = run_cli(root, "--list").stdout
         check("--list names the page as the view's container",
               "src/views/Settle.vue  (container of src/views/SettleView.vue)" in listing, True)
 
-        result = run_cli(root, baseline_path, "--update")
-        check("--update accepts a container", result.returncode, 0)
-        written = json.loads(baseline_path.read_text(encoding="utf-8"))
-        check("and freezes its view as ready", "src/views/SettleView.vue" in written["ready"], True)
-        check("but not the page, in either list",
-              "src/views/Settle.vue" in written["ready"] + written["debt"], False)
-        check("and the result passes", run_cli(root, baseline_path).returncode, 0)
+        # The freeze moves when the tree that carries the rendering becomes the
+        # tree both branches agree on: commit the container and its view, and
+        # the view is the frozen scene while the page is in neither list.
+        _freeze(root, {
+            "frontend/src/views/Settle.vue": container,
+            "frontend/src/views/SettleView.vue": pure_view,
+            "frontend/src/router/index.ts": _router(settle),
+        })
+        result = run_cli(root)
+        check("a tree that already has the container passes", result.returncode, 0)
+        check("and the page is in neither list", "src/views/Settle.vue: D" in result.stdout, False)
 
-        _fixture(root, {"frontend/src/router/index.ts": _router(settle), "frontend/src/views/SettleView.vue": (
-            '<script setup lang="ts">\nimport { api } from \'@/api\'\napi.get()\n</script>\n'
-            "<template><div /></template>\n"
-        )})
-        result = run_cli(root, baseline_path)
-        check("a frozen view that starts fetching fails", result.returncode, 1)
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container,
+            "frontend/src/views/SettleView.vue": (
+                '<script setup lang="ts">\nimport { api } from \'@/api\'\napi.get()\n</script>\n'
+                "<template><div /></template>\n"
+            ),
+        })
+        result = run_cli(root)
+        check("and its view is the frozen scene now", result.returncode, 1)
         check("and is named as the regression", "src/views/SettleView.vue: A -> C" in result.stdout, True)
-        baseline_path = _fixture_baseline(root)
+        _freeze(root)
 
         # the controls: an unused sibling, a type-only import, a view that fetches
         _fixture(root, {
@@ -1150,7 +1196,7 @@ def self_test() -> int:
             ).replace('<SettleView :thing="thing" :id="route.params.id" />', "<div />"),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a view the page does not import does not make it a container", result.returncode, 1)
         check("so the page is reported as new debt", "src/views/Settle.vue: D" in result.stdout, True)
 
@@ -1159,7 +1205,7 @@ def self_test() -> int:
             "frontend/src/views/Settle.vue": container.replace(
                 "import SettleView from", "import type SettleView from"),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a type-only import of the view does not pair it", result.returncode, 1)
 
         _fixture(root, {
@@ -1170,7 +1216,7 @@ def self_test() -> int:
                 "<template><div /></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a container whose view fetches fails", result.returncode, 1)
         check("and the view is named", "src/views/SettleView.vue: C" in result.stdout, True)
         check("with the page", "src/views/Settle.vue: D" in result.stdout, True)
@@ -1192,11 +1238,11 @@ def self_test() -> int:
                 '<SettleView :thing="thing" :id="route.params.id" />', "<div />"),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("an imported view the page never renders does not pair", result.returncode, 1)
         check("and the shell page is named", "src/views/Settle.vue: D" in result.stdout, True)
         check("and no container is claimed", "container of" in run_cli(
-            root, baseline_path, "--list").stdout, False)
+            root, "--list").stdout, False)
 
         # the template renders the view AND a fetching child: the view is one
         # of several places the rendering lives, which is not the recipe
@@ -1214,7 +1260,7 @@ def self_test() -> int:
                 "<template><div>{{ r }}</div></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a view rendered next to a fetching child does not pair", result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
 
@@ -1234,11 +1280,11 @@ def self_test() -> int:
                 "<template><div>{{ n }}</div></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a container whose other rendered child is grade A passes", result.returncode, 0)
         check("and is listed as a container",
               "src/views/Settle.vue  (container of src/views/SettleView.vue)"
-              in run_cli(root, baseline_path, "--list").stdout, True)
+              in run_cli(root, "--list").stdout, True)
 
         # a view rendered only through <component :is> cannot be verified, and
         # a verifiable shape is the price of the exemption
@@ -1249,51 +1295,58 @@ def self_test() -> int:
                 '<component :is="SettleView" :thing="thing" :id="route.params.id" />'),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a view rendered only through <component :is> does not pair", result.returncode, 1)
 
-        # a frozen page shedding its freeze into a shell: it imports the view,
-        # never renders it, and --update would otherwise launder the migration
-        ready_path = _fixture_baseline(root, {
-            "ready": FIXTURE_BASELINE["ready"] + ["src/views/Settle.vue"]})
-        _fixture(root, {
+        # a page that was frozen as plain A shedding its freeze into a shell: it
+        # imports the view and never renders it, so the page is the scene and it
+        # has stopped being standalone-ready. There is no writer to launder it.
+        plain_a = (
+            "<script setup lang=\"ts\">\ndefineProps<{ n: number }>()\n</script>\n"
+            "<template><div>{{ n }}</div></template>\n"
+        )
+        _freeze(root, {
             "frontend/src/router/index.ts": _router(settle),
-            "frontend/src/views/Settle.vue": (
-                "<script setup lang=\"ts\">\ndefineProps<{ n: number }>()\n</script>\n"
-                "<template><div>{{ n }}</div></template>\n"
-            ),
+            "frontend/src/views/Settle.vue": plain_a,
             "frontend/src/views/SettleView.vue": "",
         })
-        check("a frozen page as plain A still passes", run_cli(root, ready_path).returncode, 0)
+        check("a frozen page as plain A still passes", run_cli(root).returncode, 0)
         _fixture(root, {
             "frontend/src/router/index.ts": _router(settle),
             "frontend/src/views/Settle.vue": container.replace(
                 '<SettleView :thing="thing" :id="route.params.id" />', "<div />"),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        result = run_cli(root, ready_path)
+        result = run_cli(root)
         check("a frozen page that shells out a view it never renders fails",
               result.returncode, 1)
         check("and is named as the regression", "src/views/Settle.vue: A -> D" in result.stdout, True)
-        before = ready_path.read_text(encoding="utf-8")
-        result = run_cli(root, ready_path, "--update")
-        check("and --update refuses to lift the freeze", result.returncode, 1)
-        check("leaving the baseline alone", ready_path.read_text(encoding="utf-8"), before)
+        check("and nothing offers to lift the freeze",
+              "no list to edit" in result.stdout, True)
+        check("so the next run says the same", run_cli(root).returncode, 1)
 
-        # the control: really moving the rendering DOES move the freeze
-        _fixture(root, {
+        # the control: really moving the rendering DOES move the freeze — once
+        # the tree that carries it is the tree both branches agree on, the view
+        # is the scene that is frozen
+        _freeze(root, {
             "frontend/src/router/index.ts": _router(settle),
             "frontend/src/views/Settle.vue": container,
             "frontend/src/views/SettleView.vue": pure_view,
         })
         check("a frozen page that really moves its rendering passes",
-              run_cli(root, ready_path).returncode, 0)
-        result = run_cli(root, ready_path, "--update")
-        check("and --update moves the freeze to the view", result.returncode, 0)
-        written = json.loads(ready_path.read_text(encoding="utf-8"))
-        check("the view is frozen now", "src/views/SettleView.vue" in written["ready"], True)
-        check("and the page is out of both lists",
-              "src/views/Settle.vue" in written["ready"] + written["debt"], False)
+              run_cli(root).returncode, 0)
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": container,
+            "frontend/src/views/SettleView.vue": (
+                '<script setup lang="ts">\nimport { api } from \'@/api\'\napi.get()\n</script>\n'
+                "<template><div /></template>\n"
+            ),
+        })
+        result = run_cli(root)
+        check("and the view is frozen now", result.returncode, 1)
+        check("so its regression is the one named",
+              "src/views/SettleView.vue: A -> C" in result.stdout, True)
 
         # a panel in the same costume: the container rule is for pages, whose
         # route has to get its data somewhere — a panel has no such excuse
@@ -1306,7 +1359,7 @@ def self_test() -> int:
             ),
             "frontend/src/components/panels/SneakyView.vue": pure_view,
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a panel cannot be a container even when it really renders the view",
               result.returncode, 1)
         check("and is named as new debt", "src/components/panels/Sneaky.vue" in result.stdout, True)
@@ -1320,8 +1373,7 @@ def self_test() -> int:
             "frontend/src/components/ChildFetch.vue",
         ):
             (root / rel).unlink(missing_ok=True)
-        _fixture(root)
-        baseline_path = _fixture_baseline(root)
+        _freeze(root)
 
         # -- 11. impostors at the extraction layer ----------------------------
         #    The pairing checks are only as good as what they read: a comment
@@ -1336,7 +1388,7 @@ def self_test() -> int:
                 '<div /><!-- TODO: <SettleView :thing="thing" :id="route.params.id" /> -->'),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a view rendered only in a comment does not pair", result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
 
@@ -1357,7 +1409,7 @@ def self_test() -> int:
                 "<template><div>{{ r }}</div></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a fetching child after a nested template does not pair", result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
 
@@ -1378,7 +1430,7 @@ def self_test() -> int:
             ),
         })
         check("an A-grade child after a nested template still pairs",
-              run_cli(root, baseline_path).returncode, 0)
+              run_cli(root).returncode, 0)
 
         # a V-prefix is not a Vuetify registration: a globally registered
         # component the check cannot see must not be trusted
@@ -1389,7 +1441,7 @@ def self_test() -> int:
                 '<SettleView :thing="thing" :id="route.params.id" /><VReport />'),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("an unknown V-prefixed tag does not pair", result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
 
@@ -1401,7 +1453,7 @@ def self_test() -> int:
                 '<SettleView :thing="thing" :id="route.params.id" /><v-btn>save</v-btn>'),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        check("a real Vuetify tag still pairs", run_cli(root, baseline_path).returncode, 0)
+        check("a real Vuetify tag still pairs", run_cli(root).returncode, 0)
 
         # a local binding shadows the builtin: `import RouterView from ...` is
         # that file, not the router's outlet, and must be graded
@@ -1419,7 +1471,7 @@ def self_test() -> int:
                 "<template><div>{{ r }}</div></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a local binding named RouterView is graded, not trusted", result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
 
@@ -1431,7 +1483,7 @@ def self_test() -> int:
                 '<SettleView :thing="thing" :id="route.params.id" /><RouterView />'),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        check("the builtin RouterView still pairs", run_cli(root, baseline_path).returncode, 0)
+        check("the builtin RouterView still pairs", run_cli(root).returncode, 0)
 
         for rel in (
             "frontend/src/views/Settle.vue",
@@ -1441,8 +1493,7 @@ def self_test() -> int:
             "frontend/src/components/LocalFetch.vue",
         ):
             (root / rel).unlink(missing_ok=True)
-        _fixture(root)
-        baseline_path = _fixture_baseline(root)
+        _freeze(root)
 
         # -- 12. impostors Vue itself would execute ---------------------------
         #    Each shape below is valid, compiled-and-renders Vue (checked
@@ -1466,7 +1517,7 @@ def self_test() -> int:
                 "<template><div>{{ r }}</div></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a lowercase local component is graded, not skipped as native",
               result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
@@ -1487,7 +1538,7 @@ def self_test() -> int:
             ),
         })
         check("a lowercase import of an A component still pairs",
-              run_cli(root, baseline_path).returncode, 0)
+              run_cli(root).returncode, 0)
 
         # a quoted `</template>` inside an attribute value is not a tag
         _fixture(root, {
@@ -1505,7 +1556,7 @@ def self_test() -> int:
                 "<template><div>{{ r }}</div></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a quoted </template> in an attribute does not end the scan",
               result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
@@ -1517,7 +1568,7 @@ def self_test() -> int:
             '<template><template v-if="ok"><div /></template>'
             "<div>{{ $router.push('/') }}</div></template>\n"
         )})
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a route read after a nested template still counts", result.returncode, 1)
         check("and the frozen page is named", "src/views/Home.vue: A -> D" in result.stdout, True)
         _fixture(root)
@@ -1539,7 +1590,7 @@ def self_test() -> int:
                 "<template><div>{{ r }}</div></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a builtin shadowed by a local declaration is not trusted",
               result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
@@ -1553,7 +1604,7 @@ def self_test() -> int:
                 '<SettleView :thing="thing" :id="route.params.id" /><VOverflowBtn />'),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a V-name outside the vuetify import map does not pair",
               result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
@@ -1567,7 +1618,7 @@ def self_test() -> int:
             "frontend/src/views/SettleView.vue": pure_view,
         })
         check("a name the import map really has still pairs",
-              run_cli(root, baseline_path).returncode, 0)
+              run_cli(root).returncode, 0)
 
         for rel in (
             "frontend/src/views/Settle.vue",
@@ -1576,8 +1627,7 @@ def self_test() -> int:
             "frontend/src/components/ChildFetch.vue",
         ):
             (root / rel).unlink(missing_ok=True)
-        _fixture(root)
-        baseline_path = _fixture_baseline(root)
+        _freeze(root)
 
         # -- 13. the binding decides, and attributes do not render ------------
         #    Two more, reproduced green by review and compiled by the repo's
@@ -1601,7 +1651,7 @@ def self_test() -> int:
                     "<template><div>{{ r }}</div></template>\n"
                 ),
             })
-            result = run_cli(root, baseline_path)
+            result = run_cli(root)
             check(f"a local binding under a builtin name ({label}) decides",
                   result.returncode, 1)
             check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
@@ -1620,7 +1670,7 @@ def self_test() -> int:
                 "<template><div>{{ r }}</div></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a local binding under a vuetify name decides", result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
 
@@ -1632,7 +1682,7 @@ def self_test() -> int:
                 '<div title="<SettleView />">x</div>'),
             "frontend/src/views/SettleView.vue": pure_view,
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a view named only inside an attribute value does not pair",
               result.returncode, 1)
         check("and the page is named", "src/views/Settle.vue: D" in result.stdout, True)
@@ -1648,7 +1698,7 @@ def self_test() -> int:
             "frontend/src/views/SettleView.vue": pure_view,
         })
         check("a tag string inside an attribute does not break a real container",
-              run_cli(root, baseline_path).returncode, 0)
+              run_cli(root).returncode, 0)
 
         # -- 14. what the template renders, and a comment that only mentions ---
         #    The router test is a real import plus the template's own tags. A
@@ -1666,7 +1716,7 @@ def self_test() -> int:
                 '<template><router-link to="/x">{{ id }}</router-link></template>\n'
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a page whose only router use is the tag it renders is not ready",
               result.returncode, 1)
         check("and it is named", "src/views/Settle.vue: D" in result.stdout, True)
@@ -1682,7 +1732,7 @@ def self_test() -> int:
             ),
         })
         check("a comment that names vue-router is not a dependency",
-              run_cli(root, baseline_path).returncode, 0)
+              run_cli(root).returncode, 0)
 
         # -- 15. an edge spelled `export … from` ------------------------------
         #    An index barrel carries the chain: `index.ts` re-exports the
@@ -1704,7 +1754,7 @@ def self_test() -> int:
                 "useThing()\n</script>\n<template><div /></template>\n"
             ),
         })
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a page that fetches through a re-export barrel is not ready",
               result.returncode, 1)
         check("and it is named", "src/views/Settle.vue: C" in result.stdout, True)
@@ -1723,7 +1773,7 @@ def self_test() -> int:
             ),
         })
         check("a barrel that re-exports only a type is not an edge",
-              run_cli(root, baseline_path).returncode, 0)
+              run_cli(root).returncode, 0)
 
         for rel in (
             "frontend/src/views/Settle.vue",
@@ -1733,34 +1783,53 @@ def self_test() -> int:
             "frontend/src/views/pages/composables/useThing.ts",
         ):
             (root / rel).unlink(missing_ok=True)
-        _fixture(root)
-        baseline_path = _fixture_baseline(root)
+        _freeze(root)
 
         # -- 6. cannot judge --------------------------------------------------
+        #    The one answer this gate exists to avoid is "no frozen set, so
+        #    nothing is frozen, so everything is fine". A base that cannot be
+        #    read is a 2, and one that cannot be resolved is a 2 before any of
+        #    that.
         _fixture(root)
-        result = run_cli(root, baseline_path)
+        result = run_cli(root)
         check("a healthy tree is judged", result.returncode, 0)
-        missing = root / "absent-baseline.json"
-        check("a missing baseline cannot be judged", run_cli(root, missing).returncode, 2)
-        broken = root / "broken-baseline.json"
-        broken.write_text("{ not json", encoding="utf-8")
-        check("an unreadable baseline cannot be judged", run_cli(root, broken).returncode, 2)
-        wrong = root / "wrong-baseline.json"
-        wrong.write_text('{"ready": ["views/Home.vue"], "debt": []}\n', encoding="utf-8")
-        check("a key that is not frontend-relative cannot be judged", run_cli(root, wrong).returncode, 2)
-        empty = Path(raw) / "empty-root"
-        empty.mkdir()
-        check("a tree with no frontend/src cannot be judged", run_cli(empty, baseline_path).returncode, 2)
+        result = run_cli(root, base="refs/heads/absent")
+        check("a base ref that does not resolve cannot be judged", result.returncode, 2)
+        check("and says why", "merge base" in result.stderr, True)
+        check("and names the ref", "refs/heads/absent" in result.stderr, True)
+        result = run_cli(root, "--json", base="refs/heads/absent")
+        check("--json reports it too", result.returncode, 2)
+        try:
+            record = json.loads(result.stdout)
+        except ValueError:
+            record = {}
+        check("as the record a collector reads", record.get("status"), "cannot_judge")
+        result = run_cli(root, base=empty_sha)
+        check("a base tree with no frontend/ cannot be judged", result.returncode, 2)
+        check("and says what it could not read", "cannot read frontend/" in result.stderr, True)
+        # a base tree that has `frontend/` and no `frontend/` src to grade: the
+        # same family, one level in. Committed here, undone right after.
+        _git(root, "rm", "-r", "-q", "--cached", "frontend/src")
+        (root / "frontend" / "package.json").write_text('{"name": "fixture"}\n', encoding="utf-8")
+        _git(root, "add", "frontend/package.json")
+        _git(root, "commit", "-q", "-m", "no src")
+        result = run_cli(root, base="HEAD")
+        check("a base tree with no frontend/src cannot be judged", result.returncode, 2)
+        check("and says so", "frontend/src" in result.stderr, True)
+        _git(root, "reset", "-q", "--hard", base_sha)
 
-        # -- 7. what --update refuses, and what it may do --------------------
+        # -- 7. what the gate refuses, and what it may not do -----------------
+        #    There is no writer any more, so no list can launder a regression or
+        #    grandfather a new scene: the freeze is the base tree, and the only
+        #    edit that changes the verdict is the scene.
         _fixture(root, {"frontend/src/views/Home.vue": (
             '<script setup lang="ts">\nimport { api } from \'@/api\'\napi.get()\n</script>\n'
             "<template><div /></template>\n"
         )})
-        before = baseline_path.read_text(encoding="utf-8")
-        result = run_cli(root, baseline_path, "--update")
-        check("--update refuses to launder a regression", result.returncode, 1)
-        check("and leaves the baseline alone", baseline_path.read_text(encoding="utf-8"), before)
+        result = run_cli(root)
+        check("a regression is refused", result.returncode, 1)
+        check("and there is no list to edit", "no list to edit" in result.stdout, True)
+        check("so re-running says the same thing", run_cli(root).returncode, 1)
 
         _fixture(root)
         _fixture(root, {
@@ -1773,12 +1842,15 @@ def self_test() -> int:
                 "  { name: 'brand', path: '/brand', component: () => import('@/views/Brand.vue') },\n"
             ),
         })
-        result = run_cli(root, baseline_path, "--update")
-        check("--update refuses to grandfather a new scene", result.returncode, 1)
-        check("and names it", "src/views/Brand.vue" in result.stderr, True)
+        result = run_cli(root)
+        check("a new scene below ready is refused", result.returncode, 1)
+        check("and is named", "src/views/Brand.vue" in result.stdout, True)
+        check("while the scene it replaced is only an improvement",
+              "src/views/Home.vue: is no longer in the tree" in result.stdout, True)
 
-        # Debt that got paid down is dropped; a ready scene that is gone is
-        # dropped too, and neither is a refusal.
+        # Debt that got paid down, and a ready scene that is gone from the
+        # candidate, are both fine: the first is better than the base tree, the
+        # second is a scene the candidate simply does not have.
         _fixture(root, {
             "frontend/src/views/Heavy.vue": (
                 "<script setup lang=\"ts\">\ndefineProps<{ n: number }>()\n</script>\n"
@@ -1787,43 +1859,56 @@ def self_test() -> int:
             "frontend/src/views/Nested.vue": "",
             "frontend/src/router/pages.ts": "export const pages = []\n",
         })
-        result = run_cli(root, baseline_path, "--update")
-        check("--update pays debt down", result.returncode, 0)
-        written = json.loads(baseline_path.read_text(encoding="utf-8"))
-        check("the paid-down scene is ready now", "src/views/Heavy.vue" in written["ready"], True)
-        check("and no longer debt", "src/views/Heavy.vue" in written["debt"], False)
-        check("a scene gone from the tree is dropped", "src/views/Nested.vue" in written["ready"], False)
-        check("and the updated baseline passes", run_cli(root, baseline_path).returncode, 0)
+        result = run_cli(root)
+        check("paid-down debt passes", result.returncode, 0)
+        check("and is reported as better than the base tree",
+              "src/views/Heavy.vue: was debt, is standalone-ready now" in result.stdout, True)
+        check("and the scene that is gone is an improvement, not a failure",
+              "src/views/Nested.vue: is no longer in the tree" in result.stdout, True)
 
-        # -- 8. the committed baseline describes the tree it was written on ---
-        #    Not a re-run of the check (that is the CI step): a baseline keyed by
-        #    absolute paths, or one listing a scene that is not a scene, would
-        #    otherwise only show up as a check that passes over nothing.
-        try:
-            committed = read_baseline(REPO_ROOT / DEFAULT_BASELINE, create_if_missing=False)
-            grades = grade_scenes(REPO_ROOT)
-        except Unjudgeable as exc:
-            failures.append(f"the committed baseline is not usable: {exc}")
-        else:
-            unknown = committed.known - {key_of(scene) for scene in grades}
-            check("every committed baseline key is a scene in the tree", sorted(unknown), [])
-            check("ready and debt do not overlap", sorted(committed.ready & committed.debt), [])
-
-            # The wiring, which is what makes all of the above a gate: a check
-            # nothing runs is a document with extra steps.
-            package = json.loads((REPO_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
-            script = package["scripts"].get("lint:scenes", "")
-            check("frontend/package.json runs this script", script.endswith("scene-ratchet.py"), True)
-            workflow = (REPO_ROOT / ".github" / "workflows" / "frontend.yml").read_text(encoding="utf-8")
-            check("and CI runs that script", "run: pnpm run lint:scenes" in workflow, True)
-            hooks = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
-            check("and a commit runs it too", "scene-ratchet" in hooks, True)
+        # -- 8. the wiring, which is what makes all of the above a gate -------
+        #    A check nothing runs is a document with extra steps, and a run
+        #    without `--base` freezes against whatever `origin/main` happens to
+        #    be for the caller — or, in a shallow clone, against nothing.
+        package = json.loads((REPO_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+        script = package["scripts"].get("lint:scenes", "")
+        check("frontend/package.json runs this script against origin/main",
+              script.endswith("scene-ratchet.py --base origin/main"), True)
+        check("and keeps no writer", "lint:scenes:update" in package["scripts"], False)
+        workflow = (REPO_ROOT / ".github" / "workflows" / "frontend.yml").read_text(encoding="utf-8")
+        check("and CI runs that script", "run: pnpm run lint:scenes" in workflow, True)
+        hooks = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+        check("and a commit runs it with the same base",
+              "scene-ratchet.py --base origin/main" in hooks, True)
+        #    Whether the hook fires at all is `files:`. The pattern used to end
+        #    at the directory -- `src/(views|router|components/panels)/$` -- so
+        #    it matched no file that exists and the local gate never ran for a
+        #    scene change. Pre-commit searches the whole path, so the answer is
+        #    checked here rather than assumed from the string.
+        block = re.search(r"- id: scene-ratchet\n(?:.*\n)*?\s+files: (\S+)", hooks)
+        files = re.compile(block.group(1)) if block else None
+        check("and that hook fires on what a scene change touches",
+              files is not None
+              and all(files.search(path) is not None for path in (
+                  "frontend/src/views/Home.vue",
+                  "frontend/src/router/index.ts",
+                  "frontend/src/components/panels/catalog/CatalogTable.vue",
+                  "frontend/package.json",
+                  ".claude/scripts/scene-ratchet.py",
+              ))
+              and files.search("backend/app/main.py") is None, True)
+        check("and the ledger is gone",
+              (REPO_ROOT / "frontend" / "scene-baseline.json").exists(), False)
+        fast = (REPO_ROOT / ".github" / "scripts" / "ci-fast.py").read_text(encoding="utf-8")
+        merge_base_hooks = re.search(r"MERGE_BASE_HOOKS = \{([^}]*)\}", fast)
+        check("and the quick tier knows not to run it without a merge base",
+              merge_base_hooks is not None and "scene-ratchet" in merge_base_hooks.group(1), True)
 
         # -- 9. a wrong root is a 2, never a pass ---------------------------
         #    The trap this gate exists for: `frontend/` instead of the repo
         #    root has no `frontend/src` underneath, and an empty import graph
         #    would grade every component standalone — the silent-A failure.
-        wrong = run_cli(root / "frontend", baseline_path)
+        wrong = run_cli(root / "frontend")
         check("a root without frontend/src exits 2", wrong.returncode, 2)
         check("and says why", "frontend/src" in wrong.stderr, True)
 
@@ -1846,9 +1931,10 @@ def self_test() -> int:
         "comment that only names the package — and two the barrel decides — a "
         "re-export that carries the chain against one that carries only a type — "
         "with the controls that stay green, "
-        "debt that is grandfathered, debt paid down, a type-only import that "
-        "is not reach, --update refusing both edits, and four ways of not being able "
-        "to judge, and a wrong root being a 2)"
+        "debt read off the base tree, debt paid down, a type-only import that "
+        "is not reach, no list to launder a regression or a new scene, four ways "
+        "of not being able to read the freeze, a hook pattern that really fires "
+        "on a scene change, and a wrong root being a 2)"
     )
     return 0
 
@@ -1859,8 +1945,11 @@ def self_test() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", default=str(REPO_ROOT), help="the tree to judge")
-    parser.add_argument("--baseline", default=None, help=f"default: {DEFAULT_BASELINE}")
-    parser.add_argument("--update", action="store_true", help="add ready scenes, drop paid debt")
+    parser.add_argument(
+        "--base",
+        default=DEFAULT_BASE,
+        help=f"freeze the scenes from the merge base with this ref (default: {DEFAULT_BASE})",
+    )
     parser.add_argument("--list", action="store_true", help="print every scene with its grade")
     parser.add_argument(
         "--json",
@@ -1874,9 +1963,8 @@ def main() -> int:
         return self_test()
 
     root = Path(args.root).resolve()
-    baseline_path = Path(args.baseline) if args.baseline else root / DEFAULT_BASELINE
     try:
-        return run(root, baseline_path, update=args.update, listing=args.list)
+        return run(root, args.base, listing=args.list)
     except LookupError as exc:
         # The grader refuses to judge a root without `frontend/src` (an empty
         # import graph would grade everything standalone). Not a violation —

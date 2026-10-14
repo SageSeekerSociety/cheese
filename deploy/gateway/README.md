@@ -84,6 +84,17 @@ registered the same way). `cch` hashes the request body, so it changes on every
 request; at the head of the prompt it makes a prefix cache such as RUC's miss
 the whole conversation. Requests bound for Anthropic keep it.
 
+Every inline image in a request is opened with Pillow before the request goes
+upstream (`image_guard.py`, registered the same way). An image that is not PNG,
+JPEG, GIF or WebP, does not decode, or is over 8000 px on a side is replaced by
+a text block naming the reason and the image's hash, and the gateway logs one
+`image_guard replaced image` line for it. Every provider refuses a request with
+such an image in it, and Claude Code resends its whole history on each turn, so
+without this one broken picture fails every later request of a conversation.
+The replacement depends only on the image's bytes, so it is the same on every
+turn and the prompt cache keeps hitting. Images that open pass unchanged, and
+an image given by URL is not fetched.
+
 The box's `backend/.env` must contain:
 
 ```
@@ -154,9 +165,20 @@ the upstream drops the connection or reports `response.failed`. The router holds
 `message_start` back until content arrives, so the caller got a 200 stream with
 no content and no stop, which Claude Code reports as "Stream ended without
 receiving any events" and does not retry. `patch_responses_stream_errors.py`
-ends such a stream with an Anthropic `error` event instead; before any content
-the router turns it into an HTTP error the caller retries.
+ends such a stream with an Anthropic `error` event instead.
 `test_responses_stream_errors.py` checks this against a local fake upstream.
+
+With no fallback configured, the router then re-raises that failure to the
+proxy, which as pinned ends the stream with an unnamed OpenAI-shaped
+`data: {"error": ...}` frame. If that frame is the stream's first chunk, the
+proxy answers with its HTTP status instead, which callers retry. But a stream
+that waits 15 s has already sent a keepalive `ping` and a 200, and Claude Code
+ignores an unnamed frame, so the turn still ended with "Stream ended without
+receiving any events". `patch_anthropic_stream_errors.py` re-frames an error
+after the first chunk of a `/v1/messages` stream as `event: error`, typed
+`overloaded_error` for a server-side failure, the only streamed error type
+Claude Code retries. `test_anthropic_stream_errors.py` drives `/v1/messages`
+on the proxy to check it.
 These timestamps cover the gateway request; they do not separately measure
 provider processing and gateway overhead. Application deployments still leave
 this independent gateway stack running.
