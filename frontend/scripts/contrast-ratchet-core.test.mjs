@@ -354,6 +354,19 @@ describe('compare', () => {
     assert.equal(result.ok, true)
   })
 
+  it('counts a key that got part of its unreadable instances read again as an improvement', () => {
+    // The ratio is unchanged and still clears the floor, so `passes(run)` alone
+    // would call this a fixed point — but the key only owes the instance still
+    // behind the picture, and the count is what says the debt went down. It is
+    // deliberately out of reach of `passes(run) && !blind`, which is the case
+    // the count's own comparison in `compare` exists for.
+    const baseline = { [KEY]: { ratio: 6.12, need: 4.5, unreadable: 2, unjudged: '', sample: '众智之所为' } }
+    const result = compare(baseline, withHidden(1, { ratio: 6.12, need: 4.5 }))
+    assert.equal(result.ok, true)
+    assert.equal(result.improved.length, 1)
+    assert.equal(result.improved[0].run.unreadable, 1)
+  })
+
   it('takes a key frozen as unmeasurable as covering however many instances of it there are', () => {
     // The count is not ratcheted here, and deliberately: what the baseline
     // accepted for this key is that the selector sits on a picture, and a second
@@ -419,6 +432,21 @@ describe('tightenedBaseline', () => {
   it('drops that key once the walker can read all of it', () => {
     const baseline = { [KEY]: { ratio: 6.12, need: 4.5, unreadable: 2, unjudged: '', sample: '众智之所为' } }
     assert.deepEqual(tightenedBaseline(baseline, runsOf(run({ ratio: 6.12, need: 4.5 }))), {})
+  })
+
+  it('records the ratio a below-floor key reached once part of it is readable again', () => {
+    // Frozen below its floor while carrying instances nobody could read. The
+    // clamp would pin it at the old 4.33 forever, because `Math.min` only knows
+    // the worse of the two — but the page now measures 6.12, and the entry stays
+    // only for the one instance still behind the picture. So the new ratio is
+    // what belongs there, and the run after it is a no-op rather than a key the
+    // update chases in circles.
+    const baseline = { [KEY]: { ratio: 4.33, need: 4.5, unreadable: 2, unjudged: '', sample: '16:20' } }
+    const worst = withHidden(1, { ratio: 6.12, need: 4.5 })
+    const next = tightenedBaseline(baseline, worst)
+    assert.equal(next[KEY].ratio, 6.12)
+    assert.equal(next[KEY].unreadable, 1)
+    assert.equal(compare(next, worst).ok, true, 'and what it wrote is a fixed point')
   })
 
   it('refuses to freeze an unmeasurable run the baseline has never seen either', () => {
