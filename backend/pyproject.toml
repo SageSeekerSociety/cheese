@@ -62,8 +62,9 @@ dev = [
     "anyio>=4.13.0",
     "httpx>=0.28.1",
     "httpx2>=2.13.1",
-    # Checks the import graph in backend/.importlinter: declaration + a frozen
-    # baseline, run by scripts/check_boundaries.py.
+    # Checks the import graph in backend/.importlinter: the declaration, and the
+    # baseline scripts/check_boundaries.py derives from the tree at the merge
+    # base.
     "import-linter>=2.15",
     "pyright>=1.1.410",
     "pytest>=9.1.0",

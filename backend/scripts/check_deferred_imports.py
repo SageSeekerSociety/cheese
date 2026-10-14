@@ -31,8 +31,8 @@ that is not in it must have none, and a file that is may only go down.
 WHY. A function-body import is invisible to anyone reading the top of the file
 and to every tool that reads the import graph from module level; import-linter
 sees it, almost nothing else does. It is also the usual way a cycle is dodged
-rather than removed (27 of the 29 frozen layer violations in `.importlinter`
-are function-body imports). Either lift it to the top of the module, or write
+rather than removed (when the layer contracts started, 27 of their 29 violations
+were function-body imports). Either lift it to the top of the module, or write
 down why it cannot be.
 
 COUNTING. Same as `.claude/scripts/arch-metrics.py`'s `deferred_imports`, which

@@ -10,9 +10,11 @@ layers of `app.domain` (every child of it belongs to one layer; a new package
 or top-level module is a violation until the layer table names it), a cycle
 between sibling domains under `app.domain`, or one route module importing
 another (directly or through a helper) are failures — including when the
-import sits inside a function. The contracts and the frozen `importer ->
-imported` pairs are in
-`.importlinter`. Shared request dependencies (`DbSession`, `AuthUser`) live in
+import sits inside a function. The contracts are declared in `.importlinter`,
+and what the check holds open is measured from the tree at the merge base with
+`origin/main`: a violation that tree already has is not this branch's to fix,
+one only this branch has is. Shared request dependencies (`DbSession`,
+`AuthUser`) live in
 `app/api/request_deps.py`, so a route never needs another route's import;
 `task boundaries` (`Taskfile.yml`) runs them.
 
