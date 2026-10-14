@@ -2,13 +2,16 @@
 
     python -m scripts.seat_throughput [--window 24h|7d|30d] [--json]
 
-给在后端容器里（`docker exec -i cheese-backend-1 python -m scripts.seat_throughput`）
-或者手上就有库连接的人用：不签 token、不打 HTTP，走的是和
-`GET /throughput/seats` 同一段聚合（`app.domain.platform_stats.throughput`），所以
-两边的数永远一致。会话机器上没有库也够不着平台库（团队记忆《会话容器够不着平台
-库》），这条命令要进得了容器才跑得动。
+要的是一条数据库连接，所以给跑着后端、够得着这个库的人用。会话机器上跑不了：
+那里没有库，也连不到平台库（团队记忆《会话容器够不着平台库》），镜像里也没有
+这个文件，`backend/Dockerfile` 逐个点名 COPY 的只有几个运维一次性脚本。
 
-口径在那段聚合的模块 docstring 上，这里不重复。
+会话里要同样的数走 HTTP：`GET /throughput/seats`，或者封装好的
+`.claude/scripts/seat_tps.py`。
+
+它不签 token、不打 HTTP，走的是和接口同一段聚合
+（`app.domain.platform_stats.throughput`），所以两边的数永远一致；口径在那段
+聚合的模块 docstring 上，这里不重复。
 """
 
 import argparse
