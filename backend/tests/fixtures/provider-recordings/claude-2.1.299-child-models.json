@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "harness": "claude-code",
+  "pinned_version": "2.1.299",
+  "provenance": {
+    "capture_test": "backend/tests/unit/test_claude_child_models.py::test_native_child_default_and_explicit_model_reach_admission[claude-sonnet-5-general-purpose]",
+    "base_revision": "cc9d5c5b4",
+    "captured_at": "2026-10-13",
+    "request_source": "Real pinned binary executing two native Agent tools, one of them naming `opus`, against a scripted loopback fake provider. The harness's own model requests no longer pass through JS `fetch` on this build, so no `x-cheese-child-model` header appears: the metering proxy reads the name off the request body instead.",
+    "response_source": "Scripted loopback fake provider; no live provider or model was called.",
+    "redactions": [
+      "Authorization and transport headers removed",
+      "Session, child and prompt identifiers replaced or removed",
+      "Message text replaced with fixture text",
+      "System prompt and tool descriptions omitted; field names and tool names retained"
+    ],
+    "boundary": "Extracted request shape, not a complete unmodified wire capture. `content-length` is the real one, and is what makes the proxy buffer this body."
+  },
+  "sha256": "932eb106e404bc25356f02b125792945f11d797f50bf1b4ee249be298b07450d",
+  "requests": [
+    {
+      "headers": {
+        "x-claude-code-session-id": "fixture-parent",
+        "x-claude-code-agent-id": "fixture-child-1",
+        "x-claude-code-request-class": "subagent",
+        "x-claude-code-agent-type": "general-purpose",
+        "content-length": "58663"
+      },
+      "body": {
+        "model": "claude-sonnet-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "fixture text"
+              },
+              {
+                "type": "text",
+                "text": "fixture text"
+              },
+              {
+                "type": "text",
+                "text": "fixture text"
+              }
+            ]
+          },
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "fixture text"
+              }
+            ]
+          }
+        ]
+      },
+      "body_keys": [
+        "context_management",
+        "max_tokens",
+        "messages",
+        "metadata",
+        "model",
+        "output_config",
+        "stream",
+        "system",
+        "thinking",
+        "tools"
+      ],
+      "tool_names": [
+        "Agent",
+        "Bash",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "NotebookEdit",
+        "Read",
+        "SendMessage",
+        "Skill",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Write"
+      ]
+    },
+    {
+      "headers": {
+        "x-claude-code-session-id": "fixture-parent",
+        "x-claude-code-agent-id": "fixture-child-2",
+        "x-claude-code-request-class": "subagent",
+        "x-claude-code-agent-type": "general-purpose",
+        "content-length": "40398"
+      },
+      "body": {
+        "model": "claude-opus-5-5",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "fixture text"
+              },
+              {
+                "type": "text",
+                "text": "fixture text"
+              },
+              {
+                "type": "text",
+                "text": "fixture text"
+              }
+            ]
+          },
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "fixture text"
+              }
+            ]
+          }
+        ]
+      },
+      "body_keys": [
+        "context_management",
+        "max_tokens",
+        "messages",
+        "metadata",
+        "model",
+        "output_config",
+        "stream",
+        "system",
+        "thinking",
+        "tools"
+      ],
+      "tool_names": [
+        "Agent",
+        "Bash",
+        "Edit",
+        "EnterWorktree",
+        "ExitWorktree",
+        "NotebookEdit",
+        "Read",
+        "SendMessage",
+        "Skill",
+        "TaskStop",
+        "WebFetch",
+        "WebSearch",
+        "Write"
+      ]
+    }
+  ]
+}
