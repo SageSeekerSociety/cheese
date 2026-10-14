@@ -325,6 +325,16 @@ onBeforeUnmount(() => {
     0 0 2px var(--surface),
     0 0 3px var(--surface);
 }
+/* Where a draggable point takes the keyboard's focus; seen only when focused. */
+.handle {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-pill);
+  outline: none;
+}
+.handle:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
 .readout {
   padding: 2px 6px;
   border-radius: var(--radius-sm);

@@ -482,6 +482,10 @@ type Rec = {
   body: THREE.Group
   marks: THREE.Group
   label: HTMLElement | null
+  /** For a point the reader may drag: what takes the keyboard's focus in its
+   *  place, since a point drawn by WebGL cannot. Kept across redraws, so the
+   *  focus stays on it while the arrow keys move it. */
+  handle: HTMLElement | null
 }
 
 /** What may run past the box and is cut at its faces. */
@@ -943,6 +947,7 @@ export class Space {
       gap: Infinity,
       pending: null,
       label: null,
+      handle: null,
     } as unknown as Rec
     const ctx = { box: this.boxRef.value }
     rec.spec = scope.run(() =>
@@ -1003,6 +1008,7 @@ export class Space {
     rec.body.removeFromParent()
     rec.marks.removeFromParent()
     rec.label?.remove()
+    rec.handle?.remove()
     if (this.held?.rec === rec) this.held = null
   }
 
@@ -1171,6 +1177,12 @@ export class Space {
           rec.marks.add(drop)
         }
         if (label) rec.label = this.tag(label, 'point')
+        if (movable && !rec.handle) rec.handle = this.handleFor(rec)
+        if (!movable && rec.handle) {
+          rec.handle.remove()
+          rec.handle = null
+        }
+        if (rec.handle) rec.handle.setAttribute('aria-label', label || '可拖动的点')
         break
       }
       case 'c-line':
@@ -1414,6 +1426,48 @@ export class Space {
 
   // ——— labels ———
 
+  private handleFor(rec: Rec) {
+    const el = document.createElement('div')
+    el.className = 'handle'
+    el.tabIndex = 0
+    el.setAttribute('role', 'slider')
+    el.addEventListener('keydown', (e) => {
+      if (this.nudge(rec, e.key)) e.preventDefault()
+    })
+    this.overlay.append(el)
+    return el
+  }
+
+  /** Move a point one step with an arrow key: left and right along its first
+   *  free axis, up and down along its second (or its only one). */
+  nudge(rec: Rec, key: string): boolean {
+    const shown = rec.shown
+    if (!shown) return false
+    const st = shown.style
+    const on = st.on as Fn | null
+    const axes = (on ? 'xy' : String(st.drag)).split('').map((a) => ['x', 'y', 'z'].indexOf(a))
+    const sign: Record<string, [number, number]> = {
+      ArrowRight: [0, 1],
+      ArrowLeft: [0, -1],
+      ArrowUp: [1, 1],
+      ArrowDown: [1, -1],
+    }
+    const k = sign[key]
+    if (!k || !axes.length) return false
+    const axis = axes[Math.min(k[0], axes.length - 1)]
+    const rs = [this.box.x, this.box.y, this.box.z]
+    const snap = num(rec.el.snap, 0)
+    const step = snap > 0 ? snap : (rs[axis][1] - rs[axis][0]) / 50
+    const cur = shown.nums.slice(0, 3)
+    const next = [...cur]
+    next[axis] = Math.min(rs[axis][1], Math.max(rs[axis][0], cur[axis] + k[1] * step))
+    next[axis] = Number(next[axis].toPrecision(10))
+    if (snap > 0) next[axis] = Number((Math.round(next[axis] / snap) * snap).toPrecision(12))
+    if (on) next[2] = Number(Number(on(next[0], next[1])).toPrecision(10))
+    if (next.some((v, i) => v !== cur[i])) announce(rec.el, next)
+    return true
+  }
+
   private tag(text: string, anchor: string) {
     const el = document.createElement('div')
     el.className = 'tag'
@@ -1622,6 +1676,12 @@ export class Space {
       const spec = rec.shown
       if (!spec) continue
       const nums = rec.slide ? this.sliding(rec, now) : spec.nums
+      if (rec.handle) {
+        const s = this.project(this.worldOf(rec, nums))
+        rec.handle.style.transform = `translate(${(s.x - 13).toFixed(1)}px, ${(s.y - 13).toFixed(1)}px)`
+        const fmt = (v: number) => String(Number(v.toPrecision(4)))
+        rec.handle.setAttribute('aria-valuetext', `(${nums.slice(0, 3).map(fmt).join(', ')})`)
+      }
       const el = rec.kind === 'c-text' ? rec.el : rec.label
       if (!el) continue
       let at: number[]

@@ -39,7 +39,9 @@ FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratch
 GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
 # Hooks that judge against the merge base, so they are the ones that must report
 # not-run — never a pass — when there is no base or the caller names another one.
-BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet"}
+# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py, minus `file-size`, which
+# is one of the guard hooks this file tracks separately.
+BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 
 
 def git(repo, *args):

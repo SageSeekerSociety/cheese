@@ -79,8 +79,10 @@ JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
 # base with origin/main. Their answer depends on a history this tool only has on
 # the branch it is told about, so without that base (or under a custom `--base`
 # the hook's own argv does not carry) they report unknown rather than a verdict
-# about the wrong tree.
-MERGE_BASE_HOOKS = {"file-size", "migration-fork", "scene-ratchet"}
+# about the wrong tree. `boundary-check` grades the tree at the merge base with
+# the same contracts it grades this one with, so a base this tool cannot reach
+# is a verdict it cannot give.
+MERGE_BASE_HOOKS = {"file-size", "migration-fork", "scene-ratchet", "boundary-check"}
 # Every hook this tool can select that spawns the node toolchain: the three
 # above, and the frontend type check next to pyright, which runs
 # `pnpm run typecheck`. The preflight blocks a run whose selection needs
