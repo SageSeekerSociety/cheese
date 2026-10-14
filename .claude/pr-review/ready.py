@@ -34,14 +34,22 @@ DEFAULT_REPO = "SageSeekerSociety/cheese"
 CI_CHECK = "CI required"
 RED = ("failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale")
 UNREADABLE = "读不到"
-#: §4's exempt increment: 改文案. The copy paths are the ones the A tier calls 文案.
-COPY = tuple(prefix for what, prefix in tiers.HIGH_RISK if what == "文案")
+#: §4's exempt increment: 改文案. The message files only. The A tier also calls
+#: `backend/app/core/sentences.py` 文案, but that module loads the templates and formats the
+#: notices, so editing it is editing code: it needs its increment read like any other code.
+COPY = ("frontend/src/i18n/messages/",)
 
 
 def gh(*args):
     """`gh api …` as text, or None when the call failed (the caller says 读不到)."""
     out = subprocess.run(["gh", "api", *args], capture_output=True, text=True)
     return out.stdout.strip() if out.returncode == 0 else None
+
+
+def newest_run(runs):
+    """The check run that speaks for the head: the one that started last. A re-run after a
+    push is that one, and an older green must not answer for a newer red."""
+    return max(runs, key=lambda r: r.get("started_at") or "")
 
 
 def ci_on(repo, sha):
@@ -58,7 +66,7 @@ def ci_on(repo, sha):
         return UNREADABLE
     if not runs:
         return None
-    run = max(runs, key=lambda r: r.get("started_at") or "")
+    run = newest_run(runs)
     return run.get("conclusion") or run.get("status")
 
 
@@ -68,22 +76,35 @@ def exempt(path):
     return tiers.is_test(path) or tiers.is_doc(path) or any(tiers.under(path, p) for p in COPY)
 
 
+def _blob(repo, rev, path):
+    """The blob of `path` in `rev`, or None when the path is not in that tree."""
+    out = tiers._git(repo, "rev-parse", "--verify", "--quiet", f"{rev}:{path}")
+    return out.strip() if out and out.strip() else None
+
+
 def author_files(repo, base, since, head):
-    """The files the author's own commits touched between `since` and `head`. Commits that
-    came in by merging the base branch are not the author's change and do not count: a
-    merge of main must not look like an edit of everything main changed."""
-    revs = [f"{since}..{head}"]
-    if base:
-        revs += ["--not", f"origin/{base}"]
-    out = tiers._git(repo, "log", "--no-merges", "--format=%H", *revs)
+    """The files whose content at `head` differs from the reviewed commit's version AND from
+    the base branch's: what the author changed after the review, plus anything a merge
+    brought in that is neither of those two versions — a conflict resolution the author
+    wrote. A merge of the base branch therefore does not count: every file it brought in
+    comes out at the base branch's own version, or unchanged from `since`.
+
+    The comparison is between trees (`git diff since head`), not the commit graph. A merge
+    commit's own `diff-tree` prints nothing, so a log walk that skips merges never sees the
+    resolution a merge carries — it lives only in the tree that merge produced."""
+    out = tiers._git(repo, "diff", "--name-only", since, head)
     if out is None:
         return None
-    files = set()
-    for sha in out.split():
-        listed = tiers._git(repo, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
-        if listed is None:
-            return None
-        files |= {p for p in listed.splitlines() if p.strip()}
+    files = []
+    for path in out.splitlines():
+        if not path.strip():
+            continue
+        here = _blob(repo, head, path)
+        # Without a base branch there is nothing to compare against: keep the file. 判不了
+        # 按 B — a file nobody can clear is re-reviewed, not waved through.
+        if base and here == _blob(repo, f"origin/{base}", path):
+            continue
+        files.append(path)
     return sorted(files)
 
 
@@ -176,6 +197,15 @@ def gather(directory, repo, root):
     return f
 
 
+def resolve_root(arg_root, directory):
+    """The repository the commits live in. `--root` wins; otherwise the toplevel of DIR,
+    with the newline `git rev-parse` prints stripped off. A path carrying that newline is
+    not a directory, so every git call against it fails and the increment reads 读不到,
+    which makes 可递 refuse a PR whose only sin is that nobody passed --root."""
+    found = arg_root or tiers._git(str(directory), "rev-parse", "--show-toplevel")
+    return (found or "").strip() or str(directory)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(add_help=True, description=__doc__)
     p.add_argument("--dir", dest="directory")
@@ -192,8 +222,7 @@ def main(argv=None):
     if not (directory / "meta").exists():
         print(f"ready: {directory} 没有 meta；先跑 prepare", file=sys.stderr)
         return 2
-    root = args.root or tiers._git(str(directory), "rev-parse", "--show-toplevel")
-    root = root or str(directory)
+    root = resolve_root(args.root, directory)
     ready, lines = verdict(gather(directory, args.repo, root))
     print("\n".join(lines))
     return 0 if ready else 1
@@ -240,6 +269,14 @@ def self_test():
           (ready, any("不用重审" in l for l in lines)), (True, True))
     check("读不到 GitHub：不能递，且不假装看过",
           verdict({"error": "GitHub 读不到这个 PR"})[0], False)
+    # A re-run after a push leaves two runs on the head; the newer one decides.
+    green = {"started_at": "2026-01-01T00:00:00Z", "conclusion": "success"}
+    red = {"started_at": "2026-01-01T01:00:00Z", "conclusion": "failure"}
+    check("同一个 head 上跑过两次：较新的那次说了算（旧的绿不能替新的红）",
+          newest_run([green, red])["conclusion"], "failure")
+    check("较新的一次还没出结论：报的是它在跑",
+          newest_run([green, {"started_at": "2026-01-01T01:00:00Z", "status": "in_progress"}])
+          .get("status"), "in_progress")
 
     with tempfile.TemporaryDirectory(prefix="ready-test-") as tmp:
         repo = Path(tmp)
@@ -251,7 +288,10 @@ def self_test():
 
         def write(rel, text):
             (repo / rel).parent.mkdir(parents=True, exist_ok=True)
-            (repo / rel).write_text(text)
+            if text is None:
+                (repo / rel).unlink()
+            else:
+                (repo / rel).write_text(text)
 
         def commit(msg):
             subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True,
@@ -274,6 +314,7 @@ def self_test():
         subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "upstream",
                         root_commit], check=True)
         write("backend/app/z.py", "z = 1\n")
+        write("backend/app/y.py", None)  # the base branch deletes a file of its own
         commit("on main")
         subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main",
                         "HEAD"], check=True)
@@ -289,19 +330,54 @@ def self_test():
         logic = commit("more logic")
         check("又推了一处逻辑：要补增量审",
               increment(repo, "main", reviewed, logic)["needs"], True)
+        # Code and its test in one commit: the test file is exempt, the code file is not,
+        # so this commit needs its increment read.
+        write("backend/app/domain/review/pr_text.py", "x = 1\n")
         write("backend/tests/test_x.py", "def test_x():\n    assert 1\n")
+        mixed = commit("code and its test")
+        check("代码和它的测试一起改：要补增量审（豁免的是文件，不是整个提交）",
+              increment(repo, "main", logic, mixed),
+              {"needs": True, "detail": "改了 backend/app/domain/review/pr_text.py"})
+        write("backend/tests/test_x.py", "def test_x():\n    assert 2\n")
         write("AGENTS.md", "rules, again\n")
         write("frontend/src/i18n/messages/en/ask.json", '{"a": "b"}\n')
         docs = commit("tests, docs and copy")
         check("只改测试、文档、文案：不用重审",
-              increment(repo, "main", logic, docs),
+              increment(repo, "main", mixed, docs),
               {"needs": False, "detail": "只改了测试、文档或文案："
                                          "AGENTS.md、backend/tests/test_x.py、"
                                          "frontend/src/i18n/messages/en/ask.json"})
+        # The base branch now changes the same file this branch changed, so the merge has to
+        # be resolved by hand. That resolution is the author's code: a merge commit's own
+        # diff-tree is empty, so only the tree it produced says what came in.
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "-b", "conflict2",
+                        reviewed], check=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "upstream"], check=True)
+        write("backend/app/x.py", "x = 9\n")
+        commit("main changes x too")
+        subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main",
+                        "HEAD"], check=True)
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "conflict2"], check=True)
+        subprocess.run(["git", "-C", str(repo), "merge", "-q", "--no-autostash", "--no-edit",
+                        "upstream"], capture_output=True)
+        write("backend/app/x.py", "x = 2\nauthor = 1\n")
+        subprocess.run(["git", "-C", str(repo), "add", "backend/app/x.py"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "resolution"], check=True,
+                       capture_output=True)
+        resolved = tiers._git(repo, "rev-parse", "HEAD").strip()
+
+        check("解冲突写进去的代码：要补增量审",
+              increment(repo, "main", reviewed, resolved),
+              {"needs": True, "detail": "改了 backend/app/x.py"})
+        check("默认 root 来自 git 输出：末尾不带它多打的换行",
+              (lambda r: (r == r.strip(), Path(r).is_dir()))(resolve_root(None, str(repo))),
+              (True, True))
 
     check("文案算豁免（整份审查时它还是 A 档）",
           (exempt("frontend/src/i18n/messages/en/ask.json"), tiers.tier_of_path(
               "frontend/src/i18n/messages/en/ask.json")), (True, "A"))
+    check("sentences.py 是逻辑，不是文案：不豁免",
+          exempt("backend/app/core/sentences.py"), False)
 
     for line in bad:
         print("FAIL " + line)

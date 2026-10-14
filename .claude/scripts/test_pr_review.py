@@ -20,14 +20,19 @@ PR = "7"
 #: A second PR whose only change is a lock file: 档位 G, so nobody reviews it and the
 #: card still carries a conclusion line saying so.
 PR_MECHANICAL = "8"
+#: A PR whose head commit is a lock bump but whose first commit is an auth change: 档位 A,
+#: the tier of the whole change, not of the last commit.
+PR_MIXED = "9"
 
 GH = r"""#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$*" in
-  *.head.sha*) case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *) echo "$PR_HEAD" ;; esac ;;
+  *.head.sha*) case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *pulls/9*) echo "$PR9_HEAD" ;;
+    *) echo "$PR_HEAD" ;; esac ;;
   *.base.ref*) echo main ;;
   *--paginate*/commits*)
-    case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;; *) printf '%s\n' $PR_COMMITS ;; esac ;;
+    case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;;
+      *pulls/9*) printf '%s\n' $PR9_COMMITS ;; *) printf '%s\n' $PR_COMMITS ;; esac ;;
   *check-runs*) printf '%s\n' "${CI_JSON:-}" ;;
   *'"# "'*) printf '# A title\n\nThe body.\n' ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
@@ -108,6 +113,19 @@ class PrReview(unittest.TestCase):
         git(work, "commit", "-qm", "bump lock")
         cls.mech = git(work, "rev-parse", "HEAD")
         git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_MECHANICAL}/head")
+        # A PR whose last commit is mechanical but whose first is not: the tier is the whole
+        # change's, so a fallback that only looks at the head commit would report G here.
+        git(work, "checkout", "-q", "-b", "mixed", "main")
+        (work / "backend/app/auth").mkdir(parents=True, exist_ok=True)
+        (work / "backend/app/auth/caller.py").write_text("ok = True\n")
+        git(work, "add", "backend/app/auth/caller.py")
+        git(work, "commit", "-qm", "auth change")
+        (work / "frontend").mkdir(parents=True, exist_ok=True)
+        (work / "frontend/pnpm-lock.yaml").write_text("lockfileVersion: 2\n")
+        git(work, "add", "frontend/pnpm-lock.yaml")
+        git(work, "commit", "-qm", "bump lock")
+        cls.mixed = git(work, "rev-parse", "HEAD")
+        git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_MIXED}/head")
         git(work, "checkout", "-q", "main")
         git(work, "fetch", "-q", "origin")
         cls.work = work
@@ -131,6 +149,8 @@ class PrReview(unittest.TestCase):
             "PR_COMMITS": " ".join([*self.shas, self.side]),
             "PR8_HEAD": self.mech,
             "PR8_COMMITS": self.mech,
+            "PR9_HEAD": self.mixed,
+            "PR9_COMMITS": self.mixed,
             "PR_REVIEW_DIR": str(self.tmp / "reviews"),
             **(env_extra or {}),
         }
@@ -244,6 +264,35 @@ class PrReview(unittest.TestCase):
         self.assertIn("档位 B", out.splitlines()[0])
         self.assertNotIn("档位 G", out.splitlines()[0])
 
+    def test_post_recomputes_from_the_method_not_the_copy_in_the_prepare_dir(self):
+        # The same promotion, with the copy of the classifier prepare left in $dir deleted:
+        # post must not fall back to meta when that copy is gone.
+        review_md, _ = self.prepare()
+        d = review_md.parent
+        (d / "meta").write_text(
+            (d / "meta").read_text().replace("tier=B", "tier=G"))
+        (d / "tiers.py").unlink()
+        _, out = self.post(review_md, "minor")
+        self.assertIn("档位 B", out.splitlines()[0])
+
+    def test_post_reports_the_whole_changes_tier_not_the_head_commits(self):
+        # The tier is decided from the whole change. This PR's head commit is a lock bump,
+        # so a tier read off the head commit alone would say G and wave an auth change by.
+        out = self.run_script("prepare", PR_MIXED)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        d = Path(out.stdout.strip()).parent
+        self.assertIn("**档位 A 高风险**", (d / "REVIEW.md").read_text())
+        meta = dict(
+            line.split("=", 1) for line in (d / "meta").read_text().splitlines() if "=" in line
+        )
+        (d / "result.json").write_text(json.dumps(result_json(meta["sha"].strip("'"), "minor")))
+        out = self.run_script("post", str(d))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(
+            out.stdout.splitlines()[0],
+            f"独立 review：head {self.mixed[:8]} 结论 无 blocker/major｜档位 A",
+        )
+
     #: A green "CI required" check run on the PR head, as `gh api … check-runs --jq` prints
     #: it: one JSON object per line.
     GREEN = '{"name": "CI required", "status": "completed", "conclusion": "success", ' \
@@ -272,15 +321,18 @@ class PrReview(unittest.TestCase):
         self.assertEqual(red.returncode, 1)
         self.assertIn("还不能递", red.stdout)
         self.assertIn("CI required 在 head 上是 failure", red.stdout)
+        # A check run that has not finished is not green either. Asserted while the
+        # conclusion is still there, or the missing conclusion alone would explain the exit
+        # code and the assertion would prove nothing about the pending run.
+        pending = self.ready(d, ci='{"name": "CI required", "status": "in_progress", '
+                                   '"conclusion": null, "started_at": "2026-01-01T00:00:00Z"}')
+        self.assertEqual(pending.returncode, 1)
+        self.assertIn("CI required 在 head 上是 in_progress，等它绿", pending.stdout)
         # No conclusion line in the directory yet: ready must not read CI-green as delivery.
         (d / "REVIEW-RESULT.md").unlink()
         gone = self.ready(d)
         self.assertEqual(gone.returncode, 1)
         self.assertIn("卡里没有审查结论", gone.stdout)
-        # A check run that has not finished is not green either.
-        pending = self.ready(d, ci='{"name": "CI required", "status": "in_progress", '
-                                   '"conclusion": null, "started_at": "2026-01-01T00:00:00Z"}')
-        self.assertEqual(pending.returncode, 1)
 
     def test_ready_does_not_deliver_a_review_with_a_blocker(self):
         review_md, _ = self.prepare()
@@ -325,6 +377,10 @@ class PrReview(unittest.TestCase):
         self.assertIn(f"{since[:12]}..{self.shas[-1][:12]}", text)
         self.assertIn(f"git diff {since[:12]} HEAD", text)
         self.assertIn(f"delta since {since}", text)
+        # Scope is the tree, not the commit graph: a merge that resolved a conflict is the
+        # author's code, and a walk that skips merge commits cannot see it.
+        self.assertIn("git diff origin/main HEAD -- <path>", text)
+        self.assertNotIn("--no-merges", text)
         d, out = self.post(review_md, "blocker", "major", "minor")
         self.assertEqual(
             out.splitlines()[0],

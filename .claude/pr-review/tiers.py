@@ -124,6 +124,11 @@ GENERATED = ("frontend/src/api/openapi.d.ts",)
 #: Line comments by extension, for "纯注释" — the token a changed line may start with. An
 #: extension not here cannot be judged mechanical, and a changed line whose string value
 #: holds a comment marker does not start with one, so it is not mechanical either.
+#:
+#: No "*" token. A line starting with one is a block comment's continuation in JS/TS, but
+#: it is a dereference in Go and Rust (`*p = 3`) and the universal selector in CSS, and a
+#: diff line does not say which. A block comment's continuation lines are therefore not
+#: judged mechanical; the file falls to the tier its path asks for — 判不了按 B.
 COMMENT = {
     ".py": ("#",),
     ".sh": ("#",),
@@ -132,18 +137,18 @@ COMMENT = {
     ".toml": ("#",),
     ".ini": ("#",),
     ".cfg": ("#",),
-    ".ts": ("//", "/*", "*"),
-    ".tsx": ("//", "/*", "*"),
-    ".js": ("//", "/*", "*"),
-    ".jsx": ("//", "/*", "*"),
-    ".mjs": ("//", "/*", "*"),
-    ".cjs": ("//", "/*", "*"),
-    ".scss": ("//", "/*", "*"),
-    ".css": ("/*", "*"),
-    ".go": ("//", "/*", "*"),
-    ".rs": ("//", "/*", "*"),
+    ".ts": ("//", "/*"),
+    ".tsx": ("//", "/*"),
+    ".js": ("//", "/*"),
+    ".jsx": ("//", "/*"),
+    ".mjs": ("//", "/*"),
+    ".cjs": ("//", "/*"),
+    ".scss": ("//", "/*"),
+    ".css": ("/*",),
+    ".go": ("//", "/*"),
+    ".rs": ("//", "/*"),
     ".sql": ("--",),
-    ".vue": ("<!--", "//", "/*", "*"),
+    ".vue": ("<!--", "//", "/*"),
     ".html": ("<!--",),
     ".md": ("<!--",),
 }
@@ -214,13 +219,18 @@ def mechanical(repo, base, head, path):
 
 
 def liftable_only(repo, base, head, path):
-    """Every added and removed line is blank, starts with this file's comment token, or
-    differs from a line on the other side only in its spacing — comments, reindentation
-    and whitespace-only edits, which is what §4's 纯注释 and 纯格式 come to in a diff.
+    """Every added AND every removed line is blank, starts with this file's comment token,
+    or is the same line on the other side with only its spacing changed — comments,
+    reindentation and whitespace-only edits, which is what §4's 纯注释 and 纯格式 come to in
+    a diff.
 
-    Both sides are compared with all whitespace taken out: an added line that has a twin
-    among the removed lines is the same line moved or re-indented. A file type with no
-    entry in COMMENT is not judged here (False), not assumed clean."""
+    Both sides are judged, and both are compared with all whitespace taken out: a line
+    whose twin is on the other side only moved or was re-indented — §4's 纯格式, so a
+    change that only reorders lines inside one file is mechanical too. A line with no twin
+    was added or deleted, and deleting a line of code is not mechanical: the removed line
+    has nothing to match, which is how a removed guard or a removed feature still gets
+    read. A file type with no entry in COMMENT is not judged here (False), not assumed
+    clean."""
     tokens = COMMENT.get(Path(path).suffix)
     if not tokens:
         return False
@@ -238,15 +248,17 @@ def liftable_only(repo, base, head, path):
             removed.append(line[1:])
     if not added and not removed:
         return False
-    stripped_removed = ["".join(l.split()) for l in removed]
-    for raw in added:
+
+    def liftable(raw, others):
         body = raw.strip()
         if not body or body.startswith(tokens):
-            continue
-        if "".join(raw.split()) in stripped_removed:
-            continue
-        return False
-    return True
+            return True
+        return "".join(raw.split()) in others
+
+    stripped_added = ["".join(l.split()) for l in added]
+    stripped_removed = ["".join(l.split()) for l in removed]
+    return all(liftable(l, stripped_removed) for l in added) and all(
+        liftable(l, stripped_added) for l in removed)
 
 
 def clean_revert(repo, base, head, path):
@@ -390,6 +402,32 @@ def self_test():
         case("注释里带引号里的井号，仍算注释行", {"f.py": 'x = 1\n# see "a # b"\n'}, "G")
         case("加一行代码，是 B", {"f.py": "x = 1\ny = 2\n"}, "B")
         case("字符串里出现井号的那一行，不算注释", {"f.py": 'x = "# not a comment"\n'}, "B")
+        case("Go 里以 * 开头的一行代码，不是注释", {"f.go": "*p = 3\n"}, "B")
+        case("前端块注释的续行判不出来，按路径定档", {"f.ts": " * 说明\n"}, "B")
+
+        # Two files that each need reading, of different tiers: the change is reviewed at
+        # the highest of them — not the one seen first, and not the lightest.
+        case("A 档和 B 档各改一个文件，取最高的 A",
+             {"backend/app/auth/caller.py": "ok = False\n",
+              "backend/app/domain/review/pr_text.py": "x = 1\n"}, "A")
+        case("B 档和 E 档各改一个文件，取最高的 B",
+             {"backend/app/domain/review/pr_text.py": "y = 2\n", "AGENTS.md": "rules\n"},
+             "B")
+        # Deleting is not adding: a removed line has no twin on the other side, so a
+        # removed guard or a dropped file still gets read. Each case needs a parent of its
+        # own, because a deletion that reverts the file to a version it already had is a
+        # clean revert (G) by the rule below, and that is not what is being tested here.
+        del_parent = from_(base, {"f.py": "x = 1\ny = 2\nz = 3\n"})
+        case("删掉一行代码，不是机械改动", {"f.py": "x = 1\nz = 3\n"}, "B", parent=del_parent)
+        case("把一行挪个位置，算移动，是 G", {"f.py": "y = 2\nz = 3\nx = 1\n"}, "G",
+             parent=del_parent)
+        rm_parent = from_(base, {"f.py": "x = 1\n", "g.py": "g = 1\n"})
+        (repo / "g.py").unlink()
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "drop g.py"], check=True,
+                       capture_output=True)
+        check("删掉一整份代码文件，是 B",
+              classify(repo, rm_parent, _git(repo, "rev-parse", "HEAD").strip())[0], "B")
 
         revert_base = from_(base, {"f.py": "x = 1\ny = 2\n"})
         case("干净 revert，是 G", {"f.py": "x = 1\n"}, "G", parent=revert_base)

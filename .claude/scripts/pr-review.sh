@@ -156,9 +156,12 @@ changes the scope of steps 1 to 3 as follows; steps 4 to 7 stand.
 - The previous round reviewed ${since:0:12}. Its blocker and major findings
   are in $dir/previous.md if that file exists, otherwise in the review
   section at the top of the PR body (pr.md): read only that section, now.
-- The change under review is \`git diff ${since:0:12} HEAD\`. Commits that
-  arrived by merging the base branch are not the author's change; list the
-  author's with \`git log --no-merges ${since:0:12}..HEAD --not origin/$base\`.
+- The change under review is \`git diff ${since:0:12} HEAD\`. All of it is in
+  scope, except a file the merge of the base branch took verbatim from the base
+  branch: check each one with \`git diff origin/$base HEAD -- <path>\`, and an
+  empty diff means the base branch's own version is what arrived. A merge that
+  resolved a conflict wrote code of the author's and is in scope; a log walk
+  that skips merges cannot see it, so do not use one to decide scope.
 - Finder A checks, for each blocker and major finding of the last round,
   whether the failure is gone at ${sha:0:12}: re-run its confirm command or
   replay its failure. Finder B looks at what the increment adds, with the
@@ -200,17 +203,18 @@ post() {
   [ -f "$dir/meta" ] || die "$dir has no meta; run prepare first"
   # shellcheck disable=SC1091
   . "$dir/meta"
-  # The tier is recomputed here, not read from meta: a seat cannot promote its own
-  # change to a lighter tier (or be stuck with a heavier one) by editing the file.
-  # A tree that is already gone falls back to what prepare recorded, so post is not
-  # broken by posting after a reboot cleared /tmp.
+  # The tier is recomputed here, from the classifier that ships with the method — not
+  # from meta, and not from the copy prepare left in $dir, or a seat could promote its
+  # own change by editing meta and deleting that copy. The whole-PR range is asked
+  # first; a head commit whose parent is not there to diff against falls back to it.
   local range
-  if [ -f "$dir/tiers.py" ] \
-    && range=$(git -C "$ROOT" merge-base "origin/$base" "$sha" 2>/dev/null) \
-    && tier=$(python3 "$dir/tiers.py" --repo "$ROOT" --base "$range" --head "$sha" --letter 2>/dev/null); then
+  if range=$(git -C "$ROOT" merge-base "origin/$base" "$sha" 2>/dev/null) \
+    && tier=$(python3 "$ROOT/$METHOD/tiers.py" --repo "$ROOT" --base "$range" --head "$sha" \
+                --letter 2>/dev/null); then
     :
-  elif [ -f "$dir/tiers.py" ]; then
-    tier=$(python3 "$dir/tiers.py" --repo "$ROOT" --base "$sha^" --head "$sha" --letter 2>/dev/null) || tier=""
+  else
+    tier=$(python3 "$ROOT/$METHOD/tiers.py" --repo "$ROOT" --base "$sha^" --head "$sha" \
+             --letter 2>/dev/null) || tier=""
   fi
   [ -n "$tier" ] || echo "pr-review: 算不出档位，结论行不带档位" >&2
   result=$(python3 "$dir/render.py" "$dir/result.json" "$sha" "$method_rev" \
