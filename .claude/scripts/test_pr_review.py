@@ -28,6 +28,7 @@ case "$*" in
   *.base.ref*) echo main ;;
   *--paginate*/commits*)
     case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;; *) printf '%s\n' $PR_COMMITS ;; esac ;;
+  *check-runs*) printf '%s\n' "${CI_JSON:-}" ;;
   *'"# "'*) printf '# A title\n\nThe body.\n' ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
@@ -121,7 +122,7 @@ class PrReview(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def run_script(self, *args):
+    def run_script(self, *args, env_extra=None):
         env = {
             **os.environ,
             "PATH": f"{self.bin}:{os.environ['PATH']}",
@@ -131,6 +132,7 @@ class PrReview(unittest.TestCase):
             "PR8_HEAD": self.mech,
             "PR8_COMMITS": self.mech,
             "PR_REVIEW_DIR": str(self.tmp / "reviews"),
+            **(env_extra or {}),
         }
         (self.tmp / "reviews").mkdir(exist_ok=True)
         return subprocess.run(
@@ -224,6 +226,74 @@ class PrReview(unittest.TestCase):
         _, out = self.post(review_md, "minor")
         self.assertIn("档位 B", out.splitlines()[0])
         self.assertNotIn("档位 G", out.splitlines()[0])
+
+    #: A green "CI required" check run on the PR head, as `gh api … check-runs --jq` prints
+    #: it: one JSON object per line.
+    GREEN = '{"name": "CI required", "status": "completed", "conclusion": "success", ' \
+            '"started_at": "2026-01-01T00:00:00Z"}'
+
+    def ready(self, *args, ci=None):
+        return self.run_script("ready", *args, env_extra={"CI_JSON": self.GREEN if ci is None else ci})
+
+    def test_ready_says_可递_when_the_ci_is_green_and_the_review_covers_the_head(self):
+        review_md, _ = self.prepare()
+        d, _ = self.post(review_md, "minor")
+        for arg in (str(d), PR):  # a prepare directory, or the PR it belongs to
+            out = self.ready(arg)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertEqual(
+                out.stdout.splitlines()[0],
+                f"可递：head {self.shas[-1][:8]}｜CI required success"
+                f"｜review {self.shas[-1][:8]} 结论 无 blocker/major｜档位 B",
+            )
+
+    def test_ready_says_what_is_missing(self):
+        review_md, _ = self.prepare()
+        d, _ = self.post(review_md, "minor")
+        red = self.ready(d, ci='{"name": "CI required", "status": "completed", '
+                               '"conclusion": "failure", "started_at": "2026-01-01T00:00:00Z"}')
+        self.assertEqual(red.returncode, 1)
+        self.assertIn("还不能递", red.stdout)
+        self.assertIn("CI required 在 head 上是 failure", red.stdout)
+        # No conclusion line in the directory yet: ready must not read CI-green as delivery.
+        (d / "REVIEW-RESULT.md").unlink()
+        gone = self.ready(d)
+        self.assertEqual(gone.returncode, 1)
+        self.assertIn("卡里没有审查结论", gone.stdout)
+        # A check run that has not finished is not green either.
+        pending = self.ready(d, ci='{"name": "CI required", "status": "in_progress", '
+                                   '"conclusion": null, "started_at": "2026-01-01T00:00:00Z"}')
+        self.assertEqual(pending.returncode, 1)
+
+    def test_ready_does_not_deliver_a_review_with_a_blocker(self):
+        review_md, _ = self.prepare()
+        d, _ = self.post(review_md, "major")
+        out = self.ready(d)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("审查结论有 1 条 blocker/major", out.stdout)
+
+    def test_ready_on_a_tier_g_change_needs_no_reviewer(self):
+        review_md, _ = self.prepare_tier_g()
+        self.run_script("post", str(review_md.parent))
+        out = self.run_script("ready", str(review_md.parent), env_extra={"CI_JSON": self.GREEN})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn(f"review {self.mech[:8]} 结论 无 blocker/major｜档位 G", out.stdout)
+
+    def test_ready_asks_for_an_increment_review_when_the_head_moved(self):
+        # The head moved, and what moved it is a change of this PR's own: the review of the
+        # older commit no longer covers the head, so ready points at the delta review.
+        review_md, _ = self.prepare()
+        d, _ = self.post(review_md, "minor")
+        git(self.work, "checkout", "-q", "pr")
+        (self.work / "f.txt").write_text("change 4\n")
+        git(self.work, "commit", "-qam", "change 4")
+        moved = git(self.work, "rev-parse", "HEAD")
+        git(self.work, "checkout", "-q", "main")
+        out = self.run_script("ready", str(d),
+                              env_extra={"CI_JSON": self.GREEN, "PR_HEAD": moved})
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("缺一次增量审", out.stdout)
+        self.assertIn(f"--since {self.shas[-1][:8]}", out.stdout)
 
     def test_dry_run_prints_without_writing(self):
         review_md, _ = self.prepare()

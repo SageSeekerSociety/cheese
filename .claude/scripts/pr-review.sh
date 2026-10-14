@@ -22,6 +22,15 @@
 #       the patrol sweep reads. Makes no GitHub call. --dry-run only prints.
 #   .claude/scripts/pr-review.sh show DIR [--line]
 #       Print DIR/REVIEW-RESULT.md (--line: only its first line).
+#   .claude/scripts/pr-review.sh ready DIR|PR
+#       Say whether the PR can be delivered, or what is missing: CI required
+#       green on the PR's head, and a review conclusion with no blocker/major
+#       on that head. A review of an older commit still counts when the
+#       increment since it is one §4 does not re-review (a merge of the base
+#       branch, or changes that are only tests, docs or copy); otherwise it
+#       says to run an incremental review first. DIR is a prepare directory;
+#       PR picks the newest prepare directory for that PR on this machine.
+#       Prints 可递 or 还不能递 and the reasons. Exit 0 ready, 1 not ready.
 #
 # Exit status: 0 done, 1 failed (the reason is printed), 2 usage.
 set -uo pipefail
@@ -209,6 +218,20 @@ show() {
   if [ "${2:-}" = --line ]; then head -n 1 "$file"; else cat "$file"; fi
 }
 
+ready() {
+  local arg=$1 dir
+  if [[ $arg =~ ^[0-9]+$ ]]; then
+    dir=$(ls -dt "${PR_REVIEW_DIR:-/tmp}"/pr-review-"$arg"-*.input 2>/dev/null | head -n 1)
+    [ -n "$dir" ] || die "no prepare directory for #$arg on this machine; run prepare first"
+  else
+    dir=$arg
+  fi
+  [ -f "$dir/meta" ] || die "$dir has no meta; that is not a prepare directory"
+  # This is the deliverer's own check, so it runs the deliverer's ready.py; nothing about
+  # the PR under review can reach it.
+  python3 "${READY:-$ROOT/$METHOD/ready.py}" --dir "$dir" --root "$ROOT" --repo "$REPO"
+}
+
 case "${1:-}" in
   prepare)
     [ $# -ge 2 ] && [[ $2 =~ ^[0-9]+$ ]] || usage
@@ -219,5 +242,6 @@ case "${1:-}" in
     prepare "$pr" "$want" "$since" ;;
   post) [ $# -ge 2 ] && [ $# -le 3 ] && { [ $# -eq 2 ] || [ "$3" = --dry-run ]; } || usage; post "$2" "${3:-}" ;;
   show) [ $# -ge 2 ] && [ $# -le 3 ] && { [ $# -eq 2 ] || [ "$3" = --line ]; } || usage; show "$2" "${3:-}" ;;
+  ready) [ $# -eq 2 ] || usage; ready "$2" ;;
   *) usage ;;
 esac

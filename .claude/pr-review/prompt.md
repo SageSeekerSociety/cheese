@@ -15,8 +15,17 @@ The review result is not posted on GitHub. `post` writes it to
 `REVIEW-RESULT.md`; the seat delivering the PR pastes it into the acceptance
 card body, after the author's own sections (the board reads what the PR
 changed and how it was verified from the text before that line), and its
-first line (`独立 review：head <sha8> 结论 ...`) is what the patrol sweep reads there.
+first line (`独立 review：head <sha8> 结论 ...｜档位 A..G`) is what the patrol sweep reads there.
 
+- The "Review tier" section at the end says how deep this change is to be
+  reviewed (A–G), and why. It changes how much of step 2's effort goes where,
+  not the steps themselves. It is decided from the files the PR touches, so a
+  delta review still reports the tier of the whole change.
+- Tier G is a change that is only comments, formatting, a lock file or a clean
+  revert. Nobody reviews it: `prepare` has already written the result, CI
+  passing is enough, and run `post` on that result rather than writing your
+  own. Its line says in the body that nobody read the change, so 无
+  blocker/major there does not read as a judgement somebody made.
 - The first round reviews the whole PR, as below.
 - If it has blocker or major findings, fix them, then run
   `pr-review.sh prepare <PR> --since <the sha the last round reviewed>`. A
@@ -26,6 +35,10 @@ first line (`独立 review：head <sha8> 结论 ...`) is what the patrol sweep r
 - An increment that only merges the base branch, or only changes tests or
   copy (docs, comments, user-visible text), needs no further review. Say so
   in the card body instead of reviewing again.
+- Before the card is handed off, `pr-review.sh ready <PR>` says whether it can
+  be delivered: `可递`, or what is missing — CI not green on the head, a
+  conclusion with no blocker/major, an increment that needed a review. It
+  reads this result, so run it after `post`.
 
 ## Who does what
 
