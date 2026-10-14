@@ -45,10 +45,14 @@ const host = vi.hoisted(() => {
     arrives: new Promise<void>((resolve) => (release = resolve)),
     release: () => release(),
     calls: [] as string[],
+    // 这一块是什么时候被要的：`defineAsyncComponent` 只在这一格真要画时才问它，静态 import
+    // 则是导入 `WorkPanel` 本身时就问。下面第一条就钉这个差别。
+    asked: false,
   }
 })
 
 vi.mock('./work/PanelDocHost.vue', async () => {
+  host.asked = true
   await host.arrives
   const { defineComponent, h } = await import('vue')
   return {
@@ -147,6 +151,16 @@ async function flush() {
 }
 
 describe('文档那一格（按需取）', () => {
+  it('面板自己先挂上时，编辑器那一块还没被要过', async () => {
+    // 这一条钉的是「按需取」这条边界本身：`WorkPanel` 改回静态 import 的话，那一坨 1.1 MB
+    // 在下面这个 `expect` 之前就已经在模块图里了。别的活没人守着这件事 —— 改回静态 import
+    // 全套测试照样绿，只有这一条会红。
+    expect(host.asked).toBe(false)
+    mountPanel()
+    await flush()
+    expect(host.asked).toBe(false)
+  })
+
   it('那一块还在路上时点「查看改动」：到了也得收到', async () => {
     const { panel } = mountPanel()
     await flush()
