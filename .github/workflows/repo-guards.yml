@@ -87,6 +87,20 @@ jobs:
           python3 .claude/scripts/test_pr_review.py
           python3 .claude/scripts/orchestrator_autoaccept.py --self-test
 
+      # The rest of the review tooling. test_pr_review.py above drives pr-review.sh
+      # end to end; these three are run by it and by prepare, and are not guards of
+      # the tree. tiers.py decides a change's review tier, ready.py decides whether a
+      # card may be delivered, and render.py refuses a result that names another
+      # commit, carries an unverified finding with nothing to confirm it, or has a
+      # field the schema does not know — so a regression in any of them lets a review
+      # that never happened through while every visible check stays green, the one
+      # failure mode nobody notices by reading the diff. All three are offline.
+      - name: PR review tooling self-test
+        run: |
+          python3 .claude/pr-review/tiers.py --self-test
+          python3 .claude/pr-review/ready.py --self-test
+          python3 .claude/pr-review/render.py --self-test
+
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).
       - name: dev-db.sh tests
