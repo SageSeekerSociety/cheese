@@ -4,6 +4,7 @@
 // Both sides have to agree on these, so they live in one place of their own —
 // the panel itself is the socket, the window of history and the timers, and a
 // list of events is neither.
+import type { PostedMessage } from '../api/messages'
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { OpenedDocument } from '../lib/docReview'
@@ -95,5 +96,7 @@ export interface ChatPanelOptions {
   topicList: () => Topic[]
   unreadOnOpen: () => number
   focusBlock: () => string | null
+  /** 我发的一条落了库，这是后端回的那一条（带着它 @ 到、不在频道里的人）。 */
+  onPosted?: (block: PostedMessage) => void
   emit: ChatPanelEmit
 }

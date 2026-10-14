@@ -10,10 +10,23 @@ import { request } from '../api'
 
 import { changesAwaiting } from './awaitingChanged'
 
+/** 这条消息 @ 到、却不在这个频道里的人。只回给发的人，不落库。 */
+export interface MentionedOutside {
+  /** 频道的 id（消息发在任务或支线里时也是它所在的频道）。 */
+  room_id: string
+  handles: string[]
+  /** 发的人能不能把他们加进来。 */
+  may_add: boolean
+  /** 私密频道：不在里面的人看不到这条消息。 */
+  members_only: boolean
+}
+
+export type PostedMessage = Block & { mentioned_outside?: MentionedOutside }
+
 /** 返回落库的那一条；同一个 `request_id` 重发只会得到同一条。 */
-export function postChatMessage(topicId: string, body: ChatMessageBody, signal?: AbortSignal): Promise<Block> {
+export function postChatMessage(topicId: string, body: ChatMessageBody, signal?: AbortSignal): Promise<PostedMessage> {
   return changesAwaiting(
-    request<Block>(`/topics/${encodeURIComponent(topicId)}/messages`, {
+    request<PostedMessage>(`/topics/${encodeURIComponent(topicId)}/messages`, {
       method: 'POST',
       body: JSON.stringify(body),
       signal,

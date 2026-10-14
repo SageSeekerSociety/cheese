@@ -1321,6 +1321,16 @@
       "documentHint": "选中一段文字或点一个单元格写批注",
       "comments": "批注 {n}",
       "noComments": "暂无批注"
+    },
+    "mentionOutside": {
+      "notInPrivate": "{names} 不在这个频道，看不到这条消息",
+      "notInPublic": "{names} 未加入这个频道",
+      "add": "添加到频道",
+      "dismiss": "不添加",
+      "close": "关闭",
+      "added": "已将 {names} 添加到频道",
+      "addFailed": "添加失败",
+      "addFailedBecause": "添加失败：{reason}"
     }
   },
   "board": {
