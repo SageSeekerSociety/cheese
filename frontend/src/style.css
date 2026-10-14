@@ -60,6 +60,10 @@
   --accent-press: #d96e0a;
   --accent-ink: #9a5413; /* amber text on light */
   --accent-wash: #fdf1e2; /* rare tint */
+  /* Text ON a solid --accent fill (the notifying @chip). The same dark ink in both
+     themes on purpose: --accent stays bright in both, so its ink cannot flip with
+     the theme (white on #f57f17 is 2.6:1). */
+  --accent-on: #191a1c;
 
   /* ---- Status (ONLY for real status; dot + neutral text) ----
      Each status has three parts, and they are NOT interchangeable:
@@ -402,6 +406,7 @@
   --accent-press: #ffbc5e; /* pressing LIGHTENS on dark, unlike light theme */
   --accent-ink: #ffc670;
   --accent-wash: #2e2216;
+  --accent-on: #191a1c; /* same as light, deliberately: see the light set */
 
   /* ---- Status ---- */
   --ok: #3fbf7f;
@@ -1341,8 +1346,8 @@ button:not(.v-btn) {
    scoped 样式里，于是换一个 panel 渲染同一段字，chip 就退化成一行普通文字：点得到，
    看不出来能点。
    一个人有两种样子，和飞书一样分「提醒」和「提到」（lib/refChip 的 notified）：
-   - `.mention`（@人）：这一处真的通知到了他。带「@」，实心琥珀底（`--accent-ink`）、
-     底色上的字（`--surface`），是这段字里最要紧的那一处。
+   - `.mention`（@人）：这一处真的通知到了他。带「@」，实心琥珀底（`--accent`）、
+     深色字（`--accent-on`），是这段字里最要紧的那一处（docs/design-system.md §1.6）。
    - `.name-ref`：只是提到他，没有通知（平台提示里的操作人、通知卡、周报、文档里
      芝士写的名字……）。不带「@」，浅琥珀底、琥珀墨色字——原来那颗 chip 的样子。
    话题和文件只是去处，中性底、正文色。悬停只改底色。 */
@@ -1354,14 +1359,14 @@ button:not(.v-btn) {
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
-/* 实心底用 --accent-ink 而不是 --accent：琥珀底上的白字只有 2.6:1（浅色），读不清；
-   --accent-ink 底配 --surface 字，浅色 5.7:1、深色 10.9:1。悬停往 --ink 那头加深。 */
+/* 实心琥珀底配深色字（--accent-on，两套主题同一个值）：浅色 #f57f17 上 6.6:1（按下 5.1:1），
+   深色 #ffa733 上 9.0:1。白字在 #f57f17 上只有 2.6:1，读不清。 */
 .mention {
-  color: var(--surface);
-  background: var(--accent-ink);
+  color: var(--accent-on);
+  background: var(--accent);
 }
 .mention:hover {
-  background: color-mix(in srgb, var(--accent-ink) 85%, var(--ink));
+  background: var(--accent-press);
 }
 .name-ref {
   color: var(--accent-ink);
