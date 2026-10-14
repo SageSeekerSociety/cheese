@@ -56,6 +56,7 @@ export default {
       name: 'HomeDefault',
       meta: {
         titleKey: 'navigation.home',
+        documentTitleKey: 'publicSite.documentTitle',
         publicLanding: true,
       },
       component: () => import('@/views/home/Landing.vue'),
