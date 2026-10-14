@@ -43,6 +43,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.model_streams import model_streams
 from app.core.sandbox_auth import (
     PersonalClaims,
     is_global_sandbox_token,
@@ -72,6 +73,17 @@ logger = logging.getLogger("cheesex.llm_proxy")
 # prefix sets the base to `https://host/api`. Living under `/api` here would
 # make this the one route that needs the prefix twice.
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+# What a rollout asks the backend it is about to stop (`deploy/deploy-docker.sh`).
+# The ingress never forwards `/_internal/`, so only the box itself reaches it.
+internal_router = APIRouter(prefix="/_internal/llm", include_in_schema=False)
+
+
+@internal_router.get("/streams")
+async def open_streams() -> dict:
+    """How many model streams this process is still relaying."""
+    return {"open": model_streams.open}
+
 
 # Long: a streamed model turn holds the connection open for minutes. The read
 # timeout is what a slow first token hits, so it has to exceed the model's own
@@ -512,12 +524,15 @@ async def proxy(
         raise GatewayUnavailableError("The model pool did not answer") from exc
 
     async def stream():
-        try:
-            async for chunk in upstream.aiter_raw():
-                yield chunk
-        finally:
-            await upstream.aclose()
-            await client.aclose()
+        # Counted from the first byte to the last: a rollout waits for this
+        # count before it stops the process (`app.core.model_streams`).
+        with model_streams.held():
+            try:
+                async for chunk in upstream.aiter_raw():
+                    yield chunk
+            finally:
+                await upstream.aclose()
+                await client.aclose()
 
     return StreamingResponse(
         stream(),

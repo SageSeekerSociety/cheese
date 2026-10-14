@@ -1165,14 +1165,14 @@ API_FRONT_CONTAINER="${API_FRONT_CONTAINER:-cheese-api-front}"
 BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
 # How long the slots traffic left keep answering what they already have before
 # they are stopped. App-router's old workers do not cut those requests off at
-# this point: its worker_shutdown_timeout is set well above this drain plus the
-# backend's stop grace (deploy/llm-tunnel/app-router.conf), so what ends a
-# connection on the old slots is the old slot stopping, once.
+# this point: its worker_shutdown_timeout is set above this drain plus the wait
+# for model streams and the backend's stop grace (deploy/llm-tunnel/app-router.conf),
+# so what ends a connection on the old slots is the old slot stopping, once.
 DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-31}"
 # Matches the backend's stop_grace_period in the compose files.
 BACKEND_STOP_GRACE_SECONDS="${DEPLOY_BACKEND_STOP_GRACE_SECONDS:-60}"
 # How long the old frontend's nginx may take to finish its requests after the
-# drain: they then had 5 + 31 + 120 s, inside app-router's 240 s worker deadline.
+# drain: they then had 5 + 31 + 120 s, inside app-router's 1080 s worker deadline.
 FRONTEND_STOP_GRACE_SECONDS="${DEPLOY_FRONTEND_STOP_GRACE_SECONDS:-120}"
 # Opt in only after the public ingress uses the standing frontend proxy.
 ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
@@ -1359,6 +1359,25 @@ hand_over_running_work() {
   fi
 }
 
+# A model stream relayed through /llm/v1 runs for minutes on a reasoning model
+# and cannot move to the next backend: stopping the one that relays it ends it,
+# and the harness that asked loses the whole answer. So the old backend is
+# stopped only once the streams it relays have ended, or this bound has run out
+# (deploy/wait-model-streams.sh). app-router's worker_shutdown_timeout
+# (deploy/llm-tunnel/app-router.conf) stays above the handover pause, the drain,
+# this bound and the stop grace together, so the worker carrying such a stream
+# does not end it first.
+MODEL_STREAM_GRACE_SECONDS="${DEPLOY_MODEL_STREAM_GRACE_SECONDS:-900}"
+MODEL_STREAM_POLL_SECONDS="${DEPLOY_MODEL_STREAM_POLL_SECONDS:-5}"
+
+# $1 = the old backend's host port, $2 = its container.
+wait_for_model_streams() {
+  local line
+  bash "$HERE/wait-model-streams.sh" "$1" "$2" \
+    "$MODEL_STREAM_GRACE_SECONDS" "$MODEL_STREAM_POLL_SECONDS" 2>&1 \
+    | while IFS= read -r line; do log "$line"; done || true
+}
+
 wait_for_frontend() {
   local port="$1" container="$2" waited=0 step="$HEALTH_INTERVAL_SECONDS"
   [ "$step" -gt 0 ] 2>/dev/null || step=1
@@ -1375,12 +1394,14 @@ wait_for_frontend() {
 }
 
 rollout_app() {
-  local backend_from backend_to backend_port old_backend handover
+  local backend_from backend_to backend_port old_backend old_backend_port handover
   local frontend_from="" frontend_to="" frontend_port="" old_frontend="" collab_failed=false
   local frontend_holds_ports=false frontend_stop_grace="$FRONTEND_STOP_GRACE_SECONDS" ports_failed=false
   read_slots "$ACTIVE_BACKEND_DIR/backend.conf" backend "$BACKEND_PORT" "$BACKEND_PORT_NEXT"
   backend_from="$SLOT_FROM" backend_to="$SLOT_TO" backend_port="$SLOT_TO_PORT"
   old_backend="$(service_container "$backend_from")"
+  old_backend_port="$BACKEND_PORT"
+  [ "$backend_from" = backend ] || old_backend_port="$BACKEND_PORT_NEXT"
   if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
     [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
     read_slots "$ACTIVE_BACKEND_DIR/frontend.conf" frontend "$FRONTEND_SLOT_PORT" "$FRONTEND_PORT_NEXT" "$FRONTEND_PORT"
@@ -1441,12 +1462,14 @@ rollout_app() {
   # have: through the drain, then a graceful stop — SIGQUIT for the frontend's
   # nginx, which closes its sockets as its requests end, and SIGTERM for the
   # backend, which still hands over whatever it holds (`rm -f` alone is a
-  # SIGKILL that cuts that off). Both stop at once.
+  # SIGKILL that cuts that off). The backend stops once the model streams it
+  # still relays have ended, or their bound has run out.
   sleep "$DRAIN_SECONDS"
   if [ -n "$old_frontend" ]; then
     docker stop --time "$frontend_stop_grace" "$old_frontend" >/dev/null 2>&1 &
   fi
   if [ -n "$old_backend" ]; then
+    wait_for_model_streams "$old_backend_port" "$old_backend"
     docker stop --time "$BACKEND_STOP_GRACE_SECONDS" "$old_backend" >/dev/null 2>&1 || true
   fi
   wait || true

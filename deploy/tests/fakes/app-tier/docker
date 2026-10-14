@@ -224,6 +224,9 @@ if [ "${1:-}" = "compose" ]; then
       if [ "${2:-}" = -q ] && [ "${3:-}" = backend ] &&         [ -n "${APP_TIER_BACKEND_CONTAINER:-}" ]; then
         printf '%s\n' "$APP_TIER_BACKEND_CONTAINER"
       fi
+      if [ "${2:-}" = -q ] && [ "${3:-}" = backend-b ] && [ -n "${APP_TIER_BACKEND_B_CONTAINER:-}" ]; then
+        printf '%s\n' "$APP_TIER_BACKEND_B_CONTAINER"
+      fi
       if [ "${2:-}" = -q ] && [ "${3:-}" = frontend ] && [ -n "${APP_TIER_FRONTEND_CONTAINER:-}" ]; then
         printf '%s\n' "$APP_TIER_FRONTEND_CONTAINER"
       fi
