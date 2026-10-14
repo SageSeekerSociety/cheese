@@ -3,19 +3,22 @@
 //
 // 在它自己那一轮里，它像 Claude Code 里一次工具调用那样画：一行淡字，前面一枚文档
 // 记号，不再写队友的名字——这一轮已经说了是谁的。不在哪一轮里的，是一行淡字，谁做的
-// 写成普通的名字。两种都不画 @ 那颗 chip：这一行谁也不通知。
+// 写成名字。名字都是不带 @ 的浅色 chip（提到，lib/refChip），不是 @chip：这一行谁也
+// 不通知。点名字去这个人那里（外层对话栏按 data-handle 委派），不打开文档。
 //
 // 点这一行打开文档本身；行尾的「查看改动」打开时把改过的几处标出来，只有一段差异、没有
 // 逐处改动的老式改动，在原地展开那段差异。
 import type { Block } from '../../cx_types'
 import type { DocLine } from '../../lib/docEditLine'
 import type { DocReviewRequest, OpenedDocument } from '../../lib/docReview'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
 
 import { parseDiffLines } from '../../lib/diff'
-import { docLineCount, docLineSentence } from '../../lib/docEditLine'
+import { docLineCount, docLineSentence, docLineSentenceWithRefs } from '../../lib/docEditLine'
 import { noticeText } from '../../lib/noticeText'
+import { renderPlain } from '../../lib/renderMessage'
 
 import { t } from '@/i18n'
 
@@ -24,6 +27,8 @@ const props = defineProps<{
   line: DocLine
   /** 画在队友自己那一轮里：不写是谁，前面带一枚文档记号。 */
   inTurn: boolean
+  /** handle 读成名字。 */
+  names: RefNames
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +36,10 @@ const emit = defineEmits<{
 }>()
 
 const sentence = computed(() => docLineSentence(props.line, props.inTurn))
+// 名字在一颗按钮里，所以它们不再各占一个 Tab 位：键盘上这一行就是「打开文档」。
+const sentenceHtml = computed(() =>
+  renderPlain(docLineSentenceWithRefs(props.line, props.inTurn), props.names, { focusable: false })
+)
 const count = computed(() => docLineCount(props.line))
 
 const turnId = computed(() => props.block.turn_id ?? undefined)
@@ -38,7 +47,9 @@ const opened = computed<OpenedDocument | undefined>(() =>
   props.line.library ? { id: props.line.library.id, title: props.line.library.title } : undefined
 )
 
-function open() {
+function open(e: MouseEvent) {
+  // 点的是名字：去这个人那里（对话栏委派），不打开文档。
+  if ((e.target as HTMLElement | null)?.closest('.name-ref')) return
   if (opened.value) emit('open-resource', 'doc', turnId.value, undefined, opened.value)
   else emit('open-resource', 'doc', turnId.value)
 }
@@ -72,7 +83,7 @@ function diffText(text: string): string {
         <v-icon v-if="inTurn" class="doc-line__icon" size="16" aria-hidden="true">
           mdi-file-document-edit-outline
         </v-icon>
-        <span class="doc-line__text" data-user-content>{{ sentence }}</span>
+        <span class="doc-line__text" data-user-content v-html="sentenceHtml" />
       </button>
       <span v-if="count" class="doc-line__count">· {{ count }}</span>
       <button

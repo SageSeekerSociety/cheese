@@ -83,6 +83,12 @@ function nameOf(handle: string): string {
   return props.refs.mentionNames[handle] || handle
 }
 const docLine = computed(() => docLineOf(props.block, props.notice, nameOf))
+// 这一行的名字按 nameOf 的叫法画（这一轮的队友按它在这里的名字）。
+const docNames = computed(() =>
+  props.agent?.handle
+    ? { ...props.refs, mentionNames: { ...props.refs.mentionNames, [props.agent.handle]: props.agent.name } }
+    : props.refs
+)
 const docInTurn = computed(() => !!docLine.value && !!props.agent && docLineInTurn(props.block))
 
 const name = computed(() => (docLine.value && !docInTurn.value ? null : props.agent?.name ?? null))
@@ -311,6 +317,7 @@ const ACTION_META: Record<string, { btn: string }> = {
       :block="block"
       :line="docLine"
       :in-turn="docInTurn"
+      :names="docNames"
       @open-resource="(...a) => emit('open-resource', ...a)"
     />
     <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
