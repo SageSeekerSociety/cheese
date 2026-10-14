@@ -100,12 +100,16 @@ def seat_of(topic, token):
     seat. With none, or with several, which teammate the room answers for is not something
     a roster read can tell, and a wrong name wakes the wrong one — so it names no seat
     rather than guess."""
-    given = unwrap(call("GET", f"/topics/{topic}/task", token)).get("agent_handle")
+    given = unwrap(call("GET", f"/topics/{topic}/task", token))
+    given = given.get("agent_handle") if isinstance(given, dict) else None
     if given:
         return given
     rows = unwrap(call("GET", f"/topics/{topic}/members", token))
+    # Both shapes are guarded rather than assumed: a payload that is not what the route
+    # documents would otherwise raise out of `main`, leaving a traceback where the exit
+    # status is supposed to say which step failed.
     seats = [r.get("member_handle") for r in (rows if isinstance(rows, list) else [])
-             if (r or {}).get("agent")]
+             if isinstance(r, dict) and r.get("agent")]
     return seats[0] if len(seats) == 1 else None
 
 
@@ -180,15 +184,18 @@ def self_test():
     still reads as one line of output. The exit-code cases drive `main` with `call` stubbed
     out, so the codes the docstring promises are covered without a network."""
 
+    unset = object()
+
     def drive(argv, password="pw", seat="cheese-seat", roster=None, post=None, back=None,
-              login=None, task=None):
+              login=None, task=None, task_raw=unset):
         """(exit code, stderr, what the stub saw) for one run of `main`.
 
         `roster` is what the room's member list answers with when the task names no seat
-        (`None` stands for the task row naming one, so the roster is not read at all).
-        `login`/`task`/`post`/`back`, when they are exceptions, are raised by the stub in
-        place of that call's answer — one per platform call, so a failure can be put on
-        any of the four offline."""
+        (`None` stands for the task row naming one, so the roster is not read at all), and
+        `task_raw` puts a payload there that is not the documented one. `login`/`task`/
+        `post`/`back`, when they are exceptions, are raised by the stub in place of that
+        call's answer — one per platform call, so a failure can be put on any of the four
+        offline."""
         stubbed = {"calls": []}
 
         def fake_call(method, path, token=None, body=None, timeout=30):
@@ -202,7 +209,7 @@ def self_test():
             if path.endswith("/task"):
                 if isinstance(task, BaseException):
                     raise task
-                return {"data": {"agent_handle": seat}}
+                return {"data": {"agent_handle": seat} if task_raw is unset else task_raw}
             if method == "POST":
                 stubbed["body"] = body
                 if isinstance(post, BaseException):
@@ -218,7 +225,10 @@ def self_test():
         err = io.StringIO()
         try:
             with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
-                rc = main(argv)
+                try:
+                    rc = main(argv)
+                except Exception as e:  # a crash is a failed case, not a broken suite
+                    rc = f"raised {type(e).__name__}"
         finally:
             globals()["call"] = real_call
             if real_password is None:
@@ -267,6 +277,18 @@ def self_test():
                            roster=[{"member_handle": "someone", "agent": False}])
         return rc, "cannot name a seat" in err
 
+    def task_payload_not_a_row():
+        """A `/task` payload that is not the documented row is no seat, not a traceback."""
+        rc, err, _ = drive(["递卡", "正文"], task_raw=None)
+        return rc, "cannot name a seat" in err
+
+    def roster_rows_of_junk():
+        """Rows that are not objects are skipped; the one real teammate is still found."""
+        rc, err, seen = drive(["递卡", "正文"], seat=None,
+                              roster=[None, "oops", {"member_handle": "cheese-abc",
+                                                     "agent": True}])
+        return rc, "cheese-abc" in seen.get("body", {}).get("content", "")
+
     def no_password():
         rc, err, _ = drive(["递卡", "正文"], password="")
         return rc, "OKCHEESE_PASS" in err
@@ -310,6 +332,10 @@ def self_test():
          roster_several(), (5, False, True)),
         ("退出码：哪一处都点不出一个队友 → 5",
          no_seat_anywhere(), (5, True)),
+        ("座位：任务行回的不是一个对象 → 当作没写座位，不抛异常",
+         task_payload_not_a_row(), (5, True)),
+        ("座位：名册里混着不是对象的行 → 跳过它们，仍点出那个队友",
+         roster_rows_of_junk(), (0, True)),
         ("退出码：环境里没有密码 → 2", no_password(), (2, True)),
         ("退出码：命令行不对 → 2，且一个调用都不发", bad_command_line(), (2, True)),
         ("退出码：登录被拒 → 3，什么都没发出去",
