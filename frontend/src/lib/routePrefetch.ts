@@ -7,7 +7,7 @@
 // 它的全部纪律是一句话：**预取是顺手做的事，不是必须做完的事。** 它绝不能抢用户
 // 此刻真正在等的那个请求，绝不能因为失败而让任何人看见什么，也绝不能因为「取过一
 // 次」而改变界面上的任何状态——尤其是未读红点。
-import type { RouteLocationNormalized, RouteLocationRaw, Router } from 'vue-router'
+import type { RouteLocationRaw, Router } from 'vue-router'
 
 import { whenIdle } from './idle'
 
@@ -129,27 +129,6 @@ function warmPage(router: Router, name: string): void {
   if (!record) return
   warmedPages.add(name)
   warmComponents(record.components)
-}
-
-/**
- * 一次导航刚定下去哪儿、守卫还没走完的时候，把这一跳要用的页面代码先下下来。
- *
- * Vue Router 要等所有守卫放行之后才开始下这一跳的懒加载 chunk，而地址守卫
- * （`lib/addresses` 的 `canonicalAddress`）得先问一趟 `/addresses` 才知道地址里那个
- * 短名背后是哪个项目。两段于是首尾相接：冷开一个项目页，地址那一问回来之前这一页的
- * 代码一个字节都没在动。这里把第二段挪到第一段旁边，和它并排走。
- *
- * 和 hover 预取不同，这里下的就是这次导航自己马上要下的那份代码：省流量、慢网也照下，
- * 不下只是让人多等。地址守卫改写后的地址和原来指向同一页（只换参数，不换路由名），
- * 所以不会下错东西；真下错了也只是白下一次，用户看不见。
- */
-export function warmNavigation(to: RouteLocationNormalized, from: RouteLocationNormalized): void {
-  // 两边都指着的那几条记录是已经挂着的框架层，它的代码早就在手上了。
-  const here = new Set(from.matched)
-  for (const record of to.matched) {
-    if (here.has(record)) continue
-    warmComponents(record.components)
-  }
 }
 
 /**

@@ -17,7 +17,6 @@ import { workspaceRoutes } from './workspaceRoutes'
 
 import { canonicalAddress, isUuid, noteSignedOut, routeIds } from '@/lib/addresses'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
-import { warmNavigation } from '@/lib/routePrefetch'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { installTopicTransitions } from '@/lib/viewTransition'
 import { myId } from '@/me'
@@ -156,13 +155,6 @@ const router = createRouter({
 router.beforeEach(carryLoginRedirect)
 router.beforeEach(handSignInToApp(() => !!myId()))
 requireEmail(router, async () => (await import('@/services/account')).default)
-// 这一跳要用的页面代码和下面那条地址守卫同时出发。
-//
-// Vue Router 要等所有守卫都放行才开始下路由自己的懒加载 chunk。下面那条地址守卫要先问
-// 一趟 `/addresses`，于是冷开一个项目页时「问地址」在前、「下页面代码」在后，页面上每一
-// 段请求都排在这两段之后。挪到守卫这一侧，两段并排走（lib/routePrefetch.ts 的
-// `warmNavigation`）。
-router.beforeEach((to, from) => warmNavigation(to, from))
 // 项目框里的地址落地成短的那一种（`/projects/<短名>/tasks/318`），见 lib/addresses。
 router.beforeEach((to) => (myId() ? canonicalAddress(to) : noteSignedOut(to)))
 
