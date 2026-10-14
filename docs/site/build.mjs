@@ -874,6 +874,17 @@ write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))
 write('dev-gate.html', devGatePage(ctx))
 write('404.html', notFoundPage(ctx))
+// Search engines read these only at a host's root, so only the docs host's own build has them;
+// under /docs/ the platform's root answers. The developer pages stay out: they are sign-in only.
+if (!BASE) {
+  const userUrls = ['/', '/changelog', '/download', ...SECTIONS.flatMap(([key]) => flatNav(userNav[key]).map((p) => `/${p.slug}`))]
+  write('sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${userUrls.map((u) => `<url><loc>${SITE}${u}</loc></url>`).join('\n')}
+</urlset>
+`)
+  write('robots.txt', `User-agent: *\nDisallow: /dev/\nDisallow: /api/\n\nSitemap: ${SITE}/sitemap.xml\n`)
+}
 for (const [from, to] of Object.entries(REDIRECTS)) {
   if (!from.includes('#')) write(`${from}.html`, redirectPage(target(from, to)))
 }
