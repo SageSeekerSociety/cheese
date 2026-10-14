@@ -31,7 +31,8 @@ rejects `@/network` with a message pointing at `@/api`.
 `localStorage` and `sessionStorage` throw — Safari private mode, a full quota, a
 context with no browser at all — so nothing outside `src/lib/browserStorage.ts`
 may reference them. Import `storageGet`, `storageSet`, `storageRemove`,
-`storageGetJson`, `storageSetJson` or `storageGetStrings`: they never throw, and a
+`storageGetJson`, `storageSetJson`, `storageGetStrings`, `storageKeys` or
+`storageAvailable`: they never throw, and a
 blocked storage just means the preference does not persist. Keep the key and the
 value format that is already in users' browsers. CI runs
 `pnpm run lint:storage` (`lint:storage:update` rewrites the baseline downward);

@@ -152,6 +152,14 @@ describe('JSON 读写', () => {
     expect(storageSetJson('k', { n: '新' }, 'local', 12)).toBe(true)
     expect(storageGetJson('k')).toEqual({ n: '新' })
   })
+
+  // 边界：判据是「超过」，所以正好等于上限还是写。少一个字符就不写。
+  it('正好等于 maxChars 还是写', () => {
+    const value = 'a'.repeat(10) // 序列化后带引号正好 12 个字符
+
+    expect(storageSetJson('k', value, 'local', 12)).toBe(true)
+    expect(storageSetJson('k', value, 'local', 11)).toBe(false)
+  })
 })
 
 describe('按键前缀枚举', () => {
@@ -159,7 +167,10 @@ describe('按键前缀枚举', () => {
     storageSet('draft:a', '1')
     storageSet('draft:b', '2')
     storageSet('other', '3')
-    storageSet('draft:c', '4', 'session')
+    // 前缀在中间 / 结尾的不算 —— 这条用来把「开头对得上」和「包含」分开。
+    storageSet('x-draft:y', '4')
+    storageSet('draft', '5')
+    storageSet('draft:c', '6', 'session')
 
     expect(storageKeys('draft:').sort()).toEqual(['draft:a', 'draft:b'])
   })
