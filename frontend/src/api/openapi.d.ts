@@ -3034,6 +3034,109 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apps/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App
+         * @description The app's document and every version it has, oldest first.
+         */
+        get: operations["get_app_apps__key__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{key}/versions/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Version
+         * @description One version's code, the shell it runs in and where that shell is
+         *     served, and the room it took when the platform ran it.
+         */
+        get: operations["get_app_version_apps__key__versions__version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{key}/versions/{version}/shot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Shot
+         * @description What the version looked like when the platform ran it, at ``width``.
+         */
+        get: operations["get_app_shot_apps__key__versions__version__shot_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{document_id}/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create App
+         * @description A new app of the document, at version 1. The document does not show it
+         *     until a block names it: where it goes is the writer's to decide.
+         */
+        post: operations["create_app_documents__document_id__apps_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/apps/{key}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add App Version
+         * @description The app's next version. The documents that show it keep the version
+         *     they name until their `@<version>` is changed.
+         */
+        post: operations["add_app_version_apps__key__versions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/docs/grant": {
         parameters: {
             query?: never;
@@ -13335,6 +13438,27 @@ export interface components {
          * @enum {string}
          */
         AiMode: "autonomous" | "collaborative";
+        /** AppCodeIn */
+        AppCodeIn: {
+            /** Code */
+            code: string;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** AppOut */
+        AppOut: {
+            /** Key */
+            key: string;
+            /** Document Id */
+            document_id: string;
+            /** Document Title */
+            document_title: string | null;
+            /** Versions */
+            versions: components["schemas"]["AppVersionOut"][];
+        };
         /** AppSignInFinish */
         AppSignInFinish: {
             /** Code */
@@ -13346,6 +13470,55 @@ export interface components {
         AppSignInStart: {
             /** Challenge */
             challenge: string;
+        };
+        /** AppVersionCodeOut */
+        AppVersionCodeOut: {
+            /** Key */
+            key: string;
+            /** Version */
+            version: number;
+            /** Note */
+            note: string;
+            /** Author */
+            author: string;
+            /** Requested By */
+            requested_by: string | null;
+            /** Checked */
+            checked: boolean;
+            /** Created At */
+            created_at: string;
+            /** Code */
+            code: string;
+            /** Shell */
+            shell: number;
+            /** Shell Url */
+            shell_url: string | null;
+            /** Heights */
+            heights: {
+                [key: string]: number;
+            };
+            /** Shots */
+            shots: string[];
+        };
+        /**
+         * AppVersionOut
+         * @description A version as the version menu and the tools show it.
+         */
+        AppVersionOut: {
+            /** Key */
+            key: string;
+            /** Version */
+            version: number;
+            /** Note */
+            note: string;
+            /** Author */
+            author: string;
+            /** Requested By */
+            requested_by: string | null;
+            /** Checked */
+            checked: boolean;
+            /** Created At */
+            created_at: string;
         };
         /** ApplyEnvironment */
         ApplyEnvironment: {
@@ -14517,6 +14690,54 @@ export interface components {
          * @enum {string}
          */
         EmailMode: "instant" | "digest" | "off";
+        /** Envelope[AppOut] */
+        Envelope_AppOut_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["AppOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** Envelope[AppVersionCodeOut] */
+        Envelope_AppVersionCodeOut_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["AppVersionCodeOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** Envelope[AppVersionOut] */
+        Envelope_AppVersionOut_: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["AppVersionOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** Envelope[Page[AgentTypeOut]] */
         Envelope_Page_AgentTypeOut__: {
             /**
@@ -24072,6 +24293,174 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_app_apps__key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_AppOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_app_version_apps__key__versions__version__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_AppVersionCodeOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_app_shot_apps__key__versions__version__shot_get: {
+        parameters: {
+            query: {
+                width: number;
+                theme?: "light" | "dark";
+            };
+            header?: never;
+            path: {
+                key: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The picture. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_app_documents__document_id__apps_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppCodeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_AppVersionOut_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_app_version_apps__key__versions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppCodeIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Envelope_AppVersionOut_"];
                 };
             };
             /** @description Validation Error */

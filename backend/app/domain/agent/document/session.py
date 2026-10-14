@@ -48,10 +48,12 @@ MEMORY_MB = 512
 GONE_AFTER_S = 15.0
 
 #: What a document's 芝士 may do (`sandbox/cheese`): read and edit the
-#: document, and look things up in the project as the person asking.
+#: document and its mini-apps, and look things up in the project as the person asking.
 TOOLS = (
     "cheese_doc_get",
     "cheese_doc_edit",
+    "cheese_app_save",
+    "cheese_app_get",
     "cheese_project_search",
     "cheese_memory_read",
     "cheese_attachment_read",

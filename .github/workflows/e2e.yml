@@ -135,13 +135,14 @@ jobs:
       # on its first visit. The build needs nothing from the backend steps
       # below, so it runs alongside them and the wait step joins it.
       # VITE_API_BASE_URL is baked in at build time, as in production.
+      # `pnpm run build` is the image's build: the mini-app shell, then the app.
       - name: Start the frontend build
         working-directory: frontend
         env:
           VITE_API_BASE_URL: /api
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
-          nohup bash -c 'pnpm exec vite build > "$RUNNER_TEMP/frontend-build.log" 2>&1; echo $? > "$RUNNER_TEMP/frontend-build.status"' > /dev/null 2>&1 &
+          nohup bash -c 'pnpm run build > "$RUNNER_TEMP/frontend-build.log" 2>&1; echo $? > "$RUNNER_TEMP/frontend-build.status"' > /dev/null 2>&1 &
 
       # Build a fresh venv for this job on the hosted runner's filesystem.
       - name: Point uv at a per-job venv
