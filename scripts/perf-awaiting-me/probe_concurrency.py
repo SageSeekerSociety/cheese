@@ -18,6 +18,11 @@ could only check out 15 connections would measure the queue for a connection,
 not the read path. Pass `PERF_POOL=default` to get the old shape back for a
 before/after comparison.
 
+The collector is configured the way the app configures it too: `app.main`'s
+lifespan hook freezes the startup heap, and this probes the endpoint directly so
+that hook never runs — without repeating the call here the probe would report a
+shape the server no longer has. `PERF_FREEZE=0` turns it off for a before/after.
+
 It runs batches against the database it is pointed at; to see how the cost
 moves with the data, resize the seed (`PERF_DATABASE_URL`) and run it again.
 
@@ -61,6 +66,14 @@ def engine_kwargs() -> dict:
     }
 
 
+def freeze_startup_heap() -> bool:
+    """What `app.main.lifespan` does at boot — see the module docstring."""
+    if os.environ.get("PERF_FREEZE") == "0":
+        return False
+    gc.freeze()
+    return True
+
+
 class Collector:
     """What the cyclic collector charged to each burst."""
 
@@ -100,10 +113,12 @@ async def main() -> None:
 
     chat = SimpleNamespace(live=SimpleNamespace(active_turn_ids={}))
 
+    frozen = freeze_startup_heap()
     await one(session_factory, chat)  # warm pool + statement cache
 
     shape = "SQLAlchemy default" if not engine_kwargs() else "production 20+15"
-    print(f"concurrency={N}  batches={BATCHES}  pool={shape}")
+    print(f"concurrency={N}  batches={BATCHES}  pool={shape}"
+          f"  startup heap {'frozen' if frozen else 'unfrozen'}")
     print()
     print("batch    wall ms    CPU ms   CPU/req ms   rows    gc ms  gen2")
     walls: list[float] = []

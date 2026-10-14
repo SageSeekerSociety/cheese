@@ -10,6 +10,7 @@ this file.
 """
 
 import asyncio
+import gc
 import importlib
 import logging
 import pkgutil
@@ -55,6 +56,14 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    # Move the startup heap (modules, routers, settings, the pool) out of the
+    # collector's scan set once, so every later gen-0/1 pass stops re-walking
+    # it. Nothing reachable at boot can become garbage, so this changes neither
+    # semantics nor peak memory — only how much the collector re-reads.
+    # `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
+    # 20-concurrency burst; gunicorn's arbiter does the same after preloading.
+    gc.freeze()
+
     # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process left behind (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
