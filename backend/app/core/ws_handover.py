@@ -30,7 +30,9 @@ Send = Callable[[Message], Awaitable[None]]
 
 SERVICE_RESTART = 1012
 
-BUSINESS_SOCKETS = re.compile(r"^/(?:rooms/live|notifications/live)$")
+BUSINESS_SOCKETS = re.compile(
+    r"^/(?:rooms/live|notifications/live|notifications/inbox)$"
+)
 
 
 class _Socket:

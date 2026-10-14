@@ -8,6 +8,7 @@
     "noNotifications": "暂无通知",
     "loadFailed": "无法读取动态",
     "markAllAsRead": "全部标为已读",
+    "newItems": "有 {count} 条新动态",
     "loadMore": "加载更多",
     "filterLabel": "动态筛选",
     "unknownTeam": "未知团队",

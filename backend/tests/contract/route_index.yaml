@@ -123,6 +123,7 @@ auth_entries:
   github.state: "GitHub provider callback verifies signed install/account-link state and scopes the resulting binding; no ordinary login dependency at callback. Source: app/api/routes/github_install.py; github_account_link.py."
   app.sign_in.code: "app_sign_in.finish_app_sign_in requires same origin, signed code, PKCE verifier challenge and single-use claim before issuing session. Source: app/api/routes/app_sign_in.py."
   notice.ws: "notifications_live.live verifies dedicated notice token from Authorization then _signed_in confirms active user session, periodically rechecking. Source: app/api/routes/notifications_live.py."
+  notice.ws.first-message: "notifications_live.inbox accepts, then verifies the same notice token from the first message within SIGN_IN_SECONDS and _signed_in confirms active user session, periodically rechecking; otherwise closes with 4401. Source: app/api/routes/notifications_live.py."
   topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService.require_manager admits the channel's creator and whoever manages the project. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
   topic.archive: "topics archive/unarchive/delete resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler, and delete refuses the project's own overview in the service. Source: app/api/routes/topics_lifecycle.py onward."
   topic.channel.self: "topics_channel resolves the authenticated person in the channel and authorize_topic; joining needs the person on the project's roster, a private room or a task is not a channel. Source: app/api/routes/topics_channel.py; domain/topic_membership/services.py."
@@ -812,6 +813,7 @@ routes:
   # app.api.routes.notifications_live
   - {protocol: "http", method: "POST", path: "/notifications/live-token", auth: "user.session", owner: "notification"}
   - {protocol: "ws", method: "WS", path: "/notifications/live", auth: "notice.ws", owner: "notification"}
+  - {protocol: "ws", method: "WS", path: "/notifications/inbox", auth: "notice.ws.first-message", owner: "notification"}
   # app.api.routes.preview_sessions
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/preview-session", auth: "preview.access", owner: "preview"}
   # app.api.routes.project_context
