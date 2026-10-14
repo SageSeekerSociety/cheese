@@ -81,9 +81,16 @@ def last_output_at(gap_s: float | None, now: datetime) -> datetime | None:
     return at.replace(second=0, microsecond=0)
 
 
-async def running_tasks(chat, db: AsyncSession, tasks: list[Task]) -> set[uuid.UUID]:
-    """The ids of ``tasks`` with a turn running in their own conversation."""
-    ids = [task.id for task in tasks]
+async def running_tasks(
+    chat, db: AsyncSession, task_ids: Collection[uuid.UUID]
+) -> set[uuid.UUID]:
+    """Which of these tasks have a turn running in their own conversation.
+
+    Takes ids, not the rows: a listing reads its tasks as the few columns it
+    draws (`room_task.repositories.ListedTask`), and this question is about the
+    task's own conversation — which the id alone names.
+    """
+    ids = list(task_ids)
     if not ids:
         return set()
     here = {task_id: set(chat.live.active_turn_ids.get(task_id, ())) for task_id in ids}

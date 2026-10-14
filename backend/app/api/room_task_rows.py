@@ -55,7 +55,7 @@ async def task_out(db, chat: ChatService, task, card=None) -> dict:
     function the list uses, so a deep link and the board cannot disagree."""
     if card is None:
         card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
-    running = await running_tasks(chat, db, [task])
+    running = await running_tasks(chat, db, [task.id])
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")
     shown = presentation.task_presentation(
@@ -106,7 +106,7 @@ async def task_rows(
     # 构造几百遍。
     project = await ProjectRepository(db).get(project_id)
     choices = binding.catalog(project.settings if project else None)
-    running = await running_tasks(chat, db, [t for t, _ in threads])
+    running = await running_tasks(chat, db, [t.id for t, _ in threads])
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
     now = datetime.now(UTC)
@@ -244,7 +244,7 @@ async def project_task_rows(
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
     # 第四次批查询：哪几条此刻有一轮在跑（`agent.liveness`：不止看内存）。
-    running = await running_tasks(chat, db, tasks)
+    running = await running_tasks(chat, db, [task.id for task in tasks])
     # 第五次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
     last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
     items = []
