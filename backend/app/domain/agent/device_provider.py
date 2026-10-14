@@ -965,7 +965,8 @@ class DeviceChannel(Channel):
                 valid_after=int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S,
             )
             and not (
-                not own_login and await self._tunnel_helper_is_down(existing, home_dir)
+                not own_login
+                and await self._tunnel_helper_is_down(existing, home_dir, seat)
             )
         ):
             mark("screen_settled")
@@ -1056,7 +1057,7 @@ class DeviceChannel(Channel):
                 self._runner(device_id, place.state, "ping"),
                 _false()
                 if own_login
-                else self._tunnel_helper_is_down(existing, home_dir),
+                else self._tunnel_helper_is_down(existing, home_dir, seat),
                 self._refresh_screen_files(
                     device_id,
                     home_dir,
@@ -1275,7 +1276,9 @@ class DeviceChannel(Channel):
             return False
         return exp <= int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
 
-    async def _tunnel_helper_is_down(self, screen: HubScreen, home_dir: str) -> bool:
+    async def _tunnel_helper_is_down(
+        self, screen: HubScreen, home_dir: str, seat: str
+    ) -> bool:
         """Whether the machine-local tunnel helper this screen's `claude` dials has
         stopped listening — the second half of the reuse gate, alongside
         `_credential_is_stale`.
@@ -1288,7 +1291,9 @@ class DeviceChannel(Channel):
 
         The port is the machine's answer: the probe reads it from the SEAT's own
         directory, where that seat's helper recorded it — per seat, because a room
-        may seat several agents and one helper carries one credential.
+        may seat several agents and one helper carries one credential. ``seat``
+        is the screen's seat key (`place.seat_key`): a task's session has a
+        helper of its own beside its room's, and is judged by that one.
 
         Conservative like the runner check: only an explicit `down` retires a
         screen. A failed exec, a non-zero exit, or an `unknown` (unreadable port
@@ -1302,11 +1307,7 @@ class DeviceChannel(Channel):
             result = await self._hub.exec(
                 screen.device_id,
                 ["sh", "-c", DEVICE_TUNNEL_PROBE],
-                env={
-                    "CHEESE_TUNNEL_PROBE_DIR": seat_dir(
-                        home_dir, screen.agent_handle or ""
-                    )
-                },
+                env={"CHEESE_TUNNEL_PROBE_DIR": seat_dir(home_dir, seat)},
                 timeout=_ALIVE_PROBE_TIMEOUT_S,
             )
         except Exception:  # noqa: BLE001 — a probe failure is not proof of death

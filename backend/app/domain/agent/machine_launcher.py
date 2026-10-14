@@ -431,13 +431,18 @@ def screen_env(
         if value:
             env[name] = value
     # This seat's name inside the session home: the same one `place.seat_dir`,
-    # the launcher file and the runner's state directory are named by, derived
-    # from the handle alone. The launcher puts the seat's own files — the
-    # tunnel helper's credential above all — under it, because a room may seat
-    # several agents and one credential cannot serve two of them.
+    # the launcher file, the runner's state directory and the harness's own
+    # seat directory are named by, all derived from the seat's key
+    # (`place.seat_key`). The launcher puts the seat's own files — the tunnel
+    # helper's credential above all — under it, because one credential cannot
+    # serve two sessions. A task's session is a seat of its own beside its
+    # room's: keyed by the handle alone, every task the room's agent ran wrote
+    # its credential into one file, and each running task's helper then
+    # stamped whichever task launched last on its CONNECTs (dev, 2026-10-13:
+    # five running sessions of one room on another task's credential).
     # Not gated on truth: an empty handle hashes to a name of its own, which is
     # what keeps the room's own seat out of a teammate's directory.
-    env["CHEESE_SEAT"] = seat_name(place.agent_handle)
+    env["CHEESE_SEAT"] = seat_name(place.seat or place.agent_handle)
     if place.execution_target is not None:
         env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
     if place.project_id:
