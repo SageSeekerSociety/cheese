@@ -925,8 +925,9 @@ def sweep(tok, room, silent, skip, want_facts):
         accev.sort(key=lambda m: m["created_at"])
         # 一条长命令只在开始时落一个 event 块、结束时才补 output_bytes，所以还没返回的
         # 命令是「现在在跑」；单条 45 分钟的命令靠它才不会被报成停摆。event 只认座位自己
-        # 写的，author 过滤不能省：不过滤的话别人的块（system 的 pr_closed 每隔几天来一
-        # 条）会被当成它的心跳；座位不知道是谁时就一条都不读。行上的 last_output_at 是
+        # 写的，author 过滤不能省：不过滤的话别人的块（accept 的 pr_closed 每隔几天来一
+        # 条，`review/room_notices.py` 的 announce(author="accept")）会被当成它的心跳；座位
+        # 不知道是谁时就一条都不读。行上的 last_output_at 是
         # 平台的第三个说法，现在两端都不给值，给了就顺手采信。
         seat = t.get("agent_handle")
         evs = get(tok, f"/topics/{tid}/history?limit=1&kind=event&author={seat}")["data"] if seat else []
