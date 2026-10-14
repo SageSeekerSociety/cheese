@@ -44,6 +44,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_user_realname_service
+from app.api.response import ok
 from app.api.users_deps import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -139,7 +140,7 @@ async def get_user_identity(
             "identity": None,
         }
 
-    return {"code": 200, "message": "Success", "data": data}
+    return ok(data)
 
 
 @router.put(
@@ -167,7 +168,7 @@ async def put_user_identity(
         major=payload.major,
         class_name=payload.class_name,
     )
-    return {"code": 200, "message": "Success", "data": {"identity": stored}}
+    return ok({"identity": stored})
 
 
 @router.patch(
@@ -220,7 +221,7 @@ async def patch_user_identity(
         major=merged["major"],
         class_name=merged["className"],
     )
-    return {"code": 200, "message": "Success", "data": {"identity": stored}}
+    return ok({"identity": stored})
 
 
 @router.delete(
@@ -242,7 +243,7 @@ async def delete_user_identity(
         purpose=SudoPurpose.REALNAME_DELETE,
     )
     await realname_service.delete_user_identity(user_id)
-    return {"code": 200, "message": "Success"}
+    return ok(None)
 
 
 @router.get(
@@ -267,4 +268,4 @@ async def get_user_identity_access_logs(
         "logs": logs,
         "page": page,
     }
-    return {"code": 200, "message": "Success", "data": data}
+    return ok(data)

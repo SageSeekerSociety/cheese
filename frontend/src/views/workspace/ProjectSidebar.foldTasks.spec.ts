@@ -2,8 +2,8 @@
  * 频道行右边那个折叠加手：点一下，把挂在它下面的一整块任务收起来。
  *
  * 收起来的是画法，不是数据——这个频道里进行中的条数和那盏灯挪到频道行上（不然收起来
- * 就成了一条没有信息量的空白），你正打开的那条任务留在下面（收起不能把你手里的事一起
- * 收掉）。
+ * 就成了一条没有信息量的空白）。整块放下，里面一条都不留：正开着的那条任务也一起走，
+ * 你回到这个频道的页面。
  *
  * 用的是真的项目框路由、真的 ProjectSidebar 和 TopicSidebar、真的 store 和缓存，只把
  * 接口换成替身。
@@ -49,6 +49,7 @@ vi.mock('@/api', async (importOriginal) => ({
   listProjectTasks: api.listProjectTasks,
 }))
 
+import { rememberNumbered, rememberProject } from '@/lib/addresses'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { seedProject, seedProjects } from '@/test/seedQueries'
@@ -71,7 +72,12 @@ function task(id: string, title: string, room = 'topic-a', over: Record<string, 
   }
 }
 
-function channel(id: string, shown: ReturnType<typeof task>[], open: number): Topic {
+function channel(
+  id: string,
+  shown: ReturnType<typeof task>[],
+  open: number,
+  over: Record<string, unknown> = {}
+): Topic {
   return {
     id,
     project_id: 'p',
@@ -80,7 +86,15 @@ function channel(id: string, shown: ReturnType<typeof task>[], open: number): To
     status: 'active',
     joined: true,
     my_tasks: { shown, open },
+    ...over,
   } as unknown as Topic
+}
+
+/** 任务页的地址里只有任务，「它在哪个频道」靠地址表补上（`routeIds`）。真实运行里是任务
+ *  清单读回来时记下的，这里没有那一步，就自己记一份。 */
+function rememberTask(id: string, roomId: string, number: number) {
+  rememberProject('p', 'p')
+  rememberNumbered('tasks', [{ id, project_id: 'p', room_id: roomId, number }])
 }
 
 async function settle() {
@@ -107,6 +121,14 @@ async function openProject(topics: Topic[], members: ProjectMemberRow[] = []) {
 
 const fold = () => screen.getByRole('button', { name: "Collapse this channel's tasks" })
 const unfold = () => screen.getByRole('button', { name: "Expand this channel's tasks" })
+/** 某个频道那一行上的那颗把手：侧栏上有好几个频道时，按行取（行上带着房间 id）。 */
+function foldIn(roomId: string): HTMLElement {
+  return document.querySelector(`[data-room-id="${roomId}"] .task-fold__btn`) as HTMLElement
+}
+/** 正文停在哪一页、哪个频道/任务上——收起带走的是这个，不是地址栏怎么写。 */
+function here(router: { currentRoute: { value: { name?: unknown; params: Record<string, unknown> } } }) {
+  return { name: router.currentRoute.value.name, ...router.currentRoute.value.params }
+}
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -162,16 +184,78 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(api.listProjectTasks).not.toHaveBeenCalled()
   })
 
-  it('收起时留住你正打开的那一条', async () => {
+  it('正在这条任务里时收起：回到频道页，那条任务不再留在下面', async () => {
     const router = await openProject([channel('topic-a', [task(K1, '任务一'), task(K2, '任务二')], 5)])
+    rememberTask(K1, 'topic-a', 1)
     await router.push(`/projects/p/tasks/${K1}`)
     await settle()
+    // 任务页的地址里只有任务，它所在的频道由地址表补上（`hereChannelId`）。
+    expect(here(router)).toEqual({ name: 'workspace-task', projectId: 'p', taskId: K1 })
 
     await fireEvent.click(fold())
     await settle()
 
-    expect(screen.getByText('任务一')).toBeTruthy()
+    // 正文换成这个频道的页面（地址栏里的短名不一定是它原来那个写法）。
+    expect(here(router)).toEqual({ name: 'workspace-topic', projectId: 'p', topicId: 'topic-a' })
+    expect(screen.queryByText('任务一')).toBeNull()
     expect(screen.queryByText('任务二')).toBeNull()
+  })
+
+  it('收起只发生在你正看着的这个频道里：正文在别处时不动', async () => {
+    const router = await openProject([
+      channel('topic-a', [task(K1, '任务一')], 1),
+      channel('topic-b', [task(K2, '任务二', 'topic-b')], 1),
+    ])
+    await router.push(`/projects/p/tasks/${K2}`)
+    await settle()
+
+    // topic-a 那一行的把手：正开着的那条在 topic-b 里——收起它不该把人带走。
+    await fireEvent.click(foldIn('topic-a'))
+    await settle()
+
+    expect(here(router)).toEqual({ name: 'workspace-task', projectId: 'p', taskId: K2 })
+    expect(screen.getByText('任务二')).toBeTruthy()
+  })
+
+  it('再展开也不把人带回那条任务：正文留在这个频道页上', async () => {
+    const router = await openProject([channel('topic-a', [task(K1, '任务一')], 1)])
+    rememberTask(K1, 'topic-a', 1)
+    await router.push(`/projects/p/tasks/${K1}`)
+    await settle()
+    await fireEvent.click(fold())
+    await settle()
+
+    await fireEvent.click(unfold())
+    await settle()
+
+    expect(here(router).name).toBe('workspace-topic')
+    expect(screen.getByText('任务一')).toBeTruthy()
+  })
+
+  it('收起后那一块的灯只说里面的任务，不重复频道自己那盏', async () => {
+    // 这个频道自己在等我（黄灯）；挂在它下面那一条没什么事。
+    await openProject([channel('topic-a', [task(K1, '任务一')], 3, { awaits_me: true })])
+
+    await fireEvent.click(fold())
+    await settle()
+
+    const rollup = document.querySelector('.task-fold__rollup') as HTMLElement
+    // 频道行左边那盏已经说了这件事；这一块里没有一条任务有事，就不该再画一颗。
+    expect(rollup.querySelectorAll('.row-light')).toHaveLength(0)
+    expect(rollup.textContent).toBe('3')
+  })
+
+  it('收起后那一块的灯：里面真有活等着，就亮它那一颗', async () => {
+    await openProject([
+      channel('topic-a', [task(K1, '任务一', 'topic-a', { awaits_me: true })], 3, { awaits_me: true }),
+    ])
+
+    await fireEvent.click(fold())
+    await settle()
+
+    const lights = (document.querySelector('.task-fold__rollup') as HTMLElement).querySelectorAll('.row-light')
+    expect(lights).toHaveLength(1)
+    expect(lights[0]!.classList.contains('row-light--yellow')).toBe(true)
   })
 
   it('没有任务挂着的频道没有这个把手', async () => {

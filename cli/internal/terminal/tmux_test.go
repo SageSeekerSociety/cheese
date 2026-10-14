@@ -480,3 +480,59 @@ func TestDegenerateViewerSizeDoesNotSquashTheScreen(t *testing.T) {
 		requireUsable(t, "观看者中途缩到 10x1 之后", cols, rows)
 	})
 }
+
+// TestExitedNamesOnlyScreensThatEndedLongEnoughAgo: a screen whose program
+// ended is kept for a while so someone can read why, and named once that while
+// is over. A running screen is never named, however old, and neither is a
+// screen another backend launched.
+func TestExitedNamesOnlyScreensThatEndedLongEnoughAgo(t *testing.T) {
+	isolate(t)
+	m, err := NewManager()
+	if err != nil {
+		t.Skipf("no tmux available: %v", err)
+	}
+	t.Cleanup(m.KillServer)
+	const owner = "https://backend.test"
+	for name, argv := range map[string][]string{
+		"running": {"sleep", "60"},
+		"ended":   {"true"},
+		"foreign": {"true"},
+	} {
+		if _, err := m.Spawn(name, argv, nil, 80, 24); err != nil {
+			t.Fatal(err)
+		}
+		launcher := owner
+		if name == "foreign" {
+			launcher = "https://other.test"
+		}
+		if err := m.SaveIdentity(name, launcher, `{"sid":"`+name+`"}`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		out, _ := m.tmux("list-panes", "-t", "=ended", "-F", "#{pane_dead}").Output()
+		if strings.TrimSpace(string(out)) == "1" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the ended screen's program never ended")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	soon, err := m.Exited(owner, time.Hour, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(soon) != 0 {
+		t.Fatalf("screens named before their hour was up: %v", soon)
+	}
+	later, err := m.Exited(owner, time.Hour, time.Now().Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(later) != 1 || later[0] != "ended" {
+		t.Fatalf("named %v two hours on, want only the ended screen", later)
+	}
+}

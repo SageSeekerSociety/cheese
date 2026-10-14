@@ -13,18 +13,18 @@ from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.owner_provider import owner_is_away
 from app.domain.agent.pending_messages import defer_message
-from app.domain.agent.platform_notices import (
-    EVENT_TURN_FAILED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.agent.queries import conversation_seat
 from app.domain.agent.seat_admission import seat_admission
 from app.domain.block.models import Block
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import (
+    EVENT_TURN_FAILED,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.room_task.place import PlaceResolver
 
 
@@ -88,8 +88,9 @@ async def admitted_initial(
     async with seat_admission(seat_lock_for(topic_id, seat)):
         async with sessions() as session:
             place = await PlaceResolver(session).conversation(topic_id)
-            # A room's addressed agent must still sit on its roster; a task's
-            # agent is the task's own and sits on no roster.
+            # A room's addressed agent must still sit on its roster. A task's
+            # agent is seated when the task is given to it, and the turn
+            # refuses one that is not (`queries._acting_handle`).
             if instance_id is not None and place is not None and place.task is None:
                 # deferred-import: tests patch app.domain.topic_membership.services
                 from app.domain.topic_membership.services import TopicMemberService

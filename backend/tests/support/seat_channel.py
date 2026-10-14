@@ -9,9 +9,11 @@ does: opening a seat's runner (``open``), and answering a call to it
 """
 
 import ast
+import atexit
 import hashlib
 import json
 import re
+import shutil
 import tempfile
 import uuid
 from collections.abc import AsyncIterator
@@ -123,6 +125,9 @@ class SeatChannel:
         self.screens: list[dict] = []
         self.policy = policy
         self.root = Path(tempfile.mkdtemp(prefix="test-seats-"))
+        # Removed when the test process exits, not when this channel goes: a test
+        # standing in for a restarted backend hands this root to the next one.
+        atexit.register(shutil.rmtree, self.root, True)
         self.runtime = self.next_process(harness)
 
     def next_process(self, harness: str | None = None) -> RoomSessions:

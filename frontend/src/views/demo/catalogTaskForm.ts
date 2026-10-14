@@ -18,7 +18,6 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import TaskFormClassify from '@/components/tasks/form/TaskFormClassify.vue'
-import TaskFormExternalProblem from '@/components/tasks/form/TaskFormExternalProblem.vue'
 import TaskFormMore from '@/components/tasks/form/TaskFormMore.vue'
 import TaskFormParticipation from '@/components/tasks/form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from '@/components/tasks/form/TaskFormPrivacyDialog.vue'
@@ -85,13 +84,6 @@ const classify = (extra: Record<string, unknown> = {}) => ({
   categoryId: 1,
   topics: [1],
   categoryIdControl: OK,
-  ...extra,
-})
-
-/** 「外站题」那一节的一格。 */
-const externalProblem = (extra: Record<string, unknown> = {}) => ({
-  problemNo: '1001',
-  problemNoControl: OK,
   ...extra,
 })
 
@@ -208,34 +200,6 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         note: '点过发布才标红，打开页面时不红。',
         props: classify({ categoryId: undefined, categoryIdControl: red('未选择分类') }),
         expect: '未选择分类',
-      },
-    ],
-  },
-  {
-    id: 'task-form-external-problem',
-    title: 'TaskFormExternalProblem',
-    about: '「外站题」那一节：这道题在 YOJ 上是第几号（可空，空着就是不接外站）。',
-    file: 'src/components/tasks/form/TaskFormExternalProblem.vue',
-    component: TaskFormExternalProblem,
-    needs: UI_T,
-    states: [
-      {
-        name: '填了题号',
-        note: '填了之后平台就能按学号去 YOJ 核对每个领取者过没过；结果在「领取者」页签。',
-        props: externalProblem(),
-        expect: '外站题',
-      },
-      {
-        name: '没填（这道题不接外站）',
-        note: '空着和以前一样：这道题只在知是上做。',
-        props: externalProblem({ problemNo: '' }),
-        expect: 'YOJ 题号',
-      },
-      {
-        name: '填了不是数字（标红）',
-        note: '题号只收数字，和服务端同一条规矩。',
-        props: externalProblem({ problemNoControl: red('题号只能填数字') }),
-        expect: '题号只能填数字',
       },
     ],
   },

@@ -128,7 +128,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pool: mentionPool,
     nameOf: agentNameOf,
     names: mentionNames,
-    taskAgentHandle: opts.taskAgentHandle,
+    agentHandle: opts.agentHandle,
     alwaysSummon,
   })
 
@@ -611,6 +611,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     onDelivered: (block) => {
       // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
       if (block.conversation_id !== place()?.id) return
+      opts.onPosted?.(block)
       delivered.add(block.id)
       pushBlock(block)
       autoScroll()

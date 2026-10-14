@@ -18,16 +18,16 @@ from app.core.db import release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.platform_notices import (
+from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.delivery.agent import dispatch_pending
+from app.domain.identity.actor import Actor
+from app.domain.library import service as library
+from app.domain.notice_meta import (
     EVENT_CARD_REJECTED,
     SEVERITY_WARN,
     WHO_CHEESE,
     notice,
 )
-from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.delivery.agent import dispatch_pending
-from app.domain.identity.actor import Actor
-from app.domain.library import service as library
 from app.domain.project.forge import proposal_client
 from app.domain.review import comment_publish, pr_publish
 from app.domain.review.comments import ReviewCommentService

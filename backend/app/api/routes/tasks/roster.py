@@ -5,6 +5,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
+from app.api.response import ok
+
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 from app.api.task_deps import (
@@ -74,13 +76,11 @@ async def resubmit_task(
     task.updated_at = datetime.now(UTC)
     task = await task_repo.save(task)
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "task": _task_to_api_model(task, include_private_teaching=True),
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -161,11 +161,7 @@ async def get_task_participants(
             )
         )
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"participants": participants},
-    }
+    return ok({"participants": participants})
 
 
 @router.get(
@@ -222,15 +218,13 @@ async def get_task_participant(
         team_map=team_map,
         avatar_map=avatar_map,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "participant": _membership_to_api_model(
                 membership, participant_info=participant_info
             )
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -278,10 +272,8 @@ async def get_task_teams(
 
     team_dtos = [_team_summary(t) for t in teams]
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "teams": team_dtos,
-        },
-    }
+        }
+    )

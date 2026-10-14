@@ -39,15 +39,15 @@ from app.core.storage import private_storage
 from app.domain.agent import resource_cleanup
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DEVICE_HOME_ROOT, DEVICE_WORK_ROOT
-from app.domain.agent.platform_notices import (
+from app.domain.agent_session.models import AgentSession
+from app.domain.device.models import DeviceRow
+from app.domain.device.supply import Supply
+from app.domain.notice_meta import (
     EVENT_ROOM_FILES_KEPT,
     SEVERITY_WARN,
     WHO_HUMAN,
     notice,
 )
-from app.domain.agent_session.models import AgentSession
-from app.domain.device.models import DeviceRow
-from app.domain.device.supply import Supply
 from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.models import KeptRoomFiles
 

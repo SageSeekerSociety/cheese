@@ -40,14 +40,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
+from app.domain.library import records as library_records
+from app.domain.library import service as library
+from app.domain.notice_meta import (
     EVENT_LIBRARY_SAVED,
     SEVERITY_INFO,
     WHO_HUMAN,
     notice,
 )
-from app.domain.library import records as library_records
-from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project.models import RoomFileRevision
 from app.domain.textfile import content_version

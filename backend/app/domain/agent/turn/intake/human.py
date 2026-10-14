@@ -11,7 +11,12 @@ from app.core.sentences import say
 from app.domain.agent import own_calls
 from app.domain.agent.announce import answer_questions, instance_of_seat
 from app.domain.agent.ask import publish_answered
-from app.domain.agent.mentions import announce_mentions, person_mentions
+from app.domain.agent.mentions import (
+    MENTION_ALL,
+    MENTION_HERE,
+    announce_mentions,
+    person_mentions,
+)
 from app.domain.agent.queries import _agent_at
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent.turn.store.human import (
@@ -21,7 +26,7 @@ from app.domain.agent.turn.store.human import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
-from app.domain.delivery.mention import record_mentions
+from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
@@ -51,7 +56,9 @@ async def prepare_human(
     recipient = {
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
-        "mentioned": place.task is not None
+        "mentioned": (
+            place.task is not None and not _names_only_people(mentions.content)
+        )
         or (seats is not None and looks_like_agent_handle(seats[1])),
     }
     return HumanPreparation(
@@ -66,17 +73,28 @@ async def prepare_human(
     )
 
 
+def _names_only_people(content: str) -> bool:
+    """Whether ``content`` @-s someone and every one it @-s is a person.
+
+    A task calls its teammate with every message, except one that says whom it
+    is for and names no AI teammate there: an @ of a person is said to that
+    person, and the task's teammate does not pick it up. ``@all``/``@here``
+    name the whole channel, the teammate included."""
+    handles = mentioned_handles(content)
+    return bool(handles) and all(
+        h not in (MENTION_ALL, MENTION_HERE) and names_a_person(h) for h in handles
+    )
+
+
 async def _thread_agent(session: AsyncSession, place: Place, project):
     """Who a 支线's message is for when it calls nobody: the teammate the 支线
-    is talking with (`thread_teammate`), while it still sits in the channel.
-    Handed to the channel's default instead, it reached no one: the default
-    has no turn there to hear it, and the next turn of the teammate that does
-    leaves out a message addressed to somebody else."""
+    is talking with (`thread_teammate`). Handed to the channel's default
+    instead, it reached no one: the default has no turn there to hear it, and
+    the next turn of the teammate that does leaves out a message addressed to
+    somebody else."""
     assert place.thread is not None
     seat = await thread_teammate(session, place.thread)
-    if seat is None or seat not in await TopicMemberService(session).agent_handles(
-        place.room_id
-    ):
+    if seat is None:
         return None
     return await AgentInstanceService(session).for_seat_handle(project, seat)
 

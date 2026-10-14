@@ -112,6 +112,7 @@ def _place(
     topic_id="",
     execution_target=None,
     ca_pem="",
+    seat="",
 ) -> MachinePlace:
     return MachinePlace(
         home=home_dir,
@@ -124,6 +125,7 @@ def _place(
         agent_handle="ops",
         execution_target=execution_target,
         ca_pem=ca_pem,
+        seat=seat,
     )
 
 
@@ -1045,7 +1047,7 @@ def _run_tunnel_prefix(tmp_path, up_script: str):
     start = script.rindex(
         'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then',
         0,
-        script.index('TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up" "$SEATD")"'),
+        script.index('TUNNEL="$(sh "$HOME/.cheese/cheese-tunnel-up" "$SEATD")"'),
     )
     end = script.index("\nfi\n", start) + len("\nfi\n")
     (tmp_path / ".cheese").mkdir(exist_ok=True)
@@ -1077,7 +1079,7 @@ def test_the_agent_is_started_on_the_port_its_helper_bound(tmp_path):
     brought it up. `claude` reads HTTPS_PROXY once, at startup, so the port has
     to be in its environment before it starts — any other port is either dead or
     somebody else's helper, carrying somebody else's credential."""
-    result = _run_tunnel_prefix(tmp_path, "#!/bin/sh\necho 40123\n")
+    result = _run_tunnel_prefix(tmp_path, "#!/bin/sh\necho 40123 4242\n")
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "agent:http://127.0.0.1:40123"
@@ -1086,7 +1088,7 @@ def test_the_agent_is_started_on_the_port_its_helper_bound(tmp_path):
 def test_no_agent_starts_when_its_helper_is_not_ready(tmp_path):
     """A `claude` started without its helper fails every turn looking like a
     stalled model. The launch has to stop here, visibly, instead."""
-    result = _run_tunnel_prefix(tmp_path, "#!/bin/sh\necho 40123\nexit 1\n")
+    result = _run_tunnel_prefix(tmp_path, "#!/bin/sh\necho 40123 4242\nexit 1\n")
 
     assert result.returncode == 1
     assert "agent:" not in result.stdout
@@ -1150,10 +1152,10 @@ def test_two_seats_get_their_own_helper_and_their_own_token(tmp_path):
                 timeout=30,
             )
             assert result.returncode == 0, result.stderr
-            port = int(result.stdout.strip())
+            port, pid = map(int, result.stdout.split())
             assert (seat / "cheese-tunnel.port").read_text().strip() == str(port)
             ports.append(port)
-            pids.append(int((seat / "cheese-tunnel.pid").read_text().strip()))
+            pids.append(pid)
     finally:
         import signal
 
@@ -1166,6 +1168,94 @@ def test_two_seats_get_their_own_helper_and_their_own_token(tmp_path):
     assert ports[0] != ports[1]
     assert pids[0] != pids[1]
     assert not (home / ".cheese" / "cheese-tunnel.port").exists()
+
+
+def test_a_tasks_helper_keeps_its_tasks_credential_when_its_room_launches(tmp_path):
+    """The room's agent working a task runs two sessions on one machine, in
+    the room's home: the room's and the task's. Each launch starts a helper,
+    and the helper stamps the credential it reads from `--token-file` on every
+    CONNECT; that credential names the conversation the call acts in. The
+    room's session launching while the task's runs must leave the task's
+    helper reading the task's credential.
+
+    Measured on dev 2026-10-13: five running sessions in one room whose helpers
+    read another conversation's credential, all written by whichever session
+    of the same agent had launched last."""
+    from app.domain.agent import machine_tunnel
+
+    task_id = str(uuid.uuid4())
+    launches = {
+        "task": _screen_launch(topic_id=task_id, seat=place.seat_key("ops", task_id)),
+        "room": _screen_launch(topic_id="R", seat="ops"),
+    }
+
+    def tunnel_lines(script: str) -> str:
+        """The launcher's own lines: the seat's directory, the credential and
+        the up-script written into it, and the helper started for this launch."""
+        seat_start = script.index('SEATD="$HOME/.cheese/seats/')
+        seat_end = script.index("\n", script.index("\n", seat_start) + 1) + 1
+        credential_start = script.index(
+            'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then\n  # Use the place-scoped'
+        )
+        credential_end = script.index(
+            "\nfi\n", script.index('chmod +x "$HOME/.cheese/cheese-tunnel-up"')
+        ) + len("\nfi\n")
+        up_start = script.index(
+            'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then\n  # The machine chose the port'
+        )
+        up_end = script.index("\nfi\n", up_start) + len("\nfi\n")
+        return (
+            script[seat_start:seat_end]
+            + script[credential_start:credential_end]
+            + script[up_start:up_end]
+        )
+
+    (tmp_path / ".cheese").mkdir()
+    (tmp_path / ".cheese" / "cheese-tunnel.py").write_text(
+        Path(machine_tunnel.__file__).read_text()
+    )
+    helpers: dict[str, int] = {}
+    try:
+        for name in ("task", "room"):
+            result = subprocess.run(
+                [
+                    "sh",
+                    "-c",
+                    tunnel_lines(launches[name][0][2]) + 'printf "%s" "$TUNNEL_PID"\n',
+                ],
+                env={
+                    "PATH": os.environ["PATH"],
+                    "HOME": str(tmp_path),
+                    "CHEESE_TUNNEL_URL": "ws://127.0.0.1:9/llm/tunnel",
+                    "CHEESE_SEAT": launches[name][1]["CHEESE_SEAT"],
+                    "CHEESE_CONNECT_TOKEN": f"{name}-credential",
+                },
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            helpers[name] = int(result.stdout.split()[-1])
+
+        def read_by(pid: int) -> str:
+            argv = subprocess.run(
+                ["ps", "-ww", "-o", "args=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.split()
+            return Path(argv[argv.index("--token-file") + 1]).read_text().strip()
+
+        assert read_by(helpers["room"]) == "room-credential"
+        assert read_by(helpers["task"]) == "task-credential", (
+            "the task's helper stamps the room session's credential on its calls"
+        )
+    finally:
+        import signal
+
+        for pid in helpers.values():
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
 
 
 def _listening(port: int) -> bool:
@@ -1228,12 +1318,14 @@ def _run_tunnel_up(home, url: str = _HELPER_URL):
 
 
 def _up(home, url: str = _HELPER_URL) -> int:
-    """Run the up-script, and return the port it printed — which must be all it
-    printed, since the launcher exports stdout verbatim as the proxy's port."""
+    """Run the up-script, and return the port it printed — which, with the
+    helper's pid, must be all it printed, since the launcher takes both from
+    stdout as they are."""
     result = _run_tunnel_up(home, url)
     assert result.returncode == 0, result.stderr
-    assert re.fullmatch(r"[0-9]+\n", result.stdout), result.stdout
-    port = int(result.stdout)
+    assert re.fullmatch(r"[0-9]+ [0-9]+\n", result.stdout), result.stdout
+    port, pid = map(int, result.stdout.split())
+    assert pid == _helper_pid(home)
     assert (home / ".cheese" / "cheese-tunnel.port").read_text().strip() == str(port)
     return port
 
@@ -1305,7 +1397,7 @@ def test_rooms_launched_together_each_get_their_own_helper(tmp_path):
         for index in range(len(homes)):
             result = results[index]
             assert result.returncode == 0, result.stderr
-            ports.append(int(result.stdout))
+            ports.append(int(result.stdout.split()[0]))
             assert _listening(ports[-1])
         assert len(set(ports)) == len(homes), f"rooms share a helper port: {ports}"
 
@@ -1359,6 +1451,56 @@ def test_a_launchs_helper_stops_when_the_launch_ends(tmp_path):
     assert _await(lambda: not _pid_alive(pid), timeout=5), (
         "the launch ended and left its tunnel helper running"
     )
+
+
+def test_a_launch_stops_its_own_helper_and_not_another_launchs(tmp_path):
+    """Every task the room's agent runs shares the seat's directory, and two of
+    them can launch in the same moment. The second one's helper pid lands in
+    the seat's file over the first one's. A launch that ends must stop the
+    helper it started, and never the other one, which is still serving the
+    other task's running `claude`.
+
+    Measured on dev 2026-10-06: two launches of one seat started at 19:21:55.
+    One helper was gone when its launch was still running, and the other was
+    still running a week after its launch exited."""
+    script = _launch_with_tunnel()
+    start = script.index('AGENT_PID=""\n')
+    end = script.index("# Preserve input before POSIX sh", start)
+    own = subprocess.Popen(["sleep", "60"])
+    other = subprocess.Popen(["sleep", "60"])
+    try:
+        (tmp_path / ".cheese").mkdir()
+        # This launch started `own`; the other launch of the seat started
+        # `other` in the same moment and wrote its pid where this one's was.
+        (tmp_path / ".cheese" / "cheese-tunnel-up").write_text(
+            f'#!/bin/sh\necho {other.pid} > "$1/cheese-tunnel.pid"\n'
+            f"echo 40123 {own.pid}\n"
+        )
+        seat = 'SEATD="$HOME/.cheese/seats/${CHEESE_SEAT:-shared}"; mkdir -p "$SEATD"\n'
+        result = subprocess.run(
+            ["sh", "-c", seat + script[start:end] + "exit 0\n"],
+            env={
+                "PATH": os.environ["PATH"],
+                "HOME": str(tmp_path),
+                "CHEESE_TUNNEL_URL": "wss://x/y",
+                "CHEESE_SEAT": "6a92a43d5feb",
+            },
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+
+        assert _await(lambda: own.poll() is not None, timeout=5), (
+            "the launch ended and left the helper it started running"
+        )
+        assert other.poll() is None, (
+            "the launch stopped another launch's helper under its running claude"
+        )
+    finally:
+        for process in (own, other):
+            process.kill()
+            process.wait(timeout=5)
 
 
 def test_a_helper_that_cannot_start_fails_the_launch_loudly(tmp_path):

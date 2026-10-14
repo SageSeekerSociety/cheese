@@ -68,7 +68,8 @@ describe('the UI language follows the account', () => {
   it('a language picked while signed in is kept on the account', async () => {
     const { account, chooseLocale, locale } = await freshPage()
     await account.login('token', { ...ALICE, language: 'zh-CN' })
-    chooseLocale('en')
+    // `chooseLocale` 取到那份语言包才换过去（见 src/i18n/index.ts），所以要等。
+    await chooseLocale('en')
     expect(locale()).toBe('en')
     await vi.waitFor(() => expect(setLanguage).toHaveBeenCalledWith('en'))
   })
@@ -77,7 +78,8 @@ describe('the UI language follows the account', () => {
     const { account, locale } = await freshPage()
     expect(locale()).not.toBe('zh-CN')
     await account.login('token', { ...ALICE, language: 'zh-CN' })
-    expect(locale()).toBe('zh-CN')
+    // 账号上的语言要等语言包取到才换过去，不先画裸键。
+    await vi.waitFor(() => expect(locale()).toBe('zh-CN'))
     expect(setLanguage).not.toHaveBeenCalled()
     // …and the browser remembers it for the signed-out pages too.
     expect(localStorage.getItem('cheese:locale')).toBe('zh-CN')
@@ -98,7 +100,7 @@ describe('the UI language follows the account', () => {
     getCurrentUser.mockResolvedValue({ user: { ...ALICE, language: 'en' } })
     const { account, locale } = await freshPage()
     await account.init()
-    expect(locale()).toBe('en')
+    await vi.waitFor(() => expect(locale()).toBe('en'))
   })
 
   it('someone who never picked one has the language in front of them recorded', async () => {
@@ -112,7 +114,7 @@ describe('the UI language follows the account', () => {
   it('a language picked on the sign-in page wins over the one the account kept', async () => {
     localStorage.setItem('cheese:locale', 'zh-CN')
     const { account, chooseLocale, locale } = await freshPage()
-    chooseLocale('en')
+    await chooseLocale('en')
     expect(setLanguage).not.toHaveBeenCalled()
     await account.login('token', { ...ALICE, language: 'zh-CN' })
     expect(locale()).toBe('en')
@@ -124,9 +126,28 @@ describe('the UI language follows the account', () => {
     setLanguage.mockImplementation(() => new Promise<void>((resolve) => (land = resolve)))
     const { account, chooseLocale, locale } = await freshPage()
     await account.login('token', { ...ALICE, language: 'zh-CN' })
-    chooseLocale('en')
+    // 选中的语言要等语言包取到才落下去（见 src/i18n/index.ts），这次保存就一直挂着。
+    await chooseLocale('en')
     await account.login('token', { ...ALICE, language: 'zh-CN' })
     expect(locale()).toBe('en')
+    land()
+  })
+
+  it('an old record that answers before the save lands does not undo the pick', async () => {
+    let land: () => void = () => {}
+    setLanguage.mockImplementation(() => new Promise<void>((resolve) => (land = resolve)))
+    getCurrentUser.mockResolvedValue({ user: { ...ALICE, language: 'zh-CN' } })
+    const { account, chooseLocale, locale } = await freshPage()
+    await account.login('token', { ...ALICE, language: 'zh-CN' })
+    // 在页头选英文：这一下要写回账号，一直挂着没回来。
+    await chooseLocale('en')
+    expect(locale()).toBe('en')
+    // 保存还没回来，续签那条路（不是新登录，`updateUserInfo`）送来一条保存之前的记录，
+    // 说的还是中文。它比这次选择旧：拿它把界面换回去，人看着自己刚选的英文变回中文，
+    // 账号上那一次保存回来又要把界面翻过去一遍（`savingLanguage`）。
+    await account.updateUserInfo()
+    expect(locale()).toBe('en')
+    expect(localStorage.getItem('cheese:locale')).toBe('en')
     land()
   })
 })

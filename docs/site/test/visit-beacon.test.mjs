@@ -10,10 +10,10 @@
 // and silent in every direction it can fail. Plus the one thing a source-level
 // test cannot see — that the shipping bundle still carries the call.
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { scratchDir } from './scratch.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -160,7 +160,7 @@ const DOC = { kind: 'doc', section: 'user', slug: 'quickstart', title: '快速�
 
 // ---------- the shipping bundle carries it ----------
 {
-  const out = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'docs-visit-'))
+  const out = process.env.OUT || scratchDir('docs-visit-')
   if (!process.env.OUT) {
     execFileSync(process.execPath, ['build.mjs'], { cwd: SITE, env: { ...process.env, OUT: out }, stdio: ['ignore', 'ignore', 'inherit'] })
   }

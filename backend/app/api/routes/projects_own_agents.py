@@ -6,7 +6,7 @@ A member's own Claude Code sends the project's content to the model through
 its owner's own account, under that account's terms and settings. So a project
 lets them in only when someone who manages it turns that on, and may allow only
 some kinds of connection — a Claude subscription, an Anthropic API key, another
-model service.
+model service — and only some model services, by host.
 
 Each one is Claude Code with one of its owner's model connections, and a person
 may bring several. Its owner adds it to the project and removes it; nothing
@@ -14,9 +14,10 @@ else brings it in.
 """
 
 import uuid
+from typing import Annotated
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field, StringConstraints
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
@@ -27,10 +28,12 @@ from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent_instance.own import (
+    HOSTS_SETTING,
     KINDS_SETTING,
     SETTING,
     OwnCallers,
     add,
+    allowed_hosts,
     allowed_kinds,
     allows_own_agents,
     listing,
@@ -48,6 +51,19 @@ from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+#: A model service's host as a manager lists it: a DNS name, as the host of the
+#: service's address reads (``api.moonshot.cn``), with no scheme, port or path.
+ServiceHost = Annotated[
+    str,
+    # Compared as the host of a service's address reads: lower case.
+    BeforeValidator(lambda v: v.strip().lower() if isinstance(v, str) else v),
+    StringConstraints(
+        max_length=253,
+        pattern=r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+        r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$",
+    ),
+]
+
 
 class OwnAgentsUpdate(BaseModel):
     """What a manager changes; a field left out stays as it is."""
@@ -56,6 +72,9 @@ class OwnAgentsUpdate(BaseModel):
     # The kinds of connection members' own agents may use here. At least one:
     # allowing none is turning them off, which ``allowed`` says.
     kinds: list[ConnectionKind] | None = Field(default=None, min_length=1)
+    # The model services members' own agents may call here, by host. Empty
+    # allows any; it says nothing about the other kinds.
+    service_hosts: list[ServiceHost] | None = Field(default=None, max_length=50)
 
 
 class OwnAgentCallersUpdate(BaseModel):
@@ -63,8 +82,8 @@ class OwnAgentCallersUpdate(BaseModel):
 
 
 class OwnAgentAdd(BaseModel):
-    # One of the caller's model connections (`GET /my/model-connections`),
-    # named by the machine holding it.
+    # One of the caller's model connections (`my_connections[].id`): named by
+    # the machine holding it, or by the connection their account holds.
     connection_id: str = Field(min_length=1, max_length=64)
 
 
@@ -79,6 +98,11 @@ class OwnAgentConnectionOut(BaseModel):
     plan: str | None
     # The model a model service is called with.
     model: str | None
+    # Held by its owner's account, so it runs on the platform rather than on
+    # one of its owner's machines.
+    on_account: bool
+    # Of a kind, and for a model service at a host, the project allows.
+    allowed: bool
 
 
 class OwnAgentOut(BaseModel):
@@ -100,7 +124,15 @@ class MyConnectionOut(BaseModel):
     kind: ConnectionKind
     plan: str | None
     model: str | None
-    machine_name: str
+    # What the reader named a connection their account holds.
+    name: str | None
+    # A model service's host.
+    service_host: str | None
+    # Held by the reader's account rather than one of their machines.
+    on_account: bool
+    # The machine holding it; None when the account does.
+    machine_name: str | None
+    # Whether that machine is online; one the account holds always is.
     online: bool
     # Already here as one of the reader's own agents.
     added: bool
@@ -111,6 +143,8 @@ class MyConnectionOut(BaseModel):
 class OwnAgentsOut(BaseModel):
     allowed: bool
     kinds: list[ConnectionKind]
+    # The model-service hosts allowed here; empty when any is.
+    service_hosts: list[str]
     can_manage: bool
     agents: list[OwnAgentOut]
     # Empty while the project is closed to members' own agents.
@@ -145,9 +179,12 @@ async def get_own_agents(
         {
             "allowed": allowed,
             "kinds": [kind.value for kind in ConnectionKind if kind in kinds],
+            "service_hosts": allowed_hosts(project.settings),
             "can_manage": can_manage,
             # Withdrawn from a project closed to them: none is here.
-            "agents": await listing(db, project_id, actor.user_id, device_hub.is_online)
+            "agents": await listing(
+                db, project_id, actor.user_id, device_hub.is_online, project.settings
+            )
             if allowed
             else [],
             "my_connections": mine,
@@ -166,10 +203,11 @@ async def set_own_agents(
     resolver: ActorResolverDep,
 ) -> dict:
     """Let members bring their own Claude Code into the project, or not, and
-    which kinds of model connection it may use. Turned off, members' own
-    agents leave the project: off its roster and out of its channels. Turned on
-    again, the ones their owners had added are back on the roster, and sit in a
-    channel again once someone they answer to names them there."""
+    which kinds of model connection it may use, and which model services.
+    Turned off, members' own agents leave the project: off its roster and out
+    of its channels. Turned on again, the ones their owners had added are back
+    on the roster, and sit in a channel again once someone they answer to names
+    them there."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
@@ -180,6 +218,8 @@ async def set_own_agents(
         patch[SETTING] = body.allowed
     if body.kinds is not None:
         patch[KINDS_SETTING] = [k.value for k in ConnectionKind if k in body.kinds]
+    if body.service_hosts is not None:
+        patch[HOSTS_SETTING] = list(dict.fromkeys(body.service_hosts))
     await service.merge_settings(project, patch)
     if body.allowed is False:
         for instance, _owner, _callers in await owned_in_project(db, project_id):

@@ -34,14 +34,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
+from app.domain.block.models import Block
+from app.domain.delivery.addressing import Event
+from app.domain.notice_meta import (
     EVENT_POLICY_PROPOSAL,
     SEVERITY_WARN,
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.models import Block
-from app.domain.delivery.addressing import Event
 from app.domain.policy.gate import Call, Proposal
 from app.domain.room_task.place import PlaceResolver
 

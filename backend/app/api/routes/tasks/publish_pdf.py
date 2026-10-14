@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
 
+from app.api.response import ok
 from app.api.routes.tasks._common import (
     ConfirmTaskPublishFromPdfRequest,
     _create_task_entity,
@@ -155,10 +156,8 @@ async def preview_task_from_pdf(
         for illustration in illustrations
     ]
 
-    return {
-        "code": 200,
-        "message": "Task drafts previewed from PDF successfully.",
-        "data": {
+    return ok(
+        {
             "drafts": drafts,
             "templateUsed": template,
             "tokenUsed": token_used,
@@ -172,7 +171,8 @@ async def preview_task_from_pdf(
                 ],
             },
         },
-    }
+        "Task drafts previewed from PDF successfully.",
+    )
 
 
 @router.post(
@@ -243,11 +243,10 @@ async def confirm_publish_task_from_pdf(
     if space_id is not None:
         task_models = await _enrich_task_models(db, task_models, space_id=space_id)
 
-    return {
-        "code": 200,
-        "message": "Task drafts published successfully.",
-        "data": {
+    return ok(
+        {
             "tasks": task_models,
             "count": len(created_tasks),
         },
-    }
+        "Task drafts published successfully.",
+    )

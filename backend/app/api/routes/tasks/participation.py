@@ -119,10 +119,8 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
     project = await ProjectService(db).for_participation(
         task=task, membership=membership, owner_handle=owner.username
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "participant": _membership_to_api_model(membership),
             "project": {
                 "id": str(project.id),
@@ -130,8 +128,8 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
                 "root_topic_id": str(project.root_topic_id),
                 "team_id": project.team_id,
             },
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -403,10 +401,8 @@ async def patch_task_participant(
     # submit). Same reason as the commit in ``create_task``.
     await db.commit()
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "participant": _membership_to_api_model(updated),
-        },
-    }
+        }
+    )

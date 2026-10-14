@@ -6,11 +6,19 @@ A task made from a message knows it (``source_block_id``, and for one shown
 under a main-line message ``upgraded_from_block_id``). The task page quotes
 the message at its top and lists the rest as 相关, and the task's AI teammate
 is handed the same list with the discussion when it drafts the document.
+
+`related_of` is that 相关 assembled: `GET /topics/{task}/related` returns it, and
+the `related` of a task's room snapshot embeds the same thing, so both are one
+reading of the same three pieces. It lives here rather than in its route
+because the snapshot is not a route and must not become one that reaches one
+(C4 `routes-independent`).
 """
 
 import re
 import uuid
 from datetime import UTC, datetime
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.topics_deps import BlockRepository
 from app.domain.block.documents import DOC_CARD_KEY
@@ -172,3 +180,14 @@ def materials_text(items: list[dict]) -> str:
         else:
             lines.append(f"- 文件 `{item['path']}`（{item['by']} 发的）")
     return "讨论里用到的材料：\n" + "\n".join(lines)
+
+
+async def related_of(db: AsyncSession, task) -> dict:
+    """Where a task came from and what it was given, as its page's 相关 shows
+    it; also the `related` of a task's room snapshot."""
+    origin, blocks = await discussion(db, task)
+    return {
+        "source": await source(db, task),
+        "origin": origin,
+        "materials": materials(blocks),
+    }

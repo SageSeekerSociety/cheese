@@ -5,6 +5,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, status
 
+from app.api.response import ok
+
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
 from app.api.routes.tasks._common import (
@@ -265,14 +267,12 @@ async def get_task(
         await _enrich_task_models(db, [task_dict], space_id=task.space_id)
     )[0]
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "task": enriched_task,
             "participation": participation,
-        },
-    }
+        }
+    )
 
 
 @router.patch(
@@ -499,13 +499,12 @@ async def patch_task(
         await _enrich_task_models(db, [task_response], space_id=task.space_id)
     )[0]
 
-    return {
-        "code": 200,
-        "message": "Task updated successfully.",
-        "data": {
+    return ok(
+        {
             "task": task_response,
         },
-    }
+        "Task updated successfully.",
+    )
 
 
 @router.get(
@@ -696,11 +695,7 @@ async def get_tasks(
         data["distinctParticipants"] = await count_distinct_participants(
             db, space_id=space, task_ids=[item["id"] for item in items]
         )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": data,
-    }
+    return ok(data)
 
 
 @router.delete(
@@ -867,10 +862,8 @@ async def patch_task_membership_by_member(
     )
     participants = [_membership_to_api_model(m) for m in all_memberships]
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "participants": participants,
-        },
-    }
+        }
+    )

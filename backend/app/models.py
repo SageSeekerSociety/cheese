@@ -24,7 +24,6 @@ from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
 from app.domain.docs_site import models as docs_site  # noqa: F401
-from app.domain.external_problem import models as external_problem  # noqa: F401
 from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.idempotency import models as idempotency  # noqa: F401

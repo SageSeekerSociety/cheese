@@ -9,14 +9,18 @@ seat for it in the project's own room (结论 4).
 
 import enum
 import uuid
+from datetime import datetime
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
+    DateTime,
     Enum,
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -97,9 +101,18 @@ class OwnAgent(Base):
     It is still an ``AgentInstance`` — a memory pool, a seat, a name in the
     roster — and this row is what makes it someone's. A person may have one per
     connection in a project; its owner adds it there and removes it.
+
+    Its connection is either a machine's login (``device_id``) or one its
+    owner's account holds (``account_connection_id``), never both.
     """
 
     __tablename__ = "own_agents"
+    __table_args__ = (
+        CheckConstraint(
+            "device_id IS NULL OR account_connection_id IS NULL",
+            name="ck_own_agents_one_connection",
+        ),
+    )
 
     instance_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("agent_instances.id", ondelete="CASCADE"), primary_key=True
@@ -123,6 +136,18 @@ class OwnAgent(Base):
         nullable=True,
         index=True,
     )
+    # Or the model connection its owner's account holds (`AccountConnection`):
+    # an API key or a model service the platform keeps sealed. Its sessions run
+    # on the deployment's session host. None once its owner removed it.
+    account_connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "account_model_connections.id",
+            ondelete="SET NULL",
+            name="fk_own_agents_account_connection_id_account_model_connections",
+        ),
+        nullable=True,
+        index=True,
+    )
     callers: Mapped[OwnCallers] = mapped_column(
         Enum(
             OwnCallers,
@@ -135,3 +160,59 @@ class OwnAgent(Base):
         default=OwnCallers.owner,
         server_default=OwnCallers.owner.value,
     )
+
+
+class AccountConnection(UuidPk, Timestamps, Base):
+    """A model connection a person's account holds rather than one of their
+    machines (#2991): an Anthropic API key, or another model service that
+    speaks Anthropic's API (its address, key and model). A member's own Claude
+    Code on it runs on the deployment's session host, as the project's own
+    agents do, and calls the model with this key.
+
+    A Claude subscription is never one: its login may not be held by a third
+    party, so it stays on the machine it was given on (`DeviceClaudeLoginRow`),
+    and the kind's CHECK keeps it out of this table.
+
+    The key is sealed (`app.core.crypto`, `Purpose.MODEL_CONNECTION_KEY`, bound
+    to this row); only its last four characters are kept readable, for its
+    owner to tell keys apart.
+    """
+
+    __tablename__ = "account_model_connections"
+
+    owner_user_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey(
+            "user.id",
+            ondelete="CASCADE",
+            name="fk_account_model_connections_owner_user_id_user",
+        ),
+        nullable=False,
+        index=True,
+    )
+    #: `ConnectionKind`'s ``api_key`` or ``model_service``.
+    kind: Mapped[str] = mapped_column(
+        Enum(
+            "api_key",
+            "model_service",
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+            name="ck_account_model_connections_kind",
+        ),
+        nullable=False,
+    )
+    #: What its owner calls it; None until they name it.
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: The service's address; None for an Anthropic API key, which calls
+    #: Anthropic.
+    base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    #: The model a model service is called with; None for an API key.
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    key: Mapped[str] = mapped_column(Text, nullable=False)
+    key_last4: Mapped[str] = mapped_column(String(4), nullable=False)
+    #: When the service last answered a check, and why it refused if it did.
+    checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    check_error: Mapped[str | None] = mapped_column(Text, nullable=True)

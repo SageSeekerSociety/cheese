@@ -220,19 +220,19 @@ class LlmGateway:
         return out
 
     async def mint_project_key(
-        self, project_id: uuid.UUID, *, platform: bool = False
+        self, project_id: uuid.UUID, *, purpose: str | None = None
     ) -> str | None:
         """Create a project-scoped virtual key (no expiry; attributed via
         ``user_id``). The caller persists it in project.settings — minting is
         NOT idempotent on the gateway side, so mint once and store.
 
-        ``platform`` mints the project's second key, the one the platform's own
-        work in it (memory consolidation) runs on: its spend is the
-        platform's, so it must not mix into the key the project pays for."""
-        alias = f"project-{project_id}" + ("-platform" if platform else "")
+        ``purpose`` names a second key of the same project (``dream``, its
+        memory consolidation), whose spend has to be read apart from the
+        rooms'."""
+        alias = f"project-{project_id}" + (f"-{purpose}" if purpose else "")
         metadata = {"cheesex_project": str(project_id)}
-        if platform:
-            metadata["purpose"] = "platform"
+        if purpose:
+            metadata["purpose"] = purpose
         try:
             async with self._client() as client:
                 r = await client.post(

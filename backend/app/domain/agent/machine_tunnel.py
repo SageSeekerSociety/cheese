@@ -33,6 +33,7 @@ import base64
 import logging
 import os
 import secrets
+import signal
 import socket
 import ssl
 import struct
@@ -528,6 +529,137 @@ def serve(
         ).start()
 
 
+# The session this helper serves, named the way the forwarded project view's
+# server names its own (`remote_execution/release.py`): every process of a
+# session on the central session host carries this variable, pointing into its
+# seat, and the helper inherited it from the launch that started it.
+EXECUTION_CONFIG = "CHEESE_EXECUTION_CONFIG"
+# Programs that carry a session's variable without being the session: helpers
+# like this one, and the project view's server, both wait for it to end.
+_HELPER = "cheese-tunnel.py"
+_VIEW_SERVER = "forwarded_fs.py"
+# How often a helper looks for its session, once it is up.
+SESSION_CHECK_S = 60.0
+# A helper this young may belong to a launch whose agent has not started yet,
+# when nothing of its session is visible but the launcher's own shell, which
+# set the variable after it started. The agent starts within a second of it.
+STARTING_GRACE_S = 120.0
+
+
+def _processes():
+    """``(pid, argv, environ, same_pid_namespace, age_s)`` for each of this user's
+    processes. What the kernel will not show — another user's, a zombie's
+    environment — is skipped: a session runs as the user its helper runs as."""
+    namespace = os.readlink("/proc/self/ns/pid")
+    me = os.getuid()
+    ticks = os.sysconf("SC_CLK_TCK")
+    with open("/proc/uptime") as handle:
+        uptime = float(handle.read().split()[0])
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        base = f"/proc/{entry}"
+        try:
+            if os.stat(base).st_uid != me:
+                continue
+            with open(f"{base}/cmdline", "rb") as handle:
+                argv = [os.fsdecode(a) for a in handle.read().split(b"\0") if a]
+            with open(f"{base}/environ", "rb") as handle:
+                environ = [
+                    os.fsdecode(item) for item in handle.read().split(b"\0") if item
+                ]
+            with open(f"{base}/stat") as handle:
+                started = int(handle.read().rsplit(")", 1)[1].split()[19])
+            same = os.readlink(f"{base}/ns/pid") == namespace
+        except (OSError, IndexError, ValueError):
+            continue
+        yield int(entry), argv, environ, same, uptime - started / ticks
+
+
+def _session_of(environ) -> "str | None":
+    prefix = EXECUTION_CONFIG + "="
+    for item in environ:
+        if item.startswith(prefix):
+            return os.path.realpath(os.path.dirname(item[len(prefix) :]))
+    return None
+
+
+def _waits_for_a_session(argv) -> bool:
+    return any(os.path.basename(arg) in (_HELPER, _VIEW_SERVER) for arg in argv)
+
+
+def stop_abandoned_helpers(processes, *, grace_s: float = STARTING_GRACE_S) -> int:
+    """Stop every other helper on this host whose session has ended.
+
+    The ones that predate `watch_session` have nothing of their own to stop
+    them; on dev's session host they ran for a week after their sessions did.
+    Only helpers in this PID namespace — a session it cannot see is one it
+    cannot tell has ended — older than ``grace_s``, and carrying a session
+    at all. Returns how many it stopped."""
+    running = set()
+    helpers = []
+    for pid, argv, environ, same, age in processes:
+        session = _session_of(environ)
+        if session is None or pid == os.getpid():
+            continue
+        if not _waits_for_a_session(argv):
+            running.add(session)
+        elif (
+            same
+            and age >= grace_s
+            and any(os.path.basename(arg) == _HELPER for arg in argv)
+        ):
+            helpers.append((pid, session))
+    stopped = 0
+    for pid, session in helpers:
+        if session in running:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+        stopped += 1
+    return stopped
+
+
+def watch_session(
+    config: str,
+    *,
+    every_s: float = SESSION_CHECK_S,
+    end=lambda: os._exit(0),
+    processes=_processes,
+) -> None:
+    """End this helper once the session it serves has.
+
+    The launch that started it stops it when it ends, but only while that
+    launch runs to its end and knows which helper is its own; a helper it lost
+    outlived the session for as long as the host ran. A session has ended when
+    no process carries its variable but programs that wait for it to end
+    (`_waits_for_a_session`). The first look also stops other helpers left by
+    sessions that ended (`stop_abandoned_helpers`). Runs unattended for the
+    life of the helper, so a failed look is logged and the next one tried."""
+    session = os.path.realpath(os.path.dirname(config))
+    first = True
+    while True:
+        time.sleep(every_s)
+        try:
+            seen = list(processes())
+            if first:
+                first = False
+                stopped = stop_abandoned_helpers(seen)
+                if stopped:
+                    logger.info("stopped %d helpers whose sessions ended", stopped)
+            if not any(
+                _session_of(environ) == session and not _waits_for_a_session(argv)
+                for _pid, argv, environ, _same, _age in seen
+            ):
+                logger.info("the session this helper served has ended")
+                end()
+                return
+        except Exception as error:  # noqa: BLE001 — see the docstring
+            logger.warning("session check failed: %r", error)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, required=True, help="0 = kernel-assigned")
@@ -558,6 +690,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     source = TokenSource(value=args.token, path=args.token_file)
+    # Where there is a session to watch: the central session host's. A launch
+    # elsewhere carries no such variable, and a Mac has no /proc to look in.
+    config = os.environ.get(EXECUTION_CONFIG)
+    if config and os.path.isdir("/proc/self"):
+        threading.Thread(target=watch_session, args=(config,), daemon=True).start()
     serve(
         args.port,
         args.url,

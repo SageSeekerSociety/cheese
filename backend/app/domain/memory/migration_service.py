@@ -36,13 +36,6 @@ from app.core.errors import (
 )
 from app.core.sentences import exception_text, say
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
-    EVENT_MEMORY_ORGANIZING,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.living_doc.services import Documents
@@ -73,6 +66,13 @@ from app.domain.memory.models import (
 )
 from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import live_entries
+from app.domain.notice_meta import (
+    EVENT_MEMORY_ORGANIZING,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.project.services import ProjectService
 from app.domain.service_keys import KeySpec, service_key
 from app.domain.usage.ledger import Ledger
@@ -348,8 +348,9 @@ class MemoryMigrationService:
                 raise BadRequestError(
                     say("migrationModelFailed", reason=exception_text(exc))
                 ) from exc
-            # 搬迁是平台自己做的事，花销记在平台头上，不扣任何团队（#2233）。
-            await Ledger(self._session).record_platform(
+            # 搬的是这个项目的记忆，花销记在项目头上，和项目里的其他调用一样扣团队。
+            await Ledger(self._session).record_project_call(
+                gathered.project_id,
                 kind=USAGE_KIND,
                 model=chat.model,
                 input_tokens=answer.usage.prompt_tokens,

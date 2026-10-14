@@ -288,7 +288,8 @@
         "retry": "Retry",
         "compact": "Compaction",
         "environment": "Environment",
-        "memory": "Memory"
+        "memory": "Memory",
+        "wakeWatch": "Wake"
       }
     },
     "menu": {
@@ -1364,6 +1365,16 @@
       "documentHint": "Select text or click a cell to comment",
       "comments": "Comments {n}",
       "noComments": "No comments yet"
+    },
+    "mentionOutside": {
+      "notInPrivate": "Not in this channel, so they can't see this message: {names}",
+      "notInPublic": "Not in this channel: {names}",
+      "add": "Add to channel",
+      "dismiss": "Don't add",
+      "close": "Close",
+      "added": "Added {names} to the channel",
+      "addFailed": "Couldn't add them",
+      "addFailedBecause": "Couldn't add them: {reason}"
     }
   },
   "board": {
@@ -1766,10 +1777,12 @@
     },
     "ownAgentsTitle": "Members' own Claude Code",
     "ownAgents": {
-      "allow": "Let members connect the Claude Code on their own computers",
-      "allowDetail": "Project content goes to the model service each member set up, and the member pays for it",
+      "allow": "Let members bring their own Claude Code",
+      "allowDetail": "Project content goes to the model through each member's own model connection, and the member pays for it",
       "online": "online",
       "offline": "offline",
+      "onAccount": "kept on your account",
+      "runsOnPlatform": "runs on Cheese",
       "kindsLabel": "Allowed connections",
       "kindSubscription": "Claude subscription",
       "kindSubscriptionPlan": "Claude subscription ({plan})",
@@ -1777,6 +1790,13 @@
       "kindModelService": "Custom model service",
       "kindModelServiceModel": "Custom model service ({model})",
       "kindNotAllowed": "not allowed here",
+      "hostNotAllowed": "provider not allowed here",
+      "hostsLabel": "Allowed providers",
+      "hostsDetail": "Limits custom model services only, by the host of the service address. Leave empty to allow any",
+      "hostLabel": "Host name",
+      "hostAdd": "Add",
+      "hostRemove": "Remove",
+      "hostInvalid": "Enter a host name such as api.moonshot.cn, without https:// or a path",
       "empty": "No member has added their Claude Code",
       "connectionGone": "model connection removed",
       "remove": "Remove",
@@ -1785,7 +1805,7 @@
       "callersLabel": "Who can call it",
       "callersOwner": "Only me",
       "callersProject": "Project members",
-      "callersDetail": "When project members call it, it uses the model account you set up on your own computer. You pay for it and answer for that account's terms.",
+      "callersDetail": "When project members call it, it uses your own model connection. You pay for it and answer for that account's terms.",
       "callersOwnerTag": "only its owner can call it",
       "callersProjectTag": "any project member can call it",
       "readOnly": "Only project admins can change this",

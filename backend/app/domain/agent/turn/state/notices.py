@@ -7,7 +7,7 @@ from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
     classify_platform_failure,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
     WHO_HUMAN,

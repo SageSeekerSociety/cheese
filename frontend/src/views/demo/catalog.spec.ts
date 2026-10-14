@@ -51,6 +51,23 @@ vi.mock('@/components/account/brandScene/scenes', async () => {
 // 空壳之后，后面按秒数判定的那几格（目录页那句「找到几个」要等手停下来）不再被拖过线。
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({ GlobalWorkerOptions: {} }))
 
+// 提问页那一块正文（`@/components/common/Editor/Editor.vue`，里面建的是真的 editorjs）：
+// 它的初始化是异步的，而预览站每一格挂完就收走 —— 初始化撞上容器已经不在，editorjs 内部
+// 会抛一个没人接的 rejection（手快的人真页面上也会撞到：进 /ask 又立刻离开）。预览站要
+// 的是「这一页长什么样」，不是编辑器本身，所以换成一个只把容器画出来的替身；那一格要
+// 断言的字（标题、话题、发布按钮）都是提问页自己模板里的，替身不缺什么。
+vi.mock('@/components/common/Editor/Editor.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    default: defineComponent({
+      name: 'EditorStub',
+      props: { holder: { type: String, default: 'editor' }, config: { type: Object, default: () => ({}) } },
+      emits: ['create', 'ready'],
+      setup: (props) => () => h('div', { id: props.holder }),
+    }),
+  }
+})
+
 import { CATALOG, catalogGroup, stateProps } from './catalog'
 import { installCatalogAnswers } from './catalogFixtures'
 import { isTodo, TODO_MARK, todoSites } from './catalogTodo'
@@ -242,6 +259,28 @@ describe('组件预览站', () => {
       // 路径照 `router/spaces.ts`：名字在表里、href 也对得上真页面。
       expect(codes?.getAttribute('href')).toBe('/spaces/8/manage/settings/invite-codes')
       expect(domains?.getAttribute('href')).toBe('/spaces/8/manage/settings/domain-groups')
+    })
+
+    // 上面那一组是**静态**挂：只等画面出来、看它写了什么字。可有的组件全部行为就是
+    // 「按下去报一声」—— 「导出」那颗按钮现在只剩这一件事（拉 CSV 在页面里做）。静态挂
+    // 护不住它：把 `@click` 那一行删掉，按钮照样画得出来、字照样对，上面那一组照样绿，
+    // 而它在真页面上已经不响了。这一条真按一下，守的就是那一下。
+    it('analytics-export-button：按一下报出 `export`（静态挂看不到那一处）', async () => {
+      const entry = CATALOG.find((e) => e.id === 'analytics-export-button')
+      expect(entry).toBeTruthy()
+      const { container, emitted } = render(entry!.component, {
+        props: stateProps(entry!, entry!.states[0]),
+        global: {
+          plugins: [createVuetify({ components, directives }), i18n, demoRouter(), createPinia()],
+        },
+      })
+      const button = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('导出题目清单')
+      )
+      expect(button, '没找到那颗「导出」').toBeTruthy()
+      await fireEvent.click(button!)
+      expect(emitted(), '按了这一下，按钮没把「导出」报出来').toHaveProperty('export')
+      expect(emitted()['export']).toHaveLength(1)
     })
   })
 

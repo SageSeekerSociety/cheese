@@ -16,7 +16,7 @@ import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, Ro
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
 import type { ChannelEntry } from '@/types/channelDirectory'
-import type { ModelConnection, ModelServiceDevice } from '@/types/modelConnections'
+import type { AccountConnection, ModelConnection, ModelServiceDevice } from '@/types/modelConnections'
 import type { ProgressItem } from '@/types/projectProgress'
 import type { User } from '@/types/users'
 import type RealNameView from '@/views/user/settings/RealNameView.vue'
@@ -232,6 +232,7 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     subscription_type: 'max',
     model: null,
     service_host: null,
+    name: null,
     checked_at: ago(HOUR / 4),
     last_used_at: ago(2 * HOUR),
     revoking: false,
@@ -246,6 +247,7 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     subscription_type: null,
     model: 'kimi-k2',
     service_host: 'api.moonshot.cn',
+    name: 'Kimi',
     checked_at: ago(HOUR),
     last_used_at: null,
     revoking: false,
@@ -260,6 +262,7 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
     subscription_type: null,
     model: null,
     service_host: null,
+    name: null,
     checked_at: ago(3 * DAY),
     last_used_at: ago(3 * DAY),
     revoking: false,
@@ -270,6 +273,32 @@ export const MODEL_CONNECTIONS: ModelConnection[] = [
 export const MODEL_SERVICE_DEVICES: ModelServiceDevice[] = [
   { device_id: 'dev-desk', name: '工作站' },
   { device_id: 'dev-laptop', name: '王小明的 MacBook' },
+]
+
+/** 保存在账号里的两份：一个起了名字的 API key，一个自定义模型服务。 */
+export const MODEL_HELD: AccountConnection[] = [
+  {
+    id: 'held-key',
+    kind: 'api_key',
+    name: '工作用',
+    key_last4: 'Q7zK',
+    service_host: null,
+    model: null,
+    checked_at: ago(HOUR / 2),
+    check_error: null,
+    created_at: ago(DAY),
+  },
+  {
+    id: 'held-glm',
+    kind: 'model_service',
+    name: null,
+    key_last4: '9f2c',
+    service_host: 'open.bigmodel.cn',
+    model: 'glm-4.6',
+    checked_at: ago(2 * HOUR),
+    check_error: null,
+    created_at: ago(2 * DAY),
+  },
 ]
 
 // ---- 全部频道（`ChannelBrowseView`）----------------------------------------

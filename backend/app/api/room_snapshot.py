@@ -15,8 +15,10 @@ a fresh one.
 Each piece is exactly what its own route returns (`GET /topics/{id}/members`,
 `…/tasks`, `…/pins`, `…/threads`, `…/feedback-proposals`, the room's skill
 proposals; for a task `GET /topics/{task}/task`, `…/related`,
-`…/review-comments`), built by the same function the route calls, so a client
-files each one where that route's answer goes and reads it from there after.
+`…/review-comments`), built by the same function the route calls — each of those
+builders lives under `app/api`, in the module named for the rows it makes, so
+this module is no route's importer (C4 `routes-independent`) — so a client files
+each one where that route's answer goes and reads it from there after.
 Two are left out because reading them can wait on another service: the accept
 card refreshes PR state from the forge, and the preview probes the running
 app. Neither may hold a room's subscription up, so both stay requests of their
@@ -28,11 +30,12 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.project_skills import proposals_in_room
-from app.api.routes.review_comments import review_comment_rows
-from app.api.routes.topic_members import roster_rows
-from app.api.routes.topics_pins import pin_rows
-from app.api.routes.topics_tasks import related_of, room_task_items, task_page_row
+from app.api.project_skill_rows import proposals_in_room
+from app.api.review_comment_rows import review_comment_rows
+from app.api.room_task_rows import room_task_items, task_page_row
+from app.api.task_origin import related_of
+from app.api.topic_member_rows import roster_rows
+from app.api.topic_pin_rows import pin_rows
 from app.core.errors import NotFoundError
 from app.domain.agent.chat import ChatService
 from app.domain.feedback.proposals import ProposalService

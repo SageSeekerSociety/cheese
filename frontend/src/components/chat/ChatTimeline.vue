@@ -57,6 +57,8 @@ const props = defineProps<{
   threadStatusFor?: (m: Block) => string | null
   /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
   processable?: boolean
+  /** 支线和任务里的对话：人发的长消息也收起（RoomMessage 的 `foldPlain`）。 */
+  foldPlain?: boolean
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
@@ -151,6 +153,7 @@ const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
+  (e: 'ask-skip', block: Block): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -541,6 +544,7 @@ const rowLabels = computed(() =>
               :topic-list="topicList"
               :pinnable="pinnable"
               :pinned="!!pinnedIds?.has(m.id)"
+              :fold-plain="foldPlain"
               :data-row-id="m.id"
               :data-feed-item="m.id"
               @animationend="settleRow"
@@ -549,6 +553,7 @@ const rowLabels = computed(() =>
               @react="emitReact"
               @ask-reply="emitAskReply"
               @ask-withdraw="emitAskWithdraw"
+              @ask-skip="emit('ask-skip', $event)"
               @checklist="emitChecklist"
               @download="emit('download', $event)"
               @jump="emit('jump', $event)"

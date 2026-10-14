@@ -14,6 +14,8 @@ def view(row: DeviceClaudeLoginRow) -> dict:
         "subscription_type": row.subscription_type,
         "model": row.model,
         "service_host": row.service_host,
+        # What its owner named it.
+        "name": row.name,
         "checked_at": row.checked_at.isoformat(),
         # Removed while the machine was away: out of use on the platform
         # already, logged out on the machine once it connects.

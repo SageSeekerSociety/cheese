@@ -606,6 +606,24 @@ describe('动作行', () => {
     expect(onSend).toHaveBeenCalledWith({ content: '<@alice> 你看下', summon: false })
   })
 
+  it('任务里 @ 了人、没 @ AI 队友的一句是说给那个人的，不交给队友', async () => {
+    const { box, onSend } = mount({ alwaysSummon: true })
+    await fireEvent.update(box(), '@Alice 你看这个反馈')
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith({ content: '<@alice> 你看这个反馈', summon: false })
+  })
+
+  it('任务里不 @ 任何人、或 @ 了人也 @ 了队友，照样交给队友', async () => {
+    const { box, onSend } = mount({ alwaysSummon: true })
+    focusIn(box())
+    await fireEvent.update(box(), '接着做')
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    await fireEvent.update(box(), '@Alice @芝士 一起看')
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onSend.mock.calls.map(([sent]) => sent.summon)).toEqual([true, true])
+  })
+
   it('输入法正在选字时，回车是上屏那一下，不是发送', async () => {
     const { box, onSend } = mount()
     await fireEvent.update(box(), '看看这个')

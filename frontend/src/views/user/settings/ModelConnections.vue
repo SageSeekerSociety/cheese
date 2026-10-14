@@ -3,19 +3,34 @@
  * 「模型连接」（`/users/settings/model-connections`，#2991）。取数和动作在这里，画法在同目录的
  * `ModelConnectionsView.vue`——这一页只做它的容器。浏览器和桌面端里都有。
  */
-import type { ModelConnection, ModelServiceDevice } from '@/types/modelConnections'
+import type {
+  AccountConnection,
+  AccountConnectionInput,
+  ModelConnection,
+  ModelServiceDevice,
+} from '@/types/modelConnections'
 import type { ModelServiceInput } from '@/types/ownAgents'
 
 import { onMounted, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { listMyDevices } from '@/api'
-import { listModelConnections, revokeModelConnection, setModelService } from '@/api/modelConnections'
+import {
+  addAccountConnection,
+  checkAccountConnection,
+  listModelConnections,
+  removeAccountConnection,
+  renameAccountConnection,
+  renameModelConnection,
+  revokeModelConnection,
+  setModelService,
+} from '@/api/modelConnections'
 import { checkClaudeCode } from '@/api/ownAgents'
 import { t } from '@/i18n'
 import ModelConnectionsView from '@/views/user/settings/ModelConnectionsView.vue'
 
 const connections = ref<ModelConnection[]>([])
+const held = ref<AccountConnection[]>([])
 const devices = ref<ModelServiceDevice[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -28,6 +43,7 @@ async function load() {
   try {
     const [mine, enrolled] = await Promise.all([listModelConnections(), listMyDevices()])
     connections.value = mine.connections
+    held.value = mine.account_connections
     // 自己接入的设备（云端机器没有 claude_code 这一项），此刻在线的才能当场改。
     devices.value = enrolled.devices
       .filter((d) => d.online && 'claude_code' in d)
@@ -76,6 +92,39 @@ async function saveService(deviceId: string, service: ModelServiceInput) {
   }
 }
 
+async function addHeld(input: AccountConnectionInput) {
+  if (await act('add', () => addAccountConnection(input), t('account.modelConnections.saved'))) {
+    saved.value += 1
+  }
+}
+
+// 测试的结果写在那一行上（通过，或服务怎么拒绝的），toast 只说这一次点击。
+function checkHeld(id: string) {
+  void act(`${id}:check`, async () => {
+    const after = await checkAccountConnection(id)
+    if (after.check_error) toast.error(t('account.modelConnections.checkFailed', { reason: after.check_error }))
+    else toast.success(t('account.modelConnections.checked'))
+  })
+}
+
+async function renameHeld(id: string, name: string) {
+  if (await act(`${id}:rename`, () => renameAccountConnection(id, name), t('account.modelConnections.renamed'))) {
+    saved.value += 1
+  }
+}
+
+async function renameDevice(deviceId: string, name: string) {
+  if (
+    await act(`${deviceId}:rename`, () => renameModelConnection(deviceId, name), t('account.modelConnections.renamed'))
+  ) {
+    saved.value += 1
+  }
+}
+
+function removeHeld(id: string) {
+  void act(`${id}:revoke`, () => removeAccountConnection(id), t('account.modelConnections.removed'))
+}
+
 onMounted(load)
 </script>
 
@@ -84,11 +133,17 @@ onMounted(load)
     :loading="loading"
     :error="error"
     :connections="connections"
+    :held="held"
     :devices="devices"
     :busy="busy"
     :saved="saved"
     @recheck="recheck"
     @revoke="revoke"
     @service="saveService"
+    @add-held="addHeld"
+    @check-held="checkHeld"
+    @rename-held="renameHeld"
+    @rename-device="renameDevice"
+    @remove-held="removeHeld"
   />
 </template>

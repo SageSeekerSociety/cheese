@@ -1064,7 +1064,7 @@ restores the proxied CNAME to the tunnel from the saved copy. After that the
 to before going back to a Caddy binary without the DNS module, which rejects
 their `tls` block.
 
-## Beijing edge (pre-filing): the mainland entry for okcheese, hand-managed
+## Beijing edge: okcheese.cn, the mainland entry, hand-managed
 
 A second edge sits in the mainland so that visitors in China stop paying the
 Beijing → Hong Kong → Beijing detour. It is the Hong Kong design moved to
@@ -1073,17 +1073,26 @@ Caddy ends TLS and sends plain HTTP into two reverse SSH tunnels from the dev
 box, each landing on the dev front door's `127.0.0.1:18080`. The client address
 travels in `X-Forwarded-For`, as through Hong Kong.
 
-**It serves nothing public until the ICP filing for `okcheese.cn` is approved.**
-A mainland server may not serve an unfiled domain on 80/443, so:
+`okcheese.cn` is ICP-filed under 知是科创（北京）信息技术有限公司 as
+京ICP备2026068086号, and the filing is tied to this Aliyun server: a mainland
+server may serve only filed domains on 80/443, and the filing lapses if the domain
+stops resolving to an Aliyun mainland server. The public pages' footer shows the
+number, linked to beian.miit.gov.cn, as the filing requires.
 
-- Caddy listens only on `:8443` with its internal CA (`scripts/ops/Caddyfile.beijing`).
-- Both firewalls (Aliyun's instance firewall and ufw) allow `:8443` only from a
-  few test addresses; 80 and 443 are disabled in the Aliyun firewall, not deleted.
-- No DNS record points at the box.
+- `okcheese.cn` and `www.okcheese.cn` (Aliyun DNS) resolve to the box. Caddy
+  serves `okcheese.cn` on 443 with a public certificate, redirects `www` to it
+  and plain http to https (`scripts/ops/Caddyfile.beijing`).
+- The Aliyun instance firewall and ufw allow 22, 80 and 443.
+- `okcheese.com` stays in Hong Kong and is not served here.
 
-When the filing is approved: give the site a public certificate, move it to
-`:443`, re-enable 80/443 in the Aliyun firewall, drop the `:8443` rules, and point
-`okcheese.cn` at the box.
+The backend knows one public address, `FRONTEND_URL` (okcheese.com). Password
+and email-code sign-in and the workspace work on okcheese.cn because nothing
+checks the Host, and links copied there are okcheese.cn links. What is bound to
+okcheese.com does not work on okcheese.cn: passkeys (their rpId is okcheese.com),
+GitHub and Google sign-in (their callback is okcheese.com, where the state
+cookie set on .cn is missing), embedded previews and Sites (their CSP and grant
+check name okcheese.com), and docs sign-in. Mailed links point to okcheese.com.
+Cookies are per host, so the two addresses keep separate sign-ins.
 
 The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
 Kong tunnels inside TLS on `:443` do not apply inside the mainland.

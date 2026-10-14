@@ -35,6 +35,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
+from app.api.response import ok
 from app.api.space_deps import (
     _ensure_space_visible,
     get_space_service,
@@ -99,7 +100,7 @@ async def get_space_topics(
     else:
         topics = await service.get_hot_topics(space_id, safe_limit)
 
-    return {"code": 200, "message": "OK", "data": {"topics": topics}}
+    return ok({"topics": topics})
 
 
 @router.get(
@@ -123,7 +124,7 @@ async def list_space_categories(
         session=db, space_id=space_id, user_id=auth_user.user_id
     )
     items = [_category_to_api_model(c, include_private=may_manage) for c in cats]
-    return {"code": 200, "message": "OK", "data": {"categories": items}}
+    return ok({"categories": items})
 
 
 @router.post(
@@ -187,11 +188,7 @@ async def patch_space_category(
         # 空串 = 清掉这一格。
         default_role=payload.default_role,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category, include_private=True)},
-    }
+    return ok({"category": _category_to_api_model(category, include_private=True)})
 
 
 @router.get(
@@ -212,13 +209,9 @@ async def get_space_category(
     may_manage = auth_user.user_id > 0 and await is_space_admin(
         session=db, space_id=space_id, user_id=auth_user.user_id
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "category": _category_to_api_model(category, include_private=may_manage)
-        },
-    }
+    return ok(
+        {"category": _category_to_api_model(category, include_private=may_manage)}
+    )
 
 
 @router.delete(
@@ -254,11 +247,7 @@ async def archive_space_category(
         archived=True,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category, include_private=True)},
-    }
+    return ok({"category": _category_to_api_model(category, include_private=True)})
 
 
 @router.delete(
@@ -277,11 +266,7 @@ async def unarchive_space_category(
         archived=False,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category, include_private=True)},
-    }
+    return ok({"category": _category_to_api_model(category, include_private=True)})
 
 
 @router.get(
@@ -299,11 +284,7 @@ async def list_space_domain_groups(
         space_id=space_id, actor_user_id=auth_user.user_id
     )
     items = [_domain_group_to_api_model(group, domains) for group, domains in groups]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"groups": items},
-    }
+    return ok({"groups": items})
 
 
 @router.post(
@@ -350,11 +331,7 @@ async def patch_space_domain_group(
         domains=payload.domains,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"group": _domain_group_to_api_model(group, domains)},
-    }
+    return ok({"group": _domain_group_to_api_model(group, domains)})
 
 
 @router.delete(
@@ -390,11 +367,7 @@ async def list_space_admins(
     # outsider must not learn who runs a board they were never invited to.
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     admins = await service.list_admins(space_id)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"managers": [_admin_to_api_model(rel) for rel in admins]},
-    }
+    return ok({"managers": [_admin_to_api_model(rel) for rel in admins]})
 
 
 @router.post(
@@ -468,6 +441,6 @@ async def patch_space_manager(
     )
     space = await service.get_space(space_id)
     if space is None:
-        return {"code": 200, "message": "OK", "data": None}
+        return ok(None)
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    return {"code": 200, "message": "OK", "data": {"space": space_data}}
+    return ok({"space": space_data})

@@ -20,8 +20,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketState
 
 from app.api.auth import ActorResolver
+from app.api.preview_relay import relay_http, relay_ws
 from app.api.preview_runtime import inject_runtime_script
-from app.api.routes.app_preview import relay_http, relay_ws
 from app.core import scoped_jwt
 from app.core.config import settings
 from app.core.db import get_db

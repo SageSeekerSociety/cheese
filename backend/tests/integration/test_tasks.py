@@ -923,7 +923,7 @@ def test_what_a_task_shows_is_the_tasks_preview_not_the_rooms(client, monkeypatc
 def test_a_task_and_its_room_each_keep_their_own_preview_tunnel(client):
     """The same teammate serves an app in the room and in a task: the task's
     helper does not take the room's tunnel, nor the reverse."""
-    from app.api.routes.app_preview import connection_hub
+    from app.api.preview_relay import connection_hub
 
     project_id, room_id = _room(client)
     task = open_task(client, room_id)

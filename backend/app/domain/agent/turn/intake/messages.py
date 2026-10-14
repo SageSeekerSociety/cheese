@@ -24,12 +24,8 @@ from app.domain.agent.admission import (
 )
 from app.domain.agent.initial_admission import admitted_initial
 from app.domain.agent.platform_notices import (
-    EVENT_TURN_QUEUED,
-    SEVERITY_INFO,
-    WHO_PLATFORM,
     delivery_checking_notice,
     delivery_fallback_notice,
-    notice,
 )
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.turn.intake.ports import (
@@ -45,6 +41,12 @@ from app.domain.agent.turn_ledger import project_pool
 from app.domain.delivery.addressing import Addressed
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.handles import names_a_person, recipient_seat
+from app.domain.notice_meta import (
+    EVENT_TURN_QUEUED,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.thread.services import answer_place
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 

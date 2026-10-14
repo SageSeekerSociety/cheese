@@ -27,6 +27,7 @@ import { pastedTextName } from '../../lib/attachments'
 import {
   expandComposerMentions,
   mentionsAgent as containsAgentMention,
+  namesOnlyPeople,
   withAgentMention as addAgentMention,
 } from '../../lib/composerMentions'
 import { mentionSpans } from '../../lib/expandMentions'
@@ -236,11 +237,19 @@ function mentionsAgent(expanded: string): boolean {
   return containsAgentMention(expanded, props.agentSeat, props.mentionPool)
 }
 
+// 叫不叫它：@ 了它就叫；任务、私聊里不 @ 也叫，只有 @ 了人、没 @ 任何 AI 队友的那句
+// 是说给那几个人的，不叫（后端同一条规矩，见 `_names_only_people`）。
+function summons(expanded: string): boolean {
+  return (
+    mentionsAgent(expanded) || (props.alwaysSummon && !namesOnlyPeople(expanded, props.agentSeat, props.mentionPool))
+  )
+}
+
 // 这条草稿现在叫不叫它。**读的是正文**，不是一个单独存着的开关值：真相只有一条，
 // 入口可以有三个（手打 @、点按钮、⌘/Ctrl+Enter 都是往正文里写同一个 @）。
 // 独立开关是另一回事 —— 那种东西能和正文说不一样的话（开关亮着、正文里没有 @），
 // 那时候「这条到底算不算叫了它」谁也答不上来，而只有开关那条是通的。
-const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
+const summonOn = computed(() => summons(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
 // ⌘/Ctrl+Enter「发送并交给它」：和 AI 队友私聊时没有可交的人，这个组合键就是发送，
@@ -383,7 +392,7 @@ function sendDraft(opts?: { summon?: boolean }) {
   if (props.attsUploading) return
   if (!draft.value.trim() && !props.atts.length) return
   const content = expandMentions(opts?.summon ? withAgentMention(draft.value) : draft.value)
-  emit('send', { content, summon: props.alwaysSummon || mentionsAgent(content) })
+  emit('send', { content, summon: summons(content) })
 }
 
 // 「提醒我」：对话框管填和发，这里只开它，和设好之后说一声几点会提醒。

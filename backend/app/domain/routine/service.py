@@ -25,17 +25,6 @@ from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import listing, say, with_keys
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.platform_notices import (
-    EVENT_ROUTINE_PROPOSED,
-    EVENT_ROUTINE_RUN,
-    EVENT_ROUTINE_STOPPED,
-    EVENT_TURN_FAILED,
-    EVENT_TURN_TIMEOUT,
-    SEVERITY_INFO,
-    WHO_HUMAN,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
@@ -47,6 +36,17 @@ from app.domain.delivery.models import Delivery
 from app.domain.feedback import claims as feedback_claims
 from app.domain.feedback import triage as feedback_triage
 from app.domain.library import listing as library_listing
+from app.domain.notice_meta import (
+    EVENT_ROUTINE_PROPOSED,
+    EVENT_ROUTINE_RUN,
+    EVENT_ROUTINE_STOPPED,
+    EVENT_TURN_FAILED,
+    EVENT_TURN_TIMEOUT,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.review.models import AcceptCard, AcceptStatus
