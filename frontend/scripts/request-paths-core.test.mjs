@@ -100,21 +100,26 @@ test('the shape of a path is its segments, a parameter taking one', () => {
 })
 
 test('a failure names the source, the call site and the counts', () => {
-  const text = report(judge("request('/topic')"))
+  // Two literal paths, one of them unserved: the counts differ from each other
+  // (1 of 2 judged), so a report that transposes the two is not this report.
+  const text = report(judge(["request('/topics')", "request('/topic')"].join('\n')))
   // The source is the argument the caller passed, not a literal in here: it is
   // the line that tells a reader whether the index was read off the app or
   // handed in by the workflow.
   assert.ok(text.startsWith('Request paths the emitted index does not serve:\n'), text)
-  assert.ok(text.includes('  src/api/x.ts:1  /topic'), text)
+  assert.ok(text.includes('  src/api/x.ts:2  /topic'), text)
   assert.ok(text.includes('generated from the app'), text)
-  assert.ok(text.includes('1 path(s) of 1 judged (0 skipped).'), text)
+  assert.ok(text.includes('1 path(s) of 2 judged (0 skipped).'), text)
 })
 
 test('a clean run names the source and both counts, including the skipped one', () => {
-  const text = report(judge(["request('/topics')", 'request(base)'].join('\n')))
+  // Two judged and one skipped, so the two counts are distinct again.
+  const text = report(
+    judge(["request('/topics')", "request('/topics')", 'request(base)'].join('\n')),
+  )
   assert.equal(
     text,
-    'Request paths match the emitted index (1 call site(s) judged,\n' +
+    'Request paths match the emitted index (2 call site(s) judged,\n' +
       '  1 skipped: path built from a variable or a helper).',
   )
 })
