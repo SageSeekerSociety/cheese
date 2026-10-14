@@ -56,6 +56,23 @@ HOT_BLOCKS = 12_000
 
 SEED = 20261013
 
+# —— the three boundary rooms ————————————————————————————————————————
+#: Rooms the viewer can see that still must not reach the list, each shaped the
+#: way that would put it there if its rule went unread. Without them the
+#: endpoint is only ever measured on rows it is supposed to show, and a change
+#: that starts listing an empty or archived room costs nothing in the diff.
+#: They live in the main project only, and none of them is in its ``rooms``
+#: list — task round-robin and block mass distribute over that list, so the
+#: rest of the dataset stays the size it was.
+EMPTY_ROOMS = 6
+ARCHIVED_ROOMS = 6
+AGENT_FOLLOWUP_ROOMS = 6
+#: The handle that asked in the followed-up rooms. ``looks_like_agent_handle``
+#: reads the ``cheese-`` prefix, and a follow-up only settles a question its own
+#: **agent** walked away from: a person who asks and then adds a line has not
+#: stopped owing an answer (#2046 is the agent's case).
+AGENT = "cheese-perf"
+
 
 def now() -> datetime:
     return datetime.now(UTC)
@@ -159,7 +176,45 @@ async def _projects(
                 r + 1,
             )
             rooms_list.append(rid)
-        projects.append({"id": pid, "root": root, "rooms": rooms_list, "index": i})
+        boundary: dict[str, list[uuid.UUID]] = {}
+        if i == 0:
+            number = rooms
+            for label, status, count in (
+                ("empty room", "active", EMPTY_ROOMS),
+                ("archived room", "archived", ARCHIVED_ROOMS),
+                ("followed-up room", "active", AGENT_FOLLOWUP_ROOMS),
+            ):
+                ids = []
+                for r in range(count):
+                    rid = uuid.uuid4()
+                    number += 1
+                    await conn.execute(
+                        """insert into topics (id, project_id, parent_id, title,
+                               kind, status, created_by, created_at, updated_at,
+                               is_private, members_only, archived_with_project,
+                               number)
+                           values ($1,$2,$3,$4,'topic',$5,$6,$7,$7,false,false,
+                                   false,$8)""",
+                        rid,
+                        pid,
+                        root,
+                        f"{label} {r}",
+                        status,
+                        VIEWER,
+                        now(),
+                        number,
+                    )
+                    ids.append(rid)
+                boundary[label] = ids
+        projects.append(
+            {
+                "id": pid,
+                "root": root,
+                "rooms": rooms_list,
+                "index": i,
+                "boundary": boundary,
+            }
+        )
     return projects
 
 
@@ -258,6 +313,89 @@ async def _fill(
         )
         total += count
     print(f"blocks: {total}", flush=True)
+    await _boundary_blocks(conn, projects[0])
+
+
+async def _boundary_blocks(conn: asyncpg.Connection, project: dict) -> None:
+    """Give the archived and followed-up rooms the shape that would list them.
+
+    An archived room gets a question addressed to ``VIEWER``: an archived room
+    is read-only and nothing in it can be pushed forward, so its question must
+    not reach the list. A followed-up room gets the agent's own question and
+    then the agent's next line on the same conversation, which is the agent
+    saying it no longer waits on anybody (#2046). The empty rooms are in the
+    candidate set by being visible and get nothing else.
+    """
+    project_id = project["id"]
+    base = now()
+    for i, room in enumerate(project["boundary"]["archived room"]):
+        await _one_block(
+            conn,
+            project_id,
+            room,
+            VIEWER,
+            asked=True,
+            said="这个频道归档之前问你的，归档之后就没人能动了。",
+            at=base - timedelta(minutes=30 + i),
+        )
+    for i, room in enumerate(project["boundary"]["followed-up room"]):
+        asked_at = base - timedelta(minutes=50 + i)
+        await _one_block(
+            conn,
+            project_id,
+            room,
+            AGENT,
+            asked=True,
+            said="这一步按哪个方案走？",
+            at=asked_at,
+        )
+        await _one_block(
+            conn,
+            project_id,
+            room,
+            AGENT,
+            asked=False,
+            said="不用回了，我按第一个做完了。",
+            at=asked_at + timedelta(minutes=1),
+        )
+    print(
+        f"boundary rooms: {EMPTY_ROOMS} empty, {ARCHIVED_ROOMS} archived with an"
+        f" open question, {AGENT_FOLLOWUP_ROOMS} the asker walked away from",
+        flush=True,
+    )
+
+
+async def _one_block(
+    conn: asyncpg.Connection,
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    author: str,
+    *,
+    asked: bool,
+    said: str,
+    at: datetime,
+) -> None:
+    """One participant line, a question addressed to ``VIEWER`` when asked.
+
+    ``author`` may be an agent handle: a question is answered by people, but it
+    can be *asked* by either, and ``looks_like_agent_handle`` is what tells the
+    two apart on the read side.
+    """
+    meta = json.dumps({"options": ["yes", "no"], "asked": [VIEWER]}) if asked else None
+    await conn.execute(
+        """insert into blocks (id, project_id, conversation_id, kind, author_type,
+               author, content, reply_to, refs, created_at, updated_at, meta, seq)
+           values ($1,$2,$3,'message','participant',$4,$5,null,$6,$7,$7,$8,$9)""",
+        uuid.uuid4(),
+        project_id,
+        conversation_id,
+        author,
+        said,
+        json.dumps([]),
+        at,
+        meta,
+        1 if asked else 2,
+    )
 
 
 def _card(
