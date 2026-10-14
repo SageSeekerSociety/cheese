@@ -336,6 +336,15 @@ def list_docs(tok, reader=None):
     return rows
 
 
+def read_docs():
+    """Read the platform documents, or return None when the read was refused."""
+    try:
+        return list_docs(login())
+    except Exception as e:
+        print(f"平台读不到文档列表，weekly.json 不动：{e!r}", file=sys.stderr)
+        return None
+
+
 def remount(wd, password, docs, when, dry_run=False, deps=None):
     """One remount. (exit code, the report to print).
 
@@ -422,11 +431,9 @@ def main(argv):
 
     docs = []
     if not args.dry_run:
-        try:
-            docs = list_docs(login())
-        except Exception as e:
-            print(f"平台读不到文档列表，weekly.json 不动：{e!r}", file=sys.stderr)
-            docs = []
+        docs = read_docs()
+        if docs is None:
+            return 3
 
     code, report = remount(args.wd, password, docs,
                            datetime.now(timezone.utc), dry_run=args.dry_run)
@@ -648,6 +655,61 @@ def self_test():
     check("平台上没有周复盘时照样把循环挂起来",
           (code, sorted(seen["started"])), (0, ["timer", "watchdog"]))
     check("没写 weekly.json 时说清不是失败", "weekly.json 未写" in report, True)
+
+    # -- 读文档失败时 main 停住，一个循环也不起 ------------------------------
+    def drive_main(list_docs_impl, login_impl):
+        """(exit code, the docs each remount got, this run's stdout+stderr).
+
+        The real `main` runs here, not a stub. Only `login`/`list_docs` (the two
+        platform calls `main` makes) and `remount` (the machine seam) are replaced;
+        `read_docs` is left alone, so the stop-or-continue decision under test is the
+        one `main` actually makes. Output is captured, so the expected
+        "读不到文档列表" line never lands in this self-test's own output.
+        """
+        import contextlib
+        import io
+        import tempfile
+
+        remounts = []
+
+        def spy(wd, password, docs, when, dry_run=False):
+            remounts.append(docs)
+            return 0, "报告"
+
+        real = {k: globals()[k] for k in ("list_docs", "login", "remount")}
+        globals()["list_docs"] = list_docs_impl
+        globals()["login"] = login_impl
+        globals()["remount"] = spy
+        env = {k: os.environ.get(k) for k in ("OKCHEESE_USER", "OKCHEESE_PASS")}
+        os.environ["OKCHEESE_USER"], os.environ["OKCHEESE_PASS"] = "u", "pw"
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+                code = main(["--wd", tempfile.mkdtemp()])
+        finally:
+            for k, v in real.items():
+                globals()[k] = v
+            for k, v in env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        return code, remounts, out.getvalue()
+
+    def denied(*_a, **_k):
+        raise RuntimeError("denied")
+
+    code, remounts, out = drive_main(denied, lambda: "token")
+    check("读文档被拒时 main 返回 3", code, 3)
+    check("读文档被拒时一个循环也不起（不调 remount）", remounts, [])
+    check("读文档被拒时说清原因", "平台读不到文档列表" in out, True)
+
+    code, remounts, _ = drive_main(lambda _tok: [], denied)
+    check("登录失败时 main 返回 3", code, 3)
+    check("登录失败时一个循环也不起（不调 remount）", remounts, [])
+
+    code, remounts, _ = drive_main(lambda _tok: [], lambda: "token")
+    check("读回空列表是成功，照常 remount（docs=[]）", (code, remounts), (0, [[]]))
 
     # -- 密码不外泄 ----------------------------------------------------------
     code, report, seen = drive(none, both, password="sekret-pw")
