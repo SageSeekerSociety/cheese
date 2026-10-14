@@ -34,12 +34,12 @@ export interface MemberFace {
 /** 名册那一张表：handle → 这位自己挑过的头像地址 + 是不是队友（`lib/personIdentity` 那份）。 */
 export type MentionFaceMap = Record<string, MentionIdentity>
 
-/** 由名册那一张表算出「一位成员的脸」。表里没有的人退回 `avatarSrc`（项目名册那一份）；
- *  队友身份留 null 交给 `IdentityView` 按 handle 兜底 —— 那条规则只在一个地方写，别在
- *  这里再抄一份。 */
+/** 由名册那一张表算出「一位成员的脸」。表里没有的人退回 `avatarSrc`（项目名册那一份，
+ *  它那边也可能没有这一位，回 null）；队友身份留 null 交给 `IdentityView` 按 handle
+ *  兜底 —— 那条规则只在一个地方写，别在这里再抄一份。 */
 export function faceLookup(
   identities: MentionFaceMap,
-  avatarSrc: (handle: string) => string
+  avatarSrc: (handle: string) => string | null
 ): (handle: string) => MemberFace {
   return (handle) => {
     const known = identities[handle]
