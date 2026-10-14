@@ -388,7 +388,7 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
         assert method == "ping"
         return await operation("ping", {"alive": True})
 
-    async def tunnel(_screen, _home):
+    async def tunnel(_screen, _home, _seat):
         return await operation("tunnel", False)
 
     async def refresh(*_arguments, **_keywords):
@@ -652,6 +652,37 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(
             room.arguments["agent_handle"],
         )
     ]
+
+
+async def test_a_task_s_screen_is_judged_by_its_own_tunnel_helper():
+    """A task's session and its room's session of the same agent each start a
+    helper of their own. The room's session ending stops its helper; the task's
+    `claude` keeps running on the task's helper, and its next turn must not be
+    thrown away because the room's helper is gone."""
+    project, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    home = device_home_dir(project, room_id)
+    room_seat = seat_dir(home, "cheese")
+
+    class Hub(FakeHub):
+        async def exec(self, device_id, argv, *, env=None, **kwargs):
+            if env and "CHEESE_TUNNEL_PROBE_DIR" in env:
+                # The room's helper ended with the room's session; every other
+                # helper on the machine is listening.
+                self.probed_dirs.append(env["CHEESE_TUNNEL_PROBE_DIR"])
+                verdict = (
+                    "down" if env["CHEESE_TUNNEL_PROBE_DIR"] == room_seat else "up"
+                )
+                return {"stdout": verdict, "stderr": "", "exit": 0}
+            return await super().exec(device_id, argv, env=env, **kwargs)
+
+    hub = Hub()
+    room = _room(hub, project_id=project, env={"CHEESE_RESOURCE_ID": str(room_id)})
+    task = dict(topic_id=task_id, seat=seat_key("cheese", task_id))
+    first = await room.ensure(**task)
+
+    assert await room.ensure(**task) is first
+    assert hub.closed == []
+    assert hub.reasserted == [first.sid]
 
 
 @pytest.mark.parametrize(

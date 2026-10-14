@@ -112,6 +112,7 @@ def _place(
     topic_id="",
     execution_target=None,
     ca_pem="",
+    seat="",
 ) -> MachinePlace:
     return MachinePlace(
         home=home_dir,
@@ -124,6 +125,7 @@ def _place(
         agent_handle="ops",
         execution_target=execution_target,
         ca_pem=ca_pem,
+        seat=seat,
     )
 
 
@@ -1166,6 +1168,94 @@ def test_two_seats_get_their_own_helper_and_their_own_token(tmp_path):
     assert ports[0] != ports[1]
     assert pids[0] != pids[1]
     assert not (home / ".cheese" / "cheese-tunnel.port").exists()
+
+
+def test_a_tasks_helper_keeps_its_tasks_credential_when_its_room_launches(tmp_path):
+    """The room's agent working a task runs two sessions on one machine, in
+    the room's home: the room's and the task's. Each launch starts a helper,
+    and the helper stamps the credential it reads from `--token-file` on every
+    CONNECT; that credential names the conversation the call acts in. The
+    room's session launching while the task's runs must leave the task's
+    helper reading the task's credential.
+
+    Measured on dev 2026-10-13: five running sessions in one room whose helpers
+    read another conversation's credential, all written by whichever session
+    of the same agent had launched last."""
+    from app.domain.agent import machine_tunnel
+
+    task_id = str(uuid.uuid4())
+    launches = {
+        "task": _screen_launch(topic_id=task_id, seat=place.seat_key("ops", task_id)),
+        "room": _screen_launch(topic_id="R", seat="ops"),
+    }
+
+    def tunnel_lines(script: str) -> str:
+        """The launcher's own lines: the seat's directory, the credential and
+        the up-script written into it, and the helper started for this launch."""
+        seat_start = script.index('SEATD="$HOME/.cheese/seats/')
+        seat_end = script.index("\n", script.index("\n", seat_start) + 1) + 1
+        credential_start = script.index(
+            'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then\n  # Use the place-scoped'
+        )
+        credential_end = script.index(
+            "\nfi\n", script.index('chmod +x "$HOME/.cheese/cheese-tunnel-up"')
+        ) + len("\nfi\n")
+        up_start = script.index(
+            'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then\n  # The machine chose the port'
+        )
+        up_end = script.index("\nfi\n", up_start) + len("\nfi\n")
+        return (
+            script[seat_start:seat_end]
+            + script[credential_start:credential_end]
+            + script[up_start:up_end]
+        )
+
+    (tmp_path / ".cheese").mkdir()
+    (tmp_path / ".cheese" / "cheese-tunnel.py").write_text(
+        Path(machine_tunnel.__file__).read_text()
+    )
+    helpers: dict[str, int] = {}
+    try:
+        for name in ("task", "room"):
+            result = subprocess.run(
+                [
+                    "sh",
+                    "-c",
+                    tunnel_lines(launches[name][0][2]) + 'printf "%s" "$TUNNEL_PID"\n',
+                ],
+                env={
+                    "PATH": os.environ["PATH"],
+                    "HOME": str(tmp_path),
+                    "CHEESE_TUNNEL_URL": "ws://127.0.0.1:9/llm/tunnel",
+                    "CHEESE_SEAT": launches[name][1]["CHEESE_SEAT"],
+                    "CHEESE_CONNECT_TOKEN": f"{name}-credential",
+                },
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode == 0, result.stderr
+            helpers[name] = int(result.stdout.split()[-1])
+
+        def read_by(pid: int) -> str:
+            argv = subprocess.run(
+                ["ps", "-ww", "-o", "args=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.split()
+            return Path(argv[argv.index("--token-file") + 1]).read_text().strip()
+
+        assert read_by(helpers["room"]) == "room-credential"
+        assert read_by(helpers["task"]) == "task-credential", (
+            "the task's helper stamps the room session's credential on its calls"
+        )
+    finally:
+        import signal
+
+        for pid in helpers.values():
+            with contextlib.suppress(OSError):
+                os.kill(pid, signal.SIGKILL)
 
 
 def _listening(port: int) -> bool:
