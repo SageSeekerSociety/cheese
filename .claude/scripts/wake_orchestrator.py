@@ -13,7 +13,8 @@ It logs in as the dev account, reads the dispatcher task's current seat, posts
 status says which step failed, so a caller can branch on it:
 
   0 posted and read back · 2 the command line or the environment is wrong ·
-  3 the platform refused a call · 4 posted but the read-back did not show it
+  3 the platform refused a call (nothing was posted) ·
+  4 posted but the read-back did not show it · 5 the dispatcher's topic has no seat
 
 The tag is one of the four labels 《总调度工作流 v2》§8 gives a line — 递卡, 交付, 待决,
 队列 — and the body follows that section's format for it, e.g. 递卡's
@@ -22,9 +23,12 @@ the four is passed through with a warning rather than refused: the labels are th
 workflow's convention, and a line that needs a fifth one should not be blocked by this
 script.
 
-A run that failed after posting (exit 4) can be retried with `--request-id <id>`: the
-platform returns the message it already stored for that id instead of a second one, so
-the retry confirms the same message rather than sending its twin.
+A run that failed after posting (exit 4) is retried with `--request-id <uuid>`, the same
+id the first run used: the platform returns the message it already stored for that id
+instead of a second one, so the retry confirms the same message rather than sending its
+twin. Exit 4 prints that id — a run that minted one itself says which — so the retry does
+not have to mint a second. The id has to be a UUID: the endpoint types the field that way,
+and a value it would refuse is refused here instead, before anything is posted.
 
 Credentials come from the environment, never from argv (ps shows it) and never from a
 file: OKCHEESE_PASS is required, OKCHEESE_USER defaults to the dev account's name. That
@@ -89,7 +93,12 @@ def wake_line(seat, tag, body, as_name=""):
 
 
 def confirmed(blocks, message_id):
-    """Whether what we posted is among the blocks the platform just returned."""
+    """Whether what we posted is among the blocks the platform just returned.
+
+    A reply with no id of its own proves nothing, and `None == None` would read a block
+    that also carries no id as that message — so an id-less reply is never a match."""
+    if message_id is None:
+        return False
     return any((b or {}).get("id") == message_id for b in blocks or [])
 
 
@@ -114,8 +123,21 @@ def parse_args(argv):
     if flags - {"--self-test", "--seat", "--dry-run"}:
         print(f"unknown flag(s): {' '.join(sorted(flags))}", file=sys.stderr)
         return None, None, as_name, request_id, flags
-    if flags & {"--self-test", "--seat"}:
+    if "--self-test" in flags:
         return "", "", as_name, request_id, flags
+    if "--seat" in flags:
+        # Asked with a tag and a body, `--seat` would print the seat and exit 0 without
+        # posting: a line's wake gone, reported as a success. Say so instead.
+        if rest:
+            print("--seat takes no tag or body; drop it to send a wake", file=sys.stderr)
+            return None, None, as_name, request_id, flags
+        return "", "", as_name, request_id, flags
+    if request_id:
+        try:
+            uuid.UUID(request_id)
+        except ValueError:
+            print(f"--request-id must be a uuid; {request_id!r} is not one", file=sys.stderr)
+            return None, None, as_name, request_id, flags
     if len(rest) != 2:
         print("usage: wake_orchestrator.py <标签> <正文> [--as <名字>] [--request-id <id>]"
               "  (or --seat / --self-test)", file=sys.stderr)
@@ -138,11 +160,14 @@ def self_test():
         ("消息：正文里的方括号和换行原样带出去",
          wake_line("s", "待决", "要定什么｜我倾向 A\n第二行"),
          "<@s> 【待决】要定什么｜我倾向 A\n第二行"),
-        ("回读：刚发的 id 出现在返回的块里才算数",
-         [confirmed([{"id": "a"}, {"id": "b"}], "b"), confirmed([{"id": "a"}], "b")],
-         [True, False]),
+        ("回读：刚发的 id 出现在返回的块里才算数（落在第一个也算）",
+         [confirmed([{"id": "b"}, {"id": "a"}], "b"), confirmed([{"id": "a"}, {"id": "b"}], "b"),
+          confirmed([{"id": "a"}], "b")],
+         [True, True, False]),
         ("回读：空列表和空块都不算数",
          [confirmed([], "b"), confirmed([None], "b")], [False, False]),
+        ("回读：回复里没有 id 时不许当成功（None 不等于 None）",
+         [confirmed([{}], None), confirmed([{"id": None}], None)], [False, False]),
         ("信封：套了几层 data 都取到里面那层",
          [unwrap({"data": {"data": {"id": "x"}}}), unwrap({"id": "x"})],
          [{"id": "x"}, {"id": "x"}]),
@@ -152,12 +177,19 @@ def self_test():
          parse_args(["递卡"])[:2], (None, None)),
         ("命令行：--as 吃掉下一个词，不算位置参数",
          parse_args(["--as", "芝士", "递卡", "正文"])[:3], ("递卡", "正文", "芝士")),
-        ("命令行：--request-id 原样收下（重试时用同一个 id 不会发第二条）",
-         parse_args(["--request-id", "abc123", "递卡", "正文"])[3], "abc123"),
+        ("命令行：--request-id 收下 uuid（重试时用同一个 id 不会发第二条）",
+         parse_args(["--request-id", "3e310fb7-c3d3-4667-a4d5-552783b38975", "递卡", "正文"])[3],
+         "3e310fb7-c3d3-4667-a4d5-552783b38975"),
+        ("命令行：--request-id 不是 uuid 就当场拦下（平台收不了它）",
+         parse_args(["--request-id", "abc123", "递卡", "正文"])[:2], (None, None)),
         ("命令行：不认识的开关直接说",
          parse_args(["--wat", "递卡", "正文"])[:2], (None, None)),
-        ("命令行：--seat 不用位置参数",
-         parse_args(["--seat"])[4], {"--seat"}),
+        ("命令行：尾上没有值的开关不认（--as / --request-id 都要吃一个词）",
+         [parse_args(["递卡", "--as"])[:2], parse_args(["递卡", "正文", "--request-id"])[:2]],
+         [(None, None), (None, None)]),
+        ("命令行：--seat 单独用才取座位，带着位置参数就是错的",
+         [parse_args(["--seat"])[:2], parse_args(["递卡", "正文", "--seat"])[:2]],
+         [("", ""), (None, None)]),
     ]
     bad = 0
     for name, got, want in cases:
@@ -192,7 +224,7 @@ def main(argv):
         return 3
     if not seat:
         print(f"no seat on {TARGET}; nothing to wake", file=sys.stderr)
-        return 3
+        return 5
     if "--seat" in flags:
         print(seat)
         return 0
@@ -200,18 +232,29 @@ def main(argv):
     if "--dry-run" in flags:
         print(f"would send to {TARGET}: {content}")
         return 0
+    request_id = request_id or uuid.uuid4().hex
     try:
         sent = unwrap(call("POST", f"/topics/{TARGET}/messages", token,
-                           {"content": content, "request_id": request_id or uuid.uuid4().hex}))
+                           {"content": content, "request_id": request_id}))
+    except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
+        # Nothing was posted: the retry is the same run again, id and all.
+        print(f"the platform refused a call: {e!r}", file=sys.stderr)
+        return 3
+    message_id = sent.get("id") if isinstance(sent, dict) else None
+    # From here on the message is on the platform, so a failure is exit 4, not 3: a
+    # caller that retries on 3 would post its twin.
+    try:
         back = unwrap(call("GET", f"/topics/{TARGET}/blocks?kind=message&limit={READ_BACK}",
                            token))
     except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
-        print(f"the platform refused a call: {e!r}", file=sys.stderr)
-        return 3
-    if not confirmed(back if isinstance(back, list) else [], sent.get("id")):
-        print(f"posted {sent.get('id')} but the read-back did not show it", file=sys.stderr)
+        print(f"posted {message_id} (request_id {request_id}) but the read-back failed: {e!r}",
+              file=sys.stderr)
         return 4
-    print(f"woke {seat} on {TARGET}: {sent.get('id')}")
+    if not confirmed(back if isinstance(back, list) else [], message_id):
+        print(f"posted {message_id} (request_id {request_id}) but the read-back did not show it",
+              file=sys.stderr)
+        return 4
+    print(f"woke {seat} on {TARGET}: {message_id}")
     return 0
 
 
