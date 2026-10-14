@@ -16,6 +16,7 @@ import pytest
 from app.api.routes import webhooks as webhooks_route
 from app.core.errors import AuthenticationRequiredError, ValidationError
 from app.core.webhook_auth import mint_webhook_token, webhook_token_claims
+from app.domain.agent.announce import announce
 from app.domain.webhook import service as webhook_service
 
 # ---------------------------------------------------------------------------
@@ -117,30 +118,31 @@ class FakeSessionCM:
         return False
 
 
-def _wire_fake_announce(monkeypatch, *, fail_times: int = 0):
-    """post_with_retries owns the retry and the session, `announce` owns the
-    write — so this stubs `announce` and watches what the wrapper hands it."""
+def _fake_poster(*, fail_times: int = 0):
+    """post_with_retries owns the retry and the session, the poster owns the
+    write — the wrapper is handed that poster (ports.Poster), so this stubs it
+    and watches what the wrapper hands it."""
     sink: list = []
     remaining = {"fail": fail_times}
 
-    async def fake_announce(session, **kwargs):
+    async def fake(session, **kwargs):
         if remaining["fail"] > 0:
             remaining["fail"] -= 1
             raise RuntimeError("db unavailable")
         sink.append(kwargs)
         return object()
 
-    monkeypatch.setattr(webhook_service, "announce", fake_announce)
-    return sink
+    return fake, sink
 
 
 @pytest.mark.anyio
-async def test_post_with_retries_lands_content_and_source_annotation(monkeypatch):
-    sink = _wire_fake_announce(monkeypatch)
+async def test_post_with_retries_lands_content_and_source_annotation():
+    poster, sink = _fake_poster()
     topic_id = uuid.uuid4()
 
     landed = await webhook_service.post_with_retries(
         lambda: FakeSessionCM(FakeSession()),
+        poster=poster,
         topic_id=topic_id,
         content="build #42 passed",
         source="ci-runner",
@@ -159,10 +161,11 @@ async def test_post_with_retries_lands_content_and_source_annotation(monkeypatch
 async def test_post_with_retries_succeeds_after_transient_failures(monkeypatch):
     real_sleep = asyncio.sleep
     monkeypatch.setattr(asyncio, "sleep", lambda *_: real_sleep(0))
-    sink = _wire_fake_announce(monkeypatch, fail_times=2)
+    poster, sink = _fake_poster(fail_times=2)
 
     landed = await webhook_service.post_with_retries(
         lambda: FakeSessionCM(FakeSession()),
+        poster=poster,
         topic_id=uuid.uuid4(),
         content="x",
         source="ci",
@@ -176,10 +179,11 @@ async def test_post_with_retries_succeeds_after_transient_failures(monkeypatch):
 async def test_post_with_retries_gives_up_after_exhausting_retries(monkeypatch):
     real_sleep = asyncio.sleep
     monkeypatch.setattr(asyncio, "sleep", lambda *_: real_sleep(0))
-    sink = _wire_fake_announce(monkeypatch, fail_times=99)
+    poster, sink = _fake_poster(fail_times=99)
 
     landed = await webhook_service.post_with_retries(
         lambda: FakeSessionCM(FakeSession()),
+        poster=poster,
         topic_id=uuid.uuid4(),
         content="x",
         source="ci",
@@ -209,11 +213,10 @@ async def test_post_with_retries_waits_5_then_30_seconds_and_logs_the_last_error
         attempts["n"] += 1
         raise RuntimeError(f"db unavailable #{attempts['n']}")
 
-    monkeypatch.setattr(webhook_service, "announce", failing)
-
     with caplog.at_level("ERROR", logger=webhook_service.logger.name):
         landed = await webhook_service.post_with_retries(
             lambda: FakeSessionCM(FakeSession()),
+            poster=failing,
             topic_id=uuid.uuid4(),
             content="x",
             source="ci",
@@ -237,10 +240,9 @@ async def test_post_with_retries_does_not_retry_a_room_that_is_gone(monkeypatch)
         attempts["n"] += 1
         return None
 
-    monkeypatch.setattr(webhook_service, "announce", gone)
-
     landed = await webhook_service.post_with_retries(
         lambda: FakeSessionCM(FakeSession()),
+        poster=gone,
         topic_id=uuid.uuid4(),
         content="x",
         source="ci",
@@ -322,6 +324,9 @@ async def test_receive_webhook_lands_the_post_for_a_valid_token(monkeypatch):
     _, kwargs = post_mock.call_args
     assert kwargs["topic_id"] == topic_id
     assert kwargs["source"] == "deploy-bot"
+    # The door hands the wrapper the write itself: webhook may not import
+    # `agent` (ports.Poster), so nothing below the door can put it back.
+    assert kwargs["poster"] is announce
 
 
 @pytest.mark.anyio
