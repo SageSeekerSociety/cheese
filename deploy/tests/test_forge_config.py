@@ -245,7 +245,8 @@ class EventHealthTest(unittest.TestCase):
     def test_local_relay_must_be_present_healthy_and_on_this_release(self):
         # "This release" is its tag, or the digest the deploy chose for it
         # (FORGE_EVENTS_IMAGE): a relay whose code did not change keeps the
-        # image it runs. A check that does not know the choice accepts a digest.
+        # image it runs. A check outside the deploy reads the choice the last
+        # healthy deploy recorded (APP_TIER_PINS); a digest nobody chose fails.
         script = SCRIPT.parent / "check-app-tier.sh"
         base = (
             "backend\trepo/backend:release\trunning\tUp (healthy)\n"
@@ -254,18 +255,31 @@ class EventHealthTest(unittest.TestCase):
             "collab\trepo/collab:release\trunning\tUp (healthy)\n"
         )
         pinned = "repo/backend@sha256:" + "a" * 64
-        for row, chosen, expected in (
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        recorded = Path(directory.name) / "app-tier-pins"
+        recorded.write_text(f"COLLAB_IMAGE=repo/collab:release\nFORGE_EVENTS_IMAGE={pinned}\n")
+        nothing = Path(directory.name) / "absent"
+        for row, chosen, expected, *record in (
             ("", "", 1),
             ("forge-events\trepo/backend:old\trunning\tUp (healthy)\n", "", 1),
             ("forge-events\trepo/backend:release\trunning\tUp (unhealthy)\n", "", 1),
             ("forge-events\trepo/backend:release\trunning\tUp (healthy)\n", "", 0),
             (f"forge-events\t{pinned}\trunning\tUp (healthy)\n", pinned, 0),
-            (f"forge-events\t{pinned}\trunning\tUp (healthy)\n", "", 0),
+            (f"forge-events\t{pinned}\trunning\tUp (healthy)\n", "", 1),
+            (f"forge-events\t{pinned}\trunning\tUp (healthy)\n", "", 0, recorded),
+            ("forge-events\trepo/backend:release\trunning\tUp (healthy)\n", "", 1, recorded),
+            # What `docker ps` prints for a digest reference without --no-trunc.
+            ("forge-events\t" + "a" * 12 + "\trunning\tUp (healthy)\n", pinned, 1),
             (f"forge-events\t{pinned}\trunning\tUp (healthy)\n", "repo/backend@sha256:" + "b" * 64, 1),
             ("forge-events\trepo/backend:release\trunning\tUp (healthy)\n", pinned, 1),
         ):
             with self.subTest(row=row, chosen=chosen):
-                environment = {**os.environ, "FORGE_EVENTS_LOCAL": "true"}
+                environment = {
+                    **os.environ,
+                    "FORGE_EVENTS_LOCAL": "true",
+                    "APP_TIER_PINS": str(record[0] if record else nothing),
+                }
                 environment.pop("FORGE_EVENTS_IMAGE", None)
                 if chosen:
                     environment["FORGE_EVENTS_IMAGE"] = chosen

@@ -207,9 +207,20 @@ emit_named_rows() {
   fi
 }
 
+# How `docker ps` prints the image of a container created from a reference:
+# a digest reference comes out as the image's short ID unless --no-trunc is
+# given (Docker 29 with the containerd image store); a tag comes out as is.
+shown() {
+  if [ "$no_trunc" != true ] && [[ "$1" == *@sha256:* ]]; then
+    printf '%s' "${1#*@sha256:}" | cut -c1-12
+  else
+    printf '%s' "$1"
+  fi
+}
+
 emit_contract_rows() {
   if [ "${FORGE_EVENTS_LOCAL:-false}" = true ]; then
-    printf 'forge-events\t%s\trunning\tUp 1 minute (healthy)\n' "${FORGE_EVENTS_IMAGE:-repo/backend:$tag}"
+    printf 'forge-events\t%s\trunning\tUp 1 minute (healthy)\n' "$(shown "${FORGE_EVENTS_IMAGE:-repo/backend:$tag}")"
   fi
   if [ "$scenario" != forgejo_absent ]; then
     printf 'forgejo\tcodeberg.org/forgejo/forgejo:15.0.9-rootless\trunning\tUp 1 minute (healthy)\n'
@@ -236,7 +247,7 @@ emit_contract_rows() {
       "$frontend_tag"
   fi
   if [ "$scenario" != "collab_absent" ] && [ "$scenario" != "collab_unreleased" ]; then
-    printf 'collab\t%s\trunning\tUp 1 minute (healthy)\n' "${COLLAB_IMAGE:-repo/collab:$tag}"
+    printf 'collab\t%s\trunning\tUp 1 minute (healthy)\n' "$(shown "${COLLAB_IMAGE:-repo/collab:$tag}")"
   fi
 }
 
@@ -416,6 +427,8 @@ if [ "${1:-}" = ps ] && [[ "$*" == *'{{.Names}}'* ]]; then
 fi
 
 if [ "${1:-}" = "ps" ]; then
+  no_trunc=false
+  [[ " $* " != *" --no-trunc "* ]] || no_trunc=true
   if [[ "$*" == *com.docker.compose.service* ]]; then
     emit_contract_rows
   else

@@ -66,7 +66,7 @@ covers:
 | 切流量 | `switch_app_router` | 两个上游文件一起写（先写临时文件再 `mv`，半写的文件会带塌整个 nginx 配置），**只 reload 一次**；`nginx -t` 或 reload 失败就把两个文件改回去 |
 | 交接、排空 | `hand_over_running_work`、`DRAIN_SECONDS=${DEPLOY_DRAIN_SECONDS:-31}` | 切完马上换 collab；5 秒后给旧主 API 发 SIGUSR1 交出正在跑的工作；旧槽位继续答完手上的请求 31 秒 |
 | 收尾 | `take_frontend_ports` | 旧前端（最多 120 秒）和旧主 API（`docker stop --time 60`）同时优雅停下再删掉；盒子的 :8080、:80 写在 app-router 的 `frontend.conf` 里，转给正在服务的前端（每个版本的 `app-router.conf` 都 include 这个文件，旧提交的发版也留得住）。最后一个自己占着这两个端口的 compose 前端只给 5 秒停下，之后才把端口加进去，那一次发版多 reload 一次；加不进去就把那个前端重新拉起来服务端口，下一次发版在切流量时接过去；下次发版回到这次空出来的槽位 |
-| 判定 | `check-app-tier.sh`（`:955`） | 把 `docker ps` 的输出喂给它，断言 app 层的镜像 tag 就是本次 sha；collab 和事件中继按摘要引用时，断言的是本次发版选定的那个摘要 |
+| 判定 | `check-app-tier.sh`（`:955`） | 把 `docker ps` 的输出喂给它，断言 app 层的镜像 tag 就是本次 sha；collab 和事件中继按摘要引用时，断言的是本次发版选定的那个摘要；发版之外的检查（`deploy-drift.yml`、`scripts/whats-live.sh`）读上一次健康发版记在 `~/ops/app-tier-pins` 里的选择。`docker ps` 要带 `--no-trunc`，否则按摘要引用的镜像只打出短 ID |
 | 回收 | `reclaim_docker_disk`（`:434`）、`retain_ci_service_images`（`:409`）、`promote_image_retainer`（`:1016`） | 每次发版拉 6-7GB 新镜像，成功后立刻回收被顶掉的；`on_exit`（`:460`）保证失败、`set -e` 中止、runner 取消也回收 |
 | 定时器 | `:1009-1013` | 装 `cheese-room-cleanup.timer`；主机没有 systemd 时只在日志里提示安排外部触发 |
 

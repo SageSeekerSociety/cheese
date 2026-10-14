@@ -1056,7 +1056,7 @@ test_unready_backend_without_slots_still_rolls_back() {
 # content already running must leave compose nothing to recreate: the model
 # compose builds for those services is the same as the last release's.
 test_unchanged_services_keep_their_containers() {
-  local run_dir real_docker sha content code hashes=() service chosen=()
+  local run_dir real_docker sha content code hashes=() service chosen=() variable
   real_docker="${APP_TIER_REAL_DOCKER_BIN:-}"
   if [ -z "$real_docker" ] || ! "$real_docker" compose version >/dev/null 2>&1; then
     fail "this case needs a real docker CLI with compose (none found on PATH)"
@@ -1080,6 +1080,11 @@ test_unchanged_services_keep_their_containers() {
     # What compose would build each service from, given the references the
     # release chose: compose recreates a container exactly when this changes.
     mapfile -t chosen < <(sed -n 's/^[a-z-]*-up-env //p' "$run_dir/docker.log")
+    # The checks outside a deploy judge the digests by what it recorded.
+    for variable in COLLAB_IMAGE FORGE_EVENTS_IMAGE; do
+      grep -Fx "$(printf '%s\n' "${chosen[@]}" | grep "^$variable=" | tail -n 1)" "$run_dir/ops/app-tier-pins" >/dev/null \
+        || { rm -rf "$run_dir"; fail "release $sha did not record the $variable it chose"; }
+    done
     hashes+=("$(env -i PATH="$PATH" HOME="$run_dir" IMAGE_TAG="$sha" \
       FORGE_EVENTS_ENV_FILE="$FORGE_EVENTS_ENV_FILE" BACKEND_ENV_FILE="$BACKEND_ENV_FILE" \
       "${chosen[@]}" \

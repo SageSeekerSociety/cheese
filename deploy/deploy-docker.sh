@@ -1798,7 +1798,7 @@ code=""
 app_tier=""
 for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
   sleep "$HEALTH_INTERVAL_SECONDS"
-  app_tier="$(docker ps -a \
+  app_tier="$(docker ps -a --no-trunc \
     --filter "label=com.docker.compose.project=$PROJECT" \
     --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
     2>/dev/null || true)"
@@ -1851,6 +1851,7 @@ if [ "$code" != ok ]; then
           export BACKEND_IMAGE="$PREV_BACKEND_IMAGE" FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE"
         fi
         export IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE"
+        # shellcheck disable=SC2030 # the rollback's own choice, for this subshell only
         COLLAB_IMAGE="$(rollback_collab_image)"
         export COLLAB_IMAGE
         write_slots_overlay
@@ -1945,4 +1946,12 @@ bash "$HERE/reclaim-room-caches.sh" --apply 2>&1 | sed 's/^/  /' || true
 # user's only copy of it, and is kept and reported instead.
 python3 "$HERE/reclaim-legacy-room-checkouts.py" --apply 2>&1 | sed 's/^/  /' || true
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
+# What this release chose for the services named by digest, for the checks
+# that run outside a deploy (deploy-drift.yml, scripts/whats-live.sh).
+mkdir -p "$HOME/ops"
+{
+  # shellcheck disable=SC2031 # this release's choice; only a rollback changed it, in its subshell
+  [ -z "${COLLAB_IMAGE:-}" ] || printf 'COLLAB_IMAGE=%s\n' "$COLLAB_IMAGE"
+  [ -z "${FORGE_EVENTS_IMAGE:-}" ] || [ "${FORGE_EVENTS_LOCAL:-false}" != true ] || printf 'FORGE_EVENTS_IMAGE=%s\n' "$FORGE_EVENTS_IMAGE"
+} > "$HOME/ops/app-tier-pins"
 log "DEPLOY OK: sha=$SHA healthy"
