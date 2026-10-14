@@ -56,7 +56,7 @@ export function useProjectTaskNamingSettings(
   }
 
   async function choose(mode: TaskNamingMode) {
-    if (!state.value?.can_manage || busy.value || mode === state.value.mode) return
+    if (!state.value || busy.value || mode === state.value.mode) return
     const current = ++actionGeneration
     busy.value = true
     error.value = ''

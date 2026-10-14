@@ -32,10 +32,6 @@ const error = ref<string | null>(null)
 const submitted = ref(false)
 const choices = ref<AgentFieldChoice[]>([])
 const modelsLoading = ref(false)
-// Advanced settings change what every turn costs or can do, so they are a
-// project manager's, as the project main model is; the backend refuses the
-// rest (`projects_agents.py`).
-const canManage = ref(false)
 const advancedOpen = ref(false)
 const allowMax = ref(false)
 const customCompact = ref(false)
@@ -51,7 +47,6 @@ async function loadModels() {
   try {
     const state = await getProjectDefaultModel(props.projectId)
     choices.value = state.choices
-    canManage.value = state.can_manage === true
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('work.models.loadError')
   } finally {
@@ -277,14 +272,10 @@ async function save() {
     </button>
     <v-expand-transition>
       <div v-if="advancedOpen" class="advanced">
-        <p v-if="!canManage" class="t-meta c-muted mb-3">
-          {{ t('work.projectSettings.agents.editor.advancedReadOnly') }}
-        </p>
         <v-checkbox
           v-if="honoured.has('max') || draft.effort === 'max'"
           v-model="allowMax"
           :label="t('work.projectSettings.agents.editor.allowMax')"
-          :disabled="!canManage"
           hide-details
           density="compact"
         />
@@ -293,7 +284,6 @@ async function save() {
         <v-checkbox
           v-model="customCompact"
           :label="t('work.projectSettings.agents.editor.compactCustom')"
-          :disabled="!canManage"
           hide-details
           density="compact"
         />
@@ -303,7 +293,6 @@ async function save() {
             :min="50"
             :max="90"
             :step="5"
-            :disabled="!canManage"
             :label="t('work.projectSettings.agents.editor.compactValue', { percent: compactPercent })"
             hide-details
             color="primary"
@@ -320,7 +309,6 @@ async function save() {
           :label="t('work.projectSettings.agents.editor.skills')"
           :hint="t('work.projectSettings.agents.editor.skillsHint')"
           persistent-hint
-          :disabled="!canManage"
           variant="outlined"
           class="mt-4"
           autocomplete="off"
