@@ -589,11 +589,7 @@ def fingerprint(
 NOT_A_RULE: dict[str, dict[str, str]] = {
     **{check_id: {
         "frontend/scene-debt-baseline.json": "baseline: exact child, route and network debt sets",
-        "frontend/scene-baseline.json": "baseline: the scene rule's frozen ready and debt sets",
     } for check_id in ("scene-non-a-children", "scene-use-route", "legacy-network")},
-    "scene-ratchet": {
-        "frontend/scene-baseline.json": "baseline: the frozen scene debt",
-    },
     "catalog-ratchet": {
         "frontend/catalog-baseline.json": "baseline: the grade-A components not in the catalog yet",
     },

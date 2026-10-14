@@ -1774,9 +1774,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         # edit. A deletion with no surviving root is the same case.
         from ci_fast_checks import test_plan
         self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
-        self.put("frontend/scene-baseline.json", "{}\n")
+        self.put("frontend/catalog-baseline.json", "{}\n")
         for changed in (["frontend/src/i18n/messages/en/tasks.json"],
-                        ["frontend/scene-baseline.json"],
+                        ["frontend/catalog-baseline.json"],
                         ["frontend/src/styles/docBlocks.css"],
                         ["frontend/src/gone.ts"]):
             plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)

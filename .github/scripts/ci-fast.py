@@ -75,7 +75,12 @@ TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
 # next to them are python scripts and cost seconds, so they are not guarded:
 # their own per-check timeout reports them unknown if the budget really is gone.
 JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
-MERGE_BASE_HOOKS = {"file-size", "migration-fork"}
+# Hooks whose entry point reads a tree other than the working one: the merge
+# base with origin/main. Their answer depends on a history this tool only has on
+# the branch it is told about, so without that base (or under a custom `--base`
+# the hook's own argv does not carry) they report unknown rather than a verdict
+# about the wrong tree.
+MERGE_BASE_HOOKS = {"file-size", "migration-fork", "scene-ratchet"}
 # Every hook this tool can select that spawns the node toolchain: the three
 # above, and the frontend type check next to pyright, which runs
 # `pnpm run typecheck`. The preflight blocks a run whose selection needs
