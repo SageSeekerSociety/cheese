@@ -251,8 +251,9 @@ class SandboxHome(UuidPk, Timestamps, Base):
     Every sandbox has the same lifecycle, whoever's machine it is on: it is
     destroyed once idle for its spec's idle time (``lifecycle``). The row is
     deleted then, when its host is given up, or when its room's cleanup has
-    removed the directory. A session that moves on gives a host's home back at
-    once; a home on a person's computer is left to the same idle sweep.
+    removed the directory. A home its session moved away from is left to the
+    same idle sweep, on any machine, and on a host holds its slot until the
+    sweep has destroyed it there.
     """
 
     __tablename__ = "sandbox_homes"

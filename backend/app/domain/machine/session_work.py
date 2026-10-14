@@ -545,8 +545,8 @@ async def switch_environment(
 
     Only this agent moves: every agent in a conversation has its own. The
     checkpoint runs there with no transaction open, and the agent moves whether
-    or not it went through (``checkpoint``). A session leaving a sandbox on the
-    platform's machines gives its place there back. With ``if_idle`` a session
+    or not it went through (``checkpoint``). The sandbox it leaves is the idle
+    sweep's to destroy (``HostPool.leave``). With ``if_idle`` a session
     whose room is mid-turn is left alone (``SessionWorking``). Whether the
     environment may be chosen at all was answered by the caller
     (``environments.check_allowed``)."""
@@ -586,8 +586,8 @@ async def switch_environment(
         if still_preparing(old):
             raise ConflictError(say("machineAllocationInProgress"))
     on_platform = bool((old or {}).get("platform"))
-    # A place on the platform's machines is given back, whether or not the
-    # sandbox there was ever handed to the session.
+    # The sandbox left behind is the idle sweep's, whether or not it was ever
+    # handed to the session.
     await HostPool(db).leave(session_id)
     # A person's machine keeps the session's directories; the room's cleanup
     # finds them there by this lease.
