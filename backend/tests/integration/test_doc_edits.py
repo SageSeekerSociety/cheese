@@ -18,10 +18,12 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
+from app.domain.agent.announce import instance_of_seat
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.living_doc import collab
 from tests.integration.conftest import (
     open_task,
+    read_task,
     room_agent_seat,
     session_auth_headers,
     task_agent_headers,
@@ -55,11 +57,14 @@ def _document(client) -> tuple[str, str, dict]:
     return task, seat, task_agent_headers(project, task, seat)
 
 
-def _turn_started_by(client, task: str, seat: str, author: str) -> None:
+def _turn_started_by(client, task: str, seat: str, author: str) -> str:
+    """Open a turn of the agent named ``seat`` in the task; returns its id."""
+    turn_id = uuid.uuid4()
+
     async def go():
         async with client.test_factory() as session:
             await AgentTurnRepository(session).open(
-                turn_id=uuid.uuid4(),
+                turn_id=turn_id,
                 conversation_id=uuid.UUID(task),
                 continuation_id=uuid.uuid4(),
                 author=author,
@@ -72,6 +77,18 @@ def _turn_started_by(client, task: str, seat: str, author: str) -> None:
             await session.commit()
 
     asyncio.run(go())
+    return str(turn_id)
+
+
+def _instance_handle(client, task: str, seat: str) -> str:
+    """The handle a running turn names the seat's agent by: its instance's."""
+    project_id = uuid.UUID(read_task(client, task)["project_id"])
+
+    async def go():
+        async with client.test_factory() as session:
+            return (await instance_of_seat(session, project_id, seat)).handle
+
+    return asyncio.run(go())
 
 
 def _edit(client, task: str, headers: dict, *edits: tuple[str, str], **extra):
@@ -327,3 +344,32 @@ def test_a_whole_document_write_is_refused_while_a_persons_suggestion_pends(clie
     assert refused.status_code == 409, refused.text
     assert refused.json()["error"]["data"]["reason"] == "suggestions"
     assert _doc(client, task)["content"] == before["content"]
+
+
+def test_an_agents_edit_is_a_step_of_its_running_turn(client):
+    """The line an edit leaves belongs to the turn whose tool call made it, so
+    the conversation can draw it inside that turn. A running turn names its
+    agent by the instance, the line by the seat: the two are the same agent."""
+    task, seat, agent = _document(client)
+    turn = _turn_started_by(client, task, _instance_handle(client, task, seat), "bob")
+
+    response = _edit(client, task, agent, ("讲目标。", "讲目标和进度。"))
+
+    assert response.status_code == 200, response.text
+    line = _doc_lines(client, task)[-1]
+    assert line["author"] == seat
+    assert line["turn_id"] == turn
+
+
+def test_an_edit_outside_a_turn_of_its_editor_belongs_to_no_turn(client):
+    task, seat, agent = _document(client)
+    # Another agent's turn running in the task is not this edit's.
+    _turn_started_by(client, task, "cheese-0000000000ff", "alice")
+
+    _edit(client, task, agent, ("讲目标。", "讲目标和进度。"))
+    assert _doc_lines(client, task)[-1]["turn_id"] is None
+
+    _edit(client, task, session_auth_headers("bob"), ("讲目标", "讲目的"))
+    line = _doc_lines(client, task)[-1]
+    assert line["author"] == "bob"
+    assert line["turn_id"] is None

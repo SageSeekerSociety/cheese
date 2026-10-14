@@ -3,7 +3,6 @@
   "changedFiles": "Changed files",
   "detail": "Details",
   "docDiff": "Document changes",
-  "docEditCount": "Changes: {n}",
   "filesChanged": "Changed files: {n}",
   "goConfirm": "Review and confirm",
   "goEnvironment": "Open environment settings",
@@ -13,6 +12,5 @@
   "removed": "Removed",
   "showDetail": "Show details",
   "viewChanges": "View changes",
-  "viewSuggestions": "View",
   "working": "{name} is on it"
 }

@@ -1,7 +1,7 @@
 """Reading and writing the turn intervals in :mod:`app.domain.agent.models`."""
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -205,6 +205,26 @@ class AgentTurnRepository:
             select(AgentTurn.id)
             .where(
                 AgentTurn.conversation_id == topic_id, AgentTurn.stopped_at.is_(None)
+            )
+            .order_by(AgentTurn.started_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
+    async def open_turn_id_of(
+        self, topic_id: uuid.UUID, agent_handles: Sequence[str]
+    ) -> uuid.UUID | None:
+        """The still-running turn at this place of the agent known by any of
+        ``agent_handles`` (a turn row names it by its instance's handle, a room
+        by its seat's), the latest if several."""
+        if not agent_handles:
+            return None
+        stmt = (
+            select(AgentTurn.id)
+            .where(
+                AgentTurn.conversation_id == topic_id,
+                AgentTurn.stopped_at.is_(None),
+                AgentTurn.agent_handle.in_(list(agent_handles)),
             )
             .order_by(AgentTurn.started_at.desc())
             .limit(1)
