@@ -38,7 +38,7 @@ import { registerPwa } from './pwa'
 import router from './router'
 
 import { resolveRefs } from '@/api/addresses'
-import i18n from '@/i18n'
+import i18n, { localeReady } from '@/i18n'
 import { armAfterFirstPaint } from '@/lib/afterFirstPaint'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
@@ -87,13 +87,21 @@ watch(
 armAfterFirstPaint(router)
 
 registerPlugins(app)
-app.mount('#app')
 
-// The cold-start skeleton shell lives in index.html and is only there to cover
-// the gap before this line. Mounting has just painted the real shell, so drop
-// it now — a fresh node with fresh token values arriving in the same frame
-// means no flash even on a fast connection. See index.html for the markup.
-document.getElementById('sx-boot-skeleton')?.remove()
+// 界面上的每个字都来自当前语言那份语言包，它和入口分开取（见 i18n/index.ts），所以
+// 挂载等它——没到就挂载会先画出一片裸键。取不到（离线、构建对不上）也照常挂载，
+// i18n 那边退回入口自带的 zh-CN，界面是齐的；挂载不能卡在网络上。挂载之后这个
+// promise 早已落定，别处不用再等。
+void localeReady.then(() => {
+  app.mount('#app')
+
+  // The cold-start skeleton shell lives in index.html and is only there to cover
+  // the gap before this line. Mounting has just painted the real shell, so drop
+  // it now — a fresh node with fresh token values arriving in the same frame
+  // means no flash even on a fast connection. See index.html for the markup.
+  document.getElementById('sx-boot-skeleton')?.remove()
+})
+
 registerPwa(router)
 // 安装机会（beforeinstallprompt）来得比任何页面都早——早到用户还没来得及打开
 // 下载页。所以在启动时就把它接住，下载页上的「添加到主屏幕」才有得用。

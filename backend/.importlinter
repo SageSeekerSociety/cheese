@@ -432,7 +432,6 @@ ignore_imports =
     app.domain.user.repositories -> app.domain.identity.models
     app.domain.user.repositories -> app.domain.team.models
     app.domain.user.services -> app.domain.identity.handles
-    app.domain.webhook.service -> app.domain.agent.announce
 
 [importlinter:contract:turn-layers]
 # T1 — every turn module belongs to one of these four layers.
@@ -716,4 +715,3 @@ ignore_imports =
     app.domain.topic.services -> app.domain.thread.models
     app.domain.topic_membership.services -> app.domain.agent_instance.services
     app.domain.usage.subscription_ingest -> app.domain.block.models
-    app.domain.webhook.service -> app.domain.agent.announce

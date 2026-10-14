@@ -25,7 +25,7 @@ import { createRouter, createWebHashHistory } from 'vue-router'
 import { installPreviewFetch } from './proto-preview-transport'
 import Shell from './proto-shell.vue'
 
-import i18n from '@/i18n'
+import i18n, { localeReady } from '@/i18n'
 import { createDialogPlugin } from '@/plugins/dialog'
 import vuetify from '@/plugins/vuetify'
 import feedbackRoutes from '@/router/feedback'
@@ -69,4 +69,11 @@ const router = createRouter({
   ],
 })
 
-createApp(Shell).use(i18n).use(vuetify).use(router).use(pinia).use(createDialogPlugin).mount('#app')
+const app = createApp(Shell).use(i18n).use(vuetify).use(router).use(pinia).use(createDialogPlugin)
+
+// 和 demo-main.ts 同理：英文那份语言包不在入口里了，挂载前先等它到位，别先画一屏
+// 中文再翻过去。这份构建（vite.feedback-proto.config.mts）把动态导入并进同一个文件，
+// 所以这一步只是让出一个微任务。
+void localeReady.then(() => {
+  app.mount('#app')
+})
