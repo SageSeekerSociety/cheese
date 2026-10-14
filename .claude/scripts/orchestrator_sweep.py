@@ -19,7 +19,7 @@ Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
 
 The default output is that text list, unchanged. The same sweep in other shapes:
   --json       every class's rows — task, topic, seat, PR, head, CI state, the head its
-               review is pinned to, minutes waited, whom it waits on, the PR's two core
+               independent review covers (read from the card body), minutes waited, whom it waits on, the PR's two core
                sections and its failed checks and cases — plus that UTC day's metrics.
                Fixed shape, for tools.
   --render     the same data as Markdown, one line per signal, for a person to read;
@@ -43,11 +43,13 @@ REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/"
 #: is not a decision to make — it is the sweep saying it could not look.
 CLASSES = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
 BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
-#: The first line of the comment pr-review.sh posts on a PR, naming the head it reviewed.
-REVIEW_MARK = re.compile(r"<!--\s*pr-review sha=([0-9a-f]{7,40})")
+#: The line pr-review.sh puts first in its rendered result, which the delivering seat pastes
+#: into the card body: `独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>`.
+REVIEW_LINE = re.compile(r"独立 review：head ([0-9a-f]{7,40})(?:（增量自 ([0-9a-f]{7,40})）| )"
+                         r"结论 (无 blocker/major|有 \d+ 条)")
 CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑", "EXPECTED": "跑"}
 ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
-              "review_head", "waited_min", "waiting_on", "stage", "detail",
+              "review_head", "review_since", "review_verdict", "waited_min", "waiting_on", "stage", "detail",
               "changed", "verified", "checks", "cases")
 #: PR -> its merge-queue timeline, filled once per run (see gh_queue_timeline).
 _TIMELINES = {}
@@ -113,8 +115,8 @@ def said(m):
 
 def gh_pr(n, board=False):
     """One PR's queue state. `board` adds what only the board shows: the head, that
-    head's CI state, that head's per-check verdicts, the description, and the head the
-    newest review is pinned to. Read-only, one call.
+    head's CI state, that head's per-check verdicts, the and the description.
+    Read-only, one call.
 
     Those fields stay out of the text list's query — it asks for exactly what it
     always asked for, so a field the board wants can never be the reason the text
@@ -125,7 +127,7 @@ def gh_pr(n, board=False):
              'contexts(first:50){nodes{__typename '
              '... on CheckRun{name conclusion detailsUrl} '
              '... on StatusContext{context state targetUrl}}}}}}} '
-             'comments(last:100){nodes{body}} ') if board else ''
+             ) if board else ''
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){merged '
          + extra
          + 'mergeQueueEntry{state} '
@@ -148,15 +150,8 @@ def gh_pr(n, board=False):
             return {"error": f"GitHub 上没有 PR #{n}"}
         commits = (body.get("commits") or {}).get("nodes") or []
         rollup = ((commits[0]["commit"].get("statusCheckRollup") if commits else None) or {})
-        pinned = None
-        for c in reversed((body.get("comments") or {}).get("nodes") or []):
-            found = REVIEW_MARK.search(c.get("body") or "")
-            if found:
-                pinned = found.group(1)
-                break
         body["head"] = body.get("headRefOid")
         body["ci"] = rollup.get("state")
-        body["review_head"] = pinned
         body["desc"] = body.pop("body", None) or ""
         body["checks"] = failed_checks(rollup)
         return body
@@ -181,6 +176,25 @@ def failed_checks(rollup):
         elif str(node.get("state") or "").upper() in ("FAILURE", "ERROR"):
             out.append({"name": node.get("context") or "?", "url": node.get("targetUrl") or ""})
     return out
+
+
+def review_of(card_body):
+    """The independent-review line of a card body: (head, since, verdict), or None. When the
+    body carries several (one per round), the last is the newest."""
+    found = REVIEW_LINE.findall(card_body or "")
+    return found[-1] if found else None
+
+
+def card_review(tok, topic, card_id):
+    """What the task's card body says about the independent review. The platform's card, not
+    GitHub: review results are not posted there. None when the card has no such line, or the
+    card cannot be read (the board shows "—" for both; the line is information, not a gate)."""
+    try:
+        cards = get(tok, f"/topics/{topic}/accept-card")["data"]
+    except (urllib.error.URLError, KeyError, TypeError, ValueError):
+        return None
+    mine = [c for c in cards if c.get("id") == card_id]
+    return review_of(mine[0].get("change_body")) if mine else None
 
 
 def gh_queue_timeline(n):
@@ -433,6 +447,11 @@ def brief(desc, limit=400):
     trailer = _TRAILER_LINE.search(text)
     if trailer:
         text = text[:trailer.start()]
+    # 卡片正文末尾贴着独立审查的结果，平台把它原样镜像进 PR 正文；它的标题（「### 1.
+    # [major] tests do not bite」）不是作者写的章节，不能当 改了什么／怎么验证的 读。
+    review = REVIEW_LINE.search(text)
+    if review:
+        text = text[:review.start()]
     agent = _AGENT_MARK.search(text)
     if agent:
         text = text[agent.end():]
@@ -741,13 +760,16 @@ def waiting_of(t, kind):
 def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg):
     good = pr is not None and "error" not in pr
     changed, verified = brief(pr.get("desc")) if good else ("", "")
+    review = pr.get("review") if good else None
     return {
         "kind": kind, "name": name, "task": t["number"], "title": t["title"], "topic": t["id"],
         "seat": t.get("agent_handle"),
         "pr": card.get("pr_number"),
         "head": pr.get("head") if good else None,
         "ci": CI_WORD.get(pr.get("ci"), "无") if good else None,
-        "review_head": pr.get("review_head") if good else None,
+        "review_head": review[0] if review else None,
+        "review_since": (review[1] or None) if review else None,
+        "review_verdict": review[2] if review else None,
         "waited_min": round(waited) if waited is not None else None,
         "waiting_on": waiting or waiting_of(t, kind),
         "stage": stage_of(card, pr, ready_at, last_ready, red_at, last_msg),
@@ -795,6 +817,8 @@ def sweep(tok, room, silent, skip, want_facts):
                 pr = gh_pr(n, board=want_facts)
                 if want_facts:
                     facts[n] = pr
+        if want_facts and pr is not None and "error" not in pr and "review" not in pr:
+            pr["review"] = card_review(tok, tid, card.get("id"))
 
         ready = [m for m in accev if meta(m).get("event_type") == "accept_ready"]
         last_ready = ready[-1]["created_at"] if ready else None
@@ -856,17 +880,27 @@ def text(rows):
         print(f"[{r['kind']}] {r['name']}｜{r['detail']}")
 
 
+def review_cell(r):
+    """The 独立审查 column: the reviewed head, 增量 when the review was a delta, the verdict,
+    and 旧 when the PR has moved past that head (a small increment needs no new review, so
+    this says only that it has moved)."""
+    rev = r["review_head"]
+    if rev is None:
+        return "—"
+    moved = "" if r["head"] and r["head"].startswith(rev) else "（旧）"
+    return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}"
+
+
 def render(rows, metrics, silent, now, room):
     out = ["## 调度看板", "",
            f"UTC {now:%Y-%m-%d %H:%M}｜信号阈值 {silent} 分钟｜{len(rows)} 条｜频道 {room[:8]}", ""]
     if not rows:
         out.append("各线无待处理信号。")
     else:
-        out += ["| 类别 | 任务 | 到哪一步 | CI | 审查钉 | 卡了 | 在等 |",
+        out += ["| 类别 | 任务 | 到哪一步 | CI | 独立审查 | 卡了 | 在等 |",
                 "| --- | --- | --- | --- | --- | --- | --- |"]
         for r in rows:
-            rev = r["review_head"]
-            rev = "—" if rev is None else (rev[:8] + (" ✓" if rev == r["head"] else "（旧）"))
+            rev = review_cell(r)
             waited = "—" if r["waited_min"] is None else f"{r['waited_min']} 分"
             out.append(f"| {r['kind']} | #{r['task']} | {r['stage']} | {r['ci'] or '—'} "
                        f"| {rev} | {waited} | {r['waiting_on'] or '—'} |")
@@ -1380,7 +1414,7 @@ _SELF_TEST_METRICS = {
 def _self_pr(desc, **over):
     """A PR as `gh_pr` returns one, carrying the fields `row` and `stage_of` read."""
     pr = {"desc": desc, "head": "abcdef1234567890", "ci": "SUCCESS",
-          "review_head": "abcdef1234567890", "merged": False, "mergeQueueEntry": None,
+          "review": ("abcdef12", None, "无 blocker/major"), "merged": False, "mergeQueueEntry": None,
           "timelineItems": {"nodes": []}, "checks": [], "cases": None}
     pr.update(over)
     return pr
@@ -1401,7 +1435,7 @@ def _self_test_board():
     """(name, got, want) for 组装两段那一步：`row` 把一次读到的 PR 装成一行，`details`
     和 `render` 再把这行摆出来。两段各自加粗一行、正文按 `> ` 引，正文没写的那一段说
     「没写这一节」，正文读不到的两种情形各说各的，红在哪个检查、哪些用例，表格里 CI
-    用字／审查钉对不上标「（旧）」／没在等的写 `—`，同一个任务只说一次，以及一条
+    用字／审查对的不是现在的 head 标「（旧）」／没在等的写 `—`，同一个任务只说一次，以及一条
     信号都没有时的那一句。这几条各有一处变了就红。"""
     board = lambda rows: render(rows, _SELF_TEST_METRICS, 60,
                                 datetime(2026, 10, 13, 5, 0), "12345678-ab")
@@ -1429,26 +1463,107 @@ def _self_test_board():
          "\n红的是：guards / guards、unit\n失败用例：\n> tests/a.py::b\n> tests/c.py::d"),
         ("每个待判 PR：同一个任务在两类里只说一次",
          detail([_self_row(), _self_row(kind="长时间无动静")]).count("**#1 甲**"), 1),
-        ("表格：CI 用字、审查钉对不上标「（旧）」、没在等的写「—」",
+        ("表格：CI 用字、审查对的不是现在的 head 标「（旧）」、增量标出来、没在等的写「—」",
          [ln for ln in board([_self_row(),
                               _self_row(number=2, title="乙", waited=None, waiting=None,
                                         pr=_self_pr("改动：B。", head="abcdef1234567890",
-                                                    review_head="0123456789abcdef",
+                                                    review=("01234567", "89abcdef", "有 2 条"),
                                                     ci="FAILURE"))]).split("\n")
           if ln.startswith("| ") and "| #" in ln],
-         ["| 可采纳未采纳 | #1 | 递卡后等 CI 审查 | 绿 | abcdef12 ✓ | 7 分 | wangchangxin |",
-          "| 可采纳未采纳 | #2 | 递卡后等 CI 审查 | 红 | 01234567（旧） | — | — |"]),
+         ["| 可采纳未采纳 | #1 | 递卡后等 CI 审查 | 绿 | abcdef12 无 blocker/major | 7 分 | wangchangxin |",
+          "| 可采纳未采纳 | #2 | 递卡后等 CI 审查 | 红 | 01234567（旧） 增量 有 2 条 | — | — |"]),
         ("有信号时：表头、频道那行、每个待判 PR 那一段都在",
          [ln for ln in board([_self_row()]).split("\n")
           if ln.startswith(("UTC ", "| 类别", "### "))],
          ["UTC 2026-10-13 05:00｜信号阈值 60 分钟｜1 条｜频道 12345678",
-          "| 类别 | 任务 | 到哪一步 | CI | 审查钉 | 卡了 | 在等 |",
+          "| 类别 | 任务 | 到哪一步 | CI | 独立审查 | 卡了 | 在等 |",
           "### 每个待判 PR"]),
         ("一条信号都没有时：不摆表格，只说一句",
          board([]),
          "## 调度看板\n\nUTC 2026-10-13 05:00｜信号阈值 60 分钟｜0 条｜频道 12345678\n"
          "\n各线无待处理信号。\n\n" + metrics_line(_SELF_TEST_METRICS)),
     ]
+
+
+def _self_test_review():
+    """(name, got, want) for 审查结论从卡片正文来：render.py 写的第一行 `review_of` 读得回，
+    GitHub 的查询里不再要评论，`card_review` 只认自己这张卡，文本清单不去读卡片。`get`
+    和 `subprocess.run` 只在这一段里被换掉。"""
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location(
+        "pr_review_render", pathlib.Path(__file__).resolve().parents[1] / "pr-review" / "render.py")
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+    head, old = "a" * 40, "b" * 40
+    finding = lambda sev: {"severity": sev, "title": "t", "file": "f.py", "line": 1, "kind": "runtime",
+                           "rung": 4, "failure": "x", "evidence": "y", "confirm_with": ""}
+    result = lambda *sevs: {"reviewed_sha": head, "summary": "s", "candidates_found": 3,
+                            "candidates_refuted": 2, "findings": [finding(v) for v in sevs],
+                            "not_covered": []}
+    out = []
+    for name, res, since, want in (
+        ("整轮、无严重问题", result("minor"), "", ("a" * 8, "", "无 blocker/major")),
+        ("增量、有 blocker 和 major", result("blocker", "major", "minor"), old, ("a" * 8, "b" * 8, "有 2 条")),
+    ):
+        body = renderer.render(res, head, "m" * 40, since)
+        out.append((f"审查行：{name}，卡片正文里读得回", review_of("## 摘要\n\n" + body), want))
+    out += [
+        ("审查行：没有这一行就是没有", review_of("只有一段说明"), None),
+        ("审查行：空正文", review_of(None), None),
+        ("审查行：多轮时取最后一行",
+         review_of("独立 review：head 11111111 结论 有 1 条\n"
+                   "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major"),
+         ("22222222", "11111111", "无 blocker/major")),
+    ]
+
+    real_get, real_run = globals()["get"], subprocess.run
+    queries = []
+    card = {"id": "c1", "change_body": renderer.render(result(), head, "m" * 40, old)}
+    task = {"id": "t1", "number": 7, "title": "T", "started_at": "2026-01-01T00:00:00Z",
+            "agent_handle": "seat", "card": {"id": "c1", "status": "pending", "pr_number": 70}}
+    pull = {"merged": False, "headRefOid": head, "mergeQueueEntry": None, "timelineItems": {"nodes": []},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}}
+
+    def fake_get(tok, path):
+        if path.endswith("/tasks?status=open&limit=200"):
+            return {"data": [task]}
+        if path.endswith("/accept-card"):
+            return {"data": [{"id": "other", "change_body": "独立 review：head 99999999 结论 有 3 条"}, card],
+                    "total": 2}
+        return {"data": []}
+
+    def fake_run(cmd, **kw):
+        queries.append(" ".join(cmd))
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": {"repository": {"pullRequest": pull}}}), "")
+
+    globals()["get"], subprocess.run = fake_get, fake_run
+    try:
+        rows, _ = sweep("tok", "room", 60, set(), True)
+        text_rows, _ = sweep("tok", "room", 60, set(), False)
+    finally:
+        globals()["get"], subprocess.run = real_get, real_run
+    # 审查结果贴在卡片正文末尾、被镜像进 PR 正文后，看板读 改了什么／怎么验证的 不能读到它的标题。
+    authored = "## Change\n\n- swap A for B\n\n验证：ran pytest, green\n\n"
+    pasted = authored + renderer.render(
+        {**result("major"), "findings": [{**finding("major"), "title": "tests do not bite"}]},
+        head, "m" * 40, "")
+    out += [
+        ("审查结果贴在正文末尾时，改了什么／怎么验证的 仍读作者写的",
+         brief(pasted), brief(authored)),
+        ("审查结果贴在正文末尾时，作者那两段读得出来",
+         brief(pasted), ("- swap A for B", "ran pytest, green")),
+        ("GitHub 查询里不再要评论", [q for q in queries if "comments" in q], []),
+        ("行里带着卡片上的审查行",
+         [(r["review_head"], r["review_since"], r["review_verdict"]) for r in rows],
+         [("a" * 8, "b" * 8, "无 blocker/major")]),
+        ("文本清单不去读卡片", [r["review_head"] for r in text_rows], [None]),
+        ("head 往前走了标旧",
+         review_cell({**rows[0], "head": "c" * 40}), "aaaaaaaa（旧） 增量 无 blocker/major"),
+        ("没有审查行显示破折号", review_cell({"review_head": None}), "—"),
+        ("--json 的字段里有审查结论",
+         all(f in rows[0] for f in ("review_head", "review_since", "review_verdict")), True),
+    ]
+    return out
 
 
 def _self_test_patterns():
@@ -1523,7 +1638,7 @@ def self_test():
         found = _CASE_LINE.match(_LOG_STAMP.sub("", line).strip())
         got = next((g for g in found.groups() if g), "").strip() if found else ""
         check("读用例：" + line, got, want)
-    for name, got, want in _self_test_board() + _self_test_patterns() + _self_test_jobs():
+    for name, got, want in _self_test_board() + _self_test_review() + _self_test_patterns() + _self_test_jobs():
         check("看板：" + name, got, want)
     for line in bad:
         print("FAIL " + line)
