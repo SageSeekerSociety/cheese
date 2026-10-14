@@ -102,6 +102,5 @@ summary 写清要做什么、已经定了什么（包括否掉的做法）、还
 | `cheese template list` / `cheese template new <模板> <路径>` | 列出平台的标准模板，或者从一份模板在文件区新建文件并取到本地；怎么填见 documents 技能 |
 | `cheese convert <路径> --to <格式>` | 转格式：把 `.doc`、`.ppt`、`.xls` 这类老格式升级成新格式（告诉用户这是格式升级，转出来的不是原件）；或者转成 PDF 自己看一眼版面 |
 | `cheese recalc <路径>` | 重算 `.xlsx` 里的公式，列出算不出来的格。用程序改过表格就要跑它，不然依赖被改单元格的公式存的还是旧结果 |
-| `cheese sync-agents` | 把项目的模型目录写成子 agent 定义，Claude Code 的会话钩子会自动跑，一般不用手动调 |
 
 接口不确定时用 `platform_request` 的 `find` 查，不要整份去读 `/openapi.json`：它有几百个接口，会占满上下文。
