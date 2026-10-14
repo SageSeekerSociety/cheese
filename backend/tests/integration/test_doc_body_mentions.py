@@ -76,6 +76,7 @@ def test_a_person_who_writes_someone_into_a_document_tells_them(client):
 
     (told,) = _mentions(client, "bob")
     assert "跟进接口" in str(told)
+    assert "<@bob>" not in str(told)
     assert _mentions(client, "carol") == []
     assert _document(client, task)["notified_mentions"] == ["bob"]
 

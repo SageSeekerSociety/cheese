@@ -74,12 +74,14 @@ async def _by_a_person(session: AsyncSession, actors: list[str]) -> str | None:
     return actors[0]
 
 
-def _line_of(text: str, handle: str) -> str:
+def _line_of(text: str, handle: str, names: dict[str, str]) -> str:
+    """The line the mention is on, as a notification shows it: plain text,
+    each person by their name (an inbox row, a push and an email draw no
+    tokens)."""
     token = f"<@{handle}>"
-    for line in text.splitlines():
-        if token in line:
-            return markdown_preview(line, 200)
-    return markdown_preview(text, 200)
+    line = next((line for line in text.splitlines() if token in line), text)
+    named = _MENTION_RE.sub(lambda m: names.get(m.group(1), m.group(1)), line)
+    return markdown_preview(named, 200)
 
 
 async def tell_new_mentions(
@@ -162,6 +164,7 @@ async def _tell(
         (row["name"] for row in rows if row["handle"] == author and row.get("name")),
         author,
     )
+    names = {row["handle"]: row.get("name") or row["handle"] for row in rows}
     title = doc.title
     where: dict[str, str] = {}
     if room is not None:
@@ -184,7 +187,7 @@ async def _tell(
                     "documentTitle": title or "",
                     "author": author,
                     "authorName": who,
-                    "content": _line_of(text, handle),
+                    "content": _line_of(text, handle, names),
                     **where,
                 },
                 occurred_at=datetime.now(UTC),
