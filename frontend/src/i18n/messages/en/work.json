@@ -1321,6 +1321,16 @@
       "documentHint": "Select text or click a cell to comment",
       "comments": "Comments {n}",
       "noComments": "No comments yet"
+    },
+    "mentionOutside": {
+      "notInPrivate": "Not in this channel, so they can't see this message: {names}",
+      "notInPublic": "Not in this channel: {names}",
+      "add": "Add to channel",
+      "dismiss": "Don't add",
+      "close": "Close",
+      "added": "Added {names} to the channel",
+      "addFailed": "Couldn't add them",
+      "addFailedBecause": "Couldn't add them: {reason}"
     }
   },
   "board": {
