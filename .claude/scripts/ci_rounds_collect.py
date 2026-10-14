@@ -49,15 +49,17 @@ def pages(endpoint: str, key: str | None = None) -> list[dict]:
 
 
 def prs(repo: str, since: datetime, until: datetime) -> list[dict]:
-    rows = []
+    rows_by_number = {}
     for page in range(1, 10001):
         data = api(f"repos/{repo}/pulls?state=all&sort=created&direction=desc&per_page=100&page={page}")
         if not isinstance(data, list):
             raise ValueError("invalid PR page")
-        rows.extend(p for p in data if since <= instant(p["created_at"]) < until)
-        print(f"PR page {page}: cohort={len(rows)}", flush=True)
+        for pull in data:
+            if since <= instant(pull["created_at"]) < until:
+                rows_by_number.setdefault(pull["number"], pull)
+        print(f"PR page {page}: cohort={len(rows_by_number)}", flush=True)
         if len(data) < 100 or instant(data[-1]["created_at"]) < since:
-            return rows
+            return list(rows_by_number.values())
     raise ValueError("PR pagination limit reached")
 
 
@@ -116,7 +118,7 @@ def suites(batch: list[dict]) -> dict[int, list[dict]]:
     return result
 
 
-def collect(repo: str, since: datetime, until: datetime, output: Path, timelines: bool) -> dict:
+def collect(repo: str, since: datetime, until: datetime, output: Path, timelines: bool, only_multi_head: bool = False) -> dict:
     cohort = prs(repo, since, until)
     collected = []
     day = since
@@ -158,7 +160,7 @@ def collect(repo: str, since: datetime, until: datetime, output: Path, timelines
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(data, separators=(",", ":")) + "\n")
     if timelines:
-        enrich_timelines(output, output, repo)
+        enrich_timelines(output, output, repo, only_multi_head=only_multi_head)
         data = json.loads(output.read_text())
     return data
 
@@ -209,7 +211,7 @@ def main() -> None:
     since, until = instant(args.since), instant(args.until)
     if since >= until or until > datetime.now(UTC):
         parser.error("require since < until <= now")
-    collect(args.repo, since, until, args.output, not args.skip_timelines)
+    collect(args.repo, since, until, args.output, not args.skip_timelines, args.only_multi_head)
 
 
 if __name__ == "__main__":

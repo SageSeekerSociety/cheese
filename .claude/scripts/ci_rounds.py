@@ -130,14 +130,16 @@ def summarize(data: dict) -> dict:
     for pr in sorted(prs, key=lambda p: p["number"]):
         if not (instant(since) <= instant(pr["created_at"]) < instant(cutoff)):
             raise ValueError("PR outside birth cohort")
+        closed_at = pr["merged_at"] or pr["closed_at"]
+        run_until = (instant(closed_at) if closed_at and before(closed_at, cutoff)
+                     else instant(cutoff))
         runs = [r for r in data["runs"] if pr["number"] in r["cohort_prs"]
-                and instant(pr["created_at"]) <= instant(r["created_at"]) < instant(cutoff)]
+                and instant(pr["created_at"]) <= instant(r["created_at"]) < run_until]
         heads = head_rows(runs)
         extras = [extra_head(pr, a, b) for a, b in zip(heads, heads[1:])]
         full_heads = sum(any(c["name"] == FULL and judged(c, cutoff)
                             for r in h["runs"] for c in r["checks"]) for h in heads)
         status = "merged" if before(pr["merged_at"], cutoff) else "closed" if before(pr["closed_at"], cutoff) else "open"
-        closed_at = pr["merged_at"] or pr["closed_at"]
         right_censored = not before(closed_at, cutoff)
         rows.append({"number": pr["number"], "state_at_cutoff": status,
                      "distinct_head_rounds": len(heads),
@@ -152,7 +154,15 @@ def summarize(data: dict) -> dict:
     cancellations = [r["id"] for r in data["runs"] if r["conclusion"] == "cancelled" and before(r["updated_at"], cutoff)]
     return {
         "definition": "one distinct PR head with a pull_request Required CI workflow run; quick/full both included",
-        "cohort": {k: data[k] for k in ("repo", "since", "until", "observed_at", "timelines_complete")},
+        "cohort": {k: data[k] for k in ("repo", "since", "until", "observed_at", "timelines_complete")}
+                  | {"timeline_scope": data.get("timeline_scope", "all")},
+        "timeline_evidence": {
+            "complete": bool(data.get("timelines_complete", True)),
+            "scope": data.get("timeline_scope", "all"),
+            "prs_with_timeline": sum(bool(p["timeline"]) for p in prs),
+            "note": ("promotion and review attribution are lower bounds within this scope"
+                     if not data.get("timelines_complete", True) else "all matched PR timelines fetched"),
+        },
         "all_prs": distribution([p["distinct_head_rounds"] for p in rows]),
         "right_censored_prs": sum(p["right_censored"] for p in rows),
         "interpretation": "open PR counts are lower bounds at cutoff; all-PR mean is not a completed-lifetime mean",
@@ -167,6 +177,12 @@ def summarize(data: dict) -> dict:
                                "full_red_to_green_heads": sum(h["full_red_to_green"] for h in same),
                                "rerun_attempts_observed": sum(h["rerun_attempts_observed"] for h in same)},
         "cancelled_run_ids": cancellations,
+        "check_evidence": {
+            "scope": "current attempt per workflow run, as observed",
+            "note": "historical attempt failures are not collected; red-to-green and failure attribution may be incomplete",
+            "reruns": "rerun_attempts_observed counts attempts visible at observation time, not necessarily before cutoff",
+            "attribution": "run creation time bounds the evidence interval; labels do not prove why a push happened",
+        },
         "flaky_checks": {"verified": None, "reason": "same-head red-to-green is not proof of a flaky test; requires attempt logs"},
         "prs": rows,
     }

@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import timedelta
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -34,10 +35,28 @@ class Rounds(unittest.TestCase):
         data = snapshot([run(1, "a", SINCE, [check(report.DRAFT)]),
                          run(2, "a", "2026-10-03T00:00:00Z", [check()])])
         data["runs"][1]["run_attempt"] = 3
+        data["prs"][0]["timeline"] = [{"event": "ready_for_review",
+                                         "created_at": "2026-10-02T00:00:00Z"}]
         result = report.summarize(data)
         self.assertEqual(result["all_prs"]["distinct_head_rounds"], 1)
         self.assertEqual(result["same_head_overhead"]["additional_workflow_runs"], 1)
+        self.assertEqual(result["same_head_overhead"]["draft_and_full_judged_heads"], 1)
+        self.assertEqual(result["same_head_overhead"]["promotion_event_evidenced_heads"], 1)
+        self.assertEqual(result["same_head_overhead"]["full_red_to_green_heads"], 0)
         self.assertEqual(result["same_head_overhead"]["rerun_attempts_observed"], 2)
+
+    def test_full_red_to_green_is_reported_for_one_head(self):
+        data = snapshot([run(1, "a", SINCE, [check(conclusion="FAILURE")]),
+                         run(2, "a", "2026-10-03T00:00:00Z",
+                             [check(at="2026-10-03T01:00:00Z")])])
+        self.assertEqual(report.summarize(data)["same_head_overhead"]["full_red_to_green_heads"], 1)
+
+    def test_full_success_supersedes_other_red_checks(self):
+        data = snapshot([run(1, "a", SINCE, [check("backend / pure (0/1)", "FAILURE"), check()]),
+                         run(2, "b", "2026-10-03T00:00:00Z")])
+        result = report.summarize(data)
+        self.assertEqual(result["extra_head_attribution"], {"unattributed": 1})
+        self.assertEqual(result["prs"][0]["extra_heads"][0]["failures_before_push"], [])
 
     def test_counts_from_birth_not_merge_and_dedupes_return_to_old_head(self):
         data = snapshot([run(1, "a", SINCE), run(2, "b", "2026-10-02T00:00:00Z"),
@@ -61,6 +80,21 @@ class Rounds(unittest.TestCase):
         self.assertEqual(result["all_prs"]["distinct_head_rounds"], 1)
         self.assertEqual(result["full_judged_heads"], 0)
         self.assertEqual(result["by_state_at_cutoff"]["open"]["prs"], 1)
+
+    def test_run_after_pr_close_is_not_a_lifetime_round(self):
+        data = snapshot([run(1, "a", SINCE), run(2, "b", "2026-10-05T00:00:00Z")])
+        data["prs"][0]["closed_at"] = "2026-10-03T00:00:00Z"
+        result = report.summarize(data)
+        self.assertEqual(result["all_prs"]["distinct_head_rounds"], 1)
+
+    def test_timeline_scope_is_explicit_when_enrichment_is_bounded(self):
+        data = snapshot()
+        data["timelines_complete"] = False
+        data["timeline_scope"] = "multi_head"
+        result = report.summarize(data)
+        self.assertEqual(result["cohort"]["timeline_scope"], "multi_head")
+        self.assertFalse(result["timeline_evidence"]["complete"])
+        self.assertIn("lower bounds", result["timeline_evidence"]["note"])
 
     def test_red_after_new_head_does_not_explain_push(self):
         data = snapshot([run(1, "a", SINCE, [check(conclusion="FAILURE", at="2026-10-03T00:00:00Z")]),
@@ -114,22 +148,42 @@ class Rounds(unittest.TestCase):
 
 
 class Collector(unittest.TestCase):
+    def test_normal_collection_forwards_multi_head_scope(self):
+        with patch.object(collect, "collect") as mocked, patch.object(
+            sys, "argv", ["ci_rounds_collect.py", "--cache", "/tmp/cache",
+                           "--output", "/tmp/out", "--since", SINCE,
+                           "--until", "2026-10-02T00:00:00Z", "--only-multi-head"]):
+            collect.main()
+        self.assertEqual(mocked.call_args.args[4:], (True, True))
+
     def test_timestamp_requires_utc(self):
         for text in ("2026-10-01", "2026-10-01T00:00:00+02:00"):
             with self.assertRaises(ValueError):
                 collect.instant(text)
 
-    def test_pr_birth_cohort_is_half_open_and_not_search_capped(self):
+    def test_pr_birth_cohort_is_half_open_and_uses_pull_request_listing(self):
         raw = {"number": 1, "created_at": SINCE}
-        with patch.object(collect, "api", return_value=[raw, {"number": 2, "created_at": UNTIL}]):
+        def response(endpoint):
+            self.assertIn("/pulls?", endpoint)
+            return [raw, {"number": 2, "created_at": UNTIL}]
+        with patch.object(collect, "api", side_effect=response):
             self.assertEqual(collect.prs("owner/repo", collect.instant(SINCE), collect.instant(UNTIL)), [raw])
+
+    def test_pr_opening_between_pages_does_not_duplicate_cohort(self):
+        original = [{"number": n, "created_at": SINCE} for n in range(200, 0, -1)]
+        inserted = {"number": 201, "created_at": UNTIL}
+        live = [inserted, *original]
+        with patch.object(collect, "api", side_effect=[original[:100], live[100:200], live[200:]]):
+            result = collect.prs("owner/repo", collect.instant(SINCE), collect.instant(UNTIL))
+        self.assertEqual(len(result), 200)
+        self.assertEqual({p["number"] for p in result}, set(range(1, 201)))
 
     def test_incomplete_run_page_is_error(self):
         with patch.object(collect, "api", return_value={"total_count": 2, "workflow_runs": [{}]}):
             with self.assertRaises(ValueError):
                 collect.pages("endpoint", "workflow_runs")
 
-    def test_1000_run_cap_splits_interval_and_dedupes_boundary(self):
+    def test_1000_run_cap_splits_interval_and_dedupes_repeated_run(self):
         start = collect.instant(SINCE)
         end = start + timedelta(seconds=4)
         middle = collect.stamp(start + timedelta(seconds=2))
@@ -139,6 +193,12 @@ class Collector(unittest.TestCase):
             return {"total_count": 1, "workflow_runs": [{"id": 1, "created_at": middle}]}
         with patch.object(collect, "api", side_effect=response):
             self.assertEqual(collect.runs("owner/repo", start, end), [{"id": 1, "created_at": middle}])
+
+    def test_github_pull_request_association_filters_cohort(self):
+        first = {"number": 1}
+        second = {"number": 2}
+        row = {"id": 1, "pull_requests": [{"number": 1}]}
+        self.assertEqual(collect.associate(row, [first, second]), [1])
 
     def test_deleted_branch_fallback_requires_unique_lifetime(self):
         pr = {"number": 1, "head": {"ref": "task/x", "repo": {"full_name": "owner/repo"}},
