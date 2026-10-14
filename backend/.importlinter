@@ -359,7 +359,6 @@ ignore_imports =
     app.domain.repository.identity -> app.domain.project.services
     app.domain.repository.identity -> app.domain.room_task.services
     app.domain.repository.identity -> app.domain.topic.models
-    app.domain.repository.service -> app.domain.agent.platform_failures
     app.domain.review.forge -> app.domain.review.services
     app.domain.review.pr_publish -> app.domain.review.services
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
@@ -620,7 +619,6 @@ ignore_imports =
     app.domain.repository.forge_files -> app.domain.agent.execution
     app.domain.repository.forge_files -> app.domain.room_task.models
     app.domain.repository.identity -> app.domain.room_task.services
-    app.domain.repository.service -> app.domain.agent.platform_failures
     app.domain.repository.service -> app.domain.project_skill.service
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
     app.domain.room_task.checkouts -> app.domain.agent.resource_cleanup
