@@ -1,43 +1,23 @@
-// 答案卡片上要发请求的一共三件事：采纳、投票、收藏；还有一件要读身份的——「这个人
-// 能不能采纳」。四样都搬进了 `composables/useAnswerActions`，卡片只画它给的状态。
-// 这一份从卡片这一侧验接缝：点下去发的是哪一趟请求、服务端回来的分数落在画面哪儿、
+// 答案卡片只画状态、把要点的事交上去：采纳、投票（赞同/反对/撤回）、收藏都发成事件，
+// 请求和「这个人能不能采纳」的判据在页面那边（`composables/useAnswerActions`，另有一
+// 份测它）。这一份从卡片这一侧验接缝：点下去交上去的是哪件事、带上的是哪一份答案、
 // 采纳那颗按钮在谁手里才出现。
 import type { Answer, Group, Question, User } from '@/types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  postAttitude: vi.fn(),
-  favorite: vi.fn(),
-  unfavorite: vi.fn(),
-  acceptAnswer: vi.fn(),
-}))
-
-vi.mock('@/api/answers', () => ({
-  AnswersApi: {
-    postAttitude: (...args: unknown[]) => mocks.postAttitude(...args),
-    favorite: (...args: unknown[]) => mocks.favorite(...args),
-    unfavorite: (...args: unknown[]) => mocks.unfavorite(...args),
-  },
-}))
-vi.mock('@/api/questions', () => ({
-  QuestionApi: { acceptAnswer: (...args: unknown[]) => mocks.acceptAnswer(...args) },
-}))
-vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
-// 只换掉 `useI18n`，其余照旧：`@/composables/useAnswerActions` 那条 import 链会走到
-// `@/i18n/index`，那里要的是真的 `createI18n`（InvitationList.test.ts 同款）。
+// 卡片不再碰 `@/api`，但 `@/utils/parser` 那条链会走到 `@/i18n`，这里只把 `useI18n`
+// 换成「原样返回 key」的那一个（InvitationList.test.ts 同款）。
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
 })
 
 import AnswerCard from '../AnswerCard.vue'
-
-import AccountService from '@/services/account'
 
 const ASKER: User = {
   id: 7,
@@ -98,74 +78,79 @@ function makeQuestion(over: Partial<Question> = {}): Question {
   }
 }
 
-function mountCard(over: { answer?: Answer; question?: Question } = {}) {
-  return render(AnswerCard, {
-    props: { answer: over.answer ?? makeAnswer(), question: over.question ?? makeQuestion() },
+function mountCard(
+  over: {
+    answer?: Answer
+    question?: Question
+    canAccept?: boolean
+    defaultAvatarId?: number | null
+  } = {}
+) {
+  const answer = over.answer ?? makeAnswer()
+  const result = render(AnswerCard, {
+    props: {
+      answer,
+      question: over.question ?? makeQuestion(),
+      canAccept: over.canAccept ?? false,
+      defaultAvatarId: over.defaultAvatarId ?? null,
+    },
     global: { plugins: [createVuetify({ components, directives })] },
   })
+  return { ...result, answer }
 }
 
 /** `t` 在这一份里被换成了「原样返回 key」的那一个，所以按钮就靠 key 认。 */
 const byText = (where: Element, text: string) =>
   [...where.querySelectorAll('button')].find((b) => b.textContent?.includes(text))
 
-beforeEach(() => {
-  mocks.postAttitude.mockReset().mockResolvedValue({
-    attitudes: { positive_count: 3, negative_count: 0, difference: 3 },
-  })
-  mocks.favorite.mockReset().mockResolvedValue(null)
-  mocks.unfavorite.mockReset().mockResolvedValue(null)
-  mocks.acceptAnswer.mockReset().mockResolvedValue(null)
-  AccountService.user = null
-})
-
-afterEach(() => {
-  AccountService.user = null
-  cleanup()
-})
+beforeEach(() => vi.clearAllMocks())
+afterEach(cleanup)
 
 describe('答案卡片上的动作', () => {
-  it('点赞发的是这道题这份答案的 POSITIVE，服务端回来的分数当场落在画面上', async () => {
-    const { container } = mountCard()
-    // 投票器里第一颗是赞同。
-    const up = container.querySelector('.voter button')!
+  it('点赞交上去的是「赞同」和这份答案，画面上的分数是给进来的那一份', async () => {
+    const { container, answer, emitted } = mountCard()
     expect(container.querySelector('.voter')!.textContent).toContain('2')
 
-    await fireEvent.click(up)
+    await fireEvent.click(container.querySelector('.voter button')!)
 
-    expect(mocks.postAttitude).toHaveBeenCalledWith(QUESTION_ID, ANSWER_ID, 'POSITIVE')
-    await waitFor(() => expect(container.querySelector('.voter')!.textContent).toContain('3'))
+    expect(emitted().upvote).toEqual([[answer]])
   })
 
-  it('收藏点一下发 favorite，再点一下发 unfavorite', async () => {
-    const { container } = mountCard()
-    const toFavorite = byText(container, 'questions.detail.buttons.favorite')!
+  it('收藏那颗按钮跟着「收没收藏」换字，点一下把这件事交上去', async () => {
+    const favorited = mountCard({ answer: makeAnswer({ is_favorite: true }) })
+    expect(byText(favorited.container, 'questions.detail.buttons.unfavorite')).toBeTruthy()
+
+    const plain = mountCard()
+    const toFavorite = byText(plain.container, 'questions.detail.buttons.favorite')!
     await fireEvent.click(toFavorite)
-    expect(mocks.favorite).toHaveBeenCalledWith(QUESTION_ID, ANSWER_ID)
-
-    // 收没收藏是这份数据自己带的：点完它就变成「取消收藏」。
-    await waitFor(() => expect(byText(container, 'questions.detail.buttons.unfavorite')).toBeTruthy())
-    await fireEvent.click(byText(container, 'questions.detail.buttons.unfavorite')!)
-    expect(mocks.unfavorite).toHaveBeenCalledWith(QUESTION_ID, ANSWER_ID)
+    expect(plain.emitted().favorite).toEqual([[plain.answer]])
   })
 
-  it('采纳那颗按钮只有提问的人看得到，点了才发采纳', async () => {
-    AccountService.user = { ...ASKER, id: 8 } as never
-    const other = mountCard()
+  it('采纳那颗按钮只在「这个人能采纳」时出现，点了交上去的是这份答案', async () => {
+    const other = mountCard({ canAccept: false })
     expect(byText(other.container, 'questions.detail.buttons.accept')).toBeUndefined()
 
-    AccountService.user = { ...ASKER } as never
-    const mine = mountCard()
+    const mine = mountCard({ canAccept: true })
     const accept = byText(mine.container, 'questions.detail.buttons.accept')!
     expect(accept).toBeTruthy()
 
     await fireEvent.click(accept)
-    expect(mocks.acceptAnswer).toHaveBeenCalledWith(QUESTION_ID, ANSWER_ID)
+    expect(mine.emitted().accept).toEqual([[mine.answer]])
   })
 
   it('已经采纳过的题不再画那颗按钮', () => {
-    AccountService.user = { ...ASKER } as never
-    const { container } = mountCard({ question: makeQuestion({ accepted_answer: makeAnswer({ id: 12 }) }) })
+    const { container } = mountCard({
+      canAccept: true,
+      question: makeQuestion({ accepted_answer: makeAnswer({ id: 12 }) }),
+    })
     expect(byText(container, 'questions.detail.buttons.accept')).toBeUndefined()
+  })
+
+  it('头像用的是他自己挑的那张；用的就是全局默认那张时不画图', () => {
+    const chosen = mountCard({ defaultAvatarId: 1 })
+    expect(chosen.container.querySelector('.v-avatar img')).toBeTruthy()
+
+    const borrowed = mountCard({ defaultAvatarId: ASKER.avatarId })
+    expect(borrowed.container.querySelector('.v-avatar img')).toBeNull()
   })
 })
