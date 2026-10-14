@@ -145,8 +145,9 @@ class RunnerIntake:
         # room. The handle is the same key `merge_into_running_turn` filters on,
         # so "a live handoff was expected" and "the handoff failed" answer with
         # one key rather than two that can disagree.
-        live_delivery_expected = recipient_handle is not None and (
-            chat_service.has_running_turn(topic_id, recipient_handle)
+        live_delivery_expected = (
+            recipient_handle is not None
+            and await chat_service.has_running_turn(topic_id, recipient_handle)
         )
         mentioned = any(
             (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
@@ -183,7 +184,7 @@ class RunnerIntake:
             chat_service.session_factory, user_block_id if mentioned else None, topic_id
         )
         if answer_in != topic_id:
-            live_delivery_expected = chat_service.has_running_turn(answer_in)
+            live_delivery_expected = await chat_service.has_running_turn(answer_in)
         self._schedule_message(
             chat_service,
             answer_in,

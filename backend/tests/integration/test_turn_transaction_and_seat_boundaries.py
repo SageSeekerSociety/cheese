@@ -325,6 +325,6 @@ async def test_one_seat_completion_and_duplicate_leave_the_other_live(
                     await observer.get(AgentTurn, second_turn)
                 ).stopped_at is not None
             assert broker.active_turn_ids(str(conversation)) == []
-            assert not chat.has_running_turn(conversation)
+            assert not await chat.has_running_turn(conversation)
         finally:
             await chat.stop_listening(timeout_s=2)

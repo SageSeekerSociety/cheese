@@ -1132,7 +1132,7 @@ async def summon_agent(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
     # The conversation the button is in: a 支线's or a task's retry runs there.
-    if chat.has_running_turn(place.conversation_id):
+    if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
     if not await chat.has_unread_input(place.conversation_id):
         # 房间里没有待读的消息，不等于这一下没事可做：平台自己欠这个频道的输入

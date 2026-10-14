@@ -37,7 +37,7 @@ class MessageService(Protocol):
 
     live: LiveWork
 
-    def has_running_turn(
+    async def has_running_turn(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> bool: ...
 
