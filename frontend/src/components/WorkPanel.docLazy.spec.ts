@@ -51,9 +51,14 @@ const host = vi.hoisted(() => {
   }
 })
 
+// 闸门最多捏 2 秒。`WorkPanel` 被改回静态 import 的话，这个工厂在收集模块时就会被叫
+// 起来，而闸门要到用例里才有人放——整份文件会停在这儿，不报错也不结束，CI 只看到一个
+// 发呆的进程。给个上限让它放行：那一刻 `host.asked` 已经是 true，下面第一条就以断言
+// 失败收场，看得见红的是哪一条。（这个秒数得写死在工厂里：`vi.mock` 的工厂被提到文件
+// 最上面，外面那个常量这会儿还没初始化。）
 vi.mock('./work/PanelDocHost.vue', async () => {
   host.asked = true
-  await host.arrives
+  await Promise.race([host.arrives, new Promise((r) => setTimeout(r, 2_000))])
   const { defineComponent, h } = await import('vue')
   return {
     // `__esModule` 是给 Vue 的异步组件看的，见 `TaskOverview.opening.spec.ts` 里同一处。
@@ -113,6 +118,8 @@ beforeAll(() => {
 beforeEach(() => {
   workSummary.mockResolvedValue({ has_run: false, changed_files: [] })
   roomTasks.mockResolvedValue({ data: [], total: 0 })
+  // 这一格收到的调用记在同一个数组里，跨用例留着：「这一次一条都不该有」得从头数。
+  host.calls.length = 0
 })
 
 /** 面板 `defineExpose` 出来的那几样，得从外面拿着它调 —— 就像 `TopicView` 那样。 */
@@ -153,8 +160,9 @@ async function flush() {
 describe('文档那一格（按需取）', () => {
   it('面板自己先挂上时，编辑器那一块还没被要过', async () => {
     // 这一条钉的是「按需取」这条边界本身：`WorkPanel` 改回静态 import 的话，那一坨 1.1 MB
-    // 在下面这个 `expect` 之前就已经在模块图里了。别的活没人守着这件事 —— 改回静态 import
-    // 全套测试照样绿，只有这一条会红。
+    // 在这次断言之前就已经在模块图里了，`asked` 是 true。别的活没人守着这件事 —— 改回静态
+    // import 只有这一条会红，而且红在断言上（闸门有上限，见上面 `HOLD_MS`）。
+    // 任务页那一侧（`TaskOverview`）同样的边界在 `TaskOverview.opening.spec.ts` 里。
     expect(host.asked).toBe(false)
     mountPanel()
     await flush()
