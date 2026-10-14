@@ -160,8 +160,9 @@ async function flush() {
 describe('文档那一格（按需取）', () => {
   it('面板自己先挂上时，编辑器那一块还没被要过', async () => {
     // 这一条钉的是「按需取」这条边界本身：`WorkPanel` 改回静态 import 的话，那一坨 1.1 MB
-    // 在这次断言之前就已经在模块图里了，`asked` 是 true。别的活没人守着这件事 —— 改回静态
-    // import 只有这一条会红，而且红在断言上（闸门有上限，见上面 `HOLD_MS`）。
+    // 在这次断言之前就已经在模块图里了，`asked` 是 true。改回静态 import 时这一条和下面
+    // 那条都会红；下面那条红是因为那一格早就挂上了，红在它自己的理由上，不是这里说的边界。
+    // 两条都红在断言上，闸门有上限（见下面工厂里那 2 秒），不会把整份文件挂住。
     // 任务页那一侧（`TaskOverview`）同样的边界在 `TaskOverview.opening.spec.ts` 里。
     expect(host.asked).toBe(false)
     mountPanel()

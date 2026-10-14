@@ -44,7 +44,13 @@ const host = vi.hoisted(() => {
 })
 
 vi.mock('./work/PanelDocHost.vue', async () => {
-  await host.arrives
+  // 闸门最多捏 2 秒。`WorkPanel` 被改回静态 import 的话，这个工厂在收集模块时就会被叫
+  // 起来，而闸门要到用例里才有人放——整份文件会停在这儿，不报错也不结束，CI 只看到一个
+  // 发呆的进程（实测 120 秒超时、没有任何输出）。给个上限让它放行，红就落在断言上：
+  // 那一块已经挂上了，第一条 `expect(host.calls).toEqual([])` 失败。秒数得写死在工厂里，
+  // `vi.mock` 的工厂被提到文件最上面，外面那个常量这会儿还没初始化。同一个道理见
+  // `WorkPanel.docLazy.spec.ts`。
+  await Promise.race([host.arrives, new Promise((r) => setTimeout(r, 2_000))])
   const { defineComponent, h } = await import('vue')
   return {
     __esModule: true,
