@@ -282,6 +282,29 @@ CHECKS: tuple[Check, ...] = (
         argv=("bash", ".claude/scripts/check-repo-rules.sh", "--json"),
         rules=(".claude/scripts/check-repo-rules.sh",),
     ),
+    Check(
+        id="fe-contrast",
+        area=TYPES,
+        # The one check that needs a browser: it walks the three public pages in
+        # both themes and judges the colours they actually painted, which no
+        # reading of the source can decide. The driver starts the frontend and a
+        # headless Chromium itself, so this is still one command whose stdout is
+        # one record. It is the same walk the e2e gate runs on a pull request —
+        # e2e/contrast-walk.mjs, shared — so the number frozen here and the
+        # verdict that blocks a change come out of one piece of code.
+        argv=("node", "contrast-ratchet.mjs", "--json"),
+        cwd="e2e",
+        rules=(
+            "e2e/contrast-ratchet.mjs",
+            "e2e/contrast-walk.mjs",
+            # The rule itself: the floors, the ratio, the ratchet logic and the
+            # walker that runs inside the page.
+            "frontend/scripts/contrast-ratchet-core.mjs",
+            # The record's shape and the cannot-judge path, shared with the
+            # other ratchets.
+            "frontend/scripts/ratchet-report.mjs",
+        ),
+    ),
 )
 
 #: The board: arch-metrics.py's own output, stored as it wrote it. Reference
@@ -630,6 +653,11 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
         # in the repository (2026-10-14), so there is nothing left to excuse: the
         # generator asks the backend to build it, and the guard below requires
         # every excused path to exist.
+    },
+    "fe-contrast": {
+        "frontend/contrast-baseline.json": (
+            "baseline: the frozen rendered-contrast debt on the public pages"
+        ),
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",
