@@ -76,6 +76,7 @@ import { ROOM_ENTRIES } from './catalogRoom'
 import { SCENES_MISC_ENTRIES } from './catalogScenesMisc'
 import { SCENES_MISC2_ENTRIES } from './catalogScenesMisc2'
 import { SCENES_MISC3_ENTRIES } from './catalogScenesMisc3'
+import { SCENES_PAGES_ENTRIES } from './catalogScenesPages'
 import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
@@ -640,6 +641,9 @@ export const CATALOG: CatalogEntry[] = [
   // `catalogKnowledgeFixtures.ts`）。
   ...SCENES_MISC2_ENTRIES,
   ...SCENES_MISC3_ENTRIES,
+  // 第四批拆出来的画面（空间名录、小队链接落地页、小队项目列表、提问页）在自己的文件里：
+  // `catalogScenesPages.ts`，数据在 `catalogScenesPagesFixtures.ts`。
+  ...SCENES_PAGES_ENTRIES,
   ...SCENES_SPACES_ENTRIES,
   ...SCENES_SPACES_DETAIL_ENTRIES,
   ...SCENES_WORKSPACE_ENTRIES,

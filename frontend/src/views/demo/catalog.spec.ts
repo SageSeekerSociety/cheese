@@ -51,6 +51,23 @@ vi.mock('@/components/account/brandScene/scenes', async () => {
 // 空壳之后，后面按秒数判定的那几格（目录页那句「找到几个」要等手停下来）不再被拖过线。
 vi.mock('pdfjs-dist/legacy/build/pdf.mjs', () => ({ GlobalWorkerOptions: {} }))
 
+// 提问页那一块正文（`@/components/common/Editor/Editor.vue`，里面建的是真的 editorjs）：
+// 它的初始化是异步的，而预览站每一格挂完就收走 —— 初始化撞上容器已经不在，editorjs 内部
+// 会抛一个没人接的 rejection（手快的人真页面上也会撞到：进 /ask 又立刻离开）。预览站要
+// 的是「这一页长什么样」，不是编辑器本身，所以换成一个只把容器画出来的替身；那一格要
+// 断言的字（标题、话题、发布按钮）都是提问页自己模板里的，替身不缺什么。
+vi.mock('@/components/common/Editor/Editor.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    default: defineComponent({
+      name: 'EditorStub',
+      props: { holder: { type: String, default: 'editor' }, config: { type: Object, default: () => ({}) } },
+      emits: ['create', 'ready'],
+      setup: (props) => () => h('div', { id: props.holder }),
+    }),
+  }
+})
+
 import { CATALOG, catalogGroup, stateProps } from './catalog'
 import { installCatalogAnswers } from './catalogFixtures'
 import { isTodo, TODO_MARK, todoSites } from './catalogTodo'
