@@ -6,9 +6,10 @@ breaks the guard on purpose (the ratchet shrinks only when the routes change).
 
 Named by path and handler, never by registration position. The leaves below used
 to be pinned by absolute index (727/751), so every route added above them moved
-the pin and every PR that added a route had to touch this file and the unit test
-asserting the numbers. Position is not what makes the pair; the two registrations
-and the order between them are.
+the pin, and every PR that added one there had to touch this file and the unit
+test asserting the numbers — a route registered after the pair moved neither.
+Position is not what makes the pair; the two registrations and the order between
+them are.
 """
 
 from __future__ import annotations
