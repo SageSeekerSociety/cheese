@@ -313,16 +313,22 @@ def week_report(end):
 
 
 def parse_instant(args):
-    """`--week` 的结束时刻：给日期是当天 00:00 UTC，不给是现在。"""
+    """`--week` 的结束时刻：给日期是当天 00:00 UTC，不给是现在。
+
+    没写时区的都按 UTC 算。写死了的日期本来就按 UTC，而 GitHub 给的
+    mergedAt 永远带时区；放过一个不带时区的时刻进去，后面拿它和 mergedAt
+    比会在搜索请求已经发出去之后抛 TypeError。
+    """
     if not args:
         return datetime.now(timezone.utc)
     raw = args[0]
     try:
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
             return datetime.fromisoformat(raw).replace(tzinfo=timezone.utc)
-        return ts(raw)
+        parsed = ts(raw)
     except ValueError:
         raise SystemExit(f"--week {raw} 要写成 2026-10-14 或 2026-10-14T02:30:00Z")
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def main():
@@ -467,6 +473,12 @@ def self_test():
           parse_instant(["2026-10-14"]), datetime(2026, 10, 14, tzinfo=timezone.utc))
     check("--week 收 ISO 时刻", parse_instant(["2026-10-14T02:30:00Z"]),
           datetime(2026, 10, 14, 2, 30, tzinfo=timezone.utc))
+    # 少写一个 Z 的写法也收：不给时区的都按 UTC，不然它会在和 mergedAt 比
+    # 的时候抛 TypeError，而不是在这里被收下。
+    check("--week 收没写时区的时刻，按 UTC", parse_instant(["2026-10-14T02:30:00"]),
+          datetime(2026, 10, 14, 2, 30, tzinfo=timezone.utc))
+    check("--week 收紧凑写法，也按 UTC", parse_instant(["20261014"]),
+          datetime(2026, 10, 14, tzinfo=timezone.utc))
     check("--week 不给就是现在（是个带时区的时刻）",
           parse_instant([]).utcoffset(), timedelta(0))
 
