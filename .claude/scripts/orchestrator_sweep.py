@@ -17,13 +17,14 @@ For every open, started task in the channel it reads platform facts and the PR's
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
                 rounds). A heartbeat is the newest of the line's last message, the last
                 event block its seat wrote (a command it ran) and, when the platform gives
-                it, the running turn's last output (`last_output_at` on the task row, which
-                moves while one long command streams). A command the seat started and that
-                has not returned yet — its event block carries no output yet and no failed
-                turn came after it — is a heartbeat now: a seat inside a 45-minute test run
-                is working, not stalled. The row says when the last event and the last
+                it, the running turn's last output (`last_output_at` on the task row). A
+                command the seat started and that has not returned yet — its event block
+                carries no output yet, no failed turn came after it and the platform still
+                calls a turn running — is a heartbeat now: a seat inside a 45-minute test
+                run is working, not stalled. The row says when the last event and the last
                 message were and what the message said, so the patrol reads the line's own
-                last word before nudging it.
+                last word before nudging it. The room's task rows carry no last_output_at
+                today, so that leg is there for a platform that sends it.
 Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
 
 The default output is that text list, unchanged. The same sweep in other shapes:
