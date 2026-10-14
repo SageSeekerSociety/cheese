@@ -112,15 +112,39 @@ describe('worstOf', () => {
     assert.equal(worst.get('/|light|span.im-time|').ratio, 3.1)
   })
 
-  it('prefers a measured instance over one the walker could not read', () => {
+  it('prefers a measured instance over one the walker could not read, and counts the other', () => {
     // The unreadable instance is given the better-looking ratio on purpose: the
     // answer is only 4.33 if the measured instance is the one kept. Keeping the
     // other would have `compare` report a key that is perfectly readable as
     // unmeasurable, which is a failure — so which one wins has a consequence,
-    // and this is what notices it changing.
+    // and this is what notices it changing. What the two instances are is not a
+    // reason to lose one of them: the ratio says what the readable instance
+    // measures, and the count says there is another the walker cannot see.
     const worst = worstOf([run({ ratio: 1.2, unjudged: 'a gradient is behind it' }), run({ ratio: 4.33 })])
     assert.equal(worst.get('/|light|span.im-time|').ratio, 4.33)
     assert.equal(worst.get('/|light|span.im-time|').unjudged, '')
+    assert.equal(worst.get('/|light|span.im-time|').unreadable, 1)
+  })
+
+  it('counts every instance it could not read, on the key it kept', () => {
+    // `/solutions` as it stands: five plain paragraphs on a wash and two on a
+    // gradient. One entry per key means one ratio, but the two the ratio does
+    // not speak for have to survive somewhere.
+    const worst = worstOf([
+      run({ selector: 'p', path: '/solutions', ratio: 6.12 }),
+      run({ selector: 'p', path: '/solutions', unjudged: 'a gradient is behind it' }),
+      run({ selector: 'p', path: '/solutions', unjudged: 'a gradient is behind it' }),
+      run({ selector: 'p', path: '/solutions', ratio: 7.4 }),
+    ])
+    assert.equal(worst.size, 1)
+    assert.equal(worst.get('/solutions|light|p|').ratio, 6.12)
+    assert.equal(worst.get('/solutions|light|p|').unreadable, 2)
+  })
+
+  it('counts the key itself when no instance of it can be read', () => {
+    const worst = worstOf([run({ unjudged: 'a gradient is behind it' }), run({ unjudged: 'a gradient is behind it' })])
+    assert.equal(worst.get('/|light|span.im-time|').ratio, 4.33, 'the ratio is still recorded on the run')
+    assert.equal(worst.get('/|light|span.im-time|').unreadable, 2)
   })
 
   it('keeps keys apart across page, theme and pseudo-element', () => {
@@ -155,6 +179,11 @@ const run = (over) => ({
   ...over,
 })
 const frozen = (ratio) => ({ [KEY]: { ratio, need: 4.5, unjudged: '', sample: '16:20' } })
+/** The worst entry for one key, where `hidden` instances of it sit on a picture
+ * the walker cannot read — built the way the page produces them, so the count is
+ * `worstOf`'s answer and not the fixture's. */
+const withHidden = (hidden, over) =>
+  runsOf(run(over), ...Array.from({ length: hidden }, () => run({ ...over, unjudged: 'a gradient is behind it' })))
 
 describe('compare', () => {
   it('fails on a run below its floor that the baseline has never seen', () => {
@@ -280,6 +309,62 @@ describe('compare', () => {
     assert.equal(result.unjudged.length, 1)
   })
 
+  it('fails when an instance of a frozen key is one the walker cannot read', () => {
+    // The key is readable where it was measured; what changed is that another
+    // instance of the same selector went behind a picture. Nothing the ratio can
+    // show, and exactly how a page would hide text from this check, so it fails
+    // on its own.
+    const result = compare(frozen(6.12), withHidden(1, { ratio: 6.12, need: 4.5 }))
+    assert.equal(result.unjudged.length, 1)
+    assert.equal(result.ok, false)
+    assert.match(formatContrastReport(result), /1 instance\(s\) of it the walker cannot read/)
+  })
+
+  it('stays quiet about the instances the baseline already froze as unreadable', () => {
+    const baseline = { [KEY]: { ratio: 6.12, need: 4.5, unreadable: 2, unjudged: '', sample: '众智之所为' } }
+    const result = compare(baseline, withHidden(2, { ratio: 6.12, need: 4.5 }))
+    assert.equal(result.ok, true)
+    assert.equal(result.unjudged.length, 0)
+    assert.equal(result.improved.length, 0, 'and it is a fixed point, not a run the update has to chase')
+  })
+
+  it('fails when one more of them goes behind a picture', () => {
+    const baseline = { [KEY]: { ratio: 6.12, need: 4.5, unreadable: 2, unjudged: '', sample: '众智之所为' } }
+    assert.equal(compare(baseline, withHidden(3, { ratio: 6.12, need: 4.5 })).ok, false)
+    assert.equal(compare(baseline, withHidden(2, { ratio: 6.12, need: 4.5 })).ok, true)
+  })
+
+  it('passes a frozen key whose instances the walker can all read again', () => {
+    // However much of it was behind a picture, none of it is now: the baseline
+    // is holding a count the page no longer has, so it is an improvement to pay
+    // off with an update rather than silence.
+    const baseline = { [KEY]: { ratio: 6.12, need: 4.5, unreadable: 2, unjudged: '', sample: '众智之所为' } }
+    const result = compare(baseline, runsOf(run({ ratio: 6.12, need: 4.5 })))
+    assert.equal(result.ok, true)
+    assert.equal(result.improved.length, 1)
+  })
+
+  it('does not call a key with instances behind a picture settled', () => {
+    // It clears its floor, so by the ratio alone it is done with the baseline —
+    // but the ratio is not the whole key, and dropping the entry would throw the
+    // count away with it.
+    const baseline = { [KEY]: { ratio: 6.12, need: 4.5, unreadable: 1, unjudged: '', sample: '众智之所为' } }
+    const result = compare(baseline, withHidden(1, { ratio: 6.12, need: 4.5 }))
+    assert.equal(result.improved.length, 0)
+    assert.equal(result.ok, true)
+  })
+
+  it('takes a key frozen as unmeasurable as covering however many instances of it there are', () => {
+    // The count is not ratcheted here, and deliberately: what the baseline
+    // accepted for this key is that the selector sits on a picture, and a second
+    // paragraph behind the same picture is the same acceptance. It is the ratio
+    // that needs a count beside it, because it answers for only part of the key.
+    const baseline = { [KEY]: { ratio: null, need: 4.5, unreadable: 1, unjudged: 'a gradient is behind it' } }
+    const result = compare(baseline, withHidden(3, { ratio: 6.1 }))
+    assert.equal(result.ok, true)
+    assert.equal(result.unjudged.length, 0)
+  })
+
   it('fails when a worse instance of a frozen run appears', () => {
     const result = compare(frozen(4.33), runsOf(run({ ratio: 4.33 }), run({ ratio: 1.8 })))
     assert.equal(result.ok, false)
@@ -297,7 +382,7 @@ describe('compare', () => {
 describe('tightenedBaseline', () => {
   it('keeps a frozen run that is still below its floor, at the worse of the two ratios', () => {
     assert.deepEqual(tightenedBaseline(frozen(4.33), runsOf(run({ ratio: 4.2 }))), {
-      [KEY]: { ratio: 4.2, need: 4.5, unjudged: '', sample: '16:20' },
+      [KEY]: { ratio: 4.2, need: 4.5, unreadable: 0, unjudged: '', sample: '16:20' },
     })
   })
 
@@ -314,8 +399,26 @@ describe('tightenedBaseline', () => {
 
   it('freezes one when asked for it by name', () => {
     assert.deepEqual(tightenedBaseline({}, runsOf(run({})), { freezeNew: true }), {
-      [KEY]: { ratio: 4.33, need: 4.5, unjudged: '', sample: '16:20' },
+      [KEY]: { ratio: 4.33, need: 4.5, unreadable: 0, unjudged: '', sample: '16:20' },
     })
+  })
+
+  it('keeps a key that clears its floor while part of it is still unreadable', () => {
+    // The half of a mixed key that can be measured is not the half the baseline
+    // has to answer for. Dropping the entry on the floor alone would take the
+    // count of the instances behind the picture with it, and the next run would
+    // find a new key with unreadable instances and nothing that remembered them.
+    const worst = withHidden(2, { selector: 'p', path: '/solutions', ratio: 6.12, need: 4.5 })
+    const next = tightenedBaseline({}, worst, { freezeNew: true })
+    assert.deepEqual(next, {
+      '/solutions|light|p|': { ratio: 6.12, need: 4.5, unreadable: 2, unjudged: '', sample: '16:20' },
+    })
+    assert.equal(compare(next, worst).ok, true, 'and what it wrote is a fixed point')
+  })
+
+  it('drops that key once the walker can read all of it', () => {
+    const baseline = { [KEY]: { ratio: 6.12, need: 4.5, unreadable: 2, unjudged: '', sample: '众智之所为' } }
+    assert.deepEqual(tightenedBaseline(baseline, runsOf(run({ ratio: 6.12, need: 4.5 }))), {})
   })
 
   it('refuses to freeze an unmeasurable run the baseline has never seen either', () => {

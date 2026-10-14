@@ -1,135 +1,199 @@
 {
-  "_comment": "Frozen rendered-contrast debt on the public pages, one entry per text run that is below its WCAG floor (4.5:1, or 3:1 for large text and icon glyphs) or that the walker cannot measure at all — a `ratio` of null with a reason means a background image or gradient sits between the run and its ground, and those are frozen too rather than skipped. The ratchet blocks any new or worse run and the baseline only goes down; each entry records the worst instance of that element, its floor, and a sample of its text. Regenerate with `CONTRAST_UPDATE=1 pnpm --dir e2e exec playwright test contrast-ratchet`, which will not add a key the baseline has never seen unless CONTRAST_FREEZE_NEW=1 is set as well. The rule and its messages live in frontend/scripts/contrast-ratchet-core.mjs.",
+  "_comment": "Frozen rendered-contrast debt on the public pages, one entry per text run that is below its WCAG floor (4.5:1, or 3:1 for large text and icon glyphs) or that the walker cannot measure, wholly or in part — a `ratio` of null with a reason means a background image or gradient sits between the run and its ground, and those are frozen too rather than skipped. One entry covers a whole selector, and a selector is not always one element: `ratio` answers for the instances of it the walker could read, and `unreadable` counts those it could not, so text hidden behind a picture cannot drop out of the check by sitting beside a readable sibling. `sample` is a piece of the text the ratio was measured on. The ratchet blocks any new or worse run, and the count is ratcheted the same way; the baseline only goes down. Regenerate with `CONTRAST_UPDATE=1 pnpm --dir e2e exec playwright test contrast-ratchet`, which will not add a key the baseline has never seen unless CONTRAST_FREEZE_NEW=1 is set as well. The rule and its messages live in frontend/scripts/contrast-ratchet-core.mjs.",
   "runs": {
     "/download|dark|h1.dl-title|": {
       "ratio": null,
       "need": 3,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "下载知是"
     },
     "/download|light|h1.dl-title|": {
       "ratio": null,
       "need": 3,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "下载知是"
     },
     "/download|light|i.mdi-chevron-down.mdi.v-icon|::before": {
       "ratio": 2.65,
       "need": 3,
+      "unreadable": 0,
       "unjudged": "",
       "sample": ""
     },
     "/download|light|i.mdi-download.mdi.v-icon|::before": {
       "ratio": 2.65,
       "need": 3,
+      "unreadable": 0,
       "unjudged": "",
       "sample": ""
     },
     "/download|light|span.v-btn__content|": {
       "ratio": 2.65,
       "need": 4.5,
+      "unreadable": 0,
       "unjudged": "",
       "sample": "下载 Mac 版"
+    },
+    "/solutions|dark|a.text-link|": {
+      "ratio": 12.54,
+      "need": 4.5,
+      "unreadable": 1,
+      "unjudged": "",
+      "sample": "先体验产品"
     },
     "/solutions|dark|cite|": {
       "ratio": null,
       "need": 4.5,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "《淮南子·主术训》"
+    },
+    "/solutions|dark|i.mdi-arrow-top-right.mdi.v-icon|::before": {
+      "ratio": 12.54,
+      "need": 3,
+      "unreadable": 1,
+      "unjudged": "",
+      "sample": ""
     },
     "/solutions|dark|p.vision-label|": {
       "ratio": null,
       "need": 4.5,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "愿景 · 未来学习中心"
     },
     "/solutions|dark|p.vision-lead|": {
       "ratio": null,
       "need": 4.5,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "在真实课题中学习，在协作之中成长。"
     },
     "/solutions|dark|p.vision-policy|": {
       "ratio": null,
       "need": 4.5,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "2026 年 4 月，教育部等五部门印发《“人工"
+    },
+    "/solutions|dark|p|": {
+      "ratio": 8.76,
+      "need": 4.5,
+      "unreadable": 2,
+      "unjudged": "",
+      "sample": "讨论、决定与成果都留在项目里。成员更替，积累不断"
     },
     "/solutions|dark|span.topic-avatar|": {
       "ratio": 4.37,
       "need": 4.5,
+      "unreadable": 0,
       "unjudged": "",
       "sample": "何"
+    },
+    "/solutions|light|a.text-link|": {
+      "ratio": 11.05,
+      "need": 4.5,
+      "unreadable": 1,
+      "unjudged": "",
+      "sample": "先体验产品"
     },
     "/solutions|light|cite|": {
       "ratio": null,
       "need": 4.5,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "《淮南子·主术训》"
+    },
+    "/solutions|light|i.mdi-arrow-top-right.mdi.v-icon|::before": {
+      "ratio": 11.05,
+      "need": 3,
+      "unreadable": 1,
+      "unjudged": "",
+      "sample": ""
     },
     "/solutions|light|i.mdi-email-outline.mdi.v-icon|::before": {
       "ratio": 2.65,
       "need": 3,
+      "unreadable": 0,
       "unjudged": "",
       "sample": ""
     },
     "/solutions|light|p.vision-label|": {
       "ratio": null,
       "need": 4.5,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "愿景 · 未来学习中心"
     },
     "/solutions|light|p.vision-lead|": {
       "ratio": null,
       "need": 4.5,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "在真实课题中学习，在协作之中成长。"
     },
     "/solutions|light|p.vision-policy|": {
       "ratio": null,
       "need": 4.5,
+      "unreadable": 1,
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "2026 年 4 月，教育部等五部门印发《“人工"
+    },
+    "/solutions|light|p|": {
+      "ratio": 6.12,
+      "need": 4.5,
+      "unreadable": 2,
+      "unjudged": "",
+      "sample": "讨论、决定与成果都留在项目里。成员更替，积累不断"
     },
     "/solutions|light|span.v-btn__content|": {
       "ratio": 2.65,
       "need": 4.5,
+      "unreadable": 0,
       "unjudged": "",
       "sample": "预约交流"
     },
     "/|dark|span.scene-avatar|": {
       "ratio": 4.44,
       "need": 4.5,
+      "unreadable": 0,
       "unjudged": "",
       "sample": "周"
     },
     "/|light|i.mdi-arrow-top-right.mdi.v-icon|::before": {
       "ratio": 2.65,
       "need": 3,
+      "unreadable": 0,
       "unjudged": "",
       "sample": ""
     },
     "/|light|span.im-artifact__kind.t-meta|": {
       "ratio": 4.33,
       "need": 4.5,
+      "unreadable": 0,
       "unjudged": "",
       "sample": "网页"
     },
     "/|light|span.im-time|": {
       "ratio": 4.33,
       "need": 4.5,
+      "unreadable": 0,
       "unjudged": "",
       "sample": "16:20"
     },
     "/|light|span.tl-mark__body|": {
       "ratio": 4.33,
       "need": 4.5,
+      "unreadable": 0,
       "unjudged": "",
       "sample": "9 月 18 日"
     },
     "/|light|span.v-btn__content|": {
       "ratio": 2.65,
       "need": 4.5,
+      "unreadable": 0,
       "unjudged": "",
       "sample": "开始使用"
     }

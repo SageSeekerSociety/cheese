@@ -111,20 +111,35 @@ export const TOLERANCE = 0.05
  * appears nine times on a page is usually the same element repeated, and it is
  * the instance closest to unreadable that the baseline has to answer for. If a
  * worse instance appears later, this is what moves.
+ *
+ * A key is a selector, and a selector is not always one element. `/solutions`
+ * has plain paragraphs on a wash and plain paragraphs on a picture, and only the
+ * first kind can be measured; the event is common enough that dropping the
+ * second kind would leave the check blind exactly where a page would hide text
+ * from it. So the readable instance is kept for its ratio and the ones the
+ * walker could not read are counted on it as `unreadable` — one entry, both
+ * answers, and the reader of the baseline can see that the ratio does not speak
+ * for the whole key.
  * @param {object[]} runs records from collectRuns(), each already carrying
  *                      `path` and `theme`
  * @returns {Map<string, object>}
  */
 export function worstOf(runs) {
   const worst = new Map()
+  const unreadable = new Map()
   for (const run of runs) {
     const key = keyOf(run)
+    if (run.unjudged) {
+      unreadable.set(key, (unreadable.get(key) || 0) + 1)
+      if (!worst.has(key)) worst.set(key, run)
+      continue
+    }
     const seen = worst.get(key)
-    if (!seen) worst.set(key, run)
-    else if (seen.unjudged && !run.unjudged) worst.set(key, run)
-    else if (!!seen.unjudged === !!run.unjudged && run.ratio < seen.ratio) worst.set(key, run)
+    if (!seen || seen.unjudged || run.ratio < seen.ratio) worst.set(key, run)
   }
-  return worst
+  const kept = new Map()
+  for (const [key, run] of worst) kept.set(key, { ...run, unreadable: unreadable.get(key) || 0 })
+  return kept
 }
 
 /** The baseline record for a run: what it measured, and what it was, in the
@@ -133,6 +148,10 @@ export function entryFor(run) {
   return {
     ratio: run.unjudged ? null : roundRatio(run.ratio),
     need: run.need,
+    // The part of the key the ratio above does not answer for: `unreadable`
+    // instances of it sit on a ground the walker could not read. Zero for an
+    // element that is on every page once.
+    unreadable: run.unreadable || 0,
     unjudged: run.unjudged || '',
     sample: run.text,
   }
@@ -148,8 +167,12 @@ export function entryFor(run) {
  *            below its floor by more than the tolerance — the check just
  *            learned something bad;
  *   unjudged a run the walker cannot measure that was not already frozen as
- *            unmeasurable. A check that quietly ignores what it cannot measure
- *            is worse than no check, so this is reported rather than dropped;
+ *            unmeasurable, or a key with more instances the walker cannot read
+ *            than the baseline froze. Hiding text behind a picture is worth
+ *            reporting wherever it happens, not only where it happens to every
+ *            instance of that selector. A check that quietly ignores what it
+ *            cannot measure is worse than no check, so this is reported rather
+ *            than dropped;
  *   (a frozen run that was measured and is now unmeasurable lands here too —
  *    the ground behind it became a picture.)
  *
@@ -167,10 +190,20 @@ export function compare(baseline, worst) {
   const passes = (run) => !run.unjudged && run.ratio >= run.need
   for (const [key, run] of [...worst].sort(([a], [b]) => a.localeCompare(b))) {
     const frozen = baseline[key]
+    // How much of this key the ratio below does not answer for: instances the
+    // walker could not read at all. On a key the baseline froze measured — or on
+    // one it has never seen — that count ratchets on its own, because the ratio
+    // answers for the instances it could read and a page can hide text behind a
+    // picture wherever a sibling of the same selector stays readable. A key
+    // frozen unmeasurable needs no such count: being unmeasurable is already the
+    // whole of what the baseline accepted for it.
+    const blind = run.unreadable || 0
+    const frozeBlind = (frozen && frozen.unreadable) || 0
     if (run.unjudged) {
       if (!frozen || !frozen.unjudged) unjudged.push({ key, run })
       continue
     }
+    if (blind > frozeBlind && !(frozen && frozen.unjudged)) unjudged.push({ key, run })
     if (!frozen) {
       if (run.ratio < run.need) added.push({ key, run })
       continue
@@ -188,12 +221,17 @@ export function compare(baseline, worst) {
       else if (run.ratio < run.need - TOLERANCE) worse.push({ key, was: frozen, run })
       continue
     }
-    if (passes(run)) {
+    // A key is settled only when the whole of it is readable: a ratio that
+    // clears the floor still owes the instances it does not speak for, so it
+    // stays frozen until there are none.
+    if (passes(run) && !blind) {
       improved.push({ key, was: frozen, run })
       continue
     }
+    // Otherwise either the ratio moved, or fewer of the key's instances are on a
+    // picture now. Both are the baseline holding debt the page no longer has.
     if (run.ratio < frozen.ratio - TOLERANCE) worse.push({ key, was: frozen, run })
-    else if (run.ratio > frozen.ratio + TOLERANCE) improved.push({ key, was: frozen, run })
+    else if (run.ratio > frozen.ratio + TOLERANCE || blind < frozeBlind) improved.push({ key, was: frozen, run })
   }
   for (const key of Object.keys(baseline).sort()) {
     if (!worst.has(key)) improved.push({ key, was: baseline[key], run: null })
@@ -215,7 +253,8 @@ export function compare(baseline, worst) {
  * is only added when `freezeNew` — a person deciding, in the commit, that this
  * is debt the project accepts. That holds for a run the walker cannot measure
  * too: an unfrozen unmeasurable run is new debt, not a free pass. A run that
- * now passes is dropped.
+ * now passes — and has no instance left that the walker could not read — is
+ * dropped.
  * @param {Record<string, object>} baseline
  * @param {Map<string, object>} worst from worstOf()
  * @param {{ freezeNew?: boolean }} [options]
@@ -232,10 +271,16 @@ export function tightenedBaseline(baseline, worst, { freezeNew = false } = {}) {
       next[key] = entryFor(run)
       continue
     }
-    if (run.ratio >= run.need) continue // clears its floor now
+    const entry = entryFor(run)
+    // Settled only when the whole key is: one that clears its floor but still
+    // carries instances the walker could not read stays recorded, with the count
+    // that says why.
+    if (run.ratio >= run.need && !entry.unreadable) continue
     const ratio =
-      frozen && typeof frozen.ratio === 'number' ? Math.min(frozen.ratio, roundRatio(run.ratio)) : roundRatio(run.ratio)
-    next[key] = { ...entryFor(run), ratio }
+      run.ratio >= run.need || !(frozen && typeof frozen.ratio === 'number')
+        ? roundRatio(run.ratio)
+        : Math.min(frozen.ratio, roundRatio(run.ratio))
+    next[key] = { ...entry, ratio }
   }
   return next
 }
@@ -256,7 +301,8 @@ export function formatContrastReport(result) {
         : ` — ${run.fg} on ${run.bg} at ${run.size}px/${run.weight}, ${run.ratio}:1, needs ${run.need}:1`
       : ''
     const from = was && typeof was.ratio === 'number' ? ` (baseline froze ${was.ratio}:1)` : ''
-    return `  ${key}\n    ${where}${measured}${from}`
+    const blind = run && run.unreadable ? `, and ${run.unreadable} instance(s) of it the walker cannot read` : ''
+    return `  ${key}\n    ${where}${measured}${blind}${from}`
   }
   for (const [title, rows] of [
     ['New runs below their contrast floor:', result.added],

@@ -6,9 +6,11 @@ import {
   THEMES,
   collectRuns,
   compare,
+  contrastRatio,
   entryFor,
   floorFor,
   formatContrastReport,
+  roundRatio,
   tightenedBaseline,
   worstOf,
 } from '../../frontend/scripts/contrast-ratchet-core.mjs'
@@ -178,19 +180,71 @@ test('a run planted below its floor goes red, and freezing it turns the page gre
   expect(compare(frozen, worstOf(planted)).ok, 'and the way out is to freeze it on purpose').toBe(true)
 })
 
+test('the ratio the page works out is the one the rule would', async ({ page }) => {
+  // Every judgement this gate makes rests on a number the page worked out for
+  // itself. `need` is cross-checked run by run in collect(), and the floors agree
+  // because of it; `ratio` never was, and the module's own luminance() has no
+  // caller outside its unit test. So editing the formula in the page — the half
+  // that actually decides — would move every judgement with nothing to notice,
+  // and editing the module's copy would move nothing at all. This measures real
+  // painted runs whose colours are known and requires both halves to agree.
+  await open(page, '/', 'light')
+  const planted = await page.evaluate(
+    (pairs: [string, string][]) =>
+      pairs.map(([fg, bg], index) => {
+        const el = document.createElement('span')
+        el.className = `contrast-probe contrast-probe-${index}`
+        el.textContent = 'probe'
+        el.style.color = fg
+        el.style.background = bg
+        el.style.fontSize = '16px'
+        el.style.fontWeight = '400'
+        document.body.appendChild(el)
+        return { selector: `span.contrast-probe.contrast-probe-${index}`, fg, bg }
+      }),
+    PROBES,
+  )
+  const runs = await page.evaluate(collectRuns)
+  for (const { selector, fg, bg } of planted) {
+    const run = runs.find((candidate: { selector: string }) => candidate.selector === selector)
+    expect(run, `${selector} was not walked`).toBeTruthy()
+    expect(run.unjudged, `${selector} paints on a solid ground of its own`).toBe('')
+    expect(run.ratio, `${selector} ${fg} on ${bg}`).toBe(roundRatio(contrastRatio(hex(fg), hex(bg))))
+  }
+})
+
+/** Colours the pages really paint, and the two halves of the rule must agree on:
+ * --faint on white (below the 4.5 text floor), the amber fill's label (below the
+ * 3 large-text/icon floor), and ordinary ink on white (above both). */
+const PROBES: [string, string][] = [
+  ['#747a82', '#ffffff'],
+  ['#ffffff', '#f57f17'],
+  ['#101418', '#ffffff'],
+]
+
+/** `#rrggbb` as the `[r, g, b]` triple the rule takes. */
+function hex(value: string): [number, number, number] {
+  return [parseInt(value.slice(1, 3), 16), parseInt(value.slice(3, 5), 16), parseInt(value.slice(5, 7), 16)]
+}
+
 /** The baseline file as it is written, matching the other ratchets' shape. */
 function baselineFile(runs: Record<string, object>) {
   return {
     _comment:
       'Frozen rendered-contrast debt on the public pages, one entry per text run that is below ' +
       'its WCAG floor (4.5:1, or 3:1 for large text and icon glyphs) or that the walker cannot ' +
-      'measure at all — a `ratio` of null with a reason means a background image or gradient ' +
-      'sits between the run and its ground, and those are frozen too rather than skipped. The ' +
-      'ratchet blocks any new or worse run and the baseline only goes down; each entry records ' +
-      'the worst instance of that element, its floor, and a sample of its text. Regenerate with ' +
-      '`CONTRAST_UPDATE=1 pnpm --dir e2e exec playwright test contrast-ratchet`, which will ' +
-      'not add a key the baseline has never seen unless CONTRAST_FREEZE_NEW=1 is set as well. ' +
-      'The rule and its messages live in frontend/scripts/contrast-ratchet-core.mjs.',
+      'measure, wholly or in part — a `ratio` of null with a reason means a background image or ' +
+      'gradient ' +
+      'sits between the run and its ground, and those are frozen too rather than skipped. One ' +
+      'entry covers a whole selector, and a selector is not always one element: `ratio` answers ' +
+      'for the instances of it the walker could read, and `unreadable` counts those it could ' +
+      'not, so text hidden behind a picture cannot drop out of the check by sitting beside a ' +
+      'readable sibling. `sample` is a piece of the text the ratio was measured on. The ratchet ' +
+      'blocks any new or worse run, and the count is ratcheted the same way; the baseline only ' +
+      'goes down. Regenerate with `CONTRAST_UPDATE=1 pnpm --dir e2e exec playwright test ' +
+      'contrast-ratchet`, which will not add a key the baseline has never seen unless ' +
+      'CONTRAST_FREEZE_NEW=1 is set as well. The rule and its messages live in ' +
+      'frontend/scripts/contrast-ratchet-core.mjs.',
     runs,
   }
 }
