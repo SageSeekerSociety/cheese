@@ -33,7 +33,6 @@ from sqlalchemy.sql.elements import (
     UnaryExpression,
 )
 
-from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.conversation.models import Conversation
 from app.domain.identity.handles import (
@@ -722,7 +721,7 @@ class TopicRepository:
         )
 
     async def private_unread_counts(
-        self, project_id: uuid.UUID, user_handle: str
+        self, project_id: uuid.UUID, user_handle: str, *, seats: dict[str, str]
     ) -> dict[str, int]:
         """Unread count per 私聊, keyed by the OTHER party.
 
@@ -749,23 +748,19 @@ class TopicRepository:
         「不是我」的席位不止一个，这间房就答不出对面是谁：没有这道闸，三席的房
         间每一个「不是我」的席位各算一遍，同样的未读数翻一倍，还凭空多出一行归给
         别人的角标。答不出就一条不报，与那个读点在同一间房上答案一致。
+
+        ``seats`` 是「席位 handle → 队友的名字」，从外面喂进来：答得出这份对应的
+        是 `agent_instance`（第 3 层），本包在第 4 层，够不着它的表
+        （``app.domain.topic.ports.SeatHandles``）。
         """
-        seats = {
-            agent_instance_handle(row.id): row.handle
-            for row in (
-                await self._session.scalars(
-                    select(AgentInstance).where(AgentInstance.project_id == project_id)
-                )
-            ).all()
-        }
         project = await self._session.get(Project, project_id)
         default_handle = CHEESE_HANDLE
         if project is not None and project.default_agent_instance_id is not None:
-            default = await self._session.get(
-                AgentInstance, project.default_agent_instance_id
+            # 项目自己的芝士也在 `seats` 里（它是这个项目的一个实例），所以这一问
+            # 是一次查表，不是第二次读库。
+            default_handle = seats.get(
+                agent_instance_handle(project.default_agent_instance_id), CHEESE_HANDLE
             )
-            if default is not None:
-                default_handle = default.handle
         mine = aliased(TopicMembership)
         theirs = aliased(TopicMembership)
         stmt = (

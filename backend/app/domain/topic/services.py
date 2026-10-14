@@ -75,6 +75,7 @@ from app.domain.topic.models import (
     TopicRole,
     TopicStatus,
 )
+from app.domain.topic.ports import SeatHandles
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -569,11 +570,14 @@ class TopicService:
         return await self._repo.unread_counts(project_id, user_handle)
 
     async def private_unread_counts(
-        self, project_id: uuid.UUID, user_handle: str
+        self, project_id: uuid.UUID, user_handle: str, *, seat_handles: SeatHandles
     ) -> dict[str, int]:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
-        return await self._repo.private_unread_counts(project_id, user_handle)
+        seats = await seat_handles(self._session, project_id)
+        return await self._repo.private_unread_counts(
+            project_id, user_handle, seats=seats
+        )
 
     async def mark_read(self, conversation_id: uuid.UUID, user_handle: str) -> None:
         """Bump the cursor on a room's own conversation or on one of its tasks."""

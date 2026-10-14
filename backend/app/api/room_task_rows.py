@@ -32,6 +32,7 @@ from app.domain.addressing import Event, address
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import last_output_at, running_tasks
 from app.domain.agent.opening import opening_state
+from app.domain.agent_instance.configuration import catalog
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
@@ -42,7 +43,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
-from app.domain.room_task import binding, presentation
+from app.domain.room_task import presentation
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import hand_of
 from app.domain.room_task.schemas import TaskOut
@@ -106,7 +107,7 @@ async def task_rows(
     # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
     # 构造几百遍。
     project = await ProjectRepository(db).get(project_id)
-    choices = binding.catalog(project.settings if project else None)
+    choices = catalog(project.settings if project else None)
     running = await running_tasks(chat, db, [t for t, _ in threads])
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
@@ -443,7 +444,7 @@ async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dic
     out["model"] = presentation.card_model(
         task,
         spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
-        choices=binding.catalog(project.settings if project else None),
+        choices=catalog(project.settings if project else None),
     )
     card = cards.get(task.id)
     out["card"] = (

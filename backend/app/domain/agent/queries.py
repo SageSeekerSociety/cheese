@@ -29,6 +29,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
 )
+from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.about import EventAbout, landing
@@ -468,7 +469,7 @@ def _model_policy_call(project, agent=None) -> gate.Call:
     在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
     给一个猜出来的人。
     """
-    choices = binding.catalog(project.settings)
+    choices = catalog(project.settings)
     bound = binding.resolve(
         None,
         choices,

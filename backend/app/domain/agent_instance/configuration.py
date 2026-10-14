@@ -139,6 +139,21 @@ def model_choices(project_settings: dict | None) -> list[dict]:
     return choices
 
 
+def catalog(project_settings: dict | None) -> dict[str, dict]:
+    """这个项目能用的模型，按 id 排好 —— `model_choices` 的按 id 版。
+
+    单独一步而不是藏在 `resolve` 里，是因为它按项目算一次就够，而读它的地方是按活
+    循环的：一个房间的看板一屏几百张卡，每张卡重建一次全目录，构造的次数和卡数一样
+    多，答案却完全一样。
+
+    和 `model_choices` 住在一起，是因为答得出「这个项目能用哪些模型」的只有本包：
+    目录的每一行都由这里的名单、池和骨架算出来（见上面那几段），按 id 排一次是同一
+    件事的收尾。绑定一条活的那个包在第 4 层，够不着第 3 层，它拿在手里的就是这份排
+    好的目录。
+    """
+    return {choice["id"]: choice for choice in model_choices(project_settings)}
+
+
 def _drives(harness: Harness, model: dict) -> bool:
     """Can this harness be pointed at this model, in this deployment?
 

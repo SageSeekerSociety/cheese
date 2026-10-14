@@ -42,6 +42,7 @@ from app.domain.agent.session_host.contract import SessionRef
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent.skills import load_skills
 from app.domain.agent.supply import GATEWAY
+from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -256,7 +257,7 @@ async def bind(session: AsyncSession, asked: Asked, seat: str | None = None) -> 
     seat = seat or agent_instance_handle(agent.instance_id)
     bound = binding.resolve(
         None,
-        binding.catalog(project.settings),
+        catalog(project.settings),
         agent_model=agent.configuration.get("model"),
         default_model=(project.settings or {}).get("default_model"),
     )
@@ -272,7 +273,7 @@ async def bind(session: AsyncSession, asked: Asked, seat: str | None = None) -> 
 async def admit(session: AsyncSession, project_id: uuid.UUID, bound: Bound) -> None:
     """Refuse the question the way the agent's own turn would be refused."""
     project = await ProjectService(session).get_or_404(project_id)
-    choice = binding.catalog(project.settings)[bound.model]
+    choice = catalog(project.settings)[bound.model]
     result = gate.check(
         gate.Call(
             resource=gate.Resource.model,

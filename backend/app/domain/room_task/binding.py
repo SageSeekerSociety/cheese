@@ -1,4 +1,9 @@
-"""Resolve a work binding, teammate override, or project default against one catalog."""
+"""Resolve a work binding, teammate override, or project default against one catalog.
+
+目录（`choices`）是调用方递进来的，本模块不自己去够它：认「这个项目能用哪些模型」
+的是 `agent_instance.configuration`（第 3 层），本包在第 4 层，够不着 —— 那份目录
+按 id 从 `catalog` 拿，本模块只在它上面挑一个。
+"""
 
 from dataclasses import dataclass
 
@@ -6,7 +11,6 @@ from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.supply import SUBSCRIPTION
-from app.domain.agent_instance.configuration import model_choices
 from app.domain.room_task.models import Task
 
 
@@ -15,9 +19,9 @@ class WorkBinding:
     """一条活占用的模型资源。
 
     ``supply`` 跟着一起出，因为它不是从 id 上猜出来的 —— 订阅模型的 id 是
-    ``sonnet`` 这样的短名，前缀里看不出它走订阅；目录（``catalog``）是唯一知道
-    这件事的地方，而调用方都要它：轮次组装拿它决定要不要换成 Claude 的全名，
-    准入拿它决定送哪个池。
+    ``sonnet`` 这样的短名，前缀里看不出它走订阅；目录
+    （``agent_instance.configuration.catalog``）是唯一知道这件事的地方，而调用方
+    都要它：轮次组装拿它决定要不要换成 Claude 的全名，准入拿它决定送哪个池。
     """
 
     model: str
@@ -38,16 +42,6 @@ class WorkBinding:
             if self.supply == SUBSCRIPTION
             else self.model
         )
-
-
-def catalog(project_settings: dict | None) -> dict[str, dict]:
-    """这个项目能用的模型，按 id 排好。
-
-    单独一步而不是藏在 `resolve` 里，是因为它按项目算一次就够，而读它的地方是按
-    活循环的：一个房间的看板一屏几百张卡，每张卡重建一次全目录，构造的次数和卡数
-    一样多，答案却完全一样。
-    """
-    return {choice["id"]: choice for choice in model_choices(project_settings)}
 
 
 def resolve(

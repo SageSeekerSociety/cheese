@@ -16,6 +16,16 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.handles import agent_instance_handle
+
+
+async def seat_handles(session: AsyncSession, project_id: uuid.UUID) -> dict[str, str]:
+    """`app.domain.topic.ports.SeatHandles`：这个项目名下的席位，按席位 handle 排好。
+
+    键是席位 handle，因为调用方手里拿的是名册上的 handle；值是队友自己的名字，
+    因为它要的是「对面是谁」。"""
+    rows = await AgentInstanceService(session).list_for_project(project_id)
+    return {agent_instance_handle(row.id): row.handle for row in rows}
 
 
 async def task_teammate(
