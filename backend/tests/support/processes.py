@@ -1,5 +1,8 @@
 """The processes running on this machine, as a test can see them."""
 
+import contextlib
+import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -37,3 +40,18 @@ def process_list() -> list[tuple[int, str]]:
             (int(entry.name), raw.replace(b"\0", b" ").decode(errors="replace"))
         )
     return rows
+
+
+def end_processes_under(directory: Path) -> None:
+    """Kill every process whose command line names `directory`.
+
+    For what a pinned build leaves behind when it exits: its session hook
+    (`cheese sync-agents`, through the shell prefix) reaches for a machine a
+    test has none of, and the prefix waits a minute for one and its stop
+    watcher ten more, each in a session of its own, so nothing the build's
+    process group gets reaches them.
+    """
+    for pid, args in process_list():
+        if str(directory) in args:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)

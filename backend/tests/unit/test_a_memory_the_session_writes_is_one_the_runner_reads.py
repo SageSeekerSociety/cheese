@@ -14,11 +14,9 @@ pinned build runs with the plugin that preparation writes, against the
 deterministic model fixture.
 """
 
-import contextlib
 import importlib.util
 import json
 import os
-import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -26,7 +24,7 @@ from pathlib import Path
 from app.domain.agent.harness.claude_code.remote_execution import client, release
 from app.domain.agent.harness.claude_code.runner import Runner
 from tests.pinned_claude import claude_binary
-from tests.support.processes import process_list
+from tests.support.processes import end_processes_under
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -69,21 +67,6 @@ class Executor:
     def call(self, operation, args=None):
         assert operation == "ping", operation
         return {"workspace": "/executor/project"}
-
-
-def _end_what_the_build_left(directory: Path) -> None:
-    """End what the build left running under ``directory``.
-
-    Its session hook (`cheese sync-agents`, through the shell prefix) reaches
-    for a machine this test has none of: the prefix waits a minute for one and
-    its stop watcher ten more, each in a session of its own, so the build
-    exits with them still running and nothing it holds reaches them. Only
-    their command lines, which name this test's directory, find them.
-    """
-    for pid, args in process_list():
-        if str(directory) in args:
-            with contextlib.suppress(ProcessLookupError):
-                os.kill(pid, signal.SIGKILL)
 
 
 def _session_writes(tmp_path, monkeypatch, actions) -> Path:
@@ -160,7 +143,8 @@ def _session_writes(tmp_path, monkeypatch, actions) -> Path:
         server.shutdown()
         server.server_close()
         worker.join()
-        _end_what_the_build_left(tmp_path)
+        # The build's session hook outlives it (`end_processes_under`).
+        end_processes_under(tmp_path)
     assert result.returncode == 0, result.stderr
     assert "ACCEPTANCE_DONE" in result.stdout, result.stdout
     return home
