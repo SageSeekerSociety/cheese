@@ -120,6 +120,21 @@ jobs:
       - name: Component boundaries (eslint ratchet)
         run: pnpm run lint:boundary
 
+      # Web Storage: nothing under src/ may reference localStorage or
+      # sessionStorage directly. They throw in Safari private mode and when the
+      # quota is full, and they are absent outside a browser — one throw in a
+      # setup() or a watcher takes the render or the interaction with it.
+      # src/lib/browserStorage.ts is the one place that accepts those failure
+      # modes, and it never throws. Ratcheted like the steps above: the
+      # references already in the tree are frozen in
+      # browser-storage-baseline.json and only new ones fail, so the migration
+      # can be paid down file by file. Read-only; the writer is `pnpm run
+      # lint:storage:update`, which only lowers counts. Its own tests are
+      # scripts/browser-storage-ratchet.test.mjs (run by the Ratchet unit tests
+      # step below), including the plant that requires this command to fail.
+      - name: Direct Web Storage (eslint ratchet)
+        run: pnpm run lint:storage
+
       # Accessibility: eslint-plugin-vuejs-accessibility's recommended rules over
       # src/**/*.vue (a clickable <div> with no keyboard path, a control with no
       # label, an image with no alt). Ratcheted like the boundary step above:

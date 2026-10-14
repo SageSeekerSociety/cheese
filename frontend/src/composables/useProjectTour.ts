@@ -13,6 +13,8 @@
 // 导览」从头再走一遍（`replayTour`）。
 import { computed, ref } from 'vue'
 
+import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
+
 export type GuideFacts = { asked: boolean; answered: boolean; accepted: boolean; learned: boolean }
 
 export interface GuideContext {
@@ -75,19 +77,12 @@ const KEY_STOP = 'cheese.tour.stop'
 const KEY_DONE = 'cheese.tour.done'
 
 function read(key: string): string | null {
-  try {
-    return localStorage.getItem(key)
-  } catch {
-    return null
-  }
+  return storageGet(key)
 }
 function write(key: string, value: string | null) {
-  try {
-    if (value === null) localStorage.removeItem(key)
-    else localStorage.setItem(key, value)
-  } catch {
-    // 存不下：这一次照样走，下次进来从头。
-  }
+  // 存不下：这一次照样走，下次进来从头。
+  if (value === null) storageRemove(key)
+  else storageSet(key, value)
 }
 
 const stop = ref(Number(read(KEY_STOP) ?? 0) || 0)

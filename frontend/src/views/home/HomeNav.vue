@@ -27,6 +27,7 @@ import { TeamsApi } from '@/api/teams'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
+import { storageGetStrings, storageSetJson } from '@/lib/browserStorage'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
@@ -98,20 +99,12 @@ useEventListener(window, 'focus', () => void loadTeams())
 // 哪些团队是展开的：记在这台浏览器上，下次打开还是那样。存不进去也不要紧。
 const OPEN_KEY = 'cheesex.homeNav.openTeams'
 function readOpen(): string[] {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(OPEN_KEY) || '[]')
-    return Array.isArray(saved) ? saved.filter((v): v is string => typeof v === 'string') : []
-  } catch {
-    return []
-  }
+  return storageGetStrings(OPEN_KEY)
 }
 const open = ref<string[]>(readOpen())
 function persist() {
-  try {
-    localStorage.setItem(OPEN_KEY, JSON.stringify(open.value))
-  } catch {
-    // 存不进去就只在这一次有效。
-  }
+  // 存不进去就只在这一次有效。
+  storageSetJson(OPEN_KEY, open.value)
 }
 function toggle(handle: string) {
   open.value = open.value.includes(handle) ? open.value.filter((h) => h !== handle) : [...open.value, handle]

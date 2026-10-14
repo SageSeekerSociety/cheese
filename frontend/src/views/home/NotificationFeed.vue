@@ -81,6 +81,7 @@ import {
 } from '@/components/common/Notification/categories'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
+import { storageGet, storageSet } from '@/lib/browserStorage'
 
 const { t } = useI18n()
 
@@ -98,12 +99,8 @@ const CATEGORY_LABEL: Record<NotificationCategory, string> = {
 // 是上一版的写法）不认识了就回「需我处理」。
 const FILTER_KEY = 'cheesex.notificationFeed.filter'
 function readFilter(): NotificationCategory {
-  try {
-    const saved = localStorage.getItem(FILTER_KEY)
-    return NOTIFICATION_CATEGORIES.find((category) => category === saved) ?? 'mine'
-  } catch {
-    return 'mine'
-  }
+  const saved = storageGet(FILTER_KEY)
+  return NOTIFICATION_CATEGORIES.find((category) => category === saved) ?? 'mine'
 }
 const filter = ref<NotificationCategory>(readFilter())
 
@@ -193,11 +190,8 @@ function reload() {
 }
 
 watch(filter, (value) => {
-  try {
-    localStorage.setItem(FILTER_KEY, value)
-  } catch {
-    // 存不进去就这一次有效。
-  }
+  // 存不进去就这一次有效。
+  storageSet(FILTER_KEY, value)
   reload()
 })
 
