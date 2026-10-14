@@ -205,7 +205,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 ## 质量闸 {#gates}
 
-机器闸全部**只读**（能改文件的版本是另一个脚本，见下）。除最后一道外都跑在 `.github/workflows/frontend.yml`：
+机器闸全部**只读**（唯一写出去的是 `src/api/openapi.d.ts` 这份生成物，它不进仓库；能改源码的版本是另一个脚本，见下），除最后一道外都跑在 `.github/workflows/frontend.yml`：
 
 | 闸门 | 命令 | 拦什么 |
 |---|---|---|
@@ -214,7 +214,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 | 浏览器存储 | `pnpm run lint:storage` | `src/` 里新增的直接读 `localStorage` / `sessionStorage`（含 `window.localStorage`、`window['localStorage']`、从 `window` 解构出来再用的写法）。它们会抛：Safari 无痕、配额满、根本没有浏览器上下文——一次抛在 `setup()` 里就连带整个渲染。唯一允许碰这两个全局的是 `src/lib/browserStorage.ts`（`storageGet` / `storageSet` / `storageRemove` / `storageGetJson` / `storageSetJson` / `storageGetStrings`，都不抛），规则与报文见 `frontend/scripts/browser-storage-ratchet-core.mjs`；测试文件、`src/test/**` 和该模块本身除外。`@vueuse/core` 的 `useStorage` 不算违规 |
 | 无障碍 | `pnpm run lint:a11y` | `src/**/*.vue` 模板里新增的 `eslint-plugin-vuejs-accessibility`（`flat/recommended`，配置在 `eslint.a11y.config.mjs`）违规：能点却没有键盘路径的元素、没绑名字的表单控件和 label、没有 alt 的图片、写错或缺必需属性的 ARIA。它只读静态模板，焦点顺序、对话框的焦点管理、对比度都看不到 |
 | 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
-| 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错 |
+| 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错；跑之前先由 `scripts/typecheck.mjs` 从 `backend/openapi.json` 生成 `src/api/openapi.d.ts` |
 | 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的） |
 | 渲染对比度 | `pnpm --dir e2e exec playwright test contrast-ratchet` | 公开页（`/`、`/solutions`、`/download`）两个主题下**渲染出来**的每一段文字和每一个图标字形，新增的或变得比基线更差的对比度不足（正文 4.5:1，大字与图标字形 3:1），以及同一个选择器下量不出来的实例变多——一个 key 上既有能测的段落、又有压在渐变上的段落时，两边都记下来，不会因为前者过线就把后者丢掉。量的是画出来的东西，所以继承色、半透明叠色、`::before` 画的字形都算在内——这三样正是源码里看不出来的那部分，也是这道闸门立在 `fe-` 其他颜色闸门之外的原因（`.mjs` 头里写了为什么不用 axe-core）。规则、棘轮算法和报文在 `frontend/scripts/contrast-ratchet-core.mjs`，存量冻在 `frontend/contrast-baseline.json`。它跑在 e2e 那套里：量对比度要一个真浏览器，而 Playwright 在 `e2e/`，所以命令和更新方式（`CONTRAST_UPDATE=1` / `CONTRAST_FREEZE_NEW=1`）与其他棘轮不同，见 `e2e/tests/contrast-ratchet.spec.ts` |
 

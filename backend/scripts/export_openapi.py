@@ -6,9 +6,10 @@
 Two files, both written by this script and nothing else:
 
 * ``backend/openapi.json`` — ``app.openapi()`` as the running app serves it. The
-  frontend generates its types from this file (``pnpm run gen:api-types`` in
-  ``frontend/``, written to ``frontend/src/api/openapi.d.ts``), so a route change
-  and the frontend types that follow it land in the same diff, and review sees both.
+  frontend compiles against types generated from this file
+  (``frontend/scripts/gen-api-types.mjs``), which its type check regenerates
+  rather than commits — so a route change lands with the contract it changed in
+  one diff, and no frontend file has to be rewritten to carry it.
 * ``backend/openapi-untyped.json`` — every operation whose success response has no
   schema (``ok(...)`` returns ``dict``, which OpenAPI can only call "some object").
   It is a ratchet: an operation may leave the list, none may join it. A new route
@@ -154,8 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         if stale:
             print(
                 f"stale: {', '.join(stale)} — run `uv run python -m "
-                "scripts.export_openapi` in backend/, then `pnpm run gen:api-types` "
-                "in frontend/",
+                "scripts.export_openapi` in backend/",
                 file=sys.stderr,
             )
             return 1

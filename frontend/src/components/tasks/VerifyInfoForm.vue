@@ -101,6 +101,7 @@ import { z } from 'zod'
 import { vuetifyConfig } from '@/utils/form'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { storageGet, storageGetJson, storageSetJson } from '@/lib/browserStorage'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -167,8 +168,7 @@ const events = useEvents()
 
 // 检查本地存储
 onMounted(() => {
-  const savedData = localStorage.getItem(STORAGE_KEY)
-  if (savedData) {
+  if (storageGet(STORAGE_KEY)) {
     hasSavedInfo.value = true
     // 如果有保存的信息，默认勾选保存选项
     saveToLocal.value = true
@@ -177,9 +177,8 @@ onMounted(() => {
 
 // 填入保存的信息
 const fillSavedInfo = () => {
-  const savedData = localStorage.getItem(STORAGE_KEY)
-  if (savedData) {
-    const data = JSON.parse(savedData) as Partial<VerifyInfoFormData>
+  const data = storageGetJson<Partial<VerifyInfoFormData>>(STORAGE_KEY)
+  if (data) {
     Object.entries(data).forEach(([key, value]) => {
       if (key !== 'applyReason' && value) {
         setFieldValue(key as keyof VerifyInfoFormData, value)
@@ -194,7 +193,7 @@ const submitForm = handleSubmit((values) => {
     // 保存除了申请理由之外的信息
     const dataToSave = { ...values }
     delete dataToSave.applyReason
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave))
+    storageSetJson(STORAGE_KEY, dataToSave)
   }
 
   // 通过事件总线发送数据

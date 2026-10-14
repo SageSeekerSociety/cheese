@@ -286,7 +286,9 @@ everything is still allowed to answer unknown.
   narrow type project
   extends the real `frontend/tsconfig.json`,
   bridges `node_modules`, and checks only the surviving changed files against the
-  existing tsc-ratchet baseline; a deleted non-spec source file forces the full
+  existing tsc-ratchet baseline, after generating the API types from
+  `backend/openapi.json` (`frontend/scripts/typecheck.mjs` — that generated file
+  is not committed); a deleted non-spec source file forces the full
   typecheck instead, since only the whole project sees its dangling importers.
   Non-spec is read from the name's ending, not from the text: a helper module
   called `migrationContract.spec.helper.ts` is imported by thirteen surviving

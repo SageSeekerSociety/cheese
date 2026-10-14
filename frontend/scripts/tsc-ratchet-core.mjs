@@ -2,11 +2,11 @@
 // directly (see tsc-ratchet-core.test.mjs, run by `node --test` in CI).
 //
 // WHY A RATCHET AND NOT A PLAIN GATE: the frontend had no type check in CI at
-// all, so `vue-tsc --noEmit` starts at 33 errors across 10 files. Blocking on
-// zero would mean either landing a large unrelated cleanup first or leaving the
-// gate off for weeks. A ratchet blocks the thing that actually matters from day
-// one — a NEW error — while the existing ones stay frozen at their current
-// count and can be paid down file by file.
+// all, so a bare `vue-tsc --noEmit` starts on the errors the tree already has.
+// Blocking on zero would mean either landing a large unrelated cleanup first or
+// leaving the gate off for weeks. A ratchet blocks the thing that actually
+// matters from day one — a NEW error — while the existing ones stay frozen at
+// their current count and can be paid down file by file.
 
 const ERROR_LINE = /^(\S[^(]*)\((\d+),(\d+)\): error (TS\d+):/
 
