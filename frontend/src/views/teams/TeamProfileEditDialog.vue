@@ -3,31 +3,41 @@
 // —— 名字、介绍、头像。地址（handle）、可见性、加入方式不在这里：它们在成员页的
 // 「团队地址与加入」卡上，而且对个人小队根本不成立（后端直接报错），混进来只会
 // 多出一组要藏的分支。
+//
+// 保存本身在外面做（`composables/useTeamNav.ts`）——换头像、PATCH、撞名和没权限那两种
+// 拒绝怎么落格，都在那一层。这一件只收三样输入、报上去（A 档）：`busy`、两句报错都由
+// 外面给。
 import type { Team } from '@/types'
 
 import { ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { ApiError } from '@/api'
-import { createAvatar } from '@/api/avatars'
-import { TeamsApi } from '@/api/teams'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import { t } from '@/i18n'
 
-const props = defineProps<{ team: Team }>()
-const emit = defineEmits<{ updated: [team: Team] }>()
+const props = defineProps<{
+  /** 要改的团队——弹窗打开时照它起手。 */
+  team: Team
+  /** 正在保存：按钮转圈，这时候关不掉。 */
+  busy?: boolean
+  /** 整张表单那一句报错（没网、没权限）。 */
+  error?: string
+  /** 落在名字那一格的报错（没填、撞名）。 */
+  nameError?: string
+}>()
+const emit = defineEmits<{
+  save: [payload: { name: string; intro: string; avatarFile?: File }]
+  /** 人在输入框里动了一下：外面把上一次那两句报错撤掉。 */
+  clearErrors: []
+}>()
 
 const open = defineModel<boolean>()
 
 const name = ref('')
 const intro = ref('')
 const avatarFile = ref<File>()
-const nameError = ref('')
-const error = ref('')
-const saving = ref(false)
 
 // 每次打开都从小队现在的样子起手：上一次取消留下的半截输入不该跟到下一次，
 // 上一次的报错也一样。`immediate` 是为了「打开着被挂上去」也算一次起手。
@@ -38,50 +48,13 @@ watch(
     name.value = props.team.name
     intro.value = props.team.intro ?? ''
     avatarFile.value = undefined
-    nameError.value = ''
-    error.value = ''
   },
   { immediate: true }
 )
 
-const save = async () => {
-  nameError.value = ''
-  error.value = ''
-  const trimmedName = name.value.trim()
-  if (!trimmedName) {
-    nameError.value = t('work.teamProfile.nameRequired')
-    return
-  }
-
-  saving.value = true
-  try {
-    // 换头像 = 先把图传上去换一个 id，再把它和另外两项一起 PATCH 上去；
-    // 没换图就不带 avatarId，免得把现成的头像覆盖掉。
-    const avatarId = avatarFile.value ? (await createAvatar(avatarFile.value)).avatarId : null
-
-    const { team } = await TeamsApi.update(props.team.id, {
-      name: trimmedName,
-      intro: intro.value.trim(),
-      ...(avatarId ? { avatarId } : {}),
-    })
-
-    emit('updated', team)
-    open.value = false
-    toast.success(t('work.teamProfile.saved'))
-  } catch (e) {
-    // 名字全站唯一：撞名是 409「Team name already exists」，要落到名字那一格，
-    // 别和「没网」「没权限」混成同一句通用报错 —— 用户能自己换一个名字解决它。
-    if (e instanceof ApiError && e.status === 409) {
-      nameError.value = t('work.teamProfile.nameTaken')
-    } else if (e instanceof ApiError && e.status === 403) {
-      error.value = t('work.teamProfile.forbidden')
-    } else {
-      error.value = t('work.teamProfile.saveFailed')
-      console.error(e)
-    }
-  } finally {
-    saving.value = false
-  }
+function save() {
+  if (props.busy) return
+  emit('save', { name: name.value, intro: intro.value, avatarFile: avatarFile.value })
 }
 </script>
 
@@ -90,8 +63,8 @@ const save = async () => {
     v-model="open"
     :title="t('work.teamProfile.editTitle')"
     :primary-label="t('work.teamProfile.save')"
-    :primary-loading="saving"
-    :close-disabled="saving"
+    :primary-loading="busy"
+    :close-disabled="busy"
     @primary="save"
   >
     <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
@@ -111,7 +84,7 @@ const save = async () => {
             :error-messages="nameError"
             class="mb-4"
             rounded="md"
-            @update:model-value="nameError = ''"
+            @update:model-value="emit('clearErrors')"
           ></v-text-field>
 
           <v-textarea

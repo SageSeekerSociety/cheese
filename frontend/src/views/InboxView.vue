@@ -3,6 +3,7 @@ import type { WaitingItem } from '@/cx_types'
 
 import { computed, onMounted, ref } from 'vue'
 
+import { useJoinSpace } from '@/composables/useJoinSpace'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
@@ -59,7 +60,8 @@ onMounted(() => {
 const noProjects = computed(() => store.projectsSettled && store.projects.length === 0)
 const projectTerm = termParams(DEFAULT_SHELL)
 const { show: showNewProjectDialog } = useNewProjectDialog()
-const joinOpen = ref(false)
+// 加入空间这件事和首页目录里那一行共用一份判断（见 `useJoinSpace`）：成了直接进那个空间。
+const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = useJoinSpace()
 
 /** 这一件要你做什么。负责人那一条按停在哪一格说：文档写好了等你开始、检查没过、被退回。 */
 function askOf(item: WaitingItem): { text: string; tone: 'warn' | 'danger' } {
@@ -310,7 +312,7 @@ async function dismissAll(projectId: string) {
     </template>
 
     <NotificationFeed />
-    <JoinSpaceDialog v-model="joinOpen" />
+    <JoinSpaceDialog v-model="joinOpen" :busy="joinBusy" :error="joinError" @submit="joinSpace" />
   </AppPage>
 </template>
 

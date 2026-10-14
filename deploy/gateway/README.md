@@ -165,8 +165,23 @@ the upstream drops the connection or reports `response.failed`. The router holds
 `message_start` back until content arrives, so the caller got a 200 stream with
 no content and no stop, which Claude Code reports as "Stream ended without
 receiving any events" and does not retry. `patch_responses_stream_errors.py`
-ends such a stream with an Anthropic `error` event instead.
-`test_responses_stream_errors.py` checks this against a local fake upstream.
+ends such a stream with an Anthropic `error` event instead. A clean HTTP EOF
+without a terminal Responses event also emits a retryable `overloaded_error`:
+HTTP framing alone cannot prove the answer completed.
+
+Only a text block the failure left open can be recovered: it is closed with a
+`content_block_stop` before the error, so a client reading that block retries
+the model request. A tool block is deliberately left open, and this applies to both a
+complete and a partial `function_call` — emitting a `content_block_stop` for it
+would make the caller run the tool instead of retrying. So a failure is not
+made recoverable in general: a stream whose only open block is a `tool_use`
+still fails. If a text block is also open, closing it lets the client retry the
+model request; that unfinished tool is discarded without execution.
+Neither content is replayed, nor a successful `message_stop` manufactured, and
+a declared token limit keeps its normal `max_tokens` ending.
+`test_responses_stream_errors.py` checks these boundaries against a local fake
+upstream, including one that fails while a text block is open and asserts the
+adapter ends with a single error rather than two.
 
 With no fallback configured, the router then re-raises that failure to the
 proxy, which as pinned ends the stream with an unnamed OpenAI-shaped
