@@ -1,11 +1,9 @@
 import type { User } from '@/types/users'
 
+import { storageGetJson } from '@/lib/browserStorage'
+
 function currentAccount(): User | null {
-  try {
-    return JSON.parse(localStorage.getItem('user') || 'null') as User | null
-  } catch {
-    return null
-  }
+  return storageGetJson<User>('user')
 }
 
 /** The signed-in account as stored at sign-in, or null. */
