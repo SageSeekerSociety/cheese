@@ -876,6 +876,8 @@
   "workComputerPreparing": "环境仍在准备，对话和平台工具仍可用",
   "atMustBeIso": "at 要是一个 ISO-8601 时刻",
   "docAgentAskUnavailable": "暂时无法提问，稍后重试",
+  "webSearchNotConfigured": "这个部署没有配置网页搜索服务",
+  "webSearchUnavailable": "网页搜索服务没有应答（{reason}）",
   "docAgentPresetNotFound": "没有这个选项",
   "docAgentPresetNeedsSelection": "这个选项要选中文字才能用",
   "docAgentNoAnswerToComment": "这次没有可放进评论的回答",
