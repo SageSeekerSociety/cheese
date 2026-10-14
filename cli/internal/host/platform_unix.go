@@ -5,6 +5,7 @@ package host
 import (
 	"os"
 	"syscall"
+	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 )
@@ -33,6 +34,9 @@ func (t tmuxScreens) SaveIdentity(name, owner, data string) error {
 }
 func (t tmuxScreens) Identities(owner string) (map[string]string, error) {
 	return t.m.Identities(owner)
+}
+func (t tmuxScreens) Exited(owner string, after time.Duration) ([]string, error) {
+	return t.m.Exited(owner, after, time.Now())
 }
 func (t tmuxScreens) Spawn(name string, argv, env []string, cols, rows int) (screen, error) {
 	s, err := t.m.Spawn(name, argv, env, cols, rows)

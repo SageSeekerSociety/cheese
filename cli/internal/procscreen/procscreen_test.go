@@ -2,7 +2,9 @@ package procscreen
 
 import (
 	"errors"
+	"os"
 	"testing"
+	"time"
 )
 
 // fakeSystem stands in for the operating system: programs it started, which
@@ -133,5 +135,33 @@ func TestAScreenHasNoTerminalToShow(t *testing.T) {
 	}
 	if _, err := s.Attach(80, 24, func([]byte) {}); !errors.Is(err, ErrNoView) {
 		t.Fatalf("attach: %v", err)
+	}
+}
+
+// An ended screen is kept for a while so its log can be read, and named once
+// it has been quiet that long. A running screen is never named.
+func TestAnEndedScreenIsNamedOnceItHasBeenQuietLongEnough(t *testing.T) {
+	m, sys := newFake(t)
+	const owner = "https://cheese.example"
+	for _, name := range []string{"running", "ended"} {
+		if _, err := m.Spawn(name, []string{"bash"}, nil, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.SaveIdentity(name, owner, `{"sid":"`+name+`"}`); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(m.Log(name), []byte("bye\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sys.alive[2] = false // "ended" finished
+
+	soon, err := m.Exited(owner, time.Hour, time.Now())
+	if err != nil || len(soon) != 0 {
+		t.Fatalf("named right after it ended: %v, %v", soon, err)
+	}
+	later, err := m.Exited(owner, time.Hour, time.Now().Add(2*time.Hour))
+	if err != nil || len(later) != 1 || later[0] != "ended" {
+		t.Fatalf("two hours on: %v, %v; want only the ended screen", later, err)
 	}
 }
