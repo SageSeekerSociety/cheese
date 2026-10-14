@@ -323,7 +323,6 @@ ignore_imports =
     app.domain.memory.migration_service -> app.domain.project.services
     app.domain.memory.migration_service -> app.domain.usage.ledger
     app.domain.memory.reads -> app.domain.block.models
-    app.domain.memory.redundant -> app.domain.agent.execution
     app.domain.memory.redundant -> app.domain.topic.models
     app.domain.mentions -> app.domain.membership.roster
     app.domain.mentions -> app.domain.topic.models
@@ -351,7 +350,6 @@ ignore_imports =
     app.domain.project.services -> app.domain.topic.repositories
     app.domain.project.services -> app.domain.topic.services
     app.domain.questions.services -> app.domain.answers.repositories
-    app.domain.repository.forge_files -> app.domain.agent.device_hub
     app.domain.repository.forge_files -> app.domain.agent.execution
     app.domain.repository.forge_files -> app.domain.project.forge
     app.domain.repository.forge_files -> app.domain.room_task.models
@@ -586,7 +584,6 @@ unmatched_ignore_imports_alerting = warn
 ignore_imports =
     app.domain.membership.roster -> app.domain.agent_instance.own
     app.domain.membership.roster -> app.domain.agent_instance.services
-    app.domain.memory.redundant -> app.domain.agent.execution
     app.domain.notification.services -> app.domain.block.models
     app.domain.notification.services -> app.domain.block.repositories
     app.domain.notification.services -> app.domain.block.schemas
@@ -615,7 +612,6 @@ ignore_imports =
     app.domain.project.services -> app.domain.task.models
     app.domain.project.services -> app.domain.task.teaching
     app.domain.project.services -> app.domain.usage.ledger
-    app.domain.repository.forge_files -> app.domain.agent.device_hub
     app.domain.repository.forge_files -> app.domain.agent.execution
     app.domain.repository.forge_files -> app.domain.room_task.models
     app.domain.repository.identity -> app.domain.room_task.services

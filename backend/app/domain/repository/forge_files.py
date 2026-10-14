@@ -9,6 +9,7 @@ from urllib.parse import quote
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import release_read_session
+from app.core.device_failures import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
@@ -18,7 +19,6 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent import execution
-from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.forge import (
     binding_for_project,

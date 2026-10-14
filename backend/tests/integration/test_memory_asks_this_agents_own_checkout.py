@@ -12,9 +12,9 @@ import uuid
 
 import pytest
 
-from app.domain.agent import execution
 from app.domain.agent.harness import harness_for
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.memory.ports import ExecutorCall
 from app.domain.memory.redundant import agent_checkout_search
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -35,6 +35,21 @@ def _at(device: str, *, generation: str) -> dict:
     }
 
 
+def _recording() -> tuple[list[dict], ExecutorCall]:
+    """把执行器调用记下来，还回「repo 里没有」——这条用例问的是找谁查。
+
+    递进去的是一个同形状的调用（`ExecutorCall`），和 `agent.execution.call` 一样：
+    真够到那台机器是第 5 层的事，`memory` 在第 4 层。
+    """
+    asked: list[dict] = []
+
+    async def call(target, method, params):
+        asked.append(target)
+        return {"searched": True, "hits": []}
+
+    return asked, call
+
+
 async def _room(session):
     await registered(session, "andyl")
     project = await ProjectService(session).create(
@@ -46,27 +61,15 @@ async def _room(session):
     return project, room
 
 
-def _recording(monkeypatch) -> list[dict]:
-    """把执行器调用记下来，还回「repo 里没有」——这条用例问的是找谁查。"""
-    asked: list[dict] = []
-
-    async def call(target, method, params):
-        asked.append(target)
-        return {"searched": True, "hits": []}
-
-    monkeypatch.setattr(execution, "call", call)
-    return asked
-
-
 async def test_another_teammates_hands_are_not_this_agents_checkout(
-    business_db_factory, monkeypatch
+    business_db_factory,
 ):
     """房间里坐着另一位队友那双手，问的人是 reviewer——那双手不是它的。
 
     拿房间里第一条带租约的地点，这里就会去默认那位的检出目录里查，命中就是一次凭空
     拒绝。reviewer 自己有手之后，查的才是它自己那条。
     """
-    asked = _recording(monkeypatch)
+    asked, call = _recording()
     async with business_db_factory() as session:
         project, room = await _room(session)
         harness = harness_for(project.settings)
@@ -81,7 +84,7 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
         )
         await session.flush()
 
-        search = agent_checkout_search(session, room, "reviewer", harness)
+        search = agent_checkout_search(session, room, "reviewer", harness, call=call)
         assert await search(["pnpm"]) == []
         assert asked == []
 
@@ -100,9 +103,9 @@ async def test_another_teammates_hands_are_not_this_agents_checkout(
 
 
 async def test_a_lease_from_a_previous_generation_is_not_this_turns_hand(
-    business_db_factory, monkeypatch
+    business_db_factory,
 ):
-    asked = _recording(monkeypatch)
+    asked, call = _recording()
     async with business_db_factory() as session:
         project, room = await _room(session)
         harness = harness_for(project.settings)
@@ -115,7 +118,7 @@ async def test_a_lease_from_a_previous_generation_is_not_this_turns_hand(
         )
         await session.flush()
 
-        search = agent_checkout_search(session, room, "reviewer", harness)
+        search = agent_checkout_search(session, room, "reviewer", harness, call=call)
         assert await search(["pnpm"]) == []
 
     # 查不成就存下来（返回空），但不许把上一代的残留当成本次的手去查。
