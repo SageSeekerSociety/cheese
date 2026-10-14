@@ -7,6 +7,7 @@ import type { PersistedClient, Persister } from '@tanstack/query-persist-client-
 
 import { persistQueryClient } from '@tanstack/query-persist-client-core'
 
+import { rememberProjects } from '@/lib/addresses'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -47,8 +48,36 @@ const persister: Persister = {
   },
 }
 
+/**
+ * 存着的那份清单里，「短名 → 项目」的对照当场记下来。
+ *
+ * 冷开一个项目页时，地址守卫（`lib/addresses` 的 `canonicalAddress`）要先把短名换成
+ * UUID 才让页面的代码下去；换不出来就得先等一次 `/addresses` 请求。存着的清单里本来
+ * 就有这份对照，先记下来，守卫那一步就不必再等一个来回。
+ *
+ * 只记对照，不放缓存：缓存里那份旧清单照旧由 `persistQueryClient` 放回来，页面照旧
+ * 重读一次。换了人（`buster` 对不上）或者存得太久的一律不看。
+ */
+function seedKnownProjects(): void {
+  try {
+    const raw = storage()?.getItem(STORAGE_KEY)
+    if (!raw) return
+    const stored = JSON.parse(raw) as PersistedClient
+    if (stored.buster !== myHandle()) return
+    if (Date.now() - stored.timestamp > MAX_AGE_MS) return
+    for (const query of stored.clientState?.queries ?? []) {
+      if (query.queryKey?.[0] !== keys.projects()[0]) continue
+      const rows = query.state?.data
+      if (Array.isArray(rows)) rememberProjects(rows as { id: string; slug?: string }[])
+    }
+  } catch {
+    // 存的那份读不动（坏了、格式变了、存储被禁用）：当作没有，后面照常去读。
+  }
+}
+
 /** 打开页面时调一次：先把存着的那份放回缓存，之后清单一变就存一份。 */
 export function persistProjectList(): void {
+  seedKnownProjects()
   persistQueryClient({
     queryClient,
     persister,
