@@ -26,8 +26,6 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.agent import clone
-from app.domain.agent.harness import harness_for
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import (
@@ -70,7 +68,9 @@ from app.domain.topic.models import (
     TopicStatus,
 )
 from app.domain.topic.ports import (
+    ForkTranscript,
     NamedTeammate,
+    ProjectHarness,
     RoomTeammate,
     SeatHandles,
     SeatProject,
@@ -1145,6 +1145,8 @@ class TopicService:
         target_topic_id: uuid.UUID,
         source_topic_id: uuid.UUID,
         room_teammate: RoomTeammate,
+        fork: ForkTranscript,
+        project_harness: ProjectHarness,
     ) -> Topic:
         """Deep-copy the source topic's Claude conversation onto the target topic
         (transcript-fork, fusion-design §6 clone — distinct from a task).
@@ -1153,8 +1155,9 @@ class TopicService:
         forks the source's full conversation state so the target resumes
         exactly where the source is.
 
-        ``room_teammate`` 是递进来的口子：两边各是谁在干活，答案在第 5 层
-        （`RoomTeammate`），本包只拿那两个 handle。"""
+        ``room_teammate``、``fork``、``project_harness`` 三样都是递进来的口子：两边
+        各是谁在干活（`RoomTeammate`）、转写怎么拷（`ForkTranscript`）、这个项目跑
+        哪个骨架（`ProjectHarness`），答案都在第 5 层，本包在第 2 层。"""
         target = await self.get_or_404(target_topic_id)
         source = await self.get_or_404(source_topic_id)
         if source.id == target.id:
@@ -1175,19 +1178,17 @@ class TopicService:
         # 目标同属一个项目（上面已经拒了跨项目），所以两边解析出来的是同一个，
         # 「两边骨架不同」这个问题在这里不存在。
         owner = await self._projects.get(target.project_id)
-        harness = harness_for(owner.settings if owner else None)
+        harness = project_harness(owner.settings if owner else None)
         source_sid = await sessions.resume_token(
             source.id, source_handle, harness=harness
         )
         if not source_sid:
             raise ValidationError(say("topicCloneNeverRan"))
-        new_sid = clone.mint_session_id()
         try:
-            clone.clone_transcript_files(
+            new_sid = fork(
                 source_session_dir=ws.session_dir(source.project_id, source.id),
                 source_session_id=source_sid,
                 target_session_dir=ws.session_dir(target.project_id, target.id),
-                new_session_id=new_sid,
                 # Claude resolves --resume under the slug of the cwd it runs
                 # with, so the fork must land under the TARGET topic's workdir.
                 target_cwd=ws.sandbox_topic_workdir(target.id),

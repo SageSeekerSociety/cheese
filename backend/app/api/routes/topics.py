@@ -30,6 +30,8 @@ from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService, project_refs_text
+from app.domain.agent.clone import fork_for as fork_transcript
+from app.domain.agent.harness import harness_for
 from app.domain.agent.liveness import (
     last_output_at,
     moving_topics,
@@ -1346,6 +1348,8 @@ async def clone_topic_from(
         target_topic_id=topic_id,
         source_topic_id=source_id,
         room_teammate=room_teammate,
+        fork=fork_transcript,
+        project_harness=harness_for,
     )
     await db.commit()
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))

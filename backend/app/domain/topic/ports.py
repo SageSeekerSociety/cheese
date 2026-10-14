@@ -1,10 +1,13 @@
 """这个包够不着的那些事，写在这里由调用方递进来。
 
-`topic` 在第 2 层，「这个项目的 AI 队友是谁」只有第 5 层的 `agent_instance` 答得
-出来，所以本包把自己要的那几次查问写在这儿，实现留在那个包里
-（`app/domain/agent_instance/adapters.py`），谁在门口谁递进去 —— 和
-`review/ports.py`、`block/ports.py` 同一条规矩：口子按消费者分开写，实现按提供者
-放。
+`topic` 在第 2 层，第 5 层那三个包（`agent`、`agent_instance`、`delivery`）里的
+事都够不着，所以本包把自己要的那几次调用写在这儿，实现留在上面，谁在门口谁递进去
+—— 和 `review/ports.py`、`block/ports.py` 同一条规矩：口子按消费者分开写，实现按
+提供者放。
+
+前四个问的是「这个项目的 AI 队友是谁」，实现在
+`app/domain/agent_instance/adapters.py`；后两个是克隆一次会话时用的，实现就在
+`agent.clone` 和 `agent.harness` 自己身上，那两个模块够得着，所以没有另起一份。
 
 递回来的都是内置类型，没有一个是那个包里的类：本包认不出它的类型，也不该认得。
 """
@@ -12,7 +15,9 @@
 from __future__ import annotations
 
 import uuid
-from typing import Protocol
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,3 +87,37 @@ class SeatProject(Protocol):
     async def __call__(
         self, session: AsyncSession, handle: str
     ) -> uuid.UUID | None: ...
+
+
+class ForkTranscript(Protocol):
+    """把一次会话的全部状态拷成新的一次，还回那个新会话 id。
+
+    形状收窄到本包要的那四样：源会话目录、源会话 id、目标会话目录、目标话题的
+    工作目录。最后一个非得给：转写要落在**目标**那个 cwd 的 slug 下，换过去的下
+    一轮 ``--resume`` 才找得到它，落在源那边就是拷了一份没人读的文件。
+
+    源转写缺了或者空的就抛 ``FileNotFoundError`` —— 本包把它翻成一句给人看的话。
+
+    新 id 由实现那一侧生成，本包不造：那个 id 是骨架自己的格式（今天是一个
+    UUID），不是本包的事。实现在 `agent.clone`（第 5 层），本包在第 2 层。
+    """
+
+    def __call__(
+        self,
+        *,
+        source_session_dir: Path,
+        source_session_id: str,
+        target_session_dir: Path,
+        target_cwd: str,
+    ) -> str: ...
+
+
+class ProjectHarness(Protocol):
+    """这个项目跑哪个骨架 —— 部署设置加项目设置答的一件（结论 28）。
+
+    形状就是 `agent.harness.harness_for` 的形状：收项目设置，还回一个骨架名。
+    克隆要把新会话记在会话键上，而会话键是 ``(会话, 队友的 handle, 骨架)``，骨架
+    是其中一样；答得出它的在第 5 层。
+    """
+
+    def __call__(self, project_settings: Mapping[str, Any] | None) -> str: ...

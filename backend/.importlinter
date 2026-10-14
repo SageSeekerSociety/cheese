@@ -381,8 +381,6 @@ ignore_imports =
     app.domain.task.teaching -> app.domain.space.models
     app.domain.task.visibility_service -> app.domain.space.repositories
     app.domain.team.services -> app.domain.task.repositories
-    app.domain.topic.services -> app.domain.agent.clone
-    app.domain.topic.services -> app.domain.agent.harness
     app.domain.topic.services -> app.domain.review.archive
     app.domain.topic.services -> app.domain.review.services
     app.domain.topic_membership.repositories -> app.domain.topic.models
@@ -621,8 +619,6 @@ ignore_imports =
     app.domain.topic.directory -> app.domain.room_task.services
     app.domain.topic.repositories -> app.domain.block.models
     app.domain.topic.schemas -> app.domain.room_task.schemas
-    app.domain.topic.services -> app.domain.agent.clone
-    app.domain.topic.services -> app.domain.agent.harness
     app.domain.topic.services -> app.domain.agent_session.services
     app.domain.topic.services -> app.domain.block.about
     app.domain.topic.services -> app.domain.block.models
