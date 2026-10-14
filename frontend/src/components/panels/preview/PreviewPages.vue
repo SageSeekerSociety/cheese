@@ -123,11 +123,12 @@ async function renderPage(slot: PageSlot, mine: number) {
 
     const textLayer = document.createElement('div')
     textLayer.className = 'pv-text'
-    // pdf.js 把每个 span 的 left/top 写成 `calc(… * var(--scale-factor))`，而它按
-    // 自己所在元素解析这个变量。放在外层那个 div 上继承看着也对，但 pdf.js 读的是
-    // 文字层本身——少了它整层会缩在左上角，而屏幕上看不出来：画布还是对的，只有
-    // 选中时高亮落在别处。
-    textLayer.style.setProperty('--scale-factor', String(scale))
+    // 文字层的几何由 pdf.js 写成变量，样式负责把变量乘出来，而这套变量它按自己所在
+    // 的元素读——所以三个都得挂在文字层上。`--total-scale-factor` 它自己就要用：文字
+    // 层的宽高是它按这个变量算出来写在元素上的。
+    textLayer.style.setProperty('--total-scale-factor', String(scale))
+    textLayer.style.setProperty('--scale-round-x', '1px')
+    textLayer.style.setProperty('--scale-round-y', '1px')
     host.appendChild(textLayer)
     const layer = new lib!.TextLayer({
       textContentSource: page.streamTextContent(),
@@ -482,15 +483,30 @@ onBeforeUnmount(() => {
   display: block;
 }
 
-/* 透明的可选文字，盖在画布上。定位由 pdf.js 按 --scale-factor 写在每个 span 上。 */
+/* 透明的可选文字，盖在画布上。
+ *
+ * pdf.js 6 只把几何写成变量：每个 span 一个 `--font-height`（这一行字的原始高矮，
+ * 不含缩放）、长句子一个 `--scale-x`、竖排一段 `--rotate`，而字号和 transform 得由
+ * 样式从这里算出来。少了这一段，字还是透明的、位置也对，坏在看不见的地方：每个
+ * span 按继承来的字号排版，盒子大小和纸上那些字对不上，选中落在隔壁，高亮盖不住。 */
 .pv__page :deep(.pv-text) {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
   position: absolute;
+  text-align: initial;
   inset: 0;
-  overflow: hidden;
+  /* `clip` 不是 `hidden`：hidden 是一个能滚的框，一路拖下去选的时候浏览器会把它自己
+     滚走，高亮跟着离开纸面，再被页框裁掉。 */
+  overflow: clip;
   line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
   text-size-adjust: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
 }
 
 .pv__page :deep(.pv-text span),
@@ -500,9 +516,27 @@ onBeforeUnmount(() => {
   color: transparent;
   cursor: text;
   transform-origin: 0 0;
+  user-select: text;
 }
 
+.pv__page :deep(.pv-text > span) {
+  z-index: 1;
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+/* 选中只剩底色：正文本来就是透明的，这里不点明 color 的话，浏览器会按「被选中的
+   文字」给它上色，选中的那几个字上又叠出一层同形状的字。 */
 .pv__page :deep(.pv-text ::selection) {
   background: var(--selection-bg);
+  color: transparent;
+}
+
+/* 换行本身不该画成一块高亮。 */
+.pv__page :deep(.pv-text br::selection) {
+  background: transparent;
 }
 </style>
