@@ -5,6 +5,7 @@ import {
   storageGet,
   storageGetJson,
   storageGetStrings,
+  storageKeys,
   storageRemove,
   storageSet,
   storageSetJson,
@@ -99,6 +100,40 @@ describe('JSON 读写', () => {
 
     expect(storageSetJson('k', circular)).toBe(false)
     expect(localStorage.getItem('k')).toBeNull()
+  })
+
+  // 调用者自己那层上限（草稿粘进一整个文件那种）：超了当作不写，写下去的还是原来那一份。
+  it('超过 maxChars 的值不写，原来那一份不动', () => {
+    storageSetJson('k', { n: '旧' })
+
+    expect(storageSetJson('k', { n: '新'.repeat(20) }, 'local', 12)).toBe(false)
+    expect(storageGetJson('k')).toEqual({ n: '旧' })
+
+    expect(storageSetJson('k', { n: '新' }, 'local', 12)).toBe(true)
+    expect(storageGetJson('k')).toEqual({ n: '新' })
+  })
+})
+
+describe('按键前缀枚举', () => {
+  it('只给前缀对得上的那些键', () => {
+    storageSet('draft:a', '1')
+    storageSet('draft:b', '2')
+    storageSet('other', '3')
+    storageSet('draft:c', '4', 'session')
+
+    expect(storageKeys('draft:').sort()).toEqual(['draft:a', 'draft:b'])
+  })
+
+  it('一条都没有时是空数组', () => {
+    expect(storageKeys('draft:')).toEqual([])
+  })
+
+  it('取不到存储对象时（存储被禁）是空数组', () => {
+    vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('SecurityError')
+    })
+
+    expect(storageKeys('draft:')).toEqual([])
   })
 })
 

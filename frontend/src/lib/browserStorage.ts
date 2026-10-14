@@ -78,15 +78,46 @@ export function storageGetJson<T = unknown>(key: string, area: StorageArea = 'lo
   }
 }
 
-/** 把值写成 JSON。序列化不了（循环引用）和写不进去一样返回 false。 */
-export function storageSetJson(key: string, value: unknown, area: StorageArea = 'local'): boolean {
+/**
+ * 把值写成 JSON。序列化不了（循环引用）和写不进去一样返回 false。
+ *
+ * `maxChars` 按序列化后的长度算，超了就当作不写 —— 给「一条记录里可能粘进一整个
+ * 文件，写满了会挤掉别人」的那种调用者用，它自己那层上限是多少、由它自己传。
+ */
+export function storageSetJson(
+  key: string,
+  value: unknown,
+  area: StorageArea = 'local',
+  maxChars: number = Number.POSITIVE_INFINITY
+): boolean {
   let raw: string | undefined
   try {
     raw = JSON.stringify(value)
   } catch {
     return false
   }
-  return raw === undefined ? false : storageSet(key, raw, area)
+  if (raw === undefined || raw.length > maxChars) return false
+  return storageSet(key, raw, area)
+}
+
+/**
+ * 这一份存储里所有以 `prefix` 开头的键，顺序不保证；存储不可用时是空数组。
+ * 枚举和读、写一样，都是那两个全局的能力，所以也收在这里 —— 按前缀清理或淘汰
+ * 「一条记录一个键」的调用者（话题一条、草稿一条）不必自己去数 `store.length`。
+ */
+export function storageKeys(prefix: string, area: StorageArea = 'local'): string[] {
+  const target = store(area)
+  if (!target) return []
+  const keys: string[] = []
+  try {
+    for (let i = 0; i < target.length; i++) {
+      const key = target.key(i)
+      if (key !== null && key.startsWith(prefix)) keys.push(key)
+    }
+  } catch {
+    // 遍历到一半被拒（站点数据被禁）：已经拿到的就是全部。
+  }
+  return keys
 }
 
 /** 读一份字符串数组（存进去的是 JSON 数组）。不是数组、里面混了别的东西，都按过滤后的结果算。 */

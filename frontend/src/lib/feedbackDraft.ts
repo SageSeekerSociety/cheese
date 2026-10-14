@@ -23,6 +23,8 @@
 import type { FeedbackKind, FeedbackVisibility } from '@/cx_types'
 import type { FeedbackDraft } from '@/stores/feedback'
 
+import { storageGetJson, storageRemove, storageSetJson } from './browserStorage'
+
 const KEY_PREFIX = 'cheese.feedback-draft.v1:'
 
 /** 只有一份，所以键是常量。前缀带版本：改形状时换 v2，老记录自然读不出来。 */
@@ -43,15 +45,6 @@ interface StoredDraft {
   draft: FeedbackDraft | null
   /** 被整份替换时挪到这里的那一份，见文件头。 */
   parked: FeedbackDraft | null
-}
-
-function storage(): Storage | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage
-  } catch {
-    // 站点数据被禁用时连读这个属性都会抛。
-    return null
-  }
 }
 
 /**
@@ -121,38 +114,23 @@ function parseDraft(value: unknown): FeedbackDraft | null {
 }
 
 function read(now: number): StoredDraft | null {
-  const store = storage()
-  if (!store) return null
-  try {
-    const rawText = store.getItem(KEY)
-    if (!rawText) return null
-    const parsed = JSON.parse(rawText) as Partial<StoredDraft>
-    if (typeof parsed?.savedAt !== 'number' || now - parsed.savedAt > MAX_AGE_MS) {
-      forgetFeedbackDraft()
-      return null
-    }
-    return {
-      savedAt: parsed.savedAt,
-      draft: parseDraft(parsed.draft),
-      parked: parseDraft(parsed.parked),
-    }
-  } catch {
-    // 读不懂就清掉：留一条坏记录只会让每次打开都白读一遍。
+  const parsed = storageGetJson<Partial<StoredDraft>>(KEY)
+  // 解析不出来那条记录模块自己删了；这里管的是「读出来了，但不是我要的那一份」。
+  // 没有、过期、读不懂都清掉：留一条坏记录只会让每次打开都白读一遍。
+  if (typeof parsed?.savedAt !== 'number' || now - parsed.savedAt > MAX_AGE_MS) {
     forgetFeedbackDraft()
     return null
+  }
+  return {
+    savedAt: parsed.savedAt,
+    draft: parseDraft(parsed.draft),
+    parked: parseDraft(parsed.parked),
   }
 }
 
 function write(record: StoredDraft): void {
-  const store = storage()
-  if (!store) return
-  try {
-    const serialized = JSON.stringify(record)
-    if (serialized.length > MAX_CHARS) return
-    store.setItem(KEY, serialized)
-  } catch {
-    // 写满了、被禁用了、或者草稿本身序列化不了 —— 都不该让表单出问题。
-  }
+  // 写满了、被禁用了、或者草稿本身序列化不了，都是「这一次没记住」—— 不该让表单出问题。
+  storageSetJson(KEY, record, 'local', MAX_CHARS)
 }
 
 /** 存一份「正在写的」。空草稿等于「这里没有东西」，直接删记录 —— 不能让一条空记录
@@ -202,11 +180,5 @@ export function takeParkedFeedbackDraft(now: number = Date.now()): FeedbackDraft
 
 /** 抹掉这一格记录（两份都算）。换人登录 / 退出登录、以及两条都空下来时用。 */
 export function forgetFeedbackDraft(): void {
-  const store = storage()
-  if (!store) return
-  try {
-    store.removeItem(KEY)
-  } catch {
-    // 存储不可用时静默跳过。
-  }
+  storageRemove(KEY)
 }
