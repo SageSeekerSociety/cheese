@@ -78,8 +78,6 @@ jobs:
       # guards — but a regression in them prints a wrong report, and nothing
       # else runs their self-tests. All are offline: no token, no network.
       # `retro --self-test` is what reaches trace_retro.py's self-test.
-      # test_pr_review.py runs pr-review.sh against a throwaway repository and a
-      # stand-in `gh`, and checks what it asked GitHub for (nothing, for post).
       - name: Trace tooling self-test
         run: |
           python3 .claude/scripts/trace-sweep.py --self-test
