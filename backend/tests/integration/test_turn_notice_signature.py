@@ -10,14 +10,14 @@ import uuid
 from datetime import UTC, datetime
 
 from app.api.deps import get_chat_service
-from app.domain.agent.platform_notices import (
+from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.delivery.models import Delivery
+from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
     WHO_HUMAN,
     notice,
 )
-from app.domain.agent.repositories import AgentTurnRepository
-from app.domain.delivery.models import Delivery
 from tests.integration.conftest import post_project, session_auth_headers
 
 SECOND_SEAT = "cheese-0123456789ab"

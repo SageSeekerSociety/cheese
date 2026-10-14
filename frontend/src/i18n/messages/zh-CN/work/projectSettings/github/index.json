@@ -1,0 +1,12 @@
+{
+  "accountFailed": "连接 GitHub 账号失败：{reason}",
+  "repoFailed": "连接 GitHub 仓库失败：{reason}",
+  "taken": "{repo} 已连接到{where}，一个仓库只能连接一个项目。{next}",
+  "takenHidden": "另一个你无权查看的项目",
+  "takenHolder": "项目「{holder}」",
+  "takenNextHidden": "换一个仓库，或由那个项目的成员邀请你加入",
+  "takenNextHolder": "到那个项目里工作，或换一个仓库",
+  "takenRepo": "这个仓库",
+  "unknown": "原因未知",
+  "unknownCode": "原因未知（{code}）"
+}

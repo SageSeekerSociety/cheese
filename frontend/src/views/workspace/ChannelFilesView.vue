@@ -25,6 +25,8 @@ import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{
   files: RoomFile[]
+  /** 这个房间名册上每个 handle 叫什么，署名用（`ChannelFiles.vue` 拉一次交下来）。 */
+  memberNames: Record<string, string>
   /** 清单不是全部：文件多到超过上限，只列了最近改的那些。 */
   truncated: boolean
   loading: boolean
@@ -106,27 +108,23 @@ function folder(file: RoomFile): string {
   return cut < 0 ? '' : file.path.slice(0, cut)
 }
 
-//: 一份文件最后是怎么放下的。后端多出一种来源时这里没有它的词，那一项就不写——把键
-//: 本身印在屏幕上不如少说一项。这几个词和一份文件的保存历史用的是同一套
-//: （`components/panels/preview/RoomFileHistory.vue`）。
-const SOURCES = new Set(['baseline', 'upload', 'template', 'ai', 'editor', 'restore', 'scheduled'])
-
-function source(file: RoomFile): string {
-  const code = file.source
-  return code && SOURCES.has(code) ? t(`work.room.fileHistory.source.${code}`) : ''
-}
-
-/** 谁写的。队友照「芝士」写——`cheese-<hex>` 那种座位编号是内部的，屏幕上没人该看见
- *  它；没有保存记录的照实说「来源未知」，不编一个人名。 */
+/**
+ * 谁放下的。作者只存着 handle，名字从名册里换出来（`memberNames`）——队友写的是另一
+ * 位队友（小苔、无言），不是一句「AI 队友」；名册上认不出的照「芝士」写，`cheese-<hex>`
+ * 那种座位编号是内部的，屏幕上没人该看见它；没有保存记录的照实说「来源未知」，不编一
+ * 个人名。一份文件是怎么放下的（传上来的、定时任务交回的）不写在这一行：这一页只认
+ * 得下「谁、什么时候、多大」，那几项在它自己的保存历史里（`RoomFileHistory`）。
+ */
 function who(file: RoomFile): string {
-  if (file.author_kind === 'agent') return t('work.room.defaultAgentName')
-  return file.author || t('work.library.unknownSource')
+  if (!file.author) return t('work.library.unknownSource')
+  const known = props.memberNames[file.author]
+  if (known) return known
+  return file.author_kind === 'agent' ? t('work.room.defaultAgentName') : file.author
 }
 
-/** 从哪来的 · 什么时候 · 多大 —— 和资料库那一行同一种写法（`ProjectLibraryView`
- *  的 `rowMeta`），只是这里多一项「从哪条路进来的」。 */
+/** 什么时候 · 多大 —— 和资料库那一行同一种写法（`ProjectLibraryView` 的 `rowMeta`）。 */
 function meta(file: RoomFile): string {
-  return [source(file), relTime(file.modified_at), fmtBytes(file.bytes)].filter(Boolean).join(' · ')
+  return [relTime(file.modified_at), fmtBytes(file.bytes)].filter(Boolean).join(' · ')
 }
 
 const title = computed(() => (selected.value && !mdAndUp ? name(selected.value) : t('navigation.project.channelFiles')))

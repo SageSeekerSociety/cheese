@@ -198,6 +198,7 @@ const RECORD_VERB: Record<string, string> = {
   cloud_provisioning: 'work.room.site.record.environment',
   sandbox_asleep: 'work.room.site.record.environment',
   memory_changed: 'work.room.site.record.memory',
+  wake_missed: 'work.room.site.record.wakeWatch',
 }
 
 /** 这一行是运行记录：平台在运行中记下的事，不是芝士做的一步。 */

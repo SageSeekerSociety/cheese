@@ -21,6 +21,8 @@
     "lint:style:update": "node scripts/stylelint-ratchet.mjs --update",
     "lint:boundary": "node scripts/import-boundary-ratchet.mjs",
     "lint:boundary:update": "node scripts/import-boundary-ratchet.mjs --update",
+    "lint:storage": "node scripts/browser-storage-ratchet.mjs",
+    "lint:storage:update": "node scripts/browser-storage-ratchet.mjs --update",
     "lint:a11y": "node scripts/a11y-ratchet.mjs",
     "lint:a11y:update": "node scripts/a11y-ratchet.mjs --update",
     "lint:catalog": "python3 ../.claude/scripts/catalog-ratchet.py",

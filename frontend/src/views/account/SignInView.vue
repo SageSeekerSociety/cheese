@@ -211,7 +211,7 @@ const submit = handleSubmit((value) => emit('submit', value))
   margin: 24px 0;
   font-size: 12px;
   line-height: var(--lh-12);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .signin-or::before,

@@ -465,20 +465,23 @@ async def _ask(
     )
 
 
-async def _record_usage(factory: "SessionFactory", answer: Answer) -> None:
-    """Write what the call spent as the platform's own usage: naming is work
-    the platform does unasked, so no team pays for it (#2233). Its own session,
-    so the task the call is about stays as ``_write`` reads it."""
+async def _record_usage(factory: "SessionFactory", answer: Answer, task: Task) -> None:
+    """Charge what the call spent to the task's project: naming one of its
+    tasks is a model call made for the project, paid like the project's other
+    calls. Its own session, so the task the call is about stays as ``_write``
+    reads it."""
     if answer.usage is None or not (answer.usage.total_tokens or answer.cost_usd):
         return
     try:
         async with factory() as session:
-            await Ledger(session).record_platform(
+            await Ledger(session).record_project_call(
+                task.project_id,
                 kind=USAGE_KIND,
                 model=settings.topic_naming_model,
                 input_tokens=answer.usage.prompt_tokens,
                 output_tokens=answer.usage.completion_tokens,
                 cost_usd=answer.cost_usd,
+                topic_id=task.id,
             )
             await session.commit()
     except Exception:  # noqa: BLE001 — see the module docstring
@@ -494,6 +497,7 @@ async def _fitted(
     transport: httpx.AsyncBaseTransport | None,
     factory: "SessionFactory",
     deadline: float,
+    task: Task,
 ) -> Verdict:
     """`verdict`, with a title that fits the sidebar.
 
@@ -523,7 +527,7 @@ async def _fitted(
             {"role": "user", "content": _too_wide(verdict.title)},
         ]
         answer = await _ask(key, messages, transport, timeout=left)
-        await _record_usage(factory, answer)
+        await _record_usage(factory, answer, task)
         if (
             answer.verdict is None
             or answer.verdict.keep
@@ -821,7 +825,7 @@ async def run(
                 transport,
                 timeout=settings.topic_naming_timeout_seconds,
             )
-            await _record_usage(factory, answer)
+            await _record_usage(factory, answer, task)
             if answer.verdict is None:
                 # An answer cut off before it said anything is not the gateway
                 # failing, so the task is not made to wait out the backoff for
@@ -846,6 +850,7 @@ async def run(
                 transport=transport,
                 factory=factory,
                 deadline=deadline,
+                task=task,
             )
             renamed = await _write(session, task, stage=stage, verdict=verdict)
             if stage == "follow" and redis is not None:

@@ -19,16 +19,18 @@ export function useAgentNaming(opts: {
   nameOf: (handle: string) => string | null
   /** `<@handle>` 渲染用的表；本模块负责把它和名册对齐。 */
   names: Record<string, string>
-  /** 读的是一个任务、而这件事单独指定了队友时，那位的 handle；空＝跟着房间那位。 */
-  taskAgentHandle?: () => string | null
+  /** 这段对话说给谁听，当它不是房间那位时的 handle：任务单独指定的队友，或支线正在
+   *  和它说话的那位；空＝跟着房间那位。 */
+  agentHandle?: () => string | null
   alwaysSummon: () => boolean
 }) {
-  // 房间里是房间那位，任务里是**这件事**那位——换过之后 @ 就得写它：正文里 @ 的是谁，
-  // 读的人就以为叫的是谁，而任务选的那位和房间那位常常不是同一个。挑的那位一定在这间
+  // 房间里是房间那位，任务里是**这件事**那位，支线里是它正在和谁说话的那位——换过之后
+  // @ 就得写它：正文里 @ 的是谁，读的人就以为叫的是谁，而任务选的、支线叫来的那位和
+  // 房间那位常常不是同一个。挑的那位一定在这间
   // 房的名册上（后端换的时候只认名册上那个座位），名字从名册上取；名册还没到、或者它
   // 已经不在名册上了，就不猜，退回房间那位——写一个点不动的 @ 比不写更糟。
   const agentSeat = computed<Seat | null>(() => {
-    const handle = opts.taskAgentHandle?.() ?? null
+    const handle = opts.agentHandle?.() ?? null
     const label = handle ? opts.nameOf(handle) : null
     return handle && label ? { handle, label } : opts.roomSeat.value ?? null
   })

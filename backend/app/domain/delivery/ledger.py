@@ -347,6 +347,18 @@ async def settle(session: AsyncSession, event_id: uuid.UUID, outcome: dict) -> N
     await _settle(session, keys, outcome)
 
 
+async def settle_for(
+    session: AsyncSession, event_id: uuid.UUID, recipient: str, outcome: dict
+) -> None:
+    """`settle`, for one recipient only: the thing is done as far as he is
+    concerned, while the others it reached are still waited on (a person
+    skipping a question several people were asked)."""
+    keys = select(Delivery.dedup_key).where(
+        Delivery.event_id == event_id, Delivery.recipient_handle == recipient
+    )
+    await _settle(session, keys, outcome)
+
+
 async def settle_card(session: AsyncSession, card_id: uuid.UUID, outcome: dict) -> None:
     """这张验收卡办完了：关于它的每一条提示一并结掉。
 

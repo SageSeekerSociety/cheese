@@ -28,7 +28,10 @@ from app.core.errors import UpstreamUnavailableError
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.harness.prompt import main_checks_failed_prompt
-from app.domain.agent.platform_notices import (
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.delivery.addressing import Event
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import (
     EVENT_DEPLOY_DONE,
     EVENT_DEPLOY_FAILED,
     EVENT_MAIN_CHECKS_FAILED,
@@ -38,9 +41,6 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.delivery.addressing import Event
-from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.forge import background_quota, quota_serves_background
 from app.domain.project.models import Project
 from app.domain.review import landing_forge

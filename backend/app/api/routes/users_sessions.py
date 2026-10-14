@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_current_session_id
@@ -75,11 +76,7 @@ async def list_sessions(
 ) -> dict:
     rows = await SessionService(session).live(auth_user.user_id)
     trusted = await TrustedDeviceService(session).trusted_sessions(auth_user.user_id)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"sessions": [_session_dto(row, current, trusted) for row in rows]},
-    }
+    return ok({"sessions": [_session_dto(row, current, trusted) for row in rows]})
 
 
 @router.delete(
@@ -99,10 +96,7 @@ async def revoke_session(
     await TrustedDeviceService(session).revoke_for_session(
         auth_user.user_id, session_id
     )
-    return {
-        "code": 200,
-        "message": "Session revoked successfully.",
-    }
+    return ok(None, "Session revoked successfully.")
 
 
 @router.delete(
@@ -122,10 +116,9 @@ async def revoke_all_sessions(
     await TrustedDeviceService(session).revoke_all(
         auth_user.user_id, keep_session=current
     )
-    return {
-        "code": 200,
-        "message": f"Revoked {count} sessions.",
-        "data": {
+    return ok(
+        {
             "revokedCount": count,
         },
-    }
+        f"Revoked {count} sessions.",
+    )

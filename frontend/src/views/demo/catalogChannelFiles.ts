@@ -10,9 +10,9 @@
  * 出现的那几种形状——定时任务交回的结果（带日期戳的一层文件夹）、人放进来的文件、
  * 芝士交付的文档。`CatalogEntry` 是 type-only 引用，运行时不构成循环。
  *
- * 一行上写的是谁什么时候放下的，那几项都在 `RoomFile` 里（`author`／`modified_at`／
- * `bytes`）。人写的照 handle 写（这里没有名册可查显示名），队友写的是「芝士」，说不
- * 出谁写的写「来源未知」。
+ * 一行上写的是谁什么时候放下的：`author` 只存着 handle，名字由名册换出来，所以这里
+ * 也编一份 `memberNames`（和房间里那份同名同形）。名册上认不出的队友照「芝士」写，说
+ * 不出谁写的写「来源未知」。
  */
 import type { RoomFile } from '@/api/roomFiles'
 import type { CatalogEntry, CatalogNeed } from './catalog'
@@ -30,7 +30,7 @@ const FILES: RoomFile[] = [
     path: 'runs/2026-09-14/weekly-report.md',
     bytes: 4210,
     modified_at: '2026-09-14T02:10:00Z',
-    author: '',
+    author: 'cheese-1a2b3c',
     author_kind: 'agent',
     source: 'scheduled',
   },
@@ -38,7 +38,7 @@ const FILES: RoomFile[] = [
     path: 'runs/2026-09-14/numbers.csv',
     bytes: 21_300,
     modified_at: '2026-09-14T02:09:00Z',
-    author: '',
+    author: 'cheese-1a2b3c',
     author_kind: 'agent',
     source: 'scheduled',
   },
@@ -60,6 +60,9 @@ const FILES: RoomFile[] = [
   },
 ]
 
+/** 预览站上的名册：这一条目录里没有真名册，编一份和房间里同名同形的。 */
+const NAMES: Record<string, string> = { alice: '阿丽', 'cheese-1a2b3c': '小苔' }
+
 export const CHANNEL_FILES_ENTRIES: CatalogEntry[] = [
   {
     id: 'channel-files-view',
@@ -69,7 +72,7 @@ export const CHANNEL_FILES_ENTRIES: CatalogEntry[] = [
     file: 'src/views/workspace/ChannelFilesView.vue',
     component: ChannelFilesView,
     needs: UI_T_R,
-    args: { read, loading: false, error: null, truncated: false },
+    args: { read, loading: false, error: null, truncated: false, memberNames: NAMES },
     states: [
       {
         name: '有几份文件',

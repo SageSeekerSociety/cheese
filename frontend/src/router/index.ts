@@ -40,6 +40,7 @@ const routes: RouteRecordRaw[] = [
     name: 'team-join',
     path: '/team-invites/:token',
     component: () => import('@/views/TeamInviteView.vue'),
+    props: true,
     meta: { titleKey: 'work.teamProfile.joinTitle', isFullPage: true },
   },
   AccountRoutes,

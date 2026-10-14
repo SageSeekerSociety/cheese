@@ -316,7 +316,7 @@ async def test_the_platform_still_works_with_no_machines_at_all(client, room):
     alice = session_auth_headers("alice")
     # 一道等人回答的题：它同时走时间线、通知投递和 `/awaiting-me` 三条路。
     # 直插一条题 —— 这里要的是「有题在等」这个状态，不是提问这条路本身。
-    said = question_row(client, topic, question="先记一句", asked="alice")
+    said = question_row(client, topic, question="先记一句", asked=["alice"])
     assert said["id"]
 
     async with client.test_factory() as session:

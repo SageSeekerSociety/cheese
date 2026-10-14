@@ -17,6 +17,7 @@ from app.api.deps import (
     get_passkey_service,
     get_user_auth_service,
 )
+from app.api.response import ok
 from app.api.routes.users._common import (
     _EMAIL_FORMAT,
     _PENDING_2FA_SCOPE,
@@ -375,15 +376,14 @@ async def user_login(
         if requires_2fa and trust is None:
             if not totp_code:
                 # tempToken lets the client finish via POST /auth/verify-2fa.
-                return {
-                    "code": 200,
-                    "message": "2FA required",
-                    "data": {
+                return ok(
+                    {
                         "requires2FA": True,
                         "userId": user.id,
                         "tempToken": await _issue_2fa_pending_token(user.id),
                     },
-                }
+                    "2FA required",
+                )
             # This inline branch checks a TOTP code without ever minting a
             # ticket, so the single-use ticket does nothing for it — without
             # its own budget it stays exactly the oracle #357 describes.
@@ -409,16 +409,15 @@ async def user_login(
             profile=profile,
             viewer_id=user.id,
         )
-        return {
-            "code": 201,
-            "message": "Login successfully.",
-            "data": {
+        return ok(
+            {
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
                 "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
-        }
+            "Login successfully.",
+        )
     finally:
         await redis.aclose()
 
@@ -518,22 +517,21 @@ async def verify_2fa_login(
             profile=profile,
             viewer_id=user.id,
         )
-        return {
-            "code": 201,
-            "message": (
-                "Login successfully. Note: This backup code has expired. "
-                "Please generate a new backup code for future use."
-                if used_backup_code
-                else "Login successfully."
-            ),
-            "data": {
+        return ok(
+            {
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
                 "usedBackupCode": used_backup_code,
                 "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
-        }
+            (
+                "Login successfully. Note: This backup code has expired. "
+                "Please generate a new backup code for future use."
+                if used_backup_code
+                else "Login successfully."
+            ),
+        )
     finally:
         await redis.aclose()
 
@@ -541,10 +539,9 @@ async def verify_2fa_login(
 # The sign-in code request answers with this one body whatever the address:
 # known, unknown or a placeholder. Anything that differed would tell the
 # caller whether an account uses that address.
-_SIGN_IN_CODE_REQUESTED = {
-    "code": 200,
-    "message": "If an account uses this email, a sign-in code has been sent.",
-}
+_SIGN_IN_CODE_REQUESTED = ok(
+    None, "If an account uses this email, a sign-in code has been sent."
+)
 
 
 def _invalid_email_code() -> AuthenticationRequiredError:
@@ -644,15 +641,14 @@ async def verify_sign_in_code(
     if await TOTPService(session).is_2fa_enabled(user.id):
         trust = await _trusted_device(request, session, user.id)
         if trust is None:
-            return {
-                "code": 200,
-                "message": "2FA required",
-                "data": {
+            return ok(
+                {
                     "requires2FA": True,
                     "userId": user.id,
                     "tempToken": await _issue_2fa_pending_token(user.id),
                 },
-            }
+                "2FA required",
+            )
 
     try:
         user, profile = await auth_service.get_user_with_profile(user.id)
@@ -673,16 +669,15 @@ async def verify_sign_in_code(
         profile=profile,
         viewer_id=user.id,
     )
-    return {
-        "code": 201,
-        "message": "Login successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
             "accessToken": access_token,
             "requires2FA": False,
             "passkeyEnrollment": await _passkey_enrollment(user.id, session),
         },
-    }
+        "Login successfully.",
+    )
 
 
 @router.post(
@@ -726,14 +721,13 @@ async def refresh_access_token(
         profile=profile,
         viewer_id=user.id,
     )
-    return {
-        "code": 201,
-        "message": "Refresh token successfully.",
-        "data": {
+    return ok(
+        {
             "accessToken": access_token,
             "user": user_dto,
         },
-    }
+        "Refresh token successfully.",
+    )
 
 
 @router.post(
@@ -755,10 +749,7 @@ async def user_logout(
     if refresh_token:
         await SessionService(session).end(refresh_token)
     _clear_refresh_cookie(response)
-    return {
-        "code": 201,
-        "message": "Logout successfully.",
-    }
+    return ok(None, "Logout successfully.")
 
 
 @router.post(
@@ -798,7 +789,7 @@ async def sudo_auth(
             data["sudoTicket"] = await _issue_sudo_ticket(
                 auth_user.user_id, payload.purpose
             )
-        return {"code": 200, "message": message, "data": data}
+        return ok(data, message)
 
     async def verified(message: str, **extra: Any) -> dict:
         if current is not None:

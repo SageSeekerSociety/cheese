@@ -1,0 +1,7 @@
+{
+  "alt": "Image",
+  "close": "Close",
+  "failed": "Couldn't load the image",
+  "open": "View full size: {name}",
+  "zoomHint": "Scroll or pinch to zoom, drag to move"
+}

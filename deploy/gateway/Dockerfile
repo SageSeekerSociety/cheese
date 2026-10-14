@@ -2,10 +2,18 @@ FROM ghcr.io/berriai/litellm@sha256:e6e1c46cec92ab58b7ff95c790420aba9f05269b662a
 
 LABEL org.opencontainers.image.title="Cheese LLM gateway"
 
+# Keep idle keep-alive connections open well past the callers' own idle limit.
+# Uvicorn's 5 s default closes them first, so a request the metering proxy sends
+# on a connection idle for about 5 s lands on a closing socket and fails with
+# "server closed connection" (GatewayUnreachable). Callers of the proxy were
+# seen idling a connection for up to 195 s; the gateway must outlast that.
+# LiteLLM's CLI reads this as --keepalive_timeout.
+ENV KEEPALIVE_TIMEOUT=600
+
 # Resolve the pinned telemetry wrapper before request-time auth uses it.
 ENV LITELLM_WORKER_STARTUP_HOOKS=litellm.llms:load_guardrail_translation_mappings,litellm.anthropic_beta_headers_manager:reload_beta_headers_config,litellm.integrations.otel.runtime:_otel_runtime
 
-COPY patch_stream_timing.py test_stream_timing.py test_provider_http_timing.py test_router_logging.py test_startup_registry.py test_startup_beta_headers.py test_startup_telemetry.py /opt/cheese-gateway/
+COPY patch_stream_timing.py test_keepalive.py test_stream_timing.py test_provider_http_timing.py test_router_logging.py test_startup_registry.py test_startup_beta_headers.py test_startup_telemetry.py /opt/cheese-gateway/
 COPY provider_http_timing.py /app/.venv/lib/python3.13/site-packages/litellm/llms/custom_httpx/provider_http_timing.py
 COPY chatgpt_session.py /app/.venv/lib/python3.13/site-packages/cheese_chatgpt_session.py
 COPY test_chatgpt_session.py /opt/cheese-gateway/
@@ -25,6 +33,7 @@ RUN /app/.venv/bin/python /opt/cheese-gateway/patch_stream_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_empty_anthropic_text.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_responses_stream_errors.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_stream_timing.py \
+    && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_keepalive.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_provider_http_timing.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True /app/.venv/bin/python /opt/cheese-gateway/test_retry_stream.py \
     && LITELLM_LOCAL_MODEL_COST_MAP=True LITELLM_LOCAL_ANTHROPIC_BETA_HEADERS=True /app/.venv/bin/python /opt/cheese-gateway/test_chatgpt_session.py \

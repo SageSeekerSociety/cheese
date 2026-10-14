@@ -3,6 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -28,7 +29,7 @@ async def list_my_applications(
     items = await SpaceReviewService(db).list_applications(
         owner_id=user.user_id, status=status, offset=offset, limit=limit
     )
-    return {"code": 200, "data": {"items": items}}
+    return ok({"items": items})
 
 
 @router.post("/{space_id}/resubmit")
@@ -45,4 +46,4 @@ async def resubmit_space(
         intro=body.intro,
         avatar_id=body.avatar_id,
     )
-    return {"code": 200, "data": {"application": item}}
+    return ok({"application": item})

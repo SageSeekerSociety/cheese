@@ -1,0 +1,5 @@
+{
+  "action": "Retry",
+  "failed": "Retry failed",
+  "nothingPending": "Nothing to retry"
+}

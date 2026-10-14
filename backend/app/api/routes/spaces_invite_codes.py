@@ -44,6 +44,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Response, status
 
+from app.api.response import ok
 from app.api.space_deps import get_space_service, require_reviewed_space
 from app.api.space_payloads import (
     CreateSpaceInviteCodeRequest,
@@ -79,7 +80,7 @@ async def list_space_invite_codes(
         space_id=space_id, actor_user_id=auth_user.user_id
     )
     items = await _invite_codes_to_api_models(codes, db=db)
-    return {"code": 200, "message": "OK", "data": {"inviteCodes": items}}
+    return ok({"inviteCodes": items})
 
 
 @router.post(
@@ -105,7 +106,7 @@ async def create_space_invite_code(
         note=payload.note,
     )
     items = await _invite_codes_to_api_models([invite], db=db)
-    return {"code": 201, "message": "Created", "data": {"inviteCode": items[0]}}
+    return ok({"inviteCode": items[0]})
 
 
 @router.patch(
@@ -135,7 +136,7 @@ async def patch_space_invite_code(
         note_set="note" in payload.model_fields_set,
     )
     items = await _invite_codes_to_api_models([invite], db=db)
-    return {"code": 200, "message": "OK", "data": {"inviteCode": items[0]}}
+    return ok({"inviteCode": items[0]})
 
 
 @router.delete(

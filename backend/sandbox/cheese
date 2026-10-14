@@ -768,8 +768,11 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_ask",
             "在房间里问人：每个问题是一条带快捷回复按钮的普通消息。问完就结束这一轮，"
-            "不要等、不要轮询：人点一个选项或直接打字回复，那句回复会作为新消息开启你的"
-            "下一轮。界面总会在你给的选项后面加一个「其他」，点开能自己写答案，所以选项里不要"
+            "不要等、不要轮询：被问的人里有一个点了选项或直接打字回复，那句回复会作为新消息"
+            "开启你的下一轮。问谁用 to 选，和 @ 人一样：一个人、几个人，或 all 表示频道里"
+            "所有人；不填就问让你开始这一轮的那个人。被问的人也可以跳过不答：你点名的人都"
+            "跳过了，你的下一轮会被告知；问 all 的题不会因为有人跳过而告知你。界面总会在你给"
+            "的选项后面加一个「其他」，点开能自己写答案，所以选项里不要"
             "再放「其他」「都不是」「我自己说」这类兜底项，只写真正的候选。",
             {
                 "questions": {
@@ -797,6 +800,13 @@ PLATFORM_TOOLS = ToolTable(
                         },
                         "required": ["question", "options"],
                     },
+                },
+                "to": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string"},
+                    "description": "问谁：频道里的人的 handle；写 all 就是频道里所有人。"
+                    "不填就问让你开始这一轮的那个人",
                 },
                 "request_id": _text(
                     "上一次结果不确定时带上它返回的 request_id 重试，同一组问题不会发两遍"
@@ -1205,9 +1215,15 @@ def _ask_body(args: dict) -> dict:
                 raise ValueError("each option requires nonempty text")
             if "explain" in option and not isinstance(option["explain"], str):
                 raise ValueError("option explain must be a string")
+    to = args.get("to")
+    if to is not None and (
+        not isinstance(to, list) or not to or not all(isinstance(h, str) for h in to)
+    ):
+        raise ValueError("to must be a nonempty list of handles, or [\"all\"]")
     # Identity is supplied by the host credential, never an author in args.
     return {
         "questions": questions,
+        **({"to": to} if to is not None else {}),
         "request_id": str(uuid.UUID(args["request_id"]))
         if args.get("request_id")
         else str(uuid.uuid4()),

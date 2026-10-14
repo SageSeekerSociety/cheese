@@ -71,8 +71,9 @@ CONTAINERS = (
 
 HOW_TO_FIX = (
     "A refusal sentence is written where it is raised. Add it to both "
-    "frontend/src/i18n/messages/zh-CN/apiError.json and "
-    "frontend/src/i18n/messages/en/apiError.json under one key, and raise "
+    "frontend/src/i18n/messages/zh-CN/apiError/ and "
+    "frontend/src/i18n/messages/en/apiError/ under one key, in the shard "
+    "named after the backend module that says it, and raise "
     "say('<key>', **params) instead (app/core/sentences.py; "
     "docs/i18n.md). If this text truly is not shown to a person, put "
     "'# i18n-exempt: <reason>' on its line."
@@ -429,7 +430,6 @@ _BASELINE: dict[str, int] = {
     "app/domain/feedback/repositories.py": 1,
     "app/domain/fetch/addresses.py": 2,
     "app/domain/fetch/guard.py": 6,
-    "app/domain/frontend_log.py": 1,
     "app/domain/groups/services.py": 26,
     "app/domain/knowledge/repositories.py": 1,
     "app/domain/knowledge/services.py": 8,

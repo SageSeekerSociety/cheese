@@ -24,7 +24,9 @@ from app.domain.agent.platform_failures import (
     PlatformFailure,
     classify_platform_failure,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.agent.turn.state.execution import ExecutionPolicy, ExecutionState
+from app.domain.agent.turn.store.intervals import close_turns, open_turn
+from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
@@ -32,8 +34,6 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.agent.turn.state.execution import ExecutionPolicy, ExecutionState
-from app.domain.agent.turn.store.intervals import close_turns, open_turn
 
 logger = logging.getLogger("cheesex.runtime")
 

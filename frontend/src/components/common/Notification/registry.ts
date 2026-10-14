@@ -133,14 +133,14 @@ export function getNotificationColor(type: NotificationType): string {
 /**
  * 这一条通知此刻的图标和颜色。大多数类型只看类型；事情办完之后就不再是「待你处理」，
  * 换成和房间里那张卡一样的办结对勾，颜色从 warning 退成 success —— 还画成警示色，
- * 等于说它还在等人。两种办完：芝士的提问答过了（服务端 `ledger.settle` 把回答并进
- * `answered`），平台那一条提示背后的卡有了决定（`ledger.settle_card` 把结局并进
+ * 等于说它还在等人。两种办完：芝士的提问答过了或被跳过了（服务端 `ledger.settle` 把
+ * 回答并进 `answered`，跳过并进 `skipped`），平台那一条提示背后的卡有了决定（`ledger.settle_card` 把结局并进
  * `outcome`）。
  */
 export function getNotificationMark(notification: Notification): { icon: string; color: string } {
   const settled =
     notification.type === 'CHEESE_QUESTION'
-      ? !!notification.contextMetadata?.answered
+      ? !!(notification.contextMetadata?.answered || notification.contextMetadata?.skipped)
       : notification.type === 'ROOM_NOTICE' && !!notification.contextMetadata?.outcome
   if (settled) {
     return { icon: 'mdi-check-circle-outline', color: 'success' }

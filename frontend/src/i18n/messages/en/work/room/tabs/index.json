@@ -1,0 +1,13 @@
+{
+  "changes": "Changes",
+  "chat": "Chat",
+  "close": "Close {name}",
+  "overview": "Overview",
+  "pinHint": "{path} (double-click to keep this tab)",
+  "preview": "Preview",
+  "routines": "Routines",
+  "scrollLeft": "Scroll tabs left",
+  "scrollRight": "Scroll tabs right",
+  "site": "Activity",
+  "threads": "Threads"
+}

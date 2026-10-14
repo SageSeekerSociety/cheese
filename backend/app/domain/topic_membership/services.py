@@ -20,12 +20,11 @@ channel private; only someone who manages the project turns one back.
 
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.conversation.services import room_of
+from app.domain.conversation.services import room_of, room_of_thread
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -34,7 +33,6 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
-from app.domain.thread.models import Thread
 from app.domain.topic.models import (
     Topic,
     TopicKind,
@@ -533,9 +531,7 @@ class TopicMemberService:
         """
         if room_id is None:
             # A 支线 seats nobody of its own: its channel's roster answers.
-            room_id = await self._session.scalar(
-                select(Thread.room_id).where(Thread.id == topic_id)
-            )
+            room_id = await room_of_thread(self._session, topic_id)
         if not await self.agent_handles(room_id or topic_id):
             return None
         return await self.resolve_agent_handle(topic_id, room_id=room_id)
@@ -576,20 +572,40 @@ class TopicMemberService:
             topic_id=topic_id, member_handle=handle, role=TopicRole.member
         )
 
+    async def may_bring_in(self, topic: Topic, actor: str) -> bool:
+        """May ``actor`` add someone to this channel: a person in it, or someone
+        who manages it. An AI teammate's seat lets it act in the channel, not
+        invite."""
+        if await self._repo.get(
+            topic_id=topic.id, member_handle=actor
+        ) is not None and not await IdentityService(self._session).is_agent(actor):
+            return True
+        return await self.manages(topic, actor)
+
     async def _brought_in_by(self, topic_id: uuid.UUID, actor: str) -> Topic:
-        """The channel ``actor`` may add someone to: one they are in, or one they
-        manage. Someone outside a private channel is told it does not exist."""
+        """The channel ``actor`` may add someone to (:meth:`may_bring_in`).
+        Someone outside a private channel is told it does not exist."""
         topic = await self._topics.get(topic_id)
         if topic is None:
             raise NotFoundError("Topic not found")
-        if await self._repo.get(topic_id=topic_id, member_handle=actor) is None:
-            if topic.members_only:
-                raise NotFoundError("Topic not found")
-            return await self.require_manager(topic_id, actor)
-        if await IdentityService(self._session).is_agent(actor):
-            # An AI teammate's seat lets it act in the channel, not invite.
-            return await self.require_manager(topic_id, actor)
-        return topic
+        if await self.may_bring_in(topic, actor):
+            return topic
+        if (
+            topic.members_only
+            and await self._repo.get(topic_id=topic_id, member_handle=actor) is None
+        ):
+            raise NotFoundError("Topic not found")
+        raise ForbiddenError(say("channelManagerOnly"))
+
+    async def outside(self, room: Topic, handles: list[str]) -> list[str]:
+        """The people of the project among ``handles`` who are not in this
+        channel, in the order given. 综合 has everyone in the project and a
+        private room of two its own two, so neither has anyone outside it."""
+        if room.kind == TopicKind.root or not _public(room):
+            return []
+        people = set(await self.project_people(room.project_id))
+        seated = {m.member_handle for m in await self._repo.list_for_topic(room.id)}
+        return [h for h in dict.fromkeys(handles) if h in people and h not in seated]
 
     async def administers(self, topic: Topic, actor: str) -> bool:
         """May ``actor`` archive this channel or name who manages it without

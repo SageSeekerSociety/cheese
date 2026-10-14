@@ -7,7 +7,7 @@ platform's browser ran it, its heights and where its pictures are kept.
 Nothing existing changes.
 
 Revision ID: 70c713b50151
-Revises: 00cc083dc9f9
+Revises: 6ac10b7f1b11
 """
 
 from collections.abc import Sequence
@@ -19,7 +19,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "70c713b50151"
-down_revision: str | Sequence[str] | None = "00cc083dc9f9"
+down_revision: str | Sequence[str] | None = "6ac10b7f1b11"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

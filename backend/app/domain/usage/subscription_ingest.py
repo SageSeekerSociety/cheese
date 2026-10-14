@@ -58,6 +58,14 @@ from app.domain.usage.models import IngestCheckpoint
 logger = logging.getLogger("cheese.usage.ingest")
 
 SOURCE = "subscription-proxy"
+
+#: The usage kinds a proxy line may carry instead of a room turn's ``chat``.
+#: Admission tells the proxy which kind a call is (`routes/llm_proxy.py`), and
+#: the proxy writes it on the line; only these are taken, anything else lands as
+#: ``chat``. ``memory_dream`` is `memory.dream.DREAM_KIND`, the project's
+#: memory consolidation, written out here because this layer may not import
+#: that one (a test holds the two equal).
+LINE_KINDS = frozenset({"memory_dream"})
 # Enough head bytes to tell one log generation from another (the first line
 # carries a timestamp), cheap enough to hash every pass.
 _FINGERPRINT_BYTES = 4096
@@ -301,6 +309,7 @@ async def _land_row(
         output_tokens=output_tokens,
         cost_usd=cost,
         route="subscription",
+        kind=row["kind"] if row.get("kind") in LINE_KINDS else "chat",
         # The proxy log has no work id and one attributed unit can make many
         # /v1/messages calls. Use the nearest block-carried id by timestamp.
         turn_id=await work_index.work_at(session, topic_id, row.get("ts")),

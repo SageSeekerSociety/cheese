@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
+from app.api.response import ok
 from app.api.users_deps import _require_same_origin, issue_session
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -58,7 +59,7 @@ async def start_app_sign_in(
         await reserve(_SCOPE, claims.jti, ttl_s=APP_SIGN_IN_TTL_S)
     except SingleUseUnavailableError:
         raise InternalServerError(say("appSignInUnavailable")) from None
-    return {"code": 200, "message": "OK", "data": {"code": code}}
+    return ok({"code": code})
 
 
 @router.post("/auth/app-sign-in/finish", summary="Take over a browser sign-in")
@@ -96,4 +97,4 @@ async def finish_app_sign_in(
         login_method="app_sign_in",
     )
     await session.commit()
-    return {"code": 200, "message": "OK", "data": None}
+    return ok(None)

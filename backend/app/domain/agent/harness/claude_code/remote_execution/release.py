@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import errno
 import hashlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import types
 from importlib.metadata import distribution
 from pathlib import Path
@@ -62,6 +65,216 @@ def release_mount(path):
         if mount_state(path) == MOUNT_NONE:
             return True
     return False
+
+
+# Where a session's execution target is written. The launcher names it, so the
+# runner that holds the session and `bootstrap` preparing it agree on the file
+# without either spelling the other's layout. Every process of a session carries
+# it — the launch environment `prepare` hands the build sets it too — which is
+# what tells a session that is still running from one that has ended.
+EXECUTION_CONFIG = "CHEESE_EXECUTION_CONFIG"
+# The forwarded view inside a session's directory, and the program serving it.
+FORWARDED_VIEW = "forwarded-project"
+VIEW_SERVER = "forwarded_fs.py"
+
+
+# How long a view stays kept after a session last took it, whether or not a
+# process of that session is running yet. `bootstrap` is the session from the
+# moment it takes the view, but a caller that prepares in one process and starts
+# the build in another (`client.py prepare`, the equivalence check) has a gap in
+# between where nothing carries the session's variable.
+TAKEN_GRACE_S = 120
+
+
+def _taken_path(directory):
+    return Path(directory) / f"{FORWARDED_VIEW}.taken"
+
+
+@contextlib.contextmanager
+def view_lock(directory, *, taking=False):
+    """Held while the view in ``directory`` is mounted, taken over by a session,
+    or released for one that ended — so a session that starts while its seat's
+    view is being released mounts it again, rather than going on with one that
+    is unmounted from under it. ``taking``: a session is taking the view, which
+    keeps it for `TAKEN_GRACE_S` whatever is running."""
+    # A view is only mounted where fusermount is; Windows still loads this file.
+    # deferred-import: platform-only module; fcntl is absent on Windows
+    import fcntl
+
+    with (Path(directory) / f"{FORWARDED_VIEW}.lock").open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        if taking:
+            _taken_path(directory).touch()
+        yield
+
+
+def take_view(directory, target_path, view):
+    """Have the forwarded view mounted at ``view`` for the session taking it.
+
+    Under the view's lock, which its server takes to release the view once the
+    session that uses it has ended (`release_abandoned`): the server either sees
+    this session taking it or has already let it go and it is mounted again
+    here — never released just after this found it live. Returns None once
+    the view is live, or the end of the server's log when it did not come up.
+    """
+    mount_log = Path(directory) / f"{FORWARDED_VIEW}.log"
+    with view_lock(directory, taking=True):
+        if mount_state(view) == MOUNT_LIVE:
+            return None
+        # A previous mount whose server died still occupies this directory and
+        # cannot be mounted over, so without this the spawn below fails and the
+        # room is stuck reporting a mount failure on every turn from then on.
+        release_mount(view)
+        with mount_log.open("a") as output:
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name(VIEW_SERVER)),
+                    str(target_path),
+                    str(view),
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=output,
+                start_new_session=True,
+            )
+        deadline = time.monotonic() + 10
+        while mount_state(view) != MOUNT_LIVE and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if mount_state(view) != MOUNT_LIVE:
+            return mount_log.read_text()[-1000:] if mount_log.exists() else ""
+    return None
+
+
+def _own_processes():
+    """``(pid, argv, environ, same_pid_namespace)`` for each of this user's processes.
+
+    What the kernel will not show us — another user's, a zombie's — is skipped:
+    a session runs as the user whose views it holds, so none of those is one.
+    """
+    namespace = os.readlink("/proc/self/ns/pid")
+    me = os.getuid()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if entry.stat().st_uid != me:
+                continue
+            argv = [
+                os.fsdecode(arg)
+                for arg in (entry / "cmdline").read_bytes().split(b"\0")
+                if arg
+            ]
+            environ = [
+                os.fsdecode(item)
+                for item in (entry / "environ").read_bytes().split(b"\0")
+                if item
+            ]
+            same = os.readlink(entry / "ns/pid") == namespace
+        except OSError:
+            continue
+        yield int(entry.name), argv, environ, same
+
+
+def _serves_a_view(argv):
+    return any(Path(arg).name == VIEW_SERVER for arg in argv)
+
+
+def session_running(directory):
+    """Whether a process of the session whose files are in ``directory`` is alive.
+
+    Any process counts — the build, its runner, a command it left behind —
+    except the view's own server, which inherited the variable from the session
+    that started it and outlives it.
+    """
+    directory = os.path.realpath(directory)
+    prefix = EXECUTION_CONFIG + "="
+    for _pid, argv, environ, _same in _own_processes():
+        if _serves_a_view(argv):
+            continue
+        for item in environ:
+            if item.startswith(prefix) and (
+                os.path.realpath(os.path.dirname(item[len(prefix) :])) == directory
+            ):
+                return True
+    return False
+
+
+def release_abandoned(directory):
+    """Unmount the forwarded view in ``directory`` once its session has ended.
+
+    True when its session has ended and the view is no longer mounted here,
+    whether released now or before. That does not end its server: every
+    session's own mount namespace (`client.enter`) holds a copy of each view
+    mounted when it started, and the server goes on serving those copies for
+    as long as any such session lives. So whoever gets True ends the server too
+    (`end_server`). The next session on the seat mounts the view again
+    (`client.prepare`), under the same lock.
+    """
+    view = Path(directory) / FORWARDED_VIEW
+    with view_lock(directory):
+        try:
+            taken = _taken_path(directory).stat().st_mtime
+        except FileNotFoundError:
+            taken = 0
+        if time.time() - taken < TAKEN_GRACE_S or session_running(directory):
+            return False
+        return release_mount(view)
+
+
+def end_server(pid, view):
+    """End the server of an abandoned ``view``, if ``pid`` is still it.
+
+    SIGKILL, not SIGTERM: libfuse acts on SIGTERM only when one of its workers
+    next wakes, and a copy nothing reads never wakes one. Nothing is lost — the
+    view holds no state — and a copy left in another session's namespace, at
+    another seat's path it never reads, answers ENOTCONN from then on.
+    """
+    try:
+        argv = [
+            os.fsdecode(arg)
+            for arg in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+            if arg
+        ]
+    except OSError:
+        return
+    if _serves_a_view(argv) and argv[-1] == str(view):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def release_abandoned_views():
+    """End every other forwarded view on this host whose session has ended,
+    server included.
+
+    Found through the servers holding them rather than by walking seat
+    directories: a walk would descend into the views themselves. Only servers
+    in this PID namespace — a session it cannot see is one it cannot tell is
+    still running. Returns how many servers it ended.
+    """
+    ended = 0
+    candidates = []
+    running = set()
+    prefix = EXECUTION_CONFIG + "="
+    for pid, argv, environ, same in _own_processes():
+        if not _serves_a_view(argv):
+            running.update(
+                os.path.realpath(os.path.dirname(item[len(prefix) :]))
+                for item in environ
+                if item.startswith(prefix)
+            )
+        elif same and pid != os.getpid() and Path(argv[-1]).name == FORWARDED_VIEW:
+            candidates.append((pid, Path(argv[-1])))
+    for pid, view in candidates:
+        # A session seen running a moment ago keeps its view without another
+        # look; one that was not is looked for again under the lock, since it
+        # may have started since.
+        if os.path.realpath(view.parent) in running:
+            continue
+        if release_abandoned(view.parent):
+            end_server(pid, view)
+            ended += 1
+    return ended
 
 
 def sources():

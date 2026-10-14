@@ -1,0 +1,17 @@
+{
+  "attachments": "Attachments",
+  "body": "Body",
+  "cc": "Cc",
+  "confirmSend": "Confirm and send",
+  "discard": "Discard",
+  "discardFailed": "Couldn't discard",
+  "discarded": "Discarded",
+  "from": "From {account}",
+  "hint": "The email above is exactly what gets sent. {name} can't send it for you.",
+  "noSubject": "(No subject)",
+  "notSent": "Not sent",
+  "notSentReason": "Not sent: {reason}",
+  "sent": "Sent",
+  "to": "To",
+  "waiting": "Sent only once {owner} confirms"
+}

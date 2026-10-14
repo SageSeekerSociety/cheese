@@ -47,6 +47,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
+from app.api.response import ok
 from app.api.teams_deps import application_to_api_model, load_application_maps
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -168,14 +169,12 @@ async def list_my_team_requests(
         )
         for app in apps
     ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "requests": items,
             "page": page,
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -210,11 +209,9 @@ async def list_my_team_invitations(
         )
         for app in apps
     ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "invitations": items,
             "page": page,
-        },
-    }
+        }
+    )

@@ -3,10 +3,10 @@
 A model call made on one of our virtual keys is priced by the gateway, not by
 whoever made it, so what it cost is read back afterwards: the key's new spend
 since the checkpoint kept beside it (`gateway.drain_new_usage`), one row per
-model, landed on the ledger together with the advanced checkpoint. A room's
-project key, the platform's key inside a project and a person's own key are
-read and charged the same way; they differ only in where the key and its
-checkpoint are kept and who pays, which is what ``GatewayKey`` answers.
+model, landed on the ledger together with the advanced checkpoint. A project's
+key and a person's own key are read and charged the same way; they differ only
+in where the key and its checkpoint are kept and who pays, which is what
+``GatewayKey`` answers.
 
 Exactly-once holds across concurrent reads and backend processes: the spend is
 read without a lock (it is an HTTP round trip), and landed only if the
@@ -45,8 +45,8 @@ class GatewayKey(Protocol):
         """Store the checkpoint, in the row ``read(for_update=True)`` locked."""
         ...
 
-    async def payer(self, session: AsyncSession) -> Payer | None:
-        """Who is charged; None when the platform pays (#2233)."""
+    async def payer(self, session: AsyncSession) -> Payer:
+        """Who is charged."""
         ...
 
 
@@ -57,7 +57,6 @@ class Charge:
     #: The model named on a row the gateway could not attribute to one.
     model: str
     kind: str = "chat"
-    project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None
     turn_id: uuid.UUID | None = None
     user_id: int | None = None
@@ -145,21 +144,6 @@ async def _charge_once(
                 # `model=""` is the one unattributed migration row
                 # (`drain_new_usage`): real spend, named by the default.
                 model = usage.model or charge.model
-                if payer is None:
-                    await ledger.record_platform(
-                        kind=charge.kind,
-                        model=model,
-                        input_tokens=usage.input_tokens,
-                        cache_read_tokens=usage.cache_read_tokens,
-                        cache_write_tokens=usage.cache_write_tokens,
-                        output_tokens=usage.output_tokens,
-                        cost_usd=usage.cost_usd,
-                        project_id=charge.project_id,
-                        topic_id=charge.topic_id,
-                        turn_id=charge.turn_id,
-                        calls=row.calls,
-                    )
-                    continue
                 await ledger.record(
                     payer,
                     credits=spend_to_credits(usage.cost_usd),

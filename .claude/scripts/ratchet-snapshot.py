@@ -149,6 +149,29 @@ CHECKS: tuple[Check, ...] = (
             "frontend/scripts/tsc-ratchet-core.mjs",
             # BETTER and the status mapping both live here, for all three.
             "frontend/scripts/ratchet-report.mjs",
+            # Reading eslint's JSON output into per-file counts, shared with the
+            # a11y and storage ratchets — the boundary's counts come from it.
+            "frontend/scripts/eslint-ratchet-json.mjs",
+        ),
+    ),
+    Check(
+        id="fe-storage",
+        area=BOUNDARY,
+        argv=("node", "scripts/browser-storage-ratchet.mjs", "--json"),
+        cwd="frontend",
+        rules=(
+            "frontend/eslint.browser-storage.config.mjs",
+            # The storage config builds on the base one; a rule added there
+            # decides this check too.
+            "frontend/eslint.config.mjs",
+            "frontend/scripts/browser-storage-ratchet.mjs",
+            "frontend/scripts/browser-storage-ratchet-core.mjs",
+            # What the safe module does is what the rule means by "safe" — a
+            # change to its API is a change to the fix the ratchet asks for.
+            "frontend/src/lib/browserStorage.ts",
+            "frontend/scripts/eslint-ratchet-json.mjs",
+            "frontend/scripts/tsc-ratchet-core.mjs",
+            "frontend/scripts/ratchet-report.mjs",
         ),
     ),
     Check(
@@ -558,6 +581,11 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "fe-boundary": {
         "frontend/import-boundary-baseline.json": "baseline: the frozen boundary violations",
+    },
+    "fe-storage": {
+        "frontend/browser-storage-baseline.json": (
+            "baseline: the frozen direct Web Storage references"
+        ),
     },
     "be-contracts": {
         "backend/scripts/__init__.py": (

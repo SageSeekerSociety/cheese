@@ -57,13 +57,15 @@ class ComputePool:
     def __init__(
         self,
         backends: "list[RoomSessions]",
-        owned: "dict[str, RoomSessions] | None" = None,
+        owned: "dict[tuple[str, bool], RoomSessions] | None" = None,
     ):
 
         self._backends = {backend.harness: backend for backend in backends}
-        # A member's own coding agent runs on their own machine whatever the
-        # room chose (`owner_provider`), so these are kept apart from the
-        # machine pools a room chooses among, keyed by harness alone.
+        # A member's own coding agent runs where its model connection is,
+        # whatever the room chose (`owner_provider`): on its owner's machine,
+        # or on the session host for one its owner's account holds. These are
+        # kept apart from the machine pools a room chooses among, keyed by
+        # harness and whether the account holds the connection.
         self._owned = dict(owned or {})
         self._harnesses: list[RoomSessions] = [  # type: ignore[assignment]
             *self._backends.values(),
@@ -373,10 +375,11 @@ class ComputePool:
         """
         return self.default()
 
-    def owned(self, harness: str) -> "RoomSessions | None":
-        """The backend for a member's own agent of ``harness``: on the owner's
-        machine, never the room's choice."""
-        return self._owned.get(harness)
+    def owned(self, harness: str, *, on_account: bool) -> "RoomSessions | None":
+        """The backend for a member's own agent of ``harness``, never the
+        room's choice: on the owner's machine, or, ``on_account``, on the
+        session host with the connection its owner's account holds."""
+        return self._owned.get((harness, on_account))
 
     def choose(
         self, project_settings: Mapping[str, Any] | None
@@ -407,7 +410,7 @@ class ComputePool:
 def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     """Build the ComputePool from settings: one backend per harness that can
     forward its tools, over the one executor channel, plus a member's own
-    Claude Code on the owner's machine (#2991)."""
+    Claude Code where its model connection is (#2991)."""
     # deferred-import: breaks the cycle agent.central_provider -> agent.compute
     from app.domain.agent.central_provider import CentralChannel
 
@@ -415,7 +418,7 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
     from app.domain.agent.device_provider import DeviceChannel
 
     # deferred-import: breaks the cycle agent.owner_provider -> agent.compute
-    from app.domain.agent.owner_provider import OwnerChannel
+    from app.domain.agent.owner_provider import AccountChannel, OwnerChannel
 
     # deferred-import: breaks the cycle room.sessions -> agent.compute
     from app.domain.agent.room.sessions import RoomSessions
@@ -452,11 +455,16 @@ def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
         for harness in HARNESSES
         if forwards(harness)
     ]
-    # A member's own Claude Code: the session and its hands both on the
-    # owner's machine (#2991). The executor side is the device transport.
+    # A member's own Claude Code (#2991): its session on the owner's machine
+    # holding its login, or on the session host with a connection its owner's
+    # account holds. Its hands are its environment's either way, reached over
+    # the device transport.
     owned = {
-        CLAUDE_CODE: RoomSessions(
+        (CLAUDE_CODE, False): RoomSessions(
             OwnerChannel(DeviceChannel()), CLAUDE_CODE, host, **policy
-        )
+        ),
+        (CLAUDE_CODE, True): RoomSessions(
+            AccountChannel(DeviceChannel()), CLAUDE_CODE, host, **policy
+        ),
     }
     return ComputePool(backends, owned)

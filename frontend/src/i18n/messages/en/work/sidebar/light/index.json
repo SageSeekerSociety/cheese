@@ -1,0 +1,7 @@
+{
+  "delivered": "Done and unread",
+  "moving": "Work moving",
+  "others": "Someone else's task",
+  "red": "Says it's running, but nothing for five minutes",
+  "yellow": "Waiting on you"
+}

@@ -109,9 +109,9 @@ export function useChatScroll(
   // event finds the same height it last saw, so neither rule above catches it — the
   // pane was left hundreds of pixels up with 「回到最新」 showing, in WebKit (the
   // desktop app) every time a task in the project changed. So an upward move also
-  // does not count when the reader gave no scrolling input and the content was just
-  // rewritten; a move up with input, or with nothing rewritten (find in page), still
-  // does.
+  // does not count when the reader gave no scrolling input and the content, or what
+  // shares the pane's column, was just rewritten; a move up with input, or with nothing
+  // rewritten (find in page), still does.
   let lastTop = 0
   let lastHeight = 0
   let readerInputAt = -Infinity
@@ -129,11 +129,13 @@ export function useChatScroll(
     touched()
   })
   useEventListener(window, 'keydown', touched)
-  useMutationObserver(contentRef, () => (rewrittenAt = performance.now()), {
-    childList: true,
-    subtree: true,
-    characterData: true,
-  })
+  // The pane's parent too: the composer zone under the pane leaving and coming back in
+  // one task clamps it the same way, with the timeline untouched.
+  useMutationObserver(
+    () => [contentRef.value, scrollRef.value?.parentElement],
+    () => (rewrittenAt = performance.now()),
+    { childList: true, subtree: true, characterData: true }
+  )
   function layoutMoved(now: number): boolean {
     const reader = pointerHeld || now - readerInputAt < READER_INPUT_MS
     return !reader && now - rewrittenAt < REWRITE_MS

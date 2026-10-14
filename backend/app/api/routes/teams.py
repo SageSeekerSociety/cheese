@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.response import ok
 from app.api.teams_deps import (
     _user_payload,
     application_to_api_model,
@@ -344,10 +345,8 @@ async def get_teams(
             )
         )
     next_start = str(offset + page_size) if has_more else None
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "teams": items,
             "page": {
                 "pageStart": page_start or "0",
@@ -355,8 +354,8 @@ async def get_teams(
                 "hasMore": has_more,
                 "nextStart": next_start,
             },
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -388,11 +387,7 @@ async def get_my_teams(
                 avatars_map=avatars_map,
             )
         )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"teams": items},
-    }
+    return ok({"teams": items})
 
 
 async def _team_profile(
@@ -414,7 +409,7 @@ async def _team_profile(
         avatars_map=avatars_map,
     )
     data["joinStatus"] = await membership_service.join_status(team.id, user_id)
-    return {"code": 200, "message": "OK", "data": {"team": data}}
+    return ok({"team": data})
 
 
 @router.get(
@@ -463,11 +458,7 @@ async def join_team(
 
 
 def _join_link_payload(team: Team) -> dict:
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"token": team.join_token, "approval": team.join_approval},
-    }
+    return ok({"token": team.join_token, "approval": team.join_approval})
 
 
 @router.get("/{teamId}/join-link", summary="Get Team Join Link")
@@ -585,14 +576,12 @@ async def get_team_members(
             if not await realname_repo.has_identity(uid):
                 all_verified = False
                 break
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "members": members,
             "allMembersVerified": all_verified,
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -616,10 +605,8 @@ async def create_team(
     )
     members = list(await service.get_team_members(team_id=team.id))
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return {
-        "code": 201,
-        "message": "Team created",
-        "data": {
+    return ok(
+        {
             "team": _team_to_api_model(
                 team,
                 members=members,
@@ -629,7 +616,8 @@ async def create_team(
                 avatars_map=avatars_map,
             )
         },
-    }
+        "Team created",
+    )
 
 
 @router.patch(
@@ -657,10 +645,8 @@ async def patch_team(
     )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "team": _team_to_api_model(
                 team,
                 members=members,
@@ -669,8 +655,8 @@ async def patch_team(
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
             )
-        },
-    }
+        }
+    )
 
 
 @router.delete(
@@ -747,10 +733,8 @@ async def patch_team_member_role(
         )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "team": _team_to_api_model(
                 team,
                 members=members,
@@ -759,8 +743,8 @@ async def patch_team_member_role(
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
             )
-        },
-    }
+        }
+    )
 
 
 @router.put(
@@ -787,10 +771,8 @@ async def put_team_owner(
         )
     members = list(await service.get_team_members(team_id=team_id))
     users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "team": _team_to_api_model(
                 team,
                 members=members,
@@ -799,8 +781,8 @@ async def put_team_owner(
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
             )
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -836,18 +818,16 @@ async def add_team_member_entry(
     await check_team_locking_status(db, team_id)
 
     relation = await service.add_member(team_id, user_id, role_val)
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {
+    return ok(
+        {
             "member": {
                 "userId": relation.user_id,
                 "role": role_str,
                 "createdAt": int(relation.created_at.timestamp() * 1000),
                 "updatedAt": int(relation.updated_at.timestamp() * 1000),
             }
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -899,14 +879,12 @@ async def list_team_join_requests(
         )
         for app in apps
     ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "applications": items,
             "page": page,
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -984,14 +962,12 @@ async def list_team_invitations(
         )
         for app in apps
     ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "invitations": items,
             "page": page,
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -1019,10 +995,8 @@ async def create_team_invitation(
     users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
         db, [app]
     )
-    return {
-        "code": 201,
-        "message": "Invitation created",
-        "data": {
+    return ok(
+        {
             "invitation": application_to_api_model(
                 app,
                 users_map=users_map,
@@ -1031,7 +1005,8 @@ async def create_team_invitation(
                 teams_map=teams_map,
             )
         },
-    }
+        "Invitation created",
+    )
 
 
 @router.delete(

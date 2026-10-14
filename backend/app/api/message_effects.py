@@ -7,14 +7,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.mentions import announce_mentions
-from app.domain.agent.platform_notices import (
+from app.domain.agent.turn.intake.rewrite import SentText
+from app.domain.block.models import Block
+from app.domain.notice_meta import (
     EVENT_MENTION_FUSED,
     SEVERITY_WARN,
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent.turn.intake.rewrite import SentText
-from app.domain.block.models import Block
 from app.domain.thread.services import answered_in
 
 

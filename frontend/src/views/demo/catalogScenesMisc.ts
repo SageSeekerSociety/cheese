@@ -1,10 +1,9 @@
 /**
  * 预览站里「小队与后台那几屏拆出来的半张画面」：我的团队、发现小队、团队算力、飞书应用、
- * 外站题账号、空间申请。
+ * 空间申请。
  *
  * 这几屏在应用里由各自的路由页取数（`Mine.vue`、`Explore.vue`、`detail/Compute.vue`、
- * `AdminIntegrationsPage.vue`、`AdminExternalProblemPage.vue`、`AdminSpacesPage.vue`），
- * 路由页碰接口层，预览站碰不得。
+ * `AdminIntegrationsPage.vue`、`AdminSpacesPage.vue`），路由页碰接口层，预览站碰不得。
  * 好在它们都已经拆成「路由页 → 只吃 props 的画面」：这里展示的正是产品里真会走到的那
  * 几格 —— 数据到货 / 首次加载 / 读失败 / 空 / 没权限 / 表单与驳回框。各屏公用的一份
  * 数据见 `catalogScenesMiscFixtures.ts`。
@@ -19,8 +18,6 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import {
   APPLICATIONS,
   DEVICES,
-  EXTERNAL_PROBLEM_CONFIGURED,
-  EXTERNAL_PROBLEM_UNCONFIGURED,
   FEISHU_CONFIGURED,
   FEISHU_UNCONFIGURED,
   MY_DEVICES,
@@ -30,7 +27,6 @@ import {
 } from './catalogScenesMiscFixtures'
 
 import { t } from '@/i18n'
-import AdminExternalProblemPageView from '@/views/admin/AdminExternalProblemPageView.vue'
 import AdminIntegrationsPageView from '@/views/admin/AdminIntegrationsPageView.vue'
 import AdminSpacesPageView from '@/views/admin/AdminSpacesPageView.vue'
 import ComputeView from '@/views/teams/detail/ComputeView.vue'
@@ -313,69 +309,6 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
         },
         props: { saveError: 'App Secret 不能为空' },
         expect: 'App Secret 不能为空',
-      },
-    ],
-  },
-  {
-    id: 'admin-external-problem-page-view',
-    title: 'AdminExternalProblemPageView',
-    get about() {
-      return t('catalog.adminExternalProblemPageView.about')
-    },
-    file: 'src/views/admin/AdminExternalProblemPageView.vue',
-    component: AdminExternalProblemPageView,
-    needs: UI_T_R,
-    args: EXTERNAL_PROBLEM_CONFIGURED,
-    states: [
-      {
-        get name() {
-          return t('catalog.adminExternalProblemPageView.s1.name')
-        },
-        get note() {
-          return t('catalog.adminExternalProblemPageView.s1.note')
-        },
-        props: {},
-        expect: '已配置 · teacher01 · yoj',
-      },
-      {
-        get name() {
-          return t('catalog.adminExternalProblemPageView.s2.name')
-        },
-        get note() {
-          return t('catalog.adminExternalProblemPageView.s2.note')
-        },
-        props: { ...EXTERNAL_PROBLEM_UNCONFIGURED },
-        expect: '还没配置',
-      },
-      {
-        get name() {
-          return t('catalog.adminExternalProblemPageView.s3.name')
-        },
-        get note() {
-          return t('catalog.adminExternalProblemPageView.s3.note')
-        },
-        props: { loadError: '外站题账号接口超时', showStatus: false },
-        expect: '外站题账号接口超时',
-      },
-      {
-        get name() {
-          return t('catalog.adminExternalProblemPageView.s4.name')
-        },
-        get note() {
-          return t('catalog.adminExternalProblemPageView.s4.note')
-        },
-        props: { username: '', validationError: '先填账号' },
-        expect: '先填账号',
-      },
-      {
-        get name() {
-          return t('catalog.adminExternalProblemPageView.s5.name')
-        },
-        get note() {
-          return t('catalog.adminExternalProblemPageView.s5.note')
-        },
-        props: { saveError: '账号或密码不对' },
-        expect: '账号或密码不对',
       },
     ],
   },

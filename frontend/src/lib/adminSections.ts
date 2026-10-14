@@ -176,14 +176,6 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     group: 'settings',
   },
   {
-    to: '/admin/integrations/external-problem',
-    name: 'AdminExternalProblem',
-    icon: 'mdi-account-key-outline',
-    labelKey: 'navigation.admin.externalProblem',
-    badge: false,
-    group: 'settings',
-  },
-  {
     to: '/admin/integration-health',
     name: 'AdminIntegrationHealth',
     icon: 'mdi-lan-check',

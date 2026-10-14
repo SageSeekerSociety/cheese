@@ -113,7 +113,13 @@ const ACTIONS_BASE = {
 }
 
 /** 芝士问的一道题，`answer_log` 由各格给。 */
-function askBlock(answerLog: Record<string, unknown>[]) {
+function askBlock(
+  answerLog: Record<string, unknown>[],
+  options: { text: string; explain?: string }[] = [
+    { text: '按部门 (Recommended)', explain: '和去年的报表对得上' },
+    { text: '按项目', explain: '每个项目一张表' },
+  ]
+) {
   return {
     id: 'demo-question',
     topic_id: 'demo-room',
@@ -123,11 +129,8 @@ function askBlock(answerLog: Record<string, unknown>[]) {
     content: '预算按哪个口径统计？',
     created_at: '2026-10-05T09:00:00Z',
     meta: {
-      options: [
-        { text: '按部门 (Recommended)', explain: '和去年的报表对得上' },
-        { text: '按项目', explain: '每个项目一张表' },
-      ],
-      asked: 'alice',
+      options,
+      asked: ['alice'],
       answer_log: answerLog,
     },
   }
@@ -476,17 +479,36 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',
     about:
-      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。选项之外永远多一颗「其他」：点开就地长出输入框，发的是他自己打的字，不是「其他」这两个字。',
+      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。选项下面最后一行一直是个输入框（「其他回答」）：不用先点开，打字回车就是他对这道题的答案，发的是他自己打的字。',
     file: 'src/components/ask/AskQuickReplies.vue',
     component: AskQuickReplies,
     needs: UI_T,
     states: [
       {
         name: '刚问出来',
-        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。末尾那颗「其他」点开就地长出输入框——模型没给的答案从这儿写，发出去的仍然是他自己那句话。',
+        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。最后一行是一直摆着的输入框，和选项同一种卡——模型没给的答案直接在这儿打，回车或右边的箭头发出去，发的是他自己那句话；Shift+回车换行。',
         props: {
           block: askBlock([]),
           names: {},
+          viewer: 'alice',
+        },
+      },
+      {
+        name: '选项只是几个词',
+        note: '没有说明的短选项横着排成一行按钮；末行的输入框照样在，自己另起一整行。',
+        props: {
+          block: askBlock([], [{ text: '按部门' }, { text: '按项目' }, { text: '按季度' }]),
+          names: {},
+          viewer: 'alice',
+        },
+      },
+      {
+        name: '问的是别人',
+        note: '题问的是 @alice，看的人不在被问的人里：选项和末行的输入框都灰着、点不动，也没有跳过的 ✕；上面那行「问 @alice」说明在等谁。',
+        props: {
+          block: askBlock([]),
+          names: { alice: 'Alice' },
+          viewer: 'bob',
         },
       },
       {

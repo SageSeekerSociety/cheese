@@ -172,6 +172,29 @@ class RequiredCITest(unittest.TestCase):
         self.assertTrue(selected["backend"] and selected["e2e"])
         self.assertFalse(selected["frontend"])
 
+    def test_the_catalogs_the_backend_reads_select_backend(self):
+        # The backend reads these three at import time (sentences.py), so a
+        # change to any of them has to run the backend suite. apiError is split
+        # across a shard directory now: the pattern has to reach inside it, and
+        # the frontend-only namespaces must not drag backend along.
+        for path in (
+            "frontend/src/i18n/messages/zh-CN/roomNotice.json",
+            "frontend/src/i18n/messages/en/roomNotice.json",
+            "frontend/src/i18n/messages/zh-CN/global.json",
+            "frontend/src/i18n/messages/zh-CN/apiError/usage.json",
+            "frontend/src/i18n/messages/en/apiError/usage.json",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["backend"])
+        for path in (
+            "frontend/src/i18n/messages/zh-CN/work/room/doc/index.json",
+            "frontend/src/i18n/messages/zh-CN/account.json",
+        ):
+            with self.subTest(path=path):
+                selected = gate.select([path])
+                self.assertTrue(selected["frontend"])
+                self.assertFalse(selected["backend"])
+
     def test_frontend_ratchet_scripts_run_the_frontend_suite(self):
         # lint:catalog and lint:scenes run these scripts against the real tree
         # only in the frontend suite; guards alone never runs them there.

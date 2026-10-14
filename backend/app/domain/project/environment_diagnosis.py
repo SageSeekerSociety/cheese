@@ -5,13 +5,13 @@ One question to the model, not a session: it is handed the end of the failed
 log and the two scripts that ran, and answers with the cause, the change, and
 the scripts as they would read after it. It reads nothing else and runs
 nothing; a person reads the change and decides whether to take it (the
-settings page saves it and retries). It is work a person asked the platform
-for about the platform's own environment runner, so the platform pays for it,
-as for naming tasks.
+settings page saves it and retries). It is asked about a project's channel, so
+the project pays for it, as for every model call made for a project.
 """
 
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 
 import httpx
@@ -109,6 +109,8 @@ def parse(content: str) -> Diagnosis | None:
 async def diagnose(
     session: AsyncSession,
     *,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
     config: dict,
     failure: dict,
     transport: httpx.AsyncBaseTransport | None = None,
@@ -146,11 +148,13 @@ async def diagnose(
         logger.warning("environment diagnosis call failed", exc_info=True)
         return None
     if usage is not None and (usage.total_tokens or cost_usd):
-        await Ledger(session).record_platform(
+        await Ledger(session).record_project_call(
+            project_id,
             kind=USAGE_KIND,
             model=settings.environment_diagnosis_model,
             input_tokens=usage.prompt_tokens,
             output_tokens=usage.completion_tokens,
             cost_usd=cost_usd,
+            topic_id=topic_id,
         )
     return parse(content)

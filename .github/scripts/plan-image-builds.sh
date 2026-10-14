@@ -173,7 +173,7 @@ else
     # desktop notices from (backend/Dockerfile, the `i18n` context).
     case "$changed_path" in
       frontend/src/i18n/messages/*/roomNotice.json \
-        | frontend/src/i18n/messages/*/apiError.json \
+        | frontend/src/i18n/messages/*/apiError/* \
         | frontend/src/i18n/messages/*/global.json)
         backend=true
         ;;

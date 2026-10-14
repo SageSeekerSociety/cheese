@@ -1,0 +1,13 @@
+{
+  "changes": "改动",
+  "chat": "对话",
+  "close": "关闭 {name}",
+  "overview": "概览",
+  "pinHint": "{path}（双击固定这个页签）",
+  "preview": "预览",
+  "routines": "定时与触发",
+  "scrollLeft": "向左滚动页签",
+  "scrollRight": "向右滚动页签",
+  "site": "现场",
+  "threads": "支线"
+}

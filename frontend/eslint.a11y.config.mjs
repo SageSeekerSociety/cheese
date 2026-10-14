@@ -2,7 +2,7 @@
 // configuration.
 //
 // WHY THIS IS NOT IN eslint.config.mjs. The tree already breaks these rules in
-// about 165 places, so adding them there as `error` would red `pnpm run lint`,
+// about 159 places, so adding them there as `error` would red `pnpm run lint`,
 // the pre-commit hook and frontend.yml's ESLint step for everybody on day one,
 // on files nobody touched; as `warn` they would vanish among the existing
 // warnings. So they live here, in a config read only by the gate that knows

@@ -2,6 +2,7 @@
 """One day of orchestrator metrics, to tell whether a patrol change worked. Read-only.
 
 Usage: OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_metrics.py <channel topic id> <YYYY-MM-DD>
+       python3 .claude/scripts/orchestrator_metrics.py --self-test   (offline: no token, no network, no gh)
 For that UTC day:
   等采纳      mergeable (accept_ready) -> entered the merge queue: p50/p90/max, and how many took > 10 min
   未就绪递卡  cards whose first signal was a CI failure, or that took > 20 min to become mergeable
@@ -48,7 +49,25 @@ def mins(a, b):
     return round((ts(b) - ts(a)).total_seconds() / 60)
 
 
+def sorted_drops(drops):
+    """按 #PR、原因、分钟数排出队记录，没重排的（分钟数 None）排在最前。
+
+    出队的每条是 (PR 号, 原因, 分钟数或 None)。`sorted(set(drops))` 直接比
+    元组，同一 PR 同一原因可以掉两次——一次重排、一次没重排——第 3 项 int 和
+    None 一相遇就 TypeError，报表断在出队这一行，它和后面的失败轮次都打不出
+    来。键把 None 落到 -1，比数字都小，有数字时的次序不变。
+    """
+    return sorted(set(drops), key=lambda d: (d[0], d[1], -1 if d[2] is None else d[2]))
+
+
+def drops_line(drops):
+    return "出队：" + ("、".join(
+        f"#{n}({r}) {'未重排' if b is None else str(b) + '分后重排'}" for n, r, b in sorted_drops(drops)) or "无")
+
+
 def main():
+    if sys.argv[1:2] == ["--self-test"]:
+        return self_test()
     room, day = sys.argv[1], sys.argv[2]
     tok = login()
     evs = [m for m in events(tok, room, "accept", pages=10) + events(tok, room, "system", pages=10)
@@ -92,9 +111,43 @@ def main():
         print(f"等采纳：{len(waits)} 次，p50 {statistics.median(waits)} 分，p90 {p90} 分，最大 {waits[-1]} 分，合计 {sum(waits)} 分")
     print(f"  >10 分钟 {len(set(late))} 次：" + "、".join(f"#{n} {w}分" for n, w in sorted(set(late))))
     print(f"未就绪递卡：{unready}/{filed}")
-    print("出队：" + ("、".join(f"#{n}({r}) {'未重排' if b is None else str(b) + '分后重排'}" for n, r, b in sorted(set(drops))) or "无"))
+    print(drops_line(drops))
     print("失败轮次：总 %d；" % sum(fails.values()) + "、".join(f"{c[:8]} {k}" for c, k in sorted(fails.items(), key=lambda x: -x[1])[:8]))
 
 
+def self_test():
+    """Offline checks of the pure parts: no token, no network, no gh.
+
+    The first case is the bug this file was fixed for: one PR dropped twice
+    with the same reason, once re-queued (minutes) and once not (None). Before
+    the fix, `sorted(set(drops))` compared the third element — int against
+    None — raised TypeError, and the report died at the 出队 line, so that line
+    and the failed-turn line after it never printed. The check pins both that
+    mix sorting and the wording of the 出队 line.
+    """
+    failures = []
+
+    def check(name, got, want):
+        if got != want:
+            failures.append(f"{name}: got {got!r}, want {want!r}")
+
+    check(
+        "未重排和 N 分后重排混着排不崩，未重排在前",
+        drops_line([("1500", "ci_failed", 7), ("1500", "ci_failed", None)]),
+        "出队：#1500(ci_failed) 未重排、#1500(ci_failed) 7分后重排",
+    )
+    check("没有出队时写「无」", drops_line([]), "出队：无")
+    check(
+        "同一条重复出现只算一次",
+        drops_line([("9", "manual", 3), ("9", "manual", 3)]),
+        "出队：#9(manual) 3分后重排",
+    )
+
+    for f in failures:
+        print("FAIL", f)
+    print("self-test:", "ok" if not failures else f"{len(failures)} failed")
+    return 1 if failures else 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,0 +1,10 @@
+{
+  "acceptedPr": "Accepted · PR #{pr}",
+  "acceptedTimes": "Accepted {n} times",
+  "acceptedTimesPr": "Accepted {n} times · PR #{pr}",
+  "created": "created a task",
+  "owner": "Owner: {name}",
+  "waitingAnswer": "Waiting for {name} to answer",
+  "waitingReview": "Waiting for {name} to review",
+  "waitingStart": "Waiting for {name} to start"
+}

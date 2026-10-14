@@ -1,138 +1,47 @@
 <template>
-  <div class="an-section">
-    <div class="an-bar">
-      <AnalyticsPublisherSelect
-        v-model="publisherIdModel"
-        :publishers="publisherOptions"
-        :loading="publishersLoading"
-      />
-      <v-select
-        v-model="participationApprovedModel"
-        autocomplete="off"
-        :items="options.approval.value"
-        :prefix="t('spaces.analytics.participants.approval')"
-        :aria-label="t('spaces.analytics.participants.approval')"
-        density="compact"
-        hide-details
-        variant="outlined"
-      />
-      <v-select
-        v-model="completionStatusModel"
-        autocomplete="off"
-        :items="options.completion.value"
-        :prefix="t('spaces.analytics.participants.completion')"
-        :aria-label="t('spaces.analytics.participants.completion')"
-        density="compact"
-        hide-details
-        variant="outlined"
-      />
-      <v-select
-        v-model="realNameModel"
-        autocomplete="off"
-        :items="realNameItems"
-        :prefix="t('spaces.analytics.participants.realName')"
-        :aria-label="t('spaces.analytics.participants.realName')"
-        density="compact"
-        hide-details
-        variant="outlined"
-      />
-      <v-select
-        v-model="groupByModel"
-        autocomplete="off"
-        :items="options.groupBy.value"
-        :prefix="t('spaces.analytics.groupBy.label')"
-        :aria-label="t('spaces.analytics.groupBy.label')"
-        density="compact"
-        hide-details
-        variant="outlined"
-      />
-      <div class="an-bar__end">
-        <AnalyticsExportButton
-          section="participants"
-          :space-id="spaceId"
-          :filters="filters"
-          :label="t('spaces.analytics.participants.export')"
-        />
-      </div>
-    </div>
-
-    <v-progress-linear v-if="loading && !participants" indeterminate color="primary" />
-
-    <!-- A failed reload must replace the block, not leave the previous filter's numbers standing (docs/design-system.md §3.10). -->
-    <BaseLoadError
-      v-if="failed"
-      :title="t('spaces.analytics.participants.loadFailed')"
-      :error="errorDetail"
-      @retry="load"
-    />
-
-    <template v-else-if="participants">
-      <AnalyticsStatStrip>
-        <AnalyticsMetricCard
-          v-for="item in metrics"
-          :key="item.key"
-          :label="t(`spaces.analytics.participants.metric.${item.key}.label`)"
-          :value="formatCount(item.value)"
-          :description="t(`spaces.analytics.participants.metric.${item.key}.hint`)"
-        />
-      </AnalyticsStatStrip>
-
-      <div class="an-grid">
-        <AnalyticsTrendCard
-          :title="t('spaces.analytics.participants.trend.joined')"
-          :points="participants.trends.participantsJoined"
-        />
-        <AnalyticsTrendCard
-          :title="t('spaces.analytics.participants.trend.submitted')"
-          :points="participants.trends.submissionsCreated"
-        />
-        <AnalyticsTrendCard
-          :title="t('spaces.analytics.participants.trend.succeeded')"
-          :points="participants.trends.successesAchieved"
-        />
-      </div>
-
-      <div class="an-grid">
-        <AnalyticsDistributionCard
-          v-for="item in distributions"
-          :key="item.key"
-          :title="t(`spaces.analytics.participants.distribution.${item.key}`)"
-          :distribution="item.distribution"
-        />
-      </div>
-    </template>
-
-    <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.participants.empty')" />
-  </div>
+  <ParticipantsView
+    v-model:publisher-id="publisherIdModel"
+    v-model:participation-approved="participationApprovedModel"
+    v-model:completion-status="completionStatusModel"
+    v-model:real-name="realNameModel"
+    v-model:group-by="groupByModel"
+    :loading="loading"
+    :failed="failed"
+    :error-detail="errorDetail"
+    :participants="participants"
+    :publishers="publisherOptions"
+    :publishers-loading="publishersLoading"
+    :exporting="exporting"
+    @load="load"
+    @export="exportSection"
+  />
 </template>
 
 <script setup lang="ts">
 import type { SpaceAnalyticsParticipants } from '@/types/apiSpaces'
-import type { AnalyticsGroupBy, AnalyticsRealNameFilter } from './utils'
+import type {
+  AnalyticsApproveFilter,
+  AnalyticsCompletionStatus,
+  AnalyticsGroupBy,
+  AnalyticsRealNameFilter,
+} from './utils'
 
-import { computed, ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
+import { ref, watch } from 'vue'
 
 import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
 
-import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
-import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
-import AnalyticsMetricCard from './components/AnalyticsMetricCard.vue'
-import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
-import AnalyticsStatStrip from './components/AnalyticsStatStrip.vue'
-import AnalyticsTrendCard from './components/AnalyticsTrendCard.vue'
-import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
+import { useAnalyticsExport } from './composables/useAnalyticsExport'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
-import { formatCount, labelDistributionCodes, withDistributionPercent } from './helpers'
+import ParticipantsView from './ParticipantsView.vue'
 import { buildAnalyticsApiParams } from './utils'
 
 import { SpacesApi } from '@/api/spaces'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
 
-const { t, te } = useI18n()
-const options = useAnalyticsOptions()
+// 管理员看板「参与者」那一格（`/spaces/:id/analytics/participants`）：取数与导出在这里，
+// 画法在 `ParticipantsView.vue`。这一层只做三件事 —— 拿 spaceId 取一次、筛选换了重取一次、
+// 五个下拉写回筛选。判「失败/空/有数据」在画面那一半。
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
+const { exporting, run: exportSection } = useAnalyticsExport('participants', spaceId, filters)
 
 const loading = ref(false)
 // 读失败和「还没有参与者」是两件事：失败留在页面上，空状态才说「暂无」。
@@ -142,8 +51,8 @@ const participants = ref<SpaceAnalyticsParticipants | null>(null)
 const { publishers: publisherOptions, loading: publishersLoading } = useAnalyticsPublishers(spaceId, filters)
 
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
-const participationApprovedModel = ref(filters.value.participationApproved ?? null)
-const completionStatusModel = ref(filters.value.completionStatus ?? null)
+const participationApprovedModel = ref<AnalyticsApproveFilter | null>(filters.value.participationApproved ?? null)
+const completionStatusModel = ref<AnalyticsCompletionStatus | null>(filters.value.completionStatus ?? null)
 const realNameModel = ref<AnalyticsRealNameFilter>(filters.value.realName)
 const groupByModel = ref<AnalyticsGroupBy>(filters.value.groupBy)
 
@@ -191,43 +100,4 @@ watch(
   },
   { immediate: true }
 )
-
-const realNameItems = computed(() =>
-  (['all', 'with', 'without'] as const).map((value) => ({
-    title: t(`spaces.analytics.participants.realNameOption.${value}`),
-    value,
-  }))
-)
-
-const metrics = computed(() => {
-  const p = participants.value
-  if (!p) return []
-  return [
-    { key: 'claims', value: p.entityMetrics.participantCount },
-    { key: 'approved', value: p.entityMetrics.approvedParticipantCount },
-    { key: 'succeeded', value: p.entityMetrics.successfulParticipantCount },
-    { key: 'realName', value: p.studentMetrics.studentsWithRealNameCount },
-  ]
-})
-
-/** 状态码那三张换成名字；年级、专业、班级本来就是名字。 */
-const distributions = computed(() => {
-  const d = participants.value?.distributions
-  if (!d) return []
-  const codes = (value: typeof d.byApprovalStatus) => ({
-    ...value,
-    items: labelDistributionCodes(withDistributionPercent(value), t, te),
-  })
-  const names = (value: typeof d.byGrade) => ({ ...value, items: withDistributionPercent(value) })
-  return [
-    { key: 'approval', distribution: codes(d.byApprovalStatus) },
-    { key: 'completion', distribution: codes(d.byCompletionStatus) },
-    { key: 'realName', distribution: codes(d.byRealNameStatus) },
-    { key: 'grade', distribution: names(d.byGrade) },
-    { key: 'major', distribution: names(d.byMajor) },
-    { key: 'className', distribution: names(d.byClassName) },
-  ]
-})
 </script>
-
-<style scoped src="./analytics.css"></style>

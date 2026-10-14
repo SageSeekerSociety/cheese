@@ -67,6 +67,18 @@ async def room_of(session: AsyncSession, conversation_id: uuid.UUID) -> uuid.UUI
     return room or conversation_id
 
 
+async def room_of_thread(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> uuid.UUID | None:
+    """The room a 支线 is in, or ``None`` when the conversation is not one.
+
+    Not `room_of`: that one answers a task's room too, and the id itself for a
+    room, so a caller that has to tell a 支线 from everything else asks this."""
+    return await session.scalar(
+        select(_threads.c.room_id).where(_threads.c.id == conversation_id)
+    )
+
+
 async def rooms_of_inner(
     session: AsyncSession, rooms: list[uuid.UUID]
 ) -> dict[uuid.UUID, uuid.UUID]:
