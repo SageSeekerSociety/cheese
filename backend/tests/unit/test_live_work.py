@@ -100,6 +100,29 @@ async def test_mark_turn_active_writes_through_with_the_same_two_keys():
 
 
 @pytest.mark.anyio
+async def test_activate_cached_marks_on_the_callers_word_and_reads_nothing():
+    """The post-commit mark does no read at all.
+
+    A caller that waited on its own commit already knows the row is there; a
+    fresh connection re-reading it can answer no at the commit boundary, and a
+    no would drop a mark that belongs on. So the mark rests on the caller's
+    awaited commit, and this asks the database nothing — it must not be able to
+    reach a write-through that could drop the mark.
+    """
+    calls: list[tuple[uuid.UUID, uuid.UUID]] = []
+
+    async def write_open(topic_id, work_id):
+        calls.append((topic_id, work_id))
+        return False  # would DROP the mark if this path consulted it
+
+    live = LiveWork(write_open=write_open)
+    topic, work = uuid.uuid4(), uuid.uuid4()
+    live.activate_cached(topic, work)
+    assert live.active_turn_ids[topic] == {work}
+    assert calls == []
+
+
+@pytest.mark.anyio
 async def test_a_failed_confirm_leaves_no_cache_entry():
     """A confirm that raises must not leave the turn marked active.
 

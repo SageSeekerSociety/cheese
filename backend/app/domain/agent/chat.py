@@ -495,8 +495,11 @@ class ChatService(SessionRecovery):
             # 这里不标「在跑」：轮次那行 `AgentTurn` 要到这个 `yield` 里面
             # （`open_turn` / `open_interval`）才提交，先标就是让缓存替一个还
             # 不存在的轮次说话，正是「写落地之前不许被看见在跑」不许的那件事
-            # —— 见 `mark_turn_active`。跑起来的信号随会话的 Working 事件来
-            # （`_set_hook_activity`），那时行已经在了。
+            # —— 见 `mark_turn_active`。醒着的记号落在提交之后的那一步：平台轮
+            # 次在 `send_prepared` 等 `open_interval` 提交返回后标
+            # （`steps/send.py`），自起的轮次在自己的行开好后标
+            # （`native_turns.begin`）。会话的 Working 事件（`_set_hook_activity`）
+            # 只发布那一帧：它可能早于行，也可能晚于轮次结束。
             try:
                 yield
             finally:
@@ -1269,7 +1272,16 @@ class ChatService(SessionRecovery):
         state = self.live.hook_work.get((topic_id, work_id))
         agent = (state.acting_agent if state is not None else None) or agent_handle
         if active:
-            await self.live.mark_turn_active(topic_id, work_id)
+            # A Working event is a session SPEAKING about a turn, not the step
+            # that opened it, and the mark belongs to that step: the turn
+            # lifecycle places it once its own await has committed the row
+            # (`steps/send.py`, `native_turns.begin`). So this only publishes.
+            # Neither may it mark here — a session that opens its own turn
+            # announces it BEFORE the room opens the row, and a mark now would
+            # name a turn the authority has never seen — nor DROP a mark
+            # (`mark_turn_active`'s confirm runs on a fresh connection and can
+            # say no for a row committed a moment ago), which left a running
+            # turn unmarked until its next event.
             frame = {"type": "turn_started", "turn_id": str(work_id), "agent": agent}
         else:
             await self.live.mark_turn_inactive(topic_id, work_id)

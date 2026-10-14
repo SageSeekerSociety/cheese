@@ -267,6 +267,18 @@ class LiveWork:
         self.active_turn_ids.setdefault(topic_id, set()).add(work_id)
         return True
 
+    def activate_cached(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+        """Record a turn this process just saw committed, with no read.
+
+        For a caller whose own awaited step committed the row — the turn
+        lifecycle right after `open_turn` / `open_interval`. There the write the
+        mark mirrors is ALREADY durable, so confirming it AGAIN is the one read
+        that cannot be trusted: a fresh connection can see the row as not yet
+        open at the commit boundary and answer no, which would drop a mark that
+        belongs on. Marking on the caller's word is the point.
+        """
+        self.active_turn_ids.setdefault(topic_id, set()).add(work_id)
+
     async def mark_turn_inactive(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
         """Let go of a turn this process was holding.
 
