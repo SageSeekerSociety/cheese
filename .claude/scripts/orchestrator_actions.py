@@ -49,7 +49,10 @@ def action_items(markdown):
     """Prefer 行动项; accept 改进 and 下一步 in older retrospectives.
 
     Source order is preserved: the next retro checks the items off in the order
-    the last one wrote them, and a reordered list is a different list.
+    the last one wrote them, and a reordered list is a different list. Only the
+    list's own bullets are items: a paragraph that follows the list is prose the
+    retro wrote about it, and joining it onto the last bullet would rewrite that
+    item and pour the paragraph into whatever column reads its tail.
     """
     sections = []
     active = None
@@ -76,13 +79,19 @@ def action_items(markdown):
     items = []
     for lines in chosen:
         current = None
+        wrapping = False
         for line in lines:
             bullet = re.match(r"^(?:[-*+]\s+|\d+[.)、]\s+)(.*)$", line)
             if bullet:
                 current = re.sub(r"^\[[ xX]\]\s*", "", bullet[1]).strip()
                 items.append(current)
-            elif line.strip() and current is not None:
+                wrapping = True
+            elif not line.strip():
+                wrapping = False
+            elif wrapping and current is not None:
                 items[-1] += " " + line.strip()
+            else:
+                wrapping = False
     return items
 
 
@@ -159,7 +168,8 @@ def self_test():
     no 怎么核 and one whose 落点 carries its own parenthetical. Before the field
     parser was taught those clauses it wanted a colon after every label and
     only ever accepted 层, so all three rows came out as three 「—」: the table
-    looked complete and carried nothing.
+    looked complete and carried nothing. That section also ends with a prose
+    paragraph about workflow-tree, which is about the list and not an item.
     """
     failures = []
 
@@ -177,6 +187,8 @@ def self_test():
 - 接力手册里把「哪个座位还能起会话」记成一张常更新的对照表，换座位不现场试。owner 芝士人，落点 L5。
 - 换完座位 30 分钟内确认新座位上真的在跑。owner 芝士人，落点 L0（扫描已有「最后 event 时间」字段）。
 
+v2 要求复盘产出 workflow-tree 新版，但资料库里还没有这份东西，这一份没出；等芝士Opus 回来定它是什么形状再补，不自己造一个。
+
 ## 复盘的复盘
 
 - 「采纳前读 PR 的 `mergeable`」——**做到了**：进了工作流 v2 第 3 节。
@@ -188,6 +200,8 @@ def self_test():
           items[1], "接力手册里把「哪个座位还能起会话」记成一张常更新的对照表，"
                     "换座位不现场试。owner 芝士人，落点 L5。")
     check("第三条原文带出", items[2].startswith("换完座位 30 分钟内"), True)
+    check("小节末尾的正文段不并进最后一条（10-13 22:30 那份就这么排）",
+          "v2 要求复盘产出" in items[2], False)
 
     check("字段齐全的那条三列都填上",
           fields_of(items[0]),
@@ -221,6 +235,9 @@ def self_test():
           action_items("## 行动项\n\n- [ ] 要做的。\n- [x] 做完的。\n"), ["要做的。", "做完的。"])
     check("折行并进上一条，不新起一条",
           action_items("## 行动项\n\n- 第一条，\n  这半句接上。\n"), ["第一条， 这半句接上。"])
+    check("空行之后的段落另起，不再并回去",
+          action_items("## 行动项\n\n- 条目。\n\n这是补的说明。\n\n- 又一条。\n"),
+          ["条目。", "又一条。"])
     check("小节是空的就报 0 条，不落到别处去凑",
           action_table("## 行动项\n\n## 改进\n\n- 别处的。\n").splitlines()[-1], "行动项：0 条")
 
