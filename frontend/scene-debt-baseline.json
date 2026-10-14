@@ -50,13 +50,9 @@
     "src/views/workspace/WorkspaceEntry.vue -> src/views/workspace/ProjectSidebar.vue"
   ],
   "routes": [
-    "src/views/MyConnectionsView.vue",
     "src/views/ProjectArtifactView.vue",
     "src/views/ProjectLibraryView.vue",
-    "src/views/ProjectSkillsView.vue",
-    "src/views/admin/AdminFeaturePage.vue",
     "src/views/admin/AdminLayout.vue",
-    "src/views/feedback/FeedbackDetailPage.vue",
     "src/views/question/Detail.vue",
     "src/views/question/DetailAnswer.vue",
     "src/views/spaces/Detail.vue",

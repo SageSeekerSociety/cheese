@@ -24,8 +24,9 @@ import SkillDetailDrawer from '@/components/skills/SkillDetailDrawer.vue'
  *  走全局的 `t()` / i18n 单例。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
-/** 一份技能：默认是已经保存、正在用的那一版（`state: 'active'`），配套文件是空的。 */
-function skill(over: Partial<ProjectSkill> = {}): ProjectSkill {
+/** 一份技能：默认是已经保存、正在用的那一版（`state: 'active'`），配套文件是空的。
+ *  `catalogScenesPages2.ts`（技能列表那一页的几个状态）也拿它造数据。 */
+export function skill(over: Partial<ProjectSkill> = {}): ProjectSkill {
   return {
     id: 'skill-weekly',
     project_id: 'p1',
