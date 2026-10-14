@@ -59,6 +59,10 @@ CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑",
 #: backend's run_record.turns.TURN_FAILURE_EVENTS. A tool block left behind by any of
 #: them is not a command still running.
 TURN_ENDED = ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error")
+#: The task row's presentation phrase while a turn is running (the backend's
+#: Building.running). It is the platform's own answer to "is this line acting right now":
+#: the frontend's 还在动 rule is the same judgement, scoped to the running turn's blocks.
+RUNNING_PHRASE = "running"
 #: A tool call older than this is not taken for still running, whatever its block says:
 #: a turn can end in a way that posts no event at all (a seat replaced under it), and a
 #: line that then reads 命令在跑 forever is the one failure this class exists to catch.
@@ -806,14 +810,32 @@ def heartbeat_of(last_msg, last_event, last_output=None):
     return max((x for x in (last_msg, last_event, last_output) if x), key=ts)
 
 
-def in_flight(event, ended_after, now=None):
+def turn_running(task):
+    """Whether the platform says a turn is running in this task right now: the row's
+    presentation phrase is `running` while one is. None when the row carries no phrase
+    (an older platform), which leaves the caller its own fallback."""
+    pres = task.get("presentation")
+    if isinstance(pres, dict) and isinstance(pres.get("phrase"), str):
+        return pres["phrase"] == RUNNING_PHRASE
+    return None
+
+
+def in_flight(event, ended_after, now=None, turn=None):
     """Whether the seat's latest event block is a tool call that has not returned: the
     platform writes the block when the call starts (that is its created_at) and adds
     `output_bytes` when it ends, so a tool block without one is a command still running
     — unless the turn ended after it (TURN_ENDED), which leaves the block unmarked
-    forever, or the call is older than IN_FLIGHT_MAX_MIN."""
+    forever, or the call is older than IN_FLIGHT_MAX_MIN.
+
+    `turn` is the platform's word on whether a turn is running (turn_running). A call that
+    returned with empty output leaves the block byte-identical to this one, so the block
+    alone cannot tell the two apart (第三轮审查 2026-10-14): when the platform says no turn
+    is running, the block has returned and is not in flight. When the platform does not say
+    (None), only the age limit above keeps 命令在跑 from lasting forever."""
     m = meta(event)
     if not m.get("tool") or "output_bytes" in m or m.get("failed") or ended_after:
+        return False
+    if turn is False:
         return False
     now = now or datetime.now(timezone.utc)
     return (now - ts(event["created_at"])).total_seconds() / 60 < IN_FLIGHT_MAX_MIN
@@ -867,15 +889,16 @@ def sweep(tok, room, silent, skip, want_facts):
         sysev.sort(key=lambda m: m["created_at"])
         accev.sort(key=lambda m: m["created_at"])
         # 一条长命令只在开始时落一个 event 块、结束时才补 output_bytes，所以还没返回的
-        # 命令是「现在在跑」；跑着的一轮每有输出平台还会更新任务行上的 last_output_at
-        # （新版平台才有，没有就不算），单条 45 分钟的命令靠这两样才不会被报成停摆。
+        # 命令是「现在在跑」；单条 45 分钟的命令靠它才不会被报成停摆。event 只认座位自己
+        # 写的，author 过滤不能省：不过滤的话别人的块（system 的 pr_closed 每隔几天来一
+        # 条）会被当成它的心跳；座位不知道是谁时就一条都不读。行上的 last_output_at 是
+        # 平台的第三个说法，现在两端都不给值，给了就顺手采信。
         seat = t.get("agent_handle")
-        evs = get(tok, f"/topics/{tid}/history?limit=1&kind=event"
-                       + (f"&author={seat}" if seat else ""))["data"]
+        evs = get(tok, f"/topics/{tid}/history?limit=1&kind=event&author={seat}")["data"] if seat else []
         last_event = evs[-1]["created_at"] if evs else None
         ended_after = any(meta(m).get("event_type") in TURN_ENDED and m["created_at"] > last_event
                           for m in sysev) if evs else False
-        running = bool(evs) and in_flight(evs[-1], ended_after, now)
+        running = bool(evs) and in_flight(evs[-1], ended_after, now, turn_running(t))
         heartbeat = heartbeat_of(last_msg, last_event, t.get("last_output_at"))
         pulse = {"last_event_at": last_event, "last_message_at": msg[-1]["created_at"] if msg else None,
                  "last_message": message_brief(msg[-1]) if msg else None,
@@ -1585,6 +1608,16 @@ def _self_test_pulse():
         ("在跑：progress 这类不是 tool 的 event 不算", in_flight({"meta": {"progress": 1}}, False, now), False),
         ("在跑：没返回的 tool 块超过 IN_FLIGHT_MAX_MIN 也不算在跑",
          in_flight(dict(call, created_at="2026-10-12T23:00:00Z"), False, now), False),
+        ("在跑：块没返回但平台说这一轮没在跑（返回了、输出是空的块就长这样），不算在跑",
+         in_flight(call, False, now, turn=False), False),
+        ("在跑：平台说 running，同样没返回的块照旧算在跑",
+         in_flight(call, False, now, turn=True), True),
+        ("在跑：平台给不出判断（行上没有这个字段）时退回按块的年龄算",
+         in_flight(call, False, now, turn=None), True),
+        ("平台说在不在跑：running 是、started 不是、行上没有这个字段就不知道",
+         [turn_running(t) for t in ({"presentation": {"phrase": "running"}},
+                                    {"presentation": {"phrase": "started"}}, {}, {"presentation": None})],
+         [True, False, None, None]),
         ("结束一轮的事件：四种都算，memory_changed 不算",
          [e in TURN_ENDED for e in ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error", "memory_changed")],
          [True, True, True, True, False]),
@@ -1660,6 +1693,12 @@ def _self_test_sweep():
          kinds(60, call, sysev("turn_timeout", 50)), ["长时间无动静"]),
         ("sweep：命令没返回但之后 platform_error 结束了一轮，报停摆",
          kinds(60, call, sysev("platform_error", 50)), ["长时间无动静"]),
+        ("sweep：命令没返回、任务行说这一轮没在跑，块已经返回了，报停摆",
+         kinds(60, call, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
+        ("sweep：任务行说 running，同样没返回的块算在跑，不报",
+         kinds(60, call, row={"presentation": {"phrase": "running"}}), []),
+        ("sweep：不知道座位是谁时别人的 event 不算心跳（10 分钟前的块也不认）",
+         kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
         ("sweep：平台给的 last_output_at 10 分钟前，不报",
          kinds(60, done, row={"last_output_at": at(10)}), []),
     ]
