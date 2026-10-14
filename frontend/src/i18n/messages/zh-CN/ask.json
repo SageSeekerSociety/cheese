@@ -17,6 +17,10 @@
     "undoSkip": "撤销",
     "undoSkipAria": "撤销跳过，重新回答这道题",
     "skipFailed": "跳过失败",
-    "asks": "问 {people}"
+    "asks": "{asker} 问 {people}",
+    "asksYou": "{asker} 问你",
+    "asksYouAnd": "{asker} 问你和 {people}",
+    "asksAll": "{asker} 问所有人",
+    "asksAnyone": "{asker} 提问"
   }
 }

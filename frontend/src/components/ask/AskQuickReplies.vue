@@ -1,33 +1,37 @@
 <script setup lang="ts">
 /**
- * The quick replies under a question 芝士 asked (`cheese_ask`).
+ * A question 芝士 asked (`cheese_ask`), drawn as one card: who asks whom, the
+ * question as the card's title, its options as numbered rows, and a last row to
+ * type an answer that is not among them.
  *
  * A question is an ordinary message; its options are shortcuts for a reply, not
- * a form. Clicking one emits `reply` with the option's text and the panel sends
- * it as a message replying to the question — exactly what typing it would do.
- * Typing anything else in the input box answers too, so nothing here takes the
- * composer over. Once anyone has answered, the buttons give way to who said what.
- * Where nobody can answer any more (its task closed, its channel archived) the
- * question stays as it was asked and says it no longer waits for an answer.
+ * a form. Clicking one (or pressing its number while the card has focus) emits
+ * `reply` with the option's text and the panel sends it as a message replying to
+ * the question — exactly what typing it would do. Typing anything else in the
+ * input box answers too, so nothing here takes the composer over. Once anyone has
+ * answered, the option rows give way to who said what. Where nobody can answer
+ * any more (its task closed, its channel archived) the question stays as it was
+ * asked and says it no longer waits for an answer.
  *
  * Whoever asked fixed the options, so the answer someone most needs to give is
- * often the one that is not among them. The last row under the options is a
- * field for that, there from the start like the options beside it (as in Claude's
- * own ask-a-question card): typing in it and pressing Enter, or its send button,
- * sends the person's own words as the answer, recorded as something they said
- * rather than as a choice.
+ * often the one that is not among them. The last row is a field for that, there
+ * from the start like the options above it (as in Claude's own ask-a-question
+ * card): typing in it and pressing Enter, or its send button, sends the person's
+ * own words as the answer, recorded as something they said rather than as a
+ * choice.
  *
- * The agent chooses whom it asks, as a message @-mentions people: one person,
- * several, or everyone in the channel. The card says so above the options
- * (「问 @A @B」), with the same chips a message draws.
+ * The agent chooses whom it asks: one person, several, or everyone in the
+ * channel. The card's header says so in words (「芝士 问你」「芝士 问 Alice」). It is
+ * a statement about who is asked, not a mention, so the names are plain text,
+ * never the @ chips a message draws.
  *
  * Only whoever may answer it can use the options, the field and the ✕: someone it
  * asks, anyone in the channel when it asks everyone, and anyone when it asks
  * nobody in particular (the server holds the same rule, `block.asked.may_answer`,
  * for a click, a typed answer and a skip alike). Anyone else sees the options
- * and the field greyed out, without the ✕; the 「问 @…」 line above them says whom it waits on.
+ * and the field greyed out, without the ✕; the header says whom it waits on.
  *
- * A person it asks can decline to answer: the ✕ beside the options skips it
+ * A person it asks can decline to answer: the ✕ at the card's top right skips it
  * for him. Nothing is said in the room; the question stops waiting on him, the
  * options go away for him only, and the others it asks still see them. When
  * everyone it names has skipped, nobody sees options any more and the agent
@@ -49,10 +53,11 @@ import { t } from '../../i18n'
 import { askAnswers, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
 import ConfirmDialog from '../base/ConfirmDialog.vue'
-import UserRef from '../common/UserRef.vue'
 
 const props = defineProps<{
   block: Block
+  /** 问的那一位的显示名（卡片页头「芝士 问你」里的「芝士」）。 */
+  asker: string
   names: Record<string, string>
   /** 这里已经不能回答了：任务关了、频道归档了。 */
   closed?: boolean
@@ -68,7 +73,7 @@ const emit = defineEmits<{
 
 const options = computed(() => askOptions(props.block) ?? [])
 const meta = computed(() => (props.block.meta ?? {}) as { asked?: string[]; asked_all?: boolean })
-/** 问了谁：点名的那几个人；问所有人时只画一颗「@所有人」。空是没点名。 */
+/** 问了谁：点名的那几个人。空是没点名。 */
 const asked = computed(() => meta.value.asked ?? [])
 const askedAll = computed(() => !!meta.value.asked_all)
 const responses = computed(() => askAnswers(props.block))
@@ -82,10 +87,6 @@ const skippedByAll = computed(
 const mySkip = computed(() => props.viewer != null && skips.value.some((s) => s.by === props.viewer))
 /** 跳过的那几行：了结时列出每个人，没了结时只列看的人自己那一条。 */
 const skipLines = computed(() => (skippedByAll.value ? skips.value : skips.value.filter((s) => s.by === props.viewer)))
-// 带说明的选项是几段话，不是几个词：按各自内容收缩时三张卡宽窄不一，读起来像排版
-// 出了错。这时排成一列、同宽；只有短短几个词的选项才横着排成一行按钮。
-const stacked = computed(() => options.value.some((option) => option.explain))
-
 // 只有自己答的那一条能撤回。题已经不再等回答（任务关了）也照给：撤回是回答的人
 // 一直有的权利，后端不看这两件事。
 const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer))
@@ -96,6 +97,37 @@ const canAnswer = computed(
   () => !!props.viewer && (asked.value.length === 0 || askedAll.value || asked.value.includes(props.viewer))
 )
 const confirming = ref(false)
+
+// 页头那一句：谁问的、问谁。问到了看的人就说「你」；名字是平文，不是 @ 的 chip ——
+// 这一句说的是在等谁，不是在叫谁。
+const askedOthers = computed(() =>
+  asked.value
+    .filter((h) => h !== props.viewer)
+    .map((h) => props.names[h] ?? h)
+    .join(t('work.room.roster.listSeparator'))
+)
+const whoKey = computed(() => {
+  if (askedAll.value) return 'ask.replies.asksAll'
+  if (asked.value.length === 0) return 'ask.replies.asksAnyone'
+  if (props.viewer && asked.value.includes(props.viewer))
+    return asked.value.length > 1 ? 'ask.replies.asksYouAnd' : 'ask.replies.asksYou'
+  return 'ask.replies.asks'
+})
+
+// 选项还摆在看的人面前：没人答过、没结束、没被所有人跳过、他自己也没跳过。
+const choosing = computed(() => !answers.value.length && !props.closed && !skippedByAll.value && !mySkip.value)
+
+// 卡片有焦点时按 1–9 就是点第几个选项。末行输入框里的数字是在打字，不算；带修饰键的
+// 是别的快捷键（⌘1–9 是切侧栏），也不算。
+function onCardKey(e: KeyboardEvent) {
+  if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return
+  if (!/^[1-9]$/.test(e.key) || !choosing.value || !canAnswer.value) return
+  if ((e.target as HTMLElement).closest('textarea, input, [contenteditable="true"]')) return
+  const option = options.value[Number(e.key) - 1]
+  if (!option) return
+  e.preventDefault()
+  emit('reply', label(option.text))
+}
 
 function confirmWithdraw() {
   confirming.value = false
@@ -115,7 +147,7 @@ function fitOther() {
   el.style.height = `${el.scrollHeight}px`
 }
 // 浏览器给一行高的 textarea 留的高度比一行字多：框一画出来就量一次，空着时才和选项
-// 卡一样高。撤回之后选项重新长出来，也是一个新框。
+// 那几行一样高。撤回之后选项重新长出来，也是一个新框。
 watch(otherField, fitOther, { flush: 'post' })
 
 function sendOther() {
@@ -143,21 +175,37 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 </script>
 
 <template>
-  <div class="ask-replies">
-    <p v-if="asked.length" class="ask-replies__asked t-meta">
-      <i18n-t keypath="ask.replies.asks" tag="span" scope="global">
-        <template #people>
-          <UserRef v-if="askedAll" handle="all" :name="names.all" />
-          <template v-else>
-            <template v-for="(handle, index) in asked" :key="handle">
-              <template v-if="index">&#32;</template><UserRef :handle="handle" :name="names[handle]" />
+  <!-- tabindex=-1：点卡上任何一处，焦点就落在卡上，按数字键选选项（见 onCardKey）。 -->
+  <section class="ask-replies" tabindex="-1" @keydown="onCardKey">
+    <header class="ask-replies__head">
+      <div class="ask-replies__heading">
+        <p class="ask-replies__who">
+          <i18n-t :keypath="whoKey" tag="span" scope="global">
+            <template #asker>
+              <span class="ask-replies__name">{{ asker }}</span>
             </template>
-          </template>
-        </template>
-      </i18n-t>
-    </p>
-    <ul v-if="answers.length" class="ask-replies__answers t-meta">
-      <li v-for="(answer, index) in answers" :key="index">
+            <template #people>
+              <span class="ask-replies__name">{{ askedOthers }}</span>
+            </template>
+          </i18n-t>
+        </p>
+        <div class="ask-replies__question">
+          <slot>{{ block.content }}</slot>
+        </div>
+      </div>
+      <BaseButton
+        v-if="choosing && canAnswer"
+        class="ask-replies__skip"
+        kind="ghost"
+        size="sm"
+        icon="mdi-close"
+        :aria-label="t('ask.replies.skip')"
+        :title="t('ask.replies.skip')"
+        @click="emit('skip')"
+      />
+    </header>
+    <ul v-if="answers.length" class="ask-replies__answers">
+      <li v-for="(answer, index) in answers" :key="index" class="ask-replies__row">
         <span class="ask-replies__answer">{{
           t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text })
         }}</span>
@@ -173,8 +221,8 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
       </li>
     </ul>
     <template v-else>
-      <ul v-if="skipLines.length" class="ask-replies__answers t-meta">
-        <li v-for="skip in skipLines" :key="skip.by">
+      <ul v-if="skipLines.length" class="ask-replies__answers">
+        <li v-for="skip in skipLines" :key="skip.by" class="ask-replies__row">
           <span class="ask-replies__answer">{{ t('ask.replies.skipped', { name: names[skip.by] ?? skip.by }) }}</span>
           <button
             v-if="skip.by === viewer"
@@ -187,58 +235,51 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
           </button>
         </li>
       </ul>
-      <p v-if="closed && !skippedByAll" class="ask-replies__closed t-meta">{{ t('ask.replies.closed') }}</p>
-      <div v-else-if="!skippedByAll && !mySkip" class="ask-replies__open">
-        <div class="ask-replies__options" role="group" :aria-label="t('ask.replies.label')">
-          <div class="ask-replies__choices" :class="{ 'ask-replies__choices--stacked': stacked }">
-            <button
-              v-for="option in options"
-              :key="option.text"
-              type="button"
-              class="ask-replies__option"
-              :disabled="!canAnswer"
-              @click="emit('reply', label(option.text))"
+      <p v-if="closed && !skippedByAll" class="ask-replies__row ask-replies__closed">{{ t('ask.replies.closed') }}</p>
+      <div v-else-if="choosing" class="ask-replies__options" role="group" :aria-label="t('ask.replies.label')">
+        <button
+          v-for="(option, index) in options"
+          :key="option.text"
+          type="button"
+          class="ask-replies__option"
+          :disabled="!canAnswer"
+          @click="emit('reply', label(option.text))"
+        >
+          <span class="ask-replies__num" aria-hidden="true">{{ index + 1 }}</span>
+          <span class="ask-replies__body">
+            <span class="ask-replies__label"
+              ><span class="ask-replies__text">{{ label(option.text) }}</span
+              ><span v-if="recommended(option.text)" class="ask-replies__tag">{{
+                t('ask.replies.recommended')
+              }}</span></span
             >
-              <span class="ask-replies__text">{{ label(option.text) }}</span>
-              <span v-if="recommended(option.text)" class="ask-replies__tag">{{ t('ask.replies.recommended') }}</span>
-              <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
-            </button>
-          </div>
-          <div class="ask-replies__other" :class="{ 'ask-replies__other--off': !canAnswer }">
-            <textarea
-              ref="otherField"
-              v-model="otherText"
-              rows="1"
-              autocomplete="off"
-              class="ask-replies__other-input"
-              :disabled="!canAnswer"
-              :placeholder="t('ask.replies.otherPlaceholder')"
-              :aria-label="t('ask.replies.otherPlaceholder')"
-              @input="fitOther"
-              @keydown="onOtherKey"
-            />
-            <BaseButton
-              class="ask-replies__other-send"
-              kind="ghost"
-              size="sm"
-              icon="mdi-arrow-up"
-              :disabled="!canAnswer || !otherText.trim()"
-              :aria-label="t('ask.replies.otherSend')"
-              :title="t('ask.replies.otherSend')"
-              @click="sendOther"
-            />
-          </div>
+            <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
+          </span>
+        </button>
+        <div class="ask-replies__other" :class="{ 'ask-replies__other--off': !canAnswer }">
+          <textarea
+            ref="otherField"
+            v-model="otherText"
+            rows="1"
+            autocomplete="off"
+            class="ask-replies__other-input"
+            :disabled="!canAnswer"
+            :placeholder="t('ask.replies.otherPlaceholder')"
+            :aria-label="t('ask.replies.otherPlaceholder')"
+            @input="fitOther"
+            @keydown="onOtherKey"
+          />
+          <BaseButton
+            class="ask-replies__other-send"
+            kind="ghost"
+            size="sm"
+            icon="mdi-arrow-up"
+            :disabled="!canAnswer || !otherText.trim()"
+            :aria-label="t('ask.replies.otherSend')"
+            :title="t('ask.replies.otherSend')"
+            @click="sendOther"
+          />
         </div>
-        <BaseButton
-          v-if="canAnswer"
-          class="ask-replies__skip"
-          kind="ghost"
-          size="sm"
-          icon="mdi-close"
-          :aria-label="t('ask.replies.skip')"
-          :title="t('ask.replies.skip')"
-          @click="emit('skip')"
-        />
       </div>
     </template>
     <!-- 先弹一下确认：撤错了，这道题就当着全房间的面重新长出选项，比多点一次麻烦。 -->
@@ -252,72 +293,146 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
     >
       {{ t('ask.replies.withdrawBody') }}
     </ConfirmDialog>
-  </div>
+  </section>
 </template>
 
 <style scoped>
+/* 一张卡：和输入框同一种边（--line、--radius-lg），占满消息正文那一栏的宽。里面一行
+   一行用发丝线隔开，不再是几张各自描边的小卡。字号只有三档：题目 15（和消息正文
+   同档），选项和输入 14，其余（谁问的、编号、说明、推荐、撤回）13。 */
 .ask-replies {
-  margin-top: 8px;
+  --ask-pad: 16px;
+  margin-top: 4px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--dur-quick) var(--ease-standard);
 }
-/* 跳过的 ✕ 贴在选项组右边：横排时在一行按钮之后，竖排时在第一张选项卡的右上角。 */
-.ask-replies__open {
+/* 聚焦时边只提一档，和输入框一样。 */
+.ask-replies:focus-within {
+  border-color: var(--faint);
+}
+.ask-replies:focus-visible {
+  outline-offset: -2px;
+}
+@media (max-width: 599.98px) {
+  .ask-replies {
+    --ask-pad: 12px;
+  }
+}
+.ask-replies__head {
   display: flex;
   align-items: flex-start;
-  gap: 4px;
+  gap: 8px;
+  padding: 12px 8px 12px var(--ask-pad);
 }
-/* 按内容取宽，✕ 才紧跟在按钮后面，而不是被推到整行最右。 */
-.ask-replies__open > .ask-replies__options {
-  flex: 0 1 auto;
+.ask-replies__heading {
+  flex: 1 1 auto;
   min-width: 0;
 }
+.ask-replies__who {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+.ask-replies__name {
+  font-weight: 500;
+  color: var(--text);
+}
+/* 题目是这张卡的标题：消息正文那一档，墨色、加一点重。 */
+.ask-replies__question {
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
+  font-weight: 500;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.ask-replies__question :slotted(.im-text) {
+  color: var(--ink);
+}
+/* ✕ 收在页头右上角、卡里面：压到 28px，和页头第一行对齐。触屏上能点的范围
+   BaseButton 自己会撑到 44px。 */
 .ask-replies__skip {
   flex: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -4px;
 }
-.ask-replies__asked {
-  margin: 0 0 4px;
-  color: var(--muted);
-}
-.ask-replies__closed {
-  margin: 0;
-  color: var(--muted);
-}
-/* 选项在上，末行的输入框在下：一列，宽度取两者里宽的那个，输入框和竖排的选项卡
-   一起拉到同宽。 */
-.ask-replies__options {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 640px;
-}
-.ask-replies__choices {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.ask-replies__choices--stacked {
-  flex-direction: column;
+/* 选项、末行的输入框、答过的那几句都是卡里的一行：上面一条发丝线。 */
+.ask-replies__option,
+.ask-replies__other,
+.ask-replies__row {
+  border-top: 1px solid var(--line);
 }
 .ask-replies__option {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  max-width: 100%;
-  padding: 6px 12px;
-  font-size: 14px;
-  line-height: var(--lh-14);
-  color: var(--text);
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+  width: 100%;
+  min-height: 44px;
+  padding: 12px var(--ask-pad);
+  font: inherit;
   text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
+  color: var(--text);
+  background: none;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .ask-replies__option:hover:not(:disabled) {
   background: var(--fill);
 }
-/* 问的不是看的人：选项照样读得到，只是降一档、点不动；上面那行「问 @…」说了在等谁。
-   末行的输入框也照这样灰。 */
+/* 卡是 overflow: hidden，焦点圈画在行内，否则左右两边被裁掉。 */
+.ask-replies__option:focus-visible {
+  outline-offset: -2px;
+}
+.ask-replies__num {
+  font-size: 13px;
+  line-height: var(--lh-14);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.ask-replies__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.ask-replies__label {
+  font-size: 14px;
+  line-height: var(--lh-14);
+}
+/* 选项和说明是模型写的，常带一个 URL 或一长串不断开的词：窄屏上它会撑出卡片。 */
+.ask-replies__text,
+.ask-replies__explain,
+.ask-replies__answer {
+  overflow-wrap: anywhere;
+}
+.ask-replies__text {
+  color: var(--ink);
+}
+/* 「推荐」是跟在选项后面的一个小标签，不另起一行。 */
+.ask-replies__tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 4px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+  vertical-align: 1px;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+}
+.ask-replies__explain {
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+/* 问的不是看的人：选项照样读得到，只是降一档、点不动；页头那句说了在等谁。末行的
+   输入框也照这样灰。 */
 .ask-replies__option:disabled {
   cursor: default;
 }
@@ -325,51 +440,23 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
   color: var(--muted);
 }
 .ask-replies__option:disabled .ask-replies__explain,
-.ask-replies__option:disabled .ask-replies__tag {
+.ask-replies__option:disabled .ask-replies__tag,
+.ask-replies__option:disabled .ask-replies__num {
   color: var(--faint);
 }
-/* 选项和说明是模型写的，常带一个 URL 或一长串不断开的词：窄屏上它会撑出卡片。 */
-.ask-replies__text,
-.ask-replies__explain {
-  overflow-wrap: anywhere;
-}
-.ask-replies__text {
-  color: var(--ink);
-}
-.ask-replies__tag {
-  font-size: 12px;
-  line-height: var(--lh-12);
-  color: var(--muted);
-}
-.ask-replies__explain {
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-/* 末行的输入框和选项是同一种卡：同样的边、底和圆角，总在选项下面自成一行。聚焦时
-   只把边提一档，和别处的输入框一样。 */
+/* 末行：和选项同一种行，编号那一格空着，字和选项的字对齐。 */
 .ask-replies__other {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  min-width: 0;
-  padding: 1px 2px 1px 12px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  transition: border-color var(--dur-quick) var(--ease-standard);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  column-gap: 8px;
+  padding: 8px 8px 8px calc(var(--ask-pad) + 24px);
 }
-.ask-replies__other:focus-within {
-  border-color: var(--faint);
-}
-/* 自己要一个够写一句话的宽度：选项只有两三个短词时，整组也按它撑开，而窄屏上照样
-   能缩。 */
 .ask-replies__other-input {
-  flex: 1 1 auto;
-  width: 280px;
+  width: 100%;
   min-width: 0;
   max-height: 160px;
-  padding: 5px 0;
+  padding: 4px 0;
   font: inherit;
   font-size: 14px;
   line-height: var(--lh-14);
@@ -382,32 +469,33 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 .ask-replies__other-input::placeholder {
   color: var(--muted);
 }
-/* 问的不是看的人：和灰掉的选项同一种灰法。 */
 .ask-replies__other--off .ask-replies__other-input::placeholder {
   color: var(--faint);
 }
-/* 图标按钮默认 40px，比一行字的框高：压到 28px 落进框里，空着的输入框才和单行的选项
-   卡一样高。触屏上能点的范围 BaseButton 自己会撑到 44px。 */
 .ask-replies__other-send {
-  flex: none;
   width: 28px;
   height: 28px;
-  margin-bottom: 2px;
 }
 .ask-replies__answers {
   margin: 0;
   padding: 0;
   list-style: none;
-  color: var(--muted);
 }
-.ask-replies__answer {
-  overflow-wrap: anywhere;
+.ask-replies__row {
+  margin: 0;
+  padding: 12px var(--ask-pad);
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+.ask-replies__closed {
+  color: var(--muted);
 }
 .ask-replies__withdraw {
   margin-left: 8px;
   padding: 0;
-  font-size: 12px;
-  line-height: var(--lh-12);
+  font-size: 13px;
+  line-height: var(--lh-13);
   color: var(--muted);
   background: none;
   border: 0;
