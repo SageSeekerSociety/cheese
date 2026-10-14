@@ -3,12 +3,13 @@
 // 一位队友在记录里有两个 handle——名册上的座位（`cheese-<hex>`）和它自己的（`cheese`，
 // 会话、轮次帧、消息的收件人用它）。「在干活」和「房间在等它」两处各写一个，是同一个
 // 人的两条记录，不是两个人：按 handle 比字符串去重，它就会被画成两个头像，一绿一红。
+import type { RailTask } from '@/components/topic-sidebar/moreTasks'
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
 import { defineComponent, h, nextTick } from 'vue'
 import { render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useTopicRail } from './useTopicRail'
 
@@ -87,6 +88,25 @@ const marksOf = (container: Element, room: string) =>
     name: el.getAttribute('data-name'),
   }))
 
+/** 挂一条侧栏，并把 rail 实例交出来，好直接问 lightOf / taskLight。 */
+async function mountRail(topics: Topic[]) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  seedProjects([])
+  seedProject('p1', { topics, members: TEAM, unread: {}, privateUnread: {}, notifyLevels: {} })
+  useWorkspaceStore().openProject('p1')
+  let rail!: ReturnType<typeof useTopicRail>
+  const Host = defineComponent({
+    setup() {
+      rail = useTopicRail({ topics, selectedProjectId: 'p1', selectedTopicId: null })
+      return () => h('div')
+    },
+  })
+  const view = render(Host, { global: { plugins: [pinia] } })
+  await nextTick()
+  return { rail, view }
+}
+
 describe('侧栏一行上的成员头像', () => {
   beforeEach(() => setLocale('zh-CN'))
 
@@ -113,5 +133,51 @@ describe('侧栏一行上的成员头像', () => {
       { state: 'stalled', name: '小知' },
       { state: 'working', name: '芝士K' },
     ])
+  })
+})
+
+// 「停下来报错」那盏红灯是**时间自己走到**的，不是数据变出来的：列表三十秒才刷一次，
+// 而等满五分钟靠的是侧栏自己那只每 10 秒拨一下的慢钟（`useTopicRail.ts` 的 `clock`）。
+// 这里就拨那只钟：数据一个字节没动，只让系统时间往前走过五分钟，红灯就该自己亮。
+describe('侧栏自己的慢钟把红灯拨亮', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    setLocale('zh-CN')
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('频道行：满五分钟前不红，钟自己走过五分钟就红', async () => {
+    const base = Date.parse('2026-10-14T12:00:00Z')
+    vi.setSystemTime(base)
+    // 挂载这一刻，这间房已经坏了 4m51s——还差九秒。
+    const incompleteSince = new Date(base - 291_000).toISOString()
+    const { rail } = await mountRail([topic('t-stuck', { incomplete_since: incompleteSince })])
+
+    expect(rail.lightOf('t-stuck')).toBeNull()
+
+    // 侧栏那只 10 秒的慢钟拨一下：now -> base+10s，坏了的时长 301s > 5 分钟。
+    vi.advanceTimersByTime(10_000)
+    expect(rail.lightOf('t-stuck')).toEqual({ kind: 'red', breathe: false, why: 'unfinished' })
+  })
+
+  it('任务行：同一只钟，活自己那一行也一样', async () => {
+    const base = Date.parse('2026-10-14T12:00:00Z')
+    vi.setSystemTime(base)
+    const incompleteSince = new Date(base - 291_000).toISOString()
+    const { rail } = await mountRail([topic('t-1', {})])
+    // 别人的活、状态那几盏都没话说：不补蓝灯，此刻也不红。
+    const task = {
+      id: 'k-1',
+      room_id: 't-1',
+      owner_handle: 'cheese-someone',
+      incomplete_since: incompleteSince,
+    } as RailTask
+
+    expect(rail.taskLight(task)).toBeNull()
+
+    vi.advanceTimersByTime(10_000)
+    expect(rail.taskLight(task)).toEqual({ kind: 'red', breathe: false, why: 'unfinished' })
   })
 })

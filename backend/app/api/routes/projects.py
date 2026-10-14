@@ -473,7 +473,9 @@ async def list_project_tasks(
             me=actor.handle or "",
             accepted=accepted,
         )
-        incomplete = await incomplete_tasks(db, [t.id for t in tasks])
+        incomplete = await incomplete_tasks(
+            db, [t.id for t in tasks if t.status == "open"]
+        )
         items = await project_task_rows(
             db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
         )
@@ -494,7 +496,7 @@ async def list_project_tasks(
         for t in await TaskService(db).list_in_project(project_id, accepted=accepted)
         if t.room_id in seen and (status is None or t.status == status)
     ]
-    incomplete = await incomplete_tasks(db, [t.id for t in tasks])
+    incomplete = await incomplete_tasks(db, [t.id for t in tasks if t.status == "open"])
     items = await project_task_rows(
         db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
     )

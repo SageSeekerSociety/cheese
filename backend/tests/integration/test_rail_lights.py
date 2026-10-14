@@ -987,6 +987,15 @@ def test_a_closed_tasks_failure_lights_nothing(client):
     # 关掉的活也不在「我的活」那一栏里，所以它那一行根本不存在。
     assert _task_row(row, ids["closed"]) is None
 
+    for params in ({}, {"status": "closed"}, {"status": "closed", "limit": 5}):
+        response = client.get(
+            f"/projects/{project}/tasks",
+            params=params,
+            headers=session_auth_headers("alice"),
+        )
+        assert response.status_code == 200, response.text
+        assert _project_task_row(response, ids["closed"])["incomplete_since"] is None
+
 
 def test_the_project_task_list_carries_the_same_clock(client):
     """`/projects/{id}/tasks`（「展开剩余任务」那条路）带的是同一份事实。"""
