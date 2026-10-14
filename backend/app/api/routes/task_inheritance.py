@@ -23,6 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 
+from app.api.response import ok
 from app.api.space_payloads import teaching_to_api
 from app.api.task_deps import _require_task
 from app.auth.checker import require_auth_user
@@ -183,8 +184,4 @@ async def get_task_inheritance(
     # ``useTaskInheritance`` 拿到 ``undefined``，整块「将继承什么」静默不渲染。
     # （这条注释的前身写反了，说「这一族都是裸的」——实测 ``POST /tasks``、
     # ``/attachments`` 全是信封，浏览器验收第一次把它撞出来。）
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": _to_api(found, materials, material_ids, include_private=may_teach),
-    }
+    return ok(_to_api(found, materials, material_ids, include_private=may_teach))

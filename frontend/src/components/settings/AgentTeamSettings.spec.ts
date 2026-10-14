@@ -25,6 +25,7 @@ const listProjectSkills = vi.fn()
 const getSkillHealth = vi.fn()
 const listMachineSkills = vi.fn()
 const fetchSkillMarket = vi.fn()
+const fetchMachineSkill = vi.fn()
 
 vi.mock('@/api/projectSkills', () => ({
   listSkillCatalog: (...a: unknown[]) => listSkillCatalog(...a),
@@ -36,7 +37,7 @@ vi.mock('@/api/machineSkills', () => ({
   listMachineSkills: (...a: unknown[]) => listMachineSkills(...a),
   scanMachineSkills: vi.fn(),
   fetchSkillMarket: (...a: unknown[]) => fetchSkillMarket(...a),
-  fetchMachineSkill: vi.fn(),
+  fetchMachineSkill: (...a: unknown[]) => fetchMachineSkill(...a),
   setMachineSkillAdoption: vi.fn(),
   setMachineSkillRoots: vi.fn(),
 }))
@@ -62,7 +63,7 @@ vi.mock('@/api', async (importOriginal) => {
 import AgentTeamSettings from './AgentTeamSettings.vue'
 
 import { ApiError } from '@/api'
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
 
@@ -281,6 +282,34 @@ describe('停用', () => {
 })
 
 describe('技能面板的 409', () => {
+  const DEVICE = { device_id: 'dev1', name: '我的电脑', online: true, project_ids: [], team_ids: [], screens: [] }
+  // 市场里一张能装的卡片：点它的 + 就从网上取一份到这个队友身上。
+  const MARKET = {
+    skills: [
+      { name: 'pdf', description: '读 PDF', url: 'https://x/skills/pdf', source: 'anthropic', kind: 'skill' as const },
+    ],
+    plugins: [],
+    plugin_total: 0,
+    mcp: [],
+    notes: [],
+  }
+  // 取回来的那一份：检验通过后落盘，并把这颗装给当前队友。逐颗「采纳」那个开关随
+  // `3c523452` 一起拿掉了，装一份就是现在改队友技能的路径。
+  const landed = (name: string, description: string) => ({
+    landed: true,
+    plan: [{ name, description, files: ['SKILL.md'] }],
+    skills: [{ name, description, source_root: '/home/u/x', digest: 'd1', state: 'adopted', adopted: true }],
+    problems: [],
+    roots: ['/home/u/x'],
+    workspaces: [],
+  })
+  async function installFrom() {
+    const button = (await screen.findByLabelText(t('work.room.skills.marketInstall'))) as HTMLButtonElement
+    // 面板读完池子、机器落定（deviceId 有了）之前这个 + 是禁用的：等它能按了再装。
+    await waitFor(() => expect(button.disabled).toBe(false))
+    await fireEvent.click(button)
+  }
+
   // 别人先写了 → 这次保存被 409 拦下 → 面板重读名册。重读必须顺手把面板目标换到
   // 新读回来的那一行：名册刷新是整份换新对象，不换的话下一次保存还带着旧 version，
   // 只会再撞 409 —— toast 说的「请再改一次」就成假话（验收时浏览器里 7 连 409 实证）。
@@ -296,21 +325,22 @@ describe('技能面板的 409', () => {
       })
     listSkillCatalog.mockResolvedValue({ data: [{ name: 'wolfram', description: '算' }], total: 1 })
     listProjectSkills.mockResolvedValue({ data: [], total: 0 })
-    listMyDevices.mockResolvedValue({ devices: [] })
+    listMyDevices.mockResolvedValue({ devices: [DEVICE] })
     getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
     setAgentEditing.mockResolvedValue({ editing: null })
-    fetchSkillMarket.mockResolvedValue({ skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] })
+    fetchSkillMarket.mockResolvedValue(MARKET)
+    fetchMachineSkill.mockResolvedValue(landed('documents', '文档'))
     updateProjectAgent.mockRejectedValueOnce(new ApiError(409, 'stale')).mockResolvedValueOnce({})
     mountPage()
 
     await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
-    const toggle = await screen.findByRole('button', { name: /算/ })
-    await fireEvent.click(toggle) // 第一次：被 409 拦下，触发重读
+    await installFrom() // 第一次：被 409 拦下，触发重读
     await waitFor(() => expect(listProjectAgents).toHaveBeenCalledTimes(2))
     // 名册发出 ≠ 重读落完：重指面板目标是 fetch 回来之后的一串微任务。真实网络里这
     // 一段是几十毫秒的等待，人点不过它；测试里全是微任务，让出一个宏任务等它落完。
     await new Promise((resolve) => setTimeout(resolve, 0))
-    await fireEvent.click(await screen.findByRole('button', { name: /算/ })) // 再改一次
+    fetchMachineSkill.mockResolvedValue(landed('images', '图'))
+    await installFrom() // 再改一次
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
     expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
   })
@@ -322,26 +352,21 @@ describe('技能面板的 409', () => {
       data: [agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 })],
       total: 1,
     })
-    listSkillCatalog.mockResolvedValue({
-      data: [
-        { name: 'wolfram', description: '算' },
-        { name: 'documents', description: '文档' },
-      ],
-      total: 2,
-    })
+    listSkillCatalog.mockResolvedValue({ data: [{ name: 'wolfram', description: '算' }], total: 1 })
     listProjectSkills.mockResolvedValue({ data: [], total: 0 })
-    listMyDevices.mockResolvedValue({ devices: [] })
+    listMyDevices.mockResolvedValue({ devices: [DEVICE] })
     getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
     setAgentEditing.mockResolvedValue({ editing: null })
-    fetchSkillMarket.mockResolvedValue({ skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] })
+    fetchSkillMarket.mockResolvedValue(MARKET)
+    fetchMachineSkill.mockResolvedValue(landed('documents', '文档'))
     updateProjectAgent.mockResolvedValue({ version: 2 })
     mountPage()
 
     await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
-    await fireEvent.click(await screen.findByRole('button', { name: /添加/ })) // 展开池子
-    await fireEvent.click(await screen.findByRole('button', { name: /文档/ })) // 加一颗：成功
+    await installFrom() // 装一份：成功
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
-    await fireEvent.click(await screen.findByRole('button', { name: /文档/ })) // 再改一次
+    fetchMachineSkill.mockResolvedValue(landed('images', '图'))
+    await installFrom() // 再改一次
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
     expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
   })

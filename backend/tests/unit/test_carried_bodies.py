@@ -83,10 +83,12 @@ async def test_an_adopted_machine_skill_is_read_off_the_machine(monkeypatch):
     assert calls == [("dev1", ("cat", "/home/u/x/SKILL.md"))]
 
 
-async def test_a_machine_skill_nobody_adopted_is_not_carried(monkeypatch):
+async def test_an_indexed_machine_skill_is_carried_without_adoption(monkeypatch):
+    # 索引里有这一行就算带上：机器自己发布的索引已经把话说清了，不再先「采纳」一道
+    # （`3c523452` 拿掉了那道门限）。
     calls = _wire(monkeypatch, {"ponytail": _Row(adopted=False)}, reads="Do less.\n")
-    assert await carried_bodies(None, _Topic(), ["ponytail"]) == ""
-    assert calls == [], "没采纳的连读都不读"
+    assert await carried_bodies(None, _Topic(), ["ponytail"]) == "Do less."
+    assert calls == [("dev1", ("cat", "/home/u/x/SKILL.md"))]
 
 
 async def test_a_machine_that_cannot_answer_just_drops_the_skill(monkeypatch):

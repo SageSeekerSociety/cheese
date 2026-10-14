@@ -1,10 +1,8 @@
 {
-  "add": "添加",
   "button": "技能",
   "carriedTitle": "{name} 的技能",
   "editingBlocked": "有人正在编辑这个队友，等他改完再试",
   "editingBy": "{name} 正在编辑这个队友，等他改完再试",
-  "empty": "还没有可用的技能。",
   "emptyCarried": "这个队友还什么都没带。",
   "fetchFailed": "没能取回这份技能",
   "hint": "队友已装备的技能会自动进入每个会话；灯亮表示可用，灯灭表示不可用或未探测。",

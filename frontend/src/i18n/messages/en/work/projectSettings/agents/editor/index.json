@@ -32,8 +32,6 @@
   "presetCustom": "Write your own",
   "save": "Save",
   "saveFailed": "Couldn't save",
-  "skills": "Skills",
-  "skillsHint": "Skills this teammate brings into every session. Type a name and press Enter",
   "titleEdit": "Edit AI teammate",
   "titleNew": "New AI teammate"
 }

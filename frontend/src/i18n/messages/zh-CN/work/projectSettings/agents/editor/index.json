@@ -32,8 +32,6 @@
   "presetCustom": "自行填写",
   "save": "保存",
   "saveFailed": "保存失败",
-  "skills": "技能",
-  "skillsHint": "随这个队友带进每个会话的技能，输入名字后回车添加",
   "titleEdit": "修改 AI 队友",
   "titleNew": "新建 AI 队友"
 }

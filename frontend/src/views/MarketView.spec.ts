@@ -135,12 +135,9 @@ describe('MarketView', () => {
     expect(screen.getByText(t('work.room.skills.marketNeedMachine'))).toBeTruthy()
   })
 
-  it('技能页签：有机器时点 + 先只看不落（dry-run）', async () => {
+  it('技能页签：有机器时点 + 直接安装', async () => {
     listMyDevices.mockResolvedValue({ devices: DEVICES })
-    fetchMachineSkill.mockResolvedValue({
-      landed: false,
-      plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
-    })
+    fetchMachineSkill.mockResolvedValue({})
     render(MarketView, { global: { plugins: plugins() } })
 
     await fireEvent.click(screen.getByText(t('market.tabs.skills')))
@@ -152,13 +149,7 @@ describe('MarketView', () => {
     await fireEvent.click(add)
     await vi.advanceTimersByTimeAsync(0)
 
-    // 第一次是 dry-run：先看会写什么，没落盘。
-    expect(fetchMachineSkill).toHaveBeenCalledWith(
-      'dev1',
-      'https://github.com/o/r/tree/main/skills/pdf',
-      null,
-      'skill',
-      false
-    )
+    // 检验通过后直接安装：不再有 dry-run 那一步，`confirm` 由 API 层固定为真。
+    expect(fetchMachineSkill).toHaveBeenCalledWith('dev1', 'https://github.com/o/r/tree/main/skills/pdf', null, 'skill')
   })
 })
