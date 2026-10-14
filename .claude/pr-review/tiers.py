@@ -195,10 +195,24 @@ def tier_of_path(path):
 
 
 def _git(repo, *args):
+    """git, with path quoting off. `core.quotePath` is on by default, so any path holding a
+    non-ASCII byte comes back as `"\\346\\226\\260.py"` — not a path, matches no prefix and
+    resolves to no blob. Callers that read paths off git output use paths_of() below, which
+    is stronger still; this covers the rest."""
     out = subprocess.run(
-        ["git", "-C", str(repo), *args], capture_output=True, text=True
+        ["git", "-c", "core.quotePath=false", "-C", str(repo), *args],
+        capture_output=True, text=True,
     )
     return out.stdout if out.returncode == 0 else None
+
+
+def paths_of(repo, *args):
+    """`git diff --name-only -z <args>` as a list of paths, or None when git failed. `-z`
+    rather than line splitting: it turns quoting off entirely, so a path holding a quote or
+    a newline arrives whole. A path that arrives quoted resolves to no blob, and the
+    comparison that decides whether a file was touched then reads it as untouched."""
+    out = _git(repo, "diff", "--name-only", "-z", *args)
+    return None if out is None else [p for p in out.split("\0") if p]
 
 
 def mechanical(repo, base, head, path):
@@ -276,10 +290,9 @@ def clean_revert(repo, base, head, path):
 def classify(repo, base, head):
     """(letter, detail) for the change `base`..`head` — the whole PR, so a delta review
     still reports the tier of what is being merged."""
-    listed = _git(repo, "diff", "--name-only", "--no-renames", base, head)
-    if listed is None:
+    paths = paths_of(repo, "--no-renames", base, head)
+    if paths is None:
         return "B", "读不到改动的文件，按 B 档"
-    paths = [p for p in listed.splitlines() if p.strip()]
     if not paths:
         return "G", "没有改到任何文件"
     hard = [p for p in paths if not mechanical(repo, base, head, p)]
@@ -344,6 +357,13 @@ def self_test():
         ("deploy/deploy-prod.yml", "A"),
         ("backend/app/domain/review/pr_text.py", "B"),
         ("backend/tests/unit/test_pr_text_trailers.py", "C"),
+        ("backend/test_x.py", "C"),  # test_ prefix
+        ("backend/scripts/fusion_boot_test.py", "C"),  # _test.py suffix
+        ("backend/tests/conftest.py", "C"),  # /tests/ alone, no test name of its own
+        ("docs/site/test/ask-walk.test.mjs", "C"),  # /test/ alone: not a .test.js suffix
+        ("frontend/src/components/__tests__/acceptHarness.ts", "C"),  # __tests__/
+        ("e2e/AGENTS.md", "C"),  # e2e/ prefix: a test path beats the .md rule below
+        ("cli/e2e/task.go", "C"),  # /e2e/
         ("frontend/src/views/Home.spec.ts", "C"),
         ("e2e/tests/task.spec.ts", "C"),
         (".github/workflows/ci-fast.yml", "D"),
@@ -413,6 +433,14 @@ def self_test():
         case("B 档和 E 档各改一个文件，取最高的 B",
              {"backend/app/domain/review/pr_text.py": "y = 2\n", "AGENTS.md": "rules\n"},
              "B")
+        # A path holding a non-ASCII byte: git quotes it in `--name-only` unless quoting is
+        # off, and a quoted path matches no prefix — it reads as B, the 判不了 answer. For a
+        # doc that is heavier than the E it is, but for an auth or migration path it is
+        # lighter than the A it must be, and that direction is the one that matters.
+        case("非 ASCII 路径的文档，仍按 E 档",
+             {"docs/中文说明.md": "装法见 README\n"}, "E")
+        case("非 ASCII 路径的鉴权代码，仍按 A 档",
+             {"backend/app/auth/调用者.py": "ok = False\n"}, "A")
         # Deleting is not adding: a removed line has no twin on the other side, so a
         # removed guard or a dropped file still gets read. Each case needs a parent of its
         # own, because a deletion that reverts the file to a version it already had is a

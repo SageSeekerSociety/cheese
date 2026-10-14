@@ -265,13 +265,16 @@ class PrReview(unittest.TestCase):
         self.assertNotIn("档位 G", out.splitlines()[0])
 
     def test_post_recomputes_from_the_method_not_the_copy_in_the_prepare_dir(self):
-        # The same promotion, with the copy of the classifier prepare left in $dir deleted:
-        # post must not fall back to meta when that copy is gone.
+        # The same promotion, with the copy of the classifier prepare left in $dir made to
+        # lie: post must not run that copy. Deleting it would not prove this, and did not
+        # when this test deleted it — a call that fails falls through to the method's own
+        # copy and prints the right letter anyway, so only a copy that prints the wrong one
+        # tells the two apart.
         review_md, _ = self.prepare()
         d = review_md.parent
         (d / "meta").write_text(
             (d / "meta").read_text().replace("tier=B", "tier=G"))
-        (d / "tiers.py").unlink()
+        (d / "tiers.py").write_text('print("G")\n')
         _, out = self.post(review_md, "minor")
         self.assertIn("档位 B", out.splitlines()[0])
 
@@ -285,6 +288,11 @@ class PrReview(unittest.TestCase):
         meta = dict(
             line.split("=", 1) for line in (d / "meta").read_text().splitlines() if "=" in line
         )
+        # prepare's own letter, not just the one printed into REVIEW.md: this is what post
+        # renders and what decides whether prepare writes a 免审 result.json itself. Read
+        # off the head commit alone it would be G here, and the auth change would come out
+        # of prepare already marked as needing no review.
+        self.assertEqual(meta["tier"].strip("'"), "A")
         (d / "result.json").write_text(json.dumps(result_json(meta["sha"].strip("'"), "minor")))
         out = self.run_script("post", str(d))
         self.assertEqual(out.returncode, 0, out.stderr)

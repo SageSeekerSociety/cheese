@@ -133,7 +133,97 @@ def render(result: dict, sha: str, method_rev: str, since: str = "", tier: str =
     return "\n".join(lines) + "\n"
 
 
+def self_test() -> int:
+    """Offline: the guards in main() — a result naming another commit, an unverified
+    finding with no command to confirm it, a field the schema does not know — and the
+    grammar the card line and its readers have to agree on. `post` runs this file on every
+    review, so a guard that quietly stopped guarding would show up as a review rendered
+    anyway, on a line three other programs read back."""
+    import io
+    import tempfile
+    from contextlib import redirect_stderr, redirect_stdout
+
+    bad, total = [], 0
+
+    def check(name, got, want):
+        nonlocal total
+        total += 1
+        if got != want:
+            bad.append(f"{name}\n  想要 {want!r}\n  读成 {got!r}")
+
+    sha, other, rev = "1" * 40, "2" * 40, "3" * 40
+
+    def finding(**over):
+        f = {
+            "severity": "minor", "kind": "test", "file": "a.py", "line": 1, "title": "t",
+            "failure": "f", "evidence": "e", "rung": 4, "confirm_with": "",
+        }
+        f.update(over)
+        return f
+
+    def result(**over):
+        r = {
+            "reviewed_sha": sha, "summary": "s", "candidates_found": 1,
+            "candidates_refuted": 0, "findings": [], "not_covered": [],
+        }
+        r.update(over)
+        return r
+
+    def run(r, *argv):
+        """render.py as the command line sees it: (exit code, stdout, stderr)."""
+        with tempfile.TemporaryDirectory(prefix="render-test-") as tmp:
+            path = Path(tmp) / "result.json"
+            path.write_text(json.dumps(r), encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            argv_saved, sys.argv = sys.argv, ["render.py", str(path), *argv]
+            try:
+                with redirect_stdout(out), redirect_stderr(err):
+                    code = main()
+            finally:
+                sys.argv = argv_saved
+            return code, out.getvalue(), err.getvalue()
+
+    # A result that passes every guard, so each case below is one edit away from this one.
+    code, out, _ = run(result(), sha, rev)
+    check("干净的 result 渲染出结论行", (code, out.splitlines()[0]),
+          (0, f"独立 review：head {sha[:8]} 结论 无 blocker/major"))
+    check("审查看的是另一个提交，拒", run(result(reviewed_sha=other), sha, rev)[0], 1)
+    check("rung 不到 4 的 finding 没给确认命令，拒",
+          run(result(findings=[finding(rung=2)]), sha, rev)[0], 1)
+    check("rung 不到 4 的 finding 给了确认命令，放行",
+          run(result(findings=[finding(rung=2, confirm_with="pytest -q a")]), sha, rev)[0], 0)
+    check("多一个 schema 不认的字段，拒", run({**result(), "extra": 1}, sha, rev)[0], 1)
+    check("档位写进结论行末尾",
+          run(result(), sha, rev, "--tier", "A")[1].splitlines()[0].endswith("｜档位 A"), True)
+    check("档位不在 A-G 里，是用错了命令", run(result(), sha, rev, "--tier", "H")[0], 2)
+    check("增量审查的结论行写明从哪个提交起",
+          run(result(), sha, rev, "--since", other)[1].splitlines()[0],
+          f"独立 review：head {sha[:8]}（增量自 {other[:8]}）结论 无 blocker/major")
+    # The line and its readers are two halves of one grammar: this file writes it, and
+    # orchestrator_sweep.py, orchestrator_autoaccept.py and ready.py read it back.
+    m = CARD_LINE.search(card_line(result(findings=[finding(severity="major")]), sha, other, "G"))
+    check("结论行能读回：head、增量自、条数、档位",
+          (m.group("head"), m.group("since"), m.group("verdict"), m.group("serious"),
+           m.group("tier")),
+          (sha[:8], other[:8], "有 1 条", "1", "G"))
+    m = CARD_LINE.search(card_line(result(), sha))
+    check("结论行能读回：没有增量、没有档位时也不多认",
+          (m.group("head"), m.group("since"), m.group("verdict"), m.group("serious"),
+           m.group("tier")),
+          (sha[:8], None, "无 blocker/major", None, None))
+
+    for line in bad:
+        print("FAIL " + line)
+    if bad:
+        print(f"self-test: {len(bad)} of {total} failed")
+        return 1
+    print(f"self-test: ok ({total} cases, offline)")
+    return 0
+
+
 def main() -> int:
+    if "--self-test" in sys.argv[1:]:
+        return self_test()
     args = sys.argv[1:]
     since = tier = ""
     while args and args[-2:] and args[-2] in ("--since", "--tier"):

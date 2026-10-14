@@ -92,13 +92,11 @@ def author_files(repo, base, since, head):
     The comparison is between trees (`git diff since head`), not the commit graph. A merge
     commit's own `diff-tree` prints nothing, so a log walk that skips merges never sees the
     resolution a merge carries — it lives only in the tree that merge produced."""
-    out = tiers._git(repo, "diff", "--name-only", since, head)
+    out = tiers.paths_of(repo, since, head)
     if out is None:
         return None
     files = []
-    for path in out.splitlines():
-        if not path.strip():
-            continue
+    for path in out:
         here = _blob(repo, head, path)
         # Without a base branch there is nothing to compare against: keep the file. 判不了
         # 按 B — a file nobody can clear is re-reviewed, not waved through.
@@ -249,16 +247,28 @@ def self_test():
 
     check("全绿、审查在这版上、无 blocker/major：可递",
           verdict(base_facts), (True, ["可递：head aaaaaaaa｜CI required success｜review aaaaaaaa 结论 无 blocker/major｜档位 B"]))
+    # Whole lines, not substrings: the message for a red CI is a prefix of the one for a CI
+    # still running（「是 failure」与「是 failure，等它绿」）, so a substring test cannot tell
+    # the two branches apart — and RED losing a member then goes on printing 等它绿.
     for name, over, want in (
-        ("CI 红", {"ci": "failure"}, "CI required 在 head 上是 failure"),
-        ("CI 还在跑", {"ci": "in_progress"}, "等它绿"),
-        ("CI 没跑过", {"ci": None}, "没跑"),
-        ("CI 读不到", {"ci": "读不到"}, "CI required 读不到"),
-        ("没有审查结论", {"review": None}, "卡里没有审查结论"),
-        ("审查有两条 blocker/major", {"review": review(head, 2)}, "审查结论有 2 条 blocker/major"),
+        ("CI 红", {"ci": "failure"}, "- CI required 在 head 上是 failure"),
+        ("CI 还在跑", {"ci": "in_progress"}, "- CI required 在 head 上是 in_progress，等它绿"),
+        ("CI 没跑过", {"ci": None}, "- CI required 在 head 上是 没跑，等它绿"),
+        ("CI 读不到", {"ci": "读不到"}, "- CI required 读不到"),
+        ("没有审查结论", {"review": None}, "- 卡里没有审查结论：先 prepare，审完 post"),
+        ("审查有两条 blocker/major", {"review": review(head, 2)},
+         "- 审查结论有 2 条 blocker/major"),
     ):
         ready, lines = verdict({**base_facts, **over})
-        check(f"{name}：不能递", (ready, any(want in l for l in lines)), (False, True))
+        check(f"{name}：不能递", (ready, want in lines), (False, True))
+    # RED is a reading of someone else's vocabulary: which of GitHub's conclusions mean this
+    # check will not go green by itself. Pinned here, because a member dropped by accident
+    # reports a failed check as one still running, and nothing else in the tree notices.
+    check("红线结论就是这几条", RED,
+          ("failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"))
+    ready, lines = verdict({**base_facts, "ci": "queued"})
+    check("不在红线集合里的结论，按还没出结果处理",
+          (ready, f"- {CI_CHECK} 在 head 上是 queued，等它绿" in lines), (False, True))
     ready, lines = verdict({**base_facts, "review": review(older),
                             "increment": {"needs": True, "detail": "改了 backend/app/x.py"}})
     check("head 变了、增量要审：不能递，并给出命令",
@@ -347,6 +357,14 @@ def self_test():
               {"needs": False, "detail": "只改了测试、文档或文案："
                                          "AGENTS.md、backend/tests/test_x.py、"
                                          "frontend/src/i18n/messages/en/ask.json"})
+        # A path holding a non-ASCII byte comes back quoted from `--name-only`, and a
+        # quoted path resolves to no blob on either side: `None == None` reads the file as
+        # untouched, the increment reads as "只合了主干" and ready waves the head through.
+        write("backend/app/中文模块.py", "x = 1\n")
+        nonascii = commit("a path git would quote")
+        check("改动落在非 ASCII 路径上：仍要补增量审",
+              increment(repo, "main", docs, nonascii),
+              {"needs": True, "detail": "改了 backend/app/中文模块.py"})
         # The base branch now changes the same file this branch changed, so the merge has to
         # be resolved by hand. That resolution is the author's code: a merge commit's own
         # diff-tree is empty, so only the tree it produced says what came in.
