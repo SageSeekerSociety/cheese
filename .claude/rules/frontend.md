@@ -37,8 +37,11 @@ parts no gate can see.
     avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
     OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
     its `#fff` text is correct and "fixing" it to a token breaks it.
-- The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary)
-  > `--faint` (meta). Pick by how important the information is, not by how it looks.
+- The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary).
+  Pick by how important the information is, not by how it looks. `--faint` is not a
+  text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
+  3:1 graphics floor but never reaches 4.5:1, so text a reader reads goes to `--muted`
+  (§2.6 对比度).
 - The frame (rail, sidebars, top bar) is `--canvas`; the content pane is one
   `--surface`, so content groups by spacing and `--line`, not by white cards on
   grey. Cards get a `--line` border and **no shadow** — `--shadow-1` and
