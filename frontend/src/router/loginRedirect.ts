@@ -7,6 +7,8 @@
 // 统一补：去登录页而没带 redirect 的导航，把来路挂上。
 import type { LocationQuery, NavigationGuardWithThis } from 'vue-router'
 
+import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
+
 // 只认站内路径：`https://…` 和 `//evil.com` 都不要，否则登录页就是一个开放跳转。
 export function postLoginTarget(query: LocationQuery): string {
   const r = query.redirect
@@ -33,16 +35,16 @@ export function leaveSignInWhenSignedIn(signedIn: () => Promise<boolean>): Navig
 const OAUTH_REDIRECT_KEY = 'oauth_redirect'
 
 export function stashOAuthRedirect(path: string) {
-  localStorage.setItem(OAUTH_REDIRECT_KEY, path)
+  storageSet(OAUTH_REDIRECT_KEY, path)
 }
 
 export function takeOAuthRedirect(): string {
-  const path = localStorage.getItem(OAUTH_REDIRECT_KEY)
-  localStorage.removeItem(OAUTH_REDIRECT_KEY)
+  const path = storageGet(OAUTH_REDIRECT_KEY)
+  storageRemove(OAUTH_REDIRECT_KEY)
   return postLoginTarget({ redirect: path })
 }
 
 // 登录页每次打开都是一次新的登录：上一次 OAuth 出站没走完留下的地址不能带进来。
 export function forgetOAuthRedirect() {
-  localStorage.removeItem(OAUTH_REDIRECT_KEY)
+  storageRemove(OAUTH_REDIRECT_KEY)
 }
