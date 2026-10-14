@@ -222,9 +222,14 @@ def _module_routers(rows: list[dict]) -> dict[str, list[tuple[str, frozenset[str
 def test_the_profiled_app_expands_exactly_the_effective_routes(profiled_route_rows):
     rows = profiled_route_rows
     assert len(rows) > 600, "the whole effective surface is collected"
-    assert [row["index"] for row in rows] == list(range(len(rows))), (
-        "global leaf registration order is preserved"
+    # A row is its own key — protocol/methods/path/handler — and carries no
+    # ordinal. The registration order is the row order itself: the head is
+    # pinned below and the committed-index test holds the whole sequence to the
+    # live app.
+    assert all("index" not in row for row in rows), (
+        "the inventory is keyed by the route, not by its position"
     )
+    assert rows[0]["path"] == "/openapi.json", "the first leaf stays first"
     assert sum(row["protocol"] == "ws" for row in rows) == 7, (
         "the seven WebSocket routes are collected despite having no methods"
     )
@@ -248,6 +253,13 @@ def test_the_committed_index_uses_the_same_profile_and_ordered_inventory():
     snapshot = Path(__file__).resolve().parents[2] / "scripts" / "route_index.json"
     result = run_profiled(["--sync", str(snapshot)])
     assert result.returncode == 0, result.stdout + result.stderr
+    # A number written beside a row is a position stored twice, and the stored
+    # copy is what two branches both rewrite; the sync check tolerates extra
+    # columns, so it cannot be the thing that keeps the ordinal out.
+    _, rows = parse_snapshot(snapshot.read_text(encoding="utf-8"))
+    assert all("index" not in row for row in rows), (
+        "the committed inventory is keyed by the route, not by its position"
+    )
 
 
 # Every module whose routes live under the 2.0 prefix. A module listed here that

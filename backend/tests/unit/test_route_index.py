@@ -107,7 +107,6 @@ def test_a_frozen_tuple_suppresses_exactly_itself():
 
 def test_records_keep_their_methods_for_the_http_intersection():
     record = RouteRecord(
-        index=0,
         protocol="http",
         path="/users/{userId}",
         methods=frozenset({"GET"}),
@@ -126,7 +125,6 @@ def _write_index(tmp_path, records, auth="") -> str:
             fh.write(
                 json.dumps(
                     {
-                        "index": record.index,
                         "protocol": record.protocol,
                         "path": record.path,
                         "methods": sorted(record.methods),
@@ -182,7 +180,6 @@ def test_the_sync_check_catches_drift_both_ways(tmp_path):
         records[1:]
         + [
             RouteRecord(
-                index=records[0].index,
                 protocol=records[0].protocol,
                 path=records[0].path,
                 methods=records[0].methods,

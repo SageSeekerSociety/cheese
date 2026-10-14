@@ -21,10 +21,13 @@ from scripts.route_index_frozen import FROZEN, FrozenPair
 from scripts.route_index_profile import profile_header
 
 
-def record(index, path, methods=("GET",), protocol="http"):
-    return RouteRecord(
-        index, protocol, path, frozenset(methods), f"m.h{index}", f"h{index}"
-    )
+def record(path, methods=("GET",), protocol="http"):
+    """A registration whose key is exactly its protocol/methods/path/handler.
+
+    Two calls with the same arguments are the same registration — an equal pair
+    of rows, not two rows told apart by a stored ordinal.
+    """
+    return RouteRecord(protocol, path, frozenset(methods), f"m{path}", f"h{path}")
 
 
 def write_index(tmp_path, records):
@@ -35,7 +38,6 @@ def write_index(tmp_path, records):
         + "\n".join(
             json.dumps(
                 {
-                    "index": r.index,
                     "protocol": r.protocol,
                     "path": r.path,
                     "methods": sorted(r.methods),
@@ -82,36 +84,36 @@ def write_annotations(tmp_path, records):
 def test_sync_rejects_profile_before_decoding_route_rows(tmp_path, capsys, header_kind):
     path = tmp_path / "index.json"
     if header_kind == "missing":
-        header = {"index": 0, "path": "/old-unprofiled-index"}
+        header = {"path": "/old-unprofiled-index"}
         expected = "settings profile header missing"
     else:
         header = {"settings_profile": {**profile_header(), "name": "another-profile"}}
         expected = "settings profile mismatch"
     # Bad row JSON must not mask the first, actionable profile error.
     path.write_text(json.dumps(header) + "\nnot-json", encoding="utf-8")
-    assert _sync(str(path), [record(0, "/a")]) == 1
+    assert _sync(str(path), [record("/a")]) == 1
     assert expected in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
-    "mutation", ["swap", "index", "add_duplicate", "drop_duplicate"]
+    "mutation", ["swap", "endpoint", "add_duplicate", "drop_duplicate"]
 )
 def test_sync_preserves_order_leaf_and_multiplicity(tmp_path, mutation):
-    a, b = record(0, "/a"), record(1, "/b")
+    a, b = record("/a"), record("/b")
     stored, live = [a, b], [a, b]
     if mutation == "swap":
-        live = [replace(b, index=0), replace(a, index=1)]
-    elif mutation == "index":
-        live = [replace(a, index=5), b]
+        live = [b, a]
+    elif mutation == "endpoint":
+        live = [replace(a, endpoint="m.other"), b]
     elif mutation == "add_duplicate":
-        live = [a, b, replace(a, index=2)]
+        live = [a, b, a]
     else:
         stored = [a, b, a]
     assert _sync(write_index(tmp_path, stored), live) == 1
 
 
 def test_sync_preserves_matching_duplicate_registrations(tmp_path):
-    records = [record(0, "/same"), replace(record(0, "/same"), index=1)]
+    records = [record("/same"), record("/same")]
     assert (
         _sync(write_index(tmp_path, records), records, tmp_path / "sidecar.yaml") == 0
     )
@@ -120,7 +122,7 @@ def test_sync_preserves_matching_duplicate_registrations(tmp_path):
 def test_annotations_cover_every_http_method_and_explicit_ws(tmp_path):
     from scripts.route_index_annotations import check_annotation_coverage
 
-    records = [record(0, "/same", ("GET", "HEAD")), record(1, "/same", (), "ws")]
+    records = [record("/same", ("GET", "HEAD")), record("/same", (), "ws")]
     path, data = write_annotations(tmp_path, records)
     rows = [
         {"protocol": r.protocol, "methods": sorted(r.methods), "path": r.path}
@@ -149,7 +151,7 @@ def test_annotations_cover_every_http_method_and_explicit_ws(tmp_path):
 def test_annotation_format_and_coverage_fail_loudly(tmp_path, mutation):
     from scripts.route_index_annotations import check_annotation_coverage
 
-    records = [record(0, "/http"), record(1, "/socket", (), "ws")]
+    records = [record("/http"), record("/socket", (), "ws")]
     path, data = write_annotations(tmp_path, records)
     rows = [
         {"protocol": r.protocol, "methods": sorted(r.methods), "path": r.path}
@@ -192,7 +194,7 @@ def test_annotations_reject_duplicate_yaml_keys_and_unreadable_files(tmp_path):
 
 
 def test_sync_gates_annotations_after_ordered_inventory(tmp_path, capsys):
-    records = [record(0, "/same"), replace(record(0, "/same"), index=1)]
+    records = [record("/same"), record("/same")]
     index = write_index(tmp_path, records)
     sidecar, data = write_annotations(tmp_path, records)
     assert _sync(index, records, sidecar) == 0
@@ -207,8 +209,8 @@ def test_constrained_earlier_does_not_swallow_invalid_literal(convertor):
     assert (
         first_match_findings(
             [
-                record(0, f"/x/{{id:{convertor}}}"),
-                record(1, "/x/invite-codes"),
+                record(f"/x/{{id:{convertor}}}"),
+                record("/x/invite-codes"),
             ]
         )
         == []
@@ -217,13 +219,13 @@ def test_constrained_earlier_does_not_swallow_invalid_literal(convertor):
 
 @pytest.mark.parametrize("later", ["/x/a/b", "/x/"])
 def test_path_convertor_covers_multiple_or_empty_segments(later):
-    findings = first_match_findings([record(0, "/x/{rest:path}"), record(1, later)])
+    findings = first_match_findings([record("/x/{rest:path}"), record(later)])
     assert [(f.kind, f.witness) for f in findings] == [("unreachable", later)]
 
 
 @pytest.mark.parametrize("later", ["/x/{id:int}", "/x/{id:uuid}", "/x/{id:float}"])
 def test_witness_is_legal_for_both_convertors(later):
-    records = [record(0, "/x/{anything}"), record(1, later)]
+    records = [record("/x/{anything}"), record(later)]
     findings = first_match_findings(records)
     assert len(findings) == 1
     f = findings[0]
@@ -232,7 +234,7 @@ def test_witness_is_legal_for_both_convertors(later):
 
 
 def test_partial_overlap_has_legal_witness_and_reachable_sibling():
-    records = [record(0, "/a/{x}/c"), record(1, "/a/b/{y}")]
+    records = [record("/a/{x}/c"), record("/a/b/{y}")]
     findings = first_match_findings(records)
     assert [(f.kind, f.witness) for f in findings] == [("witness", "/a/b/c")]
     assert not _full(records[0], "/a/b/d", "http", "GET")
@@ -240,15 +242,15 @@ def test_partial_overlap_has_legal_witness_and_reachable_sibling():
 
 
 def test_literal_before_parameter_yields_witness_not_unreachable():
-    findings = first_match_findings([record(0, "/x/z"), record(1, "/x/{id}")])
+    findings = first_match_findings([record("/x/z"), record("/x/{id}")])
     assert [(f.kind, f.witness) for f in findings] == [("witness", "/x/z")]
 
 
 def test_embedded_parameter_is_not_a_literal_branch():
     findings = first_match_findings(
         [
-            record(0, "/files/{rest:path}"),
-            record(1, "/files/{name}.json"),
+            record("/files/{rest:path}"),
+            record("/files/{name}.json"),
         ]
     )
     assert findings and all(f.kind == "witness" for f in findings)
@@ -256,13 +258,13 @@ def test_embedded_parameter_is_not_a_literal_branch():
 
 def test_first_full_winner_is_unique_per_method_and_skips_partial():
     records = [
-        record(0, "/x/{a}", ("DELETE",)),
-        record(1, "/x/{b}", ("GET",)),
-        record(2, "/x/{c}", ("GET", "POST")),
-        record(3, "/x/z", ("GET", "POST")),
+        record("/x/{a}", ("DELETE",)),
+        record("/x/{b}", ("GET",)),
+        record("/x/{c}", ("GET", "POST")),
+        record("/x/z", ("GET", "POST")),
     ]
-    findings = [f for f in first_match_findings(records) if f.later.index == 3]
-    assert [(f.earlier.index, f.method) for f in findings] == [(1, "GET"), (2, "POST")]
+    findings = [f for f in first_match_findings(records) if f.later_pos == 3]
+    assert [(f.earlier_pos, f.method) for f in findings] == [(1, "GET"), (2, "POST")]
 
 
 def test_collector_keeps_effective_prefix_regex_and_actual_head_methods():
@@ -300,26 +302,24 @@ def test_nested_mount_fails_loudly():
 
 
 def test_ws_first_winner_does_not_require_methods():
-    records = [record(0, "/x/{p}", (), "ws"), record(1, "/x/z", (), "ws")]
+    records = [record("/x/{p}", (), "ws"), record("/x/z", (), "ws")]
     findings = first_match_findings(records)
-    assert [(f.earlier.index, f.method, f.kind) for f in findings] == [
+    assert [(f.earlier_pos, f.method, f.kind) for f in findings] == [
         (0, "WS", "unreachable")
     ]
 
 
 def test_actual_effective_regex_overrides_template_approximation():
     records = [
-        replace(record(0, "/x/{id}"), path_regex=re.compile(r"^/x/(?P<id>[0-9]+)$")),
-        record(1, "/x/invite-codes"),
+        replace(record("/x/{id}"), path_regex=re.compile(r"^/x/(?P<id>[0-9]+)$")),
+        record("/x/invite-codes"),
     ]
     assert first_match_findings(records) == []
 
 
 def frozen_fixture():
-    records = [record(0, "/x/{id}"), record(1, "/x/z")]
+    records = [record("/x/{id}"), record("/x/z")]
     pair = FrozenPair(
-        earlier_index=0,
-        later_index=1,
         protocol="http",
         method="GET",
         earlier_path=records[0].path,
@@ -343,7 +343,6 @@ def test_frozen_exact_pair_is_suppressed():
         "missing_earlier",
         "missing_later",
         "reverse",
-        "leaf",
         "handler",
         "path",
         "protocol",
@@ -364,8 +363,6 @@ def test_frozen_stale_identity_or_overlap_fails(mutation):
         records = records[:1]
     elif mutation == "reverse":
         records.reverse()
-    elif mutation == "leaf":
-        records[0] = replace(records[0], index=20)
     elif mutation == "handler":
         records[0] = replace(records[0], endpoint="other.handler")
     elif mutation == "path":
@@ -379,7 +376,7 @@ def test_frozen_stale_identity_or_overlap_fails(mutation):
     elif mutation == "witness":
         frozen = (replace(pair, witness="/elsewhere"),)
     elif mutation == "winner":
-        records.insert(0, record(-1, "/x/{new}"))
+        records.insert(0, record("/x/{new}"))
     elif mutation == "duplicate_leaf":
         records.insert(0, records[0])
     else:
@@ -392,38 +389,46 @@ def test_frozen_does_not_exempt_other_method_or_new_registration():
     records, pair = frozen_fixture()
     records[0] = replace(records[0], methods=frozenset({"GET", "POST"}))
     records[1] = replace(records[1], methods=frozenset({"GET", "POST"}))
-    records.append(record(2, "/x/new"))
+    records.append(record("/x/new"))
     findings = checked_findings(records, (pair,))
-    assert [(f.later.index, f.method) for f in findings] == [(1, "POST"), (2, "GET")]
+    assert [(f.later_pos, f.method) for f in findings] == [(1, "POST"), (2, "GET")]
 
 
-def test_existing_frozen_debt_keeps_exact_b9_leaves():
-    # The indices are registration positions, so they move when earlier routes
-    # are added: 706/730 until 2026-10-12, then 712/736 once this branch's four
-    # leaves of `/admin/integrations/external-problem` and
-    # `/tasks/{taskId}/external-problem*` landed above them, then 713/737 on
-    # merging main's `/admin/machines` page, 720/744 on its canvases, 724/748
-    # on its agent callers page and 719/743 once main dropped two leaves above
-    # them, then 724/748 again on main's 2026-10-13 batch, 726/750 once members
-    # could add and remove their own agents, 727/751 once
-    # `/run-records/turns` was registered above them, and 728/752 once
-    # `POST /blocks/{block_id}/skip` was, then 732/756 once an account could
-    # hold a model connection, and 733/757 once a machine's connection could be
-    # named (`PATCH /connector/my/devices/{device_id}/claude-code`), and 727/751
-    # once the six external-problem routes were reverted. The pair itself is
-    # unchanged — tests/AGENTS.md
-    # ("Generated routes and database predicates") asks for the indices, the
-    # identities behind them and this assertion to move in one commit.
+def test_existing_frozen_debt_keeps_the_exact_registrations():
+    # The pair is named protocol/method/path/handler, so it holds no offsets.
+    # Before this, it read #706/#730 until 2026-10-12 and then drifted through
+    # #712/#736, #713/#737, #720/#744, #724/#748, #719/#743, #724/#748,
+    # #726/#750, #727/#751, #728/#752, #732/#756 and #733/#757 as main added
+    # and reverted routes above it, landing back on #727/#751. None of that
+    # movement is recorded here any more: the identities never changed, and the
+    # guard reads their order off the running app. backend/AGENTS.md
+    # ("Generated routes and database predicates") still asks for the
+    # identities behind these pairs and this assertion to move together.
     (pair,) = FROZEN
-    assert (pair.earlier_index, pair.later_index, pair.protocol, pair.method) == (
-        727,
-        751,
-        "http",
-        "GET",
+    assert (pair.protocol, pair.method) == ("http", "GET")
+    assert (pair.earlier_path, pair.earlier_endpoint) == (
+        "/users/{userId}",
+        "app.api.routes.users.account.get_user",
+    )
+    assert (pair.later_path, pair.later_endpoint) == (
+        "/users/invite-codes",
+        "app.api.routes.users.invite_codes.list_invite_codes",
     )
     records = [
-        replace(record(727, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(751, pair.later_path), endpoint=pair.later_endpoint),
+        RouteRecord(
+            "http",
+            pair.earlier_path,
+            frozenset({"GET"}),
+            pair.earlier_endpoint,
+            "get_user",
+        ),
+        RouteRecord(
+            "http",
+            pair.later_path,
+            frozenset({"GET"}),
+            pair.later_endpoint,
+            "list_invite_codes",
+        ),
     ]
     assert checked_findings(records, FROZEN) == []
 
@@ -440,6 +445,6 @@ def test_unknown_custom_convertor_never_emits_invalid_witness(monkeypatch):
     monkeypatch.setitem(CONVERTOR_TYPES, "guard_code", Code())
     # Register with the framework, not a separate guard regex registry.
     register_url_convertor("guard_code", CONVERTOR_TYPES["guard_code"])
-    records = [record(0, "/x/Q123"), record(1, "/x/{id:guard_code}")]
+    records = [record("/x/Q123"), record("/x/{id:guard_code}")]
     findings = first_match_findings(records)
     assert [(f.kind, f.witness) for f in findings] == [("witness", "/x/Q123")]

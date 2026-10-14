@@ -28,9 +28,12 @@ _SAMPLES = ("x", "1", "1.5", "00000000-0000-0000-0000-000000000001", "", "a/b")
 
 @dataclass(frozen=True)
 class RouteRecord:
-    """One effective leaf; its global index is never reset per protocol."""
+    """One effective leaf, keyed by protocol, methods, path and handler.
 
-    index: int
+    No ordinal is stored beside it: its place in the collected sequence is the
+    registration order, and the guard derives that order at check time.
+    """
+
     protocol: str
     path: str
     methods: frozenset[str]
@@ -71,7 +74,6 @@ def collect(app) -> list[RouteRecord]:
         endpoint = effective.endpoint
         records.append(
             RouteRecord(
-                index=len(records),
                 protocol="ws" if isinstance(original, WebSocketRoute) else "http",
                 path=effective.path,
                 methods=frozenset(getattr(effective, "methods", None) or ()),
@@ -163,12 +165,18 @@ class Shadow:
     earlier: RouteRecord
     later: RouteRecord
     kind: str
+    earlier_pos: int
+    later_pos: int
     witness: str = ""
     method: str = ""
 
 
 def first_match_findings(records: list[RouteRecord]) -> list[Shadow]:
-    """Report actual first FULL winners per URL and protocol/method."""
+    """Report actual first FULL winners per URL and protocol/method.
+
+    Both sides are located by their position in this sequence, computed here;
+    no registration carries an ordinal to compare against.
+    """
     findings: list[Shadow] = []
     seen = set()
     for later_pos, later in enumerate(records):
@@ -187,15 +195,21 @@ def first_match_findings(records: list[RouteRecord]) -> list[Shadow]:
                         continue
                     if not _full(peer, path, later.protocol, method):
                         continue
-                    winner = _first_full(earlier_records, path, later.protocol, method)
-                    key = (winner.index, later.index, method)
+                    winner_pos = next(
+                        pos
+                        for pos, record in enumerate(earlier_records)
+                        if _full(record, path, later.protocol, method)
+                    )
+                    key = (winner_pos, later_pos, method)
                     if key not in seen:
                         seen.add(key)
                         findings.append(
                             Shadow(
-                                winner,
+                                earlier_records[winner_pos],
                                 later,
                                 "unreachable" if later.all_literal else "witness",
+                                winner_pos,
+                                later_pos,
                                 path,
                                 method,
                             )
@@ -206,11 +220,31 @@ def first_match_findings(records: list[RouteRecord]) -> list[Shadow]:
     return findings
 
 
+def _match_one(records, protocol, method, path, endpoint):
+    """The one registration a stable route key names, or None.
+
+    The key is protocol + method + path + handler; a key that resolves to no
+    registration, or to more than one, is not a frozen identity.
+    """
+    hits = [
+        pos
+        for pos, record in enumerate(records)
+        if record.protocol == protocol
+        and record.path == path
+        and record.endpoint == endpoint
+        and (method == "WS" if protocol == "ws" else method in record.methods)
+    ]
+    return hits[0] if len(hits) == 1 else None
+
+
 def checked_findings(records, frozen):
     """Validate exact frozen registrations before subtracting any findings.
 
-    Used by --check and intended for the real-index assertion as well.
-    A stale entry fails even when no currently reported shadow remains.
+    Each pair names two registrations by key — protocol, method, path and
+    handler — and whether the declared earlier one is in fact registered first
+    is read off this sequence here. Used by --check and intended for the
+    real-index assertion as well. A stale entry fails even when no currently
+    reported shadow remains.
     """
     findings = first_match_findings(records)
     exempt = set()
@@ -219,19 +253,21 @@ def checked_findings(records, frozen):
         def stale(pair=pair):
             raise ValueError(f"stale frozen pair: {pair}")
 
-        earlier = [r for r in records if r.index == pair.earlier_index]
-        later = [r for r in records if r.index == pair.later_index]
-        if len(earlier) != 1 or len(later) != 1:
+        earlier_pos = _match_one(
+            records,
+            pair.protocol,
+            pair.method,
+            pair.earlier_path,
+            pair.earlier_endpoint,
+        )
+        later_pos = _match_one(
+            records, pair.protocol, pair.method, pair.later_path, pair.later_endpoint
+        )
+        if earlier_pos is None or later_pos is None:
             stale()
-        earlier, later = earlier[0], later[0]
+        earlier, later = records[earlier_pos], records[later_pos]
         if (
-            (earlier.path, earlier.endpoint)
-            != (pair.earlier_path, pair.earlier_endpoint)
-            or (later.path, later.endpoint) != (pair.later_path, pair.later_endpoint)
-            or earlier.protocol != pair.protocol
-            or later.protocol != pair.protocol
-            or earlier.index >= later.index
-            or records.index(earlier) >= records.index(later)
+            earlier_pos >= later_pos
             or not pair.why.strip()
             or (pair.protocol == "ws" and pair.method != "WS")
         ):
@@ -241,14 +277,14 @@ def checked_findings(records, frozen):
         winner = _first_full(records, pair.witness, pair.protocol, pair.method)
         if winner is not earlier:
             stale()
-        key = (earlier.index, later.index, pair.protocol, pair.method)
+        key = (earlier_pos, later_pos, pair.protocol, pair.method)
         if key in exempt:
             stale()
         exempt.add(key)
     return [
         f
         for f in findings
-        if (f.earlier.index, f.later.index, f.later.protocol, f.method) not in exempt
+        if (f.earlier_pos, f.later_pos, f.later.protocol, f.method) not in exempt
     ]
 
 
@@ -279,7 +315,12 @@ def _sync(
     records: list[RouteRecord],
     annotations_file: str | Path | None = None,
 ) -> int:
-    """One drift check: profile, ordered leaf rows, complete handwritten notes."""
+    """One drift check: profile, ordered leaf rows, complete handwritten notes.
+
+    A row's identity is its own protocol/methods/path/handler; the rows must
+    still appear in registration order, which is why the comparison stays a
+    positional one with no ordinal column to fall out of step.
+    """
     path = Path(index_file)
     if not path.exists():
         print(f"route index missing: {index_file}")
@@ -291,7 +332,6 @@ def _sync(
         return 1
     live = [
         {
-            "index": r.index,
             "protocol": r.protocol,
             "path": r.path,
             "methods": sorted(r.methods),
@@ -299,7 +339,7 @@ def _sync(
         }
         for r in records
     ]
-    columns = ("index", "protocol", "path", "methods", "endpoint")
+    columns = ("protocol", "path", "methods", "endpoint")
     generated = [{key: row.get(key) for key in columns} for row in indexed]
     if generated != live:
         for position, (old, new) in enumerate(zip_longest(generated, live)):
@@ -367,7 +407,6 @@ def main() -> int:
             print(
                 json.dumps(
                     {
-                        "index": record.index,
                         "protocol": record.protocol,
                         "path": record.path,
                         "methods": sorted(record.methods),
@@ -387,11 +426,13 @@ def main() -> int:
             print(exc)
             return 1
         for finding in findings:
+            # The two registrations are named by their stable route keys; the
+            # position each one occupies is this run's order, printed here only.
             print(
                 f"[{finding.kind}] {finding.later.protocol}/{finding.method} "
-                f"#{finding.earlier.index} {finding.earlier.path} "
+                f"#{finding.earlier_pos} {finding.earlier.path} "
                 f"({finding.earlier.endpoint}) shadows "
-                f"#{finding.later.index} {finding.later.path} "
+                f"#{finding.later_pos} {finding.later.path} "
                 f"({finding.later.endpoint}) — witness {finding.witness}"
             )
         bad = [f for f in findings if f.kind == "unreachable"]

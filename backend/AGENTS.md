@@ -40,10 +40,13 @@ Resolve a conflict in `scripts/route_index.json` by regenerating from the merged
 routes: from `backend/`, run `uv run python -m scripts.route_index --emit > scripts/route_index.json`, then
 `uv run python -m scripts.route_index --sync scripts/route_index.json`. Run
 `uv run python -m scripts.route_index --check` too to validate the frozen
-shadowing pairs. If route ordering changed, verify
-the identities behind `scripts/route_index_frozen.py`'s indexed pairs and update
-their indices and tests together; never freeze a newly introduced shadowing
-relationship just to clear the check (`tests/unit/test_route_index*.py`).
+shadowing pairs. A row is keyed by protocol/method/path/handler and its place in
+the file is its registration order, so adding a route rewrites its own line and
+nothing after it. If registration order changed, verify the identities behind
+`scripts/route_index_frozen.py`'s pairs — protocol, method, path and handler on
+both sides — and update them and their tests together; never freeze a newly
+introduced shadowing relationship just to clear the check
+(`tests/unit/test_route_index*.py`).
 
 Keep a partial index's predicate and its querying expression aligned, including
 literal values and casts; a parameterised or differently spelled expression may
