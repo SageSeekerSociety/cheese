@@ -316,6 +316,6 @@ onMounted(() => {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  color: var(--faint);
+  color: var(--muted);
 }
 </style>
