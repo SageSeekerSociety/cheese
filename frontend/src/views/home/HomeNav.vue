@@ -23,17 +23,16 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
+import JoinSpaceDialog from './JoinSpaceDialog.vue'
+
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { storageGetStrings, storageSetJson } from '@/lib/browserStorage'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
 import TeamProfileEditDialog from '@/views/teams/TeamProfileEditDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
-
-import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
 const props = defineProps<{
   /** 手机上「待办」是底栏的一格，这里就不再列一次。 */

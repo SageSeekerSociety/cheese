@@ -7,10 +7,10 @@
 // `HomeNav.vue` 那一份一一对应，含义见它。
 import type { Team, TeamMember } from '@/types'
 
+import HomeNav from './HomeNav.vue'
+
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
 import { t } from '@/i18n'
-
-import HomeNav from './HomeNav.vue'
 
 defineProps<{
   /** 视口 ≥960：只有这一档才有常驻侧栏；手机上这一份整个不画。 */
