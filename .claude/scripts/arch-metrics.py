@@ -246,7 +246,7 @@ def parse_importlinter(path: Path) -> dict[str, Any] | None:
     pairs) and now carries only the pairs somebody decided to accept on top of
     the tree at the merge base, so the number here is meant to stay near zero.
     The debt itself is measured by the gate on every run and recorded per commit
-    in the ratchet snapshot (`docs/topics/棘轮页方案.md`).
+    in the ratchet snapshot (`docs/topics/棘轮页方案`).
 
     Not configparser: the list is a multi-line value whose entries look like
     `importer -> imported`, and INI's continuation rules would fold the comments

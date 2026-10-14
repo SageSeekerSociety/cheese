@@ -17,7 +17,7 @@ frozen baseline holds still and reports success forever. That half is the board,
 `arch-metrics.py`, and the per-commit ratchet snapshot beside it; the board
 reports and never fails. Counts, history and per-contract reasoning:
 `docs/manual/dev/architecture.md`, `docs/manual/dev/arch-metrics.md`,
-`docs/topics/棘轮页方案.md`, `backend/.importlinter`.
+`docs/topics/棘轮页方案`, `backend/.importlinter`.
 
 ## Backend: the import graph is checked, not assumed
 

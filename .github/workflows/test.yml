@@ -110,12 +110,16 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: uv run python scripts/check_boundaries.py --self-test
 
-      # What this tree is judged against is not stored anywhere: the check
-      # materialises the tree at the merge base with origin/main and grades it
-      # with these same contracts. A depth-1 checkout has no such commit, and
-      # the check would answer "could not judge" — exit 2, a red step that says
-      # nothing about the tree. Rules: .claude/rules/architecture.md.
+      # Two checks below grade this tree against the tree at the merge base with
+      # origin/main — the boundary check for the violations it tolerates, the
+      # migration check for the release's models — and neither baseline is
+      # stored anywhere. A depth-1 checkout has no such commit, and the boundary
+      # check would answer "could not judge" — exit 2, a red step that says
+      # nothing about the tree. One fetch, here, before both: a second
+      # `--unshallow` in the same job fails on a now complete repository.
+      # Rules: .claude/rules/architecture.md, .claude/rules/migrations.md.
       - name: Fetch main for comparison
+        id: main_history
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: git fetch --no-tags --unshallow origin
 
@@ -197,15 +201,10 @@ jobs:
 
       # Judges only the migrations this PR adds, against origin/main's models
       # (is a dropped column still mapped by the release that keeps serving
-      # while migrations run?). Needs main's history for the merge base; a
-      # depth-1 checkout has none. Rules: .claude/rules/migrations.md.
-      - name: Fetch main for comparison
-        id: migration_history
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: git fetch --no-tags --unshallow origin
-
+      # while migrations run?). The merge base it needs came from the fetch
+      # above. Rules: .claude/rules/migrations.md.
       - name: Added migrations are safe under the running release
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.migration_history.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.main_history.outcome == 'success' }}
         # The job's default working directory is backend/; the script takes
         # repository paths.
         working-directory: ${{ github.workspace }}
