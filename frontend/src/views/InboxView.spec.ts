@@ -32,6 +32,11 @@ const refreshProjects = vi.fn()
 const store = { projectsSettled: true, projects: [] as { id: string }[], refreshProjects }
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
+const spaceJoin = vi.fn()
+vi.mock('@/api/spaces', () => ({
+  SpacesApi: { join: (...a: unknown[]) => spaceJoin(...a), list: async () => ({ spaces: [] }) },
+}))
+
 const showNewProject = vi.fn()
 vi.mock('@/composables/useNewProjectDialog', () => ({
   useNewProjectDialog: () => ({ show: showNewProject, open: { value: false } }),
@@ -56,6 +61,16 @@ beforeAll(() => {
       disconnect() {}
     }
   }
+  // 加入空间那个弹窗是 Vuetify 的浮层：它要量视口，happy-dom 里没有。
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
 })
 
 beforeEach(async () => {
@@ -65,11 +80,13 @@ beforeEach(async () => {
   listAwaitingMe.mockReset().mockResolvedValue({ data: [], total: 0 })
   refreshProjects.mockReset().mockResolvedValue(undefined)
   showNewProject.mockReset()
+  spaceJoin.mockReset()
   router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'home', component: { template: '<div />' } },
       { path: '/teams', name: 'HomeTeamsExplore', component: { template: '<div />' } },
+      { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId', name: 'workspace-topic', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId/tasks/:taskId', name: 'workspace-task', component: { template: '<div />' } },
       { path: '/p/:projectId/overview', name: 'workspace-overview', component: { template: '<div />' } },
@@ -106,6 +123,19 @@ describe('待办页零项目时的第一屏', () => {
     await utils.findByText(t('work.startPaths.project.title', termParams(DEFAULT_SHELL)))
     await utils.getByRole('button', { name: t('navigation.newProject', termParams(DEFAULT_SHELL)) }).click()
     expect(showNewProject).toHaveBeenCalled()
+  })
+
+  // 这一页上的「用邀请码加入」和首页目录里那一行是同一件事（同一个 `useJoinSpace`）：
+  // 加进去了就直接进那个空间，留在原地等于什么都没发生。
+  it('用邀请码加入：加进去了就进那个空间', async () => {
+    spaceJoin.mockResolvedValue({ space: { id: 9 } })
+    await render(View, { global: { plugins: [vuetify, router], stubs: { NotificationFeed: true } } })
+    await fireEvent.click(await screen.findByRole('button', { name: t('work.startPaths.invite.action') }))
+    await fireEvent.update(await screen.findByLabelText(t('work.joinLabel')), 'abc123')
+    await fireEvent.click(screen.getByRole('button', { name: t('work.joinSubmit') }))
+
+    await waitFor(() => expect(spaceJoin).toHaveBeenCalledWith({ code: 'abc123' }))
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/spaces/9/tasks'))
   })
 
   it('手上有项目的人看到的还是平常那一页，不摆起步路', async () => {

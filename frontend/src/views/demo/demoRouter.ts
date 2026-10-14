@@ -45,8 +45,15 @@ const catalogTargets = [
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
+  // 首页那份目录（`catalogHome.ts`）：一个团队摊开来是四样，摊开那一行才画得出这四条；
+  // 名字不在表里的话，带 `to` 的行会当场抛，目录在预览站上整段渲染不出来。
+  { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
   { path: '/teams/:handle', name: 'TeamsDetailDefault', component: blank },
+  { path: '/teams/:handle/members', name: 'TeamsDetailMembers', component: blank },
+  { path: '/teams/:handle/knowledge', name: 'TeamsDetailKnowledge', component: blank },
+  { path: '/teams/:handle/compute', name: 'TeamsDetailCompute', component: blank },
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
+  { path: '/inbox', name: 'inbox', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
   { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
