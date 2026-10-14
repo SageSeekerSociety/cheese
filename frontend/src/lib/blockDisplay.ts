@@ -47,7 +47,9 @@ export function replySnippet(block: Block, maps: RefNames, max = 24): string {
   if (step !== null) return clip(step, max)
   const read = isAgentBlock(block) ? docReadNow() : null
   const source = read ? read.plainText(block.content, 'chat') : block.content
-  return clip(plainRefs(source, maps).replace(/\s+/g, ' ').trim(), max)
+  // A message's @ told its person, so its quote keeps the "@" its chip shows.
+  const names = block.kind === 'message' ? { ...maps, notified: true } : maps
+  return clip(plainRefs(source, names).replace(/\s+/g, ' ').trim(), max)
 }
 
 function clip(text: string, max: number): string {

@@ -1368,9 +1368,25 @@ button:not(.v-btn) {
   background: var(--fill);
   cursor: default;
 }
-/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
-.mention--static {
+/* 提到一个人、但这一处没有通知到他（通知卡里的操作人、现场里的一行、周报、文档里
+   芝士写的名字……）：只是名字。和周围同一个墨色、略重一档，悬停加下划线，点开去处和
+   @chip 一样。不带「@」，没有底色——琥珀色的 @chip 只留给真的叫到了人的那一处，
+   两者长得一样的话，读的人就分不清谁被通知了（lib/refChip 的 notified）。 */
+.name-ref {
+  color: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.name-ref:hover,
+.name-ref:focus-visible {
+  text-decoration: underline;
+}
+/* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：没有去处。 */
+.name-ref--static {
   cursor: default;
+}
+.name-ref--static:hover {
+  text-decoration: none;
 }
 /* 文件 chip 前那个 mdi 图标。 */
 .file-ref__icon {

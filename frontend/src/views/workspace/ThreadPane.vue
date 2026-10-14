@@ -137,7 +137,12 @@ const madeRead = useQuery(
   queryClient
 )
 const madeHere = computed<RoomTask[]>(() => madeRead.data.value?.data ?? [])
-const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} as Record<string, string> }))
+// The 支线's messages: each `<@handle>` in them told its person, drawn as the @chip.
+const refs = computed(() => ({
+  mentionNames: props.memberNames,
+  topicTitles: {} as Record<string, string>,
+  notified: true,
+}))
 function nameOf(handle: string): string {
   return props.memberNames[handle] || handle
 }

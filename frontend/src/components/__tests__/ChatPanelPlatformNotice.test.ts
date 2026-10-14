@@ -762,5 +762,29 @@ describe('a foldable notice that names someone', () => {
     const text = visibleText(container)
     expect(text).toContain('芝士S 提议新增技能「周报格式」')
     expect(text).not.toContain('<@cheese-s>')
+
+// 「@」的样子只说一件事：这一处通知到了那个人。消息里的点名通知了，画 @chip；平台的一行
+// 提示只是提到谁做了什么，没有通知谁，画成他的名字。
+describe('a person named in the room', () => {
+  it('is the @chip where a message told them, and only their name where a notice mentions them', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'bob', name: '鲍勃', agent: false },
+      ],
+    })
+    const said: Block = {
+      ...event('', '<@bob> 帮忙看下', null),
+      kind: 'message',
+      author_type: 'participant',
+      author: 'alice',
+    }
+    const { container } = mountRoom([event('', '<@alice> 置顶了一条消息', { event_type: 'pin' }), said])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('@鲍勃')
+    expect(text).toContain('爱丽丝')
+    expect(text).not.toContain('@爱丽丝')
   })
 })

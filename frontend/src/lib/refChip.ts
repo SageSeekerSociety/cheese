@@ -19,6 +19,21 @@ export interface RefNames {
   /** Titles the page already holds (its channels and tasks), by id. Any other
    *  `<#id>` is looked up (lib/refDirectory). */
   topicTitles: Record<string, string>
+  /**
+   * Which `<@handle>` here notified its person. Only those are drawn as the
+   * amber @chip; every other one is a name reference — the person's name,
+   * no "@", no pill — because the chip says "this told them", and a
+   * notice, a report or an agent's words in a document told nobody.
+   * `true`: every one did (a message that went through the mention path).
+   * Absent: none did.
+   */
+  notified?: boolean | ((handle: string) => boolean)
+}
+
+/** Whether the `<@handle>` in text drawn with `names` notified its person. */
+function didNotify(handle: string, names: RefNames): boolean {
+  const n = names.notified
+  return typeof n === 'function' ? n(handle) : n === true
 }
 
 type TopicRefShown = { text: string; missing: boolean }
@@ -65,7 +80,11 @@ export function refChip(
     el.dataset.topic = id
   } else if (kind === '@') {
     el.dataset.handle = id
-    el.textContent = `@${names.mentionNames[id] || id}`
+    if (didNotify(id, names)) el.textContent = `@${names.mentionNames[id] || id}`
+    else {
+      el.className = 'name-ref'
+      el.textContent = names.mentionNames[id] || id
+    }
   } else {
     // 一枚文件图标 + 文件名，点开文件。图标走 @mdi/font 的字体类而不是 emoji：
     // emoji 在各系统上是彩色位图，字号、基线、颜色都不跟着正文走。
@@ -102,7 +121,7 @@ export function refTokens(text: string): { index: number; length: number; kind: 
 export function plainRefs(text: string, names: RefNames): string {
   return text.replace(REF_TOKEN, (_m, k: string, id: string, fid: string) => {
     if (fid) return fid.split('/').pop() || fid
-    if (k === '@') return `@${names.mentionNames[id] || id}`
+    if (k === '@') return didNotify(id, names) ? `@${names.mentionNames[id] || id}` : names.mentionNames[id] || id
     return topicRef(id, names).text
   })
 }
@@ -115,7 +134,7 @@ export function installRefChipKeys(root: Document = document): void {
   root.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' && e.key !== ' ') return
     const chip = e.target instanceof HTMLElement ? e.target : null
-    if (!chip?.matches('.mention[role="button"]') || chip.isContentEditable) return
+    if (!chip?.matches('.mention[role="button"], .name-ref[role="button"]') || chip.isContentEditable) return
     e.preventDefault()
     chip.click()
   })

@@ -121,7 +121,7 @@ const itemLabel = computed(() =>
   t('work.room.chat.messageLabel', {
     name: props.authorName,
     time: props.time,
-    text: replySnippet(props.block, props.refs, 140),
+    text: replySnippet(props.block, told.value, 140),
   })
 )
 
@@ -179,8 +179,12 @@ const {
   computed(() => [props.block.content, props.editing] as const)
 )
 
+// A message's `<@handle>` went through the mention path when it was sent or
+// edited, so each one told its person: drawn as the @chip.
+const told = computed(() => ({ ...props.refs, notified: true }))
+
 function renderPlain(text: string): string {
-  return renderPlainWith(text, props.refs)
+  return renderPlainWith(text, told.value)
 }
 </script>
 
@@ -341,7 +345,7 @@ function renderPlain(text: string): string {
         @withdraw="emit('ask-withdraw', block)"
         @skip="emit('ask-skip', block)"
       >
-        <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="refs" />
+        <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="told" />
       </AskQuickReplies>
       <template v-else>
         <div
@@ -356,7 +360,7 @@ function renderPlain(text: string): string {
             class="im-text md-content"
             :source="block.content"
             as="chat"
-            :names="refs"
+            :names="told"
             :copy-code="!outgoing"
           />
           <!-- 现场尊重原文: human text renders verbatim — newlines and

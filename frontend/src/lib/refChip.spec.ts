@@ -10,7 +10,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { t } from '../i18n'
 
-import { installRefChipKeys, refChip } from './refChip'
+import { installRefChipKeys, plainRefs, refChip } from './refChip'
 import { answerRefsWith, refRoute } from './refDirectory'
 import { renderPlain } from './renderMessage'
 
@@ -29,17 +29,18 @@ const names = { mentionNames: { alice: 'Alice' }, topicTitles: {} }
 beforeAll(() => installRefChipKeys())
 afterEach(() => document.body.replaceChildren())
 
-/** A message drawn the way chat draws it, with a click delegated on the list around it. */
-function message(text: string) {
+/** A message drawn the way chat draws it, with a click delegated on the list around it.
+ *  A message's mentions told their people (`notified: true`); a notice's did not. */
+function message(text: string, notified = true) {
   const list = document.createElement('div')
-  list.innerHTML = renderPlain(text, names)
+  list.innerHTML = renderPlain(text, { ...names, notified })
   const opened = vi.fn()
   list.addEventListener('click', (e) => {
-    const chip = (e.target as HTMLElement).closest<HTMLElement>('.mention')
+    const chip = (e.target as HTMLElement).closest<HTMLElement>('.mention, .name-ref')
     if (chip) opened(chip.dataset.handle ?? chip.dataset.file ?? chip.dataset.topic)
   })
   document.body.append(list)
-  return { chip: list.querySelector<HTMLElement>('.mention')!, opened }
+  return { chip: list.querySelector<HTMLElement>('.mention, .name-ref')!, opened }
 }
 
 describe('a reference chip in a message', () => {
@@ -55,6 +56,35 @@ describe('a reference chip in a message', () => {
     chip.focus()
     chip.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
     expect(opened).toHaveBeenCalledWith('src/a.ts')
+  })
+})
+
+describe('a person who was only referred to', () => {
+  it('reads as their name, without the @ a mention that told them carries', () => {
+    expect(message('<@alice> 改了文档', false).chip.textContent).toBe('Alice')
+    expect(message('ask <@alice> about it').chip.textContent).toBe('@Alice')
+  })
+
+  it('reads the same way in plain text', () => {
+    expect(plainRefs('<@alice> 改了文档', names)).toBe('Alice 改了文档')
+    expect(plainRefs('ask <@alice>', { ...names, notified: true })).toBe('ask @Alice')
+  })
+
+  it('is told apart per person when only some were notified', () => {
+    const shown = plainRefs('<@alice> <@bob>', {
+      mentionNames: { alice: 'Alice', bob: 'Bob' },
+      topicTitles: {},
+      notified: (handle) => handle === 'bob',
+    })
+    expect(shown).toBe('Alice @Bob')
+  })
+
+  it.each(['Enter', ' '])('still opens the person, from the keyboard too (%j)', (key) => {
+    const { chip, opened } = message('<@alice> 改了文档', false)
+    chip.focus()
+    expect(document.activeElement).toBe(chip)
+    chip.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+    expect(opened).toHaveBeenCalledWith('alice')
   })
 })
 

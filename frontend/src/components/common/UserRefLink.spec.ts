@@ -1,6 +1,6 @@
-// 句子里提到的一个人，和对话消息里 @ 到的那个人，是同一颗 chip：长得一样，点了去
-// 同一个地方。这里拿真的路由表，一边点 UserRefLink，一边点对话里渲染出来的 @chip（私聊
-// 页挂真的对话栏），比两边落到的地址。
+// 句子里提到的一个人，和对话消息里 @ 到的那个人：前者只是提到，画成名字；后者通知到了
+// 他，画成 @chip。长得不一样，点了去同一个地方。这里拿真的路由表，一边点 UserRefLink，
+// 一边点对话里渲染出来的 @chip（私聊页挂真的对话栏），比两边落到的地址。
 import type { Component } from 'vue'
 import type { Router } from 'vue-router'
 
@@ -166,28 +166,27 @@ async function chatMention(handle: string, name: string, agent: boolean): Promis
   return { path: router.currentRoute.value.path, html }
 }
 
-/** 同一个人，句子里的 @chip（UserRefLink）点下去落到哪。 */
+/** 同一个人，句子里提到的名字（UserRefLink）点下去落到哪。 */
 async function userRefLandsOn(handle: string, name: string): Promise<string> {
   const router = await makeRouter('/projects/p1/settings')
   const { getByText } = mountRef(router, { handle, name })
-  await fireEvent.click(getByText(`@${name}`))
+  await fireEvent.click(getByText(name))
   await waitFor(() => expect(router.currentRoute.value.path).not.toBe('/projects/p1/settings'))
   return router.currentRoute.value.path
 }
 
 describe('UserRefLink：句子里的一个人', () => {
-  it('画成 @名字，和对话消息里的 @chip 是同一份 markup', async () => {
+  it('画成名字，不是对话消息里那颗说「通知到了」的 @chip', async () => {
     const router = await makeRouter('/projects/p1/settings')
     const { container } = mountRef(router, { handle: 'alice', name: '爱丽丝' })
-    const chip = container.querySelector('.mention') as HTMLElement
-    expect(chip.textContent).toBe('@爱丽丝')
+    const ref = container.querySelector('[data-handle="alice"]') as HTMLElement
+    expect(ref.textContent).toBe('爱丽丝')
 
     const holder = document.createElement('div')
     holder.innerHTML = (await chatMention('alice', '爱丽丝', false)).html
     const chat = holder.firstElementChild as HTMLElement
-    expect(chip.className).toBe(chat.className)
-    expect(chip.dataset.handle).toBe(chat.dataset.handle)
-    expect(chip.textContent).toBe(chat.textContent)
+    expect(chat.textContent).toBe('@爱丽丝')
+    expect(ref.className).not.toBe(chat.className)
   })
 
   it('点一个人 → 他在项目里的成员页，和对话里点 @他 同一个地址', async () => {
@@ -205,7 +204,7 @@ describe('UserRefLink：句子里的一个人', () => {
   it('键盘：聚焦后回车也能去', async () => {
     const router = await makeRouter('/projects/p1/settings')
     const { getByText } = mountRef(router, { handle: 'alice', name: '爱丽丝' })
-    const chip = getByText('@爱丽丝')
+    const chip = getByText('爱丽丝')
     expect(chip.getAttribute('tabindex')).toBe('0')
     await fireEvent.keyDown(chip, { key: 'Enter' })
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/projects/p1/members/alice'))
@@ -214,7 +213,7 @@ describe('UserRefLink：句子里的一个人', () => {
   it('项目之外 → 他的个人主页', async () => {
     const router = await makeRouter('/')
     const { getByText } = mountRef(router, { handle: 'alice', name: '爱丽丝' })
-    await fireEvent.click(getByText('@爱丽丝'))
+    await fireEvent.click(getByText('爱丽丝'))
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/users/alice'))
   })
 
@@ -223,28 +222,28 @@ describe('UserRefLink：句子里的一个人', () => {
     const onRow = vi.fn()
     const Row = withDirectory(() => h('div', { onClick: onRow }, [h(UserRefLink, { handle: 'alice', name: '爱丽丝' })]))
     const { getByText } = render(Row, { global: { plugins: [vuetify, router] } })
-    await fireEvent.click(getByText('@爱丽丝'))
+    await fireEvent.click(getByText('爱丽丝'))
     expect(onRow).not.toHaveBeenCalled()
   })
 
-  it('只知道名字、不知道 handle：照样是 @名字，但点了哪也不去', async () => {
+  it('只知道名字、不知道 handle：照样是名字，但点了哪也不去', async () => {
     const router = await makeRouter('/projects/p1/settings')
     const { getByText } = mountRef(router, { name: '爱丽丝' })
-    const chip = getByText('@爱丽丝')
+    const chip = getByText('爱丽丝')
     expect(chip.getAttribute('role')).toBeNull()
     await fireEvent.click(chip)
     await settle()
     expect(router.currentRoute.value.path).toBe('/projects/p1/settings')
   })
 
-  it('没人注入名册（组件目录、单独挂载）：画出 @handle，不能点', async () => {
+  it('没人注入名册（组件目录、单独挂载）：画出 handle，不能点', async () => {
     const router = await makeRouter('/projects/p1/settings')
     members.splice(0, members.length, { user_handle: 'alice', role: 'member', name: '爱丽丝', agent: false })
     const { getByText } = render(UserRefLink as unknown as Component, {
       props: { handle: 'alice' },
       global: { plugins: [vuetify, router] },
     })
-    const chip = getByText('@alice')
+    const chip = getByText('alice')
     expect(chip.getAttribute('role')).toBeNull()
     await fireEvent.click(chip)
     await settle()
@@ -255,6 +254,6 @@ describe('UserRefLink：句子里的一个人', () => {
     const router = await makeRouter('/projects/p1/settings')
     members.splice(0, members.length, { user_handle: 'alice', role: 'member', name: '爱丽丝', agent: false })
     const { getByText } = mountRef(router, { handle: 'alice' })
-    expect(getByText('@爱丽丝')).toBeTruthy()
+    expect(getByText('爱丽丝')).toBeTruthy()
   })
 })

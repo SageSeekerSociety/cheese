@@ -19,6 +19,7 @@ import TaskRelatedList from '@/components/task/TaskRelatedList.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { renderPlain } from '@/lib/renderMessage'
 
 // 实况文档的正文编辑器（tiptap + prosemirror + 文档 schema，压缩后约 1.1 MB）按需取，不
 // 跟这一页的路由 chunk 一起下来。任务页默认那一格是「总览」，编辑器这一格只是在最后，
@@ -56,6 +57,19 @@ const emit = defineEmits<{
   (e: 'open-document', id: string, title: string): void
   (e: 'open-file', path: string): void
 }>()
+
+// 结论里写到的人、频道、文件：存的是 token，读的是名字。提到的人没有因此被通知，
+// 所以画成名字引用，不是 @chip（lib/refChip 的 notified）。
+const conclusionHtml = computed(() =>
+  props.task.conclusion ? renderPlain(props.task.conclusion, { mentionNames: props.memberNames, topicTitles: {} }) : ''
+)
+function onConclusionClick(event: MouseEvent): void {
+  const el = (event.target as HTMLElement | null)?.closest<HTMLElement>('.mention, .name-ref')
+  if (!el) return
+  if (el.dataset.handle) emit('mention-click', el.dataset.handle)
+  else if (el.dataset.topic) emit('open-topic', el.dataset.topic)
+  else if (el.dataset.file) emit('open-file', el.dataset.file)
+}
 
 // 第一轮失败后选了「自己写」：不再拦在文档前面。
 const writingMyself = ref(false)
@@ -134,7 +148,7 @@ defineExpose({
     </div>
     <div v-if="task.conclusion" class="task-overview__conclusion">
       <div class="t-meta c-faint">{{ t('work.task.conclusion') }}</div>
-      <p class="t-body task-overview__conclusion-text">{{ task.conclusion }}</p>
+      <p class="t-body task-overview__conclusion-text" @click="onConclusionClick" v-html="conclusionHtml" />
     </div>
 
     <section v-if="opening" class="task-overview__opening" role="status" data-testid="task-opening">
