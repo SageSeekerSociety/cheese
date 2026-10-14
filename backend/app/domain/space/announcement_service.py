@@ -39,12 +39,11 @@ from app.core.errors import BadRequestError, NotFoundError
 from app.domain.addressing import Event, Hand, address
 from app.domain.avatars.models import Avatar
 from app.domain.delivery.ledger import (
-    DeliveryEvent,
     amend,
     deliver,
-    event_id_for,
     retract,
 )
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.notification.models import NotificationType
 from app.domain.space.models import (
     Space,

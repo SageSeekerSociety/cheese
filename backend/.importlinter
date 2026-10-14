@@ -307,7 +307,6 @@ ignore_imports =
     app.domain.block.editing -> app.domain.agent.chat
     app.domain.block.editing -> app.domain.agent.runtime
     app.domain.block.editing -> app.domain.delivery.agent
-    app.domain.block.editing -> app.domain.delivery.ledger
     app.domain.block.editing -> app.domain.notification.models
     app.domain.block.editing -> app.domain.room_task.services
     app.domain.delivery.agent -> app.domain.agent.runtime
@@ -605,7 +604,6 @@ ignore_imports =
     app.domain.block.editing -> app.domain.agent.chat
     app.domain.block.editing -> app.domain.agent.runtime
     app.domain.block.editing -> app.domain.delivery.agent
-    app.domain.block.editing -> app.domain.delivery.ledger
     app.domain.discussion.services -> app.domain.delivery.ledger
     app.domain.membership.roster -> app.domain.agent_instance.own
     app.domain.membership.roster -> app.domain.agent_instance.services
@@ -667,14 +665,12 @@ ignore_imports =
     app.domain.review.pr_poll -> app.domain.delivery.agent
     app.domain.review.pr_publish -> app.domain.agent.announce
     app.domain.review.pr_publish -> app.domain.delivery.agent
-    app.domain.review.pr_publish -> app.domain.delivery.ledger
     app.domain.review.room_notices -> app.domain.agent.announce
     app.domain.review.room_notices -> app.domain.delivery.agent
     app.domain.review.room_notices -> app.domain.delivery.ledger
     app.domain.review.task_landing -> app.domain.agent.harness.prompt
     app.domain.review.task_landing -> app.domain.agent_instance.services
     app.domain.review.task_landing -> app.domain.delivery.agent
-    app.domain.review.task_landing -> app.domain.delivery.ledger
     app.domain.room_task.binding -> app.domain.agent.market
     app.domain.room_task.binding -> app.domain.agent.supply
     app.domain.room_task.binding -> app.domain.agent_instance.configuration

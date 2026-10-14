@@ -45,7 +45,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.agent import record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project

@@ -36,7 +36,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import is_task
 from app.domain.delivery.agent import dispatch_pending, record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.services import TaskService
 

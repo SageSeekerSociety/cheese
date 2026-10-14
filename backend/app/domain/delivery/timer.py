@@ -24,8 +24,9 @@ from app.domain.delivery.agent import (
     instance_for_seat,
     record_agent,
 )
-from app.domain.delivery.ledger import DeliveryEvent, Ledger
+from app.domain.delivery.ledger import Ledger
 from app.domain.delivery.models import Delivery, TimedDelivery
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notice_meta import (
     EVENT_TIMED_DELIVERY,

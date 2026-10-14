@@ -31,8 +31,8 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
-from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.feedback import claims as feedback_claims
 from app.domain.feedback import triage as feedback_triage
 from app.domain.library import listing as library_listing

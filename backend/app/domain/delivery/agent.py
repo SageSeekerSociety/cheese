@@ -19,8 +19,9 @@ from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
-from app.domain.delivery.ledger import DeliveryEvent, dedup_key
+from app.domain.delivery.ledger import dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary

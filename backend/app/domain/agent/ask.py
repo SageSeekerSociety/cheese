@@ -30,7 +30,8 @@ from app.domain.block.questions import (
 )
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.agent import now, record_agent
-from app.domain.delivery.ledger import DeliveryEvent, settle, settle_for
+from app.domain.delivery.ledger import settle, settle_for
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import names_a_person
 from app.domain.notification.models import NotificationType
 from app.domain.topic_membership.services import TopicMemberService

@@ -77,7 +77,7 @@ async def tell_task(db, task, content: str, *, opening: bool = False) -> None:
     document from where it came from (`agent/opening.py`)."""
     from app.domain.agent.opening import OPENING, PURPOSE
     from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
+    from app.domain.delivery_events import DeliveryEvent
     from app.domain.notification.models import NotificationType
 
     payload = {"projectId": str(task.project_id), "topicId": str(task.room_id)}

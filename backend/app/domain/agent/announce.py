@@ -53,7 +53,8 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
-from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
+from app.domain.delivery.ledger import deliver, settle
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
     SEVERITY_INFO,

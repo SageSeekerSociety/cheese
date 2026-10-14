@@ -53,7 +53,8 @@ from app.domain.delivery.agent import (
     record_agent,
     record_task_instruction,
 )
-from app.domain.delivery.ledger import DeliveryEvent, settle_card
+from app.domain.delivery.ledger import settle_card
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.notice_meta import (
     EVENT_ACCEPT_READY,
     EVENT_ARTIFACT_DECLARED,

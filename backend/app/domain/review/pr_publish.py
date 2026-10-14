@@ -34,7 +34,7 @@ from app.core.sentences import say
 from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
 from app.domain.conversation.services import of_room
 from app.domain.delivery.agent import record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.notice_meta import (
