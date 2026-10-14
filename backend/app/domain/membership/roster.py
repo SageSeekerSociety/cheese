@@ -15,12 +15,14 @@ agent 在项目里列不出另一个 agent——结论 12 那句「不同 handle
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.identity.services import IdentityService
-from app.domain.membership.ports import ProjectTeam
+from app.domain.membership.ports import ProjectTeam, TeammateSeat
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.services import ProjectService
 
@@ -172,7 +174,10 @@ async def roster(
     at = {row.handle: index for index, row in enumerate(rows)}
     # 已有的席位和还没坐下的那几位是同一张表的两半，后一半由 `team` 读：一个关了
     # 「成员自带 agent」的项目已经把成员那几位收回了，谁该在列由它筛（`ports.py`）。
-    for seat in await team(session, project_id):
+    # 行类型在这里认下来：口子上写的是「一列东西」（`ports.py` 里说了为什么），
+    # 递回来的每一行都是本包声明的 ``TeammateSeat``，唯一的实现也是照它填的。
+    seats = cast("Sequence[TeammateSeat]", await team(session, project_id))
+    for seat in seats:
         index = at.get(seat.seat)
         if index is None:
             rows.append(

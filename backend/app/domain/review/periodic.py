@@ -60,6 +60,7 @@ def register_periodic_jobs(
             record_instruction=record_instruction,
             seat_instance_id=seat_instance_id,
             record_agent=record_agent,
+            task_teammate=task_teammate,
         ),
     )
     jobs.register(

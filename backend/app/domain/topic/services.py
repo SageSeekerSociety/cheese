@@ -636,7 +636,7 @@ class TopicService:
         return topic
 
     async def _archive_children(
-        self, topic: Topic, *, by: str, settle_card: SettleCard
+        self, topic: Topic, *, by: str, settle_card: SettleCard | None
     ) -> None:
         """Closing a place closes what is inside it.
 
@@ -706,7 +706,7 @@ class TopicService:
         topic: Topic,
         *,
         by: str,
-        settle_card: SettleCard,
+        settle_card: SettleCard | None,
         cascaded_from: str | None = None,
     ) -> None:
         topic.status = TopicStatus.archived
@@ -855,10 +855,14 @@ class TopicService:
         await self._session.flush()
 
     async def archive_with_project(
-        self, project_id: uuid.UUID, *, by: str, settle_card: SettleCard
+        self, project_id: uuid.UUID, *, by: str, settle_card: SettleCard | None
     ) -> None:
         """Archive every room of a project being archived — the overview and the
         private chats too, which nobody can archive one at a time.
+
+        ``settle_card`` 可以是 ``None``：这条路的门是 `project.archive`，它能构造出
+        一个没递口子的服务（见 `project/services.py`），而这里不替它挡 —— ``None``
+        会一路走到 `review.archive`，由那里当场说清是哪个门漏了。
 
         Each room goes the way a room archived by hand goes (``_archive_one``):
         its session is stopped and its machine reclaimed after the grace, its

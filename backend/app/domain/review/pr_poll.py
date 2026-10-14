@@ -122,6 +122,7 @@ async def poll_open_prs(
                     record_instruction=record_instruction,
                     seat_instance_id=seat_instance_id,
                     record_agent=record_agent,
+                    task_teammate=task_teammate,
                 )
     return {"cards_checked": checked, "errors": errors}
 

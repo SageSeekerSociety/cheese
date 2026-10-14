@@ -16,6 +16,7 @@ from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
 from tests.landing import summary_turn_ends
+from tests.support.review_ports import task_teammate
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
 
@@ -40,18 +41,17 @@ def test_direct_merge_settles_uncarded_task_once(client, app_world, manually_clo
     client.portal.call(record_pr)
     app_world["fake"].merge_externally(number)
 
-    first = client.portal.call(
-        pr_poll.poll_uncarded_task_prs,
-        _chat_service(),
-        announce,
-        record_instruction=record_task_instruction,
-    )
-    second = client.portal.call(
-        pr_poll.poll_uncarded_task_prs,
-        _chat_service(),
-        announce,
-        record_instruction=record_task_instruction,
-    )
+    def poll():
+        """`BlockingPortal.call` 只收位置参数，两个口子裹在闭包里递进去。"""
+        return pr_poll.poll_uncarded_task_prs(
+            _chat_service(),
+            announce,
+            record_instruction=record_task_instruction,
+            task_teammate=task_teammate,
+        )
+
+    first = client.portal.call(poll)
+    second = client.portal.call(poll)
     assert first["tasks_merged"] == 1 and first["errors"] == []
     assert second["tasks_merged"] == 0
     # The task closes once its AI teammate has written it up.

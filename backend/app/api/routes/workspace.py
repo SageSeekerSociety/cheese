@@ -125,7 +125,7 @@ async def list_files(
     await ProjectService(db).get_or_404(project_id)
     # A selected task owns its worktree; otherwise show the project base.
     files, actual_source = await ProjectFiles(
-        db, project_id, task, release_session=True
+        db, project_id, task, release_session=True, executor=execution.call
     ).files(source)
     return ok({**page(files, len(files)), "source": actual_source})
 
@@ -168,7 +168,7 @@ async def read_file_raw(
     (the text endpoint would mangle binary content)."""
     await ProjectService(db).get_or_404(project_id)
     data, actual_source = await ProjectFiles(
-        db, project_id, task, release_session=True
+        db, project_id, task, release_session=True, executor=execution.call
     ).raw(path, source)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # Arbitrary uploads must never execute in the app's origin.

@@ -10,9 +10,15 @@
 递回来的行本包认得，因为是本包自己声明的（``TeammateSeat``）；交回来的**列**由那个
 包筛过 —— 一个关了「成员自带 agent」的项目，成员自己的那几位不再在项目里，「启用与
 否」也是那边的一行属性。名册只回答「谁在这张表上」，谁该在由这个口子背后那一位定。
+
+口子上的列写的是「一列东西」（``Sequence[object]``），不是 ``list[TeammateSeat]``：
+`topic` 和 `topic_membership` 各写了一份同名同形的口子，三份之间只递不读，写死行类型
+的话那两份就得 import 本包（或者反过来），而 `topic_membership` 与本包之间本来就有一
+条靠延迟 import 绕开的环。行类型由**读它的那一处**认下来：`roster.py` 里那一下 cast。
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -57,4 +63,4 @@ class ProjectTeam(Protocol):
 
     async def __call__(
         self, session: AsyncSession, project_id: uuid.UUID
-    ) -> list[TeammateSeat]: ...
+    ) -> Sequence[object]: ...

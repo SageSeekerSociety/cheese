@@ -41,13 +41,14 @@ class SweepCheckouts(Protocol):
 
 
 class Chat(Protocol):
-    """跑这个房间的那个服务，本包只认得它身上两样。
+    """跑这个房间的那个服务，本包只认得它身上三样。
 
     形状是 `app.domain.agent.chat.ChatService` 的形状。`session_factory` 是本包自己
     开事务要的那一样；`work_runner` 本包不碰，只跟着 `chat` 一起往下递给合并路径上
-    那几层。
+    那几层；`stop_work` 是 `landing_watch` 那边替平台关掉过期任务时要的
+    （`room_task.closing.close_overdue` 的 ``work``，本包把这个对象原样交出去）。
 
-    两个都写成只读属性，而不是可写的字段：`ChatService` 上这两个本来就是
+    三个都写成只读属性或方法，而不是可写的字段：`ChatService` 上前两个本来就是
     ``@property``，而只读成员比的是返回类型（可以更窄），于是 `work_runner` 真实的
     那个类型（`agent.session_turn_events` 里的 `SessionTurnEvents`）落在 `object`
     里，本包不必为了写它再往 `agent` 伸一条边。
@@ -58,6 +59,8 @@ class Chat(Protocol):
 
     @property
     def work_runner(self) -> object: ...
+
+    async def stop_work(self, conversation_id: uuid.UUID) -> None: ...
 
 
 class Announce(Protocol):
