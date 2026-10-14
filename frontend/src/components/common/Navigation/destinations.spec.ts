@@ -140,6 +140,31 @@ describe('一级导航的两份清单', () => {
     expect(tab?.to).toBe('/projects/p2')
   })
 
+  // 和桌面项目格子同一个坑（#3029），这次轮到手机底栏：地址栏里写短名，这一格写的
+  // 要是内部编号就永远算不上当前——底栏的当前格是 Vuetify 照地址算的，中间那格的
+  // 图标就一直不变黄，另外两格一点就黄。
+  it('有短名的项目，工作区那一格写短名', () => {
+    const projects = [{ id: 'p-uuid', slug: 'demo', name: '演示' }] as Project[]
+    const tab = items(tabItems({ ...sources(0), projects, workspaceProjectId: 'p-uuid' }, DEFAULT_SHELL)).find(
+      (i) => i.title === '工作区'
+    )!
+    expect(tab.to).toBe('/projects/demo')
+  })
+
+  // 还没拿到短名的项目照旧写内部编号：落地守卫会把它换成短名，换不掉时（服务端也
+  // 不认识这个项目）地址栏里写的同样是这个编号，两边仍然对得上。
+  it('还没拿到短名、或者清单里找不到它时，工作区那一格写内部编号', () => {
+    const projects = [{ id: 'p-uuid', name: '演示' }] as Project[]
+    const known = items(tabItems({ ...sources(0), projects, workspaceProjectId: 'p-uuid' }, DEFAULT_SHELL)).find(
+      (i) => i.title === '工作区'
+    )!
+    expect(known.to).toBe('/projects/p-uuid')
+
+    // 工作区认的那个 id 不在清单里（换个账号进来）时不该炸。
+    const unknown = items(tabItems(sources(0, 'p-gone'), DEFAULT_SHELL)).find((i) => i.title === '工作区')!
+    expect(unknown.to).toBe('/projects/p-gone')
+  })
+
   it('一个项目都没有时，工作区那一格是"建一个"', () => {
     const tab = items(tabItems(sources(0), DEFAULT_SHELL)).find((i) => i.title === '工作区')
     expect(tab?.to).toBeUndefined()
