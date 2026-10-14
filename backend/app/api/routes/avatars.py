@@ -9,6 +9,7 @@ import aiofiles.os
 from fastapi import APIRouter, Depends, File, Header, Path, Query, Response, UploadFile
 
 from app.api.conditional import if_none_match_hits
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core import raster_images
@@ -142,11 +143,7 @@ async def get_available_avatars(
     if type.upper() != "PREDEFINED":
         raise BadRequestError("Invalid avatar type")
     avatar_ids = await service.list_predefined_ids()
-    return {
-        "code": 200,
-        "message": "Get available avatarIds successfully",
-        "data": {"avatarIds": avatar_ids},
-    }
+    return ok({"avatarIds": avatar_ids}, "Get available avatarIds successfully")
 
 
 @router.get(
@@ -185,7 +182,7 @@ async def get_default_avatar_id(
     service: AvatarService = Depends(get_avatar_service),
 ) -> dict:
     avatar_id = await service.get_default_id()
-    return {"code": 200, "message": "OK", "data": {"avatarId": avatar_id}}
+    return ok({"avatarId": avatar_id})
 
 
 @router.get(
@@ -197,7 +194,7 @@ async def get_predefined_avatar_ids(
     service: AvatarService = Depends(get_avatar_service),
 ) -> dict:
     avatar_ids = await service.list_predefined_ids()
-    return {"code": 200, "message": "OK", "data": {"avatarIds": avatar_ids}}
+    return ok({"avatarIds": avatar_ids})
 
 
 @router.get(

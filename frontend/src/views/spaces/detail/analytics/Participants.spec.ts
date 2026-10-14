@@ -133,15 +133,29 @@ describe('参与者看板容器', () => {
     const [, params] = api.getAnalyticsParticipants.mock.calls[1] as [number, Record<string, unknown>]
     expect(params).toMatchObject({ groupBy: 'day', realName: 'with' })
 
-    await router.push({ query: { publisherId: '3', completionStatus: 'SUCCESS' } })
+    // 「参与状态」这个下拉两个方向都要守：只验「地址变了模型跟着变」是不够的 ——
+    // 把它从写回那一组里划掉，上面那条照样是绿的。
+    send('update:participationApproved', 'APPROVED')
+    await flushPromises()
+    expect(router.currentRoute.value.query.participationApproved).toBe('APPROVED')
+    expect(api.getAnalyticsParticipants).toHaveBeenCalledTimes(3)
+    const [, approved] = api.getAnalyticsParticipants.mock.calls[2] as [number, Record<string, unknown>]
+    expect(approved).toMatchObject({ participationApproved: 'APPROVED' })
+
+    await router.push({
+      query: { publisherId: '3', completionStatus: 'SUCCESS', participationApproved: 'DISAPPROVED' },
+    })
     await flushPromises()
     expect(state['publisherId']).toBe(3)
     expect(state['completionStatus']).toBe('SUCCESS')
+    expect(state['participationApproved']).toBe('DISAPPROVED')
     // 取消筛选要从地址里去掉，不能留一个空串 —— 那会被当成一个筛选条件传下去。
     send('update:publisherId', null)
+    send('update:participationApproved', null)
     send('update:realName', 'all')
     await flushPromises()
     expect(router.currentRoute.value.query.publisherId).toBeUndefined()
+    expect(router.currentRoute.value.query.participationApproved).toBeUndefined()
     expect(router.currentRoute.value.query.realName).toBeUndefined()
   })
 

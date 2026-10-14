@@ -259,6 +259,23 @@ describe('支线里的资料库文档卡', () => {
     })
   })
 
+  it.each([DESKTOP, PHONE])('%i 宽度点改过的卡片本身，打开文档，不进改动对比', async (width) => {
+    widthIs(width)
+    const threadId = `card-body-thread-${sequence}`
+    const view = await mountThread(
+      threadId,
+      documentCardBlock(threadId, ++sequence, [{ old: '旧条款', new: '新条款' }])
+    )
+
+    await fireEvent.click(await view.findByText('Release plan', { exact: true }))
+
+    await waitFor(() => expect(view.router.currentRoute.value.name).toBe('project-document'))
+    await waitFor(() => expect(view.container.querySelector('[data-open-document="library-doc"]')).not.toBeNull())
+    // 「查看改动」那一次的标注也是文档到了之后才送到；等过同样一段，确认什么都没来。
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    expect(host.reviewEdits).toHaveLength(0)
+  })
+
   it('手机上顶栏的 ← 回的是来时的支线，不是资料库列表', async () => {
     widthIs(PHONE)
     const threadId = `back-thread-${sequence}`

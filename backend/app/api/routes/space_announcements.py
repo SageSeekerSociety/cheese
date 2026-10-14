@@ -10,6 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.response import ok
 from app.api.space_deps import _ensure_space_visible, require_reviewed_space
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -124,15 +125,13 @@ async def list_announcements(
         else None
     )
     chosen = await _chosen_avatar_ids(db, [*listed.current, *listed.expired])
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "current": [_to_api(v, chosen_avatar_ids=chosen) for v in listed.current],
             "expired": [_to_api(v, chosen_avatar_ids=chosen) for v in listed.expired],
             "notifyCount": notify_count,
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -184,11 +183,7 @@ async def patch_announcement(
         set_expires_at="expires_at" in payload.model_fields_set,
     )
     chosen = await _chosen_avatar_ids(db, [view])
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"announcement": _to_api(view, chosen_avatar_ids=chosen)},
-    }
+    return ok({"announcement": _to_api(view, chosen_avatar_ids=chosen)})
 
 
 @router.delete(

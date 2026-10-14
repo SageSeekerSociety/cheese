@@ -18,6 +18,7 @@
  * 的 `props`，算法只有 `stateProps` 这一处。
  */
 import type { Component } from 'vue'
+import type { Block } from '@/cx_types'
 
 import { avatarColor } from '@/utils/avatar'
 
@@ -53,6 +54,7 @@ import {
   OPEN_FILES,
   PREVIEW_EMPTY,
   previewPanelProps,
+  ROOM_REFS,
   roomMessageProps,
   roomNoticeProps,
   SHEET_ACTIONS,
@@ -74,6 +76,7 @@ import { ROOM_ENTRIES } from './catalogRoom'
 import { SCENES_MISC_ENTRIES } from './catalogScenesMisc'
 import { SCENES_MISC2_ENTRIES } from './catalogScenesMisc2'
 import { SCENES_MISC3_ENTRIES } from './catalogScenesMisc3'
+import { SCENES_PAGES_ENTRIES } from './catalogScenesPages'
 import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
@@ -101,6 +104,7 @@ import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import { platformNotice } from '@/lib/platformNotice'
 import AnalyticsNavigationTabs from '@/views/spaces/detail/analytics/components/AnalyticsNavigationTabs.vue'
 import LearningQuoteItem from '@/views/spaces/detail/analytics/components/LearningQuoteItem.vue'
 
@@ -151,6 +155,28 @@ export interface CatalogEntry {
   /** 画出来的东西不在容器里（浮层传送到 body）。 */
   teleport?: boolean
   states: CatalogState[]
+}
+
+/** AI 队友改了资料库里的一份文档：对话里那一行带着这份文档的卡。 */
+const LIBRARY_DOC_EDITED: Block = {
+  id: 'catalog-library-doc-edited',
+  conversation_id: 'demo',
+  kind: 'event',
+  author_type: 'platform',
+  author: 'cheese',
+  content: '<@cheese> 改了文档《第一周课件》',
+  created_at: new Date('2026-09-28T14:32:00+08:00').toISOString(),
+  meta: {
+    platform: true,
+    action: 'doc',
+    document: { id: 'doc-week-1', title: '第一周课件' },
+    doc_created: false,
+    doc_edits: [
+      { old: '周三交作业', new: '周五交作业' },
+      { old: '共 3 道题', new: '共 4 道题' },
+      { old: '课程邮箱', new: '课程平台' },
+    ],
+  },
 }
 
 /** 工作面板那几格（产品那张表，见 `panelTabList`），预览站不重复写一份。 */
@@ -347,6 +373,20 @@ export const CATALOG: CatalogEntry[] = [
         note: '有人采纳、PR 合并：同一个组件，换的是事件本身。',
         props: roomNoticeProps(ACCEPT_DONE),
         expect: '采纳了这次改动',
+      },
+      {
+        name: '资料库文档卡',
+        note: '卡片哪里都能点，打开文档本身；「查看改动」打开时一处处标出改了什么。',
+        props: {
+          block: LIBRARY_DOC_EDITED,
+          notice: platformNotice(LIBRARY_DOC_EDITED),
+          run: [LIBRARY_DOC_EDITED],
+          agent: { name: AGENT_NAME, handle: 'cheese' },
+          time: '14:32',
+          agentName: AGENT_NAME,
+          refs: ROOM_REFS,
+        },
+        expect: '改了 3 处',
       },
     ],
   },
@@ -601,6 +641,9 @@ export const CATALOG: CatalogEntry[] = [
   // `catalogKnowledgeFixtures.ts`）。
   ...SCENES_MISC2_ENTRIES,
   ...SCENES_MISC3_ENTRIES,
+  // 第四批拆出来的画面（空间名录、小队链接落地页、小队项目列表、提问页）在自己的文件里：
+  // `catalogScenesPages.ts`，数据在 `catalogScenesPagesFixtures.ts`。
+  ...SCENES_PAGES_ENTRIES,
   ...SCENES_SPACES_ENTRIES,
   ...SCENES_SPACES_DETAIL_ENTRIES,
   ...SCENES_WORKSPACE_ENTRIES,

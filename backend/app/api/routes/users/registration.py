@@ -15,6 +15,7 @@ from app.api.deps import (
     get_user_auth_service,
 )
 from app.api.legal_deps import client_context
+from app.api.response import ok
 from app.api.routes.users._common import (
     RegisterUserRequest,
     SendEmailCodeRequest,
@@ -124,13 +125,11 @@ async def send_register_email_code(
 )
 async def get_registration_config() -> dict:
     """Return public registration settings so the frontend can adapt its UI."""
-    return {
-        "code": 200,
-        "message": "Success",
-        "data": {
+    return ok(
+        {
             "requireInviteCode": settings.require_invite_code,
-        },
-    }
+        }
+    )
 
 
 @router.post(

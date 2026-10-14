@@ -52,6 +52,7 @@ from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
+from app.api.response import ok
 from app.api.users_deps import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -118,8 +119,8 @@ async def enable_user_2fa(
     if code:
         if not secret:
             raise BadRequestError("secret is required for confirmation")
-        ok = await totp_service.enable_2fa(auth_user.user_id, secret, code)
-        if not ok:
+        enabled = await totp_service.enable_2fa(auth_user.user_id, secret, code)
+        if not enabled:
             raise UnprocessableEntityError("Invalid or expired verification code")
         backup_codes = await totp_service.generate_backup_codes(auth_user.user_id)
         # A browser trusted for an earlier factor has not proved this one.
@@ -143,16 +144,15 @@ async def enable_user_2fa(
     )
     new_secret = await totp_service.offer_secret(auth_user.user_id)
     otpauth_url = totp_service.get_provisioning_uri(new_secret, account_name)
-    return {
-        "code": 200,
-        "message": "TOTP secret generated successfully",
-        "data": {
+    return ok(
+        {
             "secret": new_secret,
             "otpauth_url": otpauth_url,
             "qrcode": _qr_data_uri(otpauth_url),
             "backup_codes": [],
         },
-    }
+        "TOTP secret generated successfully",
+    )
 
 
 async def _notify_2fa_disabled(email: str | None, username: str) -> None:
@@ -248,11 +248,7 @@ async def disable_user_2fa(
     user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
     await _notify_2fa_disabled(user.email, user.username)
 
-    return {
-        "code": 200,
-        "message": "2FA disabled successfully",
-        "data": {"success": True},
-    }
+    return ok({"success": True}, "2FA disabled successfully")
 
 
 @router.get(
@@ -272,14 +268,13 @@ async def get_user_2fa_status(
     enabled = await totp_service.is_2fa_enabled(user_id)
     has_passkey = await PasskeyService.for_session(session).has_passkey(user_id)
 
-    return {
-        "code": 200,
-        "message": "Get 2FA status successfully",
-        "data": {
+    return ok(
+        {
             "enabled": enabled,
             "has_passkey": has_passkey,
         },
-    }
+        "Get 2FA status successfully",
+    )
 
 
 @router.post(

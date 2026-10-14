@@ -208,21 +208,18 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(container.querySelector('.composer')).toBeTruthy()
   })
 
-  it('点「其他」一个字都不发，只在原地长出输入框', async () => {
+  it('选项下面一直有个输入框，不用先点什么就能打字', async () => {
     history = [question('t-other-open')]
     const { getByRole } = await open('t-other-open')
-    await fireEvent.click(getByRole('button', { name: '其他' }))
-    await settle()
-    // 「其他」是个入口，不是第四个答案：点它不该把「其他」当成他的答复发出去。
+    const field = getByRole('textbox', { name: '其他回答' }) as HTMLTextAreaElement
+    expect(field.disabled).toBe(false)
     expect(sent).toHaveLength(0)
-    expect(getByRole('textbox', { name: '自己写一个答案' })).toBeTruthy()
   })
 
-  it('在「其他」里打的字，就是他对这道题的答案', async () => {
+  it('在末行打的字，回车就是他对这道题的答案', async () => {
     history = [question('t-other-send')]
     const { getByRole } = await open('t-other-send')
-    await fireEvent.click(getByRole('button', { name: '其他' }))
-    const field = getByRole('textbox', { name: '自己写一个答案' })
+    const field = getByRole('textbox', { name: '其他回答' })
     await fireEvent.update(field, '按季度汇总')
     await fireEvent.keyDown(field, { key: 'Enter' })
     await until(() => sent.length > 0)
@@ -232,11 +229,35 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(sent[0].body.reply_to).toBe('q-t-other-send')
   })
 
+  it('点末行的发送键也一样发出去', async () => {
+    history = [question('t-other-button')]
+    const { container, getByRole } = await open('t-other-button')
+    await fireEvent.update(getByRole('textbox', { name: '其他回答' }), '按季度汇总')
+    // 下面的输入框也有一颗「发送」：点的是题卡上那一颗。
+    const card = container.querySelector('.ask-replies') as HTMLElement
+    await fireEvent.click(within(card).getByRole('button', { name: '发送' }))
+    await until(() => sent.length > 0)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].body.content).toBe('按季度汇总')
+    expect(sent[0].body.reply_to).toBe('q-t-other-button')
+  })
+
+  it('Shift+回车是换行，输入法选字的回车也不算：都不发', async () => {
+    history = [question('t-other-hold')]
+    const { getByRole } = await open('t-other-hold')
+    const field = getByRole('textbox', { name: '其他回答' })
+    await fireEvent.update(field, '按季度')
+    await fireEvent.keyDown(field, { key: 'Enter', shiftKey: true })
+    await fireEvent.keyDown(field, { key: 'Enter', isComposing: true })
+    await fireEvent.keyDown(field, { key: 'Enter', keyCode: 229 })
+    await settle()
+    expect(sent).toHaveLength(0)
+  })
+
   it('空着不发：没有字就没有答案', async () => {
     history = [question('t-other-empty')]
     const { getByRole } = await open('t-other-empty')
-    await fireEvent.click(getByRole('button', { name: '其他' }))
-    await fireEvent.keyDown(getByRole('textbox', { name: '自己写一个答案' }), { key: 'Enter' })
+    await fireEvent.keyDown(getByRole('textbox', { name: '其他回答' }), { key: 'Enter' })
     await settle()
     expect(sent).toHaveLength(0)
   })
@@ -369,13 +390,13 @@ describe('题问了几个人', () => {
 })
 
 describe('只有被问到的人能点选项', () => {
-  it('问的是别人：选项看得到但点不动，「其他」也点不开，没有 ✕', async () => {
+  it('问的是别人：选项看得到但点不动，末行也打不了字，没有 ✕', async () => {
     history = [question('t-chip-theirs', null, ['alice'])]
     const { container, getByRole, queryByRole } = await open('t-chip-theirs')
     // 卡上那行「问 @alice」说明了在等谁。
     expect(container.querySelector('.ask-replies__asked')?.textContent).toContain('@alice')
     const option = getByRole('button', { name: /按项目/ }) as HTMLButtonElement
-    const other = getByRole('button', { name: '其他' }) as HTMLButtonElement
+    const other = getByRole('textbox', { name: '其他回答' }) as HTMLTextAreaElement
     // 灰掉的按钮浏览器不派发点击（happy-dom 照样派发，所以这里看的是 disabled 本身）。
     expect(option.disabled).toBe(true)
     expect(other.disabled).toBe(true)

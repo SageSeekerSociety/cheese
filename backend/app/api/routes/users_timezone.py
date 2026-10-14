@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
@@ -46,8 +47,4 @@ async def set_my_timezone(
         raise BadRequestError(f"Unknown time zone: {payload.timezone}") from exc
     if not await set_timezone(session, auth_user.user_id, payload.timezone):
         raise NotFoundError("User not found")
-    return {
-        "code": 200,
-        "message": "Time zone saved.",
-        "data": {"timezone": payload.timezone},
-    }
+    return ok({"timezone": payload.timezone}, "Time zone saved.")
