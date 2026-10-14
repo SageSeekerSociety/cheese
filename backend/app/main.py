@@ -304,14 +304,20 @@ async def lifespan(application: FastAPI):
             name="cleanup startup recovery",
         )
         if settings.forge_event_relay_url:
-            from app.domain.agent.announce import announce
-            from app.domain.delivery.agent import (
+            # The relay's collaborators: wired here, not at module level, so a
+            # deployment that runs no relay pays nothing for them.
+            from app.domain.agent.announce import (  # deferred-import: startup cost
+                announce,
+            )
+            from app.domain.delivery.agent import (  # deferred-import: startup cost
                 dispatch_pending,
                 record_agent,
                 record_task_instruction,
                 seat_instance_id,
             )
-            from app.domain.delivery.ledger import settle_card
+            from app.domain.delivery.ledger import (  # deferred-import: startup cost
+                settle_card,
+            )
             from app.domain.review.events import listen
 
             chat = get_chat_service()
