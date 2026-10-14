@@ -95,6 +95,13 @@ The replacement depends only on the image's bytes, so it is the same on every
 turn and the prompt cache keeps hitting. Images that open pass unchanged, and
 an image given by URL is not fetched.
 
+A deployment that declares `cheese_upstream_headers` or `cheese_session_header`
+under its `model_info` is sent those headers, and no other row of its model group
+is (`upstream_headers.py`, registered the same way). OpenCode Go needs both: its
+own User-Agent, and a session per conversation without which it refuses the
+request. How to put a subscription or relay row in front of a pay-per-use one:
+`docs/manual/dev/gateway.md`, "订阅与中转".
+
 The box's `backend/.env` must contain:
 
 ```
@@ -135,7 +142,8 @@ there read-only, because the gateway refuses to write them.
 
 Both routes owe one invariant, and the service behind the admin page enforces it
 as surely as `check_config.py` enforces it for the file: a selectable model with
-no price is not offered at all. Its tokens would meter at zero, the project's
+no price is not offered at all, unless its upstream is free and it says so with
+`cheese_free: true` and both prices written as 0. Its tokens would meter at zero, the project's
 `max_budget` would never trip, and the first sign of trouble would be the
 invoice; a model missing from the picker gets noticed, a brake that quietly
 stopped working does not. `check_config.py` asserts this for every selectable

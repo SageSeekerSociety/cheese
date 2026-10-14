@@ -64,6 +64,33 @@ class Rate(NamedTuple):
 _cache: tuple[float, dict[str, Rate] | None] | None = None
 
 
+def declared_free(*sources: object) -> bool:
+    """Does the model say its upstream charges nothing?
+
+    ``cheese_free: true`` in ``model_info``, with both token rates written as
+    0. A zero that is merely absent is a missing price, not a free model; the
+    marker is what tells the two apart. ``deploy/gateway/check_config.py``
+    holds config.yaml to the same rule, and ``gateway.price_is_set`` counts it
+    as a price.
+    """
+
+    def written_zero(field: str) -> bool:
+        for src in sources:
+            if isinstance(src, dict) and field in src:
+                value = src[field]
+                return type(value) in (int, float) and value == 0
+        return False
+
+    marked = any(
+        isinstance(src, dict) and src.get("cheese_free") is True for src in sources
+    )
+    return (
+        marked
+        and written_zero("input_cost_per_token")
+        and written_zero("output_cost_per_token")
+    )
+
+
 def _rate(sources: tuple[object, ...], field: str) -> float:
     """The first positive rate among the places LiteLLM may carry it."""
     for source in sources:
@@ -108,6 +135,10 @@ def _rates_from_info(payload: object) -> dict[str, Rate]:
             continue
         info = row.get("model_info")
         params = row.get("litellm_params")
+        if declared_free(params, info):
+            # Free is a price: its tokens cost nothing and are not unpriced.
+            rates[name] = Rate(0.0, 0.0, 0.0, 0.0, 0.0)
+            continue
         inp = _rate((params, info), "input_cost_per_token")
         out = _rate((params, info), "output_cost_per_token")
         if inp > 0 and out > 0:

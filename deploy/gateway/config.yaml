@@ -20,6 +20,19 @@
 #                              / high / max), offered on a teammate's settings
 #                              and passed by Claude Code as output_config.effort.
 #                              None when absent: the model's own default.
+#   cheese_free: true          its upstream charges nothing, and both token
+#                              prices are written as 0 on purpose. The one way
+#                              a selectable model may be priced at zero; a
+#                              zero without it is a missing price.
+#
+# Two keys are per deployment, not per model group, for an upstream that wants
+# headers of its own (upstream_headers.py). Other rows of the same group, such
+# as the pay-per-use API behind a subscription, are sent neither:
+#
+#   cheese_upstream_headers: {user-agent: cheese-gateway/1.0}
+#                              sent as written.
+#   cheese_session_header: x-opencode-session
+#                              carries the caller's Claude Code session.
 #
 # A selectable model with no price is not offered — see the pricing note below
 # for why a missing price is worse than a missing model.
@@ -381,6 +394,12 @@ litellm_settings:
   # (`system_billing_line.py`).
   # An image no model can decode is replaced by a line saying so, since one
   # such image fails every later request of its conversation (`image_guard.py`).
-  callbacks: ["cheese_chatgpt_session.handler", "cheese_billing_line.handler", "cheese_image_guard.handler"]
+  # A deployment that declares cheese_upstream_headers or cheese_session_header
+  # is sent them (`upstream_headers.py`).
+  callbacks:
+    - cheese_chatgpt_session.handler
+    - cheese_billing_line.handler
+    - cheese_image_guard.handler
+    - cheese_upstream_headers.handler
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true

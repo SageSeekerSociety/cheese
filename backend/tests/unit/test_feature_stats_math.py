@@ -162,6 +162,25 @@ def test_rates_read_both_places_litellm_keeps_them() -> None:
     assert "half" not in rates
 
 
+def test_a_model_declared_free_costs_nothing_and_is_not_unpriced() -> None:
+    """声明免费（`cheese_free` 加两边写明的 0）的模型是有价的：价钱是零，
+    它的 token 不算进「这个数没算全」。没有标记的 0 仍是没价。"""
+    zero = {"input_cost_per_token": 0.0, "output_cost_per_token": 0.0}
+    payload = {
+        "data": [
+            {
+                "model_name": "free",
+                "litellm_params": zero,
+                "model_info": {"cheese_free": True},
+            },
+            {"model_name": "bare-zero", "litellm_params": zero},
+        ]
+    }
+    rates = pricing._rates_from_info(payload)
+    assert tuple(rates["free"]) == (0.0, 0.0, 0.0, 0.0, 0.0)
+    assert "bare-zero" not in rates
+
+
 def test_a_cached_token_with_no_price_of_its_own_costs_a_full_input_token() -> None:
     """网关没给缓存价的模型，缓存命中的 token 按输入价算：没写价不等于免费。
     给了缓存价（哪怕是 0）就按给的算。"""
