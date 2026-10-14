@@ -27,7 +27,7 @@ from app.core.errors import AppError
 from app.core.redis import get_redis_client
 from app.core.sentences import listing, say
 from app.domain.addressing import NOBODY, Addressed, Event, Hand, address
-from app.domain.agent import death_evidence, dispatch_log, turn_inputs
+from app.domain.agent import checkout_sweep, death_evidence, dispatch_log, turn_inputs
 from app.domain.agent.admission import (
     queued,
 )
@@ -437,6 +437,7 @@ class AgentWorkRunner:
                 turn_id,
                 work,
                 chat=chat_service,
+                machines=checkout_sweep.sweep,
             )
         task = asyncio.create_task(
             work,

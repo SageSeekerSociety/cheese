@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.domain.agent import device_hub as hub_module
+from app.domain.agent.checkout_sweep import sweep
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.room_task.checkouts import remove_closed_checkouts
@@ -166,7 +167,7 @@ async def _close(client, room, tasks: list[uuid.UUID]) -> None:
         for task in tasks:
             row = await db.get(Task, task)
             assert row is not None
-            await close_task(db, row, None)
+            await close_task(db, row, None, machines=sweep)
         await db.commit()
 
 
@@ -224,7 +225,9 @@ async def test_a_machine_offline_at_close_is_swept_when_it_connects(
     assert left.exists()
 
     hub = _hub(monkeypatch, room.machines, online={"a", "b"})
-    counts = await remove_closed_checkouts(client.test_factory, device_id="b")
+    counts = await remove_closed_checkouts(
+        client.test_factory, device_id="b", machines=sweep
+    )
 
     assert hub.ran == ["b"]
     assert counts == {"removed": 1, "kept": 0}
@@ -237,7 +240,9 @@ async def test_open_tasks_are_never_named(client, tmp_path, monkeypatch):
     path = room.machines["a"].checkout(task, push=True)
     hub = _hub(monkeypatch, room.machines, online={"a"})
 
-    counts = await remove_closed_checkouts(client.test_factory, device_id="a")
+    counts = await remove_closed_checkouts(
+        client.test_factory, device_id="a", machines=sweep
+    )
 
     assert counts == {"removed": 0, "kept": 0}
     assert hub.ran == []
@@ -263,7 +268,9 @@ async def test_a_room_with_more_closed_tasks_than_a_command_line_holds_is_swept(
     last = room.machines["a"].checkout(tasks[-1], push=True)
     hub = _hub(monkeypatch, room.machines, online={"a"})
 
-    counts = await remove_closed_checkouts(client.test_factory, device_id="a")
+    counts = await remove_closed_checkouts(
+        client.test_factory, device_id="a", machines=sweep
+    )
 
     assert counts == {"removed": 1, "kept": 0}
     assert not last.exists()

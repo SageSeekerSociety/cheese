@@ -12,6 +12,7 @@ from datetime import datetime
 from app.core.background import PeriodicJobs, PeriodicRunner
 from app.core.db import SessionFactory
 from app.domain import backend_log
+from app.domain.agent import checkout_sweep
 from app.domain.agent import periodic as agent_periodic
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
@@ -164,6 +165,7 @@ def periodic_jobs(
         record_agent=record_agent,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
+        machines=checkout_sweep.sweep,
     )
     machine_periodic.register_periodic_jobs(
         jobs,
@@ -177,7 +179,11 @@ def periodic_jobs(
     run_record_periodic.register_periodic_jobs(jobs, sessions=sessions)
     notification_periodic.register_periodic_jobs(jobs, sessions=sessions)
     delivery_periodic.register_periodic_jobs(
-        jobs, sessions=sessions, chat=chat, get_runner=get_runner
+        jobs,
+        sessions=sessions,
+        chat=chat,
+        get_runner=get_runner,
+        machines=checkout_sweep.sweep,
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)
     routine_periodic.register_periodic_jobs(

@@ -31,6 +31,8 @@ from fastapi.routing import APIRoute
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
+from app.domain.agent import preview_hub as preview_hub_module
+from app.domain.agent import turn_counts
 from app.domain.agent.device_hub import device_hub
 from app.domain.machine import admin as machine_admin
 from app.domain.machine.admin_schemas import MachinesOverviewOut
@@ -40,7 +42,16 @@ router = APIRouter(prefix="/admin/stats", tags=["admin"])
 
 
 async def get_platform_stats_service(db: DbSession) -> PlatformStatsService:
-    return PlatformStatsService(db)
+    """建看板服务，顺手把 `agent` 里那两样递进去（`platform_stats/ports.py`）。
+
+    两处都取**模块属性**而不是在 import 那行把对象绑下来：谁要替换进程里那个
+    集线器/那份计数实现，换的就是模块上的这个名字。
+    """
+    return PlatformStatsService(
+        db,
+        previews=preview_hub_module.preview_hub,
+        counts=turn_counts.TurnCounts(db),
+    )
 
 
 StatsServiceDep = Annotated[PlatformStatsService, Depends(get_platform_stats_service)]

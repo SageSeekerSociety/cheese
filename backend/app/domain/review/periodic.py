@@ -15,6 +15,7 @@ from app.domain.review.ports import (
     RecordAgent,
     RecordInstruction,
     SeatInstanceId,
+    SweepCheckouts,
     TaskTeammate,
 )
 
@@ -47,6 +48,7 @@ def register_periodic_jobs(
     record_agent: RecordAgent,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    machines: SweepCheckouts | None = None,
 ) -> None:
     jobs.register(
         "pr poll",
@@ -78,6 +80,7 @@ def register_periodic_jobs(
             announce,
             record_instruction=record_instruction,
             task_teammate=task_teammate,
+            machines=machines,
         ),
     )
     # Drafts and cards watch the same repository state on the same clock.

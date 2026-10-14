@@ -346,6 +346,9 @@ _BASELINE: dict[str, int] = {
     "app/device_connection_app.py": 8,
     "app/domain/agent/announce.py": 1,
     "app/domain/agent/chat.py": 2,
+    # 2026-10: the checkout sweep left `room_task/checkouts.py` for
+    # `agent/checkout_sweep.py`, carrying its one English sentence.
+    "app/domain/agent/checkout_sweep.py": 1,
     "app/domain/agent/cli_worker.py": 6,
     "app/domain/agent/clone.py": 1,
     "app/domain/agent/compute.py": 1,
@@ -468,7 +471,6 @@ _BASELINE: dict[str, int] = {
     "app/domain/review/github_pr.py": 11,
     "app/domain/review/pr_publish.py": 5,
     "app/domain/review/services/cards.py": 2,
-    "app/domain/room_task/checkouts.py": 1,
     "app/domain/room_task/services.py": 1,
     "app/domain/site/services.py": 2,
     "app/domain/space/analytics_service.py": 1,

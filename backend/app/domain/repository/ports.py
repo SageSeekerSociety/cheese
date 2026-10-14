@@ -1,7 +1,7 @@
 """本包够不着的那一样东西 —— 谁在门口谁在构造时递进来。
 
 读一条活的检出目录里的文件，要过 ``app.domain.agent.execution``（`forge_files.py`
-的 ``live()``）。`repository` 在第 5 层，`agent` 在第 3 层，够不着
+的 ``live()``）。`repository` 在第 3 层，`agent` 在第 5 层，够不着
 （`docs/manual/dev/architecture.md` 的层表），所以本包只写下自己要的那一次调用 ——
 和 `memory/ports.py` 的 `ExecutorCall`、`webhook/ports.py` 的 `Poster` 同一条规矩。
 """

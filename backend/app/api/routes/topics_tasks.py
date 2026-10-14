@@ -64,12 +64,17 @@ from app.core.errors import (
     UnprocessableEntityError,
 )
 from app.core.sentences import say
+from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.opening import opening_content
-from app.domain.agent_instance.adapters import project_team, seat_project
+from app.domain.agent_instance.adapters import (
+    project_team,
+    seat_project,
+    task_teammate,
+)
 from app.domain.agent_instance.own import may_work_for
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.idempotency import store as idem
@@ -267,7 +272,11 @@ async def conclude_task(
     # Its own session closing it is the turn that would be stopped, and it
     # ends by itself.
     task = await close_task(
-        db, task, None if actor.via == "cheese" else chat, conclusion=conclusion
+        db,
+        task,
+        None if actor.via == "cheese" else chat,
+        conclusion=conclusion,
+        machines=checkout_sweep.sweep,
     )
     close_pr_after_commit(db, task)
     # The task's own conversation hears how it ended, and so does the
@@ -284,7 +293,9 @@ async def conclude_task(
         content=ended,
         meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
     )
-    await tell_origin(db, task, ended)
+    # The 支线 line under the message the task was made from is said by its AI
+    # teammate, so whose teammate it is comes in here too.
+    await tell_origin(db, task, ended, task_teammate=task_teammate)
     out = await task_out(db, chat, task)
     await db.commit()
     return ok(out)

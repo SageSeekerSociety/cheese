@@ -42,7 +42,13 @@ from app.domain.project.forge import background_quota, quota_serves_background
 from app.domain.review import landing_forge
 from app.domain.review.landing_forge import Check, ForgeUnavailable, LandingReads
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
-from app.domain.review.ports import Announce, Chat, RecordInstruction, TaskTeammate
+from app.domain.review.ports import (
+    Announce,
+    Chat,
+    RecordInstruction,
+    SweepCheckouts,
+    TaskTeammate,
+)
 from app.domain.review.room_notices import tell_room_undelivered
 from app.domain.review.task_landing import go_on_while_working, handed_in, tell_agent
 from app.domain.room_task.closing import close_overdue
@@ -62,9 +68,14 @@ async def watch_landings(
     *,
     record_instruction: RecordInstruction | None,
     task_teammate: TaskTeammate | None,
+    machines: SweepCheckouts | None = None,
 ) -> dict:
     """One look at every merge still being watched, the tasks being written up
-    whose AI teammate has gone on working, and the overdue closings."""
+    whose AI teammate has gone on working, and the overdue closings.
+
+    ``machines`` is used only by the overdue closings: a task closed here has
+    its checkouts removed on the machines holding it (`ports.SweepCheckouts`).
+    """
 
     sessions = chat.session_factory
     gone_on = await go_on_while_working(
@@ -73,7 +84,7 @@ async def watch_landings(
         task_teammate=task_teammate,
     )
     async with sessions() as session:
-        closed = await close_overdue(session, chat)
+        closed = await close_overdue(session, chat, machines=machines)
         for overdue in closed:
             await tell_room_undelivered(session, overdue, announce=announce)
         await session.commit()

@@ -22,6 +22,24 @@ from app.domain.block.models import Block
 from app.domain.delivery_events import DeliveryEvent
 
 
+class SweepCheckouts(Protocol):
+    """在一台机器上删掉某间房那几个已关任务留下的检出目录。
+
+    本包在「等着收尾那一轮、时间到了由平台替它关掉」这条路上用它
+    （`landing_watch.watch_landings` 里的 `close_overdue`）：一个任务关掉之后，它
+    在那台机器上的工作目录要跟着走，而这件事要过 `agent` 和 `agent_session`，本包
+    够不着。形状和 `room_task.ports.SweepCheckouts` 一样，两边各写一遍是这条规矩
+    本身（上面那句：声明按消费者分开写）；两份由类型检查照着实现对齐。
+
+    答的是机器上那份脚本的答复：``removed`` 是删掉的目录名，``kept`` 是留下没删的
+    目录名到原因。
+    """
+
+    async def __call__(
+        self, device_id: str, project: str, resource: str, tasks: list[str]
+    ) -> dict: ...
+
+
 class Chat(Protocol):
     """跑这个房间的那个服务，本包只认得它身上两样。
 

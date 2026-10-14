@@ -46,6 +46,7 @@ from app.domain.block.models import Block
 from app.domain.block.queries import queued_messages
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.ports import SweepCheckouts
 
 #: Half an hour is how long an instruction to an AI teammate is retried
 #: (`delivery.agent.GIVE_UP_AFTER`); a summary turn is a few minutes.
@@ -215,6 +216,7 @@ async def close_task(
     work: StopsWork | None,
     *,
     conclusion: str | None = None,
+    machines: SweepCheckouts | None = None,
 ) -> Task:
     """Close ``task``; with a `conclusion` it is done, without one it was put
     down. Once ``session`` commits, whatever a teammate is still doing in it
@@ -222,6 +224,9 @@ async def close_task(
     left running in it goes on paying for the model while every write it
     makes is refused. ``work`` is None only when the turn that would be
     stopped is the one closing the task.
+
+    ``machines`` goes to `after_close` unchanged: the call that reaches a
+    machine to remove this room's closed checkouts (`ports.SweepCheckouts`).
 
     Idempotent: closing a closed task keeps the first `closed_at` — the
     moment it stopped being live is a fact, not a re-statement of intent.
@@ -236,7 +241,7 @@ async def close_task(
     if task.status is not TaskStatus.closed:
         task.status = TaskStatus.closed
         task.closed_at = datetime.now(UTC)
-        after_close(session, task.room_id)
+        after_close(session, task.room_id, machines=machines)
         if work is not None:
             _stop_after_commit(session, task.id, work)
     await session.flush()
@@ -271,18 +276,22 @@ def _stop_after_commit(session: AsyncSession, task_id: uuid.UUID, work: StopsWor
 
 
 async def close_after_summary(
-    session: AsyncSession, task_id: uuid.UUID, work: StopsWork
+    session: AsyncSession,
+    task_id: uuid.UUID,
+    work: StopsWork,
+    *,
+    machines: SweepCheckouts | None = None,
 ) -> Task | None:
     """Close ``task_id`` if it is waiting for its summary turn and nothing else
     is being done or asked for in it (`unfinished`, module docstring).
     Returns the task it closed; the pages showing it hear from
-    `room_task.live`."""
+    `room_task.live`. ``machines`` is `close_task`'s."""
     task = await session.get(Task, task_id, with_for_update=True)
     if task is None or task.closing_since is None:
         return None
     if await unfinished(session, task.id):
         return None
-    return await close_task(session, task, work)
+    return await close_task(session, task, work, machines=machines)
 
 
 @dataclass(frozen=True)
@@ -295,10 +304,12 @@ class Overdue:
     undelivered: list[str]
 
 
-async def close_overdue(session: AsyncSession, work: StopsWork) -> list[Overdue]:
+async def close_overdue(
+    session: AsyncSession, work: StopsWork, *, machines: SweepCheckouts | None = None
+) -> list[Overdue]:
     """Close every task still waiting for a summary turn it is not getting,
     unless something else is being done or asked for in it — and, past
-    `STOP_WORK_AFTER`, that one too."""
+    `STOP_WORK_AFTER`, that one too. ``machines`` is `close_task`'s."""
     now = datetime.now(UTC)
     overdue = list(
         await session.scalars(
@@ -316,5 +327,7 @@ async def close_overdue(session: AsyncSession, work: StopsWork) -> list[Overdue]
         left = await unfinished(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:
             continue
-        closed.append(Overdue(await close_task(session, task, work), left))
+        closed.append(
+            Overdue(await close_task(session, task, work, machines=machines), left)
+        )
     return closed

@@ -424,6 +424,14 @@ class PreviewHub:
         machine = self._machines.get((topic_id, seat))
         return self.accepting and machine is not None and not machine.stopped
 
+    def attached(self) -> int:
+        """占着槽位的 helper 数，**只在这个进程里**（重启即清零）。
+
+        平台看板问的就是这一个数（`platform_stats.ports.PreviewConnections`），
+        所以它在这里有一个名字，而不是让那个包去读 ``_machines``。
+        """
+        return len(self._machines)
+
     async def wait_online(self, topic_id: uuid.UUID, seat: str, timeout: float) -> bool:
         """Whether a helper is connected, waiting up to ``timeout`` for one.
 
