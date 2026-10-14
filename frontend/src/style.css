@@ -41,7 +41,7 @@
   --ink: #191a1c; /* titles */
   --text: #36383c; /* body */
   --muted: #5a5e66; /* secondary */
-  --faint: #747a82; /* meta */
+  --faint: #747a82; /* decoration — icons, dividers, placeholder shapes */
 
   --line: #ecedef; /* hairlines */
   --line-2: #e2e3e6; /* dividers AND the selected row's fill — see above */
@@ -383,7 +383,7 @@
   --ink: #f3f4f6;
   --text: #d3d6db;
   --muted: #aeb4bd;
-  --faint: #888ea0;
+  --faint: #888ea0; /* decoration — icons, dividers, placeholder shapes */
 
   --line: #2b2e33;
   --line-2: #3a3e45; /* dividers AND the selected row's fill */
@@ -669,11 +669,9 @@ body {
 
 /* Meta, readable: 12 / 18 / 400 / --muted.
    与 .t-meta 同档、同尺寸，只换了颜色。判据是**文字那条线**（AA 4.5:1），不是图形
-   那条（3:1）：这一档装的是 12px 的时间戳、计数、轴标签。`--faint` 在浅色主题下
-   四种底色上连 3:1 都到不了（`--surface` 2.64 / `--canvas` 2.48 / `--fill` 2.42 /
-   `--line-2` 2.05）—— 所以它不是「差一点」，而写这条规则的人要是照图形那条线算，
-   会得出「把 --faint 抬到 3.1 这个类就能删」的结论，那个结论对 12px 的字是错的。
-   深色那一侧不成立同样的量级（4.25 / 4.60 / 3.92 / 2.70），吃紧的一直是浅色。
+   那条（3:1）：这一档装的是 12px 的时间戳、计数、轴标签。`--faint` 够图形那条线
+   （浅色 3.37–4.33、深色 3.29–5.59），但浅色下五种底色一处也到不了 4.5:1，所以它
+   只作装饰、不承载要读的字（docs/design-system.md §2.6）。
    .t-meta 是既有类，它的 `--faint` 留给存量页面，不在这里改。 */
 .t-meta-read {
   font-size: 12px;
