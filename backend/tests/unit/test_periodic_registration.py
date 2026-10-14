@@ -9,6 +9,7 @@ import pytest
 
 from app.core.background import PeriodicJobs
 from app.core.config import settings
+from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
 from app.domain.delivery.agent import (
     record_agent,
@@ -35,6 +36,7 @@ _EXPECTED_PORTS = {
     "record_agent": record_agent,
     "dispatch_pending": ANY,
     "task_teammate": task_teammate,
+    "machines": checkout_sweep.sweep,
 }
 _KEYWORD_PORTS = {
     "pr poll": (
@@ -44,7 +46,7 @@ _KEYWORD_PORTS = {
         "record_agent",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
-    "landing watch": ("record_instruction", "task_teammate"),
+    "landing watch": ("record_instruction", "task_teammate", "machines"),
     "draft pr sweep": ("dispatch_pending", "record_instruction"),
 }
 
@@ -211,14 +213,18 @@ async def test_chat_clocks_call_the_supplied_chat(name, method):
 
 
 @pytest.mark.parametrize(
-    ("name", "target"),
+    ("name", "target", "handed"),
     [
-        ("timed deliveries", "delivery.timer.deliver_due"),
-        ("routines", "routine.service.sweep"),
+        (
+            "timed deliveries",
+            "delivery.timer.deliver_due",
+            {"machines": checkout_sweep.sweep},
+        ),
+        ("routines", "routine.service.sweep", {}),
     ],
 )
 async def test_a_dispatch_clock_resolves_the_runner_when_it_ticks(
-    monkeypatch, name, target
+    monkeypatch, name, target, handed
 ):
     work = AsyncMock(return_value={"delivered": 1})
     monkeypatch.setattr(f"app.domain.{target}", work)
@@ -226,7 +232,9 @@ async def test_a_dispatch_clock_resolves_the_runner_when_it_ticks(
     replacement = object()
     world.current[0] = replacement
     await world.jobs[name]._job()
-    work.assert_awaited_once_with(world.sessions, chat=world.chat, runner=replacement)
+    work.assert_awaited_once_with(
+        world.sessions, chat=world.chat, runner=replacement, **handed
+    )
     world.get_runner.assert_called_once_with()
 
 
