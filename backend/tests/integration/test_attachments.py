@@ -29,6 +29,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.pictures import BROKEN_PNG
 
 # A valid 1x1 transparent PNG (67 bytes) — small but real image bytes.
 PNG_1PX = bytes.fromhex(
@@ -527,7 +528,9 @@ def test_image_only_message_allowed(client, stub_hooks):
 
 @pytest.mark.parametrize("midturn", [False, True])
 def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
-    """The actual session input carries one image, not ZIP/PDF/unknown bytes."""
+    """The actual session input carries one image, not ZIP/PDF/unknown bytes,
+    and not a PNG whose bytes do not decode — the browser calling it image/png
+    at upload, or the message calling it that, changes nothing."""
     _, topic_id = _create_project_and_thread(client)
     image = _upload(client, topic_id)
     files = [
@@ -538,9 +541,16 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
         for name, data, mime in (
             ("source.zip", b"PK\x03\x04source", "application/zip"),
             ("paper.pdf", b"%PDF-1.7 test", "application/pdf"),
+            ("broken.png", BROKEN_PNG, "image/png"),
+            ("claimed.png", BROKEN_PNG, "image/png"),
             ("unknown.bin", b"unknown", "application/octet-stream"),
         )
     ]
+    broken, claimed = files[2], files[3]
+    # The upload keeps it, as a plain file.
+    assert broken["mime"] == claimed["mime"] == "application/octet-stream"
+    # A message may still call it a picture: a client's word is a claim too.
+    claimed["mime"] = "image/png"
     # Legacy records can have no MIME; never guess image/png from their path.
     files[-1]["mime"] = ""
 
@@ -599,6 +609,9 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
     assert "已附在本条消息里" in prompt
     for file in files:
         assert f"发来一个文件：{file['path']}" in prompt
+    for file in (broken, claimed):
+        line = next(x for x in prompt.splitlines() if file["path"] in x)
+        assert "不要用 Read 打开它" in line
 
 
 # --- 图片输入 on a backend that does NOT embed images -----------------------
