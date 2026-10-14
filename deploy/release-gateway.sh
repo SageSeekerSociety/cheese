@@ -104,22 +104,32 @@ settled() { [[ -z "$old_proxy" ]] || ! running "$old_proxy"; }
 # requests that cut. Someone switching traffic back to it in the meantime ends
 # the wait and leaves it running.
 drain_and_stop() {
-  local color="$1" waited=0 open
+  local color="$1" started=$SECONDS elapsed open
   log "litellm-$color takes no new requests; waiting for the ones it has (at most ${drain_seconds}s)"
   while :; do
     is_draining "$color" || { log "litellm-$color serves again; not stopping it"; return 0; }
     open="$(sessions "$color")"
     [[ "$open" = 0 ]] && settled && break
-    if (( waited >= drain_seconds )) && settled; then
-      echo "::warning::litellm-$color still had $open open requests after the ${drain_seconds}s drain cap; stopping it cuts them."
-      log "DRAIN CAP: stopping litellm-$color cuts $open open requests"
-      break
+    elapsed=$((SECONDS - started))
+    if (( elapsed >= drain_seconds )); then
+      if settled; then
+        echo "::warning::litellm-$color still had $open open requests after the ${drain_seconds}s drain cap; stopping it cuts them."
+        log "DRAIN CAP: stopping litellm-$color cuts $open open requests"
+        break
+      fi
+      # hard-stop-after ends a soft-stopped proxy within 35 minutes; one still
+      # running long after was never soft-stopped, and may carry this color's
+      # streams for as long as it lives. Leave the color draining for the next
+      # release rather than cut them or wait without end.
+      if (( elapsed >= drain_seconds + ${GATEWAY_PROXY_EXIT_SECONDS:-600} )); then
+        echo "::error::The replaced proxy $old_proxy is still running after the drain; litellm-$color is left draining, not stopped."
+        fail "replaced proxy still running; litellm-$color left draining"
+      fi
     fi
     sleep "$poll_seconds"
-    waited=$((waited + poll_seconds))
   done
   "${compose[@]}" stop "litellm-$color"
-  log "litellm-$color stopped after ${waited}s of drain"
+  log "litellm-$color stopped after $((SECONDS - started))s of drain"
 }
 
 # Ready = answers /health/readiness, which checks the gateway database.
@@ -207,7 +217,10 @@ print(hashlib.sha256(json.dumps(service, sort_keys=True).encode()).hexdigest())'
 record_proxy_definition() { proxy_definition > "$GATEWAY_PROXY_STATE_DIR/proxy-definition"; }
 
 # Readable by the proxy's own user (haproxy, uid 99); it holds no secret.
-# Returns 1 when the installed configuration is already this one.
+# Returns 1 when the installed configuration is already this one. The one it
+# replaces is kept as haproxy.cfg.previous until the proxy running the new one
+# is up, so a failed proxy change can put it back.
+config_replaced=false
 install_proxy_config() {
   mkdir -m 755 -p "$GATEWAY_PROXY_DIR" "$GATEWAY_PROXY_STATE_DIR"
   cp "$here/compose/gateway-proxy.cfg" "$GATEWAY_PROXY_DIR/haproxy.cfg.next"
@@ -216,10 +229,13 @@ install_proxy_config() {
     rm -f "$GATEWAY_PROXY_DIR/haproxy.cfg.next"
     return 1
   fi
+  rm -f "$GATEWAY_PROXY_DIR/haproxy.cfg.previous"
   [[ ! -f "$GATEWAY_PROXY_DIR/haproxy.cfg" ]] \
     || cp -p "$GATEWAY_PROXY_DIR/haproxy.cfg" "$GATEWAY_PROXY_DIR/haproxy.cfg.previous"
   mv -f "$GATEWAY_PROXY_DIR/haproxy.cfg.next" "$GATEWAY_PROXY_DIR/haproxy.cfg"
+  config_replaced=true
 }
+config_kept() { rm -f "$GATEWAY_PROXY_DIR/haproxy.cfg.previous"; }
 
 # The proxy in $proxy_service changed (configuration or definition): start the
 # other one in the same network namespace with the colors' states as they are,
@@ -235,14 +251,22 @@ replace_proxy() {
   runtime 'show servers state' > "$GATEWAY_PROXY_STATE_DIR/servers.state.next"
   chmod 644 "$GATEWAY_PROXY_STATE_DIR/servers.state.next"
   mv -f "$GATEWAY_PROXY_STATE_DIR/servers.state.next" "$GATEWAY_PROXY_STATE_DIR/servers.state"
-  if ! "${compose[@]}" up -d --no-deps --force-recreate --wait --wait-timeout 60 "$next" \
-    || ! id="$(container_of "$next")" || [[ -z "$id" ]] \
+  local started=true
+  "${compose[@]}" up -d --no-deps --force-recreate --wait --wait-timeout 60 "$next" || started=false
+  # Read once, at that proxy's start. Left in place, every later cold start
+  # (a reboot, a crash restart) would load it too, drain flags included, while
+  # the colors have since switched through the runtime API: the serving color
+  # would come back drained and the other is stopped.
+  rm -f "$GATEWAY_PROXY_STATE_DIR/servers.state"
+  if ! $started || ! id="$(container_of "$next")" || [[ -z "$id" ]] \
     || { [[ -n "$from" ]] && ! proxy="$id" is_up "$from"; }; then
     "${compose[@]}" rm -f -s "$next" >/dev/null 2>&1 || true
-    [[ ! -f "$GATEWAY_PROXY_DIR/haproxy.cfg.previous" ]] \
-      || mv -f "$GATEWAY_PROXY_DIR/haproxy.cfg.previous" "$GATEWAY_PROXY_DIR/haproxy.cfg"
+    if $config_replaced && [[ -f "$GATEWAY_PROXY_DIR/haproxy.cfg.previous" ]]; then
+      mv -f "$GATEWAY_PROXY_DIR/haproxy.cfg.previous" "$GATEWAY_PROXY_DIR/haproxy.cfg"
+    fi
     fail "$next did not come up serving what $proxy_service serves; $proxy_service keeps serving."
   fi
+  config_kept
   # Its exit must stay an exit: a restart would bind :4000 again.
   docker update --restart=no "$proxy" >/dev/null
   docker kill --signal USR1 "$proxy" >/dev/null
@@ -292,15 +316,25 @@ if [[ -z "$holder" ]] && docker inspect "$legacy" >/dev/null 2>&1; then
     waited=$((waited + poll_seconds))
   done
   grace="${GATEWAY_MIGRATION_GRACE:-30}"
+  # From here until the proxy is up nothing serves, so a release that ends
+  # early for any reason (a failure, the workflow cancelled) gives the address
+  # back to the single container on its way out.
+  give_back() {
+    "${compose[@]}" rm -f -s gateway-proxy-a gateway-netns >/dev/null 2>&1 || true
+    docker start "$legacy" >/dev/null \
+      || echo "::error::Could not start $legacy again; nothing serves 172.17.0.1:4000."
+  }
+  trap give_back EXIT
+  trap 'exit 1' INT TERM
   log "stopping $legacy (in-flight requests get ${grace}s); requests are refused until the proxy listens"
   docker stop -t "$grace" "$legacy" >/dev/null
   log "$legacy stopped"
   if ! "${compose[@]}" up -d --no-deps --wait --wait-timeout 60 gateway-netns gateway-proxy-a; then
-    "${compose[@]}" rm -f -s gateway-proxy-a gateway-netns >/dev/null 2>&1 || true
-    docker start "$legacy" >/dev/null
     "${compose[@]}" rm -f -s litellm-blue >/dev/null 2>&1 || true
     fail "The proxy did not become healthy; $legacy serves again."
   fi
+  trap - EXIT INT TERM
+  config_kept
   record_proxy_definition
   log "gateway-proxy-a serves 172.17.0.1:4000 through litellm-blue"
   docker rm "$legacy" >/dev/null
@@ -334,20 +368,28 @@ else
     install_proxy_config || true
     "${compose[@]}" up -d --no-deps --force-recreate --wait --wait-timeout 60 gateway-netns "$proxy_service"
     proxy="$(container_of "$proxy_service")" old_proxy=""
+    config_kept
     record_proxy_definition
   fi
 
-  # The color serving now. Both serve only when the box restarted during a
-  # drain (both containers come back, and a fresh proxy readies both); the
-  # newer one is the last release's, and the other is drained below.
-  from="" from_created=""
+  # The color serving now: running, and neither drained nor in maintenance in
+  # the proxy. Decided from that administrative state, never from a health
+  # sample, which a slow moment on the serving color would make look stopped.
+  # Both qualify only when the box restarted during a drain (both containers
+  # come back, and a proxy starting cold readies both); the newer one is the
+  # last release's, and the other is drained below.
+  from="" from_created="" any_running=false
   for color in blue green; do
     id="$(container_of "litellm-$color")"
-    [[ -n "$id" ]] && is_up "$color" && is_ready "$color" || continue
+    [[ -n "$id" ]] || continue
+    any_running=true
+    is_ready "$color" || continue
     created="$(docker inspect "$id" --format '{{.Created}}')"
     [[ -z "$from" || "$created" > "$from_created" ]] || continue
     from="$color" from_created="$created"
   done
+  [[ -n "$from" ]] || ! $any_running || fail \
+    'A color runs but the proxy has none ready (both drained or in maintenance); which one serves is unclear, so nothing was changed.'
 
   if install_proxy_config \
     || [[ "$(proxy_definition)" != "$(cat "$GATEWAY_PROXY_STATE_DIR/proxy-definition" 2>/dev/null)" ]]; then
@@ -371,14 +413,13 @@ else
     docker inspect "$serving" --format '{{.Image}}' > "$release_dir/previous-image"
   fi
   start_color "$to" "$serving"
-  waited=0
+  deadline=$((SECONDS + ${GATEWAY_PROXY_UP_SECONDS:-60}))
   until is_up "$to"; do
-    if (( waited >= 60 )); then
+    if (( SECONDS >= deadline )); then
       "${compose[@]}" rm -f -s "litellm-$to" >/dev/null 2>&1 || true
       fail "The proxy does not see litellm-$to up; traffic stays where it was."
     fi
     sleep 1
-    waited=$((waited + 1))
   done
   runtime "set server litellm/litellm-$to state ready${from:+; set server litellm/litellm-$from state drain}" >/dev/null
   log "new requests go to litellm-$to ($GATEWAY_IMAGE, revision $revision)"

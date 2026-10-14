@@ -3,6 +3,8 @@
 import hashlib
 import json
 import os
+import signal
+import time
 from pathlib import Path
 import subprocess
 import tempfile
@@ -86,6 +88,8 @@ elif args[0] == "exec" and "socat" in args:
             out += "1\n# be_id be_name srv_id srv_name srv_addr srv_op_state srv_admin_state\n"
             for color in ("blue", "green"):
                 op = 2 if "litellm-" + color in running else 0
+                if color == env.get("NEVER_UP") or (env.get("NEW_PROXY_SEES_DOWN") and args[2] == "gateway-proxy-b-id"):
+                    op = 0
                 out += f"3 litellm 1 litellm-{color} 10.0.0.1 {op} {state['admin'].get('litellm-' + color, 0)}\n"
         elif words[:2] == ["show", "stat"]:
             out += "# pxname,svname,qcur,qmax,scur\n"
@@ -118,6 +122,11 @@ elif args[0] == "compose":
         failing = env.get("FAIL_UP", "")
         if "--no-start" in rest:
             pass
+        elif env.get("HANG_UP") and env["HANG_UP"] in names:
+            state_path.write_text(json.dumps(state))
+            lock.close()
+            import time
+            time.sleep(60)
         elif failing and failing in names:
             code = 1
         else:
@@ -150,14 +159,15 @@ APP = ("gateway-netns", "gateway-proxy-a", "gateway-proxy-b", "litellm-blue", "l
 
 
 class GatewayReleaseTest(unittest.TestCase):
-    def run_release(self, serving=SERVING, legacy=False, sessions=None, proxy_changed=False, busy="", **overrides):
+    def run_release(self, serving=SERVING, legacy=False, sessions=None, proxy_changed=False, busy="",
+                    admin=None, stale_previous=None, cancel_when=None, installed_config=None, **overrides):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             (root / "compose").mkdir()
             (root / "compose/.env").write_text("TEST=1\n")
-            if not proxy_changed:
+            if not proxy_changed or installed_config is not None:
                 (root / "proxy").mkdir()
-                (root / "proxy/haproxy.cfg").write_text(PROXY_CONFIG.read_text())
+                (root / "proxy/haproxy.cfg").write_text(installed_config or PROXY_CONFIG.read_text())
             # What the release recorded when it started the running proxy.
             (root / "proxy-state").mkdir()
             recorded = json.dumps({"image": "haproxy:test"}, sort_keys=True).encode()
@@ -165,7 +175,10 @@ class GatewayReleaseTest(unittest.TestCase):
             for name, body in (("docker", FAKE), ("sudo", FAKE_SUDO)):
                 (root / name).write_text(body)
                 (root / name).chmod(0o755)
-            state = {"running": list(serving), "legacy": legacy, "admin": {}, "sessions": sessions or {}}
+            if stale_previous is not None:
+                (root / "proxy").mkdir(exist_ok=True)
+                (root / "proxy/haproxy.cfg.previous").write_text(stale_previous)
+            state = {"running": list(serving), "legacy": legacy, "admin": admin or {}, "sessions": sessions or {}}
             (root / "state").write_text(json.dumps(state))
             if busy:
                 (root / "state.busy").write_text(busy)
@@ -178,13 +191,29 @@ class GatewayReleaseTest(unittest.TestCase):
                 GITHUB_RUN_ATTEMPT="1",
                 GATEWAY_POLL_SECONDS="0",
                 GATEWAY_MODELS_WAIT_SECONDS="1",
+                GATEWAY_PROXY_EXIT_SECONDS="1",
                 CALLS=str(root / "calls"),
                 STATE=str(root / "state"),
             )
             env.update(overrides)
-            result = subprocess.run(
-                ["bash", str(SCRIPT), "a" * 40], env=env, capture_output=True, text=True
-            )
+            if cancel_when is None:
+                result = subprocess.run(
+                    ["bash", str(SCRIPT), "a" * 40], env=env, capture_output=True, text=True
+                )
+            else:
+                # The workflow cancelled: its whole process group is signalled.
+                process = subprocess.Popen(
+                    ["bash", str(SCRIPT), "a" * 40], env=env, text=True, start_new_session=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                deadline = time.time() + 30
+                while time.time() < deadline and not (
+                    (root / "calls").exists() and cancel_when((root / "calls").read_text())
+                ):
+                    time.sleep(0.1)
+                os.killpg(process.pid, signal.SIGTERM)
+                stdout, stderr = process.communicate(timeout=30)
+                result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
             calls = (
                 [json.loads(line) for line in (root / "calls").read_text().splitlines()]
                 if (root / "calls").exists()
@@ -196,6 +225,10 @@ class GatewayReleaseTest(unittest.TestCase):
             final["installed_config"] = (
                 (root / "proxy/haproxy.cfg").read_text() if (root / "proxy/haproxy.cfg").exists() else None
             )
+            final["state_file_left"] = (root / "proxy-state/servers.state").exists()
+            final["backup_left"] = (root / "proxy/haproxy.cfg.previous").exists()
+            previous = list(root.glob("releases/*/previous-image"))
+            final["previous_image"] = previous[0].read_text().strip() if previous else None
             return result, calls, final
 
     @staticmethod
@@ -397,6 +430,112 @@ class GatewayReleaseTest(unittest.TestCase):
         self.assertFalse(any(c["args"][0] == "compose" and "up" in c["args"] for c in calls))
         self.assertEqual(state["running"], sorted(SERVING))
 
+
+    # ---- Guards the review found no test for ----
+
+    def test_the_new_color_is_drained_before_it_starts(self):
+        result, calls, _ = self.run_release()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        drained = self.index(calls, lambda a, s: "litellm/litellm-green state drain" in s)
+        self.assertLess(drained, self.index(calls, self.started("litellm-green")))
+
+    def test_traffic_never_moves_to_a_color_the_proxy_does_not_see_up(self):
+        result, calls, state = self.run_release(NEVER_UP="green", GATEWAY_PROXY_UP_SECONDS="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any("state ready" in c["stdin"] for c in calls))
+        self.assertEqual(state["running"], sorted(SERVING))
+
+    def test_the_serving_image_is_recorded_for_a_rollback(self):
+        result, _, state = self.run_release()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(state["previous_image"], "sha256:litellm-blue-id")
+
+    def test_the_serving_color_comes_from_the_proxy_not_a_health_sample(self):
+        # Blue serves (ready in the proxy) but misses its checks right now; green
+        # is stopped and drained. The release must still treat blue as serving.
+        result, calls, state = self.run_release(NEVER_UP="blue", admin={"litellm-green": 8}, GATEWAY_PROXY_UP_SECONDS="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        switch = self.index(calls, self.switched_to("green"))
+        self.assertIn("litellm/litellm-blue state drain", calls[switch]["stdin"])
+
+    def test_a_running_color_with_none_ready_in_the_proxy_changes_nothing(self):
+        result, calls, state = self.run_release(admin={"litellm-blue": 8, "litellm-green": 8})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(c["args"][0] == "compose" and "up" in c["args"] for c in calls))
+        self.assertEqual(state["running"], sorted(SERVING))
+
+    def test_of_two_ready_colors_the_newer_one_keeps_serving(self):
+        for newer, older in (("green", "blue"), ("blue", "green")):
+            with self.subTest(newer=newer):
+                result, calls, state = self.run_release(
+                    serving=SERVING + ("litellm-green",),
+                    **{f"CREATED_LITELLM_{newer.upper()}": "2026-01-02T00:00:00Z",
+                       f"CREATED_LITELLM_{older.upper()}": "2026-01-01T00:00:00Z"},
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertLess(self.index(calls, self.stopped(f"litellm-{older}")), self.index(calls, self.switched_to(older)))
+
+    def test_a_proxy_left_from_an_interrupted_change_is_soft_stopped(self):
+        result, calls, _ = self.run_release(
+            serving=SERVING + ("gateway-proxy-b",), GATEWAY_DRAIN_SECONDS="0",
+            CREATED_GATEWAY_PROXY_A="2026-01-02T00:00:00Z",
+            CREATED_GATEWAY_PROXY_B="2026-01-01T00:00:00Z",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(any(c["args"][:3] == ["update", "--restart=no", "gateway-proxy-b-id"] for c in calls))
+        self.assertTrue(any(self.soft_stopped("gateway-proxy-b-id")(c["args"], "") for c in calls))
+
+    def test_a_proxy_change_waits_while_a_replaced_proxy_still_runs(self):
+        result, calls, state = self.run_release(
+            serving=SERVING + ("gateway-proxy-b",), proxy_changed=True, OLD_PROXY_POLLS="99",
+            CREATED_GATEWAY_PROXY_A="2026-01-02T00:00:00Z",
+            CREATED_GATEWAY_PROXY_B="2026-01-01T00:00:00Z",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(self.started("gateway-proxy-b")(c["args"], "") for c in calls))
+        self.assertFalse(any("state ready" in c["stdin"] for c in calls))
+
+    def test_a_new_proxy_that_does_not_see_the_serving_color_is_rolled_back(self):
+        result, calls, state = self.run_release(proxy_changed=True, NEW_PROXY_SEES_DOWN="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(any(self.soft_stopped("gateway-proxy-a-id")(c["args"], "") for c in calls))
+        self.assertNotIn("gateway-proxy-b", state["running"])
+
+    def test_a_failed_proxy_change_puts_back_the_configuration_it_replaced(self):
+        running = "global\n  # the configuration the running proxy was started with\n"
+        result, _, state = self.run_release(installed_config=running, FAIL_UP="gateway-proxy-b")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(state["installed_config"], running)
+        self.assertFalse(state["backup_left"])
+
+    def test_a_replaced_proxy_that_never_exits_leaves_the_old_color_draining(self):
+        result, calls, state = self.run_release(proxy_changed=True, OLD_PROXY_POLLS="99999", GATEWAY_DRAIN_SECONDS="0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("::error::", result.stdout)
+        self.assertIn("litellm-blue", state["running"])
+        self.assertFalse(any(self.stopped("litellm-blue")(c["args"], "") for c in calls))
+
+    def test_a_failed_definition_change_never_restores_a_stale_configuration(self):
+        result, _, state = self.run_release(
+            PROXY_IMAGE="haproxy:newer", FAIL_UP="gateway-proxy-b", stale_previous="global\n  # stale\n"
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(state["installed_config"], PROXY_CONFIG.read_text())
+
+    def test_a_successful_proxy_change_leaves_no_backup_and_no_state_file(self):
+        result, _, state = self.run_release(installed_config="global\n  # the previous configuration\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(state["backup_left"])
+        self.assertFalse(state["state_file_left"])
+
+    def test_no_server_state_file_survives_a_release(self):
+        # Any later cold start of the proxy loads it, drain flags included.
+        for case in ({}, {"proxy_changed": True}, {"proxy_changed": True, "FAIL_UP": "gateway-proxy-b"},
+                     {"proxy_changed": True, "NEW_PROXY_SEES_DOWN": "1"}):
+            with self.subTest(case):
+                _, _, state = self.run_release(**case)
+                self.assertFalse(state["state_file_left"])
+
     # ---- Once: from the single container ----
 
     def test_moving_from_the_single_container_needs_acknowledged_interruption(self):
@@ -427,6 +566,21 @@ class GatewayReleaseTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("stopping it anyway", result.stdout)
         self.assertEqual(state["running"], ["gateway-netns", "gateway-proxy-a", "litellm-blue"])
+
+    def test_a_cancelled_move_gives_the_single_container_back(self):
+        # Cancelled after the single container stopped, before the proxy is up.
+        def proxy_starting(calls):
+            return any(
+                '"up"' in line and '"gateway-proxy-a"' in line and '"--no-start"' not in line
+                for line in calls.splitlines()
+            )
+        result, calls, state = self.run_release(
+            serving=(), legacy=True, GATEWAY_ALLOW_INTERRUPT="1", HANG_UP="gateway-proxy-a",
+            cancel_when=proxy_starting,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        stop = self.index(calls, lambda a, s: a[0] == "stop" and a[-1] == LEGACY)
+        self.assertTrue(any(c["args"] == ["start", LEGACY] for c in calls[stop:]))
 
     def test_a_proxy_that_does_not_come_up_gives_the_single_container_back(self):
         result, calls, state = self.run_release(

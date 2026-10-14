@@ -88,7 +88,10 @@ stopped color's name would still resolve and requests would go to that address.
 A change to the proxy (its configuration, image or service definition) does not
 interrupt anything either. The release starts the other proxy in the same
 network namespace with the colors' current states (`server-state-file`, drain
-flags included); both listen on `:4000` (SO_REUSEPORT). Once the new one sees
+flags included), and deletes the file once that proxy is up: colors switch
+through the runtime API afterwards, so a later cold start (a reboot, a crash
+restart) reading it would bring the serving color back drained. Both proxies
+listen on `:4000` (SO_REUSEPORT). Once the new one sees
 the serving color, the old one is soft-stopped: it stops accepting at once,
 connections already queued on its listener move to the new one
 (`net.ipv4.tcp_migrate_req`), it serves the connections it has, answers the next
@@ -107,7 +110,7 @@ connection to the old container has carried data for 30 seconds, read with
 `ss` in its network namespace through sudo, stops it with 30 seconds for
 in-flight requests, during which new requests are refused, and starts
 `gateway-netns` and the proxy in its place; if the proxy does not come up, the old container
-is started again. The metering proxy's idle connections to the old container
+is started again, and so it is if the release is cancelled in between. The metering proxy's idle connections to the old container
 die with it, so the next request on each fails once.
 
 Kimi K3 uses the native Messages endpoint at
