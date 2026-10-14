@@ -721,6 +721,13 @@ class Settings(BaseSettings):
     # 6.5 GB.
     cloud_sandbox_disk_gb: int = Field(default=4, ge=1)
     cloud_host_disk_reserve_gb: int = Field(default=10, ge=0)
+    # What one sandbox on a platform host may hold, however much room the rest
+    # of the disk has (`disk_guard`): a sandbox over it is stopped before it
+    # can fill the host for the others. About five times the measurement
+    # above. Not on a person's computer, whose disk is theirs to fill; there
+    # only the floors above apply.
+    cloud_sandbox_disk_budget_gb: int = Field(default=12, ge=1)
+    cloud_sandbox_inode_budget: int = Field(default=600_000, ge=1000)
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
     # enrollment succeeds, so without this nobody can read a Cloud machine's

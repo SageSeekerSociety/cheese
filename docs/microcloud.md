@@ -55,6 +55,11 @@ on any check that finds the disk below a floor.
   finds room again, and the sandbox holding the most of either is destroyed, one a reading.
   Its room is told what it held and under which directory. A sandbox holding under 1% of the
   disk is never evicted for it: on a person's computer the disk may be full of their own files.
+- On a platform host, a sandbox holding more than `CLOUD_SANDBOX_DISK_BUDGET_GB` (12) or
+  `CLOUD_SANDBOX_INODE_BUDGET` (600,000 inodes) is destroyed on the next walk of its homes,
+  whatever room the disk has, so one sandbox cannot fill a host for the others; its room is
+  told the limit. The budgets add up to more than a host's disk on purpose, with the floors
+  above as the backstop. A person's computer has no budget: its disk is theirs to fill.
 - A sandbox's home with no sandbox any more — its row went when its session moved away — is
   deleted, ten minutes after it was last written. A home without the sandbox marker (a room's
   own directory on a computer that runs it without a sandbox) is never touched.

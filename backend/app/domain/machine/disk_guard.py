@@ -21,6 +21,12 @@ minutes), and at once on any check that finds the disk below a floor.
   room again, and the machine's heaviest sandbox — the most of either, as a
   share of the filesystem — is destroyed and its room told what it held and
   where. One a reading: the next shows whether that was enough.
+- On a platform host, a sandbox holding more than one sandbox may
+  (``cloud_sandbox_disk_budget_gb``, ``cloud_sandbox_inode_budget``) is
+  destroyed on the next walk, whatever room the rest of the disk has, so one
+  sandbox cannot fill a host for the others; its room is told the same, with
+  the limit. A person's computer has no such budget: its disk is theirs to
+  fill.
 - A sandbox's home whose sandbox no longer exists — its row went when its
   session moved away (``HostPool.leave``) — is deleted. A sandbox is
   destroyed with its home, so no home is meant to outlive its row; one that
@@ -41,7 +47,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.machine import lifecycle, sandbox_home
 from app.domain.machine.lifecycle import STOP_HOLD, SandboxLifecycle
 from app.domain.machine.models import CloudHost, SandboxHome
-from app.domain.machine.progress import tell_disk_full
+from app.domain.machine.progress import tell_disk_full, tell_over_budget
 from app.domain.machine.repositories import CloudHostRepository
 
 logger = logging.getLogger("cheese.machine.disk_guard")
@@ -92,6 +98,23 @@ def share(home: dict, filesystem: dict) -> float:
     of_bytes = home["bytes"] / filesystem["bytes"] if filesystem["bytes"] else 0
     inodes = filesystem.get("inodes") or 0
     return max(of_bytes, home["inodes"] / inodes if inodes else 0)
+
+
+def over_budget(home: dict) -> bool:
+    """Whether a home on a platform host holds more than one sandbox may."""
+    return (
+        home["bytes"] > settings.cloud_sandbox_disk_budget_gb * 10**9
+        or home["inodes"] > settings.cloud_sandbox_inode_budget
+    )
+
+
+def held(home: dict) -> dict[str, str]:
+    """What a home held, as its room is told it."""
+    return {
+        "gb": f"{home['bytes'] / 1e9:.1f}",
+        "files": f"{home['inodes']:,}",
+        "where": where(home["top"]),
+    }
 
 
 def where(top: str) -> str:
@@ -176,7 +199,8 @@ class DiskGuard:
 
     async def check(self, device_id: str) -> dict[str, int]:
         """Read one machine and act on what it shows: its free space every
-        time, what its homes hold when a walk is due or the disk is short."""
+        time, what its homes hold when a walk is due or the disk is short. A
+        sandbox's budget is judged on a walk, the only reading that has it."""
         live = await self._live(device_id)
         now = datetime.now(UTC)
         last = _walked.get(device_id)
@@ -196,11 +220,42 @@ class DiskGuard:
         if walk:
             _walked[device_id] = now
         await self._mark(device_id, full, filesystem)
+        host = await self._repo.by_device(device_id)
+        await self._session.commit()
+        running = {
+            (str(row.project_id), row.resource_id): row
+            for row in live
+            if row.stopped_at is None
+        }
+        # Empty unless this reading walked the homes.
+        homes = [
+            (home, running[key])
+            for home in reading["homes"]
+            if (key := (home["project"], home["resource"])) in running
+        ]
         evicted = 0
-        if full and await self._evict_heaviest(
-            device_id, filesystem, reading["homes"], live
+        if host is not None:
+            limit = {
+                "limit_gb": str(settings.cloud_sandbox_disk_budget_gb),
+                "limit_files": f"{settings.cloud_sandbox_inode_budget:,}",
+            }
+            for home, row in list(homes):
+                if over_budget(home) and await self._evict(
+                    device_id,
+                    row,
+                    home,
+                    partial(tell_over_budget, **held(home), **limit),
+                ):
+                    evicted += 1
+                    homes.remove((home, row))
+        # After an eviction this reading is out of date: the next one shows
+        # whether the disk still needs another.
+        if (
+            full
+            and not evicted
+            and await self._evict_heaviest(device_id, filesystem, homes)
         ):
-            evicted = 1
+            evicted += 1
         removed = 0
         for home in reading["left_behind"]:
             if await self._remove_left_behind(
@@ -235,34 +290,23 @@ class DiskGuard:
         )
 
     async def _evict_heaviest(
-        self, device_id: str, filesystem: dict, homes: list[dict], live: list
+        self, device_id: str, filesystem: dict, homes: list[tuple[dict, object]]
     ) -> bool:
-        running = {
-            (str(row.project_id), row.resource_id): row
-            for row in live
-            if row.stopped_at is None
-        }
-        candidates = [
-            (share(home, filesystem), home, running[key])
-            for home in homes
-            if (key := (home["project"], home["resource"])) in running
-        ]
-        if not candidates:
+        if not homes:
             return False
-        held, home, row = max(candidates, key=lambda item: item[0])
-        if held < EVICT_MIN_SHARE:
+        home, row = max(homes, key=lambda item: share(item[0], filesystem))
+        if share(home, filesystem) < EVICT_MIN_SHARE:
             logger.warning(
                 "disk of %s is short, but no sandbox on it holds %s of it",
                 device_id,
                 f"{EVICT_MIN_SHARE:.0%}",
             )
             return False
-        tell = partial(
-            tell_disk_full,
-            gb=f"{home['bytes'] / 1e9:.1f}",
-            files=f"{home['inodes']:,}",
-            where=where(home["top"]),
+        return await self._evict(
+            device_id, row, home, partial(tell_disk_full, **held(home))
         )
+
+    async def _evict(self, device_id: str, row, home: dict, tell) -> bool:
         evicted = await self._lifecycle.evict(
             row.id, row.topic_id if row.session_id else None, device_id, tell
         )
