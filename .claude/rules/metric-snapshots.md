@@ -21,5 +21,8 @@ parallel snapshots conflict without changing the code's merge eligibility.
 Read live debt from the owning baselines or the checker output, with
 `.claude/scripts/ratchet-snapshot.py`'s `CHECKS` as the inventory. Do not copy a
 fixed number of checks or exceptions into a new instruction: the frontend JSON
-baselines, backend `.importlinter`, deferred-import JSON and unit-test ledgers
-are different accounts, and their counts change independently.
+baselines, deferred-import JSON and unit-test ledgers are different accounts, and
+their counts change independently. The backend contracts are a third shape
+again — their debt is not written down anywhere, the check measures it from the
+tree at the merge base on every run, so the number to quote is the `frozen` one
+in that commit's ratchet snapshot.

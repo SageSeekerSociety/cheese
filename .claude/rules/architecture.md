@@ -14,9 +14,10 @@ conventions no machine holds and (b) the landing points other files point at.
 
 A check cannot say whether the tree is getting *better*: a ratchet against a
 frozen baseline holds still and reports success forever. That half is the board,
-`arch-metrics.py`, which reports and never fails. Counts, history and
-per-contract reasoning: `docs/manual/dev/architecture.md`,
-`docs/manual/dev/arch-metrics.md`, `backend/.importlinter`.
+`arch-metrics.py`, and the per-commit ratchet snapshot beside it; the board
+reports and never fails. Counts, history and per-contract reasoning:
+`docs/manual/dev/architecture.md`, `docs/manual/dev/arch-metrics.md`,
+`docs/topics/棘轮页方案.md`, `backend/.importlinter`.
 
 ## Backend: the import graph is checked, not assumed
 
@@ -27,8 +28,13 @@ one layer), route modules independent of one another, and the `turn` layering �
 are declared in `backend/.importlinter` (AST-based, so an import inside a
 function counts too). A new child of `app.domain` — a package or a top-level
 module — is a contract violation until the layer table names it.
-`check_boundaries.py` names the fix contract by contract and what the freeze
-permits (no wildcards; exit 2 is "could not judge", never a pass).
+`check_boundaries.py` names the fix contract by contract (no wildcards; exit 2 is
+"could not judge", never a pass). What it judges this tree against is the tree at
+the merge base with `origin/main`, graded with the same contracts: the
+violations that tree already has are held open, and a violation only this tree
+has is the verdict. Nothing about that baseline is stored, so no branch carries
+a list of exemptions; the file's own `ignore_imports` lines are for a violation
+somebody decided to accept, and are meant to stay rare and short.
 
 Conventions no contract sees:
 
@@ -37,8 +43,8 @@ Conventions no contract sees:
   belongs in `app.core` with a comment saying what owns its lifetime; a new one
   is an admission, not a habit.
 - **Boundaries follow real dependencies, not a directory table.** The contracts
-  name packages the code actually imports, and the frozen list is generated from
-  the graph rather than transcribed by hand.
+  name packages the code actually imports, and the baseline is measured from the
+  same graph rather than transcribed by hand.
 - **A deferred import's reason names the cycle** it breaks (or an optional
   dependency, a start-up cost, a test double). "Avoid circular import" with no
   cycle named is not a reason — check whether the cycle still exists first.

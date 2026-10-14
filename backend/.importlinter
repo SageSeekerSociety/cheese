@@ -9,14 +9,20 @@
 # file states the whole shape once, in the tool that reads the import graph.
 #
 # RUN IT
-#     cd backend && uv run lint-imports          the nine contracts, exit 0/1
+#     cd backend && uv run lint-imports          the nine contracts on their own,
+#                                                exit 0/1. This file writes no
+#                                                exemptions, so this is the raw
+#                                                graph, not the verdict — every
+#                                                debt the baseline holds open is
+#                                                reported here too.
 #     cd backend && uv run python scripts/check_boundaries.py
-#                                                same check, exit 0/1/2 where
+#                                                the verdict, exit 0/1/2 where
 #                                                2 = could not judge
 #     cd backend && uv run python scripts/check_boundaries.py --self-test
 #                                                prove the check still fires
-#     cd backend && uv run python scripts/boundary_baseline.py --update
-#                                                rewrite the frozen baseline
+#     cd backend && uv run python scripts/check_boundaries.py --measure
+#                                                print the baseline this tree
+#                                                implies, as JSON
 #
 # THE BASELINE. These contracts did not pass on the tree they were written for
 # and were never going to: the layering was held by 26 upward imports that exist
@@ -26,32 +32,31 @@
 # contracts on with no exceptions would have meant either a month of unfunded
 # refactoring before anyone could merge, or a check switched off on day one.
 #
-# So each contract carries an `ignore_imports` block: the violations that exist
-# today, one per line, each naming a specific module and a specific target.
-# Nothing here is a wildcard — a blanket exemption cannot be written into this
-# format, which is the point. The block is a ratchet: the tree may not gain a
-# violation, and it may lose them. An entry that no longer matches anything is a
-# warning, never a failure, because paying a debt down must not go red. (The
-# hand-written guard in `tests/unit/test_domain_import_guard.py` fails on a
-# stale entry instead, to remind you to delete the line; this file cannot make
-# that trade, because a refresh is a bulk rewrite and must not go red either.)
+# So the check grades two trees with these same contracts: this one, and the one
+# at the merge base. Every violation the *other* tree has is one this tree may
+# keep, and a violation only this tree has is the whole verdict. The baseline is
+# therefore measured on every run and stored nowhere — no pull request has to
+# carry a list of exemptions, and none of them can go stale. The prose below
+# each contract still records what was paid down and when; the git log has the
+# rest.
 #
-# Those blocks are maintained by this script; do not hand-edit them. Refresh with
-# the command above: stale entries are dropped, C1/C2/C5 additions require
-# `--freeze-new`, and a recomputed C3 or C4 cut is never written, even with
-# `--freeze-new` — their stale lines are the ones the checker reports as matching
-# nothing, and nothing else about those blocks moves on its own.
+# WHAT AN `ignore_imports` LINE MEANS HERE. Not the baseline — an exception:
+# a violation this tree knows about, accepts, and says why about, which the
+# merge-base tree does not have. It is meant to be rare and short. Nothing here
+# is a wildcard — a blanket exemption cannot be written into this format, which
+# is the point. An exception that stops matching anything is a warning, never a
+# failure, because paying a debt down must not go red; the measured half simply
+# stops being in the baseline.
 #
-# STRUCTURE, because the generator rewrites this file. Prose about a contract
-# goes directly under its `[importlinter:contract:...]` header, above the first
-# option. The frozen block is always the last thing in its section. Nothing else
-# goes below the options — if it does, the generator refuses to run rather than
-# guess which section a line belongs to.
+# STRUCTURE. Prose about a contract goes directly under its
+# `[importlinter:contract:...]` header, above the first option. Notes about what
+# a contract cost and what has already been paid down may also follow the
+# options, where they are history and not settings.
 #
 # WHAT THESE CONTRACTS DO NOT DO. They are not a refactoring plan and their pass
-# rate is not a measure of how coupled the tree is. Removing every frozen edge
-# here by moving a dependency from the repository layer to the service layer
-# changes the package graph by exactly zero edges — measured, in
+# rate is not a measure of how coupled the tree is. Removing a violation by
+# moving a dependency from the repository layer to the service layer changes the
+# package graph by exactly zero edges — measured, in
 # `docs/topics/领域包解环.md`. Breaking a cycle takes removing the dependency,
 # not relocating it.
 
@@ -66,9 +71,9 @@ include_external_packages = False
 # import domain, domain may import core) and never upward. This is the one
 # direction every other rule here assumes.
 #
-# No upward imports are frozen here any more: the block below is empty, which
-# is the whole point of the ratchet. What was paid down last is recorded in the
-# git log; the three that were here on 2026-10-12 were `core/errors.py` reading
+# No upward imports are exempted here any more, which is the whole point of the
+# ratchet. What was paid down last is recorded in the git log; the three that
+# were exempted on 2026-10-12 were `core/errors.py` reading
 # the device failures (now owned by `core/device_failures.py`),
 # `platform_stats.services` calling the health route (the judging moved to
 # `core/health.py`), and `review.pr_poll` importing `api.deps` for the work
@@ -82,12 +87,9 @@ layers =
     app.api
     app.domain
     app.core
-# A frozen violation that stops matching (because the import was removed) is a
+# An exception that stops matching (because the import was removed) is a
 # warning. Paying this debt down must not turn the tree red.
 unmatched_ignore_imports_alerting = warn
-
-# --- frozen: existing violations, generated by scripts/boundary_baseline.py
-# Refresh with `--update` (drops entries that no longer match; new ones need `--freeze-new`).
 
 [importlinter:contract:routes-touch-no-models]
 # C2 — a route handler must not read another domain's model modules directly.
@@ -101,11 +103,11 @@ unmatched_ignore_imports_alerting = warn
 #
 # DIRECT IMPORTS ONLY, deliberately. The transitive form of this contract
 # ("routes can reach no model through any chain") is the stricter reading and
-# was measured at 713 frozen edges, most of them `app.domain.a -> app.domain.b`
+# was measured at 713 edges, most of them `app.domain.a -> app.domain.b`
 # model edges that the project tolerates on purpose: ORM relationships need
 # them, and `test_domain_import_guard.py` already ratified that stance for the
-# repository half. Quoting a number nobody can pay down would make the baseline
-# unreadable and the rule unownable. The reachability question is real; it is
+# repository half. Quoting a number nobody can pay down would make the contract
+# unreadable and unownable. The reachability question is real; it is
 # asked by `test_domain_import_guard.py` for repositories, where it is cheap.
 #
 # The repositories half of that rule is NOT repeated here. The existing guard
@@ -121,9 +123,9 @@ unmatched_ignore_imports_alerting = warn
 # `app.api.routes` and C2 covered them by accident; naming them keeps that
 # coverage after the move — 搬出路由不等于掉出管辖. Named one by one rather than
 # sweeping in `app.api`: the rest of that package has direct model imports of its
-# own, and pulling them in would quote a frozen block of unrelated history. Keep
-# this list in step with `test_domain_import_guard.py`'s `_SCANNED_MODULES`, which
-# covers the repositories half of the same set.
+# own, and pulling them in would grandfather every one of them without anybody
+# looking at it. Keep this list in step with `test_domain_import_guard.py`'s
+# `_SCANNED_MODULES`, which covers the repositories half of the same set.
 #
 # The 2026-10 round two moved the route-to-route shared names. The five entries
 # after `topics_deps` are what it added: `awaiting_deps`, `legal_deps` and
@@ -133,7 +135,7 @@ unmatched_ignore_imports_alerting = warn
 # `ws_pipe` is new, holding the tunnel's two pumps. Same rule as the six above:
 # a module one route shares with another stays a source after the name moves.
 #
-# The 2026-10 round three — the one that emptied C4's ledger — moved the names
+# The 2026-10 round three — the one that took the last line out of C4 — moved the names
 # still shared *through* an `app.api` helper. The five entries after `ws_pipe`
 # are what it added: `topic_member_rows`, `topic_pin_rows`, `review_comment_rows`
 # and `project_skill_rows` are new homes for the row builders `room_snapshot`
@@ -175,18 +177,18 @@ unmatched_ignore_imports_alerting = warn
 # messages, title, close). `say_on_task` is the only reader of
 # `app.domain.notification.models` in topics.py (a local import, where the
 # delivery notice is built), so that edge follows the code: it leaves
-# `app.api.routes.topics` and is frozen under `app.api.routes.topics_tasks`.
+# `app.api.routes.topics` for `app.api.routes.topics_tasks`.
 # The same debt with a new importer, not new debt -- the shape #2196 took for
-# `app.domain.review`. Nothing else in the frozen block moved, no line was
-# added, and no contract grew.
+# `app.domain.review`. Nothing else moved, no pair was added, and no contract
+# grew.
 #
 # Third projects_* slice: `projects_agents.py` (a project's roster of agents, one
 # agent's name/configuration, and which of them a new room starts with). The
 # `row: AgentInstance` annotation in `_holds_the_default` was the only reader of
 # `app.domain.agent_instance.models` in projects.py, so that edge follows the
-# code: it leaves `app.api.routes.projects` and is frozen under
+# code: it leaves `app.api.routes.projects` for
 # `app.api.routes.projects_agents`. The same debt with a new importer, not new
-# debt -- one line changed, none was added.
+# debt -- one pair moved, none was added.
 #
 # Ninth topics_* slice, and the one that closes C4 for `routes/topics.py`:
 # `app/api/topics_deps.py` (the room's front door `_actor_in_place`, the ISO
@@ -194,60 +196,18 @@ unmatched_ignore_imports_alerting = warn
 # forward to its siblings). `Block` / `BlockKind` are the only
 # `app.domain.block.models` readers there, so one edge
 # arrives under the new source -- 同一笔债换了发起方，不是新债. `routes/topics.py`
-# keeps its own two lines below because its handlers still read those models
-# directly. Nothing was paid off here; what changed is that the debt now has one
-# importer instead of fifteen, so the next slice has one row to remove.
+# still reads those models directly itself, so its own two pairs are still live.
+# Nothing was paid off here; what changed is that the debt now has one importer
+# instead of fifteen.
 #
-
-# --- frozen: existing violations, generated by scripts/boundary_baseline.py
-# Refresh with `--update` (drops entries that no longer match; new ones need `--freeze-new`).
-ignore_imports =
-    app.api.project_skill_rows -> app.domain.project_skill.models
-    app.api.routes.accept -> app.domain.review.models
-    app.api.routes.accept -> app.domain.room_task.models
-    app.api.routes.accept -> app.domain.topic.models
-    app.api.routes.admin_feedback -> app.domain.feedback.models
-    app.api.routes.admin_memory -> app.domain.memory.models
-    app.api.routes.alerts -> app.domain.notification.models
-    app.api.routes.answers -> app.domain.discussion.models
-    app.api.routes.execution -> app.domain.topic.models
-    app.api.routes.feedback -> app.domain.feedback.models
-    app.api.routes.feedback_proposals -> app.domain.block.models
-    app.api.routes.forge_token -> app.domain.project.models
-    app.api.routes.git_http -> app.domain.room_task.models
-    app.api.routes.integrations -> app.domain.block.models
-    app.api.routes.integrations -> app.domain.integration.models
-    app.api.routes.integrations -> app.domain.notification.models
-    app.api.routes.memory -> app.domain.memory.models
-    app.api.routes.memory_files -> app.domain.memory.models
-    app.api.routes.project_context -> app.domain.block.models
-    app.api.routes.project_context -> app.domain.project.models
-    app.api.routes.project_context -> app.domain.room_task.models
-    app.api.routes.project_context -> app.domain.topic.models
-    app.api.routes.project_environment -> app.domain.agent.models
-    app.api.routes.project_environment -> app.domain.project.models
-    app.api.routes.project_environment -> app.domain.topic.models
-    app.api.routes.project_skills -> app.domain.block.models
-    app.api.routes.project_skills -> app.domain.project_skill.models
-    app.api.routes.projects_agents -> app.domain.agent_instance.models
-    app.api.routes.questions -> app.domain.discussion.models
-    app.api.routes.remote_mcp -> app.domain.project.models
-    app.api.routes.routines -> app.domain.routine.models
-    app.api.routes.tasks.publish_pdf -> app.domain.task.models
-    app.api.routes.topics -> app.domain.block.models
-    app.api.routes.users._common -> app.domain.user.models
-    app.api.routes.users.account -> app.domain.passkey.models
-    app.api.routes.workspace -> app.domain.room_task.models
-    app.api.routes.workspace -> app.domain.topic.models
-    app.api.topics_deps -> app.domain.block.models
 
 [importlinter:contract:domains-acyclic]
 # C3 — no cycles among sibling domains under app.domain.
 #
 # This is the one contract whose violations cannot be paid off one at a time:
-# breaking a cycle means removing a dependency, and the frozen list below is the
-# minimum feedback set — the edges whose removal makes the graph acyclic. It is
-# also the most honest number in this file: it is what "untying the knot"
+# breaking a cycle means removing a dependency, and the baseline's edges are its
+# minimum feedback set — the ones whose removal makes the graph acyclic. It is
+# also the most honest number this check produces: it is what "untying the knot"
 # actually costs. Expect it to shrink slowly, one real inversion at a time.
 name = C3 sibling domains under app.domain are acyclic
 type = acyclic_siblings
@@ -285,153 +245,6 @@ unmatched_ignore_imports_alerting = warn
 # 23 条（C2 另多 2 条，是 answers、questions 两个路由读 discussion.models）。这些都
 # 是早已存在的依赖，只是现在才看得见；冻结的是契约在补入口文件后重新提名的切口，
 # 其中十来条落在老包之间，因为新的环要从环上任意一处切开。
-
-# --- frozen: existing violations, generated by scripts/boundary_baseline.py
-# Refresh with `--update` (drops entries that no longer match; a recomputed cycle-breaker set is never added).
-ignore_imports =
-    app.domain.agent.capability.matrix -> app.domain.agent.harness
-    app.domain.agent.capability.matrix -> app.domain.agent.harness.claude_code
-    app.domain.agent.capability.matrix -> app.domain.agent.harness.codex
-    app.domain.agent.capability.matrix -> app.domain.agent.harness.pi
-    app.domain.agent.machine_launcher -> app.domain.agent.harness.launch
-    app.domain.agent.private_chat -> app.domain.agent.device_provider
-    app.domain.agent.private_chat -> app.domain.agent.harness.claude_code
-    app.domain.agent_instance.configuration -> app.domain.agent.gateway_catalog
-    app.domain.agent_instance.configuration -> app.domain.agent.harness
-    app.domain.agent_instance.configuration -> app.domain.agent.market
-    app.domain.agent_instance.configuration -> app.domain.agent.supply
-    app.domain.agent_instance.services -> app.domain.project.models
-    app.domain.agent_instance.services -> app.domain.topic.models
-    app.domain.agent_session.repositories -> app.domain.topic.models
-    app.domain.authz.policy -> app.domain.topic.models
-    app.domain.block.editing -> app.domain.agent.chat
-    app.domain.block.editing -> app.domain.agent.runtime
-    app.domain.block.editing -> app.domain.delivery.agent
-    app.domain.block.editing -> app.domain.delivery.ledger
-    app.domain.block.editing -> app.domain.notification.models
-    app.domain.block.editing -> app.domain.room_task.services
-    app.domain.delivery.agent -> app.domain.agent.runtime
-    app.domain.delivery.agent -> app.domain.topic.models
-    app.domain.delivery.note -> app.domain.agent.chat
-    app.domain.delivery.note -> app.domain.topic.services
-    app.domain.delivery.timer -> app.domain.topic.models
-    app.domain.device.owner_reads -> app.domain.project.models
-    app.domain.device.owner_reads -> app.domain.topic.models
-    app.domain.device.sql_repository -> app.domain.project.models
-    app.domain.discussion.services -> app.domain.delivery.addressing
-    app.domain.discussion.services -> app.domain.delivery.ledger
-    app.domain.discussion.services -> app.domain.notification.models
-    app.domain.docs_site.library -> app.domain.project.models
-    app.domain.feedback.repositories -> app.domain.topic.models
-    app.domain.identity.services -> app.domain.topic_membership.services
-    app.domain.knowledge.services -> app.domain.team.repositories
-    app.domain.membership.services -> app.domain.delivery.addressing
-    app.domain.membership.services -> app.domain.delivery.ledger
-    app.domain.memory.migration_service -> app.domain.agent.announce
-    app.domain.memory.migration_service -> app.domain.identity.handles
-    app.domain.memory.migration_service -> app.domain.membership.roster
-    app.domain.memory.migration_service -> app.domain.project.services
-    app.domain.memory.migration_service -> app.domain.usage.ledger
-    app.domain.memory.reads -> app.domain.block.models
-    app.domain.memory.redundant -> app.domain.agent.execution
-    app.domain.memory.redundant -> app.domain.topic.models
-    app.domain.mentions -> app.domain.membership.roster
-    app.domain.mentions -> app.domain.topic.models
-    app.domain.mentions -> app.domain.topic.repositories
-    app.domain.notification.digest -> app.domain.delivery.models
-    app.domain.notification.legacy_queue -> app.domain.delivery.models
-    app.domain.notification.outbox -> app.domain.delivery.models
-    app.domain.notification.outbox -> app.domain.notification.maintenance
-    app.domain.notification.push_delivery -> app.domain.notification.outbox
-    app.domain.platform_stats.gaps -> app.domain.agent.preview_hub
-    app.domain.platform_stats.gaps -> app.domain.machine.models
-    app.domain.platform_stats.pipeline -> app.domain.agent.dispatch_log
-    app.domain.platform_stats.pipeline -> app.domain.agent.models
-    app.domain.platform_stats.pipeline -> app.domain.review.archive
-    app.domain.platform_stats.pipeline -> app.domain.review.models
-    app.domain.platform_stats.pipeline -> app.domain.review.notes
-    app.domain.platform_stats.product -> app.domain.review.models
-    app.domain.platform_stats.product -> app.domain.review.notes
-    app.domain.platform_stats.repositories -> app.domain.machine.models
-    app.domain.policy.proposals -> app.domain.agent.announce
-    app.domain.policy.proposals -> app.domain.delivery.addressing
-    app.domain.policy.proposals -> app.domain.room_task.place
-    app.domain.project.artifacts -> app.domain.review.models
-    app.domain.project.environment -> app.domain.topic.models
-    app.domain.project.export -> app.domain.review.models
-    app.domain.project.export -> app.domain.topic.models
-    app.domain.project.forge -> app.domain.agent.forgejo_tokens
-    app.domain.project.forge -> app.domain.agent.github_app
-    app.domain.project.forge -> app.domain.review.forgejo_pr
-    app.domain.project.forge -> app.domain.review.github_pr
-    app.domain.project.room_files -> app.domain.agent.announce
-    app.domain.project.services -> app.domain.membership.services
-    app.domain.project.services -> app.domain.topic.models
-    app.domain.project.services -> app.domain.topic.repositories
-    app.domain.project.services -> app.domain.topic.services
-    app.domain.questions.services -> app.domain.answers.repositories
-    app.domain.repository.forge_files -> app.domain.agent.device_hub
-    app.domain.repository.forge_files -> app.domain.agent.execution
-    app.domain.repository.forge_files -> app.domain.project.forge
-    app.domain.repository.forge_files -> app.domain.room_task.models
-    app.domain.repository.forge_files -> app.domain.topic.models
-    app.domain.repository.identity -> app.domain.project.services
-    app.domain.repository.identity -> app.domain.room_task.services
-    app.domain.repository.identity -> app.domain.topic.models
-    app.domain.repository.service -> app.domain.agent.platform_failures
-    app.domain.review.forge -> app.domain.review.services
-    app.domain.review.github_pr -> app.domain.agent.github_app
-    app.domain.review.pr_poll -> app.domain.agent.announce
-    app.domain.review.pr_poll -> app.domain.agent.chat
-    app.domain.review.pr_publish -> app.domain.agent.announce
-    app.domain.review.pr_publish -> app.domain.review.services
-    app.domain.review.room_notices -> app.domain.agent.announce
-    app.domain.room_task.binding -> app.domain.agent.market
-    app.domain.room_task.binding -> app.domain.agent.supply
-    app.domain.room_task.checkouts -> app.domain.agent.device_hub
-    app.domain.room_task.checkouts -> app.domain.agent.resource_cleanup
-    app.domain.room_task.checkouts -> app.domain.topic.models
-    app.domain.room_task.naming -> app.domain.agent.staleness
-    app.domain.room_task.naming -> app.domain.project.models
-    app.domain.room_task.place -> app.domain.topic.models
-    app.domain.room_task.presentation -> app.domain.review.notes
-    app.domain.room_task.presentation -> app.domain.topic.models
-    app.domain.room_task.repositories -> app.domain.project.address
-    app.domain.room_task.services -> app.domain.project.forge
-    app.domain.room_task.services -> app.domain.project.models
-    app.domain.room_task.services -> app.domain.project.protection
-    app.domain.room_task.services -> app.domain.topic.models
-    app.domain.shell.service -> app.domain.space.models
-    app.domain.shell.service -> app.domain.task.models
-    app.domain.shell.service -> app.domain.task.protocol
-    app.domain.task.services -> app.domain.space.rank_service
-    app.domain.task.services -> app.domain.space.repositories
-    app.domain.task.teaching -> app.domain.project.models
-    app.domain.task.teaching -> app.domain.space.material_service
-    app.domain.task.teaching -> app.domain.space.models
-    app.domain.task.visibility_service -> app.domain.space.repositories
-    app.domain.team.membership_services -> app.domain.delivery.addressing
-    app.domain.team.membership_services -> app.domain.delivery.ledger
-    app.domain.team.membership_services -> app.domain.notification.models
-    app.domain.team.services -> app.domain.task.repositories
-    app.domain.topic.services -> app.domain.agent.clone
-    app.domain.topic.services -> app.domain.agent.harness
-    app.domain.topic.services -> app.domain.review.archive
-    app.domain.topic.services -> app.domain.review.services
-    app.domain.topic_membership.repositories -> app.domain.topic.models
-    app.domain.topic_membership.schemas -> app.domain.topic.models
-    app.domain.topic_membership.services -> app.domain.agent_instance.services
-    app.domain.topic_membership.services -> app.domain.membership.roster
-    app.domain.topic_membership.services -> app.domain.membership.services
-    app.domain.topic_membership.services -> app.domain.project.repositories
-    app.domain.topic_membership.services -> app.domain.topic.models
-    app.domain.topic_membership.services -> app.domain.topic.repositories
-    app.domain.usage.ledger -> app.domain.project.services
-    app.domain.usage.repositories -> app.domain.project.models
-    app.domain.usage.subscription_ingest -> app.domain.project.repositories
-    app.domain.user.repositories -> app.domain.identity.models
-    app.domain.user.repositories -> app.domain.team.models
-    app.domain.user.services -> app.domain.identity.handles
 
 [importlinter:contract:turn-layers]
 # T1 — every turn module belongs to one of these four layers.
@@ -494,12 +307,10 @@ allow_indirect_imports = false
 #
 # `independence` reads the whole graph, so a chain `routes.a -> app.api.x ->
 # routes.b` is a violation too; a helper that re-exports a route is not a way
-# round. The frozen block below is the ledger of what exists today, one direct
-# import per line, shrink-only. It was cut down by hand to a minimal set: an
-# ignored edge hides every chain through it, so each line left is one that
-# turns the contract red if removed, and the helper-to-route edges
-# (`room_snapshot -> routes.*`) are deliberately not frozen, so a new route
-# importing such a helper is reported.
+# round. No exception is written here, and none is needed: the merge-base tree
+# has no route-to-route path either, so every chain in this tree is one this
+# tree added. The helper-to-route edges (`room_snapshot -> routes.*`) are not
+# excepted either, so a new route importing such a helper is reported.
 name = C4 route modules are independent of one another
 type = independence
 modules =
@@ -513,7 +324,7 @@ unmatched_ignore_imports_alerting = warn
 # helper or a domain name from it, the two `app.api` modules that did the same
 # (`task_instructions`, `task_origin`), and its own import of a sibling route
 # (`routes.projects`, for `rail_tasks`, now in `app.api.room_task_rows`). The
-# ledger went 32 -> 16. Of the seventeen edges in or out of this node,
+# list went 32 -> 16. Of the seventeen edges in or out of this node,
 # `routes.topics -> routes.topics_rows` was already gone — #3545 moved that file
 # to `app/api/topics_rows.py`.
 #
@@ -523,12 +334,12 @@ unmatched_ignore_imports_alerting = warn
 # and the application payload helpers. Each moved into a module under `app.api`
 # named for what it serves (`legal_deps`, `users_deps`, `doc_access`, `ws_pipe`,
 # `room_task_rows`, `topics_file_sources`, `awaiting_deps`, `teams_deps`), never
-# into a sibling route: the ledger went 16 -> 5. Three of the five are chains
+# into a sibling route: the list went 16 -> 5. Three of the five are chains
 # through an `app.api` helper (`chat -> room_snapshot`,
 # `preview_sessions -> preview_host`, `topics_preview -> preview_host`); the two
 # `app.main -> ...` lines are not route edges at all, removing them does not
-# turn the contract red, and `--update` keeps them because they still match —
-# they need a later turn of the same hand.
+# turn the contract red, and they stayed in the list because they still matched
+# an import somewhere — they needed a later turn of the same hand.
 #
 # Third turn, and the last: those three chains and the two inert lines. The
 # chains were the seven names the room snapshot and the preview-host middleware
@@ -541,13 +352,10 @@ unmatched_ignore_imports_alerting = warn
 # `room_task_rows`, `task_origin`), as did the browser's end of the preview
 # tunnel (`relay_http`, `relay_ws`, `connection_hub` and what they carry, to
 # `preview_relay`), leaving `routes/app_preview.py` the machine's end alone. The
-# ledger went 5 -> 0, and it is empty on purpose: with no route-to-route path
+# list went 5 -> 0, and it is empty on purpose: with no route-to-route path
 # left, the two `app.main -> ...` lines — never route edges, kept only because
 # they still matched an import somewhere in the graph — came off by hand with
 # the rest. A new chain is now reported the moment it appears.
-
-# --- frozen: existing violations, generated by scripts/boundary_baseline.py
-# Refresh with `--update` (drops entries that no longer match; a recomputed cycle-breaker set is never added).
 
 [importlinter:contract:domain-layers]
 # C5 — the seven layers of `app.domain`, highest first. A package may import
@@ -567,8 +375,10 @@ unmatched_ignore_imports_alerting = warn
 # exists only because the hole did.
 #
 # The 64 upward package edges measured under `app.domain` on 2026-10-12 (140
-# import statements) were frozen below, one module pair per line, and are paid
-# down from there; this block only shrinks. Two packages were placed by this first
+# import statements) are the debt this contract started life with, one module
+# pair per line, and are paid down from there. The merge base carries them too,
+# so they hold no branch back; what this contract reports is an upward edge a
+# branch adds. Two packages were placed by this first
 # version, and the doc's table now carries them: `onboarding` at layer 7 — it
 # reads lower layers and nothing imports it, which is that layer's whole
 # definition — and `canvas` at layer 4, where `living_doc` is (whose models it
@@ -599,123 +409,3 @@ containers =
     app.domain
 exhaustive = true
 unmatched_ignore_imports_alerting = warn
-
-# --- frozen: existing violations, generated by scripts/boundary_baseline.py
-# Refresh with `--update` (drops entries that no longer match; new ones need `--freeze-new`).
-ignore_imports =
-    app.domain.block.editing -> app.domain.agent.chat
-    app.domain.block.editing -> app.domain.agent.runtime
-    app.domain.block.editing -> app.domain.delivery.agent
-    app.domain.block.editing -> app.domain.delivery.ledger
-    app.domain.discussion.services -> app.domain.delivery.addressing
-    app.domain.discussion.services -> app.domain.delivery.ledger
-    app.domain.membership.roster -> app.domain.agent_instance.own
-    app.domain.membership.roster -> app.domain.agent_instance.services
-    app.domain.membership.services -> app.domain.delivery.addressing
-    app.domain.membership.services -> app.domain.delivery.ledger
-    app.domain.membership.services -> app.domain.notification.models
-    app.domain.memory.migration_service -> app.domain.agent.announce
-    app.domain.memory.redundant -> app.domain.agent.execution
-    app.domain.memory.redundant -> app.domain.agent_session.services
-    app.domain.notification.digest -> app.domain.delivery.models
-    app.domain.notification.legacy_queue -> app.domain.delivery.models
-    app.domain.notification.outbox -> app.domain.delivery.models
-    app.domain.notification.services -> app.domain.block.models
-    app.domain.notification.services -> app.domain.block.repositories
-    app.domain.notification.services -> app.domain.block.schemas
-    app.domain.policy.proposals -> app.domain.agent.announce
-    app.domain.policy.proposals -> app.domain.block.models
-    app.domain.policy.proposals -> app.domain.delivery.addressing
-    app.domain.policy.proposals -> app.domain.room_task.place
-    app.domain.project.artifacts -> app.domain.library.service
-    app.domain.project.artifacts -> app.domain.review.models
-    app.domain.project.environment_diagnosis -> app.domain.gateway_chat
-    app.domain.project.environment_diagnosis -> app.domain.usage.ledger
-    app.domain.project.export -> app.domain.block.models
-    app.domain.project.export -> app.domain.library.blobs
-    app.domain.project.export -> app.domain.library.records
-    app.domain.project.export -> app.domain.library.service
-    app.domain.project.export -> app.domain.living_doc.services
-    app.domain.project.export -> app.domain.review.models
-    app.domain.project.forge -> app.domain.agent.forgejo_tokens
-    app.domain.project.forge -> app.domain.agent.github_app
-    app.domain.project.forge -> app.domain.review.forgejo_pr
-    app.domain.project.forge -> app.domain.review.github_pr
-    app.domain.project.repositories -> app.domain.task.models
-    app.domain.project.room_files -> app.domain.agent.announce
-    app.domain.project.room_files -> app.domain.library.records
-    app.domain.project.room_files -> app.domain.library.service
-    app.domain.project.room_files -> app.domain.preview.office
-    app.domain.project.schemas -> app.domain.shell.schemas
-    app.domain.project.services -> app.domain.agent_instance.services
-    app.domain.project.services -> app.domain.block.documents
-    app.domain.project.services -> app.domain.living_doc.services
-    app.domain.project.services -> app.domain.task.models
-    app.domain.project.services -> app.domain.task.teaching
-    app.domain.project.services -> app.domain.usage.ledger
-    app.domain.remote_mcp.service -> app.domain.agent_instance.services
-    app.domain.repository.forge_files -> app.domain.agent.device_hub
-    app.domain.repository.forge_files -> app.domain.agent.execution
-    app.domain.repository.forge_files -> app.domain.agent_session.services
-    app.domain.repository.forge_files -> app.domain.room_task.models
-    app.domain.repository.identity -> app.domain.room_task.services
-    app.domain.repository.service -> app.domain.agent.platform_failures
-    app.domain.repository.service -> app.domain.project_skill.service
-    app.domain.review.github_pr -> app.domain.agent.github_app
-    app.domain.review.landing_watch -> app.domain.agent.announce
-    app.domain.review.landing_watch -> app.domain.agent.harness.prompt
-    app.domain.review.landing_watch -> app.domain.agent_instance.services
-    app.domain.review.landing_watch -> app.domain.delivery.addressing
-    app.domain.review.live -> app.domain.agent.realtime.broker
-    app.domain.review.periodic -> app.domain.agent.chat
-    app.domain.review.pr_poll -> app.domain.agent.announce
-    app.domain.review.pr_poll -> app.domain.agent.chat
-    app.domain.review.pr_poll -> app.domain.delivery.agent
-    app.domain.review.pr_publish -> app.domain.agent.announce
-    app.domain.review.pr_publish -> app.domain.delivery.agent
-    app.domain.review.pr_publish -> app.domain.delivery.ledger
-    app.domain.review.room_notices -> app.domain.agent.announce
-    app.domain.review.room_notices -> app.domain.delivery.addressing
-    app.domain.review.room_notices -> app.domain.delivery.agent
-    app.domain.review.room_notices -> app.domain.delivery.ledger
-    app.domain.review.task_landing -> app.domain.agent.harness.prompt
-    app.domain.review.task_landing -> app.domain.agent_instance.services
-    app.domain.review.task_landing -> app.domain.delivery.agent
-    app.domain.review.task_landing -> app.domain.delivery.ledger
-    app.domain.room_task.binding -> app.domain.agent.market
-    app.domain.room_task.binding -> app.domain.agent.supply
-    app.domain.room_task.binding -> app.domain.agent_instance.configuration
-    app.domain.room_task.checkouts -> app.domain.agent.device_hub
-    app.domain.room_task.checkouts -> app.domain.agent.resource_cleanup
-    app.domain.room_task.checkouts -> app.domain.agent_session.models
-    app.domain.room_task.naming -> app.domain.agent.staleness
-    app.domain.room_task.place -> app.domain.agent_session.models
-    app.domain.space.announcement_service -> app.domain.delivery.addressing
-    app.domain.space.announcement_service -> app.domain.delivery.ledger
-    app.domain.team.membership_services -> app.domain.delivery.addressing
-    app.domain.team.membership_services -> app.domain.delivery.ledger
-    app.domain.team.membership_services -> app.domain.notification.models
-    app.domain.team.services -> app.domain.task.repositories
-    app.domain.topic.directory -> app.domain.room_task.services
-    app.domain.topic.repositories -> app.domain.agent_instance.models
-    app.domain.topic.repositories -> app.domain.block.models
-    app.domain.topic.schemas -> app.domain.room_task.schemas
-    app.domain.topic.services -> app.domain.agent.clone
-    app.domain.topic.services -> app.domain.agent.harness
-    app.domain.topic.services -> app.domain.agent_instance.services
-    app.domain.topic.services -> app.domain.agent_session.services
-    app.domain.topic.services -> app.domain.block.about
-    app.domain.topic.services -> app.domain.block.models
-    app.domain.topic.services -> app.domain.block.repositories
-    app.domain.topic.services -> app.domain.living_doc.models
-    app.domain.topic.services -> app.domain.living_doc.services
-    app.domain.topic.services -> app.domain.notification.services
-    app.domain.topic.services -> app.domain.repository.service
-    app.domain.topic.services -> app.domain.review.archive
-    app.domain.topic.services -> app.domain.review.services
-    app.domain.topic.services -> app.domain.room_task.models
-    app.domain.topic.services -> app.domain.room_task.place
-    app.domain.topic.services -> app.domain.room_task.services
-    app.domain.topic.services -> app.domain.thread.models
-    app.domain.topic_membership.services -> app.domain.agent_instance.services
-    app.domain.usage.subscription_ingest -> app.domain.block.models

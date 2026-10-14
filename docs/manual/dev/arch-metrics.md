@@ -46,7 +46,7 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 | `frontend.grade_counts.grades` / `grade_pct` | A/B/C/D 各多少个、占几成 | 见下面的分级方法 | A 升，D 降 |
 | `frontend.grade_counts.grade_lines` | 每一级的行数 | 同级组件的行数之和 | A 升 |
 | `frontend.boundary.violations` | 组件直接取数 / 读路由的处数 | 直接读 `frontend/import-boundary-baseline.json`，不重算 | 只降 |
-| `backend.contracts.per_contract` | 九条契约各自冻结了多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条 | 只降 |
+| `backend.contracts.per_contract` | 九条契约各自**写在文件里**的例外有多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条。2026-10-14 起这个文件不再装基线：基准改成每次检查时从合并基准那棵树量出来，所以这一栏是「有人明确接受的例外」，正常接近 0；九条契约真正压着的债在 ratchet 快照的 `frozen` 里 | 只降 |
 | `backend.deferred_imports` | 函数内导入的条数 | `ast` 遍历 `backend/app`，只数词法上落在函数体里的 `import` / `from ... import`（嵌套函数算一次，模块级的 `if TYPE_CHECKING:` 不算） | 只降 |
 | `backend.files.files_over_1000` | 后端超过 1000 行的文件数 | `backend/app/**/*.py` 的行数分布 | 只降 |
 | `backend.files.files_over_1500` | 超过上限（1500 行）的 | 同上 | 只降 |

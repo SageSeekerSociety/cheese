@@ -103,14 +103,26 @@ jobs:
       # config moved or stopped naming a contract it would find nothing wrong
       # with anything. So it is asked to prove itself — this builds a throwaway
       # package tree, plants a violation in it, and requires a non-zero exit.
+      # Since it also grades the tree at the merge base, the throwaway trees
+      # include that half: a base tree of its own, a violation it already has,
+      # one this tree adds on top, and a base that does not resolve.
       - name: Module boundary check proves it still fires
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: uv run python scripts/check_boundaries.py --self-test
 
+      # What this tree is judged against is not stored anywhere: the check
+      # materialises the tree at the merge base with origin/main and grades it
+      # with these same contracts. A depth-1 checkout has no such commit, and
+      # the check would answer "could not judge" — exit 2, a red step that says
+      # nothing about the tree. Rules: .claude/rules/architecture.md.
+      - name: Fetch main for comparison
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: git fetch --no-tags --unshallow origin
+
       # The same hook a developer's commit runs, from the same file, and over
       # all files rather than this diff: the import graph is a property of the
       # tree, not of the commit that touched it.
-      - name: Module boundaries (import-linter + frozen baseline)
+      - name: Module boundaries (import-linter, baseline from the merge base)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files boundary-check

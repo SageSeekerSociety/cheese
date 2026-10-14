@@ -483,9 +483,11 @@ def run_check(check: Check, root: Path) -> dict:
 def _strip_ignore_imports(text: str) -> bytes:
     """`.importlinter` with every `ignore_imports` block removed.
 
-    The baseline lives in the same file as the contracts there, so a fingerprint
-    over the whole file would call every exemption change a change of rule. It
-    is not: the rules are the contract declarations.
+    The exceptions live in the same file as the contracts, so a fingerprint over
+    the whole file would call writing one of them down a change of rule. It is
+    not: the rules are the contract declarations. (The bulk of what used to be
+    here — the frozen baseline — is not in the file at all any more; the gate
+    measures it from the tree at the merge base on every run.)
     """
     kept: list[str] = []
     skipping = False
@@ -1123,15 +1125,15 @@ def self_test() -> int:
               _runnable(root, "no_such_module_anywhere"), False)
         check("... and one it does have is", _runnable(root, "json"), True)
 
-        # The .importlinter exception: freezing one more import is not a change
-        # of rule, and must not open a new comparison run.
+        # The .importlinter exception: writing one more exception down is not a
+        # change of rule, and must not open a new comparison run.
         base = "root_package = app\n\n[importlinter:contract:c1]\ntype = layers\nlayers =\n    a\n    b\n"
         with_one = base + "ignore_imports =\n    a.x -> b.y\n"
         with_two = base + "ignore_imports =\n    a.x -> b.y\n    a.z -> b.w\n"
         (root / "contracts.ini").write_text(with_one)
         first = fingerprint(root, ("contracts.ini",), "ignore_imports")
         (root / "contracts.ini").write_text(with_two)
-        check("freezing another exception is not a rule change", fingerprint(root, ("contracts.ini",), "ignore_imports"), first)
+        check("writing another exception is not a rule change", fingerprint(root, ("contracts.ini",), "ignore_imports"), first)
         (root / "contracts.ini").write_text(with_two.replace("type = layers", "type = forbidden"))
         check("changing the contract is", fingerprint(root, ("contracts.ini",), "ignore_imports") != first, True)
 
