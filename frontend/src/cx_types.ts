@@ -1,6 +1,5 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
-import type { components } from './api/openapi'
 import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
 import type { DeviceScreen } from './types/deviceSessions'
@@ -12,8 +11,6 @@ export type { WaitingItem } from './types/waiting'
 
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
 import type { Shell } from '@/lib/shell'
-
-type Schemas = components['schemas']
 
 export interface Project {
   id: string
@@ -113,6 +110,12 @@ export interface Topic {
   // 此刻没有在跑的轮次，或者那个戳没记着——后端不编，前端也不编，「显示在跑、但五
   // 分钟没动静」的红灯就靠它（`lib/roomLight.ts`）。只有 list/get 话题时才带。
   last_output_at?: string | null
+  // 这间房里**还没恢复**的轮次失败从什么时候开始（后端 `block/waits.py` 的
+  // `unresolved_failures`）：这间房自己那条线、它的支线，或者它名下一件还没关的活里
+  // 最早的一条。None = 没有未恢复的失败。侧栏红灯的另一半看它——不只「在跑却没动静」，
+  // 也包括「停下报错、五分钟没人接手」（`lib/roomLight.ts` 判那五分钟）。只有 list/get
+  // 话题时才带。
+  incomplete_since?: string | null
   // 这间房（或它名下的活）「交付完了、而**我**从那以后还没点开看过」——侧栏的长绿看它
   // （`lib/roomLight.ts`）。点开会推已读位，服务端下一份就不再这么说，之前由本地先灭
   // （`stores/workspace` 的 `forgetReadLights`）。只对负责人和协作者算，没登录一律 false。
@@ -294,6 +297,11 @@ export interface RoomTask {
   // 来源、同一个形状。None = 没有在跑的轮次，或者那个进程说不了——那种「不知道」不
   // 当成「很新」用，也不当成卡住（不画红）。
   last_output_at?: string | null
+  // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`
+  // 的 `unresolved_failures`）：一条活停下来报错、五分钟还没人接手，也和「在跑却没
+  // 动静」一样画红灯（`lib/roomLight.ts` 判那五分钟）。判据是「那一轮的队友又说话了」
+  // 或者「这里又开了一轮」，不是「过了多久」。别的调用方不带这一位，读作 null——不亮。
+  incomplete_since?: string | null
   // 这条活在不在往前走（侧栏这份行才带）：有一轮在跑，或者走在交付链路上。判据在
   // 后端 `presentation.work_moving`，和频道行那一头同一个来源。别的调用方不带这一位，
   // 读作 false——不亮，不是「亮着但说不清」。
@@ -984,94 +992,24 @@ export interface ProjectAgent {
 }
 
 // ---- 反馈 (feedback) ----
-//
-// 平台级的收件箱（`backend/app/api/routes/feedback.py`），不属于任何项目。字段名
-// 与后端 schema 逐字对应 —— 不在这里发明第二个名字，那会让「这个字段到底是哪个」
-// 变成每次读前端代码都要回去查一遍的事。
-//
-// 三处**故意**不叫原型里的名字：
-//   * `supports` 是计数、`comments` 也是计数（原型里 `comments` 是数组），
-//     详情页的评论在 `FeedbackDetail.thread`。
-//   * 作者是 `author_handle`、时间是 `created_at`：蛇形是这一层的约定。
-//   * 原型那个 `source: 'user' | 'agent'` 不存在 —— 它是 `author_is_agent`。
-//     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
-//     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
-//
-// 下面这些是后端 OpenAPI 生成类型（`src/api/openapi.d.ts`）的别名：字段、可空和
-// 必有与否都以 `backend/app/domain/feedback/schemas.py` 为准，改字段改那边，再跑
-// 后端导出；这份类型由类型检查现场生成（`frontend/scripts/typecheck.mjs`）。读字段要记住两件事：
-//   * `author_avatar_id` 为 null 的意思是「画彩色首字母」，不要退回
-//     `/avatars/default`，那会让没挑过头像的人共用一张脸。
-//   * 评论的 `reply_count` 是服务端数的整栋楼回复数，不是这一页带回来几条；
-//     「展开更多」靠它和手上条数比较。
-export type FeedbackKind = Schemas['FeedbackKind']
-/** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
-export type FeedbackStatus = Schemas['FeedbackStatus']
-export type FeedbackVisibility = Schemas['FeedbackVisibility']
-export type FeedbackPriority = Schemas['FeedbackPriority']
-/** 列表里的一行。 */
-export type FeedbackCard = Schemas['FeedbackCard']
-export type FeedbackTimelineEntry = Schemas['TimelineOut']
-/** 一条评论。`parent_id` 只指向顶层评论，层级恒为两层。 */
-export type FeedbackComment = Schemas['CommentOut']
-/** 管理员之间的内部备注，只增不改。 */
-export type FeedbackNote = Schemas['NoteOut']
-export type FeedbackDetail = Schemas['FeedbackDetail']
-/** 标签页上的数。`unassigned` 只在管理端列表里有（`FeedbackAdminCounts`）。 */
-export type FeedbackCounts = Schemas['FeedbackCounts'] & Partial<Pick<Schemas['FeedbackAdminCounts'], 'unassigned'>>
-export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
-  counts: FeedbackCounts
-}
-/** `GET /feedback/meta` —— 词表。颜色不在这里（那是前端的视觉决定，见 lib/feedbackMeta.ts）。 */
-export type FeedbackMeta = Schemas['FeedbackMeta']
-/** 写完之后的计数，不是增量。 */
-export type FeedbackSupportResult = Schemas['SupportOut']
-export type FeedbackCommentLikeResult = Schemas['CommentLikeOut']
-
-/** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */
-export interface FeedbackCreateBody {
-  kind: FeedbackKind
-  title: string
-  summary?: string
-  problem?: string
-  visibility: FeedbackVisibility
-  priority?: FeedbackPriority
-  why?: string | null
-  expectation?: string | null
-  what_happened?: string | null
-  repro?: string | null
-  evidence?: string | null
-  logs?: string | null
-  session_id?: string | null
-  environment?: string | null
-  tags?: string[]
-}
-
-/** 提案卡上的那份 payload（`Block.meta.feedback_proposal`）。 */
-export interface FeedbackProposalPayload {
-  kind: FeedbackKind
-  title: string
-  summary: string
-  problem: string
-  visibility: FeedbackVisibility
-  why: string | null
-  expectation: string | null
-  what_happened: string | null
-  repro: string | null
-  evidence: string | null
-  logs: string | null
-  session_id: string | null
-  environment: string | null
-  tags: string[]
-  /** 用户原话，或者那句「用户没有就这个问题说过话」。**必填**，见方案稿 §5.0。 */
-  user_said: string
-  /** 服务端算的指纹，「不用」和去重都认它。 */
-  fingerprint: string
-}
-
-export interface FeedbackProposal {
-  block_id: string
-  author_handle: string
-  authored_at: string
-  payload: FeedbackProposalPayload
-}
+// 这一域搬去了 `./types/feedback`：这个文件顶在行数上限上，只能变短。这里只把它们
+// 转出去，`@/cx_types` 对外的名字一个都没变。
+export type {
+  FeedbackCard,
+  FeedbackComment,
+  FeedbackCommentLikeResult,
+  FeedbackCounts,
+  FeedbackCreateBody,
+  FeedbackDetail,
+  FeedbackKind,
+  FeedbackListPayload,
+  FeedbackMeta,
+  FeedbackNote,
+  FeedbackPriority,
+  FeedbackProposal,
+  FeedbackProposalPayload,
+  FeedbackStatus,
+  FeedbackSupportResult,
+  FeedbackTimelineEntry,
+  FeedbackVisibility,
+} from './types/feedback'

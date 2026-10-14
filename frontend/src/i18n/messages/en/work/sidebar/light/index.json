@@ -3,5 +3,6 @@
   "mine": "My task",
   "moving": "Work moving",
   "red": "Says it's running, but nothing for five minutes",
+  "redUnfinished": "Stopped with an error, nothing for five minutes",
   "yellow": "Waiting on you"
 }

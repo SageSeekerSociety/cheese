@@ -203,6 +203,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
         moving: topic.moving === true,
         unseenDelivery: topic.unseen_delivery === true,
         lastOutputAt: topic.last_output_at,
+        incompleteSince: topic.incomplete_since,
       },
       clock.value
     )
@@ -219,6 +220,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
         moving: task.moving === true,
         unseenDelivery: task.unseen_delivery === true,
         lastOutputAt: task.last_output_at,
+        incompleteSince: task.incomplete_since,
       },
       clock.value
     )
