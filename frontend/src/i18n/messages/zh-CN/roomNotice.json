@@ -385,6 +385,7 @@
   "turnCrashedDetail": "已完成的改动都在。这类失败通常是平台缺陷，重试可能再次触发，所以平台不会自动重试。需要有人查看日志定位问题，修复后可以重试，会从中断处继续。",
   "turnFailedOutOfCredit": "本轮未完成：AI 中继余额已用完",
   "turnFailedOutOfCreditHint": "需要充值，或者换用其他 AI 服务。重试没有作用。",
+  "turnFailedRequestRefusedHint": "模型服务把这次请求当作无效请求拒收了，多半是对话里有它不接受的内容，比如一张解不开的图片。重试会把同样的内容再发一遍，结果一样；需要管理员处理。",
   "turnFailedRetryLater": "稍后可以重试。",
   "turnFailedService": "本轮未完成",
   "turnFailedWith": "本轮未完成：{reason}",

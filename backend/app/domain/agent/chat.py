@@ -116,7 +116,7 @@ from app.domain.agent.prompt import (
     _progress_lines,  # noqa: F401
     _prompt_topic_refs,  # noqa: F401
     live_inputs,
-    read_images,
+    model_images,
 )
 
 # Canonical read/policy implementations; gateway consumers retain their narrow calls.
@@ -736,16 +736,13 @@ class ChatService(SessionRecovery):
             # 中途插进来的话也带着平台自己那几句，同样按正在说话的那个人的
             # 语言走（`user.language`）。
             language = await language_of(session, author)
-        lines, images = live_input_lines(
-            author,
-            content,
-            attachments,
-            stored=stored,
-            replied=replied,
-            recipient=state.acting_agent if state else None,
-        )
+        recipient = state.acting_agent if state else None
         state = self.live.hook_work.get((topic_id, consuming_turn_id))
-        line = publication_prompt("\n".join(lines), language)
+        files = [
+            (str(a["path"]), str(a.get("mime") or ""))
+            for a in attachments or []
+            if a.get("path")
+        ]
         registrar = self._input_registrar(
             InputEffects(
                 held_block_ids=tuple(user_block_ids),
@@ -768,9 +765,31 @@ class ChatService(SessionRecovery):
                     or place.room.status == TopicStatus.archived
                     or (place.task is not None and place.task.status != TaskStatus.open)
                 )
-                pictures = await read_images(
-                    session, place.room if place else None, images
+                # The pictures are read here, and the lines written after: a line
+                # says whether its file arrives as a picture, and only reading
+                # the bytes can tell (`model_images`).
+                images, undecodable = (
+                    await model_images(
+                        session, place.room.project_id, place.room.id, files
+                    )
+                    if place is not None
+                    else ({}, set())
                 )
+            pictures = [images[path] for path, _ in files if path in images]
+            line = publication_prompt(
+                "\n".join(
+                    live_input_lines(
+                        author,
+                        content,
+                        attachments,
+                        stored=stored,
+                        replied=replied,
+                        recipient=recipient,
+                        undecodable=undecodable,
+                    )
+                ),
+                language,
+            )
             if archived:
                 delivered = False
             else:

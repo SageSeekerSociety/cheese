@@ -385,6 +385,7 @@
   "turnCrashedDetail": "Finished changes are all still there. A failure like this is usually a platform bug that a retry could trigger again, so the platform will not retry on its own. Someone needs to read the logs to find the problem; once it is fixed, retry and it will pick up where it stopped.",
   "turnFailedOutOfCredit": "This turn did not finish: the AI relay balance is used up",
   "turnFailedOutOfCreditHint": "Top up the balance, or switch to another AI service. Retrying will not help.",
+  "turnFailedRequestRefusedHint": "The model service rejected this request as invalid, most likely because the conversation holds something it does not accept, such as an image it cannot decode. Retrying sends the same conversation again and fails the same way; an administrator needs to look at it.",
   "turnFailedRetryLater": "You can retry later.",
   "turnFailedService": "This turn did not finish",
   "turnFailedWith": "This turn did not finish: {reason}",
