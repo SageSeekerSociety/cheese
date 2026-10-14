@@ -130,13 +130,15 @@ line_of() {
 # The owners outlive app releases, so a release whose migrations drop what an
 # owner's image still maps would leave that owner failing every query that
 # loads it. Such an owner is drained before the migrations and recreated on
-# the release after them; one that maps nothing extra is left alone (above).
+# the release after them; one whose schema the migrations leave alone keeps
+# running, whatever its models map that the release's no longer do.
 test_deploy_releases_owners_behind_the_schema() {
   local run_dir docker_log drained migrated device_back preview_back
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
     APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config" \
+    APP_TIER_PENDING_TOUCHES=$'pending c4e9a2f7d153\ntopics.compute_config' \
     DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
     || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed with owners behind the schema"; }
   drained="$(line_of 'device-connection/release-drain' "$docker_log")"
@@ -151,8 +153,71 @@ test_deploy_releases_owners_behind_the_schema() {
     || { rm -rf "$run_dir"; fail "the preview owner was not recreated after the migrations"; }
   grep -q -- '--force-recreate backend' "$docker_log" \
     || { rm -rf "$run_dir"; fail "the deploy did not roll the app tier"; }
+  grep -F 'device connection owner maps schema the migrations change or the database lacks: topics.compute_config' "$run_dir/deploy.log" >/dev/null \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "the deploy did not say which schema held the owner"; }
   rm -rf "$run_dir"
-  echo "PASS: owners that map schema the release dropped are released across its migrations"
+  echo "PASS: owners that map schema the migrations drop are released across them"
+}
+
+# The first half of a drop only stops mapping a column (.claude/rules/migrations.md);
+# the column stays until a later release's migration drops it. Until then no
+# owner query can fail on it, so nothing is gained by closing their connections:
+# not when the release merely maps less, and not when its migrations change
+# other tables.
+test_deploy_leaves_owners_the_migrations_spare() {
+  local run_dir docker_log touches
+  for touches in "" $'pending ea1b19de526b\nroom_locks\ntasks.compute_config'; do
+    run_dir="$(new_rollout_run_dir)"
+    docker_log="$run_dir/docker.log"
+    rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
+      APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config tasks tasks.id" \
+      APP_TIER_PENDING_TOUCHES="$touches" \
+      DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
+      || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed with owners the migrations spare"; }
+    ! grep -E 'release-drain|force-recreate (device|preview)-connection' "$docker_log" >/dev/null \
+      || { rm -rf "$run_dir"; fail "an owner was released although the migrations (${touches:-none}) change nothing it maps"; }
+    grep -q -- '--force-recreate backend' "$docker_log" \
+      || { rm -rf "$run_dir"; fail "the deploy did not roll the app tier"; }
+    rm -rf "$run_dir"
+  done
+  echo "PASS: owners whose schema the migrations leave alone keep running"
+}
+
+# Migrations commit one by one: a deploy whose second migration failed keeps
+# the first one's drop and resumes the old owner on it, and the next deploy no
+# longer lists that migration. The database itself shows the owner is behind.
+test_deploy_releases_owners_the_database_left_behind() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config" \
+    APP_TIER_DB_SCHEMA="topics topics.id" \
+    DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed with an owner behind the database"; }
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "an owner mapping a column the database no longer has was left running"; }
+  grep -F 'topics.compute_config (not in the database)' "$run_dir/deploy.log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the deploy did not say what the owner maps that the database lacks"; }
+  rm -rf "$run_dir"
+  echo "PASS: an owner mapping what the database no longer has is released"
+}
+
+# A migration whose changes cannot be read is not proof that it spares them.
+test_deploy_releases_owners_when_migrations_unreadable() {
+  local run_dir docker_log released
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_PENDING_TOUCHES_BROKEN=1 \
+    DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed when the migrations could not be read"; }
+  for released in 'device-connection/release-drain' 'force-recreate device-connection' 'force-recreate preview-connection'; do
+    grep -F "$released" "$docker_log" >/dev/null \
+      || { rm -rf "$run_dir"; fail "owners were left on migrations nobody could read ($released missing)"; }
+  done
+  rm -rf "$run_dir"
+  echo "PASS: migrations that cannot be read release the owners"
 }
 
 test_failed_migration_resumes_the_drained_owner() {
@@ -161,6 +226,7 @@ test_failed_migration_resumes_the_drained_owner() {
   docker_log="$run_dir/docker.log"
   if rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
     APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config" \
+    APP_TIER_PENDING_TOUCHES=$'pending c4e9a2f7d153\ntopics.compute_config' \
     APP_TIER_DOCKER_FAIL_MATCH='alembic upgrade head' \
     DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1; then
     rm -rf "$run_dir"
@@ -335,6 +401,79 @@ EOF
     || { rm -rf "$run_dir"; fail "failed owner release left the old owner draining"; }
   rm -rf "$run_dir"
   echo "PASS: owner release waits for atomic idle drain and stops safely on failure"
+}
+
+# Releasing an owner onto the image it already runs changes nothing it serves
+# and still closes every connection it holds. A wedged one is still replaced.
+test_owner_release_of_the_running_image_keeps_connections() {
+  local run_dir docker_log owner
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/owner-same-image.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    DEVICE_CONNECTION_SECRET=test-owner-secret PREVIEW_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    bash -c '"$1/deploy/release-device-connection.sh" testsha "$2" && "$1/deploy/release-preview-connection.sh" testsha "$2"' \
+      _ "$ROOT" "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null \
+    || { rm -rf "$run_dir"; fail "a release of the running image failed"; }
+  ! grep -E 'release-drain|force-recreate (device|preview)-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an owner was drained or recreated onto the image it already runs"; }
+
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    APP_TIER_CURL_FAIL_MATCH=/healthz DEVICE_CONNECTION_SECRET=test-owner-secret HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1 || true
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an unhealthy owner on the release's image was not replaced"; }
+
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:old APP_TIER_RELEASE_IMAGE_ID=sha256:new \
+    DEVICE_CONNECTION_SECRET=test-owner-secret HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null \
+    || { rm -rf "$run_dir"; fail "a release of a new image failed"; }
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an owner was not moved onto a new image"; }
+  # Same image, different configuration (a rotated secret, a changed env file).
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    APP_TIER_RUNNING_CONFIG_HASH=before APP_TIER_CONFIG_HASH=after \
+    DEVICE_CONNECTION_SECRET=test-owner-secret PREVIEW_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    bash -c '"$1/deploy/release-device-connection.sh" testsha "$2" && "$1/deploy/release-preview-connection.sh" testsha "$2"' \
+      _ "$ROOT" "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null \
+    || { rm -rf "$run_dir"; fail "a release of a changed configuration failed"; }
+  for owner in device preview; do
+    grep -F "force-recreate $owner-connection" "$docker_log" >/dev/null \
+      || { rm -rf "$run_dir"; fail "the $owner owner kept a configuration the release changed"; }
+  done
+
+  # The deploy's own drain across its migrations is not a release to skip.
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    DEVICE_CONNECTION_SECRET=test-owner-secret HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" drain >/dev/null \
+    || { rm -rf "$run_dir"; fail "the deploy's drain step failed"; }
+  grep -F 'release-drain' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the deploy's drain step was skipped as a release of the running image"; }
+
+  # A wedged preview owner on the release's image is replaced.
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    APP_TIER_CURL_FAIL_MATCH=/healthz PREVIEW_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    "$ROOT/deploy/release-preview-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1 || true
+  grep -F 'force-recreate preview-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an unhealthy preview owner on the release's image was not replaced"; }
+  rm -rf "$run_dir"
+  echo "PASS: an owner release of the image already running keeps its connections"
 }
 
 test_cloud_control_has_an_independent_drained_release() {
@@ -1871,6 +2010,10 @@ case "$CASE" in
   preview-owner-release) test_release_preview_connection_requires_interrupt ;;
   owners-behind-schema) test_deploy_releases_owners_behind_the_schema ;;
   owners-behind-schema-failed-migration) test_failed_migration_resumes_the_drained_owner ;;
+  owners-spared) test_deploy_leaves_owners_the_migrations_spare ;;
+  owners-behind-database) test_deploy_releases_owners_the_database_left_behind ;;
+  owners-unreadable-migrations) test_deploy_releases_owners_when_migrations_unreadable ;;
+  owner-release-same-image) test_owner_release_of_the_running_image_keeps_connections ;;
   all)
     test_missing_forge_fails_health_check
     test_forge_migration_release
@@ -1926,6 +2069,10 @@ case "$CASE" in
     test_release_preview_connection_requires_interrupt
     test_deploy_releases_owners_behind_the_schema
     test_failed_migration_resumes_the_drained_owner
+    test_deploy_leaves_owners_the_migrations_spare
+    test_deploy_releases_owners_the_database_left_behind
+    test_deploy_releases_owners_when_migrations_unreadable
+    test_owner_release_of_the_running_image_keeps_connections
     ;;
   *) fail "unknown case: $CASE" ;;
 esac
