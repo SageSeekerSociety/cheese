@@ -33,6 +33,30 @@ function store(area: StorageArea): Storage | null {
   }
 }
 
+/** 探可用性的那个键：只读，从来没有谁写过它。 */
+const PROBE_KEY = 'cheese:storage-probe'
+
+/**
+ * 这一份存储**现在能不能用**。
+ *
+ * **别拿它替代读写。** 平时的两条判据已经够了：读不到就是没存过，写不进就是返回
+ * false。它是给另一种调用者的 —— 那种「存储不可用时我另有做法」的：它要的不是
+ * 「这里没有值」，而是「这台浏览器根本不给你留东西」。
+ *
+ * 探的是一次读，和调用者从前自己试的那一下一样。配额写满和 Safari 隐私模式都读得
+ * 出来（只是写不进去），只有站点数据被禁时连读都抛。
+ */
+export function storageAvailable(area: StorageArea = 'local'): boolean {
+  const target = store(area)
+  if (!target) return false
+  try {
+    target.getItem(PROBE_KEY)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** 读一个字符串；没存过、读不到，都是 null。 */
 export function storageGet(key: string, area: StorageArea = 'local'): string | null {
   try {

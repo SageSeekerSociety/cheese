@@ -17,7 +17,7 @@ import { onUnmounted, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { storageGet, storageSet } from '@/lib/browserStorage'
+import { storageAvailable, storageGet, storageSet } from '@/lib/browserStorage'
 import { enablePush, permissionSettled, pushAvailable, pushSupported } from '@/services/webPush'
 
 const props = defineProps<{
@@ -35,9 +35,10 @@ const busy = ref(false)
 let timer: ReturnType<typeof setTimeout> | null = null
 
 function asked(): boolean {
-  // 隐私窗口和禁用站点数据读不回来，这里一律当没问过 —— 那两种环境下推送本来也留
-  // 不住，代价只是每个跑过一分钟的轮次多问一次（同一个人一答应就由 permissionSettled
-  // 挡住；一直不答就是他还没表态）。
+  // 隐私窗口和禁用站点数据读不回来。那种环境下推送本来也留不住，而且这里连「问过
+  // 没有」都记不住 —— 当作问过，别追着问：追问是人关掉一个渠道的头号原因，#1084
+  // 为通知定的那条规矩在这里同样成立。
+  if (!storageAvailable()) return true
   return storageGet(ASKED_KEY) === '1'
 }
 

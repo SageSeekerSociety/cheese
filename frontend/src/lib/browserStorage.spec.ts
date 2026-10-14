@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  storageAvailable,
   storageGet,
   storageGetJson,
   storageGetStrings,
@@ -64,6 +65,45 @@ describe('字符串读写', () => {
     expect(storageGet('k')).toBeNull()
     expect(storageSet('k', 'v')).toBe(false)
     expect(() => storageRemove('k')).not.toThrow()
+  })
+})
+
+describe('可用性探针', () => {
+  it('能用就是 true', () => {
+    expect(storageAvailable()).toBe(true)
+    expect(storageAvailable('session')).toBe(true)
+  })
+
+  // 「读不出来」和「这台浏览器不给留东西」是两回事，探针答的是后一个。
+  it('读得出来但写不进去（配额满）仍算能用', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('QuotaExceededError')
+    })
+
+    expect(storageAvailable()).toBe(true)
+  })
+
+  it('站点数据被禁时是 false，且不抛', () => {
+    vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('SecurityError')
+    })
+
+    expect(() => storageAvailable()).not.toThrow()
+    expect(storageAvailable()).toBe(false)
+  })
+
+  it('读本身就抛时是 false', () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('SecurityError')
+    })
+
+    expect(storageAvailable()).toBe(false)
+  })
+
+  it('探一下不留下东西', () => {
+    storageAvailable()
+
+    expect(localStorage.length).toBe(0)
   })
 })
 
