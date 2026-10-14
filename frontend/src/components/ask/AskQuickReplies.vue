@@ -176,6 +176,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 
 <template>
   <!-- tabindex=-1：点卡上任何一处，焦点就落在卡上，按数字键选选项（见 onCardKey）。 -->
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- digits are a shortcut caught as they bubble from the card; the option buttons are the keyboard path -->
   <section class="ask-replies" tabindex="-1" @keydown="onCardKey">
     <header class="ask-replies__head">
       <div class="ask-replies__heading">
