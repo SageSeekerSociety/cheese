@@ -437,7 +437,9 @@ def self_test():
     )
     hit, contrib = landed_first(week, pool, files_all)
     check("全文件口径命中 1 和 5", hit, 2)
-    check("3 没被别人先合过同名文件", 3 in [p["number"] for p in week], True)
+    # 3 只和 4 重叠，而 4 在 3 创建之前就已经在 main 上了，所以 3 不算命中；
+    # 3 是唯一碰 b.py 的本周 PR，b.py 进不了贡献表就是这条成立。
+    check("3 没被别人先合过同名文件", "backend/app/b.py" in contrib, False)
     check("命中算在两个文件上", contrib["backend/app/a.py"], 1)
     check("登记类文件也被算进来了", contrib["i18n/messages/en/work.json"], 1)
     check("命中的文件按贡献数排，并列按名字", top_line(contrib),

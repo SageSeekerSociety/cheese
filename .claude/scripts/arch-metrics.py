@@ -1052,11 +1052,20 @@ def _fixture_repo(root: Path, extra: dict[str, str] | None = None) -> None:
     )
 
 
-def _now_env(days_ago: int = 5) -> dict[str, str]:
-    """A commit date inside every window, without reaching for `date`."""
+def _now_env(days_ago: int = 5, at: datetime | None = None) -> dict[str, str]:
+    """A commit date inside every window, without reaching for `date`.
+
+    `at` is the instant the date is counted back from. The board's windows end
+    at the real `now`, so its fixture leaves this None and follows the clock;
+    the conflict fixture passes the same instant its assertions bucket by, so
+    its commits cannot drift out of those buckets as the clock moves.
+    """
     import time
 
-    stamp = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - days_ago * 86400))
+    when = at if at is not None else datetime.now(timezone.utc)
+    stamp = time.strftime(
+        "%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(when.timestamp() - days_ago * 86400)
+    )
     return {"GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
 
 
@@ -1068,7 +1077,7 @@ _FIXTURE_IDENTITY = {
 }
 
 
-def _conflict_fixture(root: Path) -> None:
+def _conflict_fixture(root: Path, at: datetime) -> None:
     """A repository whose two PR branches both merged `main` and both conflicted.
 
     One conflict lands only in `backend/alembic/HEAD`, a registration file, and
@@ -1077,10 +1086,15 @@ def _conflict_fixture(root: Path) -> None:
     both sides in ways git merges by itself, which is what puts an `Auto-merging`
     line in `merge-tree`'s output; a parser that keeps it counts a file that
     never conflicted.
+
+    `at` dates every commit here, and the caller measures the section at that
+    same instant: the buckets are trailing windows ending there, so a fixture
+    dated from the wall clock would fall out of them a day after it was written.
     """
     def run(*args: str, days_ago: int = 4) -> None:
         subprocess.run(
-            ["git", *args], cwd=root, check=True, env={**_FIXTURE_IDENTITY, **_now_env(days_ago)}
+            ["git", *args], cwd=root, check=True,
+            env={**_FIXTURE_IDENTITY, **_now_env(days_ago, at)},
         )
 
     def write(relative: str, contents: str) -> None:
@@ -1119,7 +1133,7 @@ def _conflict_fixture(root: Path) -> None:
             ["git", "merge", "--no-edit", "main"],
             cwd=root,
             capture_output=True,
-            env={**_FIXTURE_IDENTITY, **_now_env(1)},
+            env={**_FIXTURE_IDENTITY, **_now_env(1, at)},
         )
         run("add", "-A")
         run("commit", "-qm", "chore: merge main", days_ago=1)
@@ -1358,7 +1372,7 @@ def self_test() -> int:
         with tempfile.TemporaryDirectory(prefix="arch-metrics-conflicts-") as raw2:
             root2 = Path(raw2)
             try:
-                _conflict_fixture(root2)
+                _conflict_fixture(root2, anchor)
             except (FileNotFoundError, subprocess.CalledProcessError) as exc:
                 failures.append(f"could not build the conflict fixture: {exc}")
             else:
