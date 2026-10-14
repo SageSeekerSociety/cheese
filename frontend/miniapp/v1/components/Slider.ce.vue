@@ -27,7 +27,11 @@ const lo = computed(() => Number(props.min))
 const hi = computed(() => Math.max(Number(props.max), lo.value))
 const unit = computed(() => (Number(props.step) > 0 ? Number(props.step) : 1))
 const current = computed(() => Number(props.value ?? lo.value))
-const shown = computed(() => (props.format ? props.format(current.value) : `${current.value}${props.unit}`))
+/** As many decimals as the step has: a value the app computed shows as 0.3, not 0.30000000000000004. */
+const places = computed(() => (String(unit.value).split('.')[1] ?? '').length)
+const shown = computed(() =>
+  props.format ? props.format(current.value) : `${Number(current.value.toFixed(places.value))}${props.unit}`
+)
 const steps = computed(() => Math.round((hi.value - lo.value) / unit.value))
 const ticks = computed(() => (steps.value > 0 && steps.value <= 24 ? steps.value : 0))
 

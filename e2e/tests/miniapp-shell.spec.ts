@@ -80,6 +80,19 @@ const n = ref(5)
   expect(errors).toEqual([]);
 });
 
+test('a slider shows the value the app sets to its step, not the arithmetic behind it', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const t = ref(0.1 + 0.2)
+</script>
+<template><c-slider label="时刻" :min="0" :max="1" :step="0.02" unit=" ms" v-model="t" /></template>`
+  );
+  await expect(page.locator('c-slider output')).toHaveText('0.3 ms');
+  expect(errors).toEqual([]);
+});
+
 test('a formula wider than a phone stays inside the column and can be scrolled to its end', async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 800 });
   const errors = await runApp(
