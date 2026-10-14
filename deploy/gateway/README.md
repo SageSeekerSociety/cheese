@@ -59,12 +59,12 @@ that case would also need the router state moved to Redis first.
 A release (`deploy/release-gateway.sh`) reads credentials from
 `$HOME/gateway/compose/.env`, pulls the CI-built image, tests image
 preservation, and starts the idle color with the configuration bundled in the
-image (kept in `$HOME/gateway/releases/`). The new color takes traffic only
-after it passes its Docker health check, answers `/health/readiness`, lists
-through `GET /v1/models` (with the master key) every model the serving color
-lists apart from any this release removes from `config.yaml`, so a model added
-on the admin page has loaded from the database, and the proxy's own check sees
-it up. `/health` is not used: it calls every model. Then one runtime-API
+image. The new color takes traffic only after four checks: its Docker health
+check, `/health/readiness`, and the proxy's own check, plus a `GET /v1/models`
+sent to it with the master key. That listing must include every model the
+serving color lists, apart from any this release removes from `config.yaml`,
+so a model added on the admin page has loaded from the database. `/health` is
+not used: it calls every model. Then one runtime-API
 command makes the new color serve and sets the old one to drain. The proxy is
 not restarted, so no caller connection closes, and the next request on any of
 them goes to the new color. The old color finishes the streams it has; the
@@ -98,15 +98,15 @@ request on each idle one with `Connection: close`
 exited, because its streams are on no count the new proxy keeps.
 
 Two cases interrupt streams, and the workflow refuses them unless its
-`interrupt` box is ticked: replacing `gateway-netns` itself (a change to its
-port, networks or image), and the one release that moves a box from the single
+`interrupt` box is ticked: replacing `gateway-netns` itself, when its port,
+networks or image change, and the one release that moves a host from the single
 `cheese-gateway-litellm-1` container to this layout. That container holds the
 port and the `litellm` alias, and Docker cannot move them off a running
 container. The move starts blue, waits up to 10 minutes for a moment when no
-connection to the old container has carried data for 30 seconds (read with
-`ss` in its network namespace, through sudo), stops it with 30 seconds for
-in-flight requests, during which new requests are refused, and starts the
-holder and proxy in its place; if the proxy does not come up, the old container
+connection to the old container has carried data for 30 seconds, read with
+`ss` in its network namespace through sudo, stops it with 30 seconds for
+in-flight requests, during which new requests are refused, and starts
+`gateway-netns` and the proxy in its place; if the proxy does not come up, the old container
 is started again. The metering proxy's idle connections to the old container
 die with it, so the next request on each fails once.
 
