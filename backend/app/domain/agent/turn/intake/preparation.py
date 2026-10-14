@@ -442,8 +442,9 @@ class TurnPreparation:
             pinned_seat = None
             if recipient_instance_id is not None:
                 recipient = {"instance_id": str(recipient_instance_id)}
-                # A seat on the room's roster: a task's agent works the task and
-                # sits on no roster.
+                # A seat on the room's roster. A task's agent is seated when the
+                # task is given to it, and `_acting_handle` below refuses one
+                # that is not.
                 if task is None:
                     pinned_seat = await require_pinned_seat(
                         session, place.room_id, recipient_instance_id
