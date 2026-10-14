@@ -50,9 +50,13 @@ Without `SITES_DOMAIN` or `MINIAPP_SHELL_URL` no mini-app runs; its title and
 sentence still show.
 
 Before a version is kept, browser-render runs it in the shell at a phone's
-width and the document column's, light and dark. One that throws, draws nothing
-or keeps growing is refused; with no renderer to be had it is kept unchecked
-and without pictures.
+width and the document column's, light and dark, then once uses it the way a
+reader would: every control to its ends, every option, every button, every
+draggable point to its corners (the shell's `exercise.ts`). One that throws,
+draws nothing, keeps growing or shows NaN, on opening or once used, is refused
+with what was done to it; with no renderer to be had it is kept unchecked and
+without pictures. The light pictures go back to the AI teammate that saved it,
+in the save tool's result, for it to look at what it made.
 
 ## Publishing
 
