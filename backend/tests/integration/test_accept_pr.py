@@ -505,8 +505,8 @@ def app_world(client, monkeypatch):
     The fake records proposal edits and remote merges. Repository protection is
     disabled so the project approval policy is exercised by these tests.
     """
-    from app.domain.agent import github_app
     from app.domain.project import forge as project_forge
+    from app.domain.project import github_app
     from app.domain.project.models import ProjectForge
     from app.domain.repository import forge_files
     from app.domain.review import pr_publish

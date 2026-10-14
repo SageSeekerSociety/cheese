@@ -64,7 +64,7 @@ def _world():
         ),
         (
             "forge credential cache cleanup",
-            "agent.forgejo_tokens.purge_expired_tokens",
+            "project.forgejo_tokens.purge_expired_tokens",
             "sessions",
         ),
         (

@@ -271,7 +271,7 @@ def test_callback_repo_already_connected_to_another_project(client, monkeypatch)
 
 
 def test_callback_github_error_does_not_connect(client, monkeypatch):
-    from app.domain.agent.github_app import GitHubAppError
+    from app.domain.project.github_app import GitHubAppError
 
     async def _boom(_token, _installation_id: int) -> list[dict]:
         raise GitHubAppError("GitHub said no")

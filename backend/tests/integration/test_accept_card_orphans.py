@@ -267,8 +267,7 @@ def test_poller_skips_archived_topics_even_for_a_card_it_never_closed(
 
 def _flaky_app_tokens(monkeypatch):
     """让平台 App 凭据可开关地失效（None = 拿不到）。"""
-    from app.domain.agent import github_app
-    from app.domain.project import forge
+    from app.domain.project import forge, github_app
     from tests.integration.test_accept_pr import _FakeTokens
 
     holder: dict = {"broken": False}

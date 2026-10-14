@@ -37,9 +37,6 @@ from app.core.errors import (
 )
 from app.core.sentences import exception_text, say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.github_app import (
-    github_app_read_token_for_project,
-)
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import weeklies_for_project
@@ -49,6 +46,9 @@ from app.domain.identity.actor import Actor
 from app.domain.membership.services import InvitationService, MemberService
 from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
+from app.domain.project.github_app import (
+    github_app_read_token_for_project,
+)
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
     GITHUB_UNBOUND,

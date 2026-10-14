@@ -350,8 +350,6 @@ ignore_imports =
     app.domain.project.environment -> app.domain.topic.models
     app.domain.project.export -> app.domain.review.models
     app.domain.project.export -> app.domain.topic.models
-    app.domain.project.forge -> app.domain.agent.forgejo_tokens
-    app.domain.project.forge -> app.domain.agent.github_app
     app.domain.project.forge -> app.domain.review.forgejo_pr
     app.domain.project.forge -> app.domain.review.github_pr
     app.domain.project.room_files -> app.domain.agent.announce
@@ -369,7 +367,6 @@ ignore_imports =
     app.domain.repository.identity -> app.domain.topic.models
     app.domain.repository.service -> app.domain.agent.platform_failures
     app.domain.review.forge -> app.domain.review.services
-    app.domain.review.github_pr -> app.domain.agent.github_app
     app.domain.review.pr_poll -> app.domain.agent.announce
     app.domain.review.pr_poll -> app.domain.agent.chat
     app.domain.review.pr_publish -> app.domain.agent.announce
@@ -624,8 +621,6 @@ ignore_imports =
     app.domain.project.export -> app.domain.library.service
     app.domain.project.export -> app.domain.living_doc.services
     app.domain.project.export -> app.domain.review.models
-    app.domain.project.forge -> app.domain.agent.forgejo_tokens
-    app.domain.project.forge -> app.domain.agent.github_app
     app.domain.project.forge -> app.domain.review.forgejo_pr
     app.domain.project.forge -> app.domain.review.github_pr
     app.domain.project.repositories -> app.domain.task.models
@@ -646,7 +641,6 @@ ignore_imports =
     app.domain.repository.identity -> app.domain.room_task.services
     app.domain.repository.service -> app.domain.agent.platform_failures
     app.domain.repository.service -> app.domain.project_skill.service
-    app.domain.review.github_pr -> app.domain.agent.github_app
     app.domain.review.landing_watch -> app.domain.agent.announce
     app.domain.review.landing_watch -> app.domain.agent.harness.prompt
     app.domain.review.landing_watch -> app.domain.agent_instance.services
