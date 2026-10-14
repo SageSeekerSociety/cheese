@@ -28,7 +28,9 @@ output = {'metadata': data['metadata'], 'sample_count': len(samples), 'modes': {
                     'Descriptive medians only; eight cold pairs/four walk pairs do not establish a stable benefit.',
                     'API later-burst totals and main-thread totals overlap; neither proves a critical-path bottleneck.',
                     'Long tasks use the original accumulated-window metric, sampled just after content ready.',
-                    'The old lost run is not pooled with this rerun.']}
+                    'The old lost run is not pooled with this rerun.',
+                    'Project-docs-charter retains the original tabs-ready criterion; both first-pair screenshots still show the document-body skeleton. It is not document-body readiness.',
+                    'Screenshots use English UI and lack CJK fonts; Chinese demo text renders as missing-glyph boxes in both variants.']}
 for mode, pair_count in [('cold', data['metadata']['cold_pairs']), ('walk', data['metadata']['walk_pairs'])]:
     rows = []
     for page in pages:
