@@ -1754,7 +1754,7 @@ def _self_test_sweep():
          kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), []),
         ("sweep：不知道座位是谁时别人的 event 不算心跳（10 分钟前的块也不认）",
          kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
-        ("sweep：还没点「开始」的行整行跳过（它连座位都没有，不在这一类的范围里）",
+        ("sweep：还没点「开始」的行整行跳过（判的是 started_at，行上有座位也一样）",
          kinds(60, done, row={"started_at": None}), []),
         ("sweep：平台给的 last_output_at 10 分钟前，不报",
          kinds(60, done, row={"last_output_at": at(10)}), []),
