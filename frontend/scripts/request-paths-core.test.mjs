@@ -19,6 +19,7 @@ const ROUTES = [
 ]
 
 const judge = (source, routes = ROUTES) => findOffenders([{ path: 'src/api/x.ts', text: source }], routes)
+const report = (result) => formatReport(result, 'the emitted index')
 
 test('a literal path is judged against the index', () => {
   assert.equal(judge("request('/topics')").checked, 1)
@@ -99,8 +100,8 @@ test('the shape of a path is its segments, a parameter taking one', () => {
 })
 
 test('the report names the count it judged and the count it skipped', () => {
-  const report = formatReport(judge("request('/topic')"))
-  assert.match(report, /backend does not serve/)
-  assert.match(report, /src\/api\/x\.ts:1/)
-  assert.match(report, /route_index --emit/)
+  const text = report(judge("request('/topic')"))
+  assert.match(text, /does not serve/)
+  assert.match(text, /src\/api\/x\.ts:1/)
+  assert.match(text, /generated from the app/)
 })

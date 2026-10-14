@@ -44,6 +44,10 @@ tmp_frontend.log
 # 持续的那份在 CI 的 job summary 和 artifact 里（docs/manual/dev/arch-metrics.md）。
 /arch-metrics.json
 /arch-metrics.md
+# 路由索引（`backend/scripts/route_index.py --emit`）：每加一条路由就变一次，
+# 进仓库时两周被 64 个 PR 改过、合并常撞。CI 现场生成（前端 request-paths job、
+# 后端契约测试），本地要看就生成到这里，不提交。
+/backend/scripts/route_index.json
 
 # ---- Tooling / local agent config ----
 # .claude/ IS tracked (skills/rules/scripts are team-shared specs); only the

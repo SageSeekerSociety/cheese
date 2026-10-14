@@ -15,9 +15,9 @@
 # 把 routes/topics_rows.py 整个挪成了 app/api/topics_rows.py，topics.py 改从那里取。
 # 没有 cite 指向上面这几个文件，例外只涉及这两处文字口径。
 # 上面这份快照之后的漂移不在这条例外之内，其余行号维持快照口径。
-# Addresses cover the real regenerated profiled snapshot in scripts/route_index.json.
+# Addresses cover the live app's effective routes, as the contract suite collects them.
 # Each address is explicit. Catalog ids only share explanatory text; the app never reads this sidecar.
-# Preserve duplicate leaf registrations in scripts/route_index.json; a shared address note is not a leaf id.
+# Preserve duplicate leaf registrations the app mounts; a shared address note is not a leaf id.
 # Intent still unconfirmed: /frontend-errors, /market/nodes, question followers,
 # cross-user favorites and learning-task team eligibility. Notes record existing gates, not policy approval.
 version: 1

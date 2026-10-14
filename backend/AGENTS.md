@@ -36,14 +36,20 @@ is `app`, so a green backend type check cannot clear those outside callers.
 
 ## Generated routes and database predicates
 
-Resolve a conflict in `scripts/route_index.json` by regenerating from the merged
-routes: from `backend/`, run `uv run python -m scripts.route_index --emit > scripts/route_index.json`, then
-`uv run python -m scripts.route_index --sync scripts/route_index.json`. Run
-`uv run python -m scripts.route_index --check` too to validate the frozen
-shadowing pairs. If route ordering changed, verify
-the identities behind `scripts/route_index_frozen.py`'s indexed pairs and update
-their indices and tests together; never freeze a newly introduced shadowing
-relationship just to clear the check (`tests/unit/test_route_index*.py`).
+The route index is not committed. `scripts/route_index.json` is git-ignored and
+generated where it is judged — the frontend `request-paths` job and this suite —
+so there is no file to regenerate and no conflict to resolve in it. After adding,
+removing or reordering routes, from `backend/` run
+
+* `uv run python -m scripts.route_index --check` — no later route is provably
+  shadowed by an earlier one. The frozen pairs in
+  `scripts/route_index_frozen.py` name their two leaves by path and handler, so a
+  route added elsewhere never moves them. Never freeze a newly introduced
+  shadowing relationship just to clear the check, and never pin a pair by
+  registration position.
+* `uv run python -m scripts.route_index --check-annotations` — every live route
+  has its handwritten authorization and owner note in
+  `tests/contract/route_index.yaml` (`tests/unit/test_route_index*.py`).
 
 Keep a partial index's predicate and its querying expression aligned, including
 literal values and casts; a parameterised or differently spelled expression may
