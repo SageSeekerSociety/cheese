@@ -69,7 +69,7 @@ router = APIRouter(prefix="", tags=["accept"])
 def _accept_service(db: AsyncSession) -> AcceptService:
     """验收服务，连同它够不着的那几样一起给齐。
 
-    `review` 在第 4 层、`delivery`、`agent_instance` 在第 3 层，那些函数只能在 API
+    `review` 在第 4 层，`delivery` 和 `agent_instance` 在第 5 层，那些函数只能在 API
     这一层递进去（`app.domain.review.ports`）。这里少给一样，走那条路的话就少说
     一句，或者认不出那个 AI 队友是谁 —— 所以这一层只留这一个构造点，别再自己
     写一个。

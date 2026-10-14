@@ -266,7 +266,7 @@ async def _settle_the_card(
     由让卡离开验收人手上的那几处调用：采纳、驳回、作废、归档。别的地方改
     `card.status` 不代表卡不再等人 —— 改验收人就不是，卡只是换到别人手上。
 
-    ``settle_card`` 没递进来是接线漏了一处（第 4 层的 review 够不着第 3 层的
+    ``settle_card`` 没递进来是接线漏了一处（第 4 层的 review 够不着第 5 层的
     投递账本，得由门递）：当场炸掉，不比静默留下一条说着「等你」的提醒好。
     """
     if settle_card is None:  # pragma: no cover - 接线漏了才会走到

@@ -1,7 +1,7 @@
 """Resolve a work binding, teammate override, or project default against one catalog.
 
 目录（`choices`）是调用方递进来的，本模块不自己去够它：认「这个项目能用哪些模型」
-的是 `agent_instance.configuration`（第 3 层），本包在第 4 层，够不着 —— 那份目录
+的是 `agent_instance.configuration`（第 5 层），本包在第 4 层，够不着 —— 那份目录
 按 id 从 `catalog` 拿，本模块只在它上面挑一个。
 """
 

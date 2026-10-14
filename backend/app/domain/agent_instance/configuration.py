@@ -148,7 +148,7 @@ def catalog(project_settings: dict | None) -> dict[str, dict]:
 
     和 `model_choices` 住在一起，是因为答得出「这个项目能用哪些模型」的只有本包：
     目录的每一行都由这里的名单、池和骨架算出来（见上面那几段），按 id 排一次是同一
-    件事的收尾。绑定一条活的那个包在第 4 层，够不着第 3 层，它拿在手里的就是这份排
+    件事的收尾。绑定一条活的那个包在第 4 层，够不着第 5 层，它拿在手里的就是这份排
     好的目录。
     """
     return {choice["id"]: choice for choice in model_choices(project_settings)}

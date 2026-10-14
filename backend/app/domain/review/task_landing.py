@@ -405,7 +405,7 @@ async def tell_agent(
     """The task's AI teammate hears ``content`` on its next turn. ``closes``:
     the task closes when that turn ends.
 
-    ``record_instruction`` 是第 3 层那个 `delivery.agent.record_task_instruction`，
+    ``record_instruction`` 是第 5 层那个 `delivery.agent.record_task_instruction`，
     由调用链上的门递下来（`app.domain.review.ports.RecordInstruction`）：这句话
     落在投递账本上，而本包够不着它。没递进来是接线漏了一处：当场炸掉，不静默
     让这个 AI 队友永远收不到这一句。"""

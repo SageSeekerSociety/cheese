@@ -750,7 +750,7 @@ class TopicRepository:
         别人的角标。答不出就一条不报，与那个读点在同一间房上答案一致。
 
         ``seats`` 是「席位 handle → 队友的名字」，从外面喂进来：答得出这份对应的
-        是 `agent_instance`（第 3 层），本包在第 4 层，够不着它的表
+        是 `agent_instance`（第 5 层），本包在第 2 层，够不着它的表
         （``app.domain.topic.ports.SeatHandles``）。
         """
         project = await self._session.get(Project, project_id)

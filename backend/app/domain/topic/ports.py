@@ -1,6 +1,6 @@
 """这个包够不着的那些事，写在这里由调用方递进来。
 
-`topic` 在第 4 层，「这个项目的 AI 队友是谁」只有第 3 层的 `agent_instance` 答得
+`topic` 在第 2 层，「这个项目的 AI 队友是谁」只有第 5 层的 `agent_instance` 答得
 出来，所以本包把自己要的那几次查问写在这儿，实现留在那个包里
 （`app/domain/agent_instance/adapters.py`），谁在门口谁递进去 —— 和
 `review/ports.py`、`block/ports.py` 同一条规矩：口子按消费者分开写，实现按提供者

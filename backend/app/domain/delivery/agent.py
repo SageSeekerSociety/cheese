@@ -89,7 +89,7 @@ async def seat_instance_id(session, project_id, seat) -> uuid.UUID | None:
     """这个项目里 ``seat`` 那个席位的实例 id；这个项目里没有它就返回 ``None``。
 
     要这一行的调用点都在第 4 层以上（`review.room_notices`），认不出
-    ``AgentInstance`` 这个第 3 层的模型，所以要递出去的是 id —— 那一行其余字段没有
+    ``AgentInstance`` 这个第 5 层的模型，所以要递出去的是 id —— 那一行其余字段没有
     一处用得上。席位还在不在是另一回事（`active_seat_instance_id`）。"""
     instance = await instance_for_seat(session, project_id, seat)
     return None if instance is None else instance.id

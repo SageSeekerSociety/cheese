@@ -110,7 +110,7 @@ class SeatInstanceId(Protocol):
     """这个项目里某个席位的实例 id；没有这个席位就是 ``None``。
 
     形状是 `app.domain.delivery.agent.seat_instance_id` 的形状。递回来的是 id 而
-    不是席位那一行：`AgentInstance` 是第 3 层的模型，本包认不出它。"""
+    不是席位那一行：`AgentInstance` 是第 5 层的模型，本包认不出它。"""
 
     async def __call__(
         self, session: AsyncSession, project_id: uuid.UUID, seat: str

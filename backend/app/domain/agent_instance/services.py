@@ -210,7 +210,7 @@ class AgentInstanceService:
     async def for_task_by_id(
         self, project_id: uuid.UUID, room_id: uuid.UUID, agent_handle: str | None
     ) -> ResolvedAgent | None:
-        """`for_task`，但按 id 找那两行 —— 给够不着第 3 层的包用。
+        """`for_task`，但按 id 找那两行 —— 给够不着第 5 层的包用。
 
         比本包低的包（`review` 的交付落地那几条路）手里只有任务的
         ``project_id`` 和 ``room_id``，读不出 ``Project``/``Topic`` 这两行；读表
