@@ -6,11 +6,12 @@
 `turn_seconds`，那两列永远打成 `-`，`--self-test` 的样例行用的也是假名，所以自检
 照绿。
 
-守的是六条能在写代码之前就说出来的规则：表打的是接口送的字段；表打得出聚合算出来
+守的是七条能在写代码之前就说出来的规则：表打的是接口送的字段；表打得出聚合算出来
 的数；`--json` 的行是对象不是字符串；载荷里没有的字段要出声，不能默默打成横杠（两
-个脚本各测一次）；没算出来的速率打横杠，那是「这组里没有一轮秒数大于 0」不是缺字
-段；数是多少就打多少，不打科学计数法。走文档里那条命令的入口 `main()`，所以老代码
-上红的是断言，不是 import。
+个脚本各测一次，库里那份每一段、每一行都查）；没算出来的速率打横杠，那是「这组里
+没有一轮秒数大于 0」不是缺字段；数是多少就打多少，不打科学计数法，带小数的也不收
+成整数；一行打出来要和表头一样宽，计数到七位不能把右边的列顶歪。走文档里那条命令的
+入口 `main()`，所以老代码上红的是断言，不是 import。
 """
 
 import asyncio
@@ -128,7 +129,7 @@ class _PartialRow:
 def test_the_db_script_reports_a_missing_column_instead_of_blanking_it(
     monkeypatch, capsys
 ):
-    """库里那份出表脚本同样要说「打不了」，那条守卫以前没人走得到。"""
+    """库里那份出表脚本同样要说「打不了」：两段都要点名，别默默打成横杠。"""
     monkeypatch.setattr(db_script, "async_session_factory", lambda: _NoSession())
 
     async def seats(session, window="24h"):
@@ -143,8 +144,35 @@ def test_the_db_script_reports_a_missing_column_instead_of_blanking_it(
 
     monkeypatch.setattr(throughput, "seats", seats)
     code = asyncio.run(db_script.main("24h", False))
+    out, err = capsys.readouterr()
     assert code == 1, code
-    assert "output_tokens" in capsys.readouterr().err
+    assert "output_tokens" in err
+    # 第一段报完就退，第二段照样漏着。哪一段都要点名，不然不知道少的是哪份。
+    assert "[seats]" in err and "[by seat x model x supply]" in err, err
+    # 说了「打不了」，这一段就一行都不能打 —— 打出来的是横杠拼的假行。
+    assert "cheese" not in out, out
+
+
+def test_a_later_row_missing_a_column_is_reported_too(monkeypatch, capsys):
+    """只看第一行，第二行起漏了字段照样默默打成横杠，那一列就少了一个数。"""
+    monkeypatch.setattr(db_script, "async_session_factory", lambda: _NoSession())
+
+    async def seats(session, window="24h"):
+        return {
+            "window": "24h",
+            "since": "2026-10-13T00:00:00+00:00",
+            "now": "2026-10-14T00:00:00+00:00",
+            "window_seconds": 86400.0,
+            "rows": [_rate(), _PartialRow()],
+            "seats": [_rate(), _PartialRow()],
+        }
+
+    monkeypatch.setattr(throughput, "seats", seats)
+    code = asyncio.run(db_script.main("24h", False))
+    out, err = capsys.readouterr()
+    assert code == 1, code
+    assert "output_tokens" in err, err
+    assert "cheese" not in out, out
 
 
 def test_a_count_over_a_million_prints_as_digits():
@@ -159,6 +187,30 @@ def test_a_count_over_a_million_prints_as_digits():
         assert fmt(2592000.0, 12).strip() == "2592000"
         assert fmt(612.5, 12).strip() == "612.5"
         assert fmt(0.5556, 10).strip() == "0.5556"
+        # 秒数带小数：`2591999.757` 不是 `2.592e+06`，`123456.7` 也不是 `123457`。
+        assert fmt(2591999.757, 12).strip() == "2591999.757"
+        assert fmt(123456.7, 12).strip() == "123456.7"
+
+
+def test_a_wide_count_keeps_the_row_the_same_width_as_the_header():
+    """一行打出来要和表头一样宽。计数到七位时列宽兜不住，右边的列全被顶歪一位。"""
+    row = {
+        "seat": "cheese",
+        "model": "claude-sonnet-5",
+        "supply": "subscription",
+        "turns": 1234567,
+        "output_tokens": 48000,
+        "calls": 14,
+        "turn_seconds": 612.5,
+        "p50_tps": 78.4,
+        "p90_tps": 120.0,
+        "window_tps": 0.5556,
+    }
+    for table in (_cli().table, db_script._table):
+        out = table([row])
+        lines = out.splitlines()
+        assert "1234567" in out, out
+        assert len(lines[0]) == len(lines[2]), out
 
 
 def test_a_rate_that_was_never_computed_still_renders_as_a_dash():

@@ -37,9 +37,9 @@ COLUMNS = (
     ("seat", 16),
     ("model", 30),
     ("supply", 13),
-    ("turns", 6),
+    ("turns", 8),
     ("output_tokens", 13),
-    ("calls", 6),
+    ("calls", 8),
     ("turn_seconds", 12),
     ("p50_tps", 9),
     ("p90_tps", 9),
@@ -74,19 +74,16 @@ def login(user, password):
 def fmt(value, width, numeric=False):
     """右对齐的数字、左对齐的字。None 是没算出来（这组里没有一轮秒数大于 0）。
 
-    数是多少就打多少，不用 `:g` —— 它到 1e6 就把 `1234567` 打成 `1.23457e+06`，
-    还四舍五入掉一位；计数和秒数按席位 × 模型 × 供给在 7d / 30d 窗口里累加，过百万
-    是常事。"""
+    数是多少就打多少，不用 `:g` —— 它把 `1234567` 打成 `1.23457e+06`，丢掉一位；
+    带小数的 `2591999.757` 也被它收成 `2.592e+06`。整值的 float 打成整数
+    （`2592000.0` → `2592000`），其余照原样。"""
     if value is None:
         text = "-"
     elif not numeric:
         text = str(value)
-    elif isinstance(value, int):
-        text = str(value)
-    elif value.is_integer():
-        text = str(int(value))
     else:
-        text = f"{value:g}"
+        number = float(value)
+        text = str(int(number)) if number.is_integer() else str(number)
     return text.rjust(width) if numeric else text.ljust(width)
 
 

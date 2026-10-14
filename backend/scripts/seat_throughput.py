@@ -24,9 +24,9 @@ COLUMNS = (
     ("seat", 16),
     ("model", 30),
     ("supply", 13),
-    ("turns", 6),
+    ("turns", 8),
     ("output_tokens", 13),
-    ("calls", 6),
+    ("calls", 8),
     ("turn_seconds", 12),
     ("p50_tps", 9),
     ("p90_tps", 9),
@@ -57,24 +57,25 @@ def _plain(data: dict) -> dict:
 
 
 def _missing(rows: list[dict]) -> list[str]:
-    """ "表要的字段载荷里没有" —— 说出来，别默默打成 `-`。"""
-    return [name for name, _ in COLUMNS if rows and name not in rows[0]]
+    """表要的字段载荷里没有 —— 说出来，别默默打成 `-`。
+
+    每一行都查：只看第一行的话，第二行起漏了字段照样打成横杠。
+    """
+    absent = {name for row in rows for name, _ in COLUMNS if name not in row}
+    return [name for name, _ in COLUMNS if name in absent]
 
 
 def _fmt(value, width, numeric):
-    """数字右对齐、字左对齐。数是多少就打多少，不用 `:g` —— 它到 1e6 就把
-    `1234567` 打成 `1.23457e+06`，还四舍五入掉一位；计数和秒数按席位 × 模型 × 供给
-    在 7d / 30d 窗口里累加，过百万是常事。"""
+    """数字右对齐、字左对齐。数是多少就打多少，不用 `:g` —— 它把 `1234567` 打成
+    `1.23457e+06`，丢掉一位；带小数的 `2591999.757` 也被它收成 `2.592e+06`。
+    整值的 float 打成整数（`2592000.0` → `2592000`），其余照原样。"""
     if value is None:
         text = "-"
     elif not numeric:
         text = str(value)
-    elif isinstance(value, int):
-        text = str(value)
-    elif value.is_integer():
-        text = str(int(value))
     else:
-        text = f"{value:g}"
+        number = float(value)
+        text = str(int(number)) if number.is_integer() else str(number)
     return text.rjust(width) if numeric else text.ljust(width)
 
 
@@ -99,6 +100,7 @@ async def main(window: str, as_json: bool) -> int:
     if as_json:
         print(json.dumps(data, ensure_ascii=False, indent=2))
         return 0
+    code = 0
     for title, which in (("seats", "seats"), ("by seat x model x supply", "rows")):
         rows = data.get(which) or []
         print(
@@ -107,10 +109,13 @@ async def main(window: str, as_json: bool) -> int:
         )
         missing = _missing(rows)
         if missing:
-            print(f"(cannot print: payload has no {missing})", file=sys.stderr)
-            return 1
+            print(
+                f"(cannot print [{title}]: payload has no {missing})", file=sys.stderr
+            )
+            code = 1
+            continue
         print(_table(rows) if rows else "(none)")
-    return 0
+    return code
 
 
 if __name__ == "__main__":
