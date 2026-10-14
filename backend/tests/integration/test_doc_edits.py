@@ -373,3 +373,53 @@ def test_an_edit_outside_a_turn_of_its_editor_belongs_to_no_turn(client):
     line = _doc_lines(client, task)[-1]
     assert line["author"] == "bob"
     assert line["turn_id"] is None
+
+
+# A running turn names its agent by the instance, as the platform records every
+# turn; the edit arrives under the seat. The rule must hold across the two.
+
+
+def test_a_person_started_turn_records_who_asked(client):
+    task, seat, agent = _document(client)
+    _turn_started_by(client, task, _instance_handle(client, task, seat), "alice")
+
+    response = _edit(
+        client, task, agent, (ALICE_PARAGRAPH, "李老师写的第二段，讲范围和不做的事。")
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["requested_by"] == "alice"
+    line = _doc_lines(client, task)[-1]
+    assert line["meta"]["doc_requested_by"] == "alice"
+    assert "<@alice>" in line["content"]
+    assert _history(client, task)[-1]["requested_by"] == "alice"
+
+
+def test_a_person_started_turn_edits_a_persons_text_directly(client):
+    task, seat, agent = _document(client)
+    _turn_started_by(client, task, _instance_handle(client, task, seat), "alice")
+    before = _doc(client, task)
+
+    response = _edit(client, task, agent, ("讲范围", "讲边界"))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["mode"] == "direct"
+    doc = _doc(client, task)
+    assert "讲边界" in doc["content"]
+    assert doc["doc_version"] > before["doc_version"]
+    assert doc["pending_suggestions"] == []
+
+
+def test_a_platform_started_turn_still_only_suggests_a_persons_text(client):
+    task, seat, agent = _document(client)
+    _turn_started_by(client, task, _instance_handle(client, task, seat), "system")
+    before = _doc(client, task)
+
+    response = _edit(client, task, agent, ("讲范围", "讲边界"))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["mode"] == "suggest"
+    assert response.json()["data"]["requested_by"] is None
+    doc = _doc(client, task)
+    assert doc["content"] == before["content"]
+    assert [s["new"] for s in doc["pending_suggestions"]] == ["讲边界"]
