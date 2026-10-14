@@ -7,10 +7,10 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.queries import DEFERRED_INPUT, queued_messages
-from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED

@@ -46,8 +46,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
 from app.core.sentences import say
+from app.domain.addressing import Event
 from app.domain.agent.announce import announce
-from app.domain.delivery.addressing import Event
 from app.domain.delivery.agent import (
     instance_for_seat,
     record_agent,

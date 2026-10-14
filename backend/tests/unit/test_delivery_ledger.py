@@ -16,8 +16,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from app.domain.addressing import REASON_REVIEWER, Addressed, Recipient
 from app.domain.delivery import ledger as ledger_module
-from app.domain.delivery.addressing import REASON_REVIEWER, Addressed, Recipient
 from app.domain.delivery.ledger import MAX_ATTEMPTS, DeliveryEvent, Ledger
 from app.domain.delivery.models import ChannelDelivery, Delivery
 from app.domain.notification.handlers import (

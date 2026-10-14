@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-from app.domain.delivery.addressing import Addressed, Event, Hand, address
+from app.domain.addressing import Addressed, Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.discussion.models import DiscussableModelType
 from app.domain.discussion.reaction_services import DiscussionReactionService

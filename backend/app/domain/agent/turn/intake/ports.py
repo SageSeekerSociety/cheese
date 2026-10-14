@@ -11,8 +11,8 @@ from typing import NotRequired, Protocol, TypedDict, Unpack
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.addressing import Addressed
 from app.domain.agent.turn.state.live import LiveWork
-from app.domain.delivery.addressing import Addressed
 from app.domain.delivery.input_identity import InputReconciliationPending
 
 

@@ -26,6 +26,7 @@ from app.core.background import hold
 from app.core.errors import AppError
 from app.core.redis import get_redis_client
 from app.core.sentences import listing, say
+from app.domain.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.agent import death_evidence, dispatch_log, turn_inputs
 from app.domain.agent.admission import (
     queued,
@@ -53,7 +54,6 @@ from app.domain.agent.turn_ledger import (
     stamp_delivery,
     utcnow,
 )
-from app.domain.delivery.addressing import NOBODY, Addressed, Event, Hand, address
 from app.domain.delivery.agent import dispatch_pending, run_attempt
 from app.domain.delivery.mention import mentioned_handles
 from app.domain.delivery.models import Delivery
@@ -385,7 +385,7 @@ class AgentWorkRunner:
         on the same topic serialize on ChatService's per-topic lock (so a second
         submit queues behind the first).
 
-        ``addressed`` 是这条事件点到了谁（`delivery/addressing.py`）。**没有一个入参
+        ``addressed`` 是这条事件点到了谁（`addressing.py`）。**没有一个入参
         说「跑一轮」**：一轮是 agent 那一档收件人的到达形态，所以调用点能做的只有点
         名，跑不跑由 `_a_turn_was_addressed` 从寻址结果读出来。一个人都没点到，或者
         点到的全是人，这里就什么也不起 —— 平台因此没有一条起轮次的路径（I12）。

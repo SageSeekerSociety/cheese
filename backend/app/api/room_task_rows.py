@@ -28,6 +28,7 @@ from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.addressing import Event, address
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import last_output_at, running_tasks
 from app.domain.agent.opening import opening_state
@@ -35,7 +36,6 @@ from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
@@ -44,6 +44,7 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.models import Task
+from app.domain.room_task.presentation import hand_of
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.usage.repositories import UsageRepository

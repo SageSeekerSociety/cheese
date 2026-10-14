@@ -8,7 +8,7 @@
 是一条永远没人打开的记录。
 
 所以这一叉只回答「怎么送到」，不回答「谁该收到」—— 后者是
-`delivery/addressing.py` 那一份判据，对人和 agent 是同一句话。
+`addressing.py` 那一份判据，对人和 agent 是同一句话。
 
 ## agent 那一档送什么
 

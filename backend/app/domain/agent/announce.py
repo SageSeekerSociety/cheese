@@ -14,7 +14,7 @@
 **调用点说的是这条事件点了谁的名，不是收件人名单，也不是要不要发（I11）。**「下一
 步在谁手上」由这一层从 `meta.who` 读出来 —— 那个码本来就是这句话：`platform`（平
 台自己在重试/自愈）、`cheese`（芝士接着处理）、`human`（等人）。三个码翻成
-`delivery/addressing.py` 的两档 `Hand`，`address()` 再答谁会收到、凭什么收到。
+`addressing.py` 的两档 `Hand`，`address()` 再答谁会收到、凭什么收到。
 
 所以一条平台正在处理的提示**发不出收件人**。它**写得出来**：`points_at` 和 `meta` 是
 两个独立参数，两个都填上不报错：`who` 说了下一步不在参与者手上，点的那些名就只是
@@ -39,6 +39,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ValidationError
 from app.core.live_frames import show_once_committed
 from app.core.sentences import notice_message, with_keys
+from app.domain.addressing import (
+    NAMES_NOBODY,
+    Event,
+    Hand,
+    address,
+)
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
@@ -47,12 +53,6 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
-from app.domain.delivery.addressing import (
-    NAMES_NOBODY,
-    Event,
-    Hand,
-    address,
-)
 from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
@@ -67,7 +67,8 @@ from app.domain.topic_membership.services import TopicMemberService
 
 #: `who` 码 → 下一步在谁手上。`who` 回答的是「谁在管这件事」，那正是投递要问的那一
 #: 句，只是用的是通知契约的词，所以这里不做第二次判断，只把同一个答案翻成投递这一
-#: 侧的词 —— 和 `addressing.hand_of(column)` 对看板那一列做的是同一件事。
+#: 侧的词 —— 和 `room_task/presentation.py` 的 `hand_of(column)` 对看板那一列做的是
+#: 同一件事。
 #:
 #: `None` 是「这条提示没说谁在管」（`meta` 不是 `notice()` 拼的）：没人声明下一步到
 #: 了参与者手上，就谁都不通知 —— 和看板上一格没挪是同一个意思。

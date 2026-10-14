@@ -17,8 +17,8 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
+from app.domain.addressing import Event, Hand, address
 from app.domain.authz.policy import can_manage_project_members
-from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService

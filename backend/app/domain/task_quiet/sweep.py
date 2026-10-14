@@ -20,8 +20,8 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import notice_keys, notice_message, say
+from app.domain.addressing import Event, Hand, address
 from app.domain.block.queries import awaiting_an_answer
-from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver
 from app.domain.notification.models import NotificationType
 from app.domain.review.queries import latest_cards_by_task

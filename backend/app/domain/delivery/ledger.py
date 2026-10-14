@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
-from app.domain.delivery.addressing import Addressed
+from app.domain.addressing import Addressed
 from app.domain.delivery.models import ChannelDelivery, Delivery, TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.handlers import (

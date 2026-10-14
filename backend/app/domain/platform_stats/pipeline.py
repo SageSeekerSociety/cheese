@@ -191,7 +191,7 @@ class PipelineRepository:
     async def needs_you(self, *, limit: int = 20) -> dict[str, Any]:
         """平台版「待你处理」：跨项目、还没人动手的那些事，按原因分堆。
 
-        判据是 `delivery/addressing.py` 的三个码（`reviewer` / `reporter` /
+        判据是 `addressing.py` 的三个码（`reviewer` / `reporter` /
         `asked`），**不发明第四个** —— 那张表同时是通知收件人的判据，看板自己造一个
         新理由的后果是「看板说要人动手、通知没叫人」。
         """

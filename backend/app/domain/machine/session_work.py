@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
 from app.core.sentences import say
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
@@ -35,7 +36,6 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
-from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.device import sandbox as device_sandbox
 from app.domain.device.supply import Supply

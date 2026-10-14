@@ -12,7 +12,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import say
-from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.addressing import Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.notification.models import NotificationType
 from app.domain.team.models import (
@@ -45,7 +45,7 @@ async def _notify(
     这里的每一件事都长在一条 `team_membership_application` 上，而参与者和它的关系
     只有两种：**卡递给了他**（申请等管理员审、邀请等被邀请的人回应），或者**他等
     的东西有了结果**（申请被批/被拒、邀请被接受/被谢绝/被取消）。两种都是
-    `delivery/addressing.py` 里已经有的关系，所以这里不另写一份「谁会收到」。
+    `addressing.py` 里已经有的关系，所以这里不另写一份「谁会收到」。
 
     下一步一定在参与者手上：这几件事发生的那一刻，平台这边已经做完了。
 

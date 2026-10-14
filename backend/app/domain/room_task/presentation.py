@@ -44,6 +44,7 @@ from typing import Any, Protocol
 from sqlalchemy.orm import Mapped
 
 from app.core.errors import ValidationError
+from app.domain.addressing import Hand
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
 
@@ -137,6 +138,30 @@ class Column(enum.StrEnum):
     needs_you = "needs_you"
     done = "done"
     archived = "archived"
+
+
+#: 看板的列 → 下一步在谁手上。**封闭表**：`Column` 多一档而这里没跟上，查表当场抛
+#: `KeyError`，而不是让新的一列悄悄落进「不通知任何人」那一档。住在这里而不是
+#: `app/domain/addressing.py`：表的主键是看板的列，只有这里知道每一列是什么意思；
+#: `Hand` 是那份判据（第 1 层）的词，从下面拿。
+_HAND_OF_COLUMN: dict[Column, Hand] = {
+    # 还在讨论：下一步是负责人把事情说清楚、点「开始」。
+    Column.not_started: Hand.participant,
+    Column.building: Hand.platform,
+    Column.delivering: Hand.platform,
+    Column.needs_you: Hand.participant,
+    Column.done: Hand.platform,
+    Column.archived: Hand.platform,
+}
+
+
+def hand_of(column: Column) -> Hand:
+    """看板上这一格的下一步在谁手上。
+
+    看板的列回答的本来就是「该谁动」（见模块开头），所以这里不是第二次判断，是把
+    同一个答案翻译成投递那一侧的词（`app/domain/addressing.py`）。
+    """
+    return _HAND_OF_COLUMN[column]
 
 
 class NotStarted(enum.StrEnum):

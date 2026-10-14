@@ -168,7 +168,7 @@ class Recorder:
 
 #: 逐条判定 reads these; patched on the module *objects* ``waiting_items``
 #: actually reaches them through (it imports ``address`` by name, so patching
-#: ``delivery.addressing.address`` would miss).
+#: ``addressing.address`` would miss).
 JUDGEMENT_TARGETS = [
     ("address", "app.api.routes.awaiting.address"),
     ("task_presentation", "app.domain.room_task.presentation.task_presentation"),

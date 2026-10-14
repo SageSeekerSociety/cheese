@@ -36,8 +36,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
+from app.domain.addressing import Event, Hand, address
 from app.domain.avatars.models import Avatar
-from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import (
     DeliveryEvent,
     amend,

@@ -1,7 +1,7 @@
 """把一条提议交出去 —— 闸门那一半是纯的，这一半是 I/O。
 
 提议不是一种新东西，所以这里没有新的表、新的收件箱、新的通道：它就是房间里一条
-「下一步在人手上」的事件，走 `delivery/addressing.py` 的寻址和 `delivery/ledger.py`
+「下一步在人手上」的事件，走 `addressing.py` 的寻址和 `delivery/ledger.py`
 的账本（结论 40 后半）。`announce()` 已经把这两步接在一起了，这里只填三样：
 
 - 说什么 —— 闸门算好的那一句（`Proposal.content`），房间里和通知里是同一句；
@@ -33,9 +33,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
+from app.domain.addressing import Event
 from app.domain.agent.announce import announce
 from app.domain.block.models import Block
-from app.domain.delivery.addressing import Event
 from app.domain.notice_meta import (
     EVENT_POLICY_PROPOSAL,
     SEVERITY_WARN,

@@ -26,10 +26,10 @@ from sqlalchemy import or_, select
 
 from app.core.errors import UpstreamUnavailableError
 from app.core.sentences import listing, say
+from app.domain.addressing import Event
 from app.domain.agent.announce import announce
 from app.domain.agent.harness.prompt import main_checks_failed_prompt
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.delivery.addressing import Event
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
     EVENT_DEPLOY_DONE,
