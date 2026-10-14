@@ -119,6 +119,21 @@ class FailingMintGateway(FakeGateway):
         return None
 
 
+class WaitingMintGateway(FakeGateway):
+    """A mint that parks until the test lets it finish, so a second caller can
+    be brought up while the first is still inside its write."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.minting = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def mint_project_key(self, project_id, *, purpose=None):
+        self.minting.set()
+        await self.release.wait()
+        return await FakeGateway.mint_project_key(self, project_id, purpose=purpose)
+
+
 async def _mk_service(factory, tmp_path, fake, profiles=None, screen=None):
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
@@ -402,32 +417,28 @@ async def test_failed_usage_insert_does_not_advance_gateway_checkpoint(
 
 
 @pytest.mark.anyio
-async def test_key_lookup_does_not_queue_behind_the_gateway_lock(
-    business_db_factory, tmp_path
-):
-    """A project whose key is already minted and in step is answered WITHOUT
-    taking `_gateway_lock`.
+async def test_a_key_in_step_is_answered_without_writing(business_db_factory, tmp_path):
+    """Two callers after one project's key, both answered the same one, with
+    nothing written back.
 
-    That lock is process-wide (`get_chat_service` is `@lru_cache`d, so there is
-    one ChatService per process) and the metering proxy asks for a key per
-    request. A lookup that takes it queues every admission on the box behind
+    This is the hot path: the metering proxy asks for a key per request. Any
+    serialisation put in front of it queues every admission on the box behind
     whichever holder is slow, and that wait is what `/llm/admission`'s p95 is
     made of — measured on dev 2026-09-23 at 8.9 s, and reproduced with 20
     concurrent admissions for a single project fanning out into a 5.8 s tail.
+    There is no in-process `_gateway_lock` any more; the read path takes no
+    lock at all (design §2.3).
     """
     fake = FakeGateway()
     svc, _factory, pid, _tid = await _mk_service(business_db_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
     budgets = list(fake.budgets)
 
-    # Some other caller is inside the lock: a mint, a re-price, or a drain.
-    await svc._gateway_lock.acquire()
-    try:
-        assert (
-            await asyncio.wait_for(svc.project_gateway_key(pid), timeout=HANG_S) == key
-        )
-    finally:
-        svc._gateway_lock.release()
+    one, two = await asyncio.wait_for(
+        asyncio.gather(svc.project_gateway_key(pid), svc.project_gateway_key(pid)),
+        timeout=HANG_S,
+    )
+    assert one == two == key
 
     # And answering from the persisted row wrote nothing back.
     assert fake.minted == [pid]
@@ -435,12 +446,44 @@ async def test_key_lookup_does_not_queue_behind_the_gateway_lock(
 
 
 @pytest.mark.anyio
+async def test_two_writers_mint_one_key_between_them(business_db_factory, tmp_path):
+    """Two callers that both find no key mint one between them, and both use
+    that one.
+
+    This is what the settings row lock holds up now that `_gateway_lock` is
+    gone: the write is read-modify-write on `project.settings`, and without
+    `repo.lock_settings` both callers would mint and the project would be left
+    with two keys in play. Both callers are brought up while the first is
+    still inside its mint, so the second is reading before the first has
+    committed anything.
+    """
+    fake = WaitingMintGateway()
+    svc, factory, pid, _tid = await _mk_service(business_db_factory, tmp_path, fake)
+
+    first = asyncio.create_task(svc._gateway_project_env(pid))
+    await asyncio.wait_for(fake.minting.wait(), timeout=HANG_S)
+    second = asyncio.create_task(svc._gateway_project_env(pid))
+    await asyncio.sleep(0)  # let it read and start waiting on the row lock
+    fake.release.set()
+    one, two = await asyncio.wait_for(asyncio.gather(first, second), timeout=HANG_S)
+
+    assert one is not None and two is not None
+    assert one["ANTHROPIC_AUTH_TOKEN"] == two["ANTHROPIC_AUTH_TOKEN"]
+    assert fake.minted == [pid]
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+    assert project is not None
+    minted = one["ANTHROPIC_AUTH_TOKEN"]
+    assert (project.settings or {}).get("llm_gateway_key") == minted
+
+
+@pytest.mark.anyio
 async def test_a_slow_spend_read_does_not_stall_key_lookup(
     business_db_factory, tmp_path
 ):
     """The spend read is an HTTP round trip to LiteLLM. A drain must not hold
-    `_gateway_lock` across it, or one slow `/spend/logs` stalls every admission
-    for as long as the gateway takes to answer."""
+    anything across it, or one slow `/spend/logs` stalls every admission for
+    as long as the gateway takes to answer."""
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, factory, pid, tid = await _mk_service(business_db_factory, tmp_path, fake)

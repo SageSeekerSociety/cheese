@@ -40,7 +40,7 @@ covers:
 
 - `LlmGateway.mint_project_key` 给项目铸一把虚拟 key，沙箱拿到的是它，不是 master key；`set_key_budget` 把 `max_budget` 落到这把 key 上。
 - 额度从项目的计算额度折算（`chat._gateway_budget_target`：项目还能花的额度 × 0.01 美元；不限量的方案是 `None`，也就是不设上限）。
-- key 与环境变量的写入要分读/写两条路：读不取锁，写在 `_gateway_lock` 下；2026-09-23 实测过 20 个并发准入，尾部 5.8 秒。
+- key 与环境变量的写入要分读/写两条路：读不取锁，写整段握着项目设置的行锁（`repo.lock_settings`）串行；曾经这里还有一把进程内的 `_gateway_lock` 挂在读写两条路上，2026-09-23 实测过 20 个并发准入、尾部 5.8 秒，于是把锁从读路上拿掉，写路最终也只留行锁。
 
 ## 记账口径：每模型、当天累计增量 {#accounting}
 
