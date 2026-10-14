@@ -12,6 +12,9 @@ The rules, as a person would state them before any of this was built:
   is told what it held and where, so its agent can tell what to stop leaving
   behind; the other sandboxes there keep running;
 - a disk filled by something other than the sandboxes stops none of them;
+- on a platform host, a sandbox holding more than one sandbox may is stopped
+  on the next walk of its homes, even while the disk has room, and its room is
+  told the limit; on a person's computer there is no such limit;
 - a sandbox's home outlives no sandbox: one left behind is deleted, and a home
   in use, one just made, or one that is not a sandbox's is not;
 - a host takes no more sandboxes than its disk holds.
@@ -26,16 +29,20 @@ import json
 import os
 import re
 import time
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.block.models import Block, BlockKind
+from app.domain.device.models import DeviceRow
+from app.domain.device.supply import Supply
 from app.domain.machine import disk_guard
 from app.domain.machine.disk_guard import DiskGuard
 from app.domain.machine.models import CloudHost
 from app.domain.machine.repositories import CloudHostRepository
+from app.domain.user.repositories import UserRepository
 from tests.integration.test_cloud_host_pool import pool  # noqa: F401 — fixture
 from tests.integration.test_sandbox_idle_stop import (  # noqa: F401 — fixture
     cloud,
@@ -321,3 +328,109 @@ def test_a_check_finding_the_disk_short_walks_at_once_and_stops_the_heaviest(
     assert walks == [False, True]
     assert result["evicted"] == 1
     assert home_of(cloud, heavy) is None and home_of(cloud, light) is not None
+
+
+def test_a_sandbox_over_its_budget_on_a_host_is_stopped_while_the_disk_has_room(
+    cloud,  # noqa: F811
+    two_a_host,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "cloud_sandbox_inode_budget", 200)
+    light, heavy, _ = cloud.seats
+    light_home = working_on(cloud, light, "host-1")
+    on_the_same_host(cloud, heavy, "host-1")
+    files(sandbox_dir(cloud, heavy, "host-1") / ".cheese" / "tmp" / "brute", 300)
+    disk_of(
+        cloud,
+        {
+            "bytes": 10**12,
+            "bytes_free": 9 * 10**11,
+            "inodes": 10**9,
+            "inodes_free": 9 * 10**8,
+        },
+    )
+
+    assert guard(cloud)["evicted"] == 1
+
+    assert home_of(cloud, heavy) is None
+    assert home_of(cloud, light) is not None and light_home.exists()
+    [line] = said(cloud, heavy)
+    assert "/tmp/brute" in line and "200 个文件" in line
+
+
+def test_on_a_persons_computer_a_sandbox_has_no_budget(cloud, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(settings, "cloud_sandbox_inode_budget", 200)
+    seat = cloud.seats[0]
+    resource = "44444444-4444-4444-8444-444444444444"
+
+    async def on_alices_computer():
+        async with cloud.client.test_request_factory() as db:
+            alice = await UserRepository(db).get_by_handle("alice")
+            db.add(
+                DeviceRow(
+                    device_id="alices-computer",
+                    name="alices-computer",
+                    token="alices-token",
+                    owner_user_id=alice.id,
+                    supply=Supply.self_hosted,
+                    created_at=datetime.now(UTC),
+                )
+            )
+            await db.flush()
+            await CloudHostRepository(db).put_device_home(
+                "alices-computer",
+                {
+                    "spec": "standard",
+                    "project_id": cloud.project_id,
+                    "topic_id": seat.room,
+                    "room_resource_id": str(seat.room),
+                    "resource_id": resource,
+                    "session_id": seat.session,
+                },
+            )
+            await db.commit()
+
+    run(cloud, on_alices_computer)
+    home = (
+        cloud.hosts.home_dir("alices-computer")
+        / ".cheese"
+        / "home"
+        / str(cloud.project_id)
+        / resource
+    )
+    files(home / ".cheese" / "tmp" / "brute", 300)
+    cloud.hosts.online.add("alices-computer")
+    disk_of(
+        cloud,
+        {
+            "bytes": 10**12,
+            "bytes_free": 9 * 10**11,
+            "inodes": 10**9,
+            "inodes_free": 9 * 10**8,
+        },
+    )
+
+    assert guard(cloud) == {"read": 1, "walked": 1, "evicted": 0, "removed": 0}
+
+    assert home.exists() and home_of(cloud, seat) is not None
+
+
+def test_a_sandbox_is_held_to_its_budget_on_the_walk_not_between_walks(
+    cloud,  # noqa: F811
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "sandbox_disk_walk_s", 300)
+    monkeypatch.setattr(settings, "cloud_sandbox_inode_budget", 200)
+    seat = cloud.seats[0]
+    home = working_on(cloud, seat, "host-1")
+    walks = disk_of(cloud, ROOM)
+    guard(cloud)  # walked, within its budget
+    files(home / ".cheese" / "tmp" / "brute", 300)
+
+    assert guard(cloud)["evicted"] == 0  # a check between walks
+    assert home_of(cloud, seat) is not None
+
+    monkeypatch.setattr(settings, "sandbox_disk_walk_s", 0)  # the interval has passed
+    assert guard(cloud)["evicted"] == 1
+    assert walks == [True, False, True]
+    assert home_of(cloud, seat) is None
