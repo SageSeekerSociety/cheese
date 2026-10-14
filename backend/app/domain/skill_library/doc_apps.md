@@ -10,7 +10,7 @@ description: 文档中小程序的代码写法和设计规范。随 cheese-docs 
 
 ## 提交
 
-1. 用 `cheese_app_save` 提交代码（`code`）和标题（`title`）。平台先在浏览器中以手机和桌面两种宽度、浅色和深色两种主题各运行一次。出现以下情况时不保存，并返回原因：运行报错，页面没有内容，高度持续增长，自查（`console.assert`）未通过，读者操作的控件没有绑定到变量。
+1. 用 `cheese_app_save` 提交代码（`code`）和标题（`title`）。平台先在浏览器中以手机和桌面两种宽度、浅色和深色两种主题各运行一次，再像读者一样操作一遍：把滑块和数字输入框设到两端、选择每个选项、点击每个按钮、把可拖动的点拖到范围的角上。出现以下情况时不保存，并返回原因（操作后出现的，说明是哪一步操作）：运行报错，页面没有内容，高度持续增长，自查（`console.assert`）未通过，读者操作的控件没有绑定到变量，画面上出现 NaN。
 2. 新建时返回一个块。把它放到文档中合适的位置，并把块的第二行改写为一句说明：小程序展示什么，最重要的结论是什么。在无法运行小程序的地方，读者只能看到这句说明；你以后读这份文档时，也只会读到这一句。
 3. 修改已有的小程序：先用 `cheese_app_get` 读取代码，改好后用 `cheese_app_save` 提交，并带上 `app`（块中 `:::app` 后面的短号）。文档中块的版本号会同步更新。
 
@@ -378,12 +378,14 @@ console.assert(Math.abs(Math.hypot(check[0], check[1]) - 1) < 1e-3, '速度为 1
 import { ref, computed } from 'vue'
 
 const pts = ref([[1, 1.5], [2.5, 3.5], [4, 3], [5.5, 5]])
+// 所有点的横坐标相同时，直线是竖直的，没有斜率，这时不画直线
 const fit = computed(() => {
   const n = pts.value.length
   const mx = pts.value.reduce((s, [x]) => s + x, 0) / n
   const my = pts.value.reduce((s, [, y]) => s + y, 0) / n
-  const k =
-    pts.value.reduce((s, [x, y]) => s + (x - mx) * (y - my), 0) / pts.value.reduce((s, [x]) => s + (x - mx) ** 2, 0)
+  const sxx = pts.value.reduce((s, [x]) => s + (x - mx) ** 2, 0)
+  if (sxx === 0) return null
+  const k = pts.value.reduce((s, [x, y]) => s + (x - mx) * (y - my), 0) / sxx
   return { k, b: my - k * mx }
 })
 const line = (x) => fit.value.b + fit.value.k * x
@@ -391,8 +393,10 @@ const line = (x) => fit.value.b + fit.value.k * x
 
 <template>
   <c-plane :x="[0, 6]" :y="[0, 6]" :height="260">
-    <c-line v-for="([x, y], i) in pts" :key="`r${i}`" :from="[x, y]" :to="[x, line(x)]" tone="muted" dashed />
-    <c-curve :f="line" tone="2" :label="`y = ${fit.k.toFixed(2)}x + ${fit.b.toFixed(2)}`" />
+    <template v-if="fit">
+      <c-line v-for="([x, y], i) in pts" :key="`r${i}`" :from="[x, y]" :to="[x, line(x)]" tone="muted" dashed />
+      <c-curve :f="line" tone="2" :label="`y = ${fit.k.toFixed(2)}x + ${fit.b.toFixed(2)}`" />
+    </template>
     <c-point v-for="(p, i) in pts" :key="i" v-model="pts[i]" drag="xy" :snap="0.25" />
   </c-plane>
 </template>
