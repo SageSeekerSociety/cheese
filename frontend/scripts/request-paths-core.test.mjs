@@ -99,9 +99,22 @@ test('the shape of a path is its segments, a parameter taking one', () => {
   assert.equal(shapeSegments('/topics/${}/reopen${}'), null)
 })
 
-test('the report names the count it judged and the count it skipped', () => {
+test('a failure names the source, the call site and the counts', () => {
   const text = report(judge("request('/topic')"))
-  assert.match(text, /does not serve/)
-  assert.match(text, /src\/api\/x\.ts:1/)
-  assert.match(text, /generated from the app/)
+  // The source is the argument the caller passed, not a literal in here: it is
+  // the line that tells a reader whether the index was read off the app or
+  // handed in by the workflow.
+  assert.ok(text.startsWith('Request paths the emitted index does not serve:\n'), text)
+  assert.ok(text.includes('  src/api/x.ts:1  /topic'), text)
+  assert.ok(text.includes('generated from the app'), text)
+  assert.ok(text.includes('1 path(s) of 1 judged (0 skipped).'), text)
+})
+
+test('a clean run names the source and both counts, including the skipped one', () => {
+  const text = report(judge(["request('/topics')", 'request(base)'].join('\n')))
+  assert.equal(
+    text,
+    'Request paths match the emitted index (1 call site(s) judged,\n' +
+      '  1 skipped: path built from a variable or a helper).',
+  )
 })
