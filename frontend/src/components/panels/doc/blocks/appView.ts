@@ -32,6 +32,11 @@ const PHONE = '(max-width: 600px)'
 const SHOT_WIDTHS = [400, 720]
 /** The address parameter that opens an app full screen: what 复制链接 copies. */
 const LINK_PARAM = 'app'
+/** How long the shell, about a megabyte over the wire, has to say it is ready
+ *  before the block says the app did not load. */
+const READY_MS = 15_000
+/** How long an app that has its code has to draw before it counts as stuck. */
+const DRAW_MS = 10_000
 
 const ICONS = {
   back: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5"/></svg>',
@@ -82,6 +87,17 @@ function safeBottom(): number {
   const inset = probe.getBoundingClientRect().height
   probe.remove()
   return Math.round(inset)
+}
+
+/** Run `then` after `ms` of the page being seen: a hidden tab's frame may not
+ *  load at all, and that is no fault of the app's. Returns what cancels it. */
+function after(ms: number, then: () => void): () => void {
+  let timer = 0
+  const arm = (wait: number) => {
+    timer = window.setTimeout(() => (document.hidden ? arm(ms) : then()), wait)
+  }
+  arm(ms)
+  return () => window.clearTimeout(timer)
 }
 
 function scroller(el: HTMLElement): HTMLElement | null {
@@ -257,11 +273,19 @@ export function appBlock(initial: AppAttrs, opts: AppBlockOptions = {}): AppBloc
     stage.replaceChildren()
   }
 
-  function say(message: string) {
+  /** A sentence where the app would be; with `retry`, a way to try again. */
+  function say(message: string, retry?: () => void) {
     clearStage()
     const note = document.createElement('div')
     note.className = 'doc-app__note'
-    note.textContent = message
+    const words = document.createElement('span')
+    words.textContent = message
+    note.append(words)
+    if (retry) {
+      const again = textButton('doc-app__button', label('retry'))
+      again.addEventListener('click', retry)
+      note.append(again)
+    }
     stage.append(note)
   }
 
@@ -358,6 +382,22 @@ export function appBlock(initial: AppAttrs, opts: AppBlockOptions = {}): AppBloc
     el.title = attrs.title || label('untitled')
     // Hold the room the picture took, so the page does not jump as it starts.
     if (reserved) el.style.height = `${Math.min(reserved, cap())}px`
+    // In the frame's place until the app draws: the picture, if there is one,
+    // and that it is loading. The frame meanwhile is blank, or a page of the
+    // browser's own when the shell could not be had.
+    const loading = document.createElement('div')
+    loading.className = 'doc-app__loading'
+    if (picture) loading.append(picture)
+    else loading.style.height = `${Math.min(reserved || 300, cap())}px`
+    const pill = document.createElement('span')
+    pill.className = 'doc-app__tap'
+    pill.setAttribute('role', 'status')
+    pill.textContent = label('loading')
+    loading.append(pill)
+    stage.classList.add('is-loading')
+    teardown.push(() => stage.classList.remove('is-loading'))
+    let waiting = after(READY_MS, () => say(label('loadFailed'), () => run(v)))
+    teardown.push(() => waiting())
     let loads = 0
     // A second load is the app sending its own frame elsewhere: stop it there.
     el.addEventListener('load', () => {
@@ -367,6 +407,8 @@ export function appBlock(initial: AppAttrs, opts: AppBlockOptions = {}): AppBloc
       const data = event.data
       if (event.source !== el.contentWindow || !data || data.ch !== CHANNEL) return
       if (data.type === 'ready') {
+        waiting()
+        waiting = after(DRAW_MS, () => void fail(label('stuck')))
         const full = dom.classList.contains('is-full')
         post({
           type: 'run',
@@ -376,6 +418,11 @@ export function appBlock(initial: AppAttrs, opts: AppBlockOptions = {}): AppBloc
           safeBottom: full ? safeBottom() : 0,
         })
       } else if (data.type === 'height' && typeof data.h === 'number' && Number.isFinite(data.h)) {
+        if (loading.isConnected) {
+          waiting()
+          loading.remove()
+          stage.classList.remove('is-loading')
+        }
         size(Math.max(0, Math.min(data.h, 100_000)))
       } else if (data.type === 'error') {
         void fail(String(data.message ?? '').slice(0, 500))
@@ -387,7 +434,7 @@ export function appBlock(initial: AppAttrs, opts: AppBlockOptions = {}): AppBloc
     frame = el
     const all = textButton('doc-app__all', label('showAll'))
     all.addEventListener('click', enterFull)
-    stage.append(el, all)
+    stage.append(el, loading, all)
   }
 
   /** The picture taken when the version was kept, run on a tap. */
@@ -431,7 +478,10 @@ export function appBlock(initial: AppAttrs, opts: AppBlockOptions = {}): AppBloc
     } catch (error) {
       loaded = null
       dom.classList.add('is-closed')
-      return say(label(PROBLEM[problemOf(error)], { n: shown }))
+      const problem = problemOf(error)
+      // Forbidden or missing stays so; anything else may pass.
+      if (problem === 'failed') return say(label(PROBLEM[problem]), () => void load(opening))
+      return say(label(PROBLEM[problem], { n: shown }))
     }
     dom.classList.remove('is-closed')
     const linked = opening && new URLSearchParams(location.search).get(LINK_PARAM) === attrs.app
