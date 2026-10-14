@@ -30,15 +30,17 @@ API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 USER = os.environ.get("OKCHEESE_USER", "wangchangxin")
 WINDOWS = ("24h", "7d", "30d")
 
-#: 表头和字段的顺序。宽一点无所谓，人看的是最后三列的速率。
+#: 表头就是接口吐的字段名（`SeatRateOut` 的字段），不另起简称。另起过一次，
+#: `output` / `secs` 这两个假名对不上 `output_tokens` / `turn_seconds`，那两列
+#: 就永远打成 `-`，而自检样例用的也是假名，所以自检照过、没人发现。
 COLUMNS = (
     ("seat", 16),
     ("model", 30),
     ("supply", 13),
     ("turns", 6),
-    ("output", 9),
+    ("output_tokens", 13),
     ("calls", 6),
-    ("secs", 8),
+    ("turn_seconds", 12),
     ("p50_tps", 9),
     ("p90_tps", 9),
     ("window_tps", 10),
@@ -75,34 +77,58 @@ def fmt(value, width, numeric=False):
     return text.rjust(width) if numeric else text.ljust(width)
 
 
+TEXT_COLUMNS = ("seat", "model", "supply")
+
+
 def table(rows):
-    head = "  ".join(name.ljust(width) if not name.endswith("tps") and name not in
-                     ("turns", "output", "calls", "secs") else name.rjust(width)
-                     for name, width in COLUMNS)
+    head = "  ".join(
+        name.ljust(width) if name in TEXT_COLUMNS else name.rjust(width)
+        for name, width in COLUMNS
+    )
     lines = [head, "-" * len(head)]
     for row in rows:
+        # 表要的字段载荷里没有就当场炸。默默打成 `-` 骗过一次了：`output` / `secs`
+        # 对不上 `output_tokens` / `turn_seconds`，那两列一直空着，没人发现。
+        missing = [name for name, _ in COLUMNS if name not in row]
+        if missing:
+            raise KeyError(
+                f"payload row has no {missing}; it sends {sorted(row)}. "
+                "COLUMNS names fields the endpoint does not send."
+            )
         lines.append("  ".join(
-            fmt(row.get(name), width, numeric=name not in ("seat", "model", "supply"))
+            fmt(row.get(name), width, numeric=name not in TEXT_COLUMNS)
             for name, width in COLUMNS
         ))
     return "\n".join(lines)
 
 
 def self_test():
-    """离线核对表的排版和 None 的写法，不碰网络也不碰凭据。"""
+    """离线核对表的排版、None 的写法，和「字段名对不上要当场炸」。不碰网络不碰凭据。
+
+    样例行的键一律照接口吐的字段名写。上一版写的是 `output` / `secs` 这种假名，
+    于是自检验的是一个接口从来不会给的形状，真行里的 `output_tokens` /
+    `turn_seconds` 两列空着也照样绿。
+    """
     sample = [
         {"seat": "cheese", "model": "claude-sonnet-5", "supply": "subscription",
-         "turns": 12, "output": 48000, "calls": 14, "secs": 612.5,
+         "turns": 12, "output_tokens": 48000, "calls": 14, "turn_seconds": 612.5,
          "p50_tps": 78.4, "p90_tps": 120.0, "window_tps": 0.5556},
         {"seat": "cheese-mimo", "model": "mimo-v2.6-pro", "supply": "gateway",
-         "turns": 3, "output": 900, "calls": 3, "secs": 0.0,
+         "turns": 3, "output_tokens": 900, "calls": 3, "turn_seconds": 0.0,
          "p50_tps": None, "p90_tps": None, "window_tps": 0.0104},
     ]
     out = table(sample)
     assert "cheese" in out and "claude-sonnet-5" in out, out
     assert "78.4" in out and "0.5556" in out, out
+    assert "48000" in out and "612.5" in out, out
     # 没有速率的一组写成 `-`，不是 0 —— 0 是一个算出来的速率。
     assert "   -  " in out, out
+    try:
+        table([{"seat": "cheese"}])
+    except KeyError as exc:
+        assert "output_tokens" in str(exc), exc
+    else:
+        raise AssertionError("a row missing payload fields must not render")
     print(out)
     return 0
 
