@@ -133,34 +133,54 @@ def test_a_view_just_taken_is_kept_until_its_session_can_start(
     assert mounts[1] == [view]
 
 
-def test_one_look_releases_every_abandoned_view_on_the_host(
-    tmp_path, mounts, processes
-):
+def test_one_look_ends_every_abandoned_view_on_the_host(tmp_path, mounts, processes):
     """The views served by a server from before the watch — which will never
-    look for its session itself — go at the first look of any new one."""
+    look for its session itself — go at the first look of any new one, and so
+    do their servers: a server outlives its unmount for as long as any session
+    holds a copy of the view, which on a busy host is always."""
     running, kept = seat(tmp_path, "running", mounts)
-    serve(running, kept, processes, tmp_path)
+    kept_server = serve(running, kept, processes, tmp_path)
     processes([sys.executable, "-c", SLEEP], running)
-    ended = []
+    ended, servers = [], []
     for name in ("ended-1", "ended-2"):
         directory, view = seat(tmp_path, name, mounts)
-        serve(directory, view, processes, tmp_path)
+        servers.append(serve(directory, view, processes, tmp_path))
         stopped(processes([sys.executable, "-c", SLEEP], directory))
         ended.append(view)
+    # One already unmounted here, by a look before servers were ended with it.
+    directory, view = seat(tmp_path, "unmounted-before", mounts)
+    mounts[0].discard(view)
+    servers.append(serve(directory, view, processes, tmp_path))
 
-    assert release.release_abandoned_views() == 2
+    assert release.release_abandoned_views() == 3
     assert sorted(mounts[1]) == sorted(ended)
     assert kept in mounts[0]
+    for server in servers:
+        assert server.wait(timeout=5) is not None
+    assert kept_server.poll() is None
 
 
-def test_a_views_server_stops_watching_once_it_has_let_the_view_go(
-    tmp_path, mounts, processes, monkeypatch
-):
-    # The server loads its siblings by bare name, beside it on a session host.
-    monkeypatch.setitem(sys.modules, "release", release)
-    directory, view = seat(tmp_path, "seat", mounts)
-    serve(directory, view, processes, tmp_path)
-
-    forwarded_fs.watch(directory, every=0)
-
-    assert mounts[1] == [view]
+def test_a_views_server_ends_once_its_session_has(tmp_path, processes):
+    """Run as the server is: its own process, the watch in a thread beside a
+    main thread that would serve the view forever. The view here is not mounted
+    on the host — as after a release, while a session elsewhere still holds a
+    copy of it — and no session is left."""
+    directory = tmp_path / "seat" / "remote-session"
+    (directory / release.FORWARDED_VIEW).mkdir(parents=True)
+    program = tmp_path / release.VIEW_SERVER
+    program.write_text(
+        "import sys, threading, time\n"
+        f"sys.path.insert(0, {str(Path(forwarded_fs.__file__).parent)!r})\n"
+        "import forwarded_fs\n"
+        "threading.Thread(target=forwarded_fs.watch, args=(sys.argv[1],),"
+        " kwargs={'every': 0}, daemon=True).start()\n"
+        "time.sleep(60)\n"
+    )
+    server = subprocess.Popen(
+        [sys.executable, str(program), str(directory), str(directory / "view")],
+        env={k: v for k, v in os.environ.items() if k != release.EXECUTION_CONFIG},
+    )
+    try:
+        assert server.wait(timeout=10) == 0
+    finally:
+        server.kill()
