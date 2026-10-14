@@ -5,7 +5,7 @@ Usage: OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/lead_time_sta
            <channel topic id> <YYYY-MM-DD> <YYYY-MM-DD> [--json out.json]
        python3 .claude/scripts/lead_time_stages.py --self-test   (offline)
 
-Cohort: the tasks *created* in the window. One task line is one task; a line that
+Cohort: the tasks *created* in the window, both days included. One task line is one task; a line that
 delivers several times (step 2, step 3, ...) is still one line, and its stages end
 at its first delivery.
 
@@ -295,8 +295,14 @@ def running_spans(rows, calls, gap=GAP):
     return out
 
 
+def in_window(created, start, end):
+    """Both days are included: created on <end> itself counts. Comparing the
+    date part, not the timestamp, so `end` does not have to be midnight."""
+    return start <= (created or "")[:10] <= end
+
+
 def stages(tasks, by_line_cards, ready, first_msg, gh, start, end):
-    lines = [t for t in tasks if start <= t["created_at"] < end]
+    lines = [t for t in tasks if in_window(t["created_at"], start, end)]
     out = []
     for t in lines:
         pref = "task/" + t["id"][:8]
@@ -508,6 +514,14 @@ def self_test():
     check("mins over a minute boundary",
           round(mins("2026-10-08T00:59:30Z", "2026-10-08T01:00:30Z"), 3), 1.0)
     check("day", day("2026-10-08T00:00:00Z"), "2026-10-08")
+    check("in_window takes the first day",
+          in_window("2026-10-08T00:00:00Z", "2026-10-08", "2026-10-14"), True)
+    check("in_window takes the last day whole",
+          in_window("2026-10-14T23:59:59Z", "2026-10-08", "2026-10-14"), True)
+    check("in_window drops the day after",
+          in_window("2026-10-15T00:00:00Z", "2026-10-08", "2026-10-14"), False)
+    check("in_window drops the day before",
+          in_window("2026-10-07T23:00:00Z", "2026-10-08", "2026-10-14"), False)
     check("merge_iv joins overlapping runs", merge_iv([[1, 5], [4, 9], [20, 21]]),
           [[1, 9], [20, 21]])
     check("merge_iv keeps touching-but-disjoint runs apart",
