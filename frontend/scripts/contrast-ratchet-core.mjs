@@ -145,7 +145,8 @@ export function entryFor(run) {
  *   added    a run below its floor that the baseline has never seen;
  *   worse    a frozen run that got further below its floor, and a run frozen as
  *            unmeasurable that the walker can now read and that turns out to be
- *            below its floor — the check just learned something bad;
+ *            below its floor by more than the tolerance — the check just
+ *            learned something bad;
  *   unjudged a run the walker cannot measure that was not already frozen as
  *            unmeasurable. A check that quietly ignores what it cannot measure
  *            is worse than no check, so this is reported rather than dropped;
@@ -175,12 +176,16 @@ export function compare(baseline, worst) {
       continue
     }
     if (frozen.unjudged) {
-      // Frozen as unmeasurable, and the walker can read it now. That is only an
-      // improvement if it clears its floor; a measurable run below its floor is
-      // a failure like any other, and `tightenedBaseline` then freezes the
-      // number, so the update path is the way out rather than a way past it.
+      // Frozen as unmeasurable, and the walker can read it now. There is no
+      // frozen number to compare against, so the floor is the reference — and
+      // the same tolerance, or a run sitting one part in a hundred either side
+      // of its floor would turn the gate red and green on alternate runs, which
+      // is the flapping `TOLERANCE` exists to stop. Clearing the floor is an
+      // improvement; below it by more than the tolerance is a failure like any
+      // other, which `tightenedBaseline` then freezes as a number; in between is
+      // neither, exactly as it is for a frozen number.
       if (passes(run)) improved.push({ key, was: frozen, run })
-      else worse.push({ key, was: frozen, run })
+      else if (run.ratio < run.need - TOLERANCE) worse.push({ key, was: frozen, run })
       continue
     }
     if (passes(run)) {
@@ -255,7 +260,7 @@ export function formatContrastReport(result) {
   }
   for (const [title, rows] of [
     ['New runs below their contrast floor:', result.added],
-    ['Frozen runs that are now below their floor:', result.worse],
+    ['Frozen runs that are below their floor:', result.worse],
     ['Runs the check cannot measure:', result.unjudged],
   ]) {
     if (!rows.length) continue

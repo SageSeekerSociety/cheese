@@ -80,9 +80,12 @@ describe('keyOf', () => {
   it('is the page, the theme, the element and the pseudo-element', () => {
     assert.equal(
       keyOf({ path: '/', theme: 'light', selector: 'span.v-btn__content', pseudo: '' }),
-      '/|light|span.v-btn__content|',
+      '/|light|span.v-btn__content|'
     )
-    assert.equal(keyOf({ path: '/', theme: 'dark', selector: 'i.mdi-x', pseudo: '::before' }), '/|dark|i.mdi-x|::before')
+    assert.equal(
+      keyOf({ path: '/', theme: 'dark', selector: 'i.mdi-x', pseudo: '::before' }),
+      '/|dark|i.mdi-x|::before'
+    )
   })
 
   it('leaves the measured numbers out, so a re-render is the same run', () => {
@@ -92,7 +95,16 @@ describe('keyOf', () => {
 })
 
 describe('worstOf', () => {
-  const run = (over) => ({ path: '/', theme: 'light', selector: 'span.im-time', ratio: 4.33, need: 4.5, unjudged: '', text: '16:20', ...over })
+  const run = (over) => ({
+    path: '/',
+    theme: 'light',
+    selector: 'span.im-time',
+    ratio: 4.33,
+    need: 4.5,
+    unjudged: '',
+    text: '16:20',
+    ...over,
+  })
 
   it('keeps one entry per key, the instance closest to unreadable', () => {
     const worst = worstOf([run({ ratio: 4.33 }), run({ ratio: 3.1 }), run({ ratio: 4.4 })])
@@ -101,8 +113,14 @@ describe('worstOf', () => {
   })
 
   it('prefers a measured instance over one the walker could not read', () => {
-    const worst = worstOf([run({ unjudged: 'a gradient is behind it' }), run({ ratio: 4.33 })])
+    // The unreadable instance is given the better-looking ratio on purpose: the
+    // answer is only 4.33 if the measured instance is the one kept. Keeping the
+    // other would have `compare` report a key that is perfectly readable as
+    // unmeasurable, which is a failure — so which one wins has a consequence,
+    // and this is what notices it changing.
+    const worst = worstOf([run({ ratio: 1.2, unjudged: 'a gradient is behind it' }), run({ ratio: 4.33 })])
     assert.equal(worst.get('/|light|span.im-time|').ratio, 4.33)
+    assert.equal(worst.get('/|light|span.im-time|').unjudged, '')
   })
 
   it('keeps keys apart across page, theme and pseudo-element', () => {
@@ -123,7 +141,19 @@ describe('worstOf', () => {
 const KEY = '/|light|span.im-time|'
 const KEY2 = '/solutions|light|i.mdi-email-outline.mdi|::before'
 const runsOf = (...runs) => worstOf(runs)
-const run = (over) => ({ path: '/', theme: 'light', selector: 'span.im-time', ratio: 4.33, need: 4.5, size: 12, weight: 400, icon: false, unjudged: '', text: '16:20', ...over })
+const run = (over) => ({
+  path: '/',
+  theme: 'light',
+  selector: 'span.im-time',
+  ratio: 4.33,
+  need: 4.5,
+  size: 12,
+  weight: 400,
+  icon: false,
+  unjudged: '',
+  text: '16:20',
+  ...over,
+})
 const frozen = (ratio) => ({ [KEY]: { ratio, need: 4.5, unjudged: '', sample: '16:20' } })
 
 describe('compare', () => {
@@ -179,14 +209,27 @@ describe('compare', () => {
     // The whole reason this is a failure rather than a note. A page that puts a
     // gradient behind its text would otherwise pass this check by hiding the
     // text from it.
-    const result = compare({}, runsOf(run({ unjudged: 'a background image or gradient sits between the run and its ground' })))
+    const result = compare(
+      {},
+      runsOf(run({ unjudged: 'a background image or gradient sits between the run and its ground' }))
+    )
     assert.equal(result.ok, false)
     assert.equal(result.unjudged.length, 1)
   })
 
   it('passes a run that was already frozen as unmeasurable', () => {
-    const baseline = { [KEY]: { ratio: null, need: 4.5, unjudged: 'a background image or gradient sits between the run and its ground', sample: '16:20' } }
-    const result = compare(baseline, runsOf(run({ unjudged: 'a background image or gradient sits between the run and its ground' })))
+    const baseline = {
+      [KEY]: {
+        ratio: null,
+        need: 4.5,
+        unjudged: 'a background image or gradient sits between the run and its ground',
+        sample: '16:20',
+      },
+    }
+    const result = compare(
+      baseline,
+      runsOf(run({ unjudged: 'a background image or gradient sits between the run and its ground' }))
+    )
     assert.equal(result.ok, true)
     assert.equal(result.unjudged.length, 0)
   })
@@ -195,12 +238,30 @@ describe('compare', () => {
     // The walker finally got a colour out of it, and the answer is bad. That is
     // not an improvement to be paid off with an update; the run is below its
     // floor and the gate says so.
-    const baseline = { [KEY]: { ratio: null, need: 4.5, unjudged: 'a background image or gradient sits between the run and its ground', sample: '16:20' } }
+    const baseline = {
+      [KEY]: {
+        ratio: null,
+        need: 4.5,
+        unjudged: 'a background image or gradient sits between the run and its ground',
+        sample: '16:20',
+      },
+    }
     const result = compare(baseline, runsOf(run({ ratio: 1.5 })))
     assert.equal(result.ok, false)
     assert.equal(result.improved.length, 0)
     assert.equal(result.worse.length, 1)
     assert.match(formatContrastReport(result), /1\.5:1, needs 4\.5:1/)
+  })
+
+  it('stays quiet when one that becomes readable lands within the tolerance of its floor', () => {
+    // The gradient went away and the run turns out to sit right on its floor.
+    // Without the tolerance this one key would go red on 4.49 and green on
+    // 4.50, run after run, which is the flapping TOLERANCE is here to stop.
+    const baseline = { [KEY]: { ratio: null, need: 4.5, unjudged: 'a gradient is behind it', sample: '16:20' } }
+    const result = compare(baseline, runsOf(run({ ratio: 4.49 })))
+    assert.equal(result.ok, true)
+    assert.equal(result.worse.length, 0)
+    assert.equal(result.improved.length, 0)
   })
 
   it('passes one that becomes readable and clears its floor', () => {
@@ -211,7 +272,10 @@ describe('compare', () => {
   })
 
   it('fails when a frozen, measured run becomes unmeasurable', () => {
-    const result = compare(frozen(4.33), runsOf(run({ unjudged: 'a background image or gradient sits between the run and its ground' })))
+    const result = compare(
+      frozen(4.33),
+      runsOf(run({ unjudged: 'a background image or gradient sits between the run and its ground' }))
+    )
     assert.equal(result.ok, false)
     assert.equal(result.unjudged.length, 1)
   })
@@ -273,7 +337,10 @@ describe('tightenedBaseline', () => {
   it('never loosens what it keeps, so an update cannot paper over a regression', () => {
     // Frozen at 2.65, measured worse. The kept value must be the worse one, or
     // the run becomes invisible to the next comparison.
-    const next = tightenedBaseline({ [KEY]: { ratio: 2.65, need: 3, unjudged: '', sample: '开始使用' } }, runsOf(run({ ratio: 1.4, need: 3 })))
+    const next = tightenedBaseline(
+      { [KEY]: { ratio: 2.65, need: 3, unjudged: '', sample: '开始使用' } },
+      runsOf(run({ ratio: 1.4, need: 3 }))
+    )
     assert.equal(next[KEY].ratio, 1.4)
     assert.equal(compare(next, runsOf(run({ ratio: 2.0, need: 3 }))).ok, true, 'still worse than the new baseline')
   })
@@ -292,12 +359,29 @@ describe('tightenedBaseline', () => {
   it('is a fixed point: updating a passing tree changes nothing', () => {
     const baseline = {
       [KEY]: entryFor(run({})),
-      [KEY2]: entryFor({ path: '/solutions', theme: 'light', selector: 'i.mdi-email-outline.mdi', pseudo: '::before', ratio: 2.65, need: 3, icon: true, unjudged: '', text: '' }),
+      [KEY2]: entryFor({
+        path: '/solutions',
+        theme: 'light',
+        selector: 'i.mdi-email-outline.mdi',
+        pseudo: '::before',
+        ratio: 2.65,
+        need: 3,
+        icon: true,
+        unjudged: '',
+        text: '',
+      }),
     }
-    const runs = runsOf(
-      run({}),
-      { path: '/solutions', theme: 'light', selector: 'i.mdi-email-outline.mdi', pseudo: '::before', ratio: 2.65, need: 3, icon: true, unjudged: '', text: '' },
-    )
+    const runs = runsOf(run({}), {
+      path: '/solutions',
+      theme: 'light',
+      selector: 'i.mdi-email-outline.mdi',
+      pseudo: '::before',
+      ratio: 2.65,
+      need: 3,
+      icon: true,
+      unjudged: '',
+      text: '',
+    })
     assert.deepEqual(tightenedBaseline(baseline, runs), baseline)
   })
 })

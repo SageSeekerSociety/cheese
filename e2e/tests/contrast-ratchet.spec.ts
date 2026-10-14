@@ -167,8 +167,12 @@ test('a run planted below its floor goes red, and freezing it turns the page gre
   const planted = await collect(page, '/', 'light')
   const comparison = compare(readBaseline(), worstOf(planted))
   expect(comparison.ok, `\n${formatContrastReport(comparison)}\n`).toBe(false)
-  expect(comparison.added.length, 'the links the plant darkened are new to the baseline').toBeGreaterThan(0)
-  expect(comparison.added.every(({ run }: { run: { ratio: number; need: number } }) => run.ratio < run.need)).toBe(true)
+  // Named, not just counted: a plant that stopped hitting the links but darkened
+  // something else on the way past would still leave a non-empty `added` list.
+  expect(comparison.added.map(({ key }: { key: string }) => key)).toEqual([
+    '/|light|a.router-link-active.router-link-exact-active|',
+    '/|light|a|',
+  ])
   // The way out is a commit that says so, not a flag on the check.
   const frozen = tightenedBaseline(readBaseline(), worstOf(planted), { freezeNew: true })
   expect(compare(frozen, worstOf(planted)).ok, 'and the way out is to freeze it on purpose').toBe(true)
