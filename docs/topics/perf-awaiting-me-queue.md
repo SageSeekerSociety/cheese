@@ -112,7 +112,7 @@ shares one event loop」。这个文件也是这件事的仪表：循环迟到�
 消息不会有人回。** 进程启动时先 `hold_turns()`，只有拿到那把 advisory lock 之后才
 `start_turns()`（`main.py` 第 176、236、260 行）。一条人发的消息落库后排成的那个任务，
 第一句就是 `await self._wait_to_start()`（`turn/intake/messages.py` 第 222 行，循环在
-`runtime.py` 第 233–241 行）——没被放行的进程上，这个循环永远不退出。同一个原因还有一处：
+`runtime.py` 第 234–235 行）——没被放行的进程上，这个循环永远不退出。同一个原因还有一处：
 消息要判「是不是接上了正在跑的那一轮」，读的也是 `ChatService.live`（`chat.py` 第 980 行
 `has_running_turn`），非持锁进程永远答否，「未能送达」会假红——`messages.py` 第 140–147
 行的注释写的正是这个症状。所以 `--workers N` 要的是 `docs/manual/dev/architecture.md`

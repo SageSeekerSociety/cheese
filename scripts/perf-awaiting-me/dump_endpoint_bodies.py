@@ -11,7 +11,7 @@ between the two runs would otherwise show up as a change.
 
 Run from the repo root, with the perf database up and seeded (see README.md)::
 
-    PERF_DB_URL=postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5437/cheese_perf \\
+    PERF_DB_URL=postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433/cheese_perf \\
         uv run --project backend python scripts/perf-awaiting-me/dump_endpoint_bodies.py /tmp/before
 
 The directory is required and is created if missing; nothing is overwritten
@@ -23,15 +23,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# `probe_slow_endpoints` sets the app's environment from `PERF_DB_URL` at import,
-# so the app must not be imported before it.
-import probe_slow_endpoints as probe  # noqa: E402
+# This import has to come before `app`: `probe_slow_endpoints` sets the app's
+# environment from `PERF_DB_URL` at import time.
 from probe_slow_endpoints import VIEWER, discover_ids, endpoint_paths  # noqa: E402
 
 #: Keys whose value is the moment of the request, not a fact about a row.

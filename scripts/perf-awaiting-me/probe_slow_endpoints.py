@@ -15,7 +15,7 @@ not in the list: the app's access-log middleware skips them.
 
 Run from the repo root, with the perf database up and seeded (see README.md)::
 
-    PERF_DB_URL=postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5437/cheese_perf \\
+    PERF_DB_URL=postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433/cheese_perf \\
         uv run --project backend python scripts/perf-awaiting-me/probe_slow_endpoints.py
 
 Environment: `PERF_DB_URL` (must also be given as `DATABASE_URL` to the app — the
