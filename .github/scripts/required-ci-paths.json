@@ -12,7 +12,7 @@
   ],
   "frontend": [
     "frontend/**",
-    "backend/openapi.json",
+    "backend/openapi.sha256",
     ".github/workflows/frontend.yml",
     ".claude/scripts/frontend_grade.py",
     ".claude/scripts/catalog-ratchet.py",
