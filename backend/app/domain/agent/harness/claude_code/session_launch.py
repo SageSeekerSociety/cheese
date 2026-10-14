@@ -22,30 +22,10 @@ def session_settings() -> dict:
     """Base Claude settings for one seat's session.
 
     No hook here observes the session: the runner reads what it does from its
-    own stdout. The hooks left are the ones that act — the model catalogue
-    written as agent definitions at session start and on each prompt, and the
-    step-title and shared-checkout rules put in front of every agent the
-    session starts — and the
-    remote-execution client adds the rest of its own (``client.prepare``).
+    own stdout. The hook left is one that acts — the step-title and
+    shared-checkout rules put in front of every agent the session starts — and
+    the remote-execution client adds the rest of its own (``client.prepare``).
     """
-    # 发现层：把项目的模型目录写成本会话的 CC 分身定义文件（名字、一句话描
-    # 述、model=目录 id），主 agent 于是在 Agent 工具的可用清单里直接读到可
-    # 指定哪个模型。闸在准入（/llm/admission）——指定了目录外的模型会被拒并
-    # 列出可选；这里是让人事先知道范围。sync-agents 自己恒退出 0，够不着后
-    # 端时这一轮一切照旧。
-    sync_agents = [
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    # Existing rooms can retain a CLI release without sync-agents.
-                    # Discovery must never block a user prompt on that old CLI.
-                    "command": "cheese sync-agents || true",
-                    "timeout": 15,
-                }
-            ]
-        }
-    ]
     # An agent the session starts — the Agent tool's, a workflow's — gets none
     # of the session's system prompt, but its every step is a line on the room's
     # 施工现场 all the same, and it commits, pulls and starts servers beside
@@ -118,8 +98,6 @@ def session_settings() -> dict:
         # identities (`domain/repository/identity.py`), not to the CLI.
         "attribution": {"commit": "", "pr": "", "sessionUrl": False},
         "hooks": {
-            "SessionStart": sync_agents,
-            "UserPromptSubmit": sync_agents,
             "SubagentStart": subagent_rules,
         },
     }

@@ -74,7 +74,7 @@ from app.domain.agent.environment import (
     parse,
     project_default,
 )
-from app.domain.agent_instance.configuration import model_choices, project_pool
+from app.domain.agent_instance.configuration import model_choices
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.environments import check_allowed, offered_specs
@@ -111,9 +111,6 @@ def _default_model_state(project_settings: dict | None, access: ModelAccess) -> 
             (c["id"] for c in deployment_choices if c["default"]), None
         ),
         "choices": choices,
-        # 发现层（sync-agents）按池过滤目录：与准入同源的 project_pool,别让
-        # 每个读目录的人自己从默认项反推（零默认的目录推不出来）。
-        "pool": project_pool(project_settings),
         "can_manage": False,  # 由路由层按权限填
     }
 

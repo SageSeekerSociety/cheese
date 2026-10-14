@@ -30,6 +30,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Protocol
@@ -47,6 +48,7 @@ from app.domain.agent.queries import _model_policy_call, _Proposed
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
+from app.domain.agent_instance.configuration import project_pool
 from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.policy import gate
@@ -137,6 +139,46 @@ def model_capabilities(*models: str | None) -> str:
         f"{model}=-mid_conv_system"
         for model in sorted({m for m in models if m} & unsupported)
     )
+
+
+def model_agents(project_settings: dict | None) -> dict[str, str]:
+    """The project's models as Claude Code subagent definitions, by file name.
+
+    The Agent tool takes a model only as one of Claude's family aliases, so a
+    session runs a subagent on `kimi-k3` by starting the subagent type of that
+    name, whose definition names the model; admission still decides whether
+    it may (`/llm/admission`). Only the project's own pool is listed: a model
+    from the other one is refused there.
+
+    Claude Code reads its agent definitions once, when it starts, and a file
+    written into a running session's agents directory is never seen by it. So
+    the launch writes them (`device_launch`), and they are in the session's
+    configuration hash: a model the gateway adds reaches a running session when
+    it is next reopened, at a task boundary.
+    """
+    pool = project_pool(project_settings)
+    agents: dict[str, str] = {}
+    for choice in binding.catalog(project_settings).values():
+        if choice["supply"] != pool:
+            continue
+        # Agent names are stricter than model ids; the id itself rides `model`.
+        name = re.sub(r"[^a-z0-9._-]+", "-", choice["id"].lower()).strip("-.")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}", name):
+            continue
+        # The line the main agent reads in the Agent tool's list of types.
+        description = (
+            f"在 {choice['label']}（{choice['id']}）上跑一个分身。要用这个模型派活，"
+            f"subagent_type 填 {name}；Agent 工具的 model 参数只认 Claude 的别名。"
+        )
+        agents[f"model-{name}.md"] = (
+            "---\n"
+            f"name: {name}\n"
+            f"description: {json.dumps(description, ensure_ascii=False)}\n"
+            f"model: {choice['id']}\n"
+            "---\n\n"
+            "完成委派给你的任务，结束时把结果完整交回给委派你的 agent。\n"
+        )
+    return agents
 
 
 def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dict:
@@ -298,6 +340,7 @@ async def _model_kwargs(
             None, child_choices, default_model=child_default
         ).wire_model
     capabilities = model_capabilities(model, child_model)
+    agent_types = model_agents(project.settings)
     config_hash = hashlib.sha256(
         # Author identity, chat skills, and native RC arguments are installed
         # at process birth; refresh them together at the next task boundary.
@@ -324,6 +367,7 @@ async def _model_kwargs(
                         "default_subagent_model"
                     ),
                     "capabilities": capabilities,
+                    "model_agents": agent_types,
                 },
                 sort_keys=True,
             )
@@ -340,6 +384,8 @@ async def _model_kwargs(
             # self-description for the model the turn actually runs on.
             "ANTHROPIC_MODEL": model,
             "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
+            # Written as subagent definitions by the launch (`model_agents`).
+            "CHEESE_MODEL_AGENTS": json.dumps(agent_types),
             # The teammate's thinking effort and compaction share. Both are in
             # `agent.configuration`, and so in the hash above: changing either
             # restarts the session at the next task boundary, which is when

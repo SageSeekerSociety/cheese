@@ -4,10 +4,12 @@ Claude Code session reports none) gets its REAL usage drained from the gateway
 spend log into the usage table."""
 
 import asyncio
+import json
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from app.api import deps as session_turn_deps
@@ -185,6 +187,7 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CHEESE_MODEL_AGENTS",
     }
 
 
@@ -588,6 +591,7 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CHEESE_MODEL_AGENTS",
     }
     assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
@@ -617,6 +621,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CHEESE_MODEL_AGENTS",
     }
     assert kwargs["model"] == "claude-sonnet-5"
 
@@ -652,6 +657,7 @@ async def test_a_turn_on_a_machine_is_metered_by_the_subscription_proxy(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CHEESE_MODEL_AGENTS",
     }
     assert fake.minted == []  # no gateway key is minted for it
 
@@ -1035,3 +1041,59 @@ async def test_the_dashboard_counts_every_call_the_gateway_answered(
     answered.update(calls=40, prompt_tokens=9_900, spend=0.55)
     await svc.charge_turn_spend(pid, tid, uuid.uuid4())
     assert await dashboard_calls() == 40
+
+
+@pytest.mark.anyio
+async def test_a_model_the_gateway_adds_is_a_subagent_type_from_the_next_launch(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """A model an operator adds to the gateway while sessions run can be named
+    for a subagent once the session is next opened: its launch carries the
+    model as a subagent type, and the session's configuration moves, which is
+    what reopens a running session at its next task boundary."""
+    from app.core.config import settings as app_settings
+    from app.domain.agent import gateway_catalog
+
+    def routed(*names):
+        rows = [
+            {
+                "model_name": name,
+                "litellm_params": {"model": f"openai/{name}"},
+                "model_info": {
+                    "cheese_selectable": True,
+                    "input_cost_per_token": 0.000001,
+                    "output_cost_per_token": 0.000001,
+                },
+            }
+            for name in names
+        ]
+        answering = gw.LlmGateway(
+            "http://gw",
+            "mk",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"data": rows})
+            ),
+        )
+        return gateway_catalog.refresh(answering)
+
+    monkeypatch.setattr(app_settings, "agent_model", "glm-5.2")
+    gateway_catalog.reset()
+    try:
+        svc, _factory, pid, _tid = await _mk_service(
+            business_db_factory, tmp_path, FakeGateway()
+        )
+        await routed("glm-5.2")
+        before, _ = await svc._model_kwargs(pid, _on_a_machine())
+        assert "model-kimi-k3.md" not in json.loads(
+            before["env"]["CHEESE_MODEL_AGENTS"]
+        )
+
+        await routed("glm-5.2", "kimi-k3")
+        after, _ = await svc._model_kwargs(pid, _on_a_machine())
+    finally:
+        gateway_catalog.reset()
+
+    agents = json.loads(after["env"]["CHEESE_MODEL_AGENTS"])
+    assert "name: kimi-k3\n" in agents["model-kimi-k3.md"]
+    assert "model: kimi-k3\n" in agents["model-kimi-k3.md"]
+    assert after["env"]["CHEESE_AGENT_CONFIG"] != before["env"]["CHEESE_AGENT_CONFIG"]
