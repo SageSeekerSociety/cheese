@@ -133,7 +133,7 @@ function here(router: { currentRoute: { value: { name?: unknown; params: Record<
 beforeEach(() => {
   setActivePinia(createPinia())
   api.listProjectTasks.mockReset()
-  // 蓝灯认的是「这条不是我负责的」，所以得有个登录的人。
+  // 蓝灯认的是「这条活归我」，所以得有个登录的人。
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: '我' }))
 })
 
@@ -240,8 +240,11 @@ describe('频道下面那一整块任务，收得起来', () => {
     await settle()
 
     const rollup = document.querySelector('.task-fold__rollup') as HTMLElement
-    // 频道行左边那盏已经说了这件事；这一块里没有一条任务有事，就不该再画一颗。
-    expect(rollup.querySelectorAll('.row-light')).toHaveLength(0)
+    // 频道行左边那盏已经说了「有事等你」；这一块里没有一条任务有事，就不该再画一颗黄的。
+    // 剩下这一颗是蓝的：里面那条是我的活，蓝灯说的是「这条归我」，和频道那盏不是一件事。
+    const lights = rollup.querySelectorAll('.row-light')
+    expect(lights).toHaveLength(1)
+    expect(lights[0]!.classList.contains('row-light--blue')).toBe(true)
     expect(rollup.textContent).toBe('3')
   })
 
@@ -265,35 +268,44 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.getAllByRole('button', { name: "Collapse this channel's tasks" })).toHaveLength(1)
   })
 
-  it('别人的活画一盏蓝灯、盖过状态灯；我负责的和没主的都不画', async () => {
+  it('我负责的和没主的画一盏蓝灯；别人的活只按状态画灯', async () => {
     await openProject([
       channel(
         'topic-a',
         [
+          // 这条归我，状态上没别的话可说：画蓝灯。
           task(K1, '任务一', 'topic-a', { owner_handle: 'me' }),
-          // 这条在往前跑：它该画呼吸绿，但「不归我」压过「在跑」。
+          // 这条在往前跑，是别人负责的：只画它自己那盏呼吸绿，不画蓝。
           task(K2, '任务二', 'topic-a', { owner_handle: 'wang', filling_in: true, moving: true }),
+          // 没主的算我这边的：也画蓝灯。
           task(K3, '任务三', 'topic-a'),
         ],
         4
       ),
     ])
 
-    // 别人的那一条只有一盏灯，是蓝的：灯是给读屏用的图，名字就是它要说的事。
-    const theirs = screen.getByRole('button', { name: /任务二/ })
-    const lights = theirs.querySelectorAll('.row-light')
+    const mine = screen.getByRole('button', { name: /任务一/ })
+    const lights = mine.querySelectorAll('.row-light')
     expect(lights).toHaveLength(1)
     expect(lights[0]!.classList.contains('row-light--blue')).toBe(true)
-    // 灯是给读屏看的图，蓝灯又把状态灯盖掉了：它必须自己说得出这一行归谁。
-    expect(lights[0]!.getAttribute('aria-label')).toBeTruthy()
+    // 灯是给读屏看的图，名字就是它要说的事：这盏说的是「这条归我」。
+    expect(lights[0]!.getAttribute('aria-label')).toBe('My task')
+
+    // 没主的那一条一样：这条活先当自己的。
+    const unowned = screen.getByRole('button', { name: /任务三/ }).querySelectorAll('.row-light')
+    expect(unowned).toHaveLength(1)
+    expect(unowned[0]!.classList.contains('row-light--blue')).toBe(true)
+
+    // 别人的活不画蓝灯，只按状态画：这条在跑，就是呼吸绿。
+    const theirs = screen.getByRole('button', { name: /任务二/ })
+    const theirsLights = theirs.querySelectorAll('.row-light')
+    expect(theirsLights).toHaveLength(1)
+    expect(theirsLights[0]!.classList.contains('row-light--breathe')).toBe(true)
+    expect(theirsLights[0]!.classList.contains('row-light--blue')).toBe(false)
 
     // 借来的那一条还靠悬浮说明说出它为什么在这儿：这个频道里我自己的不到三条。
     // 断它必须说出的那件事，不整句比——整句比较只会在改文案时红一次
     // （王长鑫 2026-10-12 审阅 #3498 提的，`.claude/rules` 之外的那条约定）。
     expect(theirs.getAttribute('title')).toContain('Fewer than three')
-
-    // 我负责的那一条、还有没主的那一条，都只按状态画灯；没有状态就不画灯。
-    expect(screen.getByRole('button', { name: /任务一/ }).querySelector('.row-light')).toBeNull()
-    expect(screen.getByRole('button', { name: /任务三/ }).querySelector('.row-light')).toBeNull()
   })
 })

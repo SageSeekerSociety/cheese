@@ -112,6 +112,7 @@ describe('brightest —— 收起来的一堆行挑一盏', () => {
   const yellow = { kind: 'yellow', breathe: false } as const
   const breathe = { kind: 'green', breathe: true } as const
   const still = { kind: 'green', breathe: false } as const
+  const blue = { kind: 'blue', breathe: false } as const
 
   it('一盏都没有就是不亮', () => {
     expect(brightest([])).toBeNull()
@@ -128,6 +129,13 @@ describe('brightest —— 收起来的一堆行挑一盏', () => {
     expect(brightest([still, breathe])).toBe(breathe)
     expect(brightest([breathe, still])).toBe(breathe)
   })
+
+  it('蓝垫在四盏下面', () => {
+    expect(brightest([blue, still])).toBe(still)
+    expect(brightest([still, blue])).toBe(still)
+    expect(brightest([blue, red])).toBe(red)
+    expect(brightest([blue, breathe, yellow])).toBe(yellow)
+  })
 })
 
 describe('lightTitle —— 灯上悬停那一句', () => {
@@ -136,5 +144,6 @@ describe('lightTitle —— 灯上悬停那一句', () => {
     expect(lightTitle({ kind: 'yellow', breathe: false })).toBe('有事等你')
     expect(lightTitle({ kind: 'green', breathe: true })).toBe('有活在往前走')
     expect(lightTitle({ kind: 'green', breathe: false })).toBe('做完了，你还没看过')
+    expect(lightTitle({ kind: 'blue', breathe: false })).toBe('我负责的')
   })
 })
