@@ -327,6 +327,22 @@ function renderPlain(text: string): string {
         :editable="mine && !outgoing"
         @change="emit('checklist', block, $event)"
       />
+      <!-- 芝士问的一道题：题目本身就是卡片的标题，和选项、末行的输入框收在同一张卡里，
+           不再是上一条消息的最后一段。卡片页头写谁问的；这一条是一串的第一条时，名字
+           那一行就在卡片正上方，页头不再说一遍名字（「问你」而不是「芝士 问你」）。 -->
+      <AskQuickReplies
+        v-else-if="askOptions(block)"
+        :block="block"
+        :asker="runStart ? undefined : authorName"
+        :names="refs.mentionNames"
+        :closed="askClosed"
+        :viewer="viewer"
+        @reply="emit('ask-reply', block, $event)"
+        @withdraw="emit('ask-withdraw', block)"
+        @skip="emit('ask-skip', block)"
+      >
+        <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="refs" />
+      </AskQuickReplies>
       <template v-else>
         <div
           ref="foldEl"
@@ -376,16 +392,6 @@ function renderPlain(text: string): string {
           {{ t('work.room.outbox.edit') }}
         </button>
       </div>
-      <AskQuickReplies
-        v-if="askOptions(block)"
-        :block="block"
-        :names="refs.mentionNames"
-        :closed="askClosed"
-        :viewer="viewer"
-        @reply="emit('ask-reply', block, $event)"
-        @withdraw="emit('ask-withdraw', block)"
-        @skip="emit('ask-skip', block)"
-      />
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
       <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
