@@ -165,8 +165,13 @@ the upstream drops the connection or reports `response.failed`. The router holds
 `message_start` back until content arrives, so the caller got a 200 stream with
 no content and no stop, which Claude Code reports as "Stream ended without
 receiving any events" and does not retry. `patch_responses_stream_errors.py`
-ends such a stream with an Anthropic `error` event instead.
-`test_responses_stream_errors.py` checks this against a local fake upstream.
+ends such a stream with an Anthropic `error` event instead. A clean HTTP EOF
+without a terminal Responses event also emits a retryable `overloaded_error`:
+HTTP framing alone cannot prove the answer completed. The gateway neither
+replays partial content nor invents `message_stop`; the client's existing
+request retry handles the failure. A declared token limit keeps its normal
+`max_tokens` ending. `test_responses_stream_errors.py` checks these boundaries
+against a local fake upstream.
 
 With no fallback configured, the router then re-raises that failure to the
 proxy, which as pinned ends the stream with an unnamed OpenAI-shaped

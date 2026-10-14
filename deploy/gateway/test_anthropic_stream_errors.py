@@ -87,6 +87,10 @@ UPSTREAMS = {
     "late-overload": ([CREATED, PING_S * 4, FAILED], True),
     # The connection drops after the gateway has answered 200.
     "late-drop": ([CREATED, PING_S * 4], False),
+    # The upstream closes cleanly after the gateway has answered 200, but never
+    # sends a terminal event. A clean EOF is still an incomplete answer.
+    "clean-eof": ([CREATED, PING_S * 4], True),
+    "partial-eof": ([CREATED, *ANSWER], True),
     # The upstream overloads before the gateway has sent the caller anything.
     "early-overload": ([CREATED, FAILED], True),
     "complete": ([CREATED, *ANSWER, COMPLETED], True),
@@ -149,7 +153,7 @@ async def main():
             assert status == 200 and [name for name, _ in events][-1] == "message_stop", (status, events)
             print("PASS: a completed upstream stream reaches the caller whole", flush=True)
 
-            for upstream in ("late-overload", "late-drop"):
+            for upstream in ("late-overload", "late-drop", "clean-eof"):
                 status, events = await call(client, upstream)
                 errors = [data for name, data in events if name == "error"]
                 assert status == 200 and events and events[0][0] == "ping", (upstream, status, events)
@@ -159,6 +163,18 @@ async def main():
                 assert errors[-1]["error"]["type"] == "overloaded_error", (upstream, errors)
                 assert upstream != "late-overload" or "overloaded" in errors[-1]["error"]["message"], errors
                 print(f"PASS: a {upstream} after the stream started reaches the caller as overloaded_error", flush=True)
+
+            status, events = await call(client, "partial-eof")
+            assert status == 200, (status, events)
+            assert [name for name, _ in events].count("error") == 1, events
+            assert events[-1][1]["error"]["type"] == "overloaded_error", events
+            assert "message_stop" not in [name for name, _ in events], events
+            text = "".join(
+                data["delta"].get("text", "")
+                for name, data in events if name == "content_block_delta"
+            )
+            assert text == "OK", events
+            print("PASS: a partial answer ends in one error, without replay or a false completion", flush=True)
 
             status, events = await call(client, "early-overload")
             assert status >= 500, (status, events)

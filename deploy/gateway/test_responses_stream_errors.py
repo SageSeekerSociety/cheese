@@ -53,6 +53,15 @@ COMPLETED = {
         },
     },
 }
+INCOMPLETE = {
+    **COMPLETED,
+    "type": "response.incomplete",
+    "response": {
+        **COMPLETED["response"],
+        "status": "incomplete",
+        "incomplete_details": {"reason": "max_output_tokens"},
+    },
+}
 FAILED = {
     "type": "response.failed",
     "sequence_number": 1,
@@ -68,7 +77,12 @@ UPSTREAMS = {
     "dropped": ([CREATED], False),
     # The upstream reports its own failure inside the stream.
     "failed": ([CREATED, FAILED], True),
+    # HTTP framing finished, but the model never completed its response.
+    "empty": ([], True),
+    "clean-eof": ([CREATED], True),
+    "partial-eof": ([CREATED, *ANSWER], True),
     "complete": ([CREATED, *ANSWER, COMPLETED], True),
+    "incomplete": ([CREATED, *ANSWER, INCOMPLETE], True),
 }
 
 
@@ -133,7 +147,12 @@ async def main():
         assert "message_stop" in events(frames) and "error" not in events(frames), frames
         assert any('"text": "OK"' in f or '"text":"OK"' in f for f in frames), frames
         print("PASS: a completed upstream stream reaches the caller whole", flush=True)
-        for upstream in ("dropped", "failed"):
+        frames, error = await call(router, "incomplete")
+        assert error is None and "error" not in events(frames), (frames, error)
+        assert events(frames).count("message_stop") == 1, frames
+        assert any('"max_tokens"' in f for f in frames), frames
+        print("PASS: a declared token limit keeps its normal stop reason", flush=True)
+        for upstream in ("dropped", "failed", "empty", "clean-eof", "partial-eof"):
             frames, error = await call(router, upstream)
             assert "message_stop" not in events(frames), (upstream, frames)
             assert error is not None or "error" in events(frames), (

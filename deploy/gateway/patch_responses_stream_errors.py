@@ -5,7 +5,9 @@ an upstream failure (a dropped connection, an in-stream `response.failed`) and
 then ends the stream as if it had finished. The router has held back
 `message_start` waiting for content, so the caller receives a 200 stream with
 no content and no stop, which Claude Code reports as "Stream ended without
-receiving any events" and does not retry.
+receiving any events" and does not retry. A clean HTTP EOF without a terminal
+Responses event has the same outcome: report it as a retryable stream failure,
+without replaying content or manufacturing a successful message_stop.
 """
 
 import hashlib
@@ -46,7 +48,9 @@ replace(
 )
 replace(
     b"class AnthropicResponsesStreamWrapper:\n",
-    b"def _stream_error_event(error: Exception) -> dict[str, object]:\n"
+    b"def _stream_error_event(error: Exception | None = None) -> dict[str, object]:\n"
+    b"    if error is None:\n"
+    b"        return {\"type\": \"error\", \"error\": {\"type\": \"overloaded_error\", \"message\": \"upstream stream ended before completion\"}}\n"
     b"    from litellm.llms.anthropic.common_utils import ANTHROPIC_ERROR_STATUS_CODE_MAP\n\n"
     b"    cause: Final = getattr(error, \"original_exception\", None) or error\n"
     b"    status: Final = getattr(cause, \"status_code\", None)\n"
@@ -55,5 +59,14 @@ replace(
     b"    )\n"
     b"    return {\"type\": \"error\", \"error\": {\"type\": error_type, \"message\": str(cause) or type(cause).__name__}}\n\n\n"
     b"class AnthropicResponsesStreamWrapper:\n",
+)
+replace(
+    b"        # Drain any remaining queued chunks\n",
+    b"        # HTTP EOF is not a completed model response. Only a terminal\n"
+    b"        # Responses event may finish the message, including max_tokens.\n"
+    b"        if not self._sent_message_stop and not self._upstream_failed:\n"
+    b"            self._upstream_failed = True\n"
+    b"            self._chunk_queue.append(_stream_error_event())\n\n"
+    b"        # Drain any remaining queued chunks\n",
 )
 path.write_bytes(source)
