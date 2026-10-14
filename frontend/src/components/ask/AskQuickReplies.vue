@@ -56,8 +56,11 @@ import ConfirmDialog from '../base/ConfirmDialog.vue'
 
 const props = defineProps<{
   block: Block
-  /** 问的那一位的显示名（卡片页头「芝士 问你」里的「芝士」）。 */
-  asker: string
+  /**
+   * 问的那一位的显示名（卡片页头「芝士 问你」里的「芝士」）。卡片正上方已经是这位的
+   * 名字那一行（一串消息的第一条）时不给：页头只写「问你」，名字不说两遍。
+   */
+  asker?: string
   names: Record<string, string>
   /** 这里已经不能回答了：任务关了、频道归档了。 */
   closed?: boolean
@@ -106,12 +109,28 @@ const askedOthers = computed(() =>
     .map((h) => props.names[h] ?? h)
     .join(t('work.room.roster.listSeparator'))
 )
+const WHO = {
+  named: {
+    all: 'ask.replies.who.all',
+    anyone: 'ask.replies.who.anyone',
+    you: 'ask.replies.who.you',
+    youAnd: 'ask.replies.who.youAnd',
+    people: 'ask.replies.who.people',
+  },
+  bare: {
+    all: 'ask.replies.whoBare.all',
+    anyone: 'ask.replies.whoBare.anyone',
+    you: 'ask.replies.whoBare.you',
+    youAnd: 'ask.replies.whoBare.youAnd',
+    people: 'ask.replies.whoBare.people',
+  },
+} as const
 const whoKey = computed(() => {
-  if (askedAll.value) return 'ask.replies.asksAll'
-  if (asked.value.length === 0) return 'ask.replies.asksAnyone'
-  if (props.viewer && asked.value.includes(props.viewer))
-    return asked.value.length > 1 ? 'ask.replies.asksYouAnd' : 'ask.replies.asksYou'
-  return 'ask.replies.asks'
+  const keys = props.asker ? WHO.named : WHO.bare
+  if (askedAll.value) return keys.all
+  if (asked.value.length === 0) return keys.anyone
+  if (props.viewer && asked.value.includes(props.viewer)) return asked.value.length > 1 ? keys.youAnd : keys.you
+  return keys.people
 })
 
 // 选项还摆在看的人面前：没人答过、没结束、没被所有人跳过、他自己也没跳过。
@@ -504,5 +523,23 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 }
 .ask-replies__withdraw:hover {
   color: var(--text);
+}
+/* 触屏上全站的输入框都是 16px（style.css，免得 iOS 聚焦时放大页面），末行的输入框也
+   是。卡里和它并排的字跟着到 16：题目、选项、答过的那几句和输入框同一档，卡里仍只有
+   两三种字号，而不是 13 / 14 / 15 之外再多一个 16。排在最后：同样的选择器，后写的赢。 */
+@media (pointer: coarse) {
+  .ask-replies__question,
+  .ask-replies__label,
+  .ask-replies__row {
+    font-size: 16px;
+    line-height: var(--lh-15-reading);
+  }
+  .ask-replies__question :slotted(.im-text) {
+    font-size: 16px;
+  }
+  .ask-replies__num,
+  .ask-replies__other-input {
+    line-height: var(--lh-15-reading);
+  }
 }
 </style>

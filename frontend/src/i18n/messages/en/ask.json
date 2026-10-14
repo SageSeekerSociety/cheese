@@ -17,10 +17,19 @@
     "undoSkip": "Undo",
     "undoSkipAria": "Undo the skip and answer this question",
     "skipFailed": "Couldn't skip the question",
-    "asks": "{asker} asks {people}",
-    "asksYou": "{asker} asks you",
-    "asksYouAnd": "{asker} asks you and {people}",
-    "asksAll": "{asker} asks everyone",
-    "asksAnyone": "{asker} asks"
+    "who": {
+      "you": "{asker} asks you",
+      "youAnd": "{asker} asks you and {people}",
+      "people": "{asker} asks {people}",
+      "all": "{asker} asks everyone",
+      "anyone": "{asker} asks"
+    },
+    "whoBare": {
+      "you": "Asks you",
+      "youAnd": "Asks you and {people}",
+      "people": "Asks {people}",
+      "all": "Asks everyone",
+      "anyone": "Question"
+    }
   }
 }

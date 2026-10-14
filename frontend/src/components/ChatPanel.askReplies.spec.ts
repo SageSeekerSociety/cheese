@@ -399,6 +399,22 @@ describe('题问了几个人', () => {
     expect(card.querySelectorAll('.mention')).toHaveLength(0)
   })
 
+  it('题是一串消息的第一条：名字那一行就在卡片上面，页头不再说一遍名字', async () => {
+    history = [question('t-who-first')]
+    const { container } = await open('t-who-first')
+    const who = container.querySelector('.ask-replies__who')?.textContent?.trim()
+    expect(who).toBe('问你')
+  })
+
+  it('题接在同一个人的上一条后面（上面没有名字那一行）：页头写出是谁问的', async () => {
+    const before = { ...question('t-who-cont'), id: 'm-before', content: '我先看了一遍原始表。', meta: {} } as Block
+    history = [before, question('t-who-cont')]
+    const { container } = await open('t-who-cont')
+    await until(() => container.querySelectorAll('[data-mid]').length === 2)
+    const who = container.querySelector('.ask-replies__who')?.textContent?.trim()
+    expect(who).toMatch(/^\S+ 问你$/)
+  })
+
   it('问所有人的题写「所有人」，不逐个列名字', async () => {
     history = [question('t-asks-all', null, ['me', 'alice', 'bob'], [], true)]
     const { container } = await open('t-asks-all')
