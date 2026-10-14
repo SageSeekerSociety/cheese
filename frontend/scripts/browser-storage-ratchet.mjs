@@ -3,7 +3,10 @@
 // browser-storage-baseline.json.
 //
 //   node scripts/browser-storage-ratchet.mjs            check (exit 1 on any new reference)
-//   node scripts/browser-storage-ratchet.mjs --update   rewrite the baseline downward
+//   node scripts/browser-storage-ratchet.mjs --update   rewrite the baseline downward;
+//                                                       refuses to freeze a new file
+//                                                       unless --freeze-new is typed too
+//   node scripts/browser-storage-ratchet.mjs --update --freeze-new   accept new debt
 //   node scripts/browser-storage-ratchet.mjs --json     one JSON record on stdout, same exit code
 //   node scripts/browser-storage-ratchet.mjs --files <path>   judge just those paths
 //
@@ -38,6 +41,7 @@ function option(name, fallback) {
 }
 
 const update = process.argv.includes('--update')
+const freezeNew = process.argv.includes('--freeze-new')
 const ID = 'fe-storage'
 // Overridable so the self-test can judge a planted file against a throwaway
 // baseline instead of editing the committed one.
@@ -105,8 +109,33 @@ const currentTotal = Object.values(current).reduce((a, b) => a + b, 0)
 
 const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')).files ?? {} : {}
 
+const result = compare(baseline, current)
+
 if (update) {
-  const next = tightenedBaseline(baseline, current)
+  // Shrink-only, like the a11y ratchet and backend/scripts/boundary_baseline.py.
+  // `tightenedBaseline` never raises a frozen count, but it does admit a file the
+  // baseline has not seen yet — which is exactly where a new reference lands. So
+  // an update that would freeze anything new refuses and says what; accepting new
+  // debt is a decision someone makes on purpose, by typing --freeze-new.
+  const regressed = new Set(result.regressions.map((r) => r.file))
+  if (regressed.size && !freezeNew) {
+    console.error(
+      formatStorageReport(
+        { ...result, improvements: [] },
+        parsed.violations.filter((v) => regressed.has(v.file))
+      )
+    )
+    console.error('')
+    console.error('--update only lowers the baseline; it wrote nothing. Fix the above, or')
+    console.error('freeze them deliberately with --freeze-new.')
+    process.exit(1)
+  }
+  if (freezeNew) {
+    for (const { file, base, now } of result.regressions) console.log(`freezing ${file}: ${base} -> ${now}`)
+  }
+  const next = freezeNew
+    ? Object.fromEntries(Object.entries(current).sort(([a], [b]) => a.localeCompare(b)))
+    : tightenedBaseline(baseline, current)
   writeFileSync(
     baselinePath,
     `${JSON.stringify(
@@ -115,7 +144,8 @@ if (update) {
           'Frozen direct localStorage/sessionStorage references under src/. ' +
           'The ratchet blocks any NEW one; these are pre-existing and may only ' +
           'go down, by importing from src/lib/browserStorage.ts instead. ' +
-          'Regenerate with `pnpm run lint:storage:update`. The rule and its ' +
+          'Regenerate with `pnpm run lint:storage:update`, which refuses to ' +
+          'freeze a new file unless --freeze-new is typed too. The rule and its ' +
           'messages live in scripts/browser-storage-ratchet-core.mjs.',
         files: next,
       },
@@ -128,7 +158,6 @@ if (update) {
   process.exit(0)
 }
 
-const result = compare(baseline, current)
 const scanned = (scan.length ? scan : ROOTS).join(', ')
 // Only the files the ratchet is blocking: listing every frozen reference in the
 // tree would bury the new one the report is about.

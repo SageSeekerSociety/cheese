@@ -301,7 +301,7 @@ describe('the ratchet on a planted reference', () => {
 
   const runRatchet = (...args) => spawnSync(process.execPath, [RATCHET, ...args], { cwd: ROOT, encoding: 'utf8' })
 
-  it('blocks it, then accepts it once the baseline is allowed to know', () => {
+  it('blocks it, will not launder it, and freezes it only on purpose', () => {
     try {
       writeFileSync(
         PLANT,
@@ -320,13 +320,53 @@ describe('the ratchet on a planted reference', () => {
       // With the way out named.
       assert.match(blocked.stdout, /@\/lib\/browserStorage/)
 
-      // Freezing it (explicitly, into a scratch baseline) turns the same run green.
-      const update = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratchBaseline, '--update')
+      // A plain --update must not swallow it: the baseline is written downward
+      // only, and this would raise it.
+      const laundered = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratchBaseline, '--update')
+      assert.equal(laundered.status, 1, `${laundered.stdout}${laundered.stderr}`)
+      assert.match(laundered.stderr, /--update only lowers the baseline/)
+      assert.match(laundered.stderr, /__storageProbe\.ts: 0 -> 2/)
+      assert.throws(() => readFileSync(scratchBaseline), /ENOENT/)
+
+      // Accepting new debt is a separate, deliberate act: --freeze-new freezes it,
+      // and the same run then goes green.
+      const update = runRatchet(
+        '--files',
+        'src/__storageProbe.ts',
+        '--baseline',
+        scratchBaseline,
+        '--update',
+        '--freeze-new'
+      )
       assert.equal(update.status, 0, `${update.stdout}${update.stderr}`)
+      assert.match(update.stdout, /freezing src\/__storageProbe\.ts: 0 -> 2/)
       assert.equal(JSON.parse(readFileSync(scratchBaseline, 'utf8')).files['src/__storageProbe.ts'], 2)
 
       const after = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratchBaseline)
       assert.equal(after.status, 0, `${after.stdout}${after.stderr}`)
+    } finally {
+      rmSync(PLANT, { force: true })
+    }
+  })
+
+  it('--update lowers a count that went down and never raises one', () => {
+    const scratch = join(sandbox, 'baseline-shrink.json')
+    try {
+      writeFileSync(
+        PLANT,
+        `export const read = () => localStorage.getItem('k')\nexport const write = (v: string) => sessionStorage.setItem('k', v)\n`
+      )
+      // Frozen at 5, now 2: the update writes 2, and needs no --freeze-new.
+      writeFileSync(scratch, JSON.stringify({ files: { 'src/__storageProbe.ts': 5, 'src/gone.ts': 3 } }))
+      const lowered = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratch, '--update')
+      assert.equal(lowered.status, 0, `${lowered.stdout}${lowered.stderr}`)
+      assert.deepEqual(JSON.parse(readFileSync(scratch, 'utf8')).files, { 'src/__storageProbe.ts': 2 })
+
+      // Frozen at 1, now 2: the update refuses and leaves the file as it was.
+      writeFileSync(scratch, JSON.stringify({ files: { 'src/__storageProbe.ts': 1 } }))
+      const raised = runRatchet('--files', 'src/__storageProbe.ts', '--baseline', scratch, '--update')
+      assert.equal(raised.status, 1, `${raised.stdout}${raised.stderr}`)
+      assert.deepEqual(JSON.parse(readFileSync(scratch, 'utf8')).files, { 'src/__storageProbe.ts': 1 })
     } finally {
       rmSync(PLANT, { force: true })
     }
