@@ -256,10 +256,10 @@ def test_the_catch_up_carries_the_dedup_key_of_its_stall(client, line):
 def test_another_stalls_delivery_does_not_answer_this_one(client, line):
     """账上别的停摆窗口那一条，不算这一场停摆补过了。
 
-    线上账本里几乎总有别的还没送出去的投递，所以「这一场补过没有」只能按**这一次停
-    摆**的事件 id 去圈：圈松了，别人那一条会被当成「已经补过」，补跳从此静默地再也
-    发不出去 —— 它是平台的指令，判失败不在那条线上说话，连「没补成」都没人知道。
-    诱饵落在别的对话上，是为了让这里捞到的只可能是这一次补跳那一条。
+    线上账本里几乎总有别的还没送出去的投递，而且就落在同一条线的对话里——补跳自己
+    上一场留下的、别处投给这条线的。所以「这一场补过没有」只能按**这一次停摆**的事
+    件 id 去圈：圈松了，那一条会被当成「已经补过」，补跳从此静默地再也发不出去——
+    它是平台的指令，判失败不在那条线上说话，连「没补成」都没人知道。
     """
     _stalled(line)
     other = stall_record_id(line.beat, AT - timedelta(days=1))
@@ -270,7 +270,7 @@ def test_another_stalls_delivery_does_not_answer_this_one(client, line):
                 Delivery(
                     event_id=other,
                     recipient_handle=line.seat,
-                    conversation_id=uuid.uuid4(),
+                    conversation_id=line.task_id,
                     dedup_key=f"{other}:{line.seat}",
                     type="ROOM_NOTICE",
                     payload={},
@@ -284,8 +284,18 @@ def test_another_stalls_delivery_does_not_answer_this_one(client, line):
 
     assert line.look(STALLED) == {"stalled": 1}
 
-    (delivery,) = line.deliveries()
-    assert delivery.event_id == stall_record_id(line.beat, AT)
+    async def rows_of_this_stall() -> list:
+        async with client.test_factory() as session:
+            return list(
+                await session.scalars(
+                    select(Delivery).where(
+                        Delivery.event_id == stall_record_id(line.beat, AT)
+                    )
+                )
+            )
+
+    (this_stall,) = client.portal.call(rows_of_this_stall)
+    assert this_stall.recipient_handle == line.seat
 
 
 def test_the_catch_up_carries_the_windows_dedup_key(client, line):
