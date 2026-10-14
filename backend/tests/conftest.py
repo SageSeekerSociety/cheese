@@ -1039,11 +1039,14 @@ def _fresh_dependency_probe() -> Iterator[None]:
     dependency_probe.forget()
 
 
-#: An executor on a process list: its service, and the worker beside it that
-#: serves the platform CLI.
+#: An executor on a process list: its service, the worker beside it that
+#: serves the platform CLI, and the tunnel a room's seat keeps. Named by file
+#: alone, since a test runs them from an installed release
+#: (`remote-execution/`) or straight from the source tree (`remote_execution/`).
 _EXECUTOR_PROGRAMS = (
-    "remote-execution/runtime.py serve",
-    "remote-execution/cli_worker.py",
+    "/runtime.py serve",
+    "/cli_worker.py",
+    "/cheese-tunnel.py",
 )
 
 
