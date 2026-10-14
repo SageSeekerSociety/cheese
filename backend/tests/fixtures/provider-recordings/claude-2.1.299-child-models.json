@@ -5,7 +5,7 @@
   "provenance": {
     "capture_test": "backend/tests/unit/test_claude_child_models.py::test_native_child_default_and_explicit_model_reach_admission[claude-sonnet-5-general-purpose]",
     "base_revision": "cc9d5c5b4",
-    "captured_at": "2026-10-13",
+    "captured_at": "2026-10-14",
     "request_source": "Real pinned binary executing two native Agent tools, one of them naming `opus`, against a scripted loopback fake provider. The harness's own model requests no longer pass through JS `fetch` on this build, so no `x-cheese-child-model` header appears: the metering proxy reads the name off the request body instead.",
     "response_source": "Scripted loopback fake provider; no live provider or model was called.",
     "redactions": [

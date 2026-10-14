@@ -47,7 +47,7 @@ syncBuiltinESMExports();
 //
 // 2.1.283 took the harness's own model requests off this path and below JS
 // altogether — a whole 2.1.299 turn calls `fetch` zero times (measured
-// 2026-10-13) — so no build past 2.1.282 gets this header, and nothing
+// 2026-10-14) — so no build past 2.1.282 gets this header, and nothing
 // downstream misses it: with no `x-cheese-child-model` the metering
 // proxy buffers a subagent's `/v1/messages` and reads the model off the request
 // body, which is where the harness put it all along. A subagent therefore still

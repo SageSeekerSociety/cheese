@@ -128,16 +128,16 @@
         { "at": 0, "do": "clear" },
         { "at": 300, "do": "say", "who": "wang", "text": "<@cheese> 让分身用小模型去扫一遍日志" },
         { "at": 900, "do": "turn", "who": "cheese", "turn": "t2" },
-        { "at": 1300, "do": "act", "who": "cheese", "turn": "t2", "tool": "Agent", "arg": "扫日志 · model: haiku" },
+        { "at": 1300, "do": "act", "who": "cheese", "turn": "t2", "tool": "Agent", "arg": "扫日志 · model: deepseek-flash" },
         {
           "at": 1500,
           "do": "hop",
           "station": "session",
           "state": "ok",
-          "note": "分身请求体顶层的 model: haiku"
+          "note": "分身请求体顶层的 model: deepseek-flash"
         },
         { "at": 1700, "do": "hop", "station": "proxy", "state": "ok", "note": "和父会话不同：是显式指定" },
-        { "at": 2100, "do": "hop", "station": "admission", "state": "ok", "note": "haiku 在项目目录里，允许，就用它" },
+        { "at": 2100, "do": "hop", "station": "admission", "state": "ok", "note": "deepseek-flash 在项目目录里，允许，就用它" },
         { "at": 2600, "do": "hop", "station": "gateway", "state": "ok", "note": "项目虚拟 key" },
         { "at": 2900, "do": "hop", "station": "model", "state": "ok", "note": "分身的回答只把总结带回主会话" },
         { "at": 3300, "do": "end", "turn": "t2" }
