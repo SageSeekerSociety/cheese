@@ -9,15 +9,16 @@ beforeEach(() => setLocale('zh-CN'))
 const NOW = Date.parse('2026-10-05T08:00:00Z')
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString()
 
-/** 四条事实的默认值：什么都不成立、也没在跑。 */
+/** 五条事实的默认值：什么都不成立、也没在跑。 */
 const quiet = {
   awaitsMe: false,
+  repliedToMe: false,
   moving: false,
   unseenDelivery: false,
   lastOutputAt: null as string | null,
 }
 
-describe('lightOf —— 四盏灯的四条判据', () => {
+describe('lightOf —— 四盏灯各自的判据', () => {
   it('没开过任务、也没活在跑的不亮', () => {
     expect(lightOf(quiet, NOW)).toBeNull()
   })
@@ -68,22 +69,34 @@ describe('lightOf —— 四盏灯的四条判据', () => {
     expect(lightOf({ ...quiet, awaitsMe: true }, NOW)).toEqual({ kind: 'yellow', breathe: false })
   })
 
+  it('有人回复了我、我还没处理，也是同一盏黄灯', () => {
+    expect(lightOf({ ...quiet, repliedToMe: true }, NOW)).toEqual({
+      kind: 'yellow',
+      breathe: false,
+    })
+  })
+
+  it('回复我那一条压过绿：同时又有人在跑，还是先让我看见有人回我了', () => {
+    expect(lightOf({ ...quiet, repliedToMe: true, moving: true, lastOutputAt: ago(1) }, NOW)).toEqual({
+      kind: 'yellow',
+      breathe: false,
+    })
+  })
+
   it('做完了、我还没看过，是长绿（不闪）', () => {
     expect(lightOf({ ...quiet, unseenDelivery: true }, NOW)).toEqual({ kind: 'green', breathe: false })
   })
 
   it('红压过黄：既卡住了又有事等我，先让我看见卡住的那一件', () => {
-    expect(lightOf({ awaitsMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(9) }, NOW)).toEqual({
-      kind: 'red',
-      breathe: false,
-    })
+    expect(
+      lightOf({ awaitsMe: true, repliedToMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(9) }, NOW)
+    ).toEqual({ kind: 'red', breathe: false })
   })
 
   it('黄压过绿：在往前走、同时又有事等我，黄更该被看见', () => {
-    expect(lightOf({ awaitsMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(1) }, NOW)).toEqual({
-      kind: 'yellow',
-      breathe: false,
-    })
+    expect(
+      lightOf({ awaitsMe: true, repliedToMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(1) }, NOW)
+    ).toEqual({ kind: 'yellow', breathe: false })
   })
 
   it('呼吸绿压过长绿：又在跑、又有没看过的交付，画动的那一盏', () => {

@@ -579,6 +579,99 @@ class TopicRepository:
         )
         return int((await self._session.scalar(stmt)) or 0)
 
+    # ---- 有人回复了我、我还没处理（侧栏那盏黄灯） -----------------------
+
+    async def replied_to_me(
+        self, room_ids: Collection[uuid.UUID], user_handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these channels hold an answer to this person that they have
+        not opened the channel since.
+
+        An answer TO them is a message from somebody else that either replies to
+        a block they wrote (`reply_to`) or names them (`refs`) — the two cases
+        the person named. AI teammates count, the platform's own events do not
+        (`author_type`).
+
+        HANDLED is having read the answer, and reading it is opening the line it
+        landed on. Opening the CHANNEL counts even when the answer landed in a
+        支线 under it ("打开这个频道就算处理了" — what the person said
+        counts): the read-state row remembers when the channel was last opened,
+        and that moment being after the answer landed is enough. Reading that
+        支线 in its own pane counts too, and is what its own cursor moves.
+        Either one is enough, so "not handled" is neither — and the two are read
+        differently because they are different kinds of number: a cursor counts
+        one conversation's blocks, and 支线 number theirs separately, so the
+        channel's cursor says nothing about a 支线's block. Only the moment can
+        be compared across the two.
+
+        The channel's own line and its 支线 count. The work dispatched under it
+        does not: a task has a row of its own, and whether it waits on somebody
+        is that row's own fact.
+        """
+        if not room_ids:
+            return set()
+        # 「回复我发的消息」：另说的一条块指着我写的某一块。别名和 `unread_counts`
+        # 里 `took_part` 那一处同一个写法 —— exists() 要关联到外层的 Block，就不能
+        # 用同一个 Block。
+        mine = aliased(Block)
+        answers_mine = (
+            select(mine.id)
+            .where(mine.id == Block.reply_to, mine.author == user_handle)
+            .exists()
+        )
+        # 同一个人在两处已读：这间房自己那一位（主线取它），和这条块所在那条线的
+        # 那一位（支线里的块取它，主线上的块两处是同一位）。
+        room_state = aliased(TopicReadState)
+        line_state = aliased(TopicReadState)
+
+        def read_state_of(state, conversation):
+            return and_(
+                state.topic_id == conversation,
+                state.user_handle == user_handle,
+            )
+
+        def past(state):
+            """这条块在那一位后面吗。没有那一行 = 那一条线从没打开过，全都还没读。"""
+            return or_(state.last_read_seq.is_(None), Block.seq > state.last_read_seq)
+
+        def opened_before(state):
+            """这个人上次打开这个频道，是在这条块落地之前吗（从没打开过 = 是）。
+
+            已读位那行的时间戳就是「上次打开」：`mark_read` 每回把它推到现在
+            （`TopicReadRepository.mark_read_many` 的 upsert）。
+            """
+            return or_(state.updated_at.is_(None), state.updated_at < Block.created_at)
+
+        stmt = (
+            select(Block.conversation_id, _threads.c.room_id)
+            .outerjoin(_threads, _threads.c.id == Block.conversation_id)
+            .outerjoin(
+                room_state,
+                read_state_of(
+                    room_state, func.coalesce(_threads.c.room_id, Block.conversation_id)
+                ),
+            )
+            .outerjoin(line_state, read_state_of(line_state, Block.conversation_id))
+            .where(
+                or_(
+                    Block.conversation_id.in_(room_ids),
+                    _threads.c.room_id.in_(room_ids),
+                ),
+                Block.kind == BlockKind.message,
+                Block.author_type == AuthorType.participant,
+                Block.author != user_handle,
+                # 两处都还没读过才算「我还没处理」（见上）：这条块所在的那条线
+                # 没读过，这个频道也没在它落地之后打开过。
+                past(line_state),
+                opened_before(room_state),
+                or_(_mentions(user_handle), answers_mine),
+            )
+        )
+        return {
+            room or conversation
+            for conversation, room in (await self._session.execute(stmt)).all()
+        }
+
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 
     async def unread_counts(

@@ -574,6 +574,16 @@ class TopicService:
             raise NotFoundError("Project not found")
         return await self._repo.private_unread_counts(project_id, user_handle)
 
+    # ---- 有人回复了我、我还没处理（侧栏那盏黄灯） -----------------------
+
+    async def replied_to_me(
+        self, room_ids: list[uuid.UUID], user_handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these channels hold an answer to this person that they have
+        not opened the channel since — 回复了我发的消息，或者 @ 我
+        (`TopicRepository.replied_to_me`)."""
+        return await self._repo.replied_to_me(room_ids, user_handle)
+
     async def mark_read(self, conversation_id: uuid.UUID, user_handle: str) -> None:
         """Bump the cursor on a room's own conversation or on one of its tasks."""
         await self.get_or_404(await room_of(self._session, conversation_id))
