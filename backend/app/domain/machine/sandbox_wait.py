@@ -14,6 +14,10 @@ from app.domain.machine.models import (
 # What a tool waiting on its cloud sandbox is told.
 SANDBOX_PREPARING = "沙箱正在准备；对话和平台工具仍可用。"
 EXECUTOR_SETUP_FAILED = "执行环境里的执行器没能装好：{reason}；对话和平台工具仍可用。"
+# The reason above when the machine's disk is full. Its own error names a path
+# and an errno, which tells a reader nothing to act on; inodes run out with
+# space still free, so both are named.
+DISK_FULL = "这台机器的磁盘满了，空间或文件数用完了"
 VM_PREPARING = "虚拟机沙箱正在准备，要几分钟；对话和平台工具仍可用。"
 VM_ERROR = "虚拟机沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 # What a session is told, once, with the first tool call that succeeds in a

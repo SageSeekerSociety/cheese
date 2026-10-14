@@ -425,6 +425,7 @@
   "sandboxLost": "The environment stopped answering and was replaced: work pushed and backed up at the end of each turn comes along, and changes made after that are gone",
   "sandboxReleased": "The environment was released after {minutes} minutes without activity. The next message starts a new one, and work pushed and backed up at the end of each turn comes along.",
   "sandboxReleasedNoCredits": "Credits ran out, so the environment was released. Once there are credits again, the next message starts a new one, and work pushed and backed up at the end of each turn comes along.",
+  "sandboxReleasedDiskFull": "The machine's disk was nearly full and this environment held the most of it ({gb} GB, {files} files, mostly under {where}), so it was released. The next message starts a new one, and work pushed and backed up at the end of each turn comes along. Delete temporary files once you are done with them, so they do not pile up.",
   "sandboxArchivesKept": "Archives left by this conversation's earlier environments are kept until {date} and then deleted. To get files back from them, contact the platform administrator.",
   "cloudVmPreparing": "Preparing the VM sandbox",
   "cloudVmReady": "The VM sandbox is ready",

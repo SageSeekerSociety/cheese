@@ -33,8 +33,31 @@ user-facing route lists hosts. The admin dashboard counts them.
 Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (4 cores, 16 GiB,
 40 GB; clamped into the offering). A host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at
 once, but no more than fit, each at its full `CLOUD_SANDBOX_MEMORY_MB`, in the memory it gives
-its sandboxes (its memory less a quarter, at least 1 GiB): four on the default host. There is no team or project quota on cloud. A running sandbox is charged in credits by
+its sandboxes (its memory less a quarter, at least 1 GiB), nor more than fit on its disk at
+`CLOUD_SANDBOX_DISK_GB` each after `CLOUD_HOST_DISK_RESERVE_GB` for the host and its package
+stores: four on the default host. There is no team or project quota on cloud. A running sandbox is charged in credits by
 the hour, from the same packs as model calls (`docs/manual/dev/billing.md`, 云端算力).
+
+### A disk that is nearly full is freed
+
+`backend/app/domain/machine/disk_guard.py`; the host side is `sandbox_home.py`'s `disk`.
+Nothing inside a sandbox bounds what it writes: a host is an unprivileged container, with no
+loop device for a filesystem per sandbox and no project quotas. So the disk is held the way
+Kubernetes holds a node's ephemeral storage, by reading it and evicting. Every
+`SANDBOX_DISK_CHECK_S` (60 s), every online machine holding a sandbox — the platform's hosts
+and people's computers alike — reports the free bytes and inodes of the filesystem its homes
+are on and what each home holds.
+
+- Below `SANDBOX_DISK_FREE_FLOOR` (10%) of its bytes free or `SANDBOX_INODES_FREE_FLOOR` (5%)
+  of its inodes, a host takes no new sandbox (`cloud_hosts.disk_full_since`) until a reading
+  finds room again, and the sandbox holding the most of either is destroyed, one a reading.
+  Its room is told what it held and under which directory. A sandbox holding under 1% of the
+  disk is never evicted for it: on a person's computer the disk may be full of their own files.
+- A sandbox's home with no sandbox any more — its row went when its session moved away — is
+  deleted, ten minutes after it was last written. A home without the sandbox marker (a room's
+  own directory on a computer that runs it without a sandbox) is never touched.
+- An executor that cannot be installed because the disk is full says so rather than repeating
+  the path the error named.
 
 ### Idle sandboxes are destroyed
 

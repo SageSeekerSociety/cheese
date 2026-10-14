@@ -695,6 +695,25 @@ class Settings(BaseSettings):
     cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
     cloud_sandbox_cpus: int = Field(default=2, ge=1, le=1024)
     cloud_sandbox_pids: int = Field(default=4096, ge=16)
+    # Disk. A sandbox's home — its checkout, its dependencies, its /tmp — is on
+    # the disk of the machine it runs on, shared with every other sandbox there
+    # and, on a person's computer, with everything of theirs. Every machine
+    # holding a sandbox is read this often (`machine/disk_guard.py`); below
+    # these shares free, of bytes or of inodes, it takes no new sandbox and its
+    # heaviest sandbox is stopped. The shares are the defaults of Kubernetes'
+    # `nodefs.available` and `nodefs.inodesFree`. Inodes are their own floor:
+    # on 2026-10-14 a dev host ran out of them with 15 GB still free.
+    sandbox_disk_check_s: int = Field(default=60, ge=10, le=3600)
+    sandbox_disk_free_floor: float = Field(default=0.10, ge=0, le=0.9)
+    sandbox_inodes_free_floor: float = Field(default=0.05, ge=0, le=0.9)
+    # What one sandbox is expected to take of a host's disk, for how many a
+    # host runs at once (`models.capacity`), after `cloud_host_disk_reserve_gb`
+    # for the host itself and its projects' package stores. Measured on dev,
+    # 2026-10-14: a sandbox with one task's checkout and its dependencies held
+    # 1.5–2.3 GB and 95–130 thousand inodes; one project's package store held
+    # 6.5 GB.
+    cloud_sandbox_disk_gb: int = Field(default=4, ge=1)
+    cloud_host_disk_reserve_gb: int = Field(default=10, ge=0)
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
     # enrollment succeeds, so without this nobody can read a Cloud machine's

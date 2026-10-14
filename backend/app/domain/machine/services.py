@@ -135,6 +135,7 @@ def accepting(host: CloudHost) -> bool:
         host.released_at is None
         and host.failed_at is None
         and not host.whole_machine
+        and host.disk_full_since is None
         and host.status not in {MachineStatus.error, MachineStatus.deleting, *GONE}
         and not _failed_unenrolled(host)
     )
