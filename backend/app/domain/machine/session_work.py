@@ -1,6 +1,7 @@
 """Acquire one session's execution capability when a tool actually needs it."""
 
 import asyncio
+import errno
 import json
 import logging
 import uuid
@@ -49,6 +50,7 @@ from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
+    DISK_FULL,
     EXECUTOR_SETUP_FAILED,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
@@ -452,6 +454,8 @@ class ExecutorSetupFailed(RuntimeError):
     server error, so the reason reaches the room."""
 
     def reason(self) -> str:
+        if f"[Errno {errno.ENOSPC}]" in str(self):
+            return DISK_FULL
         lines = [line.strip() for line in str(self).splitlines() if line.strip()]
         return lines[-1] if lines else "Executor setup failed"
 
