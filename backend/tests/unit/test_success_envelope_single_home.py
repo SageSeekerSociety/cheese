@@ -1,4 +1,4 @@
-"""Guard: a success envelope is built by ``app.api.response.ok()`` and nowhere else.
+"""Guard: the ``code: 200`` success envelope comes from ``ok()``, nowhere else.
 
 A static test, the one exception to "test behaviour, don't inspect source" in
 AGENTS.md: the property under test is a property of the source tree.
@@ -9,6 +9,10 @@ drifted from the envelope a client reads: eleven carried no ``data`` and five no
 ``message``, and ``message`` came in four spellings ("OK", "ok", "Success",
 "success"). ``ok()`` always writes all three fields, so a route that uses it
 cannot answer with a different shape.
+
+Forty-three routes still spell out a ``{"code": 201, ...}`` envelope, with
+messages of their own. ``ok()`` writes 200 only, so this guard does not see
+them; they are the next change, and it widens when they are gone.
 """
 
 import ast
@@ -34,7 +38,7 @@ def _hand_written_envelopes(tree: ast.AST) -> list[int]:
     return lines
 
 
-def test_success_envelopes_come_from_ok() -> None:
+def test_200_success_envelopes_come_from_ok() -> None:
     offenders = []
     for path in sorted(APP_ROOT.rglob("*.py")):
         relative = path.relative_to(APP_ROOT).as_posix()
@@ -43,7 +47,7 @@ def test_success_envelopes_come_from_ok() -> None:
         for line in _hand_written_envelopes(ast.parse(path.read_text())):
             offenders.append(f"app/{relative}:{line}")
     assert not offenders, (
-        "Build the success envelope with app.api.response.ok() instead of a "
+        "Build the 200 success envelope with app.api.response.ok() instead of a "
         "{'code': 200, ...} literal:\n" + "\n".join(offenders)
     )
 
