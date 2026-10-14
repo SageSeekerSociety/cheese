@@ -438,3 +438,50 @@ async def announce_mentions(
             turn_id=block.turn_id,
             meta={"in_room": False},
         )
+
+
+@dataclass(frozen=True, slots=True)
+class MentionedOutside:
+    """The people a person's message @-mentions who are not in the channel it
+    was said in, told to its sender alone, as Slack does: whether the sender
+    may add them, and whether the channel is private (then they cannot read
+    it either; in a public one they are told of the mention and read it
+    there)."""
+
+    room_id: uuid.UUID
+    handles: list[str]
+    may_add: bool
+    members_only: bool
+
+    def as_json(self) -> dict:
+        return {
+            "room_id": str(self.room_id),
+            "handles": self.handles,
+            "may_add": self.may_add,
+            "members_only": self.members_only,
+        }
+
+
+async def mentioned_outside(
+    session: AsyncSession, room: Topic, text: str, author: str
+) -> MentionedOutside | None:
+    """Whom ``author``'s message in ``room``, stored as ``text``, names that the
+    channel does not seat. None when it names nobody outside. Nobody is added
+    here: the sender chooses, through the channel's own way in."""
+    named = [
+        h
+        for h in dict.fromkeys(_MENTION_RE.findall(text or ""))
+        if h != author and h not in _SPECIAL_MENTIONS
+    ]
+    if not named:
+        return None
+    members = TopicMemberService(session)
+    handles = await members.outside(room, named)
+    if not handles:
+        return None
+    return MentionedOutside(
+        room_id=room.id,
+        handles=handles,
+        may_add=await members.may_bring_in(room, author),
+        members_only=room.members_only,
+    )
