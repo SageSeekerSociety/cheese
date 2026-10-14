@@ -230,10 +230,10 @@ class AgentInstanceService:
         本包来，房间那边只留下口子（`app.domain.topic.ports.RoomTeammate`）。"""
         topic = await self._session.get(Topic, topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         project = await self._session.get(Project, topic.project_id)
         if project is None:
-            raise NotFoundError("Project not found")
+            raise NotFoundError(say("projectNotFound"))
         return await self.for_topic(topic, project)
 
     async def project_of_seat(self, handle: str) -> uuid.UUID | None:
@@ -274,7 +274,7 @@ class AgentInstanceService:
         `app.domain.topic.ports.NamedTeammate`）。"""
         project = await self._session.get(Project, project_id)
         if project is None:
-            raise NotFoundError("Project not found")
+            raise NotFoundError(say("projectNotFound"))
         return await self.for_handle(project, handle)
 
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
@@ -388,7 +388,7 @@ class AgentInstanceService:
 
         project = await self._session.get(Project, project_id)
         if project is None:
-            raise NotFoundError("Project not found")
+            raise NotFoundError(say("projectNotFound"))
         choice = next(
             (c for c in model_choices(project.settings) if c["id"] == config.model),
             None,
