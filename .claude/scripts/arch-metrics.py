@@ -114,6 +114,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -512,7 +513,45 @@ def main_ref(root: Path) -> str | None:
     return None
 
 
-def merge_commits_of_main(root: Path, main: str, since: str) -> list[dict[str, Any]]:
+def pr_head_refs(root: Path) -> list[str]:
+    """The `refs/pull/*/head` this checkout holds, or LookupError when it holds none.
+
+    A plain clone has none — they are not fetched by `git clone` — so an empty
+    list is a missing input, not a quiet week. `conflicting_merges` counts them
+    before measuring, because how many there are is the only thing that tells a
+    complete set from half of one.
+    """
+    refs = git(root, "for-each-ref", "--format=%(refname)", "refs/pull/*/head")
+    if not refs.strip():
+        raise LookupError("no refs/pull/*/head in this checkout")
+    return refs.split()
+
+
+def pr_refs_receipt() -> int | None:
+    """How many PR head refs the fetch that filled this checkout said it wrote.
+
+    A `git fetch` updates refs one at a time, so a fetch that is killed part-way
+    or loses a ref to a lock leaves a *subset* behind — a checkout that still
+    has refs, just not all of them. Nothing local tells that apart from a
+    complete set: `for-each-ref` counts what is there, not what should be. And a
+    section built on a subset reports fewer collisions than happened, which is
+    the one wrong answer this section exists to avoid. So the fetch vouches for
+    what it delivered (`ARCH_METRICS_PR_HEADS`, written by
+    `.github/workflows/arch-metrics.yml`) and this section is a measurement only
+    when the count it sees is the count it was promised. None — nobody vouched —
+    is not a measurement either, and the reader gets a reason instead of a
+    number.
+    """
+    raw = (os.environ.get("ARCH_METRICS_PR_HEADS") or "").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def merge_commits_of_main(
+    root: Path, main: str, since: str, refs: list[str]
+) -> list[dict[str, Any]]:
     """PR-branch commits that merge `main` in, with both parents, since `since`.
 
     `git rev-list --merges <head> ^main` one head at a time is thousands of
@@ -520,11 +559,9 @@ def merge_commits_of_main(root: Path, main: str, since: str) -> list[dict[str, A
     alone is not the filter — a branch that merged another feature branch also
     has two parents, and only the merge whose second parent is on `main` is the
     event this metric is about. The caller applies that test, because it needs
-    the set of main's commits to apply it.
+    the set of main's commits to apply it. `refs` comes from `pr_head_refs`, so
+    the caller has already counted them for the fetch receipt.
     """
-    refs = git(root, "for-each-ref", "--format=%(refname)", "refs/pull/*/head")
-    if not refs.strip():
-        raise LookupError("no refs/pull/*/head in this checkout")
     raw = subprocess.run(
         [
             "git",
@@ -537,7 +574,7 @@ def merge_commits_of_main(root: Path, main: str, since: str) -> list[dict[str, A
             "--format=%H|%cI|%P",
         ],
         cwd=root,
-        input=refs,
+        input="\n".join(refs),
         check=True,
         capture_output=True,
         text=True,
@@ -635,9 +672,31 @@ def conflicting_merges(
 
     buckets = conflict_weeks(now, weeks)
     try:
-        candidates = merge_commits_of_main(root, main, buckets[0][0].isoformat())
+        refs = pr_head_refs(root)
     except LookupError as exc:
         return no_conflicts(f"{exc} — the workflow fetches them before this runs")
+    except subprocess.CalledProcessError as exc:
+        return no_conflicts(f"cannot list the PR branches: {exc}")
+
+    # How many refs there are is the whole completeness check, because a
+    # half-finished fetch leaves a subset that counts and measures exactly like
+    # a complete one. See `pr_refs_receipt`.
+    promised = pr_refs_receipt()
+    if promised is None:
+        return no_conflicts(
+            "the PR head refs here are not vouched for — nothing recorded how "
+            "many the fetch delivered (ARCH_METRICS_PR_HEADS), so a partial set "
+            "could not be told from a complete one"
+        )
+    if promised != len(refs):
+        return no_conflicts(
+            f"the fetch delivered {promised} PR head refs but this checkout "
+            f"holds {len(refs)} — the difference is missing merges, which read "
+            "as a quiet week, so no number is reported"
+        )
+
+    try:
+        candidates = merge_commits_of_main(root, main, buckets[0][0].isoformat(), refs)
     except subprocess.CalledProcessError as exc:
         return no_conflicts(f"cannot walk the PR branches: {exc}")
 
@@ -970,11 +1029,28 @@ def base_worktree(root: Path, ref: str) -> Iterator[Path]:
                 pass
 
 
-def compare(root: Path, ref: str, caps: Any, windows: tuple[int, ...]) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
+def compare(
+    root: Path,
+    ref: str,
+    caps: Any,
+    windows: tuple[int, ...],
+    now: datetime | None = None,
+    after: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The same board at `ref` and here, and the rows between them.
+
+    `now` and `after` are how the caller keeps this from being a second
+    measurement of the tree it already measured: the conflict buckets are
+    trailing windows ending at the anchor, so two runs a minute apart can read
+    different weeks and the delta would be comparing those, not the two
+    revisions. The board that was already measured is the `after` — passed in,
+    not collected again.
+    """
+    now = now or datetime.now(timezone.utc)
     with base_worktree(root, ref) as base:
         before = collect(base, caps, windows, now)
-    after = collect(root, caps, windows, now)
+    if after is None:
+        after = collect(root, caps, windows, now)
     return {
         "ref": ref,
         "before": before,
@@ -1164,6 +1240,13 @@ def self_test() -> int:
     def check(label: str, got: Any, want: Any) -> None:
         if got != want:
             failures.append(f"{label}: got {got!r}, want {want!r}")
+
+    def receipt(value: str | None) -> None:
+        """Stand in for the fetch receipt the workflow writes after fetching."""
+        if value is None:
+            os.environ.pop("ARCH_METRICS_PR_HEADS", None)
+        else:
+            os.environ["ARCH_METRICS_PR_HEADS"] = value
 
     caps = load_size_caps(REPO_ROOT)
 
@@ -1393,6 +1476,11 @@ def self_test() -> int:
             except (FileNotFoundError, subprocess.CalledProcessError) as exc:
                 failures.append(f"could not build the conflict fixture: {exc}")
             else:
+                # The section refuses to measure a ref set nobody vouched for,
+                # so the fixture's two refs have to be promised the way the
+                # workflow promises them. The cases below take the promise away
+                # again to check that it is what makes the difference.
+                receipt("2")
                 section = conflicting_merges(root2, anchor)
                 if section.get("why_missing"):
                     failures.append(f"the conflict fixture has no section: {section['why_missing']}")
@@ -1430,7 +1518,9 @@ def self_test() -> int:
                     # the code column three times too big.
                     files = [
                         p
-                        for commit in merge_commits_of_main(root2, "main", "2026-01-01T00:00:00Z")
+                        for commit in merge_commits_of_main(
+                            root2, "main", "2026-01-01T00:00:00Z", pr_head_refs(root2)
+                        )
                         if (replayed := replay_conflict(root2, commit["parents"]))
                         for p in replayed
                     ]
@@ -1475,6 +1565,31 @@ def self_test() -> int:
                         section["unreadable"],
                         0,
                     )
+                    # These two refs measure only because something vouched for
+                    # them. Without that, a fetch that stopped half-way would
+                    # read as a week with fewer collisions — so an unvouched
+                    # set and a short set both report why instead of a number.
+                    receipt(None)
+                    unvouched = conflicting_merges(root2, anchor)
+                    receipt("3")
+                    short = conflicting_merges(root2, anchor)
+                    receipt("2")
+                    check(
+                        "refs nobody vouched for report why, not a number",
+                        ("why_missing" in unvouched, unvouched["conflicting"]),
+                        (True, None),
+                    )
+                    check(
+                        "fewer refs than the fetch promised report why, not a number",
+                        ("why_missing" in short, short["conflicting"]),
+                        (True, None),
+                    )
+                    short_reason = short.get("why_missing", "")
+                    check(
+                        "... and that reason names both counts",
+                        "3" in short_reason and "2" in short_reason,
+                        True,
+                    )
                     # And with the refs gone, the section says so instead of
                     # reporting a quiet zero.
                     subprocess.run(
@@ -1505,9 +1620,9 @@ def self_test() -> int:
         "PASS: arch-metrics self-test (grades A/B/C/D incl. a transitive api reach, "
         "frozen contract entries, imports inside a function, cap offenders and "
         "excess lines, hotspot churn and fix share, same-day parallel edits, "
-        "conflicting merges of main split registry-only vs code, a missing PR ref "
-        "reported as missing rather than zero, and a compare that leaves no "
-        "worktree behind)"
+        "conflicting merges of main split registry-only vs code, a missing or "
+        "unvouched PR ref set reported as missing rather than zero, and a compare "
+        "that leaves no worktree behind)"
     )
     return 0
 
@@ -1546,8 +1661,14 @@ def main() -> int:
         print(f"cannot judge: {exc}", file=sys.stderr)
         return 2
 
+    # One instant for the whole run. The conflict buckets are trailing windows
+    # ending at it, so the board in the summary and the board the delta is
+    # measured against have to be the same measurement, taken at the same
+    # moment — a second `collect` would anchor its own, seconds later, and the
+    # rows would compare two windows that had drifted apart.
+    now = datetime.now(timezone.utc)
     try:
-        board = collect(root, caps, windows)
+        board = collect(root, caps, windows, now)
     except (FileNotFoundError, subprocess.CalledProcessError) as exc:
         print(f"cannot judge: git failed: {exc}", file=sys.stderr)
         return 2
@@ -1559,7 +1680,7 @@ def main() -> int:
     markdown = render_markdown(board)
     if args.compare:
         try:
-            compared = compare(root, args.compare, caps, windows)
+            compared = compare(root, args.compare, caps, windows, now, board)
         except subprocess.CalledProcessError as exc:
             print(
                 f"cannot judge: {args.compare} is not a ref this checkout has "

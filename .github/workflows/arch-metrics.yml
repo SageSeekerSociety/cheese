@@ -136,9 +136,22 @@ jobs:
       # count anything; when this step fails the section reports itself missing
       # rather than reporting no conflicts, which is the difference between
       # "nobody collided" and "we could not look".
+      #
+      # A failed fetch has to leave nothing behind, and `--atomic` is what does
+      # that. Without it `git fetch` writes refs one at a time, so a step killed
+      # during the update — or one ref lost to a lock — leaves a *subset*, and a
+      # subset counts and measures exactly like a complete set: fewer merges,
+      # reported as a quieter week. The count therefore goes into
+      # `ARCH_METRICS_PR_HEADS` after the fetch succeeds, and
+      # `.claude/scripts/arch-metrics.py` measures the section only when what
+      # the checkout holds is what this said it delivered. A fetch that failed
+      # writes nothing, so the section reports itself missing — and that is
+      # also what happens if `--atomic` is not a flag this git knows.
       - name: Fetch the pull-request branch heads
         continue-on-error: true
-        run: git fetch --no-tags --quiet origin '+refs/pull/*/head:refs/pull/*/head'
+        run: |
+          git fetch --no-tags --quiet --atomic origin '+refs/pull/*/head:refs/pull/*/head'
+          echo "ARCH_METRICS_PR_HEADS=$(git for-each-ref 'refs/pull/*/head' | wc -l)" >> "$GITHUB_ENV"
 
       # The comparison target is the last commit before the 30-day window, so
       # the delta always reads "this month". A checkout too young to have one
