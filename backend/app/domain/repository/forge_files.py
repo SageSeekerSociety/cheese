@@ -18,7 +18,6 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.agent import execution
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.forge import (
     binding_for_project,
@@ -29,6 +28,7 @@ from app.domain.project.forge import (
     tokens_for_project,
 )
 from app.domain.repository import merge3
+from app.domain.repository.ports import ExecutorCall
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
@@ -98,9 +98,18 @@ class ProjectFiles:
         task_id: uuid.UUID | None,
         *,
         release_session: bool = False,
+        executor: ExecutorCall | None = None,
     ):
+        """``executor`` 是在任务那台机器上跑一次文件操作的东西（`ports.ExecutorCall`）。
+
+        谁构造谁给：只有走进 ``live()`` 的那几条路要它，读已提交版本的（``revision``、
+        ``committed_entries``、``comparison``、``history``）不接线，``None`` 就是不给。
+        真的走到要读工作目录那条路上还是没有它，就是有个门漏了，``live()`` 当场炸掉，
+        不会静默去读一个不存在的副本。
+        """
         self.session, self.project_id, self.task_id = session, project_id, task_id
         self.release_session = release_session
+        self._executor = executor
 
     async def _data(self, *args, **kwargs):
         if self.release_session:
@@ -180,12 +189,15 @@ class ProjectFiles:
             # with its host), and the lease still names it until the task's
             # next tool call places it in a new one.
             raise UpstreamUnavailableError(say("taskSandboxReleased"))
+        if self._executor is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("executor was not handed in")
         await self._release()
         try:
             # Interactive file requests must not inherit the agent's 11-minute
             # command timeout; cancellation also cancels the pending device call.
             async with asyncio.timeout(30):
-                result = await execution.call(
+                result = await self._executor(
                     target,
                     "task_fs",
                     {"task_id": str(task.id), "operation": operation, **params},

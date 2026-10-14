@@ -47,6 +47,7 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.delivery_events import SettleCard
     from app.domain.membership.ports import ProjectTeam
     from app.domain.project.protection import BranchProtection
+    from app.domain.repository.ports import ExecutorCall
     from app.domain.review.github_pr_status import PullRequestStatus
     from app.domain.review.ports import (
         Announce,
@@ -69,6 +70,7 @@ class AcceptService:
         record_agent: RecordAgent | None = None,
         task_teammate: TaskTeammate | None = None,
         roster_team: ProjectTeam | None = None,
+        executor: ExecutorCall | None = None,
     ):
         """``announce`` 是这个包说不了的那句话 —— 往房间里留一行（`ports.Announce`）。
 
@@ -83,6 +85,10 @@ class AcceptService:
         （`TaskTeammate`）。前两个在说给任务听的那条路上，后两个在叫醒调度
         座位的那条路上，最后一个在交付落地的那条路上 —— 都是上面一层的动作，
         本包够不着。
+
+        ``executor`` 是建卡时把交付物从那条任务的工作目录里读下来的那次机器调用
+        （`repository.ports.ExecutorCall`），只在递卡带交付物时才用得上。同上一个
+        道理：够不着（`repository` 在本包下面），谁构造谁给。
         """
 
         self._session = session
@@ -93,6 +99,7 @@ class AcceptService:
         self._record_agent = record_agent
         self._task_teammate = task_teammate
         self._roster_team = roster_team
+        self._executor = executor
         # Set only while a claimed poll runs (): forge clients
         # then give the connection back before each call.
         self._commits_before_remote = False

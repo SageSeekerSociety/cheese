@@ -17,6 +17,7 @@ from app.api.response import ok, page
 from app.core.db import release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
+from app.domain.agent import execution
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner
@@ -83,6 +84,7 @@ def _accept_service(db: AsyncSession) -> AcceptService:
         record_agent=record_agent,
         task_teammate=task_teammate,
         roster_team=project_team,
+        executor=execution.call,
     )
 
 

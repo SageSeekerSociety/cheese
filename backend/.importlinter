@@ -350,7 +350,6 @@ ignore_imports =
     app.domain.project.services -> app.domain.topic.repositories
     app.domain.project.services -> app.domain.topic.services
     app.domain.questions.services -> app.domain.answers.repositories
-    app.domain.repository.forge_files -> app.domain.agent.execution
     app.domain.repository.forge_files -> app.domain.project.forge
     app.domain.repository.forge_files -> app.domain.room_task.models
     app.domain.repository.forge_files -> app.domain.topic.models
@@ -610,7 +609,6 @@ ignore_imports =
     app.domain.project.services -> app.domain.task.models
     app.domain.project.services -> app.domain.task.teaching
     app.domain.project.services -> app.domain.usage.ledger
-    app.domain.repository.forge_files -> app.domain.agent.execution
     app.domain.repository.forge_files -> app.domain.room_task.models
     app.domain.repository.identity -> app.domain.room_task.services
     app.domain.repository.service -> app.domain.project_skill.service

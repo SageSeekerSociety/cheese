@@ -16,6 +16,7 @@ from app.auth.caller import may_access_project
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
+from app.domain.agent import execution
 from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
@@ -147,9 +148,9 @@ async def read_file(
     """
     await ProjectService(db).get_or_404(project_id)
     return ok(
-        await ProjectFiles(db, project_id, task, release_session=True).text(
-            path, source
-        )
+        await ProjectFiles(
+            db, project_id, task, release_session=True, executor=execution.call
+        ).text(path, source)
     )
 
 
@@ -218,9 +219,9 @@ async def write_file(
     if task is None:
         raise ValidationError(say("chooseTaskToEdit"))
     actor = await resolver.resolve(project_id=project_id, topic_id=task)
-    saved = await ProjectFiles(db, project_id, task, release_session=True).save(
-        path, content, version, base if isinstance(base, str) else None
-    )
+    saved = await ProjectFiles(
+        db, project_id, task, release_session=True, executor=execution.call
+    ).save(path, content, version, base if isinstance(base, str) else None)
     row = await TaskService(db).get(task)
     if row is not None and actor.authenticated and actor.via != "cheese":
         said = await announce_edit(
@@ -258,9 +259,9 @@ async def git_diff(
     await ProjectService(db).get_or_404(project_id)
     return ok(
         {
-            "diff": await ProjectFiles(db, project_id, task, release_session=True).diff(
-                source, ref
-            )
+            "diff": await ProjectFiles(
+                db, project_id, task, release_session=True, executor=execution.call
+            ).diff(source, ref)
         }
     )
 

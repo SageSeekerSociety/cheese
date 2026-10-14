@@ -211,7 +211,13 @@ async def create_card(
     # 在清单上留下一项。
     handed_over = (deliver or "").strip()
     snapshot = (
-        await _read_deliverable(self._session, task.project_id, task.id, handed_over)
+        await _read_deliverable(
+            self._session,
+            task.project_id,
+            task.id,
+            handed_over,
+            executor=self._executor,
+        )
         if handed_over
         else None
     )
