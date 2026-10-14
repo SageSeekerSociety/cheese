@@ -23,55 +23,55 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.core.sentences import NoticeText, say
-from app.domain.agent.platform_notices import (
+from app.domain.block.repositories import BlockRepository as BlockRepository
+from app.domain.notice_meta import (
     EVENT_ACCEPT_DISMISSED as EVENT_ACCEPT_DISMISSED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE as EVENT_ACCEPT_DONE,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_ACCEPT_STOPPED as EVENT_ACCEPT_STOPPED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_CARD_REDESCRIBED as EVENT_CARD_REDESCRIBED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_CARD_VOIDED as EVENT_CARD_VOIDED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_FORCE_MERGED as EVENT_FORCE_MERGED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_MERGE_REFUSED as EVENT_MERGE_REFUSED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_MIGRATION_COLLISION as EVENT_MIGRATION_COLLISION,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_PR_CLOSED as EVENT_PR_CLOSED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     SEVERITY_ERROR as SEVERITY_ERROR,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     SEVERITY_INFO as SEVERITY_INFO,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     SEVERITY_WARN as SEVERITY_WARN,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     WHO_CHEESE as WHO_CHEESE,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     WHO_HUMAN as WHO_HUMAN,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     WHO_PLATFORM as WHO_PLATFORM,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     notice as notice,
 )
-from app.domain.block.repositories import BlockRepository as BlockRepository
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository as ProjectRepository
 from app.domain.review.models import (

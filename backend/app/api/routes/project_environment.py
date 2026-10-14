@@ -20,18 +20,18 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import environment_status
 from app.domain.agent.environment_failures import open_failures, waiting_on
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.platform_notices import (
-    EVENT_ENVIRONMENT_REPAIRED,
-    SEVERITY_INFO,
-    WHO_CHEESE,
-    notice,
-)
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.conversation.services import of_room
 from app.domain.machine.services import HostPool, host_failed
 from app.domain.machine.session_reports import leases_on_peoples_devices
 from app.domain.membership.roster import roster
 from app.domain.membership.services import MemberService
+from app.domain.notice_meta import (
+    EVENT_ENVIRONMENT_REPAIRED,
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.project.environment import EnvironmentConfig, project_environment
 from app.domain.project.models import Project
 from app.domain.project.services import refuse_writes_if_archived

@@ -22,14 +22,14 @@ from sqlalchemy.exc import IntegrityError
 
 from app.core.db import SessionFactory
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
+from app.domain.agent.run_records import publish
+from app.domain.block.models import Block, BlockKind
+from app.domain.notice_meta import (
     EVENT_WAKE_MISSED,
     SEVERITY_WARN,
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent.run_records import publish
-from app.domain.block.models import Block, BlockKind
 from app.domain.run_record.models import RunRecord
 from app.domain.run_record.service import as_payload, record
 from app.domain.wake_watch.beats import (

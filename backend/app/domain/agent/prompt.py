@@ -29,13 +29,6 @@ from app.domain.agent.harness.prompt import (
     platform_prompt,
     strip_platform_notice,
 )
-from app.domain.agent.platform_notices import (
-    EVENT_CONTEXT_COMPACT,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.agent.service import AgentCompacting
 from app.domain.agent.session_host.contract import Image
 from app.domain.block.models import (
@@ -45,6 +38,13 @@ from app.domain.block.models import (
     consumed_turn,
 )
 from app.domain.library import records as library_records
+from app.domain.notice_meta import (
+    EVENT_CONTEXT_COMPACT,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.topic.models import (
     Topic,
     TopicKind,

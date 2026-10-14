@@ -36,13 +36,6 @@ from app.core.errors import (
 )
 from app.core.sentences import exception_text, say
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
-    EVENT_MEMORY_ORGANIZING,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.living_doc.services import Documents
@@ -73,6 +66,13 @@ from app.domain.memory.models import (
 )
 from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import live_entries
+from app.domain.notice_meta import (
+    EVENT_MEMORY_ORGANIZING,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.project.services import ProjectService
 from app.domain.service_keys import KeySpec, service_key
 from app.domain.usage.ledger import Ledger

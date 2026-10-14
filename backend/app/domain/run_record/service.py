@@ -2,7 +2,7 @@
 
 和 `announce` 是一对：`announce` 是平台在对话里说一句话，人要读到；这里是平台把
 运行中的一件事记下来，想查的人去现场看。哪些事走哪一边，看
-`platform_notices.RUN_RECORD_EVENTS`。
+`notice_meta.RUN_RECORD_EVENTS` 列着。
 
 记下之后推一帧 `run_record` 到这段对话的通道上（`agent.run_records`）：现场接
 着显示它，输入框上方那行「芝士 排队中」也从这一帧读芝士此刻在等什么。帧里那份

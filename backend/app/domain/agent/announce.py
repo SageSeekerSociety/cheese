@@ -1,7 +1,7 @@
 """平台在房间里说一句话 —— 落成系统事件，需要人动手时同时通知到人。
 
-`platform_notices` 定的是**说什么**：一行 `content` 加一份结构化 `meta`。这里定
-的是**怎么说出去**，两件事在一次调用里完成：
+`notice_meta` 定的是**说什么**：一行 `content` 加一份结构化 `meta`；要说的那几句
+人话在 `platform_notices`。这里定的是**怎么说出去**，两件事在一次调用里完成：
 
 1. 这句话落进房间的时间线（`kind=event, author_type=platform`）；
 2. 这条事件点到的那些人各收到同一句话 —— 前提是下一步确实在参与者手上。
@@ -40,12 +40,6 @@ from app.core.errors import ValidationError
 from app.core.live_frames import show_once_committed
 from app.core.sentences import notice_message, with_keys
 from app.domain.agent.mentions import _MENTION_RE
-from app.domain.agent.platform_notices import (
-    SEVERITY_INFO,
-    WHO_CHEESE,
-    WHO_HUMAN,
-    WHO_PLATFORM,
-)
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.asked import asked_of, settled, skipped_by
@@ -61,6 +55,12 @@ from app.domain.delivery.addressing import (
 )
 from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import (
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.topic_membership.services import TopicMemberService
@@ -72,7 +72,7 @@ from app.domain.topic_membership.services import TopicMemberService
 #: `None` 是「这条提示没说谁在管」（`meta` 不是 `notice()` 拼的）：没人声明下一步到
 #: 了参与者手上，就谁都不通知 —— 和看板上一格没挪是同一个意思。
 #:
-#: **封闭表**：`platform_notices` 多一个码而这里没跟上，查表当场抛 `KeyError`，而不
+#: **封闭表**：`notice_meta` 多一个码而这里没跟上，查表当场抛 `KeyError`，而不
 #: 是让新的码悄悄落进某一档。
 _HAND_OF_WHO: dict[str | None, Hand] = {
     WHO_PLATFORM: Hand.platform,
