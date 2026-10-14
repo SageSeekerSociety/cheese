@@ -13,11 +13,11 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.domain.agent.platform_notices import EVENT_WAKE_MISSED
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.delivery.timer import deliver_due, give_up_stale
+from app.domain.notice_meta import EVENT_WAKE_MISSED
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.run_record.models import RunRecord

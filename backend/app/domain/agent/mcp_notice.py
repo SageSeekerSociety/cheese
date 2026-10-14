@@ -7,13 +7,13 @@ from sqlalchemy import select
 
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
+from app.domain.block.models import Block, BlockKind
+from app.domain.notice_meta import (
     EVENT_MCP_NOT_CONNECTED,
     SEVERITY_WARN,
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.models import Block, BlockKind
 from app.domain.remote_mcp import service as remote_mcp
 
 logger = logging.getLogger(__name__)

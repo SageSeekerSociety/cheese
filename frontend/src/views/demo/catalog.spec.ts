@@ -243,6 +243,28 @@ describe('组件预览站', () => {
       expect(codes?.getAttribute('href')).toBe('/spaces/8/manage/settings/invite-codes')
       expect(domains?.getAttribute('href')).toBe('/spaces/8/manage/settings/domain-groups')
     })
+
+    // 上面那一组是**静态**挂：只等画面出来、看它写了什么字。可有的组件全部行为就是
+    // 「按下去报一声」—— 「导出」那颗按钮现在只剩这一件事（拉 CSV 在页面里做）。静态挂
+    // 护不住它：把 `@click` 那一行删掉，按钮照样画得出来、字照样对，上面那一组照样绿，
+    // 而它在真页面上已经不响了。这一条真按一下，守的就是那一下。
+    it('analytics-export-button：按一下报出 `export`（静态挂看不到那一处）', async () => {
+      const entry = CATALOG.find((e) => e.id === 'analytics-export-button')
+      expect(entry).toBeTruthy()
+      const { container, emitted } = render(entry!.component, {
+        props: stateProps(entry!, entry!.states[0]),
+        global: {
+          plugins: [createVuetify({ components, directives }), i18n, demoRouter(), createPinia()],
+        },
+      })
+      const button = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('导出题目清单')
+      )
+      expect(button, '没找到那颗「导出」').toBeTruthy()
+      await fireEvent.click(button!)
+      expect(emitted(), '按了这一下，按钮没把「导出」报出来').toHaveProperty('export')
+      expect(emitted()['export']).toHaveLength(1)
+    })
   })
 
   describe('页面本身', () => {

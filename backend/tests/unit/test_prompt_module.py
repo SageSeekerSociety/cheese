@@ -19,12 +19,6 @@ import pathlib
 from types import SimpleNamespace
 
 from app.domain.agent import chat, prompt
-from app.domain.agent.platform_notices import (
-    EVENT_CONTEXT_COMPACT,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
-)
 from app.domain.agent.service import AgentCompacting
 from app.domain.agent.turn.state import inputs
 from app.domain.block.models import (
@@ -34,6 +28,12 @@ from app.domain.block.models import (
     BlockKind,
 )
 from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.notice_meta import (
+    EVENT_CONTEXT_COMPACT,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+)
 
 #: 搬走的全部名字。门面要逐个还得出同一个对象。
 MOVED = (

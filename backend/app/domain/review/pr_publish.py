@@ -31,19 +31,19 @@ from sqlalchemy.orm import aliased
 from app.core.config import settings
 from app.core.db import release_read_session
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
-    EVENT_DEPENDENCY_CLOSED,
-    EVENT_DEPENDENCY_REJECTED,
-    SEVERITY_INFO,
-    WHO_CHEESE,
-    notice,
-)
 from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
 from app.domain.conversation.services import of_room
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.notice_meta import (
+    EVENT_DEPENDENCY_CLOSED,
+    EVENT_DEPENDENCY_REJECTED,
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.project.forge import (
     ForgeRateLimitedError,

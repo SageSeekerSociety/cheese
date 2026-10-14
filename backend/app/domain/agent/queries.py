@@ -27,11 +27,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
-    EVENT_MEMORY_CHANGED,
-    SEVERITY_INFO,
-    WHO_PLATFORM,
     memory_changed_notice,
-    notice,
 )
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
@@ -43,6 +39,12 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.session import MemoryChange, prefix_of_scope
+from app.domain.notice_meta import (
+    EVENT_MEMORY_CHANGED,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.project.models import Project

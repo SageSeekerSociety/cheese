@@ -13,18 +13,18 @@ from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.owner_provider import owner_is_away
 from app.domain.agent.pending_messages import defer_message
-from app.domain.agent.platform_notices import (
-    EVENT_TURN_FAILED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.agent.queries import conversation_seat
 from app.domain.agent.seat_admission import seat_admission
 from app.domain.block.models import Block
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import (
+    EVENT_TURN_FAILED,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.room_task.place import PlaceResolver
 
 

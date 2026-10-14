@@ -46,7 +46,6 @@ from sqlalchemy import select
 
 from app.core.db import SessionFactory
 from app.core.sentences import say
-from app.domain.agent.platform_notices import EVENT_WAKE_MISSED, SEVERITY_WARN
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.delivery.agent import now, record_agent
@@ -54,6 +53,7 @@ from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import EVENT_WAKE_MISSED, SEVERITY_WARN
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task, TaskStatus

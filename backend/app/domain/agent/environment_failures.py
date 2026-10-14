@@ -17,15 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say, with_keys
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
+from app.domain.block.models import Block, BlockKind
+from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import of_room, of_rooms
+from app.domain.notice_meta import (
     EVENT_ENVIRONMENT_FAILED,
     SEVERITY_WARN,
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.models import Block, BlockKind
-from app.domain.block.schemas import BlockOut
-from app.domain.conversation.services import of_room, of_rooms
 
 #: How much of the end of the log the line keeps: what failed is at the end,
 #: and the line shows what it keeps from the top, so it keeps what fits.

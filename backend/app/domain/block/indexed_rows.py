@@ -38,7 +38,7 @@ FAILED_TURN_EVENTS = ("turn_failed", "platform_error")
 
 #: Platform events that hand work to an agent: review comments on a PR, a red
 #: check, a merge that will not go in, a rejected card. Each says the agent is
-#: to fix it (`platform_notices`).
+#: to fix it (`notice_meta`).
 CHECKS_FOR_THE_AGENT = (
     "pr_review",
     "pr_conflict",

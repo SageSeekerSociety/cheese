@@ -9,8 +9,8 @@ import uuid
 
 from sqlalchemy import select
 
-from app.domain.agent.platform_notices import EVENT_POLICY_PROPOSAL
 from app.domain.block.models import Block, BlockKind
+from app.domain.notice_meta import EVENT_POLICY_PROPOSAL
 from app.domain.notification.models import Notification
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
