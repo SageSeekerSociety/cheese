@@ -15,11 +15,15 @@ For every open, started task in the channel it reads platform facts and the PR's
   红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
-                rounds). A heartbeat is the newer of the line's last message and the last
-                event block its seat wrote (a command it ran): a seat that runs commands for
-                an hour without talking is working, not stalled. The row says when the last
-                event and the last message were and what the message said, so the patrol
-                reads the line's own last word before nudging it.
+                rounds). A heartbeat is the newest of the line's last message, the last
+                event block its seat wrote (a command it ran) and, when the platform gives
+                it, the running turn's last output (`last_output_at` on the task row, which
+                moves while one long command streams). A command the seat started and that
+                has not returned yet — its event block carries no output yet and no failed
+                turn came after it — is a heartbeat now: a seat inside a 45-minute test run
+                is working, not stalled. The row says when the last event and the last
+                message were and what the message said, so the patrol reads the line's own
+                last word before nudging it.
 Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
 
 The default output is that text list, unchanged. The same sweep in other shapes:
@@ -54,7 +58,8 @@ CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑",
 ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
               "review_head", "waited_min", "waiting_on", "stage", "detail",
               "changed", "verified", "checks", "cases",
-              "last_event_at", "last_message_at", "last_message", "heartbeat_min")
+              "last_event_at", "last_message_at", "last_message", "last_output_at",
+              "running", "heartbeat_min")
 #: How much of a line's last message the row carries: enough to tell "审查在跑" from
 #: "等总调度", not the whole message.
 _MESSAGE_BRIEF = 80
@@ -770,6 +775,8 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "last_event_at": pulse.get("last_event_at"),
         "last_message_at": pulse.get("last_message_at"),
         "last_message": pulse.get("last_message"),
+        "last_output_at": pulse.get("last_output_at"),
+        "running": pulse.get("running"),
         "heartbeat_min": pulse.get("heartbeat_min"),
         "read": good,
     }
@@ -784,22 +791,42 @@ def message_brief(m):
     return f"@{m.get('author') or '-'}「{body}」"
 
 
-def heartbeat_of(last_msg, last_event):
-    """The line's last sign of life: the newer of its last message and the last event
-    block its seat wrote. A line that has no event blocks at all beats by its messages."""
-    return max(x for x in (last_msg, last_event) if x)
+def heartbeat_of(last_msg, last_event, last_output=None):
+    """The line's last sign of life: the newest of its last message, the last event
+    block its seat wrote, and the running turn's last output when the platform gives it.
+    A line that has no event blocks at all beats by its messages."""
+    return max((x for x in (last_msg, last_event, last_output) if x), key=ts)
+
+
+def in_flight(event, failed_after):
+    """Whether the seat's latest event block is a tool call that has not returned: the
+    platform writes the block when the call starts (that is its created_at) and adds
+    `output_bytes` when it ends, so a tool block without one is a command still running
+    — unless the turn failed after it, which leaves the block unmarked forever."""
+    m = meta(event)
+    return bool(m.get("tool")) and "output_bytes" not in m and not m.get("failed") and not failed_after
+
+
+def stalled_for(now, heartbeat, silent, running=False):
+    """Minutes since the heartbeat when that is at least `silent`, else None. A command
+    still running is a heartbeat now, whatever the timestamps say."""
+    if running:
+        return None
+    w = (now - ts(heartbeat)).total_seconds() / 60
+    return w if w >= silent else None
 
 
 def hhmm(iso):
     return f"{iso[11:16]} UTC" if iso else "没有"
 
 
-def pulse_detail(waited, last_event, last_msg_at, last_msg_brief):
-    """The 长时间无动静 line: how long without a heartbeat, then the two facts the
-    patrol needs before it nudges — when the seat last ran something, and the line's
-    own last word."""
+def pulse_detail(waited, last_event, last_msg_at, last_msg_brief, last_output=None):
+    """The 长时间无动静 line: how long without a heartbeat, then the facts the patrol
+    needs before it nudges — when the seat last ran something, when the turn last
+    produced output (only when the platform says), and the line's own last word."""
     return (f"{waited:.0f} 分钟无心跳：最后 event {hhmm(last_event)}，"
-            f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
+            + (f"最后输出 {hhmm(last_output)}，" if last_output else "")
+            + f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
 
 
 def sweep(tok, room, silent, skip, want_facts):
@@ -823,18 +850,25 @@ def sweep(tok, room, silent, skip, want_facts):
         # 心跳：座位跑命令是 event 块，不是消息。只看消息会把一条正在跑长命令的线报成
         # 停摆（2026-10-13 #1468 跑了 70 分钟命令、被按「70 分钟没消息」催过）。event 只认
         # 座位自己写的：system 的 turn_failed 也是 event，但那不是它在动。
-        seat = t.get("agent_handle")
-        evs = get(tok, f"/topics/{tid}/history?limit=1&kind=event"
-                       + (f"&author={seat}" if seat else ""))["data"]
-        last_event = evs[-1]["created_at"] if evs else None
-        heartbeat = heartbeat_of(last_msg, last_event)
-        pulse = {"last_event_at": last_event, "last_message_at": msg[-1]["created_at"] if msg else None,
-                 "last_message": message_brief(msg[-1]) if msg else None,
-                 "heartbeat_min": round(age(heartbeat))}
         sysev = get(tok, f"/topics/{tid}/history?limit=30&author=system")["data"]
         accev = get(tok, f"/topics/{tid}/history?limit=30&author=accept")["data"]
         sysev.sort(key=lambda m: m["created_at"])
         accev.sort(key=lambda m: m["created_at"])
+        # 一条长命令只在开始时落一个 event 块、结束时才补 output_bytes，所以还没返回的
+        # 命令是「现在在跑」；跑着的一轮每有输出平台还会更新任务行上的 last_output_at
+        # （新版平台才有，没有就不算），单条 45 分钟的命令靠这两样才不会被报成停摆。
+        seat = t.get("agent_handle")
+        evs = get(tok, f"/topics/{tid}/history?limit=1&kind=event"
+                       + (f"&author={seat}" if seat else ""))["data"]
+        last_event = evs[-1]["created_at"] if evs else None
+        failed_after = any(meta(m).get("event_type") == "turn_failed" and m["created_at"] > last_event
+                           for m in sysev) if evs else False
+        running = bool(evs) and in_flight(evs[-1], failed_after)
+        heartbeat = heartbeat_of(last_msg, last_event, t.get("last_output_at"))
+        pulse = {"last_event_at": last_event, "last_message_at": msg[-1]["created_at"] if msg else None,
+                 "last_message": message_brief(msg[-1]) if msg else None,
+                 "last_output_at": t.get("last_output_at"), "running": running,
+                 "heartbeat_min": 0 if running else round(age(heartbeat))}
 
         card = t.get("card") or {}
         n = card.get("pr_number")
@@ -893,10 +927,11 @@ def sweep(tok, room, silent, skip, want_facts):
             w = age(tail[-1]["created_at"])
             add("连续失败", f"最后 {tail[-1]['created_at'][11:16]} UTC：{said(tail[-1])}", w)
 
-        if age(heartbeat) >= silent:
-            w = age(heartbeat)
+        w = stalled_for(now, heartbeat, silent, running)
+        if w is not None:
             add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
-                                        pulse["last_message"] or "（还没有消息）"), w)
+                                        pulse["last_message"] or "（还没有消息）",
+                                        t.get("last_output_at")), w)
 
     rows.sort(key=lambda r: CLASSES.index(r["kind"]))
     return rows, idmap
@@ -942,8 +977,10 @@ def details(rows):
         seen.add(r["task"])
         out += [f"**#{r['task']} {r['title']}**｜{r['kind']}｜{r['stage']}", ""]
         if r.get("heartbeat_min") is not None:
-            out += [f"心跳：{r['heartbeat_min']} 分钟前｜最后 event {hhmm(r['last_event_at'])}"
-                    f"｜最后消息 {hhmm(r['last_message_at'])} {r['last_message'] or '（还没有消息）'}", ""]
+            out += [f"心跳：{'命令在跑' if r.get('running') else str(r['heartbeat_min']) + ' 分钟前'}"
+                    f"｜最后 event {hhmm(r['last_event_at'])}"
+                    + (f"｜最后输出 {hhmm(r['last_output_at'])}" if r.get("last_output_at") else "")
+                    + f"｜最后消息 {hhmm(r['last_message_at'])} {r['last_message'] or '（还没有消息）'}", ""]
         if not r["read"]:
             # 「没写这一节」是替作者下判断；读不到正文时说读不到，两件事分开。
             out += ["PR 正文：" + ("还没有 PR" if not r["pr"] else "GitHub 上看不到"), ""]
@@ -1513,11 +1550,27 @@ def _self_test_pulse():
     摘要压成一行、截到上限；停摆那一行把两件事都摆出来，没有 event 的线说「没有」；
     看板每个任务下面多一行心跳，老的用例没给心跳就没有这一行。"""
     msg = {"author": "cheese-a", "content": "审查在跑，\n  等它出结论。"}
+    now = datetime(2026, 10, 13, 2, 0, tzinfo=timezone.utc)
+    call = {"meta": {"tool": "Bash", "arg": "跑测试"}}
+    done = {"meta": {"tool": "Bash", "arg": "跑测试", "output_bytes": 12}}
     return [
         ("心跳取消息和 event 里新的那个",
          heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z"), "2026-10-13T01:40:00Z"),
         ("没有 event 块的线按消息算心跳",
          heartbeat_of("2026-10-13T01:00:00Z", None), "2026-10-13T01:00:00Z"),
+        ("平台给了 last_output_at（+00:00 写法）且更新，心跳取它",
+         heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z", "2026-10-13T01:55:00+00:00"),
+         "2026-10-13T01:55:00+00:00"),
+        ("停摆判定：心跳 60 分钟前、阈值 40，报 60",
+         stalled_for(now, "2026-10-13T01:00:00Z", 40), 60.0),
+        ("停摆判定：消息 60 分钟前但 event 20 分钟前，不报（回退成只看消息这里就红）",
+         stalled_for(now, heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z"), 40), None),
+        ("停摆判定：命令还在跑，时间戳再旧也不报",
+         stalled_for(now, "2026-10-13T00:00:00Z", 40, running=True), None),
+        ("在跑：tool 块没有 output_bytes 就是还没返回", in_flight(call, failed_after=False), True),
+        ("在跑：补了 output_bytes 的是返回了的", in_flight(done, failed_after=False), False),
+        ("在跑：之后有 turn_failed 的块是被扔下的，不算在跑", in_flight(call, failed_after=True), False),
+        ("在跑：progress 这类不是 tool 的 event 不算", in_flight({"meta": {"progress": 1}}, False), False),
         ("消息摘要：作者加正文一行，换行压掉",
          message_brief(msg), "@cheese-a「审查在跑， 等它出结论。」"),
         ("消息摘要：超过上限截断并标省略",
@@ -1528,6 +1581,9 @@ def _self_test_pulse():
         ("停摆那一行：没有 event 的线说「没有」",
          pulse_detail(45, None, "2026-10-13T01:00:00Z", "@a「等」"),
          "45 分钟无心跳：最后 event 没有，最后消息 01:00 UTC @a「等」"),
+        ("停摆那一行：平台给了最后输出就一并写",
+         pulse_detail(45, "2026-10-13T01:00:00Z", "2026-10-13T01:00:00Z", "@a「等」", "2026-10-13T01:10:00+00:00"),
+         "45 分钟无心跳：最后 event 01:00 UTC，最后输出 01:10 UTC，最后消息 01:00 UTC @a「等」"),
         ("看板：带心跳的行在标题下多一行心跳",
          [ln for ln in details([row("长时间无动静", "#1 甲 @cheese", "细节",
                                     {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese"},
@@ -1537,6 +1593,14 @@ def _self_test_pulse():
                                      "last_message": "@a「审查在跑」", "heartbeat_min": 52})])
           if ln.startswith("心跳：")],
          ["心跳：52 分钟前｜最后 event 01:40 UTC｜最后消息 01:00 UTC @a「审查在跑」"]),
+        ("看板：命令在跑的行说「命令在跑」",
+         [ln for ln in details([row("可采纳未采纳", "#1 甲 @cheese", "细节",
+                                    {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese"},
+                                    {}, None, 5, None, None, None, None, "2026-10-13T00:00:00Z",
+                                    {"last_event_at": "2026-10-13T01:40:00Z", "last_message_at": None,
+                                     "last_message": None, "running": True, "heartbeat_min": 0})])
+          if ln.startswith("心跳：")],
+         ["心跳：命令在跑｜最后 event 01:40 UTC｜最后消息 没有 （还没有消息）"]),
         ("看板：没给心跳的行（老用例）不多这一行",
          [ln for ln in details([_self_row()]) if ln.startswith("心跳：")], []),
     ]
