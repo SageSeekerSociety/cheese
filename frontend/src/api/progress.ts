@@ -19,11 +19,7 @@ export function getDocNodes(documentId: string): Promise<{ data: Block[]; total:
 }
 
 /** Start a comment thread on the words `quote` (or on the whole document without them). */
-export function addComment(
-  documentId: string,
-  content: string,
-  quote?: string
-): Promise<DocComment & WrittenToWriter> {
+export function addComment(documentId: string, content: string, quote?: string): Promise<DocComment & WrittenToWriter> {
   return request<DocComment & WrittenToWriter>(`/documents/${encodeURIComponent(documentId)}/comments`, {
     method: 'POST',
     body: JSON.stringify({ content, quote: quote || undefined }),

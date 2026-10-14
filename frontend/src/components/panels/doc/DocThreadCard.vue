@@ -2,15 +2,16 @@
 // 一条评论串一张卡：上面是评的那几个字，下面是来回的每一句；AI 队友在答时说它到了哪一步。
 // 点卡片就是在看它（正文滚到那几个字）；在看的那张才给回复框和解决。
 import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
-import type { DocThread, DocThreadActivity, ThreadPlace } from '../../../lib/docThreadTypes'
+import type { DocComment, DocThread, DocThreadActivity, ThreadPlace } from '../../../lib/docThreadTypes'
+import type { RefNames } from '../../../lib/refChip'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { useCommentMentions } from '../../../composables/useCommentMentions'
 import { isAgentHandle } from '../../../lib/authorship'
 import { storageGet, storageRemove, storageSet } from '../../../lib/browserStorage'
-import { plainRefs } from '../../../lib/refChip'
 import { relTime } from '../../../lib/relTime'
+import { renderPlain } from '../../../lib/renderMessage'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 import MarkdownView from '../../common/MarkdownView.vue'
 import UserAvatar from '../../common/UserAvatar.vue'
@@ -66,9 +67,13 @@ const shown = computed(() =>
 const resolved = computed(() => props.thread.state === 'resolved')
 
 const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
-// A person's comment that @s the AI teammate wakes it, so that one reads as the
-// @chip; the teammate's own replies told nobody and name people plainly (`names`).
-const asked = computed(() => ({ ...names.value, notified: (handle: string) => isAgentHandle(handle) }))
+// A person's comment draws as the @chip what it told: the AI teammate it woke, and
+// the people it notified (`notified`, from the delivery ledger). Everyone else it
+// names, and everyone the teammate's own replies name, reads as a name.
+function told(message: DocComment): RefNames {
+  const people = new Set(message.notified ?? [])
+  return { ...names.value, notified: (handle: string) => isAgentHandle(handle) || people.has(handle) }
+}
 
 // 芝士正在用的工具，说成它在做的事；没列出的就说在回答
 const TOOL_STEPS: Record<string, string> = {
@@ -190,9 +195,14 @@ function onCard(e: MouseEvent) {
             as="chat"
             :names="names"
           />
-          <div v-else class="doc-thread-card__text doc-thread-card__text--plain" dir="auto">
-            {{ plainRefs(message.content, asked) }}
-          </div>
+          <!-- eslint-disable vue/no-v-html -- renderPlain writes the words as text nodes; only the chips are elements -->
+          <div
+            v-else
+            class="doc-thread-card__text doc-thread-card__text--plain"
+            dir="auto"
+            v-html="renderPlain(message.content, told(message), { focusable: false })"
+          />
+          <!-- eslint-enable vue/no-v-html -->
         </div>
       </div>
     </div>

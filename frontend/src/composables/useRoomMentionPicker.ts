@@ -199,9 +199,7 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     const ql = q.toLowerCase()
     if (level.value === 'library') return libraryItems(ql).slice(0, 12)
     const broadcast =
-      deps.broadcast === false
-        ? []
-        : broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
+      deps.broadcast === false ? [] : broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
     const named: MentionItem[] = [
       ...deps.mentionPool().map((m) => ({
         label: m.label,

@@ -95,7 +95,10 @@ function mount(
     defineComponent({
       setup() {
         if (options.outside)
-          outside = useMentionOutside({ place: () => 'doc-1', nameOf: (handle) => (handle === 'carol' ? '张衡' : handle) })
+          outside = useMentionOutside({
+            place: () => 'doc-1',
+            nameOf: (handle) => (handle === 'carol' ? '张衡' : handle),
+          })
         return () =>
           h(DocComments, {
             ref: comments,
@@ -340,5 +343,26 @@ describe('naming someone who cannot open the document', () => {
     await fireEvent.click(screen.getByRole('button', { name: '关闭' }))
     await waitFor(() => expect(screen.queryByText(/张衡/)).toBeNull())
     expect(addTopicMember).not.toHaveBeenCalled()
+  })
+})
+
+describe('reading who a comment told', () => {
+  it('draws as an @mention only the people the comment notified, and names the rest', async () => {
+    const view = mount({
+      threads: [
+        thread('t1', {
+          comment: {
+            id: 't1',
+            author: 'alice',
+            content: '<@bob> <@carol> 看一下',
+            created_at: '2026-10-01T07:00:00Z',
+            anchor_quote: null,
+            notified: ['bob'],
+          },
+        }),
+      ],
+    })
+    const card = await view.findByText(/看一下/)
+    expect(card.textContent).toBe('@bob carol 看一下')
   })
 })

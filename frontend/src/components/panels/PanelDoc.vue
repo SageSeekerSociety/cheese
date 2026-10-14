@@ -67,6 +67,7 @@ const props = withDefaults(
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     bare: false,
+    commentOutside: undefined,
     barTo: undefined,
     flow: false,
   }
