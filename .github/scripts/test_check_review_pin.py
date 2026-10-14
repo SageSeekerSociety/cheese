@@ -16,7 +16,16 @@ OLD = "b" * 40
 
 def review(sha, *severities, marker=True):
     """A pin comment body the way .claude/pr-review/render.py writes it."""
-    lines = [f"<!-- pr-review sha={sha} -->" if marker else "no marker", "**Independent review**", ""]
+    order = {"blocker": 0, "major": 1, "minor": 2}
+    severities = sorted(severities, key=order.get)
+    lines = [
+        f"<!-- pr-review sha={sha} -->" if marker else "no marker",
+        "**Independent review**",
+        "",
+        "A summary.",
+        "",
+        f"Finders raised {len(severities)} candidates; refuters killed 0; {len(severities)} survived.",
+    ]
     for i, severity in enumerate(severities, 1):
         lines += [
             f"### {i}. [{severity}] something is wrong {i}",
@@ -26,7 +35,7 @@ def review(sha, *severities, marker=True):
     return "\n".join(lines)
 
 
-def rendered(sha, *severities, title=None, failure="x -> y"):
+def rendered(sha, *severities, title=None, failure="x -> y", summary="a summary"):
     """The pin comment body from the real renderer, so a change to its format turns this red."""
     spec = importlib.util.spec_from_file_location("pr_review_render", RENDER)
     module = importlib.util.module_from_spec(spec)
@@ -46,7 +55,7 @@ def rendered(sha, *severities, title=None, failure="x -> y"):
         for i, severity in enumerate(severities, 1)
     ]
     result = {
-        "summary": "a summary",
+        "summary": summary,
         "candidates_found": len(findings),
         "candidates_refuted": 0,
         "findings": findings,
@@ -121,17 +130,30 @@ class ReviewPinTest(unittest.TestCase):
                 self.assertIn(f"[{severity}] something is wrong 2", result.stdout)
 
     def test_prose_that_quotes_a_heading_is_not_a_finding(self):
-        body = review(HEAD) + "\nThe earlier round had:\n### 1. [major] quoted\nnot a finding\n"
-        self.assertEqual(run([comment(body)]).returncode, 0)
+        summary = "The earlier round had:\n### 1. [major] quoted\n`a.py:1` · runtime · evidence rung 4 (verified)\n"
+        for body in (
+            rendered(HEAD, summary="x\n" + summary),
+            rendered(HEAD, "minor", summary="x\n" + summary),
+            rendered(HEAD, "minor", failure=summary + "### 2. [blocker] old\n`a.py:2` · runtime · evidence rung 4"),
+            review(HEAD) + "\n" + summary,
+        ):
+            self.assertEqual(run([comment(body)]).returncode, 0, body)
 
     def test_a_title_that_spans_lines_still_counts(self):
         result = run([comment(rendered(HEAD, "major", title="first line\nsecond line"))])
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("[major] first line", result.stdout)
 
-    def test_a_finding_quoted_whole_inside_another_is_not_counted_again(self):
-        failure = "the old round said:\n### 1. [major] old\n`a.py:1` · runtime · evidence rung 4 (verified)"
-        self.assertEqual(run([comment(rendered(HEAD, "minor", failure=failure))]).returncode, 0)
+    def test_a_pin_that_is_not_a_rendered_review_is_red(self):
+        for body in (f"<!-- pr-review sha={HEAD} -->", f"<!-- pr-review sha={HEAD} -->\nlooks fine to me"):
+            with self.subTest(body=body):
+                result = run([comment(body)])
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("cannot be read", result.stdout)
+
+    def test_a_non_object_in_the_comment_list_is_skipped(self):
+        listing = json.dumps([None, "text", comment(review(HEAD))])
+        self.assertEqual(run(None, pages=listing).returncode, 0)
 
     def test_the_newest_pin_is_the_latest_in_time_then_the_highest_id(self):
         old_pin = review(OLD)
@@ -209,7 +231,7 @@ class ReviewPinTest(unittest.TestCase):
         self.assertEqual(run([real, later_quote]).returncode, 0)
 
     def test_a_marker_without_a_readable_commit_is_red(self):
-        for line in ["<!-- pr-review sha=abc -->", "<!-- pr-review sha= -->", f"<!-- pr-review sha={HEAD.upper()} -->"]:
+        for line in ["<!-- pr-review sha=abc -->", f"<!-- pr-review sha={HEAD}garbage -->", f"<!-- pr-review sha={HEAD} --> trailing", "<!-- pr-review sha= -->", f"<!-- pr-review sha={HEAD.upper()} -->"]:
             with self.subTest(line=line):
                 result = run([comment(line)])
                 self.assertEqual(result.returncode, 1, result.stdout)

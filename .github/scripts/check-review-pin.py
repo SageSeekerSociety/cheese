@@ -36,13 +36,13 @@ TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 #: The GitHub App agents post as (`gh` in a seat mints its installation token). The
 #: `[bot]` login is reserved for the App, so a user cannot take the name.
 APP_LOGIN = "cheesex-app[bot]"
-_PIN = re.compile(r"\A<!-- pr-review sha=(?P<sha>[0-9a-f]{40}) -->")
-#: A finding as `.claude/pr-review/render.py` writes it: a numbered heading (numbers run 1, 2, 3...),
-#: then, somewhere before the next heading, the line naming where it is. Prose that merely quotes a
-#: heading has the wrong number or no such line; a title that spans lines still counts.
-_HEADING = re.compile(r"^### (?P<n>\d+)\. \[(?P<severity>blocker|major|minor)\] (?P<title>.*)$", re.M)
-_ANY_HEADING = re.compile(r"^### \d+\. \[", re.M)
-_LOCATION = re.compile(r"^`[^\n]*` · .* · evidence rung \d", re.M)
+_PIN = re.compile(r"\A<!-- pr-review sha=(?P<sha>[0-9a-f]{40}) -->(?:\r?\n|\Z)")
+#: What `.claude/pr-review/render.py` writes after the summary: how many findings survived, then the
+#: findings sorted blocker, major, minor. So the first heading after that line is the most severe finding:
+#: the review is blocked exactly when it is a blocker or a major. Nothing before that line (the free-text
+#: summary) and nothing after the first heading (the findings' own prose) is read as a finding.
+_SURVIVED = re.compile(r"^Finders raised \d+ candidates; refuters killed \d+; (?P<n>\d+) survived\.[ \t]*$", re.M)
+_FIRST = re.compile(r"^### 1\. \[(?P<severity>blocker|major|minor)\] (?P<title>.*)$", re.M)
 BLOCKING = ("blocker", "major")
 HOW = "Pin again with .claude/scripts/pr-review.sh prepare <PR>, then post, after the last push."
 
@@ -76,18 +76,15 @@ def trusted(comment: dict) -> bool:
     return isinstance(user, dict) and user.get("login") == APP_LOGIN and user.get("type") == "Bot"
 
 
-def findings(body: str) -> list[tuple[str, str]]:
-    """The (severity, title) of each finding in a review comment, in order."""
-    found = []
-    for heading in _HEADING.finditer(body):
-        if int(heading["n"]) != len(found) + 1:
-            continue
-        rest = body[heading.end() :]
-        following = _ANY_HEADING.search(rest)
-        chunk = rest[: following.start()] if following else rest
-        if _LOCATION.search(chunk):
-            found.append((heading["severity"], heading["title"]))
-    return found
+def worst_finding(body: str) -> tuple[str, str] | None:
+    """(severity, title) of the most severe finding; ("", "") for a review with none; None if unreadable."""
+    survived = _SURVIVED.search(body)
+    if survived is None:
+        return None
+    if int(survived["n"]) == 0:
+        return ("", "")
+    first = _FIRST.search(body, survived.end())
+    return None if first is None else (first["severity"], first["title"])
 
 
 def newest_pin(comments: list[dict]) -> dict | None:
@@ -116,12 +113,13 @@ def problems(head: str, comments: list[dict]) -> list[str]:
         return [
             f"the review is pinned at {match['sha'][:12]}, the PR head is now {head[:12]}. {HOW}"
         ]
-    blocking = [f"[{severity}] {title.strip()}" for severity, title in findings(body) if severity in BLOCKING]
-    if blocking:
+    worst = worst_finding(body)
+    if worst is None:
+        return [f"the review of {head[:12]} is not in the format pr-review.sh post writes, so its findings cannot be read. {HOW}"]
+    if worst[0] in BLOCKING:
         return [
-            f"the review of {head[:12]} has {len(blocking)} blocking finding(s): "
-            + "; ".join(blocking)
-            + ". Fix them, push, and pin a new review."
+            f"the review of {head[:12]} has a blocking finding: [{worst[0]}] {worst[1].strip()}"
+            " (and possibly more). Fix them, push, and pin a new review."
         ]
     return []
 
