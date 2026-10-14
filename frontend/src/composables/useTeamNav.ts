@@ -29,10 +29,14 @@ export interface SpaceLink {
   name: string
 }
 
-export function useTeamNav() {
+export function useTeamNav(options: { active?: () => boolean } = {}) {
   const route = useRoute()
   const router = useRouter()
   const dialog = useDialog()
+
+  // 侧栏那一份在手机上没人看得见（同一份目录是整页的 `HomeHub`），可容器照样挂在那里：
+  // 给它 `active`，只在看得见的时候取数。整页那一份不传，一直取。
+  const active = options.active ?? (() => true)
 
   const teams = ref<Team[]>([])
   const spaces = ref<SpaceLink[]>([])
@@ -65,6 +69,7 @@ export function useTeamNav() {
   }
 
   onMounted(() => {
+    if (!active()) return
     void loadTeams()
     void loadSpaces()
   })
@@ -74,9 +79,19 @@ export function useTeamNav() {
   // 团队就是跳进那个团队）、窗口重新拿到焦点（批准往往是在别处等来的）。
   watch(
     () => route.path,
-    () => void loadTeams()
+    () => {
+      if (active()) void loadTeams()
+    }
   )
-  useEventListener(window, 'focus', () => void loadTeams())
+  useEventListener(window, 'focus', () => {
+    if (active()) void loadTeams()
+  })
+  // 窗口从窄变宽，侧栏这时才露出来，此前一次没读过：补一次。
+  watch(active, (now) => {
+    if (!now) return
+    void loadTeams()
+    void loadSpaces()
+  })
 
   // 正在看某个团队的某一页时，那个团队一定是展开的：否则侧栏上找不到「你在这儿」。
   // 展开状态本身（哪几行摊开、记不记在这台浏览器上）是画面的事，留在 `HomeNav.vue`；
@@ -179,19 +194,28 @@ export function useTeamNav() {
   const transferBusy = ref(false)
   const transferError = ref<string | null>(null)
 
+  // 这几格的状态现在活在 composable 里，弹窗卸载带不走它：关掉甲队的弹窗、再为乙队打
+  // 开时，甲队那一次名单如果晚回来，会把乙队弹窗上的人换成甲队的人（读失败则把甲队的
+  // 理由画成乙队的），它的 `finally` 还会在乙队名单没到时先把「还在读」翻成「还没有
+  // 别的成员」。和名单一样只认最后打开的那一次。
+  let transferRead = 0
   async function openTransfer(team: Team | null) {
+    const read = ++transferRead
     transferring.value = team
     transferCandidates.value = []
     transferError.value = null
+    transferLoading.value = false
     if (!team) return
     transferLoading.value = true
     try {
       const { members } = await TeamsApi.getMembers(team.id)
+      if (read !== transferRead) return
       transferCandidates.value = members.filter((m) => m.user.id !== AccountService.user?.id)
     } catch (e) {
+      if (read !== transferRead) return
       transferError.value = e instanceof Error ? e.message : t('home.nav.transferTeamLoadFailed')
     } finally {
-      transferLoading.value = false
+      if (read === transferRead) transferLoading.value = false
     }
   }
 

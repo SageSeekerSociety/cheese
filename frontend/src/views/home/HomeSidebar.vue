@@ -40,7 +40,7 @@ const {
   openTransfer,
   confirmTransfer,
   leaveTeam,
-} = useTeamNav()
+} = useTeamNav({ active: () => mdAndUp.value })
 </script>
 
 <template>

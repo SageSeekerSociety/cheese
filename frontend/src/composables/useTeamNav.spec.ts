@@ -277,6 +277,35 @@ describe('转让团队', () => {
     await fireEvent.click(await screen.findByLabelText('团队操作'))
     expect(await screen.findByText('退出团队')).toBeTruthy()
   })
+
+  // 名单这一格的状态活着的地方（composable）比弹窗长命：关掉甲队的弹窗不会取消那次
+  // 读。为乙队打开时甲队的人晚回来，就会画到乙队头上——人在乙队的名单里挑到甲队的人。
+  it('换了团队再打开，上一个团队迟到的名单不会画到这一个上', async () => {
+    getMyTeams.mockResolvedValue({
+      teams: [team('crew', '知是开发组', 'OWNER'), team('lab', '数据课第三组', 'OWNER')],
+    })
+    let answerCrew: (value: unknown) => void = () => {}
+    getMembers
+      .mockImplementationOnce(() => new Promise((resolve) => (answerCrew = resolve)))
+      .mockResolvedValueOnce({
+        members: [{ role: 'MEMBER', user: { id: 7, username: 'mate', nickname: '小王', avatarId: 0 } }],
+      })
+    await mount()
+
+    const more = await screen.findAllByLabelText('团队操作')
+    await fireEvent.click(more[0])
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '转让团队' }))
+    await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
+
+    await fireEvent.click(more[1])
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '转让团队' }))
+    expect(await screen.findByText('小王')).toBeTruthy()
+
+    answerCrew({ members: [{ role: 'MEMBER', user: { id: 8, username: 'other', nickname: '小李', avatarId: 0 } }] })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.queryByText('小李')).toBeNull()
+    expect(screen.getByText('小王')).toBeTruthy()
+  })
 })
 
 describe('改团队资料', () => {
@@ -334,6 +363,27 @@ describe('改团队资料', () => {
     await openEditor()
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await screen.findByText('保存失败，请稍后重试')
+  })
+})
+
+describe('手机上', () => {
+  // 手机上没有常驻侧栏：同一份目录是底栏「首页」那一格的整页（HomeHub）。侧栏容器照样
+  // 挂在那里，这一份没人看，就不该去读后端——更不该每次换页面、每次拿回焦点再读一回。
+  it('侧栏那一份不读名单和空间', async () => {
+    vi.stubGlobal('innerWidth', 390)
+    try {
+      await mount()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(getMyTeams).not.toHaveBeenCalled()
+      expect(spaceList).not.toHaveBeenCalled()
+
+      await mounted.router!.push('/spaces')
+      window.dispatchEvent(new Event('focus'))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(getMyTeams).not.toHaveBeenCalled()
+    } finally {
+      vi.stubGlobal('innerWidth', 1024)
+    }
   })
 })
 
