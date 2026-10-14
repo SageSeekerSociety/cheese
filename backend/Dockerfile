@@ -168,8 +168,12 @@ COPY --chown=cheese:python alembic.ini ./
 # it comes in through the named `i18n` context (build.yml), to the place
 # app/core/sentences.py reads it from: three levels above that module's
 # directory (/app/app/core), which here is /. Without it the backend does not start.
-COPY --from=i18n --chown=cheese:python zh-CN/roomNotice.json zh-CN/apiError.json zh-CN/global.json /frontend/src/i18n/messages/zh-CN/
-COPY --from=i18n --chown=cheese:python en/roomNotice.json en/apiError.json en/global.json /frontend/src/i18n/messages/en/
+COPY --from=i18n --chown=cheese:python zh-CN/roomNotice.json zh-CN/global.json /frontend/src/i18n/messages/zh-CN/
+COPY --from=i18n --chown=cheese:python en/roomNotice.json en/global.json /frontend/src/i18n/messages/en/
+# apiError is split by backend module, so the whole directory comes in — one
+# COPY per shard would need a line here for every new shard.
+COPY --from=i18n --chown=cheese:python zh-CN/apiError/ /frontend/src/i18n/messages/zh-CN/apiError/
+COPY --from=i18n --chown=cheese:python en/apiError/ /frontend/src/i18n/messages/en/apiError/
 # The agent-side assets the BACKEND serves at runtime: the `cheese` platform CLI
 # (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
 # into a topic's ~/.claude. Without these the device path has no CLI.

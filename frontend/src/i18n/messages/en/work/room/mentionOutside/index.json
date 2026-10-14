@@ -1,0 +1,10 @@
+{
+  "add": "Add to channel",
+  "addFailed": "Couldn't add them",
+  "addFailedBecause": "Couldn't add them: {reason}",
+  "added": "Added {names} to the channel",
+  "close": "Close",
+  "dismiss": "Don't add",
+  "notInPrivate": "Not in this channel, so they can't see this message: {names}",
+  "notInPublic": "Not in this channel: {names}"
+}

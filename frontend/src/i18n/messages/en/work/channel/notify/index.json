@@ -1,0 +1,16 @@
+{
+  "all": "All new messages",
+  "allHint": "Every new message in the main line counts",
+  "forEightHours": "8 hours",
+  "forHour": "1 hour",
+  "forWeek": "1 week",
+  "mentions": "Mentions and my threads",
+  "mentionsHint": "Counts when someone mentions me or everyone, or a thread I took part in gets a reply",
+  "mute": "Mute",
+  "muteHint": "Only a direct mention counts and notifies me",
+  "mutedForever": "Muted until you turn it off",
+  "mutedUntil": "Muted until {time}",
+  "title": "Notifications",
+  "untilTomorrow": "Until 9 a.m. tomorrow",
+  "untilUnmuted": "Until I turn it off"
+}

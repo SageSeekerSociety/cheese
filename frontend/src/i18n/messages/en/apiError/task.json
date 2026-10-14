@@ -1,0 +1,17 @@
+{
+  "contributorNotInProject": "Only project members can be added as collaborators",
+  "pdfDraftNotOpen": "Drafting from a PDF isn't available yet. Try again later.",
+  "pdfScanFallbackFailed": "Page {page} is a scan (no text layer). It was rendered as an image and sent to the model, but the model still couldn't read anything usable ({detail}).",
+  "pdfScannedPageNoVision": "Page {page} has no text layer (a scan or image page), and rendering it as an image won't help: the current drafting model {model} can't read images. Switch to a drafting model that can, then try again.",
+  "submissionChallengeEnded": "This challenge has ended, so no work can be handed in",
+  "submissionClaimNotApproved": "Your claim must be approved before you can hand work in",
+  "submissionPastDeadline": "Your submission deadline has passed, so no version can be handed in or changed. Ask the challenge's author to extend it",
+  "taskCreatedByPerson": "Only a person can create a task this way",
+  "taskOpeningNotFailed": "Drafting the task's doc has not failed; there is nothing to retry",
+  "taskOwnSessionCloses": "Only the task's owner, or the task's own session, can close it",
+  "taskOwnerNotInProject": "A task can only be handed to a project member",
+  "taskOwnerOnly": "Only the task's owner can do this",
+  "taskParticipantsOnly": "Only the task's owner and collaborators can talk to its AI teammate here",
+  "taskTitleTooLong": "This title doesn't fit one sidebar line: a line holds about {limit} half-width characters (a CJK character counts as 2) and this one is {now}. Write a shorter one and try again.",
+  "teammateTaskByTeammate": "Only an AI teammate creates tasks here"
+}

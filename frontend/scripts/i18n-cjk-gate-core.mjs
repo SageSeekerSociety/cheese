@@ -554,7 +554,7 @@ export function formatReport(result) {
   lines.push('')
   if (kinds.has('copy')) {
     lines.push('Chinese a user can read goes through the catalog:')
-    lines.push('  1. add the key to src/i18n/messages/zh-CN/<namespace>.json and en/<namespace>.json')
+    lines.push('  1. add the key to src/i18n/messages/zh-CN/<键路径>.json and en/<键路径>.json (docs/i18n.md §2)')
     lines.push("  2. call it: t('namespace.component.role') in script, {{ t('…') }} or :label=\"t('…')\" in a template")
     lines.push('  Key naming: docs/i18n.md §3. English for platform terms: docs/i18n-glossary.md.')
     lines.push('Chinese that is data, not copy (compared, parsed or stored; never shown as interface text),')

@@ -49,7 +49,17 @@ CATALOGS = [("roomNotice", NOTICE_MESSAGES), ("apiError", ERROR_MESSAGES)]
 
 
 def _catalog(locale: str, namespace: str) -> dict[str, str]:
-    return json.loads((CATALOG / locale / f"{namespace}.json").read_text("utf-8"))
+    """A locale's catalog, read the way the backend reads it: one file, or the
+    shards under a directory merged into the flat table they are."""
+    file = CATALOG / locale / f"{namespace}.json"
+    if file.is_file():
+        return json.loads(file.read_text("utf-8"))
+    merged: dict[str, str] = {}
+    for shard in sorted((CATALOG / locale / namespace).glob("*.json")):
+        for key, value in json.loads(shard.read_text("utf-8")).items():
+            assert key not in merged, f"{key} 在两个分片里都有：{shard.name}"
+            merged[key] = value
+    return merged
 
 
 def _placeholders(template: str) -> set[str]:
@@ -60,7 +70,8 @@ def _placeholders(template: str) -> set[str]:
 _REPAIR_CATALOG = (
     "修法：后端与前端共用一份目录。每个键要同时存在于 frontend/src/i18n/messages/ "
     "每个 locale（zh-CN 与 en）下的 roomNotice.json（后端在房间里说的句子）或 "
-    "apiError.json（后端拒绝时说的句子）；两份 locale 的 {占位符} 集合必须一致，"
+    "apiError/（后端拒绝时说的句子，按说出这句话的后端模块分片，文件名不进键名）；"
+    "两份 locale 的 {占位符} 集合必须一致，"
     "en 不能有 zh-CN 没有的键，值也不能为空。"
     "规则：docs/i18n.md 第 2 节（目录与命名空间）、第 4 节（缺翻译怎么办）、"
     "第 5 节（机器闸门）。"
@@ -71,7 +82,7 @@ _REPAIR_CATALOG = (
 _REPAIR_SAY = (
     "修法：say(键, ...) 的键必须在目录里，关键字参数名要正好等于该键模板里的 "
     "{占位符} 集合。加新键就在 frontend/src/i18n/messages 的两个 locale 的 "
-    "roomNotice.json 或 apiError.json 里同时补中英两份；参数对不上就改调用点的关键字，"
+    "roomNotice.json 或 apiError/ 里同时补中英两份；参数对不上就改调用点的关键字，"
     "不要改模板。规则：docs/i18n.md 第 4 节（缺翻译怎么办）、第 5 节（机器闸门）。"
     "复查：cd backend && uv run pytest tests/unit/test_sentences.py -q"
 )

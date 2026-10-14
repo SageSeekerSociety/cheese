@@ -1,0 +1,8 @@
+{
+  "failed": "Edit failed: {reason}",
+  "failedRetry": "Edit failed. Try again later",
+  "next": "Next",
+  "prev": "Previous",
+  "stale": "This text has changed. Select it again",
+  "unavailable": "This document can't be edited right now"
+}

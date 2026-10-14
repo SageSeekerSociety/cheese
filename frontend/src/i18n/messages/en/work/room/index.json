@@ -1,0 +1,9 @@
+{
+  "backToChat": "Back to chat",
+  "backToLatest": "Back to latest",
+  "defaultAgentName": "Cheese",
+  "loadFailed": "Failed to load messages",
+  "messageGone": "This message no longer exists",
+  "newMessages": "new",
+  "unselected": "Select a channel"
+}

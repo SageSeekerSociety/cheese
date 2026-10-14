@@ -1,0 +1,11 @@
+{
+  "accept": "接受",
+  "acceptAll": "全部接受",
+  "allDone": "{agent}的建议都处理完了：接受 {accepted} 处，拒绝 {rejected} 处",
+  "dismiss": "关闭",
+  "pending": "{agent}的建议 · 还有 {n} 处待处理",
+  "position": "{i}/{n}",
+  "reject": "拒绝",
+  "rejectAll": "全部拒绝",
+  "title": "{agent}的建议"
+}

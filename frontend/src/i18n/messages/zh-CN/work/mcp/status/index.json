@@ -1,0 +1,8 @@
+{
+  "connected": "已连接",
+  "connectedBy": "已连接（由 {name} 授权，{when}）",
+  "disconnected": "未连接",
+  "missingValues": "需要填写 {names}",
+  "needsReconnect": "需要重新连接",
+  "ready": "已就绪"
+}

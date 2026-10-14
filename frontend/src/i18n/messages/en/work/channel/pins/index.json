@@ -1,0 +1,9 @@
+{
+  "jump": "Go to the message",
+  "menu": "Pin actions",
+  "pinnedBy": "Pinned by {name} · {when}",
+  "said": "{name} · {when}",
+  "title": "Pinned · {count}",
+  "unpin": "Unpin",
+  "unpinFailed": "Could not unpin"
+}

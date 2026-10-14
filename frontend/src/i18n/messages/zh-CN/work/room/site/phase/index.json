@@ -1,0 +1,8 @@
+{
+  "environment": "等环境",
+  "queue": "排队",
+  "retry": "重试",
+  "sep": " · ",
+  "span": "{phase} {span}",
+  "work": "工作"
+}
