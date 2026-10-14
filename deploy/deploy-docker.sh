@@ -888,10 +888,17 @@ reclaim_docker_disk() {
 # to fail. The trap closes every exit path, including `fail`, `set -e` aborts and
 # a runner cancelling the job (the concurrency policy does this routinely).
 RECLAIM_PENDING=0
+# The backend traffic has left, until retire_old_backend stops it (rollout_app).
+RETIRING_BACKEND="" RETIRING_BACKEND_SERVICE="" RETIRING_BACKEND_PORT="" RETIRING_DEADLINE=0
+
 on_exit() {
   local rc=$?
   [ "$#" -eq 0 ] || rc="$1"
   trap - EXIT INT TERM
+  # A release never leaves two backends behind it, nor waits on the way out.
+  # (Set only by rollout_app, so retire_old_backend is defined by then.)
+  [ -z "$RETIRING_BACKEND_SERVICE" ] \
+    || retire_old_backend now "the deploy is exiting with status $rc"
   resume_owners_held_for_schema
   [ -z "$SLOTS_OVERLAY" ] || rm -f "$SLOTS_OVERLAY"
   if [ "$RECLAIM_PENDING" = 1 ]; then
@@ -1205,14 +1212,14 @@ API_FRONT_CONTAINER="${API_FRONT_CONTAINER:-cheese-api-front}"
 BACKEND_START_TIMEOUT="${DEPLOY_BACKEND_START_TIMEOUT:-180}"
 # How long the slots traffic left keep answering what they already have before
 # they are stopped. App-router's old workers do not cut those requests off at
-# this point: its worker_shutdown_timeout is set well above this drain plus the
-# backend's stop grace (deploy/llm-tunnel/app-router.conf), so what ends a
-# connection on the old slots is the old slot stopping, once.
+# this point: its worker_shutdown_timeout is set above this drain plus the wait
+# for model streams and the backend's stop grace (deploy/llm-tunnel/app-router.conf),
+# so what ends a connection on the old slots is the old slot stopping, once.
 DRAIN_SECONDS="${DEPLOY_DRAIN_SECONDS:-31}"
 # Matches the backend's stop_grace_period in the compose files.
 BACKEND_STOP_GRACE_SECONDS="${DEPLOY_BACKEND_STOP_GRACE_SECONDS:-60}"
 # How long the old frontend's nginx may take to finish its requests after the
-# drain: they then had 5 + 31 + 120 s, inside app-router's 240 s worker deadline.
+# drain: they then had 5 + 31 + 120 s, inside app-router's 1080 s worker deadline.
 FRONTEND_STOP_GRACE_SECONDS="${DEPLOY_FRONTEND_STOP_GRACE_SECONDS:-120}"
 # Opt in only after the public ingress uses the standing frontend proxy.
 ACTIVE_FRONTEND_DIR="${ACTIVE_FRONTEND_DIR:-}"
@@ -1399,6 +1406,51 @@ hand_over_running_work() {
   fi
 }
 
+# A model stream relayed through /llm/v1 runs for minutes on a reasoning model
+# and cannot move to the next backend: stopping the one that relays it ends it,
+# and the harness that asked loses the whole answer. So the old backend is
+# stopped only once the streams it relays have ended, or this bound, counted
+# from the switch, has run out (deploy/wait-model-streams.sh). app-router's
+# worker_shutdown_timeout (deploy/llm-tunnel/app-router.conf) stays above the
+# handover pause, the drain, this bound and the stop grace together, so the
+# worker carrying such a stream does not end it first.
+MODEL_STREAM_GRACE_SECONDS="${DEPLOY_MODEL_STREAM_GRACE_SECONDS:-900}"
+MODEL_STREAM_POLL_SECONDS="${DEPLOY_MODEL_STREAM_POLL_SECONDS:-5}"
+# A rollback is already the second switch of a failed release; the streams on
+# the release it leaves get only this long.
+ROLLBACK_MODEL_STREAM_GRACE_SECONDS="${DEPLOY_ROLLBACK_MODEL_STREAM_GRACE_SECONDS:-30}"
+
+# $1 = the old backend's host port, $2 = its container, $3 = how long to wait.
+wait_for_model_streams() {
+  local line
+  bash "$HERE/wait-model-streams.sh" "$1" "$2" "$3" "$MODEL_STREAM_POLL_SECONDS" 2>&1 \
+    | while IFS= read -r line; do log "$line"; done || true
+}
+
+# The old backend is the last thing a release stops, after its health check:
+# waiting for its model streams any earlier would hold a release that then
+# fails its health check on the broken build for that long before it rolls
+# back. rollout_app names it here; retire_old_backend stops and removes it.
+# $1 = streams: wait for its model streams up to the bound's deadline.
+# $1 = now: stop it at once, saying why ($2) — a failed release, an exit.
+retire_old_backend() {
+  local left
+  [ -n "$RETIRING_BACKEND_SERVICE" ] || return 0
+  if [ -n "$RETIRING_BACKEND" ]; then
+    if [ "$1" = streams ]; then
+      left=$((RETIRING_DEADLINE - SECONDS))
+      [ "$left" -gt 0 ] || left=0
+      wait_for_model_streams "$RETIRING_BACKEND_PORT" "$RETIRING_BACKEND" "$left"
+    else
+      log "stopping $RETIRING_BACKEND without waiting for its model streams: $2"
+    fi
+    docker stop --time "$BACKEND_STOP_GRACE_SECONDS" "$RETIRING_BACKEND" >/dev/null 2>&1 || true
+  fi
+  dc rm -f "$RETIRING_BACKEND_SERVICE" >/dev/null 2>&1 || true
+  log "$RETIRING_BACKEND_SERVICE stopped"
+  RETIRING_BACKEND="" RETIRING_BACKEND_SERVICE="" RETIRING_BACKEND_PORT="" RETIRING_DEADLINE=0
+}
+
 wait_for_frontend() {
   local port="$1" container="$2" waited=0 step="$HEALTH_INTERVAL_SECONDS"
   [ "$step" -gt 0 ] 2>/dev/null || step=1
@@ -1415,12 +1467,14 @@ wait_for_frontend() {
 }
 
 rollout_app() {
-  local backend_from backend_to backend_port old_backend handover
+  local backend_from backend_to backend_port old_backend old_backend_port handover switched_at
   local frontend_from="" frontend_to="" frontend_port="" old_frontend="" collab_failed=false
   local frontend_holds_ports=false frontend_stop_grace="$FRONTEND_STOP_GRACE_SECONDS" ports_failed=false
   read_slots "$ACTIVE_BACKEND_DIR/backend.conf" backend "$BACKEND_PORT" "$BACKEND_PORT_NEXT"
   backend_from="$SLOT_FROM" backend_to="$SLOT_TO" backend_port="$SLOT_TO_PORT"
   old_backend="$(service_container "$backend_from")"
+  old_backend_port="$BACKEND_PORT"
+  [ "$backend_from" = backend ] || old_backend_port="$BACKEND_PORT_NEXT"
   if [ -n "$ACTIVE_FRONTEND_DIR" ]; then
     [ -f "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" ] || fail "frontend proxy must be configured before enabling rollout"
     read_slots "$ACTIVE_BACKEND_DIR/frontend.conf" frontend "$FRONTEND_SLOT_PORT" "$FRONTEND_PORT_NEXT" "$FRONTEND_PORT"
@@ -1461,8 +1515,10 @@ rollout_app() {
     dc rm -f -s "$backend_to" ${frontend_to:+"$frontend_to"} >/dev/null 2>&1 || true
     fail "app-router did not take the switch; its upstream files are restored and traffic stays on $backend_from${frontend_from:+ and $frontend_from}"
   fi
-  # From here nothing exits early: the old slots are always stopped, so a
-  # failure leaves one backend and one frontend, and the next release starts
+  switched_at=$SECONDS
+  # From here nothing exits early: the old frontend is always stopped and the
+  # old backend handed to retire_old_backend, which the exit trap runs too, so
+  # a failure leaves one backend and one frontend, and the next release starts
   # from a clean state.
   #
   # The handover keeps its own clock from the switch.
@@ -1481,19 +1537,21 @@ rollout_app() {
   # have: through the drain, then a graceful stop — SIGQUIT for the frontend's
   # nginx, which closes its sockets as its requests end, and SIGTERM for the
   # backend, which still hands over whatever it holds (`rm -f` alone is a
-  # SIGKILL that cuts that off). Both stop at once.
+  # SIGKILL that cuts that off). The backend is stopped by retire_old_backend,
+  # after the release's health check, once the model streams it still relays
+  # have ended or their bound has run out.
   sleep "$DRAIN_SECONDS"
   if [ -n "$old_frontend" ]; then
     docker stop --time "$frontend_stop_grace" "$old_frontend" >/dev/null 2>&1 &
   fi
-  if [ -n "$old_backend" ]; then
-    docker stop --time "$BACKEND_STOP_GRACE_SECONDS" "$old_backend" >/dev/null 2>&1 || true
-  fi
+  RETIRING_BACKEND="$old_backend" RETIRING_BACKEND_SERVICE="$backend_from"
+  RETIRING_BACKEND_PORT="$old_backend_port"
+  RETIRING_DEADLINE=$((switched_at + HANDOVER_AFTER_SECONDS + DRAIN_SECONDS + MODEL_STREAM_GRACE_SECONDS))
+  [ -n "$old_backend" ] || retire_old_backend now
   wait || true
   if [ "$frontend_holds_ports" = true ] && ! take_frontend_ports "$old_frontend" "$frontend_port"; then
     ports_failed=true
   fi
-  dc rm -f "$backend_from" >/dev/null 2>&1 || true
   # A frontend started again to keep the ports is left for the next release,
   # which replaces it in its slot and takes the ports over at that switch.
   if [ -n "$frontend_from" ] && [ "$ports_failed" = false ]; then
@@ -1502,7 +1560,7 @@ rollout_app() {
   [ "$ports_failed" = false ] \
     || fail "app-router could not take the box's ports :$FRONTEND_PORT and $FRONTEND_DIRECT_LISTEN (see the nginx error above); $old_frontend serves them again, and the next release takes them over"
   [ "$collab_failed" = false ] || fail "compose up collab failed"
-  log "$backend_from${frontend_from:+ and $frontend_from} stopped; $backend_to${frontend_to:+ and $frontend_to} serve this release"
+  log "${frontend_from:+$frontend_from stopped; }$backend_to${frontend_to:+ and $frontend_to} serve this release; $backend_from stops after the health check"
   if [ "$backend_to" = backend-b ]; then
     # The script before the two slots starts its one-off successors on these
     # ports and refuses while app-router names them.
@@ -1617,6 +1675,11 @@ for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
     --filter "label=com.docker.compose.project=$PROJECT" \
     --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
     2>/dev/null || true)"
+  # The old backend still finishing its model streams is not part of this
+  # release; retire_old_backend removes it after this check.
+  if [ -n "$RETIRING_BACKEND_SERVICE" ]; then
+    app_tier="$(printf '%s\n' "$app_tier" | awk -F '\t' -v old="$RETIRING_BACKEND_SERVICE" '$1 != old')"
+  fi
   if printf '%s\n' "$app_tier" | "$HERE/check-app-tier.sh" "$SHA" \
     >/dev/null 2>&1; then
     code=ok
@@ -1630,6 +1693,8 @@ if [ "$code" != ok ]; then
   if [ -f "$FORGE_CUTOVER_PENDING" ]; then
     fail "repository migration completed; refusing to restart the legacy repository writer; retry this release from migration receipts"
   fi
+  # The previous release goes back into the slot the old backend holds.
+  retire_old_backend now "this release failed its health check"
   if [ -n "${PREV_SHA:-}" ] && [ "$PREV_SHA" != "$SHA" ]; then
     log "rolling back to ${PREV_SHA}…"
     # Rolling the images back without rolling the ownership back is not a
@@ -1660,7 +1725,11 @@ if [ "$code" != ok ]; then
         fi
         export IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE"
         write_slots_overlay
+        MODEL_STREAM_GRACE_SECONDS="$ROLLBACK_MODEL_STREAM_GRACE_SECONDS"
+        # A subshell does not run the script's exit trap.
+        trap 'retire_old_backend now "the rollback did not complete"' EXIT
         rollout_app
+        retire_old_backend streams
       ) || log "WARNING: the rollback to $PREV_SHA did not complete; see the lines above"
     elif [ -n "$PREV_BACKEND_IMAGE" ] && [ -n "$PREV_FRONTEND_IMAGE" ]; then
       BACKEND_IMAGE="$PREV_BACKEND_IMAGE" \
@@ -1673,6 +1742,9 @@ if [ "$code" != ok ]; then
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
 fi
+
+# Healthy: now the backend traffic left may finish its model streams and stop.
+retire_old_backend streams
 
 # Keep the cutover guard across failed releases until the new app is healthy.
 if [ -f "$FORGE_EXECUTOR_RESTART" ]; then

@@ -236,9 +236,22 @@ The deploy starts the idle slot of each on the new image, waits for its health
 check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
 `collab` is replaced at once, while the old frontend still runs. After a
-31-second drain (`DEPLOY_DRAIN_SECONDS`) the old slots stop gracefully, in
-parallel: the frontend's nginx gets up to 120 seconds to finish its requests, the
-backend 60 seconds to finish its handover. The next release goes back into the
+31-second drain (`DEPLOY_DRAIN_SECONDS`) the old frontend's nginx gets up to 120
+seconds to finish its requests. The old backend is stopped last, once the
+release has passed its health check, because it may still be relaying model
+streams through `/llm/v1`: those cannot move to the next backend, wait up to
+minutes for a reasoning model's first byte, and run for minutes after it.
+`deploy/wait-model-streams.sh` asks its `/_internal/llm/streams` count every 5
+seconds and lets it stop once that is zero, or 15 minutes after the switch's
+drain (`DEPLOY_MODEL_STREAM_GRACE_SECONDS`), when the stop ends what is left. It
+then gets 60 seconds to finish its handover. A release that fails its health
+check stops it at once, without waiting, so the previous release can go back
+into that slot, and the rollback gives the failed release's streams 30 seconds
+(`DEPLOY_ROLLBACK_MODEL_STREAM_GRACE_SECONDS`); the exit trap stops it without
+waiting on any other way out. The release job waits for all of it, so the next
+release never finds three backends, and its migrations never run under one
+still streaming. The health check leaves the old backend out while it waits.
+The next release goes back into the
 slots this one left. The `-b` services are written at deploy time from
 compose's merged model, after every value the deploy exports, so they carry
 every overlay and differ only in their port and in answering to the service's
@@ -281,11 +294,12 @@ and the next release takes them at its switch. A one-off
 from before the slots is removed by the next release when app-router does not
 send traffic to it, and stops the release when it does.
 
-App-router's `worker_shutdown_timeout` is 240 seconds, longer than the
-handover pause, the drain and the longer graceful stop together (5 + 31 + 120),
-so the workers the one reload
+App-router's `worker_shutdown_timeout` is 1080 seconds, longer than the
+handover pause, the drain, the model-stream wait and the backend's graceful stop
+together (5 + 31 + 900 + 60), so the workers the one reload
 retires keep their connections until the container they lead to stops. Device
-and model connections bypass these workers. The persistent **:18080** entry
+connections and the model tunnel bypass these workers; `/llm/v1` streams do not,
+which is why the deadline covers the wait. The persistent **:18080** entry
 routes to app-router's frontend upstream. Frontends still reach APIs through
 `API_UPSTREAM=host.docker.internal:8081`.
 

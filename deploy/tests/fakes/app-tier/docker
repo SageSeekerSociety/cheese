@@ -194,7 +194,19 @@ emit_contract_rows() {
   if [ "$scenario" != forgejo_absent ]; then
     printf 'forgejo\tcodeberg.org/forgejo/forgejo:15.0.9-rootless\trunning\tUp 1 minute (healthy)\n'
   fi
-  printf 'backend\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
+  # On a box with two slots the backend app-router serves is listed under its
+  # own slot, and the slot this release left beside it, on the previous image,
+  # until the release removes it.
+  local serving=backend other=backend-b
+  if [ -n "${ACTIVE_BACKEND_DIR:-}" ] && [ -n "${BACKEND_PORT_NEXT:-}" ] \
+    && grep -Fq "127.0.0.1:$BACKEND_PORT_NEXT;" "$ACTIVE_BACKEND_DIR/backend.conf" 2>/dev/null; then
+    serving=backend-b other=backend
+  fi
+  printf '%s\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$serving" "$tag"
+  if [ -n "${APP_TIER_DOCKER_LOG:-}" ] && grep -q -- "--force-recreate $serving\$" "$APP_TIER_DOCKER_LOG" 2>/dev/null \
+    && ! grep -q -- " rm -f $other\$" "$APP_TIER_DOCKER_LOG" 2>/dev/null; then
+    printf '%s\trepo/backend:oldsha\trunning\tUp 1 hour (healthy)\n' "$other"
+  fi
   if [ "$scenario" != "frontend_absent" ]; then
     frontend_tag="$tag"
     if [ "$scenario" = frontend_stale ] || [ "$scenario" = rollback ]; then
@@ -246,6 +258,9 @@ if [ "${1:-}" = "compose" ]; then
       fi
       if [ "${2:-}" = -q ] && [ "${3:-}" = backend ] &&         [ -n "${APP_TIER_BACKEND_CONTAINER:-}" ]; then
         printf '%s\n' "$APP_TIER_BACKEND_CONTAINER"
+      fi
+      if [ "${2:-}" = -q ] && [ "${3:-}" = backend-b ] && [ -n "${APP_TIER_BACKEND_B_CONTAINER:-}" ]; then
+        printf '%s\n' "$APP_TIER_BACKEND_B_CONTAINER"
       fi
       if [ "${2:-}" = -q ] && [ "${3:-}" = frontend ] && [ -n "${APP_TIER_FRONTEND_CONTAINER:-}" ]; then
         printf '%s\n' "$APP_TIER_FRONTEND_CONTAINER"
