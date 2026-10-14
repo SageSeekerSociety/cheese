@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Protocol
 
 from app.domain.memory.scopes import MemoryScope
 
@@ -47,12 +48,31 @@ class DurableTurnSeat:
     acting_agent: str | None
 
 
-def pick_unambiguous_entry(
-    entries: Iterable[tuple[uuid.UUID, object | None]],
-    matches: Callable[[object], bool] | None,
+class TurnSeat(Protocol):
+    """What names whose turn it is: the two seats a live turn is read by.
+
+    Both ``HookWorkState`` (this process's own work) and ``DurableTurnSeat`` (a
+    row another process opened) carry these, and that is the whole reason the
+    pickers below can ask one question of a mixed set — the durable row cannot
+    offer more, and a caller aiming a steer or stamping ``seen_by`` needs only
+    these two. Declared as a Protocol so the reader of a turn does not name
+    either concrete class. Read-only members: a class's ``acting_agent: str``
+    then satisfies it, which a writable ``str | None`` member would reject.
+    """
+
+    @property
+    def agent_instance_handle(self) -> str | None: ...
+
+    @property
+    def acting_agent(self) -> str | None: ...
+
+
+def pick_unambiguous_entry[StateT: TurnSeat](
+    entries: Iterable[tuple[uuid.UUID, StateT | None]],
+    matches: Callable[[StateT], bool] | None,
     *,
     strict: bool,
-) -> tuple[uuid.UUID, object | None] | None:
+) -> tuple[uuid.UUID, StateT | None] | None:
     """The one live turn an inbound message belongs to, with the state naming it.
 
     With no ``matches``, a single live turn on the topic is the answer. With
@@ -63,13 +83,17 @@ def pick_unambiguous_entry(
     without a state. Shared by the process-local set and the durable rows so the
     two answer the question the same way. Returns the state beside the id so a
     caller can aim the steer and name ``seen_by`` at the turn's own seat.
+
+    Generic in the state so a caller keeping one concrete kind (the local
+    ``HookWorkState``) reads that kind back, while the mixed authority set is
+    typed as the ``TurnSeat`` they share.
     """
     entries = list(entries)
     if not entries:
         return None
     if matches is None:
         return entries[0] if len(entries) == 1 else None
-    hits: list[tuple[uuid.UUID, object | None]] = []
+    hits: list[tuple[uuid.UUID, StateT | None]] = []
     for work_id, state in entries:
         if state is None:
             if not strict:
@@ -79,9 +103,9 @@ def pick_unambiguous_entry(
     return hits[0] if len(hits) == 1 else None
 
 
-def pick_unambiguous(
-    entries: Iterable[tuple[uuid.UUID, object | None]],
-    matches: Callable[[object], bool] | None,
+def pick_unambiguous[StateT: TurnSeat](
+    entries: Iterable[tuple[uuid.UUID, StateT | None]],
+    matches: Callable[[StateT], bool] | None,
     *,
     strict: bool,
 ) -> uuid.UUID | None:

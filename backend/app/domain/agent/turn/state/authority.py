@@ -20,6 +20,7 @@ from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.turn.state.live import (
     DurableTurnSeat,
     LiveWork,
+    TurnSeat,
     pick_unambiguous_entry,
 )
 
@@ -60,10 +61,10 @@ async def consuming_turn(
     live: LiveWork,
     sessions: Sessions,
     topic_id: uuid.UUID,
-    matches: Callable[[object], bool] | None = None,
+    matches: Callable[[TurnSeat], bool] | None = None,
     *,
     strict: bool = False,
-) -> tuple[uuid.UUID, object | None] | None:
+) -> tuple[uuid.UUID, TurnSeat | None] | None:
     """The one live turn an inbound message belongs to, and the state that says
     whose it is: this process's own AND the rows another process opened.
 
@@ -73,12 +74,13 @@ async def consuming_turn(
     holds keeps its richer local state; a row known only durably answers with
     its seat (`DurableTurnSeat`) — that half is what aims the steer and names the
     input's ``seen_by`` when the turn runs elsewhere. A closed row is absent: the
-    cache cannot nominate a turn the authority has ended.
+    cache cannot nominate a turn the authority has ended. ``TurnSeat`` is the
+    seat pair both kinds carry, which is all a caller reads from the result.
     """
     local = live.active_turn_ids.get(topic_id) or set()
     async with sessions() as session:
         records = await AgentTurnRepository(session).open_turn_records(topic_id)
-    entries: dict[uuid.UUID, object | None] = {
+    entries: dict[uuid.UUID, TurnSeat | None] = {
         work_id: live.hook_work.get((topic_id, work_id)) for work_id in local
     }
     for turn_id, handle in records:
