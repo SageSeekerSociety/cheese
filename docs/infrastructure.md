@@ -73,7 +73,12 @@ checks it, and gracefully reloads nginx before replacing the backend, but only
 when what api-front would load differs from what it last loaded: the deploy
 keeps a digest of its config files, comments and indentation aside, in
 `.api-front-loaded` in `ACTIVE_BACKEND_DIR`, and a release that changes none of
-them, or only their comments, leaves api-front alone. A reload's old workers
+them, or only their comments, leaves api-front alone. The record counts only
+while the files on disk still match it: after anything else wrote them (a
+release of an older commit, which reloads by its own rule, or `tls-renew.sh`)
+the next deploy reloads. Deleting the file makes the next deploy take the
+files on disk as what api-front runs; do that only after reloading api-front
+by hand. A reload's old workers
 keep the sockets they carry for up to 24 hours (`worker_shutdown_timeout` in
 `deploy/llm-tunnel/nginx.conf`, the longest idle timeout any of its routes
 grants), so a config change no longer drops every device link and tunnel. The exact

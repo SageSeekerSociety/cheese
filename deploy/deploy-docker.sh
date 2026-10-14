@@ -464,10 +464,19 @@ ensure_application_router() {
       || fail "application router cannot reach the serving frontend"
   fi
 
-  # What api-front runs. A box that never recorded it runs what is on disk,
-  # which is what the deploy compared against before the record existed.
+  # What api-front runs. The record is trusted only while the files on disk
+  # still match it: anything else that wrote them since (tls-renew.sh, a
+  # release of an older commit, an operator) reloaded api-front without
+  # updating it, or did not reload it at all, so what runs is unknown and the
+  # deploy reloads. A box that never recorded it runs what is on disk, which
+  # is what the deploy compared against before the record existed.
   loaded="$(cat "$ACTIVE_BACKEND_DIR/.api-front-loaded" 2>/dev/null || true)"
-  [ -n "$loaded" ] || loaded="$(api_front_digest "$config")"
+  if [ -z "$loaded" ]; then
+    loaded="$(api_front_digest "$config")"
+  elif [ "$loaded" != "$(api_front_digest "$config")" ]; then
+    log "api-front's config on disk is not the one it last loaded here; reloading it"
+    loaded=""
+  fi
   # Everything api-front reads that this deploy may rewrite is backed up first,
   # so a rejected config restores all of it together.
   backup="${config}.pre-device-connection"
