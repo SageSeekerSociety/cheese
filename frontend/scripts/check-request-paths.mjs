@@ -4,7 +4,8 @@
 // collector the addressing contract suite holds the app to — read from the file
 // named by `--routes FILE`, or generated on the spot by running that command
 // when no file is given. Nothing is committed in between: the index changes with
-// every route and, as a tracked file, was touched by 64 PRs in a fortnight. Exits
+// every route and, as a tracked file, took 84 commits from 83 PRs in its twelve
+// days. Exits
 // 1 on any judged path that matches no route, and 2 when it could not judge at
 // all. The judgement itself lives in request-paths-core.mjs and is unit-tested;
 // this file is only the I/O. It never writes.

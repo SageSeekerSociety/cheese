@@ -6,13 +6,13 @@
     uv run python -m scripts.route_index --check-annotations  # every route noted
 
 The index this emits is NOT committed. It changes with every route, and as a
-tracked file it was touched by 64 PRs in a fortnight; it is generated where it is
-judged instead (the frontend `request-paths` job, and the addressing contract
-suite). `--check` is the first-FULL guard (v6 reading-boundary pilot): literal
-later routes have a unique URL, so an earlier FULL match proves that URL
-unreachable for the reported method. Parameterized routes only yield verified
-concrete witnesses; sampling is not a proof of disjointness or whole-branch
-coverage. Mounts remain unsupported and fail loudly.
+tracked file 84 commits from 83 PRs touched it in the twelve days it existed; it
+is generated where it is judged instead (the frontend `request-paths` job, and the
+addressing contract suite). `--check` is the first-FULL guard (v6
+reading-boundary pilot): literal later routes have a unique URL, so an earlier
+FULL match proves that URL unreachable for the reported method. Parameterized
+routes only yield verified concrete witnesses; sampling is not a proof of
+disjointness or whole-branch coverage. Mounts remain unsupported and fail loudly.
 """
 
 from __future__ import annotations

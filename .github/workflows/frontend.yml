@@ -272,7 +272,8 @@ jobs:
   # against the routes as the app mounts them, read off the app by
   # `backend/scripts/route_index.py --emit` — the same inventory the addressing
   # contract suite holds the app to. That index used to be a committed file; it
-  # changed with every route (64 PRs in a fortnight) and every PR that added one
+  # changed with every route (84 commits from 83 PRs in its twelve days) and every
+  # PR that added one
   # had to carry a regeneration of a 149 KB generated file through review. It is
   # generated here instead, and git-ignored so nobody re-adds it by habit.
   #

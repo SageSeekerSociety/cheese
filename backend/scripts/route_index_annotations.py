@@ -119,8 +119,10 @@ def read_annotations(path: str | Path) -> dict[tuple[str, str, str], dict]:
 def check_annotation_coverage(rows: list[dict], path: str | Path) -> int:
     """All snapshot methods, including WS, are covered and no addresses orphan.
 
-    Only coverage uses a set. The caller compares the original effective leaf
-    sequence first, retaining duplicate registrations and FrozenPair identity.
+    Coverage is judged as a set: a duplicate registration, or one address under
+    two methods, is a single entry here. Whether an earlier route shadows a
+    later one is a separate check (`route_index.checked_findings`), which
+    identifies a pair by path and handler rather than by registration position.
     """
     annotations = read_annotations(path)
     keys = set()
