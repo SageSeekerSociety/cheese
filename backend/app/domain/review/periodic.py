@@ -15,6 +15,7 @@ from app.domain.review.ports import (
     RecordAgent,
     RecordInstruction,
     SeatInstanceId,
+    TaskTeammate,
 )
 
 GateNudge = Callable[[uuid.UUID, str, str, dict], Awaitable[None]]
@@ -45,6 +46,7 @@ def register_periodic_jobs(
     seat_instance_id: SeatInstanceId,
     record_agent: RecordAgent,
     dispatch_pending: DispatchPending,
+    task_teammate: TaskTeammate,
 ) -> None:
     jobs.register(
         "pr poll",
@@ -62,14 +64,20 @@ def register_periodic_jobs(
         "task pr poll",
         settings.accept_pr_poll_interval_s,
         lambda: pr_poll.poll_uncarded_task_prs(
-            chat, announce, record_instruction=record_instruction
+            chat,
+            announce,
+            record_instruction=record_instruction,
+            task_teammate=task_teammate,
         ),
     )
     jobs.register(
         "landing watch",
         settings.accept_pr_poll_interval_s,
         lambda: pr_poll.watch_landings(
-            chat, announce, record_instruction=record_instruction
+            chat,
+            announce,
+            record_instruction=record_instruction,
+            task_teammate=task_teammate,
         ),
     )
     # Drafts and cards watch the same repository state on the same clock.

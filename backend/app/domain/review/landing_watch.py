@@ -27,7 +27,6 @@ from sqlalchemy import or_, select
 from app.core.errors import UpstreamUnavailableError
 from app.core.sentences import listing, say
 from app.domain.addressing import Event
-from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
     EVENT_DEPLOY_DONE,
@@ -40,17 +39,15 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.project.forge import background_quota, quota_serves_background
-from app.domain.project.models import Project
 from app.domain.review import landing_forge
 from app.domain.review.landing_forge import Check, ForgeUnavailable, LandingReads
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
-from app.domain.review.ports import Announce, Chat, RecordInstruction
+from app.domain.review.ports import Announce, Chat, RecordInstruction, TaskTeammate
 from app.domain.review.room_notices import tell_room_undelivered
-from app.domain.review.task_landing import go_on_while_working, tell_agent
+from app.domain.review.task_landing import go_on_while_working, handed_in, tell_agent
 from app.domain.room_task.closing import close_overdue
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
-from app.domain.topic.models import Topic
 
 logger = logging.getLogger("cheesex.review.landing_watch")
 
@@ -60,13 +57,21 @@ _FAILED = frozenset({"failure", "timed_out", "startup_failure"})
 
 
 async def watch_landings(
-    chat: Chat, announce: Announce, *, record_instruction: RecordInstruction | None
+    chat: Chat,
+    announce: Announce,
+    *,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
 ) -> dict:
     """One look at every merge still being watched, the tasks being written up
     whose AI teammate has gone on working, and the overdue closings."""
 
     sessions = chat.session_factory
-    gone_on = await go_on_while_working(sessions, record_instruction=record_instruction)
+    gone_on = await go_on_while_working(
+        sessions,
+        record_instruction=record_instruction,
+        task_teammate=task_teammate,
+    )
     async with sessions() as session:
         closed = await close_overdue(session, chat)
         for overdue in closed:
@@ -93,6 +98,7 @@ async def watch_landings(
                 landing_id,
                 announce=announce,
                 record_instruction=record_instruction,
+                task_teammate=task_teammate,
             )
         except Exception as exc:  # noqa: BLE001 — one merge must not stop the rest
             errors.append(f"{landing_id}: {exc}")
@@ -111,6 +117,7 @@ async def _look(
     *,
     announce: Announce,
     record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
 ) -> int:
 
     sessions = chat.session_factory
@@ -172,6 +179,7 @@ async def _look(
                     failed,
                     announce=announce,
                     record_instruction=record_instruction,
+                    task_teammate=task_teammate,
                 )
         if deployed is not None and landing.deploy == DeployOutcome.watching:
             if deployed == DeployOutcome.unavailable:
@@ -231,6 +239,7 @@ async def _checks_failed(
     *,
     announce: Announce,
     record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
 ) -> None:
     """The merge broke a check on the default branch: the task's AI teammate
     fixes it, in the task, reopened if it had closed."""
@@ -257,7 +266,7 @@ async def _checks_failed(
         ),
         record_instruction=record_instruction,
     )
-    agent = f"<@{await _seat(session, task)}>"
+    agent = f"<@{await _seat(session, task, task_teammate=task_teammate)}>"
     names = listing([run.name for run in failed])
     await announce(
         session,
@@ -310,14 +319,18 @@ async def _deployment_seen(
     )
 
 
-async def _seat(session, task) -> str:
+async def _seat(session, task, *, task_teammate: TaskTeammate | None) -> str:
+    """The seat the task's own AI teammate sits under — the handle a line about
+    that task points at. A task whose project or room is gone has no such seat,
+    and a line that names nobody is what there is to say (`""`)."""
 
-    project = await session.get(Project, task.project_id)
-    room = await session.get(Topic, task.room_id)
-    agent = await AgentInstanceService(session).for_task(
-        project, room, task.agent_handle
+    teammate = await handed_in(task_teammate)(
+        session, task.project_id, task.room_id, task.agent_handle
     )
-    return agent_instance_handle(agent.instance_id)
+    if teammate is None:
+        return ""
+    instance_id, _handle = teammate
+    return agent_instance_handle(instance_id)
 
 
 # 这一段原先和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，但那个包里

@@ -33,6 +33,7 @@ from app.domain.review.ports import (
     RecordAgent,
     RecordInstruction,
     SeatInstanceId,
+    TaskTeammate,
 )
 from app.domain.review.task_landing import delivery_landed
 from app.domain.room_task.models import Task, TaskStatus
@@ -69,6 +70,7 @@ async def poll_open_prs(
     record_instruction: RecordInstruction,
     seat_instance_id: SeatInstanceId,
     record_agent: RecordAgent,
+    task_teammate: TaskTeammate,
 ) -> dict:
     """Reconcile returned batches and advance pending PR cards (#718) one step —
     mirror its merge state, send the events the 「谁的活」 table names, and merge
@@ -101,6 +103,7 @@ async def poll_open_prs(
                     record_instruction=record_instruction,
                     seat_instance_id=seat_instance_id,
                     record_agent=record_agent,
+                    task_teammate=task_teammate,
                 ).advance_pr_card(card_id, chat_service=chat, runner=runner)
                 await session.commit()
                 checked += 1
@@ -128,6 +131,7 @@ async def poll_uncarded_task_prs(
     project_id: uuid.UUID | None = None,
     *,
     record_instruction: RecordInstruction,
+    task_teammate: TaskTeammate,
 ) -> dict:
     """Record task PRs merged on the forge without an accept card."""
 
@@ -231,6 +235,7 @@ async def poll_uncarded_task_prs(
                     completes=True,
                     handed_over=None,
                     record_instruction=record_instruction,
+                    task_teammate=task_teammate,
                 )
                 await announce(
                     session,
@@ -255,12 +260,19 @@ async def poll_uncarded_task_prs(
 
 
 async def watch_landings(
-    chat: Chat, announce: Announce, *, record_instruction: RecordInstruction
+    chat: Chat,
+    announce: Announce,
+    *,
+    record_instruction: RecordInstruction,
+    task_teammate: TaskTeammate,
 ) -> dict:
     """Merged task PRs, watched on the default branch for a while: the checks
     there and a deployment that includes them (`landing_watch`)."""
     return await landing_watch.watch_landings(
-        chat, announce, record_instruction=record_instruction
+        chat,
+        announce,
+        record_instruction=record_instruction,
+        task_teammate=task_teammate,
     )
 
 
@@ -301,6 +313,7 @@ async def _note_card_poll_crashed(
     record_instruction: RecordInstruction,
     seat_instance_id: SeatInstanceId,
     record_agent: RecordAgent,
+    task_teammate: TaskTeammate,
 ) -> None:
     """Leave the crash on the card, in its own transaction.
 
@@ -326,6 +339,7 @@ async def _note_card_poll_crashed(
                 record_instruction=record_instruction,
                 seat_instance_id=seat_instance_id,
                 record_agent=record_agent,
+                task_teammate=task_teammate,
             ).note_poll_crashed(card_id, exc)
             await session.commit()
     except Exception:  # noqa: BLE001 — never let the explanation kill the loop
@@ -380,6 +394,7 @@ async def forge_repository_changed(
     seat_instance_id: SeatInstanceId,
     record_agent: RecordAgent,
     dispatch_pending: DispatchPending,
+    task_teammate: TaskTeammate,
 ) -> None:
     """One repository moved — from a relayed forge event, or from a reconnect."""
 
@@ -400,6 +415,7 @@ async def forge_repository_changed(
             record_instruction=record_instruction,
             seat_instance_id=seat_instance_id,
             record_agent=record_agent,
+            task_teammate=task_teammate,
         )
         await pr_publish.sweep_draft_prs(
             sessions,

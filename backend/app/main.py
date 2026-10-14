@@ -309,6 +309,9 @@ async def lifespan(application: FastAPI):
             from app.domain.agent.announce import (  # deferred-import: startup cost
                 announce,
             )
+
+            # deferred-import: startup cost
+            from app.domain.agent_instance.adapters import task_teammate
             from app.domain.delivery.agent import (  # deferred-import: startup cost
                 dispatch_pending,
                 record_agent,
@@ -338,6 +341,7 @@ async def lifespan(application: FastAPI):
                         seat_instance_id=seat_instance_id,
                         record_agent=record_agent,
                         dispatch_pending=pump_pending,
+                        task_teammate=task_teammate,
                     ),
                     name="forge events",
                 )

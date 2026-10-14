@@ -16,6 +16,7 @@ from app.domain.agent import periodic as agent_periodic
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent_instance.adapters import task_teammate
 from app.domain.block.services import last_block_at
 from app.domain.delivery import periodic as delivery_periodic
 from app.domain.delivery.agent import (
@@ -162,6 +163,7 @@ def periodic_jobs(
         seat_instance_id=seat_instance_id,
         record_agent=record_agent,
         dispatch_pending=dispatch_pending,
+        task_teammate=task_teammate,
     )
     machine_periodic.register_periodic_jobs(
         jobs,

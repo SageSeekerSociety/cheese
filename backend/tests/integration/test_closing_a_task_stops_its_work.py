@@ -26,6 +26,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.delivery.models import Delivery
 from app.domain.review import landing_watch
@@ -281,7 +282,10 @@ def test_a_task_closed_for_a_write_up_that_never_ended_stops_the_turn(client):
 
         client.portal.call(
             lambda: landing_watch.watch_landings(
-                service, announce, record_instruction=record_task_instruction
+                service,
+                announce,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
             )
         )
 
@@ -306,7 +310,10 @@ def test_the_write_up_deadline_does_not_stop_other_work_in_the_task(client):
 
         client.portal.call(
             lambda: landing_watch.watch_landings(
-                service, announce, record_instruction=record_task_instruction
+                service,
+                announce,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
             )
         )
 

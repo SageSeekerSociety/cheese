@@ -23,6 +23,7 @@ from app.domain.review.ports import (
     RecordAgent,
     RecordInstruction,
     SeatInstanceId,
+    TaskTeammate,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class _Refreshes:
         seat_instance_id: SeatInstanceId,
         record_agent: RecordAgent,
         dispatch_pending: DispatchPending,
+        task_teammate: TaskTeammate,
     ) -> None:
         self._chat = chat
         self._announce = announce
@@ -102,6 +104,7 @@ class _Refreshes:
         self._seat_instance_id = seat_instance_id
         self._record_agent = record_agent
         self._dispatch_pending = dispatch_pending
+        self._task_teammate = task_teammate
         self._waiting: dict[tuple, dict] = {}
         self._wake = asyncio.Event()
 
@@ -147,6 +150,7 @@ class _Refreshes:
                     record_instruction=self._record_instruction,
                     seat_instance_id=self._seat_instance_id,
                     record_agent=self._record_agent,
+                    task_teammate=self._task_teammate,
                 )
             else:
                 await pr_poll.forge_repository_changed(
@@ -157,6 +161,7 @@ class _Refreshes:
                     seat_instance_id=self._seat_instance_id,
                     record_agent=self._record_agent,
                     dispatch_pending=self._dispatch_pending,
+                    task_teammate=self._task_teammate,
                     **event,
                 )
         except Exception:  # noqa: BLE001 — the next event or tick retries
@@ -173,6 +178,7 @@ async def listen(
     seat_instance_id: SeatInstanceId,
     record_agent: RecordAgent,
     dispatch_pending: DispatchPending,
+    task_teammate: TaskTeammate,
 ):
     refreshes = _Refreshes(
         chat,
@@ -182,6 +188,7 @@ async def listen(
         seat_instance_id=seat_instance_id,
         record_agent=record_agent,
         dispatch_pending=dispatch_pending,
+        task_teammate=task_teammate,
     )
     worker = asyncio.create_task(refreshes.run())
     try:

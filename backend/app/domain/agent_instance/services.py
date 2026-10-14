@@ -207,6 +207,21 @@ class AgentInstanceService:
         given = await self.for_seat_handle(project, agent_handle)
         return given or await self.for_topic(room, project)
 
+    async def for_task_by_id(
+        self, project_id: uuid.UUID, room_id: uuid.UUID, agent_handle: str | None
+    ) -> ResolvedAgent | None:
+        """`for_task`，但按 id 找那两行 —— 给够不着第 3 层的包用。
+
+        比本包低的包（`review` 的交付落地那几条路）手里只有任务的
+        ``project_id`` 和 ``room_id``，读不出 ``Project``/``Topic`` 这两行；读表
+        的事留在本包做。两行缺一个就是 ``None``：那个任务无处落脚，也就没有队友
+        （`app.domain.review.ports.TaskTeammate`）。"""
+        project = await self._session.get(Project, project_id)
+        room = await self._session.get(Topic, room_id)
+        if project is None or room is None:
+            return None
+        return await self.for_task(project, room, agent_handle)
+
     async def project_of_seat(self, handle: str) -> uuid.UUID | None:
         """Which project's teammate sits on rosters as ``handle``, or None when
         the handle is not a saved teammate's seat at all (a person, the shared

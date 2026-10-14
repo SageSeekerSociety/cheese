@@ -14,6 +14,7 @@ from sqlalchemy import update
 
 from app.api.deps import get_chat_service
 from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import (
     begin_send,
     dispatch_pending,
@@ -87,6 +88,9 @@ def watch(client) -> dict:
     chat = _chat(client)
     return client.portal.call(
         lambda: landing_watch.watch_landings(
-            chat, announce, record_instruction=record_task_instruction
+            chat,
+            announce,
+            record_instruction=record_task_instruction,
+            task_teammate=task_teammate,
         )
     )

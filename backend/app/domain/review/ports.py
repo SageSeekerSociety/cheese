@@ -117,6 +117,30 @@ class SeatInstanceId(Protocol):
     ) -> uuid.UUID | None: ...
 
 
+class TaskTeammate(Protocol):
+    """这个任务现在的 AI 队友是哪一个席位：``(实例 id, 它的 handle)``。
+
+    一个任务由它项目里的某一个 AI 队友来做，那一个是谁，只有 `agent_instance`
+    答得出来（第 5 层），所以本包把这一次查问写在这里。递回来的是两个内置类型，
+    不是那个包里的 ``ResolvedAgent``：本包认不出它的类型。
+
+    实例 id 是署这个任务的话时用的那一个（本包用
+    `identity.handles.agent_instance_handle` 把它写成席位 handle），handle 是
+    `room_task.closing.unfinished` 挑「这个队友自己干的活」时用的那一个
+    （`agent_turns.agent_handle` 记的就是这个值）—— 两个值都是同一次查问的答案，
+    所以一个口子答两个，不拆成两个再查一遍。
+
+    项目或房间不在了是 ``None``（那个任务本来就无处落脚，也不该有队友）。"""
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        project_id: uuid.UUID,
+        room_id: uuid.UUID,
+        agent_handle: str | None,
+    ) -> tuple[uuid.UUID, str] | None: ...
+
+
 class DispatchPending(Protocol):
     """把投递账本上等着的那些放出去。
 

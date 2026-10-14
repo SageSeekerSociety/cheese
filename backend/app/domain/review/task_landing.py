@@ -36,7 +36,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say
-from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery_events import DeliveryEvent
@@ -45,7 +44,7 @@ from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.review.landing_models import TaskLanding
 from app.domain.review.models import AcceptCard, AcceptStatus
-from app.domain.review.ports import RecordInstruction
+from app.domain.review.ports import RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
@@ -60,6 +59,18 @@ logger = logging.getLogger(__name__)
 WATCH_FOR = timedelta(hours=2)
 
 
+def handed_in(task_teammate: TaskTeammate | None) -> TaskTeammate:
+    """把 `review.ports.TaskTeammate` 要回来；没递进来当场炸掉，不走静默。
+
+    少递这一样不会有别的反应：这个队友自己干的活没人认（任务该接着开却关了），
+    或者它该署名的那些话没人署名 —— 两样都看着像什么都没发生，比报错难查得多
+    （`app.domain.review.ports`）。所以缺了就地报错。"""
+    if task_teammate is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("task_teammate was not handed in")
+    return task_teammate
+
+
 async def delivery_landed(
     session: AsyncSession,
     task: Task,
@@ -70,6 +81,7 @@ async def delivery_landed(
     completes: bool,
     handed_over: datetime | None,
     record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
 ) -> bool:
     """``task``'s delivery merged. ``completes``: it was the task's last step.
     ``handed_over``: when its card went up; None for a merge no card asked
@@ -89,7 +101,11 @@ async def delivery_landed(
     still_working = (
         completes
         and task.status == TaskStatus.open
-        and bool(await _asked_for_more(session, task, since=handed_over))
+        and bool(
+            await _asked_for_more(
+                session, task, since=handed_over, task_teammate=task_teammate
+            )
+        )
     )
     goes_on = task.status == TaskStatus.open and (not completes or still_working)
     if still_working:
@@ -122,12 +138,16 @@ async def delivery_landed(
         else say("taskLanded", title=said_title(task), pr=pr_number)
         if pr_number is not None
         else say("taskLandedNoPr", title=said_title(task)),
+        task_teammate=task_teammate,
     )
     return True
 
 
 async def go_on_while_working(
-    sessions, *, record_instruction: RecordInstruction | None
+    sessions,
+    *,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
 ) -> list[uuid.UUID]:
     """Every task being written up whose AI teammate has started work in it
     since its last delivery went up, or has a message waiting there, stops
@@ -149,7 +169,10 @@ async def go_on_while_working(
     for task_id in being_written_up:
         try:
             if await _go_on_if_asked(
-                sessions, task_id, record_instruction=record_instruction
+                sessions,
+                task_id,
+                record_instruction=record_instruction,
+                task_teammate=task_teammate,
             ):
                 gone_on.append(task_id)
         except Exception:  # noqa: BLE001 — one task must not stop the rest
@@ -158,7 +181,11 @@ async def go_on_while_working(
 
 
 async def _go_on_if_asked(
-    sessions, task_id: uuid.UUID, *, record_instruction: RecordInstruction | None
+    sessions,
+    task_id: uuid.UUID,
+    *,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
 ) -> bool:
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import default_branch
@@ -168,7 +195,10 @@ async def _go_on_if_asked(
         if task is None or task.closing_since is None:
             return False
         if not await _asked_for_more(
-            session, task, since=await _handed_over(session, task)
+            session,
+            task,
+            since=await _handed_over(session, task),
+            task_teammate=task_teammate,
         ):
             return False
         base = await default_branch(task.project_id, session)
@@ -190,18 +220,22 @@ async def _go_on_if_asked(
 
 
 async def _asked_for_more(
-    session: AsyncSession, task: Task, *, since: datetime | None
+    session: AsyncSession,
+    task: Task,
+    *,
+    since: datetime | None,
+    task_teammate: TaskTeammate | None,
 ) -> list[str]:
     """What ``task``'s own AI teammate is doing in it, begun after ``since``,
     or has waiting there for it (`room_task.closing.unfinished`)."""
-    project = await session.get(Project, task.project_id)
-    room = await session.get(Topic, task.room_id)
-    if project is None or room is None:
-        return []
-    agent = await AgentInstanceService(session).for_task(
-        project, room, task.agent_handle
+    teammate = await handed_in(task_teammate)(
+        session, task.project_id, task.room_id, task.agent_handle
     )
-    return await unfinished(session, task.id, since=since, by=agent.handle)
+    if teammate is None:
+        # 项目和房间都不在了：这个任务无处落脚，也就没有队友的活要认。
+        return []
+    _instance_id, handle = teammate
+    return await unfinished(session, task.id, since=since, by=handle)
 
 
 async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:
@@ -284,7 +318,13 @@ async def _watch(
     )
 
 
-async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
+async def tell_origin(
+    session: AsyncSession,
+    task: Task,
+    content: str,
+    *,
+    task_teammate: TaskTeammate | None,
+) -> None:
     """Say ``content`` in the 支线 under the message ``task`` was made from,
     opening it if nobody has replied there yet. It is said by the task's AI
     teammate, as a reply: whoever took part in the discussion hears it, and the
@@ -295,12 +335,18 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
     not take the task's own state back with it."""
     try:
         async with session.begin_nested():
-            await _tell_origin(session, task, content)
+            await _tell_origin(session, task, content, task_teammate=task_teammate)
     except Exception:  # noqa: BLE001 — a courtesy line never undoes a landing
         logger.warning("could not tell task %s's discussion", task.id, exc_info=True)
 
 
-async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
+async def _tell_origin(
+    session: AsyncSession,
+    task: Task,
+    content: str,
+    *,
+    task_teammate: TaskTeammate | None,
+) -> None:
 
     if task.upgraded_from_block_id is None:
         return
@@ -316,9 +362,12 @@ async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
         or project is None
     ):
         return
-    agent = await AgentInstanceService(session).for_task(
-        project, room, task.agent_handle
+    teammate = await handed_in(task_teammate)(
+        session, task.project_id, task.room_id, task.agent_handle
     )
+    if teammate is None:
+        return
+    instance_id, _handle = teammate
     thread = await open_thread(
         session, origin.id, by=task.owner_handle or origin.author
     )
@@ -326,7 +375,7 @@ async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
         id=uuid.uuid4(),
         project_id=task.project_id,
         conversation_id=thread.id,
-        author=agent_instance_handle(agent.instance_id),
+        author=agent_instance_handle(instance_id),
         author_type=AuthorType.participant,
         kind=BlockKind.message,
         content=str(content),
