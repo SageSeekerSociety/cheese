@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.announce import instance_of_seat
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.documents import whose_document
 from app.domain.identity.services import IdentityService
@@ -81,16 +82,27 @@ async def _touches_someone_elses_text(
     return False
 
 
-async def edit_turn(
+async def _open_turn(
     db: AsyncSession, *, project_id: uuid.UUID, conversation_id: uuid.UUID, actor: str
-) -> uuid.UUID | None:
+) -> AgentTurn | None:
     """The running turn of ``actor`` (an AI teammate's seat) in
-    ``conversation_id``: the turn whose tool call made the change, which the
-    conversation's line about it is part of. None for a person (no turn is
+    ``conversation_id``. A turn row names the agent by its instance's handle, a
+    seat by the instance's id, so both are asked. None for a person (no turn is
     ever a person's), or an agent with no turn open there."""
     instance = await instance_of_seat(db, project_id, actor)
     handles = [actor, *((instance.handle,) if instance is not None else ())]
-    return await AgentTurnRepository(db).open_turn_id_of(conversation_id, handles)
+    return await AgentTurnRepository(db).open_turn_of(conversation_id, handles)
+
+
+async def edit_turn(
+    db: AsyncSession, *, project_id: uuid.UUID, conversation_id: uuid.UUID, actor: str
+) -> uuid.UUID | None:
+    """The turn whose tool call made ``actor``'s change in ``conversation_id``,
+    which the conversation's line about it is part of."""
+    turn = await _open_turn(
+        db, project_id=project_id, conversation_id=conversation_id, actor=actor
+    )
+    return turn.id if turn is not None else None
 
 
 async def decide(
@@ -109,13 +121,14 @@ async def decide(
         return Decision(mode="direct", requested_by=None)
     room, task = await whose_document(db, doc)
     conversation = task or room
-    author = (
-        await AgentTurnRepository(db).open_turn_author_for_topic(
-            conversation, agent_handle=actor
+    turn = (
+        await _open_turn(
+            db, project_id=doc.project_id, conversation_id=conversation, actor=actor
         )
         if conversation is not None
         else None
     )
+    author = turn.author if turn is not None else None
     if author and author != "system" and not await IdentityService(db).is_agent(author):
         return Decision(mode=asked or "direct", requested_by=author)
     if asked == "suggest" or await _touches_someone_elses_text(db, doc, content, edits):

@@ -211,16 +211,16 @@ class AgentTurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    async def open_turn_id_of(
+    async def open_turn_of(
         self, topic_id: uuid.UUID, agent_handles: Sequence[str]
-    ) -> uuid.UUID | None:
+    ) -> AgentTurn | None:
         """The still-running turn at this place of the agent known by any of
         ``agent_handles`` (a turn row names it by its instance's handle, a room
         by its seat's), the latest if several."""
         if not agent_handles:
             return None
         stmt = (
-            select(AgentTurn.id)
+            select(AgentTurn)
             .where(
                 AgentTurn.conversation_id == topic_id,
                 AgentTurn.stopped_at.is_(None),
