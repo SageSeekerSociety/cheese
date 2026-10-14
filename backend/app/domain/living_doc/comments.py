@@ -58,6 +58,13 @@ class CommentThreads:
             raise NotFoundError(say("docCommentNotFound"))
         return row
 
+    async def comment(self, comment_id: uuid.UUID) -> DocumentComment:
+        """One comment, opening a thread or replying in one."""
+        row = await self.session.get(DocumentComment, comment_id)
+        if row is None:
+            raise NotFoundError(say("docCommentNotFound"))
+        return row
+
     async def open(
         self, doc: Document, *, author: str, content: str, quote: str | None
     ) -> DocumentComment:

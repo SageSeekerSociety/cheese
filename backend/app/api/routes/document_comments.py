@@ -41,7 +41,6 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.living_doc import collab
 from app.domain.living_doc.comment_schemas import CommentIn, ReplyIn, ThreadMutation
 from app.domain.living_doc.comments import CommentThreads, comment_out
-from app.domain.living_doc.models import DocumentComment
 from app.domain.living_doc.schemas import node_out
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.mentions import canonicalize_refs
@@ -115,7 +114,7 @@ async def _as_stored(db, reached: Reached, content: str) -> str:
     )
 
 
-async def _announce(db, reached: Reached, comment: DocumentComment) -> CommentMentions:
+async def _announce(db, reached: Reached, comment) -> CommentMentions:
     place = reached.place
     return await announce_comment_mentions(
         db,
@@ -218,10 +217,9 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     )
     told = None
     if reply:
-        added = await db.get(
-            DocumentComment, uuid.UUID(result["replies"][-1]["comment"]["id"])
+        added = await CommentThreads(db).comment(
+            uuid.UUID(result["replies"][-1]["comment"]["id"])
         )
-        assert added is not None
         told = await _announce(db, reached, added)
     result = await _with_notified(db, result)
     receipt = ok(result)
