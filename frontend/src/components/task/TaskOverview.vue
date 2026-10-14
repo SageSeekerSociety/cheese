@@ -9,7 +9,7 @@ import type { ProjectMemberRow, RoomTask, TodoItem, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
 import type { TaskRelated, TaskSource } from '@/types/taskOrigin'
 
-import { computed, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
@@ -17,9 +17,13 @@ import TaskDocCompare from '@/components/task/TaskDocCompare.vue'
 import TaskOutputs from '@/components/task/TaskOutputs.vue'
 import TaskRelatedList from '@/components/task/TaskRelatedList.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
-import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+
+// 实况文档的正文编辑器（tiptap + prosemirror + 文档 schema，压缩后约 1.1 MB）按需取，不
+// 跟这一页的路由 chunk 一起下来。任务页默认那一格是「总览」，编辑器这一格只是在最后，
+// 静态引入的话它连着自己那一大坨被钉在 chunk 上——标题还在等网络，一兆字节先到了。
+const PanelDocHost = defineAsyncComponent(() => import('@/components/work/PanelDocHost.vue'))
 
 const props = defineProps<{
   room: Topic

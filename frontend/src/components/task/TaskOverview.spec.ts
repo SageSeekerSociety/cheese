@@ -72,8 +72,12 @@ function task(id: string, roomId: string): RoomTask {
 
 let vuetify: ReturnType<typeof createVuetify>
 
-beforeAll(() => {
+beforeAll(async () => {
   vuetify = createVuetify({ components, directives })
+  // 文档那一格是 `defineAsyncComponent`（`TaskOverview` 里按需取 `PanelDocHost`），
+  // 第一次用到它要现解析 tiptap 那一大坨，比 `waitFor` 默认的 1 秒还长。先在这里取一
+  // 次把模块图热好，下面每一条的等待就只剩「等它挂上」这件事。
+  await import('../../components/work/PanelDocHost.vue')
 })
 
 beforeEach(() => {

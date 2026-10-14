@@ -30,8 +30,9 @@ import type { MemberActivityLine } from '../lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
+import type PanelDocHostComponent from './work/PanelDocHost.vue'
 
-import { computed, nextTick, ref, useId, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getTopicWorkSummary, readPreviewFile } from '../api'
@@ -49,7 +50,6 @@ import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import { usePreviewPointer } from './panels/preview/usePreviewPointer'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
-import PanelDocHost from './work/PanelDocHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
@@ -59,6 +59,12 @@ import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { heldPreview, openRoomTasksQuery } from '@/query/room'
+
+// 文档编辑器那一格（`PanelDocHost` 连着 tiptap + prosemirror + 文档 schema，压缩后约
+// 1.1 MB）跟着这一屏的打开一起下来过：这一栏是 `TopicView` 静态引入的，而它把那一坨
+// 静态引入进来，于是每个房间的首屏都背着一份点开文档才用得上的编辑器。文档那一格只有
+// 真开了文档、`mounted` 里才有它，所以按需取就够了。
+const PanelDocHost = defineAsyncComponent(() => import('./work/PanelDocHost.vue'))
 
 const props = withDefaults(
   defineProps<{
@@ -614,7 +620,7 @@ function placeFile(path: string, document?: { id: string; title: string }, proje
 }
 
 // 聊天里那张文档卡：资料库里的这份文档在自由区开一格，改过的一处处标出来。
-const docRefs = new Map<string, InstanceType<typeof PanelDocHost>>()
+const docRefs = new Map<string, InstanceType<typeof PanelDocHostComponent>>()
 async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
   const path = DOC_TAB + document.id
   noteFileOrigin()
@@ -626,7 +632,7 @@ async function openDocument(document: OpenedDocument, review?: DocReviewRequest)
   docRefs.get(document.id)?.reviewEdits(review)
 }
 function keepDocRef(id: string, el: unknown) {
-  if (el) docRefs.set(id, el as InstanceType<typeof PanelDocHost>)
+  if (el) docRefs.set(id, el as InstanceType<typeof PanelDocHostComponent>)
   else docRefs.delete(id)
 }
 function retitle(id: string, title: string) {

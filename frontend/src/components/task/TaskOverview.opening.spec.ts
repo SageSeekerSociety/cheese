@@ -9,9 +9,20 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/components/work/PanelDocHost.vue', () => ({
-  default: { name: 'PanelDocHost', template: '<div data-testid="doc" />' },
-}))
+// `TaskOverview` 里 `PanelDocHost` 是 `defineAsyncComponent`（按需取）。`__esModule` 不
+// 是给这个 spec 用的：Vue 拿到异步取回来的那一份之后，靠这个标记认出「组件在 `.default`
+// 上」。少了它，被当成组件的是整个模块对象，`@vue/test-utils` 一读它的 `name` 就抛
+// 「No "name" export is defined on the mock」。
+vi.mock('@/components/work/PanelDocHost.vue', async () => {
+  const { defineComponent, h } = await import('vue')
+  return {
+    __esModule: true,
+    default: defineComponent({
+      name: 'PanelDocHostStub',
+      setup: () => () => h('div', { 'data-testid': 'doc' }),
+    }),
+  }
+})
 vi.mock('@/components/task/TaskOutputs.vue', () => ({ default: { name: 'TaskOutputs', template: '<div />' } }))
 
 import TaskOverview from './TaskOverview.vue'
@@ -59,9 +70,13 @@ function mount(opening: RoomTask['opening'], canRetry = true) {
 }
 
 describe('新任务的第一轮', () => {
-  it('还在整理：说正在整理，不给重试', () => {
+  it('还在整理：说正在整理，不给重试', async () => {
     const ui = mount('drafting')
     expect(ui.queryByRole('button', { name: '重试' })).toBeNull()
+    // 文档那一格是 `defineAsyncComponent`（`TaskOverview` 里按需取 `PanelDocHost`）：
+    // 先给它一个到位的机会，再断言它没被画出来。不等的话，这一条在按需取的那一块还没到
+    // 时就通过了 —— 它要守的「这一格不该出现」，得等它真有可能出现才算守住了。
+    await ui.findByTestId('doc', {}, { timeout: 250 }).catch(() => undefined)
     expect(ui.queryByTestId('doc')).toBeNull()
   })
 
@@ -79,11 +94,12 @@ describe('新任务的第一轮', () => {
   it('选自己写：露出文档', async () => {
     const ui = mount('failed')
     await fireEvent.click(ui.getByRole('button', { name: '自己写' }))
-    expect(ui.getByTestId('doc')).toBeTruthy()
+    // 文档那一格是 `defineAsyncComponent`：同步找会在它解析之前就报没有。
+    expect(await ui.findByTestId('doc')).toBeTruthy()
   })
 
-  it('文档有内容以后（没有第一轮的状态）直接是文档', () => {
+  it('文档有内容以后（没有第一轮的状态）直接是文档', async () => {
     const ui = mount(null)
-    expect(ui.getByTestId('doc')).toBeTruthy()
+    expect(await ui.findByTestId('doc')).toBeTruthy()
   })
 })
