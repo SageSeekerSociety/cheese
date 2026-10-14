@@ -41,6 +41,7 @@ import DocSurface from './doc/DocSurface.vue'
 import DocTopBar from './doc/DocTopBar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -124,6 +125,9 @@ const props = withDefaults(
     avatarOf?: (handle: string) => string
     loadVersions?: (before?: number) => Promise<DocVersionPage>
     restoreVersion?: (version: number, expected: number) => Promise<unknown>
+    // ---- 我在文档里 @ 了打不开它的人 ----
+    /** 要不要把他们加进频道：名字已经连成一串；没有就是 null。 */
+    mentionOutside?: { names: string; membersOnly: boolean; mayAdd: boolean; adding: boolean } | null
   }>(),
   {
     document: null,
@@ -152,6 +156,7 @@ const props = withDefaults(
     avatarOf: () => '',
     loadVersions: undefined,
     restoreVersion: undefined,
+    mentionOutside: null,
     canvas: null,
   }
 )
@@ -163,6 +168,8 @@ const emit = defineEmits<{
   /** 资料库文档的标题改成了这样。 */
   (e: 'rename', title: string): void
   (e: 'delete'): void
+  (e: 'mention-outside-add'): void
+  (e: 'mention-outside-dismiss'): void
 }>()
 
 /** 大标题：对话的名字，或者资料库文档自己的名字（没起名时是「未命名文档」）。 */
@@ -459,6 +466,17 @@ defineExpose({
             @dismiss="dismissSuggestions"
           />
         </Transition>
+        <MentionOutsidePrompt
+          v-if="mentionOutside"
+          class="doc-mention-outside"
+          in-document
+          :names="mentionOutside.names"
+          :members-only="mentionOutside.membersOnly"
+          :may-add="mentionOutside.mayAdd"
+          :adding="mentionOutside.adding"
+          @add="emit('mention-outside-add')"
+          @dismiss="emit('mention-outside-dismiss')"
+        />
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <!-- 顶栏下面、正文上面的那一格：任务把芝士这一轮的清单放在这里。 -->
         <slot name="lead" />
@@ -726,6 +744,10 @@ defineExpose({
   overflow-x: auto;
 }
 
+/* 贴在正文上方，和横条之间留一行的空。 */
+.doc-mention-outside {
+  margin-top: 8px;
+}
 .doc-error-toast {
   position: absolute;
   left: 50%;

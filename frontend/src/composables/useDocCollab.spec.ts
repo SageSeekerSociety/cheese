@@ -46,7 +46,7 @@ vi.mock('../api/docCollab', () => ({
   collabWsUrl: () => 'ws://collab.test/',
   getDocTicket: async () => ({ document: 'doc:r1', ticket: 'ticket', read_only: false }),
 }))
-vi.mock('../me', () => ({ myAccount: () => null }))
+vi.mock('../me', () => ({ myAccount: () => null, myHandle: () => 'alice' }))
 // 会话里那个人挑没挑过头像，`useChosenAvatar` 要问一次全局默认头像的 id。这条用例
 // 不关心头像，但不接住就是一条真请求（happy-dom 下打到默认地址 127.0.0.1:3000）。
 vi.mock('@/api/avatars', () => ({
@@ -120,6 +120,29 @@ describe('a document deleted while it is open', () => {
     expect(collab.deleted.value).toBe(true)
     expect(collab.session.value).toBeNull()
     expect(provider.destroyed).toBe(true)
+    stop()
+  })
+})
+
+describe('a store of mine that mentions people who cannot open the document', () => {
+  const frame = (to: string) =>
+    JSON.stringify({ type: 'mention_outside', to, room_id: 'r', handles: ['carol'], may_add: true, members_only: true })
+
+  it('is told to me, and only to me', async () => {
+    const { collab, provider, stop } = await opened()
+    provider.emit('authenticated', { scope: 'read-write' })
+    await nextTick()
+    provider.emit('stateless', { payload: frame('bob') })
+    await nextTick()
+    expect(collab.mentionedOutside.value).toBeNull()
+    provider.emit('stateless', { payload: frame('alice') })
+    await nextTick()
+    expect(collab.mentionedOutside.value).toEqual({
+      room_id: 'r',
+      handles: ['carol'],
+      may_add: true,
+      members_only: true,
+    })
     stop()
   })
 })

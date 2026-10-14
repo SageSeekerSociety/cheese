@@ -31,6 +31,7 @@ import { refusalText } from '../lib/noticeText'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
+import { useMentionOutside } from './useMentionOutside'
 
 import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
@@ -68,6 +69,12 @@ export function usePanelDoc(props: PanelDocProps) {
   const documentId = ref<string | null>(null)
   const resolveError = ref<string | null>(null)
   const collab = useDocCollab(() => documentId.value)
+  // 我存回的一版 @ 了打不开这份文档的人：问我要不要把他们加进频道（和发消息一样）。名字
+  // 由画的那一层按名册读，这里只记 handle。
+  const mentionOutside = useMentionOutside({ place: () => documentId.value, nameOf: (handle) => handle })
+  watch(collab.mentionedOutside, (outside) => {
+    if (outside) mentionOutside.offer({ mentioned_outside: outside })
+  })
 
   let disposed = false
   let documentSequence = 0
@@ -307,6 +314,8 @@ export function usePanelDoc(props: PanelDocProps) {
     errorMsg,
     // 这份文档
     documentId,
+    /** 我 @ 了打不开这份文档的人：要不要加进频道。 */
+    mentionOutside,
     suggestionReasons,
     fetchSuggestionReasons,
     // 动作
