@@ -51,17 +51,23 @@ const readBaseline = () => {
  * nothing measurable" cannot pass as "nothing is wrong". Each is about half of
  * what the page actually produced when the baseline was frozen — `/solutions`
  * is the longest and `/download` is a short page with a heading and a few
- * buttons — and between them they catch every failure mode that makes a walk
+ * buttons — and between them they catch the failure modes that make a walk
  * return almost nothing: a page that did not load, a redirect to sign-in, a
- * removed section, a stylesheet that never arrived so every colour parses as
- * `rgba(0, 0, 0, 0)`, or a browser with no font able to lay out text at all.
- * The last of those is not hypothetical: it is what this check found on the
- * machine it was written on, where 86 of the landing's 94 text nodes measured
- * 0×0 and the walk quietly returned a handful of runs.
+ * removed section, or a browser with no font able to lay out text at all. The
+ * last of those is not hypothetical: it is what this check found on the machine
+ * it was written on, where 86 of the landing's 94 text nodes measured 0×0 and
+ * the walk quietly returned a handful of runs. The one failure this count
+ * cannot see — the app stylesheet missing, which leaves every run at the
+ * browser default and therefore at 21:1 — is caught by the token check in
+ * `measure()` instead.
  */
 const MIN_RUNS: Record<string, number> = { '/': 50, '/solutions': 60, '/download': 8 }
 
-async function measure(page: Page, path: string, theme: string) {
+/**
+ * Open a page in one theme and leave it settled: loaded, mounted, and with its
+ * stylesheet confirmed to have arrived.
+ */
+async function open(page: Page, path: string, theme: string) {
   await page.emulateMedia({ colorScheme: theme === 'dark' ? 'dark' : 'light', reducedMotion: 'reduce' })
   await page.addInitScript((value) => {
     localStorage.setItem('cheesex.theme', value)
@@ -73,6 +79,24 @@ async function measure(page: Page, path: string, theme: string) {
   // would let the walk run against a page the app has not mounted yet — which
   // is how this measured eight runs on a page that has a hundred.
   await expect(page.getByRole('navigation', { name: '主导航' })).toBeVisible()
+  // The app mounting does not mean its stylesheet arrived: index.html loads the
+  // CSS as its own render-blocking <link>, and the module mounts either way. With
+  // no stylesheet every run falls back to the browser's black on white — 21:1,
+  // which is greener than the styled page — and a walk over it would empty the
+  // baseline. One design token is enough to tell the two apart, so this is the
+  // check that the count guard cannot be.
+  const muted = await page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue('--muted').trim(),
+  )
+  expect(muted, 'the app stylesheet did not load — every colour would measure as the browser default').not.toBe('')
+}
+
+/**
+ * Walk the page as it now stands and return the runs it painted. Split from
+ * `open` so a test can change the page (a planted style tag survives) without
+ * navigating, which would throw the change away.
+ */
+async function collect(page: Page, path: string, theme: string) {
   // Walk the document once so anything revealed on scroll has been revealed,
   // then come back to the top where the page settles.
   await page.evaluate(async () => {
@@ -103,6 +127,11 @@ async function measure(page: Page, path: string, theme: string) {
   return stamped
 }
 
+const measure = async (page: Page, path: string, theme: string) => {
+  await open(page, path, theme)
+  return collect(page, path, theme)
+}
+
 test('the public pages render every text run above its contrast floor', async ({ page }) => {
   test.slow()
   const runs = []
@@ -121,6 +150,28 @@ test('the public pages render every text run above its contrast floor', async ({
   }
   const comparison = compare(readBaseline(), worst)
   expect(comparison.ok, `\n${formatContrastReport(comparison)}\n`).toBe(true)
+})
+
+test('a run planted below its floor goes red, and freezing it turns the page green', async ({ page }) => {
+  // The plant the unit tests cannot be: they exercise the arithmetic on runs
+  // they construct themselves, and the one thing that would make this gate
+  // useless is the walk itself. So this plants the mistake #3691 fixed — text
+  // written in `--faint` — in the real DOM, walks the real page, and requires
+  // the same compare() the gate runs to call it a regression.
+  const runs = await measure(page, '/', 'light')
+  expect(compare(readBaseline(), worstOf(runs)).ok, 'the page as it stands passes').toBe(true)
+
+  // The visitor bar's links, in `--faint`. No navigation after this: `open()`
+  // would throw the planted stylesheet away.
+  await page.addStyleTag({ content: '.site-nav a { color: var(--faint) !important; }' })
+  const planted = await collect(page, '/', 'light')
+  const comparison = compare(readBaseline(), worstOf(planted))
+  expect(comparison.ok, `\n${formatContrastReport(comparison)}\n`).toBe(false)
+  expect(comparison.added.length, 'the links the plant darkened are new to the baseline').toBeGreaterThan(0)
+  expect(comparison.added.every(({ run }: { run: { ratio: number; need: number } }) => run.ratio < run.need)).toBe(true)
+  // The way out is a commit that says so, not a flag on the check.
+  const frozen = tightenedBaseline(readBaseline(), worstOf(planted), { freezeNew: true })
+  expect(compare(frozen, worstOf(planted)).ok, 'and the way out is to freeze it on purpose').toBe(true)
 })
 
 /** The baseline file as it is written, matching the other ratchets' shape. */

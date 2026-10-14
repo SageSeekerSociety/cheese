@@ -141,9 +141,11 @@ export function entryFor(run) {
 /**
  * Compare a run against the baseline.
  *
- * Four ways to fail, all of them new information:
+ * Three ways to fail, all of them new information:
  *   added    a run below its floor that the baseline has never seen;
- *   worse    a frozen run that got further below its floor;
+ *   worse    a frozen run that got further below its floor, and a run frozen as
+ *            unmeasurable that the walker can now read and that turns out to be
+ *            below its floor — the check just learned something bad;
  *   unjudged a run the walker cannot measure that was not already frozen as
  *            unmeasurable. A check that quietly ignores what it cannot measure
  *            is worse than no check, so this is reported rather than dropped;
@@ -173,7 +175,12 @@ export function compare(baseline, worst) {
       continue
     }
     if (frozen.unjudged) {
-      improved.push({ key, was: frozen, run })
+      // Frozen as unmeasurable, and the walker can read it now. That is only an
+      // improvement if it clears its floor; a measurable run below its floor is
+      // a failure like any other, and `tightenedBaseline` then freezes the
+      // number, so the update path is the way out rather than a way past it.
+      if (passes(run)) improved.push({ key, was: frozen, run })
+      else worse.push({ key, was: frozen, run })
       continue
     }
     if (passes(run)) {
@@ -201,7 +208,9 @@ export function compare(baseline, worst) {
  * update after a genuine regression cannot be used to launder it in: a frozen
  * run keeps the worse of the two ratios, and a key that is not in the baseline
  * is only added when `freezeNew` — a person deciding, in the commit, that this
- * is debt the project accepts. A run that now passes is dropped.
+ * is debt the project accepts. That holds for a run the walker cannot measure
+ * too: an unfrozen unmeasurable run is new debt, not a free pass. A run that
+ * now passes is dropped.
  * @param {Record<string, object>} baseline
  * @param {Map<string, object>} worst from worstOf()
  * @param {{ freezeNew?: boolean }} [options]
@@ -213,12 +222,12 @@ export function tightenedBaseline(baseline, worst, { freezeNew = false } = {}) {
     const run = worst.get(key)
     const frozen = baseline[key]
     if (!run) continue // gone from the page — the debt is gone with it
+    if (!frozen && !freezeNew) continue // new debt needs --freeze-new, measurable or not
     if (run.unjudged) {
       next[key] = entryFor(run)
       continue
     }
     if (run.ratio >= run.need) continue // clears its floor now
-    if (!frozen && !freezeNew) continue // new debt needs --freeze-new
     const ratio =
       frozen && typeof frozen.ratio === 'number' ? Math.min(frozen.ratio, roundRatio(run.ratio)) : roundRatio(run.ratio)
     next[key] = { ...entryFor(run), ratio }
@@ -246,7 +255,7 @@ export function formatContrastReport(result) {
   }
   for (const [title, rows] of [
     ['New runs below their contrast floor:', result.added],
-    ['Frozen runs that got worse:', result.worse],
+    ['Frozen runs that are now below their floor:', result.worse],
     ['Runs the check cannot measure:', result.unjudged],
   ]) {
     if (!rows.length) continue

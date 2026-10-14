@@ -8,9 +8,11 @@
 // the one worth having: the interesting cases are the ones where the answer
 // must be "nothing changed", and none of them look like a failure in a diff.
 //
-// Last of all, a plant: a run below its floor that the baseline has never seen
-// has to come back as a regression. A gate nobody has watched fail is not a
-// gate.
+// Last of all, a plant at the level the arithmetic can be wrong at: a run below
+// its floor that the baseline has never seen has to come back as a regression.
+// The plant for the walk itself — the mistake written into a real page, and the
+// real compare() calling it a regression — lives in
+// e2e/tests/contrast-ratchet.spec.ts, where the browser is.
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
@@ -189,6 +191,25 @@ describe('compare', () => {
     assert.equal(result.unjudged.length, 0)
   })
 
+  it('fails when a run frozen as unmeasurable becomes readable and is below its floor', () => {
+    // The walker finally got a colour out of it, and the answer is bad. That is
+    // not an improvement to be paid off with an update; the run is below its
+    // floor and the gate says so.
+    const baseline = { [KEY]: { ratio: null, need: 4.5, unjudged: 'a background image or gradient sits between the run and its ground', sample: '16:20' } }
+    const result = compare(baseline, runsOf(run({ ratio: 1.5 })))
+    assert.equal(result.ok, false)
+    assert.equal(result.improved.length, 0)
+    assert.equal(result.worse.length, 1)
+    assert.match(formatContrastReport(result), /1\.5:1, needs 4\.5:1/)
+  })
+
+  it('passes one that becomes readable and clears its floor', () => {
+    const baseline = { [KEY]: { ratio: null, need: 4.5, unjudged: 'a gradient is behind it', sample: '16:20' } }
+    const result = compare(baseline, runsOf(run({ ratio: 6.1 })))
+    assert.equal(result.ok, true)
+    assert.equal(result.improved.length, 1)
+  })
+
   it('fails when a frozen, measured run becomes unmeasurable', () => {
     const result = compare(frozen(4.33), runsOf(run({ unjudged: 'a background image or gradient sits between the run and its ground' })))
     assert.equal(result.ok, false)
@@ -233,6 +254,15 @@ describe('tightenedBaseline', () => {
     })
   })
 
+  it('refuses to freeze an unmeasurable run the baseline has never seen either', () => {
+    // Being unmeasurable is not a reason to let a new key in without the flag:
+    // `compare` fails on it, so an update that wrote it in would launder the
+    // failure the gate had just reported.
+    const runs = runsOf(run({ unjudged: 'a gradient is behind it' }))
+    assert.deepEqual(tightenedBaseline({}, runs), {})
+    assert.equal(compare({}, runs).ok, false, 'which the plain run reports as a failure')
+  })
+
   it('keeps an unmeasurable run as unmeasurable', () => {
     const next = tightenedBaseline({}, runsOf(run({ unjudged: 'a gradient is behind it' })), { freezeNew: true })
     assert.equal(next[KEY].ratio, null)
@@ -246,6 +276,17 @@ describe('tightenedBaseline', () => {
     const next = tightenedBaseline({ [KEY]: { ratio: 2.65, need: 3, unjudged: '', sample: '开始使用' } }, runsOf(run({ ratio: 1.4, need: 3 })))
     assert.equal(next[KEY].ratio, 1.4)
     assert.equal(compare(next, runsOf(run({ ratio: 2.0, need: 3 }))).ok, true, 'still worse than the new baseline')
+  })
+
+  it('keeps a frozen run at the worse ratio when it improves but is still below its floor', () => {
+    // The one case where the clamp has something to do. Frozen 2.65, measured
+    // 2.9: an improvement, so `compare` is green and the very next person runs
+    // the update — which must not write 2.9 over the 2.65 and quietly let the
+    // run creep towards its floor one acceptable step at a time.
+    const baseline = { [KEY]: { ratio: 2.65, need: 3, unjudged: '', sample: '开始使用' } }
+    const runs = runsOf(run({ ratio: 2.9, need: 3 }))
+    assert.equal(compare(baseline, runs).ok, true, 'green, so an update is what happens next')
+    assert.equal(tightenedBaseline(baseline, runs)[KEY].ratio, 2.65)
   })
 
   it('is a fixed point: updating a passing tree changes nothing', () => {
