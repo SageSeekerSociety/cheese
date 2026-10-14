@@ -42,14 +42,18 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Sequence,
     String,
     Text,
+    UniqueConstraint,
+    Uuid,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
+from app.domain.common import UuidPk
 from app.domain.delivery_events import NotificationType
 
 notification_seq = Sequence("notification_seq")
@@ -180,3 +184,39 @@ class Notification(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class ChannelDelivery(UuidPk, Base):
+    """One independently retried email or push, committed with its source event.
+
+    这张表是收件箱的**外发那一半**：站内信走 `Notification`，同一件事要发邮件或
+    推送时另落一行在这里，各自独立重试。写下它的两处都在本包内（`outbox` 的
+    `ChannelIntentHandler`、`legacy_queue` 的搬迁），只有投递账本在撤回一条事件
+    时按 `delivery_key` 删掉它发出去的那几行 —— 那是向下的读法，所以这张表从
+    `delivery/models.py` 搬到这里（2026-10-14 第九笔）。
+    """
+
+    __tablename__ = "delivery_channels"
+    __table_args__ = (
+        UniqueConstraint("delivery_key", "channel", name="uq_delivery_channel"),
+    )
+    delivery_key: Mapped[str] = mapped_column(String(160))
+    channel: Mapped[str] = mapped_column(String(16))
+    receiver_id: Mapped[int] = mapped_column(BigInteger)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    state: Mapped[str] = mapped_column(
+        String(16), default="pending", server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    claim_token: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)

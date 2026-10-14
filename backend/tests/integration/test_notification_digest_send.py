@@ -11,9 +11,8 @@ from unittest.mock import AsyncMock
 
 from sqlalchemy import select
 
-from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification import digest
-from app.domain.notification.models import NotificationType
+from app.domain.notification.models import ChannelDelivery, NotificationType
 from app.domain.notification.preferences import (
     DigestCadence,
     EmailMode,

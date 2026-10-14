@@ -332,9 +332,6 @@ ignore_imports =
     app.domain.mentions -> app.domain.membership.roster
     app.domain.mentions -> app.domain.topic.models
     app.domain.mentions -> app.domain.topic.repositories
-    app.domain.notification.digest -> app.domain.delivery.models
-    app.domain.notification.legacy_queue -> app.domain.delivery.models
-    app.domain.notification.outbox -> app.domain.delivery.models
     app.domain.notification.outbox -> app.domain.notification.maintenance
     app.domain.notification.push_delivery -> app.domain.notification.outbox
     app.domain.platform_stats.gaps -> app.domain.agent.preview_hub
@@ -603,9 +600,6 @@ ignore_imports =
     app.domain.memory.migration_service -> app.domain.agent.announce
     app.domain.memory.redundant -> app.domain.agent.execution
     app.domain.memory.redundant -> app.domain.agent_session.services
-    app.domain.notification.digest -> app.domain.delivery.models
-    app.domain.notification.legacy_queue -> app.domain.delivery.models
-    app.domain.notification.outbox -> app.domain.delivery.models
     app.domain.notification.services -> app.domain.block.models
     app.domain.notification.services -> app.domain.block.repositories
     app.domain.notification.services -> app.domain.block.schemas

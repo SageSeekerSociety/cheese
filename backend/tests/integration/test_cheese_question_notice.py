@@ -19,8 +19,8 @@ from sqlalchemy import select
 from app.domain.agent.announce import notify_question
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
-from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification.letter import letter_for
+from app.domain.notification.models import ChannelDelivery
 from app.domain.notification.push import push_link
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.topic.models import Topic

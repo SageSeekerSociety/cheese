@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.domain.addressing import Addressed
-from app.domain.delivery.models import ChannelDelivery, Delivery, TimedDelivery
+from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.delivery_events import (
     DeliveryEvent,
     NotificationType,
@@ -41,7 +41,7 @@ from app.domain.notification.handlers import (
     NotificationDelivery,
     NotificationEventHandler,
 )
-from app.domain.notification.models import Notification
+from app.domain.notification.models import ChannelDelivery, Notification
 from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.user.services import user_by_handle
 
