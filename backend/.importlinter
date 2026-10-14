@@ -642,7 +642,6 @@ ignore_imports =
     app.domain.project.services -> app.domain.task.models
     app.domain.project.services -> app.domain.task.teaching
     app.domain.project.services -> app.domain.usage.ledger
-    app.domain.remote_mcp.service -> app.domain.agent_instance.services
     app.domain.repository.forge_files -> app.domain.agent.device_hub
     app.domain.repository.forge_files -> app.domain.agent.execution
     app.domain.repository.forge_files -> app.domain.agent_session.services
