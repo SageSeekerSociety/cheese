@@ -25,10 +25,12 @@ function topicDrafts(topicId: string, author: string): TopicDrafts {
   let initial: TopicDrafts = { active: null, hidden: false, drafts: {} }
   // A record that will not parse is dropped by the module; one that parses but is not
   // shaped like drafts is only ignored. Either way the reader keeps a working draft
-  // in memory: a storage failure must not prevent commenting.
+  // in memory: a storage failure must not prevent commenting — including one entry
+  // that is not a draft at all, which is skipped like a wrong-shaped record.
   const saved = storageGetJson<Partial<TopicDrafts>>(key, 'session')
   if (saved && typeof saved.drafts === 'object' && saved.drafts !== null) {
     for (const [id, value] of Object.entries(saved.drafts)) {
+      if (value === null || typeof value !== 'object') continue
       const item = value as Partial<Draft>
       const target = item.target
       if (typeof item.text !== 'string' || typeof target?.quote !== 'string') continue
