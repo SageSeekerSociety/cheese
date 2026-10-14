@@ -1,0 +1,5 @@
+{
+  "labelSaveToLibrary": "Saved to the library",
+  "librarySaved": "{name} saved to the library",
+  "librarySavedDetail": "{actor} saved {file} from this channel to the library; every channel can reference it"
+}

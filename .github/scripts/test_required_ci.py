@@ -174,12 +174,13 @@ class RequiredCITest(unittest.TestCase):
 
     def test_the_catalogs_the_backend_reads_select_backend(self):
         # The backend reads these three at import time (sentences.py), so a
-        # change to any of them has to run the backend suite. apiError is split
-        # across a shard directory now: the pattern has to reach inside it, and
-        # the frontend-only namespaces must not drag backend along.
+        # change to any of them has to run the backend suite. roomNotice and
+        # apiError are each split across a shard directory now: the patterns
+        # have to reach inside them, and the frontend-only namespaces must not
+        # drag backend along.
         for path in (
-            "frontend/src/i18n/messages/zh-CN/roomNotice.json",
-            "frontend/src/i18n/messages/en/roomNotice.json",
+            "frontend/src/i18n/messages/zh-CN/roomNotice/agent.json",
+            "frontend/src/i18n/messages/en/roomNotice/agent.json",
             "frontend/src/i18n/messages/zh-CN/global.json",
             "frontend/src/i18n/messages/zh-CN/apiError/usage.json",
             "frontend/src/i18n/messages/en/apiError/usage.json",

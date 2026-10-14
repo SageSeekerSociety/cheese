@@ -1103,10 +1103,10 @@ sys.exit(0)
         self.assertTrue(any(r["id"] == "backend-pure" for r in report["ran"]))
 
     def test_shared_i18n_catalog_needs_no_local_widening(self):
-        # roomNotice.json already sets backend scope in the shared map, so the
-        # local guard must not claim it did anything.
+        # a roomNotice shard already sets backend scope in the shared map, so
+        # the local guard must not claim it did anything.
         self.write_hooks()
-        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice.json")
+        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice/agent.json")
         env = self.quick_tools()
         proc = self.run_ci_fast("--tier", "quick", "--title", "feat: shared catalog", env_extra=env)
         report = self.report()

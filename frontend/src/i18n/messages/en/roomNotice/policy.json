@@ -1,0 +1,6 @@
+{
+  "labelProposalDetail": "Proposal details",
+  "policyProposal": "{actor} wants to use {what} “{label}”, above this project's allowed tiers ({tier}); this step waits for {approver} to approve.",
+  "policyProposalDetail": "Resource: {label} ({subject})\nTier: {tier}\nRequested by: {asked_by}",
+  "policyResourceModel": "the model"
+}

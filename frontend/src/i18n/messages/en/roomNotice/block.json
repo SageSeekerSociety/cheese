@@ -1,0 +1,10 @@
+{
+  "docEdited": "{actor} edited the doc",
+  "docEditedFor": "{requester} had {agent} edit the doc",
+  "docCreatedInLibrary": "{actor} created the doc \"{title}\"",
+  "docEditedInLibrary": "{actor} edited the doc \"{title}\"",
+  "docSuggestedInLibrary": "{actor} suggested changes to the doc \"{title}\"",
+  "docUntitled": "Untitled doc",
+  "docSuggested": "{agent} suggested {n} changes to the doc",
+  "messageEdited": "{actor} edited an earlier message"
+}

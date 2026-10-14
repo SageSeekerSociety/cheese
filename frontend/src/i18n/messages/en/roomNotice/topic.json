@@ -1,0 +1,13 @@
+{
+  "mentionFused": "AI teammates reached this hour's limit on mentioning each other; this one did not wake anyone",
+  "mentionFusedDetail": "In one channel, AI teammates' mentions can start at most {limit} turns an hour, so they cannot keep mentioning each other forever. Not woken this time: {names}. Mentions by people are not limited.",
+  "pendingHandedOver": "{actor} handed over the earlier messages",
+  "pendingHandedTo": "{actor} handed the earlier messages to {seat}",
+  "roomArchived": "{actor} archived channel “{room}”",
+  "channelSteppedIn": "{actor} (project manager) joined the channel",
+  "channelManagerChanged": "{actor} made {manager} the channel's manager",
+  "roomArchivedWithParent": "Channel “{room}” was archived along with its parent channel “{parent}”",
+  "roomUnarchived": "{actor} unarchived channel “{room}”; it is active again",
+  "taskCreated": "{actor} created the task “{title}”, owned by {owner}",
+  "threadArchivedWithRoom": "Archived along with its channel “{room}”"
+}
