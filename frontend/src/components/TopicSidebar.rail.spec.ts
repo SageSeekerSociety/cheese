@@ -525,6 +525,8 @@ describe('C6 等你的那一盏黄灯', () => {
         presentation: { column: 'needs_you', phrase: 'awaiting_review' },
       },
       { ...topic('busy', 'root'), presentation: { column: 'building', phrase: 'running' } },
+      // 有人回复了我、我还没处理：说「有事等你」的第二件事，画的是同一盏灯。
+      { ...topic('answered', 'root'), replied_to_me: true },
     ]
   }
   function rowOf(container: Element, title: string): HTMLElement {
@@ -543,6 +545,13 @@ describe('C6 等你的那一盏黄灯', () => {
     expect(mine?.getAttribute('title')).toBe('有事等你')
     expect(rowOf(container, 'theirs').querySelector('.row-light')).toBeNull()
     expect(rowOf(container, 'busy').querySelector('.row-light')).toBeNull()
+  })
+
+  it('有人回复了我、我还没处理，画的也是这同一盏灯', () => {
+    const { container } = mount({ topics: rooms() })
+    const row = rowOf(container, 'answered').querySelector('.row-light--yellow')
+    expect(row).not.toBeNull()
+    expect(row?.getAttribute('title')).toBe('有事等你')
   })
 
   it('看板状态不再以任何记号出现在标题里', () => {

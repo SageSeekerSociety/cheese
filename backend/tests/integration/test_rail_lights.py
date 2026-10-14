@@ -5,9 +5,10 @@
 所以这个文件里每条都从两个人的眼里看同一份数据 —— 只有一个人看得见的说法，光看
 一个人的响应是钉不住的。
 
-四条事实：这里在不在往前走（`moving`，频道那一行还含它名下的活）、在跑的那一轮
+五条事实：这里在不在往前走（`moving`，频道那一行还含它名下的活）、在跑的那一轮
 上一次有输出是什么时候（`last_output_at`）、有没有事在等我（`awaits_me`，这里只
-当对照）、以及做完了交付完了而我还没点开看过（`unseen_delivery`）。
+当对照）、做完了交付完了而我还没点开看过（`unseen_delivery`），以及有人回复了我、
+我还没处理（`replied_to_me`）。
 
 活的行由 `_planted` 直接种进库，不走「建任务 → 递卡 → 采纳」那一圈：每一圈自己的
 规矩在别处钉着（`test_accept.py`），而这里要对下来的是「哪几列推出哪盏灯」。判据
@@ -21,6 +22,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.api.deps import get_work_runner
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.models import AgentTurn
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
@@ -28,7 +30,9 @@ from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import Building
 from app.main import app
 from tests.integration.conftest import (
+    in_thread,
     join_project_team,
+    post_message,
     post_project,
     session_auth_headers,
 )
@@ -138,6 +142,13 @@ def _open(client, handle: str, topic_id: str) -> None:
     assert r.status_code == 200, r.text
 
 
+def _join(client, room_id: str, handle: str) -> None:
+    """这个人加入这个频道（浏览器里点「加入」那一步）。主线发言要先加入；
+    答在支线里不用（`channelJoinToPost`）。"""
+    r = client.post(f"/topics/{room_id}/join", headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+
+
 # —— 长绿：做完了、交付完了，而我还没点开看过 ——————————————————————————
 
 
@@ -233,6 +244,164 @@ def test_opening_the_task_itself_counts_as_having_seen_the_delivery(client):
     row = _room_row(client, project, room, "alice")
     assert row["unseen_delivery"] is False
     assert _task_row(row, ids["delivered"])["unseen_delivery"] is False
+
+
+# —— 黄灯：有人回复了我、我还没处理 ——————————————————————————————————
+
+
+def _said(client, topic_id: str, handle: str, content: str, **extra) -> dict:
+    """某个人在某个地方说了一句（可以带 `reply_to`）。"""
+    return post_message(client, topic_id, handle, {"content": content, **extra})
+
+
+def _answered_in_a_thread(
+    client, project: str, *, opened_first: bool = False
+) -> tuple[str, str]:
+    """alice 在频道里开了条支线、在里面问了一句，芝士在支线里答了她。
+
+    返回 (频道 id, 支线 id)。这是真实的那一幕：芝士答一条主线上的消息，答在**那条
+    消息的支线里**，不在主线。`opened_first` 让 alice 在这一切之前先打开一次频道。
+    """
+    room = _room(client, project)
+    if opened_first:
+        _open(client, "alice", room)
+    thread = in_thread(client, room, "alice")
+    asked = _said(client, thread, "alice", "这条要多久？")
+    token = mint_scoped_token(project_id=project, topic_id=thread)
+    r = client.post(
+        f"/topics/{thread}/messages",
+        json={
+            "content": "大约半小时。",
+            "request_id": str(uuid.uuid4()),
+            "reply_to": asked["id"],
+        },
+        headers={"X-Cheese-Token": token},
+    )
+    assert r.status_code == 200, r.text
+    return room, thread
+
+
+def test_a_reply_to_my_message_lights_my_row_and_nobody_elses(client):
+    """被回复的那个人那一行亮，同一份数据在别人眼里不亮。"""
+    project = _project(client)
+    room = _room(client, project)
+    _join(client, room, "bob")
+    mine = _said(client, room, "alice", "这件事怎么办？")
+    _said(client, room, "bob", "我看一下。", reply_to=mine["id"])
+
+    alice = _room_row(client, project, room, "alice")
+    assert alice["replied_to_me"] is True
+    # 这一位是**新**的一条判据，不是老的那一条：这间房并没有在等我拍板。
+    assert alice["awaits_me"] is False
+    # bob 说的是别人的话，carol 更没被谁答过。
+    assert _room_row(client, project, room, "bob")["replied_to_me"] is False
+    assert _room_row(client, project, room, "carol")["replied_to_me"] is False
+
+
+def test_a_mention_lights_it_too_and_a_plain_message_does_not(client):
+    """@ 我算「回复了我」；一句没答我、没点名的话不算。"""
+    project = _project(client)
+    room = _room(client, project)
+    _join(client, room, "bob")
+
+    _said(client, room, "bob", "大家都看下吧")
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is False
+
+    _said(client, room, "bob", "<@alice> 你定")
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is True
+
+
+def test_opening_the_channel_puts_it_out_for_that_person_only(client):
+    """打开这个频道就算处理了 —— 只灭点开的那个人那一盏。"""
+    project = _project(client)
+    room = _room(client, project)
+    for who in ("bob", "carol"):
+        _join(client, room, who)
+    first = _said(client, room, "alice", "先做 A")
+    _said(client, room, "bob", "A 这版行吗？", reply_to=first["id"])
+    second = _said(client, room, "bob", "B 的方案在这儿")
+    _said(client, room, "carol", "B 我想想。", reply_to=second["id"])
+
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is True
+    assert _room_row(client, project, room, "bob")["replied_to_me"] is True
+
+    _open(client, "alice", room)
+
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is False
+    assert _room_row(client, project, room, "bob")["replied_to_me"] is True
+
+
+def test_a_teammates_answer_in_a_thread_lights_the_channel_row(client):
+    """芝士在我那条消息的支线里答我：亮的是那间频道那一行。
+
+    侧栏上那一行是频道，而芝士答一条主线上的消息从来答在支线里（`_answering_in`）：
+    只认主线的话，这件事在侧栏上无处可亮。
+    """
+    project = _project(client)
+    room, _thread = _answered_in_a_thread(client, project)
+
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is True
+
+
+def test_opening_the_channel_puts_out_an_answer_that_landed_in_a_thread(client):
+    """打开频道就灭，答在支线里的也一样。"""
+    project = _project(client)
+    room, _thread = _answered_in_a_thread(client, project)
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is True
+
+    _open(client, "alice", room)
+
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is False
+
+
+def test_opening_the_channel_before_an_answer_lands_does_not_count(client):
+    """先看过频道、之后才有人答我 —— 打开的那一下在前，这盏灯还得亮。
+
+    「打开频道就算处理」问的是**哪一下在前**：打开在先、答复在后，就是还没处理。
+    """
+    project = _project(client)
+    room, _thread = _answered_in_a_thread(client, project, opened_first=True)
+
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is True
+
+
+def test_reading_that_thread_itself_also_counts_as_having_handled_it(client):
+    """在那条支线里读过了也算处理了，不必再回频道点一次。
+
+    支线和频道各有一条已读位（`thread.reads` 的规矩），读的是哪一条都算看过这条回复
+    —— 只有两处都还没读过，它才继续亮着。
+    """
+    project = _project(client)
+    room, thread = _answered_in_a_thread(client, project)
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is True
+
+    _open(client, "alice", thread)
+
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is False
+
+
+def test_an_answer_inside_a_task_under_the_channel_does_not_light_that_row(client):
+    """名下的活里有人回我，不是频道这一行的事 —— 活有它自己那一行。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "一件活",
+                "owner_handle": "alice",
+                "contributor_handles": ["bob"],
+                "started_at": datetime.now(UTC),
+            }
+        ],
+    )
+    mine = _said(client, ids["task"], "alice", "这版先按这个来")
+    _said(client, ids["task"], "bob", "收到，我看一遍。", reply_to=mine["id"])
+
+    assert _room_row(client, project, room, "alice")["replied_to_me"] is False
 
 
 # —— 呼吸绿：这里有没有活在往前走 ————————————————————————————————————
