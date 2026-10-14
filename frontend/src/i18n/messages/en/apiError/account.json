@@ -13,6 +13,7 @@
   "oauthLastSignInMethod": "This is your only way to sign in. Set a password or add a passkey before unlinking it",
   "projectMemberOnly": "You're not a member of this project, so you can't view it",
   "projectReadsWithOutsiders": "Someone in this conversation is outside the project, so the project's contents can't be read from here",
+  "projectSettingWithOutsiders": "Someone in this conversation is outside the project, so project settings can't be changed from here",
   "sandboxTokenRequired": "Sign in, or use a valid sandbox token",
   "securityCheckUnavailable": "Security verification isn't available right now. Try again later",
   "sessionExpired": "Your session is invalid or has expired. Sign in again",

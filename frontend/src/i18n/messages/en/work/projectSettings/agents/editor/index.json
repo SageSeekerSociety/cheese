@@ -1,6 +1,5 @@
 {
   "advanced": "Advanced settings",
-  "advancedReadOnly": "Only the project owner or a team admin can change advanced settings",
   "allowMax": "Allow \"Max\": slower and more expensive",
   "body": "Role (optional)",
   "compact": "Context compaction",

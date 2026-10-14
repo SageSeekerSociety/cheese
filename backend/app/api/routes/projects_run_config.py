@@ -63,6 +63,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
+from app.api.member_settings import change_project_settings, member_setting_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
@@ -111,7 +112,6 @@ def _default_model_state(project_settings: dict | None, access: ModelAccess) -> 
             (c["id"] for c in deployment_choices if c["default"]), None
         ),
         "choices": choices,
-        "can_manage": False,  # 由路由层按权限填
     }
 
 
@@ -125,13 +125,7 @@ async def get_default_model(
     if project is None:
         raise NotFoundError("Project not found")
     access = await UsageService(db).model_access(project.team_id)
-    state = _default_model_state(project.settings, access)
-    try:
-        await MemberService(db).require_manager(project_id, actor)
-        state["can_manage"] = True
-    except ForbiddenError:
-        state["can_manage"] = False
-    return ok(state)
+    return ok(_default_model_state(project.settings, access))
 
 
 @router.put("/{project_id}/default-model")
@@ -141,12 +135,10 @@ async def save_default_model(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。"""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。
+    项目里的人和 AI 队友都能改，方案不允许的模型照样拒（``member_settings``）。"""
+    actor = await member_setting_actor(resolver, project_id)
+    project = await ProjectService(db).get_or_404(project_id)
 
     access = await UsageService(db).model_access(project.team_id)
     valid = {c["id"]: c for c in model_choices(project.settings)}
@@ -167,10 +159,10 @@ async def save_default_model(
             raise ValidationError(say("modelNotInPlan", label=valid[chosen]["label"]))
         else:
             patch[key] = chosen
-    settings = await service.merge_settings(project, patch, remove=remove)
-    state = _default_model_state(settings, access)
-    state["can_manage"] = True
-    return ok(state)
+    settings = await change_project_settings(
+        db, project, patch, remove=remove, by=actor.handle
+    )
+    return ok(_default_model_state(settings, access))
 
 
 # --- Execution environment: what a new agent in this project gets ---
@@ -191,6 +183,9 @@ async def get_compute_configs(
     project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    # Whether this caller may move the agents already on a device elsewhere
+    # (``list_device_sessions``), which stays a manager's. The default itself
+    # is anyone's in the project.
     can_manage = True
     try:
         await MemberService(db).require_manager(project_id, actor)
@@ -273,19 +268,19 @@ async def save_compute_configs(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """What a new agent in this project gets. A manager's choice; nobody
-    already working moves."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    service = ProjectService(db)
-    project = await service.get(project_id)
+    """What a new agent in this project gets. Anyone in the project may choose
+    it (``member_settings``); nobody already working moves."""
+    actor = await member_setting_actor(resolver, project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    await MemberService(db).require_manager(project_id, actor)
     environment = parse(body.default)
     await check_allowed(db, project, environment, actor)
-    await service.merge_settings(
-        project, {"execution_environment": environment.model_dump()}
+    await change_project_settings(
+        db,
+        project,
+        {"execution_environment": environment.model_dump()},
+        by=actor.handle,
     )
     return ok({"default": dump(environment)})
 
