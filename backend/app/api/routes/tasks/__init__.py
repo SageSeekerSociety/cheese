@@ -5,8 +5,8 @@ router 是 `routes/` 下唯一的 APIRouter —— main.py 会遍历每个路由
 APIRouter 实例，子模块的 router 对象只要不进本模块命名空间就不会被重复挂载，
 这一点靠 `from . import <mod>`（而不是 from .<mod> import router）保证。
 
-include 顺序＝原来的声明顺序：它决定 first-match，被 route_index.json 与
-route_index_frozen.py 钉住，改动必须重生成索引并复核。
+include 顺序＝原来的声明顺序：它决定 first-match，被 route_index_frozen.py
+按路径＋处理函数记名钉住，改动后跑 `uv run python -m scripts.route_index --check` 复核。
 """
 
 from fastapi import APIRouter
