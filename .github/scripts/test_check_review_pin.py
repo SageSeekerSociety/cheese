@@ -1,6 +1,7 @@
 """The review-pin rule, run the way CI runs it: a PR file, a comments file, an exit code."""
 
 from pathlib import Path
+import importlib.util
 import json
 import subprocess
 import sys
@@ -8,6 +9,7 @@ import tempfile
 import unittest
 
 SCRIPT = Path(__file__).with_name("check-review-pin.py")
+RENDER = Path(__file__).resolve().parents[2] / ".claude" / "pr-review" / "render.py"
 HEAD = "a" * 40
 OLD = "b" * 40
 
@@ -16,8 +18,41 @@ def review(sha, *severities, marker=True):
     """A pin comment body the way .claude/pr-review/render.py writes it."""
     lines = [f"<!-- pr-review sha={sha} -->" if marker else "no marker", "**Independent review**", ""]
     for i, severity in enumerate(severities, 1):
-        lines += [f"### {i}. [{severity}] something is wrong {i}", "`a.py:1` · runtime", ""]
+        lines += [
+            f"### {i}. [{severity}] something is wrong {i}",
+            f"`a.py:{i}` · runtime · evidence rung 4 (verified)",
+            "",
+        ]
     return "\n".join(lines)
+
+
+def rendered(sha, *severities):
+    """The pin comment body from the real renderer, so a change to its format turns this red."""
+    spec = importlib.util.spec_from_file_location("pr_review_render", RENDER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    findings = [
+        {
+            "severity": severity,
+            "title": f"something is wrong {i}",
+            "file": "a.py",
+            "line": i,
+            "kind": "runtime",
+            "rung": 4,
+            "failure": "x -> y",
+            "evidence": "ran it",
+            "confirm_with": "",
+        }
+        for i, severity in enumerate(severities, 1)
+    ]
+    result = {
+        "summary": "a summary",
+        "candidates_found": len(findings),
+        "candidates_refuted": 0,
+        "findings": findings,
+        "not_covered": [],
+    }
+    return module.render(result, sha, "c" * 40, "")
 
 
 def comment(body, *, who="MEMBER", at="2026-10-13T10:00:00Z", id=1, login="someone", kind="User"):
@@ -75,6 +110,19 @@ class ReviewPinTest(unittest.TestCase):
                 result = run([comment(review(HEAD, "minor", severity))])
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertIn(f"[{severity}]", result.stdout)
+
+    def test_reads_the_findings_the_real_renderer_writes(self):
+        self.assertEqual(run([comment(rendered(HEAD))]).returncode, 0)
+        self.assertEqual(run([comment(rendered(HEAD, "minor"))]).returncode, 0)
+        for severity in ("blocker", "major"):
+            with self.subTest(severity=severity):
+                result = run([comment(rendered(HEAD, "minor", severity))])
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn(f"[{severity}] something is wrong 2", result.stdout)
+
+    def test_prose_that_quotes_a_heading_is_not_a_finding(self):
+        body = review(HEAD) + "\nThe earlier round had:\n### 1. [major] quoted\nnot a finding\n"
+        self.assertEqual(run([comment(body)]).returncode, 0)
 
     def test_only_the_newest_pin_counts(self):
         stale_then_good = [

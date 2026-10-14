@@ -37,8 +37,12 @@ TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 #: `[bot]` login is reserved for the App, so a user cannot take the name.
 APP_LOGIN = "cheesex-app[bot]"
 _PIN = re.compile(r"\A<!-- pr-review sha=(?P<sha>[0-9a-f]{40}) -->")
-#: A finding heading as `.claude/pr-review/render.py` writes it.
-_FINDING = re.compile(r"^### \d+\. \[(?P<severity>blocker|major|minor)\] (?P<title>.*)$", re.M)
+#: A finding as `.claude/pr-review/render.py` writes it: its heading, then the line naming
+#: where it is. Prose that merely quotes a heading does not have the second line.
+_FINDING = re.compile(
+    r"^### \d+\. \[(?P<severity>blocker|major|minor)\] (?P<title>.*)\n`[^\n]*` · .* · evidence rung \d",
+    re.M,
+)
 BLOCKING = ("blocker", "major")
 HOW = "Pin again with .claude/scripts/pr-review.sh prepare <PR>, then post, after the last push."
 

@@ -31,10 +31,6 @@ permissions:
   contents: read
   pull-requests: read
 
-concurrency:
-  group: review-pin-${{ github.event.issue.number }}
-  cancel-in-progress: true
-
 jobs:
   recheck:
     if: >-
@@ -43,8 +39,14 @@ jobs:
           || (github.event.comment.user.login == 'cheesex-app[bot]' && github.event.comment.user.type == 'Bot'))
       && (startsWith(github.event.comment.body, '<!-- pr-review sha=')
           || startsWith(github.event.changes.body.from, '<!-- pr-review sha='))
+    # On the job, not the workflow: every comment on any PR starts a run of this
+    # workflow, and a run whose job is skipped must not queue behind, or cancel,
+    # the recheck of a real pin. Never cancel one that is waiting to re-run.
+    concurrency:
+      group: review-pin-${{ github.event.issue.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Re-run the review-pin check of the head commit's Required CI run
         env:
