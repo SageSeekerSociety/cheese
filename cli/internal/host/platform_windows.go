@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/procscreen"
 )
@@ -46,6 +47,9 @@ func (p procScreens) SaveIdentity(name, owner, data string) error {
 }
 func (p procScreens) Identities(owner string) (map[string]string, error) {
 	return p.m.Identities(owner)
+}
+func (p procScreens) Exited(owner string, after time.Duration) ([]string, error) {
+	return p.m.Exited(owner, after, time.Now())
 }
 func (p procScreens) Spawn(name string, argv, env []string, cols, rows int) (screen, error) {
 	s, err := p.m.Spawn(name, argv, env, cols, rows)

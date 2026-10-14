@@ -28,12 +28,6 @@ from app.api.response import ok, page
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
 from app.domain.agent.announce import settle_proposal
-from app.domain.agent.platform_notices import (
-    EVENT_SKILL_PROPOSED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.agent.staleness import announce_stale
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
@@ -49,6 +43,12 @@ from app.domain.memory.files import (
     parse_memory_file,
 )
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.notice_meta import (
+    EVENT_SKILL_PROPOSED,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.project_skill import importer
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 from app.domain.project_skill.service import ProjectSkillService

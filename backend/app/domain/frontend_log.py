@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import alerting
-from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
 from app.domain.conversation.models import Conversation
+from app.domain.notice_meta import SEVERITY_ERROR, WHO_HUMAN
 from app.domain.run_record.service import keep as keep_record
 
 DEDUP_WINDOW_S = 600.0

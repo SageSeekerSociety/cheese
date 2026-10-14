@@ -12,7 +12,7 @@ from app.domain.agent.platform_failures import (
     TOOL_UNAVAILABLE_CODE,
     classify_cli_notice,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
     SEVERITY_WARN,

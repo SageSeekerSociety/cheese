@@ -35,18 +35,6 @@ from app.domain.agent.pending_messages import nudge_messages, resume_messages
 from app.domain.agent.platform_failures import (
     PlatformFailure,
 )
-from app.domain.agent.platform_notices import (
-    EVENT_DELIVERY_FALLBACK,
-    EVENT_DEPLOY_INTERRUPTED,
-    EVENT_DISPATCH_UNKNOWN,
-    EVENT_TOOLS_RECOVERED,
-    EVENT_TURN_QUEUED,
-    EVENT_TURN_TIMEOUT,
-    SEVERITY_WARN,
-    WHO_HUMAN,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.agent.queries import instance_of_handle
 from app.domain.agent.realtime import broker as realtime
 from app.domain.agent.realtime import subscriber_queue
@@ -71,6 +59,18 @@ from app.domain.delivery.mention import mentioned_handles
 from app.domain.delivery.models import Delivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.identity.handles import names_a_person
+from app.domain.notice_meta import (
+    EVENT_DELIVERY_FALLBACK,
+    EVENT_DEPLOY_INTERRUPTED,
+    EVENT_DISPATCH_UNKNOWN,
+    EVENT_TOOLS_RECOVERED,
+    EVENT_TURN_QUEUED,
+    EVENT_TURN_TIMEOUT,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.topic_membership.services import addressable_seat
 
 logger = logging.getLogger("cheesex.runtime")
@@ -392,7 +392,7 @@ class AgentWorkRunner:
 
         ``nudge_event`` is the ONE LINE the room sees for a platform-initiated
         turn; ``nudge_meta`` is that event's structured payload (see
-        `platform_notices.notice`), which is where the long text goes — the CI
+        `notice_meta.notice`), which is where the long text goes — the CI
         log, the check output, the provider's own words. ``content`` stays the
         agent's prompt either way, so what 芝士 receives never changes when this
         pair does.

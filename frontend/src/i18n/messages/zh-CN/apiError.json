@@ -353,6 +353,8 @@
   "screenAgentIdentityMissing": "本轮 agent 身份不存在，无法启动执行机",
   "ownerMachineOffline": "无法启动：这份模型连接所在的电脑不在线",
   "ownAgentOtherOwnersTask": "这是别人的 Claude Code，只能做它主人负责的任务",
+  "taskTeammateNeedsSeat": "这位 AI 队友不在任务所在的频道里，你也不能把它加进去。请频道管理者先把它加进频道，再把任务交给它",
+  "teammateNotSeatedHere": "这位 AI 队友不在这个频道里，不能在这里工作。把它加进频道，或者换一位队友",
   "ownAgentOwnerOnlyChat": "只有主人能和自己的 Claude Code 私聊",
   "ownAgentNotFound": "项目里没有这个成员自己的 Claude Code",
   "ownAgentCallersOwnerOnly": "只有主人能决定谁可以叫自己的 Claude Code",

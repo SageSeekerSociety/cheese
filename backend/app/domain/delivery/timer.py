@@ -16,15 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
-    EVENT_TIMED_DELIVERY,
-    EVENT_TURN_FAILED,
-    SEVERITY_ERROR,
-    SEVERITY_INFO,
-    WHO_CHEESE,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import (
     GAVE_UP,
@@ -36,6 +27,15 @@ from app.domain.delivery.agent import (
 from app.domain.delivery.ledger import DeliveryEvent, Ledger
 from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
+from app.domain.notice_meta import (
+    EVENT_TIMED_DELIVERY,
+    EVENT_TURN_FAILED,
+    SEVERITY_ERROR,
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary

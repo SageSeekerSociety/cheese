@@ -32,14 +32,14 @@ from dataclasses import dataclass
 
 from app.core.sentences import NoticeText, say
 from app.domain.agent.platform_failures import PlatformFailure
-from app.domain.agent.platform_notices import (
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.device.service import DeviceService, device_service_for_session
+from app.domain.notice_meta import (
     EVENT_HOST_FAILURE,
     SEVERITY_WARN,
     WHO_HUMAN,
     notice,
 )
-from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.service import DeviceService, device_service_for_session
 
 logger = logging.getLogger(__name__)
 

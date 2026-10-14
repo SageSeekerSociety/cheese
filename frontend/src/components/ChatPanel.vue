@@ -16,6 +16,7 @@ import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { vGuideAnchor } from '../composables/useGuideAnchors'
+import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
@@ -27,6 +28,7 @@ import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
+import MentionOutsidePrompt from './chat/MentionOutsidePrompt.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
@@ -141,6 +143,13 @@ const panelEmit = ((event: string, ...args: unknown[]) => {
 
 // A composable is not re-run when a prop changes: it reads the current value
 // when it needs it. That is why every prop is handed over as an accessor.
+// 我 @ 了不在这个频道里的人：问要不要加进来（Slack 那样），见 useMentionOutside。
+const mentionOutside = useMentionOutside({
+  place: () => props.conversationId ?? props.topic?.id ?? null,
+  nameOf: (handle) => props.members.find((m) => m.user_handle === handle)?.name || handle,
+})
+const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
+
 const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
@@ -152,6 +161,7 @@ const panel = useChatPanel({
   topicList: () => props.topicList,
   unreadOnOpen: () => props.unreadOnOpen,
   focusBlock: () => props.focusBlock ?? null,
+  onPosted: mentionOutside.offer,
   emit: panelEmit,
 })
 
@@ -506,6 +516,15 @@ useComposerShortcut({
             {{ t('slides.removeQuote') }}
           </button>
         </div>
+        <MentionOutsidePrompt
+          v-if="showComposer && outsidePrompt"
+          :names="mentionOutside.names(outsidePrompt.handles)"
+          :members-only="outsidePrompt.members_only"
+          :may-add="outsidePrompt.may_add"
+          :adding="outsideAdding"
+          @add="mentionOutside.add"
+          @dismiss="mentionOutside.dismiss"
+        />
         <div v-if="showComposer && composerClosed" class="composer-closed">
           <div class="composer-closed__box t-body">
             <span class="composer-closed__text">{{ composerClosed }}</span>

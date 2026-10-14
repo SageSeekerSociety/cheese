@@ -53,8 +53,9 @@ from app.domain.agent.resource_cleanup import SESSION_TMP
 # reads every write point out of the rendered script and holds it to that name.
 
 # Starts the tunnel helper, and does NOT return until the helper it started has
-# bound a port. Prints that port on stdout and nothing else; the caller exports
-# it as HTTPS_PROXY for the agent it is about to start.
+# bound a port. Prints that port and the helper's pid on stdout and nothing
+# else; the caller exports the port as HTTPS_PROXY for the agent it is about to
+# start, and stops that pid when it ends.
 #
 # The port belongs to the machine. Only its kernel knows which ports are free,
 # so the helper binds port 0 and reports what it got. The
@@ -152,9 +153,16 @@ if [ "$RC" != 0 ]; then
   tail -n 5 "$LOG" >&2
   exit 1
 fi
+# Printed from what THIS run started, never read back from the seat's files:
+# every task the room's agent runs shares this seat's directory, and two of
+# them launching in the same moment overwrite each other's files. A launch that
+# read the pid back took the other's, stopped that helper under the other's
+# running `claude` when it ended, and left its own running for good (dev,
+# 2026-10-06: two launches at 19:21:55, one helper still running a week on).
+PORT="$(cat "$NEWF")"
 mv "$NEWF" "$PORTF"
 echo "$NEWPID" > "$PIDF"
-cat "$PORTF"
+echo "$PORT $NEWPID"
 """
 
 
@@ -423,13 +431,18 @@ def screen_env(
         if value:
             env[name] = value
     # This seat's name inside the session home: the same one `place.seat_dir`,
-    # the launcher file and the runner's state directory are named by, derived
-    # from the handle alone. The launcher puts the seat's own files — the
-    # tunnel helper's credential above all — under it, because a room may seat
-    # several agents and one credential cannot serve two of them.
+    # the launcher file, the runner's state directory and the harness's own
+    # seat directory are named by, all derived from the seat's key
+    # (`place.seat_key`). The launcher puts the seat's own files — the tunnel
+    # helper's credential above all — under it, because one credential cannot
+    # serve two sessions. A task's session is a seat of its own beside its
+    # room's: keyed by the handle alone, every task the room's agent ran wrote
+    # its credential into one file, and each running task's helper then
+    # stamped whichever task launched last on its CONNECTs (dev, 2026-10-13:
+    # five running sessions of one room on another task's credential).
     # Not gated on truth: an empty handle hashes to a name of its own, which is
     # what keeps the room's own seat out of a teammate's directory.
-    env["CHEESE_SEAT"] = seat_name(place.agent_handle)
+    env["CHEESE_SEAT"] = seat_name(place.seat or place.agent_handle)
     if place.execution_target is not None:
         env["CHEESE_EXECUTION_TARGET"] = json.dumps(place.execution_target)
     if place.project_id:
@@ -723,8 +736,9 @@ if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   # The machine chose the port, so only this line can tell the agent which.
   # The seat's directory goes in: this seat gets its own helper, on its own
   # port, holding its own token — the whole point of $SEATD above.
-  TUNNEL_PORT="$(sh "$HOME/.cheese/cheese-tunnel-up" "$SEATD")" || exit 1
-  TUNNEL_PID="$(cat "$SEATD/cheese-tunnel.pid")"
+  TUNNEL="$(sh "$HOME/.cheese/cheese-tunnel-up" "$SEATD")" || exit 1
+  TUNNEL_PORT="${{TUNNEL% *}}"
+  TUNNEL_PID="${{TUNNEL#* }}"
   export HTTPS_PROXY="http://127.0.0.1:$TUNNEL_PORT"
 fi
 if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then

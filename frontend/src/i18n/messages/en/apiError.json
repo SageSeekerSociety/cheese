@@ -353,6 +353,8 @@
   "screenAgentIdentityMissing": "This turn's agent identity doesn't exist, so the execution machine can't start",
   "ownerMachineOffline": "Can't start: the computer holding this model connection is offline",
   "ownAgentOtherOwnersTask": "This Claude Code is someone else's and only works tasks its owner is responsible for",
+  "taskTeammateNeedsSeat": "This AI teammate isn't in the task's channel, and you can't add it. Ask a channel manager to add it first, then give it the task",
+  "teammateNotSeatedHere": "This AI teammate isn't in this channel, so it can't work here. Add it to the channel, or ask another teammate",
   "ownAgentOwnerOnlyChat": "Only its owner can chat privately with their own Claude Code",
   "ownAgentNotFound": "No member's own Claude Code by that name in this project",
   "ownAgentCallersOwnerOnly": "Only its owner can decide who may call their Claude Code",
