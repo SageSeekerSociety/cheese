@@ -1,0 +1,10 @@
+{
+  "collapse": "Collapse",
+  "empty": "No activity",
+  "expandAll": "Show all ({count} lines)",
+  "live": "In progress",
+  "loadFailed": "Couldn't load",
+  "loadingOlder": "Loading earlier activity…",
+  "older": "Earlier activity",
+  "steps": "No steps | 1 step | {count} steps"
+}

@@ -3,10 +3,13 @@
 Claude Code runs as ``claude -p`` with stream-json on both pipes, and this
 process holds the pipes for the whole life of the session: a user message, a
 message said mid-turn and a control are all a line written to its stdin, and
-everything it reports is a line read from its stdout. Closing stdin ends the
-session and kills whatever it had running in the background, so stdin is closed
-exactly once, on purpose — when the session has sat idle (``driven.runner``),
-or when the screen that supervises this runner goes away.
+everything it reports is a line read from its stdout. Closing stdin is the
+ending, so it is closed exactly once, on purpose — when the session has sat
+idle (``driven.runner``), or when the screen that supervises this runner goes
+away. Claude Code reads that close as the session's last input and exits with
+the status the session would have had, and what it still had running is stopped
+for it (``release``) — from 2.1.292 it waits for its background tasks before it
+leaves, which a released session must not do.
 
 Every line read is recorded in the journal under a stable sequence, stamped with
 the room's work it belongs to — except the deltas of the block being written,
@@ -68,6 +71,10 @@ LINE_LIMIT = 64 * 1024 * 1024
 #: (``Runner.starting``). A failing bootstrap or a missing program ends well
 #: inside it; a session that comes up costs a greeting no more than this.
 SETTLE_S = 0.5
+#: How long a released session gets to end on its own before what it left
+#: running is stopped for it (``Runner.release``). A session with nothing
+#: running ends at once and never waits this out.
+RELEASE_GRACE_S = 5.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
 # How long a new turn waits to see the project's context as it is now before it
@@ -220,6 +227,63 @@ def _alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def started_by(session: int) -> list[int]:
+    """What a session started and could still be running: its descendants.
+
+    A session's work is under it — the shell it started a command in, what that
+    shell runs, and the helpers it started for itself — so its descendants are
+    what has to be stopped for it to be let go of work it would otherwise wait
+    out (``Runner.release``). Its own process is not in the list: it is the one
+    being ended, and it should be the one to exit.
+    """
+    if sys.platform == "win32":
+        return [
+            pid
+            for pid in portable.tree([(session, portable.created(session))])
+            if pid != session
+        ]
+    children: dict[int, list[int]] = {}
+    for pid, parent in _processes():
+        children.setdefault(parent, []).append(pid)
+    found: list[int] = []
+    queue = [session]
+    while queue:
+        for child in children.get(queue.pop(), []):
+            found.append(child)
+            queue.append(child)
+    return found
+
+
+def _processes() -> list[tuple[int, int]]:
+    """Every process on this machine as (pid, parent), from /proc where there is
+    one and from ``ps`` where there is not."""
+    proc = Path("/proc")
+    if proc.is_dir():
+        pairs = []
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                # Past the name, which may itself hold a ')'.
+                _, parent = (entry / "stat").read_bytes().split(b")")[-1].split()[:2]
+            except (OSError, ValueError):
+                continue
+            pairs.append((int(entry.name), int(parent)))
+        return pairs
+    try:
+        listing = subprocess.run(
+            ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=10
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    pairs = []
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
+            pairs.append((int(fields[0]), int(fields[1])))
+    return pairs
 
 
 def transcript(config_dir: Path, session_id: str) -> Path | None:
@@ -1059,11 +1123,38 @@ class Runner(runner.Runner[Journal]):
             await self.yield_foreground()
 
     async def release(self) -> None:
-        """Let the session go the way it is meant to: close its stdin."""
+        """Let the session go the way it is meant to: close its stdin, and stop
+        what it left running.
+
+        Closing stdin is the ending. Nothing running turns out of it at once;
+        a session still working on something of its own — which is what the
+        build waits out before it goes, from 2.1.292 on — is let go by having
+        that work stopped for it, and it then exits with the status it would
+        have had. Only a session that will not go even then is ended on the
+        spot, which the room reads as the ending it was already asking for.
+        """
         assert self.process is not None and self.process.stdin is not None
         with contextlib.suppress(ConnectionError, BrokenPipeError):
             self.process.stdin.close()
             await self.process.stdin.wait_closed()
+        if await self._gone(RELEASE_GRACE_S):
+            return
+        # Waiting out what is stopped is not done in the loop: reading the
+        # session's stdout and answering a backend both go on meanwhile.
+        await asyncio.to_thread(end, started_by(self.process.pid))
+        if await self._gone(RELEASE_GRACE_S):
+            return
+        await asyncio.to_thread(end, [self.process.pid])
+        await self._gone(RELEASE_GRACE_S)
+
+    async def _gone(self, within: float) -> bool:
+        """Whether the session process has exited, waiting up to ``within``."""
+        assert self.process is not None
+        try:
+            await asyncio.wait_for(self.process.wait(), within)
+        except TimeoutError:
+            return False
+        return True
 
     # --- stdin ---------------------------------------------------------------
 

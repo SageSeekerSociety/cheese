@@ -105,7 +105,7 @@ async def upload_material(
         uploader_id=auth_user.user_id,
         meta=meta,
     )
-    return {"code": 201, "message": "Created", "data": result}
+    return ok(result)
 
 
 @router.get(

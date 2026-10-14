@@ -391,15 +391,16 @@ def case(folder, options):
             env.update(runner_fixture.room_home(home, target))
             claude = options.claude
             if options.mode == "disabled":
-                # `bootstrap` switches function hooks on for the session; the
-                # fault is a build that starts with them off regardless.
-                claude = folder / "claude-without-function-hooks"
-                claude.write_text(
-                    "#!/bin/sh\nCLAUDE_CODE_ENABLE_FUNCTION_HOOKS=0 exec "
-                    + shlex.quote(options.claude)
-                    + ' "$@"\n'
-                )
-                claude.chmod(0o755)
+                # Nothing takes the call. The module is loaded and the
+                # interface is up, but it registers no handler, so the native
+                # tool reaches the harness and the PreToolUse guard refuses
+                # it. The function-hook switch cannot make this state any
+                # more: on the pinned build it no longer keeps a module from
+                # loading.
+                #
+                # The helper `bootstrap` copies into the session's plugin.
+                proxy = runner_fixture.session_dir(home) / "remote-execution/proxy.js"
+                proxy.write_text("export function register(on) {}\n")
             elif options.mode in ("throw", "timeout"):
                 # The helper `bootstrap` copies into the session's plugin.
                 proxy = runner_fixture.session_dir(home) / "remote-execution/proxy.js"

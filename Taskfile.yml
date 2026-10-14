@@ -100,14 +100,16 @@ tasks:
       - task: be:check
       - task: fe:check
 
-  # Architecture gates: import boundaries, standalone scenes, shrinking scene
-  # debt, catalog coverage and file sizes. Scene debt and file sizes require
-  # an up-to-date origin/main; frontend checks require installed dependencies.
+  # Architecture gates: import boundaries, browser storage, standalone scenes,
+  # shrinking scene debt, catalog coverage and file sizes. Scene debt and file
+  # sizes require an up-to-date origin/main; frontend checks require installed
+  # dependencies.
   boundaries:
-    desc: Boundaries + scenes + scene debt + catalog + file-size caps
+    desc: Boundaries + storage + scenes + scene debt + catalog + file-size caps
     cmds:
       - task: be:boundaries
       - task: fe:lint:boundary
+      - task: fe:lint:storage
       - task: fe:lint:scenes
       - task: fe:lint:scene-debt
       - task: fe:lint:catalog

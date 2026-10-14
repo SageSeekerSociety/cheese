@@ -140,6 +140,17 @@ class TopicOut(BaseModel):
     # is deliberately NOT here: unread already has its own badge.
     joined: bool = False
     awaits_me: bool = False
+    # 有人回复了我、我还没处理：这间房里（它自己那条线，或它名下的支线）有一条别人
+    # 说的消息，答的是我写的某一块、或者点了我的名，而我从那以后没打开过这间房
+    # （`TopicRepository.replied_to_me`）。侧栏的黄灯问的也是它 —— 和 `awaits_me`
+    # 同一盏灯，都是「有事等你」。
+    #
+    # 和 `awaits_me` 那条「未读的 @ 不算」不同，未读的 @ 在这里**算**：这盏灯要的
+    # 正是「有人回了我」这件事本身，未读角标只说有多少条。打开这间房就算处理了。
+    #
+    # 和 `awaits_me` 一样是对**看的人**算的：只有 list_topics/get_topic 会填，别处
+    # 一律 False（「没人算过」，不是「没有」）。名下的活不在里面 —— 活有自己那一行。
+    replied_to_me: bool = False
     # 看板上这一格 —— 同一个 `presentation` 结构，一条活和一个房间用同一套词，因为
     # 侧栏把它们画在一起。和上面几个派生字段同一条规矩：只有 list_topics/get_topic
     # 会填，别处是 None（「没人算过」）。

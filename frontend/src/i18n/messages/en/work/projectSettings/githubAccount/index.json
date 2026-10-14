@@ -1,0 +1,14 @@
+{
+  "connect": "Connect GitHub account",
+  "connected": "Connected as {login}",
+  "connectedAt": " (connected {when})",
+  "disconnect": "Disconnect",
+  "expired": "The GitHub authorization has expired, so PRs can't be created as you. Choose Reconnect to renew it",
+  "hint": "Identifies your commits and creates GitHub PRs as you. It is separate from the GitHub sign-in and can be a different account",
+  "loadFailed": "Couldn't load the connection",
+  "loading": "Loading connection…",
+  "none": "No account linked",
+  "reconnect": "Reconnect",
+  "retry": "Retry",
+  "title": "Connect GitHub account"
+}

@@ -1,6 +1,6 @@
 """Full service replacement retains a pinned native executor and its work.
 
-Claude 2.1.282 uses the local deterministic Messages API. The channel forwards
+Claude 2.1.299 uses the local deterministic Messages API. The channel forwards
 real runner dispatch, not manufactured echoes/results. Replacement is in the
 same Python process; this does not prove a new backend interpreter or upgrade.
 """

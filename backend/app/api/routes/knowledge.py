@@ -90,11 +90,7 @@ async def create_knowledge(
         project_id=project_id,
         discussion_id=discussion_id,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"knowledge": knowledge},
-    }
+    return ok({"knowledge": knowledge})
 
 
 @router.get(

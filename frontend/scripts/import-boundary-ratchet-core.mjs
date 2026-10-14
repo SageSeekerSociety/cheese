@@ -33,6 +33,8 @@
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { parseEslintJsonFor } from './eslint-ratchet-json.mjs'
+
 /** The eslint rule that carries the boundary. Must match the id eslint reports. */
 export const BOUNDARY_RULE_ID = 'boundary/no-api-or-router'
 
@@ -200,53 +202,17 @@ export const boundaryPlugin = {
 }
 
 /**
- * Count boundary violations per file in eslint's `--format json` output.
- *
- * Keys are relative to `root` (forward slashes, no leading `./`): eslint reports
- * absolute paths, and a baseline keyed by those would only match on the machine
- * that wrote it — not in CI, not in a second worktree. `root` is a parameter
- * rather than a constant so the unit test can drive it with a fixture.
- *
- * Returns `{ counts, violations, unjudged }`. `violations` keeps eslint's own
- * `line`, `column` and `message` for every hit, for the failure report.
- * `unjudged` is non-empty when eslint could not
- * parse a file (`"fatal": true`) or reported a message with no rule id — a
- * syntax error, a missing parser, a plugin that crashed. Those are neither a
- * pass nor a violation of this rule, and counting them as zero is exactly how a
- * boundary check reports a clean tree it never read. The caller must treat a
- * non-empty `unjudged` as "could not judge".
+ * Count boundary violations per file in eslint's `--format json` output — this
+ * rule's share of it. The parsing, the relative-path keys and the "could not
+ * judge" set are the same question every rule-counting ratchet asks, so they
+ * live in `eslint-ratchet-json.mjs`; this binds it to `BOUNDARY_RULE_ID`.
  *
  * @param {string} text raw eslint JSON output
  * @param {string} root absolute path the file names are made relative to
  * @returns {{ counts: Record<string, number>, violations: {file: string, line: number, column: number, rule: string, message: string}[], unjudged: string[] }}
  */
 export function parseEslintJson(text, root = process.cwd()) {
-  const parsed = JSON.parse(String(text))
-  if (!Array.isArray(parsed)) {
-    throw new TypeError('eslint output is not a JSON array of file results')
-  }
-
-  const prefix = String(root).replaceAll('\\', '/').replace(/\/$/, '') + '/'
-  /** @type {Record<string, number>} */
-  const counts = {}
-  /** @type {{file: string, line: number, column: number, rule: string, message: string}[]} */
-  const violations = []
-  const unjudged = []
-  for (const result of parsed) {
-    const absolute = String(result.filePath ?? '').replaceAll('\\', '/')
-    const file = absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute
-    const messages = result.messages ?? []
-    if (result.fatal === true || messages.some((m) => m.ruleId == null)) {
-      unjudged.push(`${file}: ${messages.map((m) => m.message).join('; ') || 'fatal'}`)
-      continue
-    }
-    const hits = messages.filter((m) => m.ruleId === BOUNDARY_RULE_ID)
-    for (const m of hits) {
-      violations.push({ file, line: m.line, column: m.column, rule: m.ruleId, message: m.message })
-    }
-    if (hits.length > 0) counts[file] = (counts[file] ?? 0) + hits.length
-  }
-  return { counts, violations, unjudged }
+  return parseEslintJsonFor(text, root, BOUNDARY_RULE_ID)
 }
 
 // The ratchet arithmetic is the same question the vue-tsc and stylelint

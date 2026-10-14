@@ -183,7 +183,7 @@ const files = computed(() => [
 .scene-sample {
   font-size: 12px;
   line-height: var(--lh-12);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .scene-title {

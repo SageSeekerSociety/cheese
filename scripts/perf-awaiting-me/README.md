@@ -32,6 +32,12 @@
    `perfviewer`，一屏摆 66 行。`conversations` 那几行不用自己写——`topics`、
    `tasks`、`threads` 上的 BEFORE INSERT 触发器会登记。
 
+   主项目里另有 18 个**边界房间**：6 个空房间、6 个归档房（各带一道指着
+   `perfviewer` 的题）、6 个「芝士问完自己又接了一句」的房间（#2046）。三类都看得
+   见、都不该摆上清单，所以 66 这个数不变 —— 反过来把归档房改成 `active`、或者删掉
+   那 6 句接话，行数各多 6 行（2026-10-14 实测 66 → 72）。改取数的改动要能和它们
+   对上账，见下面第 6 步。
+
 4. 出分段表：
 
        uv run --project backend python scripts/perf-awaiting-me/measure_awaiting_me.py
@@ -56,6 +62,15 @@
    「4.1 秒」的场景。采样轮数用 `PERF_ROUNDS` 调（`probe_brief.py`、
    `probe_query_split.py`），批数和并发数用 `PERF_BATCHES`、`PERF_CONCURRENCY`
    调（`probe_concurrency.py`）——没有哪个探针读全部三个。
+
+6. 改前改后各导一份响应，整份对一遍（改的是取数，答的得是同一份）：
+
+       cd <改前那棵树> && python scripts/perf-awaiting-me/dump_body.py --out /tmp/before.json
+       cd <改后那棵树> && python scripts/perf-awaiting-me/dump_body.py --out /tmp/after.json
+       diff /tmp/before.json /tmp/after.json
+
+   它跑的是自己所在那棵树的代码，所以两棵树各跑一次、比这两份文件。差别只应该
+   出现在时间戳相同的两条之间——那两条的先后不保证。
 
 ## 读数的坑
 

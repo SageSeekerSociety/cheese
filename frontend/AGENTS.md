@@ -26,6 +26,20 @@ of the boundary disagree about `import type` is in
 `@/api`, and `eslint.config.mjs` keeps a `no-restricted-imports` rule that
 rejects `@/network` with a message pointing at `@/api`.
 
+## Browser storage goes through one module
+
+`localStorage` and `sessionStorage` throw — Safari private mode, a full quota, a
+context with no browser at all — so nothing outside `src/lib/browserStorage.ts`
+may reference them. Import `storageGet`, `storageSet`, `storageRemove`,
+`storageGetJson`, `storageSetJson` or `storageGetStrings`: they never throw, and a
+blocked storage just means the preference does not persist. Keep the key and the
+value format that is already in users' browsers. CI runs
+`pnpm run lint:storage` (`lint:storage:update` rewrites the baseline downward);
+the references still in the tree are frozen per file in
+`browser-storage-baseline.json`. Rule and messages:
+`scripts/browser-storage-ratchet-core.mjs`. `useStorage` from `@vueuse/core` is
+fine where a reactive, cross-tab value is what you want.
+
 ## The component preview site
 
 `/demo/catalog` renders every component in `views/demo/catalog.ts` — one page per

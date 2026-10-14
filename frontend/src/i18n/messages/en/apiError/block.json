@@ -1,0 +1,16 @@
+{
+  "askAlreadyAnswered": "This question has already been answered",
+  "askAlreadySkipped": "You've already skipped this question",
+  "askFieldRequired": "{field} must be a nonempty string",
+  "askFieldString": "{field} must be a string",
+  "askNotAQuestion": "This message is not a question with options",
+  "askNothingToWithdraw": "You haven't answered this question, so there is nothing to take back",
+  "askOptionObject": "Each option must be an object with text and optional explain fields",
+  "askOptionsTwoToThree": "Each question needs 2–3 option objects",
+  "askQuestionObject": "Each question must be an object",
+  "askQuestionsCount": "questions must contain 1–{limit} questions",
+  "askSkipNotYours": "This question isn't waiting on you, so you can't skip it",
+  "optionsDistinct": "Options can't repeat",
+  "quoteNeedsMessage": "A quote needs a message of your own",
+  "quoteTooLong": "The message and the quote together can't be longer than {limit} characters"
+}

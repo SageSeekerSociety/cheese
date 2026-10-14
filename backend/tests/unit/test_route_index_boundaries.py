@@ -12,44 +12,17 @@ from starlette.routing import Mount, Route
 from scripts.route_index import (
     RouteRecord,
     _full,
-    _sync,
     checked_findings,
     collect,
     first_match_findings,
 )
 from scripts.route_index_frozen import FROZEN, FrozenPair
-from scripts.route_index_profile import profile_header
 
 
 def record(index, path, methods=("GET",), protocol="http"):
     return RouteRecord(
         index, protocol, path, frozenset(methods), f"m.h{index}", f"h{index}"
     )
-
-
-def write_index(tmp_path, records):
-    path = tmp_path / "index.json"
-    path.write_text(
-        json.dumps({"settings_profile": profile_header()})
-        + "\n"
-        + "\n".join(
-            json.dumps(
-                {
-                    "index": r.index,
-                    "protocol": r.protocol,
-                    "path": r.path,
-                    "methods": sorted(r.methods),
-                    "endpoint": r.endpoint,
-                    "auth": "reviewed outside this slice",
-                    "owner": "test",
-                }
-            )
-            for r in records
-        ),
-        encoding="utf-8",
-    )
-    write_annotations(tmp_path, records)
-    return str(path)
 
 
 def write_annotations(tmp_path, records):
@@ -76,45 +49,6 @@ def write_annotations(tmp_path, records):
     path = tmp_path / "sidecar.yaml"
     path.write_text(json.dumps(data), encoding="utf-8")
     return path, data
-
-
-@pytest.mark.parametrize("header_kind", ["missing", "wrong_profile"])
-def test_sync_rejects_profile_before_decoding_route_rows(tmp_path, capsys, header_kind):
-    path = tmp_path / "index.json"
-    if header_kind == "missing":
-        header = {"index": 0, "path": "/old-unprofiled-index"}
-        expected = "settings profile header missing"
-    else:
-        header = {"settings_profile": {**profile_header(), "name": "another-profile"}}
-        expected = "settings profile mismatch"
-    # Bad row JSON must not mask the first, actionable profile error.
-    path.write_text(json.dumps(header) + "\nnot-json", encoding="utf-8")
-    assert _sync(str(path), [record(0, "/a")]) == 1
-    assert expected in capsys.readouterr().out
-
-
-@pytest.mark.parametrize(
-    "mutation", ["swap", "index", "add_duplicate", "drop_duplicate"]
-)
-def test_sync_preserves_order_leaf_and_multiplicity(tmp_path, mutation):
-    a, b = record(0, "/a"), record(1, "/b")
-    stored, live = [a, b], [a, b]
-    if mutation == "swap":
-        live = [replace(b, index=0), replace(a, index=1)]
-    elif mutation == "index":
-        live = [replace(a, index=5), b]
-    elif mutation == "add_duplicate":
-        live = [a, b, replace(a, index=2)]
-    else:
-        stored = [a, b, a]
-    assert _sync(write_index(tmp_path, stored), live) == 1
-
-
-def test_sync_preserves_matching_duplicate_registrations(tmp_path):
-    records = [record(0, "/same"), replace(record(0, "/same"), index=1)]
-    assert (
-        _sync(write_index(tmp_path, records), records, tmp_path / "sidecar.yaml") == 0
-    )
 
 
 def test_annotations_cover_every_http_method_and_explicit_ws(tmp_path):
@@ -189,17 +123,6 @@ def test_annotations_reject_duplicate_yaml_keys_and_unreadable_files(tmp_path):
     path.write_text("version: 1\nversion: 1\n", encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate YAML mapping key"):
         read_annotations(path)
-
-
-def test_sync_gates_annotations_after_ordered_inventory(tmp_path, capsys):
-    records = [record(0, "/same"), replace(record(0, "/same"), index=1)]
-    index = write_index(tmp_path, records)
-    sidecar, data = write_annotations(tmp_path, records)
-    assert _sync(index, records, sidecar) == 0
-    data["routes"] = []
-    sidecar.write_text(json.dumps(data), encoding="utf-8")
-    assert _sync(index, records, sidecar) == 1
-    assert "route annotations coverage mismatch" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("convertor", ["int", "uuid", "float"])
@@ -318,8 +241,6 @@ def test_actual_effective_regex_overrides_template_approximation():
 def frozen_fixture():
     records = [record(0, "/x/{id}"), record(1, "/x/z")]
     pair = FrozenPair(
-        earlier_index=0,
-        later_index=1,
         protocol="http",
         method="GET",
         earlier_path=records[0].path,
@@ -343,7 +264,6 @@ def test_frozen_exact_pair_is_suppressed():
         "missing_earlier",
         "missing_later",
         "reverse",
-        "leaf",
         "handler",
         "path",
         "protocol",
@@ -364,8 +284,6 @@ def test_frozen_stale_identity_or_overlap_fails(mutation):
         records = records[:1]
     elif mutation == "reverse":
         records.reverse()
-    elif mutation == "leaf":
-        records[0] = replace(records[0], index=20)
     elif mutation == "handler":
         records[0] = replace(records[0], endpoint="other.handler")
     elif mutation == "path":
@@ -397,36 +315,27 @@ def test_frozen_does_not_exempt_other_method_or_new_registration():
     assert [(f.later.index, f.method) for f in findings] == [(1, "POST"), (2, "GET")]
 
 
-def test_existing_frozen_debt_keeps_exact_b9_leaves():
-    # The indices are registration positions, so they move when earlier routes
-    # are added: 706/730 until 2026-10-12, then 712/736 once this branch's four
-    # leaves of `/admin/integrations/external-problem` and
-    # `/tasks/{taskId}/external-problem*` landed above them, then 713/737 on
-    # merging main's `/admin/machines` page, 720/744 on its canvases, 724/748
-    # on its agent callers page and 719/743 once main dropped two leaves above
-    # them, then 724/748 again on main's 2026-10-13 batch, 726/750 once members
-    # could add and remove their own agents, 727/751 once main registered
-    # `/run-records/turns` above them, then 728/752 once `POST
-    # /blocks/{block_id}/skip` was, 732/756 once an account could hold a model
-    # connection, and 733/757 once a machine's connection could be named
-    # (`PATCH /connector/my/devices/{device_id}/claude-code`) — and 727/751
-    # again once main reverted the six external-problem routes, which is where
-    # main's own tree sits. On this branch the room/machine skill registers also
-    # sit above the pair, and they are what puts it at 742/766 here. The pair
-    # itself is
-    # unchanged — tests/AGENTS.md
-    # ("Generated routes and database predicates") asks for the indices, the
-    # identities behind them and this assertion to move in one commit.
+def test_existing_frozen_debt_keeps_exact_leaves():
+    # The pair names its two leaves by path and handler, so it survives a route
+    # added or removed anywhere else on the app. The registration indices this
+    # assertion used to carry — 706/730 until 2026-10-12, then 712/736, 713/737,
+    # 720/744, 719/743, 724/748, 726/750, 727/751, 728/752, 732/756, 733/757 and
+    # back to 727/751 as routes landed above them and were reverted — were the
+    # churn that form removes; tests/AGENTS.md ("Generated routes and database
+    # predicates") asks for this file not to be touched by an unrelated route.
     (pair,) = FROZEN
-    assert (pair.earlier_index, pair.later_index, pair.protocol, pair.method) == (
-        742,
-        766,
-        "http",
-        "GET",
+    assert (pair.protocol, pair.method) == ("http", "GET")
+    assert (pair.earlier_path, pair.earlier_endpoint) == (
+        "/users/{userId}",
+        "app.api.routes.users.account.get_user",
+    )
+    assert (pair.later_path, pair.later_endpoint) == (
+        "/users/invite-codes",
+        "app.api.routes.users.invite_codes.list_invite_codes",
     )
     records = [
-        replace(record(742, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(766, pair.later_path), endpoint=pair.later_endpoint),
+        replace(record(0, pair.earlier_path), endpoint=pair.earlier_endpoint),
+        replace(record(1, pair.later_path), endpoint=pair.later_endpoint),
     ]
     assert checked_findings(records, FROZEN) == []
 

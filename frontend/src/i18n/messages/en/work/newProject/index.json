@@ -1,0 +1,20 @@
+{
+  "cancel": "Cancel",
+  "createFailed": "Could not create the project",
+  "forge": "Code repository",
+  "forgeGithub": "Connect GitHub",
+  "forgeGithubHint": "Connect GitHub in the project settings after it is created. The hosting service cannot be changed after the project is created.",
+  "forgeHint": "The hosting service cannot be changed after the project is created",
+  "forgeHosted": "Hosted on the platform (default)",
+  "fromTask": "From task: {task}",
+  "intent": "What do you plan to do (optional)",
+  "intentExample": "For example: turn this term's course materials into an outline",
+  "name": "Project name",
+  "ownHint": "Under your name; you can invite people to it",
+  "retry": "Retry",
+  "team": "Belongs to",
+  "teamHint": "All {n} team members join automatically",
+  "teamsEmpty": "No teams available. Create or join a team first.",
+  "teamsFailed": "Could not load teams",
+  "title": "New project"
+}

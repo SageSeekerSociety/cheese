@@ -1,0 +1,8 @@
+{
+  "dmFailed": "Couldn't open the conversation",
+  "notFound": "This channel doesn't exist",
+  "notFoundHint": "It may have been deleted, or it isn't part of this project",
+  "quoted": "“{title}”",
+  "resize": "Drag to resize, double-click to reset",
+  "untitledTask": "New task"
+}

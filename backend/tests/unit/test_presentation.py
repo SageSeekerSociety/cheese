@@ -553,6 +553,53 @@ def test_a_narrow_rail_card_folds_into_the_same_facts_as_the_orm_row():
     assert rail_facts.decided is True
 
 
+def test_a_narrow_listed_room_folds_into_the_same_facts_as_the_orm_row():
+    """窄读入口交出来的 `ListedRoom` 和 ORM 那一行，读成同一份事实。
+
+    「待我处理」不再为摆上来的那几个频道读整行（`topic.repositories.ListedRoom`），
+    但它要的答案必须一模一样 —— 否则同一个房间在清单和别处会说出两种话。三位都要
+    覆盖到：`status` 挑格子、`id` 说它是不是那个正在跑的房间、`accepted_at` 说这一步
+    已经交出去了。`RoomFacts` 是纯值，所以两边相等就是这一层的契约。
+    """
+    from app.domain.room_task.presentation import facts_for_room
+    from app.domain.topic.models import Topic
+    from app.domain.topic.repositories import ListedRoom
+
+    def both(**spec) -> tuple[RoomFacts, RoomFacts]:
+        shared = {
+            "status": spec.get("status", TopicStatus.active),
+            "accepted_at": spec.get("accepted_at"),
+        }
+        room_id = uuid.uuid4()
+        row = Topic(id=room_id, project_id=uuid.uuid4(), title="频道", **shared)
+        listed = ListedRoom(
+            id=room_id,
+            project_id=row.project_id,
+            title=row.title,
+            status=shared["status"],
+            accepted_at=shared["accepted_at"],
+            updated_at=NOW,
+        )
+        running = {room_id} if spec.get("running") else set()
+        return facts_for_room(row, running), facts_for_room(listed, running)
+
+    specs = [
+        {},
+        {"running": True},
+        {"status": TopicStatus.archived},
+        {"accepted_at": NOW},
+        {"status": TopicStatus.archived, "accepted_at": NOW, "running": True},
+    ]
+    for spec in specs:
+        from_orm, from_listed = both(**spec)
+        assert from_listed == from_orm
+
+    # 不是「两边都算成 None」就等于：拿几位具体的事实对下来。
+    _, listed_facts = both(status=TopicStatus.archived, accepted_at=NOW)
+    assert listed_facts.status == "archived"
+    assert listed_facts.accepted_at == NOW
+
+
 # —— 侧栏那盏呼吸绿问的那件事 ————————————————————————————————————
 
 

@@ -149,6 +149,29 @@ CHECKS: tuple[Check, ...] = (
             "frontend/scripts/tsc-ratchet-core.mjs",
             # BETTER and the status mapping both live here, for all three.
             "frontend/scripts/ratchet-report.mjs",
+            # Reading eslint's JSON output into per-file counts, shared with the
+            # a11y and storage ratchets — the boundary's counts come from it.
+            "frontend/scripts/eslint-ratchet-json.mjs",
+        ),
+    ),
+    Check(
+        id="fe-storage",
+        area=BOUNDARY,
+        argv=("node", "scripts/browser-storage-ratchet.mjs", "--json"),
+        cwd="frontend",
+        rules=(
+            "frontend/eslint.browser-storage.config.mjs",
+            # The storage config builds on the base one; a rule added there
+            # decides this check too.
+            "frontend/eslint.config.mjs",
+            "frontend/scripts/browser-storage-ratchet.mjs",
+            "frontend/scripts/browser-storage-ratchet-core.mjs",
+            # What the safe module does is what the rule means by "safe" — a
+            # change to its API is a change to the fix the ratchet asks for.
+            "frontend/src/lib/browserStorage.ts",
+            "frontend/scripts/eslint-ratchet-json.mjs",
+            "frontend/scripts/tsc-ratchet-core.mjs",
+            "frontend/scripts/ratchet-report.mjs",
         ),
     ),
     Check(
@@ -212,9 +235,25 @@ CHECKS: tuple[Check, ...] = (
     Check(
         id="vue-tsc",
         area=TYPES,
-        argv=("node", "scripts/tsc-ratchet.mjs", "--json"),
+        # Through the wrapper, not `tsc-ratchet.mjs` directly: the types the
+        # ratchet reads are generated rather than committed, and a bare run on
+        # a checkout that has not run the type check yet reports four TS2307
+        # cannot-find-module errors for `api/openapi` and calls them type errors.
+        #
+        # The wrapper spawns both of its halves by name, and the closure follows
+        # that (see `_JS_SCRIPT`), so the guard still walks everything this
+        # check reads. The ratchet's baseline — frontend/tsc-baseline.json, the
+        # frozen per-file error counts — is the measured debt, not a rule, and
+        # stays excused in NOT_A_RULE.
+        argv=("node", "scripts/typecheck.mjs", "--json"),
         cwd="frontend",
         rules=(
+            "frontend/scripts/typecheck.mjs",
+            # The generator decides the types being judged, so it is a rule
+            # too. `backend/openapi.json` beside it is the subject being
+            # measured, not a rule: it changes with every route, and a rule
+            # that moves on every route change makes every comparison a new run.
+            "frontend/scripts/gen-api-types.mjs",
             "frontend/scripts/tsc-ratchet.mjs",
             "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
@@ -559,6 +598,11 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     "fe-boundary": {
         "frontend/import-boundary-baseline.json": "baseline: the frozen boundary violations",
     },
+    "fe-storage": {
+        "frontend/browser-storage-baseline.json": (
+            "baseline: the frozen direct Web Storage references"
+        ),
+    },
     "be-contracts": {
         "backend/scripts/__init__.py": (
             "not read: the checker asks whether a package marker exists, and the "
@@ -579,6 +623,10 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "vue-tsc": {
         "frontend/tsc-baseline.json": "baseline: the frozen per-file error counts",
+        "backend/openapi.json": (
+            "subject: the schema the generated types are judged against, so every "
+            "edit to it is the measurement and a new comparison run"
+        ),
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",
@@ -605,6 +653,10 @@ _PATH_LITERAL = re.compile(r"""['"][^'"]*?([\w][\w./-]*\.(?:py|mjs|cjs|js|json|i
 #: a name in a docstring is not one.
 _PY_IMPORT = re.compile(r"^\s*(?:from\s+([\w.]+)\s+import|import\s+([\w.]+))", re.M)
 _JS_SPEC = re.compile(r"""(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]""")
+#: A script a checker hands to a runner by name: `run('tsc-ratchet.mjs', [])`.
+#: That is neither an import nor a path built for a reader, so without it a
+#: wrapper that runs its halves by name hides both of them from the guard.
+_JS_SCRIPT = re.compile(r"""\b\w+\s*\(\s*['"]([\w][\w./-]*\.(?:mjs|cjs|js))['"]""")
 _SH_SOURCE = re.compile(r"^\s*(?:source|\.)\s+['\"]?([^\s'\"]+)", re.M)
 
 
@@ -630,11 +682,12 @@ def _rule_paths(root: Path, check: Check) -> set[str]:
 def _deps_of(path: Path, root: Path, cwd: Path) -> list[Path]:
     """Every repo file `path` reads, as code or as data.
 
-    A checker names a file in two ways, and it uses both: it imports the module
-    beside it, and it builds a path and hands it to a reader. The second is the
-    one that hides — `resolve(ROOT, 'eslint.boundary.config.mjs')` decides the
-    check as much as an `import` does, and nothing in a hand-written registry
-    notices it going missing.
+    A checker names a file in three ways. It imports the module beside it, it
+    builds a path and hands it to a reader, and it names a script and hands it
+    to a runner. The last two are the ones that hide —
+    `resolve(ROOT, 'eslint.boundary.config.mjs')` decides the check as much as
+    an `import` does, so does `run('tsc-ratchet.mjs', [])`, and nothing in a
+    hand-written registry notices either going missing.
     """
     text = path.read_text(encoding="utf-8", errors="replace")
     found: list[Path] = []
@@ -659,6 +712,10 @@ def _deps_of(path: Path, root: Path, cwd: Path) -> list[Path]:
             )
             if hit is not None:
                 found.append(hit)
+        for name in _JS_SCRIPT.findall(text):
+            target = (path.parent / name).resolve()
+            if target.is_file() and target != path.resolve():
+                found.append(target)
     elif path.suffix == ".sh":
         for target in _SH_SOURCE.findall(text):
             candidate = (path.parent / target).resolve()

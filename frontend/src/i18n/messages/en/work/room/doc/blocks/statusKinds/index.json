@@ -1,0 +1,5 @@
+{
+  "no": "No, failed",
+  "ok": "Yes, passed",
+  "warn": "At risk, pending"
+}

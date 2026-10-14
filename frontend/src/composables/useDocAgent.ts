@@ -97,8 +97,8 @@ export function useDocAgent(options: DocAgentOptions) {
     if (now) paint({ target: { ...now, mode: 'select', label: '' } })
   }
 
-  /** 选中的那一段开出输入框；对整篇时不带范围。 */
-  function open(range?: CommentSpot) {
+  /** 选中的那一段开出输入框；对整篇时不带范围。带着 `request` 时开框就把它说出去。 */
+  function open(range?: CommentSpot, request?: string) {
     if (!options.ask()) return
     close()
     const e = editor()
@@ -119,6 +119,7 @@ export function useDocAgent(options: DocAgentOptions) {
       context.value = { editable: options.editable(), list: false, chinese: true }
     }
     phase.value = 'asking'
+    if (request) say(request)
   }
 
   function close() {

@@ -897,7 +897,9 @@ def _link(directory, config, forwarded, tree, helpers, view):
     for parent, name in nested:
         skill = f"{parent}/.claude/skills/{name}"
         if name in regular or counts[name] > 1:
-            # As Claude Code names and describes it (2.1.282, `RGo`).
+            # As Claude Code names and describes it — a skill in a subdirectory
+            # is listed with a path prefix, `apps/web:deploy`. Read off a
+            # 2.1.299 turn (its own Skill tool description).
             entry = parent.replace("/", NAME_SLASH) + ":" + name
             note = (
                 f' (scoped to {parent}/ — use this instead of the unscoped "{name}" '

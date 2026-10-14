@@ -1,0 +1,5 @@
+{
+  "days": "{count} 天",
+  "hours": "{count} 小时",
+  "minutes": "{count} 分钟"
+}

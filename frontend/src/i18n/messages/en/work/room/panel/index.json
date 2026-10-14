@@ -1,0 +1,12 @@
+{
+  "close": "Close the overview",
+  "detailPair": "{first}, {second}",
+  "fileCount": "no files | 1 file | {count} files",
+  "inProgress": "none in progress | 1 in progress | {count} in progress",
+  "label": "Overview",
+  "newChanges": "new changes",
+  "newContent": "new content",
+  "open": "Open the overview",
+  "pickTopic": "Select a channel to see its document",
+  "tabDetail": "{label} ({detail})"
+}

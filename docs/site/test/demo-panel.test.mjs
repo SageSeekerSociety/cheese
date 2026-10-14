@@ -181,7 +181,10 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
   const { renderDemo, registerUiStrings } = await import(path.join(SITE, 'src/demos.mjs'))
   const dir = path.join(REPO, 'frontend/src/i18n/messages/zh-CN')
   const leaves = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
-  registerUiStrings(fs.readdirSync(dir).filter((f) => f.endsWith('.json')).flatMap((f) => leaves(JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')))))
+  // Same walk as build.mjs: the catalog is a tree of files (docs/i18n.md §2).
+  const catalogFiles = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? catalogFiles(path.join(d, e.name)) : e.name.endsWith('.json') ? [path.join(d, e.name)] : [])
+  registerUiStrings(catalogFiles(dir).flatMap((f) => leaves(JSON.parse(fs.readFileSync(f, 'utf8')))))
   const run = (fence) => { try { renderDemo('demo-panel', fence, 'test'); return '' } catch (e) { return e.message } }
   eq(run('title: 好的\ncaption: 一行\nparts:\n  - kind: composer\n    placeholder: 输入消息，@芝士 交给它处理\n    button: 交给芝士\n    type: 你好\n    at: 1\n    press: 2'), '', 'a panel quoting real labels builds')
   const made = run('title: 假按钮\ncaption: 一行\nparts:\n  - kind: composer\n    placeholder: 输入消息，@芝士 交给它处理\n    button: 立即派活\n    type: 你好\n    at: 1\n    press: 2')

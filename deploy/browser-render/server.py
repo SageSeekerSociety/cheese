@@ -240,6 +240,12 @@ class InspectIn(BaseModel):
     pdf_margin: str | None = Field(
         default=None, pattern=r"^[0-9.]+(mm|cm|in|px)?( [0-9.]+(mm|cm|in|px)?)?$"
     )
+    #: Picture this one element instead of the page, and say how tall it is: a
+    #: document's mini-app is the box its shell draws into, and the page around
+    #: it is at least the viewport tall. A selector, never script.
+    element: str | None = Field(
+        default=None, pattern=r"^[#.][A-Za-z][A-Za-z0-9_-]{0,63}$"
+    )
 
 
 async def _print_pdf(browser, body: InspectIn) -> str:
@@ -287,6 +293,21 @@ async def _browser():
         return _inspector
 
 
+async def _element_shot(page, selector: str) -> tuple[bytes, int]:
+    """The picture of one element, and its height; empty and 0 when there is
+    no such element or it has no height."""
+    box = await page.locator(selector).first.bounding_box()
+    if not box or box["height"] < 1:
+        return b"", 0
+    height = min(round(box["height"]), MAX_SHOT_HEIGHT)
+    shot = await page.screenshot(
+        type="png",
+        full_page=True,
+        clip={"x": box["x"], "y": box["y"], "width": box["width"], "height": height},
+    )
+    return shot, round(box["height"])
+
+
 async def _inspect_at(browser, body: InspectIn, width: int) -> dict:
     context = await browser.new_context(
         viewport={"width": width, "height": 900},
@@ -306,19 +327,25 @@ async def _inspect_at(browser, body: InspectIn, width: int) -> dict:
         await page.set_content(body.html, wait_until="load", timeout=INSPECT_TIMEOUT_MS)
         await page.wait_for_timeout(int(body.settle_seconds * 1000))
         measured = await page.evaluate(MEASURE_JS)
-        height = min(measured["page_height"], MAX_SHOT_HEIGHT)
-        shot = await page.screenshot(
-            type="png",
-            full_page=height == measured["page_height"],
-            clip=None
-            if height == measured["page_height"]
-            else {"x": 0, "y": 0, "width": width, "height": height},
-        )
+        element_height = None
+        if body.element:
+            shot, element_height = await _element_shot(page, body.element)
+        else:
+            height = min(measured["page_height"], MAX_SHOT_HEIGHT)
+            shot = await page.screenshot(
+                type="png",
+                full_page=height == measured["page_height"],
+                clip=None
+                if height == measured["page_height"]
+                else {"x": 0, "y": 0, "width": width, "height": height},
+            )
     finally:
         await context.close()
+    height = min(measured["page_height"], MAX_SHOT_HEIGHT)
     return {
         "width": width,
         **measured,
+        "element_height": element_height,
         "cut_at": height if height < measured["page_height"] else None,
         "console_errors": console[:10],
         "failed_requests": failed[:10],

@@ -1,0 +1,7 @@
+{
+  "cleaning": "正在自动清理",
+  "needsAdmin": "需要管理员处理",
+  "recovering": "正在恢复",
+  "retryable": "可以重试",
+  "title": "环境暂时不可用"
+}

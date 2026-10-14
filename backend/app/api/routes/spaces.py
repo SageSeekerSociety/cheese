@@ -399,14 +399,12 @@ async def create_space(
     # code that arrives without the same fields the list gives it is how two
     # views of one row drift apart.
     items = await _invite_codes_to_api_models(codes, db=db)
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {
+    return ok(
+        {
             "space": space_data,
             "inviteCode": items[0] if items else None,
-        },
-    }
+        }
+    )
 
 
 @router.patch(
@@ -547,7 +545,7 @@ async def add_space_member(
         profile_repo=UserProfileRepository(session=db),
         space_service=service,
     )
-    return {"code": 201, "message": "Created", "data": {"member": items[0]}}
+    return ok({"member": items[0]})
 
 
 @router.delete(

@@ -1,0 +1,18 @@
+{
+  "attachFiles": "上传文件（每个最大 10MB，视频 200MB）",
+  "cancelReply": "取消回复",
+  "keysHint": "Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给{name}，可直接粘贴图片",
+  "keysHintSend": "Enter 发送，Shift+Enter 换行，可直接粘贴图片",
+  "more": "更多操作",
+  "pasteHint": "可直接粘贴图片",
+  "placeholder": "输入消息，{'@'}{name} 交给它处理",
+  "placeholderDm": "给{name}发消息",
+  "removeAttachment": "移除 {name}",
+  "replyTo": "回复 {name}：{text}",
+  "send": "发送",
+  "sendPhotos": "发送照片或视频",
+  "sendUploading": "附件上传中，传完再发",
+  "summon": "交给{name}",
+  "summonOff": "发送并交给{name}（⌘/Ctrl+Enter）",
+  "summonOn": "已 {'@'}{name}，点击取消"
+}

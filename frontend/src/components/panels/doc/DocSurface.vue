@@ -120,8 +120,8 @@ const emit = defineEmits<{
   (e: 'locate-comment', threadId: string): void
   /** 选中一段正文点了「评论」：转给页面去开写评论的框。 */
   (e: 'open-comment', payload: CommentSpot): void
-  /** 选中一段正文点了 AI 队友。 */
-  (e: 'agent', payload: CommentSpot): void
+  /** 选中一段正文点了 AI 队友；带着 `request` 时，开框就替读者说这一句。 */
+  (e: 'agent', payload: CommentSpot, request?: string): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
 }>()
@@ -347,7 +347,10 @@ function buildEditor(session: DocSession): DocEditor {
         docExtensions({ loadImage: (src) => props.imageSrc(src) }),
         () =>
           props.agentHandle
-            ? { name: props.agentName, run: (ed, from, to) => emit('agent', spotAt(ed, from, to)) }
+            ? {
+                name: props.agentName,
+                run: (ed, from, to, request) => emit('agent', spotAt(ed, from, to), request),
+              }
             : null,
         props.canvas ? { ...props.canvas, openTask: (id) => emit('open-topic', id) } : null
       ),

@@ -1,0 +1,5 @@
+{
+  "callName": "Invoked as {name}",
+  "content": "Content",
+  "size": "{kb} KB"
+}

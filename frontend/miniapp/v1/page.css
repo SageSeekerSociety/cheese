@@ -1,0 +1,45 @@
+/* The page an app is drawn on: plain elements already in the document's look. */
+*, *::before, *::after { box-sizing: border-box; }
+html { overflow: hidden; background: var(--surface); color: var(--text); font: 14px / var(--lh-14) var(--font-sans); -webkit-text-size-adjust: 100%; }
+html[data-mode='full'] { overflow: auto; }
+body { margin: 0; }
+#cheese-app { display: flow-root; padding: 12px 14px 14px; }
+h1, h2, h3, h4 { margin: 12px 0 8px; color: var(--ink); font-size: 15px; line-height: var(--lh-15); }
+p { margin: 8px 0; }
+small, .muted { color: var(--muted); font-size: 13px; }
+table { width: 100%; margin: 8px 0; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+th { color: var(--muted); font-size: 13px; font-weight: 500; }
+tr.active td { background: var(--fill); color: var(--ink); font-weight: 600; }
+td.num, th.num { text-align: right; }
+button { min-height: 32px; padding: 4px 14px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+button:hover { background: var(--fill); }
+button.primary { border-color: var(--ink); background: var(--ink); color: var(--surface); }
+button:disabled { opacity: 0.5; cursor: default; }
+code { font-family: var(--font-mono); font-size: 13px; }
+/* <c-math> renders into the page, not a shadow root, so its look lives here. A formula wider than
+   the column scrolls instead of being cut off at the frame's edge. */
+c-math[display] { display: block; max-width: 100%; margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+c-math[display] .katex-display { margin: 0; }
+/* <c-board>'s zones and pieces are the app's own content (components/board.ts): a plain look the
+   app's own classes override. */
+c-board { display: block; }
+c-zone { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px; min-height: 48px; padding: 8px; border: 1px dashed var(--line-2); border-radius: var(--radius-md); transition: background-color var(--dur-quick) var(--ease-standard), border-color var(--dur-quick) var(--ease-standard); }
+c-zone[data-over] { border-color: var(--accent); background: var(--accent-wash); }
+c-piece { display: inline-flex; align-items: center; padding: 6px 10px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: grab; touch-action: none; user-select: none; transition: background-color var(--dur-quick) var(--ease-standard), border-color var(--dur-quick) var(--ease-standard); }
+c-piece[fixed] { cursor: default; }
+c-piece[data-picked] { border-color: var(--accent); background: var(--accent-wash); }
+c-piece[data-dragging] { opacity: 0.35; }
+c-piece[data-ghost] { cursor: grabbing; }
+c-zone:focus-visible, c-piece:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* Ready-made transitions for Vue's <Transition> and <TransitionGroup>
+   (references/apps.md): name="c-fade" for something appearing or going,
+   name="c-list" for keyed items coming, going and changing places. */
+.c-fade-enter-active, .c-fade-leave-active, .c-list-enter-active, .c-list-leave-active { transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-base) var(--ease-standard); }
+.c-fade-enter-from, .c-fade-leave-to { opacity: 0; }
+.c-list-enter-from, .c-list-leave-to { opacity: 0; transform: translateY(6px); }
+.c-list-move { transition: transform var(--dur-base) var(--ease-standard); }
+@media (prefers-reduced-motion: reduce) {
+  .c-fade-enter-active, .c-fade-leave-active, .c-list-enter-active, .c-list-leave-active, .c-list-move { transition: none; }
+}

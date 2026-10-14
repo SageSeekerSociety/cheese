@@ -1,0 +1,8 @@
+{
+  "failed": "Could not save",
+  "hint": "Links to this project use this short name: lowercase letters, digits and hyphens. After a rename, old links still open this project, and no other project can take the old name",
+  "label": "Short name",
+  "save": "Save",
+  "saved": "Saved",
+  "title": "Project address"
+}

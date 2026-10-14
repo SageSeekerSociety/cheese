@@ -207,8 +207,24 @@ def test_native_child_default_and_explicit_model_reach_admission(
         # What the pinned build resolves the `opus` alias to.
         "claude-opus-5-5",
     }
+    # The child's resolved model has to reach admission. 2.1.283 moved the
+    # harness's own model requests off the JS fetch path — a whole 2.1.299 turn
+    # makes zero `fetch` calls — so the preload writes no `x-cheese-child-model`
+    # any more, and the metering proxy takes its deferred road instead: a
+    # subagent /v1/messages is buffered whole and the name is read off the body
+    # (`test_metering_proxy_addon.py`, and the recordings under
+    # tests/fixtures/provider-recordings/ hold both roads ending at one name).
+    # What this test holds is the harness half: the request is labelled a child
+    # and the name the parent gave is in the body, where the proxy reads it.
     for child in children:
-        assert child["headers"]["x-cheese-child-model"] == child["body"]["model"]
+        # What makes it a child request to the proxy, and so eligible for the
+        # deferred road at all.
+        assert child["headers"]["x-claude-code-agent-id"]
+        # On the builds whose requests the preload still sees this header is
+        # what carries the name; where it is written it has to agree with the
+        # body. Absent is the truth on the pinned build, not a failure.
+        named = child["headers"].get("x-cheese-child-model")
+        assert named is None or named == child["body"]["model"]
     assert all(
         "x-cheese-child-model" not in item["headers"]
         for item in requests

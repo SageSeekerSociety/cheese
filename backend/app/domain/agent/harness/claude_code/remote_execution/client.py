@@ -127,7 +127,7 @@ else:
     )
     from shell_stop import CAUGHT, KILL, current_target, deliver_stop, start_watcher
 
-PINNED_VERSION = "2.1.282"
+PINNED_VERSION = "2.1.299"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.

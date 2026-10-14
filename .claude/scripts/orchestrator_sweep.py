@@ -55,8 +55,12 @@ CLASSES = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "�
 BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
 #: The line pr-review.sh puts first in its rendered result, which the delivering seat pastes
 #: into the card body: `独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>`.
+#: 档位 A–G, decided from the files the PR touches, may follow the verdict; it is the last
+#: field, so a body written before the tiers existed still reads. The grammar is owned by
+#: .claude/pr-review/render.py, which writes the line; this is the reading side.
 REVIEW_LINE = re.compile(r"独立 review：head ([0-9a-f]{7,40})(?:（增量自 ([0-9a-f]{7,40})）| )"
-                         r"结论 (无 blocker/major|有 \d+ 条)")
+                         r"结论 (无 blocker/major|有 \d+ 条)"
+                         r"(?:\s*｜\s*档位 ([A-G]))?")
 CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑", "EXPECTED": "跑"}
 #: The system events that end a turn without the step's block ever being marked: the
 #: backend's run_record.turns.TURN_FAILURE_EVENTS. A tool block left behind by any of
@@ -78,8 +82,8 @@ RUNNING_OVERRIDES = ("accepted", "awaiting_answer", "discussing")
 #: line that then reads 命令在跑 forever is the one failure this class exists to catch.
 IN_FLIGHT_MAX_MIN = 120
 ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
-              "review_head", "review_since", "review_verdict", "waited_min", "waiting_on", "stage", "detail",
-              "changed", "verified", "checks", "cases",
+              "review_head", "review_since", "review_verdict", "review_tier", "waited_min", "waiting_on",
+              "stage", "detail", "changed", "verified", "checks", "cases",
               "last_event_at", "last_message_at", "last_message", "last_output_at",
               "running", "heartbeat_min")
 #: How much of a line's last message the row carries: enough to tell "审查在跑" from
@@ -213,8 +217,9 @@ def failed_checks(rollup):
 
 
 def review_of(card_body):
-    """The independent-review line of a card body: (head, since, verdict), or None. When the
-    body carries several (one per round), the last is the newest."""
+    """The independent-review line of a card body: (head, since, verdict, tier), or None.
+    When the body carries several (one per round), the last is the newest. `tier` is None
+    for a body written before the tiers existed, which is not the same as an empty tier."""
     found = REVIEW_LINE.findall(card_body or "")
     return found[-1] if found else None
 
@@ -806,6 +811,8 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "review_head": review[0] if review else None,
         "review_since": (review[1] or None) if review else None,
         "review_verdict": review[2] if review else None,
+        # 卡片上没写档位（旧卡）时就不提档位：空串和没有是两回事，这里只认没有。
+        "review_tier": (review[3] or None) if review and len(review) > 3 else None,
         "waited_min": round(waited) if waited is not None else None,
         "waiting_on": waiting or waiting_of(t, kind),
         "stage": stage_of(card, pr, ready_at, last_ready, red_at, last_msg),
@@ -1021,13 +1028,15 @@ def text(rows):
 
 def review_cell(r):
     """The 独立审查 column: the reviewed head, 增量 when the review was a delta, the verdict,
-    and 旧 when the PR has moved past that head (a small increment needs no new review, so
-    this says only that it has moved)."""
+    the tier, and 旧 when the PR has moved past that head (a small increment needs no new
+    review, so this says only that it has moved). The tier is what kind of change it is, so
+    a G here next to 无 blocker/major reads as 不用审 rather than 审过没事."""
     rev = r["review_head"]
     if rev is None:
         return "—"
     moved = "" if r["head"] and r["head"].startswith(rev) else "（旧）"
-    return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}"
+    tier = f" {r['review_tier']}档" if r["review_tier"] else ""
+    return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}{tier}"
 
 
 def render(rows, metrics, silent, now, room):
@@ -1558,7 +1567,7 @@ _SELF_TEST_METRICS = {
 def _self_pr(desc, **over):
     """A PR as `gh_pr` returns one, carrying the fields `row` and `stage_of` read."""
     pr = {"desc": desc, "head": "abcdef1234567890", "ci": "SUCCESS",
-          "review": ("abcdef12", None, "无 blocker/major"), "merged": False, "mergeQueueEntry": None,
+          "review": ("abcdef12", None, "无 blocker/major", "B"), "merged": False, "mergeQueueEntry": None,
           "timelineItems": {"nodes": []}, "checks": [], "cases": None}
     pr.update(over)
     return pr
@@ -1614,7 +1623,7 @@ def _self_test_board():
                                                     review=("01234567", "89abcdef", "有 2 条"),
                                                     ci="FAILURE"))]).split("\n")
           if ln.startswith("| ") and "| #" in ln],
-         ["| 可采纳未采纳 | #1 | 递卡后等 CI 审查 | 绿 | abcdef12 无 blocker/major | 7 分 | wangchangxin |",
+         ["| 可采纳未采纳 | #1 | 递卡后等 CI 审查 | 绿 | abcdef12 无 blocker/major B档 | 7 分 | wangchangxin |",
           "| 可采纳未采纳 | #2 | 递卡后等 CI 审查 | 红 | 01234567（旧） 增量 有 2 条 | — | — |"]),
         ("有信号时：表头、频道那行、每个待判 PR 那一段都在",
          [ln for ln in board([_self_row()]).split("\n")
@@ -1777,19 +1786,24 @@ def _self_test_review():
                             "candidates_refuted": 2, "findings": [finding(v) for v in sevs],
                             "not_covered": []}
     out = []
-    for name, res, since, want in (
-        ("整轮、无严重问题", result("minor"), "", ("a" * 8, "", "无 blocker/major")),
-        ("增量、有 blocker 和 major", result("blocker", "major", "minor"), old, ("a" * 8, "b" * 8, "有 2 条")),
+    for name, res, since, tier, want in (
+        ("整轮、无严重问题", result("minor"), "", "", ("a" * 8, "", "无 blocker/major", "")),
+        ("增量、有 blocker 和 major", result("blocker", "major", "minor"), old, "",
+         ("a" * 8, "b" * 8, "有 2 条", "")),
+        ("带档位", result("minor"), "", "A", ("a" * 8, "", "无 blocker/major", "A")),
     ):
-        body = renderer.render(res, head, "m" * 40, since)
+        body = renderer.render(res, head, "m" * 40, since, tier)
         out.append((f"审查行：{name}，卡片正文里读得回", review_of("## 摘要\n\n" + body), want))
     out += [
         ("审查行：没有这一行就是没有", review_of("只有一段说明"), None),
         ("审查行：空正文", review_of(None), None),
         ("审查行：多轮时取最后一行",
          review_of("独立 review：head 11111111 结论 有 1 条\n"
-                   "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major"),
-         ("22222222", "11111111", "无 blocker/major")),
+                   "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major｜档位 C"),
+         ("22222222", "11111111", "无 blocker/major", "C")),
+        ("审查行：档位之前写的旧行也读得回，档位读成空",
+         review_of("独立 review：head 33333333（增量自 22222222）结论 有 1 条"),
+         ("33333333", "22222222", "有 1 条", "")),
     ]
 
     real_get, real_run = globals()["get"], subprocess.run
@@ -1830,14 +1844,19 @@ def _self_test_review():
          brief(pasted), ("- swap A for B", "ran pytest, green")),
         ("GitHub 查询里不再要评论", [q for q in queries if "comments" in q], []),
         ("行里带着卡片上的审查行",
-         [(r["review_head"], r["review_since"], r["review_verdict"]) for r in rows],
-         [("a" * 8, "b" * 8, "无 blocker/major")]),
+         [(r["review_head"], r["review_since"], r["review_verdict"], r["review_tier"]) for r in rows],
+         [("a" * 8, "b" * 8, "无 blocker/major", None)]),
         ("文本清单不去读卡片", [r["review_head"] for r in text_rows], [None]),
         ("head 往前走了标旧",
          review_cell({**rows[0], "head": "c" * 40}), "aaaaaaaa（旧） 增量 无 blocker/major"),
+        ("卡上有档位就摆出来", review_cell({**rows[0], "review_tier": "G"}),
+         "aaaaaaaa 增量 无 blocker/major G档"),
+        ("没有档位的旧卡，列里就不提档位",
+         review_cell({**rows[0], "review_tier": None}), "aaaaaaaa 增量 无 blocker/major"),
         ("没有审查行显示破折号", review_cell({"review_head": None}), "—"),
-        ("--json 的字段里有审查结论",
-         all(f in rows[0] for f in ("review_head", "review_since", "review_verdict")), True),
+        ("--json 的字段里有审查结论和档位",
+         all(f in rows[0] for f in ("review_head", "review_since", "review_verdict", "review_tier")),
+         True),
     ]
     return out
 

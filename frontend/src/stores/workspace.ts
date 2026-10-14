@@ -26,6 +26,7 @@ import { t } from '@/i18n'
 import { type ProjectRefusal, projectRefusal } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { memberName } from '@/lib/agentNames'
+import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 import { externalHandles } from '@/lib/externalMembers'
 import { identityChanges } from '@/lib/identity'
 import { myHandle } from '@/me'
@@ -77,12 +78,8 @@ interface StoredLayout {
 }
 
 function loadLayout(): StoredLayout {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}')
-    return typeof saved === 'object' && saved !== null ? (saved as StoredLayout) : {}
-  } catch {
-    return {} // malformed stored layout
-  }
+  const saved = storageGetJson<unknown>(LAYOUT_KEY)
+  return typeof saved === 'object' && saved !== null ? (saved as StoredLayout) : {}
 }
 
 // 存进来的这份是整个浏览器一份，可能是老版本写的、也可能被人手改过：只留下三项
@@ -209,15 +206,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   //（每天都走的主路径不该多加一跳）。
   const lastPlaceByProject = ref<Record<string, RememberedPlace>>(validPlaceMap(stored.lastPlaceByProject))
   function persistLayout() {
-    localStorage.setItem(
-      LAYOUT_KEY,
-      JSON.stringify({
-        chatPct: chatPct.value,
-        panelOpen: panelPref.value ?? undefined,
-        lastProjectId: projectId.value ?? undefined,
-        lastPlaceByProject: lastPlaceByProject.value,
-      })
-    )
+    storageSetJson(LAYOUT_KEY, {
+      chatPct: chatPct.value,
+      panelOpen: panelPref.value ?? undefined,
+      lastProjectId: projectId.value ?? undefined,
+      lastPlaceByProject: lastPlaceByProject.value,
+    })
   }
   function setChatPct(pct: number) {
     chatPct.value = clampNum(pct, 25, 80)
@@ -487,8 +481,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const project = pid.value
     if (!project) return
     await patchQuery<Record<string, TopicUnread>>(keys.projectUnread(project, me.value), () => ({}))
-    // 每一间的已读位都推到了现在，所以亮着的长绿也一起灭（见 `clearDeliveries`）。
-    void patchTopics(project, (rows) => rows.map(clearDeliveries))
+    // 每一间的已读位都推到了现在，所以跟着它走的两盏灯也一起灭（见 `clearReadLights`）。
+    void patchTopics(project, (rows) => rows.map(clearReadLights))
     try {
       await markAllTopicsRead(project)
     } catch (e) {
@@ -511,23 +505,27 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
         return next
       })
     }
-    forgetUnseenDelivery(topicId)
+    forgetReadLights(topicId)
     markTopicRead(topicId, me.value).catch(() => {})
   }
 
-  // 「点开看过就灭」：点开的那一行（频道或一件活）交付完的长绿当场灭掉。这正是上面
-  // 那一次 `markTopicRead` 在服务端记下的同一笔——差别只是服务端要等下一次清单回来，
-  // 而这个灯是「你刚点开」当场就该变的。
+  // 「点开过就灭」：点开的那一行（频道或一件活）交付完的长绿当场灭掉，连同那一行
+  // 「有人回复了我」的黄灯（两者都是跟着已读位走的，一次点开一起灭）。这正是上面那
+  // 一次 `markTopicRead` 在服务端记下的同一笔——差别只是服务端要等下一次清单回来，
+  // 而这两个灯是「你刚点开」当场就该变的。
   //
   // 两种点开都算，和后端算这一位时比的同一个东西（那儿把已读位和采纳时刻取
   // `GREATEST`）：开那个频道，或者开它名下的一件活。所以点开一件活时，灭掉的是挂着
   // 它的那个频道那一行——长绿只画在频道行上（活一关就从侧栏消失，只剩它的频道）。
-  function forgetUnseenDelivery(topicId: string) {
+  // 黄灯跟进的是这间房自己的已读位：打开这个频道就算处理了，所以点开的正是这个频道
+  // 时它当场灭。点开它名下的一件活推的是活自己那一位，动不了它（点开一条支线在服务
+  // 端也算处理了，那一条要等下一次清单回来才灭）。
+  function forgetReadLights(topicId: string) {
     const project = pid.value
     if (!project) return
     void patchTopics(project, (rows) =>
       rows.map((topic) => {
-        if (topic.id === topicId) return clearDeliveries(topic)
+        if (topic.id === topicId) return clearReadLights(topic)
         const my = topic.my_tasks
         if (!my) return topic
         const at = my.shown.findIndex((task) => task.id === topicId && task.unseen_delivery)
@@ -543,15 +541,23 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     )
   }
 
-  /** 这一行上还亮着的长绿灭掉（含它名下那几件活）；本来就没亮的原样返回，省掉一次
-   *  整行重画。 */
-  function clearDeliveries(topic: Topic): Topic {
+  /** 这一行上跟着已读位走的两盏灯灭掉（长绿；「有人回复了我」的黄灯），含它名下那几
+   *  件活的长绿；本来就没亮的原样返回，省掉一次整行重画。 */
+  function clearReadLights(topic: Topic): Topic {
     const my = topic.my_tasks
-    if (!my) return topic.unseen_delivery ? { ...topic, unseen_delivery: false } : topic
+    if (!my) {
+      if (!topic.unseen_delivery && !topic.replied_to_me) return topic
+      return { ...topic, unseen_delivery: false, replied_to_me: false }
+    }
     const shown = my.shown.map((task) => (task.unseen_delivery ? { ...task, unseen_delivery: false } : task))
     const lit = shown.some((task, i) => task !== my.shown[i])
-    if (!topic.unseen_delivery && !lit) return topic
-    return { ...topic, unseen_delivery: false, my_tasks: lit ? { ...my, shown } : my }
+    if (!topic.unseen_delivery && !topic.replied_to_me && !lit) return topic
+    return {
+      ...topic,
+      unseen_delivery: false,
+      replied_to_me: false,
+      my_tasks: lit ? { ...my, shown } : my,
+    }
   }
 
   // Same, for a 私聊 — its badge is keyed by peer handle, not topic id.

@@ -296,6 +296,52 @@ def test_recorded_native_child_choices_replay_through_proxy_admission(
     assert set(admitted) == {"claude-sonnet-5", "claude-opus-5"}
 
 
+def test_recorded_child_models_replay_through_the_deferred_body_road(
+    monkeypatch, tmp_path
+):
+    """2.1.283 起 harness 自己的模型请求不再走 JS 层 fetch，`x-cheese-child-model`
+    就此不再出现（2.1.299 实测：整个回合零次 fetch 调用）。这一段录的是那之后的
+    真分身请求：体里照旧写着指名模型，头里没有指定。计量代理为分身的
+    /v1/messages 缓冲请求体，把它从体里读出来随准入带上去，绑定、改写与头部那
+    条路一致——上面那条 2.1.277 的录制走的是头部，这一条走的是请求体。"""
+    fixture = json.loads(
+        (
+            REPO_ROOT
+            / "backend/tests/fixtures/provider-recordings"
+            / "claude-2.1.299-child-models.json"
+        ).read_text()
+    )
+    records = fixture["requests"]
+    canonical = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
+    assert hashlib.sha256(canonical).hexdigest() == fixture["sha256"]
+    assert all("x-cheese-child-model" not in record["headers"] for record in records)
+    mod = _load_addon(monkeypatch, tmp_path, allow_header_attr="1")
+    mod.ADMISSION_URL = "http://fixture/admission"
+    admitted = []
+
+    def admit(
+        url, bearer, timeout, *, subagent=False, child_model="", requested_model="", **_
+    ):
+        assert subagent
+        admitted.append(child_model or requested_model)
+        return _verdict(model=child_model or requested_model)
+
+    mod.ADMISSION = core.AdmissionGate(mod.ADMISSION_URL, post=admit)
+    for record in records:
+        flow = _make_flow()
+        flow.request.headers.update({**record["headers"], "x-cheese-attr": "p/t"})
+        asyncio.run(mod.requestheaders(flow))
+        # No name in a header: this body is buffered whole before admission is
+        # asked, so the header hook turns streaming off and returns.
+        assert flow.request.stream is False
+        assert flow.response is None
+        flow.request.content = json.dumps(record["body"]).encode()
+        asyncio.run(mod.request(flow))
+        assert flow.response is None
+        assert json.loads(flow.request.content)["model"] == record["body"]["model"]
+    assert admitted == [record["body"]["model"] for record in records]
+
+
 def _with_admission(mod, monkeypatch, **named):
     """Point the addon at a control plane that returns one verdict for everyone."""
     verdict = _verdict(**{"pool": "subscription", **named})

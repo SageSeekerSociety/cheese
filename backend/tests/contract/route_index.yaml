@@ -15,9 +15,9 @@
 # 把 routes/topics_rows.py 整个挪成了 app/api/topics_rows.py，topics.py 改从那里取。
 # 没有 cite 指向上面这几个文件，例外只涉及这两处文字口径。
 # 上面这份快照之后的漂移不在这条例外之内，其余行号维持快照口径。
-# Addresses cover the real regenerated profiled snapshot in scripts/route_index.json.
+# Addresses cover the live app's effective routes, as the contract suite collects them.
 # Each address is explicit. Catalog ids only share explanatory text; the app never reads this sidecar.
-# Preserve duplicate leaf registrations in scripts/route_index.json; a shared address note is not a leaf id.
+# Preserve duplicate leaf registrations the app mounts; a shared address note is not a leaf id.
 # Intent still unconfirmed: /frontend-errors, /market/nodes, question followers,
 # cross-user favorites and learning-task team eligibility. Notes record existing gates, not policy approval.
 version: 1
@@ -106,6 +106,7 @@ auth_entries:
   address.reader: "addresses._readable_project resolves the project a slug, former slug or id names, then ActorResolver.resolve(read_only) and authorize_project; a refusal is answered as NotFound so an address reveals no project. A numbered task or channel is then held to its room through topics_deps._actor_in_place, a document through api/doc_access.reach, again refused as NotFound. Source: app/api/routes/addresses.py."
   address.refs: "addresses.resolve_refs answers each id by the project it is in: ActorResolver.resolve(project_id, read_only) then readable_topic_ids over the rooms the ids are in; an id in a room the caller may not read is left out of the answer, as one that names nothing is. Source: app/api/routes/addresses.py."
   project.documents: "living_docs project routes resolve in the project then api/doc_access.authorize_in_project: a member (authorize_project), or 芝士 with its session credential naming one of the project's rooms, refused once taken off that room (refuse_unseated_agent). Creating also requires an authenticated actor and refuses an archived project. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
+  document.app.writer: "doc_apps: api/doc_access.reach(enforce=True) on the app's own document, then doc_access.require_writable; the writer must be 芝士 — its own credential, or a document 芝士's delegated one (api.auth.DELEGATED_ROUTES) — and a person's session is refused (doc_apps._writer). Source: app/api/routes/doc_apps.py; app/api/doc_access.py."
   document.own: "living_docs._own: api/doc_access.reach(enforce=True), refuses a room's living document (docBelongsToRoom), then doc_access.require_writable. Rename and delete apply only to the project's own documents. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
   living.document: "living_docs resolves through api/doc_access.reach (room roster for a room's document, project membership, or 芝士's session credential in the project, for one in no room); state-changing/history/receipt/restore branches enforce it and use doc_identity.operation_actor, and writes refuse an archived room or project (doc_access.require_writable). Source: app/api/routes/living_docs.py; app/api/doc_access.py. Endpoint-specific branch is kept in the map below."
   editor.link: "room_files.editor_fetches_file authenticates the signed/expiring document link with documents.editor.read_link; that link is the only credential. Source: app/api/routes/room_files.py; domain/documents/editor.py."
@@ -299,6 +300,7 @@ owners:
   topic.chat: "Room messaging/live chat relay; domain/agent/ChatService and topic/member identity, with route owning delivery/broadcast ordering."
   delivery: "Room delivery timer requests and same-handle note dispatch; domain/delivery timer/addressing, composed by room route."
   documents: "Office/spreadsheet conversion, revisions and editor callbacks; domain/documents editor/convert/revisions/spreadsheet."
+  web_snippet: "A document's mini-apps: domain/web_snippet keeps each version's code and the platform browser's check of it (heights, pictures); every read is checked against the owning document, not where the block was found."
   living_doc: "Documents: canonical journal, receipts, history, restoration and comment threads; domain/living_doc/DocumentJournal and living_doc/comments, with block/document persistence. Versions are recorded only by the collaboration service's store (api/doc_store.py); other writers go through living_doc/collab.replace."
   canvas: "Canvases: a document's free board of cards and the lines between them, a block of exactly one document; domain/canvas (tables, changes, copying, the outline an AI teammate reads), with room_task/canvas_text naming the tasks cards point at."
   room.files: "Room retained files and shown-source composition; domain/project/room_files.py plus block/shown. The route owns composing file save and shown-block broadcast."
@@ -1180,6 +1182,12 @@ routes:
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/comments/{comment_id}/resolve", auth: "document.member", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/comments/{comment_id}/reopen", auth: "document.member", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/comments/{comment_id}/agent/stop", auth: "document.member", owner: "living_doc"}
+  # app.api.routes.doc_apps
+  - {protocol: "http", method: "GET", path: "/apps/{key}", auth: "document.reader", owner: "web_snippet"}
+  - {protocol: "http", method: "GET", path: "/apps/{key}/versions/{version}", auth: "document.reader", owner: "web_snippet"}
+  - {protocol: "http", method: "GET", path: "/apps/{key}/versions/{version}/shot", auth: "document.reader", owner: "web_snippet"}
+  - {protocol: "http", method: "POST", path: "/apps/{key}/versions", auth: "document.app.writer", owner: "web_snippet"}
+  - {protocol: "http", method: "POST", path: "/documents/{document_id}/apps", auth: "document.app.writer", owner: "web_snippet"}
   # app.api.routes.document_images
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/image", auth: "document.reader", owner: "living_doc"}
   # app.api.routes.document_comments

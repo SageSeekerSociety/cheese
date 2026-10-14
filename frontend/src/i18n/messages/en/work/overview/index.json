@@ -1,0 +1,22 @@
+{
+  "allTasks": "All tasks {count}",
+  "collapse": "Collapse",
+  "date": "{month}/{day}",
+  "document": "Project goals",
+  "earlier": "Show earlier",
+  "edit": "Edit project goals",
+  "expand": "Show all",
+  "moreOf": "{count} more",
+  "myDeadline": "Your deadline: {when}",
+  "noDocument": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+  "noProgress": "No progress in the last two weeks",
+  "nobody": "No tasks in progress",
+  "people": "Who is doing what",
+  "progress": "Recent progress",
+  "progressFailed": "Unable to load recent progress",
+  "taskDeadline": "Challenge closes: {when}",
+  "today": "Today",
+  "versionOf": "{name} version {version}",
+  "write": "Write project goals",
+  "yesterday": "Yesterday"
+}

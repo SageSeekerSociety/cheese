@@ -17,7 +17,6 @@
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,9 +36,10 @@ from app.domain.notification.services import (
     asks_for_decision,
 )
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.queries import listed_cards
 from app.domain.review.services import AcceptService
 from app.domain.room_task import awaiting, presentation
-from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.repositories import ListedTask, TaskRepository
 from app.domain.thread.services import onto_rooms
 from app.domain.topic.repositories import TopicRepository
 
@@ -62,22 +62,6 @@ def _one_line(text: str, limit: int = 140) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
-async def _room_cards(
-    db: AsyncSession, topic_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, Any]:
-    """每个房间**自己**那张还没结算的验收卡。
-
-    `task_id is None` 才是房间自己的：一条活递的卡把房间记在 `topic_id` 上，不过滤
-    的话，一条活在等验收会让它上面那个房间也显示成等验收。哪些状态算「还没结算」
-    由 review 领域的 service 决定（那张表是 `review/archive.py` 维护的），路由不自己数。
-    """
-    if not topic_ids:
-        return {}
-    cards = await AcceptService(db).live_cards_for_places(topic_ids)
-    # 按 created_at 升序回来，所以同一个房间后写的覆盖先写的 = 留下最新那张。
-    return {c.topic_id: c for c in cards if c.task_id is None}
-
-
 async def waiting_items(
     db: AsyncSession, chat: ChatService, *, handle: str, user_id: int | None
 ) -> list[awaiting.WaitingItem]:
@@ -95,16 +79,12 @@ async def waiting_items(
     project_ids = list(names)
 
     # 归档的频道是只读的，里面没有人还能推进的事：它的任务和提问都不进清单。
-    # 这一趟只要主键和状态：看得见的频道有哪几个，用来判断一条活所在的频道他看
-    # 不看得见、在不在归档里。整行只为真正会摆上这一屏的那几个再取一次（见下面的
+    # 这一趟只要主键：看得见、没归档的频道有哪几个，用来判断一条活所在的频道他
+    # 看不看得见。整行只为真正会摆上这一屏的那几个再取一次（见下面的
     # `render_rooms`）——一屏常常只点到一两个人，却要为全部频道付整行装配的钱。
-    topic_ids = [
-        room_id
-        for room_id, status in await TopicRepository(db).visible_ids_for_projects(
-            project_ids, viewer=handle
-        )
-        if str(status) != "archived"
-    ]
+    topic_ids = await TopicRepository(db).visible_unarchived_ids_for_projects(
+        project_ids, viewer=handle
+    )
     visible_rooms = set(topic_ids)
     # A task is seen where its channel is: none from a private channel I left.
     # 关了的活落「已结束」那一列，那一列的下一步在平台手上，`address` 不点任何人
@@ -125,8 +105,12 @@ async def waiting_items(
     ]
 
     blocks = BlockRepository(db)
-    task_cards = await AcceptService(db).latest_cards_by_task([b.id for b in underway])
-    room_cards = await _room_cards(db, topic_ids)
+    # 每条活最新那张卡，和每个房间**自己**那张还没结算的卡（`task_id` 为空才是房
+    # 间自己的：一条活递的卡把房间记在 `topic_id` 上，不分开的话一条活在等验收会让
+    # 它上面那个房间也显示成等验收）—— 同一张表问一趟，交回来的是纯值（`RailCard`）。
+    room_cards, task_cards = await listed_cards(
+        db, room_ids=topic_ids, task_ids=[b.id for b in underway]
+    )
     # 卡递给谁在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上：这两批卡
     # 的评审人各一次查完，下面每行只做一次集合查询（`address` 要的就是这个集合）。
     cards_service = AcceptService(db)
@@ -174,31 +158,31 @@ async def waiting_items(
             and handle in (task_card_reviewers.get(task_cards[b.id].id) or ())
         )
     ]
-    tasks = await TaskRepository(db).list_by_ids(task_ids)
     # 通知指到的活不走判据（关了的也算，一条「改了什么」的提醒不因为活关了就不用
-    # 读），它们只要被认出标题和所在的频道：单独取，不混进上面那一批 —— 那一批每
-    # 一条都还要问心跳、问有没有一轮在跑。
+    # 读），它们只要被认出标题和所在的频道。通知指到的可能是一条**关了的**活 ——
+    # 关了的活不在上面的候选里（`brief_for_projects` 的 `open_only`），但通知照旧
+    # 要摆出来，所以这一笔按 id 直接问。指到频道自己或支线的认不出活来，按 id 问
+    # 自然给空；看不见的频道里的照旧不算。
     on_the_list = set(task_ids)
     pointed_at = {
         a.conversation_id
         for a in alerts
         if a.conversation_id is not None and a.conversation_id not in on_the_list
     }
-    # 通知指到的可能是一条**关了的**活 —— 关了的活不在上面的候选里，但通知照旧要
-    # 摆出来（它只要被认出标题和所在的频道）。所以这一笔按 id 直接问。以前是拿
-    # 上面那份全量活去筛，`brief_for_projects` 加上 `open_only` 之后那份里没有关
-    # 了的活，就得直接按 id 问 —— 顺带也比筛一份上千行的候选便宜。指到频道自己或
-    # 支线的认不出活来，`list_by_ids` 自然给空；看不见的频道里的照旧不算。
-    pointed = [
-        task
-        for task in await TaskRepository(db).list_by_ids(list(pointed_at))
-        if task.room_id in visible_rooms
-    ]
-    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
-    said = await blocks.contents([question[1] for question in questions.values()])
+    # 两批活一趟取回，每条带着它最后一次说话的时间（看板的心跳）：这一屏读的是
+    # 活的状态、人和日期，拿到的是那几列折成的值（`ListedTask`），不是整行实体。
+    tasks: list[ListedTask] = []
+    pointed: list[ListedTask] = []
+    for task in await TaskRepository(db).listed_by_ids([*task_ids, *pointed_at]):
+        if task.id in on_the_list:
+            tasks.append(task)
+        elif task.room_id in visible_rooms:
+            pointed.append(task)
+    # 题文和题一起回来的（`awaiting_answer_blocks`），不再按块 id 取第二趟。
+    said = {question[1]: question[2] for question in questions.values()}
     # 「运行中」也在这一页出现（一列里的每一格都是同一个函数算的），所以这一屏每行
     # 要的当下事实也一次问完 —— 这批任务有没有一轮在跑（`agent.liveness`）。
-    running = await running_tasks(chat, db, tasks)
+    running = await running_tasks(chat, db, [task.id for task in tasks])
     # 一次，给整份清单用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
 
@@ -227,7 +211,7 @@ async def waiting_items(
         at_room = room_of_conversation.get(alert.conversation_id)
         if at_room is not None:
             render_rooms.add(at_room)
-    rooms = {t.id: t for t in await TopicRepository(db).list_by_ids(render_rooms)}
+    rooms = {t.id: t for t in await TopicRepository(db).listed_by_ids(render_rooms)}
     # 频道这一格按原来的次序走（`topic_ids` 是查出来的顺序），只是现在只装得下真
     # 会摆上来的那几个。
     topics = [rooms[tid] for tid in topic_ids if tid in rooms]
@@ -284,7 +268,7 @@ async def waiting_items(
                 task_title_source=str(task.title_source),
                 phrase=shown.phrase,
                 reason=reason,
-                at=beats.get(task.id) or task.updated_at,
+                at=task.last_said_at or task.updated_at,
                 block_id=questions[task.id][1] if reason == "asked" else None,
                 detail=_one_line(detail),
             )

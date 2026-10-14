@@ -1,0 +1,4 @@
+{
+  "invalid": "无法读取 .mcp.json：格式不正确",
+  "unreadable": "无法读取仓库里的 .mcp.json，稍后重试"
+}

@@ -54,9 +54,12 @@ A refusal is a sentence too. An error raised with ``say()`` as its message
 Chinese ``message`` in the error body (``error.i18n``, see
 ``app/core/errors.py``), and the browser shows it in its reader's language.
 Those sentences live in the catalog ``apiError``: they are shown in a toast or
-a form, not in a room. The two catalogs share one key space, so a key names one
-sentence wherever it is said — an error's sentence can also end up in a room
-line.
+a form, not in a room. ``apiError`` is one flat key space split across
+``apiError/*.json`` — the shard's name says which backend module says the
+sentence and never appears in the key (``docs/i18n.md`` §2) — so a new refusal
+extends one file instead of the one every other change also edits. The two
+catalogs share one key space, so a key names one sentence wherever it is said —
+an error's sentence can also end up in a room line.
 """
 
 from __future__ import annotations
@@ -84,8 +87,24 @@ LOCALES: Final = ("zh-CN", "en")
 
 
 def _templates(locale: str, namespace: str) -> dict[str, str]:
+    """One namespace's templates: a file (``roomNotice.json``), or the shards
+    under a directory merged back into the flat table they are
+    (``apiError/``). Where the shards split it is a file-layout question; the
+    key space is the one it always was. A key in two shards would silently drop
+    one of them, so it is an error here."""
     path = CATALOG_DIR / locale / f"{namespace}.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    if path.is_file():
+        return json.loads(path.read_text(encoding="utf-8"))
+    merged: dict[str, str] = {}
+    for shard in sorted((CATALOG_DIR / locale / namespace).glob("*.json")):
+        for key, text in json.loads(shard.read_text(encoding="utf-8")).items():
+            if key in merged:
+                # i18n-exempt: a traceback for a developer, never a screen
+                raise RuntimeError(
+                    f"{namespace}: {key} is in two shards ({shard.name})"
+                )
+            merged[key] = text
+    return merged
 
 
 #: key → Chinese template of a room line, from ``roomNotice``.

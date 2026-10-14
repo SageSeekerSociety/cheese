@@ -48,44 +48,38 @@ import app.models  # noqa: E402,F401 — register every table
 from app.api.routes.awaiting import waiting_items  # noqa: E402
 
 #: (bucket, dotted path) for every leaf fetch ``waiting_items`` performs. They
-#: do not nest, so charging each one is exclusive. A path here is where the
-#: route *reaches* the call: two of these (``threads_of_rooms``,
-#: ``running_tasks``) are imported by name into ``app.api.routes.awaiting``, so
-#: patching the defining module would miss them. ``address`` is a third such
-#: by-name import, but it is a judgement call, so it sits in
-#: ``JUDGEMENT_TARGETS`` below rather than here.
+#: do not nest, so charging each one is exclusive. A path here is the name
+#: ``waiting_items`` itself looks up, which is not always the one the leaf is
+#: defined under: it lives in ``app.api.awaiting_deps`` and imports
+#: ``threads_of_rooms``, ``running_tasks`` and ``listed_cards`` by name, so
+#: those three have to be patched on that module — patching the module they
+#: come from charges nothing and leaves their cost in 组装 DTO. Repository
+#: methods need no such care: the class object is the same one either way.
+#: ``address`` is imported by name the same way, but it is a judgement call, so
+#: it sits in ``JUDGEMENT_TARGETS`` below rather than here.
 FETCH_LEAVES = [
     ("projects", "app.domain.project.repositories.ProjectRepository.list_visible_to"),
     (
         "topics",
-        "app.domain.topic.repositories.TopicRepository.visible_ids_for_projects",
+        "app.domain.topic.repositories.TopicRepository.visible_unarchived_ids_for_projects",
     ),
     (
         "tasks.brief",
         "app.domain.room_task.repositories.TaskRepository.brief_for_projects",
     ),
-    (
-        "cards.by_task",
-        "app.domain.review.services.AcceptService.latest_cards_by_task",
-    ),
-    ("cards.live", "app.domain.review.services.AcceptService.live_cards_for_places"),
-    ("threads", "app.api.routes.awaiting.threads_of_rooms"),
+    ("cards.listed", "app.api.awaiting_deps.listed_cards"),
+    ("threads", "app.api.awaiting_deps.threads_of_rooms"),
     (
         "blocks.questions",
         "app.domain.block.repositories.BlockRepository.awaiting_answer_blocks",
     ),
-    ("blocks.contents", "app.domain.block.repositories.BlockRepository.contents"),
     (
         "alerts",
         "app.domain.notification.services.ProjectNotificationService.still_open",
     ),
-    ("tasks.rows", "app.domain.room_task.repositories.TaskRepository.list_by_ids"),
-    (
-        "tasks.beats",
-        "app.domain.room_task.repositories.TaskRepository.last_block_at_for_tasks",
-    ),
-    ("topics.rows", "app.domain.topic.repositories.TopicRepository.list_by_ids"),
-    ("running", "app.api.routes.awaiting.running_tasks"),
+    ("tasks.rows", "app.domain.room_task.repositories.TaskRepository.listed_by_ids"),
+    ("topics.rows", "app.domain.topic.repositories.TopicRepository.listed_by_ids"),
+    ("running", "app.api.awaiting_deps.running_tasks"),
 ]
 
 
@@ -170,7 +164,7 @@ class Recorder:
 #: actually reaches them through (it imports ``address`` by name, so patching
 #: ``delivery.addressing.address`` would miss).
 JUDGEMENT_TARGETS = [
-    ("address", "app.api.routes.awaiting.address"),
+    ("address", "app.api.awaiting_deps.address"),
     ("task_presentation", "app.domain.room_task.presentation.task_presentation"),
     ("room_presentation", "app.domain.room_task.presentation.room_presentation"),
     ("facts_for_task", "app.domain.room_task.presentation.facts_for_task"),

@@ -1,0 +1,7 @@
+{
+  "download": "Download",
+  "keep": "Save to library",
+  "keepFailed": "Couldn't save to the library. Try again later",
+  "more": "More actions for “{name}”",
+  "open": "Open"
+}

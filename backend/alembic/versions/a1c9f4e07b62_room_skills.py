@@ -1,7 +1,7 @@
 """A room keeps the skills it switched on
 
 Revision ID: a1c9f4e07b62
-Revises: e81c4b7a2f05
+Revises: 70c713b50151
 Create Date: 2026-10-08
 
 The composer's skill panel switches a platform skill on for one room: the turn then
@@ -23,7 +23,7 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "a1c9f4e07b62"
-down_revision: str | Sequence[str] | None = "6ac10b7f1b11"
+down_revision: str | Sequence[str] | None = "70c713b50151"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

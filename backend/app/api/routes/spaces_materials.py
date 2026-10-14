@@ -108,7 +108,7 @@ async def upload_space_material(
         content_type=file.content_type or "application/octet-stream",
         visibility=visibility,
     )
-    return {"code": 201, "message": "Created", "data": {"material": item}}
+    return ok({"material": item})
 
 
 @router.patch(
