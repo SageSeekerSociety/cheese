@@ -521,6 +521,45 @@ async def test_the_gateway_reports_what_it_routes_and_what_it_can_bill():
 
 
 @pytest.mark.anyio
+async def test_a_model_declared_free_is_offered_and_an_unpriced_zero_is_not():
+    """A free upstream is the one model offered at a price of zero, and only
+    when it says so: ``cheese_free`` with both rates written as 0, the way
+    /model/info echoes them. A zero with no marker is a missing price, and a
+    marker with a rate missing is not a declaration of anything."""
+    free_rates = {"input_cost_per_token": 0.0, "output_cost_per_token": 0.0}
+    client = gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=_transport(
+            _model_info_response(
+                [
+                    {
+                        "model_name": "declared-free",
+                        "litellm_params": {"model": "hosted_vllm/f", **free_rates},
+                        "model_info": {"cheese_selectable": True, "cheese_free": True},
+                    },
+                    {
+                        "model_name": "zero-without-marker",
+                        "litellm_params": {"model": "hosted_vllm/g", **free_rates},
+                        "model_info": {"cheese_selectable": True},
+                    },
+                    {
+                        "model_name": "marker-without-rates",
+                        "litellm_params": {"model": "hosted_vllm/h"},
+                        "model_info": {"cheese_selectable": True, "cheese_free": True},
+                    },
+                ]
+            )
+        ),
+    )
+    reported = {m.id: m for m in await client.models()}
+
+    assert reported["declared-free"].priced
+    assert not reported["zero-without-marker"].priced
+    assert not reported["marker-without-rates"].priced
+
+
+@pytest.mark.anyio
 async def test_a_gateway_that_cannot_be_asked_does_not_answer_nothing():
     """An empty catalogue and an unreachable gateway are opposites: the first
     says this deployment serves no models, the second says ask again. Returning
