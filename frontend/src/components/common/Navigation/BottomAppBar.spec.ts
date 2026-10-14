@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import type { Project } from '@/cx_types'
 import type { NavItem } from './types'
 
 import { createRouter, createWebHistory } from 'vue-router'
@@ -15,15 +16,22 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import BottomAppBar from './BottomAppBar.vue'
+import { tabItems } from './destinations'
+
+import { setLocale } from '@/i18n'
+import { DEFAULT_SHELL } from '@/lib/shell'
 
 const here = dirname(fileURLToPath(import.meta.url))
 
 const router = createRouter({
   history: createWebHistory(),
-  routes: [{ path: '/:pathMatch(.*)*', name: 'catch-all', component: { template: '<div />' } }],
+  routes: [
+    { path: '/projects/:projectId', name: 'project', component: { template: '<div />' } },
+    { path: '/:pathMatch(.*)*', name: 'catch-all', component: { template: '<div />' } },
+  ],
 })
 
 function mount(items: NavItem[]) {
@@ -47,6 +55,8 @@ beforeAll(() => {
   }
 })
 
+beforeEach(() => setLocale('zh-CN'))
+
 const tab = (title: string, extra: Partial<NavItem> = {}): NavItem => ({
   key: title,
   type: 'item',
@@ -54,6 +64,10 @@ const tab = (title: string, extra: Partial<NavItem> = {}): NavItem => ({
   icon: 'mdi-circle',
   ...extra,
 })
+
+/** 亮着的格子（Vuetify 给当前格的类），按渲染顺序。 */
+const litTabs = (container: Element) =>
+  Array.from(container.querySelectorAll('.v-btn--active'), (el) => el.textContent?.trim())
 
 describe('BottomAppBar', () => {
   it('清单里有几格就渲染几格', async () => {
@@ -91,8 +105,26 @@ describe('BottomAppBar', () => {
       tab('空间', { to: '/spaces', match: (path) => path.startsWith('/teams') }),
       tab('待办', { to: '/inbox' }),
     ])
-    const lit = Array.from(container.querySelectorAll('.v-btn--active'), (el) => el.textContent?.trim())
-    expect(lit).toEqual(['空间'])
+    expect(litTabs(container)).toEqual(['空间'])
+  })
+
+  it('地址里写的是项目的短名时，中间那格亮着', async () => {
+    // 底栏的当前格是 Vuetify 照地址算出来的，而这个应用的地址栏里项目写的是短名
+    // （`canonicalAddress` 落地时换的）。工作区那一格写的要是内部编号，就永远算不上
+    // 当前格，图标一直不变黄——首页和待办一点就成当前格，所以那两格会黄。桌面那排
+    // 项目头像在 #3029 踩过同一个坑，这里是漏掉的那一处。
+    await router.push('/projects/demo')
+    const { container } = mount(
+      tabItems(
+        {
+          projects: [{ id: 'p-uuid', slug: 'demo', name: '演示' } as Project],
+          workspaceProjectId: 'p-uuid',
+          createProject: () => {},
+        },
+        DEFAULT_SHELL
+      )
+    )
+    expect(litTabs(container)).toEqual(['工作区'])
   })
 
   it('每一格的遮罩都压掉，不只是选中那一格', () => {
