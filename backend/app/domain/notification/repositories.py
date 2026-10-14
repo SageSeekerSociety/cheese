@@ -131,11 +131,12 @@ class NotificationRepository:
         return list(reversed(rows.all()))
 
     async def latest_id_for_user(
-        self, user_id: int, types: frozenset[NotificationType]
+        self, user_id: int, types: frozenset[NotificationType] | None = None
     ) -> int | None:
-        stmt = self._my_mail(select(func.max(Notification.id)), user_id).where(
-            Notification.type.in_(types)
-        )
+        """The newest of `user_id`'s rows of these `types`; of any type without."""
+        stmt = self._my_mail(select(func.max(Notification.id)), user_id)
+        if types is not None:
+            stmt = stmt.where(Notification.type.in_(types))
         return await self._session.scalar(stmt)
 
     async def mark_all_as_read_for_user(self, user_id: int) -> int:

@@ -289,7 +289,7 @@ def test_a_notice_committed_by_the_other_process_arrives_on_a_beat(client, monke
         # The row lands, the wake does not: what committing from the other slot
         # looks like from inside this one.
         monkeypatch.setattr(
-            notification_handlers, "wake_after_commit", lambda *_args: None
+            notification_handlers, "wake_after_commit", lambda *_a, **_k: None
         )
         _deliver(client, user_id, (NotificationType.CHEESE_QUESTION, QUESTION))
 
@@ -306,3 +306,68 @@ def test_a_notice_committed_by_the_other_process_arrives_on_a_beat(client, monke
     assert [(i["title"], i["body"], i["url"]) for i in live["items"]] == [
         ("用哪个数据库？", "在「迁移」", "/projects/p1/topics/t1")
     ]
+
+
+# --- a browser's feed (`/notifications/inbox`) -------------------------------
+
+
+def test_a_browsers_feed_hears_of_every_new_row_not_only_pushable_ones(client):
+    user_id, _, page = _signed_in(client, "gus")
+    notices = _notices_token(client, page)
+
+    with client.websocket_connect("/notifications/inbox") as ws:
+        ws.send_json({"token": notices})
+        opened = _next(ws, "inbox")
+
+        # A mention is never pushed, yet it is new in the feed.
+        _deliver(client, user_id, (NotificationType.MENTION, {}))
+        changed = _next(ws, "inbox")
+
+    assert changed["latest"] is not None
+    assert changed["latest"] != opened["latest"]
+
+
+def test_a_feed_hears_nothing_of_someone_elses_inbox(client, monkeypatch):
+    monkeypatch.setattr(notifications_live, "BEAT_SECONDS", 0.2)
+    _, _, page = _signed_in(client, "hal")
+    other_id, _, _ = _signed_in(client, "ivy")
+    notices = _notices_token(client, page)
+
+    with client.websocket_connect("/notifications/inbox") as ws:
+        ws.send_json({"token": notices})
+        _next(ws, "inbox")
+        _deliver(client, other_id, (NotificationType.MENTION, {}))
+        # The next thing this feed hears is a beat, not a change.
+        assert ws.receive_json()["kind"] == "beat"
+
+
+def test_a_feed_without_a_credential_that_holds_is_turned_away(client):
+    _, _, page = _signed_in(client, "jo")
+
+    with client.websocket_connect("/notifications/inbox") as ws:
+        # The page's own token is not the notices credential.
+        ws.send_json({"token": page})
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+
+    assert closed.value.code == 4401
+
+
+def test_a_row_committed_by_the_other_process_reaches_a_feed_on_a_beat(
+    client, monkeypatch
+):
+    monkeypatch.setattr(notifications_live, "BEAT_SECONDS", 0.2)
+    user_id, _, page = _signed_in(client, "kim")
+    notices = _notices_token(client, page)
+
+    with client.websocket_connect("/notifications/inbox") as ws:
+        ws.send_json({"token": notices})
+        opened = _next(ws, "inbox")
+        # The row lands, the wake does not (the other backend slot wrote it).
+        monkeypatch.setattr(
+            notification_handlers, "wake_after_commit", lambda *_a, **_k: None
+        )
+        _deliver(client, user_id, (NotificationType.MENTION, {}))
+        caught_up = _next(ws, "inbox")
+
+    assert caught_up["latest"] != opened["latest"]

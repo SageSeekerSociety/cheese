@@ -8,6 +8,7 @@
     "noNotifications": "No notifications",
     "loadFailed": "Couldn't load activity",
     "markAllAsRead": "Mark all as read",
+    "newItems": "New notifications: {count}",
     "loadMore": "Load more",
     "filterLabel": "Filter notifications",
     "unknownTeam": "Unknown team",

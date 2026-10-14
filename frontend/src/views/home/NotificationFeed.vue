@@ -30,6 +30,12 @@
          skeleton instead of leaving a blank. -->
     <LoadingSkeleton v-else-if="loading && !notifications.length" variant="list" class="notification-feed__skel" />
     <div v-else-if="notifications.length > 0" class="notification-feed__list">
+      <!-- 看着列表时来了新的：不把正在读的那几行往下挤，先在顶上说一声，点了才换成最新的。 -->
+      <div v-if="fresh > 0" class="notification-feed__fresh">
+        <BaseButton size="sm" prepend-icon="mdi-arrow-up" @click="showFresh">
+          {{ t('notifications.common.newItems', { count: fresh }) }}
+        </BaseButton>
+      </div>
       <v-list density="compact" lines="three" class="py-0" bg-color="transparent">
         <notification-item
           v-for="notification in notifications"
@@ -65,8 +71,9 @@
 import type { NotificationCategory } from '@/components/common/Notification/categories'
 import type { Notification } from '@/types/apiNotifications'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useEventListener } from '@vueuse/core'
 
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 
@@ -82,6 +89,7 @@ import {
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { storageGet, storageSet } from '@/lib/browserStorage'
+import { onInboxChange } from '@/lib/inboxLive'
 
 const { t } = useI18n()
 
@@ -181,6 +189,7 @@ const fetchNotifications = async (isMore = false) => {
 // 换筛选就是从第一页重新问一遍：游标是跟着上一种筛选走的，接着往下翻会漏。
 function reload() {
   generation += 1
+  fresh.value = 0
   loading.value = false
   cursorStart.value = undefined
   notifications.value = []
@@ -252,6 +261,53 @@ const deleteNotification = async (notificationId: number) => {
 // 读完、删完之后把首页那一格的小点对上。
 const fetchUnreadCount = () => unread.refresh()
 
+// 列表上面那几行之后又来了几条（这一档里的）。看第一页就够：新的一定排在最前。
+const fresh = ref(0)
+
+// 有没有新的：问一遍这一档的第一页，比列表最上面那一条新的就是。列表还空着就直接
+// 摆上来——没有正在读的东西可打断。
+async function lookForNew() {
+  void refreshCounts()
+  if (loading.value || failed.value) return
+  const mine = generation
+  try {
+    const page = await NotificationsApi.list({ type: typesOfCategory(filter.value), pageSize: pageSize.value })
+    if (mine !== generation || loading.value) return
+    if (notifications.value.length === 0) {
+      notifications.value = page.notifications
+      hasMore.value = page.page.hasMore
+      cursorStart.value = page.page.nextStart
+      return
+    }
+    const newest = Math.max(...notifications.value.map((n) => n.id))
+    fresh.value = page.notifications.filter((n) => n.id > newest).length
+  } catch {
+    // 只是看一眼有没有新的：没问到就等下一次，列表照旧。
+  }
+}
+
+function showFresh() {
+  reload()
+  void refreshCounts()
+}
+
+// 新的一行一来服务端就说（`lib/inboxLive.ts`）。连接断开期间漏掉的，在这一页重新回
+// 到眼前时补问一次；切来切去不必每次都问，隔 30 秒以上才问。
+const LOOK_INTERVAL_MS = 30_000
+let lookedAt = Date.now()
+function lookIfStale() {
+  if (document.visibilityState !== 'visible' || Date.now() - lookedAt < LOOK_INTERVAL_MS) return
+  lookedAt = Date.now()
+  void lookForNew()
+}
+const stopListening = onInboxChange(() => {
+  lookedAt = Date.now()
+  void lookForNew()
+})
+onBeforeUnmount(stopListening)
+useEventListener(document, 'visibilitychange', lookIfStale)
+useEventListener(window, 'focus', lookIfStale)
+
 // 初始化加载通知。三档的数字和第一页一起要，格子一出来就带着数。
 onMounted(() => {
   void refreshCounts()
@@ -278,6 +334,12 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+.notification-feed__fresh {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
 }
 .notification-feed__list {
   border: 1px solid var(--line);
