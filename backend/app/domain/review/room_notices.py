@@ -119,6 +119,7 @@ def _notify_merge_result(
     spawn(
         webhook_service.post_with_retries(
             session_factory,
+            poster=announce,
             topic_id=topic.id,
             task_id=task_id,
             content=content,
