@@ -61,7 +61,7 @@ async def lifespan(application: FastAPI):
     # it. Nothing reachable at boot can become garbage, so this changes neither
     # semantics nor peak memory — only how much the collector re-reads.
     # `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
-    # 20-concurrency burst; gunicorn's arbiter does the same after preloading.
+    # 20-concurrency burst.
     gc.freeze()
 
     # Schema is managed by Alembic migrations.
