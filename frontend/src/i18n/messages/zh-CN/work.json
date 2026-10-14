@@ -486,16 +486,14 @@
     "skills": {
       "button": "技能",
       "title": "技能",
-      "hint": "技能跟着人走：点亮的那些会跟着这位队友进它的每个会话。",
+      "hint": "队友已装备的技能会自动进入每个会话；灯亮表示可用，灯灭表示不可用或未探测。",
       "loading": "正在读技能…",
       "empty": "还没有可用的技能。",
       "loadFailed": "技能列表读不出来",
       "saveFailed": "技能没能保存",
-      "carriedTitle": "{name} 带的技能",
-      "cap": "{max} 个上限",
+      "carriedTitle": "{name} 的技能",
       "add": "添加",
       "emptyCarried": "这个队友还什么都没带。",
-      "full": "一个队友最多带 {max} 个，先减掉一个再加。",
       "managerOnly": "只有项目管理员能改队友带的技能。",
       "stale": "别人刚改过这个队友",
       "editingBy": "{name} 正在编辑这个队友，等他改完再试",
@@ -510,9 +508,6 @@
       "webPlaceholder": "https://github.com/…/tree/main/skills/pdf",
       "webAdd": "取回",
       "fetchFailed": "没能取回这份技能",
-      "scanFailed": "机器没扫成",
-      "adoptFailed": "没能采纳这项技能",
-      "unadoptFailed": "没能退订这项技能",
       "marketTitle": "技能市场",
       "marketTabSkills": "技能",
       "marketTabPlugins": "插件",
@@ -526,18 +521,11 @@
       "marketInstall": "装到这台机器上",
       "marketNoInstall": "只读",
       "marketNeedMachine": "先连接一台机器，才能把技能装到本机；目录不用机器也能看。",
-      "installTitle": "装到这台机器上？",
-      "installOk": "安装",
-      "installRisk": "它会写进这台机器上你的目录。其中的脚本/命令会以你的身份运行，来源不可信就别装。",
       "marketSource": {
         "anthropic": "Anthropic",
         "openai": "OpenAI",
         "mcp": "MCP 官方注册表"
-      },
-      "healthOk": "可用",
-      "healthDegraded": "受限",
-      "healthUnavailable": "不可用",
-      "healthUnknown": "还没探到"
+      }
     },
     "checklist": {
       "updatedAt": "清单更新于 {time}",

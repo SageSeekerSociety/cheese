@@ -5,9 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../api/machineSkills', () => ({
   listMachineSkills: vi.fn(),
-  scanMachineSkills: vi.fn(),
-  setMachineSkillRoots: vi.fn(),
-  setMachineSkillAdoption: vi.fn(),
   fetchMachineSkill: vi.fn(),
   fetchSkillMarket: vi.fn(),
 }))
@@ -25,14 +22,7 @@ vi.mock('@/api', () => ({
   updateProjectAgent: vi.fn(),
 }))
 
-import {
-  fetchMachineSkill,
-  fetchSkillMarket,
-  listMachineSkills,
-  scanMachineSkills,
-  setMachineSkillAdoption,
-  setMachineSkillRoots,
-} from '../api/machineSkills'
+import { fetchMachineSkill, fetchSkillMarket, listMachineSkills } from '../api/machineSkills'
 import { getSkillHealth, listProjectSkills, listSkillCatalog } from '../api/projectSkills'
 
 import { useAgentSkills } from './useAgentSkills'
@@ -159,34 +149,12 @@ describe('队友技能面板', () => {
     await s.openSkills()
 
     expect(s.carried.value).toEqual(['wolfram'])
-    // 池子：平台两颗 + 已采纳的机器技能一颗；没采纳的那颗不进池子。
-    expect(s.pool.value.map((p) => p.name)).toEqual(['wolfram', 'documents', 'ponytail'])
+    // 池子：平台两颗 + 机器上扫到的（含还没人「采纳」过的）。勾上才带进会话。
+    expect(s.pool.value.map((p) => p.name)).toEqual(['wolfram', 'documents', 'ponytail', 'draft-skill'])
     expect(s.deviceId.value).toBe('dev2')
     expect(s.canManage.value).toBe(true)
     expect(s.skillHealth.value.wolfram?.status).toBe('ok')
     expect(s.loading.value).toBe(false)
-  })
-
-  it('退订一颗：从池子里拿掉，机器那段列表里还在（只是回到没人要）', async () => {
-    const s = skills()
-    await s.openSkills()
-    expect(s.pool.value.map((p) => p.name)).toContain('ponytail')
-
-    vi.mocked(setMachineSkillAdoption).mockResolvedValue({
-      name: 'ponytail',
-      description: '懒',
-      source_root: '/home/me/.claude/skills/ponytail',
-      digest: 'd',
-      state: 'seen',
-      adopted: false,
-    })
-
-    await s.unadoptMachine('ponytail')
-
-    expect(setMachineSkillAdoption).toHaveBeenCalledWith('dev2', 'ponytail', false)
-    expect(s.pool.value.map((p) => p.name)).not.toContain('ponytail')
-    expect(s.machineSkills.value.find((m) => m.name === 'ponytail')?.adopted).toBe(false)
-    expect(s.machineSkills.value.map((m) => m.name)).toContain('ponytail')
   })
 
   it('加一颗：落库的是写在这个队友身上的整份名单，并把结果回给父组件', async () => {
@@ -255,16 +223,19 @@ describe('队友技能面板', () => {
     expect(s.editingBlocked.value).toBe(false)
   })
 
-  it('超过上限就拦住，一次网络调用都不发', async () => {
-    const fail = vi.fn()
-    const s = skills(fail, undefined, ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'])
+  it('带了八颗再加一颗：没有上限，整份名单落库', async () => {
+    const saved = vi.fn()
+    const eight = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']
+    const s = skills(() => {}, saved, eight)
     await s.openSkills()
 
     await s.adoptSkill('wolfram')
 
-    expect(updateProjectAgent).not.toHaveBeenCalled()
-    expect(s.carried.value).toHaveLength(8)
-    expect(fail).toHaveBeenCalled()
+    expect(updateProjectAgent).toHaveBeenCalledWith('p1', 'a1', {
+      configuration: expect.objectContaining({ skills: [...eight, 'wolfram'] }),
+      expected_version: 1,
+    })
+    expect(s.carried.value).toHaveLength(9)
   })
 
   it('健康探不到只是那一颗是灰的，列表照常出来', async () => {
@@ -273,110 +244,47 @@ describe('队友技能面板', () => {
 
     await s.openSkills()
 
-    expect(s.pool.value).toHaveLength(3)
+    expect(s.pool.value).toHaveLength(4)
     expect(s.skillHealth.value.wolfram).toBeUndefined()
   })
 
-  it('登记工作区根：整份名单发给机器，回来的是它新扫的结果', async () => {
-    vi.mocked(setMachineSkillRoots).mockResolvedValue({
-      skills: [],
-      problems: [],
-      roots: ['/Users/me/repo/.trae/skills'],
-      workspaces: ['/Users/me/repo'],
-    } as never)
-    const s = skills()
-    await s.openSkills()
-
-    await s.setWorkspaceRoots(['/Users/me/repo'])
-
-    expect(setMachineSkillRoots).toHaveBeenCalledWith('dev2', ['/Users/me/repo'], 'p1')
-    expect(s.workspaceRoots.value).toEqual(['/Users/me/repo'])
-  })
-
-  it('扫描时把项目 id 带上：只读本项目的会话 home', async () => {
-    vi.mocked(scanMachineSkills).mockResolvedValue({
-      skills: [],
-      problems: [],
-      roots: [],
+  it('互联网直连：自动安装并带上当前这位队友', async () => {
+    vi.mocked(fetchMachineSkill).mockResolvedValue({
+      landed: true,
+      plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
+      skills: [
+        {
+          name: 'pdf',
+          description: '读 PDF',
+          source_root: '/home/me/.cheese/web-skills/pdf',
+          digest: 'x',
+          state: 'seen',
+          adopted: false,
+        },
+      ],
+      problems: ['docs/x.txt: 不是文本'],
+      roots: ['/home/me/.cheese/web-skills'],
       workspaces: [],
     } as never)
     const s = skills()
     await s.openSkills()
 
-    await s.scanMachine()
-
-    expect(scanMachineSkills).toHaveBeenCalledWith('dev2', 'p1')
-  })
-
-  it('互联网直连：先只看不落，人确认了才覆盖机器那三个列表', async () => {
-    vi.mocked(fetchMachineSkill)
-      .mockResolvedValueOnce({
-        landed: false,
-        plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
-      } as never)
-      .mockResolvedValueOnce({
-        landed: true,
-        plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
-        skills: [
-          {
-            name: 'pdf',
-            description: '读 PDF',
-            source_root: '/home/me/.cheese/web-skills/pdf',
-            digest: 'x',
-            state: 'seen',
-            adopted: false,
-          },
-        ],
-        problems: ['docs/x.txt: 不是文本'],
-        roots: ['/home/me/.cheese/web-skills'],
-        workspaces: [],
-      } as never)
-    const s = skills()
-    await s.openSkills()
-
     await s.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
 
-    // 只看：清单摆出来等人点头，机器那三个列表一个都没动
     expect(fetchMachineSkill).toHaveBeenLastCalledWith(
       'dev2',
       'https://github.com/anthropics/skills/tree/main/skills/pdf',
       'p1',
-      'skill',
-      false
+      'skill'
     )
-    expect(s.pendingInstall.value?.plan.map((p) => p.name)).toEqual(['pdf'])
-    expect(s.machineSkills.value.map((m) => m.name)).toEqual(['ponytail', 'draft-skill'])
-
-    await s.confirmWebSkill()
-
-    expect(fetchMachineSkill).toHaveBeenLastCalledWith(
-      'dev2',
-      'https://github.com/anthropics/skills/tree/main/skills/pdf',
-      'p1',
-      'skill',
-      true
-    )
-    expect(s.pendingInstall.value).toBeNull()
     expect(s.machineSkills.value.map((m) => m.name)).toEqual(['pdf'])
     expect(s.machineProblems.value).toEqual(['docs/x.txt: 不是文本'])
     expect(s.workspaceRoots.value).toEqual([])
-  })
-
-  it('不装：把那份清单收起来，机器那三个列表不动', async () => {
-    vi.mocked(fetchMachineSkill).mockResolvedValue({
-      landed: false,
-      plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
-    } as never)
-    const s = skills()
-    await s.openSkills()
-
-    await s.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
-    expect(s.pendingInstall.value).not.toBeNull()
-
-    s.cancelWebSkill()
-
-    expect(s.pendingInstall.value).toBeNull()
-    expect(fetchMachineSkill).toHaveBeenCalledTimes(1) // 没有第二次写盘的调用
+    expect(updateProjectAgent).toHaveBeenCalledWith('p1', 'a1', {
+      configuration: expect.objectContaining({ skills: ['wolfram', 'pdf'] }),
+      expected_version: 1,
+    })
+    expect(s.carried.value).toEqual(['wolfram', 'pdf'])
   })
 
   it('市场：打开面板就拉一次，卡片按 kind 分三堆', async () => {
@@ -405,8 +313,8 @@ describe('队友技能面板', () => {
     expect(s.machineSkills.value.map((m) => m.name)).toEqual(['ponytail', 'draft-skill'])
   })
 
-  it('装一枚插件：kind 跟着地址一起发上去，先只看不落', async () => {
-    vi.mocked(fetchMachineSkill).mockResolvedValue({ landed: false, plan: [] } as never)
+  it('装一枚插件：kind 跟着地址发上去并自动安装', async () => {
+    vi.mocked(fetchMachineSkill).mockResolvedValue({ landed: true, plan: [], skills: [], problems: [], roots: [], workspaces: [] } as never)
     const s = skills()
     await s.openSkills()
 
@@ -416,8 +324,7 @@ describe('队友技能面板', () => {
       'dev2',
       'https://github.com/o/r/tree/main/plugins/reviewer',
       'p1',
-      'plugin',
-      false
+      'plugin'
     )
   })
 
@@ -430,7 +337,6 @@ describe('队友技能面板', () => {
     await s.fetchWebSkill('https://example.com/x')
 
     expect(fail).toHaveBeenCalledWith('skillWebSpec')
-    expect(s.pendingInstall.value).toBeNull()
     expect(s.machineSkills.value.map((m) => m.name)).toEqual(['ponytail', 'draft-skill'])
   })
 })

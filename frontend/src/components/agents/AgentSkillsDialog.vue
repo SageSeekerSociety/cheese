@@ -1,15 +1,14 @@
 <script setup lang="ts">
 // 技能面板：带什么、还能从哪儿加。黄底一块灯板，一颗一颗「洞」按下去就亮。
 //
-// 亮/灭 = 带不带（人的选择，存在队友身上）；右上角小圆点 = 现在能不能跑（后端探的，
-// 只探平台那几颗）。两件事分开说，所以灭了也可以有绿点。
+// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。
 //
 // 只管画、只往上发：池子、机器索引、落库都在 `useAgentSkills` 里。桌面上是居中
 // 弹窗，手机上是一整页 —— 外壳由 AdaptiveDialog 决定，这一块在两边都是同一张灯板。
 //
 // 文案还在 `work.room.skills.*` 命名空间下（重命名命名空间不在这次改动范围内），
 // 虽然它现在是从项目设置里打开的。
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import SkillMarket from '@/components/skills/SkillMarket.vue'
@@ -42,18 +41,6 @@ interface MarketItem {
   mcp: MarketCardItem[]
   notes: string[]
 }
-// 落盘前给人看的那份清单：一颗技能，和会跟着写进去的文件名（含 SKILL.md）。
-interface InstallPlanItem {
-  name: string
-  description: string
-  files: string[]
-}
-interface PendingInstall {
-  url: string
-  kind: 'skill' | 'plugin'
-  plan: InstallPlanItem[]
-}
-
 const open = defineModel<boolean>({ default: false })
 
 const props = withDefaults(
@@ -65,13 +52,10 @@ const props = withDefaults(
     deviceId: string | null
     market?: MarketItem | null
     marketLoading?: boolean
-    /** 读回来、检验过、还没落盘的网上下载。非空时弹确认框。 */
-    pending?: PendingInstall | null
     /** 别人正占着这个队友的「编辑中」租约：这一轮面板只读。 */
     editingBlocked?: boolean
     /** 占着租约的那个人的 handle，画在人看的那一句里。 */
     editingBy?: string | null
-    max: number
     loading?: boolean
     scanning?: boolean
     saving?: boolean
@@ -80,7 +64,6 @@ const props = withDefaults(
   {
     market: null,
     marketLoading: false,
-    pending: null,
     editingBlocked: false,
     editingBy: null,
     loading: false,
@@ -91,51 +74,43 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'add', name: string): void
-  (e: 'remove', name: string): void
-  (e: 'fetchWeb', url: string): void
   (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
-  (e: 'confirmInstall'): void
-  (e: 'cancelInstall'): void
 }>()
 
-// 健康圆点说的话。四个状态加上「还没探到」这一种。
-const HEALTH: Record<SkillHealthItem['status'] | 'unknown', string> = {
-  ok: 'work.room.skills.healthOk',
-  degraded: 'work.room.skills.healthDegraded',
-  unavailable: 'work.room.skills.healthUnavailable',
-  unknown: 'work.room.skills.healthUnknown',
-}
 const status = (name: string): SkillHealthItem['status'] | 'unknown' => props.health[name]?.status ?? 'unknown'
-const healthLabel = (name: string) => t(HEALTH[status(name)])
+const availableNow = (skill: SkillItem) =>
+  skill.source === 'platform' ? status(skill.name) === 'ok' : true
 
-// 「+ 添加」是一格，按下去在下面展开池子。关掉再开就收起来：还没加完的那张列表
-// 留着，会让人以为已经加上了。
-const adding = ref(false)
-// 「互联网直连」那一格的地址。关掉再开就清掉没交出去的那一段。
-const newWebUrl = ref('')
+const boardSkills = computed(() => {
+  const seen = new Set<string>()
+  return [...props.carried, ...props.available].filter((skill) => {
+    if (seen.has(skill.name)) return false
+    seen.add(skill.name)
+    return true
+  })
+})
+const skillUrl = ref('')
 // 市场停在哪个页签（页签照 Claude Desktop 的 Discover：技能 / 插件 / MCP，外加第四个
 // 货架「Agent 模板」）。市场那段画面在共享组件 SkillMarket 里，这里只留这份状态，好在
 // 每次打开面板时把它复位。
 type MarketTab = 'skills' | 'plugins' | 'mcp' | 'agents'
 const marketTab = ref<MarketTab>('skills')
 watch(open, () => {
-  adding.value = false
-  newWebUrl.value = ''
+  skillUrl.value = ''
   marketTab.value = 'skills'
 })
+
+function importSkill() {
+  const url = skillUrl.value.trim()
+  if (!url || !props.deviceId || props.scanning) return
+  skillUrl.value = ''
+  emit('install', { url, kind: 'skill' })
+}
 
 // 改队友的 userskill 要 manager（后端 `projects_agents.py`）；别人正占着「编辑中」
 // 的租约时也改不动 —— 那是同一件事的另一半：现在改会撞上他。
 const locked = () => !props.canManage || props.editingBlocked
 
-/** 从网上取一份技能：地址发上去，取回、合规检验、落盘都在别处。 */
-function addWebSkill() {
-  const url = newWebUrl.value.trim()
-  if (!url) return
-  newWebUrl.value = ''
-  emit('fetchWeb', url)
-}
 </script>
 
 <template>
@@ -146,7 +121,6 @@ function addWebSkill() {
       <div class="board">
         <div class="board__head">
           <span class="board__title t-eyebrow">{{ t('work.room.skills.carriedTitle', { name: agentName }) }}</span>
-          <span class="board__cap t-meta-read t-num">{{ t('work.room.skills.cap', { max }) }}</span>
         </div>
         <p v-if="loading" class="skills__note t-meta-read">{{ t('work.room.skills.loading') }}</p>
         <template v-else>
@@ -158,86 +132,40 @@ function addWebSkill() {
           </p>
           <p v-else-if="locked()" class="skills__note t-meta-read">{{ t('work.room.skills.managerOnly') }}</p>
           <div class="skills__grid">
-            <button
-              v-for="s in carried"
+            <div
+              v-for="s in boardSkills"
               :key="s.name"
-              type="button"
-              class="socket socket--on"
-              :disabled="locked() || saving"
+              class="socket"
+              :class="{ 'socket--on': availableNow(s) }"
               :title="s.description || s.name"
-              @click="emit('remove', s.name)"
             >
               <span class="socket__hole"
                 ><v-icon size="20">{{ skillIcon(s.name) }}</v-icon></span
               >
               <span class="socket__name t-meta-read">{{ s.name }}</span>
               <span class="socket__desc t-meta-read">{{ s.description }}</span>
-              <span class="socket__dot" :class="`socket__dot--${status(s.name)}`" :title="healthLabel(s.name)" />
-            </button>
-            <button
-              type="button"
-              class="socket socket--add"
-              :disabled="locked() || saving"
-              :aria-expanded="adding"
-              @click="adding = !adding"
-            >
-              <span class="socket__hole"><v-icon size="20">mdi-plus</v-icon></span>
-              <span class="socket__name t-meta-read">{{ t('work.room.skills.add') }}</span>
-            </button>
-          </div>
-          <p v-if="!carried.length" class="skills__note t-meta-read">{{ t('work.room.skills.emptyCarried') }}</p>
-
-          <div v-if="adding" class="pool">
-            <p v-if="!available.length" class="skills__note t-meta-read">{{ t('work.room.skills.empty') }}</p>
-            <button
-              v-for="s in available"
-              :key="s.name"
-              type="button"
-              class="pool__row"
-              :disabled="saving"
-              @click="emit('add', s.name)"
-            >
-              <v-icon size="18">{{ skillIcon(s.name) }}</v-icon>
-              <span class="pool__body">
-                <span class="pool__name t-body">{{ s.name }}</span>
-                <span class="pool__desc t-meta-read">{{ s.description }}</span>
-              </span>
-              <span class="pool__from t-meta-read">{{ t(`work.room.skills.from.${s.source}`) }}</span>
-            </button>
-
-            <!-- 机器那一段（扫描、扫到的技能、工作区根登记）暂时不在这块板上摆：
-                 扫描/采纳的代码仍在（`useAgentSkills` + 后端 `machine_skills`），这里只
-                 不展示。留下的这一格是「互联网直连」——贴一个地址取一份技能到机器上，
-                 取回时按 agentskills.io 规范检验，过了才落盘。 -->
-            <div class="machine">
-              <p v-if="!deviceId" class="skills__note t-meta-read">{{ t('work.room.skills.noMachine') }}</p>
-              <div v-else class="roots">
-                <p class="skills__note t-meta-read">{{ t('work.room.skills.webHint') }}</p>
-                <div class="roots__add">
-                  <input
-                    v-model="newWebUrl"
-                    class="roots__input t-meta-read"
-                    type="text"
-                    autocomplete="off"
-                    :aria-label="t('work.room.skills.webPlaceholder')"
-                    :placeholder="t('work.room.skills.webPlaceholder')"
-                    :disabled="scanning"
-                    @keyup.enter="addWebSkill"
-                  />
-                  <button
-                    type="button"
-                    class="machine__scan"
-                    :disabled="scanning || !newWebUrl.trim()"
-                    @click="addWebSkill"
-                  >
-                    {{ t('work.room.skills.webAdd') }}
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
+          <p v-if="!boardSkills.length" class="skills__note t-meta-read">{{ t('work.room.skills.emptyCarried') }}</p>
         </template>
       </div>
+      <form class="skill-import" @submit.prevent="importSkill">
+        <p class="skills__note t-meta-read">{{ t('work.room.skills.webHint') }}</p>
+        <div class="skill-import__row">
+          <input
+            v-model="skillUrl"
+            class="skill-import__input t-meta-read"
+            type="url"
+            autocomplete="off"
+            :aria-label="t('work.room.skills.webPlaceholder')"
+            :placeholder="t('work.room.skills.webPlaceholder')"
+            :disabled="!deviceId || scanning"
+          />
+          <button type="submit" class="skill-import__submit" :disabled="!deviceId || scanning || !skillUrl.trim()">
+            {{ t('work.room.skills.webAdd') }}
+          </button>
+        </div>
+      </form>
     </div>
 
     <!-- 技能市场：琥珀块**下面**另一块，抽成共享组件 SkillMarket（全局市场页画同一份）。
@@ -249,10 +177,7 @@ function addWebSkill() {
       :device-id="deviceId"
       :scanning="scanning"
       :saving="saving"
-      :pending="pending"
       @install="emit('install', $event)"
-      @confirm-install="emit('confirmInstall')"
-      @cancel-install="emit('cancelInstall')"
     />
   </AdaptiveDialog>
 </template>
@@ -291,8 +216,35 @@ function addWebSkill() {
   gap: 8px;
   margin-bottom: 10px;
 }
-.board__cap {
-  opacity: 0.75;
+.skill-import {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed color-mix(in srgb, var(--warn-ink) 30%, transparent);
+}
+.skill-import__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.skill-import__input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--warn-ink) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.skill-import__submit {
+  border: 0;
+  background: transparent;
+  color: var(--warn-ink);
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.skill-import__submit:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 /* 洞的数量跟着技能走：窄了自动换行，不写死几行几个。 */
 .skills__grid {
@@ -301,7 +253,6 @@ function addWebSkill() {
   gap: 10px;
 }
 .socket {
-  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -310,10 +261,6 @@ function addWebSkill() {
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
-  cursor: pointer;
-}
-.socket--add {
-  border: 1px dashed color-mix(in srgb, var(--warn-ink) 40%, transparent);
 }
 /* 那颗「洞」：底色跟浮层自己的背景走（`--surface`，对话框里重映射成 `--raised`，
    浅色即 #fff），不再用 `--code-bg` 那口近黑的井 —— 两套主题下它都从底上「长」出来，
@@ -351,105 +298,5 @@ function addWebSkill() {
   overflow: hidden;
   text-align: center;
   opacity: 0.7;
-}
-/* 健康：右上角一颗圆点。绿=能跑、黄=受限、红=不能跑、灰=还没探到。 */
-.socket__dot {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--faint);
-}
-.socket__dot--ok {
-  background: var(--ok);
-}
-.socket__dot--degraded {
-  background: var(--warn);
-}
-.socket__dot--unavailable {
-  background: var(--danger);
-}
-.socket__dot--unknown {
-  background: var(--faint);
-}
-.pool {
-  margin-top: 12px;
-  border-top: 1px dashed color-mix(in srgb, var(--warn-ink) 30%, transparent);
-  padding-top: 10px;
-}
-.pool__row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-  padding: 8px;
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--warn-ink);
-  text-align: left;
-  cursor: pointer;
-}
-.pool__row:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--warn-ink) 8%, transparent);
-}
-.pool__row:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-.pool__body {
-  flex: 1;
-  min-width: 0;
-}
-.pool__name {
-  display: block;
-}
-.pool__desc {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  opacity: 0.75;
-}
-.pool__from {
-  flex: none;
-  opacity: 0.75;
-}
-/* 「互联网直连」那一格不是「灯板」：它是本机自己的事，单独落在中性底上，不跟着
-   上面的琥珀走。 */
-.machine {
-  margin-top: 10px;
-  padding: 8px;
-  background: var(--surface);
-  border-radius: var(--radius-md);
-}
-.machine__scan {
-  border: 0;
-  background: transparent;
-  color: var(--warn-ink);
-  /* 编辑窗里同一类控件（那个「高级设置」开关）手写的就是 13px，这里照抄同一个值：
-     阶梯上 13px 那一档（.t-dense）是 600 重的读数，安静按钮跟它不对路。 */
-  font-size: 13px;
-  text-decoration: underline;
-  cursor: pointer;
-}
-/* 互联网直连那一格：一枚输入 + 一颗按钮。 */
-.roots {
-  margin: 4px 0 0;
-}
-.roots__add {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.roots__input {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 8px;
-  border: 1px solid color-mix(in srgb, var(--warn-ink) 35%, transparent);
-  border-radius: var(--radius-md);
-  background: transparent;
 }
 </style>

@@ -14,7 +14,6 @@
 // 结构相同的本地声明。
 import { computed } from 'vue'
 
-import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
 import { skillIcon } from '@/lib/skillIcons'
 
@@ -33,18 +32,6 @@ interface MarketItem {
   mcp: MarketCardItem[]
   notes: string[]
 }
-// 落盘前给人看的那份清单：一颗技能，和会跟着写进去的文件名（含 SKILL.md）。
-interface InstallPlanItem {
-  name: string
-  description: string
-  files: string[]
-}
-interface PendingInstall {
-  url: string
-  kind: 'skill' | 'plugin'
-  plan: InstallPlanItem[]
-}
-
 const props = withDefaults(
   defineProps<{
     market?: MarketItem | null
@@ -53,19 +40,15 @@ const props = withDefaults(
     deviceId?: string | null
     scanning?: boolean
     saving?: boolean
-    /** 读回来、检验过、还没落盘的网上下载。非空时弹确认框。 */
-    pending?: PendingInstall | null
     /** 要不要摆第四个货架「Agent 模板」。只在**市场**里摆：队友技能面板那一格问的是
      *  「这个队友带哪些技能」，模板不属于那一问。 */
     showAgents?: boolean
   }>(),
-  { market: null, loading: false, deviceId: null, scanning: false, saving: false, pending: null, showAgents: false }
+  { market: null, loading: false, deviceId: null, scanning: false, saving: false, showAgents: false }
 )
 
 const emit = defineEmits<{
   (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
-  (e: 'confirmInstall'): void
-  (e: 'cancelInstall'): void
 }>()
 
 // 页签照 Claude Desktop 的 Discover：技能 / 插件 / MCP，外加第四个货架「Agent 模板」。
@@ -162,25 +145,6 @@ const cards = computed(() => {
     </template>
   </section>
 
-  <!-- 落盘前的最后一道：把「会写什么」摆给人看，人点头了才真写。落下去的是别人写的
-       脚本，会拿本人的权限在这台机器上跑，所以确认键写的是动作本身（「装到这台机器」），
-       框里既点名每颗技能，也把跟着写进去的文件列出来 —— 三个 .py 不该藏在一次点击后面。 -->
-  <ConfirmDialog
-    :model-value="!!pending"
-    :title="t('work.room.skills.installTitle')"
-    :confirm-label="t('work.room.skills.installOk')"
-    :loading="scanning"
-    @update:model-value="(open: boolean) => !open && emit('cancelInstall')"
-    @confirm="emit('confirmInstall')"
-    @cancel="emit('cancelInstall')"
-  >
-    <div v-for="item in pending?.plan ?? []" :key="item.name" class="install__item">
-      <span class="install__name">{{ item.name }}</span>
-      <span class="install__desc t-meta-read">{{ item.description }}</span>
-      <span class="install__files t-meta-read">{{ item.files.join('、') }}</span>
-    </div>
-    <p class="install__risk">{{ t('work.room.skills.installRisk') }}</p>
-  </ConfirmDialog>
 </template>
 
 <style scoped>
@@ -282,25 +246,5 @@ const cards = computed(() => {
 .mcard__add:disabled {
   cursor: default;
   opacity: 0.5;
-}
-/* 确认框里那份清单：一颗技能一段，文件名跟在后面。文件名可能有一串，让它折行。 */
-.install__item {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 0;
-}
-.install__item + .install__item {
-  border-top: 1px solid var(--line);
-}
-.install__name {
-  font-weight: 600;
-}
-.install__files {
-  word-break: break-all;
-}
-.install__risk {
-  margin-top: 10px;
-  color: var(--warn-ink);
 }
 </style>

@@ -5,37 +5,26 @@
 //
 // 可加的技能有三个来源，合成一个池子画：
 //   * 平台发货（`/projects/{id}/skill-catalog`）
-//   * **我自己**机器上的（`/connector/my/devices/{id}/skills`，要人先采纳）—— 不是房间
-//     那台：读别人的机器是隐私上的越界，别人的盘不关我的事
+//   * **我自己**机器上的（`/connector/my/devices/{id}/skills`）—— 不是房间那台：读别人
+//     的机器是隐私上的越界，别人的盘不关我的事。索引里有的就能勾，不再先「采纳」一道。
 //   * 我导入的（项目技能，`/projects/{id}/skills`）
 //
 // **打开面板时才读**，不做常驻拉取：没人打开的时候多读一次，只是一次没人看的网络
 // 调用。健康那一列同理，一次打开探一遍（后端自己还缓存 5 分钟），而且只探平台那几颗
 // ——别的来源后端没有探针，画成「还没探到」比编一个绿点诚实。
-import type { InstallPlanItem, MachineSkill, SkillMarket } from '../api/machineSkills'
+import type { MachineSkill, SkillMarket } from '../api/machineSkills'
 import type { SkillHealth } from '../api/projectSkills'
 import type { ProjectAgent } from '../cx_types'
 
 import { computed, ref } from 'vue'
 
-import {
-  fetchMachineSkill,
-  fetchSkillMarket,
-  listMachineSkills,
-  scanMachineSkills,
-  setMachineSkillAdoption,
-  setMachineSkillRoots,
-} from '../api/machineSkills'
+import { fetchMachineSkill, fetchSkillMarket, listMachineSkills } from '../api/machineSkills'
 import { getSkillHealth, listProjectSkills, listSkillCatalog } from '../api/projectSkills'
 
 import { getProjectDefaultModel, listMyDevices, setAgentEditing, updateProjectAgent } from '@/api'
 import { ApiError } from '@/api/http'
 import { t } from '@/i18n'
 import { pickMyDevice } from '@/lib/myDevice'
-
-/** 一个队友最多带几个。和 `PROPOSAL_LIMIT = 20` 是同一条经验的同一理由：正文都进
- *  提示词，颗数一多，模型挑对的准确率明显下降，而一个队友这里更该省着。 */
-export const MAX_CARRIED = 8
 
 export type SkillSource = 'platform' | 'machine' | 'project'
 
@@ -68,9 +57,6 @@ export function useAgentSkills(
   // 市场：两家厂商公开的技能 / 插件 / MCP。公开目录，和哪台机器无关。
   const market = ref<SkillMarket | null>(null)
   const marketLoading = ref(false)
-  // 待确认的网上下载：读回来、检验过，人还没说「装」。写盘前必须过这一道 —— 落下去
-  // 的是别人写的脚本，会拿本人的权限在这台机器上跑。
-  const pendingInstall = ref<{ url: string; kind: 'skill' | 'plugin'; plan: InstallPlanItem[] } | null>(null)
   // 面板自己的名单：打开时从队友身上抄一份，保存后就地更新，父组件不必重拉。
   const carriedNames = ref<string[]>([])
   const loading = ref(false)
@@ -133,7 +119,6 @@ export function useAgentSkills(
     machineSkills.value = []
     machineProblems.value = []
     workspaceRoots.value = []
-    pendingInstall.value = null
     if (deviceId.value) {
       try {
         machineSkills.value = (await listMachineSkills(deviceId.value)).skills
@@ -146,9 +131,7 @@ export function useAgentSkills(
     void openMarket()
     pool.value = dedupe([
       ...catalog.map((s): SkillItem => ({ name: s.name, description: s.description, source: 'platform' })),
-      ...machineSkills.value
-        .filter((s) => s.adopted)
-        .map((s): SkillItem => ({ name: s.name, description: s.description, source: 'machine' })),
+      ...machineSkills.value.map((s): SkillItem => ({ name: s.name, description: s.description, source: 'machine' })),
       ...project
         .filter((s) => s.state === 'active')
         .map((s): SkillItem => ({ name: s.name, description: s.description, source: 'project' })),
@@ -167,17 +150,12 @@ export function useAgentSkills(
     )
   }
 
-  /** 加 / 减一颗。先改本地再落库，落库失败就翻回去 —— 一颗按钮不该等一个来回。 */
-  async function setSkill(name: string, on: boolean) {
+  /** 把这份名单写到这个队友身上。先改本地再落库，落库失败就翻回去。 */
+  async function saveCarried(next: string[]) {
     const pid = projectId()
     const subject = agent()
     if (!pid || !subject || saving.value) return
-    if (on && carriedNames.value.length >= MAX_CARRIED) {
-      onError(t('work.room.skills.full', { max: MAX_CARRIED }))
-      return
-    }
     const before = [...carriedNames.value]
-    const next = on ? [...before, name] : before.filter((n) => n !== name)
     carriedNames.value = next
     saving.value = true
     try {
@@ -202,6 +180,13 @@ export function useAgentSkills(
     } finally {
       saving.value = false
     }
+  }
+
+  /** 加 / 减一颗。一颗按钮不该等一个来回。 */
+  async function setSkill(name: string, on: boolean) {
+    const before = [...carriedNames.value]
+    const next = on ? [...before, name] : before.filter((n) => n !== name)
+    await saveCarried(next)
   }
 
   /** 占住这个队友（打开技能面板时）。占不到就把持有者记下来，面板转只读。 */
@@ -234,81 +219,29 @@ export function useAgentSkills(
     }
   }
 
-  /** 让机器重新扫一遍自己的盘（人点「扫描」）。结果只入库，不替人采纳。 */
-  async function scanMachine() {
-    const device = deviceId.value
-    if (!device || scanning.value) return
-    scanning.value = true
-    try {
-      const scan = await scanMachineSkills(device, projectId())
-      machineSkills.value = scan.skills
-      machineProblems.value = scan.problems
-      workspaceRoots.value = scan.workspaces
-    } catch (e) {
-      onError(e instanceof Error ? e.message : t('work.room.skills.scanFailed'))
-    } finally {
-      scanning.value = false
-    }
-  }
-
-  /** 登记工作区根（整份名单）。写在那台机器上，写完它顺手重扫一遍。 */
-  async function setWorkspaceRoots(roots: string[]) {
-    const device = deviceId.value
-    if (!device || scanning.value) return
-    scanning.value = true
-    try {
-      const scan = await setMachineSkillRoots(device, roots, projectId())
-      machineSkills.value = scan.skills
-      machineProblems.value = scan.problems
-      workspaceRoots.value = scan.workspaces
-    } catch (e) {
-      onError(e instanceof Error ? e.message : t('work.room.skills.scanFailed'))
-    } finally {
-      scanning.value = false
-    }
-  }
-
-  /** 从网上取一份技能：**先只看不落** —— 地址发上去，取回、按 agentskills.io 规范检验，
-      答复是「会写什么」，存进 `pendingInstall` 等人点头。`kind: 'plugin'` 时地址是一个
-      插件，它带的每颗技能都会各落一份，那份清单一次列全。 */
+  /** 从网上取一份技能：按 agentskills.io 规范检验后直接安装，并装备给当前队友。 */
   async function fetchWebSkill(url: string, kind: 'skill' | 'plugin' = 'skill') {
     const device = deviceId.value
     if (!device || scanning.value) return
     scanning.value = true
     try {
-      const look = await fetchMachineSkill(device, url, projectId(), kind, false)
-      pendingInstall.value = { url, kind, plan: look.plan }
-    } catch (e) {
-      onError(e instanceof Error ? e.message : t('work.room.skills.fetchFailed'))
-    } finally {
-      scanning.value = false
-    }
-  }
-
-  /** 人确认了这份清单：真写盘，然后重扫 —— 收尾和登记工作区根一样，覆盖那三个 ref。 */
-  async function confirmWebSkill() {
-    const device = deviceId.value
-    const pending = pendingInstall.value
-    if (!device || !pending || scanning.value) return
-    scanning.value = true
-    try {
-      const scan = await fetchMachineSkill(device, pending.url, projectId(), pending.kind, true)
+      const scan = await fetchMachineSkill(device, url, projectId(), kind)
       if (scan.landed) {
         machineSkills.value = scan.skills
         machineProblems.value = scan.problems
         workspaceRoots.value = scan.workspaces
+        pool.value = dedupe([
+          ...pool.value,
+          ...scan.skills.map((s): SkillItem => ({ name: s.name, description: s.description, source: 'machine' })),
+        ])
+        const extra = scan.plan.map((p) => p.name).filter((n) => !carriedNames.value.includes(n))
+        if (extra.length) await saveCarried([...carriedNames.value, ...extra])
       }
-      pendingInstall.value = null
     } catch (e) {
       onError(e instanceof Error ? e.message : t('work.room.skills.fetchFailed'))
     } finally {
       scanning.value = false
     }
-  }
-
-  /** 不装了：把那份清单收起来，盘上什么都没动过。 */
-  function cancelWebSkill() {
-    pendingInstall.value = null
   }
 
   /** 读市场：两家厂商公开的技能 / 插件 / MCP。读不到就在那段说一声，别处照常。 */
@@ -324,31 +257,6 @@ export function useAgentSkills(
     }
   }
 
-  /** 采纳 / 退订一项。采纳之后它可以被勾给某个队友（正文照 `source_root` 读，不搬文件）；
-      退订把它从池子里拿掉 —— 已经勾了它的队友从此不带它（`carried_bodies` 只认确认过的
-      那一行），名单里那个名字留着，和「机器上那颗没了」是同一种收场。 */
-  async function setAdoption(name: string, adopted: boolean) {
-    const device = deviceId.value
-    if (!device) return
-    try {
-      const row = await setMachineSkillAdoption(device, name, adopted)
-      machineSkills.value = machineSkills.value.map((s) => (s.name === name ? row : s))
-      if (adopted) {
-        if (!pool.value.some((p) => p.name === name))
-          pool.value = dedupe([
-            ...pool.value,
-            { name: row.name, description: row.description, source: 'machine' as const },
-          ])
-      } else {
-        pool.value = pool.value.filter((p) => !(p.name === name && p.source === 'machine'))
-      }
-    } catch (e) {
-      onError(
-        e instanceof Error ? e.message : t(adopted ? 'work.room.skills.adoptFailed' : 'work.room.skills.unadoptFailed')
-      )
-    }
-  }
-
   return {
     pool,
     available,
@@ -360,7 +268,6 @@ export function useAgentSkills(
     workspaceRoots,
     market,
     marketLoading,
-    pendingInstall,
     editingBlocked,
     editingBy,
     deviceId,
@@ -372,14 +279,8 @@ export function useAgentSkills(
     openMarket,
     adoptSkill: (name: string) => setSkill(name, true),
     removeSkill: (name: string) => setSkill(name, false),
-    scanMachine,
-    setWorkspaceRoots,
     holdAgent,
     releaseAgent,
     fetchWebSkill,
-    confirmWebSkill,
-    cancelWebSkill,
-    adoptMachine: (name: string) => setAdoption(name, true),
-    unadoptMachine: (name: string) => setAdoption(name, false),
   }
 }

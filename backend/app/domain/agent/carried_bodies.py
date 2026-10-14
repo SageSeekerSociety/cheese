@@ -72,11 +72,10 @@ def room_device(topic) -> str | None:
 
 
 async def _from_machine(session: AsyncSession, device_id: str, name: str) -> str:
-    """一条机器技能的正文，或者空串（没这条、没采纳、读不回来）。"""
+    """一条机器技能的正文，或者空串（没这条、读不回来）。"""
     row = await MachineSkillService(session).find(device_id, name)
-    # 没采纳的不算带：采纳是「这条准进提示词」那一下人的点头
-    # （`machine_skill/models.py`）。
-    if row is None or row.confirmed_by is None:
+    # 索引里有这一行就读：人把它勾给队友（或装进当前这位）就算带上，不再先「采纳」一道。
+    if row is None:
         return ""
     key = (device_id, name, row.digest)
     if key in _BODIES:

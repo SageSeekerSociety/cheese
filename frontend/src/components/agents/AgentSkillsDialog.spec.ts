@@ -1,12 +1,11 @@
 // 技能弹窗画出来的那几件事：市场三页签换得动、卡片上的 + 把「装什么」原样往上发
 // （MCP 只读，没有 +）。落盘与取数不在这里 —— 那些是 `useAgentSkills` 的事。
 //
-// 机器那一段（扫描 / 采纳 / 工作区根登记）现在不在板上摆：代码仍在（`useAgentSkills`
-// + 后端 `machine_skills`），只是不展示，所以这里也不再钉它的画面。
+// 机器那一段（扫描 / 采纳 / 退订）不在板上摆：装进来或勾上就跟着这位队友走。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen, within } from '@testing-library/vue'
+import { fireEvent, render, screen } from '@testing-library/vue'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import AgentSkillsDialog from './AgentSkillsDialog.vue'
@@ -72,7 +71,6 @@ function mount(extra: Record<string, unknown> = {}) {
       health: {},
       deviceId: 'dev2',
       market: MARKET,
-      max: 8,
       ...extra,
     },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -80,26 +78,22 @@ function mount(extra: Record<string, unknown> = {}) {
 }
 
 describe('技能弹窗', () => {
-  it('不再展示「扫描机器」：机器那一段不在这块板上', async () => {
-    const view = mount()
-    await fireEvent.click(await screen.findByText('添加'))
+  it('把已装备和可用技能合并显示在灯板，移除下方技能列表', async () => {
+    mount({
+      available: [
+        { name: 'cheese', description: '芝士自己的用法', source: 'project' as const },
+        { name: 'ponytail', description: '懒，但把活干对的写法', source: 'machine' as const },
+      ],
+    })
 
-    expect(screen.queryByText('扫描机器')).toBeNull()
-    expect(document.querySelector('.machine__window')).toBeNull()
-    // 扫描/采纳的意图也不再往上发。
-    expect(view.emitted('scan')).toBeUndefined()
-    expect(view.emitted('adopt')).toBeUndefined()
-  })
-
-  it('机器那一段留下的是「互联网直连」：贴地址取回仍发得上去', async () => {
-    const view = mount()
-    await fireEvent.click(await screen.findByText('添加'))
-
-    const box = await screen.findByPlaceholderText('https://github.com/…/tree/main/skills/pdf')
-    await fireEvent.update(box, 'https://github.com/o/r/tree/main/skills/pdf')
-    await fireEvent.click(screen.getByText('取回'))
-
-    expect(view.emitted('fetchWeb')?.[0]).toEqual(['https://github.com/o/r/tree/main/skills/pdf'])
+    expect(await screen.findByText('wolfram')).toBeTruthy()
+    expect(screen.getByText('cheese')).toBeTruthy()
+    expect(screen.getByText('ponytail')).toBeTruthy()
+    expect(document.querySelectorAll('.skills__grid .socket')).toHaveLength(3)
+    expect(document.querySelector('.pool')).toBeNull()
+    expect(document.querySelector('.machine')).toBeNull()
+    expect(screen.queryByText(/工作电脑/)).toBeNull()
+    expect(screen.queryByText('添加')).toBeNull()
   })
 
   it('市场三页签各画各的，MCP 那张没有 +', async () => {
@@ -141,44 +135,12 @@ describe('技能弹窗', () => {
     expect((button as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('有未确认的下载时弹确认框：点名每颗技能和跟着写进去的文件', async () => {
-    const view = mount({
-      pending: {
-        url: 'https://github.com/o/r/tree/main/skills/pdf',
-        kind: 'skill' as const,
-        plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md', 'scripts/run.py'] }],
-      },
-    })
-
-    expect(await screen.findByText('装到这台机器上？')).toBeTruthy()
-    // 文件名是列出来的，不是藏在一个数字后面 —— 三个 .py 不该只是一句「共 4 个文件」。
-    expect(screen.getByText('SKILL.md、scripts/run.py')).toBeTruthy()
-
-    const box = screen.getByRole('alertdialog')
-    await fireEvent.click(within(box).getByRole('button', { name: '安装' }))
-    expect(view.emitted('confirmInstall')).toBeTruthy()
-  })
-
-  it('确认框里点取消：把 cancelInstall 发上去', async () => {
-    const view = mount({
-      pending: {
-        url: 'https://github.com/o/r/tree/main/skills/pdf',
-        kind: 'skill' as const,
-        plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
-      },
-    })
-
-    const box = await screen.findByRole('alertdialog')
-    await fireEvent.click(within(box).getByRole('button', { name: '取消' }))
-    expect(view.emitted('cancelInstall')).toBeTruthy()
-  })
-
   it('别人正占着「编辑中」：先说这一句，灯板转只读', async () => {
-    mount({ editingBlocked: true, editingBy: 'alice' })
+    mount({ editingBlocked: true, editingBy: 'alice', health: { wolfram: { status: 'ok', detail: '' } } })
 
     expect(await screen.findByText('alice 正在编辑这个队友，等他改完再试')).toBeTruthy()
     expect(screen.queryByText('只有项目管理员能改队友带的技能。')).toBeNull()
-    expect((screen.getByRole('button', { name: /算/ }) as HTMLButtonElement).disabled).toBe(true)
+    expect(document.querySelector('.socket--on')).toBeTruthy()
   })
 
   it('占着的那位没留下名字：说什么都不假造一个名字', async () => {

@@ -7,9 +7,9 @@ read it whole (OpenClaw's Installed-skill discovery, over the platform).
 * the platform's shipped skills (``agent/skills.py``);
 * this project's **confirmed** skills (``project_skill``; a teammate's draft is
   not shipped yet, so it is not installed);
-* the skills **adopted** on the machine this room runs on (``machine_skill``
-  ``confirmed_by``) — never another person's machine (``room_device`` names
-  only this room's), and never an un-adopted one.
+* the skills indexed on the machine this room runs on (``machine_skill``) —
+  never another person's machine (``room_device`` names only this room's).
+  A row on the index is enough; the old adopt/un-adopt gate is gone.
 
 Search answers names and descriptions only — an index, not the library — so a
 big skill set costs no prompt tokens. ``skills_read`` is a separate call and is
@@ -118,11 +118,10 @@ async def _installed(db: AsyncSession, place) -> dict[str, dict]:
     device_id = room_device(place.room)
     if device_id is not None:
         for row in await MachineSkillService(db).list(device_id):
-            # Un-adopted is not carried (``carried_bodies``); and the body is
-            # read back the same way, so an offline machine simply reads empty.
-            if row.confirmed_by is not None:
-                body = await carried_bodies(db, place.room, [row.name])
-                add(row.name, row.description, _SOURCE_MACHINE, body)
+            # The body is read back the same way as a turn, so an offline
+            # machine simply reads empty.
+            body = await carried_bodies(db, place.room, [row.name])
+            add(row.name, row.description, _SOURCE_MACHINE, body)
     return found
 
 

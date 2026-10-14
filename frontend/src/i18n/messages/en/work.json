@@ -486,16 +486,14 @@
     "skills": {
       "button": "Skills",
       "title": "Skills",
-      "hint": "Skills follow the teammate: what you switch on here rides into this teammate's every turn.",
+      "hint": "Equipped skills automatically follow this teammate into every session. Lit means available; unlit means unavailable or unchecked.",
       "loading": "Reading skills…",
       "empty": "No skills available yet.",
       "loadFailed": "Couldn't load the skill list",
       "saveFailed": "Couldn't save the skill",
-      "carriedTitle": "Skills {name} carries",
-      "cap": "{max} max",
+      "carriedTitle": "Skills for {name}",
       "add": "Add",
       "emptyCarried": "This teammate carries nothing yet.",
-      "full": "A teammate carries at most {max} — drop one first.",
       "managerOnly": "Only a project manager can change a teammate's skills.",
       "stale": "Someone else just changed this teammate",
       "editingBy": "{name} is editing this teammate. Try again once they're done",
@@ -510,9 +508,6 @@
       "webPlaceholder": "https://github.com/…/tree/main/skills/pdf",
       "webAdd": "Fetch",
       "fetchFailed": "Couldn't fetch this skill",
-      "scanFailed": "The machine didn't scan",
-      "adoptFailed": "Couldn't adopt this skill",
-      "unadoptFailed": "Couldn't unadopt this skill",
       "marketTitle": "Skill market",
       "marketTabSkills": "Skills",
       "marketTabPlugins": "Plugins",
@@ -526,18 +521,11 @@
       "marketInstall": "Install on this machine",
       "marketNoInstall": "Read-only",
       "marketNeedMachine": "Connect a machine to install skills on it; the catalogue needs no machine.",
-      "installTitle": "Install on this machine?",
-      "installOk": "Install",
-      "installRisk": "This writes into your folders on this machine. Any scripts it brings run as you, so don't install it unless you trust where it came from.",
       "marketSource": {
         "anthropic": "Anthropic",
         "openai": "OpenAI",
         "mcp": "MCP registry"
-      },
-      "healthOk": "Available",
-      "healthDegraded": "Limited",
-      "healthUnavailable": "Unavailable",
-      "healthUnknown": "Not probed yet"
+      }
     },
     "checklist": {
       "updatedAt": "Checklist updated {time}",

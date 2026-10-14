@@ -81,16 +81,22 @@ const LONG_SKILL = skill({
   },
 })
 
-/** 队友技能面板的池子：平台随会话发货的原生技能，加上这台机器上采纳来的。名字就是
+/** 队友技能面板的池子：平台随会话发货的原生技能，加上这台机器上的。名字就是
  *  技能的名字（后端按名字点亮、按名字取说明书），说明就是那一格的第二行。 */
 const SKILL_POOL = [
   { name: 'cheese', description: '芝士自己的用法', source: 'platform' as const },
   { name: 'wolfram', description: '用 Wolfram 把算式算准', source: 'platform' as const },
   { name: 'ponytail', description: '懒，但把活干对的写法', source: 'machine' as const },
+  { name: 'documents', description: '读写办公文档与 PDF', source: 'platform' as const },
+  { name: 'showcase', description: '制作网页、看板和图表', source: 'platform' as const },
+  { name: 'skill-creator', description: '创建或修改技能', source: 'platform' as const },
+  { name: 'mcp-builder', description: '构建 MCP 服务和外部 API 接入', source: 'platform' as const },
 ]
 
-/** 右上角那一枚圆点说的话：能跑 / 受限 / 不能跑 / 还没探到。 */
-const SKILL_HEALTH = { wolfram: { status: 'ok' as const, detail: 'Wolfram 通道可用' } }
+/** 平台技能的探测结果：只有可用时对应灯板点亮。 */
+const SKILL_HEALTH = Object.fromEntries(
+  SKILL_POOL.filter((skill) => skill.source === 'platform').map((skill) => [skill.name, { status: 'ok' as const, detail: '可用' }])
+)
 
 /** 市场的一份目录：技能 / 插件各一条能装的，外加一条只读的 MCP。`plugin_total` 比摆出来
  *  的多 —— 插件页签那句「列出前 N 条，共 M 条」要用它。名字、说明就是卡片上的两行。 */
@@ -124,19 +130,6 @@ const MARKET = {
     },
   ],
   notes: [],
-}
-
-/** 取回来、检验过、还没落盘的网上下载：确认框里摆出「会写什么」（含跟着写进去的文件名）。 */
-const MARKET_PENDING = {
-  url: 'https://github.com/anthropics/skills/tree/main/pdf',
-  kind: 'skill' as const,
-  plan: [
-    {
-      name: 'pdf',
-      description: '把 PDF 里的文字和表格读出来。',
-      files: ['SKILL.md', 'scripts/read.py'],
-    },
-  ],
 }
 
 export const SKILL_ENTRIES: CatalogEntry[] = [
@@ -177,7 +170,7 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
     id: 'agent-skills-dialog',
     title: 'AgentSkillsDialog',
     about:
-      '一个 AI 队友带哪些技能：黄底一块灯板，一颗一颗「洞」按下去就亮。亮了的技能跟着这位队友进它的每个会话（后端把说明书接进提示词）；右上角那枚小圆点是「现在能不能跑」，和亮不亮是两件事。',
+      '一个 AI 队友带哪些技能：黄底一块灯板，展示队友装备的技能；灯亮表示当前可用，灯灭表示不可用或状态未知。',
     file: 'src/components/agents/AgentSkillsDialog.vue',
     component: AgentSkillsDialog,
     needs: UI_T,
@@ -186,27 +179,25 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '一个队友带的',
-        note: '亮着的是这位队友带的（这里带 wolfram）；灭了也可以有绿点，亮了也可以有红点 —— 亮/灭是人的选择，圆点是能不能跑。',
+        note: '6 个内置技能始终属于每位队友；灯亮表示当前可用。',
         props: {
           agentName: '米洛',
           carried: [SKILL_POOL[1]],
-          available: [SKILL_POOL[0], SKILL_POOL[2]],
+          available: SKILL_POOL.filter((skill) => skill.source === 'platform' && skill.name !== 'wolfram'),
           health: SKILL_HEALTH,
           deviceId: null,
-          max: 8,
         },
         expect: 'wolfram',
       },
       {
         name: '绑了机器时',
-        note: '这个房间绑了一台工作电脑：灯板照画；额外的取用入口在「添加」展开之后（机器那一段现在只留「互联网直连」，扫描/采纳不在板上摆）。',
+        note: '6 个内置技能和机器上的 ponytail 都显示在灯板；灯亮表示当前可用。',
         props: {
           agentName: '米洛',
           carried: [SKILL_POOL[2]],
-          available: [SKILL_POOL[0]],
+          available: SKILL_POOL.filter((skill) => skill.name !== 'ponytail'),
           health: SKILL_HEALTH,
           deviceId: 'dev1',
-          max: 8,
         },
         expect: 'ponytail',
       },
@@ -219,7 +210,6 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
           available: [],
           health: {},
           deviceId: null,
-          max: 8,
           loading: true,
         },
         expect: '正在读技能',
@@ -233,11 +223,8 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
       '技能市场：两家厂商公开的技能 / 插件 / MCP 各一张卡片栅格，卡片上的 + 就是「取一份到这台机器上」。页签停在哪儿、装到哪台机器都由页面给；没机器时 + 按不动。第四个货架「Agent 模板」只在市场里摆（`showAgents`）。',
     file: 'src/components/skills/SkillMarket.vue',
     component: SkillMarket,
-    // 页签、`v-icon`、落盘前的确认框（`v-dialog`）是 Vuetify 的；卡片上的字走全局 `t()`。
+    // 页签与 `v-icon` 是 Vuetify 的；卡片上的字走全局 `t()`。
     needs: UI_T,
-    // 确认框（`v-dialog`）画在 body 上，所以这一条按 body 找 —— `document.body` 里本来就
-    // 装着挂载容器，前四格照样找得到。
-    teleport: true,
     args: { market: MARKET, deviceId: 'dev1' },
     states: [
       {
@@ -263,12 +250,6 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
         note: '摆第四个货架时停在「Agent 模板」：后台还没有这类东西，只照实说一句，不摆假卡片。',
         props: { showAgents: true, tab: 'agents' },
         expect: '还没有 Agent 模板。',
-      },
-      {
-        name: '落盘前的确认框',
-        note: '取回来、还没落盘：弹确认框，把「会写什么」摆出来 —— 点名的技能和跟着写进去的文件名都在。',
-        props: { pending: MARKET_PENDING },
-        expect: 'scripts/read.py',
       },
     ],
   },

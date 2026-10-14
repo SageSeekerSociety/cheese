@@ -3,7 +3,7 @@
 // composables/useMarketNodes），画面全在同目录的 MarketViewView。页签状态放在这里：
 // 节点状态板在「模型与工作电脑」页签上，用户第一次点开它才开始读节点、起表；技能市场的
 // 目录与「我有没有机器」同理，第一次点开「技能与插件」页签才读。
-import type { InstallPlanItem, SkillMarket as SkillMarketData } from '@/api/machineSkills'
+import type { SkillMarket as SkillMarketData } from '@/api/machineSkills'
 import type { MarketPools } from '@/cx_types'
 
 import { onMounted, ref, watch } from 'vue'
@@ -31,7 +31,6 @@ const marketLoading = ref(false)
 const marketLoaded = ref(false)
 const deviceId = ref<string | null>(null)
 const scanning = ref(false)
-const pending = ref<{ url: string; kind: 'skill' | 'plugin'; plan: InstallPlanItem[] } | null>(null)
 
 async function load() {
   loading.value = true
@@ -77,14 +76,13 @@ async function loadMarket() {
   marketLoaded.value = true
 }
 
-/** 从网上取一份：先只看不落，把清单摆出来等人点头。 */
+/** 从网上取一份：检验后直接安装到当前工作电脑。 */
 async function install({ url, kind }: { url: string; kind: 'skill' | 'plugin' }) {
   const device = deviceId.value
   if (!device || scanning.value) return
   scanning.value = true
   try {
-    const look = await fetchMachineSkill(device, url, null, kind, false)
-    pending.value = { url, kind, plan: look.plan }
+    await fetchMachineSkill(device, url, null, kind)
   } catch (e) {
     toast.error(e instanceof Error ? e.message : t('work.room.skills.fetchFailed'))
   } finally {
@@ -92,25 +90,6 @@ async function install({ url, kind }: { url: string; kind: 'skill' | 'plugin' })
   }
 }
 
-/** 人确认了这份清单：真写盘。 */
-async function confirmInstall() {
-  const device = deviceId.value
-  const plan = pending.value
-  if (!device || !plan || scanning.value) return
-  scanning.value = true
-  try {
-    await fetchMachineSkill(device, plan.url, null, plan.kind, true)
-    pending.value = null
-  } catch (e) {
-    toast.error(e instanceof Error ? e.message : t('work.room.skills.fetchFailed'))
-  } finally {
-    scanning.value = false
-  }
-}
-
-function cancelInstall() {
-  pending.value = null
-}
 </script>
 
 <template>
@@ -127,10 +106,7 @@ function cancelInstall() {
     :market-loaded="marketLoaded"
     :device-id="deviceId"
     :scanning="scanning"
-    :pending="pending"
     @retry="load"
     @install="install"
-    @confirm-install="confirmInstall"
-    @cancel-install="cancelInstall"
   />
 </template>

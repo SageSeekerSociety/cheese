@@ -15,7 +15,7 @@
 // of multi-column content — a live node board above card grids — and keeps that
 // same column while giving the page the shared header (docs/design-system.md
 // §3.5). `read` would be a narrower, single-column tier.
-import type { InstallPlanItem, SkillMarket as SkillMarketData } from '@/api/machineSkills'
+import type { SkillMarket as SkillMarketData } from '@/api/machineSkills'
 import type { MarketNodes, MarketPools, PoolListing } from '@/cx_types'
 
 import { computed } from 'vue'
@@ -42,7 +42,6 @@ const props = withDefaults(
     /** 装到哪台机器上。没有 = 卡片上的 + 按不动。 */
     deviceId?: string | null
     scanning?: boolean
-    pending?: { url: string; kind: 'skill' | 'plugin'; plan: InstallPlanItem[] } | null
   }>(),
   {
     loading: false,
@@ -55,14 +54,11 @@ const props = withDefaults(
     marketLoaded: false,
     deviceId: null,
     scanning: false,
-    pending: null,
   }
 )
 const emit = defineEmits<{
   (e: 'retry'): void
   (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
-  (e: 'confirmInstall'): void
-  (e: 'cancelInstall'): void
 }>()
 
 const { t } = useI18n()
@@ -189,7 +185,7 @@ const computePools = computed<PoolListing[]>(() => props.pools?.compute ?? [])
 
       <!-- 技能与插件：技能 / 插件 / MCP 的市场（components/skills/SkillMarket 画）。目录
            公开，没机器也能看；「装」要一台机器，所以没机器时先把话说在前面，卡片上的 +
-           由组件如实禁掉。装走两步（先看清单、再确认）在共享组件里那个确认框。 -->
+           由组件如实禁掉。点击加号后会校验并自动安装。 -->
       <v-window-item value="skills">
         <p v-if="marketLoaded && !deviceId" class="t-body c-muted mb-5">
           {{ t('work.room.skills.marketNeedMachine') }}
@@ -199,11 +195,8 @@ const computePools = computed<PoolListing[]>(() => props.pools?.compute ?? [])
           :loading="marketLoading"
           :device-id="deviceId"
           :scanning="scanning"
-          :pending="pending"
           show-agents
           @install="emit('install', $event)"
-          @confirm-install="emit('confirmInstall')"
-          @cancel-install="emit('cancelInstall')"
         />
       </v-window-item>
     </v-window>

@@ -1,15 +1,14 @@
 // 一台机器上扫到的技能（`~/.claude/skills/<name>/SKILL.md` 这类 agentskills.io 目录）。
 //
-// 正文留在机器原位，平台只记 `source_root` + `digest` + 采纳状态（后端 `machine_skill`
-// 表）。所以这里只有几件事：读索引、让机器重新扫一遍、登记工作区根、从网上取一份、
-// 采纳或退订一项。
+// 正文留在机器原位，平台只记 `source_root` + `digest` 和机器索引（后端 `machine_skill`
+// 表）。所以这里只有几件事：读索引、让机器重新扫一遍、登记工作区根和从网上取一份。
 //
 // 走 `connectorRequest`：这几条挂在 `/connector/*` 下（和 `/connector/my/devices` 同一
 // 片区），不带 `/api` 前缀、也不拆 envelope。
 
 import { connectorRequest } from './connector'
 
-/** 扫到的技能在索引里的样子。`adopted` 才是「可以被队友勾上」的那一档。 */
+/** 扫到的技能在索引里的样子。索引里的技能可以直接勾给队友。 */
 export interface MachineSkill {
   name: string
   description: string
@@ -62,42 +61,31 @@ export function setMachineSkillRoots(
   })
 }
 
-/** 落盘前给人看的那份清单：每颗技能，和会跟着写进去的文件名（含 SKILL.md）。 */
+/** 落盘前给人看的清单：每颗技能，以及会跟着写进去的文件名（含 SKILL.md）。 */
 export interface InstallPlanItem {
   name: string
   description: string
   files: string[]
 }
 
-/** 看一眼：读回来、按规范检验过，但一个字节都没写。 */
-export interface WebSkillLook {
-  landed: false
-  plan: InstallPlanItem[]
-}
-
-/** 确认后落完盘，重扫一遍的结果。 */
+/** 安装并重扫后的结果。 */
 export interface WebSkillLanded extends MachineScan {
   landed: true
   plan: InstallPlanItem[]
 }
 
-export type WebSkillOutcome = WebSkillLook | WebSkillLanded
-
 /** 把一份网上的技能取到这台机器上：平台先按 agentskills.io 规范检验，过了才落盘。
  *  `kind: 'plugin'` 时地址是一个插件，它带的每颗技能都会各落一份。
- *
- *  默认**只取不落**（`confirm: false`）：答复是「会写什么」，人看过再带 `confirm: true`
- *  来一次，那一刻才真写盘 —— 落下去的是别人写的脚本，要拿本人的权限在这台机器上跑。 */
+ *  验证通过后直接安装；不再弹出安装确认框。 */
 export function fetchMachineSkill(
   deviceId: string,
   url: string,
   projectId?: string | null,
-  kind: 'skill' | 'plugin' = 'skill',
-  confirm = false
-): Promise<WebSkillOutcome> {
+  kind: 'skill' | 'plugin' = 'skill'
+): Promise<WebSkillLanded> {
   return connectorRequest(`/my/devices/${encodeURIComponent(deviceId)}/skills/web`, {
     method: 'POST',
-    body: JSON.stringify({ url, kind, project_id: projectId ?? null, confirm }),
+    body: JSON.stringify({ url, kind, project_id: projectId ?? null, confirm: true }),
   })
 }
 

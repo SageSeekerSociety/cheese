@@ -69,16 +69,29 @@ def test_a_room_finds_a_project_skill_and_reads_it_whole(client):
 
 def test_the_platforms_shipped_skills_are_installed_for_every_room(client):
     """发货技能随每个会话在，搜索就该找得到——它不挂在项目上。"""
-    _, topic, _ = _room(client)
+    project_id, topic, headers = _room(client)
+    agent = room_agent_headers(client, topic)
 
-    found = client.post(
-        SEARCH,
-        json={"topic": topic, "query": "交付工作"},
-        headers=room_agent_headers(client, topic),
+    # They are installed for every agent even though none were manually added
+    # to its per-agent configuration.
+    catalog = client.get(
+        f"/projects/{project_id}/skill-catalog",
+        headers=headers,
     )
-    assert found.status_code == 200, found.text
-    names = {s["name"] for s in found.json()["data"]["skills"]}
-    assert "cheese" in names
+    assert catalog.status_code == 200, catalog.text
+    expected = {skill["name"] for skill in catalog.json()["data"]["data"]}
+    assert len(expected) == 6
+
+    found_names = set()
+    for name in expected:
+        found = client.post(
+            SEARCH,
+            json={"topic": topic, "query": name},
+            headers=agent,
+        )
+        assert found.status_code == 200, found.text
+        found_names.update(s["name"] for s in found.json()["data"]["skills"])
+    assert found_names == expected
 
 
 def test_a_teammate_draft_is_not_installed_and_so_is_not_returned(client):

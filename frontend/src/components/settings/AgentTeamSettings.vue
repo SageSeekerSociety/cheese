@@ -15,7 +15,7 @@ import type { ProjectAgent } from '@/cx_types'
 import { computed, ref, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
-import { MAX_CARRIED, useAgentSkills } from '@/composables/useAgentSkills'
+import { useAgentSkills } from '@/composables/useAgentSkills'
 import { useProjectAgents } from '@/composables/useProjectAgents'
 
 import AgentEditorDialog from '@/components/agents/AgentEditorDialog.vue'
@@ -256,20 +256,13 @@ async function confirmDeactivate() {
       :device-id="skills.deviceId.value"
       :market="skills.market.value"
       :market-loading="skills.marketLoading.value"
-      :pending="skills.pendingInstall.value"
       :editing-blocked="skills.editingBlocked.value"
       :editing-by="skills.editingBy.value"
-      :max="MAX_CARRIED"
       :loading="skills.loading.value"
       :scanning="skills.scanning.value"
       :saving="skills.saving.value"
       :can-manage="skills.canManage.value"
-      @add="skills.adoptSkill"
-      @remove="skills.removeSkill"
-      @fetch-web="(url) => void skills.fetchWebSkill(url)"
       @install="(payload) => void skills.fetchWebSkill(payload.url, payload.kind)"
-      @confirm-install="() => void skills.confirmWebSkill()"
-      @cancel-install="skills.cancelWebSkill"
     />
 
     <ConfirmDialog
