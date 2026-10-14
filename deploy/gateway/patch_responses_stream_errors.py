@@ -8,9 +8,11 @@ no content and no stop, which Claude Code reports as "Stream ended without
 receiving any events" and does not retry. A clean HTTP EOF without a terminal
 Responses event has the same outcome.
 
-Emit a retryable `overloaded_error` for either. Claude Code retries a streamed
-error only once the text block it was reading is closed, so a text block the
-failure left open is closed with `content_block_stop` first. An open `tool_use`
+Emit a retryable streamed error for either: clean EOF uses
+`overloaded_error`, while an upstream exception keeps its mapped status type
+(or defaults to `api_error`). Claude Code retries a streamed error only once
+the text block it was reading is closed, so a text block the failure left open
+is closed with `content_block_stop` first. An open `tool_use`
 block is never closed, because the caller would execute it instead of retrying;
 content is never replayed, and no successful `message_stop` is manufactured.
 """
