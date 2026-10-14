@@ -125,9 +125,7 @@ class TaskRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def listed_by_ids(
-        self, task_ids: Collection[uuid.UUID]
-    ) -> list[ListedTask]:
+    async def listed_by_ids(self, task_ids: Collection[uuid.UUID]) -> list[ListedTask]:
         """These threads as a listing draws them, each with its last word's time.
 
         One query for what used to be two: the rows a listing reads

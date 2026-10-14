@@ -423,7 +423,9 @@ async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factor
         # Who spoke since the question is one question, not two: the same read
         # answers it for the agents and for the participants, split in Python on
         # the shape of the author's handle.
-        reads = [(sql, params) for sql, params in seen if "max(blocks.created_at)" in sql]
+        reads = [
+            (sql, params) for sql, params in seen if "max(blocks.created_at)" in sql
+        ]
         assert len(reads) == 1, seen
         for sql, params in reads:
             # The bound is the row's own question, carried in alongside the place

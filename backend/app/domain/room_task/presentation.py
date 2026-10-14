@@ -52,8 +52,9 @@ from app.domain.room_task.binding import catalog_id, resolve
 # 的是这条活绑了什么模型（`Task.model` / `Task.effort`），标 `Task` 才读得出来。
 # `facts_for_task` 不在此列：`room_task` 已经有了自己的窄读输出
 # （`repositories.ListedTask`），所以那一格走结构契约（`TaskSignals` / `TaskRow`），
-# 和卡那一格（`CardSignals` / `CardRow`）一样。房间那一行 (`Topic`) 也是结构契约
-# （`TopicSignals`）——只看它被读到的几位。
+# 和卡那一格（`CardSignals` / `CardRow`）一样。房间那一格也一样：`topic` 窄读出口
+# 交出来的纯值走 `TopicSignals`，`Topic` 那一行走 `TopicRow` —— 各只看它被读到的
+# 那几位。
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import TopicStatus
 
@@ -163,11 +164,38 @@ class TaskRow(Protocol):
 
 
 class TopicSignals(Protocol):
-    """一个房间**行**能被折成 `RoomFacts` 的几位 —— `facts_for_room` 只读这三位。
+    """一个房间**摆上清单**能被折成 `RoomFacts` 的三位 —— **纯值**那一份契约。
 
-    `facts_for_room` 的两个调用方手上都是 ORM 那一行（`Topic`），所以和 `CardRow`
-    一样按模型的原样声明 `Mapped[...]`，pyright 才比得过。`status` 同样收成
-    `Mapped[Any]`：`TopicStatus` 的名字在 `topic.models` 里，而这一层只读它做词比较
+    和 `CardSignals` / `TaskSignals` 同一条理由、同一份写法：`facts_for_room` 的两个
+    调用方，领域内的人手上是 `Topic` 那一行（ORM 行），HTTP 路由手上是 `topic` 窄读
+    出口交出来的纯值（`topic.repositories.ListedRoom`）——「待我处理」把几百个频道收窄
+    到真正要摆的那几个之后，读的是标题、状态、日期这几位，整行里的环境文档和简介它
+    一个字不读。ORM 行的属性是 `Mapped` 描述符、纯值的属性是普通标量，所以在 pyright
+    那里是**两份**契约：这里是纯值那一份，那一行走 `TopicRow`。
+
+    声明成 property 是有意的（同 `CardSignals`）：pyright 对只读属性按协变比对，
+    所以 `ListedRoom` 上的普通字段也接得住。
+
+    三位正好是 `facts_for_room` 读的那三位，多一个就多一条「对方必须记得改」的绳子，
+    少一个那一格就折不出来。
+    """
+
+    @property
+    def id(self) -> uuid.UUID: ...
+
+    @property
+    def status(self) -> Any: ...
+
+    @property
+    def accepted_at(self) -> datetime | None: ...
+
+
+class TopicRow(Protocol):
+    """`Topic` 那一行的形状 —— **ORM 行**那一份契约，按模型的原样声明 `Mapped`。
+
+    同 `CardRow`：pyright 拿 `Topic` 的类成员来比协议的类成员时，属性是 `Mapped`
+    描述符，普通的 `status: str` 接不住它。`status` 同样收成 `Mapped[Any]`：
+    `TopicStatus` 的名字在 `topic.models` 里，而这一层只读它做词比较
     （`room_presentation` 里 `facts.status == TopicStatus.archived`），不必把那一列
     的枚举类型拖进来。
     """
@@ -389,12 +417,20 @@ def facts_for_task(
 
 
 def facts_for_room(
-    topic: TopicSignals,
+    topic: TopicSignals | TopicRow,
     running_ids: set[uuid.UUID],
     card: CardSignals | CardRow | None = None,
     *,
     awaiting_answer: bool = False,
 ) -> RoomFacts:
+    """把一个房间折成这层要读的事实。
+
+    收两种形状是因为房间有两处来源：领域内的人手上是 `Topic` 那一行，HTTP 路由手上是
+    `topic` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查一行。这一
+    层只读 `id` / `status` / `accepted_at` 三位（`TopicSignals` / `TopicRow`），两种
+    形状都长得出来，所以折出来的 `RoomFacts` 一模一样（`tests/unit/test_presentation.py`
+    钉住了）。
+    """
     return RoomFacts(
         status=str(topic.status),
         running=topic.id in running_ids,

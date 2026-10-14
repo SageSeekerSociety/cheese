@@ -57,6 +57,15 @@
    `probe_query_split.py`），批数和并发数用 `PERF_BATCHES`、`PERF_CONCURRENCY`
    调（`probe_concurrency.py`）——没有哪个探针读全部三个。
 
+6. 改前改后各导一份响应，整份对一遍（改的是取数，答的得是同一份）：
+
+       cd <改前那棵树> && python scripts/perf-awaiting-me/dump_body.py --out /tmp/before.json
+       cd <改后那棵树> && python scripts/perf-awaiting-me/dump_body.py --out /tmp/after.json
+       diff /tmp/before.json /tmp/after.json
+
+   它跑的是自己所在那棵树的代码，所以两棵树各跑一次、比这两份文件。差别只应该
+   出现在时间戳相同的两条之间——那两条的先后不保证。
+
 ## 读数的坑
 
 - `per_round` 里每段的中位数和下面的入口明细要对得上。明细是按「每个入口自己的

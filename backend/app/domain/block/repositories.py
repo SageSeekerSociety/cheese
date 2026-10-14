@@ -185,15 +185,6 @@ class BlockRepository:
         stmt = select(Block).where(Block.id.in_(list(block_ids)))
         return list((await self._session.scalars(stmt)).all())
 
-    async def contents(self, block_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
-        """{block id: 正文} —— 一次查完。"""
-        if not block_ids:
-            return {}
-        rows = await self._session.execute(
-            select(Block.id, Block.content).where(Block.id.in_(block_ids))
-        )
-        return {block_id: content or "" for block_id, content in rows.all()}
-
     async def client_delivery(
         self, conversation_id: uuid.UUID, *, author: str, client_id: str
     ) -> list[Block]:
@@ -616,9 +607,7 @@ class BlockRepository:
             .render_derived()
         )
         said_since = (
-            select(
-                Block.author.label("author"), func.max(Block.created_at).label("at")
-            )
+            select(Block.author.label("author"), func.max(Block.created_at).label("at"))
             .where(
                 place_column == asked_places.c.place,
                 Block.created_at > asked_places.c.asked_at,

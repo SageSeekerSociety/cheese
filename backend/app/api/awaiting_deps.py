@@ -201,7 +201,7 @@ async def waiting_items(
         at_room = room_of_conversation.get(alert.conversation_id)
         if at_room is not None:
             render_rooms.add(at_room)
-    rooms = {t.id: t for t in await TopicRepository(db).list_by_ids(render_rooms)}
+    rooms = {t.id: t for t in await TopicRepository(db).listed_by_ids(render_rooms)}
     # 频道这一格按原来的次序走（`topic_ids` 是查出来的顺序），只是现在只装得下真
     # 会摆上来的那几个。
     topics = [rooms[tid] for tid in topic_ids if tid in rooms]
