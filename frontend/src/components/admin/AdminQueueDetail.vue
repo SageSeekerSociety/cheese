@@ -291,16 +291,28 @@ function onSecurity(v: unknown) {
           <!-- 一行事实挤在一个 `<span>` 里（不是一堆 flex 项）：截断要生效，被截的必须
                是**一行文字**，而 flex 容器的文字会变成匿名 flex 项，`text-overflow`
                在它身上不生效。 -->
-          <!-- This line is a single text run: for `text-overflow` to work the clipped
-               thing must be one run of text (see the comment above). So it prints the
-               server's display name rather than an avatar chip — inserting a flex item
-               would stop `text-overflow` from applying to the whole line. The face
-               lives in the facts column. -->
+          <!-- The submitter is a person, so it carries the same face + name chip it
+               carries everywhere else. Only the author gets a chip here: the rest of the
+               line ("time · supports · comments · assign alice") stays one run of text,
+               because for `text-overflow` to work the clipped thing must be one run of
+               text (see the comment above) — a second chip mid-sentence would break
+               that, and the assignee already has its face right below in the facts
+               column. -->
           <span v-if="item" class="qdet__main-who">
-            {{ item.author_name || item.author_handle }} · {{ relTime(item.created_at) }} ·
-            {{ t('feedback.queue.supports', { n: item.supports }) }} · {{ t('feedback.queueDetail.comments') }}
-            {{ item.comments }} · {{ t('feedback.queueDetail.assign') }}
-            {{ item.assignee_name || item.assignee_handle || t('feedback.queueDetail.unassigned') }}
+            <IdentityView
+              class="qdet__who-face"
+              :handle="item.author_handle"
+              :name="item.author_name"
+              :avatar-id="item.author_avatar_id"
+              :agent="item.author_is_agent"
+              :size="20"
+            />
+            <span class="qdet__who-run">
+              · {{ relTime(item.created_at) }} · {{ t('feedback.queue.supports', { n: item.supports }) }} ·
+              {{ t('feedback.queueDetail.comments') }} {{ item.comments }} ·
+              {{ t('feedback.queueDetail.assign') }}
+              {{ item.assignee_name || item.assignee_handle || t('feedback.queueDetail.unassigned') }}
+            </span>
           </span>
         </div>
 
@@ -722,12 +734,27 @@ function onSecurity(v: unknown) {
   border-bottom: 1px solid var(--line-2);
 }
 
+/* 窄屏时右栏那一行整块对齐到一个左边界，读起来是一句而不是一列格子。作者那颗身份
+   chip 不参与截断（名字再长也画得下），被截的是它后面那一整句 —— 也就是
+   `.qdet__who-run` 这一个文字流，`text-overflow` 才落得上（换成两个 flex 项就没有
+   一条「整行文字」可截了）。 */
 .qdet__main-who {
-  /* 窄屏时右栏那一行整块对齐到一个左边界，读起来是一句而不是一列格子。 */
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   color: var(--muted);
   font-size: 13px;
   line-height: var(--lh-13);
+}
+
+.qdet__who-face {
+  flex: 0 0 auto;
+}
+
+.qdet__who-run {
+  min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }

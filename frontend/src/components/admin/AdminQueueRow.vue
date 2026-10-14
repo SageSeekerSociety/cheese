@@ -116,12 +116,20 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
         </template>
         <span>{{ item.display_id }}</span>
         <span class="qrow__sep" aria-hidden="true">·</span>
-        <!-- This cell is a run of same-size same-colour readings (priority, status,
-             id, author, time…); a face here would read as one person singled out. So
-             print the display name — the server provides `author_name` on the card,
-             falling back to the handle. The author's face and name live in the detail
-             view's facts cell (`AdminQueueDetail`). -->
-        <span>{{ item.author_name || item.author_handle }}</span>
+        <!-- The submitter is a person, not one more reading: priority, status, id and
+             time are facts about the card, but "who filed it" is the same question the
+             assignee cell twenty lines down already answers with a face. So the author
+             carries the same face + display name as every other identity entry on the
+             platform. The name, avatar and agent flag all come from the card the server
+             sends (`author_name` / `author_avatar_id` / `author_is_agent`) — nothing is
+             guessed from what the handle looks like. -->
+        <IdentityView
+          :handle="item.author_handle"
+          :name="item.author_name"
+          :avatar-id="item.author_avatar_id"
+          :agent="item.author_is_agent"
+          :size="18"
+        />
         <span class="qrow__sep" aria-hidden="true">·</span>
         <span>{{ createdAt }}</span>
         <span class="qrow__sep" aria-hidden="true">·</span>
@@ -243,6 +251,14 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   font-size: 12px;
   line-height: var(--lh-12);
   white-space: nowrap;
+}
+
+/* 作者的身份 chip 画的是公共那一个（`IdentityView`），它的名字行用的是 `--lh-14`
+   （20px）。这一行是 meta 行盒，高 `--lh-12`（18px）—— 61px 就是照这个数算出来的。
+   chip 比行盒高 2px 会把整行顶高，所以在这里把它拉回 meta 的行高；这一处只压高度，
+   其余（脸、降级、队友判断）都还是公共那一份。 */
+.qrow__meta :deep(.identity-view__text) {
+  line-height: var(--lh-12);
 }
 
 .qrow__word {

@@ -102,6 +102,26 @@ describe('管理端反馈详情', () => {
     expect(await findByRole('combobox', { name: /指派给/ })).toBeTruthy()
   })
 
+  // 右栏顶上那一行是「谁提的 · 时间 · 支持 · 评论 · 指派给谁」。作者是个人，所以那一行
+  // 也得画脸 —— 但只有作者画 chip：后面那一整句仍是一条文字流（`text-overflow` 才有东西
+  // 可截），指派那一张脸就在下面的事实格里。
+  it('摘要那一行的作者画的是脸 + 昵称，后面那整句还是一条文字流', () => {
+    const { container } = mountDetail({
+      item: { ...ROW, author_name: 'Max', author_avatar_id: 7 },
+      loading: false,
+      error: null,
+      triageOpen: false,
+    })
+
+    const who = container.querySelector('.qdet__main-who')
+    expect(who, '摘要那一行没画出来').not.toBeNull()
+    const chip = who!.querySelector('.identity-view')
+    expect(chip, '摘要那行的作者没画身份').not.toBeNull()
+    expect(chip!.querySelector('.identity-view__name')?.textContent).toBe('Max')
+    expect(chip!.querySelector('img')?.getAttribute('src')).toContain('/avatars/7')
+    expect(who!.querySelector('.qdet__who-run')?.textContent).toContain('指派')
+  })
+
   it('还在拉的时候画骨架，不画「加载失败」', () => {
     const { container, queryByText } = mountDetail({
       item: null,
