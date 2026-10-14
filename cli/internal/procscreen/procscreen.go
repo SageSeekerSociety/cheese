@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ErrNoView is what attaching a viewer answers: the program has no terminal.
@@ -173,6 +174,30 @@ func (m *Manager) Identities(owner string) (map[string]string, error) {
 		}
 	}
 	return identities, nil
+}
+
+// Exited names the screens owner launched whose program is no longer running
+// and has written nothing to its log for at least `after`, as of now. The log
+// is the only clock a process leaves here: its last write is no later than
+// its exit, so a screen is never counted before it has been quiet that long.
+func (m *Manager) Exited(owner string, after time.Duration, now time.Time) ([]string, error) {
+	identities, err := m.Identities(owner)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for name := range identities {
+		rec, ok := m.read(name)
+		if !ok || m.sys.running(rec.PID, rec.Started) {
+			continue
+		}
+		info, err := os.Stat(m.Log(name))
+		if err != nil || now.Sub(info.ModTime()) < after {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 // EndAll ends every screen on this machine, for disconnecting it.
