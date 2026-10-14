@@ -103,9 +103,11 @@ import PanelDocView from '@/components/panels/PanelDocView.vue'
 import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
+import DocEditLine from '@/components/room/DocEditLine.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import { type DocLine, docLineOf } from '@/lib/docEditLine'
 import { platformNotice } from '@/lib/platformNotice'
 import AnalyticsNavigationTabs from '@/views/spaces/detail/analytics/components/AnalyticsNavigationTabs.vue'
 import LearningQuoteItem from '@/views/spaces/detail/analytics/components/LearningQuoteItem.vue'
@@ -180,6 +182,14 @@ const LIBRARY_DOC_EDITED: Block = {
       { old: '课程邮箱', new: '课程平台' },
     ],
   },
+}
+
+/** 同一行，不属于哪一轮（更早留下的、或者人改的）。 */
+const LIBRARY_DOC_ALONE: Block = { ...LIBRARY_DOC_EDITED, id: 'catalog-library-doc-alone', turn_id: null }
+
+/** 那一行要画的东西，名字按房间里的叫法。 */
+function docLine(block: Block): DocLine {
+  return docLineOf(block, platformNotice(block), (handle) => ROOM_REFS.mentionNames[handle] || handle)!
 }
 
 /** 工作面板那几格（产品那张表，见 `panelTabList`），预览站不重复写一份。 */
@@ -346,6 +356,28 @@ export const CATALOG: CatalogEntry[] = [
         note: '还没落库的那一条淡一档，形状不变；送失败时带「重试」和「编辑」。',
         props: roomMessageProps(WANG_CLOSING, { mine: true, outgoing: { failed: true } }),
         expect: '好了，谢谢',
+      },
+    ],
+  },
+  {
+    id: 'doc-edit-line',
+    title: 'DocEditLine',
+    about: 'AI 队友改了一份文档留下的那一行：在它那一轮里不再写名字，不在哪一轮里时名字是普通文字。',
+    file: 'src/components/room/DocEditLine.vue',
+    component: DocEditLine,
+    needs: ['vuetify'],
+    states: [
+      {
+        name: '在一轮里',
+        note: '前面一枚文档记号；点这一行打开文档，「查看改动」标出改过的几处。',
+        props: { block: LIBRARY_DOC_EDITED, line: docLine(LIBRARY_DOC_EDITED), inTurn: true },
+        expect: '3 处',
+      },
+      {
+        name: '不在哪一轮里',
+        note: '谁做的、谁让做的都写成普通的名字。',
+        props: { block: LIBRARY_DOC_ALONE, line: docLine(LIBRARY_DOC_ALONE), inTurn: false },
+        expect: '改了《第一周课件》',
       },
     ],
   },
