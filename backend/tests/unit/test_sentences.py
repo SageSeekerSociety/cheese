@@ -70,7 +70,7 @@ def _placeholders(template: str) -> set[str]:
 _REPAIR_CATALOG = (
     "修法：后端与前端共用一份目录。每个键要同时存在于 frontend/src/i18n/messages/ "
     "每个 locale（zh-CN 与 en）下的 roomNotice.json（后端在房间里说的句子）或 "
-    "apiError/（后端拒绝时说的句子，按说出这句话的后端模块分片，文件名不进键名）；"
+    "apiError/（后端拒绝时说的句子，按说出这句话的后端模块分片，文件名不是键的一部分）；"
     "两份 locale 的 {占位符} 集合必须一致，"
     "en 不能有 zh-CN 没有的键，值也不能为空。"
     "规则：docs/i18n.md 第 2 节（目录与命名空间）、第 4 节（缺翻译怎么办）、"

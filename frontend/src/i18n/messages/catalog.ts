@@ -8,7 +8,8 @@
 /** 一棵消息子树：叶子是字符串，枝干还是子树。 */
 export type Messages = { [key: string]: string | Messages }
 
-// 平表命名空间：文件名只表示「这句话是哪个后端模块说的」，不进键名。apiError 的键
+// 平表命名空间：文件名只表示「这句话是哪个后端模块说的」，不是键的一部分（同一句话
+// 换到别的分片，它的键一个字不用改）。apiError 的键
 // 就是错误码本身（后端 `say("键")`、前端 `apiError.<键>`），所以它在磁盘上分成许多
 // 份，读出来仍是一张平表。见 `docs/i18n.md` 第 2 节。
 const FLAT: ReadonlySet<string> = new Set(['apiError'])
