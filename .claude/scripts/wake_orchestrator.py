@@ -8,14 +8,20 @@
   OKCHEESE_PASS=... python3 .claude/scripts/wake_orchestrator.py --dry-run <标签> <正文>
   python3 .claude/scripts/wake_orchestrator.py --self-test      (offline: no token, no network)
 
-It logs in as the dev account, reads the dispatcher task's current seat, posts
+It logs in as the dev account, reads the seat the dispatcher task is on, posts
 `<@seat> 【tag】body` there with a request_id, and reads the message back. The exit
 status says which step failed, so a caller can branch on it:
 
   0 posted and read back · 2 the command line or the environment is wrong ·
   3 the platform refused a call · 4 posted but the read-back did not show it ·
-  5 the dispatcher's topic has no seat. Exit 3 on the posting call does not prove the
-  message is absent: an answer lost after the platform stored it looks the same.
+  5 no seat to name. Exit 3 on the posting call does not prove the message is absent:
+  an answer lost after the platform stored it looks the same.
+
+The dispatcher's task row neither names a seat nor leaves it empty for long: `None` there
+means the platform hands the task to the project's default teammate, so a seat is still
+being awoken. The room's roster is read for it then — see `seat_of` for which roster it
+is and when this stands down. Exit 5 only fires when neither the row nor the roster names
+exactly one teammate, i.e. when the platform's own choice cannot be told from here.
 
 The tag is one of the four labels 《总调度工作流 v2》§8 gives a line — 递卡, 交付, 待决,
 队列 — and the body follows that section's format for it, e.g. 递卡's
@@ -84,8 +90,22 @@ def login(user, password):
 
 
 def seat_of(topic, token):
-    """The handle of the seat the task is on right now, or None when it has none."""
-    return unwrap(call("GET", f"/topics/{topic}/task", token)).get("agent_handle")
+    """The handle of the seat to mention on this line, or None when none can be named.
+
+    A task row that names a seat is used as it stands. A row with no seat of its own
+    (`agent_handle` is `None`, which the platform reads as "the project's default
+    teammate") still has someone to wake, so the room's roster is read next: exactly one
+    AI teammate in it is the seat the platform hands such a task to. With none, or with
+    several, which one the platform would pick is not something this can tell — the
+    project's default and the room's own answer can differ — so it names no seat rather
+    than guess."""
+    given = unwrap(call("GET", f"/topics/{topic}/task", token)).get("agent_handle")
+    if given:
+        return given
+    rows = unwrap(call("GET", f"/topics/{topic}/members", token))
+    seats = [r.get("member_handle") for r in (rows if isinstance(rows, list) else [])
+             if (r or {}).get("agent")]
+    return seats[0] if len(seats) == 1 else None
 
 
 def wake_line(seat, tag, body, as_name=""):
@@ -158,9 +178,11 @@ def self_test():
     still reads as one line of output. The exit-code cases drive `main` with `call` stubbed
     out, so the codes the docstring promises are covered without a network."""
 
-    def drive(argv, password="pw", seat="cheese-seat", post=None, back=None):
+    def drive(argv, password="pw", seat="cheese-seat", roster=None, post=None, back=None):
         """(exit code, stderr, what the stub saw) for one run of `main`.
 
+        `roster` is what the room's member list answers with when the task names no seat
+        (`None` stands for the task row naming one, so the roster is not read at all).
         `post`/`back`, when they are exceptions, are raised by the stub in place of that
         call's answer, so a failure can be put on either call — or on both — offline."""
         stubbed = {"calls": []}
@@ -169,6 +191,8 @@ def self_test():
             stubbed["calls"].append(f"{method} {path}")
             if path.endswith("/users/auth/login"):
                 return {"data": {"accessToken": "tok"}}
+            if path.endswith("/members"):
+                return {"data": {"data": roster if roster is not None else [], "total": 0}}
             if path.endswith("/task"):
                 return {"data": {"agent_handle": seat}}
             if method == "POST":
@@ -215,9 +239,25 @@ def self_test():
         rc, err, _ = drive(["递卡", "正文", "--request-id", rid], back=[])
         return rc, "did not show it" in err
 
-    def no_seat():
-        rc, err, _ = drive(["递卡", "正文"], seat=None)
-        return rc, "no seat" in err
+    def roster_only():
+        """No seat on the row, one teammate on the roster: that one is who to mention."""
+        rc, err, seen = drive(["递卡", "正文"], seat=None,
+                              roster=[{"member_handle": "cheese-abc", "agent": True}])
+        return rc, "cheese-abc" in seen.get("body", {}).get("content", "")
+
+    def roster_several():
+        """Two teammates and no seat on the row: the platform's own choice is not
+        something this can tell, so it stands down instead of guessing a name."""
+        rc, err, seen = drive(["递卡", "正文"], seat=None, roster=[
+            {"member_handle": "cheese-abc", "agent": True},
+            {"member_handle": "cheese-def", "agent": True},
+        ])
+        return rc, "body" in seen, "nothing to wake" in err
+
+    def no_seat_anywhere():
+        rc, err, _ = drive(["递卡", "正文"], seat=None,
+                           roster=[{"member_handle": "someone", "agent": False}])
+        return rc, "nothing to wake" in err
 
     def no_password():
         rc, err, _ = drive(["递卡", "正文"], password="")
@@ -243,7 +283,12 @@ def self_test():
          read_back_failed(), (4, True)),
         ("退出码：回读里没有这条 → 4",
          read_back_did_not_show_it(), (4, True)),
-        ("退出码：话题没有座位 → 5", no_seat(), (5, True)),
+        ("座位：任务行没写座位、名册上只有一个队友 → 点名它，照发",
+         roster_only(), (0, True)),
+        ("座位：名册上有好几个队友、任务行也没写 → 不猜，说没有可叫的",
+         roster_several(), (5, False, True)),
+        ("退出码：哪一处都点不出一个队友 → 5",
+         no_seat_anywhere(), (5, True)),
         ("退出码：环境里没有密码 → 2", no_password(), (2, True)),
         ("行程：--seat 只打座位，不发消息", seat_only(), (0, "", False)),
         ("行程：--dry-run 只组消息，不发消息", dry_run(), (0, False)),
@@ -327,7 +372,8 @@ def main(argv):
         print(f"the platform refused a call: {e!r}", file=sys.stderr)
         return 3
     if not seat:
-        print(f"no seat on {TARGET}; nothing to wake", file=sys.stderr)
+        print(f"nothing to wake on {TARGET}: the task names no seat and the room's "
+              f"roster does not name exactly one teammate", file=sys.stderr)
         return 5
     if "--seat" in flags:
         print(seat)
