@@ -473,3 +473,90 @@ const n = ref(6)
   await expect(page.locator('#out')).toHaveText('1');
   expect(errors).toEqual([]);
 });
+
+// A space's point is drawn by WebGL, not in the page; one at the middle of a
+// space whose ranges are symmetric shows at the middle of the drawing.
+async function dragFromMiddle(page: Page, dx: number, dy: number) {
+  const stage = (await page.locator('c-space .stage').boundingBox())!;
+  const [x, y] = [stage.x + stage.width / 2, stage.y + stage.height / 2];
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx, y + dy, { steps: 8 });
+  await page.mouse.up();
+}
+
+test('a point held to a surface in space moves along that surface, and stays inside the space', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const f = (x, y) => (x * y) / 2
+const p = ref([0, 0, 0])
+</script>
+<template>
+  <c-space :x="[-1, 1]" :y="[-1, 1]" :z="[-1, 1]"><c-point v-model="p" :on="f" /></c-space>
+  <p id="out">{{ p.join(' ') }}</p>
+</template>`
+  );
+  await dragFromMiddle(page, 2000, 600);
+  await expect(page.locator('#out')).not.toHaveText('0 0 0');
+  const [x, y, z] = (await page.locator('#out').textContent())!.split(' ').map(Number);
+  for (const c of [x, y]) expect(Math.abs(c)).toBeLessThanOrEqual(1);
+  expect(z).toBeCloseTo((x * y) / 2, 6);
+  expect(errors).toEqual([]);
+});
+
+test('a point dragged across a level plane of space keeps its height', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const p = ref([0, 0, 0.25])
+</script>
+<template>
+  <c-space :x="[-1, 1]" :y="[-1, 1]" :z="[-0.5, 1]"><c-point v-model="p" drag="xy" :snap="0.25" /></c-space>
+  <p id="out">{{ p.join(' ') }}</p>
+</template>`
+  );
+  await dragFromMiddle(page, 80, 40);
+  await expect(page.locator('#out')).not.toHaveText('0 0 0.25');
+  const [x, y, z] = (await page.locator('#out').textContent())!.split(' ').map(Number);
+  expect(z).toBe(0.25);
+  for (const c of [x, y]) expect(Math.abs(c / 0.25 - Math.round(c / 0.25))).toBeLessThan(1e-9);
+  expect(errors).toEqual([]);
+});
+
+test('a click on a solid in space reaches the element the app listens on', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const hits = ref(0)
+</script>
+<template>
+  <c-space :x="[-1, 1]" :y="[-1, 1]" :z="[-1, 1]" equal axes="none">
+    <c-sphere :center="[0, 0, 0]" :radius="0.6" @click="hits++" />
+  </c-space>
+  <p id="out">{{ hits }}</p>
+</template>`
+  );
+  const stage = (await page.locator('c-space .stage').boundingBox())!;
+  await page.mouse.click(stage.x + stage.width / 2, stage.y + stage.height / 2);
+  await expect(page.locator('#out')).toHaveText('1');
+  await page.mouse.click(stage.x + 4, stage.y + 4);
+  await expect(page.locator('#out')).toHaveText('1');
+  expect(errors).toEqual([]);
+});
+
+test('an element of space written wrongly is refused, with what to write instead', async ({ page }) => {
+  for (const [part, says] of [
+    ['<c-point :value="[1, 2]" />', 'c-point'],
+    ['<c-curve :f="(t) => t" />', 'c-curve'],
+    ['<c-group :rotate="0.5"><c-sphere /></c-group>', 'c-group'],
+  ]) {
+    const errors = await runApp(page, `<template><c-space>${part}</c-space><p>x</p></template>`);
+    await expect.poll(() => errors.join('\n'), part).toContain(says);
+  }
+  const outside = await runApp(page, `<template><c-surface :f="(x, y) => x" /><p>x</p></template>`);
+  await expect.poll(() => outside.join('\n')).toContain('c-space');
+});
