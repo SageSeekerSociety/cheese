@@ -16,13 +16,25 @@ if [ "${1:-}" = exec ] && [[ "$*" == *SigCgt* ]]; then
   exit 0
 fi
 
-# deploy/schema-map.py run in an image: the tables and columns its models map.
-# The release's (`compose … run … backend python -`) is APP_TIER_RELEASE_SCHEMA;
-# a running owner's (`exec -i <owner> python -`) is APP_TIER_OWNER_SCHEMA, and
-# the same as the release's unless a test sets it.
+# A script fed to `python -` in an image. deploy/migration-touches.py, run in the
+# release (`compose … run … backend python -`), answers APP_TIER_PENDING_TOUCHES:
+# `pending <revision>` and the tables and columns those migrations touch, nothing
+# pending unless a test sets it; APP_TIER_PENDING_TOUCHES_BROKEN=1 is a script
+# that died before answering. deploy/schema-map.py answers the tables and
+# columns an image maps: the release's APP_TIER_RELEASE_SCHEMA, a running
+# owner's (`exec -i <owner> python -`) APP_TIER_OWNER_SCHEMA, the same as the
+# release's unless a test sets it.
 if [[ " $* " == *" python - "* ]]; then
-  cat >/dev/null
+  script="$(cat)"
   [ -n "${APP_TIER_DOCKER_LOG:-}" ] && printf '%s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
+  if [[ "$script" == *'print("migration-touches ok")'* ]]; then
+    [ "${APP_TIER_PENDING_TOUCHES_BROKEN:-}" != 1 ] || exit 1
+    while IFS= read -r touched; do
+      [ -z "$touched" ] || printf 'migration-touches %s\n' "$touched"
+    done <<< "${APP_TIER_PENDING_TOUCHES:-}"
+    printf 'migration-touches ok\n'
+    exit 0
+  fi
   schema="${APP_TIER_RELEASE_SCHEMA-topics topics.id}"
   [ "${1:-}" != exec ] || schema="${APP_TIER_OWNER_SCHEMA-$schema}"
   for object in $schema; do printf 'schema-map %s\n' "$object"; done
@@ -286,6 +298,11 @@ if [ -n "${APP_TIER_IMAGE_STORE:-}" ] && [ "${1:-}" = image ] && \
 fi
 
 if [ "${1:-}" = image ] && [ "${2:-}" = inspect ]; then
+  # The image a release names, as the owner release compares it.
+  if [[ "$*" == *'{{.Id}}'* ]]; then
+    printf '%s\n' "${APP_TIER_RELEASE_IMAGE_ID:-sha256:release}"
+    exit 0
+  fi
   if [ "$scenario" = local_image_missing ] && \
     [ "${3:-}" = repo/frontend:testsha ]; then
     exit 1
@@ -308,6 +325,8 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
       [ -z "${APP_TIER_PREVIOUS_RELEASE:-}" ] || printf 'APP_RELEASE=%s\n' "$APP_TIER_PREVIOUS_RELEASE"
       ;;
     *State.Running*) printf 'true\n' ;;
+    # The image a running container was created from.
+    *'{{.Image}}'*) printf '%s\n' "${APP_TIER_RUNNING_IMAGE:-sha256:running}" ;;
   esac
   exit 0
 fi

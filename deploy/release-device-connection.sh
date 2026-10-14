@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Release path for the stable device WebSocket owner. Replacing this service
-# disconnects links, so an app deploy calls it only when its migrations would
-# drop schema the owner's image still maps (deploy-docker.sh,
-# `hold_owners_behind_schema`); otherwise it is dispatched on its own.
+# disconnects links, so an app deploy calls it only when its migrations drop,
+# rename or alter schema the owner's image maps (deploy-docker.sh,
+# `hold_owners_behind_schema`); otherwise it is dispatched on its own. A
+# dispatched release of the image a healthy owner already runs leaves it alone.
 #
 # The optional step splits the release around that deploy's migrations:
 #   all       drain, then recreate (the default)
@@ -80,6 +81,19 @@ if [ "$STEP" != recreate ]; then
     docker compose "${compose_args[@]}" -p "$PROJECT" pull device-connection
   else
     docker image inspect "$DEVICE_CONNECTION_IMAGE" >/dev/null
+  fi
+  # Replacing an owner with the image it already runs changes nothing it
+  # serves and still closes every link it holds. Only a healthy one is kept:
+  # recreating is also how a wedged owner on the same image is restarted.
+  if [ "$STEP" = all ]; then
+    running="$(docker compose "${compose_args[@]}" -p "$PROJECT" ps -q device-connection 2>/dev/null | head -n 1 || true)"
+    running_image="$([ -z "$running" ] || docker inspect --format '{{.Image}}' "$running" 2>/dev/null || true)"
+    release_image="$(docker image inspect --format '{{.Id}}' "$DEVICE_CONNECTION_IMAGE" 2>/dev/null || true)"
+    if [ -n "$running_image" ] && [ "$running_image" = "$release_image" ] \
+      && curl -fsS -m 3 "$owner_url/healthz" >/dev/null 2>&1; then
+      echo "device connection owner already runs $DEVICE_CONNECTION_IMAGE ($release_image) and is healthy; nothing to release"
+      exit 0
+    fi
   fi
   drain_attempts=180
   drain_interval=0.25

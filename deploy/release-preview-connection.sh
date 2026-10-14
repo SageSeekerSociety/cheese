@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Release path for the stable preview owner (machine preview tunnels and
 # preview content hosts). Replacing this service drops every live preview
-# tunnel, so an app deploy calls it only when its migrations would drop schema
-# the owner's image still maps (deploy-docker.sh, `hold_owners_behind_schema`);
-# otherwise it is released on its own, exactly like the device connection owner.
+# tunnel, so an app deploy calls it only when its migrations drop, rename or
+# alter schema the owner's image maps (deploy-docker.sh,
+# `hold_owners_behind_schema`); otherwise it is released on its own, exactly
+# like the device connection owner, and a release of the image a healthy owner
+# already runs leaves it alone.
 #
 # Unlike the device connection owner this process has NO drain endpoint. It does
 # not hold executor calls that must finish, and a dropped preview tunnel is
@@ -47,6 +49,17 @@ if [ "${DEPLOY_APP_IMAGE_SOURCE:-registry}" = registry ]; then
   docker compose "${compose_args[@]}" -p "$PROJECT" pull preview-connection
 else
   docker image inspect "$PREVIEW_CONNECTION_IMAGE" >/dev/null
+fi
+
+# Same reasoning as the device owner's release: the image it already runs
+# changes nothing and still drops every tunnel. A wedged owner is replaced.
+running="$(docker compose "${compose_args[@]}" -p "$PROJECT" ps -q preview-connection 2>/dev/null | head -n 1 || true)"
+running_image="$([ -z "$running" ] || docker inspect --format '{{.Image}}' "$running" 2>/dev/null || true)"
+release_image="$(docker image inspect --format '{{.Id}}' "$PREVIEW_CONNECTION_IMAGE" 2>/dev/null || true)"
+if [ -n "$running_image" ] && [ "$running_image" = "$release_image" ] \
+  && curl -fsS -m 3 "http://127.0.0.1:${PREVIEW_CONNECTION_PORT:-18087}/healthz" >/dev/null 2>&1; then
+  echo "preview connection owner already runs $PREVIEW_CONNECTION_IMAGE ($release_image) and is healthy; nothing to release"
+  exit 0
 fi
 
 docker compose "${compose_args[@]}" -p "$PROJECT" up -d --no-deps --force-recreate preview-connection

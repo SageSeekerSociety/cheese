@@ -144,16 +144,18 @@ preview_connection_running() {
 # Keeping every owner query column-limited (app/domain/device/owner_reads.py)
 # had not prevented it.
 #
-# So the deploy compares what each running owner's image maps with what this
-# release's image maps. A migration only drops what the release before it no
-# longer mapped (.claude/scripts/check-migration-safety.py), so anything the
-# owner maps and this release does not is schema the migrations may take from
-# under it. Such an owner is released in this deploy: the device owner is
-# drained before the migrations, so its callers wait and retry rather than fail,
-# and both are recreated on this release's image after them. Not before: the
-# new image may need what the migrations add.
+# So before migrating, the deploy reads what the pending migrations drop,
+# rename or alter (deploy/migration-touches.py, run in this release's image
+# against the database) and what each running owner's image maps
+# (deploy/schema-map.py, run in the owner). An owner is released in this deploy
+# only when the two meet: the device owner is drained before the migrations, so
+# its callers wait and retry rather than fail, and both are recreated on this
+# release's image after them. Not before: the new image may need what the
+# migrations add. A release that only stops mapping a column (the first half of
+# a drop, .claude/rules/migrations.md) leaves the owners running; the deploy
+# that carries the drop releases whichever owner still maps it.
 SCHEMA_HELD_OWNERS=""
-RELEASE_SCHEMA_MAP=""
+PENDING_TOUCHES=""
 
 # schema_map <command…>: run deploy/schema-map.py in an image, one table or
 # table.column per line.
@@ -161,15 +163,25 @@ schema_map() {
   "$@" python - < "$HERE/schema-map.py" | sed -n 's/^schema-map //p' | LC_ALL=C sort -u
 }
 
-read_release_schema_map() {
-  [ -z "$RELEASE_SCHEMA_MAP" ] || return 0
-  RELEASE_SCHEMA_MAP="$(schema_map dc run --rm --no-deps -T backend || true)"
-  [ -n "$RELEASE_SCHEMA_MAP" ] \
-    || fail "could not read the schema this release's models map; nothing was migrated"
+# What the pending migrations touch, one table, table.column or * per line, and
+# a `pending <revision>` line for each of them. An answer that did not finish
+# is read as touching everything: unreadable is not proof that nothing moves.
+read_pending_touches() {
+  local answer
+  answer="$(dc run --rm --no-deps -T backend python - < "$HERE/migration-touches.py" \
+    | sed -n 's/^migration-touches //p' || true)"
+  if [ "$(printf '%s\n' "$answer" | tail -n 1)" != ok ]; then
+    log "WARNING: could not read what the pending migrations change; treating them as touching every table"
+    answer="pending (unreadable)
+*
+ok"
+  fi
+  PENDING_TOUCHES="$(printf '%s\n' "$answer" | sed '$d')"
 }
 
-# owner_schema_behind <container>: what the owner maps and this release does not.
-owner_schema_behind() {
+# owner_schema_touched <container>: what the owner maps that the pending
+# migrations touch.
+owner_schema_touched() {
   local owner_map
   owner_map="$(schema_map docker exec -i "$1" || true)"
   if [ -z "$owner_map" ]; then
@@ -177,18 +189,31 @@ owner_schema_behind() {
     echo "(its schema map could not be read)"
     return
   fi
-  LC_ALL=C comm -23 <(printf '%s\n' "$owner_map") <(printf '%s\n' "$RELEASE_SCHEMA_MAP")
+  if printf '%s\n' "$PENDING_TOUCHES" | grep -Fqx '*'; then
+    echo "(a pending migration whose changes could not be read)"
+    return
+  fi
+  printf '%s\n' "$owner_map" | awk -v touched="$PENDING_TOUCHES" '
+    BEGIN { n = split(touched, items, "\n"); for (i = 1; i <= n; i++) hit[items[i]] = 1 }
+    ($0 in hit) || (substr($0, 1, index($0 ".", ".") - 1) in hit)
+  '
 }
 
 hold_owners_behind_schema() {
-  local container behind
+  local container touched pending
+  read_pending_touches
+  pending="$(printf '%s\n' "$PENDING_TOUCHES" | sed -n 's/^pending //p')"
+  if [ -z "$pending" ]; then
+    log "no migrations pending; the connection owners are left running"
+    return 0
+  fi
+  log "pending migrations: $(printf '%s\n' "$pending" | tr '\n' ' ')"
   container="$(dc ps -q device-connection 2>/dev/null | head -n 1 || true)"
   if [ -n "$container" ] \
     && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]; then
-    read_release_schema_map
-    behind="$(owner_schema_behind "$container")"
-    if [ -n "$behind" ]; then
-      log "device connection owner maps schema this release does not: $(printf '%s ' $behind)"
+    touched="$(owner_schema_touched "$container")"
+    if [ -n "$touched" ]; then
+      log "the pending migrations change schema the device connection owner maps: $(printf '%s\n' "$touched" | tr '\n' ' ')"
       log "draining the device connection owner across the migrations; it is recreated on this release after them"
       # A call still running after the drain's wait is interrupted rather than
       # stopping the deploy: left alone, the owner would fail every call that
@@ -196,15 +221,18 @@ hold_owners_behind_schema() {
       DEVICE_CONNECTION_INTERRUPT=late bash "$HERE/release-device-connection.sh" "$SHA" "$COMPOSE" drain \
         || fail "could not drain the device connection owner; nothing was migrated"
       SCHEMA_HELD_OWNERS="device"
+    else
+      log "the pending migrations change nothing the device connection owner maps; it is left running"
     fi
   fi
   if [ "$PREVIEW_CONNECTION_MODE" = owner ] && preview_connection_running; then
-    read_release_schema_map
-    behind="$(owner_schema_behind "$(preview_connection_container)")"
-    if [ -n "$behind" ]; then
-      log "preview connection owner maps schema this release does not: $(printf '%s ' $behind)"
+    touched="$(owner_schema_touched "$(preview_connection_container)")"
+    if [ -n "$touched" ]; then
+      log "the pending migrations change schema the preview connection owner maps: $(printf '%s\n' "$touched" | tr '\n' ' ')"
       log "the preview connection owner is recreated on this release after the migrations; its tunnels redial"
       SCHEMA_HELD_OWNERS="${SCHEMA_HELD_OWNERS:+$SCHEMA_HELD_OWNERS }preview"
+    else
+      log "the pending migrations change nothing the preview connection owner maps; it is left running"
     fi
   fi
 }

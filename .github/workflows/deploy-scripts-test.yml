@@ -115,6 +115,9 @@ jobs:
       - name: Cloud control connection lifecycle
         run: python3 deploy/tests/test_cloud_control.py
 
+      - name: What pending migrations change under the connection owners
+        run: python3 deploy/tests/test_migration_touches.py
+
       - name: Forge deployment configuration
         run: |
           python3 deploy/tests/test_forge_config.py
