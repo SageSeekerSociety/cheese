@@ -159,7 +159,13 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
   `frontend/src/i18n/messages/<locale>/<namespace>.json` and call `t()`. A big
   namespace is split into files whose path is the key path, `index.json` holding
   the keys of that level itself: `work.room.doc.x` lives in
-  `frontend/src/i18n/messages/zh-CN/work/room/doc/index.json`.
+  `frontend/src/i18n/messages/zh-CN/work/room/doc/index.json`. Two are flat —
+  `apiError` and `roomNotice`, whose keys the backend writes out itself — so their
+  directory is split by the backend module that says the sentence and the shard's
+  name is not part of the key:
+  `frontend/src/i18n/messages/zh-CN/apiError/usage.json` is the key `creditsMonthFull`,
+  and `frontend/src/i18n/messages/zh-CN/roomNotice/usage.json` is the key
+  `creditsRefused`.
 - **Key names are `namespace.component.role`** (`account.signIn.submit`), never an
   English sentence or a fragment of one: a sentence-shaped key means rewording
   the Chinese forces renaming the key, and the translation goes with it.

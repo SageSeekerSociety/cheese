@@ -1,0 +1,8 @@
+{
+  "taskUntitled": "新任务",
+  "taskStarted": "{actor} 开始了任务「{title}」",
+  "taskCompleted": "任务「{title}」已关闭：{conclusion}",
+  "taskClosed": "任务「{title}」已关闭",
+  "taskReopened": "{actor} 重新打开了任务「{title}」",
+  "taskQuiet": "任务「{title}」已经 {days} 天没有进展"
+}

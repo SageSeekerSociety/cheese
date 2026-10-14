@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -151,6 +151,39 @@ describe('locale catalogs', () => {
   it('never ships Chinese text as the English translation', () => {
     const withCjk = enEntries.filter((e) => CJK.test(e.value)).map((e) => e.id)
     expect(withCjk, '英文词条里出现了中日韩字符——多半是复制中文凑数').toEqual([])
+  })
+})
+
+// The two catalogs whose keys the backend writes out itself (`apiError`,
+// `roomNotice`) are one flat key space each, split across a directory by the
+// backend module that says the sentence — the shard's name is not part of the
+// key (`messages/catalog.ts`, FLAT). The tests above would catch a shard only
+// one locale has, but they report the missing keys, not the file somebody forgot
+// to add; this names it.
+//
+// The directory form is asserted, not just the two listings matching: putting
+// either catalog back into one file is the regression the split exists to
+// prevent (every change to any sentence collides in git, and the shared file
+// becomes the merge base for unrelated PRs — `route_index.yaml`).
+const MESSAGES = resolve(SRC, 'i18n/messages')
+const FLAT_CATALOGS = ['apiError', 'roomNotice']
+
+describe('flat catalogs are split the same way in both locales', () => {
+  it.each(FLAT_CATALOGS)('%s is a shard directory with the same shards in both locales', (namespace) => {
+    const shardsIn = (locale: string) => {
+      const dir = join(MESSAGES, locale, namespace)
+      if (!existsSync(dir)) {
+        throw new Error(`messages/${locale}/${namespace} 不是分片目录：这个平表命名空间按模块分片放在目录里`)
+      }
+      return readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+        .map((entry) => entry.name)
+        .sort()
+    }
+    const zh = shardsIn('zh-CN')
+    const en = shardsIn('en')
+    expect(zh.length, `${namespace} 一片都没有`).toBeGreaterThan(0)
+    expect(en, `${namespace} 的分片两个 locale 对不上：译文要落在同名的分片里`).toEqual(zh)
   })
 })
 
