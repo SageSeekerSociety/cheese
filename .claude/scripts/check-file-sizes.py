@@ -156,17 +156,24 @@ def git(*args: str, cwd: Path) -> str:
     ).stdout
 
 
+class CannotListIgnored(Exception):
+    """`git check-ignore` refused to answer, so which of the changed files this
+    tree really has is unknown. `git check-ignore` reads its input as pathspecs,
+    so a path NAME alone can make it exit 128 — `/etc/passwd`, or `:!wip` — and
+    a cap applied to the wrong set of files is worse than no verdict."""
+
+
 def ignored_paths(root: Path, paths: list[str]) -> set[str]:
-    """The subset of `paths` git ignores and the index does not track.
+    """The subset of `paths` git ignores.
 
     A generated file that stopped being committed is the case this exists for:
     `git diff` against a merge base that still tracked it reports it as changed
     on every branch forked before the removal, and the copy on disk is then a
-    build product nobody on that branch owns. A path git is told to ignore, and
-    that the index does not track, is not part of the tree being judged, so it
-    is not weighed — a cap cannot ask whoever regenerated it to split it. An
-    ignored path the index DOES track is still judged: whatever the ignore rule
-    says, that file is in the tree.
+    build product nobody on that branch owns. A path git is told to ignore is
+    not part of the tree being judged, so it is not weighed — a cap cannot ask
+    whoever regenerated it to split it. `git check-ignore` never reports a path
+    the index tracks, so a file still in the index is judged whatever the
+    ignore rules say.
     """
     if not paths:
         return set()
@@ -180,8 +187,8 @@ def ignored_paths(root: Path, paths: list[str]) -> set[str]:
     if result.returncode == 1:  # 1: none of them is ignored
         return set()
     if result.returncode != 0:
-        raise subprocess.CalledProcessError(
-            result.returncode, ["git", "check-ignore", "--stdin", "-z"], result.stdout, result.stderr
+        raise CannotListIgnored(
+            (result.stderr.strip().splitlines() or [f"git exited {result.returncode}"])[-1]
         )
     return {path for path in result.stdout.split("\0") if path}
 
@@ -197,8 +204,12 @@ def changed_files(root: Path, merge_base: str) -> list[str]:
     untracked = git("ls-files", "--others", "--exclude-standard", cwd=root)
     candidates = sorted({line for line in (diff + untracked).splitlines() if line.strip()})
     tracked = set(git("ls-files", cwd=root).splitlines())
+    # Only the untracked candidates are asked about. A file the index tracks is
+    # in the tree being judged whatever the ignore rules say, and
+    # `git check-ignore` does not report a path in the index anyway, so nothing
+    # that is tracked can come back in `ignored`.
     ignored = ignored_paths(root, [path for path in candidates if path not in tracked])
-    return [path for path in candidates if path in tracked or path not in ignored]
+    return [path for path in candidates if path not in ignored]
 
 
 class NoMergeBase(Exception):
@@ -284,7 +295,15 @@ def judge_tree(root: Path, base: str) -> tuple[int, list[str], dict | None]:
             "    git fetch --unshallow origin    # or a bounded `git fetch --deepen=<n> origin`",
         ], None
 
-    paths = changed_files(root, against)
+    try:
+        paths = changed_files(root, against)
+    except CannotListIgnored as exc:
+        return 2, [
+            f"cannot judge: git could not say which changed files it ignores ({exc}).",
+            "`git check-ignore` reads the names it is given as pathspecs, so a file",
+            "named `:!wip` or `:(glob)x` makes it refuse; judging the changed set",
+            "without that answer would weigh files this branch does not have.",
+        ], None
 
     findings: list[Finding] = []
     exempted: list[str] = []
@@ -620,8 +639,10 @@ def self_test() -> int:
     #    base copy. It is not in the tree the cap is judging — the index does
     #    not track it and the repo is told to ignore it — so it must not be
     #    judged, or every branch forked before the removal is told to split a
-    #    build product nobody on it owns. The tracked half is the control: the
-    #    same bytes ARE judged while the file is still in the index.
+    #    build product nobody on it owns. Both halves are asserted — the same
+    #    bytes ARE judged while the index still tracks them, and are not judged
+    #    once they are out of it and ignored — because a filter that judged
+    #    nothing at all would pass the second half on its own.
     with tempfile.TemporaryDirectory(prefix="file-sizes-selftest-") as raw:
         root = Path(raw)
         git = _repo_git(root)
@@ -646,6 +667,37 @@ def self_test() -> int:
         check("... but once untracked and ignored it is not judged", code, 0)
         check("... and not even named", "generated.ts" not in out, True)
 
+    # 9. A changed file whose NAME git reads as a pathspec. `git check-ignore`
+    #    takes the names it is handed as pathspecs, so an untracked `:!wip` in
+    #    the working tree makes it exit 128 — and `git ls-files --others` lists
+    #    that file like any other. The tree cannot be judged, because which
+    #    files this branch has is the very thing git refused to say, so it is a
+    #    2 with git's own reason on it, never a traceback.
+    with tempfile.TemporaryDirectory(prefix="file-sizes-selftest-") as raw:
+        root = Path(raw)
+        git = _repo_git(root)
+        run, run_json = _script_runner(root)
+        try:
+            git("init", "-q")
+            _write(root / "backend/app/legacy.py", 3100)
+            git("add", "-A")
+            git("commit", "-qm", "a tree worth judging")
+        except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+            print(f"SELF-TEST FAIL: could not build the fixture repository: {exc}")
+            return 1
+
+        (root / ":!wip").write_text("scratch\n", encoding="utf-8")
+        code, out = run()
+        check("a file git reads as a pathspec is a 2, not a crash", code, 2)
+        check("... and says it cannot judge", "cannot judge" in out, True)
+        check("... carrying git's own reason rather than a traceback",
+              "fatal:" in out and "Traceback" not in out, True)
+        check("... and judges nothing at all", "it was" not in out, True)
+
+        (root / ":!wip").unlink()
+        code, _ = run()
+        check("... and the same tree without that file is judged", code, 0)
+
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}")
     if failures:
@@ -653,7 +705,7 @@ def self_test() -> int:
     print(
         "PASS: check-file-sizes self-test (caps per tree, new vs oversized files, "
         "shrinking allowed, judged at the merge base, an ignored file is not judged, "
-        "no merge base is a 2, "
+        "no merge base is a 2, a name git reads as a pathspec is a 2, "
         "a missing base is a 2, --json agrees with the exit code and prints "
         "exactly one line)"
     )
