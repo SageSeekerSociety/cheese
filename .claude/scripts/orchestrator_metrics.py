@@ -108,20 +108,40 @@ def gh_json(args, what, tries=3, pause=2):
 
     TLS 握手超时在这种代理后面真的发生过，一周要打几十次 REST，一次超时就让整
     周没有数——这是最坏的一种失败，看上去像「查不了」，其实只是没重试。重试之间
-    等一下，因为超时通常意味着对面正忙。stdout 前面可能顶着一行 gh 自己的说明，
-    所以从第一个 `{` 起解析。
+    等一下，因为超时通常意味着对面正忙。stdout 怎么变成 JSON 见 `parse_gh_stdout`。
     """
     err = ""
     for attempt in range(tries):
         if attempt:
             time.sleep(pause * attempt)
         r = subprocess.run(["gh", "api", *args], capture_output=True, text=True)
-        body = r.stdout[r.stdout.find("{"):]
         try:
-            return json.loads(body)
+            return parse_gh_stdout(r.stdout)
         except ValueError:
             err = (r.stderr or r.stdout).strip()[:200]
     raise SystemExit(f"GitHub {what} 失败：{err}")
+
+
+def parse_gh_stdout(stdout):
+    """gh 的 stdout 解析成 JSON，对象和数组都认；认不出抛 ValueError。
+
+    从第一个 `{` 起解析：stdout 前面可能顶着一行 gh 自己的说明。REST 那族接口
+    有一半整个回一个数组，从 `{` 起切会把数组第一个元素当开头、末尾多一个
+    `]`，所以那份不成时再找第一个能解析成数组的 `[`。先试 `{` 是为了 GraphQL
+    和单个对象的调用保持原样。
+    """
+    try:
+        return json.loads(stdout[stdout.find("{"):])
+    except ValueError:
+        pass
+    for start, char in enumerate(stdout):
+        if char != "[":
+            continue
+        try:
+            return json.loads(stdout[start:])
+        except ValueError:
+            continue
+    raise ValueError("no JSON object or array in gh's output")
 
 
 def gh_graphql(variables, what="GraphQL 调用"):
@@ -481,6 +501,33 @@ def self_test():
           datetime(2026, 10, 14, tzinfo=timezone.utc))
     check("--week 不给就是现在（是个带时区的时刻）",
           parse_instant([]).utcoffset(), timedelta(0))
+
+    # -- gh stdout 的解析 --------------------------------------------------
+    # 这条分支原先只从第一个 `{` 起切。REST 那族接口整个回一个数组，切出来
+    # 末尾多一个 `]`，于是 `>100` 个文件的那几次调用每次都要重试三遍、最后
+    # 报「GitHub 拉取失败」——多出来的 REST 分支等于没有。数组这两条就是它。
+    check("对象照旧从第一个 `{` 起解析",
+          parse_gh_stdout('{"number": 1}'), {"number": 1})
+    check("stdout 前面顶着 gh 的说明也认",
+          parse_gh_stdout('notice: something\n{"number": 1}'), {"number": 1})
+    check("整个回一个数组时按数组解析",
+          parse_gh_stdout('[{"filename":"a"},{"filename":"b"}]'),
+          [{"filename": "a"}, {"filename": "b"}])
+    # 一个元素的数组也得是数组：从 `{` 起切出来的是那个元素本身，长度不对。
+    check("一个元素的数组还是数组",
+          parse_gh_stdout('[{"filename":"a"}]'), [{"filename": "a"}])
+    check("空数组是空数组", parse_gh_stdout("[]"), [])
+    check("数组前面顶着说明也认",
+          parse_gh_stdout('notice: something\n[{"filename":"a"}]'),
+          [{"filename": "a"}])
+    # 认不出就抛 ValueError，由 gh_json 收下重试或报错；静默回 None 会一路
+    # 变成「这一周没有 PR」。
+    try:
+        parse_gh_stdout("gh: Not Found (HTTP 404)")
+    except ValueError:
+        check("认不出时抛 ValueError", True, True)
+    else:
+        check("认不出时抛 ValueError", "没抛", "ValueError")
 
     for f in failures:
         print("FAIL", f)
