@@ -1,7 +1,10 @@
-// 首页那一格的目录：团队在原地展开成四样东西，正在看的那个团队一定是展开的；
-// 团队行的 ⋯ 和右键：管理员邀请、改资料，不是所有者的能退出团队。
+// 首页那一格的目录，只看画面这一半：名单从 props 来，点下去发出事件；正在看的那个团队
+// 一定是展开的，团队行的 ⋯ 和右键按角色长。
+//
+// 名单是怎么读来的、点下去之后真发生了什么（退出、解散、转让、加入）在
+// `composables/useTeamNav.spec.ts` 里，那里挂的是真接线。
 import type { Component } from 'vue'
-import type { Team } from '@/types'
+import type { Team, TeamMember } from '@/types'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -10,42 +13,13 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getMyTeams = vi.fn()
-const removeMember = vi.fn()
-const del = vi.fn()
-const getMembers = vi.fn()
-const transferOwner = vi.fn()
-vi.mock('@/api/teams', () => ({
-  TeamsApi: {
-    getMyTeams: () => getMyTeams(),
-    removeMember: (...args: unknown[]) => removeMember(...args),
-    del: (...args: unknown[]) => del(...args),
-    getMembers: (...args: unknown[]) => getMembers(...args),
-    transferOwner: (...args: unknown[]) => transferOwner(...args),
-  },
-}))
-const confirm = vi.fn()
-vi.mock('@/plugins/dialog', () => ({
-  useDialog: () => ({ confirm: (...a: unknown[]) => ({ wait: () => confirm(...a) }) }),
-}))
-vi.mock('@/services/account', () => ({ default: { user: { id: 42 } } }))
-const refreshProjects = vi.fn()
-vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ refreshProjects }) }))
-vi.mock('@/services/ErrorHandler', () => ({
-  default: { withErrorHandling: async (fn: () => Promise<unknown>) => fn().catch(() => undefined) },
-}))
-vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn() } }))
-vi.mock('@/api/spaces', () => ({
-  SpacesApi: { list: async () => ({ spaces: [{ id: 3, name: '数据分析课' }] }) },
-}))
-
 import HomeNav from './HomeNav.vue'
 
 import { setLocale } from '@/i18n'
 
 const blank = { template: '<div />' }
 
-function team(handle: string, name: string, role: Team['role'] = 'MEMBER'): Team {
+function team(handle: string, name: string, role: Team['role'] = 'MEMBER', extra: Partial<Team> = {}): Team {
   return {
     id: [...handle].reduce((n, c) => n + c.charCodeAt(0), 0),
     handle,
@@ -56,12 +30,30 @@ function team(handle: string, name: string, role: Team['role'] = 'MEMBER'): Team
     owner: { id: 1 } as Team['owner'],
     admins: { total: 0, examples: [] },
     members: { total: 1, examples: [] },
+    ...extra,
   }
 }
 
-const mounted: { router?: ReturnType<typeof createRouter> } = {}
+function member(id: number, nickname: string): TeamMember {
+  return { role: 'MEMBER', user: { id, username: `${nickname}-handle`, nickname, avatarId: 0 } } as TeamMember
+}
 
-async function mount(path: string) {
+/** 一份目录要的那些值，缺的都当「没有」——每一件只写它在乎的那几样。 */
+function props(overrides: Record<string, unknown> = {}) {
+  return {
+    inbox: true,
+    teams: [] as Team[],
+    spaces: [] as { id: number; name: string }[],
+    editing: null,
+    disbanding: null,
+    transferring: null,
+    transferCandidates: [] as TeamMember[],
+    joinOpen: false,
+    ...overrides,
+  }
+}
+
+async function mount(overrides: Record<string, unknown> = {}) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -82,16 +74,13 @@ async function mount(path: string) {
       },
     ],
   })
-  await router.push(path)
+  await router.push('/inbox')
   await router.isReady()
-  mounted.router = router
-  return render(HomeNav as unknown as Component, {
-    props: { inbox: true },
-    global: {
-      plugins: [createVuetify({ components, directives }), router],
-      stubs: { TeamProfileEditDialog: true, JoinSpaceDialog: true },
-    },
+  const view = render(HomeNav as unknown as Component, {
+    props: props(overrides),
+    global: { plugins: [createVuetify({ components, directives }), router] },
   })
+  return { view, router }
 }
 
 beforeAll(() => {
@@ -118,22 +107,22 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
-  removeMember.mockReset()
-  del.mockReset()
-  getMembers.mockReset()
-  transferOwner.mockReset()
-  confirm.mockReset()
-  refreshProjects.mockReset()
-  getMyTeams.mockReset().mockResolvedValue({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
 })
 afterEach(cleanup)
 
 const hrefs = () => Array.from(document.querySelectorAll('a')).map((a) => a.getAttribute('href'))
 
-describe('首页目录', () => {
+/** 点开一行 ⋯ 之后，弹出来的那份操作清单。 */
+function menuLabels() {
+  return Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim())
+}
+
+describe('首页目录的画面', () => {
   it('正在看的那个团队展开着，四样东西都点得到；别的团队收着', async () => {
-    await mount('/teams/crew/members')
-    await screen.findByText('知是开发组')
+    await mount({
+      teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')],
+      currentHandle: 'crew',
+    })
     await waitFor(() =>
       expect(hrefs()).toEqual(
         expect.arrayContaining(['/teams/crew', '/teams/crew/members', '/teams/crew/knowledge', '/teams/crew/compute'])
@@ -143,7 +132,7 @@ describe('首页目录', () => {
   })
 
   it('点一个团队在原地展开，再点收起', async () => {
-    await mount('/inbox')
+    await mount({ teams: [team('lab', '数据课第三组')] })
     await fireEvent.click(await screen.findByLabelText('展开 数据课第三组'))
     await waitFor(() => expect(hrefs()).toContain('/teams/lab/members'))
     await fireEvent.click(screen.getByLabelText('收起 数据课第三组'))
@@ -155,98 +144,36 @@ describe('首页目录', () => {
     ['MEMBER', ['退出团队']],
     ['OWNER', ['邀请成员', '编辑团队资料', '转让团队', '解散团队']],
   ] as const)('%s 在团队那一行的 ⋯ 里看到的操作', async (role, labels) => {
-    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', role)] })
-    await mount('/inbox')
+    await mount({ teams: [team('crew', '知是开发组', role)] })
     await fireEvent.click(await screen.findByLabelText('团队操作'))
     await screen.findByText(labels[0])
-    const shown = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) =>
-      el.textContent?.trim()
-    )
-    expect(shown).toEqual(labels)
+    expect(menuLabels()).toEqual(labels)
   })
 
-  it('右键一个团队弹出同一份操作，确认后退出团队、这一行消失', async () => {
-    confirm.mockResolvedValue(true)
-    removeMember.mockResolvedValue({})
-    await mount('/teams/lab')
-    await fireEvent.contextMenu(await screen.findByLabelText('收起 数据课第三组'), { clientX: 40, clientY: 80 })
-    await fireEvent.click(await screen.findByText('退出团队'))
-
-    await waitFor(() => expect(removeMember).toHaveBeenCalledWith(team('lab', '').id, 42))
-    await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
-    expect(refreshProjects).toHaveBeenCalled()
-  })
-
-  it('所有者解散团队：要把团队名打一遍才按得下去，解散后这一行消失', async () => {
-    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'OWNER')] })
-    del.mockResolvedValue({})
-    await mount('/inbox')
-    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
-    await fireEvent.click(await screen.findByText('解散团队'))
-    const confirmButton = await screen.findByRole('button', { name: '解散团队' })
-    const input = screen.getByLabelText('输入团队名「知是开发组」确认')
-
-    await fireEvent.update(input, '知是')
-    expect(confirmButton.hasAttribute('disabled')).toBe(true)
-    await fireEvent.click(confirmButton)
-    expect(del).not.toHaveBeenCalled()
-
-    await fireEvent.update(input, '知是开发组')
-    await waitFor(() => expect(confirmButton.hasAttribute('disabled')).toBe(false))
-    await fireEvent.click(confirmButton)
-    await waitFor(() => expect(del).toHaveBeenCalledWith(team('crew', '').id))
-    await waitFor(() => expect(screen.queryByText('知是开发组')).toBeNull())
-  })
-
-  it('解散被拒（还有没归档的项目）：理由留在弹窗里，团队还在', async () => {
-    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'OWNER')] })
-    del.mockRejectedValue(new Error('团队里还有没归档的项目，把它们都归档后才能解散'))
-    await mount('/inbox')
-    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
-    await fireEvent.click(await screen.findByText('解散团队'))
-    await fireEvent.update(await screen.findByLabelText('输入团队名「知是开发组」确认'), '知是开发组')
-    await fireEvent.click(await screen.findByRole('button', { name: '解散团队' }))
-    expect(await screen.findByText('团队里还有没归档的项目，把它们都归档后才能解散')).toBeTruthy()
-    expect(screen.getAllByText('知是开发组').length).toBeGreaterThan(0)
-  })
-
-  it('所有者把团队交给一位成员，之后自己就能退出了', async () => {
-    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'OWNER')] })
-    getMembers.mockResolvedValue({
-      members: [
-        { role: 'OWNER', user: { id: 42, username: 'me', nickname: '我', avatarId: 0 } },
-        { role: 'MEMBER', user: { id: 7, username: 'mate', nickname: '小王', avatarId: 0 } },
-      ],
-    })
-    transferOwner.mockResolvedValue({ team: team('crew', '知是开发组', 'OWNER') })
-    await mount('/inbox')
+  it.each([
+    ['OWNER', '编辑团队资料', 'edit'],
+    ['OWNER', '解散团队', 'openDisband'],
+    ['OWNER', '转让团队', 'openTransfer'],
+    ['MEMBER', '退出团队', 'leave'],
+  ] as const)('从 ⋯ 里选「%s」只是把这件事报上去', async (role, label, event) => {
+    const crew = team('crew', '知是开发组', role)
+    const { view } = await mount({ teams: [crew] })
     await fireEvent.click(await screen.findByLabelText('团队操作'))
-    await fireEvent.click(await screen.findByText('转让团队'))
-    await fireEvent.click(await screen.findByText('小王'))
-    expect(screen.queryByText('我')).toBeNull()
-    await fireEvent.click(screen.getByRole('button', { name: '转让团队' }))
-    await waitFor(() => expect(transferOwner).toHaveBeenCalledWith(team('crew', '').id, 7))
-
-    await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
-    expect(await screen.findByText('退出团队')).toBeTruthy()
+    await fireEvent.click(await screen.findByText(label))
+    await waitFor(() => expect(view.emitted(event)).toEqual([[crew]]))
   })
 
-  it('取消确认就什么都不做', async () => {
-    confirm.mockResolvedValue(false)
-    await mount('/inbox')
-    await fireEvent.contextMenu(await screen.findByLabelText('展开 数据课第三组'))
-    await fireEvent.click(await screen.findByText('退出团队'))
-    await waitFor(() => expect(confirm).toHaveBeenCalled())
-    expect(removeMember).not.toHaveBeenCalled()
-    expect(screen.getByText('数据课第三组')).toBeTruthy()
+  it('右键一个团队弹出同一份操作', async () => {
+    await mount({ teams: [team('lab', '数据课第三组')] })
+    await fireEvent.contextMenu(await screen.findByLabelText('展开 数据课第三组'), { clientX: 40, clientY: 80 })
+    expect(await screen.findByText('退出团队')).toBeTruthy()
   })
 
   // 自己名下的项目不是一个团队：以自己的昵称单独一行，在「团队」小标题之上；
   // 展开后没有「成员」，也没有团队的 ⋯ 操作。
   it('自己名下在「团队」之上单独一行，没有成员页，也没有团队操作', async () => {
-    const own = { ...team('andy', '林夏', 'OWNER'), personal: true }
-    getMyTeams.mockResolvedValue({ teams: [own, team('crew', '知是开发组', 'OWNER')] })
-    await mount('/teams/andy')
+    const own = team('andy', '林夏', 'OWNER', { personal: true })
+    await mount({ teams: [own, team('crew', '知是开发组', 'OWNER')], currentHandle: 'andy' })
     await waitFor(() =>
       expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/knowledge', '/teams/andy/compute']))
     )
@@ -261,54 +188,96 @@ describe('首页目录', () => {
   })
 
   it('团队展开后有「额度」一页', async () => {
-    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'MEMBER')] })
-    await mount('/teams/crew')
+    await mount({ teams: [team('crew', '知是开发组')], currentHandle: 'crew' })
     await waitFor(() => expect(hrefs()).toContain('/teams/crew/credits'))
   })
 
-  // 侧栏跨页面一直挂着：名单要是只在挂载时读一次，刚建的、刚被批准加入的团队
-  // 都得整页刷新才出现。
-  it('刚建好的团队，跳过去的那一下就出现在侧栏里', async () => {
-    await mount('/teams/explore')
-    await screen.findByText('知是开发组')
-    getMyTeams.mockResolvedValue({
-      teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('fresh', '刚建的团队', 'OWNER')],
-    })
-    await mounted.router!.push('/teams/fresh')
-    expect(await screen.findByText('刚建的团队')).toBeTruthy()
-  })
-
-  it('在别处被批准加入的团队，回到这个窗口就出现在侧栏里', async () => {
-    await mount('/inbox')
-    await screen.findByText('知是开发组')
-    getMyTeams.mockResolvedValue({
-      teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('joined', '刚加入的团队')],
-    })
-    window.dispatchEvent(new Event('focus'))
-    expect(await screen.findByText('刚加入的团队')).toBeTruthy()
-  })
-
-  it('退出团队时还在路上的那次重读，回来后不会把这个团队又画回去', async () => {
-    confirm.mockResolvedValue(true)
-    removeMember.mockResolvedValue({})
-    await mount('/inbox')
-    await screen.findByText('数据课第三组')
-    let answerOldRead: (value: unknown) => void = () => {}
-    getMyTeams.mockImplementationOnce(() => new Promise((resolve) => (answerOldRead = resolve)))
-    await mounted.router!.push('/teams/crew')
-
-    await fireEvent.contextMenu(await screen.findByLabelText('展开 数据课第三组'), { clientX: 40, clientY: 80 })
-    await fireEvent.click(await screen.findByText('退出团队'))
-    await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
-
-    answerOldRead({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(screen.queryByText('数据课第三组')).toBeNull()
-  })
-
   it('空间点了就进那个空间', async () => {
-    await mount('/inbox')
+    await mount({ spaces: [{ id: 3, name: '数据分析课' }] })
     await screen.findByText('数据分析课')
     expect(hrefs()).toContain('/spaces/3/tasks')
+  })
+
+  it('待我处理的件数画在「待办」那一行上，一百以上收成 99+', async () => {
+    await mount({ awaiting: 3 })
+    expect(await screen.findByText('3')).toBeTruthy()
+    cleanup()
+    await mount({ awaiting: 128 })
+    expect(await screen.findByText('99+')).toBeTruthy()
+  })
+
+  it('点「用邀请码加入」那一行：这件事由外面开', async () => {
+    const { view } = await mount()
+    await fireEvent.click(await screen.findByText('用邀请码加入'))
+    await waitFor(() => expect(view.emitted('update:joinOpen')).toEqual([[true]]))
+  })
+})
+
+describe('目录带的四个弹窗', () => {
+  let view: ReturnType<typeof render>
+
+  it('在改哪个团队：弹窗开着他的名字，保存报上去的是填的三样', async () => {
+    view = (await mount({ teams: [team('crew', '知是开发组')], editing: team('crew', '知是开发组') })).view
+    const name = await screen.findByLabelText('团队名称')
+    await waitFor(() => expect((name as HTMLInputElement).value).toBe('知是开发组'))
+    await fireEvent.update(name, '知是开发组二部')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() =>
+      expect(view.emitted('saveProfile')).toEqual([[{ name: '知是开发组二部', intro: '', avatarFile: undefined }]])
+    )
+  })
+
+  it('关掉改资料的弹窗就是把「在改哪个团队」交回空', async () => {
+    view = (await mount({ teams: [team('crew', '知是开发组')], editing: team('crew', '知是开发组') })).view
+    await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
+    await waitFor(() => expect(view.emitted('update:editing')).toEqual([[null]]))
+  })
+
+  it('解散：要把团队名打一遍才报得上去', async () => {
+    const crew = team('crew', '知是开发组', 'OWNER')
+    view = (await mount({ teams: [crew], disbanding: crew })).view
+    const confirmButton = await screen.findByRole('button', { name: '解散团队' })
+    const input = screen.getByLabelText('输入团队名「知是开发组」确认')
+
+    await fireEvent.update(input, '知是')
+    expect(confirmButton.hasAttribute('disabled')).toBe(true)
+    await fireEvent.click(confirmButton)
+    expect(view.emitted('confirmDisband')).toBeUndefined()
+
+    await fireEvent.update(input, '知是开发组')
+    await waitFor(() => expect(confirmButton.hasAttribute('disabled')).toBe(false))
+    await fireEvent.click(confirmButton)
+    await waitFor(() => expect(view.emitted('confirmDisband')).toEqual([[]]))
+  })
+
+  it('解散被拒的理由：由外面给回来，画在弹窗里', async () => {
+    const crew = team('crew', '知是开发组', 'OWNER')
+    await mount({
+      teams: [crew],
+      disbanding: crew,
+      disbandError: '团队里还有没归档的项目，把它们都归档后才能解散',
+    })
+    expect(await screen.findByText('团队里还有没归档的项目，把它们都归档后才能解散')).toBeTruthy()
+  })
+
+  it('转让：名单由外面给，挑中谁就把谁的 id 报上去', async () => {
+    const crew = team('crew', '知是开发组', 'OWNER')
+    view = (await mount({ teams: [crew], transferring: crew, transferCandidates: [member(7, '小王')] })).view
+    await fireEvent.click(await screen.findByText('小王'))
+    await fireEvent.click(screen.getByRole('button', { name: '转让团队' }))
+    await waitFor(() => expect(view.emitted('confirmTransfer')).toEqual([[7]]))
+  })
+
+  it('进来接手的名单还没到，别说成「团队里没有别人」', async () => {
+    const crew = team('crew', '知是开发组', 'OWNER')
+    await mount({ teams: [crew], transferring: crew, transferCandidates: [], transferLoading: true })
+    expect(screen.queryByText('团队里还没有别的成员可以接手。')).toBeNull()
+  })
+
+  it('加入空间：弹窗开着时填好邀请码，按「加入」把码报上去', async () => {
+    view = (await mount({ joinOpen: true })).view
+    await fireEvent.update(await screen.findByLabelText('邀请码'), ' abc123 ')
+    await fireEvent.click(screen.getByRole('button', { name: '加入' }))
+    await waitFor(() => expect(view.emitted('join')).toEqual([['abc123']]))
   })
 })

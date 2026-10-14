@@ -33,6 +33,7 @@ import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import { DOC_BLOCK_ENTRIES } from './catalogDoc'
 import { DOC_LINE_ENTRIES, LIBRARY_DOC_EDITED } from './catalogDocLine'
+import { HOME_ENTRIES } from './catalogHome'
 import { FEEDBACK_ENTRIES } from './catalogFeedback'
 import {
   ACCEPT_CARD,
@@ -936,6 +937,9 @@ export const CATALOG: CatalogEntry[] = [
   // 公共站那几页（三个公共页共用的外壳、首页、方案页，和首页里那段房间）在自己的文件
   // 里：`catalogPublic.ts`。
   ...PUBLIC_ENTRIES,
+  // 首页那一格（那份目录、它两端的两个画面、它带的四个弹窗）在自己的文件里：
+  // `catalogHome.ts`。
+  ...HOME_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */
