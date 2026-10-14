@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent.chat import ChatService
 from app.domain.review import gate_sweep, pr_poll
+from app.domain.review.ports import Announce
 
 GateNudge = Callable[[uuid.UUID, str, str, dict], Awaitable[None]]
 GateNudgeFactory = Callable[[], GateNudge]
@@ -29,29 +30,30 @@ def register_periodic_jobs(
     jobs: PeriodicJobs,
     *,
     chat: ChatService,
+    announce: Announce,
     gate_sessions: SessionFactory,
     gate_nudge_factory: GateNudgeFactory,
 ) -> None:
     jobs.register(
         "pr poll",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.poll_open_prs(chat),
+        lambda: pr_poll.poll_open_prs(chat, announce),
     )
     jobs.register(
         "task pr poll",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.poll_uncarded_task_prs(chat),
+        lambda: pr_poll.poll_uncarded_task_prs(chat, announce),
     )
     jobs.register(
         "landing watch",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.watch_landings(chat),
+        lambda: pr_poll.watch_landings(chat, announce),
     )
     # Drafts and cards watch the same repository state on the same clock.
     jobs.register(
         "draft pr sweep",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.open_draft_prs(chat),
+        lambda: pr_poll.open_draft_prs(chat, announce),
     )
     jobs.register(
         "gate sweep",

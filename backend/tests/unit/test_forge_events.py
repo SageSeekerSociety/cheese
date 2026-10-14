@@ -18,6 +18,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from app import forge_events_app as relay
 from app.core.forge_events import subscription_assertion
+from app.domain.agent.announce import announce
 from tests.integration.conftest import a_team
 
 
@@ -236,7 +237,7 @@ async def test_clean_disconnect_cancels_subscription_renewal(monkeypatch):
     monkeypatch.setattr(events, "register_subscriptions", register)
     monkeypatch.setattr(events.asyncio, "sleep", retry)
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(events.listen(object(), None), 2)
+        await asyncio.wait_for(events.listen(object(), None, announce), 2)
 
 
 @pytest.mark.anyio
@@ -489,15 +490,15 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
     )
     monkeypatch.setattr(events.settings, "forge_event_secret", "deployment-secret")
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(events.listen(chat, None), 2)
+        await asyncio.wait_for(events.listen(chat, None, announce), 2)
     assert len(attempts) == 2
     assert attempts[1][1]["additional_headers"] == {
         "Authorization": "Bearer deployment-secret"
     }
-    poll.open_draft_prs.assert_awaited_once_with(chat)
-    poll.poll_open_prs.assert_awaited_once_with(chat)
+    poll.open_draft_prs.assert_awaited_once_with(chat, announce)
+    poll.poll_open_prs.assert_awaited_once_with(chat, announce)
     poll.forge_repository_changed.assert_awaited_once_with(
-        chat, kind="forgejo", repo="owner/project"
+        chat, kind="forgejo", repo="owner/project", announce=announce
     )
 
 
@@ -511,7 +512,7 @@ async def test_events_arriving_during_a_refresh_cost_one_more_refresh(monkeypatc
     release = asyncio.Event()
     refreshes: list[str] = []
 
-    async def refresh(chat, kind, repo, project_id=None):
+    async def refresh(chat, kind, repo, project_id=None, *, announce):  # noqa: ARG001
         refreshes.append(repo)
         await release.wait()
 
@@ -555,7 +556,7 @@ async def test_events_arriving_during_a_refresh_cost_one_more_refresh(monkeypatc
 
     monkeypatch.setattr(events, "connect", lambda *a, **k: Connect())
     monkeypatch.setattr(events, "register_subscriptions", no_subscriptions)
-    listener = asyncio.create_task(events.listen(object(), None))
+    listener = asyncio.create_task(events.listen(object(), None, announce))
     await asyncio.wait_for(drained.wait(), 2)
     release.set()
     for _ in range(50):
@@ -600,13 +601,17 @@ async def test_event_refresh_is_limited_to_bound_repository(db_factory, monkeypa
     monkeypatch.setattr(pr_poll, "poll_open_prs", poll)
     sweep = AsyncMock()
     monkeypatch.setattr(pr_publish, "sweep_draft_prs", sweep)
-    await pr_poll.forge_repository_changed(chat, "forgejo", "owner/first")
-    sweep.assert_awaited_once_with(db_factory, first.id)
-    poll.assert_awaited_once_with(chat, first.id)
-    await pr_poll.forge_repository_changed(chat, "github_app", "owner/first")
+    await pr_poll.forge_repository_changed(
+        chat, "forgejo", "owner/first", announce=announce
+    )
+    sweep.assert_awaited_once_with(db_factory, first.id, announce=announce)
+    poll.assert_awaited_once_with(chat, announce, first.id)
+    await pr_poll.forge_repository_changed(
+        chat, "github_app", "owner/first", announce=announce
+    )
     assert sweep.await_count == 1
     await pr_poll.forge_repository_changed(
-        chat, "forgejo", "owner/first", str(second.id)
+        chat, "forgejo", "owner/first", str(second.id), announce=announce
     )
     assert sweep.await_count == 1
 
@@ -794,7 +799,7 @@ async def test_a_relay_restart_reconnects_without_a_warning(
     )
     caplog.set_level("INFO", logger=events.logger.name)
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(events.listen(object(), None), 2)
+        await asyncio.wait_for(events.listen(object(), None, announce), 2)
     assert len(attempts) == 2
     closes = [
         r

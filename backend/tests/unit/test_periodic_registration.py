@@ -9,6 +9,7 @@ import pytest
 
 from app.core.background import PeriodicJobs
 from app.core.config import settings
+from app.domain.agent.announce import announce
 from app.periodic_jobs import periodic_jobs
 
 pytestmark = pytest.mark.anyio
@@ -43,6 +44,7 @@ def _world():
     return SimpleNamespace(
         jobs={job.name: job for job in jobs},
         chat=chat,
+        announce=announce,
         sessions=sessions,
         chat_sessions=chat_sessions,
         runner=runner,
@@ -73,10 +75,10 @@ def _world():
             "sessions",
         ),
         ("quiet task reminder", "task_quiet.sweep.remind_quiet_tasks", "sessions"),
-        ("pr poll", "review.pr_poll.poll_open_prs", "chat"),
-        ("task pr poll", "review.pr_poll.poll_uncarded_task_prs", "chat"),
-        ("landing watch", "review.pr_poll.watch_landings", "chat"),
-        ("draft pr sweep", "review.pr_poll.open_draft_prs", "chat"),
+        ("pr poll", "review.pr_poll.poll_open_prs", ("chat", "announce")),
+        ("task pr poll", "review.pr_poll.poll_uncarded_task_prs", ("chat", "announce")),
+        ("landing watch", "review.pr_poll.watch_landings", ("chat", "announce")),
+        ("draft pr sweep", "review.pr_poll.open_draft_prs", ("chat", "announce")),
         ("cloud warm pool", "machine.warm.sweep_warm_pool", "sessions"),
         ("run record expiry", "run_record.service.purge_expired", "sessions"),
         (
@@ -120,7 +122,8 @@ async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
     world = _world()
     assert world.get_runner.call_count == 0, "registration ran work before a tick"
     assert await world.jobs[name]._job() == {"did": 1}
-    work.assert_awaited_once_with(getattr(world, argument))
+    handed = argument if isinstance(argument, tuple) else (argument,)
+    work.assert_awaited_once_with(*(getattr(world, name) for name in handed))
 
 
 @pytest.mark.parametrize(

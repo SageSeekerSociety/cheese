@@ -46,12 +46,20 @@ from . import cards, decisions, merge_queue, notices, polling, reviewers
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
     from app.domain.review.github_pr_status import PullRequestStatus
+    from app.domain.review.ports import Announce
 
 
 class AcceptService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, announce: Announce | None = None):
+        """``announce`` 是这个包说不了的那句话 —— 往房间里留一行（`ports.Announce`）。
+
+        谁构造谁给：这个包上面一层（`agent.announce`）写的话，只看只读路径的门
+        （列卡、查卡）不接线，`None` 就是不接。真的走到要说话的那条路上还是没有它，
+        就是有个门漏了，`notices._announce_of` 当场炸掉，不会静默不发。
+        """
 
         self._session = session
+        self._announce = announce
         # Set only while a claimed poll runs (): forge clients
         # then give the connection back before each call.
         self._commits_before_remote = False

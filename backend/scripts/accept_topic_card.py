@@ -22,6 +22,7 @@ async def main() -> int:
     from sqlalchemy import select
 
     from app.core.db import async_session_factory
+    from app.domain.agent.announce import announce
     from app.domain.review.models import AcceptCard, AcceptStatus
     from app.domain.review.services import AcceptService
 
@@ -42,7 +43,7 @@ async def main() -> int:
             print("STATUS=none")
             print("NOTE=no pending card on this topic")
             return 1
-        decided = await AcceptService(session).accept(
+        decided = await AcceptService(session, announce=announce).accept(
             card_id=card.id, decided_by="andy"
         )
         await session.commit()

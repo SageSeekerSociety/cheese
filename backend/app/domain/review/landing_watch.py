@@ -27,7 +27,6 @@ from sqlalchemy import or_, select
 from app.core.errors import UpstreamUnavailableError
 from app.core.sentences import listing, say
 from app.domain.addressing import Event
-from app.domain.agent.announce import announce
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
@@ -45,6 +44,7 @@ from app.domain.project.models import Project
 from app.domain.review import landing_forge
 from app.domain.review.landing_forge import Check, ForgeUnavailable, LandingReads
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
+from app.domain.review.ports import Announce
 from app.domain.review.room_notices import tell_room_undelivered
 from app.domain.review.task_landing import go_on_while_working, tell_agent
 from app.domain.room_task.closing import close_overdue
@@ -59,7 +59,7 @@ logger = logging.getLogger("cheesex.review.landing_watch")
 _FAILED = frozenset({"failure", "timed_out", "startup_failure"})
 
 
-async def watch_landings(chat) -> dict:
+async def watch_landings(chat, announce: Announce) -> dict:
     """One look at every merge still being watched, the tasks being written up
     whose AI teammate has gone on working, and the overdue closings."""
 
@@ -68,7 +68,7 @@ async def watch_landings(chat) -> dict:
     async with sessions() as session:
         closed = await close_overdue(session, chat)
         for overdue in closed:
-            await tell_room_undelivered(session, overdue)
+            await tell_room_undelivered(session, overdue, announce=announce)
         await session.commit()
         ids = list(
             await session.scalars(
@@ -86,7 +86,7 @@ async def watch_landings(chat) -> dict:
     errors: list[str] = []
     for landing_id in ids:
         try:
-            looked += await _look(chat, landing_id)
+            looked += await _look(chat, landing_id, announce=announce)
         except Exception as exc:  # noqa: BLE001 — one merge must not stop the rest
             errors.append(f"{landing_id}: {exc}")
             logger.warning("landing watch failed for %s", landing_id, exc_info=True)
@@ -98,7 +98,7 @@ async def watch_landings(chat) -> dict:
     }
 
 
-async def _look(chat, landing_id: uuid.UUID) -> int:
+async def _look(chat, landing_id: uuid.UUID, *, announce: Announce) -> int:
 
     sessions = chat.session_factory
     async with sessions() as session:
@@ -152,7 +152,7 @@ async def _look(chat, landing_id: uuid.UUID) -> int:
             outcome, failed = checks
             landing.checks = outcome
             if outcome == ChecksOutcome.failed:
-                await _checks_failed(session, task, sha, failed)
+                await _checks_failed(session, task, sha, failed, announce=announce)
         if deployed is not None and landing.deploy == DeployOutcome.watching:
             if deployed == DeployOutcome.unavailable:
                 landing.deploy = DeployOutcome.unavailable
@@ -163,7 +163,9 @@ async def _look(chat, landing_id: uuid.UUID) -> int:
                     if deployed.state == "success"
                     else DeployOutcome.failed
                 )
-                await _deployment_seen(session, task, landing.deploy, deployed)
+                await _deployment_seen(
+                    session, task, landing.deploy, deployed, announce=announce
+                )
         await session.commit()
     return 1
 
@@ -201,7 +203,9 @@ async def _judge_checks(
     return ChecksOutcome.failed, ours
 
 
-async def _checks_failed(session, task, sha: str, failed: list[Check]) -> None:
+async def _checks_failed(
+    session, task, sha: str, failed: list[Check], *, announce: Announce
+) -> None:
     """The merge broke a check on the default branch: the task's AI teammate
     fixes it, in the task, reopened if it had closed."""
 
@@ -245,7 +249,9 @@ async def _checks_failed(session, task, sha: str, failed: list[Check]) -> None:
     )
 
 
-async def _deployment_seen(session, task, outcome: DeployOutcome, deployed) -> None:
+async def _deployment_seen(
+    session, task, outcome: DeployOutcome, deployed, *, announce: Announce
+) -> None:
 
     environment = deployed.environment
     if outcome == DeployOutcome.deployed:

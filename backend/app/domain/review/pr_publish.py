@@ -59,6 +59,7 @@ from app.domain.review import notes, pr_text
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.ports import Announce
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
@@ -248,7 +249,10 @@ async def sync_pr_text(
 
 
 async def sweep_draft_prs(
-    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+    session_factory: async_sessionmaker,
+    project_id: uuid.UUID | None = None,
+    *,
+    announce: Announce,
 ) -> dict[str, int]:
     """Open draft PRs for task branches with commits and no existing PR.
 
@@ -261,7 +265,9 @@ async def sweep_draft_prs(
     from app.domain.room_task.services import TaskService
 
     counts = {"opened": 0, "skipped": 0, "failed": 0}
-    await retarget_completed_dependencies(session_factory, project_id)
+    await retarget_completed_dependencies(
+        session_factory, project_id, announce=announce
+    )
     if not enabled():
         return counts
     async with session_factory() as session:
@@ -306,12 +312,12 @@ async def sweep_draft_prs(
 
 
 async def retarget_completed_dependencies(
-    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+    session_factory: async_sessionmaker,
+    project_id: uuid.UUID | None = None,
+    *,
+    announce: Announce,
 ) -> None:
     """Retarget delivered dependencies and persist instructions for the executor."""
-
-    # deferred-import: tests replace this name on app.domain.agent.announce
-    from app.domain.agent.announce import announce
 
     # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService

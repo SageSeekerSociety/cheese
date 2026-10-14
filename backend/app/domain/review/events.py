@@ -16,6 +16,7 @@ from app.core.db import SessionFactory
 from app.core.forge_events import subscription_assertion
 from app.domain.project.models import ProjectGitInstallation
 from app.domain.review import pr_poll
+from app.domain.review.ports import Announce
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,9 @@ class _Refreshes:
     times out, and every reconnect starts another refresh of everything.
     """
 
-    def __init__(self, chat) -> None:  # noqa: ANN001
+    def __init__(self, chat, announce: Announce) -> None:  # noqa: ANN001
         self._chat = chat
+        self._announce = announce
         self._waiting: dict[tuple, dict] = {}
         self._wake = asyncio.Event()
 
@@ -110,16 +112,18 @@ class _Refreshes:
     async def _refresh(self, event: dict | None) -> None:
         try:
             if event is None:
-                await pr_poll.open_draft_prs(self._chat)
-                await pr_poll.poll_open_prs(self._chat)
+                await pr_poll.open_draft_prs(self._chat, self._announce)
+                await pr_poll.poll_open_prs(self._chat, self._announce)
             else:
-                await pr_poll.forge_repository_changed(self._chat, **event)
+                await pr_poll.forge_repository_changed(
+                    self._chat, announce=self._announce, **event
+                )
         except Exception:  # noqa: BLE001 — the next event or tick retries
             logger.warning("Forge refresh failed for %s", event, exc_info=True)
 
 
-async def listen(chat, sessions: SessionFactory):
-    refreshes = _Refreshes(chat)
+async def listen(chat, sessions: SessionFactory, announce: Announce):
+    refreshes = _Refreshes(chat, announce)
     worker = asyncio.create_task(refreshes.run())
     try:
         await _listen(refreshes, sessions)

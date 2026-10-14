@@ -5,6 +5,7 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+from app.domain.agent.announce import announce
 from app.domain.project import forge
 from app.domain.project.models import Project
 from app.domain.repository.forge_files import ProjectFiles
@@ -111,7 +112,7 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
             first = await _task(session, project, room, "first")
             second = await _task(session, project, room, "second")
             delivered_head = machine_commits(project, first.id, {"a.txt": "first"})
-            service = AcceptService(session)
+            service = AcceptService(session, announce=announce)
             card = await service.create_card(
                 topic_id=room,
                 task_id=first.id,
@@ -217,7 +218,11 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
 
     parent, child = client.portal.call(seed)
     original = git_store.head(project, child.branch_name)
-    client.portal.call(retarget_completed_dependencies, client.test_request_factory)
+    client.portal.call(
+        lambda: retarget_completed_dependencies(
+            client.test_request_factory, announce=announce
+        )
+    )
     github.update_pr.assert_awaited_once_with(123, base=parent.base_branch)
 
     async def check():
@@ -231,7 +236,11 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
 
     client.portal.call(check)
     assert git_store.head(project, child.branch_name) == original
-    client.portal.call(retarget_completed_dependencies, client.test_request_factory)
+    client.portal.call(
+        lambda: retarget_completed_dependencies(
+            client.test_request_factory, announce=announce
+        )
+    )
     assert github.update_pr.await_count == 1
 
 
@@ -268,7 +277,9 @@ def test_retargeting_holds_no_task_lock_while_github_is_called(client, monkeypat
 
     async def race():
         sweep = asyncio.create_task(
-            retarget_completed_dependencies(client.test_request_factory)
+            retarget_completed_dependencies(
+                client.test_request_factory, announce=announce
+            )
         )
         await asyncio.wait_for(in_flight.wait(), timeout=5)
         async with client.test_factory() as session:

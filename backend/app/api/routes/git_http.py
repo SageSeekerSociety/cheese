@@ -23,6 +23,7 @@ from app.core.sandbox_auth import (
     verify_scoped_token,
 )
 from app.core.sentences import say
+from app.domain.agent.announce import announce
 from app.domain.repository import identity
 from app.domain.review.services import AcceptService
 from app.domain.room_task import snapshots
@@ -197,7 +198,7 @@ async def task_workspace(
     # A queued PR's branch is locked by the forge until the queue merges or
     # drops it; a machine that pushes to it is refused. It is told here so it
     # can say that, instead of reporting a failed push to be retried.
-    queued = await AcceptService(db).merge_queued_pr(task.id)
+    queued = await AcceptService(db, announce=announce).merge_queued_pr(task.id)
     return ok(
         {
             "task_id": str(task.id),

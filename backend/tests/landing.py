@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from sqlalchemy import update
 
 from app.api.deps import get_chat_service
+from app.domain.agent.announce import announce
 from app.domain.delivery.agent import (
     begin_send,
     dispatch_pending,
@@ -83,4 +84,4 @@ def time_passes(client, task_id: str, *, minutes: int) -> None:
 def watch(client) -> dict:
     """One tick of the platform's watch on merges."""
     chat = _chat(client)
-    return client.portal.call(lambda: landing_watch.watch_landings(chat))
+    return client.portal.call(lambda: landing_watch.watch_landings(chat, announce))

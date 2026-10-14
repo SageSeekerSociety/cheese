@@ -364,11 +364,8 @@ ignore_imports =
     app.domain.repository.identity -> app.domain.topic.models
     app.domain.repository.service -> app.domain.agent.platform_failures
     app.domain.review.forge -> app.domain.review.services
-    app.domain.review.pr_poll -> app.domain.agent.announce
     app.domain.review.pr_poll -> app.domain.agent.chat
-    app.domain.review.pr_publish -> app.domain.agent.announce
     app.domain.review.pr_publish -> app.domain.review.services
-    app.domain.review.room_notices -> app.domain.agent.announce
     app.domain.room_task.binding -> app.domain.agent.market
     app.domain.room_task.binding -> app.domain.agent.supply
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
@@ -635,15 +632,11 @@ ignore_imports =
     app.domain.repository.identity -> app.domain.room_task.services
     app.domain.repository.service -> app.domain.agent.platform_failures
     app.domain.repository.service -> app.domain.project_skill.service
-    app.domain.review.landing_watch -> app.domain.agent.announce
     app.domain.review.landing_watch -> app.domain.agent_instance.services
     app.domain.review.periodic -> app.domain.agent.chat
-    app.domain.review.pr_poll -> app.domain.agent.announce
     app.domain.review.pr_poll -> app.domain.agent.chat
     app.domain.review.pr_poll -> app.domain.delivery.agent
-    app.domain.review.pr_publish -> app.domain.agent.announce
     app.domain.review.pr_publish -> app.domain.delivery.agent
-    app.domain.review.room_notices -> app.domain.agent.announce
     app.domain.review.room_notices -> app.domain.delivery.agent
     app.domain.review.room_notices -> app.domain.delivery.ledger
     app.domain.review.task_landing -> app.domain.agent_instance.services

@@ -47,7 +47,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import spawn
 from app.core.sentences import say
 from app.domain.addressing import Event
-from app.domain.agent.announce import announce
 from app.domain.delivery.agent import (
     instance_for_seat,
     record_agent,
@@ -72,6 +71,7 @@ from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
+from app.domain.review.ports import Announce
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.closing import Overdue
 from app.domain.room_task.models import Task, TaskStatus
@@ -89,6 +89,7 @@ def _notify_merge_result(
     *,
     task_id: uuid.UUID | None,
     meta: dict | None = None,
+    announce: Announce,
 ) -> None:
     """merge 后结果回房间: post the accept's merge outcome into the topic
     timeline via the webhook primitive's internal function (卡1) — no HTTP
@@ -138,6 +139,7 @@ async def _tell_the_reviewer(
     content: str,
     *,
     meta: dict,
+    announce: Announce,
     also: Sequence[str] = (),
     about_card: uuid.UUID | None = None,
     dispatch: bool = False,
@@ -248,7 +250,12 @@ async def _settle_the_card(
 
 
 async def _announce_filed(
-    session: AsyncSession, topic: Topic, card: AcceptCard, task: Task
+    session: AsyncSession,
+    topic: Topic,
+    card: AcceptCard,
+    task: Task,
+    *,
+    announce: Announce,
 ) -> None:
     """递卡说一声，并通知等着这件事的两个人。
 
@@ -296,7 +303,12 @@ async def _announce_filed(
 
 
 async def _announce_new_artifact(
-    session: AsyncSession, topic: Topic, name: str, *, task_id: uuid.UUID
+    session: AsyncSession,
+    topic: Topic,
+    name: str,
+    *,
+    task_id: uuid.UUID,
+    announce: Announce,
 ) -> None:
     """清单上多出一项 —— 在房间里说一声 (#1085 结论三)。
 
@@ -338,7 +350,9 @@ async def _announce_new_artifact(
     )
 
 
-async def _notify_ready(session: AsyncSession, card: AcceptCard, topic: Topic) -> None:
+async def _notify_ready(
+    session: AsyncSession, card: AcceptCard, topic: Topic, *, announce: Announce
+) -> None:
     """CLEAN → 通知验收人，按 (head, clean) 经账本去重 —— 一个 head 只说
     一次「可以采纳了」，重跑的检查、反复的轮询都不重复。"""
     ledger = pr_signals.NudgeLedger.load(card.nudge_state)
@@ -357,6 +371,7 @@ async def _notify_ready(session: AsyncSession, card: AcceptCard, topic: Topic) -
             detail=say("acceptReadyDetail", url=card.pr_url or ""),
             detail_label=say("labelNextStep"),
         ),
+        announce=announce,
         about_card=card.id,
         dispatch=True,
     )
@@ -370,6 +385,7 @@ async def _note_needs_human(
     card: AcceptCard,
     topic: Topic,
     reason: str,
+    announce: Announce,
     explain: str | None = None,
 ) -> None:
     """The machine ran out of moves on this card: say so on the card and
@@ -404,6 +420,7 @@ async def _note_needs_human(
             detail=say("mergeWithheldDetail", reason=reason, why=why, url=card.pr_url),
             detail_label=say("labelReason"),
         ),
+        announce=announce,
         about_card=card.id,
     )
 
@@ -433,7 +450,15 @@ def _note_poll_failed(card: AcceptCard, exc: BaseException) -> None:
 
 
 async def _record_task_nudge(
-    session: AsyncSession, *, topic, task, content, headline, meta, dispatch=None
+    session: AsyncSession,
+    *,
+    topic,
+    task,
+    content,
+    headline,
+    meta,
+    dispatch=None,
+    announce: Announce,
 ):
     """Commit the task event and parent delivery with the source state.
 
@@ -498,7 +523,9 @@ async def _note_outside_accept_txn(
         logger.exception("could not record the PR-open failure on card %s", card_id)
 
 
-async def tell_room_undelivered(session: AsyncSession, closed: Overdue) -> None:
+async def tell_room_undelivered(
+    session: AsyncSession, closed: Overdue, *, announce: Announce
+) -> None:
     """``closed`` was closed past its deadline with work still going on or
     asked for in it (`room_task.closing.STOP_WORK_AFTER`): its room hears that
     the task closed, that work was stopped, and what it was. Best effort,

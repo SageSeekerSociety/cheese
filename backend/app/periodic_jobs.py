@@ -13,6 +13,7 @@ from app.core.background import PeriodicJobs, PeriodicRunner
 from app.core.db import SessionFactory
 from app.domain import backend_log
 from app.domain.agent import periodic as agent_periodic
+from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.block.services import last_block_at
@@ -136,6 +137,7 @@ def periodic_jobs(
     review_periodic.register_periodic_jobs(
         jobs,
         chat=chat,
+        announce=announce,
         gate_sessions=chat.session_factory,
         gate_nudge_factory=gate_nudges,
     )

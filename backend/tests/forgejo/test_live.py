@@ -22,6 +22,7 @@ from app.api.routes.git_http import open_task_workspace, task_workspace
 from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.announce import announce
 from app.domain.agent.room_events import _known_commits, _turn_changeset
 from app.domain.project.forge import (
     branch_head,
@@ -393,7 +394,7 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         async with asyncio.timeout(10):
             while not server.started:
                 await asyncio.sleep(0.01)
-        consumer = asyncio.create_task(events.listen(chat, db_factory))
+        consumer = asyncio.create_task(events.listen(chat, db_factory, announce))
         async with asyncio.timeout(10):
             while "test" not in relay.connections:
                 await asyncio.sleep(0.01)
@@ -423,7 +424,11 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
             while not changed.await_count:
                 await asyncio.sleep(0.05)
         changed.assert_awaited_with(
-            chat, kind="forgejo", repo=binding.repo, project_id=str(project.id)
+            chat,
+            announce=announce,
+            kind="forgejo",
+            repo=binding.repo,
+            project_id=str(project.id),
         )
     finally:
         if consumer is not None:
@@ -654,10 +659,13 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "url": check_url,
                 }
             ]
-            refreshed = await AcceptService(session).push_fix(task.id)
+            refreshed = await AcceptService(session, announce=announce).push_fix(
+                task.id
+            )
             assert refreshed["pushed"] is True
             assert card.pr_head_sha == latest and card.rebase_count == 0
-            assert (await AcceptService(session).push_fix(task.id))["pushed"] is False
+            again = await AcceptService(session, announce=announce).push_fix(task.id)
+            assert again["pushed"] is False
             await session.commit()
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
         stale = await publisher.client.merge_pull_request(**args, sha=reviewed)
@@ -675,7 +683,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert verdict.state == "clean"
         async with db_factory() as session:
-            accepted = await AcceptService(session).accept(
+            accepted = await AcceptService(session, announce=announce).accept(
                 card_id=card.id, decided_by="reviewer", head_sha=latest
             )
             await session.commit()

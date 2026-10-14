@@ -11,6 +11,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.api.deps import get_chat_service, get_work_runner
+from app.domain.agent.announce import announce
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.agent.turn.intake.completion import TurnCompletion
 from app.domain.review.landing_watch import watch_landings
@@ -95,7 +96,7 @@ def test_the_task_page_hears_the_task_close_once_its_summary_is_done(client):
     ):
         _drain(task_page)
         _drain(channel)
-        client.portal.call(lambda: watch_landings(chat))
+        client.portal.call(lambda: watch_landings(chat, announce))
 
         assert _told(task_page, room)
         assert _told(channel, room)

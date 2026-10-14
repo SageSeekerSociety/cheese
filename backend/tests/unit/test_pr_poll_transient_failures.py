@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from app.domain.agent.announce import announce
 from app.domain.review import pr_poll
 from app.domain.review.pr_poll import TRANSIENT_MISSES_BEFORE_ERROR
 
@@ -52,7 +53,7 @@ def _poller(monkeypatch, failure: Exception) -> tuple[SimpleNamespace, dict]:
         yield _Session()
 
     class _AcceptService:
-        def __init__(self, _session) -> None: ...
+        def __init__(self, _session, *, announce=None) -> None: ...  # noqa: ARG002
 
         async def open_pr_card_ids(self, project_id=None) -> list[uuid.UUID]:
             assert project_id is None
@@ -84,7 +85,7 @@ async def test_one_missed_tick_is_not_worth_waking_anyone(monkeypatch, caplog):
     chat, _outcome = _poller(monkeypatch, httpx.ConnectError("no route to host"))
 
     with caplog.at_level(logging.DEBUG):
-        result = await pr_poll.poll_open_prs(chat)
+        result = await pr_poll.poll_open_prs(chat, announce)
 
     assert _errors(caplog) == []
     assert any(r.levelno == logging.WARNING for r in caplog.records)
@@ -98,7 +99,7 @@ async def test_retries_that_keep_failing_are_reported(monkeypatch, caplog):
 
     with caplog.at_level(logging.DEBUG):
         for _ in range(TRANSIENT_MISSES_BEFORE_ERROR):
-            await pr_poll.poll_open_prs(chat)
+            await pr_poll.poll_open_prs(chat, announce)
 
     assert len(_errors(caplog)) == 1
 
@@ -109,7 +110,7 @@ async def test_a_failure_that_is_not_the_network_is_reported_at_once(
     chat, _outcome = _poller(monkeypatch, KeyError("pr_number"))
 
     with caplog.at_level(logging.DEBUG):
-        await pr_poll.poll_open_prs(chat)
+        await pr_poll.poll_open_prs(chat, announce)
 
     assert len(_errors(caplog)) == 1
 
@@ -119,11 +120,11 @@ async def test_a_tick_that_works_forgives_the_misses_before_it(monkeypatch, capl
     chat, outcome = _poller(monkeypatch, httpx.ConnectError("blip"))
 
     with caplog.at_level(logging.DEBUG):
-        await pr_poll.poll_open_prs(chat)
+        await pr_poll.poll_open_prs(chat, announce)
         outcome["failure"] = None
-        await pr_poll.poll_open_prs(chat)
+        await pr_poll.poll_open_prs(chat, announce)
         outcome["failure"] = httpx.ConnectError("blip")
         for _ in range(TRANSIENT_MISSES_BEFORE_ERROR - 1):
-            await pr_poll.poll_open_prs(chat)
+            await pr_poll.poll_open_prs(chat, announce)
 
     assert _errors(caplog) == []

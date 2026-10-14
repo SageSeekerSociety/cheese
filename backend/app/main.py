@@ -304,11 +304,12 @@ async def lifespan(application: FastAPI):
             name="cleanup startup recovery",
         )
         if settings.forge_event_relay_url:
+            from app.domain.agent.announce import announce
             from app.domain.review.events import listen
 
             forge_events.append(
                 asyncio.create_task(
-                    listen(get_chat_service(), async_session_factory),
+                    listen(get_chat_service(), async_session_factory, announce),
                     name="forge events",
                 )
             )

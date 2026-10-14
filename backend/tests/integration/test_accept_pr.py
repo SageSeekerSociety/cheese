@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.announce import announce
 from app.domain.review import github_pr
 from app.domain.review.github_pr import OpenedPR
 from app.domain.review.github_pr_status import PullRequestStatus
@@ -187,7 +188,7 @@ def _poll(client) -> dict:
     """
     from app.domain.review import pr_poll
 
-    return client.portal.call(pr_poll.poll_open_prs, _chat_service())
+    return client.portal.call(pr_poll.poll_open_prs, _chat_service(), announce)
 
 
 def _room(client, topic_id: str) -> str:
@@ -3094,7 +3095,11 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 def _sweep(client) -> dict:
     from app.domain.review import pr_publish
 
-    return client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
+    return client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory, announce=announce
+        )
+    )
 
 
 def _room_with_work(client) -> tuple[str, str]:
@@ -3344,7 +3349,11 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
 
     monkeypatch.setattr(TaskService, "open_without_pr", _list_then_merge)
 
-    counts = client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
+    counts = client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory, announce=announce
+        )
+    )
 
     assert counts["opened"] == 0, counts
     assert sweeping["opened"] == []
