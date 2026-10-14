@@ -1,7 +1,9 @@
 // `@platform/sim`: a process that moves in steps of model time — an epidemic,
 // a queue, an orbit — played, paused and reset by the reader. The app says what
-// the start is and what one step does; how many steps a frame takes, so the
-// pace is the same on every screen, and stopping when the app goes, are here.
+// the start is, what one step does and, for a process that finishes, where it
+// ends; how many steps a frame takes, so the pace is the same on every screen,
+// stopping at the end, playing again from the start, and stopping when the app
+// goes, are here.
 // It is shell 1's contract: it may grow, never change.
 import { getCurrentScope, onScopeDispose, reactive, shallowRef, triggerRef } from 'vue'
 
@@ -12,11 +14,14 @@ export type Simulation<S> = {
   t: number
   steps: number
   running: boolean
+  /** The process has reached its `end`. */
+  done: boolean
+  /** From where it is; at the end, from the start again. */
   play(): void
   pause(): void
-  /** Back to the start (with its `start` steps taken), paused. */
+  /** Back to the start, paused. */
   reset(): void
-  /** Take `n` steps at once (default 1). */
+  /** Take `n` steps at once (default 1), never past the end. */
   advance(n?: number): void
 }
 
@@ -32,10 +37,12 @@ export function simulate<S>(options: {
   dt?: number
   /** Steps per second while playing (default 10). */
   speed?: number
-  /** Steps already taken when the app opens, so its first picture shows something. */
-  start?: number
+  /** Steps the process takes in all, for one that finishes: playing stops
+   *  there. Without it the process runs until paused. */
+  end?: number
 }): Simulation<S> {
   const dt = options.dt ?? 1
+  const end = options.end ?? Infinity
   const speed = Math.max(0, options.speed ?? 10)
   let frame = 0
   let last = 0
@@ -49,8 +56,12 @@ export function simulate<S>(options: {
     t: 0,
     steps: 0,
     running: false,
+    get done() {
+      return sim.steps >= end
+    },
     play() {
       if (sim.running) return
+      if (sim.done) sim.reset()
       sim.running = true
       last = performance.now()
       owed = 0
@@ -65,12 +76,13 @@ export function simulate<S>(options: {
       state.value = options.init()
       sim.t = 0
       sim.steps = 0
-      sim.advance(options.start ?? 0)
     },
     advance(n = 1) {
       // The steps run on the plain state, and the page hears of it once.
       let s = state.value
       let { t, steps } = sim
+      n = Math.min(n, end - steps)
+      if (n <= 0) return
       for (let i = 0; i < n; i++) {
         s = options.step(s, dt, t)
         steps += 1
@@ -90,10 +102,10 @@ export function simulate<S>(options: {
     const n = Math.min(Math.floor(owed), MOST_PER_FRAME)
     owed -= Math.floor(owed)
     if (n > 0) sim.advance(n)
-    frame = requestAnimationFrame(tick)
+    if (sim.done) sim.running = false
+    else frame = requestAnimationFrame(tick)
   }
 
-  sim.advance(options.start ?? 0)
   if (getCurrentScope()) onScopeDispose(() => cancelAnimationFrame(frame))
   return sim
 }

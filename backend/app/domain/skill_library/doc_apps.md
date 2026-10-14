@@ -37,7 +37,8 @@ description: 文档中小程序的代码写法和设计规范。随 cheese-docs 
 小程序要做到以下五点。讲清楚是目的；可交互、直观、动起来是做到它的手段，取舍时按这个先后；正确是底线。
 
 1. **讲清楚**：读者不读正文，只看画面、操作一两次，就能得出文档要讲的结论。
-   - 打开时的画面就体现结论：默认值选最能说明问题的一组，因为多数读者不会操作小程序。练习例外，见下文。
+   - 默认值选最能说明问题的一组，因为多数读者不会改动它们。滑块的默认值不放在范围的两端，读者往两个方向都能拖。
+   - 有过程的小程序，打开时停在过程的起点，读者按播放后看它一步步变化。起点画面上用淡色画出整条轨迹或终点，不按播放的读者也能看到结果。不要打开时就停在终点：读者按播放，画面不会有任何变化。
    - 读者操作后，能看到支持结论的证据，例如越过临界点的那一刻、两个方案拉开差距的地方。
    - 用颜色、箭头、高亮或标注，指明读者该看哪里。没有提示，读者的注意力会落在无关的细节上。
    - 不误导：图形的长短和面积与数值成比例，坐标范围固定、不随数据缩放，否则画面上的差别不是真实的差别。
@@ -169,11 +170,11 @@ const sim = simulate({
   step: (state, dt, t) => next,          // 由当前状态算出下一步的状态，可以直接修改 state 后返回它
   dt: 1,                                 // 每一步代表的时长，默认 1
   speed: 10,                             // 播放时每秒走几步，默认 10
-  start: 30,                             // 打开时已经走过的步数，让初始画面就体现要点
+  end: 60,                               // 过程一共走几步；过程不会结束时省略
 })
 ```
 
-返回的 `sim` 可以直接在模板中使用：`sim.state` 是当前状态，`sim.t` 是当前时刻，`sim.running` 表示是否在播放；`sim.play()`、`sim.pause()`、`sim.reset()` 分别是播放、暂停和回到开头，`sim.advance(n)` 一次前进 `n` 步。播放和暂停用普通的 `<button>`。读者改了参数要从头开始时，写 `watch(参数, () => sim.reset())`。需要按微分方程精确推进时（轨道、摆），用同一模块的 `rk4(f, y, t, dt)`：`f(t, y)` 返回 `y` 各分量的变化率，`rk4` 返回前进一步之后的 `y`。
+返回的 `sim` 可以直接在模板中使用：`sim.state` 是当前状态，`sim.t` 是当前时刻，`sim.running` 表示是否在播放，`sim.done` 表示是否已到终点；`sim.play()`、`sim.pause()`、`sim.reset()` 分别是播放、暂停和回到开头，`sim.advance(n)` 一次前进 `n` 步。打开时停在开头。播放到 `end` 自动停下，再按播放从头开始。播放和暂停用普通的 `<button>`。要在起点画面上画出整条轨迹，在 `computed` 中从 `init()` 起把 `step` 走到终点。读者改了参数要从头开始时，写 `watch(参数, () => sim.reset())`。需要按微分方程精确推进时（轨道、摆），用同一模块的 `rk4(f, y, t, dt)`：`f(t, y)` 返回 `y` 各分量的变化率，`rk4` 返回前进一步之后的 `y`。
 
 需要随机数时，用 `@platform/random` 的 `random(种子)`，不用 `Math.random`。同一个种子每次产生同样的随机数，平台检查时拍下的画面就是读者看到的画面，`console.assert` 也能核对模拟的结果。它提供 `next()`（0 到 1 之间的数）、`uniform(a, b)`、`int(a, b)`、`normal(均值, 标准差)`、`exponential(速率)`、`poisson(均值)`、`pick(列表)`、`shuffle(列表)`。要让 `reset()` 后重现同样的过程，在 `init` 中重新创建它。
 
@@ -283,7 +284,7 @@ const x = tween(slots)
 </template>
 ```
 
-窗口前的队伍：顾客每分钟随机到达，窗口每分钟最多服务 3 人。读者调整到达速度，看到达速度接近服务能力时队伍如何越排越长。过程用 `simulate` 推进，到达人数用固定种子的 `random` 生成，队伍中的人用 `c-list` 过渡进出。
+窗口前的队伍：顾客每分钟随机到达，窗口每分钟最多服务 3 人。读者调整到达速度，看到达速度接近服务能力时队伍如何越排越长。过程用 `simulate` 推进，到达人数用固定种子的 `random` 生成，队伍中的人用 `c-list` 过渡进出。打开时停在第 0 分钟，淡色曲线是整整一小时的队伍长度，播放时实线沿着它画出来。
 
 ```vue
 <script setup>
@@ -293,39 +294,38 @@ import { simulate } from '@platform/sim'
 
 const rate = ref(2.6)
 const SERVE = 3
-let r = random(7)
-const sim = simulate({
-  init: () => {
-    r = random(7)
-    return { line: [], next: 0, history: [0] }
-  },
-  step: (s) => {
-    for (let k = r.poisson(rate.value); k > 0; k--) s.line.push(s.next++)
-    s.line.splice(0, SERVE)
-    s.history.push(s.line.length)
-    if (s.history.length > 61) s.history.shift()
-    return s
-  },
-  speed: 4,
-  start: 30,
-})
+const MINUTES = 60
+// 随机数放进状态，从 init 重新开始时，到达人数也重新来过
+const init = () => ({ r: random(7), line: [], next: 0, history: [0] })
+const step = (s) => {
+  for (let k = s.r.poisson(rate.value); k > 0; k--) s.line.push(s.next++)
+  s.line.splice(0, SERVE)
+  s.history.push(s.line.length)
+  return s
+}
+const sim = simulate({ init, step, speed: 4, end: MINUTES })
 watch(rate, () => sim.reset())
-const path = computed(() =>
-  sim.state.history.map((q, i) => `${i * 5},${78 - Math.min(q, 25) * 3}`).join(' ')
-)
+// 整整一小时的队伍长度，画在底下，打开时就能看到结果
+const whole = computed(() => {
+  let s = init()
+  for (let m = 0; m < MINUTES; m++) s = step(s)
+  return s.history
+})
+const points = (history) => history.map((q, i) => `${i * 5},${78 - Math.min(q, 25) * 3}`).join(' ')
 </script>
 
 <template>
   <c-row>
     <c-slider label="到达速度" :min="1" :max="3.4" :step="0.2" unit=" 人/分" v-model="rate" />
     <button class="primary" @click="sim.running ? sim.pause() : sim.play()">{{ sim.running ? '暂停' : '播放' }}</button>
-    <button @click="sim.reset()">从头开始</button>
+    <button @click="sim.reset()">回到开头</button>
   </c-row>
   <TransitionGroup name="c-list" tag="div" class="qu-line">
     <span v-for="id in sim.state.line.slice(0, 24)" :key="id" class="qu-person"></span>
   </TransitionGroup>
   <svg viewBox="0 0 300 80" width="100%">
-    <polyline :points="path" fill="none" stroke="var(--chart-1)" stroke-width="2" />
+    <polyline :points="points(whole)" fill="none" stroke="var(--line-2)" stroke-width="2" />
+    <polyline :points="points(sim.state.history)" fill="none" stroke="var(--chart-1)" stroke-width="2" />
   </svg>
   <p>第 {{ sim.t }} 分钟，队伍中有 {{ sim.state.line.length }} 人</p>
 </template>

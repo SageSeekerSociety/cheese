@@ -311,23 +311,29 @@ const draw = (seed) => { const r = random(seed); return [r.next(), r.normal(), r
   expect(errors).toEqual([]);
 });
 
-test('a simulation opens with its first steps taken, steps on, and starts over', async ({ page }) => {
+test('a simulation opens at its start, stops at its end, and plays again from the start', async ({ page }) => {
   const errors = await runApp(
     page,
     `<script setup>
 import { simulate } from '@platform/sim'
-const sim = simulate({ init: () => ({ n: 0 }), step: (s) => { s.n += 1; return s }, dt: 0.5, start: 4 })
+const sim = simulate({ init: () => ({ n: 0 }), step: (s) => { s.n += 1; return s }, dt: 0.5, speed: 5, end: 6 })
 </script>
 <template>
-  <p id="out">{{ sim.steps }} {{ sim.t }} {{ sim.state.n }}</p>
-  <button id="on" @click="sim.advance(3)">on</button><button id="back" @click="sim.reset()">back</button>
+  <p id="out">{{ sim.steps }} {{ sim.t }} {{ sim.state.n }} {{ sim.done ? 'done' : sim.running ? 'running' : 'paused' }}</p>
+  <button id="on" @click="sim.advance(3)">on</button><button id="play" @click="sim.play()">play</button>
+  <button id="back" @click="sim.reset()">back</button>
 </template>`
   );
-  await expect(page.locator('#out')).toHaveText('4 2 4');
+  await expect(page.locator('#out')).toHaveText('0 0 0 paused');
   await page.locator('#on').click();
-  await expect(page.locator('#out')).toHaveText('7 3.5 7');
+  await expect(page.locator('#out')).toHaveText('3 1.5 3 paused');
+  await page.locator('#on').click();
+  await expect(page.locator('#out')).toHaveText('6 3 6 done');
+  await page.locator('#play').click();
+  await expect(page.locator('#out')).toHaveText(/^[0-5] .* running$/);
+  await expect(page.locator('#out')).toHaveText('6 3 6 done');
   await page.locator('#back').click();
-  await expect(page.locator('#out')).toHaveText('4 2 4');
+  await expect(page.locator('#out')).toHaveText('0 0 0 paused');
   expect(errors).toEqual([]);
 });
 
