@@ -8,6 +8,8 @@ Chinese room name here, `采纳 topic/8f3a… → main (#7)` there, "验收人�
 a body.
 """
 
+import re
+
 from app.core.config import settings
 from app.domain.repository import identity
 from app.domain.review import commit_message
@@ -142,6 +144,21 @@ def pr_trailers(
     return "\n".join(lines)
 
 
+#: The line that starts an independent review's result in a card body. The delivering seat
+#: pastes the result after its own sections (`.claude/pr-review/render.py` writes this line
+#: first). The patrol board reads it from the card; review results stay off GitHub.
+_REVIEW_BLOCK = re.compile(r"^独立 review：", re.MULTILINE)
+
+
+def without_review_block(body: str) -> str:
+    """`body` up to the line that starts a review result, without that line and what follows.
+
+    The card body is mirrored into the PR body and the squash commit, so this is the
+    one place that keeps the review result from reaching either."""
+    found = _REVIEW_BLOCK.search(body)
+    return body[: found.start()].rstrip() if found else body
+
+
 def pr_body(
     topic: Topic,
     decided_by: str,
@@ -154,6 +171,7 @@ def pr_body(
     and useless to a reviewer, who can see that from the PR's own metadata. The
     body a reviewer needs is the WHY, which is why `change_body` exists."""
     body = (getattr(card, "change_body", None) or "").strip() if card else ""
+    body = without_review_block(body)
     parts = [body] if body else []
     parts.append(pr_trailers(topic, decided_by, who, card))
     return "\n\n".join(parts)
