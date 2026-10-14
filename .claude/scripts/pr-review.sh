@@ -82,7 +82,14 @@ prepare() {
     git -C "$ROOT" show "origin/main:$METHOD/prompt.md" > "$dir/REVIEW.md"
     git -C "$ROOT" show "origin/main:$METHOD/schema.json" > "$dir/schema.json"
     git -C "$ROOT" show "origin/main:$METHOD/render.py" > "$dir/render.py"
-    git -C "$ROOT" show "origin/main:$METHOD/tiers.py" > "$dir/tiers.py" 2>/dev/null || :
+    # tiers.py is newer than the rest of the method: while it is only on this
+    # branch, main has no copy of it, and refusing to run would take the review
+    # tooling down for every other PR. Use this checkout's copy in that window,
+    # the same way the whole method falls back below. After it merges, main's
+    # copy is the one used and the PR under review cannot loosen its own tier.
+    git -C "$ROOT" show "origin/main:$METHOD/tiers.py" > "$dir/tiers.py" 2>/dev/null \
+      || { echo "pr-review: tiers.py is not on origin/main yet; using this checkout's copy" >&2
+           cp "$ROOT/$METHOD/tiers.py" "$dir/tiers.py" 2>/dev/null || rm -f "$dir/tiers.py"; }
   else
     echo "pr-review: $METHOD is not on origin/main yet; using this checkout's copy" >&2
     method_rev=$(git -C "$ROOT" rev-parse HEAD)
@@ -96,11 +103,15 @@ prepare() {
 
   # The tier is a property of the change, not of the review: always over the PR's
   # whole range, so a delta review still reports the tier of what is being merged.
-  merge_base=$(git -C "$ROOT" merge-base "origin/$base" "$sha") || exit 1
-  tier=$(python3 "${TIERS:-$dir/tiers.py}" --repo "$ROOT" --base "$merge_base" --head "$sha" --letter) \
-    || die "could not decide the review tier"
-  tier_txt=$(python3 "${TIERS:-$dir/tiers.py}" --repo "$ROOT" --base "$merge_base" --head "$sha") \
-    || exit 1
+  # A tier nobody can decide is not worth failing the review over: the criteria
+  # stay in REVIEW.md either way, and the conclusion line simply carries none.
+  tier=""; tier_txt=""
+  if merge_base=$(git -C "$ROOT" merge-base "origin/$base" "$sha" 2>/dev/null) \
+    && [ -f "${TIERS:-$dir/tiers.py}" ]; then
+    tier=$(python3 "${TIERS:-$dir/tiers.py}" --repo "$ROOT" --base "$merge_base" --head "$sha" --letter 2>/dev/null) || tier=""
+    tier_txt=$(python3 "${TIERS:-$dir/tiers.py}" --repo "$ROOT" --base "$merge_base" --head "$sha" 2>/dev/null) || tier_txt=""
+  fi
+  [ -n "$tier" ] || echo "pr-review: 算不出档位，结论行不带档位" >&2
   [ "$tier" != G ] || echo "pr-review: 档位 G（纯机械改动），不用跑审查；post 会照常出结论行" >&2
 
   gh api "repos/$REPO/pulls/$pr" -q '"# " + .title + "\n\n" + (.body // "")' > "$dir/pr.md" || exit 1
@@ -158,7 +169,7 @@ changes the scope of steps 1 to 3 as follows; steps 4 to 7 stand.
   blockers and majors are fixed, and which are not.
 EOF
   fi
-  cat >> "$dir/REVIEW.md" <<EOF
+  [ -z "$tier_txt" ] || cat >> "$dir/REVIEW.md" <<EOF
 
 ## Review tier
 

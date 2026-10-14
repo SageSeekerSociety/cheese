@@ -186,6 +186,23 @@ class PrReview(unittest.TestCase):
         self.assertIn("两路全新上下文找茬", text)
         self.assertIn("f.txt（实现代码）", text)
 
+    def test_prepare_still_works_when_the_tier_cannot_be_decided(self):
+        # The tier says how deep to review; it is not a gate on reviewing at all. A machine
+        # that cannot decide it — tiers.py not on main yet, a checkout that predates it —
+        # must still hand out the method and a usable REVIEW.md, just without a tier, or the
+        # review tooling would be down for every PR but the one adding it.
+        out = self.run_script("prepare", PR, env_extra={"TIERS": str(self.tmp / "gone.py")})
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("算不出档位", out.stderr)
+        d = Path(out.stdout.strip()).parent
+        text = (d / "REVIEW.md").read_text()
+        self.assertIn("## This review", text)
+        self.assertNotIn("## Review tier", text)
+        meta = dict(
+            line.split("=", 1) for line in (d / "meta").read_text().splitlines() if "=" in line
+        )
+        self.assertEqual(meta["tier"].strip("'"), "")
+
     def test_a_mechanical_change_is_tier_g_and_gets_a_result_without_a_review(self):
         # post runs straight on prepare's own result.json, without the seat writing one:
         # that is the point of the tier, so nothing writes over it here.
