@@ -34,16 +34,17 @@ description: 文档中小程序的代码写法和设计规范。随 cheese-docs 
 
 编写代码前，先确定画面：画的是什么对象，读者操作时哪些部分随之变化。如果设想中的画面只有几个数字和一张表格，说明还没有找到要画的对象。
 
-小程序要做到以下五点。讲清楚是目的；可交互、直观、动起来是做到它的手段，取舍时按这个先后；正确是底线。
+画面上的每个控件、每段运动，都要说得出它帮读者弄懂了什么：去掉它，读者会少懂什么。说不出来的，不要加。为了显得可以操作而加的滑块，为了显得生动而加的播放，只会让读者花时间找要紧的东西。
+
+小程序要做到以下五点。讲清楚是目的；可交互、直观、运动是做到它的手段，取舍时按这个先后；正确是底线。
 
 1. **讲清楚**：读者不读正文，只看画面、操作一两次，就能得出文档要讲的结论。
    - 默认值选最能说明问题的一组，因为多数读者不会改动它们。滑块的默认值不放在范围的两端，读者往两个方向都能拖。
-   - 有过程的小程序，打开时停在过程的起点，读者按播放后看它一步步变化。起点画面上用淡色画出整条轨迹或终点，不按播放的读者也能看到结果。不要打开时就停在终点：读者按播放，画面不会有任何变化。
    - 读者操作后，能看到支持结论的证据，例如越过临界点的那一刻、两个方案拉开差距的地方。
    - 用颜色、箭头、高亮或标注，指明读者该看哪里。没有提示，读者的注意力会落在无关的细节上。
    - 不误导：图形的长短和面积与数值成比例，坐标范围固定、不随数据缩放，否则画面上的差别不是真实的差别。
 2. **可交互**：读者可以拖动、点击、输入、播放或作答，画面随之变化。
-   - 只提供决定结论的那一两个量或结构，并限定范围。控件越多，读者越难找到要紧的那一个。
+   - 每个控件对应读者会问的一个问题，例如「间隔再短一些会怎样」「样本再大一些呢」。只提供决定结论的那一两个量或结构，并限定范围。控件越多，读者越难找到要紧的那一个。
    - 操作方式与实际一致：本来就是拿起放下、排列顺序、两两配对的对象，让读者直接拖动；调整连续的数值用滑块；点击即可完成的操作不改成拖拽。
    - 操作后画面立即给出反馈。
    - 同一个量有几种表示（图形、数值、曲线）时，它们一起变化，读者才能把它们对应起来。
@@ -52,12 +53,14 @@ description: 文档中小程序的代码写法和设计规范。随 cheese-docs 
    - 完成后自查：遮住画面上的数字和文字，读者能否仍然看出发生了什么。如果不能，画面只是把数字换了一种排列；几张指标卡、一张通用图表加一张表格，读者从中得到的与阅读正文无异。
    - 最重要的量用位置或长度表示，次要的量才用颜色或面积：人眼比较位置和长度最准确，比较颜色深浅和面积大小最不准确。
    - 画成简化的示意图，只保留讲清这件事必需的部分。写实的细节只会分散注意力。
-4. **动起来**：让所讲的对象本身动起来，而不只是展示几个静止的状态。过程可以播放，机制中的各部分在运转，变化连续地展现出来，读者能看到它如何一步步变成后来的样子，例如行星沿轨道运行、队伍逐渐变长。随时间发展的过程用 `simulate` 推进（见下文「模拟与随机数」）。
+4. **运动**：所讲的东西本身就在运动时，让读者看着它运动：天体和物体的运动（行星绕转、三体、摆、抛体），物理现象（波的传播、扩散、碰撞），数学过程（迭代逼近、随机游走），算法和协议的执行（排序中元素的交换、数据包的收发、进程的调度）。各部分如何同时变化、如何相互影响，看着它运动比看一张事后画的图更容易理解。用 `simulate` 推进（见下文「模拟与随机数」）。
+   - 结果用一张静态图就能看清的，不加播放。例如随时间变化的一条曲线：读者要比较的是不同条件下的曲线，用滑块调整条件、曲线立即重画即可；让曲线从左到右画出来，读者不会多懂什么。
+   - 打开时停在起点，读者按播放后开始运动。
    - 节奏要看得清：速度慢到读者能分辨变化的先后。一闪而过的变化，读者看不清。
    - 读者能控制节奏：可以暂停、继续、逐步前进和重来。
-   - 运动之后留下痕迹，例如轨迹、历史曲线或逐步的记录。动画转瞬即逝，留下的痕迹让读者可以回看、比较前后的状态。
+   - 运动之后留下痕迹，例如轨迹或逐步的记录。动画转瞬即逝，留下的痕迹让读者可以回看、比较前后的状态。
 
-   内容本身不随时间或过程变化时（例如静态方案的比较），这一条不适用。
+   所讲的东西本身不在运动时，这一条不适用。
 5. **正确**：
    - 数值按文档给出的数据计算，不另加文档没有给出的假设；计算结果保留合适的小数位数。
    - 文档中明确给出的数值（算例的结果、表格中的数据），在代码中用 `console.assert` 核对，第二个参数写明核对的是哪个数，例如 `console.assert(Math.abs(price(0) - 24) < 1e-9, '不征税时均衡价应为 24')`。核对未通过时，平台不保存，并返回未通过的那一条。
@@ -70,7 +73,7 @@ description: 文档中小程序的代码写法和设计规范。随 cheese-docs 
 - **比较方案**：几个方案并列展示，差别一目了然，选中的一项突出显示。
 - **推演过程**：每一步发生了什么，以及它如何影响下一步，都画在图上。
 - **动手组合**：读者每改动一处，画面立即显示新组合的结果；出现冲突或不满足条件的地方，在图上直接标出。
-- **练习**：打开时给出题目和起点，不给出答案。把任务拆成几步，每一步给读者可以选择、拖放的部件，或者一个已经完成一部分的起点，不要只给一个空白的大输入框；需要读者自己输入时，只让他填其中一小段。每完成一步，画面就展示这一步的效果。所有正确答案都判为正确（相等的分数、写法不同的等价式子）；答错时指出错在哪一步、原因是什么，而不只是提示「错误」。
+- **练习**：考的是文档所讲的内容：概念的运用、原理的推理、因果关系，而不是照着画面上的线索就能做出的操作。答案不能出现在画面上，也不显示能直接推出答案的数据。打开时给出题目和起点，不给出答案。把任务拆成几步，每一步给读者可以选择、拖放的部件，或者一个已经完成一部分的起点，不要只给一个空白的大输入框；需要读者自己输入时，只让他填其中一小段。每完成一步，画面就展示这一步的效果。所有正确答案都判为正确（相等的分数、写法不同的等价式子）；答错时指出错在哪一步、原因是什么，而不只是提示「错误」。
 
 画面要简洁：
 
@@ -162,7 +165,7 @@ description: 文档中小程序的代码写法和设计规范。随 cheese-docs 
 
 ## 模拟与随机数
 
-推演一个随时间发展的过程（传染病传播、排队、轨道运动）时，用 `@platform/sim` 的 `simulate`，不要自己写定时器：
+所讲的东西本身在运动时（轨道、摆、传播、算法的执行），用 `@platform/sim` 的 `simulate` 推进，不要自己写定时器：
 
 ```js
 const sim = simulate({
@@ -174,7 +177,7 @@ const sim = simulate({
 })
 ```
 
-返回的 `sim` 可以直接在模板中使用：`sim.state` 是当前状态，`sim.t` 是当前时刻，`sim.running` 表示是否在播放，`sim.done` 表示是否已到终点；`sim.play()`、`sim.pause()`、`sim.reset()` 分别是播放、暂停和回到开头，`sim.advance(n)` 一次前进 `n` 步。打开时停在开头。播放到 `end` 自动停下，再按播放从头开始。播放和暂停用普通的 `<button>`。要在起点画面上画出整条轨迹，在 `computed` 中从 `init()` 起把 `step` 走到终点。读者改了参数要从头开始时，写 `watch(参数, () => sim.reset())`。需要按微分方程精确推进时（轨道、摆），用同一模块的 `rk4(f, y, t, dt)`：`f(t, y)` 返回 `y` 各分量的变化率，`rk4` 返回前进一步之后的 `y`。
+返回的 `sim` 可以直接在模板中使用：`sim.state` 是当前状态，`sim.t` 是当前时刻，`sim.running` 表示是否在播放，`sim.done` 表示是否已到终点；`sim.play()`、`sim.pause()`、`sim.reset()` 分别是播放、暂停和回到开头，`sim.advance(n)` 一次前进 `n` 步。打开时停在开头。播放到 `end` 自动停下，再按播放从头开始。播放和暂停用普通的 `<button>`。读者改了参数要从头开始时，写 `watch(参数, () => sim.reset())`。需要按微分方程精确推进时（轨道、摆），用同一模块的 `rk4(f, y, t, dt)`：`f(t, y)` 返回 `y` 各分量的变化率，`rk4` 返回前进一步之后的 `y`。
 
 需要随机数时，用 `@platform/random` 的 `random(种子)`，不用 `Math.random`。同一个种子每次产生同样的随机数，平台检查时拍下的画面就是读者看到的画面，`console.assert` 也能核对模拟的结果。它提供 `next()`（0 到 1 之间的数）、`uniform(a, b)`、`int(a, b)`、`normal(均值, 标准差)`、`exponential(速率)`、`poisson(均值)`、`pick(列表)`、`shuffle(列表)`。要让 `reset()` 后重现同样的过程，在 `init` 中重新创建它。
 
@@ -284,56 +287,53 @@ const x = tween(slots)
 </template>
 ```
 
-窗口前的队伍：顾客每分钟随机到达，窗口每分钟最多服务 3 人。读者调整到达速度，看到达速度接近服务能力时队伍如何越排越长。过程用 `simulate` 推进，到达人数用固定种子的 `random` 生成，队伍中的人用 `c-list` 过渡进出。打开时停在第 0 分钟，淡色曲线是整整一小时的队伍长度，播放时实线沿着它画出来。
+行星绕恒星运行：读者调整行星的初速度，看轨道从圆变成越来越扁的椭圆。行星本身在运动，用 `simulate` 推进，每一步用 `rk4` 按万有引力求解，走过的路径留下轨迹。
 
 ```vue
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { random } from '@platform/random'
-import { simulate } from '@platform/sim'
+import { simulate, rk4 } from '@platform/sim'
 
-const rate = ref(2.6)
-const SERVE = 3
-const MINUTES = 60
-// 随机数放进状态，从 init 重新开始时，到达人数也重新来过
-const init = () => ({ r: random(7), line: [], next: 0, history: [0] })
-const step = (s) => {
-  for (let k = s.r.poisson(rate.value); k > 0; k--) s.line.push(s.next++)
-  s.line.splice(0, SERVE)
-  s.history.push(s.line.length)
-  return s
+// 取 GM = 1：行星从 (1, 0) 出发，初速度垂直向上；速度为 1 时是圆轨道
+const speed = ref(1.1)
+const gravity = (t, [x, y, vx, vy]) => {
+  const r3 = Math.hypot(x, y) ** 3
+  return [vx, vy, -x / r3, -y / r3]
 }
-const sim = simulate({ init, step, speed: 4, end: MINUTES })
-watch(rate, () => sim.reset())
-// 整整一小时的队伍长度，画在底下，打开时就能看到结果
-const whole = computed(() => {
-  let s = init()
-  for (let m = 0; m < MINUTES; m++) s = step(s)
-  return s.history
+const sim = simulate({
+  init: () => ({ body: [1, 0, 0, speed.value], trail: [[1, 0]] }),
+  step: (s, dt, t) => {
+    s.body = rk4(gravity, s.body, t, dt)
+    s.trail.push([s.body[0], s.body[1]])
+    return s
+  },
+  dt: 0.02,
+  speed: 60,
+  end: 1200, // 约 24 个时间单位，速度取到 1.25 时也能绕完一圈
 })
-const points = (history) => history.map((q, i) => `${i * 5},${78 - Math.min(q, 25) * 3}`).join(' ')
+watch(speed, () => sim.reset())
+
+const X = (x) => 190 + x * 32 // 1 个单位 = 32 像素，恒星在 (190, 70)
+const Y = (y) => 70 - y * 32
+const path = computed(() => sim.state.trail.map(([x, y]) => `${X(x).toFixed(1)},${Y(y).toFixed(1)}`).join(' '))
+
+let check = [1, 0, 0, 1]
+for (let i = 0; i < 300; i++) check = rk4(gravity, check, i * 0.02, 0.02)
+console.assert(Math.abs(Math.hypot(check[0], check[1]) - 1) < 1e-3, '速度为 1 时行星应留在半径 1 的圆上')
 </script>
 
 <template>
   <c-row>
-    <c-slider label="到达速度" :min="1" :max="3.4" :step="0.2" unit=" 人/分" v-model="rate" />
+    <c-slider label="初速度" :min="0.8" :max="1.25" :step="0.05" v-model="speed" />
     <button class="primary" @click="sim.running ? sim.pause() : sim.play()">{{ sim.running ? '暂停' : '播放' }}</button>
     <button @click="sim.reset()">回到开头</button>
   </c-row>
-  <TransitionGroup name="c-list" tag="div" class="qu-line">
-    <span v-for="id in sim.state.line.slice(0, 24)" :key="id" class="qu-person"></span>
-  </TransitionGroup>
-  <svg viewBox="0 0 300 80" width="100%">
-    <polyline :points="points(whole)" fill="none" stroke="var(--line-2)" stroke-width="2" />
-    <polyline :points="points(sim.state.history)" fill="none" stroke="var(--chart-1)" stroke-width="2" />
+  <svg viewBox="0 0 300 140" width="100%">
+    <polyline :points="path" fill="none" stroke="var(--chart-1)" stroke-width="1.5" />
+    <circle cx="190" cy="70" r="6" fill="var(--chart-2)" />
+    <circle :cx="X(sim.state.body[0])" :cy="Y(sim.state.body[1])" r="4" fill="var(--ink)" />
   </svg>
-  <p>第 {{ sim.t }} 分钟，队伍中有 {{ sim.state.line.length }} 人</p>
 </template>
-
-<style>
-.qu-line { display: flex; flex-wrap: wrap; gap: 4px; min-height: 48px; margin-top: 12px; }
-.qu-person { width: 16px; height: 20px; border-radius: var(--radius-sm); background: var(--chart-2); }
-</style>
 ```
 
 拖动数据点，观察最小二乘直线如何随之转动：点位于坐标平面中，读者直接拖动，直线和残差同步变化。
