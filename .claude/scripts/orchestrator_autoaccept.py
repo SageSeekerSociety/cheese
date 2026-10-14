@@ -26,7 +26,8 @@ Output. Text: one line per card,
   [交总调度] #<task> PR #<n> head <sha8>｜<code>: <detail>；<code>: <detail>
 --json: {"room", "apply", "cards": [{"task", "pr", "head", "verdict": "accept" | "handoff",
   "codes": [...], "reasons": [{"code", "detail", "reply"}], "notes": [...], "applied"?}]}.
-Both shapes are read by other scripts: change them only together with their readers.
+A detail never contains ；or ｜ in the text shape, so splitting on them is safe. Both shapes are
+read by other scripts: change them only together with their readers.
 
 --apply also accepts the 会采 cards as OKCHEESE_USER: approve, then accept with the card's head.
 When the platform refuses because the card has never shown a version (it refreshes the card as it
@@ -73,6 +74,10 @@ HIGH_RISK = (
     ("部署链", "deploy/"),
     ("部署链", ".github/workflows/deploy"),
     ("部署链", "scripts/redeploy.sh"),
+    # The gates deploy-prod.yml runs (uses: test.yml) and check-auto-deploy.py reads by name.
+    ("部署链", ".github/workflows/test.yml"),
+    ("部署链", ".github/workflows/build.yml"),
+    ("部署链", ".github/workflows/required-ci.yml"),
     ("文案", "frontend/src/i18n/messages/"),
     ("文案", "backend/app/core/sentences.py"),
 )
@@ -128,7 +133,7 @@ def deploy_reasons(files):
     if prod:
         out.append(("prod_deploy", "碰了正式部署：" + "、".join(prod)))
     if risky:
-        out.append(("high_risk", "；".join(f"{w}：{'、'.join(ps)}" for w, ps in risky.items())))
+        out.append(("high_risk", "，".join(f"{w}：{'、'.join(ps)}" for w, ps in risky.items())))
     return out
 
 
@@ -298,10 +303,15 @@ def row_of(f, verdict, why, notes):
             "notes": notes}
 
 
+def _flat(text):
+    """A detail as one text-line field: the separators line() uses never appear inside it."""
+    return " ".join(str(text).split()).replace("；", "，").replace("｜", "/")
+
+
 def line(row):
     verdict = "会采" if row["verdict"] == "accept" else "交总调度"
     tail = (row["notes"] if row["verdict"] == "accept"
-            else [f"{r['code']}: {r['detail']}" for r in row["reasons"]])
+            else [f"{r['code']}: {_flat(r['detail'])}" for r in row["reasons"]])
     head = (row["head"] or "")[:8] or "-"
     out = f"[{verdict}] #{row['task']} PR #{row['pr']} head {head}" + (f"｜{'；'.join(tail)}" if tail else "")
     return out + (f"｜{row['applied']}" if "applied" in row else "")
@@ -383,6 +393,7 @@ def self_test():
     check("CI 红", facts(ci="failure"), "交总调度", "ci_red", "CI required 在卡上 head 是 failure")
     check("CI 没跑", facts(ci=None), "交总调度", "ci_pending", "没跑")
     check("CI 读不到", facts(ci="读不到"), "交总调度", "unreadable")
+    check("CI 取消也算红", facts(ci="cancelled"), "交总调度", "ci_red")
     # 审查
     check("审查有 major", facts(card=card(change_body=f"独立 review：head {H[:8]} 结论 有 2 条")),
           "交总调度", "review_major", "有 2 条 blocker/major")
@@ -425,17 +436,53 @@ def self_test():
     check("鉴权", facts(files=["backend/app/api/auth.py"]), "交总调度", "high_risk", "鉴权")
     check("用户可见文案", facts(files=["frontend/src/i18n/messages/en/x.ts"]), "交总调度", "high_risk", "文案")
     check("i18n 的代码不算文案", facts(files=["frontend/src/i18n/index.ts"]), "会采")
+    # Each area the deploy check covers, named by a real path rather than read back from the tables.
+    for path, code in [
+        ("deploy/deploy.sh", "prod_deploy"), ("deploy/deploy-docker.sh", "prod_deploy"),
+        ("deploy/docker-compose.prod.yml", "prod_deploy"), ("deploy/.env.prod.example", "prod_deploy"),
+        ("deploy/compose/docker-compose.gateway.yml", "prod_deploy"),
+        (".github/workflows/deploy.yml", "prod_deploy"), (".github/workflows/deploy-prod.yml", "prod_deploy"),
+        ("deploy/gateway/config.yaml", "high_risk"), ("deploy/check-auto-deploy.py", "high_risk"),
+        ("scripts/redeploy.sh", "high_risk"), (".github/workflows/deploy-drift.yml", "high_risk"),
+        (".github/workflows/test.yml", "high_risk"), (".github/workflows/build.yml", "high_risk"),
+        (".github/workflows/required-ci.yml", "high_risk"),
+        ("backend/alembic/env.py", "high_risk"), ("backend/app/auth/core.py", "high_risk"),
+        ("backend/app/domain/identity/actor.py", "high_risk"), ("backend/app/domain/authz/x.py", "high_risk"),
+        ("cli/internal/auth/token.go", "high_risk"), ("backend/app/core/sentences.py", "high_risk"),
+        ("frontend/src/i18n/messages/zh-CN/room.json", "high_risk"),
+    ]:
+        got = [c for c, _ in judge(facts(files=[path]), "me")[1]]
+        if got != [code]:
+            failures.append(f"{path}: got {got}, want [{code!r}]")
+    check("部署文件只报正式部署一次", facts(files=["deploy/deploy.sh"]), "交总调度", "prod_deploy")
+    if [c for c, _ in judge(facts(files=["deploy/deploy.sh"]), "me")[1]] != ["prod_deploy"]:
+        failures.append("正式部署的文件不再算一遍高风险")
+    check("前缀只到文件名为止", facts(files=["backend/app/api/auth.py/x", "scripts/redeploy.sh.d/x"]), "会采")
     check("名字相近但不是鉴权文件", facts(files=["backend/app/api/auth_extra/x.py", "deployment.md"]), "会采")
     # 采纳人与读失败
     check("验收人不是自己", facts(card=card(reviewer_handle="someone")), "交总调度", "not_reviewer", "someone")
     check("读不到卡", {"task": 1, "card": {}, "pr": None, "error": "读不到这张卡"}, "交总调度", "unreadable",
           "读不到这张卡")
+    if judge(dict(facts(), error="读不到 X"), "me")[1] != [("unreadable", "读不到 X")]:
+        failures.append("其余都过时，读失败本身也交总调度、码是 unreadable")
     # 输出格式
     f = facts(ci="failure", files=["deploy/deploy.sh", "backend/alembic/versions/x.py"])
     row = row_of(f, *judge(f, "me"))
     if row["verdict"] != "handoff" or row["codes"] != ["ci_red", "prod_deploy", "high_risk"] \
-            or any(r["reply"] != REASONS[r["code"]] for r in row["reasons"]):
+            or not all(r["reply"] for r in row["reasons"]):
         failures.append(f"多条原因按判据顺序给码并附话术: got {row!r}")
+    codes = {"ci_red", "review_missing", "review_major", "head_mismatch", "conflicting", "high_risk",
+             "prod_deploy", "ci_pending", "mergeable_unknown", "not_reviewer", "pr_merged", "unreadable"}
+    if set(REASONS) != codes or not all(REASONS.values()):
+        failures.append(f"原因码是固定的十二个、各有话术: got {sorted(REASONS)}")
+    mixed = facts(files=["backend/alembic/versions/x.py", "backend/app/api/auth.py"], ci="failure")
+    tail = line(row_of(mixed, *judge(mixed, "me"))).split("｜", 1)[1].split("；")
+    if [t.split(":")[0] for t in tail] != ["ci_red", "high_risk"]:
+        failures.append(f"文本行按 ；切开每段都以码开头: got {tail!r}")
+    odd = dict(facts(), error="平台回了 422；原因｜看不懂\n第二行")
+    parts = line(row_of(odd, *judge(odd, "me"))).split("｜")
+    if len(parts) != 2 or parts[1] != "unreadable: 平台回了 422，原因/看不懂 第二行":
+        failures.append(f"细节里的 ；｜和换行不拆行: got {parts!r}")
     want = "[交总调度] #1 PR #9 head aaaaaaaa｜ci_red: CI required 在卡上 head 是 failure；prod_deploy: "
     if not line(row).startswith(want):
         failures.append(f"文本行格式: got {line(row)!r}")
