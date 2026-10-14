@@ -20,6 +20,7 @@ from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness import HARNESSES
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.project.services import ProjectService
@@ -88,7 +89,9 @@ async def _turn_on(
         project = await ProjectService(session).create(name="P", owner_handle="u")
         if dm:
             topic = await TopicService(session).get_or_create_private(
-                project_id=project.id, user_handle="u"
+                project_id=project.id,
+                user_handle="u",
+                named_teammate=named_teammate,
             )
         else:
             topic = await TopicService(session).create(

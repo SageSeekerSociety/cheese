@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.repositories import AgentBindingRepository
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -51,7 +50,7 @@ async def roster_rows(db: AsyncSession, topic) -> list[dict]:
             topic.project_id
         )
     }
-    fallback = await TopicService(db).resolve_agent(topic)
+    fallback = await AgentInstanceService(db).for_topic_by_id(topic.id)
     items = []
     for m in seats:
         d = m.model_dump(mode="json")

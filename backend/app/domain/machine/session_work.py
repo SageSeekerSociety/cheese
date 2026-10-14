@@ -129,7 +129,7 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
 
     teammate = await _session_teammate(db, project, handle)
     agent = (
-        await TopicService(db).resolve_agent(topic)
+        await AgentInstanceService(db).for_topic_by_id(topic.id)
         if teammate is None
         else AgentInstanceService.resolved(teammate)
     )

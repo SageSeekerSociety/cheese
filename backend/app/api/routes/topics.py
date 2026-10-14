@@ -41,6 +41,7 @@ from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.turn.intake.rewrite import text_as_sent
+from app.domain.agent_instance.adapters import room_teammate
 from app.domain.block.asked import Awaited
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
@@ -1342,7 +1343,9 @@ async def clone_topic_from(
         actor, project_id=source.project_id, topic_id=source_id
     )
     topic = await service.clone_from(
-        target_topic_id=topic_id, source_topic_id=source_id
+        target_topic_id=topic_id,
+        source_topic_id=source_id,
+        room_teammate=room_teammate,
     )
     await db.commit()
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))

@@ -38,6 +38,7 @@ from app.core.errors import (
 from app.core.sentences import exception_text, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.profiles import ProfileRegistry
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
@@ -604,6 +605,7 @@ async def get_private_chat(
         user_handle=user_handle,
         peer_handle=peer_handle,
         agent_handle=agent_handle,
+        named_teammate=named_teammate,
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 

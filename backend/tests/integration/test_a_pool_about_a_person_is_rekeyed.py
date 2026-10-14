@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.memory.models import MemoryEntry, user_scope_id
 from app.domain.memory.scopes import MemoryScope
@@ -88,7 +89,9 @@ def test_what_was_learned_about_a_person_lands_on_the_agent_that_learned_it(
             name="有私聊的那个项目", owner_handle="andyl", forge_kind="github_app"
         )
         await TopicService(db_session).get_or_create_private(
-            project_id=mine.id, user_handle="andyl"
+            project_id=mine.id,
+            user_handle="andyl",
+            named_teammate=named_teammate,
         )
         # 同一个人在另一个项目里也是成员，但没有私聊——归属的依据是私聊，所以这个
         # 项目不该分到那条记忆。
@@ -145,7 +148,10 @@ def test_a_dm_with_a_second_teammate_lands_on_that_teammate(
         )
         default_agent = await agents.for_project(project)
         await TopicService(db_session).get_or_create_private(
-            project_id=project.id, user_handle="andyl", agent_handle=reviewer.handle
+            project_id=project.id,
+            user_handle="andyl",
+            agent_handle=reviewer.handle,
+            named_teammate=named_teammate,
         )
 
         await store.remember(MemoryScope.user, "andyl", "他改完代码才看评论")

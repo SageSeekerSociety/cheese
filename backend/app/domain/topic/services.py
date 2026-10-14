@@ -28,10 +28,6 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.agent import clone
 from app.domain.agent.harness import harness_for
-from app.domain.agent_instance.services import (
-    AgentInstanceService,
-    ResolvedAgent,
-)
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import (
@@ -43,8 +39,6 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import room_of
 from app.domain.delivery_events import SettleCard
 from app.domain.identity.handles import (
-    CHEESE_NAME,
-    agent_instance_handle,
     looks_like_agent_handle,
     names_a_person,
     recipient_seat,
@@ -75,7 +69,12 @@ from app.domain.topic.models import (
     TopicRole,
     TopicStatus,
 )
-from app.domain.topic.ports import SeatHandles, SeatProject
+from app.domain.topic.ports import (
+    NamedTeammate,
+    RoomTeammate,
+    SeatHandles,
+    SeatProject,
+)
 from app.domain.topic.repositories import (
     SortOrder,
     TopicProgressRepository,
@@ -198,35 +197,6 @@ class TopicService:
             raise ConflictError(say("roomArchivedUnarchiveFirst"))
         return topic
 
-    async def _starting_agent_handle(self, topic: Topic) -> str:
-        """The identity of the agent this room starts with.
-
-        A room does not have an agent; it seats one, and seating needs the
-        agent's own identity rather than a name derived from the room. Which
-        agent a new room starts with is still the project's choice — replacing
-        that choice with explicit seating is the next step, and this is the seam
-        it will land on.
-
-        Always an answer: a project is created with its 芝士, so the agent a new
-        room starts with is a saved row with an identity of its own.
-        """
-        # deferred-import: agent_instance_handle already bound at the top of this module
-        from app.domain.identity.handles import agent_instance_handle
-
-        return agent_instance_handle((await self.resolve_agent(topic)).instance_id)
-
-    async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
-        """The agent a turn here runs as when nobody was addressed.
-
-        A room does not have an agent; a room's fallback is the project's
-        default, and a private 1:1 names its own teammate. Nothing hands a room
-        to an agent any more — an agent is seated on the roster, and addressed.
-        """
-        project = await self._projects.get(topic.project_id)
-        if project is None:
-            raise NotFoundError("Project not found")
-        return await AgentInstanceService(self._session).for_topic(topic, project)
-
     async def create(
         self,
         *,
@@ -284,9 +254,12 @@ class TopicService:
         # ladder as dispatch_task, which has one rung this does not: a split
         # happens DURING somebody's turn, so it can ask who is driving. Creating a
         # topic is a standalone act with nobody to ask.
+        #
+        # 芝士那一席不点名：新房间名册空空，`seed` 自己回落到项目默认的那一席
+        # （`TopicMemberService._project_agent_seat`）。本包原来自己算一遍 ——
+        # 走的是 `resolve_agent`，而那只为了答这一个问题往第 5 层伸手。
         await self._members.seed(
             topic.id,
-            agent_handle=await self._starting_agent_handle(topic),
             owner_handle=await self._resolve_owner(
                 created_by,
                 project_id=project_id,
@@ -362,6 +335,7 @@ class TopicService:
         user_handle: str,
         peer_handle: str | None = None,
         agent_handle: str | None = None,
+        named_teammate: NamedTeammate,
     ) -> Topic:
         """A 1:1 private chat (spec §1).
 
@@ -379,11 +353,11 @@ class TopicService:
             owner, peer = sorted((user_handle, peer_handle))
             title = f"私聊 · {owner} · {peer}"
         else:
-            agents = AgentInstanceService(self._session)
-            agent = await agents.for_handle(project, agent_handle)
-            await agents.ensure_identity(agent)
-            owner, peer = user_handle, agent_instance_handle(agent.id)
-            title = f"与{agent.display_name or CHEESE_NAME}私聊 · {owner}"
+            # 挑哪一位队友、它显示什么名字，是第 5 层 `agent_instance` 答的两件事
+            # （`NamedTeammate`）：本包在第 2 层，手里只有项目 id。
+            peer, name = await named_teammate(self._session, project_id, agent_handle)
+            owner = user_handle
+            title = f"与{name}私聊 · {owner}"
         topic = await self._repo.get_or_create_private(
             project_id=project_id, owner=owner, peer=peer, title=title
         )
@@ -1109,9 +1083,7 @@ class TopicService:
         if (
             teammate
             and project is not None
-            and await AgentInstanceService(self._session).for_seat_handle(
-                project, teammate
-            )
+            and await seat_project(self._session, teammate) == project.id
         ):
             await self._seat_teammate(
                 room.id, teammate, by=created_by, seat_project=seat_project
@@ -1136,9 +1108,7 @@ class TopicService:
         ``seat_project`` 递到落座那一步（`SeatProject`）。"""
         if seat is not None:
             project = await self._projects.get(task.project_id)
-            if project is None or not await AgentInstanceService(
-                self._session
-            ).for_seat_handle(project, seat):
+            if project is None or await seat_project(self._session, seat) != project.id:
                 raise ValidationError(say("teammateHandleNotFound", handle=repr(seat)))
             await self._seat_teammate(
                 task.room_id, seat, by=by, seat_project=seat_project
@@ -1170,14 +1140,21 @@ class TopicService:
             raise ForbiddenError(say("taskTeammateNeedsSeat")) from None
 
     async def clone_from(
-        self, *, target_topic_id: uuid.UUID, source_topic_id: uuid.UUID
+        self,
+        *,
+        target_topic_id: uuid.UUID,
+        source_topic_id: uuid.UUID,
+        room_teammate: RoomTeammate,
     ) -> Topic:
         """Deep-copy the source topic's Claude conversation onto the target topic
         (transcript-fork, fusion-design §6 clone — distinct from a task).
 
         A task (create_task) starts a FRESH session of its own; clone instead
         forks the source's full conversation state so the target resumes
-        exactly where the source is."""
+        exactly where the source is.
+
+        ``room_teammate`` 是递进来的口子：两边各是谁在干活，答案在第 5 层
+        （`RoomTeammate`），本包只拿那两个 handle。"""
         target = await self.get_or_404(target_topic_id)
         source = await self.get_or_404(source_topic_id)
         if source.id == target.id:
@@ -1192,15 +1169,15 @@ class TopicService:
         # copying one agent's transcript onto another's key would hand it a
         # thread it never had.
         sessions = AgentSessionService(self._session)
-        source_agent = await self.resolve_agent(source)
-        target_agent = await self.resolve_agent(target)
+        _, source_handle = await room_teammate(self._session, source.id)
+        _, target_handle = await room_teammate(self._session, target.id)
         # 骨架不是参与者的属性（结论 28），是项目设置加部署设置答的一件事。源和
         # 目标同属一个项目（上面已经拒了跨项目），所以两边解析出来的是同一个，
         # 「两边骨架不同」这个问题在这里不存在。
         owner = await self._projects.get(target.project_id)
         harness = harness_for(owner.settings if owner else None)
         source_sid = await sessions.resume_token(
-            source.id, source_agent.handle, harness=harness
+            source.id, source_handle, harness=harness
         )
         if not source_sid:
             raise ValidationError(say("topicCloneNeverRan"))
@@ -1220,7 +1197,7 @@ class TopicService:
         # Point the target at the forked session so its next turn --resume's it.
         await sessions.remember(
             conversation_id=target.id,
-            agent_handle=target_agent.handle,
+            agent_handle=target_handle,
             resume_token=new_sid,
             harness=harness,
         )

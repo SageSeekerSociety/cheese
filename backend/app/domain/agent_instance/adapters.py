@@ -16,7 +16,33 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.handles import CHEESE_NAME, agent_instance_handle
+
+
+async def room_teammate(session: AsyncSession, room_id: uuid.UUID) -> tuple[str, str]:
+    """`app.domain.topic.ports.RoomTeammate`：这个房间的队友是谁。
+
+    席位 handle 从实例 id 派生（`identity.handles.agent_instance_handle`），队友
+    自己的 handle 是它在会话键、记忆池上用的那个 —— 两样都要，谁用哪样由调用方
+    定。"""
+    agent = await AgentInstanceService(session).for_topic_by_id(room_id)
+    return agent_instance_handle(agent.instance_id), agent.handle
+
+
+async def named_teammate(
+    session: AsyncSession, project_id: uuid.UUID, handle: str | None
+) -> tuple[str, str]:
+    """`app.domain.topic.ports.NamedTeammate`：这个项目里叫这个名字的队友。
+
+    顺手补上它的身份行：开私聊的人下一步就把它放上名册，而名册读的是那一行
+    （`AgentInstanceService.ensure_identity`，本来就是读时即补的）。名字没写人话
+    时回落到「芝士」—— 一个队友总得有个能挂出去的名字。"""
+    agents = AgentInstanceService(session)
+    # 「这个项目里叫这个名字的队友」按 id 问，不在这里把项目行读出来：本包读第 2
+    # 层的模型本就不该由这一层再添一处（`for_handle_in`）。
+    agent = await agents.for_handle_in(project_id, handle)
+    await agents.ensure_identity(agent)
+    return agent_instance_handle(agent.id), agent.display_name or CHEESE_NAME
 
 
 async def seat_handles(session: AsyncSession, project_id: uuid.UUID) -> dict[str, str]:

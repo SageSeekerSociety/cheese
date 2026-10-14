@@ -635,7 +635,6 @@ ignore_imports =
     app.domain.topic.schemas -> app.domain.room_task.schemas
     app.domain.topic.services -> app.domain.agent.clone
     app.domain.topic.services -> app.domain.agent.harness
-    app.domain.topic.services -> app.domain.agent_instance.services
     app.domain.topic.services -> app.domain.agent_session.services
     app.domain.topic.services -> app.domain.block.about
     app.domain.topic.services -> app.domain.block.models

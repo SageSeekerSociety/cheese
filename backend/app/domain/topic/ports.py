@@ -33,6 +33,39 @@ class SeatHandles(Protocol):
     ) -> dict[str, str]: ...
 
 
+class RoomTeammate(Protocol):
+    """这个房间的队友是谁：``(它在这间房的席位 handle, 它自己的 handle)``。
+
+    一个房间自己没有队友 —— 它坐的是人，谁答话由点名决定；答不出名字时回落到
+    名册上那个席位（`agent_instance.services.for_topic` 讲的就是这个），私聊更是
+    只有两席、另一席就是它。这一问是本包在 `resolve_agent` 里自己答的，而答案要
+    读 ``Project``/``Topic`` 两行、算席位 handle，两样都在第 5 层。
+
+    两样都要：开私聊要席位 handle 才能把那个人放进去，克隆会话要队友自己的
+    handle 才能在它自己的会话键上接着跑。都是字符串。
+    """
+
+    async def __call__(
+        self, session: AsyncSession, room_id: uuid.UUID
+    ) -> tuple[str, str]: ...
+
+
+class NamedTeammate(Protocol):
+    """这个项目里叫 ``handle`` 的那个队友：``(席位 handle, 它显示的名字)``。
+
+    ``handle`` 是 None 时给项目默认的那个。名字没写人话时回落到「芝士」——
+    一个队友总得有个能挂出去的名字。名字不对就抛 ``NotFoundError``，不悄悄换成
+    默认的那个：答成别人比说它不在这儿更糟（`agent_instance.services.for_handle`）。
+
+    和 `RoomTeammate` 分开，是因为查法不同：那个问「这间房的队友」，这个问「这个
+    项目里叫这个名字的队友，没有就用默认的」。
+    """
+
+    async def __call__(
+        self, session: AsyncSession, project_id: uuid.UUID, handle: str | None
+    ) -> tuple[str, str]: ...
+
+
 class SeatProject(Protocol):
     """``handle`` 这个席位落在哪个项目上，不是任何一个队友的席位就是 ``None``。
 

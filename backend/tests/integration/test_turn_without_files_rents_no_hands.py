@@ -29,6 +29,7 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.harness.claude_code import ClaudeLaunch
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
@@ -252,7 +253,9 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
         await registered(session, "u")
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).get_or_create_private(
-            project_id=project.id, user_handle="u"
+            project_id=project.id,
+            user_handle="u",
+            named_teammate=named_teammate,
         )
         topic_id = topic.id
         await session.commit()

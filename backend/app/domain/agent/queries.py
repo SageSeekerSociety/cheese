@@ -29,6 +29,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
 )
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
@@ -385,7 +386,7 @@ async def _private_room(
     from app.domain.topic.services import TopicService
 
     topic = await TopicService(session).get_or_create_private(
-        project_id=project_id, user_handle=owner
+        project_id=project_id, user_handle=owner, named_teammate=named_teammate
     )
     return topic.id
 
