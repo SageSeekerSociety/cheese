@@ -7,6 +7,7 @@ appends the rendered board to one document and never restates anything above it.
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
       [--silent-min 60] [--skip 1443,1405] [--json | --render | --sync-doc <document id>]
+  python3 .claude/scripts/orchestrator_sweep.py --self-test   (offline: no token, no network, no gh)
 
 For every open, started task in the channel it reads platform facts and the PR's GitHub queue state:
   出队          card pending, PR neither merged nor queued, last queue event is a removal
@@ -17,8 +18,9 @@ For every open, started task in the channel it reads platform facts and the PR's
 Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
 
 The default output is that text list, unchanged. The same sweep in other shapes:
-  --json       every class's rows — task, topic, seat, PR, head, CI state, the head its
-               review is pinned to, minutes waited, whom it waits on — plus that UTC
+  --json       every class's rows — task, topic, seat, PR, head, CI state, the head the
+               card's independent-review line names and its verdict, minutes waited,
+               whom it waits on — plus that UTC
                day's metrics. Fixed shape, for tools.
   --render     the same data as Markdown, one line per signal, for a person to read.
   --sync-doc D write the rendered board into document D between <!-- board:start --> and
@@ -37,11 +39,13 @@ REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/"
 #: is not a decision to make — it is the sweep saying it could not look.
 CLASSES = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
 BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
-#: The first line of the comment pr-review.sh posts on a PR, naming the head it reviewed.
-REVIEW_MARK = re.compile(r"<!--\s*pr-review sha=([0-9a-f]{7,40})")
+#: The line pr-review.sh puts first in its rendered result, which the delivering seat pastes
+#: into the card body: `独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>`.
+REVIEW_LINE = re.compile(r"独立 review：head ([0-9a-f]{7,40})(?:（增量自 ([0-9a-f]{7,40})）| )"
+                         r"结论 (无 blocker/major|有 \d+ 条)")
 CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑", "EXPECTED": "跑"}
 ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
-              "review_head", "waited_min", "waiting_on", "stage", "detail")
+              "review_head", "review_since", "review_verdict", "waited_min", "waiting_on", "stage", "detail")
 #: PR -> its merge-queue timeline, filled once per run (see gh_queue_timeline).
 _TIMELINES = {}
 #: PRs this run could not read a timeline for at all. The day's numbers are short by those,
@@ -105,14 +109,13 @@ def said(m):
 
 
 def gh_pr(n, board=False):
-    """One PR's queue state. `board` adds what only the board shows: the head, that
-    head's CI state, and the head the newest review is pinned to. Read-only, one call.
+    """One PR's queue state. `board` adds what only the board shows: the head and that
+    head's CI state. Read-only, one call.
 
     Those fields stay out of the text list's query — it asks for exactly what it
     always asked for, so a field the board wants can never be the reason the text
     list reports "GitHub 未查"."""
-    extra = ('headRefOid commits(last:1){nodes{commit{statusCheckRollup{state}}}} '
-             'comments(last:100){nodes{body}} ') if board else ''
+    extra = 'headRefOid commits(last:1){nodes{commit{statusCheckRollup{state}}}} ' if board else ''
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){merged '
          + extra
          + 'mergeQueueEntry{state} '
@@ -135,17 +138,29 @@ def gh_pr(n, board=False):
             return {"error": f"GitHub 上没有 PR #{n}"}
         commits = (body.get("commits") or {}).get("nodes") or []
         rollup = ((commits[0]["commit"].get("statusCheckRollup") if commits else None) or {})
-        pinned = None
-        for c in reversed((body.get("comments") or {}).get("nodes") or []):
-            found = REVIEW_MARK.search(c.get("body") or "")
-            if found:
-                pinned = found.group(1)
-                break
         body["head"] = body.get("headRefOid")
         body["ci"] = rollup.get("state")
-        body["review_head"] = pinned
         return body
     return {"error": err}
+
+
+def review_of(card_body):
+    """The independent-review line of a card body: (head, since, verdict), or None. When the
+    body carries several (one per round), the last is the newest."""
+    found = REVIEW_LINE.findall(card_body or "")
+    return found[-1] if found else None
+
+
+def card_review(tok, topic, card_id):
+    """What the task's card body says about the independent review. The platform's card, not
+    GitHub: review results are not posted there. None when the card has no such line, or the
+    card cannot be read (the board shows "—" for both; the line is information, not a gate)."""
+    try:
+        cards = get(tok, f"/topics/{topic}/accept-card")["data"]
+    except (urllib.error.URLError, KeyError, TypeError, ValueError):
+        return None
+    mine = [c for c in cards if c.get("id") == card_id]
+    return review_of(mine[0].get("change_body")) if mine else None
 
 
 def gh_queue_timeline(n):
@@ -224,13 +239,16 @@ def waiting_of(t, kind):
 
 def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg):
     good = pr is not None and "error" not in pr
+    review = pr.get("review") if good else None
     return {
         "kind": kind, "name": name, "task": t["number"], "title": t["title"], "topic": t["id"],
         "seat": t.get("agent_handle"),
         "pr": card.get("pr_number"),
         "head": pr.get("head") if good else None,
         "ci": CI_WORD.get(pr.get("ci"), "无") if good else None,
-        "review_head": pr.get("review_head") if good else None,
+        "review_head": review[0] if review else None,
+        "review_since": review[1] or None if review else None,
+        "review_verdict": review[2] if review else None,
         "waited_min": round(waited) if waited is not None else None,
         "waiting_on": waiting or waiting_of(t, kind),
         "stage": stage_of(card, pr, ready_at, last_ready, red_at, last_msg),
@@ -273,6 +291,8 @@ def sweep(tok, room, silent, skip, want_facts):
                 pr = gh_pr(n, board=want_facts)
                 if want_facts:
                     facts[n] = pr
+        if want_facts and pr is not None and "error" not in pr and "review" not in pr:
+            pr["review"] = card_review(tok, tid, card.get("id"))
 
         ready = [m for m in accev if meta(m).get("event_type") == "accept_ready"]
         last_ready = ready[-1]["created_at"] if ready else None
@@ -322,17 +342,27 @@ def text(rows):
         print(f"[{r['kind']}] {r['name']}｜{r['detail']}")
 
 
+def review_cell(r):
+    """The 独立审查 column: the reviewed head, 增量 when the review was a delta, the verdict,
+    and 旧 when the PR has moved past that head (a small increment needs no new review, so
+    this says only that it has moved)."""
+    rev = r["review_head"]
+    if rev is None:
+        return "—"
+    moved = "" if r["head"] and r["head"].startswith(rev) else "（旧）"
+    return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}"
+
+
 def render(rows, metrics, silent, now, room):
     out = ["## 调度看板", "",
            f"UTC {now:%Y-%m-%d %H:%M}｜信号阈值 {silent} 分钟｜{len(rows)} 条｜频道 {room[:8]}", ""]
     if not rows:
         out.append("各线无待处理信号。")
     else:
-        out += ["| 类别 | 任务 | 到哪一步 | CI | 审查钉 | 卡了 | 在等 |",
+        out += ["| 类别 | 任务 | 到哪一步 | CI | 独立审查 | 卡了 | 在等 |",
                 "| --- | --- | --- | --- | --- | --- | --- |"]
         for r in rows:
-            rev = r["review_head"]
-            rev = "—" if rev is None else (rev[:8] + (" ✓" if rev == r["head"] else "（旧）"))
+            rev = review_cell(r)
             waited = "—" if r["waited_min"] is None else f"{r['waited_min']} 分"
             out.append(f"| {r['kind']} | #{r['task']} | {r['stage']} | {r['ci'] or '—'} "
                        f"| {rev} | {waited} | {r['waiting_on'] or '—'} |")
@@ -492,8 +522,93 @@ def value_of(argv, flag):
     return argv[i]
 
 
+def self_test():
+    """Offline checks: the review column comes from the card body and GitHub comments are
+    never asked for. `get` and `subprocess.run` are replaced for the length of the test."""
+    import importlib.util, pathlib
+    failures = []
+
+    def check(name, got, want):
+        if got != want:
+            failures.append(f"{name}: got {got!r}, want {want!r}")
+
+    spec = importlib.util.spec_from_file_location(
+        "pr_review_render", pathlib.Path(__file__).resolve().parents[1] / "pr-review" / "render.py")
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+    head, old = "a" * 40, "b" * 40
+    finding = lambda sev: {"severity": sev, "title": "t", "file": "f.py", "line": 1, "kind": "bug",
+                           "rung": 4, "failure": "x", "evidence": "y", "confirm_with": ""}
+    result = lambda *sevs: {"reviewed_sha": head, "summary": "s", "candidates_found": 3,
+                            "candidates_refuted": 2, "findings": [finding(v) for v in sevs],
+                            "not_covered": []}
+
+    # What render.py writes first is what the sweep reads back, for each shape of review.
+    for name, res, since, want in (
+        ("整轮、无严重问题", result("minor"), "", ("a" * 8, "", "无 blocker/major")),
+        ("增量、有 blocker 和 major", result("blocker", "major", "minor"), old, ("a" * 8, "b" * 8, "有 2 条")),
+    ):
+        body = renderer.render(res, head, "m" * 40, since)
+        check(f"{name}：卡片正文里读得回", review_of("## 摘要\n\n" + body), want)
+    check("没有这一行就是没有", review_of("只有一段说明"), None)
+    check("空正文", review_of(None), None)
+    check("多轮时取最后一行", review_of("独立 review：head 11111111 结论 有 1 条\n"
+                                       "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major"),
+          ("22222222", "11111111", "无 blocker/major"))
+
+    real_get, real_run = globals()["get"], subprocess.run
+    queries = []
+    card = {"id": "c1", "change_body": renderer.render(result(), head, "m" * 40, old)}
+    task = {"id": "t1", "number": 7, "title": "T", "started_at": "2026-01-01T00:00:00Z",
+            "agent_handle": "seat", "card": {"id": "c1", "status": "pending", "pr_number": 70}}
+    pull = {"merged": False, "headRefOid": head, "mergeQueueEntry": None, "timelineItems": {"nodes": []},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}}
+
+    def fake_get(tok, path):
+        if path.endswith("/tasks?status=open&limit=200"):
+            return {"data": [task]}
+        if path.endswith("/accept-card"):
+            return {"data": [{"id": "other", "change_body": "独立 review：head 99999999 结论 有 3 条"}, card],
+                    "total": 2}
+        return {"data": []}
+
+    def fake_run(cmd, **kw):
+        queries.append(" ".join(cmd))
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": {"repository": {"pullRequest": pull}}}), "")
+
+    globals()["get"], subprocess.run = fake_get, fake_run
+    try:
+        rows, _ = sweep("tok", "room", 60, set(), True)
+        text_rows, _ = sweep("tok", "room", 60, set(), False)
+    finally:
+        globals()["get"], subprocess.run = real_get, real_run
+    check("GitHub 查询里不再要评论", [q for q in queries if "comments" in q], [])
+    check("行里带着卡片上的审查行",
+          [(r["review_head"], r["review_since"], r["review_verdict"]) for r in rows],
+          [("a" * 8, "b" * 8, "无 blocker/major")])
+    check("文本清单不去读卡片", [r["review_head"] for r in text_rows], [None])
+    metrics = {"date": "d", "merge_to_queue": {"samples": 0, "median_min": None, "over_10_min_cards": 0,
+                                               "over_10_min": 0, "over_10_min_detail": []},
+               "failed_turns": {"total": 0, "by_line": {}}}
+    board = render(rows, metrics, 60, datetime.now(timezone.utc), "room")
+    check("看板的独立审查列", "| aaaaaaaa 增量 无 blocker/major |" in board, True)
+    rows[0]["head"] = "c" * 40
+    check("head 往前走了标旧", review_cell(rows[0]), "aaaaaaaa（旧） 增量 无 blocker/major")
+    check("没有审查行显示破折号", review_cell({"review_head": None}), "—")
+    check("--json 的字段里有审查结论",
+          all(f in board_json(rows, metrics, "room", 60, set(), datetime.now(timezone.utc))["classes"]["长时间无动静"][0]
+              for f in ("review_head", "review_since", "review_verdict")), True)
+
+    for f in failures:
+        print("FAIL", f)
+    print("self-test:", "ok" if not failures else f"{len(failures)} failed")
+    return 1 if failures else 0
+
+
 def main():
     argv = sys.argv
+    if argv[1:2] == ["--self-test"]:
+        sys.exit(self_test())
     room = argv[1]
     silent = int(value_of(argv, "--silent-min") or 60)
     skip = set((value_of(argv, "--skip") or "").split(",")) - {""}

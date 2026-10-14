@@ -78,11 +78,15 @@ jobs:
       # guards — but a regression in them prints a wrong report, and nothing
       # else runs their self-tests. All are offline: no token, no network.
       # `retro --self-test` is what reaches trace_retro.py's self-test.
+      # test_pr_review.py runs pr-review.sh against a throwaway repository and a
+      # stand-in `gh`, and checks what it asked GitHub for (nothing, for post).
       - name: Trace tooling self-test
         run: |
           python3 .claude/scripts/trace-sweep.py --self-test
           python3 .claude/scripts/trace-sweep.py retro --self-test
           python3 .claude/scripts/orchestrator_metrics.py --self-test
+          python3 .claude/scripts/orchestrator_sweep.py --self-test
+          python3 .claude/scripts/test_pr_review.py
 
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).

@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
-"""Check a review result against schema.json beside this file and render it as the PR comment.
+"""Check a review result against schema.json beside this file and render it for the acceptance card.
 
-    render.py <result.json> <pinned sha> <method rev> [<current head>]
+    render.py <result.json> <pinned sha> <method rev> [--since <reviewed sha>]
 
 prepare copies this file and schema.json from origin/main next to the
 result, and post runs that copy, so the branch a seat sits on cannot loosen
-the check. The first line of the comment is `<!-- pr-review sha=<pinned sha> -->`, so
-`pr-review.sh show` can find the review of a given commit. Exits 1, printing
+the check. The first line of the output is the one line the card carries,
+which orchestrator_sweep.py reads back:
+
+    独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>
+
+(the 增量自 part only for a review of `--since` .. head; N counts blockers and majors). Exits 1, printing
 why, when the result does not match the schema or names a different commit
-than the one pinned: a review of the wrong tree is never posted as if it
+than the one pinned: a review of the wrong tree is never rendered as if it
 were the right one.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
 SCHEMA = json.loads((Path(__file__).parent / "schema.json").read_text())
 SEVERITY_ORDER = {"blocker": 0, "major": 1, "minor": 2}
+SHA = re.compile(r"[0-9a-f]{40}")
 
 
 def problems(value, schema, at="result"):
@@ -61,15 +67,21 @@ def problems(value, schema, at="result"):
     return []
 
 
-def render(result: dict, sha: str, method_rev: str, head_now: str) -> str:
+def card_line(result: dict, sha: str, since: str = "") -> str:
+    """The one line of the review the card shows. Blockers and majors are what it counts."""
+    serious = sum(f["severity"] != "minor" for f in result["findings"])
+    scope = f"（增量自 {since[:8]}）" if since else " "
+    verdict = f"有 {serious} 条" if serious else "无 blocker/major"
+    return f"独立 review：head {sha[:8]}{scope}结论 {verdict}"
+
+
+def render(result: dict, sha: str, method_rev: str, since: str = "") -> str:
     findings = sorted(result["findings"], key=lambda f: SEVERITY_ORDER[f["severity"]])
+    span = f"`{since[:12]}..{sha[:12]}`" if since else f"`{sha[:12]}`"
     lines = [
-        f"<!-- pr-review sha={sha} -->",
-        f"**Independent review** of `{sha[:12]}`, method `.claude/pr-review/prompt.md` at `{method_rev[:12] + method_rev[40:]}`",
-    ]
-    if head_now and head_now != sha:
-        lines.append(f"The PR has moved on since: its head is now `{head_now[:12]}`.")
-    lines += [
+        card_line(result, sha, since),
+        "",
+        f"**Independent review** of {span}, method `.claude/pr-review/prompt.md` at `{method_rev[:12] + method_rev[40:]}`",
         "",
         result["summary"].strip(),
         "",
@@ -106,11 +118,15 @@ def render(result: dict, sha: str, method_rev: str, head_now: str) -> str:
 
 
 def main() -> int:
-    if len(sys.argv) not in (4, 5):
+    args = sys.argv[1:]
+    since = ""
+    if len(args) == 5 and args[3] == "--since":
+        since = args[4]
+        args = args[:3]
+    if len(args) != 3 or (since and not SHA.fullmatch(since)):
         print(__doc__, file=sys.stderr)
         return 2
-    path, sha, method_rev = sys.argv[1:4]
-    head_now = sys.argv[4] if len(sys.argv) == 5 else ""
+    path, sha, method_rev = args
     try:
         result = json.loads(Path(path).read_text())
     except (OSError, json.JSONDecodeError) as e:
@@ -128,7 +144,7 @@ def main() -> int:
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    sys.stdout.write(render(result, sha, method_rev, head_now))
+    sys.stdout.write(render(result, sha, method_rev, since))
     return 0
 
 
