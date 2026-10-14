@@ -13,8 +13,9 @@ It logs in as the dev account, reads the dispatcher task's current seat, posts
 status says which step failed, so a caller can branch on it:
 
   0 posted and read back · 2 the command line or the environment is wrong ·
-  3 the platform refused a call (nothing was posted) ·
-  4 posted but the read-back did not show it · 5 the dispatcher's topic has no seat
+  3 the platform refused a call · 4 posted but the read-back did not show it ·
+  5 the dispatcher's topic has no seat. Exit 3 on the posting call does not prove the
+  message is absent: an answer lost after the platform stored it looks the same.
 
 The tag is one of the four labels 《总调度工作流 v2》§8 gives a line — 递卡, 交付, 待决,
 队列 — and the body follows that section's format for it, e.g. 递卡's
@@ -23,12 +24,14 @@ the four is passed through with a warning rather than refused: the labels are th
 workflow's convention, and a line that needs a fifth one should not be blocked by this
 script.
 
-A run that failed after posting (exit 4) is retried with `--request-id <uuid>`, the same
-id the first run used: the platform returns the message it already stored for that id
-instead of a second one, so the retry confirms the same message rather than sending its
-twin. Exit 4 prints that id — a run that minted one itself says which — so the retry does
-not have to mint a second. The id has to be a UUID: the endpoint types the field that way,
-and a value it would refuse is refused here instead, before anything is posted.
+A run that failed after posting is retried with `--request-id <uuid>`, the same id the
+first run used: the platform returns the message it already stored for that id instead of
+a second one, so the retry confirms the same message rather than sending its twin. Two
+prints mean "a message may be on the platform now" — exit 4, and exit 3 on the posting
+call itself, whose answer may have been lost after the platform stored the message — and
+both say which id to reuse, so nothing has to be re-derived. The id has to be a UUID: the
+endpoint types the field that way, and it is written in the canonical form here, so the
+retry matches whatever form the first run was given.
 
 Credentials come from the environment, never from argv (ps shows it) and never from a
 file: OKCHEESE_PASS is required, OKCHEESE_USER defaults to the dev account's name. That
@@ -134,7 +137,11 @@ def parse_args(argv):
         return "", "", as_name, request_id, flags
     if request_id:
         try:
-            uuid.UUID(request_id)
+            # Canonical form on purpose: pydantic's UUID field refuses strings that
+            # `uuid.UUID` accepts (`{hex-without-dashes}`, `urn:uuid:hex-without-dashes`),
+            # and the platform dedupes on this string, so the posting call and any retry
+            # have to agree on it.
+            request_id = str(uuid.UUID(request_id))
         except ValueError:
             print(f"--request-id must be a uuid; {request_id!r} is not one", file=sys.stderr)
             return None, None, as_name, request_id, flags
@@ -146,11 +153,105 @@ def parse_args(argv):
 
 
 def self_test():
-    """(name, got, want) for the parts that need no platform. The cases that exercise a
-    wrong command line print to stderr by design; that noise is swallowed here so the
-    run still reads as one line of output."""
+    """(name, got, want) for everything that needs no platform. The cases that exercise a
+    wrong command line print to stderr by design; that noise is swallowed here so the run
+    still reads as one line of output. The exit-code cases drive `main` with `call` stubbed
+    out, so the codes the docstring promises are covered without a network."""
+
+    def drive(argv, password="pw", seat="cheese-seat", post=None, back=None):
+        """(exit code, stderr, what the stub saw) for one run of `main`.
+
+        `post`/`back`, when they are exceptions, are raised by the stub in place of that
+        call's answer, so a failure can be put on either call — or on both — offline."""
+        stubbed = {"calls": []}
+
+        def fake_call(method, path, token=None, body=None, timeout=30):
+            stubbed["calls"].append(f"{method} {path}")
+            if path.endswith("/users/auth/login"):
+                return {"data": {"accessToken": "tok"}}
+            if path.endswith("/task"):
+                return {"data": {"agent_handle": seat}}
+            if method == "POST":
+                stubbed["body"] = body
+                if isinstance(post, BaseException):
+                    raise post
+                return {"data": {"id": "m1"}}
+            if isinstance(back, BaseException):
+                raise back
+            return {"data": [{"id": "m1"}] if back is None else back}
+
+        real_call, real_password = call, os.environ.get("OKCHEESE_PASS")
+        globals()["call"] = fake_call
+        os.environ["OKCHEESE_PASS"] = password
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                rc = main(argv)
+        finally:
+            globals()["call"] = real_call
+            if real_password is None:
+                os.environ.pop("OKCHEESE_PASS", None)
+            else:
+                os.environ["OKCHEESE_PASS"] = real_password
+        return rc, err.getvalue(), stubbed
+
+    refused = urllib.error.HTTPError("stub", 503, "no", {}, None)
+    rid = "3e310fb7-c3d3-4667-a4d5-552783b38975"
+
+    def happy():
+        rc, err, seen = drive(["递卡", "正文"])
+        return rc, "body" in seen, err
+
+    def post_refused():
+        """The call may have landed before it failed, so the id has to come out."""
+        rc, err, _ = drive(["递卡", "正文", "--request-id", rid], post=refused)
+        return rc, rid in err
+
+    def read_back_failed():
+        rc, err, _ = drive(["递卡", "正文", "--request-id", rid], back=refused)
+        return rc, rid in err
+
+    def read_back_did_not_show_it():
+        rc, err, _ = drive(["递卡", "正文", "--request-id", rid], back=[])
+        return rc, "did not show it" in err
+
+    def no_seat():
+        rc, err, _ = drive(["递卡", "正文"], seat=None)
+        return rc, "no seat" in err
+
+    def no_password():
+        rc, err, _ = drive(["递卡", "正文"], password="")
+        return rc, "OKCHEESE_PASS" in err
+
+    def seat_only():
+        rc, err, seen = drive(["--seat"])
+        return rc, err, "body" in seen
+
+    def dry_run():
+        rc, err, seen = drive(["--dry-run", "递卡", "正文"])
+        return rc, "body" in seen
+
+    def unknown_tag():
+        rc, err, seen = drive(["甩锅", "正文"])
+        return rc, "warning" in err, "body" in seen
+
+    runtime_cases = [
+        ("退出码：发出去并回读到这条 → 0，没有别的报错", happy(), (0, True, "")),
+        ("退出码：平台拒绝 POST → 3，并带上 request_id（它可能已经存下了）",
+         post_refused(), (3, True)),
+        ("退出码：POST 之后回读失败 → 4，并带上 request_id 供重试",
+         read_back_failed(), (4, True)),
+        ("退出码：回读里没有这条 → 4",
+         read_back_did_not_show_it(), (4, True)),
+        ("退出码：话题没有座位 → 5", no_seat(), (5, True)),
+        ("退出码：环境里没有密码 → 2", no_password(), (2, True)),
+        ("行程：--seat 只打座位，不发消息", seat_only(), (0, "", False)),
+        ("行程：--dry-run 只组消息，不发消息", dry_run(), (0, False)),
+        ("行程：标签不在四个里也照发，只在 stderr 说一句", unknown_tag(), (0, True, True)),
+    ]
+
     with contextlib.redirect_stderr(io.StringIO()):
-        cases = [
+        cases = runtime_cases + [
         ("消息：点名当班座位，标签在方括号里，正文原样",
          wake_line("cheese-abc", "递卡", "#1512 PR #3675 head 672653c5：CI 绿"),
          "<@cheese-abc> 【递卡】#1512 PR #3675 head 672653c5：CI 绿"),
@@ -182,6 +283,9 @@ def self_test():
          "3e310fb7-c3d3-4667-a4d5-552783b38975"),
         ("命令行：--request-id 不是 uuid 就当场拦下（平台收不了它）",
          parse_args(["--request-id", "abc123", "递卡", "正文"])[:2], (None, None)),
+        ("命令行：--request-id 收下不带连字符的 uuid，也归成规范写法（重试才对得上）",
+         parse_args(["--request-id", "{3e310fb7c3d34667a4d5552783b38975}", "递卡", "正文"])[3],
+         "3e310fb7-c3d3-4667-a4d5-552783b38975"),
         ("命令行：不认识的开关直接说",
          parse_args(["--wat", "递卡", "正文"])[:2], (None, None)),
         ("命令行：尾上没有值的开关不认（--as / --request-id 都要吃一个词）",
@@ -237,8 +341,10 @@ def main(argv):
         sent = unwrap(call("POST", f"/topics/{TARGET}/messages", token,
                            {"content": content, "request_id": request_id}))
     except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
-        # Nothing was posted: the retry is the same run again, id and all.
-        print(f"the platform refused a call: {e!r}", file=sys.stderr)
+        # The call may have landed before it failed: a timeout, or a 5xx raised after the
+        # platform stored the message. So the id goes out with it — a retry that resends
+        # it cannot post a twin, and one that mints a fresh id can.
+        print(f"the platform refused a call: {e!r} (request_id {request_id})", file=sys.stderr)
         return 3
     message_id = sent.get("id") if isinstance(sent, dict) else None
     # From here on the message is on the platform, so a failure is exit 4, not 3: a
