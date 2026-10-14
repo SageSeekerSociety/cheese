@@ -95,7 +95,18 @@ async def _seed(session) -> dict[str, object]:
     apart. Behind the cases, because the bulk is signed by the agent handle: a
     bulk block newer than a question in the same conversation reads as the asker
     speaking again, which `_awaiting_an_answer` takes for the question
-    withdrawn."""
+    withdrawn.
+
+    The table is truncated first, inside the test's transaction (so the
+    rollback at the end restores it). The worker's database is emptied between
+    tests by DELETE, which leaves `blocks` and every index on it as large as
+    the earlier tests on that worker made them, and the planner prices a scan
+    by those page counts. Which conversation-leading index wins then depends on
+    what ran before: after some tests the small `ix_blocks_conversation_eid`
+    (which cannot cut on time) undercuts the ones keyed on created_at. A fresh
+    file for the table and each index makes every plan here the one this seed
+    alone produces."""
+    await session.execute(text("TRUNCATE blocks CASCADE"))
     now = datetime.now(UTC)
     project = Project(team_id=await a_team(session), name="P", owner_handle="o")
     session.add(project)
