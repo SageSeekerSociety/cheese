@@ -1,5 +1,5 @@
-// 一页一页往下翻的答案列表。`components/questions/AnswerList.vue` 只画 `usePaging`
-// 交回来的那些状态（骨架屏、空板、加载更多），取数这一句落在这里——组件不吃 API 层
+// 一页一页往下翻的答案列表。`views/question/DetailAnswerListView.vue` 只画 `usePaging`
+// 交回来的那些状态（骨架屏、空板），取数这一句落在这里——组件不吃 API 层
 // （.claude/rules/architecture.md）。
 import type { MaybeRefOrGetter } from 'vue'
 import type { Answer } from '@/types'

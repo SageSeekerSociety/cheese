@@ -371,8 +371,10 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat):
                         "automatic replay is withheld"
                     )
                 row.lease_until = None
-                # The turn that writes a finished task up is over, however it
-                # went: the task closes now (`room_task.closing`).
+                # The instruction to write a finished task up is over, however
+                # it went. A turn it started that the session still runs closes
+                # the task when it ends (`room_task.closing.turns_ended`); with
+                # none running, the task closes now.
                 if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
                     await close_after_summary(session, row.conversation_id, chat)
             await session.commit()

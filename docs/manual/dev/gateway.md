@@ -9,6 +9,7 @@ covers:
   - backend/app/domain/agent/gateway_catalog.py
   - backend/app/domain/agent/gateway_models.py
   - backend/app/api/routes/admin_models.py
+  - backend/scripts/gateway_conformance.py
 ---
 
 # 模型网关 {#gateway}
@@ -109,6 +110,31 @@ docker exec -i cheese-gateway-litellm-1 python - /app/config.yaml < deploy/gatew
 ```
 
 价格用人民币rate 除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率（`kimi-k3`、`mimo-v2.6-pro` 的注释里都写了各自的原始人民币价）。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，发布带它的配置前要在网关 `.env` 里备好 `MOONSHOT_API_KEY`。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
+
+## 上线前：跑一遍一致性套件 {#conformance}
+
+新模型、新 key、换中转站、升级 LiteLLM，上线前都对着网关跑一遍 `backend/scripts/gateway_conformance.py`。它发的就是 Claude Code 发的那种请求（流式 `/v1/messages`、Claude Code 的 beta 头和 system 布局、adaptive thinking 加 effort），每一项对应一类曾经在生产上才被发现的问题：
+
+| 检查 | 断言 |
+| --- | --- |
+| `stream_text` | 流式文本到达、以 `message_stop` 收尾、`stop_reason` 是 `end_turn`、usage 非零 |
+| `tool_call` | 一次工具调用，参数非空且是合法 JSON |
+| `parallel_tool_calls` | 一次要三个并行调用，每个参数都非空；模型只调一次记 warn |
+| `tool_result_roundtrip` | 回传 tool_result 后模型用它作答 |
+| `image_in_tool_result` | tool_result 里放一张写着单词的 PNG，回答必须含这个词；没声明 `supports_vision` 就 skip |
+| `thinking_effort` | `cheese_efforts` 里每一档都不被拒；声明了 `supports_reasoning` 的要有 thinking 块 |
+| `mid_conversation_system` | 对话中间的 system 消息被遵守，或模型已标 `supports_mid_conversation_system: false` |
+| `cache_hit` | 两次相同的约 6k token 前缀，第二次 cache_read 超过提示的一半；没有缓存读价格的模型只 warn |
+| `chat_completions` | pi 走的 `/v1/chat/completions`（pi 的 compat 形状），文本与工具调用各一次 |
+
+```sh
+GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
+  --base <网关地址> --model deepseek-flash --json conformance.json
+```
+
+- 不带 `--model` 就查 `/model/info` 里每个 `cheese_selectable` 的模型；`--checks stream_text,tool_call` 只跑其中几项；`--list` 列出模型和每个部署的 `model_info.id`。
+- `--deployment <model_info.id>` 只打模型组里的一个部署：LiteLLM 把 `model` 是部署 id 的请求直接路由到那一个部署。按模型组生效的 pre-call 钩子（去掉计费行、会话亲和）这时不起作用，所以钉住部署时缓存未命中只记 warn。
+- 请求逐个发，一个模型几美分；有一项 fail 就退出码 1。失败原因里带供应商的报错原文和模型回答的片段，所以输出是给操作的人看的，别贴进共享日志。
 
 ## 边界与坑 {#traps}
 

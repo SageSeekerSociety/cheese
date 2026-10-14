@@ -93,6 +93,7 @@ jobs:
           python3 deploy/tests/test_gateway_release.py
           python3 deploy/tests/test_gateway_health_workflow.py
           python3 backend/scripts/test_gateway_supply_probe.py
+          python3 backend/scripts/test_gateway_conformance.py
           bash .github/scripts/test-plan-image-builds.sh
 
       - name: Claude failover preserves HTTP/1.1 and HTTP/2 streaming

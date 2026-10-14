@@ -5,6 +5,8 @@ Usage: OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_
        python3 .claude/scripts/orchestrator_metrics.py --week [<YYYY-MM-DD>|ISO instant>]
        python3 .claude/scripts/orchestrator_metrics.py --self-test   (offline: no token, no network, no gh)
 For that UTC day:
+  行动项核对表  上一份《总调度复盘 …》的行动项原样带出，一列 owner、一列层、一列
+                怎么核；复盘开头先核的就是这张表（工作流 v2 §5 第 1 步、§9 S6）
   等采纳      mergeable (accept_ready) -> entered the merge queue: p50/p90/max, and how many took > 10 min
   未就绪递卡  cards whose first signal was a CI failure, or that took > 20 min to become mergeable
   出队        removals from the queue other than merging, and minutes until re-queued
@@ -22,11 +24,12 @@ log, and this one has nothing to do with it. `--week 2026-10-14T02:30:00Z` is th
 week the study measured; a bare date means that day at 00:00 UTC.
 """
 import importlib.util
-import json, re, statistics, subprocess, sys, time
+import contextlib, io, json, re, statistics, subprocess, sys, time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from orchestrator_sweep import REPO, events, login, meta, ts
+from orchestrator_actions import action_table, last_retro
+from orchestrator_sweep import REPO, events, get, login, meta, ts
 
 _cache = {}
 
@@ -351,6 +354,34 @@ def parse_instant(args):
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def action_checklist(tok):
+    """上一份复盘的行动项，原样带出成核对表（工作流 v2 §5 第 1 步、§9 S6）。
+
+    「上一份复盘」是资料库里最新的一份《总调度复盘 …》：这次复盘开头要核的就是
+    它那份列表，所以排在当天的数字前面。周深度复盘是另一份文档、另一套流程
+    （§6），不从这里取。挑哪一份和画表都在 orchestrator_actions 里，那边离线
+    测；这一层只负责读平台。资料库里还没有复盘时说清楚原因，不摆一张空表：
+    「行动项：0 条」读起来像列了 0 条，不像还没写过复盘。
+    """
+    rows = []
+    for project in (get(tok, "/projects") or {}).get("data") or []:
+        cursor = None
+        for _ in range(5):
+            page = get(tok, f"/projects/{project['id']}/documents?limit=50"
+                            + (f"&cursor={cursor}" if cursor else "")) or {}
+            rows += page.get("data") or []
+            cursor = page.get("next")
+            if not cursor:
+                break
+    retro = last_retro(rows)
+    if retro is None:
+        print("行动项核对表：资料库里还没有《总调度复盘 …》")
+        return
+    body = get(tok, f"/documents/{retro['id']}") or {}
+    print(f"行动项核对表（{retro['title']}）")
+    print(action_table(body.get("content") or ""))
+
+
 def main():
     if sys.argv[1:2] == ["--self-test"]:
         return self_test()
@@ -358,6 +389,8 @@ def main():
         return week_report(parse_instant(sys.argv[2:3]))
     room, day = sys.argv[1], sys.argv[2]
     tok = login()
+    action_checklist(tok)
+    print()
     evs = [m for m in events(tok, room, "accept", pages=10) + events(tok, room, "system", pages=10)
            if m["created_at"].startswith(day)]
     evs.sort(key=lambda m: m["created_at"])
@@ -528,6 +561,56 @@ def self_test():
         check("认不出时抛 ValueError", True, True)
     else:
         check("认不出时抛 ValueError", "没抛", "ValueError")
+
+    # -- 行动项核对表这一节真的会打进当天的报告 ------------------------------
+    # 这一节是 S6 的交付物。只测 action_checklist 这个函数不够：删掉 main() 里
+    # 那次调用照样全绿，整节从报告里消失而 CI 不红。所以这里走 main() 的当天
+    # 模式，把 login / get / events 换成假的，看它打出来的 stdout。
+    def day_report(docs, body):
+        def fake_get(tok, path):
+            if path == "/projects":
+                return {"data": [{"id": "p1"}], "next": None}
+            if path.startswith("/projects/p1/documents"):
+                return {"data": docs, "next": None}
+            if path.startswith("/documents/"):
+                return {"content": body}
+            raise AssertionError(f"unstubbed path: {path}")
+
+        saved = {n: globals()[n] for n in ("login", "get", "events")}
+        argv = sys.argv
+        buf = io.StringIO()
+        try:
+            globals()["login"] = lambda: "tok"
+            globals()["get"] = fake_get
+            globals()["events"] = lambda *a, **k: []
+            sys.argv = ["orchestrator_metrics.py", "room", "2026-10-14"]
+            with contextlib.redirect_stdout(buf):
+                main()
+        finally:
+            for n, fn in saved.items():
+                globals()[n] = fn
+            sys.argv = argv
+        return buf.getvalue()
+
+    out = day_report(
+        [{"id": "d1", "title": "总调度复盘 10-14 07:15–10:15（UTC）",
+          "created_at": "2026-10-14T10:18:56Z"}],
+        "## 行动项\n\n- 一条。owner 张三，落点 L5，怎么核：跑一次。\n",
+    )
+    check("当天报告里先出核对表这一节", "## 行动项核对表" in out, True)
+    check("表里带着上一份的条目和三个字段",
+          "| 一条。owner 张三，落点 L5，怎么核：跑一次。 | 张三 | L5 | 跑一次 |" in out,
+          True)
+    check("标题里写清带的是哪一份",
+          "行动项核对表（总调度复盘 10-14 07:15–10:15（UTC））" in out, True)
+    check("核对表排在当天的数字前面",
+          ("## 行动项核对表" in out and "失败轮次" in out
+           and out.index("## 行动项核对表") < out.index("失败轮次")),
+          True)
+
+    out = day_report([], "")
+    check("资料库里还没有复盘时说清楚，不摆空表",
+          out.splitlines()[0], "行动项核对表：资料库里还没有《总调度复盘 …》")
 
     for f in failures:
         print("FAIL", f)

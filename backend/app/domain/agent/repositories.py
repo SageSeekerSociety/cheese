@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.domain.agent.models import AgentTurn
+from app.domain.room_task.closing import turns_ended
 from app.domain.room_task.live import turns_moved
 
 
@@ -296,7 +297,9 @@ class AgentTurnRepository:
             .values(stopped_at=at)
             .returning(AgentTurn.conversation_id)
         )
-        await turns_moved(self._session, closed.scalars())
+        conversations = list(closed.scalars())
+        await turns_moved(self._session, conversations)
+        await turns_ended(self._session, conversations)
 
     async def still_open(
         self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
@@ -381,6 +384,7 @@ class AgentTurnRepository:
         )
         conversations = list(closed.scalars())
         await turns_moved(self._session, conversations)
+        await turns_ended(self._session, conversations)
         return len(conversations)
 
     async def started_at_of(
