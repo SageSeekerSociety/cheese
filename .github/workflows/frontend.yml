@@ -239,7 +239,8 @@ jobs:
       # Not a plain `vue-tsc --noEmit`: 31 pre-existing errors are frozen in
       # tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
       # Runs through scripts/typecheck.mjs, which generates src/api/openapi.d.ts
-      # first: the judging project imports it through src/cx_types.ts.
+      # first: the judging project imports it — src/cx_types.ts, and
+      # src/types/{canvas,ownAgents,modelConnections}.ts directly.
       - name: Type check (ratchet)
         env:
           # Node's default heap lands around 2GB and vue-tsc on this tree peaks

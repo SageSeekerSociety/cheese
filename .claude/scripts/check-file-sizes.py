@@ -31,10 +31,13 @@ judge), never a guess against whichever tree it happens to be holding.
 EXEMPTIONS. A registry, a manifest or a generated table legitimately grows line
 by line, and a cap on it only teaches people to route around the cap. An
 exemption is one exact repo-relative path and one reason, declared in EXEMPT
-below — never a pattern, and never a line count. The one today is the generated
-OpenAPI types; adding one is a code change that goes through review, which is the point. (This is why
-they are not in a config file: `backend/tests/unit/test_domain_import_guard.py`
-makes the same choice for the same reason.)
+below — never a pattern, and never a line count. Adding one is a code change
+that goes through review, which is the point. (This is why they are not in a
+config file: `backend/tests/unit/test_domain_import_guard.py` makes the same
+choice for the same reason.) The generated OpenAPI types used to be the one
+entry; they are not exempt now because they are not in the tree at all —
+`frontend/scripts/typecheck.mjs` generates them where they are judged, and a
+regenerated copy is ignored, which is a file `changed_files` does not weigh.
 
 Exit 0 nothing over its cap, 1 something is, 2 the tree could not be judged.
 
@@ -153,6 +156,36 @@ def git(*args: str, cwd: Path) -> str:
     ).stdout
 
 
+def ignored_paths(root: Path, paths: list[str]) -> set[str]:
+    """The subset of `paths` git ignores and the index does not track.
+
+    A generated file that stopped being committed is the case this exists for:
+    `git diff` against a merge base that still tracked it reports it as changed
+    on every branch forked before the removal, and the copy on disk is then a
+    build product nobody on that branch owns. A path git is told to ignore, and
+    that the index does not track, is not part of the tree being judged, so it
+    is not weighed — a cap cannot ask whoever regenerated it to split it. An
+    ignored path the index DOES track is still judged: whatever the ignore rule
+    says, that file is in the tree.
+    """
+    if not paths:
+        return set()
+    result = subprocess.run(
+        ["git", "check-ignore", "--stdin", "-z"],
+        cwd=root,
+        input="\0".join(paths),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 1:  # 1: none of them is ignored
+        return set()
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, ["git", "check-ignore", "--stdin", "-z"], result.stdout, result.stderr
+        )
+    return {path for path in result.stdout.split("\0") if path}
+
+
 def changed_files(root: Path, merge_base: str) -> list[str]:
     """Files whose working-tree content differs from the merge base.
 
@@ -162,7 +195,10 @@ def changed_files(root: Path, merge_base: str) -> list[str]:
     """
     diff = git("diff", "--name-only", "--no-renames", merge_base, cwd=root)
     untracked = git("ls-files", "--others", "--exclude-standard", cwd=root)
-    return sorted({line for line in (diff + untracked).splitlines() if line.strip()})
+    candidates = sorted({line for line in (diff + untracked).splitlines() if line.strip()})
+    tracked = set(git("ls-files", cwd=root).splitlines())
+    ignored = ignored_paths(root, [path for path in candidates if path not in tracked])
+    return [path for path in candidates if path in tracked or path not in ignored]
 
 
 class NoMergeBase(Exception):
@@ -578,13 +614,46 @@ def self_test() -> int:
         check("... and names the fix", "git fetch --unshallow" in out, True)
         check("... and judges nothing at all", "it was" not in out, True)
 
+    # 8. A generated file that stopped being committed. The merge base still
+    #    tracked it, so `git diff` reports it as changed however old the fork
+    #    point is, and a route change makes the regenerated copy bigger than the
+    #    base copy. It is not in the tree the cap is judging — the index does
+    #    not track it and the repo is told to ignore it — so it must not be
+    #    judged, or every branch forked before the removal is told to split a
+    #    build product nobody on it owns. The tracked half is the control: the
+    #    same bytes ARE judged while the file is still in the index.
+    with tempfile.TemporaryDirectory(prefix="file-sizes-selftest-") as raw:
+        root = Path(raw)
+        git = _repo_git(root)
+        run, run_json = _script_runner(root)
+        try:
+            git("init", "-q")
+            _write(root / "frontend/src/api/generated.ts", 500)  # over the api cap of 400
+            git("add", "-A")
+            git("commit", "-qm", "while it was still committed")
+        except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+            print(f"SELF-TEST FAIL: could not build the fixture repository: {exc}")
+            return 1
+
+        _write(root / "frontend/src/api/generated.ts", 600)  # regenerated, grown
+        code, out = run()
+        check("a regenerated file the index still tracks is judged", code, 1)
+        check("... and named", "generated.ts" in out, True)
+
+        git("rm", "-q", "--cached", "frontend/src/api/generated.ts")
+        (root / "frontend/.gitignore").write_text("src/api/generated.ts\n", encoding="utf-8")
+        code, out = run()
+        check("... but once untracked and ignored it is not judged", code, 0)
+        check("... and not even named", "generated.ts" not in out, True)
+
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}")
     if failures:
         return 1
     print(
         "PASS: check-file-sizes self-test (caps per tree, new vs oversized files, "
-        "shrinking allowed, judged at the merge base, no merge base is a 2, "
+        "shrinking allowed, judged at the merge base, an ignored file is not judged, "
+        "no merge base is a 2, "
         "a missing base is a 2, --json agrees with the exit code and prints "
         "exactly one line)"
     )

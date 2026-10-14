@@ -14,9 +14,14 @@
 // 1.4 MB of it, and any two branches that each touched a route collided in it
 // without either having a decision there. It costs about three seconds.
 //
-// Both entry points go through this file, because both need the types present:
-// `pnpm run typecheck` (the CI job, the pre-commit hook) and the narrow
-// changed-files project the fast tier builds in .github/scripts/ci_fast_checks.py.
+// Everything that runs the ratchet goes through this file, because everything
+// that runs it needs the types present: `pnpm run typecheck` (the CI job, the
+// pre-commit hook, `task fe:check`), the narrow changed-files project the fast
+// tier builds in .github/scripts/ci_fast_checks.py, and the post-merge
+// collector — .claude/scripts/ratchet-snapshot.py runs this rather than
+// scripts/tsc-ratchet.mjs for exactly this reason: the collector installs
+// pnpm and runs the checks on a fresh checkout, where the types have never
+// been generated.
 import { spawnSync } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'

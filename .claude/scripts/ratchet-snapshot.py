@@ -212,9 +212,28 @@ CHECKS: tuple[Check, ...] = (
     Check(
         id="vue-tsc",
         area=TYPES,
-        argv=("node", "scripts/tsc-ratchet.mjs", "--json"),
+        # Through the wrapper, not `tsc-ratchet.mjs` directly: the types the
+        # ratchet reads are generated rather than committed, and a bare run on
+        # a checkout that has not run the type check yet reports four TS2307
+        # "cannot find module './api/openapi'" and calls that a type error.
+        #
+        # The wrapper is why the script list below is longer than the closure
+        # the self-test can walk: it spawns both of its own scripts by name, so
+        # the registry sees neither and the two have to be written down. The
+        # ratchet's baseline — frontend/tsc-baseline.json, the frozen per-file
+        # error counts — is the measured debt, not a rule, and it is not
+        # excused in NOT_A_RULE only because the closure cannot reach it either.
+        argv=("node", "scripts/typecheck.mjs", "--json"),
         cwd="frontend",
         rules=(
+            "frontend/scripts/typecheck.mjs",
+            # The generator decides the types being judged, so it is a rule
+            # too — the closure cannot see it (the wrapper spawns it by name),
+            # which is exactly why it is written down here. `backend/openapi.json`
+            # beside it is the subject being measured, not a rule: it changes
+            # with every route, and a rule that moves on every route change
+            # makes every comparison a new run.
+            "frontend/scripts/gen-api-types.mjs",
             "frontend/scripts/tsc-ratchet.mjs",
             "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
@@ -576,9 +595,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "stylelint-tokens": {
         "frontend/stylelint-baseline.json": "baseline: the frozen token counts",
-    },
-    "vue-tsc": {
-        "frontend/tsc-baseline.json": "baseline: the frozen per-file error counts",
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",

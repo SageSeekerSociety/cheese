@@ -3,11 +3,11 @@
 //
 //   node scripts/gen-api-types.mjs    rewrite src/api/openapi.d.ts
 //
-// The output is not committed (frontend/.gitignore): a generated file that
-// nothing reads until the type check runs only made every route change rewrite
-// 1.4 MB of it, and made any two routes changed in parallel collide. The type
-// check generates it first — scripts/typecheck.mjs — so there is no stale copy
-// to detect and no second command to remember.
+// The output is not committed (frontend/.gitignore): a generated file nothing
+// reads until the type check runs only made every route change rewrite 1.4 MB
+// of it, and made any two routes changed in parallel collide. Everything that
+// runs the ratchet generates it first, through scripts/typecheck.mjs — so there
+// is no stale copy to detect and no second command to remember.
 //
 // backend/openapi.json is the backend's own export (`uv run python -m
 // scripts.export_openapi` in backend/), kept current by `export_openapi --check`

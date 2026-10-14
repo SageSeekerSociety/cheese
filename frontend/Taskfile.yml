@@ -107,10 +107,15 @@ tasks:
     cmds:
       - pnpm run lint:scene-debt
   typecheck:
-    desc: Run vue-tsc type check
+    desc: Run the ratcheted vue-tsc check (the API types are generated first)
     deps: [install]
+    # Not `vue-tsc --noEmit`: the types it compiles against are generated
+    # rather than committed, so a bare run on a checkout that has not run the
+    # type check yet reports four TS2307 "cannot find module './api/openapi'".
+    # Same command as the CI job's, which is also what makes `task fe:check`
+    # and .github/workflows/frontend.yml agree.
     cmds:
-      - pnpm exec vue-tsc --noEmit
+      - pnpm run typecheck
     sources:
       - src/**/*.{ts,tsx,vue}
       - tsconfig*.json
