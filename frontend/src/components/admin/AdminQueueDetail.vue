@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { AdminCandidate } from '@/api'
 import type { FeedbackDetail, FeedbackPriority, FeedbackStatus } from '@/cx_types'
 
 import { computed, ref } from 'vue'
@@ -9,7 +10,6 @@ import StatusRail from '@/components/admin/StatusRail.vue'
 import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { allStatuses, KIND_LABEL, PRIORITY_META, SOURCE_LABEL, statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
-import { useFeedbackStore } from '@/stores/feedback'
 
 /**
  * AdminQueueDetail.vue — 一条反馈的详情（§4.4），三个断点共用这一个组件：
@@ -32,28 +32,47 @@ import { useFeedbackStore } from '@/stores/feedback'
  * 「一次只退一层」，而那一层的顺序由谁拿着详情谁决定。这里的按钮只负责把用户的意图
  * 报上去。
  *
- * 写操作分两路：**状态**从 `triage` 出去（调用方要记撤销条，那是页面级的栈），
- * **指派 / 优先级 / 安全问题 / 内部备注**直接落到 store —— 它们没有撤销条（撤销是给
- * 单键误触的保险，而这几样都要先点开面板、再选一个值）。
+ * 写操作**全部从这里出去**，一件不落：**状态**是 `triage`（调用方要记撤销条，那是
+ * 页面级的栈），**指派 / 优先级 / 安全问题 / 内部备注**各有自己的事件。这一层现在只认
+ * props —— 它以前直接把后四样写进 store，于是「详情」和「业务 store」之间多了一条只有
+ * 它俩知道的线，页面反而看不见自己这一屏发生了什么。
+ *
+ * 写失败的那句原话也是 prop（`writeError`）：它由调用方的 store 给，画在这里是因为
+ * 「刚才那一下没成」要贴着刚点过的控件说，隔着一屏没人看得见。
  */
 defineOptions({ name: 'AdminQueueDetail' })
 
-const props = defineProps<{
-  item: FeedbackDetail | null
-  loading: boolean
-  /** 拉取失败时的原话。为空表示这一趟没出错。 */
-  error: string | null
-  /** 分诊面板展开着没有。见文件开头：状态在调用方。 */
-  triageOpen: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    item: FeedbackDetail | null
+    loading: boolean
+    /** 拉取失败时的原话。为空表示这一趟没出错。 */
+    error: string | null
+    /** 分诊面板展开着没有。见文件开头：状态在调用方。 */
+    triageOpen: boolean
+    /** 服务端 meta 里那份状态梯子。缺省时用本地那一份。 */
+    statuses?: FeedbackStatus[]
+    /** 写操作失败的原话，由调用方的 store 给。 */
+    writeError?: string
+    /** 「指派给谁」那个框：候选与那串搜索词都归调用方（关详情时它得能清掉）。 */
+    candidates?: AdminCandidate[]
+    search?: string
+    searching?: boolean
+  }>(),
+  { statuses: undefined, writeError: '', candidates: () => [], search: '', searching: false }
+)
 
 const emit = defineEmits<{
   (e: 'close'): void
   (e: 'update:triageOpen', v: boolean): void
   (e: 'triage', to: FeedbackStatus): void
+  (e: 'assign', id: string, handle: string | null): void
+  (e: 'priority', id: string, priority: FeedbackPriority): void
+  (e: 'security', id: string, security: boolean): void
+  (e: 'note', id: string, body: string): void
+  (e: 'search', v: string): void
 }>()
 
-const store = useFeedbackStore()
 const { t } = useI18n()
 
 /** 下一格。和 `AdminQueueRow` 的那张表同一份 —— 详情里那颗主按钮推的就是这一格。 */
@@ -79,9 +98,7 @@ const next = computed(() => (props.item ? NEXT[props.item.status] : null))
 const advanceLabel = computed(() => (next.value ? t(ADVANCE_LABEL[next.value]) : ''))
 
 /** 状态选项用**服务端**那份（meta 里的 `statuses`）：梯子四级，外加梯子之外的「不修复」。 */
-const statusItems = computed(() =>
-  allStatuses(store.meta?.statuses).map((s) => ({ title: statusMeta(s).label, value: s }))
-)
+const statusItems = computed(() => allStatuses(props.statuses).map((s) => ({ title: statusMeta(s).label, value: s })))
 const priorityItems = computed(() =>
   Object.entries(PRIORITY_META).map(([value, meta]) => ({ title: meta.label, value }))
 )
@@ -113,18 +130,18 @@ function focusAssignee() {
 
 defineExpose({ focusAssignee })
 
-async function addNote() {
+function addNote() {
   const body = noteDraft.value.trim()
   if (!body || !props.item) return
-  // 先清草稿再发：失败时用户手上那份字会没掉，但服务端回的是一句原话（`store.error`
+  // 先清草稿再发：失败时用户手上那份字会没掉，但服务端回的是一句原话（调用方把它
   // 画在这一页上），而留在框里的话，他会以为「加进去了」再点一次，于是同一条备注
   // 写两遍 —— 备注是只增不改的流水，重复的那一条删不掉。
   noteDraft.value = ''
-  await store.addNote(props.item.id, body)
+  emit('note', props.item.id, body)
 }
 
 function onSecurity(v: unknown) {
-  if (props.item) void store.setSecurity(props.item.id, !!v)
+  if (props.item) emit('security', props.item.id, !!v)
 }
 </script>
 
@@ -194,8 +211,12 @@ function onSecurity(v: unknown) {
                 <AdminAssigneeSelect
                   :model-value="item.assignee_handle"
                   :label="t('feedback.queueDetail.assignTo')"
+                  :search="props.search"
+                  :candidates="props.candidates"
+                  :searching="props.searching"
                   dense
-                  @update:model-value="(v: string | null) => store.assign(item!.id, v)"
+                  @update:model-value="(v: string | null) => emit('assign', item!.id, v)"
+                  @update:search="(v: string) => emit('search', v)"
                 />
               </div>
             </div>
@@ -215,7 +236,7 @@ function onSecurity(v: unknown) {
                 autocomplete="off"
                 density="compact"
                 hide-details
-                @update:model-value="(v: FeedbackPriority) => store.setPriority(item!.id, v)"
+                @update:model-value="(v: FeedbackPriority) => emit('priority', item!.id, v)"
               />
             </div>
           </div>
@@ -389,8 +410,8 @@ function onSecurity(v: unknown) {
               />
             </section>
 
-            <v-alert v-if="store.error" type="error" density="compact" variant="tonal" class="qdet__alert">
-              {{ store.error }}
+            <v-alert v-if="writeError" type="error" density="compact" variant="tonal" class="qdet__alert">
+              {{ writeError }}
             </v-alert>
           </template>
 
