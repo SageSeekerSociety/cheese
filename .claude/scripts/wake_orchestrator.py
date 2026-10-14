@@ -37,8 +37,9 @@ a second one, so the retry confirms the same message rather than sending its twi
 prints mean "a message may be on the platform now" — exit 4, and exit 3 on the posting
 call itself, whose answer may have been lost after the platform stored the message — and
 both say which id to reuse, so nothing has to be re-derived. The id has to be a UUID: the
-endpoint types the field that way, and it is held in the canonical form here, so the
-string this run prints is the one a retry can hand straight back.
+endpoint types the field that way, and the forms this prints are ones a retry can feed
+straight back — a `--request-id` is held as the canonical uuid, one minted here as its
+dashed-free hex, and either is accepted by the parser.
 
 Credentials come from the environment, never from argv (ps shows it) and never from a
 file: OKCHEESE_PASS is required, OKCHEESE_USER defaults to the dev account's name. That
