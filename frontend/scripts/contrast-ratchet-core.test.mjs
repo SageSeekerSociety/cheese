@@ -67,7 +67,7 @@ describe('the WCAG arithmetic', () => {
     assert.ok(a < b)
   })
 
-  it('reports white on the amber brand fill as the 2.65:1 the baseline freezes', () => {
+  it('reports white on the amber brand fill as the 2.65:1 that started the ratchet', () => {
     assert.equal(roundRatio(contrastRatio([255, 255, 255], [0xf5, 0x7f, 0x17])), 2.65)
   })
 })

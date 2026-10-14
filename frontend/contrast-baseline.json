@@ -15,27 +15,6 @@
       "unjudged": "a background image or gradient sits between the run and its ground",
       "sample": "下载知是"
     },
-    "/download|light|i.mdi-chevron-down.mdi.v-icon|::before": {
-      "ratio": 2.65,
-      "need": 3,
-      "unreadable": 0,
-      "unjudged": "",
-      "sample": ""
-    },
-    "/download|light|i.mdi-download.mdi.v-icon|::before": {
-      "ratio": 2.65,
-      "need": 3,
-      "unreadable": 0,
-      "unjudged": "",
-      "sample": ""
-    },
-    "/download|light|span.v-btn__content|": {
-      "ratio": 2.65,
-      "need": 4.5,
-      "unreadable": 0,
-      "unjudged": "",
-      "sample": "下载 Mac 版"
-    },
     "/solutions|dark|a.text-link|": {
       "ratio": 12.54,
       "need": 4.5,
@@ -113,13 +92,6 @@
       "unjudged": "",
       "sample": ""
     },
-    "/solutions|light|i.mdi-email-outline.mdi.v-icon|::before": {
-      "ratio": 2.65,
-      "need": 3,
-      "unreadable": 0,
-      "unjudged": "",
-      "sample": ""
-    },
     "/solutions|light|p.vision-label|": {
       "ratio": null,
       "need": 4.5,
@@ -148,26 +120,12 @@
       "unjudged": "",
       "sample": "讨论、决定与成果都留在项目里。成员更替，积累不断"
     },
-    "/solutions|light|span.v-btn__content|": {
-      "ratio": 2.65,
-      "need": 4.5,
-      "unreadable": 0,
-      "unjudged": "",
-      "sample": "预约交流"
-    },
     "/|dark|span.scene-avatar|": {
       "ratio": 4.44,
       "need": 4.5,
       "unreadable": 0,
       "unjudged": "",
       "sample": "周"
-    },
-    "/|light|i.mdi-arrow-top-right.mdi.v-icon|::before": {
-      "ratio": 2.65,
-      "need": 3,
-      "unreadable": 0,
-      "unjudged": "",
-      "sample": ""
     },
     "/|light|span.im-artifact__kind.t-meta|": {
       "ratio": 4.33,
@@ -189,13 +147,6 @@
       "unreadable": 0,
       "unjudged": "",
       "sample": "9 月 18 日"
-    },
-    "/|light|span.v-btn__content|": {
-      "ratio": 2.65,
-      "need": 4.5,
-      "unreadable": 0,
-      "unjudged": "",
-      "sample": "开始使用"
     }
   }
 }
