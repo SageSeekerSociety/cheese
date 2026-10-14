@@ -43,6 +43,7 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import BaseError, NotFoundError
 from app.db.session import get_db
 from app.domain.agent.environment import Sandbox, devices_of, dump
+from app.domain.agent_instance.adapters import default_teammate
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
@@ -104,7 +105,7 @@ async def finish_onboarding(
     if user is None:
         raise NotFoundError()
 
-    projects = ProjectService(session)
+    projects = ProjectService(session, default_teammate=default_teammate)
     project = await projects.create(
         name=payload.project_name,
         owner_handle=user.username,

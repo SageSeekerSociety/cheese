@@ -14,11 +14,10 @@ from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent_instance.adapters import named_teammate
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, settle_turn
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.support.living_doc import write_overview
 
 pytestmark = pytest.mark.anyio
@@ -45,7 +44,7 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
     )
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         if private:
             topic = await TopicService(session).get_or_create_private(
                 project_id=project.id,

@@ -16,11 +16,10 @@ from app.domain.block.models import Block
 from app.domain.delivery.input_identity import WorkCompletion
 from app.domain.delivery.models import NativeInput
 from app.domain.identity.handles import agent_instance_handle
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, stub_compute
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.support.hang import HANG_S
 from tests.support.threads import thread_in
 
@@ -44,7 +43,7 @@ class HeldSeats(StubChannel):
 async def a_conversation(factory, *, two_seats=False):
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         room = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )

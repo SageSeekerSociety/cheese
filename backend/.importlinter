@@ -603,7 +603,6 @@ ignore_imports =
     app.domain.project.room_files -> app.domain.library.service
     app.domain.project.room_files -> app.domain.preview.office
     app.domain.project.schemas -> app.domain.shell.schemas
-    app.domain.project.services -> app.domain.agent_instance.services
     app.domain.project.services -> app.domain.block.documents
     app.domain.project.services -> app.domain.living_doc.services
     app.domain.project.services -> app.domain.task.models

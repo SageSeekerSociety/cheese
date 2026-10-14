@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import CHEESE_NAME, agent_instance_handle
+from app.domain.project.models import Project
 
 
 async def room_teammate(session: AsyncSession, room_id: uuid.UUID) -> tuple[str, str]:
@@ -82,3 +83,23 @@ async def task_teammate(
     if agent is None:
         return None
     return agent.instance_id, agent.handle
+
+
+async def default_teammate(
+    session: AsyncSession,
+    project: Project,
+    *,
+    display_name: str | None = None,
+    type_name: str | None = None,
+) -> None:
+    """`app.domain.project.ports.DefaultTeammate`：这个项目的默认 AI 队友。
+
+    两次调用按次序做：先播（没有才播，播种和席位都在 `materialize_default` 里，它
+    自己收尾时 flush），人设只在还是空的时候落。收的是那一行 `Project` 本身，因为
+    播种要就地写回 ``default_agent_instance_id``、也要读 ``root_topic_id`` 才坐得下
+    席位。"""
+    agents = AgentInstanceService(session)
+    teammate = await agents.materialize_default(project, display_name=display_name)
+    if type_name and teammate.type_name is None:
+        await agents.set_type(teammate, type_name)
+        await session.flush()

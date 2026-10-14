@@ -16,10 +16,9 @@ from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness.driven.runner import reply_owed, reply_owed_path
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio
 
@@ -50,7 +49,7 @@ async def _room(factory, tmp_path) -> tuple[ChatService, Screen, uuid.UUID]:
     )
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="Work", created_by="u"
         )

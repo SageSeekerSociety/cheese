@@ -29,8 +29,7 @@ from app.domain.memory.models import (
     user_scope_id,
 )
 from app.domain.memory.scopes import MemoryScope
-from app.domain.project.services import ProjectService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.support.living_doc import write_overview
 
 pytestmark = pytest.mark.anyio
@@ -78,7 +77,7 @@ class _Model:
 
 async def _project(session, handle: str = "alice"):
     await registered(session, handle)
-    project = await ProjectService(session).create(
+    project = await project_service(session).create(
         name="旧记忆搬迁", owner_handle=handle
     )
     await session.flush()

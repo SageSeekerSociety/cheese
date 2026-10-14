@@ -12,10 +12,9 @@ import pytest
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.support.living_doc import write_overview
 
 pytestmark = pytest.mark.anyio
@@ -41,7 +40,7 @@ async def _three_turns(factory, tmp_path) -> list[tuple[str, str]]:
     )
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="Work", created_by="u"
         )

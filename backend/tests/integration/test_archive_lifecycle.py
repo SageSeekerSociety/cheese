@@ -19,11 +19,10 @@ from app.domain.agent.models import AgentTurn
 from app.domain.delivery.ledger import settle_card
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
-from app.domain.project.services import ProjectService
 from app.domain.room_cleanup import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio
 
@@ -43,7 +42,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 37)
     async with business_db_factory() as session:
         await registered(session, "owner")
-        project = await ProjectService(session).create(name="P", owner_handle="owner")
+        project = await project_service(session).create(name="P", owner_handle="owner")
         service = TopicService(session)
         room = await service.create(
             project_id=project.id, title="Room", created_by="owner"
@@ -76,7 +75,7 @@ async def archived_room(client, monkeypatch):
     async with client.test_factory() as session:
         await registered(session, "owner")
         await enrolled(session, *KNOWN_MACHINES)
-        project = await ProjectService(session).create(name="P", owner_handle="owner")
+        project = await project_service(session).create(name="P", owner_handle="owner")
         room = await TopicService(session).create(
             project_id=project.id, title="Room", created_by="owner"
         )
@@ -769,7 +768,7 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
         project_id, resource_id = operation.project_id, str(operation.resource_id)
-        other_project = await ProjectService(session).create(
+        other_project = await project_service(session).create(
             name="Other", owner_handle="owner"
         )
         other_room = await TopicService(session).create(

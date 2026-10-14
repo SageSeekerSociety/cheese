@@ -15,6 +15,7 @@ from tests.integration.conftest import (
     _register,
     join_project_team,
     post_project,
+    project_service,
     registered,
     session_auth_headers,
 )
@@ -192,7 +193,9 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
     async def go() -> list:
         async with factory() as session:
             await registered(session, OWNER)
-            project = await ProjectService(session).create(name="P", owner_handle=OWNER)
+            project = await project_service(session).create(
+                name="P", owner_handle=OWNER
+            )
             project.settings = {
                 **(project.settings or {}),
                 "memory_dream": {"threshold_output_tokens": 1},

@@ -32,6 +32,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.agent_instance.adapters import default_teammate
 from app.domain.notification.preferences import local_time
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
@@ -397,7 +398,9 @@ async def patch_task_participant(
         phone=payload.phone,
     )
 
-    await ProjectService(db).activate_participation(task=task, membership=updated)
+    await ProjectService(db, default_teammate=default_teammate).activate_participation(
+        task=task, membership=updated
+    )
     # Commit before answering: the participant told they are approved can reload
     # the task on their next request and must see it as theirs (download and
     # submit). Same reason as the commit in ``create_task``.

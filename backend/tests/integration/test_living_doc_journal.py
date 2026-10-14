@@ -22,7 +22,7 @@ from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered, session_auth_headers
+from tests.integration.conftest import project_service, registered, session_auth_headers
 from tests.integration.test_docs import _topic
 from tests.support.living_doc import document_of
 
@@ -31,7 +31,7 @@ async def seed(factory):
     """A task, whose living document these tests write."""
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         task = await TopicService(session).create_task(
             room_id=project.root_topic_id,
             created_by="alice",
@@ -265,7 +265,7 @@ async def test_platform_brief_seed_has_raw_history_without_contribution_event(
     factory = business_db_factory
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         await session.commit()
     raw = "# 原稿\r\n😀"
     async with factory() as session:

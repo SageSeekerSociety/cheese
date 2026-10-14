@@ -26,10 +26,9 @@ from app.domain.agent.profiles import (
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.project.repositories import ProjectRepository
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
-from tests.integration.conftest import put_on_plan, registered
+from tests.integration.conftest import project_service, put_on_plan, registered
 from tests.support.hang import HANG_S
 
 
@@ -131,7 +130,7 @@ async def _mk_service(factory, tmp_path, fake, profiles=None, screen=None):
     )
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )

@@ -3,10 +3,10 @@
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
-from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
     add_external_member,
     post_project,
+    project_service,
     put_on_plan,
     registered,
     session_auth_headers,
@@ -16,7 +16,7 @@ from tests.integration.conftest import (
 def test_agents_own_independent_configuration(db_session, _portal, monkeypatch):
     async def run():
         await registered(db_session, "owner")
-        project = await ProjectService(db_session).create(
+        project = await project_service(db_session).create(
             owner_handle="owner", name="Agents", forge_kind="github_app"
         )
         service = AgentInstanceService(db_session)

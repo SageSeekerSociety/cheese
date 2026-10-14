@@ -31,7 +31,7 @@ from app.domain.usage.models import (
     ResourceUsage,
 )
 from app.domain.usage.services import UsageService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 
 async def _team(session, handle: str, plan: str = "free") -> int:
@@ -334,7 +334,6 @@ async def test_the_gateway_budget_narrows_as_packs_lapse_and_clears_on_reserve(
     business_db_factory, tmp_path, monkeypatch
 ):
     from app.domain.agent.chat import ChatService
-    from app.domain.project.services import ProjectService
     from tests.conftest import stub_compute
     from tests.integration.test_gateway_usage import FakeGateway
 
@@ -350,7 +349,7 @@ async def test_the_gateway_budget_narrows_as_packs_lapse_and_clears_on_reserve(
     async with business_db_factory() as session:
         await _free(session, credits_per_period=100)
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         pack = await Ledger(session).grant(
             project.team_id, 50, expires_at=datetime.now(UTC) + timedelta(days=1)
         )

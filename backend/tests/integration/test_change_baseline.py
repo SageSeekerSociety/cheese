@@ -7,12 +7,11 @@ still land on, so one deleted branch does not cost every turn its summary."""
 import pytest
 
 from app.domain.agent.room_events import _known_commits
-from app.domain.project.services import ProjectService
 from app.domain.repository import forge_files
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 
 @pytest.mark.anyio
@@ -21,7 +20,7 @@ async def test_a_closed_task_with_a_gone_branch_leaves_the_baseline_readable(
 ):
     async with business_db_factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         room = await TopicService(session).create(
             project_id=project.id, title="R", created_by="u"
         )
