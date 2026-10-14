@@ -44,6 +44,7 @@ _KEYWORD_PORTS = {
         "record_instruction",
         "seat_instance_id",
         "record_agent",
+        "task_teammate",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
     "landing watch": ("record_instruction", "task_teammate", "machines"),
