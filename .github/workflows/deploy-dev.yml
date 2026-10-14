@@ -377,11 +377,13 @@ jobs:
           CHEESE_CENTRAL_SESSION_HOST: "1"
         run: APP_RELEASE="$(git rev-parse HEAD)" bash deploy/deploy-docker.sh "$(bash deploy/image-tag.sh HEAD)"
 
+      # Cuts no stream: the new proxy starts beside the old one, and the step
+      # waits until the old one has finished what it carries (at most 30 min,
+      # usually a few). A change that would cut streams fails here instead.
       - name: Release the verified metering image
         if: steps.release.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          METERING_ALLOW_INTERRUPT: "1"
         run: |
           set -euo pipefail
           release_sha="$(git rev-parse HEAD)"

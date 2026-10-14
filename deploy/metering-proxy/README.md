@@ -12,7 +12,9 @@ cap as backstop). Design context: issue #218 and
 - `billing_addon.py` — the mitmproxy addon (glue only).
 - `cheese_billing_core.py` — token verify / metering / admission logic, stdlib
   only, unit-tested from `backend/tests/unit/test_metering_proxy_core.py`.
-- `compose.yml` — the container. Values via a box-local `.env` (see header).
+- `compose.yml` — the front and the two proxy slots. Values via a box-local
+  `.env` (see header).
+- `front.cfg` — the front's HAProxy configuration (see "Release on the dev box").
 
 Gateway responses emit `gateway_request_timing` in the container log. Each record
 contains the HTTP request and response timestamps, the end of route selection,
@@ -89,56 +91,89 @@ the same base the machine reaches the backend at, and the tunnel connects to
   and when the window fills the whole deployment's subscription traffic is
   refused until it rolls. Per-project budgets are admission's job. The gateway
   pool is not under this window at all — LiteLLM meters it.
-- **One writer per usage log**: every proxy on a `USAGE_LOG_DIR` windows its
-  own totals and appends to the same file, so two instances sharing one log
-  reach roughly N×cap and neither notices. Compose's fixed `container_name`
-  pins this in practice; a second instance on the same log logs an error at
-  startup rather than starting silently. Run one proxy per log directory.
+- **One ledger, written whole**: during a release the old and the new proxy
+  both append to `usage.jsonl`. Each row goes out in one `write` under an
+  exclusive lock on the file, so rows never interleave and the backend's ingest,
+  which reads by byte offset, sees whole lines only. With the cap on, each
+  proxy also reads the rows the other appended, so a turn the old proxy
+  finishes counts against the cap the new one enforces.
 
 ## Release on the dev box
 
 The dev application deployment releases the metering image after updating the
 application, using the same full commit SHA and requiring its image build and
-Required CI to succeed. A healthy proxy already running that digest with the
-same configuration is left running, so a release that changes nothing does not
-interrupt active streams.
+Required CI to succeed. The **Release metering proxy** GitHub Actions workflow
+does the same for a SHA given by hand.
 
-The configuration is the compose file being released and the box-local `.env`.
-Each release labels the container it creates with a SHA-256 of the two
-(`cheese.metering-proxy.config-sha256`), and the next release exits early only
-when the image, health and that hash all match. A change to only the `.env` or
-the compose file is therefore applied by the next release, which recreates the
-proxy. Only the hash is stored; the `.env` itself is never printed or copied.
-A container created any other way, or one restored by a rollback, has no hash
-and is recreated by the next release.
+Callers never reach a proxy directly. `front` (HAProxy, `front.cfg`) holds
+`172.17.0.1:8444` and the alias `metering-proxy` on `cheese-meter-gateway`, and
+behind it run two proxies, `slot-blue` and `slot-green`; outside a release only
+one of them runs. A release (`deploy/release-metering-proxy.sh`):
 
-Use the **Release metering proxy** GitHub Actions workflow from `main`, with the
-full merged commit SHA. Its image build and Required CI must both have succeeded
-for that exact SHA. Acknowledge the interruption only when ready to recreate the
-proxy: active model streams can disconnect.
+1. starts the idle slot on the new image, held out of rotation until it is
+   healthy and the front sees it up;
+2. moves new connections to it through the front's runtime API, without a
+   reload, so every open connection stays where it is;
+3. marks the old slot draining: it then closes each client connection after
+   the response that connection carries, so a client's next request opens a
+   new connection and lands on the new slot;
+4. stops the old slot once it has no connection open, counted in the slot's own
+   network namespace, or after `METERING_DRAIN_SECONDS` (1800) with whatever is
+   still open cut. Clients close idle connections within a few minutes, so a
+   drain usually lasts as long as the longest stream running at the switch.
 
-The build pins mitmproxy 12.1.2 and packages the addon, billing core and control
-answers into the image. The release pulls the full-SHA tag, resolves its registry
-digest and starts that digest. No host source directory is mounted over `/addons`.
+A slot that fails its health check never receives traffic; rolling back is
+releasing the previous SHA. A slot already serving the same digest with the same
+configuration is left running. The configuration is the compose file and the
+box-local `.env`: each release labels the slot it starts with a SHA-256 of the
+two (`cheese.metering-proxy.config-sha256`), so a change to either alone is
+released too. Only the hash is stored; the `.env` is never printed or copied.
 
-The existing box-local `.env` remains at
-`~/cheese-proxy-new/deploy/metering-proxy/.env`. The release preserves its project
-directory, published ports, ledger and CA mounts.
-`CHEESE_ADMISSION_URL` must point at the backend's `/llm/admission`;
-`USAGE_LOG_DIR` must match the backend's `SUBSCRIPTION_USAGE_LOG` directory.
-`CERTS_DIR` holds the existing CA.
-Do not print the environment or replace the CA during a release.
+A change to `front.cfg` is applied by a hitless reload (the slots' state is
+carried over in a server-state file). A change to the front's image or service
+definition recreates the front, which cuts every open connection: the automatic
+deployment refuses it, and the manual workflow runs it only with its
+`interrupt` input set.
 
-Before recreating the service, the release saves its image ID and raw compose
-files in a private `releases/<sha>-<run>-<attempt>/` directory. It leaves legacy
-source files in place for the first release's rollback. Failed health checks
-restore the previous image and mounts. Health checks require both listeners and
-an unauthenticated CONNECT response of 407; they do not call a model provider.
+### What the two slots share while they overlap
 
-After release, verify a sandbox turn, a usage row attributed to that turn, and a
-budget refusal for a test project whose compute grant is exhausted. Listener health alone does not
-verify that the platform's credential reaches Anthropic, backend admission or
-ledger ingestion.
+| State | Where it lives | During the overlap |
+| --- | --- | --- |
+| Ledger `usage.jsonl` | shared file | appended whole rows under a file lock; ingest unchanged |
+| Claude and ChatGPT credentials | shared files | a refresh holds a file lock and re-reads first, so one pair is refreshed once between the two proxies |
+| Claude account cooldowns (`cooldowns.json`) | shared file | each change is applied to the file as it stands, under a file lock |
+| Rolling token window (cap on) | memory, rebuilt from the ledger | each proxy reads the rows the other appends |
+| Turns in flight against the cap | memory | not shared; the new proxy does not see the old one's running turns, so the cap can overshoot by them, as it already can for any turn admitted before the window filled |
+| Conversation-to-account affinity, single-probe recovery | memory | not shared; a conversation that reconnects may land on another account once, as after any restart |
+| Spent ChatGPT accounts | memory | not shared; the new proxy learns a spent account from its first refusal, as after any restart |
+| Admission cache, egress health | memory | rebuilt within seconds |
+
+The old slot takes no new connections, and each HTTP connection it holds
+carries at most one more request after the switch, so what remains per process is bounded
+by the requests it finishes.
+
+### The move from the single container
+
+Before this layout the proxy ran as one container, `cheese-metering-proxy`,
+holding the address and the alias itself, and Docker moves neither while it
+runs. The first release after the change moves the box without cutting a
+session's stream: it starts `slot-blue` and a second front, `front-handover`;
+inserts a NAT rule (`iptables -t nat`, PREROUTING and OUTPUT, comment
+`cheese-metering-handover`) that sends new connections for `172.17.0.1:8444` to
+`front-handover`, while connections the old container already has keep their
+translation; waits until the old container has none left (bounded by the same
+drain limit); stops it; starts `front` on the freed address; removes the rule;
+and stops `front-handover` once its tunnels have ended. A failure before the old
+container stops removes the rule and leaves it serving. On the ChatGPT listener
+both the old container and `front-handover` answer the alias meanwhile; the old
+container is stopped at a moment it has no connection open on it when one comes
+within a minute, and a request it is carrying otherwise is cut.
+
+After a release, verify a sandbox turn, a usage row attributed to that turn, and
+a budget refusal for a test project whose compute grant is exhausted. Listener
+health alone does not verify that the platform's credential reaches Anthropic,
+backend admission or ledger ingestion. Do not print the environment or replace
+the CA during a release; both slots use the same CA from `CERTS_DIR`.
 
 ## The Claude credential
 

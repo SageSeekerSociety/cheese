@@ -4,8 +4,8 @@ upstream call."""
 import socket
 
 
-def check(connect_port: int = 8444) -> None:
-    with socket.create_connection(("127.0.0.1", connect_port), timeout=2) as connection:
+def check(connect_port: int = 8444, host: str = "127.0.0.1") -> None:
+    with socket.create_connection((host, connect_port), timeout=2) as connection:
         connection.sendall(
             b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n"
             b"Host: api.anthropic.com:443\r\n\r\n"

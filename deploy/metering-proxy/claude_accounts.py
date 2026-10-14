@@ -11,10 +11,11 @@ import math
 import os
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from cheese_billing_core import PlatformCredential
+from cheese_billing_core import PlatformCredential, file_lock
 
 log = logging.getLogger("cheese.accounts")
 
@@ -50,6 +51,22 @@ class ClaudeAccounts:
                     )
         self.credentials = found
         return found
+
+    @contextmanager
+    def _change(self):
+        """Change the cooldowns as they stand on disk, then save them.
+
+        During a release the old proxy and the new one both write this file,
+        so a change applied to this process's last read would put back
+        whatever the other changed since."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with file_lock(self.path.with_name(".cooldowns.lock")):
+            try:
+                self.state = json.loads(self.path.read_text())
+            except FileNotFoundError:
+                self.state = {}
+            yield
+            self._save()
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -150,6 +167,15 @@ class ClaudeAccounts:
 
     def reject(self, name, headers, body):
         """Quarantine a 429 account without inferring a reset from its status."""
+        with self._change():
+            self._reject(name, headers, body)
+        log.warning(
+            "Claude account %s cooling until %s after 429",
+            name,
+            self.state[name]["until"],
+        )
+
+    def _reject(self, name, headers, body):
         previous = self.state.get(name, {})
         failures = previous.get("failures", 0) + 1
         headers = {k.lower(): v for k, v in headers.items()}
@@ -196,21 +222,21 @@ class ClaudeAccounts:
             "failures": failures,
         }
         self.probes.pop(name, None)
-        self._save()
-        log.warning("Claude account %s cooling until %s after 429", name, reset)
 
     def accepted(self, name, request_id=None):
         if name in self.probes and self.probes[name] == request_id:
             self.probes.pop(name)
-            self.state.pop(name, None)
-            self._save()
+            with self._change():
+                self.state.pop(name, None)
             log.info("Claude account %s recovered", name)
 
     def release(self, name, request_id=None):
         if name in self.probes and self.probes[name] == request_id:
             self.probes.pop(name)
-            self.state[name]["until"] = self.now() + 300
-            self._save()
+            with self._change():
+                # Gone when the other proxy saw the account recover meanwhile.
+                if name in self.state:
+                    self.state[name]["until"] = self.now() + 300
 
     def retry_after(self):
         deadlines = [s["until"] for s in self.state.values() if s["until"] is not None]

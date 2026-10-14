@@ -297,6 +297,30 @@ def test_a_response_without_the_split_logs_no_split(tmp_path):
     assert "cache_creation_5m_input_tokens" not in rec
 
 
+def test_with_the_cap_on_turns_another_proxy_finishes_count_here(tmp_path):
+    """A release runs the old proxy beside the new one until the old one's
+    turns end, both appending to one ledger. What the old one finishes is spent
+    against the same deployment-wide cap the new one enforces, so the new one
+    counts it, and counts its own turns once."""
+    log = tmp_path / "usage.jsonl"
+    new = core.Meter(log, cap_window_s=3600, follow=True)
+    old = core.Meter(log, cap_window_s=3600, follow=True)
+    new.record("p", "t", {"input_tokens": 400}, "m")
+    old.record("p", "t", {"input_tokens": 500}, "m")
+
+    assert not new.would_exceed(901)
+    assert new.would_exceed(900)
+    new.record("p", "t", {"input_tokens": 100}, "m")
+    assert new.used() == 1000
+    assert [
+        json.loads(line)["total_tokens"] for line in log.read_text().splitlines()
+    ] == [
+        400,
+        500,
+        100,
+    ]
+
+
 def test_admission_verdict_carries_the_supply_decision():
     """The same answer says both 'may it run' and 'where does it go' (#243)."""
 
@@ -672,6 +696,33 @@ def test_concurrent_requests_that_find_it_due_refresh_it_once(tmp_path):
     assert cred.token() == ("sk-ant-oat01-NEW", "")
 
 
+def test_two_proxies_that_find_it_due_together_refresh_it_once(tmp_path):
+    """During a release the old and the new proxy hold the same credential file.
+    A refresh rotates the pair, so the second to refresh would present a
+    refresh token the first has already spent: between them they refresh once,
+    and both then serve the new token."""
+    clock = _Clock(1_000_000.0)
+    path = _pair_file(tmp_path, expires_in_s=60, now=clock.t)
+    calls = []
+    granted = _granting(calls)
+
+    def slow_post(url, body, timeout):
+        time.sleep(0.3)
+        return granted(url, body, timeout)
+
+    holders = [
+        core.PlatformCredential(path, post=slow_post, now=clock) for _ in range(2)
+    ]
+    workers = [_threading.Thread(target=holder.refresh_if_due) for holder in holders]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join(5)
+
+    assert len(calls) == 1
+    assert [holder.token() for holder in holders] == [("sk-ant-oat01-NEW", "")] * 2
+
+
 def test_a_refused_refresh_token_asks_for_a_new_login_and_stops_trying(tmp_path):
     clock = _Clock(1_000_000.0)
     path = _pair_file(tmp_path, expires_in_s=60, now=clock.t)
@@ -977,6 +1028,35 @@ def test_a_chatgpt_account_near_expiry_is_refreshed_the_way_the_backend_does(
     assert written["expires_at"] == int(clock.t) + 864000
     assert ((directory / "credential").stat().st_mode & 0o777) == 0o600
     assert account.refresh_due() is False
+
+
+def test_two_proxies_refresh_a_chatgpt_account_once_between_them(tmp_path):
+    """As with the Claude pair: OpenAI answers a refresh token presented twice
+    with refresh_token_reused, so the old and the new proxy of a release must
+    not both refresh the account."""
+    clock = _Clock(1_000_000.0)
+    _chatgpt_account(tmp_path, expires_in_s=300, now=clock.t)
+    calls = []
+    granted = _chatgpt_granting(calls)
+
+    def slow_post(url, fields, timeout):
+        time.sleep(0.3)
+        return granted(url, fields, timeout)
+
+    holders = [
+        core.ChatGPTAccounts(tmp_path, post=slow_post, now=clock).get("work")
+        for _ in range(2)
+    ]
+    workers = [_threading.Thread(target=holder.refresh_if_due) for holder in holders]
+    for w in workers:
+        w.start()
+    for w in workers:
+        w.join(5)
+
+    assert len(calls) == 1
+    assert [holder.token() for holder in holders] == [
+        ("chatgpt-at-NEW", "acct-NEW", "")
+    ] * 2
 
 
 def test_a_refresh_without_a_lifetime_takes_it_from_the_access_token(tmp_path):

@@ -1706,6 +1706,41 @@ def test_gateway_responses_do_not_charge_the_subscription(monkeypatch, tmp_path)
     assert not mod.USAGE_LOG.exists()
 
 
+def _http1_flow(method="POST", path="/api/event_logging/batch"):
+    flow = _make_flow(path=path)
+    flow.request.method = method
+    flow.request.http_version = "HTTP/1.1"
+    return flow
+
+
+def test_a_draining_proxy_closes_each_connection_after_its_response(
+    monkeypatch, tmp_path
+):
+    """Once a release moves new connections to the proxy that replaces this one,
+    a client's next request must open a new connection rather than come back
+    here on its old keep-alive one. Until then nothing about a response changes,
+    and a CONNECT's own answer never closes the tunnel it opens."""
+    mod = _load_addon(monkeypatch, tmp_path)
+    mod.DRAIN_FLAG = tmp_path / "draining"
+
+    def answered(flow):
+        flow.response = _make_response(content_type="application/json")
+        mod.responseheaders(flow)
+        mod.response(flow)
+        return flow.response.headers
+
+    assert "connection" not in answered(_http1_flow())
+
+    mod.DRAIN_FLAG.touch()
+    assert answered(_http1_flow())["connection"] == "close"
+    assert "connection" not in answered(_http1_flow(method="CONNECT"))
+    # Answered here, never streamed: only the response hook sees it.
+    refused = _http1_flow()
+    refused.response = _make_response(status_code=407, content_type="text/plain")
+    mod.response(refused)
+    assert refused.response.headers["connection"] == "close"
+
+
 def _gateway_answer(mod, status: int, body: dict):
     mod.GATEWAY_BASE = "http://gateway:4000"
     mod.ADMISSION_URL = "http://backend/llm/admission"

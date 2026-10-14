@@ -8,7 +8,10 @@ on:
         required: true
         type: string
       interrupt:
-        description: Acknowledge that recreating the proxy interrupts active model streams
+        description: >-
+          Acknowledge interrupting active model streams. Only a change to the
+          front itself (its image or service definition) needs it; a release of
+          the proxy moves streams without cutting them.
         required: true
         default: false
         type: boolean
@@ -24,10 +27,12 @@ concurrency:
 
 jobs:
   release:
-    if: github.ref == 'refs/heads/main' && inputs.interrupt
+    if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, cheese-dev]
     environment: dev
-    timeout-minutes: 15
+    # The old slot may take up to METERING_DRAIN_SECONDS (30 min) to finish
+    # the streams it carries.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -51,5 +56,5 @@ jobs:
       - name: Release the verified image
         env:
           RELEASE_SHA: ${{ inputs.sha }}
-          METERING_ALLOW_INTERRUPT: "1"
+          METERING_ALLOW_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}
         run: bash deploy/release-metering-proxy.sh "$RELEASE_SHA"

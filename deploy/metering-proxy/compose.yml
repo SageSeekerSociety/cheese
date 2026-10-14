@@ -36,9 +36,9 @@
 #
 # The ChatGPT listener (:8445) is published nowhere. Its one caller, the
 # gateway's LiteLLM, reaches it as http://metering-proxy:8445 on
-# cheese-meter-gateway, an internal network only those two containers join;
-# no sandbox is on it. Plain HTTP is safe there because the hop never leaves
-# that network, and the Bearer it carries is the listener key, not an upstream
+# cheese-meter-gateway, an internal network only the gateway and this stack's
+# front join; no sandbox is on it. Plain HTTP is safe there because the hop
+# never leaves that network, and the Bearer it carries is the listener key, not an upstream
 # credential. CHEESE_CHATGPT_KEY stays as the second line of defence.
 #
 # The network is shared with the gateway stack, so neither stack owns it: both
@@ -58,84 +58,166 @@
 # CHEESE_SCOPED_SECRET configured it refuses every CONNECT rather than relaying.
 # It only ever MITMs the Anthropic names; everything else tunnels raw, so device
 # shell tools that honor HTTPS_PROXY but not our CA keep working.
+#
+# Both listeners belong to `front` (HAProxy, front.cfg), not to a proxy: behind
+# it run two proxies, slot-blue and slot-green, and outside a release only one
+# of them. A release starts the other on the new image, moves new connections
+# to it, lets the old one finish the streams it carries and stops it
+# (deploy/release-metering-proxy.sh), so a release cuts no model stream.
+
+# One proxy; the two slots differ only in their address behind the front.
+x-slot: &slot
+  # One variable for both slots: a release only ever starts the idle one.
+  image: ${METERING_PROXY_IMAGE:?Use the Release metering proxy workflow}
+  restart: unless-stopped
+  labels:
+    # A hash of this file and the .env the release started it with, so the
+    # next release can tell a configuration change from an unchanged proxy
+    # (release-metering-proxy.sh). Empty when started any other way, which
+    # the next release treats as changed.
+    cheese.metering-proxy.config-sha256: ${METERING_PROXY_CONFIG_SHA256:-}
+  # Backstop, not the fix: the addon now streams both request and response
+  # bodies (billing_addon.py) so per-flow memory is bounded and a long agent
+  # turn no longer buffers its whole grown context. This cap only ensures that
+  # if something pathological still spikes memory, the OOM is contained to this
+  # container (a restart) instead of taking down every other service on the
+  # box. Raise it on hosts that run many concurrent subscription turns.
+  mem_limit: 2g
+  # journald, for the reason the app containers use it
+  # (docs/infrastructure.md, "Logs"): every release recreates a slot, and a
+  # json-file log goes with the container it belonged to.
+  logging:
+    driver: journald
+    options:
+      tag: "{{.Name}}"
+  # mitmproxy puts no timeout on opening an upstream connection, so an
+  # unreachable one (a credential egress across a flaky tailnet relay) waited
+  # out the kernel's 6 SYN retries, ~135 s, per request. At 3 it fails in
+  # ~20 s and the client's retries surface the failure instead of a silent
+  # room. Scoped to this container's network namespace.
+  sysctls:
+    net.ipv4.tcp_syn_retries: "3"
+  command: >
+    mitmdump --listen-host 0.0.0.0
+    --mode regular@8444
+    --mode reverse:https://chatgpt.com@8445
+    --ssl-insecure
+    --set connection_strategy=lazy
+    -s /addons/billing_addon.py
+  environment:
+    CHEESE_USAGE_LOG: /var/log/cheese/usage.jsonl
+    CHEESE_TOKEN_CAP: ${CHEESE_TOKEN_CAP:-0}
+    CHEESE_SCOPED_SECRET: ${CHEESE_SCOPED_SECRET:-}
+    CHEESE_ALLOW_HEADER_ATTR: ${CHEESE_ALLOW_HEADER_ATTR:-}
+    CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}
+    CHEESE_GATEWAY_BASE: ${CHEESE_GATEWAY_BASE:-}
+    CHEESE_CLAUDE_CREDENTIAL: /etc/cheese/claude-credential/credential
+    CHEESE_CHATGPT_CREDENTIALS: /etc/cheese/chatgpt-credential
+    CHEESE_CHATGPT_KEY: ${CHEESE_CHATGPT_KEY:-}
+  volumes:
+    # The ledger, which both slots append to while a release overlaps them
+    # (whole rows under a lock; cheese_billing_core.Meter). This MUST resolve
+    # to the same host directory the backend's SUBSCRIPTION_USAGE_LOG points
+    # into — the proxy writes the rows and the backend ingests them, and
+    # nothing checks that the two agree. Defaulting it to `./logs` pins the
+    # ledger to wherever this compose file happens to sit, which is how a box
+    # that moved its checkout ended up metering into a directory no one read:
+    # turns were billed, rows were written, and the ledger simply stopped
+    # growing. No error, on either side.
+    - ${USAGE_LOG_DIR:-./logs}:/var/log/cheese
+    # One CA for both slots, so a session trusts whichever one it reaches.
+    - ${CERTS_DIR:-./certs}:/home/mitmproxy/.mitmproxy
+    # The platform's Claude credential, the only copy anywhere: logging in or
+    # out is writing or deleting `credential` in this directory
+    # (claude-login.sh). Writable, because a login's pair is refreshed here
+    # and written back; a directory, so an atomic replace is seen at once.
+    - ${CLAUDE_CREDENTIAL_DIR:-./claude-credential}:/etc/cheese/claude-credential
+    # The platform's ChatGPT accounts, one directory per name
+    # (chatgpt-login.sh), writable for the same reason as the Claude one.
+    - ${CHATGPT_CREDENTIAL_DIR:-./chatgpt-credential}:/etc/cheese/chatgpt-credential
+
+# The front, twice: `front` for good, `front-handover` only while the one
+# release that moves the box off its single proxy container runs.
+x-front: &front
+  image: mirror.gcr.io/library/haproxy:3.2.25-alpine
+  restart: unless-stopped
+  logging:
+    driver: journald
+    options:
+      tag: "{{.Name}}"
+  volumes:
+    # A directory, not the file: the release replaces haproxy.cfg in it by
+    # rename (front.cfg), and a file mount would keep showing the old one.
+    - ${METERING_FRONT_DIR:?Use the Release metering proxy workflow}:/usr/local/etc/haproxy:ro
+  environment:
+    # front.cfg reads the slots' addresses from these.
+    METERING_BLUE_ADDR: 10.213.49.2
+    METERING_GREEN_ADDR: 10.213.49.3
+  healthcheck:
+    # Healthy only while a slot is up behind it: what callers get.
+    test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8446/health"]
+    interval: 15s
+    timeout: 5s
+    retries: 3
+    # Checked every second while it starts, so a release waiting for it is
+    # not held up by the 15 s interval.
+    start_period: 60s
+    start_interval: 1s
+
 services:
-  metering-proxy:
-    image: ${METERING_PROXY_IMAGE:?Use the Release metering proxy workflow}
-    container_name: cheese-metering-proxy
-    restart: unless-stopped
-    labels:
-      # A hash of this file and the .env the release started it with, so the
-      # next release can tell a configuration change from an unchanged proxy
-      # (release-metering-proxy.sh). Empty when started any other way, which
-      # the next release treats as changed.
-      cheese.metering-proxy.config-sha256: ${METERING_PROXY_CONFIG_SHA256:-}
-    # Backstop, not the fix: the addon now streams both request and response
-    # bodies (billing_addon.py) so per-flow memory is bounded and a long agent
-    # turn no longer buffers its whole grown context. This cap only ensures that
-    # if something pathological still spikes memory, the OOM is contained to this
-    # container (a restart) instead of taking down every other service on the
-    # box. Raise it on hosts that run many concurrent subscription turns.
-    mem_limit: 2g
-    # journald, for the reason the app containers use it
-    # (docs/infrastructure.md, "Logs"): every release recreates this
-    # container, and a json-file log goes with the container it belonged to.
-    logging:
-      driver: journald
-      options:
-        tag: "{{.Name}}"
-    # mitmproxy puts no timeout on opening an upstream connection, so an
-    # unreachable one (a credential egress across a flaky tailnet relay) waited
-    # out the kernel's 6 SYN retries, ~135 s, per request. At 3 it fails in
-    # ~20 s and the client's retries surface the failure instead of a silent
-    # room. Scoped to this container's network namespace.
-    sysctls:
-      net.ipv4.tcp_syn_retries: "3"
-    command: >
-      mitmdump --listen-host 0.0.0.0
-      --mode regular@8444
-      --mode reverse:https://chatgpt.com@8445
-      --ssl-insecure
-      --set connection_strategy=lazy
-      -s /addons/billing_addon.py
+  front:
+    <<: *front
     ports:
       - "172.17.0.1:8444:8444"
     networks:
-      # Listed because naming any network drops the implicit one: the
-      # published listeners and the way out to Anthropic stay on it.
+      # Its published port.
       default:
+      slots:
+        ipv4_address: 10.213.49.4
       meter-gateway:
         aliases:
           - metering-proxy
-    environment:
-      CHEESE_USAGE_LOG: /var/log/cheese/usage.jsonl
-      CHEESE_TOKEN_CAP: ${CHEESE_TOKEN_CAP:-0}
-      CHEESE_SCOPED_SECRET: ${CHEESE_SCOPED_SECRET:-}
-      CHEESE_ALLOW_HEADER_ATTR: ${CHEESE_ALLOW_HEADER_ATTR:-}
-      CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}
-      CHEESE_GATEWAY_BASE: ${CHEESE_GATEWAY_BASE:-}
-      CHEESE_CLAUDE_CREDENTIAL: /etc/cheese/claude-credential/credential
-      CHEESE_CHATGPT_CREDENTIALS: /etc/cheese/chatgpt-credential
-      CHEESE_CHATGPT_KEY: ${CHEESE_CHATGPT_KEY:-}
-    volumes:
-      # The ledger. This MUST resolve to the same host directory the backend's
-      # SUBSCRIPTION_USAGE_LOG points into — the proxy writes the rows and the
-      # backend ingests them, and nothing checks that the two agree. Defaulting
-      # it to `./logs` pins the ledger to wherever this compose file happens to
-      # sit, which is how a box that moved its checkout ended up metering into a
-      # directory no one read: turns were billed, rows were written, and the
-      # ledger simply stopped growing. No error, on either side.
-      - ${USAGE_LOG_DIR:-./logs}:/var/log/cheese
-      - ${CERTS_DIR:-./certs}:/home/mitmproxy/.mitmproxy
-      # The platform's Claude credential, the only copy anywhere: logging in or
-      # out is writing or deleting `credential` in this directory
-      # (claude-login.sh). Writable, because a login's pair is refreshed here
-      # and written back; a directory, so an atomic replace is seen at once.
-      - ${CLAUDE_CREDENTIAL_DIR:-./claude-credential}:/etc/cheese/claude-credential
-      # The platform's ChatGPT accounts, one directory per name
-      # (chatgpt-login.sh), writable for the same reason as the Claude one.
-      - ${CHATGPT_CREDENTIAL_DIR:-./chatgpt-credential}:/etc/cheese/chatgpt-credential
+
+  front-handover:
+    <<: *front
+    profiles: [handover]
+    # Never called on this port. Publishing it is what makes Docker accept
+    # connections from other networks to this container's :8444, which is
+    # where the release steers 172.17.0.1:8444 while the old single container
+    # still holds that address.
+    ports:
+      - "172.17.0.1:28444:8444"
+    networks:
+      default:
+      slots:
+        ipv4_address: 10.213.49.5
+
+  slot-blue:
+    <<: *slot
+    networks:
+      # The way out to Anthropic, ChatGPT, the backend and the gateway.
+      default:
+      slots:
+        ipv4_address: 10.213.49.2
+
+  slot-green:
+    <<: *slot
+    networks:
+      default:
+      slots:
+        ipv4_address: 10.213.49.3
 
 networks:
+  # Where the fronts reach the slots, at addresses fixed here rather than by
+  # name (front.cfg says why). Internal: the slots reach everything else
+  # through `default`. Outside Docker's default pools (172.17-31.0.0/16,
+  # 192.168.0.0/16) and beside the gateway's 10.213.47.0/28, so no network the
+  # box creates takes it.
+  slots:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.213.49.0/28
   meter-gateway:
     external: true
     name: cheese-meter-gateway
