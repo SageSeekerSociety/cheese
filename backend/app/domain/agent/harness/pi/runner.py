@@ -564,7 +564,10 @@ class Runner(runner.Runner[Journal]):
             text = catalog.run_platform_tool(tool, arguments, host)
         except Exception as error:  # noqa: BLE001 — the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": failure_text(error)}
-        return {"status": 0, "stdout": text, "stderr": ""}
+        # Pictures a tool hands back (a mini-app's, as the platform ran it) go
+        # to the model beside the text (`platform.ts`).
+        images = list(getattr(text, "images", ()))
+        return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
 
     async def tool_hooks(self, params: dict) -> dict:
         """The project's hooks for one event of one of pi's own tool calls,

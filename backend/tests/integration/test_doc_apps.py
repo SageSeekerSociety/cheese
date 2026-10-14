@@ -186,3 +186,27 @@ def test_the_pictures_taken_when_it_was_kept_are_its_readers(client, browser):
     )
     assert refused.status_code in (403, 404)
     assert refused.content != PNG
+
+
+def test_its_writer_may_have_the_pictures_back_with_the_save(client, browser):
+    """For the AI teammate to look at what it made before it moves on: the
+    light pictures, by width, only when asked for."""
+    import base64
+
+    _, doc, agent = _project(client)
+    shots = {"400-light": PNG, "720-light": PNG, "400-dark": PNG, "720-dark": PNG}
+    browser.append(check.Ran(heights={400: 300, 720: 260}, shots=shots))
+    asked = client.post(
+        f"/documents/{doc}/apps",
+        params={"pictures": "true"},
+        json={"code": CODE, "note": "第一版"},
+        headers=agent,
+    )
+    assert asked.status_code == 200, asked.text
+    pictures = asked.json()["data"]["pictures"]
+    assert set(pictures) == {"400", "720"}
+    assert base64.b64decode(pictures["720"]) == PNG
+
+    browser.append(check.Ran(heights={400: 300, 720: 260}, shots=shots))
+    plain = _save(client, doc, agent)
+    assert "pictures" not in plain.json()["data"]
