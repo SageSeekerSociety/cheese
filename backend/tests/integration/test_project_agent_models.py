@@ -453,6 +453,9 @@ async def test_a_subagent_asking_outside_the_projects_pool_is_refused_by_name(
     assert "不在当前项目可用的模型范围内" in body["reason"]
     # 拒绝要给出可指定的范围,不然就是一句没法行动的「不行」。
     assert "deepseek-flash" in body["reason"]
+    # 主 agent 下一步得知道怎么起它：model 参数只认四个别名，目录里的模型走
+    # subagent_type。
+    assert "subagent_type" in body["reason"]
 
 
 @pytest.mark.anyio
@@ -466,6 +469,7 @@ async def test_a_subagent_asking_for_a_model_the_catalogue_lacks_is_refused(clie
     assert body["allow"] is False
     assert body["reason_kind"] == "binding"
     assert "模型目录里没有" in body["reason"]
+    assert "subagent_type" in body["reason"]
 
 
 @pytest.mark.anyio
