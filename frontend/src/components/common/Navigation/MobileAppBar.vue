@@ -11,11 +11,13 @@
     <!-- 中间这一格：要么是路由的标题，要么由当前页自己填（它 Teleport 到这里）。
          手机上只有这一条顶栏，从不卸载——页面各画各的头的时候，两条头交替
          出现，Vuetify 会把 v-main 的 padding 从 57 滑到 0（.v-main 是
-         transition: .2s），整页跟着抖一下。所以顶栏不动，动的是里面的内容。 -->
-    <div v-if="barSlot" id="app-bar-slot" class="bar-slot" />
+         transition: .2s），整页跟着抖一下。所以顶栏不动，动的是里面的内容。
+         The slot itself is always here, whatever the route: a page's header is
+         teleported into it and must always find it (composables/useAppBarSlot.ts). -->
+    <div v-show="barSlot" id="app-bar-slot" class="bar-slot" />
     <!-- 标题读页头那一号字 (.t-title 15/600)：屏幕上这条横条和页内页头是同一条，
          Vuetify 默认的 20px 会让它们看起来是两种东西。 -->
-    <v-app-bar-title v-else class="t-title">
+    <v-app-bar-title v-if="!barSlot" class="t-title">
       {{ currentTitle }}
     </v-app-bar-title>
 
@@ -101,6 +103,7 @@
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 
+import { appBarClaimed } from '@/composables/useAppBarSlot'
 import { useNavigation } from '@/composables/useNavigation'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
@@ -135,10 +138,10 @@ const backTo = computed(() => {
 // 下面挂没挂侧栏——手机上没有侧栏的页面（/inbox、首页那两页）以前照样画一个汉堡。
 const hasDrawer = computed(() => navigation?.route?.meta?.drawer === true)
 
-// 这一页自己往顶栏里填内容（话题页的标题+阶段、话题列表的项目名、首页那对分段），
-// 于是这里不写标题。谁填由路由声明，不靠去数 slot 里有没有东西——那样第一帧
-// 永远是空的。
-const barSlot = computed(() => navigation?.route?.meta?.barSlot === true)
+// 这一页自己往顶栏里填内容（话题页的标题+阶段、话题列表的项目名、任务页的标题），
+// 于是这里不写标题。谁填由填的那个组件自己登记（composables/useAppBarSlot.ts），
+// 不靠去数 slot 里有没有东西——那样第一帧永远是空的。
+const barSlot = appBarClaimed
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)

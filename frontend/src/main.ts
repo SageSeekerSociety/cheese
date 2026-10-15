@@ -49,6 +49,7 @@ import { installRefChipKeys } from '@/lib/refChip'
 import { answerRefsWith } from '@/lib/refDirectory'
 // Plugins
 import { registerPlugins } from '@/plugins'
+import { installAppRuntime } from '@/plugins/runtime'
 import vuetify from '@/plugins/vuetify'
 import { persistProjectList } from '@/query/persist'
 import AccountService from '@/services/account'
@@ -96,6 +97,8 @@ watch(
 armAfterFirstPaint(router)
 
 registerPlugins(app)
+// 和画哪一页无关、整段会话里一直在跑的那几件（主题跟随、页面标题、登录后的实时连接、全局按键）。
+installAppRuntime(app, router)
 
 // 挂载等三件事：
 // - 当前语言那份语言包。它和入口分开取（见 i18n/index.ts），没到就挂载会先画出一片裸键。
