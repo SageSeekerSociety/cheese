@@ -201,11 +201,18 @@ def _readable_by(user_handle: str):
     )
 
 
-#: 「有人回复了我、我还没处理」（侧栏那盏黄灯）那条查询的房间参数。房间按百计，所以
+#: 「有人回复了我、我还没处理」（侧栏那盏黄灯）那条查询的两份清单参数。房间按百计，所以
 #: 走数组参数；`expanding` 让它在 SQL 里照样摊成 `IN ($1, $2, …)` —— 和原先直接
 #: `in_(room_ids)` 生成的文本逐字节相同，执行计划不变。
 _replied_rooms = bindparam("replied_rooms", type_=Uuid, expanding=True)
+#: 这些房间里的支线 id，不是房间 id 本身（两者都是 uuid，但判据完全不同）。
+#: `_replied_to_me_statement` 的说明写了为什么必须是支线 id。
 _replied_inner = bindparam("replied_inner", type_=Uuid, expanding=True)
+
+
+#: 一间房有哪些支线。`replied_to_me` 先跑这一条（`ix_threads_room_id` 上的索引扫，
+#: 0.018 ms），把结果当上面第二份清单交给主查询。
+_room_thread_ids = select(_threads.c.id).where(_threads.c.room_id.in_(_replied_rooms))
 
 
 @lru_cache(maxsize=64)
@@ -217,6 +224,10 @@ def _replied_to_me_statement(user_handle: str) -> Select:
     「提到我」那条 JSONB 判据（`_mentions`），所以缓存的键是人；房间本身只以参数
     进来。语句是只读的，一份拿给并发用安全（`block/repositories.py` 的
     `_awaiting_statements` 是同一个写法）。
+
+    两份清单参数：`replied_rooms` 是房间本身，`replied_inner` 是这些房间里的支线
+    id（调用方先用 `_room_thread_ids` 读出来）。第二份传支线 id 而不是房间 id，
+    是这条语句唯一的形状要求 —— 见下面那个 OR 的注释。
     """
     # 「回复我发的消息」：另说的一条块指着我写的某一块。别名和 `unread_counts`
     # 里 `took_part` 那一处同一个写法 —— exists() 要关联到外层的 Block，就不能
@@ -261,9 +272,16 @@ def _replied_to_me_statement(user_handle: str) -> Select:
         )
         .outerjoin(line_state, read_state_of(line_state, Block.conversation_id))
         .where(
+            # 两个分支都约束 `blocks.conversation_id`（`blocks` 上每个索引的首列），
+            # 规划器才能把房间收窄完再去碰 `blocks`。原来第二支写的是外连接进来的
+            # `threads.room_id IN (…)`，它要等连接之后才算得出来，整个 OR 于是只能
+            # 全表扫：48 万区块的库里，一个只有 51 个块的房间也要 136 ms；改成
+            # 支线 id 清单是 0.130 ms（`docs/evidence/`
+            # `channel-page-20-concurrency-2026-10-15.md` §2，七种写法的执行计划
+            # 在 `explain-channel-detail.txt`）。
             or_(
                 Block.conversation_id.in_(_replied_rooms),
-                _threads.c.room_id.in_(_replied_inner),
+                Block.conversation_id.in_(_replied_inner),
             ),
             Block.kind == BlockKind.message,
             Block.author_type == AuthorType.participant,
@@ -714,14 +732,21 @@ class TopicRepository:
         """
         if not room_ids:
             return set()
-        # 语句按看的人建一次留着，房间每次当参数给（`_replied_to_me_statement`）。
+        # 语句按看的人建一次留着，两份清单每次当参数给（`_replied_to_me_statement`）。
         rooms = list(room_ids)
+        # 这些房间的支线 id 先单独读一趟（`ix_threads_room_id`，0.018 ms），主查询
+        # 才能拿它去收窄 `blocks`。多这一条查询，换掉一次 48 万行的整表扫。
+        thread_ids = list(
+            (
+                await self._session.scalars(_room_thread_ids, {"replied_rooms": rooms})
+            ).all()
+        )
         return {
             room or conversation
             for conversation, room in (
                 await self._session.execute(
                     _replied_to_me_statement(user_handle),
-                    {"replied_rooms": rooms, "replied_inner": rooms},
+                    {"replied_rooms": rooms, "replied_inner": thread_ids},
                 )
             ).all()
         }
