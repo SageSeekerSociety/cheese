@@ -17,8 +17,10 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
   building,
+  CENTER_ROWS,
   DECLINED,
   DEPLOYED_WITH_NOTE,
+  FEEDBACK_META,
   JUST_RECEIVED,
   LADDER,
   LIKED_COMMENT,
@@ -30,10 +32,16 @@ import FeedbackClaimCard from '@/components/feedback/FeedbackClaimCard.vue'
 import FeedbackCommentItem from '@/components/feedback/FeedbackCommentItem.vue'
 import FeedbackCommentsThread from '@/components/feedback/FeedbackCommentsThread.vue'
 import FeedbackStatusTimeline from '@/components/feedback/FeedbackStatusTimeline.vue'
+import FeedbackCenterPageView from '@/views/feedback/FeedbackCenterPageView.vue'
+import FeedbackMinePageView from '@/views/feedback/FeedbackMinePageView.vue'
 
 /** 按钮（`BaseButton` 是 `v-btn`）、点赞那颗 `v-icon`、回复框 `v-textarea`：都要 Vuetify。
  *  句子里的 @名字、时间、梯子上的字走的是全局的 `t()`，单独的 i18n 实例不用装。 */
 const UI: CatalogNeed[] = ['vuetify']
+
+/** 画面只发事件（动作都在容器里），预览站上不给动作：这几格要看的是它长什么样，
+ *  不是按下去发生什么。 */
+const noop = () => {}
 
 /** 评论条（和渲染它的整栋评论楼）模板里有 `<i18n-t>`：「回复 X」那一行。它是 i18n
  *  插件注册的全局组件，所以这两件还要装 i18n —— 光有全局 `t()` 不够。 */
@@ -154,6 +162,146 @@ export const FEEDBACK_ENTRIES: CatalogEntry[] = [
         note: '「不修复」不在梯子上 —— 它是另一种结局。梯子画到它就停，后面的「已修复 / 已上线」不画，免得读的人以为还会轮到它们；走过去的那一档换成「已处理」。',
         props: { timeline: DECLINED, status: 'declined', ladder: LADDER },
         expect: '不修复',
+      },
+    ],
+  },
+  {
+    id: 'feedback-center-page-view',
+    title: 'FeedbackCenterPageView',
+    about:
+      '反馈中心首页的画面那一半：页头、栏位页签、一排筛选药丸、列表。取数、栏位、四个筛选、点支持全在容器 `feedback/FeedbackCenterPage.vue` 里（它调 store、读地址），这一半只收 props、只发事件，所以能脱离后端单独摆出来。',
+    file: 'src/views/feedback/FeedbackCenterPageView.vue',
+    component: FeedbackCenterPageView,
+    needs: ['vuetify', 'router'],
+    // 每格默认一份「有四条、一页到底」的世界；哪一格要看别的样子就在它自己的 props 里改。
+    args: {
+      isAdmin: false,
+      tab: 'all',
+      tabs: [
+        { value: 'all', label: '全部', count: 4 },
+        { value: 'hot', label: '热门', count: 2 },
+        { value: 'active', label: '处理中', count: 1 },
+        { value: 'resolved', label: '已完成', count: 1 },
+      ],
+      meta: FEEDBACK_META,
+      query: '',
+      filterKind: null,
+      filterStatus: null,
+      filterDays: null,
+      filterAuthor: '',
+      hasFilters: false,
+      items: CENTER_ROWS,
+      total: 4,
+      loading: false,
+      loadingMore: false,
+      listHasMore: false,
+      error: null,
+      hotHalfLifeDays: 2,
+      hotThreshold: 10,
+      hotMinItems: 5,
+      // 画面只发事件，动作都在容器里；预览站上不给动作（回题列表要看的不是按下去发生
+      // 什么，而是这一格长什么样）。
+      search: noop,
+      'set-kind': noop,
+      'set-status': noop,
+      'set-days': noop,
+      'set-author': noop,
+      'clear-filters': noop,
+      'set-tab': noop,
+      retry: noop,
+      more: noop,
+      'dismiss-error': noop,
+      support: noop,
+    },
+    states: [
+      {
+        name: '一屏反馈',
+        note: '页头三颗动作、四条栏位页签（各带计数）、一排「不限」的筛选药丸，下面是列表：标题一行、摘要两行、底行是「哪一类、谁提的、多少人参与、走到哪一步」。',
+        props: {},
+        expect: '导出一个月的数据要等四十秒',
+      },
+      {
+        name: '管理员看得见入口',
+        note: '服务端说这个读者是管理员：页头多一颗「管理后台」——它出不出现由服务端答，不是一个可以拨的开关。',
+        props: { isAdmin: true },
+        expect: '管理后台',
+      },
+      {
+        name: '热门那一栏',
+        note: '切到热门：页签下面多一句「为什么这么排」的说明（半衰期、门槛、最少几条都由服务端发下来），免得读者把它当成按支持数排。',
+        props: { tab: 'hot' },
+        expect: '按支持数算',
+      },
+      {
+        name: '筛选之后没有',
+        note: '被筛选（或栏位）收窄之后一条都没有：说的是「没有符合条件的反馈」并给一颗清除筛选的按钮，不是「暂无反馈」——那读起来像平台一条都没有。',
+        props: { items: [], total: 0, hasFilters: true, filterKind: 'other' },
+        expect: '没有符合条件的反馈',
+      },
+      {
+        name: '搜索没结果',
+        note: '搜过之后一条都没有：换一句关键词，而且说清搜索只覆盖哪几个字段，免得人以为该搜到的东西丢了。',
+        props: { items: [], total: 0, query: '导出' },
+        expect: '没有匹配的反馈',
+      },
+      {
+        name: '拉挂了',
+        note: '服务端那句话摆在空态里，动作是重试；上面那句写的是「这一次为什么没成」，下面那句是服务端的原话。',
+        props: { items: [], total: 0, error: '网络不通' },
+        expect: '反馈加载失败',
+      },
+      {
+        name: '正在读',
+        note: '还没到货：画骨架行（不是四条空行），标题和摘要的位置都占着，到货那一刻不会跳。',
+        props: { items: [], total: 0, loading: true },
+        expectSelector: '.skel--feedback',
+      },
+    ],
+  },
+  {
+    id: 'feedback-mine-page-view',
+    title: 'FeedbackMinePageView',
+    about:
+      '「我的反馈」的画面那一半：说明一句、列表、空态。清单边界（我提的 / 我替谁提的 / 指派给我的）和把未读游标往前推都在容器 `feedback/FeedbackMinePage.vue` 里，这一半只收 props、只发事件。',
+    file: 'src/views/feedback/FeedbackMinePageView.vue',
+    component: FeedbackMinePageView,
+    needs: ['vuetify', 'router'],
+    args: {
+      items: CENTER_ROWS.slice(0, 2),
+      total: 2,
+      loading: false,
+      loadingMore: false,
+      hasMore: false,
+      error: null,
+      'empty-action': noop,
+      more: noop,
+      'dismiss-error': noop,
+      support: noop,
+    },
+    states: [
+      {
+        name: '我的几条',
+        note: '说明里带上总数（只在拉到之后才说），下面两行：同一条反馈在哪一页都长一样。',
+        props: {},
+        expect: '共 2 条。',
+      },
+      {
+        name: '还没提过',
+        note: '一条都没有：「你还没有提过反馈，也没有指派给你的」加一颗「提交一条」——这是这一页特有的边界，反馈中心那句「你提交的反馈会出现在这里」在这里是错的。',
+        props: { items: [], total: 0 },
+        expect: '你还没有提过反馈，也没有指派给你的',
+      },
+      {
+        name: '拉挂了不冒充空',
+        note: '没拉到：摆服务端那句话和重试，**不**说「还没有提过」——把一次网络故障说成「平台没有你的数据」是另一类 bug。',
+        props: { items: [], total: 0, error: '「我的反馈」加载失败' },
+        expect: '「我的反馈」加载失败',
+      },
+      {
+        name: '还有下一页',
+        note: '手上两条、服务端说一共二十条：列表尾巴上一颗「加载更多」加「已显示 2 / 20」。',
+        props: { total: 20, hasMore: true },
+        expect: '加载更多',
       },
     ],
   },

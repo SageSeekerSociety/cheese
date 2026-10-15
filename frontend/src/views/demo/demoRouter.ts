@@ -45,6 +45,10 @@ const catalogTargets = [
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
+  // 反馈中心两页的画面（`catalogFeedback.ts` 的 `FeedbackCenterPageView` / `FeedbackMinePageView`）
+  // 页头那颗「提交」按名字指到提交页。它必须在表里：按名字解析的路由找不到就**抛**，
+  // 缺了这一条，两页的画面在预览站上整段渲染不出来。
+  { path: '/feedback/new', name: 'FeedbackSubmit', component: blank },
   // 首页那份目录（`catalogHome.ts`）：一个团队摊开来是四样，摊开那一行才画得出这四条；
   // 名字不在表里的话，带 `to` 的行会当场抛，目录在预览站上整段渲染不出来。
   { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },

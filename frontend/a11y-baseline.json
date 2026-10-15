@@ -56,7 +56,6 @@
     "src/components/TopicSidebar.vue": 1,
     "src/views/account/recover/password/VerifyView.vue": 1,
     "src/views/artifact/ArtifactCompare.vue": 1,
-    "src/views/feedback/FeedbackCenterPage.vue": 1,
     "src/views/home/JoinSpaceDialog.vue": 1,
     "src/views/home/LandingFilm.vue": 2,
     "src/views/home/LandingShell.vue": 3,
