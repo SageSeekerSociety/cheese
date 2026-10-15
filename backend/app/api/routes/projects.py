@@ -265,9 +265,12 @@ async def list_projects(
         # this answered "which projects does that team have, and what are their
         # ids" to anyone who asked — including callers with no credential at
         # all, while the SAME route without `team_id` was strict.
-        await resolver.authorize_team(await resolver.resolve(), team_id=team_id)
+        viewer = await resolver.resolve()
+        await resolver.authorize_team(viewer, team_id=team_id)
         projects = [
-            p for p in await service.list_for_team(team_id) if p.archived_at is None
+            p
+            for p in await service.list_for_team(team_id, viewer=viewer.handle)
+            if p.archived_at is None
         ]
         total = len(projects)
     else:
@@ -346,7 +349,7 @@ async def project_for_team(
     """
     actor = await resolver.resolve()
     await resolver.authorize_team(actor, team_id=team_id)
-    project = await ProjectService(db).get_by_team(team_id)
+    project = await ProjectService(db).get_by_team(team_id, viewer=actor.handle)
     data = await _project_payload(db, project) if project is not None else None
     return ok(data)
 
@@ -607,6 +610,13 @@ async def get_private_chat(
         participants = {user_handle, peer_handle} - {None}
         if actor.handle not in participants:
             raise ForbiddenError(say("directMessageOwnOnly"))
+    if peer_handle is not None:
+        # Each of the two takes a seat, and a seat is a door into the project:
+        # only people the project already has may sit in its DMs.
+        seats = TopicMemberService(db)
+        for handle in (user_handle, peer_handle):
+            if not await seats.on_project(project_id, handle, team=project_team):
+                raise ForbiddenError(say("privateChatProjectMembersOnly"))
     if peer_handle is None:
         project = await ProjectService(db).get_or_404(project_id)
         if not await may_chat_with(

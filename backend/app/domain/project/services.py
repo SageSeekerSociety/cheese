@@ -489,9 +489,12 @@ class ProjectService:
         """
         return await self._repo.list_for_space(space_id)
 
-    async def list_for_team(self, team_id: int) -> list[Project]:
-        """A team's 项目 page, newest first."""
-        return await self._repo.list_by_team(team_id)
+    async def list_for_team(
+        self, team_id: int, *, viewer: str | None = None
+    ) -> list[Project]:
+        """A team's 项目 page, newest first; a ``viewer`` does not see the ones
+        they left."""
+        return await self._repo.list_by_team(team_id, viewer=viewer)
 
     async def list_visible_to(
         self, *, handle: str | None, user_id: int | None
@@ -508,10 +511,12 @@ class ProjectService:
         """这条赛题开出来的每个项目（``/projects/by-task``）。"""
         return await self._repo.list_for_external_task(task_id)
 
-    async def get_by_team(self, team_id: int) -> Project | None:
+    async def get_by_team(
+        self, team_id: int, *, viewer: str | None = None
+    ) -> Project | None:
         """这个知是团队的那个 AI 工作台项目（P4 原生绑定），最新的一条；没有是
         None（``/projects/by-team`` 用它显示/隐藏「AI 工作台」入口）。"""
-        return await self._repo.get_by_team(team_id)
+        return await self._repo.get_by_team(team_id, viewer=viewer)
 
     async def installation_for_project(
         self, project_id: uuid.UUID

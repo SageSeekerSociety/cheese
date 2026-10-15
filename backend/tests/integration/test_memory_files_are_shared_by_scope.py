@@ -1,8 +1,8 @@
 """记忆的两个作用域各守各的门，写入带版本号。
 
-team 是项目里所有人共看的一份；private 是「这个人 × 这个项目」——本人和项目管理员
-看得见，别人问起答 403 而不是 404（private 的存在本身不是秘密，里面的内容才是）。
-**读得到不等于写得动**：private 那一侧的写和删只认本人，管理员也不行。写入对号入座
+team 是项目里所有人共看的一份；private 是「这个人 × 这个项目」——只有本人看得见、
+改得动，项目管理员也不例外；别人问起答 403 而不是 404（private 的存在本身不是秘密，
+里面的内容才是）。写入对号入座
 的那个版本号对不上就是 409 并把当前那一版还回去：冲突是拒绝，不是把两段散文悄悄合
 在一起。
 """
@@ -172,8 +172,8 @@ def test_a_members_private_memory_is_not_everyones(client):
     assert [row["path"] for row in listed.json()["data"]["data"]] == []
 
 
-def test_a_project_admin_may_read_a_members_private_memory(client):
-    """项目管理员要能处理「这个人为什么被这么对待」，所以看得见，但仍是别人的。"""
+def test_a_project_admin_may_not_read_a_members_private_memory(client):
+    """private 多半是芝士从这个人的私聊里记下的；私聊管理员进不去，它也不能是后门。"""
     project_id = _project(client)
     _put(
         client,
@@ -188,16 +188,13 @@ def test_a_project_admin_may_read_a_members_private_memory(client):
 
     assert (
         _get(client, project_id, "carol", scope="private", owner="alice").status_code
-        == 200
+        == 403
     )
 
 
 def test_a_project_admin_may_not_write_a_members_private_memory(client):
-    """那道门是**看**，不是**改**。
-
-    给他一支笔，这一条记忆就同时有了两个主人，而「这是谁的判断」正是 private 这
-    一层唯一要保住的东西。查得到就够了。
-    """
+    """给他一支笔，这一条记忆就同时有了两个主人，而「这是谁的判断」正是 private
+    这一层唯一要保住的东西。"""
     project_id = _project(client)
     _put(
         client,

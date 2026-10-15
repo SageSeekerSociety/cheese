@@ -74,6 +74,7 @@ def _private_unread(client, project_id: str, handle: str) -> dict:
 def test_one_person_cannot_read_anothers_dm_badges(client):
     """Who you are DMing is private — naming someone else must not read it."""
     project_id = _project(client)
+    _on_the_roster(client, project_id, "mentor-1", "mentor-2")
     dm = _dm(client, project_id, "mentor-1", "mentor-2")
     _seed_message(client, project_id, dm, "mentor-2")
 

@@ -29,6 +29,7 @@ from app.domain.team.models import (
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
+    refuse_admin_grant_by_non_owner,
     refuse_anyone_but_the_owner,
 )
 from app.domain.user.models import User
@@ -225,6 +226,10 @@ class TeamMembershipService:
                 f"User {initiator_user_id} is not authorized to invite members to team {team_id}."  # noqa: E501
             )
 
+        if role in (TeamMemberRole.ADMIN, TeamMemberRole.OWNER):
+            await refuse_admin_grant_by_non_owner(
+                self._team_repo, team_id, initiator_user_id
+            )
         team = await self._team_repo.get_by_id(team_id)
         if team is not None:
             # Refused now rather than when it is accepted: an invitation that

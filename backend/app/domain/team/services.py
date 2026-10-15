@@ -20,7 +20,10 @@ from app.domain.team.models import (
     TeamVisibility,
     team_seq,
 )
-from app.domain.team.repositories import TeamRepository
+from app.domain.team.repositories import (
+    TeamRepository,
+    refuse_admin_grant_by_non_owner,
+)
 from app.domain.user.services import (
     handle_is_available_shape,
     handle_is_taken,
@@ -467,6 +470,11 @@ class TeamService:
 
         await check_team_locking_status(self._repo._session, team_id)
         await self._repo.soft_delete_member(relation)
+
+    async def refuse_admin_grant(self, team_id: int, actor_user_id: int) -> None:
+        """Refuse ``actor_user_id`` making someone an admin unless they own the
+        team (``refuse_admin_grant_by_non_owner``)."""
+        await refuse_admin_grant_by_non_owner(self._repo, team_id, actor_user_id)
 
     async def update_team_member_role(
         self,
