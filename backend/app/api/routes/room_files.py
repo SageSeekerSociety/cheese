@@ -37,6 +37,7 @@ from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import (
     ARTIFACT_MIME,
@@ -211,7 +212,11 @@ async def restore_file_revision(
     place, actor = await _in_room(db, resolver, topic_id)
     row = await room_files.revision_or_404(db, place.room_id, revision_id)
     made = await room_files.restore_revision(
-        db, row=row, by=actor.handle, author_kind=author_kind(actor)
+        db,
+        row=row,
+        by=actor.handle,
+        author_kind=author_kind(actor),
+        warm_preview=office.prewarm,
     )
     await db.commit()
     return ok(room_files.revision_out(made))
@@ -253,6 +258,7 @@ async def copy_into_room(
         author_kind=author_kind(actor),
         source="upload",
         note=f"从 {source} 复制",
+        warm_preview=office.prewarm,
     )
     shown = await add_shown_block(
         db,
@@ -316,6 +322,7 @@ async def new_from_template(
         author_kind=author_kind(actor),
         source="template",
         note=f"从「{template.name}」模板新建",
+        warm_preview=office.prewarm,
     )
     shown = await add_shown_block(
         db,
@@ -449,6 +456,7 @@ async def editor_saves_file(
             source="editor",
             base_version=target.version,
             editor_key=target.key,
+            warm_preview=office.prewarm,
         )
     except UnprocessableEntityError as exc:
         # Over the ceiling: a refusal, and the editor has to hear why. Left to
@@ -478,6 +486,7 @@ async def editor_saves_file(
                 source="editor",
                 note=f"保存时 {target.path} 已被别人改过，这一份另存在这里",
                 editor_key=target.key,
+                warm_preview=office.prewarm,
             )
         except UnprocessableEntityError as exc:
             # Same ceiling, same answer — the copy beside it is a file too.

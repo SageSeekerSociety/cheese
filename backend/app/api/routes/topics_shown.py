@@ -67,6 +67,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.shown import add_shown_block, repeat_of_latest_shown
+from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import (
     ARTIFACT_MIME,
@@ -250,6 +251,7 @@ async def show_in_room(
             source="ai" if actor.via == "cheese" else "upload",
             note=note if isinstance(note, str) else None,
             base_version=base if isinstance(base, str) and base else None,
+            warm_preview=office.prewarm,
         )
         saved_at = revision.created_at
         for asset_path, data in assets:
@@ -265,6 +267,7 @@ async def show_in_room(
                 author=author if actor.via == "cheese" else actor.handle,
                 author_kind="agent" if actor.via == "cheese" else "human",
                 source="ai" if actor.via == "cheese" else "upload",
+                warm_preview=office.prewarm,
             )
             saved_at = max(saved_at, asset.created_at)
     if saved_at is not None:

@@ -75,6 +75,7 @@ from app.domain.documents.spreadsheet import (
     recalculate,
 )
 from app.domain.library import service as library
+from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import MAX_ARTIFACT_BYTES, clean_artifact_path
 from app.domain.repository.forge_files import ProjectFiles
@@ -267,6 +268,7 @@ async def decide_document_revisions(
             source="editor",
             note="处理修订",
             base_version=expected,
+            warm_preview=office.prewarm,
         )
     return ok(
         {

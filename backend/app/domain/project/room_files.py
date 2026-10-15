@@ -47,9 +47,8 @@ from app.domain.notice_meta import (
     WHO_HUMAN,
     notice,
 )
-from app.domain.preview import office
 from app.domain.project.models import RoomFileRevision
-from app.domain.project.ports import Announce
+from app.domain.project.ports import Announce, WarmPreview
 from app.domain.textfile import content_version
 
 #: Which door a revision's bytes came in by.
@@ -123,6 +122,7 @@ async def save_room_file(
     note: str | None = None,
     base_version: str | None = None,
     editor_key: str | None = None,
+    warm_preview: WarmPreview,
 ) -> RoomFileRevision:
     """Write a room file and keep the state it replaces restorable.
 
@@ -186,6 +186,7 @@ async def save_room_file(
             source="baseline",
             note=None,
             editor_key=None,
+            warm_preview=warm_preview,
         )
     if before is not None and before == data and latest is not None:
         return latest
@@ -202,6 +203,7 @@ async def save_room_file(
         source=source,
         note=(note or "").strip() or None,
         editor_key=editor_key,
+        warm_preview=warm_preview,
     )
 
 
@@ -255,6 +257,7 @@ async def _record(
     source: str,
     note: str | None,
     editor_key: str | None,
+    warm_preview: WarmPreview,
 ) -> RoomFileRevision:
     digest = await asyncio.to_thread(
         library.write_revision_blob, project_id, room_id, data
@@ -274,7 +277,7 @@ async def _record(
     )
     session.add(row)
     await session.flush()
-    office.prewarm(data, path)
+    warm_preview(data, path)
     return row
 
 
@@ -341,6 +344,7 @@ async def restore_revision(
     row: RoomFileRevision,
     by: str,
     author_kind: str,
+    warm_preview: WarmPreview,
 ) -> RoomFileRevision:
     """Put an earlier state back as the file's newest one.
 
@@ -359,6 +363,7 @@ async def restore_revision(
         author_kind=author_kind,
         source="restore",
         note=f"恢复到第 {row.seq} 版",
+        warm_preview=warm_preview,
     )
 
 

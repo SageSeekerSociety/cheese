@@ -435,6 +435,23 @@ unmatched_ignore_imports_alerting = warn
 # ids, the settings and the failure — and what it reads is `gateway_chat` and
 # `usage.ledger`, both of this row. Living in `project` made `project ->
 # gateway_chat` an upward edge for a module that never needed the layer.
+#
+# `project -> usage` came off the graph (2026-10-14) the way `project -> shell`
+# did: what `project` wanted was two questions (has this 赛题 earmarked credits
+# for this project yet? issue them), not the `Ledger` class, so
+# `app.domain.project.ports.ComputeCredits` declares them and
+# `app.domain.usage.adapters.ComputeCredits` answers them — the composition root
+# hands one in at `ProjectService`'s four construction sites. `Ledger.earmarks`
+# returns `ComputeGrant` rows, which is why the port folds them into a bool: a
+# layer-2 package does not name a caller's class.
+#
+# `project -> preview` came off in the same breath, and here the port needed no
+# implementation written at all: saving a room file warms the Office → PDF
+# preview cache, which is `preview.office.prewarm` at layer 5, and its shape
+# (`data, path`, returns at once, does nothing when no render service is
+# configured) is already exactly what `project.ports.WarmPreview` asks for. The
+# eight route call sites hand the function itself in, next to the bytes they are
+# saving — 谁调用谁给, the `webhook/ports.py` `Poster` shape.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
