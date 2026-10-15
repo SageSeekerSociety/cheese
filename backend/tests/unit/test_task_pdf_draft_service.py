@@ -415,3 +415,63 @@ async def test_a_page_whose_answer_cannot_be_read_still_counts_as_spent() -> Non
             user_id=2,
         )
     assert service.spent == Usage(500, 40, 300, 0)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("sees", [True, False])
+async def test_a_scanned_page_is_sent_as_an_image_only_where_the_gateway_says_so(
+    monkeypatch: pytest.MonkeyPatch, sees: bool
+) -> None:
+    """The draft service as the route gets it: whether a scanned page is sent
+    to the draft model as a picture is the gateway's `supports_vision` on that
+    model, not a list kept here."""
+    from app.api.task_deps import get_task_pdf_draft_service
+    from app.domain.agent import gateway as gw
+    from app.domain.agent import gateway_catalog
+    from app.domain.task import task_pdf_draft_service as module
+
+    rows = [
+        {
+            "model_name": "draft-model",
+            "litellm_params": {"model": "openai/draft-model"},
+            "model_info": {"supports_vision": sees},
+        }
+    ]
+    gateway = gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": rows})
+        ),
+    )
+    gateway_catalog.reset()
+    assert await gateway_catalog.refresh(gateway)
+    monkeypatch.setattr(settings, "task_draft_model", "draft-model")
+
+    async def a_key(db, spec):
+        return "key"
+
+    monkeypatch.setattr(module, "service_key", a_key)
+    chat = _RecordingChat("draft-model", _scan_payload())
+    monkeypatch.setattr(module, "GatewayChat", lambda *args, **kwargs: chat)
+    try:
+        service = await get_task_pdf_draft_service(db=None)
+        drafting = service.generate_task_payloads_from_pdf(
+            pdf_bytes=_scanned_pdf(),
+            template={},
+            space_id=1,
+            category_id=None,
+            forced_submitter_type=None,
+            user_id=2,
+            max_tasks=1,
+        )
+        if sees:
+            drafts, _, _ = await drafting
+            assert [d["name"] for d in drafts] == ["扫描题"]
+            assert chat.images and chat.images[0] is not None
+        else:
+            with pytest.raises(BadRequestError):
+                await drafting
+            assert chat.images == []
+    finally:
+        gateway_catalog.reset()

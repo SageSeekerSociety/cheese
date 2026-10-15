@@ -17,12 +17,15 @@ import pytest
 
 from app.domain.agent import gateway as gw
 from app.domain.agent import gateway_catalog
+from app.domain.agent.harness import PI
 from app.domain.agent.harness.codex.tools import PLATFORM, RemoteTools, platform_tools
+from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.harness.pi import runner as pi_runner
 from app.domain.agent.harness.pi.launch import provider
 from app.domain.agent.harness.pi.runner import Runner
-from app.domain.agent.session_host.contract import SessionSpec
-from app.domain.agent.session_host.host import PICTURES, with_pictures
+from app.domain.agent.session_host.contract import Access, SessionRef, SessionSpec
+from app.domain.agent.session_host.driver import Launched
+from app.domain.agent.session_host.host import PICTURES, SessionHost, with_pictures
 
 cheese = platform_tools()
 PICTURE = {"data": "d2lkZQ==", "mimeType": "image/png"}
@@ -39,7 +42,7 @@ def _forget_the_catalogue():
     gateway_catalog.reset()
 
 
-def _gateway_says(**vision: bool | None) -> None:
+def _gateway(**vision: bool | None) -> gw.LlmGateway:
     """The gateway's model page: each model, with `supports_vision` as set
     there (None: never set)."""
     rows = [
@@ -50,14 +53,17 @@ def _gateway_says(**vision: bool | None) -> None:
         }
         for name, sees in vision.items()
     ]
-    gateway = gw.LlmGateway(
+    return gw.LlmGateway(
         "http://gw",
         "mk",
         transport=httpx.MockTransport(
             lambda request: httpx.Response(200, json={"data": rows})
         ),
     )
-    assert asyncio.run(gateway_catalog.refresh(gateway))
+
+
+def _gateway_says(**vision: bool | None) -> None:
+    assert asyncio.run(gateway_catalog.refresh(_gateway(**vision)))
 
 
 def test_a_sessions_tools_are_told_its_model_reads_pictures_as_the_gateway_says():
@@ -74,6 +80,52 @@ def test_a_sessions_tools_are_told_its_model_reads_pictures_as_the_gateway_says(
     assert not told("elsewhere")
     gateway_catalog.reset()
     assert not told("sees")
+
+
+class _Machine:
+    def is_online(self, device_id: str) -> bool:
+        return True
+
+
+class _Launching:
+    """A harness that records the launches it is asked for."""
+
+    harness = PI
+    label = "pi"
+    mirror = "journal"
+
+    def __init__(self):
+        self.launched: list[SessionSpec] = []
+
+    def takes_inputs(self, status):
+        return True
+
+    async def launch(self, wire, host, ref, spec, access, known):
+        self.launched.append(spec)
+        return Launched("conversation", frozenset({LONG_POLL}), "launch")
+
+
+@pytest.mark.anyio
+async def test_a_session_started_on_a_model_that_reads_pictures_is_launched_saying_so(
+    tmp_path,
+):
+    """What every harness's tools read (`cheese_app_save` among them) is the
+    environment the session is launched with."""
+    assert await gateway_catalog.refresh(_gateway(sees=True, blind=False))
+    host = SessionHost(_Machine(), mirrors=tmp_path)
+    harness = _Launching()
+    host._drivers = {PI: harness}
+
+    for model in ("sees", "blind"):
+        await host.start(
+            SessionRef(PI, f"session-{model}"),
+            SessionSpec(system_prompt="", model=model, env={"CHEESE_TOPIC": "t"}),
+            Access("token", host="machine"),
+        )
+
+    seeing, blind = harness.launched
+    assert seeing.env == {"CHEESE_TOPIC": "t", PICTURES: "1"}
+    assert blind.env == {"CHEESE_TOPIC": "t"}
 
 
 def test_pi_is_told_which_models_can_look_at_pictures():
