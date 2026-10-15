@@ -1,14 +1,12 @@
 {
   "action": {
     "edit": "修改",
-    "drop": "不要了",
     "pause": "暂停",
     "resume": "恢复",
     "runNow": "立即执行一次",
     "hideRuns": "收起记录",
     "showRuns": "执行记录",
     "delete": "删除",
-    "confirm": "确认启用",
     "more": "更多操作",
     "refresh": "刷新",
     "new": "新建"
@@ -26,8 +24,7 @@
     "hourly": "每小时"
   },
   "state": {
-    "draft": "待确认",
-    "active": "执行中",
+    "active": "启用中",
     "paused": "已暂停"
   },
   "line": {
@@ -55,19 +52,8 @@
   "editTitle": "修改「{title}」",
   "pickRoom": "先选一个频道：工作在那个频道里执行，结果也放在那里",
   "saveFailed": "没有保存成功",
-  "intro": "到点或项目里发生某件事时，频道里的 AI 队友自己开工，做完把结果放进频道并通知你。在频道里说「每周一早上整理一次进展」，{name}也会起草一条，等你在这里确认",
+  "intro": "到点或项目里发生某件事时，频道里的 AI 队友自己开工，做完把结果放进频道并通知你。在频道里说「每周一早上整理一次进展」，{name}也会建一条，存下来就在跑。",
   "loading": "读取例行事务",
-  "waiting": "等你确认",
-  "spec": {
-    "work": "工作内容",
-    "scope": "参考资料",
-    "unlimited": "未限定",
-    "output": "存储位置",
-    "outputDir": "频道 {dir}",
-    "rootDir": "根目录",
-    "agent": "执行者",
-    "draftedBy": "{agent}（由 {author} 起草）"
-  },
   "next": "下次 {time}",
   "neverRun": "还没有执行过",
   "finishedAt": "结束于 {time}",
@@ -81,12 +67,11 @@
     "roomHint": "执行者是这个频道里的 AI 队友，结果也放在这个频道",
     "name": "名称",
     "namePlaceholder": "例如：每周项目进展",
-    "instructions": "工作内容",
-    "instructionsPlaceholder": "例如：汇总本周各频道完成的任务、进行中的事和阻碍，写成一页周报",
-    "context": "参考资料",
-    "contextPlaceholder": "例如：本项目所有频道的任务和决策；只用资料库里的文件",
-    "outputDir": "存储位置",
-    "outputDirPlaceholder": "例如：周报",
+    "nameHint": "不填就取目标的第一句",
+    "goal": "目标",
+    "goalPlaceholder": "例如：汇总本周各频道完成的任务、进行中的事和阻碍，写成一页周报",
+    "note": "补充说明",
+    "notePlaceholder": "例如：结果按频道分开列；只用资料库里的文件",
     "trigger": "执行条件",
     "freq": "频率",
     "time": "时间",
@@ -102,7 +87,6 @@
   "deleteBody": "删除后不再执行，执行记录也一起删除；已经放进频道的结果文件保留",
   "roomsFailed": "未能读取这个项目的频道",
   "archivedStopped": "已随频道归档停止",
-  "readonly": "这条例行事务由 {owner} 管，只有他和项目管理员能改",
   "refreshAria": "刷新例行事务",
   "save": "保存",
   "weekday": {

@@ -16,16 +16,19 @@ import i18n, { t } from '@/i18n'
 /** 一条规则。字段和后端 `GET /routines/{id}` 一一对应。 */
 export interface Routine {
   id: string
-  /** 这一条此刻归不归**你**管：确认、暂停/恢复、立即执行、删除、修改都要它。 */
-  can_manage: boolean
+  /** 这一条此刻归不归**你**删：读得到就改得动（暂停/恢复/立即执行/修改），只有删除
+   *  收窄到规则主人和项目管理员。 */
+  can_delete: boolean
   /** 这个房间归档了没有。规则自己的状态没变（取消归档后从下一个时刻继续）。 */
   room_archived: boolean
   project_id: string
   topic_id: string
+  /** 名称。人可以不填：后端取目标的第一句。 */
   title: string
+  /** 目标：要它干什么，用这个人自己的话。唯一必填的一格。 */
   instructions: string
-  context_scope: string
-  output_dir: string
+  /** 补充说明。可以空着 —— 空着就没有这一项，不替谁编一段。 */
+  note: string
   trigger: RoutineTrigger
   /** The server's text, with the key that renders it in the reader's language. */
   trigger_text: string
@@ -35,9 +38,8 @@ export interface Routine {
   state: RoutineState
   agent_handle: string
   owner_handle: string
-  proposed_by: string
-  confirmed_by: string | null
-  confirmed_at: string | null
+  /** 建这条规则的人：人或者 AI 队友。 */
+  created_by: string
   next_run_at: string | null
   revision: number
   created_at: string
@@ -45,7 +47,7 @@ export interface Routine {
 }
 
 export type RoutineTrigger = 'schedule' | 'library_file_added' | 'task_closed' | 'card_accepted'
-export type RoutineState = 'draft' | 'active' | 'paused'
+export type RoutineState = 'active' | 'paused'
 export type RoutineRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped'
 
 /** 一次执行。`GET /routines/{id}` 的 `runs` 里那些。 */
@@ -65,10 +67,7 @@ export interface RoutineRun {
 }
 
 /** 新建和修改发出去的那几个字段，两边一样。 */
-export type RoutineInput = Pick<
-  Routine,
-  'title' | 'instructions' | 'context_scope' | 'output_dir' | 'trigger' | 'spec' | 'timezone'
->
+export type RoutineInput = Pick<Routine, 'title' | 'instructions' | 'note' | 'trigger' | 'spec' | 'timezone'>
 
 /**
  * 一条规则所在的房间 —— 它在哪儿执行、结果也放在哪儿。点「结果」那一行的去处。

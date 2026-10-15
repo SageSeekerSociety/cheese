@@ -1,6 +1,6 @@
 /**
- * 例行事务：芝士起草的规则要人确认才跑；删一条规则之前要问一句；一次失败的执行
- * 说得出为什么。
+ * 例行事务：存下来就在跑（没有「等人确认」这一步）；删一条规则之前要问一句；一次失败的
+ * 执行说得出为什么。
  */
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -52,22 +52,19 @@ beforeAll(() => {
 })
 
 const base = {
-  can_manage: true,
+  can_delete: true,
   room_archived: false,
   project_id: 'p1',
   topic_id: 'room-1',
   instructions: '整理本周进展',
-  context_scope: '',
-  output_dir: '周报',
+  note: '',
   trigger: 'schedule' as const,
   trigger_text: '每周周一 09:00（Asia/Shanghai）',
   spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
   timezone: 'Asia/Shanghai',
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
-  proposed_by: 'cheese-x',
-  confirmed_by: null,
-  confirmed_at: null,
+  created_by: 'cheese-x',
   next_run_at: null,
   revision: 1,
   created_at: '2026-09-25T00:00:00Z',
@@ -82,8 +79,8 @@ beforeEach(() => {
   } as never)
   vi.mocked(listProjectRoutines).mockResolvedValue({
     data: [
-      { ...base, id: 'draft-1', title: '芝士起草的周报', state: 'draft' },
       { ...base, id: 'live-1', title: '已经在跑的日报', state: 'active', next_run_at: '2026-09-28T01:00:00Z' },
+      { ...base, id: 'live-2', title: '暂停了的周报', state: 'paused' },
     ],
     total: 2,
   })
@@ -111,24 +108,25 @@ describe('例行事务', () => {
   it('reads in English under the en locale', async () => {
     setLocale('en')
     const { container } = mount()
-    await waitFor(() => expect(container.textContent).toContain('Waiting for you to confirm'))
-    const draft = row(container, 'draft-1')
-    expect(buttonIn(draft, 'Confirm and enable')).toBeTruthy()
-    // The drafter credit is a sentence with two people in it, not two names glued together.
-    expect(draft.textContent).toContain('(drafted by')
+    await waitFor(() => expect(container.textContent).toContain('已经在跑的日报'))
     expect(buttonIn(row(container, 'live-1'), 'Run history')).toBeTruthy()
+    expect(container.textContent).toContain('Paused')
+    expect(container.textContent).toContain('Next')
   })
 
-  it('芝士起草的规则单独列在「等你确认」里，确认之后才算启用', async () => {
-    vi.mocked(routineAction).mockResolvedValue({ ...base, id: 'draft-1', title: '芝士起草的周报', state: 'active' })
+  // 存下来就在跑：一条规则的行上只有启用/暂停这个开关，没有「等人确认」那一步。
+  it('存下来就在跑：没有「确认启用」，暂停发的是「暂停」', async () => {
+    vi.mocked(routineAction).mockResolvedValue({ ...base, id: 'live-1', title: '已经在跑的日报', state: 'paused' })
     const { container } = mount()
-    await waitFor(() => expect(container.textContent).toContain('等你确认'))
+    await waitFor(() => expect(container.textContent).toContain('已经在跑的日报'))
 
-    expect(buttonIn(row(container, 'live-1'), '确认启用')).toBeUndefined()
-    await fireEvent.click(buttonIn(row(container, 'draft-1'), '确认启用')!)
+    expect(container.textContent).not.toContain('确认启用')
+    expect(container.textContent).not.toContain('等你确认')
+    expect(buttonIn(row(container, 'live-2'), '暂停')).toBeUndefined()
 
-    expect(routineAction).toHaveBeenCalledWith('draft-1', 'confirm')
-    await waitFor(() => expect(container.textContent).not.toContain('等你确认'))
+    await fireEvent.click(buttonIn(row(container, 'live-1'), '暂停')!)
+
+    expect(routineAction).toHaveBeenCalledWith('live-1', 'pause')
   })
 
   it('取消删除，规则还在，也没有请求删除', async () => {

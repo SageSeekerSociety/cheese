@@ -1,11 +1,10 @@
 <script setup lang="ts">
 // 例行事务的画面：一条规则一行（`RoutineBoard`），加上新建 / 修改那张表单
 // （`RoutineFormDialog`）。规则本身和表单都是 `components/routine/` 里的共用件；
-// 取数、读地址、权限全留在容器 `ProjectRoutinesView.vue` 里 —— 这一半只收 props、
-// 只把动作抛上去。
+// 取数、读地址留在容器 `ProjectRoutinesView.vue` 里 —— 这一半只收 props、只把动作
+// 抛上去。
 import type { Topic } from '@/cx_types'
 import type { Routine, RoutineInput, RoutineRun } from '@/lib/routine'
-import type { UserRefTarget } from '@/lib/userRef'
 
 import AppPage from '@/components/common/AppPage.vue'
 import RoutineBoard from '@/components/routine/RoutineBoard.vue'
@@ -22,7 +21,6 @@ defineProps<{
   loading: boolean
   error: string
   roomNames: Record<string, string>
-  userNames: Record<string, string>
   rooms: Topic[]
   defaultRoom: string
   formOpen: boolean
@@ -32,8 +30,6 @@ defineProps<{
 }>()
 
 defineEmits<{
-  navigate: [target: UserRefTarget]
-  confirm: [routine: Routine]
   pause: [routine: Routine]
   resume: [routine: Routine]
   'run-now': [routine: Routine]
@@ -58,9 +54,6 @@ defineEmits<{
         :loading="loading"
         :error="error"
         :room-names="roomNames"
-        :user-names="userNames"
-        @navigate="(target) => $emit('navigate', target)"
-        @confirm="(r) => $emit('confirm', r)"
         @pause="(r) => $emit('pause', r)"
         @resume="(r) => $emit('resume', r)"
         @run-now="(r) => $emit('run-now', r)"

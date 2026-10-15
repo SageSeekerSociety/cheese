@@ -2,8 +2,8 @@
 //
 // 这一块从 `api.ts` 拆出来。那个文件已经在上限之上（`.claude/scripts/check-file-sizes.py`），
 // 只能变短；而规则本来就有它自己的边界 —— 一条规则属于一个房间、读的人要在这个房间的
-// 名册上（`GET /projects/{id}/routines?topic=`），动作只有规则主人和项目管理员能做
-// （每一个回答里带回 `can_manage`）—— 所以拆在这里是一个有理由的整体。
+// 名册上（`GET /projects/{id}/routines?topic=`），读得到就改得动，只有删除收窄到规则
+// 主人和项目管理员（每一个回答里带回 `can_delete`）—— 所以拆在这里是一个有理由的整体。
 //
 // 形状（`Routine` / `RoutineRun` / 那几张措辞表）在 `lib/routine.ts`：组件要吃那个形状
 // 又碰不得 API 层，取数这一半只往上面接。
@@ -45,15 +45,12 @@ export function updateRoutine(id: string, body: Partial<RoutineInput>): Promise<
 }
 
 /**
- * 确认启用 / 暂停 / 恢复 / 立即执行一次。
+ * 暂停 / 恢复 / 立即执行一次。
  *
- * 后三个只有规则主人和项目管理员做得成，都不是就回 403（`can_manage` 已经说过一次，
- * 这里说第二次是为了「两个人同时看着」这一种）。
+ * 三个都要读得到这条规则：读得到就改得动。谁读得到是后端凭这次请求的身份判断的
+ * （这个房间的名册成员，或者管理这个项目的人），前端不猜第二遍。
  */
-export function routineAction(
-  id: string,
-  action: 'confirm' | 'pause' | 'resume' | 'run-now'
-): Promise<Routine | RoutineRun> {
+export function routineAction(id: string, action: 'pause' | 'resume' | 'run-now'): Promise<Routine | RoutineRun> {
   return request<Routine | RoutineRun>(`/routines/${encodeURIComponent(id)}/${action}`, { method: 'POST' })
 }
 

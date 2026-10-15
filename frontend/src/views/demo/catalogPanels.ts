@@ -35,7 +35,7 @@ import {
   PANEL_NAMES,
   previewBundle,
   projectFileProps,
-  ROUTINE_DRAFT,
+  ROUTINE_ACCEPTED,
   ROUTINE_RUNS,
   ROUTINE_WEEKLY,
   SITE_DONE,
@@ -301,17 +301,17 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-routines',
     title: 'PanelRoutines',
-    about: '话题页右侧「例行事务」那一格：这个房间的规则，新建、确认、暂停、看执行记录都从这里抛出去。',
+    about: '话题页右侧「例行事务」那一格：这个频道的规则，新建、暂停、看执行记录都从这里抛出去。',
     file: 'src/components/panels/PanelRoutines.vue',
     component: PanelRoutines,
     needs: ['vuetify', 'i18n'],
-    args: { defaultRoom: DEMO_TOPIC, userNames: PANEL_NAMES },
+    args: { defaultRoom: DEMO_TOPIC },
     states: [
       {
-        name: '一条在跑、一条等确认',
-        note: '芝士起草的那条排在最上面「等你确认」；在跑的那条写着下一次什么时候。',
-        props: { routines: [ROUTINE_DRAFT, ROUTINE_WEEKLY] },
-        expect: '等你确认',
+        name: '两条在跑',
+        note: '一条按时间跑（写着下一次什么时候），一条等频道里发生某件事。',
+        props: { routines: [ROUTINE_ACCEPTED, ROUTINE_WEEKLY] },
+        expect: '成果被采纳时',
       },
       {
         name: '展开了执行记录',
@@ -320,10 +320,10 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         expect: '工作电脑没有连上',
       },
       {
-        name: '别人管的规则',
-        note: '这一条不归你管：行里不画按钮，只说清归谁管 —— 只读是说出来，不是偷偷禁用。',
-        props: { routines: [{ ...ROUTINE_WEEKLY, can_manage: false }] },
-        expect: '只有他和项目管理员能改',
+        name: '删不掉的那一条',
+        note: '这一条不归你管：别的动作都在，就是不画「删除」。',
+        props: { routines: [{ ...ROUTINE_WEEKLY, can_delete: false }] },
+        expect: '立即执行一次',
       },
       {
         name: '还没有规则',

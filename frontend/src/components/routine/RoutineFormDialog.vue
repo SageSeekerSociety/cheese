@@ -40,8 +40,7 @@ const form = reactive({
   room: '',
   title: '',
   instructions: '',
-  context_scope: '',
-  output_dir: '',
+  note: '',
   trigger: 'schedule' as RoutineTrigger,
   freq: 'weekly',
   time: '09:00',
@@ -69,8 +68,7 @@ watch(
       room: r?.topic_id || props.defaultRoom || props.rooms[0]?.id || '',
       title: r?.title ?? '',
       instructions: r?.instructions ?? '',
-      context_scope: r?.context_scope ?? '',
-      output_dir: r?.output_dir ?? '',
+      note: r?.note ?? '',
       trigger: r?.trigger ?? 'schedule',
       freq: (spec.freq as string) ?? 'weekly',
       time: (spec.time as string) ?? '09:00',
@@ -113,8 +111,7 @@ function submit() {
     body: {
       title: form.title,
       instructions: form.instructions,
-      context_scope: form.context_scope,
-      output_dir: form.output_dir,
+      note: form.note,
       trigger: form.trigger,
       spec: specFromForm(),
       timezone: form.timezone,
@@ -146,31 +143,30 @@ function submit() {
         persistent-hint
         class="mb-3"
       />
+      <v-textarea
+        v-model="form.instructions"
+        autocomplete="off"
+        :label="t('routines.form.goal')"
+        rows="3"
+        auto-grow
+        :placeholder="t('routines.form.goalPlaceholder')"
+      />
       <v-text-field
         v-model="form.title"
         autocomplete="off"
         :label="t('routines.form.name')"
         :placeholder="t('routines.form.namePlaceholder')"
+        :hint="t('routines.form.nameHint')"
+        persistent-hint
+        class="mb-3"
       />
       <v-textarea
-        v-model="form.instructions"
+        v-model="form.note"
         autocomplete="off"
-        :label="t('routines.form.instructions')"
-        rows="3"
+        :label="t('routines.form.note')"
+        rows="2"
         auto-grow
-        :placeholder="t('routines.form.instructionsPlaceholder')"
-      />
-      <v-text-field
-        v-model="form.context_scope"
-        autocomplete="off"
-        :label="t('routines.form.context')"
-        :placeholder="t('routines.form.contextPlaceholder')"
-      />
-      <v-text-field
-        v-model="form.output_dir"
-        autocomplete="off"
-        :label="t('routines.form.outputDir')"
-        :placeholder="t('routines.form.outputDirPlaceholder')"
+        :placeholder="t('routines.form.notePlaceholder')"
       />
       <v-select
         v-model="form.trigger"

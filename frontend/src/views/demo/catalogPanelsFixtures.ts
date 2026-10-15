@@ -541,14 +541,13 @@ export function threadTime(iso: string): string {
 function routine(over: Partial<Routine>): Routine {
   return {
     id: 'routine-weekly',
-    can_manage: true,
+    can_delete: true,
     room_archived: false,
     project_id: DEMO_PROJECT,
     topic_id: DEMO_TOPIC,
     title: '每周一整理课程进展',
     instructions: '把上周这个频道里的作业、提问和改动整理成一页，放进「周报」目录',
-    context_scope: '',
-    output_dir: '周报',
+    note: '结果按周分文件；只用资料库里的文件',
     trigger: 'schedule',
     trigger_text: '每周周一 09:00（Asia/Shanghai）',
     spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
@@ -556,9 +555,7 @@ function routine(over: Partial<Routine>): Routine {
     state: 'active',
     agent_handle: 'cheese',
     owner_handle: 'wang',
-    proposed_by: 'cheese',
-    confirmed_by: 'wang',
-    confirmed_at: '2026-09-28T01:00:00Z',
+    created_by: 'cheese',
     next_run_at: '2026-10-12T01:00:00Z',
     revision: 1,
     created_at: '2026-09-27T09:00:00Z',
@@ -567,19 +564,16 @@ function routine(over: Partial<Routine>): Routine {
   }
 }
 
-/** 一条在跑的周报，和芝士刚起草、等人确认的一条。 */
+/** 两条在跑的规则：一条按时间，一条等频道里发生某件事。 */
 export const ROUTINE_WEEKLY = routine({})
-export const ROUTINE_DRAFT = routine({
+export const ROUTINE_ACCEPTED = routine({
   id: 'routine-accepted',
   title: '作业被采纳后通知全班',
   instructions: '成果被采纳时，在频道里写一句这次改了什么',
-  output_dir: '',
+  note: '',
   trigger: 'card_accepted',
   trigger_text: '成果被采纳时',
   spec: { scope: 'room' },
-  state: 'draft',
-  confirmed_by: null,
-  confirmed_at: null,
   next_run_at: null,
 })
 

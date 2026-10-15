@@ -8,19 +8,11 @@
 // 这一只负责把那两边接起来：范围是这一个房间、新建的房间是定死的、结果文件就在这个
 // 房间的文件区里（不画「去房间」的链接 —— 那一格就在这个房间里，点一份就当场打开它）。
 //
-// 名册和路由也接在这里（人名的显示名、点了去哪），画的那一半只收结果——panels/ 下的
-// 每个 SFC 都是场景棘轮里的「场景」，新场景必须第一天就是 A 档，所以取数一滴都不能
-// 漏到 `PanelRoutines.vue` 里去。
-import type { UserRefTarget } from '@/lib/userRef'
-
-import { computed, getCurrentInstance } from 'vue'
-
-import { useNavigation } from '@/composables/useNavigation'
+// 取数都接在这里，画的那一半只收结果——panels/ 下的每个 SFC 都是场景棘轮里的「场景」，
+// 新场景必须第一天就是 A 档，所以取数一滴都不能漏到 `PanelRoutines.vue` 里去。
 import { useRoutineList } from '@/composables/useRoutineList'
 
 import PanelRoutines from '../panels/PanelRoutines.vue'
-
-import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = withDefaults(
   defineProps<{
@@ -36,24 +28,6 @@ const emit = defineEmits<{
   /** 点了某次执行交回的一份结果文件：工作面板把它开成一格。 */
   (e: 'open-file', path: string): void
 }>()
-
-// 路由走 useNavigation()、pinia 从 app 上拿（和 composables/useUserRef 同一个理由）：
-// 这一只也可能在没装路由、没装 store 的树里被孤立渲染（单测），那里照样画，只是人名
-// 不可点、画 handle。
-const nav = useNavigation()
-const app = getCurrentInstance()?.appContext.config.globalProperties
-const store = app?.$pinia ? useWorkspaceStore() : null
-
-/** 人名 → 显示名：原来每颗 UserRefLink 各自查同一个 store，现在在这里查一次。 */
-const userNames = computed(() =>
-  Object.fromEntries(
-    (store?.members ?? []).map((m) => [m.user_handle, m.name]).filter((e): e is [string, string] => Boolean(e[1]))
-  )
-)
-
-function go(target: UserRefTarget) {
-  void nav?.navigate(target)
-}
 
 const {
   routines,
@@ -96,10 +70,8 @@ const {
     :form-error="formError"
     :saving="saving"
     :default-room="topicId ?? ''"
-    :user-names="userNames"
     @reload="reload"
     @start-new="startNew"
-    @confirm="(r) => act(r, 'confirm')"
     @pause="(r) => act(r, 'pause')"
     @resume="(r) => act(r, 'resume')"
     @run-now="(r) => act(r, 'run-now')"
@@ -109,6 +81,5 @@ const {
     @open-file="(path) => emit('open-file', path)"
     @form-open-change="(open) => (open ? (formOpen = true) : closeForm())"
     @submit="submit"
-    @navigate="go"
   />
 </template>

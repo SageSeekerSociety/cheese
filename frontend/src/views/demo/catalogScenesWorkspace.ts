@@ -26,7 +26,6 @@ import {
   SEARCH_HITS_LIBRARY_ONLY,
   searchSection,
   topic,
-  USER_NAMES,
 } from './catalogScenesWorkspaceFixtures'
 
 import ConnectViewView from '@/views/ConnectViewView.vue'
@@ -188,7 +187,7 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
     id: 'project-routines-view',
     title: 'ProjectRoutinesViewView',
     about:
-      '项目里「例行事务」那一整页的画面：这个项目所有房间的规则，一条一行；等确认的草稿摊开给人读，已经在跑的写清下次什么时候跑，页头两颗命令由页壳画。取数、读地址里的 `?routine=`、权限都在容器 `ProjectRoutinesView.vue` 里。',
+      '项目里「例行事务」那一整页的画面：这个项目所有频道的规则，一条一行，启用中的写清下次什么时候跑，页头两颗命令由页壳画。取数、读地址里的 `?routine=` 都在容器 `ProjectRoutinesView.vue` 里。',
     file: 'src/views/ProjectRoutinesViewView.vue',
     component: ProjectRoutinesViewView,
     needs: UI_T,
@@ -200,7 +199,6 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       loading: false,
       error: '',
       roomNames: { 'topic-weekly': '周会' },
-      userNames: USER_NAMES,
       rooms: [topic()],
       defaultRoom: 'topic-weekly',
       formOpen: false,
@@ -216,10 +214,10 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
         expect: '还没有例行事务',
       },
       {
-        name: '一条等确认、一条在跑',
-        note: '草稿摆在前面的「等你确认」那一栏里，摊开写着它要做什么、用哪些资料、结果放哪；已经在跑的那条写在下面，带它的状态和下次时间。',
+        name: '一条在跑、一条暂停',
+        note: '在跑的那条写着状态和下次什么时候；暂停的那条状态是「已暂停」，不带下次时间。',
         props: { routines: ROUTINES },
-        expect: '等你确认',
+        expect: '已暂停',
       },
       {
         name: '正在读规则',

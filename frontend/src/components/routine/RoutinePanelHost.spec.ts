@@ -3,7 +3,7 @@
 // 它和项目「例行事务」页画的是同一串（`RoutineBoard`，经 `panels/PanelRoutines.vue`）、
 // 填的是同一张表，差别只有范围：那一页是整个项目，这一格带着 `topicId` 去问后端。所以
 // 这一份钉的是三件只有这一格才成立的事：问的是这个房间、新建的规则长在这个房间（表单
-// 里连「在哪个房间执行」都不问）、拿不到权限的规则只读。
+// 里连「在哪个房间执行」都不问）、删不掉的那一条不画「删除」。
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -49,14 +49,13 @@ beforeAll(() => {
 
 const live = {
   id: 'live-1',
-  can_manage: true,
+  can_delete: true,
   room_archived: false,
   project_id: 'p1',
   topic_id: 'room-1',
   title: '这个房间的日报',
   instructions: '把这个房间今天的进展写成一页',
-  context_scope: '',
-  output_dir: '日报',
+  note: '',
   trigger: 'schedule' as const,
   trigger_text: '每天 09:00（Asia/Shanghai）',
   spec: { freq: 'daily', time: '09:00' },
@@ -64,9 +63,7 @@ const live = {
   state: 'active' as const,
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
-  proposed_by: 'cheese-x',
-  confirmed_by: 'u1',
-  confirmed_at: '2026-09-25T02:00:00Z',
+  created_by: 'cheese-x',
   next_run_at: '2026-09-28T01:00:00Z',
   revision: 1,
   created_at: '2026-09-25T00:00:00Z',
@@ -102,20 +99,21 @@ describe('房间右侧的「例行事务」', () => {
     await findByText('还没有例行事务')
   })
 
-  it('别人的规则：只读，一颗按钮都不画', async () => {
+  it('删不掉的那一条：删除不画，别的动作还在', async () => {
     vi.mocked(listProjectRoutines).mockResolvedValue({
-      data: [{ ...live, can_manage: false, owner_handle: 'u-other' }],
+      data: [{ ...live, can_delete: false, owner_handle: 'u-other' }],
       total: 1,
     })
     const { container, findByText } = mount()
     await findByText('这个房间的日报')
     const row = container.querySelector('[data-routine="live-1"]')!
-    expect(row.querySelectorAll('button')).toHaveLength(0)
-    expect(row.textContent).toContain('只有他和项目管理员能改')
+    const labels = Array.from(row.querySelectorAll('button')).map((b) => b.textContent?.trim())
+    expect(labels).not.toContain('删除')
+    expect(labels).toContain('修改')
   })
 
   it('在这一格里新建：房间是定死的，不问「在哪个房间执行」', async () => {
-    vi.mocked(createRoutine).mockResolvedValue({ ...live, id: 'new-1', state: 'draft' })
+    vi.mocked(createRoutine).mockResolvedValue({ ...live, id: 'new-1' })
     const { findByText } = mount()
     await findByText('这个房间的日报')
 

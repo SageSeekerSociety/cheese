@@ -26,18 +26,17 @@ import { tasks } from '@/views/workspace/search/tasks.palette'
 
 // ---- 例行事务（ProjectRoutinesViewView）----------------------------------
 
-/** 一条例行事务：后端 `GET /routines/{id}` 那个形状。`state` 决定它是草稿还是已启用。 */
+/** 一条例行事务：后端 `GET /routines/{id}` 那个形状。`state` 是启用中还是已暂停。 */
 export function routine(over: Partial<Routine> = {}): Routine {
   return {
     id: 'routine-weekly',
-    can_manage: true,
+    can_delete: true,
     room_archived: false,
     project_id: 'p-demo',
     topic_id: 'topic-weekly',
     title: '每周一整理上周进展',
     instructions: '把上周房间里的讨论和任务收成一页周报。',
-    context_scope: '频道全部内容',
-    output_dir: 'reports',
+    note: '结果放在 reports/；只用资料库里的文件',
     trigger: 'schedule',
     trigger_text: '每周一 09:00',
     spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
@@ -45,9 +44,7 @@ export function routine(over: Partial<Routine> = {}): Routine {
     state: 'active',
     agent_handle: 'cheese-demo',
     owner_handle: 'cheese',
-    proposed_by: 'cheese',
-    confirmed_by: 'cheese',
-    confirmed_at: '2026-09-01T01:00:00Z',
+    created_by: 'cheese',
     next_run_at: '2026-10-19T01:00:00Z',
     revision: 1,
     created_at: '2026-09-01T00:00:00Z',
@@ -89,10 +86,10 @@ export function topic(over: Partial<Topic> = {}): Topic {
   }
 }
 
-/** 两条规则：一条等着确认（草稿），一条已经在跑。 */
+/** 两条规则：一条按时间跑，一条暂停着。 */
 export const ROUTINES: Routine[] = [
-  routine({ id: 'routine-draft', title: '每天提醒作业截止', state: 'draft', trigger_text: '每天 18:00' }),
-  routine(),
+  routine({ id: 'routine-daily', title: '每天提醒作业截止', trigger_text: '每天 18:00' }),
+  routine({ id: 'routine-paused', state: 'paused', next_run_at: null }),
 ]
 
 /** 键是规则 id：展开某一条时它下面那一串。 */
