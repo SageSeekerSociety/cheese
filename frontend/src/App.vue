@@ -458,8 +458,7 @@ const SudoDialog = defineAsyncComponent(() => import('./components/account/SudoD
 const inApp = inDesktopApp()
 const DesktopAboutDialog = defineAsyncComponent(() => import('./components/common/DesktopAboutDialog.vue'))
 const DesktopPhoneDialog = defineAsyncComponent(() => import('./components/common/DesktopPhoneDialog.vue'))
-// 只在有人打开、或者某件事发生时才出现的几样，不跟应用外壳一起下：外壳要等它们的代码到齐
-// 才能挂载，冷打开时它们一样都用不上。
+// 只在有人打开、或某件事发生时才出现的几样，不跟外壳一起下：冷打开时都用不上。
 const CommandPalette = defineAsyncComponent(() => import('@/commands/palette/CommandPalette.vue'))
 const DeviceConnect = defineAsyncComponent(() => import('@/views/desktop/DeviceConnect.vue'))
 const GuideBubble = defineAsyncComponent(() => import('@/components/common/GuideBubble.vue'))
@@ -495,8 +494,7 @@ const cxProjects = computed<Project[]>(() => (AccountService.loggedIn ? projects
 const projectOrder = ref<string[]>(loadProjectOrder(myHandle()))
 const railProjects = computed(() => applyProjectOrder(cxProjects.value, projectOrder.value))
 // 下次冷打开时启动骨架照这个数画 rail 上的项目格。
-const railCount = computed(() => (AccountService.loggedIn && projectsRead.data.value ? cxProjects.value.length : null))
-watch(railCount, (count) => count !== null && rememberRailCount(count), { immediate: true })
+rememberRailCount(() => (AccountService.loggedIn && projectsRead.data.value ? cxProjects.value.length : null))
 
 function reorderRail(movedId: string, targetId: string, edge: DropEdge) {
   const next = reorderProjects(railProjects.value, movedId, targetId, edge)

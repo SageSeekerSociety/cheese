@@ -36,7 +36,7 @@ const modules = import.meta.glob(
     '!./topic.json',
     '!./taskList.json',
     // 后端说的那两类话，见 `./sentences.ts`。
-    '!./roomNotice.json',
+    '!./roomNotice/**',
     '!./apiError/**',
   ],
   { eager: true, import: 'default' }

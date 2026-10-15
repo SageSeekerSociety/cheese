@@ -5,6 +5,6 @@ import { buildCatalog } from '../catalog'
 // 前端查不到这个键就显示那句中文（`src/lib/noticeText.ts`）。所以这一块不必在第一页之前到：
 // 挂载之后才取（`../../index.ts` 的 `loadPlatformSentences`），到之前中文读者看到的字一样，
 // 也不会露出键名。界面上直接用这两个命名空间的键，就等于丢了那句中文，别这么写。
-const modules = import.meta.glob(['./apiError/**/*.json', './roomNotice.json'], { eager: true, import: 'default' })
+const modules = import.meta.glob(['./apiError/**/*.json', './roomNotice/**/*.json'], { eager: true, import: 'default' })
 
 export default buildCatalog(modules)
