@@ -115,10 +115,31 @@ class Settings(BaseSettings):
     db_pool_size: int = 20
     db_max_overflow: int = 15
     db_pool_timeout_s: float = 30.0
+    # How many uvicorn worker processes this container runs. The two numbers
+    # above are the CONTAINER's budget and the workers share it; the image
+    # passes this same variable to uvicorn's `--workers` (see the split below).
+    backend_workers: int = 1
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
     # idle otherwise fails the first statement of whoever checks it out next.
     db_pool_pre_ping: bool = True
+
+    def db_connections_per_worker(self) -> tuple[int, int]:
+        """One worker's share of this container's pool budget: (size, overflow).
+
+        Together the workers hold what one process held before — the owner-lock
+        connection each of them keeps outside its pool (`core.ownership`)
+        included — so the arithmetic in
+        `tests/unit/test_db_pool_fits_the_server.py` still describes the
+        container. At 1 it is exactly `db_pool_size` and `db_max_overflow`.
+        """
+        # The budget holds up to (db_pool_size + db_max_overflow + 1) // 2
+        # workers — 18 at the defaults, a share down to one pooled connection
+        # plus the lock. Past that the box has to raise `db_pool_size`.
+        workers = max(1, self.backend_workers)
+        budget = max(0, (self.db_pool_size + self.db_max_overflow + 1) // workers - 1)
+        pool_size = max(1, min(self.db_pool_size // workers, budget))
+        return pool_size, max(0, budget - pool_size)
 
     # --- Migration timeouts (#356) ---
     # Bound how long a migration waits on a lock / runs, applied by alembic's
