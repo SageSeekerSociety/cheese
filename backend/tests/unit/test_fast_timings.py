@@ -17,7 +17,12 @@ from pathlib import Path
 import pytest
 
 from app.core.config import Settings, settings
-from tests.support.fast_timings import FAST_S, MODULE_KNOBS, SETTINGS_KNOBS
+from tests.support.fast_timings import (
+    FAST_S,
+    MODULE_KNOBS,
+    SETTINGS_KNOBS,
+    SETTINGS_SWITCHES,
+)
 
 APP = Path(__file__).resolve().parents[2] / "app"
 
@@ -48,7 +53,7 @@ def test_each_knob_is_the_own_binding_of_the_module_reads_it(module_name, name):
     )
 
 
-@pytest.mark.parametrize(("name", "_value"), SETTINGS_KNOBS)
+@pytest.mark.parametrize(("name", "_value"), SETTINGS_KNOBS + SETTINGS_SWITCHES)
 def test_each_settings_knob_is_a_declared_field(name, _value):
     assert name in Settings.model_fields, (
         f"settings.{name} 不在 Settings 里了 —— 改名或删掉时把表里这一项一起改"
@@ -59,8 +64,12 @@ def test_the_fixture_moves_every_binding_it_claims(fast_timings):
     for module_name, name in MODULE_KNOBS:
         module = importlib.import_module(module_name)
         assert getattr(module, name) == FAST_S, f"{module_name}.{name} 没被压到毫秒级"
-    for name, value in SETTINGS_KNOBS:
+    for name, value in SETTINGS_KNOBS + SETTINGS_SWITCHES:
         assert getattr(settings, name) == value, f"settings.{name} 没被压到 {value}"
+    # The switches are applied too, not just declared: a test that asks for the
+    # fixture must not find the ingest job armed on its default interval.
+    assert settings.subscription_ingest_interval_s == 0
+    assert settings.microcloud_reconcile_interval_s == 0.0
 
 
 def test_every_value_is_millisecond_scale(fast_timings):

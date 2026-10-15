@@ -6,8 +6,8 @@ break anything it reaches?* It is meant to run between edits, next to the editor
 and next to the agent writing the test that covers the edit.
 
 ``task ci:fast`` answers the other question — *is this change safe to push* — and
-pays for it: the static hooks are most of that tier's 180 s, and
-``PROVE_REGRESSION``/type checks sit behind them. No hook runs here. What is left
+pays for it: the static hooks are most of that tier's 180 s, and the type checks
+and the tests sit behind them. No hook runs here. What is left
 is the two product suites, selected exactly the way ci-fast selects them, so the
 run is bounded by the tests rather than by a hook budget. That decoupling is the
 whole point: a session that must wait for ruff and the ratchets before it learns
@@ -20,6 +20,16 @@ reverse-import graph (``ci_fast_backend.select_backend``), the frontend
 the evidence rules live. Re-deriving any of that here would drift, and the drift
 would land as two answers to "which tests does this change reach".
 
+One of ``test_plan``'s inputs is not a default: ``conservative``, which ci-fast
+computes as ``bool(unknown_paths) or not base_sha``. It is the point at which the
+selection stops narrowing — a path the shared map does not name, or a change no
+merge base can be attributed to, widens the frontend run to the whole suite and
+the backend run to the full pure fallback. This script passes that same flag, so
+its selection is ci-fast's and not a narrower echo of it: without it, a change on
+an unmapped path plans the i18n guards alone (no changed ``frontend/src`` file
+seeds the related graph) and greens having judged nothing. ``--strict`` refuses
+the widened entries when a full sweep is not what the edit-time loop should spend.
+
 The three suites this keeps are ``backend-pure``, ``frontend-unit`` and
 ``frontend-i18n``. The type checks and the hooks are dropped: a type error is a
 push-time verdict, it costs tens of seconds, and `task ci:fast` already owns it.
@@ -27,18 +37,21 @@ The evidence rules are kept in full — an empty selection, a selected file that
 never executed, or a related run whose seeds ran alone all read as unknown (exit
 2) rather than as a pass. Speed must not come from believing an empty run.
 
-One local widening the shared path map does not make: a change under
-``.claude/scripts/`` or ``.github/scripts/`` turns the backend suite on. Those
-scripts are covered by backend unit tests (``tests/unit/test_*_sweep_*.py`` and
-friends load them by path), and the path map routes them to ``guards`` only, so
-without this a change to a script would be judged by nothing at all. The graph
-cannot see those edges — the tests load the script by file path, not by import —
-so the selection pinpoints no unit test for them and the run says so instead of
-reporting the tree guards as a pass.
+No widening is added here that the shared map does not make. A change under
+``.claude/scripts/`` or ``.github/scripts/`` is a case where the answer is
+*nothing to judge*, not a case for one: backend unit tests do cover those scripts
+(``tests/unit/test_*_sweep_*.py`` and friends load them by file path) but the AST
+graph cannot see an edge that is a path in a string, so the selection pinpoints
+none of them and the run exits unknown (2) — the honest report, since running the
+always-on tree guards and calling it green would be a verdict about a change none
+of them judges. ``plan_for`` drops exactly that shape; a helper that widened the
+scope instead would only relabel the same empty plan.
 
-Exit 0 pass, 1 fail, 2 unknown (nothing to judge, empty selection, no merge
-base), 3 blocked (missing tool). Unknown is a real answer here, not a nuisance:
-it means this run has no opinion about the change.
+Exit 0 pass, 1 fail, 2 unknown (nothing to judge, empty selection, no merge base,
+a suite that reported a pass without running what it selected), 3 blocked (not a
+git repository, or a tool a suite needs is missing). The exit code is folded the
+way ci-fast folds its own — see ``worst``. Unknown is a real answer here, not a
+nuisance: it means this run has no opinion about the change.
 """
 
 import argparse
@@ -58,11 +71,6 @@ PASS, FAIL, UNKNOWN, BLOCKED = 0, 1, 2, 3
 # The plan entries this entry point keeps, in the order they run. The rest of
 # ci-fast's plan is the type checks, which belong to the push, not to the edit.
 SUITES = ("backend-pure", "frontend-unit", "frontend-i18n")
-
-# Script roots whose backend unit tests the import graph cannot see. See the
-# module docstring: the map sends these to `guards`, the tests load them by
-# path, and neither the map nor the graph is wrong — they answer other questions.
-SCRIPT_ROOTS = (".claude/scripts/", ".github/scripts/")
 
 
 def repo_root():
@@ -91,10 +99,18 @@ def load_platform(root):
         raise SystemExit(f"缺少 {entry}：这个入口要靠 ci-fast.py 的选测逻辑，不能在别处跑")
     if str(scripts) not in sys.path:
         sys.path.insert(0, str(scripts))
+    import ci_fast_backend as backend
     spec = importlib.util.spec_from_file_location("ci_fast_entry", entry)
     module = importlib.util.module_from_spec(spec)
     with contextlib.chdir(root):
         spec.loader.exec_module(module)
+    # The unit-test files every backend selection carries whether or not it could
+    # narrow: ``select_backend`` puts them in the entry's ``files`` alongside what
+    # it pinpointed. That is the structural way to ask "would this entry run the
+    # guards and nothing else" — the reason string next to it is prose, and two
+    # very different selections both report an empty ``required``.
+    module.GUARD_TESTS = frozenset(f"{backend.UNIT_PREFIX}{name}"
+                                   for name in backend.TREE_GUARDS)
     return module
 
 
@@ -116,8 +132,6 @@ def scope_for(changed, select, paths_map, base_sha, doc_globs):
                and not any(fnmatch.fnmatchcase(p, pat) for pat in doc_globs)]
     if unknown:
         scope["backend"] = scope["frontend"] = True
-    if any(p.startswith(SCRIPT_ROOTS) and p.endswith(".py") for p in changed):
-        scope["backend"] = True
     # A frontend catalog under src/i18n/messages/** is read back by the
     # backend's refusal/sentences tree guards, and the shared map names only
     # three catalogs, so any other one leaves backend scope off. Same widening
@@ -132,33 +146,64 @@ def scope_for(changed, select, paths_map, base_sha, doc_globs):
     return scope, frontend_scope, unknown, catalog_guard
 
 
-def plan_for(platform, root, changed, scope, frontend_scope, tmp, memory_mib, catalog_guard):
+def plan_for(platform, root, changed, scope, frontend_scope, tmp, memory_mib,
+             catalog_guard, *, conservative):
     """ci-fast's plan, cut down to the suites an edit-time run wants.
+
+    ``conservative`` is forwarded, not assumed, and it is keyword-only so that a
+    caller cannot omit it by accident: it is the flag that decides whether the
+    plan may narrow at all (see the module docstring), and a caller that drops it
+    silently gets a smaller selection than ci-fast's for exactly the changes
+    nothing else can judge.
 
     Kept as the plan object rather than turned into a shell string: the evidence
     that decides pass/unknown lives in it, and dropping it would leave this
     entry point believing any exit code the tests happened to hand back.
 
-    One entry is dropped rather than run: a backend selection that pinpoints no
-    unit test — ``required`` empty — happens when no backend module changed (a
-    script root turned the suite on), and what is left is the always-on tree
-    guards. Running them and reporting green would say "this change is fine"
-    about a change none of them judges. The exception is a frontend catalog
-    edit, where those guards are exactly what the widening was for.
+    One entry is dropped rather than run: the backend suite with an empty
+    ``required`` and no fallback behind it. That happens when the backend scope is
+    on and no backend module changed — a change under ``.claude/scripts/``, or
+    under ``deploy/metering-proxy/``, which the map routes to the backend suite
+    because it can change what the tests do. What is left of that selection is the
+    always-on tree guards, and running those and reporting green would say "this
+    change is fine" about a change none of them judges. The exception is a
+    frontend catalog edit, where those guards are exactly what the widening was
+    for.
+
+    A *full fallback* is not that case and is not dropped: ``required`` is empty
+    there too, but the entry behind it is the whole pure suite, which is what
+    ci-fast runs for the same change. It is kept so that ``--strict`` has
+    something to refuse; dropping it here would silently turn "run the suite" into
+    "no opinion" and leave that half of ``--strict`` unreachable.
     """
     plan, omissions = platform.test_plan(
-        root, changed, scope, Path(tmp), memory_mib=memory_mib,
+        root, changed, scope, Path(tmp), conservative, memory_mib=memory_mib,
         frontend_scope=frontend_scope)
     kept = []
     for entry in plan:
         if entry["id"] not in SUITES:
             continue
-        if entry["id"] == "backend-pure" and not entry["evidence"]["required"] and not catalog_guard:
+        if (entry["id"] == "backend-pure" and not entry["evidence"]["required"]
+                and not catalog_guard and only_guards(platform, entry)):
             omissions.append({"id": "backend-pure", "reason":
                               "没有后端单测静态够得着这次改动，选中的只有常跑的门禁用例"})
             continue
         kept.append(entry)
     return kept, omissions
+
+
+def only_guards(platform, entry):
+    """Whether a backend entry would run the always-on guards and nothing else.
+
+    ``select_backend`` puts what it pinpointed in ``required`` and everything it
+    will run in ``files``. An empty ``required`` has two meanings — the guards
+    alone, or the whole pure suite once nothing could be pinpointed — and only the
+    second is worth a run. ``files`` is what tells them apart, without reading the
+    prose reason next to it: outside a fallback the selection is exactly the guards
+    the plan builds from ``TREE_GUARDS``.
+    """
+    evidence = entry["evidence"]
+    return not set(evidence["files"]) - platform.GUARD_TESTS
 
 
 def pinpointed(entry):
@@ -168,13 +213,38 @@ def pinpointed(entry):
     narrow, and it is far too big for an edit-time loop: the backend's fallback
     is every pure unit test, the frontend's is all 700-odd specs. ``--strict``
     refuses those instead of spending minutes on them.
+
+    For the backend that is exactly "``required`` is empty": a pinpointed entry
+    names the files it was selected for, and a fallback names none (it runs them
+    all). Guards-only entries are refused here too, which is right — ``--strict``
+    asks for a narrow judgement, and a change judged only by the always-on guards
+    has not had one.
     """
     evidence = entry["evidence"]
     if entry["id"] == "backend-pure":
-        return not evidence["selection"].startswith("full pure fallback")
+        return bool(evidence["required"])
     if entry["id"] == "frontend-unit":
         return evidence.get("mode") == "related"
     return True
+
+
+def worst(results):
+    """Fold the per-suite verdicts the way ci-fast folds its own.
+
+    Order matters and is ci-fast's, not severity-of-a-number: a red test outranks
+    a suite that could not start, which outranks a suite that reported a pass
+    without running what it selected. Folding by ``max`` would report a real test
+    failure as unknown (2) as soon as any other suite was inconclusive, and would
+    turn ``blocked`` into 2 rather than 3 — the two ways this entry point's exit
+    code stops matching ci-fast's on the same change.
+    """
+    if "fail" in results:
+        return FAIL
+    if "blocked" in results:
+        return BLOCKED
+    if any(r not in ("pass", "not_applicable") for r in results) or "pass" not in results:
+        return UNKNOWN
+    return PASS
 
 
 def describe(entry):
@@ -206,12 +276,19 @@ def main(argv):
     select, paths_map = platform.load_select()
     scope, frontend_scope, unknown, catalog_guard = scope_for(
         changed, select, paths_map, base_sha, platform.DOC_GLOBS)
+    # ci-fast's own answer to "can this be narrowed at all": an unmapped path or
+    # a missing merge base means it cannot, and the selection must widen the way
+    # ci-fast widens it rather than fall back to whatever the graph happens to
+    # see. See the module docstring.
+    conservative = bool(unknown) or not base_sha
 
     with tempfile.TemporaryDirectory(prefix="test-changed-") as tmp:
-        plan, omissions = plan_for(platform, root, changed, scope, frontend_scope, tmp,
-                                   args.memory_mib, catalog_guard)
+        plan, omissions = plan_for(platform, root, changed, scope, frontend_scope,
+                                   tmp, args.memory_mib, catalog_guard,
+                                   conservative=conservative)
         report = {"base": args.base, "merge_base": base_sha, "head": head,
                   "changed": changed, "unknown_paths": unknown,
+                  "conservative": conservative,
                   "dirty": sorted(set(staged + unstaged + untracked)),
                   "plan": [describe(entry) for entry in plan],
                   "omissions": omissions, "ran": []}
@@ -249,7 +326,7 @@ def main(argv):
             return PASS
 
         started = time.monotonic()
-        outcome = PASS
+        verdicts = []
         for entry in plan:
             left = max(0.0, args.budget - (time.monotonic() - started))
             process = platform.execute(entry["command"], entry["cwd"],
@@ -271,10 +348,10 @@ def main(argv):
                 print(f"  {row['id']}: {row['result']} {row['seconds']}s{tail}")
                 if row.get("tail"):
                     print(row["tail"])
-            outcome = max(outcome, {"pass": PASS, "fail": FAIL}.get(result["result"], UNKNOWN))
+            verdicts.append(result["result"])
         if args.json:
             print(json.dumps(report, ensure_ascii=False, indent=2))
-        return outcome
+        return worst(verdicts)
 
 
 if __name__ == "__main__":
