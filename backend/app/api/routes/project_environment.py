@@ -320,8 +320,8 @@ async def diagnose_environment(
     """「让芝士看看」: why this channel's latest failure happened and what to
     change, read from its log and the scripts it ran. Nothing is changed:
     the answer is a proposal a person takes or leaves."""
-    # deferred-import: tests patch diagnose on app.domain.project.environment_diagnosis
-    from app.domain.project.environment_diagnosis import diagnose
+    # deferred-import: tests patch diagnose on app.domain.environment_diagnosis
+    from app.domain.environment_diagnosis import diagnose
 
     project, _ = await access(db, project_id, user, write=True)
     topic = await room(db, project_id, topic_id, viewer=user)

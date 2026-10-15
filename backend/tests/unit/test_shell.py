@@ -11,8 +11,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.domain.shell.catalog import CATALOG, DEFAULT_SHELL_NAME
 from app.domain.shell.service import resolve_shell
+from app.domain.shell_catalog import CATALOG, DEFAULT_SHELL_NAME
 from app.domain.task.protocol import resolve
 
 REPO_ROOT = Path(__file__).resolve().parents[3]

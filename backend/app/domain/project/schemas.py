@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.domain.project.models import AiMode
-from app.domain.shell.schemas import ShellOut
+from app.domain.shell_catalog import ShellOut
 
 
 class ProjectCreate(BaseModel):

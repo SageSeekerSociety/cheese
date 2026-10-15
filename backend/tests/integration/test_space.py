@@ -5,8 +5,8 @@ from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.shell.catalog import DEFAULT_SHELL_NAME
 from app.domain.shell.service import resolve_shell
+from app.domain.shell_catalog import DEFAULT_SHELL_NAME
 from app.domain.space.models import SpaceCategory
 from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 

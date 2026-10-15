@@ -13,8 +13,9 @@ in the tree names. The size ceilings are the landing layer's
 (`library.max_bytes_for`).
 
 Where the shared names went. The three names this module used to read from
-topics.py now have their own homes: `clean_artifact_path` and
-`MAX_ARTIFACT_BYTES` are the room-file rules in `app.domain.project.room_files`,
+topics.py now have their own homes: `clean_artifact_path` is a room-file rule in
+`app.domain.project.room_files`, the ceiling it is read against is
+`library.service.MAX_ARTIFACT_BYTES` (written down once, where the bytes land),
 `source_bytes` is the API read-orchestration helper in
 `app.api.topics_file_sources`, and the binding check became
 `TaskService.require_source_in_room`. `DbSession` is still imported from
@@ -67,10 +68,7 @@ from app.domain.preview.office import (
     render_to_html,
     render_to_pdf,
 )
-from app.domain.project.room_files import (
-    MAX_ARTIFACT_BYTES,
-    clean_artifact_path,
-)
+from app.domain.project.room_files import clean_artifact_path
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
 from app.domain.topic.services import TopicService
@@ -383,9 +381,9 @@ async def attachment_as_pdf(
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
     data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
-    if len(data) > MAX_ARTIFACT_BYTES:
+    if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
-            say("previewTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+            say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
         )
     try:
         pdf = await render_to_pdf(data, clean, settings.office_render_endpoint)
@@ -444,9 +442,9 @@ async def attachment_as_html(
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
     data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
-    if len(data) > MAX_ARTIFACT_BYTES:
+    if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
-            say("previewTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+            say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
         )
     try:
         page = await render_to_html(data, clean, settings.office_render_endpoint)

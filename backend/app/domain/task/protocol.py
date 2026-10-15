@@ -190,7 +190,7 @@ class Protocol:
     #: Expert role a project inherits when it has none of its own (spec §8.2).
     default_role: str | None = None
     #: Which 壳 the projects under this protocol run: a NAME, resolved against
-    #: `app.domain.shell.catalog.CATALOG`. The declaration is platform-owned and
+    #: `app.domain.shell_catalog.CATALOG`. The declaration is platform-owned and
     #: the institution only picks one, so a 项目集 cannot grow a private 壳 that
     #: no other 项目集 can use — and cannot ship code, which is the same rule
     #: (`app.domain.shell`). None = nobody said, so `default` is in force.

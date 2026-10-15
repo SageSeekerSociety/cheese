@@ -15,7 +15,7 @@ from app.domain.delivery_events import SettleCard
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
 from app.domain.project.models import AiMode, Project, ProjectGitInstallation
-from app.domain.project.ports import DefaultTeammate
+from app.domain.project.ports import ComputeCredits, DefaultTeammate
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
@@ -27,7 +27,6 @@ from app.domain.topic.models import TopicKind
 from app.domain.topic.ports import ArchivedCards, SessionStore
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.usage.ledger import Ledger
 from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
@@ -76,6 +75,7 @@ class ProjectService:
         *,
         settle_card: SettleCard | None = None,
         default_teammate: DefaultTeammate | None = None,
+        compute_credits: ComputeCredits | None = None,
         cards: ArchivedCards | None = None,
         sessions: SessionStore | None = None,
     ):
@@ -90,6 +90,11 @@ class ProjectService:
         `agent_instance` 的事。同样不给也能构造，理由一样：只有 ``create`` 和
         ``_accept_task_protocol`` 这两条路要它，走到那里没递进来就当场炸掉。
 
+        ``compute_credits``：审过一道赛题报名，项目要继承机构协议里的算力，而那是
+        第 3 层 `usage` 的账本（`app.domain.project.ports.ComputeCredits`）。也只有
+        ``create`` 和 ``_accept_task_protocol`` 这两条路要它，同样走到那里没递进来
+        就当场炸掉。
+
         ``cards`` 和 ``sessions``：归档项目会顺手做两件本包够不着的事 —— 把房间里
         还没结的验收卡收掉（第 4 层 `review`），把取消归档的房间记着的会话令牌忘掉
         （第 3 层 `agent_session`）。两样都只在 ``archive`` / ``unarchive`` 这两条路
@@ -98,10 +103,10 @@ class ProjectService:
         self._repo = ProjectRepository(session)
         self._installations = ProjectGitInstallationRepository(session)
         self._topics = TopicRepository(session)
-        self._ledger = Ledger(session)
         self._members = TopicMemberService(session)
         self._settle_card = settle_card
         self._default_teammate = default_teammate
+        self._compute_credits = compute_credits
         self._cards = cards
         self._sessions = sessions
 
@@ -121,6 +126,29 @@ class ProjectService:
             raise RuntimeError("default_teammate was not handed in")
         await self._default_teammate(
             self._session, project, display_name=display_name, type_name=type_name
+        )
+
+    async def _has_earmark(self, project: Project, task_id: int) -> bool:
+        """这个项目领过这道赛题的资源包没有。
+
+        口子没递进来是接线漏了一处，当场炸掉 —— 静默不发资源包，赛题那边看不出
+        分别，只有参与者会发现自己少了一份算力。"""
+        if self._compute_credits is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("compute_credits was not handed in")
+        return await self._compute_credits.has_earmark(project.id, task_id)
+
+    async def _grant_earmark(
+        self, project: Project, task_id: int, *, credits_total: float
+    ) -> None:
+        """把这道赛题的算力发到这个项目上，理由同 ``_has_earmark``。"""
+        if self._compute_credits is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("compute_credits was not handed in")
+        await self._compute_credits.grant_earmark(
+            project_id=project.id,
+            source_task_id=task_id,
+            credits_total=credits_total,
         )
 
     async def create(
@@ -554,14 +582,11 @@ class ProjectService:
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
         await self._seed_default_teammate(project, type_name=protocol.default_role)
-        grants = await self._ledger.earmarks(project.id)
-        if protocol.compute_credits > 0 and not any(
-            grant.source_task_id == task_id for grant in grants
+        if protocol.compute_credits > 0 and not await self._has_earmark(
+            project, task_id
         ):
-            await self._ledger.grant_earmark(
-                project_id=project.id,
-                source_task_id=task_id,
-                credits_total=protocol.compute_credits,
+            await self._grant_earmark(
+                project, task_id, credits_total=protocol.compute_credits
             )
 
     async def activate_participation(

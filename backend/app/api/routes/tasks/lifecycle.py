@@ -67,6 +67,7 @@ from app.domain.task.visibility_service import resolve_user_email_domain
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
+from app.domain.usage.adapters import ComputeCredits
 from app.domain.user.repositories import (
     UserRealNameRepository,
 )
@@ -845,9 +846,9 @@ async def patch_task_membership_by_member(
         phone=payload.phone,
     )
 
-    await ProjectService(db, default_teammate=default_teammate).activate_participation(
-        task=task, membership=membership
-    )
+    await ProjectService(
+        db, default_teammate=default_teammate, compute_credits=ComputeCredits(db)
+    ).activate_participation(task=task, membership=membership)
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
     all_memberships = await membership_service.list_memberships_for_task(
