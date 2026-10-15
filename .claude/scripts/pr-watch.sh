@@ -56,12 +56,17 @@ ci_required() { # pass | fail | pending | none
   gh pr checks "$1" -R "$REPO" 2>/dev/null | awk -F'\t' '$1=="CI required"{print $2; f=1} END{if(!f) print "none"}'
 }
 
-# The machine this runs on has no `jq`, and its absence used to cost the whole
-# script every field it polls: a round of `jq: command not found`, nothing
-# parsed, `ci_required()` reading an empty state forever, and a watcher that
-# looks like it is watching while taking no action at all. `gh` carries a jq of
-# its own, but the reply is in hand already and python3 is on the same machine
-# as the script — so the fields come out of that, one line.
+# The machine this runs on has no `jq`, and its absence used to cost the script
+# every GraphQL field it polls: a round of `jq: command not found` and seven
+# assignments to the empty string. `state` was then never MERGED or CLOSED, so
+# the poll loop had no way to end and the watcher never printed its closing
+# line; `queue` and `auto` came out empty as well, which pointed the enqueue
+# branch the other way — with `CI required` passing, --enqueue ran `gh pr merge`
+# blind, on a pull request that was already queued. `ci_required()` is not part
+# of this: it reads `gh pr checks`, and never touched jq.
+#
+# `gh` carries a jq of its own, but the reply is in hand already and python3 is
+# on the same machine as the script — so the fields come out of that, one line.
 #
 # `|` and not a tab between them: a tab is IFS whitespace, so bash collapses a
 # run of them and every empty field shifts the ones after it. No field can hold

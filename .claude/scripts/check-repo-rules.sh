@@ -397,21 +397,23 @@ check_room_derived_agent_handle() {
 
 # Rule 10 — a spec that asserts what DOMPurify.sanitize() left must run under
 # jsdom. frontend/vite.config.ts defaults vitest to happy-dom, and there
-# DOMPurify 3.2.6 answers any input carrying `<script>` with an empty string, so
+# DOMPurify 3.4.16 answers any input carrying `<script>` with an empty string, so
 # every "the dangerous part is gone" assertion passes whether or not anything
 # was cleaned — the worst shape a failure can take, a security assertion that is
 # green either way. jsdom behaves like the browser. Measured 2026-10-08 on
 # frontend/src/utils/parser.spec.ts.
 #
-# The environment is chosen per FILE, so this reads the file's own header and
-# not the config: a spec that forgets the pragma still passes, and nothing else
-# in the build can tell the difference. Five lines is where vitest reads it —
-# the pragma has to precede the imports.
+# The environment is chosen per FILE, so this reads the file's own text and not
+# the config: a spec that forgets the pragma still passes, and nothing else in
+# the build can tell the difference. Position does not matter — vitest 5 matches
+# the pragma against the whole file (its detectCodeBlock runs on the raw text),
+# so a check that looked only at the top would report specs that run under jsdom
+# perfectly well.
 check_dompurify_specs_use_jsdom() {
   local f files=()
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    head -n 5 "$f" | grep -q '@vitest-environment jsdom' || files+=("$f")
+    grep -qE '@(vitest|jest)-environment[[:space:]]+jsdom([[:space:]]|$)' "$f" || files+=("$f")
   done < <(grep -rlE --include='*.spec.ts' 'DOMPurify|\.sanitize\(' "$ROOT/frontend/src" 2>/dev/null || true)
   [ ${#files[@]} -eq 0 ] && return 0
   echo "FAIL: a spec on DOMPurify that does not run under jsdom"
@@ -444,8 +446,11 @@ check_container_script_is_in_the_image() {
   # A directory copy would put every script in the image; there is nothing to
   # compare against, and reading nothing is better than reading a wrong set.
   printf '%s\n' "$stage" | grep -qE '^COPY[^#]*[[:space:]]scripts/?([[:space:]]|$)' && return 0
+  # `|| true`: a stage that names no scripts/&lt;name&gt;.py leaves grep with nothing
+  # to match, and under `set -eo pipefail` that status would take the whole guard
+  # down here — before the inert return below, and with no FAIL line to say why.
   copied="$(printf '%s\n' "$stage" | grep -oE 'scripts/[A-Za-z0-9_]+\.py' \
-    | sed -E 's|scripts/||; s|\.py$||' | sort -u)"
+    | sed -E 's|scripts/||; s|\.py$||' | sort -u || true)"
   [ -n "$copied" ] || return 0
   local line mod lines=()
   while IFS= read -r line; do
@@ -751,11 +756,16 @@ if [ "$SELF_TEST" = 1 ]; then
   printf "// @vitest-environment jsdom\nimport DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
     > "$tmp/frontend/src/utils/clean.spec.ts"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the same assertion under jsdom must pass"
-  # It is the header vitest reads, not a mention anywhere in the file: a pragma
-  # the loader never sees is the same as not writing one.
-  printf "import DOMPurify from 'dompurify'\n\n// c\n// c\n// c\n// @vitest-environment jsdom\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('')\n" \
+  # Position is not part of it: vitest matches the pragma against the whole
+  # file, so one written below the imports is honoured and must not be reported.
+  printf "import DOMPurify from 'dompurify'\n\n// c\n// c\n// c\n// @vitest-environment jsdom\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
     > "$tmp/frontend/src/utils/clean.spec.ts"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a pragma below the header must still fail"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a pragma below the imports must pass"
+  # Either spelling triggers, so a spec that reaches the sanitiser through an
+  # alias — and never writes the library's name — is still this guard's business.
+  printf "import dp from 'dompurify'\n\nexpect(dp.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "an aliased .sanitize() under the default environment must fail"
   # And a spec that neither imports DOMPurify nor sanitizes is not this guard's
   # business — requiring jsdom everywhere would be switched off within a week.
   printf "import { parse } from './parse'\n\nexpect(parse('<b>x</b>')).toBe('x')\n" \
@@ -767,23 +777,35 @@ if [ "$SELF_TEST" = 1 ]; then
   # scripts one at a time, and docs/ is where a command meant for the box is
   # written down.
   mkdir -p "$tmp/backend/scripts" "$tmp/docs" "$tmp/deploy"
-  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha.py ./scripts/\n' \
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha_one.py ./scripts/\n' \
     > "$tmp/backend/Dockerfile"
-  printf 'python -m scripts.alpha --all\n' > "$tmp/docs/ops.md"
+  printf 'python -m scripts.alpha_one --all\n' > "$tmp/docs/ops.md"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a script the image carries must pass"
-  printf 'python3 -m scripts.beta --all\n' > "$tmp/docs/ops.md"
+  printf 'python3 -m scripts.beta_two --all\n' > "$tmp/docs/ops.md"
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a script the image does not carry must fail"
-  # The same file under deploy/, where release steps are written.
-  printf 'docker exec backend python -m scripts.beta\n' > "$tmp/deploy/release.md"
+  # The same command under deploy/, where release steps are written — and docs/
+  # is cleared first, or the run below is red on docs/ alone and this assertion
+  # would hold whether or not deploy/ is ever read.
+  rm "$tmp/docs/ops.md"
+  printf 'docker exec backend python -m scripts.beta_two\n' > "$tmp/deploy/release.md"
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the check must read deploy/ too"
+  # An image that takes the whole directory names no file to compare against, so
+  # the rule stands down — and stands down quietly. The grep behind it matches
+  # nothing here, and a status that took the rest of the run with it would be a
+  # red build with nothing on it to read.
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/*.py ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an image that copies the whole directory must stand down"
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha_one.py ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
   # `uv run` is a checkout command — the source tree is right there — so a
   # dev-only script named that way is not a claim about the image.
   rm "$tmp/deploy/release.md"
-  printf 'uv run python -m scripts.beta --all\n' > "$tmp/docs/ops.md"
+  printf 'uv run python -m scripts.beta_two --all\n' > "$tmp/docs/ops.md"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a uv run command must pass"
   rm "$tmp/docs/ops.md" "$tmp/backend/Dockerfile"
   # No Dockerfile, nothing to compare against — inert, not red.
-  printf 'python -m scripts.beta\n' > "$tmp/docs/ops.md"
+  printf 'python -m scripts.beta_two\n' > "$tmp/docs/ops.md"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a tree without the image must pass"
   rm -rf "$tmp/docs" "$tmp/deploy" "$tmp/backend/scripts"
 
