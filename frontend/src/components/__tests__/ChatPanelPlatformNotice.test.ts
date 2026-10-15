@@ -762,6 +762,8 @@ describe('a foldable notice that names someone', () => {
     const text = visibleText(container)
     expect(text).toContain('芝士S 提议新增技能「周报格式」')
     expect(text).not.toContain('<@cheese-s>')
+  })
+})
 
 // 「@」的样子只说一件事：这一处通知到了那个人。消息里的点名通知了，画 @chip；平台的一行
 // 提示只是提到谁做了什么，没有通知谁，画成他的名字。
