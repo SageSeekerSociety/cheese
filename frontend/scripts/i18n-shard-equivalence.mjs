@@ -3,8 +3,11 @@
 //
 // 用法：node frontend/scripts/i18n-shard-equivalence.mjs <命名空间> <拆分前的 git 版本>
 //
-//   node frontend/scripts/i18n-shard-equivalence.mjs roomNotice \
-//     "$(git rev-parse HEAD~1)"        # 拆分的那一个提交的父提交
+//   node frontend/scripts/i18n-shard-equivalence.mjs roomNotice 6dd77fb8a^
+//
+// 第二个参数是拆分那个提交的父提交，写成「拆分提交^」。别写 HEAD~1：拆分之后同一条分支
+// 上还会有别的提交压在上面，HEAD~1 就不是它了。这个 PR 里 HEAD~1 恰好是拆分提交自己，
+// 而那一版已经没有 roomNotice.json，照它跑会 fatal: path ... does not exist。
 //
 // 为什么是脚本而不是常跑的测试：分片是活的，以后改一条文案，「和拆分前逐字节相同」就不
 // 成立了——把它当常跑测试，等于让每个改文案的 PR 都去改一个共享的期望值，正是拆分要消掉
