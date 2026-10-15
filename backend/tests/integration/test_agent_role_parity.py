@@ -319,8 +319,13 @@ def test_project_membership_never_opens_someone_elses_private_chat(
         ).status_code
         == 403
     )
+    # Even seated there, it answers in another room: what it read would reach
+    # people the DM does not.
     _join(client, private, handle)
-    assert client.get(f"/topics/{private}/blocks", headers=auth).status_code == 200
+    assert client.get(f"/topics/{private}/blocks", headers=auth).status_code in (
+        403,
+        404,
+    )
 
 
 def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
