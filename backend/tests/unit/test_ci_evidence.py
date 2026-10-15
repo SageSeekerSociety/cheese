@@ -258,7 +258,8 @@ def lost_worker_run(
             "--dist",
             "loadfile",
             "--no-loadscope-reorder",
-            # CI's timeout, so the hang log has the case's `start` to name.
+            # A per-case timeout, so the hang log has the case's `start` to
+            # name; this sample's is 60 s, CI's is 300.
             "-o",
             "timeout=60",
             "-o",
