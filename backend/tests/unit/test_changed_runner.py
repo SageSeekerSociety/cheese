@@ -78,7 +78,7 @@ def test_a_backend_change_selects_its_consumer(runner, platform, tmp_path):
     assert entry["evidence"]["required"] == ["tests/unit/test_touched.py"]
     # Pinpointed rather than merely non-empty: ``--strict`` keeps this entry only
     # because ``required`` names the tests the change reaches.
-    assert runner.pinpointed(entry)
+    assert runner.pinpointed(platform, entry)
     assert "tests/unit/test_touched.py" in entry["command"]
     assert entry["cwd"] == root / "backend"
     # A type error is the push's verdict, not the edit's; the plan carries one
@@ -171,7 +171,7 @@ def test_a_full_fallback_is_run_rather_than_dropped(runner, platform, tmp_path):
     # prose reason next to it: a fallback runs the whole pure suite.
     assert not runner.only_guards(platform, plan[0])
     # Kept so that --strict has a refusal to make; without --strict it runs.
-    assert not runner.pinpointed(plan[0])
+    assert not runner.pinpointed(platform, plan[0])
 
 
 def test_a_frontend_catalog_still_runs_backend_tree_guards(runner, platform, tmp_path):
@@ -190,6 +190,11 @@ def test_a_frontend_catalog_still_runs_backend_tree_guards(runner, platform, tmp
     )
     assert [entry["id"] for entry in plan] == ["backend-pure"]
     assert plan[0]["evidence"]["required"] == []
+    # Cheap, and here the judgement: --strict must keep it, or a catalog change
+    # gets no run at all. A full fallback has the same empty ``required`` and is
+    # refused — see test_strict_refuses_the_whole_suite_and_allows_a_pinpointed_one.
+    assert runner.only_guards(platform, plan[0])
+    assert runner.pinpointed(platform, plan[0])
 
 
 def test_scope_follows_the_shared_path_map(runner, platform):
@@ -213,11 +218,16 @@ def test_scope_follows_the_shared_path_map(runner, platform):
     prose, _, unknown, _ = scope(["docs/topics/anything.md"])
     assert not prose["backend"] and not prose["frontend"] and not unknown
 
-    # A script root is named by the map (``guards``) and by nothing the graph can
-    # follow, so it reads as a change with no reachable unit test — not as an
-    # unknown path, and not as a widened backend suite that would judge nothing.
+    # A script the map names only under ``guards`` is a change with no reachable
+    # unit test — not an unknown path, and not a widened backend suite that would
+    # judge nothing. The map does name some ``.claude/scripts/`` files for the
+    # frontend (``frontend_grade.py`` and the ratchets), so the generalisation
+    # stops here; this file is one it names nowhere but ``guards``.
     script, _, unknown, _ = scope([".claude/scripts/trace-sweep.py"])
     assert not script["backend"] and not script["frontend"] and not unknown
+
+    graded, _, _, _ = scope([".claude/scripts/frontend_grade.py"])
+    assert graded["frontend"] and not graded["backend"]
 
     catalog, _, _, guard = scope(["frontend/src/i18n/messages/zh-CN/other/x.json"])
     assert guard and catalog["backend"]
@@ -253,7 +263,7 @@ def test_an_unmapped_path_is_judged_by_ci_fasts_selection(runner, platform, tmp_
     assert [entry["id"] for entry in widened] == ["frontend-unit", "backend-pure"]
     assert widened[0]["evidence"]["mode"] == "full"
     assert not runner.only_guards(platform, widened[1])
-    assert all(not runner.pinpointed(entry) for entry in widened)
+    assert all(not runner.pinpointed(platform, entry) for entry in widened)
     narrowed, _ = runner.plan_for(
         platform,
         root,
@@ -299,35 +309,58 @@ def test_the_entry_point_widens_an_unmapped_change_before_it_runs_anything(
     assert "related" not in report["plan"][0]
 
 
-def test_strict_refuses_the_whole_suite_and_allows_a_pinpointed_one(runner):
-    """``required`` decides, and the reason string next to it is prose.
+def test_strict_refuses_the_whole_suite_and_allows_a_pinpointed_one(runner, platform):
+    """What decides is the selection's shape, and the reason string next to it is prose.
 
-    The backend cases below carry their reason strings swapped on purpose: one
+    The two backend cases below carry their reason strings swapped on purpose: one
     calls itself a fallback while naming the files it reaches, the other reads
-    like a pinpoint while naming none. ``--strict`` has to answer the same way in
-    both, which it only does if it reads the list.
+    like a pinpoint while naming none. Only the second is a refusal — its
+    ``files`` hold a test that is not one of the always-on guards. The first is
+    kept whatever it calls itself.
     """
+    guards = sorted(platform.GUARD_TESTS)
     assert runner.pinpointed(
+        platform,
         {
             "id": "backend-pure",
             "evidence": {
                 "required": ["tests/unit/x.py"],
+                "files": ["tests/unit/x.py"] + guards,
                 "selection": "full pure fallback: no static consumers for app.x",
             },
-        }
+        },
     )
     assert not runner.pinpointed(
+        platform,
         {
             "id": "backend-pure",
             "evidence": {
                 "required": [],
+                "files": guards + ["tests/unit/test_everything_else.py"],
                 "selection": "reverse transitive Python imports plus tree/i18n guards",
             },
-        }
+        },
     )
-    assert runner.pinpointed({"id": "frontend-unit", "evidence": {"mode": "related"}})
-    assert not runner.pinpointed({"id": "frontend-unit", "evidence": {"mode": "full"}})
-    assert runner.pinpointed({"id": "frontend-i18n", "evidence": {}})
+    # Guards and nothing else is cheap and is the judgement where it survives
+    # ``plan_for`` at all, so --strict keeps it rather than refusing the run.
+    assert runner.pinpointed(
+        platform,
+        {
+            "id": "backend-pure",
+            "evidence": {
+                "required": [],
+                "files": guards,
+                "selection": "reverse transitive Python imports plus tree/i18n guards",
+            },
+        },
+    )
+    assert runner.pinpointed(
+        platform, {"id": "frontend-unit", "evidence": {"mode": "related"}}
+    )
+    assert not runner.pinpointed(
+        platform, {"id": "frontend-unit", "evidence": {"mode": "full"}}
+    )
+    assert runner.pinpointed(platform, {"id": "frontend-i18n", "evidence": {}})
 
 
 def test_the_fold_keeps_ci_fasts_precedence(runner):
@@ -380,7 +413,12 @@ def test_the_entry_point_refuses_a_tool_it_cannot_start(
 def test_the_entry_point_returns_unknown_when_nothing_is_selected(
     runner, platform, tmp_path, monkeypatch, capsys
 ):
-    """The empty plan is the case the whole entry point exists to report honestly."""
+    """The empty plan is the case the whole entry point exists to report honestly.
+
+    Pinned as an empty ``plan`` and not only as an exit code: a run that spawns the
+    always-on guards and then cannot read their report also exits unknown, and that
+    is the shape this entry point exists to avoid.
+    """
     root = _tree(tmp_path)
     monkeypatch.setattr(runner, "repo_root", lambda: root)
     monkeypatch.setattr(runner, "load_platform", lambda _root: platform)
@@ -390,5 +428,57 @@ def test_the_entry_point_returns_unknown_when_nothing_is_selected(
         "collect_changes",
         lambda base: (changed, "cafe1234", "head", [], [], []),
     )
-    assert runner.main([]) == runner.UNKNOWN
-    capsys.readouterr()
+    monkeypatch.setattr(
+        platform,
+        "execute",
+        lambda *a, **kw: pytest.fail("选测为空时不该起任何进程"),
+    )
+    assert runner.main(["--plan", "--json"]) == runner.UNKNOWN
+    assert json.loads(capsys.readouterr().out)["plan"] == []
+
+
+def _report(capsys):
+    """The JSON part of the run's stdout.
+
+    ``--json`` guards the plan printout but not the ``--strict`` refusal lines, so a
+    refusing run writes prose before the object.
+    """
+    out = capsys.readouterr().out
+    return json.loads(out[out.index("{") :])
+
+
+def test_strict_keeps_a_guards_only_run_it_would_otherwise_refuse(
+    runner, platform, tmp_path, monkeypatch, capsys
+):
+    """A plan whose every entry is cheap is run, even when one of them is the guards.
+
+    The plan is handed to ``main`` directly: the synthetic tree cannot produce a
+    ``related`` frontend seed (its one TypeScript project is the empty config
+    ``_tree`` writes, so the frontend always resolves to the full suite there), and
+    the pair below is exactly what the real tree plans for a catalog plus a source
+    root. Without the guards-only exemption ``--strict`` sees a loose entry and
+    exits 2 having run nothing.
+    """
+
+    def entry(id_, evidence):
+        return {"id": id_, "cwd": tmp_path, "command": ["true"], "evidence": evidence}
+
+    guards_only = entry(
+        "backend-pure", {"required": [], "files": sorted(platform.GUARD_TESTS)}
+    )
+    related = entry("frontend-unit", {"mode": "related"})
+    full = entry("frontend-unit", {"mode": "full"})
+
+    root = _tree(tmp_path)
+    monkeypatch.setattr(runner, "repo_root", lambda: root)
+    monkeypatch.setattr(runner, "load_platform", lambda _root: platform)
+    monkeypatch.setattr(
+        runner, "plan_for", lambda *a, **kw: ([guards_only, related], [])
+    )
+
+    assert runner.main(["--strict", "--plan", "--json"]) == runner.PASS
+    assert "strict_refused" not in _report(capsys)
+
+    monkeypatch.setattr(runner, "plan_for", lambda *a, **kw: ([guards_only, full], []))
+    assert runner.main(["--strict", "--plan", "--json"]) == runner.UNKNOWN
+    assert _report(capsys)["strict_refused"] == ["frontend-unit"]

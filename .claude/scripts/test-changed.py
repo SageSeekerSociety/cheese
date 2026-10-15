@@ -38,14 +38,18 @@ never executed, or a related run whose seeds ran alone all read as unknown (exit
 2) rather than as a pass. Speed must not come from believing an empty run.
 
 No widening is added here that the shared map does not make. A change under
-``.claude/scripts/`` or ``.github/scripts/`` is a case where the answer is
-*nothing to judge*, not a case for one: backend unit tests do cover those scripts
-(``tests/unit/test_*_sweep_*.py`` and friends load them by file path) but the AST
-graph cannot see an edge that is a path in a string, so the selection pinpoints
-none of them and the run exits unknown (2) — the honest report, since running the
-always-on tree guards and calling it green would be a verdict about a change none
-of them judges. ``plan_for`` drops exactly that shape; a helper that widened the
-scope instead would only relabel the same empty plan.
+``.claude/scripts/`` or ``.github/scripts/`` that the map names nowhere but
+``guards`` is a case where the answer is *nothing to judge*, not a case for one:
+backend unit tests do cover those scripts (``tests/unit/test_*_sweep_*.py`` and
+friends load them by file path) but the AST graph cannot see an edge that is a
+path in a string, so the selection pinpoints none of them and the run exits
+unknown (2) — the honest report, since running the always-on tree guards and
+calling it green would be a verdict about a change none of them judges.
+``plan_for`` drops exactly that shape; a helper that widened the scope instead
+would only relabel the same empty plan. The map does name six ``.claude/scripts/``
+files for the frontend (``frontend_grade.py``, the four ratchets and
+``ratchet_report.py``), and a change to one of those runs the frontend suite
+rather than exiting 2.
 
 Exit 0 pass, 1 fail, 2 unknown (nothing to judge, empty selection, no merge base,
 a suite that reported a pass without running what it selected), 3 blocked (not a
@@ -206,23 +210,25 @@ def only_guards(platform, entry):
     return not set(evidence["files"]) - platform.GUARD_TESTS
 
 
-def pinpointed(entry):
-    """Whether this plan entry judges the change, rather than the whole suite.
+def pinpointed(platform, entry):
+    """Whether this plan entry judges the change cheaply enough for ``--strict``.
 
-    A full-suite fallback is the honest answer to a change the graph cannot
-    narrow, and it is far too big for an edit-time loop: the backend's fallback
-    is every pure unit test, the frontend's is all 700-odd specs. ``--strict``
-    refuses those instead of spending minutes on them.
+    ``--strict`` refuses a sweep: the backend's fallback is every pure unit test,
+    the frontend's is all 700-odd specs, and both are minutes. It is not there to
+    refuse a cheap judgement, so an entry that runs only the always-on tree guards
+    counts as pinpointed. That shape reaches ``--strict`` in exactly one case —
+    a changed i18n catalog, where the guards are the reader of the file — and
+    refusing it would leave the run judging nothing while refusing a job that
+    costs seconds.
 
-    For the backend that is exactly "``required`` is empty": a pinpointed entry
-    names the files it was selected for, and a fallback names none (it runs them
-    all). Guards-only entries are refused here too, which is right — ``--strict``
-    asks for a narrow judgement, and a change judged only by the always-on guards
-    has not had one.
+    For the backend, "cheap" is ``only_guards``: the full fallback is the one
+    selection that names no ``required`` files *and* carries more than the guards
+    in ``files``. For the frontend it is a ``related`` seed; ``full`` is the whole
+    spec suite.
     """
     evidence = entry["evidence"]
     if entry["id"] == "backend-pure":
-        return bool(evidence["required"])
+        return bool(evidence["required"]) or only_guards(platform, entry)
     if entry["id"] == "frontend-unit":
         return evidence.get("mode") == "related"
     return True
@@ -309,7 +315,7 @@ def main(argv):
             return UNKNOWN
 
         if args.strict:
-            loose = [entry for entry in plan if not pinpointed(entry)]
+            loose = [entry for entry in plan if not pinpointed(platform, entry)]
             if loose:
                 for entry in loose:
                     reason = (entry["evidence"].get("selection")
