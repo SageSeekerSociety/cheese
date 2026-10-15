@@ -47,6 +47,11 @@ def main():
                                   "reason": "first card precedes first commit"})
         else:
             valid_lines.append(line)
+    cohort_topics = {line["topic"] for line in cohort["lines"]}
+    foreign_topics = sorted({event["topic"] for event in evidence["observations"]}
+                            - cohort_topics)
+    if foreign_topics:
+        raise ValueError("evidence outside the frozen cohort: " + ", ".join(foreign_topics))
     valid_topics = {line["topic"] for line in valid_lines}
     evidence["observations"] = [event for event in evidence["observations"]
                                 if event["topic"] in valid_topics]

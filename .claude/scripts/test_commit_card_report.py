@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from commit_card_ci import fetch_pages, observations, snapshot
+from commit_card_ci import fetch_pages, main as collect_ci, observations, snapshot
 from commit_card_report import combine
 
 
@@ -42,12 +42,56 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(output["wall_seconds"], 600)
             self.assertEqual(output["invalid_cohort_lines"][0]["task"], 2)
 
+    def test_report_rejects_foreign_evidence_topics(self):
+        line = {"task": 1, "topic": "one", "start": "2026-10-08T10:10:00Z",
+                "end": "2026-10-08T10:20:00Z"}
+        event = {"topic": "foreign", "source": "github-check:9", "phase": "ci",
+                 "start": line["start"], "end": line["end"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp)
+            (p / "cohort.json").write_text(json.dumps({"lines": [line]}))
+            (p / "platform.json").write_text(json.dumps({"provenance": {}, "observations": [event]}))
+            (p / "ci.json").write_text(json.dumps({"provenance": {}, "observations": []}))
+            result = subprocess.run([sys.executable, str(Path(__file__).with_name("commit_card_report.py")),
+                                     str(p / "cohort.json"), str(p / "platform.json"), str(p / "ci.json"),
+                                     "--out", str(p / "out")], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("outside the frozen cohort", result.stderr)
+            self.assertFalse((p / "out").exists())
+
     def test_ci_pages_include_all_attempts(self):
         response = subprocess.CompletedProcess([], 0, json.dumps([{"check_runs": [{"id": 1}]},
                                                                   {"check_runs": [{"id": 2}]}]), "")
         with patch("commit_card_ci.subprocess.run", return_value=response) as run:
             self.assertEqual(fetch_pages("checks?filter=all", "check_runs"), [{"id": 1}, {"id": 2}])
         self.assertIn("--paginate", run.call_args.args[0])
+
+    def test_ci_main_requests_all_check_attempts(self):
+        line = {"task": 1, "topic": "one", "start": "2026-10-08T10:10:00Z",
+                "end": "2026-10-08T10:20:00Z", "prs": [7]}
+        calls = []
+        def fake_fetch(endpoint, key=None):
+            calls.append(endpoint)
+            if "/pulls/7/commits" in endpoint:
+                return [{"sha": "abc", "commit": {"committer": {"date": "2026-10-08T10:11:00Z"}}}]
+            self.assertIn("filter=all", endpoint)
+            return [{"id": 1, "name": "tests", "head_sha": "abc",
+                     "started_at": "2026-10-08T10:12:00Z",
+                     "completed_at": "2026-10-08T10:13:00Z", "conclusion": "failure",
+                     "status": "completed"},
+                    {"id": 2, "name": "tests", "head_sha": "abc",
+                     "started_at": "2026-10-08T10:14:00Z",
+                     "completed_at": "2026-10-08T10:15:00Z", "conclusion": "success",
+                     "status": "completed"}]
+        with tempfile.TemporaryDirectory() as tmp, patch("commit_card_ci.fetch_pages", side_effect=fake_fetch):
+            with patch.object(sys, "argv", ["commit_card_ci.py", str(Path(tmp) / "cohort.json"),
+                                             "--out", str(Path(tmp) / "out")]):
+                (Path(tmp) / "cohort.json").write_text(json.dumps({"lines": [line]}))
+                collect_ci()
+            evidence = json.loads((Path(tmp) / "out/evidence.json").read_text())
+        self.assertEqual({row["source"] for row in evidence["observations"]},
+                         {"github-check:1", "github-check:2"})
+        self.assertTrue(any("filter=all" in endpoint for endpoint in calls))
 
     @patch("commit_card_ci.time.sleep")
     def test_transient_failure_retries_but_permission_failure_does_not(self, sleep):
@@ -70,6 +114,10 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIsNone(result[0]["end"])
         self.assertEqual(observations(line, [{**run, "conclusion": "skipped"}]), [])
+        completed = {**run, "completed_at": "2026-10-08T10:15:00Z", "conclusion": "neutral"}
+        neutral = observations(line, [completed])
+        self.assertEqual(len(neutral), 1)
+        self.assertEqual(neutral[0]["end"], completed["completed_at"])
 
     def test_snapshot_is_not_overwritten_by_later_fetch(self):
         with tempfile.TemporaryDirectory() as tmp:

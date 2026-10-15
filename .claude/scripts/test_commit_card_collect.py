@@ -30,18 +30,19 @@ class ClassificationTests(unittest.TestCase):
             self.assertEqual(classify("Bash", command)[0], "other_tool", command)
 
     def test_supported_check_entrypoints(self):
-        for command in (
-            "pytest -q",
-            "ruff check .",
-            "task ci:fast",
-            "python3 -m unittest discover",
-            "python3 .github/scripts/ci-fast.py",
-            "pnpm lint",
-            "npm run typecheck",
-            "gh pr checks 3785 --watch",
-            "sleep 2",
+        for command, phase in (
+            ("pytest -q", "local_check"),
+            ("ruff check .", "local_check"),
+            ("task ci:fast", "local_check"),
+            ("python3 -m unittest discover", "local_check"),
+            ("python3 .github/scripts/ci-fast.py", "local_check"),
+            ("pnpm lint", "local_check"),
+            ("npm run typecheck", "local_check"),
+            ("gh pr checks 3785 --watch", "ci_wait"),
+            ("gh run watch 123", "ci_wait"),
+            ("sleep 2", "explicit_wait"),
         ):
-            self.assertNotEqual(classify("Bash", command)[0], "other_tool", command)
+            self.assertEqual(classify("Bash", command)[0], phase, command)
 
     def test_background_output_removes_unbounded_end(self):
         row = {
@@ -96,6 +97,24 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(token, ["new"])
         login.assert_called_once()
         self.assertEqual(get.call_args.args[0], "new")
+
+    @patch("commit_card_collect.time.sleep")
+    def test_rate_limit_does_not_consume_token_refresh(self, sleep):
+        rate = urllib.error.HTTPError("test", 429, "limited", {"Retry-After": "1"}, None)
+        expired = urllib.error.HTTPError("test", 401, "expired", {}, None)
+        token = ["old"]
+        with patch("commit_card_collect.get", side_effect=[rate, expired, {"data": []}]) as get, \
+             patch("commit_card_collect.login", return_value="new") as login:
+            self.assertEqual(read_api(token, "/history"), {"data": []})
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(get.call_args.args[0], "new")
+        login.assert_called_once()
+        with patch("commit_card_collect.get", side_effect=[rate, expired, expired]) as get, \
+             patch("commit_card_collect.login", return_value="new") as login:
+            with self.assertRaises(urllib.error.HTTPError):
+                read_api(["old"], "/history")
+        self.assertEqual(get.call_count, 3)
+        login.assert_called_once()
 
     @patch("commit_card_collect.time.sleep")
     def test_refused_permission_is_not_retried(self, sleep):

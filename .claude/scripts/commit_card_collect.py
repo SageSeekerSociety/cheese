@@ -75,6 +75,7 @@ _LAST_REQUEST = 0.0
 
 def read_api(token: list[str], path: str) -> dict:
     global _LAST_REQUEST
+    refreshed = False
     for attempt in range(4):
         with _REQUEST_LOCK:
             time.sleep(max(0, 1.1 - (time.monotonic() - _LAST_REQUEST)))
@@ -82,8 +83,9 @@ def read_api(token: list[str], path: str) -> dict:
             try:
                 return get(token[0], path)
             except urllib.error.HTTPError as error:
-                if error.code == 401 and attempt == 0:
+                if error.code == 401 and not refreshed and attempt < 3:
                     token[0] = login()
+                    refreshed = True
                     continue
                 if error.code != 429 or attempt == 3:
                     raise

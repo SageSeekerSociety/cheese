@@ -63,7 +63,7 @@ def observations(line: dict, runs: list[dict]) -> list[dict]:
         if not start or timestamp(start) >= hi or (end and timestamp(end) <= lo):
             continue
         # A check skipped without executing is not time spent running a check.
-        if run.get("conclusion") in ("skipped", "neutral"):
+        if run.get("conclusion") == "skipped":
             continue
         out.append({
             "topic": line["topic"], "source": "github-check:" + str(run["id"]),
