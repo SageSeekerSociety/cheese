@@ -94,7 +94,7 @@ describe('反馈中心把画面的动作接到 store 上', () => {
   it('点某一行的支持，请求带的是那一条的 id，计数回到服务端回的数', async () => {
     // 服务端回的是**写完之后**的计数，不是增量：本地 ±1 会在两个人同时点的时候渲染出
     // 一个从来没存在过的数字。
-    supportFeedback.mockResolvedValue({ count: 4, supported: true })
+    supportFeedback.mockResolvedValue({ count: 10, supported: true })
 
     const { findByText, getByRole, baseElement } = mount()
     await findByText('导出报表偶发 502')
@@ -104,7 +104,7 @@ describe('反馈中心把画面的动作接到 store 上', () => {
     // 接错的表现：请求带的是别的 id（或者根本不发）—— 于是另一条反馈的数字动了。
     await waitFor(() => expect(supportFeedback).toHaveBeenCalledWith('fb-1'))
     await waitFor(() => {
-      expect(baseElement.querySelector('.fb-card__count')?.textContent).toBe('4')
+      expect(baseElement.querySelector('.fb-card__count')?.textContent).toBe('10')
     })
   })
 
