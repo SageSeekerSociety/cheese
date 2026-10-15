@@ -9,7 +9,11 @@
 
 ## 结论表
 
-同一进程内 ASGI 与真 uvicorn + 20 条保活 HTTP 连接两路，各 7 批，取中位数。
+同一进程内 ASGI（`leg1-asgi.json`）与真 uvicorn + 20 条保活 HTTP 连接
+（`leg2-http.json`）两路，各 7 批。**墙钟、CPU、CPU 占比是两路各自的中位数
+组成的区间**；**最慢单请求取 HTTP 那一路**（它才是真实的单请求最坏值）；
+**DB/请求和 SQL 条/请求来自 `sql-census.txt` 的串行单请求读数**，与并发无关。
+
 `CPU` 是事件循环的进程时间；`CPU/墙钟` 是循环被占住的比例，剩下的
 `墙钟 − CPU` 才是循环能拿去等 I/O 的空闲。
 
@@ -22,7 +26,7 @@
 | 5 | 频道 task list | 605–619 | 490–502 | 81% | 598 | 12 | 16 | 可控：响应可以缩小 |
 | 6 | 频道 members | 490–545 | 390–396 | 72–81% | 537 | 4 | 12 | 可控：响应可以缩小 |
 | 7 | 频道 threads | 391–554 | 263–380 | 67–69% | 545 | 3 | 8 | 可控：响应可以缩小 |
-| 8 | 频道 environment | 430–447 | 303–330 | 70–74% | 438 | 5 | 14 | 可控：响应可以缩小 |
+| 8 | 频道 environment | 430–447 | 303–330 | 70–74% | 438 | 4 | 14 | 可控：响应可以缩小 |
 | 9 | 频道 pins | 367–541 | 240–370 | 65–68% | 527 | 3 | 8 | 可控：响应可以缩小 |
 
 「可控」当且仅当能指出一条具体的省法。两路排名一致，数字在小范围内互相印证。
@@ -45,14 +49,17 @@
 | `SELECT accept_cards … WHERE task_id = ANY(…)` | 28 | 这一页的卡 |
 
 请求 `/projects/{id}/tasks?status=open` 只摆 82 条活（响应 86.7 KB），
-却在行过滤之前把 **1437 行活和 219 个频道**装配成了 ORM 对象：
-1437 + 219 = 1656 行，对得上每请求那 1686 次装配。行数复跑两次完全一致，不是抖动。
+却在行过滤之前把 **1437 行活和 219 个频道**装配成了 ORM 对象：这两笔是
+1656 行，占每请求 1686 次装配的 98%，剩下的零头是那 82 行和几张卡。
+行数复跑两次完全一致，不是抖动。
 
 那 1437 行也占掉 `sql_census.txt` 里项目任务列表 35 ms/请求 DB 时间中的
 **23.0 ms**（`SELECT tasks`，1 次/请求），因为它搬回了 1437 行，
-而这个表 46 列里绝大多数这一页用不上。装配加 JSON 解码占 `cProfile` 总时间的
-**47%**（`_populate_full` 16.0% + `_instance` 14.2% + `_json_decoder` 9.1%
-+ 它底下的 `json.decode` 7.8%），**这几乎全是那 1437 行白搬出来的。**
+而这个表 46 列里绝大多数这一页用不上。装配本身占 `cProfile` 的
+**19.6%**（`_populate_full` 12.3% + `_instance` 7.3%），JSON 列解码另占
+**5.5%**（`_json_decoder` 3.5% + 它底下的 `json.decode` 2.0%）——总时间
+12.722 s 印在同一份 `profile-burst.txt` 的表头行上。**这几乎全是那 1437 行
+和 219 行白搬出来的。**
 
 - 可控性：**能省，但省在哪要先定行为**。页大小是 82，读却是全项目——要么把
   `status` 过滤下推到 SQL（现在看起来是 Python 侧过滤），要么把这一页的 id 先定死、
@@ -71,32 +78,47 @@
 它是「谁回复了我、我还没处理」那盏黄灯的查询，每次打开一个频道都要算一遍；
 但它的代价和房间大小无关——这个房间一共只有 51 个块。
 
-`EXPLAIN (ANALYZE, BUFFERS)` 的原因很直白：
+`explain-channel-detail.txt` 是这条语句的执行计划，一次跑六种写法（同一个房间、
+同一进程、同一轮，所以互相可比）：
 
 ```
-Nested Loop Left Join  (actual time=121.832..121.834 rows=0 loops=1)
-  ->  Seq Scan on blocks  (cost=0.00..4078134.77 rows=1)
-        Filter: (... (refs)::jsonb @> '["user:perfviewer"]'::jsonb OR EXISTS(SubPlan 1))
-        Rows Removed by Filter: 479832
+A 原样：Seq Scan on blocks ... Rows Removed by Filter: 479832   Execution Time 136.3 ms
+B 把 OR 的支线那半删掉：Bitmap Index Scan on ix_blocks_conversation_seq   0.105 ms
+C 只读本频道自己的块：Index Only Scan on ix_blocks_conversation_kind_seq   0.042 ms
 ```
 
-查询里「直接挂在这个频道下的块」和「挂在这个频道的支线下的块」用 `OR` 连着
-（`Block.conversation_id IN (…rooms…) OR threads.room_id IN (…rooms…)`），
-规划器没法把它拆成两次索引扫，只能整表扫 48 万行，再靠过滤条件逐行判断。
-把 OR 去掉单独测同一条查询的另一半：
+**只要那条 OR 在，就是 48 万行整表扫；把支线那半删掉，立刻回到索引，差三个数量级。**
+
+原因是 OR 的第二半引用的是外连接进来的 `threads`（`threads.room_id IN (…)`，
+`backend/app/domain/topic/repositories.py:264`），整个 OR 因此只能在连接之后求值，
+规划器没法拿房间把 `blocks` 先收窄。**而这个房间里一条支线都没有**
+（`explain-channel-detail.txt` 开头那行：51 个块、0 条支线）——48 万行是白扫的。
+
+改成子查询**没用**（同一份文件里的 D1–D3，三种写法都还是整表扫，117–123 ms）；
+有用的是**把支线的 id 先用一条索引查询读出来，当第二份清单传进去**
+（同文件的 E）：
 
 | 写法 | 执行时间 |
 |---|---|
-| `conversation_id IN (…)` 单独 | **0.178 ms**（`Bitmap Index Scan on ix_blocks_conversation_seq`） |
-| 原样带 `OR threads.room_id IN (…)` | **70.245 ms** |
+| A 原样带 `OR threads.room_id IN (…)` | **136.3 ms** |
+| E 支线 id 读出来当清单：`conversation_id IN (…rooms…) OR conversation_id IN (…thread ids…)` | **0.130 ms** |
 
-**差约 400 倍。** 该频道一共只有 51 个块。
+**差约 1000 倍，代价是多一次索引查询**（`threads.room_id` 上有索引，
+`EXPLAIN` 里那次 Bitmap Heap Scan 是 0.018 ms）。
 
-- 可控性：**高，一条查询**。把它拆成「本频道的线」和「本频道支线」两次索引扫再合并，
-  或者用 `UNION ALL`／把房间收窄成一份 id 清单。不需要新索引——`blocks` 上已经有
+这几个毫秒数每次跑会动几个百分点（复核时重跑一遍：A 120.6、B 0.116、
+D 117–119、E 0.133 ms），要认的是**计划的形状**——A 和 D1–D3 都是
+`Seq Scan on blocks` 加 `Rows Removed by Filter: 479832`，B、C、E 都是索引扫——
+不是末位那一两个百分点。
+
+这条种子库里 `threads` 表是空的，所以 E 那一格传进去的两个 id 是假的
+（`00000000-…-0001/0002`），用的是「有支线的房间」会走的计划；本房间里真实
+那份清单是空的。要一边有支线一边比，得先给库里播几条支线——这一轮没做。
+
+- 可控性：**高，一条查询**。不需要新索引，也不需要动行为——`blocks` 上已经有
   `(conversation_id, *)` 的多个索引，问题是它们没被用上。
-- 这块归 `_replied_to_me_statement`（`backend/app/domain/topic/repositories.py`），
-  上游是 `TopicRepository.replied_to_me`。
+- 这块归 `_replied_to_me_statement`（`backend/app/domain/topic/repositories.py:212`），
+  上游是 `TopicRepository.replied_to_me`（同文件 `:660`）。
 
 ### 3. 待我处理（参照）：1.04–1.28 s
 
@@ -109,7 +131,7 @@ Nested Loop Left Join  (actual time=121.832..121.834 rows=0 loops=1)
 ### 4. 频道 blocks：558–632 ms
 
 响应 20 KB、51 行、14 条 SQL、DB 11 ms/请求。**它没有任何一条语句值得指出来**：
-最大一笔是取那 51 行本身（3 ms/请求）。DB 不是问题，循环 CPU 占 77% 也不是问题
+最大一笔是取那 51 行本身（4.0 ms/请求，2 次调用）。DB 不是问题，循环 CPU 占 77% 也不是问题
 ——它本来就是「读 51 个块再序列化」。**唯一可疑的是绝对值**：51 行数据不该花
 0.6 秒。响应体积那笔账前一份热点报告已经算过，这里也没有新的发现。
 
@@ -145,22 +167,27 @@ CHEESEX_DEV_PG_PORT=5533 CHEESEX_DEV_REDIS_PORT=6399 \
 export PERF_DB_URL="postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5533/cheese_perf"
 export PERF_REDIS_URL="redis://127.0.0.1:6399/0" ENVIRONMENT=development
 
-# 两路 20 并发
-PERF_LEG=asgi PERF_BATCHES=7 PERF_ROUNDS=7 PERF_OUT=/tmp/leg1.json \
+# 两路 20 并发。并发 20 和 ROUNDS 7 是脚本默认值，BATCHES 两路都调到 7
+PERF_LEG=asgi PERF_BATCHES=7 PERF_OUT=/tmp/leg1.json \
   uv run --project backend python .claude/scripts/concurrent_read_probe.py
-PERF_LEG=http PERF_BATCHES=7 PERF_ROUNDS=3 PERF_HTTP_PORT=5621 PERF_OUT=/tmp/leg2.json \
+PERF_LEG=http PERF_BATCHES=7 PERF_HTTP_PORT=5621 PERF_OUT=/tmp/leg2.json \
   uv run --project backend python .claude/scripts/concurrent_read_probe.py
 
 # 每条语句花了多少 / 每次请求几条
 uv run --project backend python .claude/scripts/sql_census.py
 
-# 20 并发下循环 CPU 的去向
-PERF_ONLY="project task list" PERF_CONCURRENCY=20 PERF_BURSTS=3 \
+# 20 并发下循环 CPU 的去向（两条最慢的接口）
+PERF_ONLY="channel detail,project task list" PERF_CONCURRENCY=20 PERF_BURSTS=3 \
   uv run --project backend python .claude/scripts/profile_burst.py
+
+# 频道详情那条 OR 语句的六个执行计划（§2 那几个毫秒数）
+uv run --project backend python .claude/scripts/explain_channel_detail.py
 ```
 
 原始输出都在本目录同名子目录下：`leg1-asgi.json`、`leg2-http.json`、
-`sql-census.txt`、`sql-rowcounts.txt`、`profile-burst.txt`。
+`sql-census.txt`、`sql-rowcounts.txt`、`profile-burst.txt`（完整未剪，pstats
+表头那行总时间就是正文百分比的被除数）、`explain-channel-detail.txt`。
+逐份说明和两处读法上的口径在那个目录的 `README.md` 里。
 
 ## 这一轮踩过的坑（会影响别人复现）
 
@@ -173,5 +200,5 @@ PERF_ONLY="project task list" PERF_CONCURRENCY=20 PERF_BURSTS=3 \
    与读路径成本无关，但会让启动在负载下不确定，其中一个还会和任何指向同一个库的
    东西抢 `(project_id, handle)` 那行。读的突发本来就会减掉自己的 CPU 基线，
    关掉它不会让数字变好看。
-3. **别用错误输出判服务死活**：服务起来了，第一次真请求伪死时错误输出里只有
-   噪声。手工 `curl` 三个接口（0.33 s / 0.16 s / 0.09 s）比读日志快得多。
+3. **别用错误输出判服务死活**：服务起来了、第一次真请求伪死时，错误输出里只有
+   1 里那堆启动告警，看不出服务是活的。敲一个接口看它答不答，比读日志快。
