@@ -395,6 +395,72 @@ check_room_derived_agent_handle() {
     "$hits"
 }
 
+# Rule 10 — a spec that asserts what DOMPurify.sanitize() left must run under
+# jsdom. frontend/vite.config.ts defaults vitest to happy-dom, and there
+# DOMPurify 3.2.6 answers any input carrying `<script>` with an empty string, so
+# every "the dangerous part is gone" assertion passes whether or not anything
+# was cleaned — the worst shape a failure can take, a security assertion that is
+# green either way. jsdom behaves like the browser. Measured 2026-10-08 on
+# frontend/src/utils/parser.spec.ts.
+#
+# The environment is chosen per FILE, so this reads the file's own header and
+# not the config: a spec that forgets the pragma still passes, and nothing else
+# in the build can tell the difference. Five lines is where vitest reads it —
+# the pragma has to precede the imports.
+check_dompurify_specs_use_jsdom() {
+  local f files=()
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    head -n 5 "$f" | grep -q '@vitest-environment jsdom' || files+=("$f")
+  done < <(grep -rlE --include='*.spec.ts' 'DOMPurify|\.sanitize\(' "$ROOT/frontend/src" 2>/dev/null || true)
+  [ ${#files[@]} -eq 0 ] && return 0
+  echo "FAIL: a spec on DOMPurify that does not run under jsdom"
+  report "a spec asserting on DOMPurify.sanitize() without a jsdom environment — happy-dom returns '' and the assertion passes by accident" \
+    "put '// @vitest-environment jsdom' at the top of the spec, before the imports" \
+    "$(printf '%s\n' "${files[@]}")"
+}
+
+# Rule 11 — a command that runs a script INSIDE the backend container must name
+# a module the production image copies. Both deployments run the Dockerfile's
+# `production` stage (build.yml's `target: production`), which carries no source
+# and names the `scripts/*.py` it ships one file at a time — the rest of that
+# directory is dev probes and demo seeders that have no business in the image.
+# The repository has the file, so `python -m scripts.<name>` reads as runnable
+# everywhere and raises ModuleNotFoundError on the box. Measured 2026-10-14
+# (PR #3753): `docker exec … python -m scripts.seat_throughput` ran nowhere,
+# written both in a document and in the script's own docstring.
+#
+# Read in docs/ and deploy/ only, where a line that says `uv run` is a checkout
+# command (the whole source tree is right there) and what is left is what an
+# operator is told to run on a deployed box. The workflows are left out on
+# purpose: there the same spelling runs on the CI runner, in the checkout
+# (test.yml's assert_shards_complete), and means the opposite.
+check_container_script_is_in_the_image() {
+  local dockerfile="$ROOT/backend/Dockerfile"
+  [ -f "$dockerfile" ] || return 0
+  local stage copied
+  stage="$(awk '/^FROM /{p=($0 ~ /AS production([[:space:]]|$)/)} p' "$dockerfile")"
+  [ -n "$stage" ] || return 0
+  # A directory copy would put every script in the image; there is nothing to
+  # compare against, and reading nothing is better than reading a wrong set.
+  printf '%s\n' "$stage" | grep -qE '^COPY[^#]*[[:space:]]scripts/?([[:space:]]|$)' && return 0
+  copied="$(printf '%s\n' "$stage" | grep -oE 'scripts/[A-Za-z0-9_]+\.py' \
+    | sed -E 's|scripts/||; s|\.py$||' | sort -u)"
+  [ -n "$copied" ] || return 0
+  local line mod lines=()
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    mod="$(printf '%s\n' "$line" | sed -nE 's|.*python3? -m scripts\.([A-Za-z0-9_]+).*|\1|p')"
+    printf '%s\n' "$copied" | grep -qx "$mod" || lines+=("$line")
+  done < <(grep -rnE 'python3? -m scripts\.[A-Za-z0-9_]+' "$ROOT/docs" "$ROOT/deploy" 2>/dev/null \
+             | grep -v 'uv run' || true)
+  [ ${#lines[@]} -eq 0 ] && return 0
+  echo "FAIL: a script run in the backend container that the image does not carry"
+  report "a python -m scripts.<name> meant for the deployed box, naming a module backend/Dockerfile's production stage never COPYs" \
+    "run it where the source is, or add COPY --chown=cheese:python scripts/<name>.py ./scripts/ to the production stage" \
+    "$(printf '%s\n' "${lines[@]}")"
+}
+
 run_all() {
   check_naive_datetime
   check_raw_http_exception
@@ -404,6 +470,8 @@ run_all() {
   check_platform_cli_in_claude_md
   check_retired_author_type_as_string
   check_room_derived_agent_handle
+  check_dompurify_specs_use_jsdom
+  check_container_script_is_in_the_image
 }
 
 # --- palette baseline update ------------------------------------------------
@@ -673,7 +741,53 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "deriving from the agent must pass"
   rm "$tmp/backend/app/domain/identity/handles.py"
 
-  echo "PASS: check-repo-rules self-test (8 rules, scoping and the palette ratchet verified; the --json record agrees with the exit code, reports a stale allowance, and is absent when the check did not run)"
+  # Rule 10. The environment is picked per file, so the fixture is the file's
+  # header — the one thing no other tool in the build can see, and the reason a
+  # spec that forgets the pragma still passes.
+  mkdir -p "$tmp/frontend/src/utils"
+  printf "import DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a sanitize assertion under the default environment must fail"
+  printf "// @vitest-environment jsdom\nimport DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the same assertion under jsdom must pass"
+  # It is the header vitest reads, not a mention anywhere in the file: a pragma
+  # the loader never sees is the same as not writing one.
+  printf "import DOMPurify from 'dompurify'\n\n// c\n// c\n// c\n// @vitest-environment jsdom\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a pragma below the header must still fail"
+  # And a spec that neither imports DOMPurify nor sanitizes is not this guard's
+  # business — requiring jsdom everywhere would be switched off within a week.
+  printf "import { parse } from './parse'\n\nexpect(parse('<b>x</b>')).toBe('x')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an unrelated spec must pass without a pragma"
+  rm -rf "$tmp/frontend"
+
+  # Rule 11. The fixture is the split that actually shipped: the image names its
+  # scripts one at a time, and docs/ is where a command meant for the box is
+  # written down.
+  mkdir -p "$tmp/backend/scripts" "$tmp/docs" "$tmp/deploy"
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha.py ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
+  printf 'python -m scripts.alpha --all\n' > "$tmp/docs/ops.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a script the image carries must pass"
+  printf 'python3 -m scripts.beta --all\n' > "$tmp/docs/ops.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a script the image does not carry must fail"
+  # The same file under deploy/, where release steps are written.
+  printf 'docker exec backend python -m scripts.beta\n' > "$tmp/deploy/release.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the check must read deploy/ too"
+  # `uv run` is a checkout command — the source tree is right there — so a
+  # dev-only script named that way is not a claim about the image.
+  rm "$tmp/deploy/release.md"
+  printf 'uv run python -m scripts.beta --all\n' > "$tmp/docs/ops.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a uv run command must pass"
+  rm "$tmp/docs/ops.md" "$tmp/backend/Dockerfile"
+  # No Dockerfile, nothing to compare against — inert, not red.
+  printf 'python -m scripts.beta\n' > "$tmp/docs/ops.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a tree without the image must pass"
+  rm -rf "$tmp/docs" "$tmp/deploy" "$tmp/backend/scripts"
+
+  echo "PASS: check-repo-rules self-test (10 rules, scoping and the palette ratchet verified; the --json record agrees with the exit code, reports a stale allowance, and is absent when the check did not run)"
   exit 0
 fi
 
@@ -710,4 +824,4 @@ if [ "$FAILED" = 1 ]; then
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in AGENTS.md, retired author_type name as a string, room-derived agent handle)"
+echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in AGENTS.md, retired author_type name as a string, room-derived agent handle, DOMPurify specs under jsdom, container scripts present in the image)"
