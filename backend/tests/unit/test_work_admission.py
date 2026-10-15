@@ -296,11 +296,15 @@ async def test_concurrency_gate_queues_and_announces_position(db_factory):
         db_factory,
     )
     runner, _ = _runner()
-    topic = await a_topic(db_factory)
+    # One seat each, so that what holds the second and third turns back is the
+    # project's gate: turns of one conversation queue for their seat instead,
+    # which is a wait of its own (see
+    # test_a_seat_is_taken_before_a_project_place.py).
+    first, second, third = [await a_topic(db_factory) for _ in range(3)]
 
     runner.submit(
         chat,
-        topic,
+        first,
         author="u1",
         content="第一轮",
         addressed=addressed_to_agent("cheese-seat"),
@@ -310,7 +314,7 @@ async def test_concurrency_gate_queues_and_announces_position(db_factory):
     # Second turn: gate is full → queued, with a visible system event (0 ahead).
     runner.submit(
         chat,
-        topic,
+        second,
         author="u2",
         content="第二轮",
         addressed=addressed_to_agent("cheese-seat"),
@@ -321,7 +325,7 @@ async def test_concurrency_gate_queues_and_announces_position(db_factory):
     # Third turn: one waiter already ahead of it.
     runner.submit(
         chat,
-        topic,
+        third,
         author="u3",
         content="第三轮",
         addressed=addressed_to_agent("cheese-seat"),

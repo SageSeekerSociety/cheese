@@ -1,4 +1,4 @@
-"""Admit a turn's first input under its seat's lock, after project admission."""
+"""Recheck a turn's first input on its seat, after project admission."""
 
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -67,18 +67,14 @@ async def admitted_initial(
 
     Yields True when the seat still holds an input whose outcome is not settled:
     the turn does not start, and a person's message waits for it instead.
+
+    The seat itself was taken before project admission, while this turn was on
+    its way in (``RunnerIntake._admit``), so that a turn which cannot run yet
+    never holds a place among the project's turns (#1561). The take below finds
+    this task already inside that seat and yields to it rather than waiting
+    behind itself; on any other path in, it is the take it always was.
     """
-    async with sessions() as session:
-        delivery = (
-            await session.get(Delivery, delivery_id)
-            if delivery_id is not None
-            else None
-        )
-        instance_id = (
-            delivery.agent_instance_id
-            if delivery is not None
-            else recipient_instance_id
-        )
+    instance_id = await seat_instance(sessions, delivery_id, recipient_instance_id)
     seat = await resolve_seat(
         topic_id,
         user_block_id=user_block_id,
@@ -126,6 +122,27 @@ async def admitted_initial(
                 meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
             )
         yield pending or away
+
+
+async def seat_instance(
+    sessions: async_sessionmaker[AsyncSession],
+    delivery_id: uuid.UUID | None,
+    recipient_instance_id: uuid.UUID | None,
+) -> uuid.UUID | None:
+    """Which agent instance's seat a turn serializes on: the one its delivery
+    named (a held message is addressed to an instance), the recipient's when
+    the delivery is gone or the turn came in without one.
+
+    Read by both places that have to agree on the seat — the take on the way in
+    and the recheck after project admission. They read it separately rather
+    than passing it along one of them: the second read is a delivery by primary
+    key, and what it costs is worth less than the two having one answer.
+    """
+    if delivery_id is None:
+        return recipient_instance_id
+    async with sessions() as session:
+        delivery = await session.get(Delivery, delivery_id)
+    return delivery.agent_instance_id if delivery is not None else recipient_instance_id
 
 
 async def _tell_once(session, block_id) -> bool:

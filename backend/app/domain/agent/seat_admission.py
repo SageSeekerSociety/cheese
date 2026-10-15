@@ -1,7 +1,7 @@
 """Serialize prompt preparation and live offers on the same recipient seat."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
@@ -18,16 +18,27 @@ _owner: ContextVar[tuple[Lease | asyncio.Lock, asyncio.Task[object] | None] | No
 
 
 @asynccontextmanager
-async def seat_admission(lease: Lease | asyncio.Lock) -> AsyncIterator[None]:
+async def seat_admission(
+    lease: Lease | asyncio.Lock,
+    on_queued: Callable[[], Awaitable[object]] | None = None,
+) -> AsyncIterator[None]:
     """Hold ``lease`` for the seat, re-entrant within one task.
 
-    A bare ``asyncio.Lock`` is still taken: it is what a double for "this seat
-    is never really taken" hands over, and nothing about admission needs the
-    cross-process half to be there."""
+    ``on_queued`` is told once, before the wait, when the seat this take wants
+    is held by another turn — in this process or in another one. A turn that
+    waits for a seat says so in its own room, the way one that waits for a
+    place among the project's turns does: the wait is otherwise what a person
+    reads as nothing happening.
+
+    A bare ``asyncio.Lock`` is still taken and is never told about: it is what
+    a double for "this seat is never really taken" hands over, and nothing
+    about admission needs the cross-process half to be there."""
     task = asyncio.current_task()
     if _owner.get() == (lease, task):
         yield
         return
+    if on_queued is not None and isinstance(lease, Lease) and await lease.taken():
+        await on_queued()
     async with lease:
         token = _owner.set((lease, task))
         try:
