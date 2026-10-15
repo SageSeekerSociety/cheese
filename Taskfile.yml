@@ -140,6 +140,22 @@ tasks:
     cmds:
       - python3 .github/scripts/ci-fast.py --tier quick {{.CLI_ARGS}}
 
+  # The inner loop, next to the editor: the same selection as ci:fast and no
+  # hooks, so the run is bounded by the tests instead of by the pre-commit
+  # budget. Meant to be run between edits, `task ci:fast` before the push.
+  test:changed:
+    desc: Only the backend/frontend tests this change reaches (no hooks)
+    cmds:
+      - python3 .claude/scripts/test-changed.py {{.CLI_ARGS}}
+
+  # Proves a regression test can fail: it must go red with the implementation
+  # reverted and green with it back. --auto reads the new/changed tests off the
+  # branch's merge diff, which is the manual step this replaces.
+  test:prove:
+    desc: Prove the branch's new tests fail without their implementation change
+    cmds:
+      - python3 .claude/scripts/prove-regression.py --auto {{.CLI_ARGS}}
+
   infra:
     desc: Start infrastructure services (PG, Valkey)
     cmds:
