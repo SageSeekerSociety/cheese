@@ -179,7 +179,11 @@ async def list_file_revisions(
     clean = clean_artifact_path(path)
     rows = await room_files.list_revisions(db, place.room_id, clean)
     current = await asyncio.to_thread(
-        room_files.current_version, place.project_id, place.room_id, clean
+        room_files.current_version,
+        place.project_id,
+        place.room_id,
+        clean,
+        file_store=library,
     )
     items = [room_files.revision_out(r) for r in rows]
     return ok({**page(items, len(items)), "path": clean, "version": current})
@@ -194,7 +198,7 @@ async def file_revision_raw(
 ) -> Response:
     place, _ = await _in_room(db, resolver, topic_id)
     row = await room_files.revision_or_404(db, place.room_id, revision_id)
-    data = await asyncio.to_thread(room_files.revision_bytes, row)
+    data = await asyncio.to_thread(room_files.revision_bytes, row, file_store=library)
     stem, dot, ext = row.path.rsplit("/", 1)[-1].rpartition(".")
     name = f"{stem}（第{row.seq}版）{dot}{ext}" if dot else f"{ext}（第{row.seq}版）"
     return _bytes_response(data, name, row.sha256[:16])
@@ -217,6 +221,7 @@ async def restore_file_revision(
         by=actor.handle,
         author_kind=author_kind(actor),
         warm_preview=office.prewarm,
+        file_store=library,
     )
     await db.commit()
     return ok(room_files.revision_out(made))
@@ -259,6 +264,7 @@ async def copy_into_room(
         source="upload",
         note=f"从 {source} 复制",
         warm_preview=office.prewarm,
+        file_store=library,
     )
     shown = await add_shown_block(
         db,
@@ -323,6 +329,7 @@ async def new_from_template(
         source="template",
         note=f"从「{template.name}」模板新建",
         warm_preview=office.prewarm,
+        file_store=library,
     )
     shown = await add_shown_block(
         db,
@@ -361,7 +368,11 @@ async def open_in_editor(
     if library.library_name(clean) is not None:
         return ok({"enabled": False, "reason": "library_original", "copyable": True})
     version = await asyncio.to_thread(
-        room_files.current_version, place.project_id, place.room_id, clean
+        room_files.current_version,
+        place.project_id,
+        place.room_id,
+        clean,
+        file_store=library,
     )
     if version is None:
         raise NotFoundError(say("roomFileNotFound"))
@@ -457,6 +468,7 @@ async def editor_saves_file(
             base_version=target.version,
             editor_key=target.key,
             warm_preview=office.prewarm,
+            file_store=library,
         )
     except UnprocessableEntityError as exc:
         # Over the ceiling: a refusal, and the editor has to hear why. Left to
@@ -487,6 +499,7 @@ async def editor_saves_file(
                 note=f"保存时 {target.path} 已被别人改过，这一份另存在这里",
                 editor_key=target.key,
                 warm_preview=office.prewarm,
+                file_store=library,
             )
         except UnprocessableEntityError as exc:
             # Same ceiling, same answer — the copy beside it is a file too.

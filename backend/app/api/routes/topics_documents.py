@@ -13,8 +13,10 @@ tracked changes in a `.docx` are listed (`GET .../documents/revisions`) and
 decided (`POST .../documents/revisions`) without Word.
 
 Where the shared names went. The names these four routes read from topics.py now
-have homes of their own: `clean_artifact_path` and `MAX_ARTIFACT_BYTES` are the
-room-file rules in `app.domain.project.room_files`, `source_bytes` is the API
+have homes of their own: `clean_artifact_path` is a room-file rule in
+`app.domain.project.room_files`, the ceiling it is read against is
+`library.service.MAX_ARTIFACT_BYTES` (written down once, where the bytes land),
+`source_bytes` is the API
 read-orchestration helper in `app.api.topics_file_sources`, and the binding
 check became `TaskService.require_source_in_room`. `_actor_in_place`
 is still imported from topics.py; `DbSession` comes from `app.api.request_deps`.
@@ -77,7 +79,7 @@ from app.domain.documents.spreadsheet import (
 from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project import room_files
-from app.domain.project.room_files import MAX_ARTIFACT_BYTES, clean_artifact_path
+from app.domain.project.room_files import clean_artifact_path
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
@@ -269,6 +271,7 @@ async def decide_document_revisions(
             note="处理修订",
             base_version=expected,
             warm_preview=office.prewarm,
+            file_store=library,
         )
     return ok(
         {
@@ -309,8 +312,8 @@ def _document_bytes(
             raise ValidationError(say("contentB64Invalid")) from exc
     else:
         raw = library.read_room_file(project_id, topic_id, path)
-    if len(raw) > MAX_ARTIFACT_BYTES:
+    if len(raw) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
-            say("fileOverLimit", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+            say("fileOverLimit", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
         )
     return raw

@@ -21,12 +21,25 @@
 
 房间里的文件从哪来、叫什么算合法，是这一组规则，而不是某一条路由的内部：
 `ARTIFACT_MIME` 说一种渲染类型对应哪个 mime，`artifact_kind_for` 从扩展名推类型，
-`clean_artifact_path` 拦住越界路径，`MAX_ARTIFACT_BYTES` 是它们共用的上限。
+`clean_artifact_path` 拦住越界路径；它们共用的那个上限跟着落地的字节走，在
+``library.service.MAX_ARTIFACT_BYTES`` 那边，这里不再写第二遍。
 
 规则和来源分开：**规则**（这里）是纯函数和常量，谁读都行、不需要 session；**来源**
 （字节从哪个仓库读出来 —— 房间自己的、某个任务分支的、资料库的）认 `db` 和
 项目/房间/任务的寻址方式，是 API 侧的读编排，留在 `app/api/routes` 那边。两边读同
 一份 `clean_artifact_path`，路径合法与否只有一个答案。
+
+## 字节放在哪儿
+
+本包读写的那几份字节 —— 房间里的文件、它每一版的历史、交出去那一版留存的快照 ——
+都是资料库的事：落地的在 `app/domain/library/service.py`，那几行记录在
+`app/domain/library/records.py` 里，两个都在本包上面两层。所以两件事都**由调用方
+递进来**：``FileStore`` 收读写字节的每一次调用，``LibraryFiles`` 收「留一份进资料
+库」和「导出时把库里的字节搬出来」。
+
+地址由本包给出（项目、房间、路径、卡），交回的都是内置类型：本包认不出也不该认得
+资料库那几行，也认不出字节存在哪张盘上。所以调用方把那两个模块本身递进来即可，
+不需要适配（`ports.py` 里写明为什么形状正好对得上）。
 """
 
 import asyncio
@@ -39,8 +52,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.library import records as library_records
-from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_LIBRARY_SAVED,
     SEVERITY_INFO,
@@ -48,7 +59,12 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.project.models import RoomFileRevision
-from app.domain.project.ports import Announce, WarmPreview
+from app.domain.project.ports import (
+    Announce,
+    FileStore,
+    LibraryFiles,
+    WarmPreview,
+)
 from app.domain.textfile import content_version
 
 #: Which door a revision's bytes came in by.
@@ -64,12 +80,15 @@ async def save_to_library(
     by: str,
     said_in: uuid.UUID | None = None,
     announce: Announce,
+    file_store: FileStore,
+    library_files: LibraryFiles,
 ) -> str:
     """把房间里的一份文件留进资料库，返回它在那里的名字。``said_in`` 是按下保存
     的那段对话（任务或支线）；在那里说一声，不在主线。
 
-    说那一句的 `announce` 是递进来的：本包在第 2 层、`agent.announce` 在第 5 层
-    （`ports.py`）。
+    三样都是递进来的：``file_store`` 读出房间里的那份字节、``library_files`` 把它
+    留进资料库（都在 `library` 里，比本包高两层），说那一句的 `announce` 在
+    `agent.announce`（第 5 层，`ports.py`）。
 
     撞名不覆盖，跟着资料库自己的规矩走：两次保存就是两份，各自留着 —— 谁也说不准
     第二份是第一份的新版，还是另一样同名的东西。
@@ -77,8 +96,8 @@ async def save_to_library(
     leaf = PurePosixPath(path).name
     if not leaf:
         raise ValidationError(say("notARoomFile"))
-    data = await asyncio.to_thread(library.read_room_file, project_id, room_id, path)
-    name = await library_records.add(
+    data = await asyncio.to_thread(file_store.read_room_file, project_id, room_id, path)
+    name = await library_files.add(
         session,
         project_id=project_id,
         filename=leaf,
@@ -102,11 +121,13 @@ async def save_to_library(
     return name
 
 
-def current_version(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> str | None:
+def current_version(
+    project_id: uuid.UUID, room_id: uuid.UUID, path: str, *, file_store: FileStore
+) -> str | None:
     """The version a reader holds: the content hash, or None when there is no file."""
-    if not library.room_file_exists(project_id, room_id, path):
+    if not file_store.room_file_exists(project_id, room_id, path):
         return None
-    return content_version(library.read_room_file(project_id, room_id, path))
+    return content_version(file_store.read_room_file(project_id, room_id, path))
 
 
 async def save_room_file(
@@ -123,6 +144,7 @@ async def save_room_file(
     base_version: str | None = None,
     editor_key: str | None = None,
     warm_preview: WarmPreview,
+    file_store: FileStore,
 ) -> RoomFileRevision:
     """Write a room file and keep the state it replaces restorable.
 
@@ -144,10 +166,10 @@ async def save_room_file(
         {"key": f"room-file:{room_id}:{path}"},
     )
     existing = await asyncio.to_thread(
-        library.room_file_exists, project_id, room_id, path
+        file_store.room_file_exists, project_id, room_id, path
     )
     before = (
-        await asyncio.to_thread(library.read_room_file, project_id, room_id, path)
+        await asyncio.to_thread(file_store.read_room_file, project_id, room_id, path)
         if existing
         else None
     )
@@ -173,7 +195,11 @@ async def save_room_file(
     # earlier state is not recorded — the save itself still goes through (its
     # own bytes face the gate like any other). Failing here instead would leave
     # such a file impossible to save at all: every attempt would hit this first.
-    if latest is None and before is not None and len(before) <= library.MAX_FILE_BYTES:
+    if (
+        latest is None
+        and before is not None
+        and len(before) <= file_store.MAX_FILE_BYTES
+    ):
         latest = await _record(
             session,
             project_id=project_id,
@@ -187,10 +213,11 @@ async def save_room_file(
             note=None,
             editor_key=None,
             warm_preview=warm_preview,
+            file_store=file_store,
         )
     if before is not None and before == data and latest is not None:
         return latest
-    await asyncio.to_thread(library.write_room_file, project_id, room_id, path, data)
+    await asyncio.to_thread(file_store.write_room_file, project_id, room_id, path, data)
     return await _record(
         session,
         project_id=project_id,
@@ -204,6 +231,7 @@ async def save_room_file(
         note=(note or "").strip() or None,
         editor_key=editor_key,
         warm_preview=warm_preview,
+        file_store=file_store,
     )
 
 
@@ -258,9 +286,10 @@ async def _record(
     note: str | None,
     editor_key: str | None,
     warm_preview: WarmPreview,
+    file_store: FileStore,
 ) -> RoomFileRevision:
     digest = await asyncio.to_thread(
-        library.write_revision_blob, project_id, room_id, data
+        file_store.write_revision_blob, project_id, room_id, data
     )
     row = RoomFileRevision(
         project_id=project_id,
@@ -334,8 +363,8 @@ async def revision_or_404(
     return row
 
 
-def revision_bytes(row: RoomFileRevision) -> bytes:
-    return library.read_revision_blob(row.project_id, row.room_id, row.sha256)
+def revision_bytes(row: RoomFileRevision, *, file_store: FileStore) -> bytes:
+    return file_store.read_revision_blob(row.project_id, row.room_id, row.sha256)
 
 
 async def restore_revision(
@@ -345,6 +374,7 @@ async def restore_revision(
     by: str,
     author_kind: str,
     warm_preview: WarmPreview,
+    file_store: FileStore,
 ) -> RoomFileRevision:
     """Put an earlier state back as the file's newest one.
 
@@ -352,7 +382,7 @@ async def restore_revision(
     replaced stays one click away too. A delivered version lives in the accept
     card's own snapshot and is not reachable from here at all.
     """
-    data = await asyncio.to_thread(revision_bytes, row)
+    data = await asyncio.to_thread(revision_bytes, row, file_store=file_store)
     return await save_room_file(
         session,
         project_id=row.project_id,
@@ -364,6 +394,7 @@ async def restore_revision(
         source="restore",
         note=f"恢复到第 {row.seq} 版",
         warm_preview=warm_preview,
+        file_store=file_store,
     )
 
 
@@ -436,13 +467,6 @@ _ARTIFACT_KIND_BY_SUFFIX = {
     ".gif": "gif",
     ".webp": "webp",
 }
-
-#: Ceiling on a published artifact, matching the chat attachment limit —
-#: both are "a file a person will open in this room", and a report that is too
-#: big to send as an attachment is too big to publish as a deliverable. The
-#: number itself lives with the layer that lands the bytes
-#: (``library.MAX_FILE_BYTES``), together with the attachment and library caps.
-MAX_ARTIFACT_BYTES = library.MAX_FILE_BYTES
 
 
 def artifact_kind_for(path: str) -> str:

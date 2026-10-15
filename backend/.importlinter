@@ -452,6 +452,30 @@ unmatched_ignore_imports_alerting = warn
 # configured) is already exactly what `project.ports.WarmPreview` asks for. The
 # eight route call sites hand the function itself in, next to the bytes they are
 # saving — 谁调用谁给, the `webhook/ports.py` `Poster` shape.
+#
+# `project -> library` came off the same way one step later (2026-10-15), and it
+# needed two ports because `project` asks the layer-4 `library` two unrelated
+# things. Saving, reading back, versioning and snapshotting a room file's bytes
+# are address lookups on disk: `project.ports.FileStore` declares them and
+# `app/domain/library/service.py` already answers every one, so the routes hand
+# the module itself in — `integration.ports.RoomFiles` again, right down to the
+# constant (`MAX_FILE_BYTES`, half of the pair the routes read as
+# `MAX_ARTIFACT_BYTES`; that name now lives in `library.service` beside the
+# number it is, instead of in `project.room_files` pointing at it).
+# `project.ports.LibraryFiles` is the other half — keeping a file in the
+# project's 资料库 (`records.add`) and listing its blobs for the export archive
+# (`records.stored`, plus a one-line `records.read_blob` so a caller does not
+# have to know that bytes are addressed by `(location, key)`). `records.add`'s
+# `data` is narrowed from `service.Content` to `bytes` in the port: it does not
+# change a call, and it keeps `BinaryIO` from leaking into a layer-2 signature.
+#
+# Only the six *imports* left; the two packages keep their rows. `library` could
+# not sink — `records._follow_references` (it rewrites `<&library/…>` chips and
+# attachment block contents when a file is renamed) and `listing` both read
+# `block.models` — and the artifact *rules* stayed in `project.room_files`
+# because they are pure functions over a path, not over bytes:
+# `ARTIFACT_MIME`, `artifact_kind_for`, `clean_artifact_path`. That ceiling
+# alone moved, because a ceiling is the number the landing layer writes down.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =

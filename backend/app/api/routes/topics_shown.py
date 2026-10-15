@@ -13,9 +13,12 @@ of them in the project's 资料库), plus the two names only these three read --
 `_reject_unreachable_app` and `_PREVIEW_ATTACH_WAIT_S`, the grace window it gives a
 machine's tunnel.
 
-Where the shared names went. The four room-file rules -- `ARTIFACT_MIME`,
-`MAX_ARTIFACT_BYTES`, `artifact_kind_for` and `clean_artifact_path` -- now live in
-`app.domain.project.room_files`, their own group there, and `record_shown` became
+Where the shared names went. Three of the four room-file rules -- `ARTIFACT_MIME`,
+`artifact_kind_for` and `clean_artifact_path` -- live in
+`app.domain.project.room_files`, their own group there; the ceiling they are read
+against, `library.MAX_ARTIFACT_BYTES`, lives with the bytes in
+`app.domain.library.service`, where the number is written down once (the project
+package hands that module in rather than importing it). `record_shown` became
 `add_shown_block` in `app.domain.block.shown` (it writes the block; the broadcast
 stays with each caller, so a caller keeps its own order and its own commit). The
 source read (`_source_bytes`) and the binding check (`_bind_source_task`) went to
@@ -67,11 +70,12 @@ from app.domain.agent.announce import announce
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.shown import add_shown_block, repeat_of_latest_shown
+from app.domain.library import records as library_records
+from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import (
     ARTIFACT_MIME,
-    MAX_ARTIFACT_BYTES,
     artifact_kind_for,
     clean_artifact_path,
 )
@@ -118,9 +122,9 @@ def _page_assets(body: dict, entry: str) -> list[tuple[str, bytes]]:
             data = base64.b64decode(item["content_b64"], validate=True)
         except (ValueError, binascii.Error) as exc:
             raise UnprocessableEntityError(say("contentB64Invalid")) from exc
-        if len(data) > MAX_ARTIFACT_BYTES:
+        if len(data) > library.MAX_ARTIFACT_BYTES:
             raise UnprocessableEntityError(
-                say("artifactTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+                say("artifactTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
         assets.append((path, data))
     return assets
@@ -229,9 +233,9 @@ async def show_in_room(
             if not isinstance(content, str):
                 raise ValidationError(say("contentMustBeText"))
             raw = content.encode()
-        if len(raw) > MAX_ARTIFACT_BYTES:
+        if len(raw) > library.MAX_ARTIFACT_BYTES:
             raise ValidationError(
-                say("artifactTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+                say("artifactTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
         assets = _page_assets(body, path)
     if as_ != "app" and ("content" in body or "content_b64" in body):
@@ -252,6 +256,7 @@ async def show_in_room(
             note=note if isinstance(note, str) else None,
             base_version=base if isinstance(base, str) and base else None,
             warm_preview=office.prewarm,
+            file_store=library,
         )
         saved_at = revision.created_at
         for asset_path, data in assets:
@@ -268,6 +273,7 @@ async def show_in_room(
                 author_kind="agent" if actor.via == "cheese" else "human",
                 source="ai" if actor.via == "cheese" else "upload",
                 warm_preview=office.prewarm,
+                file_store=library,
             )
             saved_at = max(saved_at, asset.created_at)
     if saved_at is not None:
@@ -348,6 +354,8 @@ async def save_shown_to_library(
         by=actor.handle,
         said_in=place.inner_id,
         announce=announce,
+        file_store=library,
+        library_files=library_records,
     )
     await db.commit()
     return ok({"name": name})

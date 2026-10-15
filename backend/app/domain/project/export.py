@@ -28,12 +28,10 @@ from app.core.errors import (
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_rooms, room_column
 from app.domain.identity.actor import Actor
-from app.domain.library import blobs
-from app.domain.library import records as library_records
-from app.domain.library.service import artifact_snapshot_path
 from app.domain.living_doc.services import Documents
 from app.domain.project import artifacts, forge
 from app.domain.project.models import Project
+from app.domain.project.ports import FileStore, LibraryFiles
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
 
@@ -201,7 +199,17 @@ async def create_archive(
     db: AsyncSession,
     actor: Actor,
     readability: TopicReadability,
+    *,
+    file_store: FileStore,
+    library_files: LibraryFiles,
 ) -> tuple[Path, Path]:
+    """把这个项目读得出来的东西打成一个压缩包，交回 ``(内容, 压缩包)`` 两条路径。
+
+    ``file_store`` 和 ``library_files`` 是递进来的：一版交付物留存下来的那份字节在
+    哪儿、这个项目的资料库里都有哪些文件，都是第 4 层 `library` 的事，本包够不着
+    （`ports.py`）。两样都要，是因为搬字节分两段：路径在事务里定下来（
+    ``artifact_snapshot_path`` / ``stored``），字节在事务结束之后、git 那句之后才读。
+    """
     topics = list(await db.scalars(select(Topic).where(Topic.project_id == project_id)))
     readable = await readability.readable_topic_ids(
         actor, project_id=project_id, topics=topics
@@ -310,7 +318,7 @@ async def create_archive(
                     "An artifact file has no retained filename"
                 )
             if version["kind"] == "file" and version["filename"]:
-                source = artifact_snapshot_path(
+                source = file_store.artifact_snapshot_path(
                     project_id, version["card_id"], version["filename"]
                 )
                 dest = f"artifacts/{artifact.id}/{version['card_id']}/{source.name}"
@@ -319,7 +327,7 @@ async def create_archive(
             else:
                 version["offline_bytes"] = False
         catalog.append(row)
-    library_files = await library_records.stored(db, project_id)
+    stored_files = await library_files.stored(db, project_id)
     # All database reads end before credential renewal or Git I/O.
     await db.commit()
     workspace = Path(settings.workspace_root)
@@ -356,10 +364,10 @@ async def create_archive(
             )
         else:
             manifest["repository"] = {"status": "not_configured"}
-        manifest["library"] = {"files": len(library_files)}
-        for name, location, key in library_files:
+        manifest["library"] = {"files": len(stored_files)}
+        for name, location, key in stored_files:
             try:
-                data = await run_sync(blobs.store(location).get, key)
+                data = await run_sync(library_files.read_blob, location, key)
             except NotFoundError as exc:
                 raise UpstreamUnavailableError(
                     "A library file is missing; no archive was returned"
