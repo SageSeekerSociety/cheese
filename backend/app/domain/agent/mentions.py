@@ -529,7 +529,7 @@ async def announce_comment_mentions(
     if await IdentityService(session).is_agent(author):
         return CommentMentions([], None)
     members = TopicMemberService(session)
-    people = set(await members.project_people(doc.project_id))
+    people = set(await members.project_people(doc.project_id, team=project_team))
     named = [
         h
         for h in dict.fromkeys(_MENTION_RE.findall(comment.content or ""))
@@ -543,7 +543,8 @@ async def announce_comment_mentions(
         targets = await members.reached(room, named)
         # Only whoever the comment could not tell: in a public channel someone
         # not in it still opens the document and is told.
-        away = [h for h in await members.outside(room, named) if h not in targets]
+        outsiders = await members.outside(room, named, team=project_team)
+        away = [h for h in outsiders if h not in targets]
         if away:
             outside = MentionedOutside(
                 room_id=room.id,
@@ -552,7 +553,7 @@ async def announce_comment_mentions(
                 members_only=room.members_only,
             )
     if targets:
-        roster = await roster_rows(session, doc.project_id)
+        roster = await roster_rows(session, doc.project_id, team=project_team)
         who = next(
             (r["name"] for r in roster if r.get("handle") == author and r.get("name")),
             author,

@@ -38,6 +38,7 @@ from app.domain.agent.mentions import (
 )
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.agent_instance.adapters import project_team
 from app.domain.living_doc import collab
 from app.domain.living_doc.comment_schemas import CommentIn, ReplyIn, ThreadMutation
 from app.domain.living_doc.comments import CommentThreads, comment_out
@@ -110,6 +111,7 @@ async def _as_stored(db, reached: Reached, content: str) -> str:
         db,
         reached.doc.project_id,
         content,
+        team=project_team,
         exclude_topic_id=reached.place.room_id if reached.place else None,
     )
 
