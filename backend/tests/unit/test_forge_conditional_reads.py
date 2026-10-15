@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app.core import forge_quota
-from app.domain.agent.github_app import GitHubAppTokens
+from app.domain.project.github_app import GitHubAppTokens
 from app.domain.review.github_pr import HttpxGitHubPrClient
 
 INSTALLATION = 152342238

@@ -14,11 +14,14 @@ have to be able to open an HTTP call. A facade that imported the hub, while the
 hub picks its own facade at import time, is a cycle (``.importlinter``, C3).
 
 ``device_hub`` re-exports everything here, so importing a failure from there —
-where it was written down before — keeps working. The three failures clients
-answer with (``DeviceOffline``, ``LinkInterrupted``, ``DeviceCallError``) and
-``offline_headers`` are re-exported FROM ``app/core/device_failures.py``: what
-answers with them is the error tree, and the error tree is core, so the word a
-domain and core both need has to be owned below both (``.importlinter``, C1).
+where it was written down before — keeps working. The four failures clients
+answer with (``DeviceOffline``, ``LinkInterrupted``, ``DeviceCallError``,
+``DeviceNotReady``) and ``offline_headers`` are re-exported FROM
+``app/core/device_failures.py``: what answers with them is the error tree, and
+the error tree is core, so the word a domain and core both need has to be owned
+below both (``.importlinter``, C1). That a caller below this layer — the
+repository reads a task's unfinished files off a machine — has to catch one of
+them is the same argument from the other side.
 """
 
 import uuid
@@ -27,6 +30,7 @@ from typing import Protocol
 
 from app.core.device_failures import (
     DeviceCallError,
+    DeviceNotReady,
     DeviceOffline,
     LinkInterrupted,
     offline_headers,
@@ -56,19 +60,6 @@ class DeviceUnreachable(DeviceOffline):
 
     所以只有这一档能被记成 ``failed``「确定没发生」（``agent/dispatch_log.py``）。
     一个子类，因为除此之外它和链路不在是同一件事：所有 ``except DeviceOffline`` 照旧。
-    """
-
-
-class DeviceNotReady(DeviceCallError):
-    """The link is up, but this machine cannot serve calls yet.
-
-    A connector that has just dialled in finishes updating itself before it can
-    run anything, and a call that arrives in that window has nothing to reach.
-    It is the same standing as the machine being away — the caller's next poll,
-    a second or two later, finds it ready — but as a bare RuntimeError it was an
-    unhandled 500 and one alert per release: 「Device connector must finish
-    updating before execution」 arrived that way at 01:47 UTC on 2026-09-20,
-    seconds after the owner was replaced and the fleet re-attached.
     """
 
 

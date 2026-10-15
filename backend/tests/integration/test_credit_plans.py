@@ -10,7 +10,7 @@ import pytest
 
 from app.core.config import settings
 from tests.conftest import seed_user
-from tests.integration.conftest import post_project
+from tests.integration.conftest import post_project, project_service
 
 ADMIN = "cp-admin"
 
@@ -351,13 +351,12 @@ def test_a_teams_earmarked_credits_name_their_task_and_project(client, admin):
     task_id = seed_task_with_protocol(client, resource_pack={"compute_credits": 300})
 
     async def earmark() -> tuple[int, str]:
-        from app.domain.project.services import ProjectService
         from app.domain.usage.ledger import Ledger
         from tests.integration.conftest import registered
 
         async with client.test_factory() as session:  # type: ignore[attr-defined]
             await registered(session, "cp-owner")
-            project = await ProjectService(session).create(
+            project = await project_service(session).create(
                 name="赛题项目", owner_handle="cp-owner"
             )
             await Ledger(session).grant_earmark(

@@ -24,6 +24,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.executor_transport import RemoteClient
 from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
+from app.domain.agent_instance.services import type_of_seat
 from app.domain.remote_mcp import service
 from tests.integration import test_remote_mcp as base
 from tests.support.room_machine import room_machine
@@ -78,7 +79,9 @@ def _target(client, pid, tid, tmp_path) -> Path:
     async def compose():
         async with client.test_factory() as session:
             # The project default's session: no type of its own.
-            return await service.session_target(session, pid, tid, None)
+            return await service.session_target(
+                session, pid, tid, None, type_of_seat=type_of_seat
+            )
 
     remote = asyncio.run(compose())
     target = {

@@ -11,12 +11,16 @@ import os
 import subprocess
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from app.domain.agent import device_hub as hub_module
+from app.domain.agent.checkout_sweep import sweep
+from app.domain.agent.models import AgentTurn
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.room_task.checkouts import remove_closed_checkouts
@@ -166,7 +170,7 @@ async def _close(client, room, tasks: list[uuid.UUID]) -> None:
         for task in tasks:
             row = await db.get(Task, task)
             assert row is not None
-            await close_task(db, row, None)
+            await close_task(db, row, None, machines=sweep)
         await db.commit()
 
 
@@ -224,7 +228,9 @@ async def test_a_machine_offline_at_close_is_swept_when_it_connects(
     assert left.exists()
 
     hub = _hub(monkeypatch, room.machines, online={"a", "b"})
-    counts = await remove_closed_checkouts(client.test_factory, device_id="b")
+    counts = await remove_closed_checkouts(
+        client.test_factory, device_id="b", machines=sweep
+    )
 
     assert hub.ran == ["b"]
     assert counts == {"removed": 1, "kept": 0}
@@ -237,7 +243,9 @@ async def test_open_tasks_are_never_named(client, tmp_path, monkeypatch):
     path = room.machines["a"].checkout(task, push=True)
     hub = _hub(monkeypatch, room.machines, online={"a"})
 
-    counts = await remove_closed_checkouts(client.test_factory, device_id="a")
+    counts = await remove_closed_checkouts(
+        client.test_factory, device_id="a", machines=sweep
+    )
 
     assert counts == {"removed": 0, "kept": 0}
     assert hub.ran == []
@@ -263,8 +271,50 @@ async def test_a_room_with_more_closed_tasks_than_a_command_line_holds_is_swept(
     last = room.machines["a"].checkout(tasks[-1], push=True)
     hub = _hub(monkeypatch, room.machines, online={"a"})
 
-    counts = await remove_closed_checkouts(client.test_factory, device_id="a")
+    counts = await remove_closed_checkouts(
+        client.test_factory, device_id="a", machines=sweep
+    )
 
     assert counts == {"removed": 1, "kept": 0}
     assert not last.exists()
     assert len(hub.ran) > 1
+
+
+async def test_a_write_up_ending_takes_its_tasks_checkout_along(
+    client, tmp_path, monkeypatch
+):
+    """The route most closes take is a turn ending, not `close_task`: the
+    write-up's interval stops and the task closes behind it. The repository is
+    built the way its callers build it — without naming a sweep — so the sweep
+    has to be the one its own package supplies, or the room's closed checkout
+    stays on the machine."""
+    room = await _room(client, tmp_path)
+    machine = room.machines["a"]
+    (task,) = await _tasks(client, room, 1)
+    path = machine.checkout(task, push=True)
+    hub = _hub(monkeypatch, room.machines, online={"a"})
+
+    async with client.test_factory() as db:
+        row = await db.get(Task, task)
+        assert row is not None
+        # Waiting for its write-up: what a task is once its last step landed.
+        row.closing_since = datetime.now(UTC)
+        turn = uuid.uuid4()
+        db.add(
+            AgentTurn(
+                id=turn,
+                continuation_id=turn,
+                conversation_id=task,
+                author="alice",
+                content="写一下总结",
+                started_at=datetime.now(UTC),
+                delivered_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+        await AgentTurnRepository(db).close([turn], datetime.now(UTC))
+        await db.commit()
+
+    await _until(lambda: hub.ran == ["a"])
+    assert not path.exists()
+    assert str(path) not in git(machine.cache, "worktree", "list")

@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.errors import ValidationError
+from app.domain.agent.announce import announce
 from app.domain.block.models import Block
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery
@@ -21,6 +22,7 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
+from tests.support.review_ports import pumping, record_task_instruction
 
 
 async def seed(factory, *, delivered):
@@ -78,8 +80,12 @@ async def test_dependency_notice_is_durable_and_deduplicated(
         await session.commit()
     forge = AsyncMock()
     monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=forge))
-    await retarget_completed_dependencies(db_factory)
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     async with db_factory() as session:
         saved = await session.get(Task, child.id)
         blocks = list(await session.scalars(select(Block)))
@@ -103,10 +109,14 @@ async def test_failed_retarget_retries_before_announcing(db_factory, monkeypatch
     forge = AsyncMock()
     forge.update_pr.side_effect = [RuntimeError("offline"), {}]
     monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=forge))
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     async with db_factory() as session:
         assert list(await session.scalars(select(Block))) == []
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     async with db_factory() as session:
         assert len(list(await session.scalars(select(Block)))) == 1
 
@@ -147,7 +157,9 @@ async def test_detached_parent_preserves_ancestor_review_for_descendants(
         session.add(descendant)
         await session.commit()
     monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock())
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     for completed, notified in ((child, grandchild), (grandchild, descendant)):
         async with db_factory() as session:
             saved = await session.get(Task, completed.id)
@@ -157,8 +169,12 @@ async def test_detached_parent_preserves_ancestor_review_for_descendants(
             saved.closed_at = datetime.now(UTC)
             saved.delivered_head = "b" * 40
             await session.commit()
-        await retarget_completed_dependencies(db_factory)
-        await retarget_completed_dependencies(db_factory)
+        await retarget_completed_dependencies(
+            db_factory, announce=announce, record_instruction=record_task_instruction
+        )
+        await retarget_completed_dependencies(
+            db_factory, announce=announce, record_instruction=record_task_instruction
+        )
         async with db_factory() as session:
             notices = list(
                 await session.scalars(
@@ -209,8 +225,12 @@ async def test_dependency_notice_preserves_only_current_rejection(
         )
         session.add(current)
         await session.commit()
-    await retarget_completed_dependencies(db_factory)
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     async with db_factory() as session:
         blocks = list(await session.scalars(select(Block)))
         if parent_open and latest_status == AcceptStatus.pending:
@@ -262,8 +282,12 @@ async def test_rejected_dependency_can_later_deliver(db_factory, monkeypatch):
         await session.commit()
     forge = AsyncMock()
     monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=forge))
-    await retarget_completed_dependencies(db_factory)
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     forge.update_pr.assert_not_awaited()
     async with db_factory() as session:
         saved_child = await session.get(Task, child.id)
@@ -278,8 +302,12 @@ async def test_rejected_dependency_can_later_deliver(db_factory, monkeypatch):
         saved_parent.closed_at = datetime.now(UTC)
         saved_parent.delivered_head = "a" * 40
         await session.commit()
-    await retarget_completed_dependencies(db_factory)
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     forge.update_pr.assert_awaited_once_with(2, base="main")
     async with db_factory() as session:
         blocks = list(await session.scalars(select(Block).order_by(Block.created_at)))
@@ -291,15 +319,21 @@ async def test_rejected_dependency_can_later_deliver(db_factory, monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_notification_failure_rolls_back_the_dedup_key(db_factory, monkeypatch):
-    from app.domain.agent.announce import announce
+async def test_notification_failure_rolls_back_the_dedup_key(db_factory):
+    """一句话没说出来，那个「已经说过」的记号也不能留下。
 
+    递进来的是值，不是模块属性：换一句话就是换一个 `announce`，没有别的口子
+    可以把它替换掉（这一步之前是 `monkeypatch.setattr` 打到
+    `app.domain.agent.announce.announce` 上）。
+    """
     await seed(db_factory, delivered=False)
     failing = AsyncMock(side_effect=RuntimeError("write failed"))
-    monkeypatch.setattr("app.domain.agent.announce.announce", failing)
-    await retarget_completed_dependencies(db_factory)
-    monkeypatch.setattr("app.domain.agent.announce.announce", announce)
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=failing, record_instruction=record_task_instruction
+    )
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     async with db_factory() as session:
         assert len(list(await session.scalars(select(Block)))) == 1
 
@@ -310,8 +344,12 @@ async def test_concurrent_scans_persist_one_notice(db_factory):
 
     await seed(db_factory, delivered=False)
     await asyncio.gather(
-        retarget_completed_dependencies(db_factory),
-        retarget_completed_dependencies(db_factory),
+        retarget_completed_dependencies(
+            db_factory, announce=announce, record_instruction=record_task_instruction
+        ),
+        retarget_completed_dependencies(
+            db_factory, announce=announce, record_instruction=record_task_instruction
+        ),
     )
     async with db_factory() as session:
         assert len(list(await session.scalars(select(Block)))) == 1
@@ -350,21 +388,22 @@ async def test_dependency_notice_reaches_the_task_and_recovers_only_unsent_claim
 
     parent, child = await seed(db_factory, delivered=False)
     await assign_parent(db_factory, child.id)
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     runner = Mock()
     chat = SimpleNamespace(session_factory=db_factory, work_runner=runner)
-    await pr_poll.deliver_dependency_notices(chat)
+    await pr_poll.deliver_dependency_notices(chat, dispatch_pending=pumping(chat))
     assert runner.submit.call_count == 1
     first_attempt = runner.submit.call_args.kwargs["turn_id"]
-    await pr_poll.deliver_dependency_notices(chat)
+    await pr_poll.deliver_dependency_notices(chat, dispatch_pending=pumping(chat))
     assert runner.submit.call_count == 1
     async with db_factory() as session:
         row = await session.scalar(select(Delivery))
         row.lease_until = datetime.now(UTC) - timedelta(seconds=1)
         await session.commit()
-    await pr_poll.deliver_dependency_notices(
-        SimpleNamespace(session_factory=db_factory, work_runner=runner)
-    )
+    other = SimpleNamespace(session_factory=db_factory, work_runner=runner)
+    await pr_poll.deliver_dependency_notices(other, dispatch_pending=pumping(other))
     assert runner.submit.call_count == 2
     assert runner.submit.call_args.kwargs["turn_id"] != first_attempt
     # It is the task's own conversation that is asked, not the room's.
@@ -423,7 +462,9 @@ async def test_dependency_delivery_needs_the_matching_native_receipt(
 
     parent, child = await seed(db_factory, delivered=False)
     await assign_parent(db_factory, child.id)
-    await retarget_completed_dependencies(db_factory)
+    await retarget_completed_dependencies(
+        db_factory, announce=announce, record_instruction=record_task_instruction
+    )
     runner = Mock()
     chat = ChatService(
         work_runner=runner,
@@ -432,7 +473,7 @@ async def test_dependency_delivery_needs_the_matching_native_receipt(
         workspace_root="/unused-dependency-receipt-test",
         compute=stub_compute(),
     )
-    await pr_poll.deliver_dependency_notices(chat)
+    await pr_poll.deliver_dependency_notices(chat, dispatch_pending=pumping(chat))
     attempt = runner.submit.call_args.kwargs
     await begin_send(db_factory, attempt["delivery_id"], attempt["turn_id"])
     # A dependency notice is an input like any other: it is registered against
@@ -459,5 +500,5 @@ async def test_dependency_delivery_needs_the_matching_native_receipt(
     async with db_factory() as session:
         row = await session.get(Delivery, attempt["delivery_id"])
         assert row.state == "received" and row.sent_at is not None
-    await pr_poll.deliver_dependency_notices(chat)
+    await pr_poll.deliver_dependency_notices(chat, dispatch_pending=pumping(chat))
     assert runner.submit.call_count == 1

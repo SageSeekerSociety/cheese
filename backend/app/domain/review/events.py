@@ -14,8 +14,17 @@ from websockets.frames import CloseCode
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.forge_events import subscription_assertion
+from app.domain.delivery_events import SettleCard
 from app.domain.project.models import ProjectGitInstallation
 from app.domain.review import pr_poll
+from app.domain.review.ports import (
+    Announce,
+    DispatchPending,
+    RecordAgent,
+    RecordInstruction,
+    SeatInstanceId,
+    TaskTeammate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +85,26 @@ class _Refreshes:
     times out, and every reconnect starts another refresh of everything.
     """
 
-    def __init__(self, chat) -> None:  # noqa: ANN001
+    def __init__(  # noqa: ANN001
+        self,
+        chat,
+        announce: Announce,
+        *,
+        settle_card: SettleCard,
+        record_instruction: RecordInstruction,
+        seat_instance_id: SeatInstanceId,
+        record_agent: RecordAgent,
+        dispatch_pending: DispatchPending,
+        task_teammate: TaskTeammate,
+    ) -> None:
         self._chat = chat
+        self._announce = announce
+        self._settle_card = settle_card
+        self._record_instruction = record_instruction
+        self._seat_instance_id = seat_instance_id
+        self._record_agent = record_agent
+        self._dispatch_pending = dispatch_pending
+        self._task_teammate = task_teammate
         self._waiting: dict[tuple, dict] = {}
         self._wake = asyncio.Event()
 
@@ -110,16 +137,59 @@ class _Refreshes:
     async def _refresh(self, event: dict | None) -> None:
         try:
             if event is None:
-                await pr_poll.open_draft_prs(self._chat)
-                await pr_poll.poll_open_prs(self._chat)
+                await pr_poll.open_draft_prs(
+                    self._chat,
+                    self._announce,
+                    dispatch_pending=self._dispatch_pending,
+                    record_instruction=self._record_instruction,
+                )
+                await pr_poll.poll_open_prs(
+                    self._chat,
+                    self._announce,
+                    settle_card=self._settle_card,
+                    record_instruction=self._record_instruction,
+                    seat_instance_id=self._seat_instance_id,
+                    record_agent=self._record_agent,
+                    task_teammate=self._task_teammate,
+                )
             else:
-                await pr_poll.forge_repository_changed(self._chat, **event)
+                await pr_poll.forge_repository_changed(
+                    self._chat,
+                    announce=self._announce,
+                    settle_card=self._settle_card,
+                    record_instruction=self._record_instruction,
+                    seat_instance_id=self._seat_instance_id,
+                    record_agent=self._record_agent,
+                    dispatch_pending=self._dispatch_pending,
+                    task_teammate=self._task_teammate,
+                    **event,
+                )
         except Exception:  # noqa: BLE001 — the next event or tick retries
             logger.warning("Forge refresh failed for %s", event, exc_info=True)
 
 
-async def listen(chat, sessions: SessionFactory):
-    refreshes = _Refreshes(chat)
+async def listen(
+    chat,
+    sessions: SessionFactory,
+    announce: Announce,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    seat_instance_id: SeatInstanceId,
+    record_agent: RecordAgent,
+    dispatch_pending: DispatchPending,
+    task_teammate: TaskTeammate,
+):
+    refreshes = _Refreshes(
+        chat,
+        announce,
+        settle_card=settle_card,
+        record_instruction=record_instruction,
+        seat_instance_id=seat_instance_id,
+        record_agent=record_agent,
+        dispatch_pending=dispatch_pending,
+        task_teammate=task_teammate,
+    )
     worker = asyncio.create_task(refreshes.run())
     try:
         await _listen(refreshes, sessions)

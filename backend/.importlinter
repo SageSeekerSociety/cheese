@@ -401,16 +401,32 @@ unmatched_ignore_imports_alerting = warn
 # `web_snippet` joined at layer 4 beside `living_doc` and `canvas` (2026-10-13):
 # a document's mini-apps are part of the document, it keeps its pictures in the
 # `library` blob store on the same layer, and only routes import it.
+#
+# `delivery_events` joined at layer 1 (2026-10-14), the same move once more:
+# the notification codes (`NotificationType`) and the shape of one event
+# (`DeliveryEvent`, `event_id_for`, `dedup_key`) are what every layer needs to
+# say that something happened, but they lived at layer 5 — the codes in
+# `notification.models`, the event in `delivery.ledger`. Writing the ledger
+# itself stays at layer 5; whoever calls it hands the call in.
+#
+# `agent_session` moved from layer 5 down to layer 3 (2026-10-14). It is a leaf
+# that everything above reads — `topic` at 2, `repository` at 3, `memory` and
+# `room_task` at 4, its own layer-5 neighbours, `room_cleanup` at 6 — and what
+# it reads is `common`, `conversation` (both layer 1) and `topic.models`, whose
+# row is 2. Layer 3 is the lowest row that keeps that one import legal, and it
+# is where four of the five upward edges into it stop being upward. The fifth,
+# `topic -> agent_session`, stays: the session row cannot name its project's id
+# without the join, and layer 2 is below layer 3.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
     platform_stats : feature_stats : dashboard : project_progress : onboarding
     routine : task_quiet : admin : room_cleanup : wake_watch
-    agent : agent_session : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
+    agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet
-    repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification
+    repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta
 containers =
     app.domain
 exhaustive = true

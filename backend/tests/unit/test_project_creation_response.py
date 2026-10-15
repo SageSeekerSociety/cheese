@@ -60,7 +60,10 @@ async def test_project_response_waits_for_commit(monkeypatch, commit_fails):
     monkeypatch.setattr(
         projects,
         "ProjectService",
-        lambda _: SimpleNamespace(create=AsyncMock(return_value=project)),
+        # The route also hands in its teammate port; this stand-in takes both.
+        lambda *_args, **_kwargs: SimpleNamespace(
+            create=AsyncMock(return_value=project)
+        ),
     )
     app = FastAPI()
     app.include_router(projects.router)

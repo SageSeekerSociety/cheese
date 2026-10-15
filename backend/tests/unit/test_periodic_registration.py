@@ -3,15 +3,53 @@
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 
 from app.core.background import PeriodicJobs
 from app.core.config import settings
+from app.domain.agent import checkout_sweep
+from app.domain.agent.announce import announce
+from app.domain.delivery.agent import (
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+)
+from app.domain.delivery.ledger import settle_card
 from app.periodic_jobs import periodic_jobs
+from tests.support.review_ports import task_teammate
 
 pytestmark = pytest.mark.anyio
+
+# 投递包的那几件事 review 够不着，由 `periodic_jobs` 在接线时递进去
+# （`app.domain.review.periodic.register_periodic_jobs`）。哪几个钟拿到哪几个口子
+# 写在这里，下面按名字比 —— 名字写错就是接错线。
+#
+# 前四个是模块级的函数对象，`periodic_jobs` 递的就是同一个，比的是它本身。
+# `dispatch_pending` 是接线时现包的闭包，外面做不出一个相等的，只认名字；它到底
+# 包住了什么，由 `test_the_draft_sweep_pump_runs_on_this_chats_factory` 盯。
+_EXPECTED_PORTS = {
+    "settle_card": settle_card,
+    "record_instruction": record_task_instruction,
+    "seat_instance_id": seat_instance_id,
+    "record_agent": record_agent,
+    "dispatch_pending": ANY,
+    "task_teammate": task_teammate,
+    "machines": checkout_sweep.sweep,
+}
+_KEYWORD_PORTS = {
+    "pr poll": (
+        "settle_card",
+        "record_instruction",
+        "seat_instance_id",
+        "record_agent",
+        "task_teammate",
+    ),
+    "task pr poll": ("record_instruction", "task_teammate"),
+    "landing watch": ("record_instruction", "task_teammate", "machines"),
+    "draft pr sweep": ("dispatch_pending", "record_instruction"),
+}
 
 
 def _world():
@@ -19,6 +57,7 @@ def _world():
     chat_sessions = Mock(name="chat sessions")
     chat = SimpleNamespace(
         session_factory=chat_sessions,
+        work_runner=Mock(name="the chat's work runner"),
         stop_work_in_closed_tasks=AsyncMock(),
         remind_silent_turns=AsyncMock(),
         remind_stale_checklists=AsyncMock(),
@@ -43,6 +82,7 @@ def _world():
     return SimpleNamespace(
         jobs={job.name: job for job in jobs},
         chat=chat,
+        announce=announce,
         sessions=sessions,
         chat_sessions=chat_sessions,
         runner=runner,
@@ -64,7 +104,7 @@ def _world():
         ),
         (
             "forge credential cache cleanup",
-            "agent.forgejo_tokens.purge_expired_tokens",
+            "project.forgejo_tokens.purge_expired_tokens",
             "sessions",
         ),
         (
@@ -73,10 +113,10 @@ def _world():
             "sessions",
         ),
         ("quiet task reminder", "task_quiet.sweep.remind_quiet_tasks", "sessions"),
-        ("pr poll", "review.pr_poll.poll_open_prs", "chat"),
-        ("task pr poll", "review.pr_poll.poll_uncarded_task_prs", "chat"),
-        ("landing watch", "review.pr_poll.watch_landings", "chat"),
-        ("draft pr sweep", "review.pr_poll.open_draft_prs", "chat"),
+        ("pr poll", "review.pr_poll.poll_open_prs", ("chat", "announce")),
+        ("task pr poll", "review.pr_poll.poll_uncarded_task_prs", ("chat", "announce")),
+        ("landing watch", "review.pr_poll.watch_landings", ("chat", "announce")),
+        ("draft pr sweep", "review.pr_poll.open_draft_prs", ("chat", "announce")),
         ("cloud warm pool", "machine.warm.sweep_warm_pool", "sessions"),
         ("sandbox disk guard", "machine.disk_guard.sweep", "sessions"),
         ("run record expiry", "run_record.service.purge_expired", "sessions"),
@@ -121,7 +161,26 @@ async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
     world = _world()
     assert world.get_runner.call_count == 0, "registration ran work before a tick"
     assert await world.jobs[name]._job() == {"did": 1}
-    work.assert_awaited_once_with(getattr(world, argument))
+    handed = argument if isinstance(argument, tuple) else (argument,)
+    ports = {port: _EXPECTED_PORTS[port] for port in _KEYWORD_PORTS.get(name, ())}
+    work.assert_awaited_once_with(*(getattr(world, one) for one in handed), **ports)
+
+
+async def test_the_draft_sweep_hands_a_pump_bound_to_this_chat(monkeypatch):
+    """`dispatch_pending` 不带参数，是因为会话工厂、房间服务和跑机器在接线时就定好
+    了（`app.periodic_jobs.periodic_jobs`）。上面那条只认名字，这一条认它包住的
+    就是这一个 chat。"""
+    pump = AsyncMock(return_value={"dispatched": 1})
+    monkeypatch.setattr("app.periodic_jobs.dispatch_pending_work", pump)
+    sweep = AsyncMock(return_value={})
+    monkeypatch.setattr("app.domain.review.pr_poll.open_draft_prs", sweep)
+    world = _world()
+    await world.jobs["draft pr sweep"]._job()
+    handed = sweep.await_args.kwargs["dispatch_pending"]
+    assert await handed() == {"dispatched": 1}
+    pump.assert_awaited_once_with(
+        world.chat_sessions, chat=world.chat, runner=world.chat.work_runner
+    )
 
 
 @pytest.mark.parametrize(
@@ -156,14 +215,18 @@ async def test_chat_clocks_call_the_supplied_chat(name, method):
 
 
 @pytest.mark.parametrize(
-    ("name", "target"),
+    ("name", "target", "handed"),
     [
-        ("timed deliveries", "delivery.timer.deliver_due"),
-        ("routines", "routine.service.sweep"),
+        (
+            "timed deliveries",
+            "delivery.timer.deliver_due",
+            {"machines": checkout_sweep.sweep},
+        ),
+        ("routines", "routine.service.sweep", {}),
     ],
 )
 async def test_a_dispatch_clock_resolves_the_runner_when_it_ticks(
-    monkeypatch, name, target
+    monkeypatch, name, target, handed
 ):
     work = AsyncMock(return_value={"delivered": 1})
     monkeypatch.setattr(f"app.domain.{target}", work)
@@ -171,7 +234,9 @@ async def test_a_dispatch_clock_resolves_the_runner_when_it_ticks(
     replacement = object()
     world.current[0] = replacement
     await world.jobs[name]._job()
-    work.assert_awaited_once_with(world.sessions, chat=world.chat, runner=replacement)
+    work.assert_awaited_once_with(
+        world.sessions, chat=world.chat, runner=replacement, **handed
+    )
     world.get_runner.assert_called_once_with()
 
 
