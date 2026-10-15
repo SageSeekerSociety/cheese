@@ -31,10 +31,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.text import markdown_preview
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent.mentions import MentionedOutside
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.documents import whose_document
-from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document, DocumentMention
 from app.domain.membership.roster import roster_rows
@@ -96,7 +98,7 @@ async def tell_new_mentions(
     author = await _by_a_person(session, actors)
     if author is None:
         return None
-    rows = await roster_rows(session, doc.project_id)
+    rows = await roster_rows(session, doc.project_id, team=project_team)
     people = {row["handle"] for row in rows if not row.get("agent")}
     named = [h for h in added if h in people and h != author]
     if not named:
