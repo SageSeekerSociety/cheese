@@ -52,8 +52,9 @@ DIALECT = asyncpg_dialect.dialect()
 #: branches then constrain `blocks.conversation_id`, the leading column of every
 #: index on `blocks`.
 #:
-#: D2 constrains it to a hashed subquery of the room's thread ids (`= ANY (…)`),
-#: which is what actually gets the planner to seek per branch.
+#: D2 keeps the existing `threads.id = blocks.conversation_id` equality and adds
+#: a hashed subquery of the room's thread ids (`= ANY (…)`) beside it. It does not
+#: help either: the plan is still `Seq Scan on blocks` at 122.6 ms.
 #:
 #: D3 makes the room's own blocks an explicit `IN` list too, so the whole OR is
 #: three seekable branches and no correlated `threads` join is needed.
