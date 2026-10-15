@@ -104,21 +104,21 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'select-file', path: string): void
+  'select-file': [path: string]
   /** 回到全部改动那一面。 */
-  (e: 'close-file'): void
-  (e: 'select-version', source: FileSource): void
-  (e: 'toggle-dir', path: string): void
-  (e: 'refresh'): void
-  (e: 'download'): void
-  (e: 'save'): void
-  (e: 'overwrite'): void
-  (e: 'resolve-merge', content: string): void
-  (e: 'cancel-merge'): void
-  (e: 'toggle-compare'): void
-  (e: 'reload'): void
-  (e: 'view-changed', view: 'diff' | 'edit'): void
-  (e: 'draft-changed', content: string): void
+  'close-file': []
+  'select-version': [source: FileSource]
+  'toggle-dir': [path: string]
+  refresh: []
+  download: []
+  save: []
+  overwrite: []
+  'resolve-merge': [content: string]
+  'cancel-merge': []
+  'toggle-compare': []
+  reload: []
+  'view-changed': [view: 'diff' | 'edit']
+  'draft-changed': [content: string]
 }>()
 
 const { mdAndUp } = useDisplay()

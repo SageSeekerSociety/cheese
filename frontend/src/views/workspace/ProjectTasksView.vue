@@ -55,12 +55,12 @@ const includesClosed = computed(() => status.value !== 'open')
 const whose = defineModel<TaskFilter>('whose', { default: 'all' })
 
 const emit = defineEmits<{
-  (e: 'open-task', task: RoomTask): void
-  (e: 'new-task'): void
-  (e: 'retry'): void
-  (e: 'pick-channel', channelId: string | null): void
+  'open-task': [task: RoomTask]
+  'new-task': []
+  retry: []
+  'pick-channel': [channelId: string | null]
   /** 已关闭的往下滚到底了：要下一页。 */
-  (e: 'more'): void
+  more: []
 }>()
 
 const stalledOpen = ref(false)
