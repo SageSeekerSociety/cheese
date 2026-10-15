@@ -14,7 +14,6 @@
   "routineNoNextRun": "这个时间安排算不出下一次执行时间",
   "routineNotFound": "没有这条例行事务",
   "routineOnlyRunnerReports": "只有执行这条例行事务的 AI 队友能交回结果",
-  "routineOutputDirInvalid": "结果目录要写成频道里的相对路径，例如 周报/",
   "routineOwnerNotInProject": "{handle} 不是项目成员，结果无法通知到",
   "routineOwnerOrAdmin": "「{title}」是 {owner} 设的例行事务，只有他本人或项目管理员能{what}",
   "routinePauseActiveOnly": "只有执行中的例行事务能暂停",

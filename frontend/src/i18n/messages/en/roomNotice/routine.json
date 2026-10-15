@@ -20,13 +20,12 @@
   "routineWeekdaySat": "Saturday",
   "routineWeekdaySun": "Sunday",
   "routineFailed": "failed",
-  "routineOutputRoot": "root folder",
   "routineProposalDeletedBy": "{who} deleted the routine “{title}”",
   "routineProposedBy": "{who} created the routine “{title}”",
   "routineResultWithFiles": "{body}\nResult files: {files}",
   "routineRunStarted": "Started “{title}”",
-  "routineScopeUnset": "(not limited)",
   "routineSkipped": "did not run",
   "routineSucceeded": "finished",
-  "routineSummary": "Name: {title}\nTrigger: {trigger}\nWork: {instructions}\nMaterials: {scope}\nResults saved to: channel {output}\nRun by: {agent}\nResults sent to: {owner}"
+  "routineSummaryNoNote": "Name: {title}\nGoal: {goal}\nTrigger: {trigger}\nRun by: {agent}\nResults sent to: {owner}",
+  "routineSummaryWithNote": "Name: {title}\nGoal: {goal}\nNote: {note}\nTrigger: {trigger}\nRun by: {agent}\nResults sent to: {owner}"
 }

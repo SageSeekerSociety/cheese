@@ -48,8 +48,9 @@ class RoutineIn(BaseModel):
     #: is then taken from the goal's first sentence.
     title: str = Field(default="", max_length=200)
     instructions: str = Field(min_length=1)
-    context_scope: str = ""
-    output_dir: str = ""
+    #: 「补充说明」: anything else the teammate should know. May be left empty —
+    #: nothing is invented to fill it.
+    note: str = ""
     trigger: str = "schedule"
     spec: dict = Field(default_factory=dict)
     timezone: str = "Asia/Shanghai"
@@ -60,8 +61,7 @@ class RoutineIn(BaseModel):
 class RoutinePatch(BaseModel):
     title: str | None = None
     instructions: str | None = None
-    context_scope: str | None = None
-    output_dir: str | None = None
+    note: str | None = None
     trigger: str | None = None
     spec: dict | None = None
     timezone: str | None = None
@@ -91,8 +91,7 @@ def _routine(
         "topic_id": str(row.topic_id),
         "title": row.title,
         "instructions": row.instructions,
-        "context_scope": row.context_scope,
-        "output_dir": row.output_dir,
+        "note": row.note,
         "trigger": row.trigger,
         "trigger_text": trigger_text,
         "spec": row.spec,
@@ -340,8 +339,7 @@ async def create_routine(
         by_agent=not _is_person(actor),
         title=body.title,
         instructions=body.instructions,
-        context_scope=body.context_scope,
-        output_dir=body.output_dir,
+        note=body.note,
         trigger=body.trigger,
         spec=body.spec,
         tz=body.timezone,

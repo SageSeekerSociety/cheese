@@ -192,6 +192,11 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "routineProposalConfirmedBy",
         "routineProposalDeleted",
         "routineProposed",
+        # 例行事务的详情行说出「资料范围」和「结果保存到」的那一版，和它用的两个
+        # 词：规则现在只写「补充说明」，旧房间里的那几行还带着这三个键。
+        "routineSummary",
+        "routineScopeUnset",
+        "routineOutputRoot",
         "skillProposalNotSaved",
         "skillProposalSaved",
         "skillProposed",

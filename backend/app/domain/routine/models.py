@@ -74,11 +74,18 @@ class Routine(UuidPk, Timestamps, Base):
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
     title: Mapped[str] = mapped_column(String(200))
+    #: 「目标」: what the rule is for, in the person's own words. The one field
+    #: that has to be filled in.
     instructions: Mapped[str] = mapped_column(Text)
-    #: Which material the work may draw on, in the words the person confirmed.
-    context_scope: Mapped[str] = mapped_column(Text, default="", server_default="")
-    #: Room-relative folder the results are saved under.
-    output_dir: Mapped[str] = mapped_column(String(300), default="", server_default="")
+    #: 「补充说明」: anything else the teammate should know. A new name on the
+    #: column that held 「使用哪些资料」, not a rename — the release still serving
+    #: reads that name. What a rule used to keep in that column and in
+    #: ``output_dir`` was folded in here by migration ``3e8b1d5a72c4``; both
+    #: columns go two releases from now.
+    note: Mapped[str] = mapped_column("context_scope", Text, default="", server_default="")
+    # No ``output_dir``: where the results go is the teammate's call each time it
+    # runs, so nothing asks for it any more. The column is still there, unmapped
+    # and unwritten, until a later release drops it.
     trigger: Mapped[str] = mapped_column(String(32))
     #: schedule: {"freq": hourly|daily|weekly|monthly, "time": "HH:MM",
     #: "minute": int, "weekdays": [0..6], "day": 1..31}.

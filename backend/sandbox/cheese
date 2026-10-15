@@ -956,10 +956,12 @@ PLATFORM_TOOLS = ToolTable(
             "**存下就在跑**：没有人再点一次确认，所以你建之前先把配置说清楚，"
             "建完告诉用户它已经开跑了，以及什么时候跑第一次。",
             {
-                "title": _text("规则名字，一句话"),
-                "instructions": _text("到点要做的事，写清做什么、交出什么"),
-                "context_scope": _text("可以用哪些资料；不写就是按需要自取"),
-                "output_dir": _text("结果放频道文件区哪个目录；不写就是根目录"),
+                "title": _text("规则名字，一句话；不写就取目标的第一句"),
+                "instructions": _text("目标：到点要做的事，写清做什么、交出什么"),
+                "note": _text(
+                    "补充说明：还有什么要它知道的；不写就没有这一项"
+                    "（用哪些资料、结果放哪，每次开工它自己定，不用在这里写）"
+                ),
                 "trigger": {
                     "type": "string",
                     "enum": list(ROUTINE_TRIGGERS),
@@ -984,9 +986,8 @@ PLATFORM_TOOLS = ToolTable(
             {
                 "routine": _ROUTINE,
                 "title": _text("新名字"),
-                "instructions": _text("新的工作内容"),
-                "context_scope": _text("新的资料范围"),
-                "output_dir": _text("新的结果目录"),
+                "instructions": _text("新的目标"),
+                "note": _text("新的补充说明；给空字符串就清掉这一项"),
                 "trigger": {
                     "type": "string",
                     "enum": list(ROUTINE_TRIGGERS),
@@ -1665,8 +1666,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "timezone": args.get("timezone") or "Asia/Shanghai",
             **_given(
                 args,
-                "context_scope",
-                "output_dir",
+                "note",
                 "owner_handle",
                 "agent_handle",
             ),
@@ -1687,8 +1687,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             args,
             "title",
             "instructions",
-            "context_scope",
-            "output_dir",
+            "note",
             "trigger",
             "spec",
             "timezone",

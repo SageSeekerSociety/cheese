@@ -81,8 +81,7 @@ def _weekly(client, room, headers=None, **over):
     body = {
         "title": "每周进展",
         "instructions": "整理本周各房间的进展，列出完成、进行中和阻碍",
-        "context_scope": "本项目所有房间",
-        "output_dir": "周报",
+        "note": "结果按房间分开列，写完发在频道里",
         "trigger": "schedule",
         "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
         "timezone": "Asia/Shanghai",

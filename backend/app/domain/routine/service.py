@@ -124,13 +124,6 @@ def _name(title: str, instructions: str) -> str:
     return name[:200]
 
 
-def _clean_dir(raw: str) -> str:
-    path = (raw or "").strip().strip("/")
-    if any(part in ("", ".", "..") for part in path.split("/")) and path:
-        raise ValidationError(say("routineOutputDirInvalid"))
-    return path
-
-
 def _validate(trigger: str, spec: dict, tz: str) -> dict:
     try:
         kind = RoutineTrigger(trigger)
@@ -207,8 +200,7 @@ class RoutineService:
         by_agent: bool,
         title: str,
         instructions: str,
-        context_scope: str,
-        output_dir: str,
+        note: str,
         trigger: str,
         spec: dict,
         tz: str,
@@ -243,8 +235,7 @@ class RoutineService:
             topic_id=topic.id,
             title=_name(title, instructions),
             instructions=instructions.strip(),
-            context_scope=(context_scope or "").strip(),
-            output_dir=_clean_dir(output_dir),
+            note=(note or "").strip(),
             trigger=trigger,
             spec=spec,
             timezone=tz,
@@ -290,16 +281,21 @@ class RoutineService:
 
     @staticmethod
     def summary_text(row: Routine) -> str:
-        return say(
-            "routineSummary",
-            title=row.title,
-            trigger=describe_trigger(row),
-            instructions=row.instructions,
-            scope=row.context_scope or say("routineScopeUnset"),
-            output=row.output_dir or say("routineOutputRoot"),
-            agent=row.agent_handle,
-            owner=row.owner_handle,
-        )
+        """这条例行事务自己是什么样，给房间里的人看。
+
+        补充说明空着就不显示那一行 —— 它不替谁编一段：要么是这个人写的字，要么
+        没有这一行。
+        """
+        filled = {
+            "title": row.title,
+            "goal": row.instructions,
+            "trigger": describe_trigger(row),
+            "agent": row.agent_handle,
+            "owner": row.owner_handle,
+        }
+        if row.note:
+            return say("routineSummaryWithNote", note=row.note, **filled)
+        return say("routineSummaryNoNote", **filled)
 
     def _activate(self, row: Routine) -> None:
         stamp = now()
@@ -333,15 +329,13 @@ class RoutineService:
         tz = changes.get("timezone", row.timezone)
         new_spec = _validate(trigger, spec, tz)
         await self._check_feedback_batch(new_spec, row.project_id)
-        for key in ("title", "instructions", "context_scope"):
+        for key in ("title", "instructions", "note"):
             if key in changes and changes[key] is not None:
                 setattr(row, key, str(changes[key]).strip())
         if not row.instructions:
             raise ValidationError(say("routineInstructionsRequired"))
         if not row.title:
             row.title = _name(row.title, row.instructions)
-        if changes.get("output_dir") is not None:
-            row.output_dir = _clean_dir(changes["output_dir"])
         if changes.get("agent_handle"):
             row.agent_handle = await self._agent_for(
                 row.topic_id, changes["agent_handle"]
@@ -537,16 +531,18 @@ class RoutineService:
 
 
 def run_prompt(routine: Routine, run: RoutineRun, previous: str = "") -> str:
-    folder = routine.output_dir or "房间根目录"
     lines = [
         f"【{TRIGGER_LABELS[RoutineTrigger(routine.trigger)]}工作】{routine.title}",
         f"这是例行事务「{routine.title}」的一次执行（执行 id {run.id}）。"
         f"{run.trigger_detail}",
         "",
-        f"工作内容：{routine.instructions}",
-        "参考资料："
-        + (routine.context_scope or "按工作内容需要，只用你有权访问的项目内容"),
-        f"存储位置：{folder}（用 cheese show 放进房间，文件名带上日期）",
+        f"目标：{routine.instructions}",
+    ]
+    if routine.note:
+        lines.append(f"补充说明：{routine.note}")
+    lines += [
+        "用哪些资料、结果放在哪，都按这次的目标自己定；结果文件用 cheese show "
+        "放进房间，文件名带上日期。",
         "",
         "做完后必须交回结果，成功失败都要交：",
         f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '

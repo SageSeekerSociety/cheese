@@ -14,7 +14,6 @@
   "routineNoNextRun": "This schedule doesn't give a next run time",
   "routineNotFound": "This routine doesn't exist",
   "routineOnlyRunnerReports": "Only the AI teammate running this routine can hand back its result",
-  "routineOutputDirInvalid": "Write the results folder as a path relative to the channel, e.g. reports/",
   "routineOwnerNotInProject": "{handle} isn't a project member, so the results can't be sent to them",
   "routineOwnerOrAdmin": "“{title}” is a routine set up by {owner}; only they or a project admin can {what}",
   "routinePauseActiveOnly": "Only a running routine can be paused",

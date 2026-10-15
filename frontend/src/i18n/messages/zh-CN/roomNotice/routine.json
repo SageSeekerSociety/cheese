@@ -20,13 +20,12 @@
   "routineWeekdaySat": "周六",
   "routineWeekdaySun": "周日",
   "routineFailed": "失败",
-  "routineOutputRoot": "根目录",
   "routineProposalDeletedBy": "{who} 删掉了例行事务「{title}」",
   "routineProposedBy": "{who} 建了例行事务「{title}」",
   "routineResultWithFiles": "{body}\n结果文件：{files}",
   "routineRunStarted": "开始执行「{title}」",
-  "routineScopeUnset": "（未限定）",
   "routineSkipped": "未执行",
   "routineSucceeded": "已完成",
-  "routineSummary": "名称：{title}\n触发：{trigger}\n工作内容：{instructions}\n资料范围：{scope}\n结果保存到：频道 {output}\n执行者：{agent}\n结果通知：{owner}"
+  "routineSummaryNoNote": "名称：{title}\n目标：{goal}\n触发：{trigger}\n执行者：{agent}\n结果通知：{owner}",
+  "routineSummaryWithNote": "名称：{title}\n目标：{goal}\n补充说明：{note}\n触发：{trigger}\n执行者：{agent}\n结果通知：{owner}"
 }

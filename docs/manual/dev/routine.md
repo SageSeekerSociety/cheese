@@ -21,7 +21,7 @@ covers:
 
 | 表 | 是什么 | 关键列 |
 | --- | --- | --- |
-| `Routine` | 一条**规则** | `title`、`instructions`、`context_scope`、`output_dir`、`trigger`、`spec`、`timezone`、`state`、`agent_handle`、`owner_handle`、`next_run_at`、`event_cursor`、`revision` |
+| `Routine` | 一条**规则** | `title`、`instructions`（目标）、`note`（补充说明）、`trigger`、`spec`、`timezone`、`state`、`agent_handle`、`owner_handle`、`next_run_at`、`event_cursor`、`revision` |
 | `RoutineRun` | 规则**响了一次** | `occurrence_key`、`routine_revision`、`status`、`message_id`、`delivery_event_id`、`turn_id`、`summary`、`outputs`、`error`、`notified` |
 
 规则两态：`active`、`paused`。执行五态：`queued` / `running` / `succeeded` / `failed` / `skipped`，末三者是终结态（`TERMINAL_RUN_STATUSES`）。
@@ -71,7 +71,7 @@ covers:
 
 **这一轮留得下，追问留不下。** 支线里芝士的改动本来留不下；执行的那一轮从投递上认出来（`turn_speakers.is_routine_run`，`eventType == routine_run`），凭证不带 `scratch`，开场提示也换成「这一轮就是这次执行，可以保存结果」。之后有人在这条支线里追问，那几轮照支线的规矩改动留不下，会话按新参数重启一次，接着同一段对话。执行那一轮也不改代码：它和支线一样只拿到只读的仓库令牌，要改代码就转为任务（见[支线的会话](/dev/session#scratch)）。
 
-**投递和交回。** 投递事件的 payload 里是这段工作本身：`run_prompt` 把工作内容、资料范围、结果目录、上一次成功执行交回的结果，以及**怎么交回**（`POST /routine-runs/{id}/report`）都写给芝士看。执行的 `turn_id` 就是那一轮。
+**投递和交回。** 投递事件的 payload 里是这段工作本身：`run_prompt` 把目标、补充说明（有才写）、上一次成功执行交回的结果，以及**怎么交回**（`POST /routine-runs/{id}/report`）都写给芝士看。执行用哪些资料、结果放哪，提示词里明说由它这次自己定。执行的 `turn_id` 就是那一轮。
 
 **交回是必须的**：`report` 只认这条规则的 `agent_handle` 交，成功失败都要交，失败还必须写明原因，`outputs` 最多 50 条。成功时交回的 `summary` 就是那条消息的正文，频道里的人直接读它。没交回的那一次会被记成失败。
 
