@@ -40,6 +40,7 @@ from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.session_work import checkpoint_room
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
 from app.domain.topic.models import KeptRoomFiles, RoomCleanup
 from app.domain.topic.services import TopicService
@@ -298,7 +299,10 @@ async def _archive(client, monkeypatch, room_id, device_id, machine):
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as session:
         await TopicService(session).archive(
-            room_id, by="owner", settle_card=settle_card
+            room_id,
+            by="owner",
+            settle_card=settle_card,
+            cards=close_cards_for_archived_topic,
         )
         await session.commit()
         cleanup_id = (await TopicService(session).get_or_404(room_id)).cleanup_id

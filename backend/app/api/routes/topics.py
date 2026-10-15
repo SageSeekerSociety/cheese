@@ -44,6 +44,7 @@ from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.agent_instance.adapters import project_team, room_teammate
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.asked import Awaited
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
@@ -66,7 +67,9 @@ from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.repository import service as workspace_paths
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
 from app.domain.room_task.services import TaskService
@@ -116,7 +119,11 @@ async def create_topic(
     )
     service = TopicService(db)
     relevance = await service.relevance_for_topics(
-        [topic], _viewer(actor), team=project_team
+        [topic],
+        _viewer(actor),
+        team=project_team,
+        cards=AcceptService(db),
+        decisions=ProjectNotificationService(db),
     )
     managed = await TopicMemberService(db).managed_topic_ids([topic], actor.handle)
     response = ok(_topic_out(topic, set(), {}, relevance, managed_ids=managed))
@@ -310,7 +317,11 @@ async def list_topics(
     # 「哪一行还开着」（`agent.liveness.moving_topics`）。
     moving_ids = await moving_topics(db, [t.id for t in topics], running=running_ids)
     relevance = await service.relevance_for_topics(
-        topics, _viewer(actor), team=project_team
+        topics,
+        _viewer(actor),
+        team=project_team,
+        cards=AcceptService(db),
+        decisions=ProjectNotificationService(db),
     )
     live = await topics_signals.live_cards(db, [t.id for t in topics])
     cards = topics_signals.own_cards(live)
@@ -467,7 +478,11 @@ async def get_topic(
     actor = await _actor_in_place(resolver, place)
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics(
-        [topic], _viewer(actor), team=project_team
+        [topic],
+        _viewer(actor),
+        team=project_team,
+        cards=AcceptService(db),
+        decisions=ProjectNotificationService(db),
     )
     live = await topics_signals.live_cards(db, [topic.id])
     cards = topics_signals.own_cards(live)
@@ -1373,6 +1388,8 @@ async def clone_topic_from(
         room_teammate=room_teammate,
         fork=fork_transcript,
         project_harness=harness_for,
+        paths=workspace_paths,
+        sessions=AgentSessionService(db),
     )
     await db.commit()
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
