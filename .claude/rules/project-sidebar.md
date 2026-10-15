@@ -37,5 +37,5 @@ paths:
 守着它的是 `frontend/src/lib/shell.spec.ts` 里「项目名下那一行是总览和资料库」，那一行
 的白名单是 `lib/shell.ts` 的 `PROJECT_BAR_PAGES`；屏幕上那一列由
 `e2e/tests/shell-default.spec.ts` 的 `PAGES` 钉住；后端那份「今天长什么样」的声明在
-`backend/app/domain/shell/catalog.py`，`backend/tests/unit/test_shell.py` 里也有同一条
+`backend/app/domain/shell_catalog.py`，`backend/tests/unit/test_shell.py` 里也有同一条
 约定。改白名单会让这几处一起红，这是故意的。
