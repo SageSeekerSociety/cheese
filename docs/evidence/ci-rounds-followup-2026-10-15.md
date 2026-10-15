@@ -19,7 +19,7 @@ The collector also saw five PRs born after the fixed birth cutoff (#3782–#3786
 | Open | 15 | 43 | 13 | 42 | 3.231 |
 | Closed unmerged | 1 | 0 | 1 | 0 | 0.000 |
 
-Relative to the frozen baseline of 1,462 PRs / 3,402 heads / 2.327, the extension is 0.100 heads per PR lower (4.28%). The merged extension (52 PRs / 105 heads / 2.019) is the completed-lifetime slice of this cohort: those PRs closed by merge, so their head counts are final. The all-PR extension is not a completed-lifetime mean, because 13 PRs remain open and right-censored; their lifetime counts can still grow. Two PRs (#3726 and #3742) changed from open to merged, and the right-censored count fell from 15 to 13.
+Relative to the frozen baseline of 1,462 PRs / 3,402 heads / 2.327, the extension is 0.100 heads per PR lower (4.28%). The merged-only slice contains 52 PRs / 105 heads / 2.019. All 53 completed PRs, including the zero-run closed-unmerged PR #3750, contain 105 heads / 53 PRs = 1.981, below two. These are settled subset counts, not the all-PR target: the full cohort remains at 2.227 with 13 PRs open and right-censored, whose lifetime counts can still grow. Two PRs (#3726 and #3742) changed from open to merged, and the right-censored count fell from 15 to 13.
 
 Four new heads appeared after the prior cutoff, one each on #3730, #3741, #3775 and #3781. No prior head disappeared. Five new workflow runs produced these four heads because #3781 also had a same-head duplicate run, which is counted once.
 
