@@ -5,8 +5,7 @@ agent 绑定的身份进。而这条读的是「我们几个席位谁快谁慢�
 门照 `/run-records` 那套（`run_records._from_platform_room` 的孪生兄弟）：只在平台
 自己的项目里读得到 —— 数字里有席位名和生成速率，只该给在修这个平台的人看。
 
-口径写在 `domain/platform_stats/throughput.py` 的模块 docstring 上：按轮速率是主
-口径，窗口吞吐随行带上。
+口径（窗口吞吐）写在 `domain/platform_stats/throughput.py` 的模块 docstring 上。
 """
 
 import uuid
