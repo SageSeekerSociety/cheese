@@ -26,7 +26,7 @@
 // So a Chinese comment fails a test about a component it has nothing to do with:
 // that is how this was found, twice (2026-10-03 and 2026-10-12). It is counted
 // as its own kind and held by a ratchet rather than refused outright, because
-// the tree already carries 755 of them across 230 files; they are frozen in
+// the tree already carries 1422 of them across 230 files; they are frozen in
 // `i18n-comments-baseline.json`, which only goes down. `<!-- i18n-data: … -->`
 // stays exempt, and has to: the reason after it is usually Chinese prose, so
 // counting it would fail the very lines the first rule asks for.
@@ -399,23 +399,21 @@ function chineseLines(relPath, text) {
   return found
 }
 
-/** An exempting comment: the marker right after the comment opener, then the reason. */
-const MARKUP_ANNOTATION = /<!--\s*i18n-data:(.*?)(?:-->|$)/
 /**
- * The same marker asked of a whole `<!-- … -->` comment instead of one line:
- * does it OPEN with the marker? `MARKUP_ANNOTATION` cannot answer that for a
- * comment several lines long — its `(.*?)` stops at the newline, so the `-->`
- * alternative never reaches and the `$` alternative is not at the end of a
- * string that continues — and a reason that wraps onto the next line is one
- * `annotationOn` accepts, line by line. Asking the question this way also keeps
- * a plain Chinese comment that merely quotes `<!-- i18n-data:` in its prose
- * counted: only the marker at the opener exempts.
+ * An annotation is the marker right after a comment opener: `<!-- i18n-data: …`
+ * in a template, `//`/`/* i18n-data: …` in code.
+ *
+ * The same question is asked of two strings — one line of a file
+ * (`annotationOn`) and a whole `<!-- … -->` comment (`commentLines`, through
+ * `ANNOTATION_COMMENT`) — and the two have to agree, or a comment the counter
+ * exempts becomes a line the checker refuses. Neither lets the marker sit on a
+ * later line than the opener; a reason that continues on the next line counts,
+ * one that only begins there does not.
  */
-const ANNOTATION_COMMENT = /^<!--\s*i18n-data:/
-const ANNOTATIONS = {
-  code: [/\/\/\s*i18n-data:(.*)$/, /\/\*\s*i18n-data:(.*?)(?:\*\/|$)/],
-  markup: [MARKUP_ANNOTATION],
-}
+const MARKUP_ANNOTATION = /^<!--[ \t]*i18n-data:(.*?)(?:-->|$)/
+const ANNOTATION_COMMENT = /^<!--[ \t]*i18n-data:/
+/** The marker after a `//` or `/*` opener on a code line, then the reason. */
+const CODE_ANNOTATIONS = [/\/\/\s*i18n-data:(.*)$/, /\/\*\s*i18n-data:(.*?)(?:\*\/|$)/]
 
 /**
  * The lines of a `.vue` template that sit inside an ordinary HTML comment
@@ -447,6 +445,56 @@ function commentLines(relPath, text) {
 }
 
 /**
+ * The lines of a `.vue` file that sit inside a `<template>` block, where the
+ * only comment syntax is `<!-- -->`.
+ *
+ * `chineseLines` says the same thing for lines carrying Chinese outside a
+ * comment, but a line whose Han all sits inside one has no `kind` — and those
+ * are the lines where the wrong syntax would be read: `//` is text in a
+ * template, so a Chinese comment that mentions `// i18n-data:` in its prose
+ * would be taken for an annotation on that line.
+ * @param {string} relPath
+ * @param {string} text
+ * @returns {Set<number>} 1-based line numbers
+ */
+function markupLines(relPath, text) {
+  /** @type {Set<number>} */
+  const lines = new Set()
+  const src = String(text)
+  if (!String(relPath).replaceAll('\\', '/').endsWith('.vue')) return lines
+  const lineOf = lineIndexer(src)
+  for (const template of topLevelBlocks(src, 'template')) {
+    const first = lineOf(template.start)
+    template.body.split('\n').forEach((_, index) => lines.add(first + index))
+  }
+  return lines
+}
+
+/**
+ * The reason a template line's annotation gives, or `null`.
+ *
+ * `<!--` inside an HTML comment is text, not another comment, so the line is
+ * walked from one comment's end to the next instead of searched for the marker:
+ * a Chinese comment that merely quotes `<!-- i18n-data:` in its prose is prose,
+ * and exempts nothing. The comment may close on a later line and its reason may
+ * continue there; only the opener and the marker share a line.
+ * @param {string} line
+ * @returns {string | null}
+ */
+function markupAnnotationOn(line) {
+  for (let at = line.indexOf('<!--'); at !== -1; ) {
+    const m = MARKUP_ANNOTATION.exec(line.slice(at))
+    if (m) return m[1].trim()
+    const close = line.indexOf('-->', at)
+    // No close left on this line: the rest of it sits inside this comment, so
+    // there is no second opener to ask.
+    if (close === -1) return null
+    at = line.indexOf('<!--', close + 3)
+  }
+  return null
+}
+
+/**
  * The `i18n-data:` annotation on one line, read with the comment syntaxes in
  * `kinds`. `null` when there is none; otherwise its reason, trimmed — which may
  * be empty, and that is a failure of its own.
@@ -456,7 +504,12 @@ function commentLines(relPath, text) {
  */
 export function annotationOn(line, kinds) {
   for (const kind of kinds) {
-    for (const pattern of ANNOTATIONS[kind]) {
+    if (kind === 'markup') {
+      const reason = markupAnnotationOn(line)
+      if (reason !== null) return { reason }
+      continue
+    }
+    for (const pattern of CODE_ANNOTATIONS) {
       const m = pattern.exec(line)
       if (m) return { reason: m[1].trim() }
     }
@@ -489,6 +542,7 @@ const hasReason = (reason) => /[\p{L}\p{N}]/u.test(reason)
 export function checkSource(relPath, text) {
   const copy = chineseLines(relPath, text)
   const comments = commentLines(relPath, text)
+  const markup = markupLines(relPath, text)
   const lines = String(text).split('\n')
   const problems = []
   const annotated = []
@@ -496,7 +550,11 @@ export function checkSource(relPath, text) {
     const line = index + 1
     const kind = copy.get(line)
     const commented = comments.has(line)
-    const note = annotationOn(raw, kind ? [kind] : ['code', 'markup'])
+    // The block decides the syntax, never the copy: a line whose Chinese all
+    // sits inside a comment carries no `kind`, and it is exactly there that
+    // reading a template line as code would take a `// i18n-data:` quoted in
+    // the comment for an annotation.
+    const note = annotationOn(raw, [markup.has(line) ? 'markup' : 'code'])
     const shown = raw.trim().slice(0, 110)
     if (note && !hasReason(note.reason)) problems.push({ line, problem: 'no-reason', text: shown })
     else if (!note && kind) problems.push({ line, problem: 'copy', text: shown })

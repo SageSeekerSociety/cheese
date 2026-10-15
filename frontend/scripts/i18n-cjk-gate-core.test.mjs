@@ -398,13 +398,74 @@ test('checkSource: an i18n-data comment whose reason wraps is still exempt', () 
 })
 
 test('checkSource: a Chinese comment that merely quotes the marker is not exempt', () => {
+  // The inner `<!--` is text, not a second comment, so the marker is not at an
+  // opener and the comment is counted like any other.
   const vue = `<template>
-  <!-- 写法参照 <!-- i18n-data: 理由 --> 的样子 -->
+  <!-- 写法参照 <!-- i18n-data: 理由 的样子 -->
 </template>
 `
   assert.deepEqual(
     checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
     [{ line: 2, problem: 'comment' }]
+  )
+})
+
+test('checkSource: the marker on the line after the opener is not an annotation', () => {
+  // The exemption asks the whole comment, and it has to ask it the way the
+  // line reader does: a marker the comment merely carries on a later line
+  // exempts nothing, or a Chinese comment walks out of the count unannounced.
+  const vue = `<template>
+  <!--
+  i18n-data: whatever
+  这是一句中文说明
+  -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 4, problem: 'comment' }]
+  )
+})
+
+test('checkSource: a template line reads markup annotations, never code ones', () => {
+  // `//` is text in a template, so a comment whose prose mentions the code
+  // marker is prose — not an annotation, and so not a stale one either.
+  const vue = `<template>
+  <!-- 脚本里用 // i18n-data: 理由 标注 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'comment' }]
+  )
+})
+
+test('checkSource: copy beside a comment that quotes the marker is still copy', () => {
+  // Reading the quoted marker as an annotation would exempt the copy on this
+  // line and report nothing at all.
+  const vue = `<template>
+  <div>确定</div> <!-- see <!-- i18n-data: reason -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'copy' }]
+  )
+})
+
+test('checkSource: a reason that only begins on the next line is no reason', () => {
+  // The marker and the reason have to share the opener's line: a reason that
+  // starts after it leaves the annotation saying nothing, which is what
+  // `no-reason` is for. Unlike a reason that starts on the marker's line and
+  // continues below it, which the whole comment is read to cover.
+  const vue = `<template>
+  <code>【PDF · 第 N 页】</code> <!-- i18n-data:
+  写进题目简介的固定标记 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'no-reason' }]
   )
 })
 
