@@ -3666,6 +3666,27 @@ def test_a_batch_being_merged_right_now_does_not_get_a_second_pr(
     assert [o for o in sweeping["opened"] if o["draft"]] == []
 
 
+def test_a_card_still_waiting_to_be_settled_keeps_the_sweep_away(client, sweeping):
+    """这张卡还没结算，所以巡检连问都不问 GitHub 就把这批跳过。
+
+    判据是「有没有还没结算的卡」，不是「有没有递过卡」：一张 `pending` 的卡是
+    「这批活正在交付里」，巡检在那儿开 PR 只会多出一个没人要合的；结算过的卡不
+    挡，因为第二步正是靠这一点才开得出自己的 PR
+    （`test_a_task_delivers_in_steps.py::test_the_next_step_gets_a_draft_pr_of_its_own`）。
+
+    这条咬的是不加锁的预判那一步：预判先返回 False，锁里那一步这两条根本走不到
+    （把它删掉这条仍然绿，`test_a_batch_being_merged_right_now_does_not_get_a_second_pr`
+    管的就是那个窗口）。两条判据一起拿掉，这条和它一起红。
+    """
+    _pid, tid = _room_with_work(client)
+    _make_card(client, tid)  # 递出去就是 pending
+
+    counts = _sweep(client)
+
+    assert counts == {"opened": 0, "skipped": 1, "failed": 0}, counts
+    assert sweeping["opened"] == []
+
+
 def _treeless_card(client, topic_id: str, status: str) -> None:
     """一张老卡：`tree_id IS NULL`（迁移 `e4c9a2f60b18` 对没有诚实值可填的卡就是
     这么留的），状态由用例指定。"""

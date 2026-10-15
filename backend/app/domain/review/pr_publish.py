@@ -54,7 +54,7 @@ from app.domain.project.forge import (
     status_client,
 )
 from app.domain.repository import identity
-from app.domain.review import notes, pr_text
+from app.domain.review import archive, notes, pr_text
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -605,23 +605,32 @@ async def retarget_completed_dependencies(
 async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> bool:
     """Open and record this task's draft PR. False = there was nothing to do.
 
-    **A task anybody has filed a card on is not this sweep's business**, and
-    that — not the row lock — is what keeps it off a merged branch. The task's
-    `status` cannot answer "has this been merged on GitHub", because the merge
-    happens FIRST and the row is updated after
+    **A task with a card still waiting to be settled is not this sweep's
+    business**, and that — not the row lock — is what keeps it off a merged
+    branch. The task's `status` cannot answer "has this been merged on GitHub",
+    because the merge happens FIRST and the row is updated after
     (`AcceptService._merge_pr_for_accept`: merge API, then
     `_mark_task_merged`). A sweep holding the row lock in between sees
     `open` while the branch is, on GitHub, already squashed into main — and
     opens a PR nobody can ever close by merging it. Locking the row makes that
-    window deterministic instead of removing it. The card does remove it: a
-    filed card is the delivery, from that moment the PR belongs to it
-    (`open_pr_for_card`), and no task is ever merged without one. So the
-    question this asks is the question that has a stable answer.
+    window deterministic instead of removing it. The open card does remove it:
+    a filed card is the delivery, from that moment the PR belongs to it
+    (`open_pr_for_card`), and no task is ever merged in that window without
+    one. So the question this asks is the question that has a stable answer.
 
-    Every merging path goes through a card — the ordinary accept, an
-    auto-merged armed card, a manual override, and the PR somebody merged on
-    GitHub that the platform then settles — so all of them are excluded by the
-    same one check.
+    Settled cards are a different matter, and asking about them was wrong: a
+    task that delivers in steps starts its second step with step one's card
+    already `accepted`, its `pr_number` back to None and a branch of its own
+    (`TaskService.next_step`) — nothing but this check stood between it and the
+    draft PR it needs, so the sweep never brought it one and the step sat
+    waiting for a review that could not start. A settled card holds no PR
+    anybody is still going to merge, which is why `archive.OPEN_CARD_STATUSES`
+    — the same "not settled yet" the rest of review uses — is the filter.
+
+    Every merging path goes through a card, and the card is open while the
+    merge is in flight — the ordinary accept, an auto-merged armed card, a
+    manual override, and the PR somebody merged on GitHub that the platform
+    then settles — so all of them are excluded by the same one check.
 
     The row is still locked and re-read, for the narrower job it can actually
     do: two overlapping passes over one task must not both open a PR. The second
@@ -637,7 +646,10 @@ async def _draft_pr_for_one_task(session: AsyncSession, task_id: uuid.UUID) -> b
     if task is None:
         return False
     cards = AcceptCardRepository(session)
-    if await cards.list_for_task(task.id):
+    if any(
+        card.status in archive.OPEN_CARD_STATUSES
+        for card in await cards.list_for_task(task.id)
+    ):
         return False
     # The row is held here, so GitHub is not asked: `_branch_ahead` asked it
     # live a moment ago, and what it answered is in the process's quota record.
@@ -675,7 +687,10 @@ async def _branch_ahead(session: AsyncSession, task_id: uuid.UUID) -> bool:
         or task.pr_number is not None
     ):
         return False
-    if await AcceptCardRepository(session).list_for_task(task.id):
+    if any(
+        card.status in archive.OPEN_CARD_STATUSES
+        for card in await AcceptCardRepository(session).list_for_task(task.id)
+    ):
         return False
     project_id, branch, base = task.project_id, task.branch_name, task.base_branch
     quota = await background_quota(project_id, session)
