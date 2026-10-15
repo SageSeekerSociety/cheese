@@ -66,10 +66,14 @@ function param(value: unknown): unknown {
 // The catalog entry a key names. The backend's two catalogs share one key space
 // (`app/core/sentences.py` refuses a key in both), so at most one of these matches.
 // `zh-CN` is the complete catalog; asking it keeps a key that only lacks
-// English on the fallback path of vue-i18n rather than on `fallback`.
+// English on the fallback path of vue-i18n rather than on `fallback`. It is
+// also the part that arrives after the first page (`loadPlatformSentences`), so
+// the reader's own catalog is asked too: an English reader in that gap reads the
+// English sentence, not the server's Chinese one.
 function entryOf(key: string): string | null {
-  if (i18n.global.te(`roomNotice.${key}`, 'zh-CN')) return `roomNotice.${key}`
-  if (i18n.global.te(`apiError.${key}`, 'zh-CN')) return `apiError.${key}`
+  const { te } = i18n.global
+  if (te(`roomNotice.${key}`, 'zh-CN') || te(`roomNotice.${key}`)) return `roomNotice.${key}`
+  if (te(`apiError.${key}`, 'zh-CN') || te(`apiError.${key}`)) return `apiError.${key}`
   return null
 }
 

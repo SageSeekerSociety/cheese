@@ -20,13 +20,15 @@ import '@mdi/font/css/materialdesignicons.css'
 
 import 'vuetify/styles'
 
+import type { VuetifyOptions } from 'vuetify'
+
 import { createVuetify } from 'vuetify'
 import { aliases, mdi } from 'vuetify/iconsets/mdi'
 import { en, zhHans } from 'vuetify/locale'
 
 import { resolveInitialTheme } from '@/theme'
 
-export default createVuetify({
+export const vuetifyOptions: VuetifyOptions = {
   // Vuetify 自带一批它自己的文案 —— 数据表的「No data available」、分页的
   // 「Items per page:」、文件选择器的按钮、一堆 aria-label。不声明语言的话它们
   // 全是英文，混在中文界面里，而且这些字符串一个都不在本仓库里，搜不到、改不动。
@@ -213,4 +215,6 @@ export default createVuetify({
     VAvatar: { rounded: 'lg' },
     VToolbar: { color: 'surface' },
   },
-})
+}
+
+export default createVuetify(vuetifyOptions)

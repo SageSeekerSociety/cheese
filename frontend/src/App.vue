@@ -1,11 +1,10 @@
 <template>
-  <!-- The "restoring your session / unreachable, retry" layer for a cold open. It
+  <!-- The "can't confirm your session, retry" layer for a cold open. It
        comes first because it has to cover both branches — the shell and the public
        page: on a weak network, someone whose session was still good used to be
        sent to the marketing page. See RestorePhase in services/account.ts. -->
   <SessionRestoreGate
     :visible="restoreVisible"
-    :phase="restorePhase"
     :retrying="restoreRetrying"
     :navigation-failed="restoreNavigationFailed"
     @retry="retryRestore"
@@ -334,23 +333,20 @@ import { NotificationsApi } from '@/api/notifications'
 import { TeamsApi } from '@/api/teams'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
-import CommandPalette from '@/commands/palette/CommandPalette.vue'
 import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
-import GuideBubble from '@/components/common/GuideBubble.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import SessionRestoreGate from '@/components/common/SessionRestoreGate.vue'
 import { appShortcutSheetOpen } from '@/components/common/shortcutSheet'
 import VersionBadge from '@/components/common/VersionBadge.vue'
-import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
-import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
+import { rememberRailCount } from '@/lib/bootShape'
 import { offerToConnect } from '@/lib/desktop'
 import {
   desktopBadge,
@@ -377,8 +373,6 @@ import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
-import DeviceConnect from '@/views/desktop/DeviceConnect.vue'
-import TaskInheritance from '@/views/tasks/components/TaskInheritance.vue'
 import { useTaskInheritance } from '@/views/tasks/composables/useTaskInheritance'
 
 // Activate the theme runtime app-wide. First paint is already correct without
@@ -463,6 +457,14 @@ const SudoDialog = defineAsyncComponent(() => import('./components/account/SudoD
 const inApp = inDesktopApp()
 const DesktopAboutDialog = defineAsyncComponent(() => import('./components/common/DesktopAboutDialog.vue'))
 const DesktopPhoneDialog = defineAsyncComponent(() => import('./components/common/DesktopPhoneDialog.vue'))
+// 只在有人打开、或者某件事发生时才出现的几样，不跟应用外壳一起下：外壳要等它们的代码到齐
+// 才能挂载，冷打开时它们一样都用不上。
+const CommandPalette = defineAsyncComponent(() => import('@/commands/palette/CommandPalette.vue'))
+const DeviceConnect = defineAsyncComponent(() => import('@/views/desktop/DeviceConnect.vue'))
+const GuideBubble = defineAsyncComponent(() => import('@/components/common/GuideBubble.vue'))
+const LeaveProjectDialog = defineAsyncComponent(() => import('@/components/LeaveProjectDialog.vue'))
+const ResourceLimitsNotice = defineAsyncComponent(() => import('@/components/ResourceLimitsNotice.vue'))
+const TaskInheritance = defineAsyncComponent(() => import('@/views/tasks/components/TaskInheritance.vue'))
 const sudoWanted = ref(false)
 watch(pendingSudo, (request) => {
   if (request) sudoWanted.value = true
@@ -491,6 +493,9 @@ const cxProjects = computed<Project[]>(() => (AccountService.loggedIn ? projects
 // 存：拖过之后再刷新项目列表，排法不会被服务端的顺序盖掉。
 const projectOrder = ref<string[]>(loadProjectOrder(myHandle()))
 const railProjects = computed(() => applyProjectOrder(cxProjects.value, projectOrder.value))
+// 下次冷打开时启动骨架照这个数画 rail 上的项目格。
+const railCount = computed(() => (AccountService.loggedIn && projectsRead.data.value ? cxProjects.value.length : null))
+watch(railCount, (count) => count !== null && rememberRailCount(count), { immediate: true })
 
 function reorderRail(movedId: string, targetId: string, edge: DropEdge) {
   const next = reorderProjects(railProjects.value, movedId, targetId, edge)
@@ -515,11 +520,10 @@ watch(
 // 到的时候，项目侧栏也还没注册，内容区先按没有侧栏的宽度画出来，侧栏一到整块内容
 // 往右跳一个侧栏宽——每个项目页冷打开时最大的一次布局偏移。在那之前内容区不可见、
 // 也不做内边距过渡，露出来的时候已经在最终位置上。
-// 冷打开时「正在恢复登录状态 / 连不上、可以重试」那一层。逻辑在 composable 里
+// 冷打开时「连不上、可以重试」那一层。逻辑在 composable 里
 // ——组件边界规则不允许子组件碰 services/router，而这里是视图那一层。
 const {
   visible: restoreVisible,
-  phase: restorePhase,
   retrying: restoreRetrying,
   navigationFailed: restoreNavigationFailed,
   retry: retryRestore,

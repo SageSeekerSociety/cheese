@@ -4,7 +4,8 @@ import { beforeAll } from 'vitest'
 //
 // 为什么两份都要：英文那份不在入口里，用的时候现取（`src/i18n/index.ts`）。一大批用例
 // 先 `setLocale('en')`、下一行就同步断言英文，等不了动态 import；还有一批在挂载前就用
-// `t()` 取词。所以这里把它取回来。zh-CN 本来就跟着入口来，取它是同一份、当场返回。
+// `t()` 取词。所以这里把它取回来。zh-CN 的大半跟着入口来，首屏用不上的那几个命名空间
+// 另取（`messages/zh-CN/deferred.ts`），取 zh-CN 就是把它们一起取回来。
 //
 // 为什么放在钩子里而不是这个文件的第一行：i18n 实例一建起来就把界面语言定下来（读
 // localStorage，再看浏览器语言；happy-dom 报的是 en-US）。而用例文件里「在 import
@@ -16,13 +17,14 @@ beforeAll(async () => {
   // 有的用例文件把整个 `@/i18n` 换成替身（只给一个 `t` 那种）：那种文件用自己那份假
   // i18n，不碰真语言包，替身里没有 `loadLocale` 就跳过。取包本身失败不吞：真的取不回
   // 来要看见。
-  let load: ((locale: 'zh-CN' | 'en') => Promise<void>) | undefined
+  let loads: Promise<void>[]
   try {
     const real = await import('@/i18n')
-    if (typeof real.loadLocale === 'function') load = real.loadLocale
+    if (typeof real.loadLocale !== 'function') return
+    // 后端说的那两类话页面挂载后才取（`loadPlatformSentences`），这里一起取齐。
+    loads = [real.loadLocale('zh-CN'), real.loadLocale('en'), real.loadPlatformSentences()]
   } catch {
     return
   }
-  if (!load) return
-  await Promise.all([load('zh-CN'), load('en')])
+  await Promise.all(loads)
 })
