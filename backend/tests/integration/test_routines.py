@@ -1,4 +1,4 @@
-"""Standing work: a confirmed rule wakes the room's teammate, once per moment or
+"""Standing work: a saved rule wakes the room's teammate, once per moment or
 event, and whoever set it hears how each run went."""
 
 import uuid
@@ -109,27 +109,24 @@ def _runs(client, routine_id):
     return r.json()["data"]["data"]
 
 
-def test_an_ai_draft_runs_nothing_until_a_person_confirms_it(client):
+def test_a_teammates_rule_runs_from_the_moment_it_is_saved(client):
+    """Nobody confirms it: a rule an AI teammate creates is saved and running,
+    and its first moment comes the same way a person-made rule's does."""
     room = _room(client, _project(client))
-    drafted = _weekly(client, room, owner_handle=OWNER)
-    assert drafted.status_code == 200, drafted.text
-    routine = drafted.json()["data"]
-    assert routine["state"] == "draft"
-    assert routine["next_run_at"] is None
+    made = _weekly(client, room, owner_handle=OWNER)
+    assert made.status_code == 200, made.text
+    routine = made.json()["data"]
+    assert routine["state"] == "active"
+    assert routine["next_run_at"] is not None
+    assert routine["created_by"] == routine["agent_handle"], routine
 
-    refused = client.post(f"/routines/{routine['id']}/confirm")
-    assert refused.status_code == 403, "an AI teammate confirmed its own draft"
-
+    _make_due(client, routine["id"])
     (_, runner) = _sweep(client)
-    assert runner.submitted == []
-
-    confirmed = client.post(f"/routines/{routine['id']}/confirm", headers=PERSON)
-    assert confirmed.status_code == 200, confirmed.text
-    assert confirmed.json()["data"]["state"] == "active"
-    assert confirmed.json()["data"]["next_run_at"] is not None
+    assert len(runner.submitted) == 1
 
 
-def _draft_line(client, room: str, routine_id: str) -> dict:
+def _rule_line(client, room: str, routine_id: str) -> dict:
+    """The room's line about this rule: the one the teammate's creation left."""
     blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
     [line] = [
         b
@@ -140,49 +137,43 @@ def _draft_line(client, room: str, routine_id: str) -> dict:
     return line
 
 
-def test_the_rooms_line_about_a_draft_says_how_a_person_decided(client):
+def test_the_rooms_line_about_a_rule_says_what_became_of_it(client):
     room = _room(client, _project(client))
     kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
-    line = _draft_line(client, room, kept["id"])
-    assert line["meta"]["who"] == "human", (
-        "a draft waiting on a person said 芝士 had it"
+    line = _rule_line(client, room, kept["id"])
+    assert line["meta"]["who"] == "platform", (
+        "a rule that is already running read as one waiting on a person"
     )
-
-    client.post(f"/routines/{kept['id']}/confirm", headers=PERSON)
-    line = _draft_line(client, room, kept["id"])
-    assert "已确认" in line["content"], line["content"]
-    assert line["meta"]["state"] == "over"
-    assert not line["meta"]["who"]
+    assert "建了例行事务" in line["content"], line["content"]
 
     dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
     assert (
         client.delete(f"/routines/{dropped['id']}", headers=PERSON).status_code == 200
     )
-    line = _draft_line(client, room, dropped["id"])
-    assert "已删除" in line["content"], line["content"]
+    line = _rule_line(client, room, dropped["id"])
+    assert "删掉了例行事务" in line["content"], line["content"]
     assert line["meta"]["state"] == "over"
+    assert not line["meta"]["who"]
 
 
-def test_the_rooms_line_about_a_draft_names_the_teammate_that_drafted(client):
+def test_the_rooms_line_about_a_rule_names_the_teammate_that_created_it(client):
     """The line names the teammate by its handle, the way a mention chip does,
-    so a teammate called Nova is not announced as 「芝士」, before a person
-    decides and after."""
+    so a teammate called Nova is not announced as 「芝士」."""
     room = _room(client, _project(client))
     seat = room_agent_seat(client, room)
     kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
     dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
     for routine in (kept, dropped):
-        line = _draft_line(client, room, routine["id"])
+        line = _rule_line(client, room, routine["id"])
         assert line["content"].startswith(f"<@{seat}> "), line["content"]
         assert "芝士" not in line["content"]
 
-    client.post(f"/routines/{kept['id']}/confirm", headers=PERSON)
+    # 删掉以后那一行说的是谁删的：把规则从房间里拿走的是人，不是芝士。
     client.delete(f"/routines/{dropped['id']}", headers=PERSON)
-    for routine in (kept, dropped):
-        line = _draft_line(client, room, routine["id"])
-        assert line["meta"]["state"] == "over"
-        assert line["content"].startswith(f"<@{seat}> "), line["content"]
-        assert "芝士" not in line["content"]
+    line = _rule_line(client, room, dropped["id"])
+    assert line["meta"]["state"] == "over"
+    assert line["content"].startswith(f"<@{OWNER}> "), line["content"]
+    assert _rule_line(client, room, kept["id"])["content"].startswith(f"<@{seat}> ")
 
 
 def test_the_work_a_run_hands_over_is_labelled_with_the_teammates_name(client):
@@ -429,17 +420,44 @@ def test_an_edit_reaches_the_next_run(client):
     assert "整理本周各房间的进展" not in runner.submitted[0][1]["content"]
 
 
-def test_an_ai_edit_to_a_live_rule_waits_for_a_person_again(client):
+def test_an_ai_edit_to_a_live_rule_takes_effect_at_once(client):
     room = _room(client, _project(client))
     routine = _weekly(client, room, headers=PERSON).json()["data"]
     edited = client.patch(
         f"/routines/{routine['id']}", json={"instructions": "顺手把周报发给所有人"}
     )
     assert edited.status_code == 200, edited.text
-    assert edited.json()["data"]["state"] == "draft"
+    assert edited.json()["data"]["state"] == "active"
     _make_due(client, routine["id"])
     (_, runner) = _sweep(client)
-    assert runner.submitted == []
+    assert len(runner.submitted) == 1
+    assert "顺手把周报发给所有人" in runner.submitted[0][1]["content"]
+
+
+def test_a_rule_that_was_given_no_name_is_named_by_its_goal(client):
+    room = _room(client, _project(client))
+    made = client.post(
+        f"/topics/{room}/routines",
+        json={
+            "instructions": "每周一汇总各频道进展。写成三五条，附上各自的文件。",
+            "trigger": "schedule",
+            "spec": {"freq": "weekly", "weekdays": [0], "time": "09:00"},
+        },
+        headers=PERSON,
+    )
+    assert made.status_code == 200, made.text
+    assert made.json()["data"]["title"] == "每周一汇总各频道进展"
+
+
+def test_a_rule_has_to_say_what_it_should_do(client):
+    room = _room(client, _project(client))
+    refused = client.post(
+        f"/topics/{room}/routines",
+        json={"title": "每周进展", "instructions": "   "},
+        headers=PERSON,
+    )
+    assert refused.status_code >= 400, refused.text
+    assert "要它干什么" in refused.json()["message"], refused.json()
 
 
 def _close_task(client, project, room, title):

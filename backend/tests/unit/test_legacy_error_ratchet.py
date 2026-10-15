@@ -206,7 +206,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/room_task/presentation.py", "ValidationError"): 1,
     ("app/domain/room_task/snapshots.py", "ValidationError"): 4,
     ("app/domain/routine/schedule.py", "ValidationError"): 8,
-    ("app/domain/routine/service.py", "ValidationError"): 17,
+    ("app/domain/routine/service.py", "ValidationError"): 15,
     ("app/domain/site/hosting.py", "AppError"): 2,
     ("app/domain/site/hosting.py", "ValidationError"): 3,
     ("app/domain/site/services.py", "ValidationError"): 12,

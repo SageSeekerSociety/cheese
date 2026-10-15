@@ -19,6 +19,7 @@
   "mailDrafted": "Cheese wrote a draft in {account}; it is sent only once {owner} confirms",
   "policyResourceMachine": "the environment",
   "routineProposalConfirmed": "Cheese's draft “{title}” was confirmed and runs as set",
+  "routineProposalConfirmedBy": "{who}'s draft “{title}” was confirmed and runs as set",
   "routineProposalDeleted": "Cheese's draft “{title}” was deleted and will not run",
   "routineProposed": "Cheese drafted “{title}”; it runs only once you confirm",
   "routineResult": "“{title}” {verdict}",

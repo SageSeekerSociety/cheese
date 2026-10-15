@@ -339,6 +339,7 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "labelUpgradedTo",
         "labelRoutineWork",
         "routineProposalConfirmed",
+        "routineProposalConfirmedBy",
         "routineProposalDeleted",
         "routineProposed",
         "skillProposalNotSaved",

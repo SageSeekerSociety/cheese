@@ -144,9 +144,11 @@ def test_the_room_is_told_once_per_archive_but_every_episode(client):
 def test_a_room_without_active_rules_is_left_alone(client):
     project = _project(client)
     room = _room(client, project)
-    # 只有一份草稿，没有启用中的规则。
-    drafted = _weekly(client, room, owner_handle=OWNER).json()["data"]
-    assert drafted["state"] == "draft"
+    # 只有一条暂停的规则，没有在跑的。
+    parked = _weekly(client, room, headers=PERSON).json()["data"]
+    assert (
+        client.post(f"/routines/{parked['id']}/pause", headers=PERSON).status_code == 200
+    )
 
     assert _archive(client, room).status_code == 200
     _sweep(client)

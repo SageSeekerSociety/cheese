@@ -256,7 +256,6 @@ UNDECLARED: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/questions/{question_id}/invitations"),
         ("POST", "/questions/{question_id}/vote"),
         ("POST", "/routine-runs/{run_id}/report"),
-        ("POST", "/routines/{routine_id}/confirm"),
         ("POST", "/routines/{routine_id}/pause"),
         ("POST", "/routines/{routine_id}/resume"),
         ("POST", "/routines/{routine_id}/run-now"),

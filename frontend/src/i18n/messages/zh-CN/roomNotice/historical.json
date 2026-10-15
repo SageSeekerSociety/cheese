@@ -19,6 +19,7 @@
   "mailDrafted": "芝士在 {account} 里写好了一封草稿，等 {owner} 确认后才会发送",
   "policyResourceMachine": "环境",
   "routineProposalConfirmed": "芝士起草的「{title}」已确认，会按设定执行",
+  "routineProposalConfirmedBy": "{who} 起草的「{title}」已确认，会按设定执行",
   "routineProposalDeleted": "芝士起草的「{title}」已删除，不会执行",
   "routineProposed": "芝士起草了「{title}」，要你确认后才会执行",
   "routineResult": "「{title}」{verdict}",

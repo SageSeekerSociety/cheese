@@ -189,6 +189,7 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "labelUpgradedTo",
         "labelRoutineWork",
         "routineProposalConfirmed",
+        "routineProposalConfirmedBy",
         "routineProposalDeleted",
         "routineProposed",
         "skillProposalNotSaved",

@@ -106,6 +106,24 @@ def now() -> datetime:
     return datetime.now(UTC)
 
 
+def _name(title: str, instructions: str) -> str:
+    """The rule's name: what was typed, or its goal's first sentence.
+
+    Only the goal is required, so a rule usually gets its name from the first
+    thing that goal says —— 「每周一汇总各频道进展。写成三五条」 叫「每周一汇总各频道进展」。
+    """
+    name = (title or "").strip()
+    goal = (instructions or "").strip()
+    if not name:
+        cut = len(goal)
+        for stop in ("。", "！", "？", "\n", ". ", "! ", "? "):
+            at = goal.find(stop)
+            if at > 0:
+                cut = min(cut, at)
+        name = goal[:cut].strip()
+    return name[:200]
+
+
 def _clean_dir(raw: str) -> str:
     path = (raw or "").strip().strip("/")
     if any(part in ("", ".", "..") for part in path.split("/")) and path:
@@ -197,14 +215,14 @@ class RoutineService:
         owner_handle: str | None,
         agent_handle: str | None,
     ) -> Routine:
-        if not title.strip() or not instructions.strip():
-            raise ValidationError(say("routineFieldsRequired"))
+        if not instructions.strip():
+            raise ValidationError(say("routineInstructionsRequired"))
         spec = _validate(trigger, spec, tz)
         await self._check_feedback_batch(spec, topic.project_id)
         if by_agent:
             agent = await self._agent_for(topic.id, agent_handle or by)
             if not owner_handle:
-                raise ValidationError(say("routineDraftNeedsOwner"))
+                raise ValidationError(say("routineNeedsOwner"))
             # The owner is told the results, so they are a person of the
             # project, and the channel the routine runs in becomes theirs too.
             members = TopicMemberService(self._session)
@@ -223,21 +241,24 @@ class RoutineService:
             id=uuid.uuid4(),
             project_id=topic.project_id,
             topic_id=topic.id,
-            title=title.strip()[:200],
+            title=_name(title, instructions),
             instructions=instructions.strip(),
             context_scope=(context_scope or "").strip(),
             output_dir=_clean_dir(output_dir),
             trigger=trigger,
             spec=spec,
             timezone=tz,
-            state=RoutineState.draft.value,
+            state=RoutineState.active.value,
             agent_handle=agent,
             owner_handle=owner,
-            proposed_by=by,
+            created_by=by,
         )
         self._session.add(row)
+        self._activate(row)
         await self._session.flush()
         if by_agent:
+            # 芝士建完说一句：房间里的人要知道多了这么一条，那句话点得开，点开就是
+            # 它 —— 它此刻已经在跑，说这句不是请谁去确认。
             line = say("routineProposedBy", who=f"<@{by}>", title=row.title)
             self._session.add(
                 Block(
@@ -254,8 +275,7 @@ class RoutineService:
                             **notice(
                                 EVENT_ROUTINE_PROPOSED,
                                 severity=SEVERITY_INFO,
-                                # It waits on a person confirming it.
-                                who=WHO_HUMAN,
+                                who=WHO_PLATFORM,
                                 detail=self.summary_text(row),
                                 detail_label=say("labelRoutineToConfirm"),
                             ),
@@ -265,9 +285,7 @@ class RoutineService:
                     ),
                 )
             )
-        else:
-            self._activate(row, confirmed_by=by)
-        await self._session.flush()
+            await self._session.flush()
         return row
 
     @staticmethod
@@ -283,43 +301,14 @@ class RoutineService:
             owner=row.owner_handle,
         )
 
-    def _activate(self, row: Routine, *, confirmed_by: str | None = None) -> None:
+    def _activate(self, row: Routine) -> None:
         stamp = now()
         row.state = RoutineState.active.value
-        if confirmed_by is not None:
-            row.confirmed_by = confirmed_by
-            row.confirmed_at = stamp
         row.event_cursor = stamp
         row.next_run_at = (
             schedule.next_after(row.spec, row.timezone, stamp)
             if row.trigger == RoutineTrigger.schedule
             else None
-        )
-
-    async def confirm(self, row: Routine, *, by: str) -> Routine:
-        if row.state != RoutineState.draft.value:
-            raise ValidationError(say("routineAlreadyConfirmed"))
-        self._activate(row, confirmed_by=by)
-        await self._session.flush()
-        await self._settled(
-            row,
-            say(
-                "routineProposalConfirmedBy",
-                who=f"<@{row.proposed_by}>",
-                title=row.title,
-            ),
-        )
-        return row
-
-    async def _settled(self, row: Routine, content: str) -> None:
-        """A person decided on a teammate's draft: its line in the room says so."""
-        await settle_proposal(
-            self._session,
-            row.topic_id,
-            event_type=EVENT_ROUTINE_PROPOSED,
-            key="routine_id",
-            value=row.id,
-            content=content,
         )
 
     async def pause(self, row: Routine) -> Routine:
@@ -338,7 +327,7 @@ class RoutineService:
         await self._session.flush()
         return row
 
-    async def update(self, row: Routine, *, by_agent: bool, changes: dict) -> Routine:
+    async def update(self, row: Routine, *, changes: dict) -> Routine:
         trigger = changes.get("trigger", row.trigger)
         spec = changes.get("spec", row.spec)
         tz = changes.get("timezone", row.timezone)
@@ -347,8 +336,10 @@ class RoutineService:
         for key in ("title", "instructions", "context_scope"):
             if key in changes and changes[key] is not None:
                 setattr(row, key, str(changes[key]).strip())
-        if not row.title or not row.instructions:
-            raise ValidationError(say("routineFieldsRequired"))
+        if not row.instructions:
+            raise ValidationError(say("routineInstructionsRequired"))
+        if not row.title:
+            row.title = _name(row.title, row.instructions)
         if changes.get("output_dir") is not None:
             row.output_dir = _clean_dir(changes["output_dir"])
         if changes.get("agent_handle"):
@@ -357,19 +348,14 @@ class RoutineService:
             )
         row.trigger, row.spec, row.timezone = trigger, new_spec, tz
         row.revision += 1
-        if by_agent and row.state != RoutineState.draft.value:
-            # An AI teammate's edit is a new proposal: nothing it wrote runs
-            # until a person has read and confirmed it.
-            row.state = RoutineState.draft.value
-            row.next_run_at = None
-        elif row.state == RoutineState.active.value:
+        # An edit takes effect the same way a new rule does: an AI teammate's
+        # edit needs nobody's confirmation either.
+        if row.state == RoutineState.active.value:
             self._activate(row)
         await self._session.flush()
         return row
 
     async def run_now(self, row: Routine, *, by: str) -> RoutineRun:
-        if row.state == RoutineState.draft.value:
-            raise ValidationError(say("routineRunUnconfirmed"))
         run = await _fire(
             self._session,
             row,
@@ -381,18 +367,26 @@ class RoutineService:
         await self._session.flush()
         return run
 
-    async def delete(self, row: Routine) -> None:
-        if row.state == RoutineState.draft.value:
-            await self._settled(
-                row,
-                say(
-                    "routineProposalDeletedBy",
-                    who=f"<@{row.proposed_by}>",
-                    title=row.title,
-                ),
-            )
+    async def delete(self, row: Routine, *, by: str) -> None:
+        # 芝士建的那条行说「多了这么一条」；规则删了，它还那样写就会把人指到一条
+        # 不存在的规则上，所以原地改成删掉的样子，那条行上的「打开」也随之收掉。
+        await self._settled(
+            row,
+            say("routineProposalDeletedBy", who=f"<@{by}>", title=row.title),
+        )
         await self._session.delete(row)
         await self._session.flush()
+
+    async def _settled(self, row: Routine, content: str) -> None:
+        """一条提到这条规则的行，改成它的下落。"""
+        await settle_proposal(
+            self._session,
+            row.topic_id,
+            event_type=EVENT_ROUTINE_PROPOSED,
+            key="routine_id",
+            value=row.id,
+            content=content,
+        )
 
     async def announce_archived_rooms(self) -> int:
         """归档是别处做的动作：每次对账扫一遍，哪个房间的话还没说就补上。

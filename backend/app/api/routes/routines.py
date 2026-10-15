@@ -1,16 +1,18 @@
 """Routines: standing work on a clock or on a project event.
 
-An AI teammate may draft or edit one; only a person confirms it, resumes it or
-runs it by hand, because each of those is what makes work happen unattended.
+An AI teammate creates and edits one the same way a person does, and both take
+effect at once: saving a rule is what makes work happen unattended, and nothing
+waits on a second person to agree. What a person keeps to themselves is deleting
+one, because that takes the rule away from everyone in the room.
 
 **Who a rule belongs to.** Seeing one is the room's business: the people on that
 room's roster, plus whoever manages the project. Being a member of the project
 itself is NOT enough — a rule names what one room does on a clock, and the other
-rooms of the project have no business reading who set what there. Acting on one
-(confirming, pausing, resuming, running by hand, deleting, and a person's edit)
-is narrower still: the person it notifies (``owner_handle``) or a project
-manager. Every response carries ``can_manage`` so the frontend knows which
-buttons to draw.
+rooms of the project have no business reading who set what there. Editing one
+(pausing, resuming, running by hand, and a change of its fields) is the same
+audience: whoever may read it may change it. Deleting is narrower: the person it
+notifies (``owner_handle``) or a project manager. Every response carries
+``can_delete`` so the frontend knows whether to draw that button.
 """
 
 import uuid
@@ -42,7 +44,9 @@ router = APIRouter(prefix="", tags=["routines"])
 
 
 class RoutineIn(BaseModel):
-    title: str = Field(min_length=1, max_length=200)
+    #: The goal is the one thing a rule must say; its name may be left out and
+    #: is then taken from the goal's first sentence.
+    title: str = Field(default="", max_length=200)
     instructions: str = Field(min_length=1)
     context_scope: str = ""
     output_dir: str = ""
@@ -75,13 +79,13 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _routine(
-    row: Routine, *, can_manage: bool = False, room_archived: bool = False
+    row: Routine, *, can_delete: bool = False, room_archived: bool = False
 ) -> dict:
     trigger_text = describe_trigger(row)
     return {
         **notice_keys(trigger_text=trigger_text),
         "id": str(row.id),
-        "can_manage": can_manage,
+        "can_delete": can_delete,
         "room_archived": room_archived,
         "project_id": str(row.project_id),
         "topic_id": str(row.topic_id),
@@ -96,9 +100,7 @@ def _routine(
         "state": row.state,
         "agent_handle": row.agent_handle,
         "owner_handle": row.owner_handle,
-        "proposed_by": row.proposed_by,
-        "confirmed_by": row.confirmed_by,
-        "confirmed_at": _iso(row.confirmed_at),
+        "created_by": row.created_by,
         "next_run_at": _iso(row.next_run_at),
         "revision": row.revision,
         "created_at": _iso(row.created_at),
@@ -191,19 +193,19 @@ async def _routine_actor(
     return row, actor
 
 
-def _may_manage(row: Routine, actor: Actor, *, admin: bool) -> bool:
-    """The rule's owner, or a project manager. An AI teammate never: it drafts
-    and edits, and a person decides."""
+def _may_delete(row: Routine, actor: Actor, *, admin: bool) -> bool:
+    """The rule's owner, or a project manager. Never an AI teammate: whoever may
+    read a rule may change it, but taking one away from the room is a person's
+    call."""
     if not _is_person(actor):
         return False
     return admin or (bool(actor.handle) and actor.handle == row.owner_handle)
 
 
-async def _require_manage(
-    db: AsyncSession, actor: Actor, row: Routine, what: str
-) -> None:
-    if await _can_manage(db, actor, row):
+async def _require_delete(db: AsyncSession, actor: Actor, row: Routine) -> None:
+    if await _can_delete(db, actor, row):
         return
+    what = say("routineDelete")
     if _is_person(actor):
         raise ForbiddenError(
             say(
@@ -216,8 +218,8 @@ async def _require_manage(
     raise ForbiddenError(say("routineManagerOnly", what=what))
 
 
-async def _can_manage(db: AsyncSession, actor: Actor, row: Routine) -> bool:
-    return _may_manage(
+async def _can_delete(db: AsyncSession, actor: Actor, row: Routine) -> bool:
+    return _may_delete(
         row, actor, admin=await _manages_project(db, actor, row.project_id)
     )
 
@@ -226,7 +228,7 @@ async def _present(
     db: AsyncSession, actor: Actor, rows: list[Routine], *, admin: bool
 ) -> list[dict]:
     """The rows as this caller gets them, carrying the two flags the frontend
-    draws buttons from: ``can_manage`` (may this caller act on it) and
+    draws buttons from: ``can_delete`` (may this caller take it away) and
     ``room_archived`` (its room went away — the rule is not running now, and
     that is the room's fact, not the rule's).
 
@@ -237,7 +239,7 @@ async def _present(
     return [
         _routine(
             r,
-            can_manage=_may_manage(r, actor, admin=admin),
+            can_delete=_may_delete(r, actor, admin=admin),
             room_archived=r.topic_id in archived,
         )
         for r in rows
@@ -366,30 +368,13 @@ async def update_routine(
     routine_id: uuid.UUID, body: RoutinePatch, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    if _is_person(actor):
-        await _require_manage(db, actor, row, say("routineEdit"))
     if body.agent_handle is not None:
         await _own_agent_works_for(
             db, row.project_id, body.agent_handle, row.owner_handle or ""
         )
     row = await RoutineService(db).update(
-        row,
-        by_agent=not _is_person(actor),
-        changes=body.model_dump(exclude_unset=True),
+        row, changes=body.model_dump(exclude_unset=True)
     )
-    presented = await _present_one(db, actor, row)
-    await db.commit()
-    return ok(presented)
-
-
-@router.post("/routines/{routine_id}/confirm")
-async def confirm_routine(
-    routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    row, actor = await _routine_actor(db, resolver, routine_id)
-    _person(actor, say("routineConfirmEnable"))
-    await _require_manage(db, actor, row, say("routineConfirmEnable"))
-    row = await RoutineService(db).confirm(row, by=actor.handle)
     presented = await _present_one(db, actor, row)
     await db.commit()
     return ok(presented)
@@ -400,10 +385,7 @@ async def pause_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    # 芝士今天就能暂停（人写的规则也暂停），这一档不变：暂停停下的是执行，不
-    # 是新工作；其余的操作仍要人来做。
-    if _is_person(actor):
-        await _require_manage(db, actor, row, say("routinePause"))
+    # 看得到就改得动，暂停也一样：暂停停下的是执行，不是新工作。
     row = await RoutineService(db).pause(row)
     presented = await _present_one(db, actor, row)
     await db.commit()
@@ -415,8 +397,6 @@ async def resume_routine(
     routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
-    _person(actor, say("routineResume"))
-    await _require_manage(db, actor, row, say("routineResume"))
     row = await RoutineService(db).resume(row)
     presented = await _present_one(db, actor, row)
     await db.commit()
@@ -431,9 +411,7 @@ async def run_routine_now(
     from app.api.deps import get_chat_service, get_work_runner
 
     row, actor = await _routine_actor(db, resolver, routine_id)
-    _person(actor, say("routineRunNow"))
-    await _require_manage(db, actor, row, say("routineRunNow"))
-    run = await RoutineService(db).run_now(row, by=actor.handle)
+    run = await RoutineService(db).run_now(row, by=await _speaker(db, actor, row.topic_id))
     await db.commit()
     chat = get_chat_service()
     if run.message_id is not None:
@@ -452,8 +430,8 @@ async def delete_routine(
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
     _person(actor, say("routineDelete"))
-    await _require_manage(db, actor, row, say("routineDelete"))
-    await RoutineService(db).delete(row)
+    await _require_delete(db, actor, row)
+    await RoutineService(db).delete(row, by=actor.handle)
     await db.commit()
     return ok({"deleted": str(routine_id)})
 

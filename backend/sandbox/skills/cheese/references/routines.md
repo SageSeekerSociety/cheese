@@ -5,10 +5,10 @@
 ## 起草
 
 1. 从对话里整理出：做什么（`instructions`）、用哪些资料（`context_scope`）、多久一次或者哪种事件、几点、哪个时区、结果放在文件区哪个目录（`output_dir`）。时间或范围有歧义就用 `cheese_ask` 问，不要自己挑一个。
-2. 用 `cheese_routine_draft` 起草，参数照工具的说明写。取值、时间格式、星期几、几号、时区写错会当场被拒。
-3. 你起草的例行事务是**草稿，不会执行**。用一两句话把配置告诉用户，请他在这个频道右侧的「例行事务」里点「确认启用」。你没有确认、恢复、立即执行、删除的权限，也不要说已经设好了。
+2. 用 `cheese_routine_draft` 建，参数照工具的说明写。取值、时间格式、星期几、几号、时区写错会当场被拒。
+3. **存下就在跑**，没有人再点一次确认。所以先建得对，再用一两句话把这条规则什么时候跑第一次说给用户听；要改、要停，都在这个频道右侧的「例行事务」里。你没有删除的权限，删要由建它的人或项目管理员来点。
 
-查看用 `cheese_routine_list`，改用 `cheese_routine_update`（只发要改的那几项），暂停用 `cheese_routine_pause`。一条不是草稿的例行事务（启用中或已暂停）被你改过，会退回草稿，要人再确认一次，改完把改动告诉用户。更细的读法在接口上：`GET /projects/<项目 id>/routines?topic=<CHEESE_TOPIC>`、`GET /routines/<id>`、`GET /routines/<id>/runs`。
+查看用 `cheese_routine_list`，改用 `cheese_routine_update`（只发要改的那几项），暂停用 `cheese_routine_pause`。改一条启用中的规则，下一次就按改后的来，没有人再确认一次；改完把改动告诉用户。更细的读法在接口上：`GET /projects/<项目 id>/routines?topic=<CHEESE_TOPIC>`、`GET /routines/<id>`、`GET /routines/<id>/runs`。
 
 ## 被一条例行事务唤起时
 

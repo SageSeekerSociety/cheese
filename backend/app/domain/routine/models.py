@@ -37,8 +37,8 @@ class RoutineTrigger(enum.StrEnum):
 
 
 class RoutineState(enum.StrEnum):
-    #: Proposed by an AI teammate; runs nothing until a person confirms it.
-    draft = "draft"
+    #: Saved and running. Nothing waits on a person: an AI teammate creating a
+    #: rule and a person creating one both leave it here.
     active = "active"
     paused = "paused"
 
@@ -85,16 +85,16 @@ class Routine(UuidPk, Timestamps, Base):
     #: Events: {"scope": room|project}.
     spec: Mapped[dict] = mapped_column(JSONB, default=dict)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
-    state: Mapped[str] = mapped_column(String(16), default=RoutineState.draft.value)
+    state: Mapped[str] = mapped_column(String(16), default=RoutineState.active.value)
     #: The AI teammate seat that does the work.
     agent_handle: Mapped[str] = mapped_column(String(64))
     #: Who asked for it; the person notified of every result.
     owner_handle: Mapped[str] = mapped_column(String(64))
-    proposed_by: Mapped[str] = mapped_column(String(64))
-    confirmed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    confirmed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    #: Who created it — a person's handle, or the handle of the teammate that
+    #: created it on someone's behalf. The column still carries its birth name:
+    #: a rename is a new name on the old column, and `proposed_by` keeps it
+    #: until a later release drops the three columns the confirm step added.
+    created_by: Mapped[str] = mapped_column("proposed_by", String(64))
     next_run_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

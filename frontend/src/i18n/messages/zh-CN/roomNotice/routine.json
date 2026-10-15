@@ -1,5 +1,5 @@
 {
-  "labelRoutineToConfirm": "待确认的例行事务",
+  "labelRoutineToConfirm": "这条例行事务",
   "labelRoutineWorkFor": "交给 {who} 的工作",
   "routineTriggerHourly": "每小时第 {minute} 分（{timezone}）",
   "routineTriggerDaily": "每天 {time}（{timezone}）",
@@ -21,9 +21,8 @@
   "routineWeekdaySun": "周日",
   "routineFailed": "失败",
   "routineOutputRoot": "根目录",
-  "routineProposalConfirmedBy": "{who} 起草的「{title}」已确认，会按设定执行",
-  "routineProposalDeletedBy": "{who} 起草的「{title}」已删除，不会执行",
-  "routineProposedBy": "{who} 起草了「{title}」，要你确认后才会执行",
+  "routineProposalDeletedBy": "{who} 删掉了例行事务「{title}」",
+  "routineProposedBy": "{who} 建了例行事务「{title}」",
   "routineResultWithFiles": "{body}\n结果文件：{files}",
   "routineRunStarted": "开始执行「{title}」",
   "routineScopeUnset": "（未限定）",
