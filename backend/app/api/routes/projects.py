@@ -85,6 +85,7 @@ from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.adapters import ComputeCredits
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheesex.projects")
@@ -218,7 +219,11 @@ async def create_project(
     # 领了这道题才能用它新建项目：项目带着题目的访问权和资源包，不能凭一个题号拿到。
     if body.external_task_id is not None:
         await _require_claim(db, who, body.external_task_id, body.team_id)
-    project = await ProjectService(db, default_teammate=default_teammate).create(
+    project = await ProjectService(
+        db,
+        default_teammate=default_teammate,
+        compute_credits=ComputeCredits(db),
+    ).create(
         **body.model_dump(exclude={"id"}),
         project_id=body.id,
         owner_handle=who.handle,
