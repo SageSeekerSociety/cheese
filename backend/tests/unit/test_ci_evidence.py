@@ -1,5 +1,9 @@
 """A worker that pytest-timeout ends leaves the case and its stacks behind, and
-its retry keeps the run green without hiding that it needed one."""
+its retry keeps the run green without hiding that it needed one.
+
+Under the distribution CI runs (``--dist loadfile``) a lost worker ends its
+shard instead: the case cannot be retried there, and a replacement worker never
+reports, so the shard would wait for it until the job's ceiling."""
 
 import json
 import os
@@ -203,3 +207,96 @@ def test_a_teardown_retry_counts_once_and_warns(tmp_path: Path, workers: int) ->
     assert "test_retried passed only on a retry" in warning
     with pytest.raises(SuiteDidNotRun):
         assert_suite_ran(results, at_least=2, selection_dir=evidence)
+
+
+SAMPLE_LOSES_ITS_WORKER = """
+import os, pathlib, signal
+
+def test_its_worker_is_lost():
+    mark = pathlib.Path(__file__).with_name("lost")
+    if not mark.exists():
+        mark.write_text("")
+        os.kill(os.getpid(), signal.SIGKILL)
+"""
+
+SAMPLE_CARRIES_ON = """
+import pathlib
+
+def test_the_rest_of_the_shard():
+    pathlib.Path(__file__).with_name("carried_on").write_text("")
+"""
+
+
+@pytest.fixture(scope="module")
+def lost_worker_run(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[Path, subprocess.CompletedProcess]:
+    """One worker and the CI's own flags, so a second module is the work a
+    replacement worker would have been handed."""
+    tmp_path = tmp_path_factory.mktemp("lost")
+    (tmp_path / "test_a_loses_its_worker.py").write_text(SAMPLE_LOSES_ITS_WORKER)
+    (tmp_path / "test_b_carries_on.py").write_text(SAMPLE_CARRIES_ON)
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    evidence = tmp_path / "evidence"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "scripts.ci_shard",
+            "-p",
+            "scripts.ci_evidence",
+            "--ci-evidence-dir",
+            str(evidence),
+            "-n",
+            "1",
+            # CI's distribution: the one where a replacement worker deadlocks
+            # and where a case whose worker died cannot be retried.
+            "--dist",
+            "loadfile",
+            "--no-loadscope-reorder",
+            # CI's timeout, so the hang log has the case's `start` to name.
+            "-o",
+            "timeout=60",
+            "-o",
+            "timeout_method=thread",
+            "--reruns",
+            "1",
+            "--reruns-delay",
+            "1",
+            "--junitxml",
+            str(evidence / "results.xml"),
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            str(tmp_path),
+        ],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(BACKEND)},
+        capture_output=True,
+        text=True,
+        # Without the fix this never returns: the run waits on a replacement
+        # worker that was handed one work unit and waits for the next.
+        timeout=30,
+    )
+    return tmp_path, result
+
+
+def test_a_lost_worker_ends_the_shard_instead_of_being_replaced(
+    lost_worker_run: tuple[Path, subprocess.CompletedProcess],
+) -> None:
+    tmp_path, result = lost_worker_run
+    # Without the fix there is no run to inspect: the fixture times out while
+    # the shard waits on the replacement worker.
+    assert result.returncode != 0, result.stdout + result.stderr
+    # Which case, not just that something died.
+    assert "test_a_loses_its_worker.py::test_its_worker_is_lost" in result.stdout
+    log = (tmp_path / "evidence" / "hang-gw0.log").read_text()
+    assert log.splitlines()[-1].split()[1:] == [
+        "start",
+        "test_a_loses_its_worker.py::test_its_worker_is_lost",
+        "timeout=60.0s",
+    ]
+    # The module after the loss is what a replacement worker would have run.
+    assert not (tmp_path / "carried_on").exists()

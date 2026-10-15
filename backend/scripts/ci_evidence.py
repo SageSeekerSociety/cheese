@@ -11,6 +11,17 @@ when a case starts and one when it ends, faulthandler's dump of every thread
 just before the case's timeout fires, and faulthandler's dump on a fatal
 signal. A worker that died mid-case is the one whose file ends on a ``start``.
 
+A lost worker also ends the run. xdist replaces a crashed worker, and under a
+scheduler that hands out one work unit at a time (``--dist loadfile``, which the
+CI uses, plus loadscope and loadgroup) the replacement then deadlocks: before
+running the unit it was handed it waits for the next one, which the scheduler
+sends only after a completed case, which the replacement never reports. The
+shard sits there until the job's ceiling, which is the freeze #3005 reports.
+Those schedulers leave ``mark_test_pending`` unimplemented too, so a case whose
+worker died cannot be retried either, and the shard is red however it ends — so
+it ends at the loss, named, instead of spending the job's remaining minutes
+waiting on a worker that will never report.
+
 ``--reruns`` turns a failed or crashed case into a retry, and a case that then
 passes leaves the JUnit report looking clean. The process that collects the
 reports appends every retry to ``reruns.jsonl``, so ``scripts.assert_suite_ran``
@@ -34,6 +45,11 @@ _HANG_LOG = pytest.StashKey[object]()
 # The case whose stacks are due: pytest-timeout cancels from more than one
 # place (teardown and pytest_exception_interact), and only the first says `end`.
 _PENDING = pytest.StashKey[str]()
+
+# Schedulers that hand a worker a whole work unit at a time: loadfile groups by
+# module, loadscope by scope, loadgroup by xdist_group. The others (load,
+# worksteal) send a case at a time and can requeue one whose worker died.
+_SCOPE_SCHEDULERS = ("loadfile", "loadscope", "loadgroup")
 
 
 def pytest_addoption(parser):
@@ -141,12 +157,24 @@ class _RerunRecorder:
             )
 
 
+@pytest.hookimpl(tryfirst=True)
 def pytest_configure(config):
     directory = config.getoption("--ci-evidence-dir")
-    if directory is not None and not hasattr(config, "workerinput"):
-        config.pluginmanager.register(
-            _RerunRecorder(directory / "reruns.jsonl"), "cheese-ci-reruns"
-        )
+    # The CI's own invocation, which is the only one that loads this plugin: its
+    # flags pass the directory, and the controller is the process whose options
+    # below matter.
+    if directory is None or hasattr(config, "workerinput"):
+        return
+    config.pluginmanager.register(
+        _RerunRecorder(directory / "reruns.jsonl"), "cheese-ci-reruns"
+    )
+    # Set before xdist's own pytest_configure builds the DSession that reads it.
+    # Behind this run's flag on purpose: under a scheduler that hands a worker a
+    # whole work unit at a time a lost one cannot be retried, so the shard is
+    # red however it ends, and ending it there is what leaves the hang log able
+    # to name the case.
+    if config.option.numprocesses and config.option.dist in _SCOPE_SCHEDULERS:
+        config.option.maxworkerrestart = "0"
 
 
 def pytest_unconfigure(config):

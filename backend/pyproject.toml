@@ -187,7 +187,9 @@ timeout = 300
 # A signal can interrupt anyio's run_until_complete without cancelling the
 # async test. Fixture teardown then queues behind that still-running test and
 # hangs before the timeout report reaches CI. Dump the stack and exit the
-# worker instead; xdist reports the crashed test and runs the remaining work.
+# worker instead; xdist reports the crashed test. The rest of the shard runs
+# only under a scheduler that hands out one case at a time, which a local run
+# gets; CI's --dist loadfile ends the shard at the loss (scripts/ci_evidence).
 timeout_method = "thread"
 # Keep a test's tmp_path only when it failed. Every passing test's directory
 # used to stay until pytest's three-run rotation, which is how 13 GB of them
