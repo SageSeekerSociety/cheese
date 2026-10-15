@@ -223,7 +223,6 @@ class DocumentJournal:
         base_version: int | None,
         operation_id: uuid.UUID | None = None,
         event_id: uuid.UUID | None = None,
-        requested_by: str | None = None,
     ) -> None:
         self.session.add(
             DocumentVersion(
@@ -234,7 +233,6 @@ class DocumentJournal:
                 previous_version=version - 1 if version > 1 else None,
                 base_version=base_version,
                 actor=actor,
-                requested_by=requested_by,
                 operation_id=operation_id,
                 event_id=event_id,
             )
@@ -390,7 +388,6 @@ def _version_row(row: DocumentVersion) -> dict:
         "previous_version": row.previous_version,
         "base_version": row.base_version,
         "actor": row.actor,
-        "requested_by": row.requested_by,
         "operation_id": str(row.operation_id) if row.operation_id else None,
         "event_id": str(row.event_id) if row.event_id else None,
         "created_at": row.created_at.isoformat(),

@@ -74,7 +74,6 @@ async def store(
     operation: dict | None,
     quiet: bool = False,
     suggestions: list[dict] | None = None,
-    requested_by: str | None = None,
     edits: list[dict] | None = None,
     suggested: bool = False,
     reason: str | None = None,
@@ -87,7 +86,7 @@ async def store(
     ``suggestions`` are the ones pending in the stored state, kept with it on
     every store. A ``suggested`` store proposed ``edits`` (each with its
     ``suggestion_id``) without changing the text: no version, only the line
-    that says so. ``requested_by`` is who an edit was made for.
+    that says so; a direct one's ``edits`` go on its line, for 「查看改动」.
     """
     journal = DocumentJournal(db)
     await journal.lock(doc.id)
@@ -153,7 +152,6 @@ async def store(
         actors=actors,
         operation_id=operation_id,
         quiet=quiet,
-        requested_by=requested_by,
         edits=edits,
         turn_id=turn_id,
     )

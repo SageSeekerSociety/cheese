@@ -57,8 +57,8 @@ class PassageEditsIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     edits: list[PassageEdit] = Field(min_length=1, max_length=50)
-    #: "suggest" proposes the changes instead of making them. Left out, the
-    #: platform decides (see ``app.api.doc_edits``).
+    #: "suggest": an AI teammate proposes the changes instead of making them.
+    #: Left out, or from a person, the changes are made.
     mode: Literal["direct", "suggest"] | None = None
     #: Why, in a sentence: shown next to a suggestion.
     reason: str | None = Field(default=None, max_length=500)

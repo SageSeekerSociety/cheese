@@ -178,14 +178,12 @@ export const DOC_VERSIONS: DocVersion[] = [
     version: 4,
     content: '# 上线过程\n\n九月起搜索框改为常驻。\n\n## 复盘\n\n搜索次数翻了三倍。',
     actor: DOC_PERSON_HANDLE,
-    requested_by: null,
     created_at: T0,
   },
   {
     version: 3,
     content: '# 上线过程\n\n九月起搜索框改为常驻。\n\n## 复盘\n\n搜索次数翻倍。',
-    actor: DOC_PERSON_HANDLE,
-    requested_by: DOC_AGENT_HANDLE,
+    actor: DOC_AGENT_HANDLE,
     created_at: '2026-09-29T10:00:00.000Z',
   },
 ]

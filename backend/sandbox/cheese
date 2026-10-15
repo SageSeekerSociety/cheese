@@ -446,9 +446,8 @@ PLATFORM_TOOLS = ToolTable(
             "改一份文档里的几处文字，其余部分和别人正在打的字都不动。每处给"
             "原文 old（照 cheese_doc_get 读到的 Markdown 原样抄，要在文档里只出现"
             "一次）和改后的 new，按顺序生效；有一处用不上就一处都不改。改已有文档"
-            "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
-            "做完一件事顺手整理）设 suggest=true，只提建议，等人接受或拒绝；"
-            "这样的一轮里改了人写的段落，平台也会把它转成建议。"
+            "用它，不用 cheese_doc_set 整份覆盖。改动直接生效；想先让人看过再定的，"
+            "设 suggest=true，作为建议留在文档里，等人接受或拒绝。"
             "改到一处 AI 队友（包括自己）留下、还没处理的建议时，那条旧建议会被"
             "撤掉、这处照改；人留下的建议还没处理时这处改不动，先请人接受或退回。",
             {
@@ -2048,10 +2047,7 @@ def _doc_edit(args: dict, host) -> str:
     edits = data.get("edits") or []
     if data.get("mode") == "suggest":
         return f"已提出 {len(edits)} 处修改建议，等人接受或拒绝；正文还没有变。"
-    who = data.get("requested_by")
     done = f"已改了 {len(edits)} 处"
-    if who:
-        done = f"已按 {who} 的要求改了 {len(edits)} 处"
     version = data.get("doc_version")
     lines = [f"{done}（第 {version} 版）。" if version else f"{done}。"]
     lines += _made_canvases(answer)

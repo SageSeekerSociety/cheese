@@ -98,7 +98,6 @@ const topic = {
 } as Topic
 
 const REVIEW: DocReviewRequest = {
-  requester: '芝士',
   edits: [{ old: '30 天', new: '60 天' }],
 }
 

@@ -255,7 +255,7 @@ describe('支线里的资料库文档那一行', () => {
     await waitFor(() => expect(host.reviewEdits).toHaveLength(1))
     expect(host.reviewEdits[0]).toEqual({
       doc: 'library-doc',
-      request: { requester: '', edits } as DocReviewRequest,
+      request: { edits } as DocReviewRequest,
     })
   })
 
