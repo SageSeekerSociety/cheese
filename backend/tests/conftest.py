@@ -718,14 +718,16 @@ class StubChannel(SeatChannel):
         extra = {"session_id": session_id} if session_id else {}
         self.record(topic_id, agent=agent, type="system", subtype="init", **extra)
 
-    def acknowledges(
+    def took(
         self, topic_id: uuid.UUID, prompt: str, *, agent: str | None = None
-    ) -> None:
-        """The session takes the input: its turn starts and it echoes it back.
+    ) -> str | None:
+        """The session begins on the input it was handed: its turn opens on that
+        input's identity. Returns the input's uuid, or None when the runner has
+        no sent input matching ``prompt``.
 
-        The echo is the receipt that stamps an injected message consumed. A
-        session that never echoes leaves every mid-turn delivery pending, and
-        pending messages are replayed (宁可重复不可丢失)."""
+        This is the half of `acknowledges` a session prints by merely starting.
+        On its own it marks nothing read: a session that begins on an input and
+        never echoes it leaves it pending."""
         session = self._session_for(topic_id, agent)
         identifier = next(
             (
@@ -738,7 +740,7 @@ class StubChannel(SeatChannel):
             None,
         )
         if identifier is None:
-            return
+            return None
         self.record(
             topic_id,
             agent=agent,
@@ -746,6 +748,20 @@ class StubChannel(SeatChannel):
             command_uuid=identifier,
             state="started",
         )
+        return identifier
+
+    def acknowledges(
+        self, topic_id: uuid.UUID, prompt: str, *, agent: str | None = None
+    ) -> None:
+        """The session takes the input: its turn starts and it echoes it back.
+
+        The echo is the receipt that stamps an injected message consumed. A
+        session that never echoes leaves every mid-turn delivery pending, and
+        pending messages are replayed (宁可重复不可丢失). Use `took` alone for a
+        session that starts on the input without echoing it."""
+        identifier = self.took(topic_id, prompt, agent=agent)
+        if identifier is None:
+            return
         self.record(
             topic_id,
             agent=agent,
