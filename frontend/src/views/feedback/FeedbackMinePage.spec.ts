@@ -153,7 +153,14 @@ describe('我的反馈', () => {
     // 判据读的正是它。
     const pinia = createPinia()
     setActivePinia(pinia)
-    useFeedbackStore().counts = { all: 1, hot: 0, active: 0, resolved: 0, unread: 5 }
+    useFeedbackStore().counts = {
+      all: 1,
+      hot: 0,
+      active: 0,
+      resolved: 0,
+      deployed: 0,
+      unread: 5,
+    }
 
     const { findByText } = mountPage(pinia)
     await findByText('导出报表偶发 502')

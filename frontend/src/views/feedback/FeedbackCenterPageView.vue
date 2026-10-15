@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { FeedbackKind, FeedbackMeta, FeedbackStatus } from '@/cx_types'
+import type { FeedbackCard as FeedbackCardItem, FeedbackKind, FeedbackMeta, FeedbackStatus } from '@/cx_types'
 import type { FeedbackTab as TabName } from '@/stores/feedback'
 
 import { computed, ref, watch } from 'vue'
@@ -79,7 +79,7 @@ const props = defineProps<{
   filterAuthor: string
   /** 栏位或那四个筛选收窄了没有。判据在容器里（就是发请求的那一份）。 */
   hasFilters: boolean
-  items: FeedbackCard[]
+  items: FeedbackCardItem[]
   total: number
   loading: boolean
   loadingMore: boolean
