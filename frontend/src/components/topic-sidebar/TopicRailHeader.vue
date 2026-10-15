@@ -62,7 +62,9 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <Teleport to="#app-bar-slot" :disabled="!page || column">
+  <!-- defer: the app mounts once the first page is resolved (main.ts), so the bar and
+       this header render in the same pass and the slot is not in the document yet. -->
+  <Teleport to="#app-bar-slot" :disabled="!page || column" defer>
     <div
       class="sidebar-header rail-header"
       :class="{
