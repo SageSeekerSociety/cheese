@@ -117,7 +117,9 @@ async def main() -> None:
     token = create_access_token(None, handle=VIEWER)
     transport = httpx.ASGITransport(app=app)
     load = Path("/proc/loadavg").read_text().strip()
-    print(f"ids {json.dumps(ids)} rounds={ROUNDS} loadavg={load}")
+    # The rowcounts mode asks one request per endpoint, so it must not claim the
+    # timed mode's round count -- the header is what a reader dates both files by.
+    print(f"ids {json.dumps(ids)} rounds={1 if ROWCOUNTS else ROUNDS} loadavg={load}")
 
     async with httpx.AsyncClient(
         transport=transport, base_url="http://probe", timeout=600.0

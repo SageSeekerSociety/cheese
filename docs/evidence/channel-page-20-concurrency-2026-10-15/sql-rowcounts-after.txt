@@ -1,0 +1,147 @@
+/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/163c41bf-28d8-4244-ba8e-b5c34cbdca05/.cheese/tasks/1151b7c9-5e86-4cf7-8429-2e5774076300/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:147: InsecureKeyLengthWarning: The HMAC key is 17 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+  return self._jws.encode(
+/home/cheese/.cheese/home/de808b13-ffd2-4b8a-9d1d-fba7babe389f/163c41bf-28d8-4244-ba8e-b5c34cbdca05/.cheese/tasks/1151b7c9-5e86-4cf7-8429-2e5774076300/backend/.venv/lib/python3.13/site-packages/jwt/api_jwt.py:368: InsecureKeyLengthWarning: The HMAC key is 17 bytes long, which is below the minimum recommended length of 32 bytes for SHA256. See RFC 7518 Section 3.2.
+  decoded = self.decode_complete(
+2026-10-15 10:11:08 [warning  ] request_rate_unchecked         [app.request_limits] detail='Connection closed by server.' error=ConnectionError req=b1c596130f77
+2026-10-15 10:11:08 [info     ] req                            [http] bytes=1875 client=127.0.0.1 host=probe method=GET ms=328.0 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76 req=b1c596130f77 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:08 [info     ] req                            [http] bytes=1875 client=127.0.0.1 host=probe method=GET ms=105.1 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76 req=e325cb8b68da status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:08 [info     ] req                            [http] bytes=12159 client=127.0.0.1 host=probe method=GET ms=93.6 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/tasks req=c5f5a92eab8e status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:08 [info     ] req                            [http] bytes=12159 client=127.0.0.1 host=probe method=GET ms=33.2 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/tasks req=d75319519c31 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=20544 client=127.0.0.1 host=probe method=GET ms=39.4 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/blocks req=c47d816bb972 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=20544 client=127.0.0.1 host=probe method=GET ms=68.0 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/blocks req=18aace68e712 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=174 client=127.0.0.1 host=probe method=GET ms=66.3 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/environment req=311c82aba865 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=174 client=127.0.0.1 host=probe method=GET ms=59.6 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/environment req=df320e9de9b9 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=56 client=127.0.0.1 host=probe method=GET ms=63.2 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/members req=b9136074fbe9 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=56 client=127.0.0.1 host=probe method=GET ms=59.1 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/members req=d0f9bcfdbaaf status=200 ua=python-httpx/0.28.1
+ids {"project": "586786ec-acac-41f5-ba69-7296055c73a2", "room": "13f6e609-d016-49c0-b8ac-d67d1641bd76", "task": "5f4dcca7-31e5-4f88-9c10-2baff7e70619"} rounds=1 loadavg=35.47 55.61 55.06 28/9471 32785
+== channel detail (200, 1875 B) 38 statements ==
+   rows=     8 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task_
+   rows=     8 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task_
+   rows=     8 x  1  SELECT tasks.id, tasks.room_id FROM tasks WHERE tasks.room_id IN ($1::UUID)
+   rows=     5 x  1  SELECT tasks.id, tasks.room_id, tasks.accepted_at, greatest(topic_read_states_1.
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects.
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_parent
+   rows=     1 x  1  SELECT topics.id, coalesce(greatest((SELECT max(blocks.created_at) AS max_1 FROM
+   rows=     1 x  1  SELECT tasks.id, tasks.room_id FROM tasks WHERE tasks.room_id IN ($2::UUID) AND 
+   rows=     1 x  1  SELECT DISTINCT ON (coalesce((SELECT tasks.room_id FROM tasks WHERE tasks.id = b
+   rows=     1 x  1  SELECT tasks.room_id, count(tasks.id) AS count_1 FROM tasks WHERE tasks.room_id 
+   rows=     1 x  1  SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.number, tasks.title_s
+   rows=     1 x  1  SELECT tasks.id, (SELECT max(blocks.created_at) AS max_1 FROM blocks WHERE block
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FROM
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_memberships
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members.
+   rows=     0 x  1  SELECT topic_memberships.topic_id FROM topic_memberships WHERE topic_memberships
+   rows=     0 x  1  SELECT coalesce((SELECT tasks.room_id FROM tasks WHERE tasks.id = notification.t
+   rows=     0 x  3  SELECT threads.id, threads.room_id FROM threads WHERE threads.room_id = ANY ($1:
+   rows=     0 x  2  SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.author, anon_1.id
+   rows=     0 x  1  SELECT DISTINCT ON (blocks.conversation_id, blocks.author) blocks.conversation_i
+   rows=     0 x  1  SELECT blocks.conversation_id, blocks.created_at, blocks.meta FROM blocks WHERE 
+   rows=     0 x  1  SELECT conversations_of.room_id, anon_1.author, anon_1.created_at FROM (SELECT a
+   rows=     0 x  1  SELECT DISTINCT ON (coalesce((SELECT tasks.room_id FROM tasks WHERE tasks.id = b
+   rows=     0 x  1  SELECT DISTINCT ON (coalesce((SELECT tasks.room_id FROM tasks WHERE tasks.id = r
+   rows=     0 x  1  SELECT blocks.conversation_id, blocks.turn_id, blocks.created_at FROM blocks WHE
+   rows=     0 x  1  SELECT threads.id, threads.room_id FROM threads WHERE threads.room_id IN ($1::UU
+   rows=     0 x  1  SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_turns.stopped_at
+   rows=     0 x  1  SELECT threads.id FROM threads WHERE threads.room_id IN ($1::UUID)
+   rows=     0 x  1  SELECT blocks.conversation_id, threads.room_id FROM blocks LEFT OUTER JOIN threa
+   rows=     0 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task_
+   rows=     0 x  1  SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_turns.conversati
+   rows=     0 x  1  SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.number, tasks.title_s
+== channel task list (200, 12159 B) 16 statements ==
+   rows=     8 x  1  SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.number, tasks.title_s
+   rows=     8 x  1  SELECT blocks.project_id, blocks.conversation_id, blocks.seq, blocks.kind, block
+   rows=     7 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task_
+   rows=     7 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task_
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects.
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_parent
+   rows=     1 x  1  SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.author, anon_1.id
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FROM
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_memberships
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members.
+   rows=     0 x  1  SELECT anon_1.place, said_since.author, said_since.at FROM unnest($1::UUID[], $2
+   rows=     0 x  1  SELECT DISTINCT ON (resource_usage.conversation_id) resource_usage.conversation_
+   rows=     0 x  1  SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_turns.conversati
+== channel blocks (200, 20544 B) 14 statements ==
+   rows=    51 x  1  SELECT blocks.project_id, blocks.conversation_id, blocks.seq, blocks.kind, block
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects.
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_parent
+   rows=     1 x  1  SELECT count(*) AS count_1 FROM blocks WHERE blocks.conversation_id = $1::UUID A
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FROM
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_memberships
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members.
+   rows=     0 x  1  SELECT block_reactions.block_id, block_reactions.emoji, block_reactions.author, 
+   rows=     0 x  1  SELECT threads.id, threads.project_id, threads.room_id, threads.root_block_id, t
+   rows=     0 x  1  SELECT routine_runs.routine_id, routine_runs.occurrence_key, routine_runs.trigge
+   rows=     0 x  1  SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.number, tasks.title_s
+== channel environment (200, 174 B) 14 statements ==
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects.
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_parent
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FROM
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_memberships
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members.
+   rows=     0 x  2  SELECT device_project.device_id FROM device_project WHERE device_project.project
+   rows=     0 x  2  SELECT device_team.device_id FROM device_team JOIN projects ON projects.team_id 
+   rows=     0 x  1  SELECT agent_sessions.conversation_id, agent_sessions.agent_handle, agent_sessio
+   rows=     0 x  1  SELECT agent_environments.conversation_id, agent_environments.agent_handle, agen
+== channel members (200, 56 B) 12 statements ==
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects.
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_parent
+   rows=     1 x  1  SELECT agent_instances.project_id, agent_instances.handle, agent_instances.type_
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FROM
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_memberships
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members.
+   rows=     0 x  2  SELECT topic_memberships.topic_id, topic_memberships.member_handle, topic_member2026-10-15 10:11:09 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=17.7 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/pins req=4d8316f600ed status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=56.3 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/pins req=73ea42630709 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=18.9 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/threads req=63660625743a status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=37 client=127.0.0.1 host=probe method=GET ms=16.4 path=/topics/13f6e609-d016-49c0-b8ac-d67d1641bd76/threads req=77559a8a614c status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=86747 client=127.0.0.1 host=probe method=GET ms=45.0 path=/projects/586786ec-acac-41f5-ba69-7296055c73a2/tasks req=2bf7bfdee7e5 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=86747 client=127.0.0.1 host=probe method=GET ms=37.5 path=/projects/586786ec-acac-41f5-ba69-7296055c73a2/tasks req=7fb7023740ee status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=25300 client=127.0.0.1 host=probe method=GET ms=64.6 path=/awaiting-me req=ed7a422ace82 status=200 ua=python-httpx/0.28.1
+2026-10-15 10:11:09 [info     ] req                            [http] bytes=25300 client=127.0.0.1 host=probe method=GET ms=87.6 path=/awaiting-me req=fdcf5cf47f90 status=200 ua=python-httpx/0.28.1
+
+   rows=     0 x  1  SELECT threads.room_id FROM threads WHERE threads.id = $1::UUID
+== channel pins (200, 37 B) 8 statements ==
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_parent
+   rows=     1 x  1  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects.
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FROM
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_memberships
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members.
+   rows=     0 x  1  SELECT pins.room_id, pins.block_id, pins.pinned_by, pins.pinned_at, pins.id, blo
+== channel threads (200, 37 B) 8 statements ==
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_parent
+   rows=     1 x  1  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects.
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FROM
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_memberships
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members.
+   rows=     0 x  1  SELECT threads.id, threads.project_id, threads.room_id, threads.root_block_id, t
+== project task list (200, 86747 B) 11 statements ==
+   rows=   219 x  1  SELECT topics.id FROM topics WHERE topics.project_id IN ($2::UUID) AND topics.is
+   rows=    82 x  1  SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.number, tasks.title_s
+   rows=    82 x  1  SELECT tasks.id, (SELECT max(blocks.created_at) AS max_1 FROM blocks WHERE block
+   rows=    28 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task_
+   rows=    12 x  1  SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.author, anon_1.id
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects.
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members.
+   rows=     0 x  1  SELECT anon_1.place, said_since.author, said_since.at FROM unnest($1::UUID[], $2
+   rows=     0 x  1  SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_turns.conversati
+== awaiting-me (reference) (200, 25300 B) 12 statements ==
+   rows=   621 x  1  SELECT topics.id FROM topics WHERE topics.project_id IN ($3::UUID, $4::UUID, $5:
+   rows=   178 x  1  SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.author, anon_1.id
+   rows=   120 x  1  SELECT topics.id, topics.project_id, topics.title, topics.status, topics.accepte
+   rows=   118 x  1  SELECT tasks.id, tasks.room_id, tasks.status = $1 AS underway, tasks.reporter_ha
+   rows=   118 x  1  SELECT tasks.id, tasks.project_id, tasks.room_id, tasks.title, tasks.title_sourc
+   rows=    40 x  1  SELECT accept_cards.id, accept_cards.topic_id, accept_cards.task_id, accept_card
+   rows=    13 x  1  SELECT projects.name, projects.slug, projects.owner_handle, projects.team_id, pr
+   rows=    12 x  1  SELECT notification.id, notification.receiver_id, notification.recipient_handle,
+   rows=     6 x  1  SELECT anon_1.place, said_since.author, said_since.at FROM unnest($1::UUID[], $2
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  1  SELECT threads.id, threads.room_id FROM threads WHERE threads.room_id = ANY ($1:
+   rows=     0 x  1  SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_turns.conversati

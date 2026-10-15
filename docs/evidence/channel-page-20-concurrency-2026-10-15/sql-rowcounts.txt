@@ -1,4 +1,4 @@
-ids {"project": "586786ec-acac-41f5-ba69-7296055c73a2", "room": "13f6e609-d016-49c0-b8ac-d67d1641bd76", "task": "5f4dcca7-31e5-4f88-9c10-2baff7e70619"} rounds=5 loadavg=87.43 59.43 63.69 31/10163 37773
+ids {"project": "586786ec-acac-41f5-ba69-7296055c73a2", "room": "13f6e609-d016-49c0-b8ac-d67d1641bd76", "task": "5f4dcca7-31e5-4f88-9c10-2baff7e70619"} rounds=1 loadavg=91.55 43.92 46.16 151/9295 46322
 == channel detail (200, 1875 B) 37 statements ==
    rows=     8 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task_
    rows=     8 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task_
