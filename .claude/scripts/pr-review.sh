@@ -201,10 +201,19 @@ prepare() {
   # prompt.md has no 5b until this branch merges, and a section naming a step the method
   # above it does not contain is one nobody can follow. The contract is left out in that
   # window the way the 档位 is, with the review told there is none rather than handed a
-  # dangling one. `REVIEW.md` holds the method alone at this point.
-  spec_note="none — skip step 5b"
+  # dangling one. `REVIEW.md` holds the method alone at this point. The bullet says which
+  # of the two it is whether or not a contract was offered: pointing a review at step 5b
+  # when the method it was just handed has none sends it looking for a step that is not
+  # there.
+  has_5b=""
+  grep -q "^## 5b" "$dir/REVIEW.md" 2>/dev/null && has_5b=yes
+  if [ -n "$has_5b" ]; then
+    spec_note="none — skip step 5b"
+  else
+    spec_note="none — this review's method has no step 5b"
+  fi
   if [ -n "$spec_txt" ]; then
-    if grep -q "^## 5b" "$dir/REVIEW.md" 2>/dev/null; then
+    if [ -n "$has_5b" ]; then
       spec_note=$spec_txt
     else
       echo "pr-review: 这份 method 还没有 step 5b，这次不注入需求契约" >&2

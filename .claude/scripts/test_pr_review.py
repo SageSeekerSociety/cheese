@@ -349,6 +349,17 @@ class PrReview(unittest.TestCase):
         self.assertEqual(out.returncode, 1)
         self.assertIn("empty", out.stderr)
 
+    def test_the_spec_bullet_names_the_step_the_method_it_was_handed_has(self):
+        # The bullet used to read `none — skip step 5b` whenever no contract was passed,
+        # including in the window where the default branch's method has no 5b at all: it
+        # pointed the review at a step that is not above it. Without a contract it says
+        # which of the two it is now. The other half is in the old-method test below.
+        review_md, text = self.prepare()
+        self.assertIn("## 5b", text)
+        self.assertIn("- Spec: none — skip step 5b", text)
+        self.assertNotIn("this review's method has no step 5b", text)
+        self.assertFalse((review_md.parent / "spec.md").exists())
+
     def test_a_method_that_predates_step_5b_is_handed_no_contract(self):
         # The contract section names step 5b, and the method the reviewer is handed comes
         # from the default branch: until 5b is on main, that section would name a step that
@@ -374,6 +385,15 @@ class PrReview(unittest.TestCase):
             self.assertFalse((d / "spec.md").exists())
             self.assertEqual(self.meta_of(Path(out.stdout.strip()))["spec"], "''")
             self.assertIn("还没有 step 5b", out.stderr)
+            self.assertIn("- Spec: none — this review's method has no step 5b", text)
+            self.assertNotIn("skip step 5b", text)
+            # And the same window with no contract offered at all: the bullet still says
+            # which method it was handed, rather than pointing at a 5b that is not there.
+            out = self.run_script("prepare", PR)
+            self.assertEqual(out.returncode, 0, out.stderr)
+            text = Path(out.stdout.strip()).read_text()
+            self.assertIn("- Spec: none — this review's method has no step 5b", text)
+            self.assertNotIn("skip step 5b", text)
         finally:
             git(self.work, "checkout", "-q", "main")
             git(self.work, "branch", "-qD", "old-main")

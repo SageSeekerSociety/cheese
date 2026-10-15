@@ -4,9 +4,10 @@
     python3 .claude/scripts/review-findings-trend.py [--dir DIR]... [--top N] [--json]
 
 Reads every `result.json` under the given prepare directories — by default the
-`/tmp/pr-review-*.input` ones `pr-review.sh prepare` leaves behind, which is
-what one machine has seen since it last rebooted — and ranks what came back, by
-kind and by the area of the tree the finding is in. Offline, read-only.
+`pr-review-*.input` ones under `$PR_REVIEW_DIR` (`/tmp` when it is not set),
+which is where `pr-review.sh prepare` leaves them: what one machine has seen
+since it last rebooted — and ranks what came back, by kind and by the area of
+the tree the finding is in. Offline, read-only.
 
 The point is the top of the list: a defect class that shows up review after
 review is one a check should catch before a reviewer does. Whether a class is
