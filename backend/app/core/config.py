@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.sandbox_config import SandboxSettings
+
 # The gateway mounts this whole app under `/api` and strips that one segment
 # (`proxy_pass http://backend:8081/`), so a backend route is bare while the URL
 # the browser used is `/api` + that route. Anything the BROWSER will resolve
@@ -58,7 +60,11 @@ def parse_data_encryption_keys(value: str) -> tuple[bytes, ...]:
     return tuple(keys)
 
 
-class Settings(BaseSettings):
+class Settings(BaseSettings, SandboxSettings):
+    # The base class above is the sandbox's own settings and the package
+    # mirrors a room fetches through (`core/sandbox_config`); they are a base
+    # class rather than sections below because this module is at the size cap
+    # it is held to and that section stands alone.
     # `validate_by_name` exists for exactly one field, `platform_admin_handles`:
     # it carries a `validation_alias` (so the deploy keeps working through the
     # env-name change), and in pydantic a field with an alias is otherwise
@@ -604,15 +610,6 @@ class Settings(BaseSettings):
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
 
-    # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
-    # to mount over the image's baked copy — but nothing kept that checkout in
-    # sync with the backend, so boxes served agents a months-old CLI. The CLI is
-    # now staged per-topic from the backend's own copy (ws.session_dir →
-    # bin/cheese), which is host-visible and fresh by construction. Kept only so
-    # a box that still sets it gets the loud startup warning in main.lifespan
-    # instead of silence; delete once no deployment sets it.
-    sandbox_shim_host_dir: str = ""
-
     # --- Subscription compute through the metering proxy ---
     # A turn on the subscription does NOT go through the LLM gateway: there is no
     # per-call API key to meter, and re-originating the request from our own HTTP
@@ -822,22 +819,9 @@ class Settings(BaseSettings):
     machine_enroll_interval_seconds: int = 10
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
-    # Base URL the in-container `cheese` CLI calls back to (host → backend).
-    # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
-    # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
-    # #370 step 2 the platform routes are bare — `{base}/projects/…`.
-    #
-    # A box whose .env still carries the old `…/api` value keeps working:
-    # `agent_api_base()` strips one trailing `/api` and the boot warning names
-    # the box so it can be cleaned up. Silently 404ing every `cheese` call would
-    # look exactly like an agent that decided not to use its tools.
-    sandbox_api_base: str = "http://host.docker.internal:8099"
-    # Shared secret the sandbox `cheese` CLI sends (X-Cheese-Token) so the
-    # cheese write-API isn't open on the bind address. Empty → derived from
-    # `jwt_secret` (see `sandbox_signing_secret`); pin it to rotate the two
-    # independently, or to share one secret across multiple backend hosts.
-    sandbox_token: str = ""
-
+    # The sandbox's own settings — the callback base, the token, the retired
+    # shim directory — and the package mirrors a room fetches through are the
+    # base class (`core/sandbox_config`); the methods below read them there.
     @property
     def sandbox_signing_secret(self) -> str:
         """The HMAC secret behind every scoped sandbox token.

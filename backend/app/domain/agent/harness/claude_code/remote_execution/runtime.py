@@ -81,6 +81,7 @@ RELEASE_FILES = {
         for name in (*_OWN, "predecessor")
     },
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
+    "remote-execution/package_mirrors.py": "app/domain/agent/package_mirrors.py",
     "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "cheese": "sandbox/cheese",
@@ -349,8 +350,7 @@ class Executor:
         self.config = json.loads((self.state / "config.json").read_text())
         self.programs = Path(self.config.get("release", self.state.parent))
         self.admission_lock = threading.Lock()
-        self.active_calls = 0
-        self.upgrading = False
+        self.active_calls, self.upgrading = 0, False
         upgrade = self.state / "upgrade.json"
         if upgrade.exists():
             pending = json.loads(upgrade.read_text())
@@ -380,17 +380,13 @@ class Executor:
         # a `cd` changes for the next call, as the build's own Bash tool does.
         self.bash_cwd = self.root
         # When a watched command's record was last read, by command id.
-        self.collected = {}
-        self.snapshot = None
-        self.snapshot_lock = threading.Lock()
-        self.cli_lock = threading.Lock()
+        self.collected, self.snapshot = {}, None
+        self.snapshot_lock, self.cli_lock = threading.Lock(), threading.Lock()
         self.clients = {}
         # Agent types' servers, by name: their definitions come with the calls.
         self.agent_specs = {}
-        self.client_lock = threading.Lock()
-        self.log_lock = threading.Lock()
-        self.db_lock = threading.Lock()
-        self.context_fs_entries = {}
+        self.client_lock, self.log_lock = threading.Lock(), threading.Lock()
+        self.db_lock, self.context_fs_entries = threading.Lock(), {}
         # Socket clients load this module without opening the service database.
         import sqlite3  # deferred-import: socket clients load this without a DB
 
@@ -403,8 +399,7 @@ class Executor:
             "(id TEXT PRIMARY KEY, input TEXT, result TEXT)"
         )
         self.db.commit()
-        self.cli_worker = None
-        self.cli_worker_ready = False
+        self.cli_worker, self.cli_worker_ready = None, False
         worker = self.programs / "remote-execution/cli_worker.py"
         cli = self.programs / "cheese"
         # The worker forks and passes descriptors; Windows has neither, and
@@ -1192,8 +1187,7 @@ class Executor:
                 "is released; they are not permanent storage. "
                 "No project checkout is available.",
             }
-        files = {}
-        instructions = []
+        files, instructions = {}, []
         seen = set()
 
         def include(path):
@@ -1201,8 +1195,7 @@ class Executor:
             if path in seen or not path.is_file():
                 return
             seen.add(path)
-            text = path.read_text()
-            imported = []
+            text, imported = path.read_text(), []
 
             def reference(match):
                 candidate = Path(match.group(1)).expanduser()
@@ -1762,14 +1755,17 @@ class Executor:
             _,
             _,
         ):
-            if {k: v for k, v in self.config.items() if k != "env"} != {
-                k: v for k, v in config.items() if k != "env"
+            # The two keys a configure replaces, and so the two the running
+            # room is allowed to differ in: everything else has to match.
+            configure = {"env": config["env"], "env_reset": config.get("env_reset", {})}
+            if {k: v for k, v in self.config.items() if k not in configure} != {
+                k: v for k, v in config.items() if k not in configure
             }:
                 raise RuntimeError(
                     "Executor configuration changed; restart the room environment"
                 )
             info = {
-                **self.dispatch("configure", {"env": config["env"]}),
+                **self.dispatch("configure", configure),
                 "mcp_servers": bootstrap["process_servers"](config),
                 "context_tree": self.context_fs({"operation": "tree"}),
             }
@@ -1822,6 +1818,11 @@ class Executor:
         if method == "configure" or (
             method == "configure_private" and self.config.get("private")
         ):
+            # A governed name the prepare does not state, and the room holds the
+            # value of, is one to stop using: this only adds, so it would stay.
+            for name, value in params.get("env_reset", {}).items():
+                if name not in params["env"] and self.env.get(name) == value:
+                    self.env.pop(name, None)
             self.env.update(params["env"])
             self.config["env"] = params["env"]
             write_json(self.state / "config.json", self.config)
@@ -1920,8 +1921,7 @@ def serve(state):
                 self.wfile.write(json.dumps(response).encode() + b"\n")
 
     if sys.platform == "win32":
-        base = socketserver.ThreadingTCPServer
-        address = ("127.0.0.1", 0)
+        base, address = socketserver.ThreadingTCPServer, ("127.0.0.1", 0)
     else:
         base = socketserver.ThreadingUnixStreamServer
         directory = Path(socket_directory(state))
