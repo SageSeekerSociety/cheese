@@ -595,6 +595,9 @@ def _fetching_curl(log: Path, version: str = PIN, bundle: Path | None = None) ->
     )
     return (
         "#!/bin/sh\n"
+        # A `--head` is the platform asking a package mirror whether it answers
+        # (`package_mirrors`), and it is not a download this fixture counts.
+        'for a in "$@"; do [ "$a" = "--head" ] && exit 0; done\n'
         'dest=""; url=""\n'
         'while [ "$#" -gt 0 ]; do\n'
         '  case "$1" in -o) shift; dest="$1" ;; http*) url="$1" ;; esac\n'
@@ -787,7 +790,13 @@ def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     _owner, session, _work, claude, env = _machine(tmp_path)
     network = tmp_path / "network.calls"
     curl = tmp_path / "bin/curl"
-    curl.write_text(f'#!/bin/sh\necho attempted >> "{network}"\nexit 1\n')
+    curl.write_text(
+        # A `--head` is the platform asking a package mirror whether it answers
+        # (`package_mirrors`), which is the one call here that is not a fetch.
+        "#!/bin/sh\n"
+        'for a in "$@"; do [ "$a" = "--head" ] && exit 0; done\n'
+        f'echo attempted >> "{network}"\nexit 1\n'
+    )
     curl.chmod(0o755)
 
     result = _launch(tmp_path, env)

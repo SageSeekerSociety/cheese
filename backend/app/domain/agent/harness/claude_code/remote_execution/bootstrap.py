@@ -104,6 +104,19 @@ def portable(release):
     return runpy.run_path(str(Path(release) / "remote-execution/portable.py"))
 
 
+def package_mirrors(release):
+    """The mirror policy for a room's package downloads
+    (`app/domain/agent/package_mirrors.py`), which the launcher script applies
+    too. Shipped beside this file; read from the source tree when this runs from
+    a checkout, the way `runtime.project_hooks` reads its own."""
+    beside = Path(release) / "remote-execution/package_mirrors.py"
+    if not beside.exists():
+        beside = Path(__file__).resolve().parents[6] / (
+            "app/domain/agent/package_mirrors.py"
+        )
+    return runpy.run_path(str(beside))
+
+
 def windows_shim(name, data):
     """A `.cmd` that runs an extension-less script, or None for anything else.
 
@@ -1087,6 +1100,18 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         plant_native_skills(home, payload.get("skills") or {})
         release, contents = stage_release(release_store(owner), platform_dir, payload)
         stop_previous_root(home, release)
+        # Where this room's package downloads come from, as a variable set for
+        # the mirrors that answer this machine right now (`package_mirrors`).
+        # After the room's own configured variables, not before: a project that
+        # names an index of its own keeps it, which is why the value is only
+        # defaulted. This is the environment an agent's tools inherit, so a
+        # mirror listed here is what an agent's `pip install` goes through.
+        mirrors = payload.get("package_mirrors") or {}
+        if mirrors:
+            for name, value in package_mirrors(release)["environment"](
+                mirrors, store
+            ).items():
+                package_env.setdefault(name, variables.get(name, value))
         env = dict(os.environ)
         for name in list(env):
             # Except, on Windows, the one the connector sets for every command:

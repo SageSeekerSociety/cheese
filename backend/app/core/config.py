@@ -583,6 +583,25 @@ class Settings(BaseSettings):
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
 
+    # --- Package downloads in a room, through a domestic mirror ---
+    # The policy — a mirror used once a probe says it answers, the official
+    # index behind it where the tool takes two — is in
+    # `domain/agent/package_mirrors`, applied as process environment. None of
+    # it reaches an agent's prompt, skills or memory.
+    package_mirror_enabled: bool = True
+    # The index pip and uv fetch from first, and the official one behind it.
+    package_mirror_pypi_index: str = "https://pypi.tuna.tsinghua.edu.cn/simple"
+    package_mirror_pypi_fallback: str = "https://pypi.org/simple"
+    # npm and pnpm's registry, and `playwright install`'s browser host.
+    package_mirror_npm_registry: str = "https://registry.npmmirror.com"
+    package_mirror_playwright_host: str = (
+        "https://cdn.npmmirror.com/binaries/playwright"
+    )
+    # uv's standalone CPython builds. Empty by default: those are GitHub
+    # release assets, and the mirrors carrying them are third-party proxies
+    # rather than a distribution's own archive.
+    package_mirror_uv_python: str = ""
+
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in
     # sync with the backend, so boxes served agents a months-old CLI. The CLI is
