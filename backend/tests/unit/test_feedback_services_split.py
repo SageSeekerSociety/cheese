@@ -136,17 +136,42 @@ def test_the_service_keeps_all_47_methods() -> None:
 
 
 def test_init_still_builds_the_session_and_the_repository() -> None:
-    """拆分没动 __init__：两个属性仍在，且仍从这里赋值。"""
-    source = inspect.getsource(feedback_services.FeedbackService.__init__)
-    for attribute in ("_session", "_repo"):
-        assert attribute in source, f"{attribute} 没在 __init__ 里赋值"
+    """拆分没动 __init__：两个属性仍**在这里赋值**，赋的什么也没换。
+
+    看的是赋值本身，不是「源码里出现过这个词」——把赋值改成一句提到 `_repo` 的
+    注释不该让这条过。
+    """
+    init = ast.parse(
+        textwrap.dedent(inspect.getsource(feedback_services.FeedbackService.__init__))
+    ).body[0]
+    assert [a.arg for a in init.args.args] == ["self", "session"]
+
+    assigned: dict[str, str] = {}
+    for node in ast.walk(init):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if (
+                isinstance(target, ast.Attribute)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+            ):
+                assigned[target.attr] = ast.unparse(node.value)
+    assert assigned == {
+        "_session": "session",
+        "_repo": "repo.FeedbackRepository(session)",
+    }
 
 
 @pytest.mark.parametrize(
     "name", [n for n in FEEDBACK_SERVICE_METHODS if n != "__init__"]
 )
 def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
-    """方法体恰好一句转发，转给子模块里的同名函数——实现只有一份。"""
+    """方法体恰好一句转发，转给子模块里的同名函数——实现只有一份。
+
+    转发本身也是行为：这条要求**每个参数都按同一个名字原样转出去**，一个不漏、
+    一个不多。少转一个关键字（`q` 丢了、窗口参数丢了）就是静默改行为，这条红。
+    """
     method = getattr(feedback_services.FeedbackService, name)
     body = ast.parse(textwrap.dedent(inspect.getsource(method))).body[0].body
     if (
@@ -169,6 +194,33 @@ def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
 
     # 转发把服务原样交出去：子模块函数的首参就是它。
     assert isinstance(call.args[0], ast.Name) and call.args[0].id == "self"
+    assert call.args[1:] == [], f"{name} 除了服务还多传了位置参数"
     forwarded = getattr(SIBLINGS[target_module.id], name)
     assert callable(forwarded)
-    assert next(iter(inspect.signature(forwarded).parameters)) == "svc"
+    parameters = inspect.signature(forwarded).parameters
+    assert next(iter(parameters)) == "svc"
+
+    # 一对一：每个形参一个同名的关键字实参，两边一个不差。
+    passed = {keyword.arg: keyword.value for keyword in call.keywords}
+    assert None not in passed, f"{name} 用了 **kwargs 摊开，转发不再是一对一"
+    assert [n for n in passed if not isinstance(passed[n], ast.Name)] == []
+    assert {n: passed[n].id for n in passed} == {n: n for n in passed}, (
+        f"{name} 转发时换了名字：{ {n: passed[n].id for n in passed} }"
+    )
+    missing = set(parameters) - {"svc"} - set(passed)
+    extra = set(passed) - set(parameters)
+    assert set(passed) == set(parameters) - {"svc"}, (
+        f"{name} 的转发表和 {target_module.id}.{name} 的形参对不上："
+        f"漏了 {missing}，多了 {extra}"
+    )
+    assert set(passed) == {p for p in method_signature(method) if p != "self"}, (
+        f"{name} 的转发表和它自己的形参对不上"
+    )
+
+
+def method_signature(method: object) -> list[str]:
+    """方法自己的形参名（含 `self`），用来和转发表对照。"""
+    declaration = ast.parse(textwrap.dedent(inspect.getsource(method))).body[0]
+    assert isinstance(declaration, (ast.FunctionDef, ast.AsyncFunctionDef))
+    args = declaration.args
+    return [a.arg for a in [*args.posonlyargs, *args.args, *args.kwonlyargs]]
