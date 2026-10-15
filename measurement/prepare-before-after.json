@@ -1,0 +1,128 @@
+{
+  "measured_at": "2026-10-15T06:05:09.861669+00:00",
+  "scope": "complete local prepare; fixed gh metadata and local git origin; not end-to-end lead time",
+  "base": "f5eb87afe372332d644bbe817ce9cf1385b82bb8",
+  "head": "f99da6ed57f5f4e92a510b133a062d99a89e799c",
+  "before_code": "f99da6ed57f5f4e92a510b133a062d99a89e799c",
+  "script_sha256": {
+    "before": "516223ccda9b07bc0e75f228322f960a2d99bb834f337257d2119a0f299c54d5",
+    "after": "1a7d4016ed6bb005c7d5a5ce324832e374e2800e01c580e60a093a8306ae69fa"
+  },
+  "classifier_sha256": "678ce6b3d36a52fa959c0242fbfdd368dda48c364d9f6421b274b5f67c981f0e",
+  "python": "3.13.5",
+  "platform": "Linux-7.0.2-6-pve-x86_64-with-glibc2.41",
+  "git": "git version 2.47.3",
+  "warmups_per_version": 1,
+  "pairs": 10,
+  "outputs_equal": true,
+  "compared_outputs": [
+    "REVIEW.md",
+    "meta",
+    "pr.md"
+  ],
+  "before_median_seconds": 4.4058968629688025,
+  "after_median_seconds": 2.890965072438121,
+  "paired_saving_median_seconds": 1.5303392130881548,
+  "samples": [
+    {
+      "pair": 1,
+      "order": [
+        "before",
+        "after"
+      ],
+      "before_seconds": 4.550720974802971,
+      "after_seconds": 2.941599490121007,
+      "saved_seconds": 1.609121484681964
+    },
+    {
+      "pair": 2,
+      "order": [
+        "after",
+        "before"
+      ],
+      "after_seconds": 2.8772201165556908,
+      "before_seconds": 4.374664429575205,
+      "saved_seconds": 1.497444313019514
+    },
+    {
+      "pair": 3,
+      "order": [
+        "before",
+        "after"
+      ],
+      "before_seconds": 4.515633778646588,
+      "after_seconds": 2.889741050079465,
+      "saved_seconds": 1.6258927285671234
+    },
+    {
+      "pair": 4,
+      "order": [
+        "after",
+        "before"
+      ],
+      "after_seconds": 2.9128361251205206,
+      "before_seconds": 4.647418763488531,
+      "saved_seconds": 1.7345826383680105
+    },
+    {
+      "pair": 5,
+      "order": [
+        "before",
+        "after"
+      ],
+      "before_seconds": 4.376694807782769,
+      "after_seconds": 2.9329598285257816,
+      "saved_seconds": 1.4437349792569876
+    },
+    {
+      "pair": 6,
+      "order": [
+        "after",
+        "before"
+      ],
+      "after_seconds": 2.866296222433448,
+      "before_seconds": 4.356457371264696,
+      "saved_seconds": 1.4901611488312483
+    },
+    {
+      "pair": 7,
+      "order": [
+        "before",
+        "after"
+      ],
+      "before_seconds": 4.435098918154836,
+      "after_seconds": 2.8270223885774612,
+      "saved_seconds": 1.6080765295773745
+    },
+    {
+      "pair": 8,
+      "order": [
+        "after",
+        "before"
+      ],
+      "after_seconds": 2.8456059601157904,
+      "before_seconds": 4.368254367262125,
+      "saved_seconds": 1.5226484071463346
+    },
+    {
+      "pair": 9,
+      "order": [
+        "before",
+        "after"
+      ],
+      "before_seconds": 4.376095110550523,
+      "after_seconds": 2.8921890947967768,
+      "saved_seconds": 1.483906015753746
+    },
+    {
+      "pair": 10,
+      "order": [
+        "after",
+        "before"
+      ],
+      "after_seconds": 3.0057856999337673,
+      "before_seconds": 4.543815718963742,
+      "saved_seconds": 1.538030019029975
+    }
+  ]
+}

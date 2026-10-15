@@ -134,8 +134,12 @@ prepare() {
   tier=""; tier_txt=""
   if merge_base=$(git -C "$ROOT" merge-base "origin/$base" "$sha" 2>/dev/null) \
     && [ -f "${TIERS:-$dir/tiers.py}" ]; then
-    tier=$(python3 "${TIERS:-$dir/tiers.py}" --repo "$ROOT" --base "$merge_base" --head "$sha" --letter 2>/dev/null) || tier=""
+    # The block already carries the letter: classify the range only once. Use
+    # main's existing output format, without requiring a new classifier flag.
     tier_txt=$(python3 "${TIERS:-$dir/tiers.py}" --repo "$ROOT" --base "$merge_base" --head "$sha" 2>/dev/null) || tier_txt=""
+    if [[ $tier_txt =~ ^\*\*档位\ ([A-G])\  ]]; then
+      tier=${BASH_REMATCH[1]}
+    fi
   fi
   [ -n "$tier" ] || echo "pr-review: 算不出档位，结论行不带档位" >&2
   [ "$tier" != G ] || echo "pr-review: 档位 G（纯机械改动），不用跑审查；post 会照常出结论行" >&2

@@ -221,6 +221,48 @@ class PrReview(unittest.TestCase):
         self.assertIn("两路全新上下文找茬", text)
         self.assertIn("f.txt（实现代码）", text)
 
+    def test_prepare_computes_each_range_once_for_both_tier_outputs(self):
+        # One classification must supply both outputs; post's independent check is
+        # deliberately outside this budget. The wrapper counts real CLI invocations.
+        with tempfile.TemporaryDirectory(dir=self.tmp) as directory:
+            folder = Path(directory)
+            log, wrapper = folder / "calls.jsonl", folder / "tiers.py"
+            classifier = self.work / ".claude/pr-review/tiers.py"
+            wrapper.write_text(
+                "import json, runpy, sys\n"
+                f"with open({str(log)!r}, 'a') as out:\n"
+                "    out.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                f"runpy.run_path({str(classifier)!r}, run_name='__main__')\n"
+            )
+            for pr, sha, expected in ((PR, self.shas[-1], "B"),
+                                      (PR_MECHANICAL, self.mech, "G"),
+                                      (PR_MIXED, self.mixed, "A")):
+                with self.subTest(tier=expected):
+                    log.write_text("")
+                    reference = subprocess.run(
+                        ["python3", str(classifier), "--repo", str(self.work),
+                         "--base", "origin/main", "--head", sha],
+                        capture_output=True, text=True, check=True,
+                    ).stdout.strip()
+                    out = self.run_script("prepare", pr, env_extra={"TIERS": str(wrapper)})
+                    self.assertEqual(out.returncode, 0, out.stderr)
+                    d = Path(out.stdout.strip()).parent
+                    self.assertIn(reference, (d / "REVIEW.md").read_text())
+                    self.assertIn(f"tier={expected}\n", (d / "meta").read_text())
+                    self.assertEqual(len(log.read_text().splitlines()), 1)
+
+    def test_prepare_discards_partial_tier_output_on_failure(self):
+        with tempfile.TemporaryDirectory(dir=self.tmp) as directory:
+            classifier = Path(directory) / "tiers.py"
+            classifier.write_text('print("**档位 G 机械改动**")\nraise SystemExit(1)\n')
+            out = self.run_script("prepare", PR, env_extra={"TIERS": str(classifier)})
+            self.assertEqual(out.returncode, 0, out.stderr)
+            self.assertIn("算不出档位", out.stderr)
+            d = Path(out.stdout.strip()).parent
+            self.assertNotIn("## Review tier", (d / "REVIEW.md").read_text())
+            self.assertIn("tier=''\n", (d / "meta").read_text())
+            self.assertFalse((d / "result.json").exists())
+
     def test_prepare_still_works_when_the_tier_cannot_be_decided(self):
         # The tier says how deep to review; it is not a gate on reviewing at all. A machine
         # that cannot decide it — tiers.py not on main yet, a checkout that predates it —
