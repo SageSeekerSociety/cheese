@@ -1,16 +1,22 @@
 """这个包够不着的那些事，写在这里由调用方递进来。
 
-`topic` 在第 2 层，第 5 层那三个包（`agent`、`agent_instance`、`delivery`）里的
-事都够不着，所以本包把自己要的那几次调用写在这儿，实现留在上面，谁在门口谁递进去
-—— 和 `review/ports.py`、`block/ports.py` 同一条规矩：口子按消费者分开写，实现按
-提供者放。
+`topic` 在第 2 层，上面每层的事都够不着，所以本包把自己要的那几次调用写在这儿，
+实现留在上面，谁在门口谁递进去 —— 和 `review/ports.py`、`block/ports.py` 同一条
+规矩：口子按消费者分开写，实现按提供者放。
 
-前五个问的是「这个项目的 AI 队友是谁」，实现在
-`app/domain/agent_instance/adapters.py`；后两个是克隆一次会话时用的，实现就在
-`agent.clone` 和 `agent.harness` 自己身上，那两个模块够得着，所以没有另起一份。
-`ProjectTeam` 是前五个里唯一本包不读的：拿到手就原样递出去。
+头五个问的是「这个项目的 AI 队友是谁」，实现在
+`app/domain/agent_instance/adapters.py`；`ForkTranscript` 和 `ProjectHarness` 是
+克隆一次会话时用的，实现就在 `agent.clone` 和 `agent.harness` 自己身上，那两个模块
+够得着，所以没有另起一份。`ProjectTeam` 是头五个里唯一本包不读的：拿到手就原样递
+出去。
 
-递回来的都是内置类型，没有一个是那个包里的类：本包认不出它的类型，也不该认得。
+后半截（`RoomThread`、`SessionStore`、`WorkspacePaths`、`ReviewCards`、
+`PendingDecisions`、`ArchivedCards`）是本包在第 3、4 层各自只取一两次调用的那些：
+支线的根消息（第 4 层）、一间房的会话状态（第 3 层）、转写与工作目录落在哪
+（第 3 层）、还有「这间房等着谁动手」的两个角标和归档时收卡（第 3、4 层）。它们的
+形状大多就是提供方已有的类或函数，递进来的就是那个对象本身，本包不另包一层。
+
+递回来的都是内置类型：本包认不出别人家的类，也不该认得。
 """
 
 from __future__ import annotations
@@ -21,6 +27,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.delivery_events import SettleCard
 
 
 class SeatHandles(Protocol):
@@ -141,3 +149,105 @@ class ProjectHarness(Protocol):
     """
 
     def __call__(self, project_settings: Mapping[str, Any] | None) -> str: ...
+
+
+class RoomThread(Protocol):
+    """``conversation_id`` 是一条支线的话，这条支线的根消息是哪一条；不是就 None。
+
+    任务从一条消息升起来时要挂在**主线那一条**下面：这条消息本身，或者它底下那条
+    支线的根。哪张表答得出「这是一条支线」，不在本包手里 —— 本包在第 2 层，
+    `thread` 在第 4 层（`docs/manual/dev/architecture.md` 的层表）。
+
+    实现在 `app/domain/thread/adapters.py`，本包只认「给我一个 id 或者 None」。
+    """
+
+    async def __call__(
+        self, session: AsyncSession, conversation_id: uuid.UUID
+    ) -> uuid.UUID | None: ...
+
+
+class SessionStore(Protocol):
+    """一间房跑着的会话：接着跑的那张令牌、记下新的一张、把整间房忘掉。
+
+    形状就是 `agent_session.services.AgentSessionService` 那三个方法，递进来的
+    就是那个对象本身。--resume 的那张令牌住在这张表里，而「这一席上次跑到哪」是
+    会话域的事，不是房间的事。``forget_room`` 在取消归档时用：房间的会话已经交给
+    跑机器了，取消归档等于给它一个新身份，旧身份不能再被认领。
+    """
+
+    async def resume_token(
+        self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
+    ) -> str | None: ...
+
+    async def remember(
+        self,
+        *,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        resume_token: str,
+        harness: str,
+    ) -> None: ...
+
+    async def forget_room(self, room_id: uuid.UUID) -> None: ...
+
+
+class WorkspacePaths(Protocol):
+    """会话转写、沙箱工作目录落在磁盘的哪一格。
+
+    形状就是 `app.domain.repository.service` 的两个纯函数，把那个模块递进来即可：
+    它们是路径约定，不是查询，本包只是够不着那一层。
+
+    ``sandbox_topic_workdir`` 单独要一个：转写要落在**目标** cwd 的 slug 下，换过去
+    的下一轮 ``--resume`` 才找得到它。
+    """
+
+    def session_dir(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> Path: ...
+
+    def sandbox_topic_workdir(self, topic_id: uuid.UUID) -> str: ...
+
+
+class ReviewCards(Protocol):
+    """这批房间里，还有哪几间点过我的名 —— ``{话题: 现在是不是等我动手}``。
+
+    形状就是 `review.services.AcceptService.reviewer_topic_ids`，递进来的是那个
+    服务实例。频道列表的「与我的相关性」要把「在等我」那盏灯点上，而验收卡是
+    第 4 层的事。
+    """
+
+    async def reviewer_topic_ids(
+        self, topic_ids: list[uuid.UUID], reviewer_handle: str
+    ) -> dict[uuid.UUID, bool]: ...
+
+
+class PendingDecisions(Protocol):
+    """这批房间里，还有哪几间向我要的决策没拍板 —— 和上面同一盏灯的另外一半。
+
+    形状就是 `notification.services.ProjectNotificationService.decision_topic_ids`。
+    """
+
+    async def decision_topic_ids(
+        self, topic_ids: list[uuid.UUID], target_handle: str
+    ) -> dict[uuid.UUID, bool]: ...
+
+
+class ArchivedCards(Protocol):
+    """一间房归档了，它上面还没结的验收卡要一起收掉。
+
+    形状就是 `review.archive.close_cards_for_archived_topic`，实现留在那里，递进来
+    的就是那个函数本身 —— 和 `agent.harness.harness_for` 一样，提供方已经长成这个
+    形状，不必再包一层。
+
+    返回值是不透明的：它答的是「改动了哪几张卡」，本包只关心收没收。
+    """
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        *,
+        topic_id: uuid.UUID,
+        project_id: uuid.UUID,
+        topic_title: str,
+        overview_room_id: uuid.UUID,
+        by: str,
+        settle_card: SettleCard | None,
+    ) -> object: ...

@@ -24,6 +24,7 @@ from app.domain.task.models import Task, TaskMembership
 from app.domain.task.teaching import protocol_for_task
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicKind
+from app.domain.topic.ports import ArchivedCards, SessionStore
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import Ledger
@@ -75,6 +76,8 @@ class ProjectService:
         *,
         settle_card: SettleCard | None = None,
         default_teammate: DefaultTeammate | None = None,
+        cards: ArchivedCards | None = None,
+        sessions: SessionStore | None = None,
     ):
         """``settle_card``：归档项目要把房间里等验收人的那几句话一起收掉，
         而结一张卡是 `review` 和 `delivery` 做的事，本包够不着
@@ -85,7 +88,12 @@ class ProjectService:
         ``default_teammate``：项目的芝士由本包在 ``create`` 里播种
         （`app.domain.project.ports.DefaultTeammate`），而播种是第 5 层
         `agent_instance` 的事。同样不给也能构造，理由一样：只有 ``create`` 和
-        ``_accept_task_protocol`` 这两条路要它，走到那里没递进来就当场炸掉。"""
+        ``_accept_task_protocol`` 这两条路要它，走到那里没递进来就当场炸掉。
+
+        ``cards`` 和 ``sessions``：归档项目会顺手做两件本包够不着的事 —— 把房间里
+        还没结的验收卡收掉（第 4 层 `review`），把取消归档的房间记着的会话令牌忘掉
+        （第 3 层 `agent_session`）。两样都只在 ``archive`` / ``unarchive`` 这两条路
+        上用，所以也不给也能构造，走到那里没递进来就当场炸掉。"""
         self._session = session
         self._repo = ProjectRepository(session)
         self._installations = ProjectGitInstallationRepository(session)
@@ -94,6 +102,8 @@ class ProjectService:
         self._members = TopicMemberService(session)
         self._settle_card = settle_card
         self._default_teammate = default_teammate
+        self._cards = cards
+        self._sessions = sessions
 
     async def _seed_default_teammate(
         self,
@@ -410,9 +420,12 @@ class ProjectService:
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
+        if self._cards is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("cards was not handed in")
         project.archived_at = datetime.now(UTC)
         await TopicService(self._session).archive_with_project(
-            project_id, by=by, settle_card=self._settle_card
+            project_id, by=by, settle_card=self._settle_card, cards=self._cards
         )
         await self._session.flush()
         return project
@@ -426,7 +439,12 @@ class ProjectService:
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
-        await TopicService(self._session).unarchive_with_project(project_id, by=by)
+        if self._sessions is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("sessions was not handed in")
+        await TopicService(self._session).unarchive_with_project(
+            project_id, by=by, sessions=self._sessions
+        )
         project.archived_at = None
         await self._session.flush()
         return project

@@ -415,8 +415,10 @@ unmatched_ignore_imports_alerting = warn
 # it reads is `common`, `conversation` (both layer 1) and `topic.models`, whose
 # row is 2. Layer 3 is the lowest row that keeps that one import legal, and it
 # is where four of the five upward edges into it stop being upward. The fifth,
-# `topic -> agent_session`, stays: the session row cannot name its project's id
-# without the join, and layer 2 is below layer 3.
+# `topic -> agent_session`, has since been handed in as a value at construction
+# instead: layer 2 sits below layer 3, so `topic` cannot reach the session row —
+# it takes the store. (The join is what binds the row to layer 3 either way:
+# `agent_session` still reads `topic.models` at layer 2.)
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =

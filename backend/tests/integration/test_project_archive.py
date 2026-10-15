@@ -9,6 +9,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.delivery.ledger import settle_card
 from app.domain.memory.models import MemoryDreamRun
 from app.domain.project.services import ProjectService
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
@@ -210,9 +211,11 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
                 kind="chat",
                 turn_id=None,
             )
-            await ProjectService(session, settle_card=settle_card).archive(
-                project.id, by=OWNER
-            )
+            await ProjectService(
+                session,
+                settle_card=settle_card,
+                cards=close_cards_for_archived_topic,
+            ).archive(project.id, by=OWNER)
             project_id = project.id
             await session.commit()
         await chat.sweep_memory_dreams()

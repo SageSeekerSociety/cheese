@@ -379,7 +379,7 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
         )
         assert sum((block.meta or {}).get("action") == "doc" for block in blocks) == 1
         doc = await task_doc(session, task)
-        assert len(await TopicService(session).doc_nodes(doc)) == 1
+        assert len(await Documents(session).nodes(doc)) == 1
 
 
 @pytest.mark.anyio

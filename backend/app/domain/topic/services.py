@@ -26,7 +26,6 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import (
     AuthorType,
@@ -41,12 +40,6 @@ from app.domain.identity.handles import (
     names_a_person,
     recipient_seat,
 )
-from app.domain.living_doc.models import Document, DocumentNode
-from app.domain.living_doc.services import Documents
-from app.domain.notification.services import ProjectNotificationService
-from app.domain.repository import service as ws
-from app.domain.review.archive import close_cards_for_archived_topic
-from app.domain.review.services import AcceptService
 from app.domain.room_task.models import (
     PLACEHOLDER_TITLE,
     Task,
@@ -57,7 +50,6 @@ from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.services import team_service
-from app.domain.thread.models import Thread
 from app.domain.topic.models import (
     NotifyLevel,
     RoomCleanup,
@@ -68,13 +60,19 @@ from app.domain.topic.models import (
     TopicStatus,
 )
 from app.domain.topic.ports import (
+    ArchivedCards,
     ForkTranscript,
     NamedTeammate,
+    PendingDecisions,
     ProjectHarness,
     ProjectTeam,
+    ReviewCards,
     RoomTeammate,
+    RoomThread,
     SeatHandles,
     SeatProject,
+    SessionStore,
+    WorkspacePaths,
 )
 from app.domain.topic.repositories import (
     SortOrder,
@@ -174,11 +172,6 @@ class TopicService:
         self._projects = ProjectService(session)
         self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
-        # 与我的相关性 asks three other domains the same question at once, and
-        # asks each through its own service — the roster, the accept cards and
-        # the @-notifications each decide for themselves what "mine" means.
-        self._cards = AcceptService(session)
-        self._notifications = ProjectNotificationService(session)
 
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         """Return one topic for cross-domain service callers."""
@@ -436,6 +429,8 @@ class TopicService:
         viewer_handle: str | None,
         *,
         team: ProjectTeam,
+        cards: ReviewCards,
+        decisions: PendingDecisions,
     ) -> dict[uuid.UUID, TopicRelevance]:
         """{topic_id: what it is to me} for a batch of channels, in a fixed
         number of queries whatever the batch size: the list endpoint returns a
@@ -445,21 +440,24 @@ class TopicService:
         ``viewer_handle`` is passed IN rather than read from an auth context:
         the caller resolved the actor at the trust boundary. Anonymous/unknown
         callers relate to nothing.
-        """
+
+        「在等我」 asks two other domains the same question at once, and asks each
+        through its own口子 — the accept cards and the @-notifications each decide
+        for themselves what "mine" means. 两边都在第 4 层，本包在第 2 层，所以
+        答案由调用方递进来（`topic/ports.py`）。"""
         if viewer_handle is None or not topics:
             return {}
         topic_ids = [t.id for t in topics]
         joined = await self._members.joined_topic_ids(topics, viewer_handle, team=team)
-        cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
-        decisions = await self._notifications.decision_topic_ids(
-            topic_ids, viewer_handle
-        )
+        awaiting_card = await cards.reviewer_topic_ids(topic_ids, viewer_handle)
+        pending = await decisions.decision_topic_ids(topic_ids, viewer_handle)
         return {
             topic.id: TopicRelevance(
                 joined=topic.id in joined,
                 # 「在等我」只数要我**动手拍板**的：一张点名我还没结的验收卡，或一条
                 # 还没答的决策请求。
-                awaits_me=cards.get(topic.id, False) or decisions.get(topic.id, False),
+                awaits_me=awaiting_card.get(topic.id, False)
+                or pending.get(topic.id, False),
             )
             for topic in topics
         }
@@ -611,7 +609,12 @@ class TopicService:
     # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
 
     async def archive(
-        self, topic_id: uuid.UUID, *, by: str, settle_card: SettleCard
+        self,
+        topic_id: uuid.UUID,
+        *,
+        by: str,
+        settle_card: SettleCard,
+        cards: ArchivedCards,
     ) -> Topic:
         """A person archives a channel (idempotent): it leaves everyone's
         sidebar and is read, not spoken in, until someone unarchives it. A
@@ -630,13 +633,18 @@ class TopicService:
             for task in await TaskService(self._session).list_in_room(topic.id)
         ):
             raise ValidationError(say("channelArchiveOpenTasks"))
-        await self._archive_one(topic, by=by, settle_card=settle_card)
-        await self._archive_children(topic, by=by, settle_card=settle_card)
+        await self._archive_one(topic, by=by, settle_card=settle_card, cards=cards)
+        await self._archive_children(topic, by=by, settle_card=settle_card, cards=cards)
         await self._session.flush()
         return topic
 
     async def _archive_children(
-        self, topic: Topic, *, by: str, settle_card: SettleCard | None
+        self,
+        topic: Topic,
+        *,
+        by: str,
+        settle_card: SettleCard | None,
+        cards: ArchivedCards,
     ) -> None:
         """Closing a place closes what is inside it.
 
@@ -678,9 +686,15 @@ class TopicService:
             if child.status == TopicStatus.archived:
                 continue
             await self._archive_one(
-                child, by=by, cascaded_from=topic.title, settle_card=settle_card
+                child,
+                by=by,
+                cascaded_from=topic.title,
+                settle_card=settle_card,
+                cards=cards,
             )
-            await self._archive_children(child, by=by, settle_card=settle_card)
+            await self._archive_children(
+                child, by=by, settle_card=settle_card, cards=cards
+            )
 
     async def _overview_room(self, project_id: uuid.UUID) -> uuid.UUID:
         """项目总览那个房间（`TopicKind.root`）——项目的事落在这里。
@@ -707,6 +721,7 @@ class TopicService:
         *,
         by: str,
         settle_card: SettleCard | None,
+        cards: ArchivedCards,
         cascaded_from: str | None = None,
     ) -> None:
         topic.status = TopicStatus.archived
@@ -729,7 +744,7 @@ class TopicService:
         # 去向与理由见 review/archive.py 的模块 docstring。
 
         overview_room = await self._where_said(topic)
-        await close_cards_for_archived_topic(
+        await cards(
             self._session,
             topic_id=topic.id,
             project_id=topic.project_id,
@@ -758,10 +773,16 @@ class TopicService:
             meta={"platform": True},
         )
 
-    async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
+    async def unarchive(
+        self, topic_id: uuid.UUID, *, by: str, sessions: SessionStore
+    ) -> Topic:
         """Bring an archived topic back to active (idempotent). Accept markers
         are kept — un-archiving doesn't rewrite acceptance history (use 撤回采纳
-        for that)."""
+        for that).
+
+        ``sessions`` 是递进来的口子：一间房回到项目里，它那台工作机还在原地
+        （如果停到一半被按住了），得把记着的那张令牌忘掉，让下一轮重新开一张。
+        会话在第 5 层，本包在第 2 层。"""
         topic = await self._repo.lock(topic_id)
         if topic is None:
             raise NotFoundError("Topic not found")
@@ -781,7 +802,7 @@ class TopicService:
                 operation.state = "cancelled"
             elif operation.state in {"claimed", "retained", "complete"}:
                 topic.resource_id = uuid.uuid4()
-                await AgentSessionService(self._session).forget_room(topic.id)
+                await sessions.forget_room(topic.id)
         topic.status = TopicStatus.active
         topic.archived_at = None
         topic.cleanup_due_at = None
@@ -808,7 +829,12 @@ class TopicService:
     # ---- 删除 (归档的去向，清单第 2 条) ---------------------------------
 
     async def delete(
-        self, topic_id: uuid.UUID, *, by: str, settle_card: SettleCard
+        self,
+        topic_id: uuid.UUID,
+        *,
+        by: str,
+        settle_card: SettleCard,
+        cards: ArchivedCards,
     ) -> None:
         """A person deletes a channel: it leaves every list for good, and what
         was said in it, the tasks in it and its documents go with it.
@@ -835,8 +861,10 @@ class TopicService:
                 for task in await TaskService(self._session).list_in_room(topic.id)
             ):
                 raise UnprocessableEntityError(say("channelArchiveOpenTasks"))
-            await self._archive_one(topic, by=by, settle_card=settle_card)
-            await self._archive_children(topic, by=by, settle_card=settle_card)
+            await self._archive_one(topic, by=by, settle_card=settle_card, cards=cards)
+            await self._archive_children(
+                topic, by=by, settle_card=settle_card, cards=cards
+            )
         deleted_at = datetime.now(UTC)
         topic.deleted_at = deleted_at
         # 归档把清理排在宽限之后；删除就排在现在 —— 删掉就是删掉，不必等一天。
@@ -855,7 +883,12 @@ class TopicService:
         await self._session.flush()
 
     async def archive_with_project(
-        self, project_id: uuid.UUID, *, by: str, settle_card: SettleCard | None
+        self,
+        project_id: uuid.UUID,
+        *,
+        by: str,
+        settle_card: SettleCard | None,
+        cards: ArchivedCards,
     ) -> None:
         """Archive every room of a project being archived — the overview and the
         private chats too, which nobody can archive one at a time.
@@ -879,17 +912,23 @@ class TopicService:
         for topic in rooms:
             # The overview's children were already taken along with it.
             if topic.status != TopicStatus.archived:
-                await self._archive_one(topic, by=by, settle_card=settle_card)
-                await self._archive_children(topic, by=by, settle_card=settle_card)
+                await self._archive_one(
+                    topic, by=by, settle_card=settle_card, cards=cards
+                )
+                await self._archive_children(
+                    topic, by=by, settle_card=settle_card, cards=cards
+                )
             topic.archived_with_project = True
         await self._session.flush()
 
-    async def unarchive_with_project(self, project_id: uuid.UUID, *, by: str) -> None:
+    async def unarchive_with_project(
+        self, project_id: uuid.UUID, *, by: str, sessions: SessionStore
+    ) -> None:
         """Bring back the rooms :meth:`archive_with_project` took along."""
         for topic in await self._repo.lock_all_in_project(project_id):
             if not topic.archived_with_project:
                 continue
-            await self.unarchive(topic.id, by=by)
+            await self.unarchive(topic.id, by=by, sessions=sessions)
             topic.archived_with_project = False
         await self._session.flush()
 
@@ -900,6 +939,7 @@ class TopicService:
         created_by: str | None = None,
         seat_project: SeatProject,
         team: ProjectTeam,
+        main_line: RoomThread,
     ) -> tuple[Topic, Task]:
         """转为任务: a message in a channel becomes a task in that channel,
         owned by whoever turned it. A message, or the 支线 under it, can become
@@ -923,19 +963,24 @@ class TopicService:
             room_id=parent.id,
             created_by=created_by,
             teammate=recipient_seat((block.meta or {}).get("agent_recipient")),
-            origin_block_id=await self._main_line_message(block),
+            origin_block_id=await self._main_line_message(block, thread=main_line),
             source_block_id=block.id,
             seat_project=seat_project,
             team=team,
         )
         return parent, task
 
-    async def _main_line_message(self, block: Block) -> uuid.UUID:
+    async def _main_line_message(
+        self, block: Block, *, thread: RoomThread
+    ) -> uuid.UUID:
         """The main-line message ``block`` is under: itself, or the message its
-        支线 hangs under. A task from either shows under that message."""
+        支线 hangs under. A task from either shows under that message.
 
-        thread = await self._session.get(Thread, block.conversation_id)
-        return thread.root_block_id if thread is not None else block.id
+        「这条会话是不是支线」由 `thread` 那一头回答（`RoomThread`）：支线是
+        第 4 层的行，本包在第 2 层，所以这一次查问由调用方递进来。"""
+
+        root = await thread(self._session, block.conversation_id)
+        return root if root is not None else block.id
 
     async def say_thread_title(
         self, *, room_id: uuid.UUID, title: str, by: str
@@ -1180,6 +1225,8 @@ class TopicService:
         room_teammate: RoomTeammate,
         fork: ForkTranscript,
         project_harness: ProjectHarness,
+        paths: WorkspacePaths,
+        sessions: SessionStore,
     ) -> Topic:
         """Deep-copy the source topic's Claude conversation onto the target topic
         (transcript-fork, fusion-design §6 clone — distinct from a task).
@@ -1190,7 +1237,9 @@ class TopicService:
 
         ``room_teammate``、``fork``、``project_harness`` 三样都是递进来的口子：两边
         各是谁在干活（`RoomTeammate`）、转写怎么拷（`ForkTranscript`）、这个项目跑
-        哪个骨架（`ProjectHarness`），答案都在第 5 层，本包在第 2 层。"""
+        哪个骨架（`ProjectHarness`），答案都在第 5 层，本包在第 2 层。``paths`` 和
+        ``sessions`` 同理：转写和沙箱目录落在磁盘的哪一格（`WorkspacePaths`），
+        一个房间跑着的会话记在哪（`SessionStore`）。"""
         target = await self.get_or_404(target_topic_id)
         source = await self.get_or_404(source_topic_id)
         if source.id == target.id:
@@ -1204,7 +1253,6 @@ class TopicService:
         # Both are resolved rather than assumed: a room may host several, and
         # copying one agent's transcript onto another's key would hand it a
         # thread it never had.
-        sessions = AgentSessionService(self._session)
         _, source_handle = await room_teammate(self._session, source.id)
         _, target_handle = await room_teammate(self._session, target.id)
         # 骨架不是参与者的属性（结论 28），是项目设置加部署设置答的一件事。源和
@@ -1219,12 +1267,12 @@ class TopicService:
             raise ValidationError(say("topicCloneNeverRan"))
         try:
             new_sid = fork(
-                source_session_dir=ws.session_dir(source.project_id, source.id),
+                source_session_dir=paths.session_dir(source.project_id, source.id),
                 source_session_id=source_sid,
-                target_session_dir=ws.session_dir(target.project_id, target.id),
+                target_session_dir=paths.session_dir(target.project_id, target.id),
                 # Claude resolves --resume under the slug of the cwd it runs
                 # with, so the fork must land under the TARGET topic's workdir.
-                target_cwd=ws.sandbox_topic_workdir(target.id),
+                target_cwd=paths.sandbox_topic_workdir(target.id),
             )
         except FileNotFoundError as exc:
             raise ValidationError(say("topicCloneRecordMissing")) from exc
@@ -1248,10 +1296,6 @@ class TopicService:
         if place is None:
             raise NotFoundError("Topic not found")
         return place
-
-    async def doc_nodes(self, doc: Document) -> list[DocumentNode]:
-        """文档的顶层块（标题、段落、列表……），按顺序。"""
-        return await Documents(self._session).nodes(doc)
 
     async def get_progress(
         self, conversation_id: uuid.UUID

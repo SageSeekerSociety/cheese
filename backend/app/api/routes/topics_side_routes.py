@@ -63,6 +63,7 @@ from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team, seat_handles, seat_project
 from app.domain.conversation.services import room_of
 from app.domain.room_task.schemas import TaskOut
+from app.domain.thread.adapters import root_block_of
 from app.domain.topic.services import TopicService
 
 # Per-project unread map lives under /api/projects (a "/unread" path under
@@ -218,6 +219,7 @@ async def upgrade_block(
         created_by=actor.handle,
         seat_project=seat_project,
         team=project_team,
+        main_line=root_block_of,
     )
     # 转出来即已开始：审阅人默认就是转它的人，不用再挑一次。
     await start_task_at_once(db, task, by=actor.handle)

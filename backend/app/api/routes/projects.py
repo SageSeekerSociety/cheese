@@ -45,6 +45,7 @@ from app.domain.agent_instance.adapters import (
     project_team,
 )
 from app.domain.agent_instance.own import may_chat_with
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.ledger import deliver, settle, settle_card
@@ -72,6 +73,7 @@ from app.domain.project.schemas import (
 from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.github_pr import parse_github_repo
 from app.domain.room_task import naming
 from app.domain.room_task.services import TaskService
@@ -778,9 +780,11 @@ async def archive_project(
     with no answer that means anything.
     """
     owner = await _project_owner(project_id, db, resolver)
-    project = await ProjectService(db, settle_card=settle_card).archive(
-        project_id, by=owner.handle
-    )
+    project = await ProjectService(
+        db,
+        settle_card=settle_card,
+        cards=close_cards_for_archived_topic,
+    ).archive(project_id, by=owner.handle)
     await InvitationService(
         db, deliver=deliver, settle=settle, team=project_team
     ).revoke_all_pending(project_id)
@@ -794,7 +798,9 @@ async def unarchive_project(
 ) -> dict:
     """取消归档: the project and the rooms archived with it come back."""
     owner = await _project_owner(project_id, db, resolver)
-    project = await ProjectService(db).unarchive(project_id, by=owner.handle)
+    project = await ProjectService(db, sessions=AgentSessionService(db)).unarchive(
+        project_id, by=owner.handle
+    )
     await db.commit()
     return ok(await _project_payload(db, project))
 
