@@ -790,14 +790,15 @@ def _loader_self_test():
         sh("commit", "-qm", 'Revert "feat: side branch work (#7)"')
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #8 from x/revfix", "revfix")
-        # 第二条线：只加一份登记表。它接下来会被删掉——「去掉生成物后」那一项要能把只
-        # 丢了生成物的线排掉，光数「有没有文件消失」做不到。只放一个文件也是为了「一次
-        # 改动多大」那张表：四条线的改动文件数要是 2、1、2、1，中位（1）和上四分位（2）
-        # 才分得开。三条线时那两个数碰巧一样，把中位列写成上四分位也看不出来。
+        # 第二条线：只加一份登记表（两行）。它接下来会被删掉——「去掉生成物后」那一项要
+        # 能把只丢了生成物的线排掉，光数「有没有文件消失」做不到。每条线几个文件、几行也
+        # 是给「一次改动多大」那张表摆的：改动文件数要排成 1、1、2、2，净增行数要排成
+        # 0、1、2、3，中位和上四分位才分得开。它们挤在一起（比如全落在同一个数上）时，
+        # 把中位列写成上四分位也看不出来。
         reg = os.path.join(tmp, "frontend/src/i18n/messages/en.json")
         sh("checkout", "-q", "-b", "extra")
         os.makedirs(os.path.dirname(reg))
-        open(reg, "w").write("{}\n")
+        open(reg, "w").write("{}\n{}\n")
         sh("add", "frontend/src/i18n/messages/en.json")
         sh("commit", "-qm", "feat: extra work")
         sh("checkout", "-q", "main")
@@ -806,7 +807,7 @@ def _loader_self_test():
         # 和第二条线一样要被那句排除。
         sh("checkout", "-q", "-b", "final")
         os.remove(reg)
-        open(os.path.join(tmp, "f.txt"), "w").write("5\n")
+        open(os.path.join(tmp, "f.txt"), "w").write("5\n6\n")
         sh("add", "frontend/src/i18n/messages/en.json", "f.txt")
         sh("commit", "-qm", "feat: final work")
         sh("checkout", "-q", "main")
@@ -814,7 +815,7 @@ def _loader_self_test():
         # 第四条线：文件全在。留存那一项要有一个「全在」的对照，四条线里一条全在、三条
         # 有文件消失，「数留下来的」和「数消失的」给的是 1/4 与 3/4、1 条与 3 条。
         sh("checkout", "-q", "-b", "later")
-        open(os.path.join(tmp, "g.txt"), "w").write("6\n")
+        open(os.path.join(tmp, "g.txt"), "w").write("7\n8\n9\n")
         sh("add", "g.txt"); sh("commit", "-qm", "feat: later work")
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #11 from x/later", "later")
@@ -908,10 +909,11 @@ def _wiring_self_test(tmp, sh):
     assert "队列：窗口内第一次合入的 **4 条线**" in md, md
     assert "共 5 次合入（其中 5 次在默认分支上认出了对应提交）" in md, md
     # 文件和行数来自真的 git：合并 #7 加 b.txt 一行，合并 #8 删 b.txt、加 d.txt 一行
-    # （所以 T1 是 2 个文件、净增 1），合并 #9 只加登记表（1 个文件），合并 #10 删登记表、
-    # 加 f.txt（2 个文件），合并 #11 加 g.txt（1 个文件）。四处都对不上时这里先响：喂空
-    # 字典会没有一条线，加删写反了净增就是 -1。中位是 4 条线里的第 2 个（最近秩，不插
-    # 值）：改动文件数按 1、1、2、2 排，中位 1、上四分位 2，把中位列写成上四分位就会响。
+    # （所以 T1 是 2 个文件、净增 1），合并 #9 只加登记表（1 个文件、两行），合并 #10 删
+    # 登记表、加 f.txt（2 个文件、净增 0），合并 #11 加 g.txt（1 个文件、三行）。四处都
+    # 对不上时这里先响：喂空字典会没有一条线，加删写反了净增就是 -1。中位是 4 条线里的
+    # 第 2 个（最近秩，不插值）：改动文件数按 1、1、2、2 排，净增行数按 0、1、2、3 排，
+    # 两行的中位（1、1）都和各自的上四分位（2、2）不一样，把中位列写成上四分位就会响。
     assert "| 改动文件数 | 1 |" in md, md
     assert "| 净增行数 | 1 |" in md, md
     # 留存那一段也走真的 `head_files`：只有 T4 的 g.txt 全在，T1 丢了 b.txt，T2/T3 丢了
