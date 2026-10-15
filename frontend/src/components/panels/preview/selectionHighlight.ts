@@ -98,18 +98,14 @@ export function useSelectionHighlight(options: SelectionHighlightOptions) {
     // 一路拖过好几页时，一个 range 的块落在好几张纸上，所以每一张都拿整个 range 的块来
     // 试，落不到这一张上的那些由 `selectionPath` 按块心丢掉。
     const ours =
-      !!range &&
-      sheets.some((sheet) => sheet.contains(range.startContainer) || sheet.contains(range.endContainer))
+      !!range && sheets.some((sheet) => sheet.contains(range.startContainer) || sheet.contains(range.endContainer))
     const rects = ours ? range.getClientRects() : null
     for (const sheet of sheets) {
       // 没选中的纸不建这一层：一页一个空 div 不划算，等真有选区再说。
       if (!rects && !paints.has(sheet)) continue
       const paint = paintFor(sheet)
       if (!paint) continue
-      paint.path.setAttribute(
-        'd',
-        rects ? selectionPath(rects, paint.box.getBoundingClientRect()) : ''
-      )
+      paint.path.setAttribute('d', rects ? selectionPath(rects, paint.box.getBoundingClientRect()) : '')
     }
   }
 

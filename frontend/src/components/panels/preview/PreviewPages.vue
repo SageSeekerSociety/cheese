@@ -16,10 +16,10 @@ import type { PagePin, SlideSource } from './slidesContext'
 
 import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 
+import { useSelectionHighlight } from './selectionHighlight'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-
-import { useSelectionHighlight } from './selectionHighlight'
 
 type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
