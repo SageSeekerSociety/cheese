@@ -83,12 +83,12 @@ async function mountApp(path: string, width: number) {
       { path: '/', component: blank },
       { path: '/spaces', component: blank },
       { path: '/inbox', component: blank },
-      { path: '/projects/p1', name: 'workspace-project', component: List, meta: { barSlot: true } },
+      { path: '/projects/p1', name: 'workspace-project', component: List },
       {
         path: '/projects/p1/topics/t1',
         name: 'workspace-topic',
         component: Room,
-        meta: { barSlot: true, backTo: 'workspace-project' },
+        meta: { backTo: 'workspace-project' },
       },
       { path: '/projects/p1/dm/agent:cheese', name: 'workspace-dm', component: blank },
       {
@@ -161,7 +161,7 @@ it('desktop rail opens 待办 from 首页, the first tile, with no separate 待�
     expect(labels).not.toContain('待办')
     expect(rail!.querySelectorAll('a[href="/inbox"]')).toHaveLength(1)
     // 点这一格走的是和项目格同一套 Vuetify 链接，所以这里只证明它到得了：
-    // 这套测试的假路由只要从 /projects/:id 这种 barSlot 页出栈就崩（与本改动
+    // 这套测试的假路由只要从 /projects/:id 出栈就崩（与本改动
     // 无关——换成去 /spaces 同样崩），点进去的路由跳转留给真环境验证。
   } finally {
     app.dispose()

@@ -25,7 +25,7 @@
 import hashlib
 import re
 import uuid
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 from app.core import raster_images
@@ -322,8 +322,9 @@ PLATFORM_RULES = (
     "只传 `find`。不要自己提取凭据拼 curl 或裸 HTTP 请求，不翻 home、会话文件、"
     "`.git` 内部和系统目录。参数拿不准就看工具的定义或 `--help`，不要瞎试。\n"
     f"{SHARED_CHECKOUT}\n"
-    "- 改项目仓库里的文件、交出东西，在任务里做。你在支线里时，用 `cheese_task` "
-    "创建一个。怎么创建、怎么交，在 `cheese` 技能里，先加载它。\n"
+    "- 改项目仓库里的文件、交出东西，在任务里做。你在支线里、有人要把这件事做出来时，"
+    "用 `cheese_task` 把这条支线转为任务，或者另开几件任务。怎么选、怎么交，在 "
+    "`cheese` 技能里，先加载它。\n"
     "- 用户问这个平台怎么用，先用 `cheese_docs_search` 查官方说明书再答，不凭印象。\n"
     "- 会话可能是新开的：不记得之前聊过什么时，用 `cheese_chat_list`、"
     "`cheese_chat_search` 读记录，不要猜，也不要问人「之前说到哪了」。\n"
@@ -447,21 +448,53 @@ TRACKED_SECTIONS = (
     "roster",
     "overview",
     "memory",
-    "machine",
+    "task",
 )
 
-#: 任务会话对工作机器能做什么。它随任务开始而变（开始后会话带着留得下改动的凭证重开，
-#: 但接着的是同一条对话，开场不会再发），所以是一段会再告诉一次的现状，而不是写死在开场
-#: 里。开始前说清楚改动留不下，否则 agent 照常提交、推送，被拒以后才知道。
-TASK_MACHINE_NOT_STARTED = (
-    "## 工作机器\n"
-    "这条任务还没开始。用 `cheese checkout` 取一份主干代码，可以在里面读代码、跑命令"
-    "和测试、临时改文件，任务文档照常能写；但这些改动留不下，不能推送进项目。负责人"
-    "开始任务以后平台会告诉你，那之后再用 `cheese worktree` 动手改项目。"
-)
-TASK_MACHINE_STARTED = (
-    "## 工作机器\n这条任务已经开始，你可以在工作机器上执行命令、改文件。"
-)
+
+def task_section(
+    *, owner: str | None, contributors: Sequence[str] = (), closed: bool = False
+) -> str:
+    """任务会话那一段：谁的话是指令，在哪里改项目。
+
+    它会变：支线转为任务时，会话接着原来的那段对话，开场不会再发一遍；负责人换人、
+    协作者进出、任务关闭和重新打开时也一样。所以它是一段会再告诉一次的现状
+    （``TRACKED_SECTIONS``），不写死在开场里。"""
+    if closed:
+        return (
+            "## 这个任务\n"
+            "这件任务已关闭。大家还可以在这里说话：回答关于这件任务的问题，"
+            "可以查看项目，但不改动项目，也不提交审阅。有人要接着做这件事，"
+            "告诉他重新打开任务；说的是另一件事，建议他回到频道主线说，或者另开任务。"
+        )
+    people = [f"@{h}" for h in (owner, *contributors) if h]
+    who = (
+        f"负责人是 {people[0]}"
+        + (f"，协作者是 {'、'.join(people[1:])}" if people[1:] else "")
+        + "。他们的话是给你的指令；"
+        if people
+        else ""
+    )
+    return (
+        "## 这个任务\n"
+        f"{who}项目里别的人也能在这里说话，他们的话是参考：和负责人的意思不一样时，"
+        "按负责人的来，拿不准就问负责人。\n"
+        "你可以在工作机器上执行命令、改文件：在任务自己的工作目录里改项目"
+        "（`cheese worktree`），做完提交审阅。"
+    )
+
+
+def became_task_prompt(*, owner: str | None) -> str:
+    """支线转为任务那一刻交给 AI 队友的话：人点「转为任务」时是一条指令，叫它马上
+    开工；它自己转的（`cheese_task` 的 ``here``）在工具的回复里读到同样的话。"""
+    who = f"负责人是 @{owner}。" if owner else ""
+    return (
+        f"这条支线已经转为任务，{who}从现在起你可以改动项目：在任务自己的工作目录里"
+        "做（`cheese worktree`），在支线里临时改过、要留下的内容带过去，做完提交审阅。"
+        "先把这段讨论整理进任务文档：要做什么、已经定了什么、还有什么没定。"
+        "然后，负责人已经说了要做什么就接着做；还没说，回复一两句说明文档整理了什么，"
+        "停下来等他的话。之后文档边做边写，不用先写完再动手。"
+    )
 
 
 @dataclass(frozen=True)
@@ -525,11 +558,11 @@ def build_session_opening(
     environment: list[str] | None = None,
     teaching: TeachingContext | None = None,
     keeps_memory: bool = False,
-    machine: str | None = None,
+    task: str | None = None,
 ) -> SessionOpening:
     """新会话第一条消息前面的那份现状：支线、频道、产物、成员、项目目标、文档、记忆索引。
 
-    ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。
+    ``task``：任务会话那一段（:func:`task_section`）；别处是 None。
     ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
     变，所以和支线那一段分开、跟踪着再说一次。"""
     sections: dict[str, str] = {}
@@ -537,8 +570,8 @@ def build_session_opening(
         sections["thread"] = "## 这条支线\n" + thread
     if tasks:
         sections["tasks"] = tasks
-    if machine:
-        sections["machine"] = machine
+    if task:
+        sections["task"] = task
     if teaching is not None and (section := teaching_section(teaching)):
         sections["teaching"] = section
     if topics:
@@ -650,51 +683,29 @@ def task_opening_prompt(
     owner: str | None,
     source: str,
     materials: str = "",
-    started: bool = False,
     reviewer: str | None = None,
 ) -> str:
     """What a new task's agent is told first: where the task came from, what
-    was put on the table there, and to draft the task's document from it
-    before anything else. A task started as it was created goes on to the work
-    once the document is drafted, and is told who accepts its deliveries when
-    that is not the owner."""
+    was put on the table there, and that it goes to the work from there; the
+    task's document is written along the way, not before. Who accepts its
+    deliveries is said when that is not the owner."""
     who = f"负责人是 @{owner}。" if owner else ""
     put = (
-        f"{materials}\n整理时读一读它们，文档里写明依据的是哪一份。\n\n"
+        f"{materials}\n动手时读一读它们，实况文档里写明依据的是哪一份。\n\n"
         if materials
         else ""
     )
     accepted = (
-        f"这次交付由 @{reviewer} 验收。\n\n"
-        if started and reviewer and reviewer != owner
-        else ""
+        f"这次交付由 @{reviewer} 验收。\n\n" if reviewer and reviewer != owner else ""
     )
     return (
         f"这里是任务「{title}」，{who}它从频道里的讨论中创建：\n\n"
         f"---\n{source}\n---\n\n"
         f"{put}"
         f"{accepted}"
-        "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入。怎么组织你来"
-        "判断：最要紧的一两句放在最上面，细节缩进到下面；讨论里否掉的做法也记下来，"
-        "写明没采用和原因。"
-        + (
-            "任务创建时已经开始：写完文档就按文档动手，在任务自己的工作目录里做"
-            "（cheese worktree），做完提交审阅。要人决定的事，用 cheese_ask 问负责人。"
-            if started
-            else "还没定的细节用 cheese_ask 问负责人。"
-            "负责人点「开始」之前，你只讨论、写文档，不改动项目。"
-        )
-    )
-
-
-def task_started_prompt(*, title: str, actor: str) -> str:
-    """What a task's agent is told when its owner starts it."""
-    return (
-        f"@{actor} 开始了任务「{title}」。从现在起你可以改动项目：按实况文档动手，"
-        "在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
-        "做的过程中要求变了，就改实况文档；要人决定的事，用 cheese_ask 问负责人。"
-        "开始之前你问过、还没人答的题，负责人开始就是不再等它们的答案："
-        "按你最合理的判断定下来，写进实况文档并标明是你的判断，然后动手。"
+        "按讨论动手，在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
+        "实况文档边做边写，用 cheese_doc_set：最要紧的一两句放在最上面，讨论里否掉的"
+        "做法也记下来，写明没采用和原因。要人决定的事，用 cheese_ask 问负责人。"
     )
 
 

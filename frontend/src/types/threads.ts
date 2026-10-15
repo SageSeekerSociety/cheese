@@ -58,6 +58,8 @@ export interface Thread {
   /** 这条支线正在和它说话的 AI 队友（席位 handle）：最近被叫来的那位，还在频道里时。
    *  没人叫过、或它已离开频道时是 null。在这里不 @ 任何人说的话就是说给它的。 */
   teammate?: string | null
+  /** 这条支线已经原地转成了任务：任务的 id，就是支线自己的 id。还没转是 null。 */
+  task?: string | null
 }
 
 /** 频道概览「支线」那一页的一行。 */

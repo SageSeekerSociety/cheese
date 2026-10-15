@@ -379,49 +379,24 @@ class TaskService:
             select(Task).where(Task.document_id == document_id)
         )
 
-    async def start(
-        self, task: Task, *, by: str, reviewer_handle: str | None = None
-    ) -> Task:
-        """「开始」：written once, with who reviews its changes and what its
-        document said at that moment.
+    @staticmethod
+    def default_reviewer(
+        project: Project | None, owner_handle: str | None
+    ) -> str | None:
+        """Who reviews a new task's changes: its owner, who asked for it and so
+        should look at what changed; when the owner cannot take a review (an AI
+        teammate in a project run as a collaboration), the project's default
+        reviewer. None when neither can: the task is worked all the same, and
+        its first delivery asks for a reviewer (`review.services.reviewers`).
 
-        谁审这件事，按档取第一个：这里点名的人 > 派活时定的人 > 任务的负责人 >
-        项目默认审阅人。负责人这一档是提出这件事的人 —— 他提的，改了什么本来就
-        该他看一眼；他也审不了时（协作模式下的 AI 队友）才退到项目默认，不把审
-        阅人定成一个谁也采纳不了的人。任务建出来即开始（`api.task_instructions
-        .start_task_at_once`），所以这一档平时就是建任务的人在审。
-
-        It is written now rather than read back from the setting when changes are
-        submitted: the setting can change, and who a task was handed to for
-        review is a fact about the moment it started.
-        """
-
-        if task.started_at is not None:
-            raise UnprocessableEntityError(say("taskStartedAlready"))
-        project = await self._session.get(Project, task.project_id)
-        owner_handle = (task.owner_handle or "").strip()
-        reviewer = (
-            (reviewer_handle or "").strip()
-            or (task.reviewer_handle or "").strip()
-            or (owner_handle if can_take_review(project, owner_handle) else "")
-            or branch_protection_of(project).default_reviewer
-        )
-        if not reviewer:
-            raise UnprocessableEntityError(say("reviewerRequired"))
-        # 审阅人定成采纳不了的人（协作模式下的 AI 队友），这件事的每一次交付都没人能收。
-        if not can_take_review(project, reviewer):
-            raise UnprocessableEntityError(say("reviewerNotAPerson", handle=reviewer))
-        doc = (
-            await Documents(self._session).get(task.document_id)
-            if task.document_id is not None
-            else None
-        )
-        task.reviewer_handle = reviewer
-        task.started_at = datetime.now(UTC)
-        task.started_by = by
-        task.started_doc_version = doc.version if doc is not None else 0
-        await self._session.flush()
-        return task
+        Written when the task is made rather than read back from the setting
+        when changes are submitted: the setting can change, and who a task was
+        handed to for review is a fact about the moment it was handed over."""
+        owner = (owner_handle or "").strip()
+        if can_take_review(project, owner):
+            return owner
+        fallback = branch_protection_of(project).default_reviewer
+        return fallback if fallback and can_take_review(project, fallback) else None
 
     async def hand_over(self, task: Task, *, owner_handle: str) -> Task:
         """Another member owns the task from now. Moving it off its former
@@ -437,8 +412,8 @@ class TaskService:
     @staticmethod
     def takes_part(task: Task, handle: str | None) -> bool:
         """Whether this person works the task: its owner, or a collaborator
-        the owner brought in. Both talk to its AI teammate and write its
-        document; only the owner starts, closes or hands it over."""
+        the owner brought in. What they say is what its AI teammate acts on,
+        and they write its document; only the owner closes or hands it over."""
         return handle is not None and (
             handle == task.owner_handle or handle in (task.contributor_handles or [])
         )
@@ -460,7 +435,8 @@ class TaskService:
 
     @staticmethod
     def require_open(task: Task) -> None:
-        """Refuse what only an open task takes: a message to its session."""
+        """Refuse what only an open task takes: its first instruction given
+        again, a handover. A closed task is still talked in."""
         if task.status != TaskStatus.open:
             raise UnprocessableEntityError(say("taskClosedNoTurn"))
 
@@ -477,8 +453,12 @@ class TaskService:
         contributor_handles: list[str] | None = None,
         base_task_id: uuid.UUID | None = None,
         title_source: TaskTitleSource = TaskTitleSource.human,
+        task_id: uuid.UUID | None = None,
     ) -> Task:
-        """Record a task's branch; its executor creates the worktree on its machine."""
+        """Record a task's branch; its executor creates the worktree on its machine.
+
+        ``task_id`` is a 支线's id when the 支线 itself becomes the task: the
+        conversation keeps its id, and with it everything said in it."""
         # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
@@ -493,6 +473,10 @@ class TaskService:
                 parent.accepted_at is None and parent.delivered_head is None
             ):
                 base = parent.branch_name
+        if reviewer_handle is None:
+            reviewer_handle = self.default_reviewer(
+                await self._session.get(Project, project_id), owner_handle
+            )
         task = await self._repo.add(
             project_id=project_id,
             room_id=room_id,
@@ -501,6 +485,7 @@ class TaskService:
             reviewer_handle=reviewer_handle,
             created_by=created_by,
             title_source=title_source,
+            task_id=task_id,
         )
         await self.set_credits(
             task,

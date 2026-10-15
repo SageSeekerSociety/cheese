@@ -52,6 +52,12 @@ export function replySnippet(block: Block, maps: RefNames, max = 24): string {
   return clip(plainRefs(source, names).replace(/\s+/g, ' ').trim(), max)
 }
 
+/** 一条支线的标题：它挂着的那条消息，去掉开头点的名（「@芝士 」），只留说的事。 */
+export function threadHeading(block: Block, maps: RefNames): string {
+  const said = block.content.replace(/^(\s*<@[^>\s]+>)+\s*/, '')
+  return replySnippet({ ...block, content: said || block.content }, maps, 120)
+}
+
 function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) + '…' : text
 }

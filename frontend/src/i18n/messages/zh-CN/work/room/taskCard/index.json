@@ -5,6 +5,5 @@
   "created": "新建了任务",
   "owner": "{name} 负责",
   "waitingAnswer": "待 {name} 回答",
-  "waitingReview": "待 {name} 审阅",
-  "waitingStart": "待 {name} 开始"
+  "waitingReview": "待 {name} 审阅"
 }

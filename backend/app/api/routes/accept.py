@@ -24,9 +24,7 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.delivery.agent import (
     dispatch_pending,
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
 )
 from app.domain.delivery.ledger import settle_card
 from app.domain.identity.actor import Actor
@@ -80,8 +78,6 @@ def _accept_service(db: AsyncSession) -> AcceptService:
         announce=announce,
         settle_card=settle_card,
         record_instruction=record_task_instruction,
-        seat_instance_id=seat_instance_id,
-        record_agent=record_agent,
         task_teammate=task_teammate,
         roster_team=project_team,
         executor=execution.call,

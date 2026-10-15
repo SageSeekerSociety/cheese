@@ -17,14 +17,16 @@ at the same place.
 import itertools
 import uuid
 
+from app.domain.room_task.models import Task
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_artifact
 from tests.integration.conftest import (
     join_project_team,
+    open_task,
     post_project,
+    read_task,
     room_agent_seat,
     session_auth_headers,
-    teammate_task,
 )
 from tests.machine_work import declare_task, machine_commits
 
@@ -55,20 +57,21 @@ def _room(client, pid: str) -> str:
 
 
 def _task(client, room: str, title: str, reviewer: str) -> dict:
-    """一件负责人开着的活，验收的人是 ``reviewer``。
+    """一件负责人开着的活，验收的人是 ``reviewer``：建任务那一刻写下的验收人。
 
-    停着的那件（芝士自己想的，`teammate_task`）只有这里等得到：人建的活建出来
-    即已开始，没有再点一次「开始」的机会 —— 所以「任务上写着谁审」这件事，今天
-    只有在这一下里写得上去。"""
-    task = teammate_task(client, room, title, owner=OWNER)
-    r = client.post(
-        f"/topics/{task['id']}/start",
-        json={"reviewer_handle": reviewer},
-        headers=session_auth_headers(OWNER),
-    )
-    assert r.status_code == 200, r.text
+    人建的活由建它的人验收（`TaskService.default_reviewer`），所以别人当验收人
+    的活，由这里直接写进那一列。"""
+    task = open_task(client, room, title, owner=OWNER)
+
+    async def hand_to_reviewer():
+        async with client.test_factory() as session:
+            row = await session.get(Task, uuid.UUID(task["id"]))
+            row.reviewer_handle = reviewer
+            await session.commit()
+
+    client.portal.call(hand_to_reviewer)
     wait_work_idle()
-    return r.json()["data"]
+    return read_task(client, task["id"], OWNER)
 
 
 def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
@@ -163,24 +166,6 @@ def test_an_autonomous_project_can_route_a_card_to_its_ai_teammate(client):
 
     assert r.status_code == 200, r.text
     assert r.json()["data"]["reviewer_handle"] == seat
-
-
-def test_a_task_cannot_start_with_an_ai_teammate_reviewing_it(client):
-    pid = _project(client)
-    room = _room(client, pid)
-    seat = room_agent_seat(client, room)
-    task = teammate_task(client, room, "一条活", owner=OWNER)
-
-    r = client.post(
-        f"/topics/{task['id']}/start",
-        json={"reviewer_handle": seat},
-        headers=session_auth_headers(OWNER),
-    )
-
-    assert r.status_code == 422, r.text
-    assert r.json()["error"]["i18n"]["key"] == "reviewerNotAPerson"
-    got = client.get(f"/topics/{task['id']}/task", headers=session_auth_headers(OWNER))
-    assert got.json()["data"]["started_at"] is None
 
 
 # --- 改派 -------------------------------------------------------------------

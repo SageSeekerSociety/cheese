@@ -1,8 +1,7 @@
 // 文档两版之间逐行（一段一行）看改了什么，给「修改记录」的对比用。
 //
-// 和 paragraphDiff 的区别：那边吃的是后端给的统一格式 diff、只列改了的段；这里手上
-// 已经有两版全文（历史接口每版都带全文），在前端直接比，并且保留没改的上下文——人要
-// 看出改的那一处在文章的哪儿。没改的长段落折成一行「N 段未改」。
+// 手上已经有两版全文（历史接口每版都带全文），在前端直接比，并且保留没改的上下文——
+// 人要看出改的那一处在文章的哪儿。没改的长段落折成一行「N 段未改」。
 //
 // 相邻的删和加配成一对「改了的一段」，行内再用 inlineDiff 标出改了哪几个字。
 import type { Segment } from './paragraphDiff'
@@ -94,7 +93,7 @@ function collapse(rows: DiffRow[]): DiffRow[] {
 
 /** `before` → `after` 改了什么。`before` 为 null 时（第一版）整篇算新加的。 */
 export function versionDiff(before: string | null, after: string): VersionDiff {
-  // 一段一行；段与段之间的空行不算一段（同 paragraphDiff），否则「加了一段」会数成两段，
+  // 一段一行；段与段之间的空行不算一段，否则「加了一段」会数成两段，
   // 还多出一行空的绿底。
   const lines = (text: string) => text.split('\n').filter((line) => line.trim() !== '')
   const rows = pairChanges(lineOps(before === null ? [] : lines(before), lines(after)))

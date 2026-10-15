@@ -5,6 +5,5 @@
   "created": "created a task",
   "owner": "Owner: {name}",
   "waitingAnswer": "Waiting for {name} to answer",
-  "waitingReview": "Waiting for {name} to review",
-  "waitingStart": "Waiting for {name} to start"
+  "waitingReview": "Waiting for {name} to review"
 }

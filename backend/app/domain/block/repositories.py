@@ -15,11 +15,9 @@ from sqlalchemy import (
     any_,
     bindparam,
     cast,
-    column,
     func,
     or_,
     select,
-    table,
     text,
     true,
     tuple_,
@@ -52,12 +50,6 @@ from app.domain.block.models import (
 )
 from app.domain.conversation.services import of_room
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
-
-# When a task's owner pressed 「开始」. A bare table: ``room_task`` depends on
-# this domain.
-_tasks = table(
-    "tasks", column("id", Uuid), column("started_at", DateTime(timezone=True))
-)
 
 
 @dataclass(frozen=True)
@@ -553,11 +545,8 @@ class BlockRepository:
         # 收成一个数组参数（`_places_param`）之后语句只编译一次，后面每次都由驱动
         # 直接复用。
         #
-        # 每段只取最近一题（#1084 的原语义），连同**题文**和这条活的「开始」一起
-        # 回来：清单第二行要显示题文，而「开始」决定了开始之前问的题还算不算数 ——
-        # 两笔本来就要和这一趟的答案并起来读，各自再问一趟就是白白多两次往返
-        # （`tasks` 是一张裸表，见文件开头；拿 `id == place_id` 左连，题问在频道或
-        # 支线上时它自然不匹配）。
+        # 每段只取最近一题（#1084 的原语义），连同**题文**一起回来：清单第二行要
+        # 显示题文，本来就要和这一趟的答案并起来读，再问一趟就是白白多一次往返。
         latest = (
             select(
                 place_column,
@@ -577,9 +566,7 @@ class BlockRepository:
             .distinct(place_column)
             .subquery()
         )
-        return select(latest, _tasks.c.started_at).select_from(
-            latest.outerjoin(_tasks, _tasks.c.id == latest.c.place_id)
-        )
+        return select(latest)
 
     @classmethod
     def _build_spoke_statement(cls) -> Select:
@@ -616,7 +603,7 @@ class BlockRepository:
             return {}
         selected = {}
         rows = []
-        for place_id, meta, at, asker, block_id, content, started_at in (
+        for place_id, meta, at, asker, block_id, content in (
             await self._session.execute(
                 self._awaiting_statement("places", self._build_places_statement),
                 {"places": list(place_ids)},
@@ -628,12 +615,6 @@ class BlockRepository:
             if settled(meta):
                 # Answered by anyone, or skipped by everyone it names
                 # (`block.asked`).
-                continue
-            # 「开始」 is the owner saying the task is discussed enough: what was
-            # asked in it before then no longer holds it, so a started task
-            # reads 已开始 / 运行中 rather than 待回答 until a question is asked
-            # after it.
-            if started_at is not None and at <= started_at:
                 continue
             rows.append((place_id, meta, at, asker, block_id, content))
         if not rows:

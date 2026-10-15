@@ -415,8 +415,8 @@ export const PROJECT_TASKS: RoomTask[] = [
   task({
     id: 'task-idea',
     title: '换一门课的题目板',
-    column: 'not_started',
-    phrase: 'discussing',
+    column: 'building',
+    phrase: 'started',
     owner_handle: 'linxia',
   }),
 ]

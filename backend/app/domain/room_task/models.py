@@ -255,13 +255,6 @@ class Task(UuidPk, Timestamps, Base):
         ForeignKey("documents.id", ondelete="SET NULL", name="fk_tasks_document_id"),
         nullable=True,
     )
-    # 「开始」：负责人确认讨论清楚了，芝士从这一刻起可以改动项目。三列一起写，
-    # 只写一次；`started_doc_version` 是那一刻实况文档的版本，审阅时对照它。
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    started_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    started_doc_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # 关闭时留下的一句话：做成了什么，或者为什么不做了。
     conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
 

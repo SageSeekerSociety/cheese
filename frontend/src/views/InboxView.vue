@@ -63,7 +63,7 @@ const { show: showNewProjectDialog } = useNewProjectDialog()
 // 加入空间这件事和首页目录里那一行共用一份判断（见 `useJoinSpace`）：成了直接进那个空间。
 const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = useJoinSpace()
 
-/** 这一件要你做什么。负责人那一条按停在哪一格说：文档写好了等你开始、检查没过、被退回。 */
+/** 这一件要你做什么。负责人那一条按停在哪一格说：检查没过，或被退回。 */
 function askOf(item: WaitingItem): { text: string; tone: 'warn' | 'danger' } {
   if (item.reason === 'reviewer') return { text: t('home.inbox.reason.reviewer'), tone: 'warn' }
   if (item.reason === 'reporter') return { text: t('home.inbox.reason.reporter'), tone: 'warn' }
@@ -71,8 +71,7 @@ function askOf(item: WaitingItem): { text: string; tone: 'warn' | 'danger' } {
   if (item.reason === 'decide') return { text: t('home.inbox.reason.decide'), tone: 'warn' }
   if (item.reason === 'read') return { text: t('home.inbox.reason.read'), tone: 'warn' }
   if (item.phrase === 'checks_failed') return { text: t('home.inbox.reason.checksFailed'), tone: 'danger' }
-  if (item.phrase === 'bounced') return { text: t('home.inbox.reason.bounced'), tone: 'warn' }
-  return { text: t('home.inbox.reason.start'), tone: 'warn' }
+  return { text: t('home.inbox.reason.bounced'), tone: 'warn' }
 }
 
 /** 任务的事写任务的名字，频道自己的事写频道的；来自通知的写通知的标题。 */

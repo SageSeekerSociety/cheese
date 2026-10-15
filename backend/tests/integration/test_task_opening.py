@@ -1,14 +1,15 @@
-"""A task made from a discussion starts with its AI teammate drafting the
-document. While the document is empty, whoever opens the task is told where
-that is, and when it failed they can have it tried again.
+"""A task made from a discussion — one of several laid out in a 支线 — starts
+with its AI teammate setting to work from it. While the task's document is
+still empty, whoever opens the task is told where that first turn is, and when
+it failed they can have it tried again.
 
 The rules, stated before the code:
 
-- right after the task is made, it is being drafted;
+- right after the task is made, its first turn is under way;
 - once the first instruction gave up, the task says it failed, and someone
   working the task can try again, which gives the same instruction again;
 - only someone working the task tries again, and only after a failure;
-- while the first turn runs, the task is being drafted, even before the
+- while the first turn runs, it is under way, even before the
   session's receipt for the instruction is recorded; it failed only when that
   turn ended having said nothing;
 - a task created empty has no such first turn;
@@ -48,7 +49,11 @@ def _task_from_message(client):
         headers=session_auth_headers("alice"),
     )
     channel = r.json()["data"]["id"]
-    said = post_message(client, channel, "alice", {"content": "微信里打不开预览"})
+    root = post_message(client, channel, "alice", {"content": "预览有两个问题"})
+    thread = client.post(
+        f"/blocks/{root['id']}/thread", headers=session_auth_headers("alice")
+    ).json()["data"]["id"]
+    said = post_message(client, thread, "alice", {"content": "微信里打不开预览"})
     r = client.post(
         f"/blocks/{said['id']}/upgrade", headers=session_auth_headers("alice")
     )

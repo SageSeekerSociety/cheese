@@ -1,4 +1,4 @@
-"""A 支线's session, and a task's before its owner starts it, keep nothing.
+"""A 支线's session keeps nothing; a task's keeps its work.
 
 On a machine that is its own it reads, runs and changes files like any session:
 that is how it finds out what is wrong. What it does there never reaches the
@@ -7,13 +7,10 @@ the forge token it is handed reads and never pushes. On a machine it shares
 with others it only reads, because what it changed would stay among their
 work.
 
-The place decides that, not the credential: one signed before its task was
-started goes on saying so until the session goes quiet, and the started task
-works all the same.
-
-Making a task starts it, so the only task that keeps nothing is the one an AI
-teammate raised on its own idea and nobody has said to do yet
-(:func:`teammate_task`); a task a person made is ``place="started"``.
+The place decides that, not the credential: one signed while the session was
+in a 支线 goes on saying so until the session goes quiet, and once the 支线
+became a task (``place="became"``) the session works like any task's
+(``place="task"``).
 """
 
 import uuid
@@ -31,14 +28,12 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
-from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     in_thread,
     open_task,
     post_project,
     room_agent_seat,
     session_auth_headers,
-    teammate_task,
 )
 
 pytestmark = pytest.mark.anyio
@@ -56,13 +51,16 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
         json={"project_id": project["id"], "title": "Room"},
         headers=session_auth_headers("alice"),
     ).json()["data"]
-    if place == "thread":
+    if place in ("thread", "became"):
         conversation = in_thread(client, room["id"], "alice")
-    elif place == "unstarted":
-        # 建出来即已开始之后，还没开始的活只剩芝士自己想、没人让它做的那种。
-        # 造完先等它那场开场轮落地：下面要往库里写这个会话，轮子还在写就清了库。
-        conversation = teammate_task(client, room["id"], "Task", owner="alice")["id"]
-        wait_work_idle()
+        if place == "became":
+            root = client.get(
+                f"/topics/{conversation}/thread", headers=session_auth_headers("alice")
+            ).json()["data"]["root_block_id"]
+            made = client.post(
+                f"/blocks/{root}/upgrade", headers=session_auth_headers("alice")
+            )
+            assert made.json()["data"]["id"] == conversation, made.text
     else:
         conversation = open_task(client, room["id"], "Task", owner="alice")["id"]
     project_id, room_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
@@ -162,7 +160,7 @@ MCP = ("mcp", {"server": "tracker", "method": "tools/call"})
 MCP_TOOL = ("invoke", {"id": "4", "tool": "create_issue", "server": "tracker"})
 
 
-@pytest.mark.parametrize("place", ["thread", "unstarted"])
+@pytest.mark.parametrize("place", ["thread"])
 @pytest.mark.parametrize("call", [BASH, SHELL, WRITE, EDIT, READ])
 async def test_on_its_own_machine_it_reads_runs_and_changes_files(
     client, monkeypatch, place, call
@@ -173,7 +171,7 @@ async def test_on_its_own_machine_it_reads_runs_and_changes_files(
     remote.assert_awaited()
 
 
-@pytest.mark.parametrize("place", ["thread", "unstarted"])
+@pytest.mark.parametrize("place", ["thread"])
 @pytest.mark.parametrize("call", [SYNC, MCP, MCP_TOOL])
 async def test_nothing_it_does_is_carried_off_the_machine(
     client, monkeypatch, place, call
@@ -201,26 +199,28 @@ async def test_on_a_shared_machine_it_only_reads(
         remote.assert_not_awaited()
 
 
+@pytest.mark.parametrize("place", ["task", "became"])
 @pytest.mark.parametrize("own", [True, False, None])
 @pytest.mark.parametrize("call", [BASH, SHELL, WRITE, EDIT, READ])
-async def test_a_started_task_works_though_its_credential_says_scratch(
-    client, monkeypatch, own, call
+async def test_a_task_works_though_its_credential_says_scratch(
+    client, monkeypatch, place, own, call
 ):
     """A credential is signed when the session starts and replaced only once
-    the session goes quiet (`screen_identity`): a task its owner starts
+    the session goes quiet (`screen_identity`): a 支线 that becomes a task
     mid-turn goes on presenting one that says its work is not kept. The place
     decides, so on a machine it shares it works all the same."""
-    held = await _session(client, "started", own=own)
+    held = await _session(client, place, own=own)
     response, remote = _execute(client, monkeypatch, held, *call)
     assert response.status_code == 200, response.text
     remote.assert_awaited()
 
 
+@pytest.mark.parametrize("place", ["task", "became"])
 @pytest.mark.parametrize("call", [SYNC, MCP, MCP_TOOL])
-async def test_a_started_task_carries_its_work_off_though_it_says_scratch(
-    client, monkeypatch, call
+async def test_a_task_carries_its_work_off_though_it_says_scratch(
+    client, monkeypatch, place, call
 ):
-    held = await _session(client, "started")
+    held = await _session(client, place)
     response, remote = _execute(client, monkeypatch, held, *call)
     assert response.status_code == 200, response.text
     remote.assert_awaited()
@@ -265,7 +265,7 @@ def _forge_token(client, monkeypatch, held: dict) -> dict:
     return response.json()["data"]
 
 
-@pytest.mark.parametrize("place", ["thread", "unstarted"])
+@pytest.mark.parametrize("place", ["thread"])
 async def test_its_forge_token_reads_and_never_pushes(client, monkeypatch, place):
     held = await _session(client, place)
     data = _forge_token(client, monkeypatch, held)
@@ -273,8 +273,9 @@ async def test_its_forge_token_reads_and_never_pushes(client, monkeypatch, place
     assert data["read_only"] is True
 
 
-async def test_a_started_task_gets_the_token_that_pushes(client, monkeypatch):
-    held = await _session(client, "started")
+@pytest.mark.parametrize("place", ["task", "became"])
+async def test_a_task_gets_the_token_that_pushes(client, monkeypatch, place):
+    held = await _session(client, place)
     data = _forge_token(client, monkeypatch, held)
     assert data["token"] == "pushes"
     assert data["read_only"] is False
@@ -294,7 +295,7 @@ async def _move(client, monkeypatch, held: dict) -> dict:
     return response.json()["data"]
 
 
-@pytest.mark.parametrize("place", ["thread", "unstarted"])
+@pytest.mark.parametrize("place", ["thread"])
 async def test_a_session_that_keeps_nothing_is_told_so_when_it_moves(
     client, monkeypatch, place
 ):
@@ -306,9 +307,10 @@ async def test_a_session_that_keeps_nothing_is_told_so_when_it_moves(
     assert moved["keeps_nothing"] is True
 
 
-async def test_a_started_task_that_moves_is_not_told_it_keeps_nothing(
-    client, monkeypatch
+@pytest.mark.parametrize("place", ["task", "became"])
+async def test_a_task_that_moves_is_not_told_it_keeps_nothing(
+    client, monkeypatch, place
 ):
-    held = await _session(client, "started")
+    held = await _session(client, place)
     moved = await _move(client, monkeypatch, held)
     assert moved["keeps_nothing"] is False

@@ -30,7 +30,6 @@
   "taskMachineFailed": "The task's environment couldn't complete this: {error}. You can view the committed version",
   "taskMachineNotResponding": "The task's environment isn't responding right now. Load the file again before continuing, or view the committed version",
   "taskNoOwnFileVersion": "The task has no file version of its own",
-  "taskNotStarted": "This task hasn't started; the project can change once its owner starts it",
   "taskNothingCommitted": "This task hasn't committed any files yet",
   "taskRequired": "Choose a task",
   "taskSandboxReleased": "The task's environment was released after being idle. You can view the committed version",

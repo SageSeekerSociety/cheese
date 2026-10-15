@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // 任务页的页头，和房间页头是同一条线：同样的高度和底线，手机上同样填进顶栏那一格。
 // 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人和协作者（点开看谁在做、
-// 在哪台电脑上做，负责人在这里增减协作者），以及「开始」和 ⋯（重命名归负责人和协作者，
-// 转交、关闭只归负责人）。
+// 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名归负责人和协作者，转交、
+// 关闭只归负责人）。
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
 
@@ -11,6 +11,7 @@ import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { claimAppBar } from '@/composables/useAppBarSlot'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -35,11 +36,8 @@ const props = defineProps<{
   agents: TopicMemberRow[]
   machine: TopicEnvironment | null
   machineError: boolean
-  starting: boolean
-  startError: string | null
   actionError: string | null
   connected?: boolean
-  start: () => Promise<void>
   close: (conclusion: string) => Promise<boolean>
   reopen: () => Promise<boolean>
   handOver: (owner: string) => Promise<boolean>
@@ -60,6 +58,8 @@ const emit = defineEmits<{
 }>()
 
 const { mdAndUp } = useDisplay()
+// 手机上这一行就是顶栏那一格的内容（下面的 Teleport），顶栏于是不写路由的标题。
+claimAppBar(() => !mdAndUp.value)
 const ME = myHandle()
 const isOwner = computed(() => !!props.task && props.task.owner_handle === ME)
 const isOpen = computed(() => props.task?.status === 'open')
@@ -366,16 +366,6 @@ async function confirmHandOver() {
         </v-card>
       </v-menu>
 
-      <BaseButton
-        v-if="task && isOwner && isOpen && !task.started_at"
-        v-guide-anchor="'task-start'"
-        kind="primary"
-        size="sm"
-        :loading="starting"
-        data-testid="task-start"
-        @click="start()"
-        >{{ t('work.task.start') }}</BaseButton
-      >
       <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
       <v-menu v-if="task && takesPart" location="bottom end">
         <template #activator="{ props: menuProps }">
@@ -418,7 +408,6 @@ async function confirmHandOver() {
   </Teleport>
 
   <p v-if="actionError" class="task-notice t-meta" role="alert">{{ actionError }}</p>
-  <p v-if="startError" class="task-notice t-meta" role="alert">{{ startError }}</p>
 
   <ConfirmDialog
     v-model="closeOpen"

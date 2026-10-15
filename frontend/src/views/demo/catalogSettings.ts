@@ -69,14 +69,13 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '读到了，GitHub 没开保护',
-        note: '九条规则按「检查 → 跟上 main → 作废采纳 → 自动合并 → 放行名单 → 批准人数 → 合并方式 → 默认 reviewer → 调度座位」排；填了路径范围的检查只在改到对应文件时要求。',
+        note: '九条规则按「检查 → 跟上 main → 作废采纳 → 自动合并 → 放行名单 → 批准人数 → 合并方式 → 默认 reviewer」排；填了路径范围的检查只在改到对应文件时要求。',
         props: bpProps({
           bp: bpRules({
             required_checks: [{ name: 'ci / tests', paths: ['backend/**', 'frontend/**'] }, { name: 'lint' }],
             approvals_required: 2,
             override_handles: ['alice'],
             default_reviewer: 'wang',
-            dispatch_seat: 'cheese-ab12cd34ef56',
           }),
           checkName: '网页端 e2e',
           checkPaths: 'frontend/**',

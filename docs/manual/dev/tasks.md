@@ -58,37 +58,38 @@ covers:
 
 ## 一条任务是一段对话 {#conversation}
 
-任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。只有负责人和做这条任务的 AI 队友在里面说话（`POST /topics/{task}/messages` 只收负责人，或这条任务自己的会话），其他人能读，要说的话去房间说。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
+任务在房间旁边有自己的对话，地址就是任务自己的 id：和房间的对话走同一套 `/topics/{id}/…` 接口（发言、标题、实况文档、历史、清单、现场、预览、工作电脑），`id` 换成任务的就是任务的。项目里的人都能在里面说话，AI 队友里只有这条任务自己的会话能发（`POST /topics/{task}/messages`）。负责人和协作者说的话直接叫醒任务的 AI 队友，别人的话 `@` 了它才叫醒，否则跟着下一轮读到（`agent/turn/intake/human.py` 的 `prepare_human`）；会话开场的「这个任务」一段告诉它谁的话是指令（`harness/prompt.task_section`）。做这条任务的是一条独立的会话，按 `(任务 id, 队友, 骨架)` 记在 `agent_sessions` 上（见[会话与轮次](/dev/session#layers)）。它的凭证签的就是任务的 id（claim `t`），`CHEESE_TOPIC` 也是任务的 id，所以它调的每个接口都落在这条任务上，碰不到房间和别的任务（`ActorResolver._confine_task_credential`）。谁能看任务，按它所在房间的名册判。
 
 **创建只由人做**，创建的人就是负责人：
 
 | 入口 | 路由 | 之后 |
 |---|---|---|
-| 房间 ⋯ 菜单里的「新建任务」 | `POST /topics/{room}/tasks` | 空任务，建出来即以负责人名义开始，负责人第一句话时会话才起 |
-| 从一条消息「转为任务」 | `POST /blocks/{id}/upgrade` | 任务的会话收到一段开场提示，带着那条消息和它前面的几条讨论；建出来即以转它的人的名义开始 |
-| AI 队友的 `cheese_task` | `POST /topics/{支线}/teammate-tasks` | 同上，再加上它写的 `summary`；`start` 为真时同时开始 |
+| 房间 ⋯ 菜单里的「新建任务」 | `POST /topics/{room}/tasks` | 空任务，负责人第一句话时会话才起 |
+| 主线上一条消息「转为任务」（支线页头那颗也是它） | `POST /blocks/{id}/upgrade` | 这条消息的支线**原地**转成任务，见下 |
+| 支线里的一条回复、任务里的一条消息、主线上的文件「转为任务」 | `POST /blocks/{id}/upgrade` | 另开一件，任务的会话收到一段开场提示，带着那条消息和它前面的几条讨论 |
+| AI 队友的 `cheese_task` | `POST /topics/{支线}/teammate-tasks` | `here` 为真时这条支线原地转成任务；否则另开一件，同上，再加上它写的 `summary` |
 
-三条入口都顺手开始（`app/api/task_instructions.py` 的 `start_task_at_once`），`started_by` 记的人：前两条是建它的人，`cheese_task` 是它填的负责人（要这件事的人）。开始不了就照 `TaskService.start` 的话说明原因，任务留在讨论中；芝士自己想、没人让它做的那种（`cheese_task` 且 `start: false`）压根不调它。
+任务建出来就在做，没有「开始」这一步：芝士从第一轮起就能改动项目。审阅人在建任务时定下（`TaskService.default_reviewer`）：负责人审阅得了就是负责人，审阅不了（协作模式里的 AI 队友）用项目默认审阅人，都没有时留空，第一次交付时再要（`review/services/reviewers.py`）。
 
-一条消息可以转出好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面；单独新建的任务才在主线上落一行 `task_created`。
+**原地转**（`app/api/thread_task.turn_into_task`）：任务沿用支线的 id，所以对话、AI 队友的会话（`agent_sessions` 按对话 id 记）、花费都留在原处；`threads` 那一行也留着，它把这段对话挂在主线消息下面。`conversations` 登记表里同一个 id 从 `thread` 改成 `task`，由触发器维护（迁移 `e4f7009313c1`：插任务时这个 id 已经是支线就只改 kind；删任务时支线还在就改回 `thread`；删支线时它已经是任务就不动），删了登记行会连带删掉对话和会话。做这件任务的队友沿用支线正在和它说话的那位（`thread_teammate`），换一位就是新的一段会话。`PlaceResolver.conversation` 先认任务再认支线，所以从下一轮起 `Place.keeps_work` 为真，执行凭证和仓库令牌按地点现问，一轮当中转也接得上（见[支线的会话](/dev/session#scratch)）。转的那一刻，对话里落一行「已转为任务，某某 负责」，平台提示附在这一行上（`became_task_prompt`），下一轮交给芝士。转过的支线在主线上不再画「N 条回复」那一行，「支线」页签也不再列它（`thread/reads.py` 的 `_became_a_task`）；任务行带 `from_thread`，前端据此在频道页右半边打开它。支线的结果回原处（`tell_origin`）对它不再发：原处就是它自己。
+
+一条消息可以另开好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面；单独新建的任务才在主线上落一行 `task_created`。
 
 任务另记它是从哪句话来的（`source_block_id`），可以是支线里的一条回复，也可以是另一个任务里的一条：转为任务的是被转的那一条；`cheese_task` 建的是这个 AI 队友在那段对话里最近收到的一句人话，频道主线上只认点了它名字的那句。任务页顶上引这句话，点它回到那段对话并停在这一条上（`?block=`）。这一列加上之前建的任务没有它，退回 `upgraded_from_block_id`；两样都没有的（单独新建的任务）照实说是谁新建的。
 
-`cheese_task` 的 `owner` 是要这件事的人，省略时是支线挂着的那条消息的作者。有人让芝士去做时它填 `start: true`，任务建好即以负责人的名义开始，开不了（例如负责人审阅不了、项目也没有默认审阅人）回复里说明原因；芝士自己想到的填 `false`，任务停在讨论中，由芝士在支线里问一次。
+`cheese_task` 只在有人说要做时调。`owner` 是要这件事的人，省略时是这一轮回应的那个人（`asked_in`），再没有就是支线挂着的那条消息的作者。芝士自己看出来该做的，先用 `cheese_ask` 问一句「要转为任务吗？」，选项「转为任务」「不转」；选了的人发出的那句话叫醒它，它再调 `cheese_task`，负责人就是那个人。
 
 私聊里没有任务：新建、转为任务、`cheese_task` 这三条在同一处拒绝（`privateChatHasNoTasks`）。
 
-后两种入口给任务会话的开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本和它起的那一轮现读，不另存。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务从哪句话来（`source`）、原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
+另开的任务，开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本和它起的那一轮现读，不另存。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务从哪句话来（`source`）、原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
 
 交给 AI 队友的指令在投递账本里过了 30 分钟还没开始（`delivery/agent.py` 的 `GIVE_UP_AFTER`），记为失败，不再每五分钟重试；有意在等的（等发问的会话、等回执）不算。
 
-**实况文档**写这件事要做什么、做到哪、定了什么（`GET /topics/{task}/document` 第一次要时建）。看得见任务的人都能读，只有负责人和这条任务自己的会话能写。
-
-**开始**（`POST /topics/{task}/start`，只有负责人）：写下 `started_at`、`started_by`、`started_doc_version`（那一刻文档的版本），并告诉任务的芝士从现在起可以改动项目。开始之前任务会话的改动留不下：能讨论、写文档、在机器上读代码和跑命令，不能把改动同步或推送进项目。`GET /documents/{id}/compare?before=&after=` 交回两个版本的内容，任务页的「与开始时相比」就是拿开始那一版和现在比。
+**实况文档**写这件事要做什么、做到哪、定了什么（`GET /topics/{task}/document` 第一次要时建）。看得见任务的人都能读，负责人、协作者和这条任务自己的会话能写。芝士边做边写，不先写完再动手。
 
 **转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务里执行环境落在新负责人不能用的电脑上的队友（原负责人自己的电脑，不进沙箱或那人电脑的规格），先照换环境的流程换到新负责人能用的那个（`environments.usable_by_owner`：任务的默认、房间的默认、项目默认，不能用的跳过，最后是标准沙箱），任务指着这样一台电脑的默认清掉；推送不成功就不转交，说明原因。
 
-**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带不带结论都显示「已关闭」，结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——负责人关、写总结的那一轮结束或被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的那一轮就被打断，写下的留着。后三种是平台自己关的，任务里有总结以外的一轮在跑、或有发给 AI 队友的消息还在等轮次时（`closing.unfinished`）一律不关，等它们没了之后的那次再关；一轮超过孤儿清扫的静默上限（`turn_silence_timeout_s`）没有新输出就不再算在跑。写总结的那一轮从它结束时算起，不从会话接手它时算起（`closing.turns_ended`，轮次的区间结束都经过 `agent/repositories.AgentTurnRepository`）：它还开着时任务不关。这样平台自己关任务时通常什么都不用打断，只有采纳 45 分钟还没写完的总结会被打断；另一个例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、那一轮照停，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
+**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带不带结论都显示「已关闭」，结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——负责人关、写总结的那一轮结束或被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的那一轮就被打断，写下的留着。后三种是平台自己关的，任务里有总结以外的一轮在跑、或有发给 AI 队友的消息还在等轮次时（`closing.unfinished`）一律不关，等它们没了之后的那次再关；一轮超过孤儿清扫的静默上限（`turn_silence_timeout_s`）没有新输出就不再算在跑。写总结的那一轮从它结束时算起，不从会话接手它时算起（`closing.turns_ended`，轮次的区间结束都经过 `agent/repositories.AgentTurnRepository`）：它还开着时任务不关。这样平台自己关任务时通常什么都不用打断，只有采纳 45 分钟还没写完的总结会被打断；另一个例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、那一轮照停，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。关闭后任务对话照样能说话，和支线一样：会话的改动留不下（`Place.keeps_work`），只有被叫到才回答，`task_section(closed=True)` 告诉它只回答、不改；按关闭状态打断和结束轮次的两处（`turn_inputs.stop_work_in_closed_tasks`、`open_turns`）只管关闭之前开始的轮次，关闭之后有人来问的那一轮不受影响。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
 
 平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。任务里每位队友的执行环境是自己的；它第一次要手时按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目默认 取一份，之后默认再变也不跟着动。负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/sessions/{session}/environment` 换一位、用 `PUT /topics/{task}/environment-default` 改任务的默认；设备页的批量挪走对任务会话走的就是前一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`environment.works_tasks_of`）：选不了，那个人电脑的沙箱也不放在上面。
 
@@ -176,8 +177,7 @@ covers:
 
 | 列 | 意思 | 允许出现的短语 |
 |---|---|---|
-| `not_started` 未开始 | 任务还在讨论，负责人还没点「开始」（只剩芝士自己想的那种） | 讨论中 |
-| `building` 进行中 | 开始了，还没递出交付 | 运行中、已开始、空闲（房间）、草稿（房间） |
+| `building` 进行中 | 在做，还没递出交付 | 芝士在做、进行中、空闲（房间）、草稿（房间） |
 | `delivering` 检查中 | 下一步在平台 / 芝士手上 | 检查运行中、等待检查、修复检查、解决冲突、平台更新分支 |
 | `needs_you` 待处理 | 下一步在人手上 | 检查未通过、待审阅、已退回、待回答 |
 | `done` 已关闭 | 已关闭：最后一步已采纳，或没交付就关了 | 已采纳、已关闭（留没留结论都是这一句） |

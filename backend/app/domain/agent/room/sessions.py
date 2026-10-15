@@ -794,10 +794,9 @@ class RoomSessions:
         phases: dict[str, float] | None = None,
     ) -> Live:
         """The seat's session, started where the room's placement puts it if it
-        has to be. ``keeps_nothing``: a 支线's session, or a task's before its
-        owner starts it, whose work stays on the machine and never reaches the
-        project. ``phases``, when given, receives how long each step took
-        (`send` logs it)."""
+        has to be. ``keeps_nothing``: a 支线's session, whose work stays on the
+        machine and never reaches the project. ``phases``, when given, receives
+        how long each step took (`send` logs it)."""
         mark = Stopwatch(phases)
         seat = self._seat_of(session)
         previous = self.live.get(seat)
@@ -860,7 +859,7 @@ class RoomSessions:
                     # The conversation: a room, or the task this session works.
                     "CHEESE_TOPIC": str(session.conversation_id),
                     "CHEESE_AUTHOR": prepared.agent_handle,
-                    # Part of the launch, so starting the task relaunches
+                    # Part of the launch, so a 支线 becoming a task relaunches
                     # an idle session with a credential whose work is kept.
                     **(
                         {"CHEESE_KEEPS_NOTHING": "1" if keeps_nothing else "0"}

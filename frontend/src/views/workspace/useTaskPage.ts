@@ -1,5 +1,5 @@
-// 任务页要的那份任务：它本身、负责人能做的几件事（开始、转交、关闭）、做它的电脑，
-// 以及「与开始时相比」。对话不在这里：任务的对话就是房间那一栏，换了一段会话来读。
+// 任务页要的那份任务：它本身、负责人能做的几件事（转交、关闭）和做它的电脑。对话不在
+// 这里：任务的对话就是房间那一栏，换了一段会话来读。
 import type { RoomTask, TopicMemberRow } from '@/cx_types'
 import type { Environment, TopicEnvironment } from '@/types/compute'
 
@@ -7,17 +7,12 @@ import { computed, ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { ApiError, setEnvironmentDefault, setSessionEnvironment } from '@/api'
-import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
+import { closeTask, renameTask, reopenTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
-import { patchQuery, queryClient } from '@/query/client'
+import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { environmentQuery, roomTaskQuery } from '@/query/room'
-
-export interface TaskComparison {
-  before: string
-  after: string
-}
 
 export function useTaskPage(opts: { taskId: () => string | undefined; people: () => TopicMemberRow[] }) {
   const ME = myHandle()
@@ -56,40 +51,20 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (opts.taskId()) await read.refetch({ cancelRefetch: changed })
   }
 
-  /** 换到另一件任务：上一件的报错、比较、电脑都不带过来。 */
+  /** 换到另一件任务：上一件的报错、电脑都不带过来。 */
   function reset() {
     machineWanted.value = false
-    comparing.value = false
-    comparison.value = null
-    startError.value = null
     actionError.value = null
   }
 
   const isOwner = computed(() => !!task.value && task.value.owner_handle === ME)
-  // 负责人和协作者都在做这件事：都能在任务里说话。开始、关闭、转交只归负责人。
+  // 负责人和协作者都在做这件事：他们的话是给 AI 队友的指令。关闭、转交只归负责人。
   const takesPart = computed(
     () => isOwner.value || (!!task.value && (task.value.contributor_handles ?? []).includes(ME))
   )
   const isOpen = computed(() => task.value?.status === 'open')
   // 能接这件事、能来协作的人：项目里的人（不含 AI 队友）。
   const people = computed(() => opts.people().filter((m) => !m.agent))
-
-  // ---- 开始 ----
-  // 开始只还留给芝士自己想、还没人让它做的那种任务：人建的任务建出来就开始了。
-  const starting = ref(false)
-  const startError = ref<string | null>(null)
-  async function start() {
-    if (!task.value || starting.value) return
-    starting.value = true
-    startError.value = null
-    try {
-      await apply(await startTask(task.value.id))
-    } catch (e) {
-      startError.value = e instanceof ApiError && e.message ? e.message : t('work.task.startFailed')
-    } finally {
-      starting.value = false
-    }
-  }
 
   // ---- 负责人：转交、关闭、重新打开 ----
   const actionError = ref<string | null>(null)
@@ -193,28 +168,6 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     else await machineRead.refetch()
   }
 
-  // ---- 与开始时相比 ----
-  const comparing = ref(false)
-  const comparison = ref<TaskComparison | null>(null)
-  const compareError = ref<string | null>(null)
-  async function toggleCompare() {
-    if (comparing.value) {
-      comparing.value = false
-      return
-    }
-    const current = task.value
-    if (!current?.document_id || current.started_doc_version == null) return
-    comparing.value = true
-    comparison.value = null
-    compareError.value = null
-    try {
-      const got = await compareDocumentVersions(current.document_id, current.started_doc_version)
-      comparison.value = { before: got.before.content, after: got.after.content }
-    } catch {
-      compareError.value = t('work.task.compareFailed')
-    }
-  }
-
   return {
     task,
     loading,
@@ -227,9 +180,6 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     setAgent,
     isOpen,
     people,
-    starting,
-    startError,
-    start,
     actionError,
     close,
     reopen,
@@ -240,9 +190,5 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     loadMachine,
     setMachine,
     setMachineDefault,
-    comparing,
-    comparison,
-    compareError,
-    toggleCompare,
   }
 }

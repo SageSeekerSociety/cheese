@@ -26,9 +26,7 @@ from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.delivery.agent import (
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
 )
 from app.domain.delivery.ledger import settle_card
 from app.domain.repository import identity
@@ -186,9 +184,6 @@ async def task_workspace(
     task = await _task_for(db, project_id, task_id, x_cheese_token)
     if task.branch_name is None:
         raise NotFoundError(say("workTaskNotInProject"))
-    # The project changes only once the task's owner started it.
-    if task.started_at is None:
-        raise ValidationError(say("taskNotStarted"))
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError(say("projectHasNoRepo"))
@@ -210,8 +205,6 @@ async def task_workspace(
         announce=announce,
         settle_card=settle_card,
         record_instruction=record_task_instruction,
-        seat_instance_id=seat_instance_id,
-        record_agent=record_agent,
         task_teammate=task_teammate,
         roster_team=project_team,
     ).merge_queued_pr(task.id)
