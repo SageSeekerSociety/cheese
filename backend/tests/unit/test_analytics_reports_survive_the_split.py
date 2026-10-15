@@ -7,8 +7,8 @@ CSV exports contain byte for byte, and which buckets a trend window produces.
 
 Every expectation below was captured from the implementation before that move,
 so a difference here is the move changing a report. The service is driven
-through its public methods with loading stubbed out, which is the same
-observation point a route has.
+through its public methods with ``_load_context`` stubbed out: what is pinned
+is the report it builds from a context, not the SQL that fills the context.
 """
 
 from __future__ import annotations
@@ -34,12 +34,18 @@ from app.domain.task.models import (
 from app.domain.user.models import User, UserProfile, UserRealNameIdentity
 
 SPACE_ID = 7
-WINDOW_FROM = int(datetime(2025, 1, 1, tzinfo=UTC).timestamp() * 1000)
-WINDOW_TO = int(datetime(2025, 1, 4, tzinfo=UTC).timestamp() * 1000)
+WINDOW_FROM_DT = datetime(2025, 1, 1, tzinfo=UTC)
+WINDOW_TO_DT = datetime(2025, 1, 4, tzinfo=UTC)
+WINDOW_FROM = int(WINDOW_FROM_DT.timestamp() * 1000)
+WINDOW_TO = int(WINDOW_TO_DT.timestamp() * 1000)
 
 D1 = datetime(2025, 1, 1, 9, 0, 0)
 D2 = datetime(2025, 1, 2, 9, 0, 0)
 D3 = datetime(2025, 1, 3, 9, 0, 0)
+# Exactly the window's last instant, and just past it: one is inside the
+# window and the other is not, so the closed upper bound is pinned.
+BOUNDARY = datetime(2025, 1, 4, 0, 0, 0)
+AFTER_WINDOW = datetime(2025, 1, 4, 9, 0, 0)
 
 
 def _task(
@@ -138,6 +144,17 @@ def build_context() -> _Context:
             created_at=D2,
             deadline=datetime(2025, 1, 3, 0, 0, 0),
         ),
+        # Created the day after the window closes: the trends are over the
+        # window, so this one is counted nowhere in them.
+        _task(
+            id=3,
+            creator_id=11,
+            category_id=2,
+            approved=0,
+            name="夏季赛",
+            created_at=AFTER_WINDOW,
+            deadline=datetime(2025, 1, 5, 0, 0, 0),
+        ),
     ]
     memberships = [
         _membership(
@@ -160,6 +177,35 @@ def build_context() -> _Context:
         _membership(
             id=3,
             task_id=2,
+            member_id=102,
+            approved=2,
+            completion_status="NOT_SUBMITTED",
+            created_at=D3,
+        ),
+        # The same member as m1, on the other task: four membership rows over
+        # three people, so a report that deduplicated would be caught.
+        _membership(
+            id=4,
+            task_id=2,
+            member_id=100,
+            approved=0,
+            completion_status="SUCCESS",
+            created_at=D3,
+        ),
+        # Joined exactly on the window's last instant, so it is kept.
+        _membership(
+            id=5,
+            task_id=1,
+            member_id=103,
+            approved=0,
+            completion_status="SUCCESS",
+            created_at=BOUNDARY,
+        ),
+        # Member 102 again, on the other task of the same publisher: the
+        # publisher's row counts that person once.
+        _membership(
+            id=6,
+            task_id=3,
             member_id=102,
             approved=2,
             completion_status="NOT_SUBMITTED",
@@ -202,6 +248,7 @@ def build_context() -> _Context:
             100: User(id=100, username="student_1"),
             101: User(id=101, username="student_2"),
             102: User(id=102, username="student_3"),
+            103: User(id=103, username="student_4"),
         },
         profiles_by_user_id={
             10: UserProfile(user_id=10, nickname="张老师"),
@@ -321,28 +368,85 @@ async def _participants_csv() -> str:
 
 @pytest.mark.anyio
 async def test_every_membership_counts_as_a_participant_without_deduplication():
-    """Two tasks, three memberships, two distinct people: NT counts rows, not
-    people, so the space reports three participants."""
-    metrics = (await _overview())["entityMetrics"]
-    assert metrics["participantCount"] == 3
-    assert metrics["approvedParticipantCount"] == 2
+    """Two members join two tasks each, so the six memberships are only four
+    people: the space counts rows, and reports six."""
+    report = await _overview()
+    assert report["entityMetrics"]["participantCount"] == 6
+    assert report["entityMetrics"]["approvedParticipantCount"] == 4
+    assert report["studentMetrics"]["studentCount"] == 6
 
 
 @pytest.mark.anyio
 async def test_a_membership_without_a_submission_is_not_submitted():
     """A member is submitted only once a submission row exists for them, so the
-    one reviewed submission below counts for its membership alone."""
+    one reviewed submission below counts for its membership alone, while the
+    three memberships that carry a SUCCESS status on their own do not."""
     metrics = (await _overview())["entityMetrics"]
     assert metrics["submittedParticipantCount"] == 1
-    assert metrics["successfulParticipantCount"] == 1
+    assert metrics["successfulParticipantCount"] == 3
 
 
 @pytest.mark.anyio
 async def test_the_success_rate_is_over_every_membership():
-    """One success out of three memberships, not out of the one submitted."""
+    """Three successes out of six memberships, not out of the one submitted."""
     assert (await _overview())["entityMetrics"]["successRate"] == pytest.approx(
-        1 / 3, abs=1e-4
+        3 / 6, abs=1e-4
     )
+
+
+@pytest.mark.anyio
+async def test_a_publisher_counts_a_person_once_across_its_tasks():
+    """Where the space counts rows, a publisher counts people: its two tasks
+    have three memberships between them, and one member is on both."""
+    rows = (await _publishers())["publishers"]
+    by_id = {row["publisherId"]: row for row in rows}
+    assert by_id[11]["taskCount"] == 2
+    assert by_id[11]["participantCount"] == 2
+    assert by_id[10]["participantCount"] == 3
+
+
+@pytest.mark.anyio
+async def test_a_trend_window_keeps_its_last_instant_and_drops_the_rest():
+    """A join at exactly ``to`` belongs to the window; the task created after
+    it does not, so ``tasksCreated`` is the two tasks inside the range."""
+    trends = (await _overview())["trends"]
+    assert sum(point["count"] for point in trends["tasksCreated"]) == 2
+    assert sum(point["count"] for point in trends["participantsJoined"]) == 6
+    assert trends["participantsJoined"][-1] == {
+        "bucket": WINDOW_TO,
+        "count": 1,
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("group_by", "expected"),
+    [
+        # 2025-01-01 is a Wednesday, so the whole window sits in the week
+        # starting Monday 2024-12-30.
+        ("week", [(1735516800000, 6)]),
+        # ... and in January 2025, which starts on 2025-01-01.
+        ("month", [(1735689600000, 6)]),
+    ],
+)
+async def test_a_coarser_grouping_keeps_every_value_in_its_own_bucket(
+    group_by, expected
+):
+    """Day, week and month are three views of the same six joins: a coarser
+    grouping may not lose or duplicate one, and its bucket starts where its
+    own calendar says."""
+    service = build_service()
+    coarse = await service.get_overview(
+        space_id=SPACE_ID,
+        from_ts=WINDOW_FROM,
+        to_ts=WINDOW_TO,
+        category_id=None,
+        publisher_id=None,
+        task_approved=None,
+        group_by=group_by,
+    )
+    points = coarse["trends"]["participantsJoined"]
+    assert [(point["bucket"], point["count"]) for point in points] == expected
 
 
 @pytest.mark.anyio
@@ -424,47 +528,46 @@ async def test_each_export_keeps_its_columns_in_order(export, columns):
 
 # ---------------------------------------------------------------------------
 # What the reports answered before the computation moved
-# ---------------------------------------------------------------------------
 
 
 EXPECTED_OVERVIEW = {
     "summary": {"spaceId": 7, "from": 1735689600000, "to": 1735948800000},
     "entityMetrics": {
-        "taskCount": 2,
+        "taskCount": 3,
         "publisherCount": 2,
-        "participantCount": 3,
-        "approvedParticipantCount": 2,
+        "participantCount": 6,
+        "approvedParticipantCount": 4,
         "submittedParticipantCount": 1,
-        "successfulParticipantCount": 1,
+        "successfulParticipantCount": 3,
         "participationConversionRate": 0.6667,
-        "submissionConversionRate": 0.5,
-        "successRate": 0.3333,
+        "submissionConversionRate": 0.25,
+        "successRate": 0.5,
     },
     "studentMetrics": {
-        "studentCount": 3,
-        "approvedStudentCount": 2,
-        "successfulStudentCount": 1,
+        "studentCount": 6,
+        "approvedStudentCount": 4,
+        "successfulStudentCount": 3,
     },
     "taskDistributions": {
         "byCategory": {
             "name": "Task Categories",
             "type": "DISCRETE",
             "items": [
-                {"label": "高一", "count": 1, "percentage": 50.0},
-                {"label": "高二", "count": 1, "percentage": 50.0},
+                {"label": "高二", "count": 2, "percentage": 66.6667},
+                {"label": "高一", "count": 1, "percentage": 33.3333},
             ],
         },
         "byApprovalStatus": {
             "name": "Task Approval Status",
             "type": "DISCRETE",
-            "items": [{"label": "APPROVED", "count": 2, "percentage": 100.0}],
+            "items": [{"label": "APPROVED", "count": 3, "percentage": 100.0}],
         },
         "byCompletionStatus": {
             "name": "Participant Completion Status",
             "type": "DISCRETE",
             "items": [
-                {"label": "PARTIAL_SUCCESS", "count": 1, "percentage": 50.0},
-                {"label": "NOT_STARTED", "count": 1, "percentage": 50.0},
+                {"label": "PARTIAL_SUCCESS", "count": 2, "percentage": 66.6667},
+                {"label": "NOT_STARTED", "count": 1, "percentage": 33.3333},
             ],
         },
     },
@@ -476,40 +579,45 @@ EXPECTED_OVERVIEW = {
         "participantsJoined": [
             {"bucket": 1735689600000, "count": 1},
             {"bucket": 1735776000000, "count": 1},
-            {"bucket": 1735862400000, "count": 1},
+            {"bucket": 1735862400000, "count": 3},
+            {"bucket": 1735948800000, "count": 1},
         ],
         "submissionsCreated": [{"bucket": 1735776000000, "count": 1}],
-        "successesAchieved": [{"bucket": 1735689600000, "count": 1}],
+        "successesAchieved": [
+            {"bucket": 1735689600000, "count": 1},
+            {"bucket": 1735862400000, "count": 1},
+            {"bucket": 1735948800000, "count": 1},
+        ],
     },
 }
 
 EXPECTED_PUBLISHERS = {
     "publishers": [
         {
-            "publisherId": 10,
-            "publisherName": "张老师",
-            "taskCount": 1,
-            "participantCount": 2,
-            "approvedParticipantCount": 2,
-            "submittedParticipantCount": 1,
-            "successfulParticipantCount": 1,
-            "avgParticipantsPerTask": 2.0,
-            "submissionConversionRate": 0.5,
-            "successRate": 1.0,
-            "lastTaskCreatedAt": 1735722000000,
-        },
-        {
             "publisherId": 11,
             "publisherName": "publisher_b",
-            "taskCount": 1,
-            "participantCount": 1,
-            "approvedParticipantCount": 0,
+            "taskCount": 2,
+            "participantCount": 2,
+            "approvedParticipantCount": 1,
             "submittedParticipantCount": 0,
-            "successfulParticipantCount": 0,
+            "successfulParticipantCount": 1,
             "avgParticipantsPerTask": 1.0,
             "submissionConversionRate": 0.0,
             "successRate": 0.0,
-            "lastTaskCreatedAt": 1735808400000,
+            "lastTaskCreatedAt": 1735981200000,
+        },
+        {
+            "publisherId": 10,
+            "publisherName": "张老师",
+            "taskCount": 1,
+            "participantCount": 3,
+            "approvedParticipantCount": 3,
+            "submittedParticipantCount": 1,
+            "successfulParticipantCount": 2,
+            "avgParticipantsPerTask": 3.0,
+            "submissionConversionRate": 0.3333,
+            "successRate": 2.0,
+            "lastTaskCreatedAt": 1735722000000,
         },
     ]
 }
@@ -523,18 +631,18 @@ EXPECTED_TASKS = {
             "category": {"id": 1, "name": "高一"},
             "approved": "APPROVED",
             "createdAt": 1735722000000,
-            "participantCount": 2,
+            "participantCount": 3,
             "participantLimit": 5,
             "pendingParticipantApprovalCount": 0,
-            "approvedParticipantCount": 2,
+            "approvedParticipantCount": 3,
             "rejectedParticipantCount": 0,
             "submittedParticipantCount": 1,
             "pendingReviewCount": 0,
             "resubmittableCount": 0,
-            "successfulParticipantCount": 1,
+            "successfulParticipantCount": 2,
             "failedParticipantCount": 0,
-            "submissionConversionRate": 0.5,
-            "successRate": 1.0,
+            "submissionConversionRate": 0.3333,
+            "successRate": 2.0,
             "deadline": 1735776000000,
         },
         {
@@ -544,6 +652,27 @@ EXPECTED_TASKS = {
             "category": {"id": 2, "name": "高二"},
             "approved": "APPROVED",
             "createdAt": 1735808400000,
+            "participantCount": 2,
+            "participantLimit": None,
+            "pendingParticipantApprovalCount": 1,
+            "approvedParticipantCount": 1,
+            "rejectedParticipantCount": 0,
+            "submittedParticipantCount": 0,
+            "pendingReviewCount": 0,
+            "resubmittableCount": 0,
+            "successfulParticipantCount": 1,
+            "failedParticipantCount": 0,
+            "submissionConversionRate": 0.0,
+            "successRate": 0.0,
+            "deadline": 1735862400000,
+        },
+        {
+            "taskId": 3,
+            "taskName": "夏季赛",
+            "publisher": {"id": 11, "name": "publisher_b"},
+            "category": {"id": 2, "name": "高二"},
+            "approved": "APPROVED",
+            "createdAt": 1735981200000,
             "participantCount": 1,
             "participantLimit": None,
             "pendingParticipantApprovalCount": 1,
@@ -556,7 +685,7 @@ EXPECTED_TASKS = {
             "failedParticipantCount": 0,
             "submissionConversionRate": 0.0,
             "successRate": 0.0,
-            "deadline": 1735862400000,
+            "deadline": 1736035200000,
         },
     ]
 }
@@ -564,53 +693,53 @@ EXPECTED_TASKS = {
 EXPECTED_PARTICIPANTS = {
     "summary": {"spaceId": 7, "from": 1735689600000, "to": 1735948800000},
     "entityMetrics": {
-        "participantCount": 3,
-        "approvedParticipantCount": 2,
-        "pendingParticipantCount": 1,
+        "participantCount": 6,
+        "approvedParticipantCount": 4,
+        "pendingParticipantCount": 2,
         "disapprovedParticipantCount": 0,
         "submittedParticipantCount": 1,
-        "successfulParticipantCount": 1,
+        "successfulParticipantCount": 3,
     },
-    "studentMetrics": {"studentCount": 2, "studentsWithRealNameCount": 1},
+    "studentMetrics": {"studentCount": 4, "studentsWithRealNameCount": 2},
     "distributions": {
         "byApprovalStatus": {
             "name": "Participant Approval Status",
             "type": "DISCRETE",
             "items": [
-                {"label": "APPROVED", "count": 2, "percentage": 66.6667},
-                {"label": "NONE", "count": 1, "percentage": 33.3333},
+                {"label": "APPROVED", "count": 4, "percentage": 66.6667},
+                {"label": "NONE", "count": 2, "percentage": 33.3333},
             ],
         },
         "byCompletionStatus": {
             "name": "Participant Completion Status",
             "type": "DISCRETE",
             "items": [
-                {"label": "SUCCESS", "count": 1, "percentage": 33.3333},
-                {"label": "PENDING_REVIEW", "count": 1, "percentage": 33.3333},
-                {"label": "NOT_SUBMITTED", "count": 1, "percentage": 33.3333},
+                {"label": "SUCCESS", "count": 3, "percentage": 50.0},
+                {"label": "NOT_SUBMITTED", "count": 2, "percentage": 33.3333},
+                {"label": "PENDING_REVIEW", "count": 1, "percentage": 16.6667},
             ],
         },
         "byGrade": {
             "name": "Participant Grades",
             "type": "DISCRETE",
-            "items": [{"label": "高一", "count": 1, "percentage": 100.0}],
+            "items": [{"label": "高一", "count": 3, "percentage": 100.0}],
         },
         "byMajor": {
             "name": "Participant Majors",
             "type": "DISCRETE",
-            "items": [{"label": "计算机", "count": 1, "percentage": 100.0}],
+            "items": [{"label": "计算机", "count": 3, "percentage": 100.0}],
         },
         "byClassName": {
             "name": "Participant Classes",
             "type": "DISCRETE",
-            "items": [{"label": "3班", "count": 1, "percentage": 100.0}],
+            "items": [{"label": "3班", "count": 3, "percentage": 100.0}],
         },
         "byRealNameStatus": {
             "name": "Participant Real Name Status",
             "type": "DISCRETE",
             "items": [
-                {"label": "WITHOUT_REAL_NAME", "count": 2, "percentage": 66.6667},
-                {"label": "WITH_REAL_NAME", "count": 1, "percentage": 33.3333},
+                {"label": "WITH_REAL_NAME", "count": 3, "percentage": 50.0},
+                {"label": "WITHOUT_REAL_NAME", "count": 3, "percentage": 50.0},
             ],
         },
     },
@@ -618,10 +747,15 @@ EXPECTED_PARTICIPANTS = {
         "participantsJoined": [
             {"bucket": 1735689600000, "count": 1},
             {"bucket": 1735776000000, "count": 1},
-            {"bucket": 1735862400000, "count": 1},
+            {"bucket": 1735862400000, "count": 3},
+            {"bucket": 1735948800000, "count": 1},
         ],
         "submissionsCreated": [{"bucket": 1735776000000, "count": 1}],
-        "successesAchieved": [{"bucket": 1735689600000, "count": 1}],
+        "successesAchieved": [
+            {"bucket": 1735689600000, "count": 1},
+            {"bucket": 1735862400000, "count": 1},
+            {"bucket": 1735948800000, "count": 1},
+        ],
     },
 }
 
@@ -635,10 +769,12 @@ EXPECTED_TASKS_CSV = _csv(
     "Task ID,Task Title,Category,Rank,Creator,Created At,Deadline,"
     "Total Participants,Approved,Rejected,Pending,Submitted,Pending Review,"
     "Completed,Failed,Task Status",
-    "2,春季赛,高二,,publisher_b,2025-01-02 09:00:00,2025-01-03 00:00:00,"
-    "1,0,0,1,0,0,0,0,APPROVED",
-    "1,秋季赛,高一,,张老师,2025-01-01 09:00:00,2025-01-02 00:00:00,"
-    "2,2,0,0,1,0,1,0,APPROVED",
+    "3,夏季赛,高二,,publisher_b,2025-01-04 09:00:00,2025-01-05 00:00:00,1,0,0,1,"
+    "0,0,0,0,APPROVED",
+    "2,春季赛,高二,,publisher_b,2025-01-02 09:00:00,2025-01-03 00:00:00,2,1,0,1,"
+    "0,0,1,0,APPROVED",
+    "1,秋季赛,高一,,张老师,2025-01-01 09:00:00,2025-01-02 00:00:00,3,3,0,0,1,0,2,0,"
+    "APPROVED",
 )
 
 EXPECTED_PUBLISHERS_CSV = _csv(
@@ -646,24 +782,33 @@ EXPECTED_PUBLISHERS_CSV = _csv(
     "Approved Participants,Submitted Participants,Successful Participants,"
     "Average Participants Per Task,Submission Conversion Rate,Success Rate,"
     "Last Task Created At",
-    "10,张老师,1,2,2,1,1,2.0,0.5,1.0,2025-01-01 09:00:00",
-    "11,publisher_b,1,1,0,0,0,1.0,0.0,0.0,2025-01-02 09:00:00",
+    "11,publisher_b,2,2,1,0,1,1.0,0.0,0.0,2025-01-04 09:00:00",
+    "10,张老师,1,3,3,1,2,3.0,0.3333,2.0,2025-01-01 09:00:00",
 )
 
 EXPECTED_PARTICIPANTS_CSV = _csv(
-    "Task ID,Task Title,Category,Task Rank,Task Creator,Created At,Deadline,"
-    "Member ID,Username,Real Name,Student ID,Grade,Major,Class,Phone,Email,"
-    "Apply Reason,Reject Reason,Approval Status,Completion Status,Is Team,"
-    "Join Date",
-    "1,秋季赛,高一,,publisher_a,2025-01-01 09:00:00,2025-01-02 00:00:00,"
-    "100,,,,,,,13800000100,m100@example.com,,,APPROVED,SUCCESS,true,"
+    "Task ID,Task Title,Category,Task Rank,Task Creator,Created At,"
+    "Deadline,Member ID,Username,Real Name,Student ID,Grade,Major,Class,"
+    "Phone,Email,Apply Reason,Reject Reason,Approval Status,"
+    "Completion Status,Is Team,Join Date",
+    "1,秋季赛,高一,,publisher_a,2025-01-01 09:00:00,2025-01-02 00:00:00,100,,,,,"
+    ",,13800000100,m100@example.com,,,APPROVED,SUCCESS,true,"
     "2025-01-01 09:00:00",
-    "1,秋季赛,高一,,publisher_a,2025-01-01 09:00:00,2025-01-02 00:00:00,"
-    "101,,,,,,,13800000101,m101@example.com,,,APPROVED,PENDING_REVIEW,false,"
+    "1,秋季赛,高一,,publisher_a,2025-01-01 09:00:00,2025-01-02 00:00:00,101,,,,,"
+    ",,13800000101,m101@example.com,,,APPROVED,PENDING_REVIEW,false,"
     "2025-01-02 09:00:00",
-    "2,春季赛,高二,,publisher_b,2025-01-02 09:00:00,2025-01-03 00:00:00,"
-    "102,,王五,20230102,高一,计算机,3班,13800000102,m102@example.com,,,NONE,"
-    "NOT_SUBMITTED,false,2025-01-03 09:00:00",
+    "2,春季赛,高二,,publisher_b,2025-01-02 09:00:00,2025-01-03 00:00:00,102,,王五,"
+    "20230102,高一,计算机,3班,13800000102,m102@example.com,,,NONE,NOT_SUBMITTED,"
+    "false,2025-01-03 09:00:00",
+    "2,春季赛,高二,,publisher_b,2025-01-02 09:00:00,2025-01-03 00:00:00,100,,李四,"
+    "20230100,高一,计算机,3班,13800000100,m100@example.com,,,APPROVED,SUCCESS,"
+    "false,2025-01-03 09:00:00",
+    "1,秋季赛,高一,,publisher_a,2025-01-01 09:00:00,2025-01-02 00:00:00,103,,,,,"
+    ",,13800000103,m103@example.com,,,APPROVED,SUCCESS,false,"
+    "2025-01-04 00:00:00",
+    "3,夏季赛,高二,,publisher_b,2025-01-04 09:00:00,2025-01-05 00:00:00,102,,王五,"
+    "20230102,高一,计算机,3班,13800000102,m102@example.com,,,NONE,NOT_SUBMITTED,"
+    "false,2025-01-03 09:00:00",
 )
 
 
