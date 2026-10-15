@@ -314,7 +314,8 @@ SQL，要接着挖得从 `sql-census-after.txt` 那张排行往下走；频道 b
 原始输出：`pair-dedup-2026-10-15/sql-census-{before,after}.txt`、
 `sql-rowcounts-{before,after}.txt`（两棵树逐行 diff 只有上面那一处差异）；
 「34 → 32 条语句、两边都是 29 条不同的」出自
-`sql-callers-channel-detail-{before,after}.txt` 各自第一行的表头。
+`sql-callers-channel-detail-{before,after}.txt` 各自表头那一行（两份文件前面还有几百行
+告警和请求日志，表头分别在 before 第 10 行、after 第 382 行）。
 
 **行为没变是验过的**，不是推的：把九个端点的响应体规范化后落盘、两棵树逐字节比对，
 九份全部相同（`pair-dedup-2026-10-15/response-bodies.sha256.txt`，两列哈希一致）。
@@ -326,8 +327,9 @@ pins、threads）、`/projects/{id}/tasks` 和 `/awaiting-me`，**不含 `GET /t
 
 **这几处省下的 CPU 量不出来。** 四轮 before/after 交替配对（`pair-*.json`）里，频道详情
 的单请求循环 CPU，取每轮最小值是 35.5 / 36.1（before）与 41.2 / 33.3（after），取每轮
-中位数是 38.1 / 38.8 与 45.7 / 34.0——同一棵树两轮之间相差 6–12 ms，而按语句数算这次
-该省下约 1.4 ms，落在噪声里。能拿的确定性证据是语句数和行数，不是 CPU 表。按去掉的
+中位数是 38.1 / 38.8 与 45.7 / 34.0——同一棵树两轮之间本身就差 0.6 / 0.7 ms（before 的
+最小 / 中位）和 7.9 / 11.8 ms（after），after 树的抖动量级大于按语句数算这次该省下的约
+1.4 ms，所以这一档负载下 CPU 表分不出这 2 条语句。能拿的确定性证据是语句数和行数。按去掉的
 这两条语句、每条 0.7–1.5 ms 的固定成本算（`burst-cpu-split-channel-detail.txt`：28 次
 `sql.execute` 合计 19.95 ms），20 并发下最多让最坏值少 30–60 ms，**离 1 秒还差得远**。
 
@@ -342,7 +344,7 @@ pins、threads）、`/projects/{id}/tasks` 和 `/awaiting-me`，**不含 `GET /t
    一个进程握着 35 条连接，20 并发打不满。这条假设量过、否掉了。
 3. **多进程是明确排在外面的**（总调度 2026-10-13 定）：实时通知的监听表是进程内的
    模块级全局，聊天 broker 也是进程内的，多 worker 会让别的 worker 提交的唤醒收不到。
-   这台机器上实测也印证了这个方向有别的代价：loadavg 97 时把 worker 从 1 调到 2
+   这台机器上实测也印证了这个方向有别的代价：把 worker 从 1 调到 2
    （`.claude/scripts/worker_scaling_probe.py`，两次运行的原始样本是
    `pair-dedup-2026-10-15/worker-scaling-run{1,2}.json`），频道详情单批最坏值两次
    分别是 7779 ms 和 12182 ms，同一条件下 1 个 worker 是 2014 ms 和 1648 ms。

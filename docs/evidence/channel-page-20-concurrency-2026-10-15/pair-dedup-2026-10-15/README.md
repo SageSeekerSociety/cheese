@@ -41,20 +41,21 @@ cd <树> && PERF_OUT=<输出>.json \
 ### 2. 每条请求发了哪些 SQL（`sql-census-{before,after}.txt`）
 
 ```bash
-export PERF_LEG=asgi PERF_CONCURRENCY=1 PERF_ROUNDS=5
+export PERF_ROUNDS=5
 export PERF_ONLY="channel detail,awaiting"
 cd <树> && uv run --project "$W/backend" python .claude/scripts/sql_census.py
 ```
 
-`sql_census.py` 按「动词 + 碰到的表」把语句归成形状：表头的 `statements/req` 是每请求
-**执行**了多少条，下面列的是耗时最高的八种形状，各自的 `calls/req` 加起来就是它。它不认
-`PERF_BY_CALLER`（那是 `sql_callers.py` 的开关），也不打印 distinct——「29 条不同」要看
-第 5 节那两份。
+`sql_census.py` 按「动词 + 碰到的表」把语句归成形状。表头的 `statements/req` 是每请求
+**执行**了多少条；下面八行是按耗时排的前八种形状，**不是全部形状**，所以它们的
+`calls/req` 加起来小于表头（before 树 21.0 对表头 34.0，after 树 17.0 对表头 32.0），
+要核总数得看表头那一行。它不认 `PERF_BY_CALLER`（那是 `sql_callers.py` 的开关），也不
+打印 distinct——「29 条不同」要看第 5 节那两份。
 
 ### 3. 每条语句读回多少行（`sql-rowcounts-{before,after}.txt`）
 
 ```bash
-export PERF_LEG=asgi PERF_CONCURRENCY=1 PERF_ROUNDS=5 PERF_ROWCOUNTS=1
+export PERF_ROUNDS=5 PERF_ROWCOUNTS=1
 export PERF_ONLY="awaiting"
 cd <树> && uv run --project "$W/backend" python .claude/scripts/sql_census.py
 ```
@@ -75,13 +76,14 @@ cd <树> && uv run --project "$W/backend" \
 但在这个负载下测不出 CPU 的差别。四轮的单请求循环 CPU，取每轮的最小值是
 35.5/36.1（before）与 41.2/33.3（after），取每轮的中位数是 38.1/38.8 与 45.7/34.0
 （`pair-*.json` 里的 `asgi["channel detail"]["single"][*]["cpu"]`，探针自己的汇总用的是
-中位数）。两种取法下，同一棵树两轮之间的差（6 ms 和 12 ms）都大于这次该省下的约
-1.4 ms——结论一样，但报的是哪个统计量得说清楚。确定性证据是语句数和行数。
+中位数）。同一棵树两轮之间本身就差 0.6 / 0.7 毫秒（before 的最小 / 中位）和 7.9 / 11.8
+毫秒（after），after 树的抖动量级就大于这次该省下的约 1.4 ms，所以这一档负载下 CPU
+分不出这 2 条语句——结论一样，但报的是哪个统计量得说清楚。确定性证据是语句数和行数。
 
 ### 5. 每条语句由哪一行代码发出（`sql-callers-channel-detail-{before,after}.txt`）
 
 ```bash
-export PERF_LEG=asgi PERF_CONCURRENCY=1 PERF_ONLY="channel detail,awaiting"
+export PERF_ONLY="channel detail,awaiting"
 cd <树> && uv run --project "$W/backend" python .claude/scripts/sql_callers.py
 ```
 
@@ -98,9 +100,12 @@ cd <树> && uv run --project "$W/backend" python .claude/scripts/sql_callers.py
 ### 6. 单请求循环 CPU 的分段去向（`burst-cpu-split-channel-detail.txt`）
 
 ```bash
-PERF_ONLY="channel detail,awaiting" PERF_ROUNDS=7 \
+PERF_WHICH=both PERF_ROUNDS=7 \
   uv run --project "$W/backend" python .claude/scripts/split_topic_cpu.py
 ```
+
+`split_topic_cpu.py` 选被测段用的是 `PERF_WHICH`（`topic` / `awaiting` / `both`），不认
+`PERF_ONLY`。
 
 ### 7. worker 数（`worker-scaling-run1.json`、`worker-scaling-run2.json`）
 
