@@ -7,11 +7,23 @@ name: Deploy Scripts Test
 # that could abort it, six green CI jobs, none of which touched the file (run
 # 31466502982).
 #
-# On the cheese-ci pool: these suites are pure bash against fakes — no service
-# containers, no registry, no docker at all. It ran on a hosted runner until
-# the org's Actions billing lapsed on 2026-08-13 (every ubuntu-latest job is
-# refused before it starts); the pool is separate capacity from the dev box's
-# single deploy slot, so it never queues behind a deploy. Under a minute.
+# These suites are pure bash and python against fakes — no service containers, no
+# registry, and the only image is the one `docker run` pulls for the failover
+# case.
+#
+# This was one job until 2026-10-14. Its serial work had grown to 589-611 s
+# against the 10-minute limit set when the whole file was "under a minute", and
+# GitHub cancelled it at 603-611 s in 9 of the last 11 required checks — a
+# cancelled job is not a red run, but the `required` aggregator reads it as one.
+# The three groups below share no state (every suite builds its own mktemp tree,
+# under `$ROOT/.tmp/`, `$ROOT/tmp/` or `$TMPDIR`; nothing reads what an earlier
+# step wrote), so they run side by
+# side and the longest one sets the lane's wall clock: 406/112/120 s in the first
+# run after the split, against ~600 s for the single job. Each step is
+# byte-identical to the one in the old job, and required-ci.py reads this
+# workflow's overall result, so the split is invisible to the gate. Timeouts are
+# 3-4x those measurements — this repo's own convention, P0-2 in
+# docs/topics/CI提速P0六条.md.
 on:
   workflow_call:
 permissions:
@@ -27,9 +39,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  shell-tests:
+  # The bulk of the lane: 406 s here, 401 s of it the app-tier suite (379 s of
+  # the step when it sat in the single job). Two of those cases sit out the 60 s a
+  # release script spends probing for a healthy owner that the fake never reports
+  # — that wait is the behaviour under test, not slack to trim. 20 minutes is 3x.
+  shell-tests-app-tier:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -44,10 +60,10 @@ jobs:
           exit "$status"
 
       # One case reads a `run:` block out of deploy-drift.yml. Everything else in
-      # these suites is bash against fakes — this is the whole dependency. On the
-      # pool the system python3 has no PyYAML and `pip install` is blocked
-      # (PEP 668), so install the distro package; it is a no-op once a machine
-      # already has it.
+      # these suites is bash against fakes — this is the whole dependency. The
+      # system python3 has no PyYAML and `pip install` is blocked (PEP 668), so
+      # install the distro package; it is a no-op once a machine already has it.
+      # Each job is its own machine and keeps its own copy of this step.
       - name: Ensure a YAML-capable python3
         run: |
           python3 -c 'import yaml' 2>/dev/null && exit 0
@@ -56,6 +72,37 @@ jobs:
 
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
+
+  # 112 s here (104 s of it the step itself), most of it the nginx install the
+  # step does for itself. No PyYAML: these three scripts import none and shell
+  # out only to the `configure-*.sh` writers and nginx. 6 minutes is 3x.
+  shell-tests-ingress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Persistent ingress survives application switches
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
+          python3 deploy/tests/test_ingress_lifecycle.py
+          python3 deploy/tests/test_front_door_tls.py
+          python3 deploy/llm-tunnel/verify-sites.py
+
+  # Everything else: 120 s here, led by the gateway group (72 s) and the failover
+  # image pull. 8 minutes is 4x — the mount that can grow on its own is the pull,
+  # and a cold one of those is slower than the 120 s this measured.
+  shell-tests-deploy-scripts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Ensure a YAML-capable python3
+        run: |
+          python3 -c 'import yaml' 2>/dev/null && exit 0
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh python3-yaml
+          python3 -c 'import yaml'
 
       # Fetches the last commit before the two slots per service and runs its
       # deploy script against the state the slots leave.
@@ -75,13 +122,6 @@ jobs:
 
       - name: Hong Kong edge asset copy
         run: python3 deploy/tests/test_edge_asset_sync.py
-
-      - name: Persistent ingress survives application switches
-        run: |
-          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh nginx
-          python3 deploy/tests/test_ingress_lifecycle.py
-          python3 deploy/tests/test_front_door_tls.py
-          python3 deploy/llm-tunnel/verify-sites.py
 
       - name: Gateway release and image planning
         run: |
