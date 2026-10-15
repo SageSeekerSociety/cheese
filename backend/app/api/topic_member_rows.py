@@ -12,10 +12,10 @@ that reaches a route, which is what C4 (`routes-independent`) forbids.
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.repositories import AgentBindingRepository
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -24,7 +24,7 @@ async def roster_rows(db: AsyncSession, topic) -> list[dict]:
     """A room's roster as `GET /topics/{id}/members` lists it; also the
     `members` of the room snapshot a subscription opens with (`room_snapshot`).
     The caller has authorised the reader."""
-    seats = await TopicMemberService(db).seats(topic)
+    seats = await TopicMemberService(db).seats(topic, team=project_team)
     # Attach display names and avatars so the UI can draw the roster without a
     # second round-trip.
     users = UserRepository(db)
@@ -51,7 +51,7 @@ async def roster_rows(db: AsyncSession, topic) -> list[dict]:
             topic.project_id
         )
     }
-    fallback = await TopicService(db).resolve_agent(topic)
+    fallback = await AgentInstanceService(db).for_topic_by_id(topic.id)
     items = []
     for m in seats:
         d = m.model_dump(mode="json")

@@ -17,7 +17,7 @@ is told it changed, the way a message reaches it.
 
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Protocol, TypeVar
+from typing import Protocol, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,17 +32,13 @@ from app.domain.block.models import (
     BlockKind,
     consumed_turn,
 )
+from app.domain.block.ports import Dispatcher, Notifier, RecordInstruction
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import is_task
-from app.domain.delivery.agent import dispatch_pending, record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.services import TaskService
-
-if TYPE_CHECKING:
-    from app.domain.agent.chat import ChatService
-    from app.domain.agent.runtime import AgentWorkRunner
 
 
 class EditedText(Protocol):
@@ -87,13 +83,18 @@ async def edit_message[Sent: EditedText](
     *,
     editor: str,
     content: str,
-    chat: "ChatService",
-    runner: "AgentWorkRunner",
+    notify: Notifier,
+    dispatch: Dispatcher,
+    record_instruction: RecordInstruction,
     normalize_text: Callable[[AsyncSession, Block, str, str], Awaitable[Sent]],
     notify_mentions: MentionEffects[Sent],
     checklist: dict | None = None,
 ) -> dict:
     """Replace the text of ``editor``'s own message, commit, and tell the room.
+
+    ``notify``、``dispatch``、``record_instruction`` 是本包够不着的那三步
+    （`block/ports.py`）：说给跑着的那一轮听、把等着的投递放出去、给任务自己的
+    席位留一句话。谁调用谁在门口递进来。
 
     ``checklist`` is `todo_write` editing its checklist message: the list
     travels with the text. Any other edit of that message leaves plain text."""
@@ -130,7 +131,13 @@ async def edit_message[Sent: EditedText](
     )
     relayed = not in_room and not sent.by_agent
     if relayed:
-        await _tell_the_card(session, block, block.conversation_id, editor)
+        await _tell_the_card(
+            session,
+            block,
+            block.conversation_id,
+            editor,
+            record_instruction=record_instruction,
+        )
     payload = BlockOut.model_validate(block).model_dump(mode="json")
     # The frame replaces the line whole, so it carries what else is on it.
     payload["reactions"] = await blocks.reactions_for_block(block.id)
@@ -140,14 +147,14 @@ async def edit_message[Sent: EditedText](
         str(block.conversation_id), {"type": "block_updated", "block": payload}
     )
     if notice is not None:
-        await chat.notify_running_turn(
+        await notify.notify_running_turn(
             block.conversation_id, _said(notice), blocks=[notice.id]
         )
     # What somebody else now has to run: a card's line relayed to its task, and
     # a teammate the new text named. Both wait in the ledger, and both are
     # picked up here — after the commit, so whoever wakes reads the new text.
     if relayed or summoned:
-        await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
+        await dispatch()
     return payload
 
 
@@ -192,7 +199,12 @@ async def _tell_the_room(blocks: BlockRepository, block: Block, editor: str) -> 
 
 
 async def _tell_the_card(
-    session: AsyncSession, block: Block, task_id: uuid.UUID, editor: str
+    session: AsyncSession,
+    block: Block,
+    task_id: uuid.UUID,
+    editor: str,
+    *,
+    record_instruction: RecordInstruction,
 ) -> None:
     """What the owner says in a task reaches the task's own session; an edit
     goes the same way, saying it is one."""
@@ -200,7 +212,7 @@ async def _tell_the_card(
     task = await TaskService(session).get(task_id)
     if task is None:
         return
-    await record_task_instruction(
+    await record_instruction(
         session,
         DeliveryEvent(
             # Its own event: the message's id already names the relay of what
@@ -210,7 +222,7 @@ async def _tell_the_card(
             payload={"projectId": str(block.project_id), "topicId": str(task.room_id)},
             occurred_at=block.updated_at,
         ),
-        task=task,
+        task_id=task.id,
         content=(
             f"{editor} 改了之前说的一句（消息 id {block.id}），改后是：\n"
             f"{block.content}"

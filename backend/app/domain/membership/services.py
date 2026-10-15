@@ -17,15 +17,21 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
+from app.domain.addressing import Event, Hand, address
 from app.domain.authz.policy import can_manage_project_members
-from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.delivery_events import (
+    Deliver,
+    DeliveryEvent,
+    NotificationType,
+    Settle,
+    event_id_for,
+)
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
+from app.domain.membership.ports import ProjectTeam
 from app.domain.membership.repositories import InvitationRepository, MemberRepository
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import InvitationOut
-from app.domain.notification.models import NotificationType
 from app.domain.project.models import (
     InvitationStatus,
     Project,
@@ -246,11 +252,23 @@ class InvitationService:
     ``_reject_execution_identity``。
     """
 
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        deliver: Deliver,
+        settle: Settle,
+        team: ProjectTeam,
+    ):
         self._session = session
+        self._team = team
         self._repo = InvitationRepository(session)
         self._members = MemberRepository(session)
         self._projects = ProjectRepository(session)
+        # 邀请发出去是一条事件，被回应之后那条事件要结掉：两下都落在第 5 层的
+        # 投递账本上，由构造这一侧递进来（`Deliver`、`Settle`）。
+        self._deliver = deliver
+        self._settle = settle
 
     async def _project_or_404(self, project_id: uuid.UUID):
         project = await self._projects.get(project_id)
@@ -272,7 +290,10 @@ class InvitationService:
         那条路。
         """
 
-        return any(m.handle == handle for m in await roster(self._session, project_id))
+        return any(
+            m.handle == handle
+            for m in await roster(self._session, project_id, team=self._team)
+        )
 
     async def invite(
         self,
@@ -327,7 +348,7 @@ class InvitationService:
         inviter = await user_by_handle(self._session, invitation.inviter_handle)
         if inviter is not None:
             payload["inviter"] = {"type": "user", "id": str(inviter.id)}
-        await deliver(
+        await self._deliver(
             self._session,
             DeliveryEvent(
                 id=event_id_for(NotificationType.PROJECT_INVITE, str(invitation.id)),
@@ -423,10 +444,7 @@ class InvitationService:
         Answered or withdrawn, it is marked read and records how it ended, so it
         no longer offers to accept an invitation that has no answer left.
         """
-        # deferred-import: tests replace this name on app.domain.delivery.ledger
-        from app.domain.delivery.ledger import event_id_for, settle
-
-        await settle(
+        await self._settle(
             self._session,
             event_id_for(NotificationType.PROJECT_INVITE, str(invitation.id)),
             {"status": invitation.status.value},

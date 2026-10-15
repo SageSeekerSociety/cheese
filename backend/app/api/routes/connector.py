@@ -53,7 +53,7 @@ from app.core.errors import (
     UnprocessableEntityError,
 )
 from app.core.sentences import say
-from app.domain.agent import model_connections
+from app.domain.agent import checkout_sweep, model_connections
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceOffline,
@@ -202,7 +202,9 @@ async def _recover_business_state(device_id: str) -> None:
     from app.domain.room_task.checkouts import remove_closed_checkouts
 
     background.spawn(
-        remove_closed_checkouts(async_session_factory, device_id=device_id),
+        remove_closed_checkouts(
+            async_session_factory, device_id=device_id, machines=checkout_sweep.sweep
+        ),
         name="closed task checkouts device reconnect",
     )
     # Rooms from before rooms had an executor are told their files are kept

@@ -15,9 +15,8 @@ from datetime import UTC, datetime
 
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
-from app.domain.project.services import ProjectService
 from app.domain.team.services import team_service
-from tests.integration.conftest import post_project, registered
+from tests.integration.conftest import post_project, project_service, registered
 
 OWNER = "owner-1"
 
@@ -173,7 +172,7 @@ def test_a_teams_project_starts_with_the_whole_team(client):
             )
             await session.commit()
         async with factory() as session:
-            project = await ProjectService(session).create(
+            project = await project_service(session).create(
                 name="P", owner_handle="captain", team_id=team.id
             )
             await session.commit()
@@ -195,7 +194,7 @@ def test_a_personal_project_pulls_nobody_in(client):
         await _user(factory, "solo")
         async with factory() as session:
             await registered(session, "solo")
-            project = await ProjectService(session).create(
+            project = await project_service(session).create(
                 name="P", owner_handle="solo"
             )
             await session.commit()
@@ -218,7 +217,7 @@ def test_late_teammate_is_listed_without_a_persistent_project_grant(client):
             team = await team_service(session).create_team(
                 name="小队", intro="", description="", avatar_id=1, owner_id=captain
             )
-            project = await ProjectService(session).create(
+            project = await project_service(session).create(
                 name="P", owner_handle="late-captain", team_id=team.id
             )
             await session.commit()

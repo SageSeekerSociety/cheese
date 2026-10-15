@@ -32,6 +32,8 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import exception_text, say
+from app.domain.agent_instance.adapters import project_team
+from app.domain.agent_instance.services import project_types, type_of_seat
 from app.domain.conversation import services as conversations
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
@@ -51,7 +53,10 @@ async def member(
     resolver.reject_failed_credential(actor)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required")
-    if not any(m.handle == actor.handle for m in await roster(db, project_id)):
+    if not any(
+        m.handle == actor.handle
+        for m in await roster(db, project_id, team=project_team)
+    ):
         raise ForbiddenError(say("mcpManageMembersOnly"))
     # The project roster lists every teammate the project has, seated or not.
     await resolver.refuse_unseated_agent(actor, project_id=project_id)
@@ -63,7 +68,7 @@ async def list_servers(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await member(db, project_id, resolver)
-    return ok(await service.settings_view(db, project_id))
+    return ok(await service.settings_view(db, project_id, project_types=project_types))
 
 
 @router.post("/projects/{project_id}/mcp/servers/{name}/connect")
@@ -76,7 +81,12 @@ async def connect(
 ) -> dict:
     handle = await member(db, project_id, resolver)
     url = await service.begin_connect(
-        db, project_id, name, handle, in_app=started_in_app(request)
+        db,
+        project_id,
+        name,
+        handle,
+        in_app=started_in_app(request),
+        project_types=project_types,
     )
     return ok({"authorization_url": url})
 
@@ -103,7 +113,9 @@ async def set_secret(
     resolver: ActorResolverDep,
 ) -> dict:
     handle = await member(db, project_id, resolver)
-    await service.set_secret(db, project_id, name, body.value, handle)
+    await service.set_secret(
+        db, project_id, name, body.value, handle, project_types=project_types
+    )
     return ok(None)
 
 
@@ -204,6 +216,7 @@ async def proxy(
             name=name,
             method=body.method,
             params=body.params,
+            type_of_seat=type_of_seat,
         )
     except (AppError, BaseError) as exc:
         # Said to the agent as the tool's answer: what it can do next is the
@@ -228,4 +241,10 @@ async def room_servers(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
-    return ok({"servers": await service.room_view(db, place.project_id)})
+    return ok(
+        {
+            "servers": await service.room_view(
+                db, place.project_id, project_types=project_types
+            )
+        }
+    )

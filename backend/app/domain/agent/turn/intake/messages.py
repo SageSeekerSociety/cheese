@@ -14,6 +14,7 @@ from typing import Unpack
 
 from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, say
+from app.domain.addressing import Addressed
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
@@ -38,7 +39,6 @@ from app.domain.agent.turn.intake.ports import (
 )
 from app.domain.agent.turn.state.execution import ExecutionState
 from app.domain.agent.turn_ledger import project_pool
-from app.domain.delivery.addressing import Addressed
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.notice_meta import (

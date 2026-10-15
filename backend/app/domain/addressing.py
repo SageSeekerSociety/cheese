@@ -1,5 +1,18 @@
 """一条事件点到了谁 —— 全仓唯一的那一份判据（结论 13、14、15，不变量 I11）。
 
+## 为什么住在第 1 层
+
+这份词汇被每一层用：第 6 层的编排（`task_quiet`）、第 5 层的智能体执行（`agent` 的
+`announce`、`mentions`、`runtime`，以及 `machine`）、第 4 层的协作内容（`block`、
+`review`、`discussion`、`space`）、第 2 层的身份与归属（`membership`、`team`、
+`policy`）都在说同一句话：一条事件点了谁的名，下一步在谁手上。它原来住在第 5 层的
+`delivery` 里，于是每一层都得向上够四层去拿这几个码。
+
+搬下来的理由和 `notice_meta` 一样（`docs/manual/dev/architecture.md`）：被每一层读的
+一份词汇，该住在每一层下面。搬之前先拆掉它唯一那条出边 —— `hand_of(column)` 读的是
+看板那一列，那是第 4 层的 `room_task/presentation.py` 的东西，留在那里和 `Column`
+做邻居；这个模块因此谁都不 import，落在第 1 层不新添一条向上的边。
+
 ## 为什么有这个模块
 
 「下一步在谁手上」以前有三个互不引用的答案：
@@ -14,9 +27,9 @@
 凭什么收到。**
 
 「下一步在谁手上」本来就在两处被声明过，所以这里不新造第三处，只把那两处翻成
-`Hand`：看板那一列（`hand_of`）和通知契约的 `who` 码（`agent/announce.py` 的
-`_HAND_OF_WHO`，`platform` / `cheese` → 平台手上，`human` → 参与者手上）。两张都是
-封闭表，多一档而没跟上就当场抛 `KeyError`。
+`Hand`：看板那一列（`room_task/presentation.py` 的 `hand_of`）和通知契约的 `who` 码
+（`agent/announce.py` 的 `_HAND_OF_WHO`，`platform` / `cheese` → 平台手上，`human`
+→ 参与者手上）。两张都是封闭表，多一档而没跟上就当场抛 `KeyError`。
 
 ## 唯一的收件人规则（结论 15）
 
@@ -63,8 +76,6 @@ from __future__ import annotations
 import enum
 from dataclasses import dataclass
 
-from app.domain.room_task.presentation import Column
-
 #: 为什么是他。前端按它给「待我处理」的每一行配一句话。
 REASON_REVIEWER = "reviewer"
 REASON_REPORTER = "reporter"
@@ -83,28 +94,6 @@ class Hand(enum.StrEnum):
     platform = "platform"
     #: 下一步在某个参与者手上。
     participant = "participant"
-
-
-#: 看板的列 → 下一步在谁手上。**封闭表**：`Column` 多一档而这里没跟上，查表当场
-#: 抛 `KeyError`，而不是让新的一列悄悄落进「不通知任何人」那一档。
-_HAND_OF_COLUMN: dict[Column, Hand] = {
-    # 还在讨论：下一步是负责人把事情说清楚、点「开始」。
-    Column.not_started: Hand.participant,
-    Column.building: Hand.platform,
-    Column.delivering: Hand.platform,
-    Column.needs_you: Hand.participant,
-    Column.done: Hand.platform,
-    Column.archived: Hand.platform,
-}
-
-
-def hand_of(column: Column) -> Hand:
-    """看板上这一格的下一步在谁手上。
-
-    看板的列回答的本来就是「该谁动」（见 `presentation.py` 模块开头），所以这里不
-    是第二次判断，是把同一个答案翻译成投递这一侧的词。
-    """
-    return _HAND_OF_COLUMN[column]
 
 
 @dataclass(frozen=True, slots=True)

@@ -33,16 +33,16 @@ from app.core.github_install_state import (
 )
 from app.core.sentences import say
 from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
-from app.domain.agent.github_app import (
-    GitHubAppError,
-    fetch_user_installation_repos,
-    list_user_installations,
-)
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.project.forge import follow_github_rename
+from app.domain.project.github_app import (
+    GitHubAppError,
+    fetch_user_installation_repos,
+    list_user_installations,
+)
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,

@@ -22,8 +22,7 @@ import pytest
 from app.core.config import settings
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.memory.reads import body_reads, is_body_read
-from app.domain.project.services import ProjectService
-from tests.integration.conftest import registered, session_auth_headers
+from tests.integration.conftest import project_service, registered, session_auth_headers
 
 # 这个文件里两种都有：域里那几个是 async（`business_db_factory`），接口那两个走
 # `client`、是同步的。`anyio_mode = "auto"` 认的是函数本身，所以不打模块级的
@@ -42,7 +41,9 @@ ADMIN = "reads-admin"
 
 async def _project(session, handle: str = "alice"):
     await registered(session, handle)
-    project = await ProjectService(session).create(name="正文读数", owner_handle=handle)
+    project = await project_service(session).create(
+        name="正文读数", owner_handle=handle
+    )
     await session.flush()
     return project
 
@@ -257,7 +258,7 @@ def test_the_admin_endpoint_answers_per_project_per_day(client, as_admin):
     async def _seed() -> str:
         async with client.test_factory() as session:
             await registered(session, "reads-owner")
-            project = await ProjectService(session).create(
+            project = await project_service(session).create(
                 name="接口读数", owner_handle="reads-owner"
             )
             await session.flush()
