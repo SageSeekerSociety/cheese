@@ -32,6 +32,26 @@ const refreshProjects = vi.fn()
 const store = { projectsSettled: true, projects: [] as { id: string }[], refreshProjects }
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
+// 「动态」那一块的取数现在跟着容器走（`useNotificationFeed.ts`）：这一页一挂上就会问
+// 三档的条数和第一页，所以这三条依赖得在这里按名接住，否则这一份里每个用例都会在收尾
+// 的网络陷阱上红。这一份测的是「等你处理」那一半，动态本身在
+// `src/views/home/NotificationFeed.spec.ts` 里测。
+const feedList = vi.fn(async () => ({ notifications: [], page: { hasMore: false } }))
+vi.mock('@/api/notifications', () => ({
+  NotificationsApi: {
+    list: (...a: unknown[]) => feedList(...a),
+    countByTypes: async () => [0, 0, 0],
+    getUnreadCount: async () => ({ count: 0 }),
+    updateStatus: vi.fn(),
+    markAllAsRead: vi.fn(),
+    del: vi.fn(),
+  },
+}))
+vi.mock('@/composables/useUnreadNotifications', () => ({
+  useUnreadNotifications: () => ({ count: { value: 0 }, refresh: vi.fn(), set: vi.fn() }),
+}))
+vi.mock('@/lib/inboxLive', () => ({ onInboxChange: () => () => {} }))
+
 const spaceJoin = vi.fn()
 vi.mock('@/api/spaces', () => ({
   SpacesApi: { join: (...a: unknown[]) => spaceJoin(...a), list: async () => ({ spaces: [] }) },
@@ -89,6 +109,11 @@ beforeEach(async () => {
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId', name: 'workspace-topic', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId/tasks/:taskId', name: 'workspace-task', component: { template: '<div />' } },
+      {
+        path: '/p/:projectId/c/:topicId/threads/:threadId',
+        name: 'workspace-thread',
+        component: { template: '<div />' },
+      },
       { path: '/p/:projectId/overview', name: 'workspace-overview', component: { template: '<div />' } },
     ],
   })
@@ -197,6 +222,18 @@ describe('待办上的一件事', () => {
     await mount()
     const link = (await screen.findByText('分享页加访问口令')).closest('a')
     expect(link?.getAttribute('href')).toBe('/p/p1/t/c1/tasks/t1')
+  })
+
+  it('芝士在哪条支线里问的，就打开那条支线', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({
+      data: [item({ reason: 'asked', phrase: 'awaiting_answer', threadId: 'th-1', detail: '口令要不要只发一次？' })],
+      total: 1,
+    })
+    await mount()
+    const link = (await screen.findByText('口令要不要只发一次？')).closest('a')
+    // 支线页那条路（`router/workspaceRoutes.ts` 的 `workspace-thread`）——不是它所在的频道。
+    expect(link?.getAttribute('href')).toBe('/p/p1/c/c1/threads/th-1')
   })
 
   it('要你拍板的：选一个就交上去，这一件随之离开清单', async () => {

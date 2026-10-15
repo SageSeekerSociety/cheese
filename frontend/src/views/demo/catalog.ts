@@ -65,6 +65,7 @@ import {
   WANG_LINES,
 } from './catalogFixtures'
 import { HOME_ENTRIES } from './catalogHome'
+import { INBOX_ENTRIES } from './catalogInbox'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
@@ -669,6 +670,8 @@ export const CATALOG: CatalogEntry[] = [
   // 通知渲染那一组（十件「一条动态长什么样」，数据在 `catalogNotificationsFixtures.ts`）
   // 在自己的文件里：`catalogNotifications.ts`。
   ...NOTIFICATION_ENTRIES,
+  // 待办页拆出来的两条（等你处理的画面、动态那一块）：`catalogInbox.ts`。
+  ...INBOX_ENTRIES,
   // 知识库那六件（从 1508 行的 Knowledge.vue 拆出来的四块模板 + 两个对话框）在自己的
   // 文件里：`catalogKnowledge.ts`（数据在 `catalogKnowledgeFixtures.ts`）。
   ...KNOWLEDGE_ENTRIES,

@@ -84,6 +84,13 @@ export function demoRouter() {
       // topicId is optional only so a link that passes one (the app strips it in addresses.ts) isn't warned about.
       { path: '/projects/:projectId/topics/:topicId?/tasks/:taskId', name: 'workspace-task', component: blank },
       { path: '/projects/:projectId/library', name: 'project-library', component: blank },
+      // 支线（`router/workspaceRoutes.ts` 那条 `workspace-thread`）：待办页里「芝士在哪条
+      // 支线里问你」那一行走的就是它。名字缺了，NavLink 会把那一条画成点不动的字。
+      {
+        path: '/projects/:projectId/channels/:topicId/threads/:threadId',
+        name: 'workspace-thread',
+        component: blank,
+      },
       ...analytics,
       ...catalogTargets,
       { path: '/:any(.*)*', component: blank },

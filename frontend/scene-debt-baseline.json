@@ -1,7 +1,6 @@
 {
   "version": 1,
   "children": [
-    "src/views/InboxView.vue -> src/views/home/NotificationFeed.vue",
     "src/views/MyDevicesView.vue -> src/components/DeviceLiveViewer.vue",
     "src/views/ProjectArtifactView.vue -> src/components/ArtifactVersionPreview.vue",
     "src/views/ProjectArtifactView.vue -> src/views/artifact/ArtifactCompare.vue",

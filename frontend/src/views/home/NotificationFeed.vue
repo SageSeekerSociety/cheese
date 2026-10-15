@@ -1,17 +1,24 @@
 <template>
   <!-- 待办页的「动态」：提到你、回复你、邀请你、截止提醒。以前它是顶栏铃铛的下拉
-       卡片；铃铛拆了，这些东西就住在这里，和「等你处理」一页。 -->
+       卡片；铃铛拆了，这些东西就住在这里，和「等你处理」一页。
+
+       **只认 props**：这一档有哪些条、三档各多少、翻到哪儿了、要不要顶上那条「有 N 条
+       新动态」，全是从外面递进来的；换一档、标已读、删一条、接着往下翻、重来一次，都
+       往上发事件。看哪一档、问服务端、存偏好、来了新的怎么补问，都在
+       `useNotificationFeed.ts`，`views/InboxView.vue` 那只容器把它接上——于是这一块在
+       测试和 /demo 里都只需要一串 props。 -->
   <section class="notification-feed">
     <header class="notification-feed__head">
       <h2 class="notification-feed__title">{{ t('home.inbox.feed') }}</h2>
       <div class="notification-feed__controls">
         <SegmentedControl
-          v-model="filter"
+          :model-value="filter"
           :options="filterOptions"
           :label="t('notifications.common.filterLabel')"
           size="md"
+          @update:model-value="emit('update:filter', $event)"
         />
-        <BaseButton v-if="hasUnread" size="sm" @click="markAllAsRead">
+        <BaseButton v-if="hasUnread" size="sm" @click="emit('mark-all-read')">
           {{ t('notifications.common.markAllAsRead') }}
         </BaseButton>
       </div>
@@ -24,7 +31,7 @@
       class="notification-feed__load-error"
       :title="t('notifications.common.loadFailed')"
       :error="errorReason || null"
-      @retry="reload"
+      @retry="emit('retry')"
     />
     <!-- First load still in flight: the row shape is predictable, so draw a row
          skeleton instead of leaving a blank. -->
@@ -32,18 +39,23 @@
     <div v-else-if="notifications.length > 0" class="notification-feed__list">
       <!-- 看着列表时来了新的：不把正在读的那几行往下挤，先在顶上说一声，点了才换成最新的。 -->
       <div v-if="fresh > 0" class="notification-feed__fresh">
-        <BaseButton size="sm" prepend-icon="mdi-arrow-up" @click="showFresh">
+        <BaseButton size="sm" prepend-icon="mdi-arrow-up" @click="emit('show-fresh')">
           {{ t('notifications.common.newItems', { count: fresh }) }}
         </BaseButton>
       </div>
       <v-list density="compact" lines="three" class="py-0" bg-color="transparent">
-        <notification-item
+        <!-- 行本身（`NotificationItem`）由外面递进来：它自己会问到后端（那几类邀请的
+             接受 / 拒绝是在行里办的），这一块要能只收 props 单独画，就不能把它写死
+             在这儿。行为一点没变——递进来的那件照样收到同一串 props，标记已读和删除
+             这两只动作由下面那两只只发事件的适配器接。 -->
+        <component
+          :is="itemComponent"
           v-for="notification in notifications"
           :key="notification.id"
           :notification="notification"
           :category-label="t(CATEGORY_LABEL[notificationCategoryOf(notification.type)])"
-          :on-mark-as-read="markAsRead"
-          :on-delete="deleteNotification"
+          :on-mark-as-read="onMarkAsRead"
+          :on-delete="onDelete"
         />
       </v-list>
       <!-- Loading the next page failed: keep the pages we already have, append the
@@ -53,10 +65,10 @@
         class="notification-feed__load-error"
         :title="t('notifications.common.loadFailed')"
         :error="errorReason || null"
-        @retry="loadMore"
+        @retry="emit('more')"
       />
       <div v-else-if="hasMore" class="notification-feed__more">
-        <BaseButton size="sm" :loading="loading" @click="loadMore">
+        <BaseButton size="sm" :loading="loading" @click="emit('more')">
           {{ t('notifications.common.loadMore') }}
         </BaseButton>
       </div>
@@ -68,32 +80,53 @@
 </template>
 
 <script setup lang="ts">
+import type { Component } from 'vue'
 import type { NotificationCategory } from '@/components/common/Notification/categories'
 import type { Notification } from '@/types/apiNotifications'
 
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useEventListener } from '@vueuse/core'
 
-import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
-
-import { NotificationsApi } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
-import {
-  NOTIFICATION_CATEGORIES,
-  notificationCategoryOf,
-  typesOfCategory,
-} from '@/components/common/Notification/categories'
-import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
+import { NOTIFICATION_CATEGORIES, notificationCategoryOf } from '@/components/common/Notification/categories'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import { storageGet, storageSet } from '@/lib/browserStorage'
-import { onInboxChange } from '@/lib/inboxLive'
+
+defineOptions({ name: 'NotificationFeed' })
+
+const props = defineProps<{
+  /** 现在看的是哪一档。 */
+  filter: NotificationCategory
+  /** 三档各有多少条；还没问到就是 null，格子先只写名字。 */
+  counts: Record<NotificationCategory, number> | null
+  /** 这一档当前这一页。 */
+  notifications: Notification[]
+  /** 正在读这一档。 */
+  loading: boolean
+  /** 整块读失败：上面那段换成错误 + 重试。 */
+  failed: boolean
+  /** 只往下翻那一页失败：已经到手的那几页留着，错误接在下面。 */
+  moreFailed: boolean
+  errorReason: string
+  hasMore: boolean
+  /** 列表上面那几行之后又来了几条。 */
+  fresh: number
+  /** 一行长什么样。见模板里那段：行自己会问到后端，所以由外面递进来。 */
+  itemComponent: Component
+}>()
+
+const emit = defineEmits<{
+  'update:filter': [value: NotificationCategory]
+  'mark-all-read': []
+  'mark-as-read': [notificationId: number]
+  delete: [notificationId: number]
+  more: []
+  retry: []
+  'show-fresh': []
+}>()
 
 const { t } = useI18n()
-
-const unread = useUnreadNotifications()
 
 // 三档各自的词条（`notifications.category.*`）。写在这里而不是拼字符串，是为了
 // catalog 的「每个键都有调用处」那一关看得见它们。
@@ -103,216 +136,20 @@ const CATEGORY_LABEL: Record<NotificationCategory, string> = {
   system: 'notifications.category.system',
 }
 
-// 停在哪一档记在这台浏览器上，下次打开还是上次那样。读过的那几档（「全部」「未读」
-// 是上一版的写法）不认识了就回「需我处理」。
-const FILTER_KEY = 'cheesex.notificationFeed.filter'
-function readFilter(): NotificationCategory {
-  const saved = storageGet(FILTER_KEY)
-  return NOTIFICATION_CATEGORIES.find((category) => category === saved) ?? 'mine'
-}
-const filter = ref<NotificationCategory>(readFilter())
-
-// 每一档各有多少条。载荷里带「全部 12 条」那个数就是它；删掉一条之后要重新问一遍。
-const counts = ref<Record<NotificationCategory, number> | null>(null)
+// 三档的格子：有数字就带上「· 12」，没有就先只写名字。
 const filterOptions = computed(() =>
   NOTIFICATION_CATEGORIES.map((category) => ({
     value: category,
-    label: counts.value ? `${t(CATEGORY_LABEL[category])} · ${counts.value[category]}` : t(CATEGORY_LABEL[category]),
+    label: props.counts ? `${t(CATEGORY_LABEL[category])} · ${props.counts[category]}` : t(CATEGORY_LABEL[category]),
   }))
 )
 
-// 三档的数字各问一次服务端（一组类型只要一条，拿的是它的 total）。
-async function refreshCounts() {
-  try {
-    const [mine, notice, system] = await NotificationsApi.countByTypes(
-      NOTIFICATION_CATEGORIES.map((category) => typesOfCategory(category))
-    )
-    counts.value = { mine, notice, system }
-  } catch (error) {
-    // 数字取不到不影响读列表：三档的格子先只写名字。
-    console.error('获取动态条数失败:', error)
-  }
-}
+// 还有没读的：「全部标为已读」那颗只有这时候才画。
+const hasUnread = computed(() => props.notifications.some((notification) => !notification.read))
 
-const notifications = ref<Notification[]>([])
-const loading = ref(false)
-// 动态没读出来：就地显示错误 + 重试，而不是留一片空白装作「暂无通知」。
-const failed = ref(false)
-// 翻页（「加载更多」）失败：已经到手的那几页不能扔，只在列表下面就地接错误 + 重试
-// ——整块换成失败会把看得好好的那几页一起弄没（同搜索页，docs/design-system.md §3.10）。
-const moreFailed = ref(false)
-const errorReason = ref('')
-const cursorStart = ref<string | undefined>(undefined)
-const pageSize = ref(10)
-const hasMore = ref(false)
-
-// 判断是否有未读通知
-const hasUnread = computed(() => notifications.value.some((notification) => !notification.read))
-
-// 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页
-// 属于上一档，丢掉，不然「需我处理」那一栏会混进别的档的通知。
-let generation = 0
-const fetchNotifications = async (isMore = false) => {
-  if (loading.value) return
-
-  const mine = generation
-  loading.value = true
-  // 只是接着往下翻：不动上面那一段的失败态，这一次失败也不让整块换掉。
-  moreFailed.value = false
-  if (!isMore) failed.value = false
-  errorReason.value = ''
-  try {
-    const page = await NotificationsApi.list({
-      // 只问服务端要这一档的几种事由。已读未读不问服务端：读没读靠行的底色和「标为
-      // 已读」区分，不改变这一条属于哪一档。
-      type: typesOfCategory(filter.value),
-      pageStart: cursorStart.value,
-      pageSize: pageSize.value,
-    })
-
-    if (mine !== generation) return
-    notifications.value = [...notifications.value, ...page.notifications]
-    hasMore.value = page.page.hasMore
-    cursorStart.value = page.page.nextStart
-  } catch (error) {
-    console.error('获取通知失败:', error)
-    if (mine === generation) {
-      if (isMore) moreFailed.value = true
-      else failed.value = true
-      errorReason.value = error instanceof Error ? error.message : ''
-    }
-  } finally {
-    if (mine === generation) loading.value = false
-  }
-}
-
-// 换筛选就是从第一页重新问一遍：游标是跟着上一种筛选走的，接着往下翻会漏。
-function reload() {
-  generation += 1
-  fresh.value = 0
-  loading.value = false
-  cursorStart.value = undefined
-  notifications.value = []
-  hasMore.value = false
-  moreFailed.value = false
-  void fetchNotifications()
-}
-
-watch(filter, (value) => {
-  // 存不进去就这一次有效。
-  storageSet(FILTER_KEY, value)
-  reload()
-})
-
-// 加载更多通知
-const loadMore = () => {
-  void fetchNotifications(true)
-}
-
-// 标记单个通知为已读
-const markAsRead = async (notificationId: number) => {
-  try {
-    await NotificationsApi.updateStatus(notificationId, true)
-
-    // 更新本地通知状态。读掉的那条还留在这一档里——它没换事由，只是不再是新的。
-    const notification = notifications.value.find((n) => n.id === notificationId)
-    if (notification) notification.read = true
-
-    // 更新未读数量
-    fetchUnreadCount()
-  } catch (error) {
-    console.error('标记通知已读失败:', error)
-  }
-}
-
-// 标记所有通知为已读
-const markAllAsRead = async () => {
-  try {
-    await NotificationsApi.markAllAsRead()
-
-    // 更新本地通知状态
-    notifications.value.forEach((notification) => {
-      notification.read = true
-    })
-
-    // 更新未读数量
-    fetchUnreadCount()
-  } catch (error) {
-    console.error('标记所有通知已读失败:', error)
-  }
-}
-
-// 删除通知
-const deleteNotification = async (notificationId: number) => {
-  try {
-    await NotificationsApi.del(notificationId)
-
-    // 从列表中移除
-    notifications.value = notifications.value.filter((n) => n.id !== notificationId)
-
-    // 更新未读数量；这一档的总数也少了一条。
-    fetchUnreadCount()
-    void refreshCounts()
-  } catch (error) {
-    console.error('删除通知失败:', error)
-  }
-}
-
-// 读完、删完之后把首页那一格的小点对上。
-const fetchUnreadCount = () => unread.refresh()
-
-// 列表上面那几行之后又来了几条（这一档里的）。看第一页就够：新的一定排在最前。
-const fresh = ref(0)
-
-// 有没有新的：问一遍这一档的第一页，比列表最上面那一条新的就是。列表还空着就直接
-// 摆上来——没有正在读的东西可打断。
-async function lookForNew() {
-  void refreshCounts()
-  if (loading.value || failed.value) return
-  const mine = generation
-  try {
-    const page = await NotificationsApi.list({ type: typesOfCategory(filter.value), pageSize: pageSize.value })
-    if (mine !== generation || loading.value) return
-    if (notifications.value.length === 0) {
-      notifications.value = page.notifications
-      hasMore.value = page.page.hasMore
-      cursorStart.value = page.page.nextStart
-      return
-    }
-    const newest = Math.max(...notifications.value.map((n) => n.id))
-    fresh.value = page.notifications.filter((n) => n.id > newest).length
-  } catch {
-    // 只是看一眼有没有新的：没问到就等下一次，列表照旧。
-  }
-}
-
-function showFresh() {
-  reload()
-  void refreshCounts()
-}
-
-// 新的一行一来服务端就说（`lib/inboxLive.ts`）。连接断开期间漏掉的，在这一页重新回
-// 到眼前时补问一次；切来切去不必每次都问，隔 30 秒以上才问。
-const LOOK_INTERVAL_MS = 30_000
-let lookedAt = Date.now()
-function lookIfStale() {
-  if (document.visibilityState !== 'visible' || Date.now() - lookedAt < LOOK_INTERVAL_MS) return
-  lookedAt = Date.now()
-  void lookForNew()
-}
-const stopListening = onInboxChange(() => {
-  lookedAt = Date.now()
-  void lookForNew()
-})
-onBeforeUnmount(stopListening)
-useEventListener(document, 'visibilitychange', lookIfStale)
-useEventListener(window, 'focus', lookIfStale)
-
-// 初始化加载通知。三档的数字和第一页一起要，格子一出来就带着数。
-onMounted(() => {
-  void refreshCounts()
-  fetchNotifications()
-})
+// 行的两只动作只往上发事件（`NotificationItem` 收的是函数 props，不是事件）。
+const onMarkAsRead = (notificationId: number) => emit('mark-as-read', notificationId)
+const onDelete = (notificationId: number) => emit('delete', notificationId)
 </script>
 
 <style scoped>
