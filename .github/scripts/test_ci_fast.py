@@ -8,9 +8,10 @@ that mirrors the implementation cannot catch the implementation being wrong.
 
 Stub hooks are `language: system` entries in the fixture's own
 .pre-commit-config.yaml: the command table still comes from a config file,
-and pre-commit is the real scheduler. Set CI_FAST_PRECOMMIT to a pre-commit
-invocation available on the machine (CI provides it via uv — `uvx pre-commit`
-— in every workflow whose discover picks this file up).
+and pre-commit is the real scheduler. CI_FAST_PRECOMMIT overrides which
+pre-commit the runs below use; when it is not set this file picks one the
+machine can actually run (see `precommit_command`), rather than naming a
+binary that may not be installed and reporting every hook as blocked.
 """
 
 import json
@@ -50,6 +51,21 @@ BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 
 def git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def precommit_command():
+    """What CI_FAST_PRECOMMIT should say on the machine running this file.
+
+    The value has to name something that runs here, or the suite reports the
+    machine instead of the change: a bare `pre-commit` on a checkout without
+    pre-commit installed makes every hook come back `pre-commit unavailable:
+    blocked` and turns the run red for no reason at all. Both workflows pass
+    `uvx pre-commit`, which resolves on a machine that has only uv; a checkout
+    that does have pre-commit on PATH may as well use it directly.
+
+    Only the default: a caller's own CI_FAST_PRECOMMIT still wins.
+    """
+    return "pre-commit" if shutil.which("pre-commit") else "uvx pre-commit"
 
 
 def _cores():
@@ -120,7 +136,7 @@ class CiFastTest(unittest.TestCase):
 
     def run_ci_fast(self, *extra, env_extra=None):
         env = dict(self.env)
-        env.setdefault("CI_FAST_PRECOMMIT", "pre-commit")
+        env.setdefault("CI_FAST_PRECOMMIT", precommit_command())
         if env_extra:
             env.update(env_extra)
         return subprocess.run(
@@ -894,7 +910,7 @@ class CiFastTest(unittest.TestCase):
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--tier", "static"],
             cwd=worktree, capture_output=True, text=True,
-            env={**self.env, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", "pre-commit")},
+            env={**self.env, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", precommit_command())},
             timeout=120,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -1278,7 +1294,7 @@ sys.exit(0)
         # (slow) stub hook, so nothing here is stubbed away.
         self.write_hooks(slow={"file-size"})
         self.make_base_and_head("frontend/src/probe.ts")
-        subprocess.run([*shlex.split(self.env.get("CI_FAST_PRECOMMIT", "pre-commit")), "--version"],
+        subprocess.run([*shlex.split(self.env.get("CI_FAST_PRECOMMIT", precommit_command())), "--version"],
                        cwd=self.repo, capture_output=True, env=self.env, timeout=120)
         proc = self.run_ci_fast("--budget", "8", "--timeout", "30")
         self.assertEqual(proc.returncode, 2, proc.stdout)

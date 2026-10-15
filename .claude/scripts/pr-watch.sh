@@ -56,6 +56,36 @@ ci_required() { # pass | fail | pending | none
   gh pr checks "$1" -R "$REPO" 2>/dev/null | awk -F'\t' '$1=="CI required"{print $2; f=1} END{if(!f) print "none"}'
 }
 
+# The machine this runs on has no `jq`, and its absence used to cost the whole
+# script every field it polls: a round of `jq: command not found`, nothing
+# parsed, `ci_required()` reading an empty state forever, and a watcher that
+# looks like it is watching while taking no action at all. `gh` carries a jq of
+# its own, but the reply is in hand already and python3 is on the same machine
+# as the script — so the fields come out of that, one line.
+#
+# `|` and not a tab between them: a tab is IFS whitespace, so bash collapses a
+# run of them and every empty field shifts the ones after it. No field can hold
+# a `|` — they are GitHub's own enums, a SHA, and the ISO timestamp of a removal.
+pr_fields() { # state, merge commit, queue, removal, mergeable, merge state, auto-merge
+  python3 -c 'import json,sys
+p=json.load(sys.stdin)["data"]["repository"]["pullRequest"]
+e=p.get("mergeQueueEntry") or {}
+nodes=(p.get("timelineItems") or {}).get("nodes") or []
+r=(nodes[0] if nodes else None) or {}
+mc=p.get("mergeCommit") or {}
+queue=(str(e["state"])+" "+str(e["position"])) if e else ""
+removed=(str(r["createdAt"])+" "+str(r["reason"])) if r else ""
+print("|".join([p.get("state") or "", mc.get("oid") or "", queue, removed,
+                p.get("mergeable") or "", p.get("mergeStateStatus") or "",
+                "auto-merge on" if p.get("autoMergeRequest") else ""]))'
+}
+
+live_sha() { # the SHA the version endpoint reports, or nothing
+  python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("data",{}).get("sha") or "", end="")
+except Exception: pass'
+}
+
 deploy_of() { # "<status> <conclusion> <run id>" of the newest dev deploy containing $1, or nothing
   local merge=$1 id st co sha
   # Every field is a word, a run still going included (its conclusion is
@@ -82,13 +112,7 @@ while :; do
     [ -n "${ended[$p]:-}" ] && continue
     open=1
     j=$(gh api graphql -f query="$query" -F o="${REPO%/*}" -F n="${REPO#*/}" -F p="$p" 2>/dev/null) || continue
-    state=$(jq -r '.data.repository.pullRequest.state' <<<"$j")
-    merge=$(jq -r '.data.repository.pullRequest.mergeCommit.oid // ""' <<<"$j")
-    queue=$(jq -r '.data.repository.pullRequest.mergeQueueEntry | if . then "\(.state) \(.position)" else "" end' <<<"$j")
-    removed=$(jq -r '.data.repository.pullRequest.timelineItems.nodes[0] | if . then "\(.createdAt) \(.reason)" else "" end' <<<"$j")
-    mergeable=$(jq -r '.data.repository.pullRequest.mergeable // ""' <<<"$j")
-    mstate=$(jq -r '.data.repository.pullRequest.mergeStateStatus // ""' <<<"$j")
-    auto=$(jq -r '.data.repository.pullRequest.autoMergeRequest | if . then "auto-merge on" else "" end' <<<"$j")
+    IFS='|' read -r state merge queue removed mergeable mstate auto <<<"$(printf '%s' "$j" | pr_fields)"
 
     if [ "$state" = MERGED ]; then
       if [ "$deploy" = 0 ]; then
@@ -105,7 +129,7 @@ while :; do
         "completed success "*)
           # A run can succeed while shipping an older commit whose images were
           # the newest built, so deployed means the live version contains it.
-          live=$(curl -fsS "$DEV_VERSION_URL" 2>/dev/null | jq -r '.data.sha // empty')
+          live=$(curl -fsS "$DEV_VERSION_URL" 2>/dev/null | live_sha)
           if [ -n "$live" ] && gh api "repos/$REPO/compare/$merge...$live" -q '.status' 2>/dev/null | grep -qE '^(ahead|identical)$'; then
             say "$p" "live on dev at ${live:0:9}"; ended[$p]=1 ok[$p]=1
           elif [ "${last[$p]:-}" != "$key live" ]; then
