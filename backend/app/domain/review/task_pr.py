@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core import background
 from app.core.db import after_own_commit
 from app.core.errors import UpstreamUnavailableError
-from app.domain.project import forge
+from app.domain.review.forge_clients import proposal_client
 from app.domain.review.github_pr import GitHubPRError
 from app.domain.room_task.models import Task, TaskStatus
 
@@ -64,7 +64,7 @@ async def close_task_pr(
                 or task.pr_number != number
             ):
                 return False
-            client = await forge.proposal_client(project_id, session)
+            client = await proposal_client(project_id, session)
             if client is None:
                 return False
             pr = await client.pr_view(number)

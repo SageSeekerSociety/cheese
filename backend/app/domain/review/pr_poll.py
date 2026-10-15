@@ -23,6 +23,10 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.project.forge import (
+    background_quota,
+    quota_serves_background,
+)
 from app.domain.project.models import ProjectForge
 from app.domain.review import landing_watch, pr_publish
 from app.domain.review.models import AcceptCard
@@ -129,12 +133,8 @@ async def poll_uncarded_task_prs(
 ) -> dict:
     """Record task PRs merged on the forge without an accept card."""
 
-    # deferred-import: tests replace this name on app.domain.project.forge
-    from app.domain.project.forge import (
-        background_quota,
-        proposal_client,
-        quota_serves_background,
-    )
+    # deferred-import: tests replace this name on app.domain.review.forge_clients
+    from app.domain.review.forge_clients import proposal_client
 
     global _uncarded_task_cursor
     sessions = chat.session_factory

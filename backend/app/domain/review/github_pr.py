@@ -1105,22 +1105,6 @@ def pr_branch_name(topic_id: uuid.UUID) -> str:
 
 # ---- #188 §5.1's original client (App installation token, sync accept) ----
 
-# Upstream URL shapes eligible for PR-based accept. SSH remotes are excluded on
-# purpose: an installation token only authenticates over https.
-_GITHUB_HTTPS_RE = re.compile(
-    r"^https://github\.com/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+?)(?:\.git)?/?$"
-)
-
-
-def parse_github_repo(url: str | None) -> tuple[str, str] | None:
-    """(owner, repo) when the upstream is an https GitHub remote, else None."""
-    if not url:
-        return None
-    match = _GITHUB_HTTPS_RE.match(url.strip())
-    if match is None:
-        return None
-    return match.group("owner"), match.group("repo")
-
 
 class GitHubPRError(RuntimeError):
     """GitHub refused an operation (or the network did)."""

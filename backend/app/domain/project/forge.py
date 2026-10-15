@@ -9,7 +9,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -34,18 +34,13 @@ from app.domain.project.github_app import (
     GitHubAppTokens,
     github_app_tokens_for_project,
     locate_repo,
+    parse_github_repo,
     repository_named,
 )
 from app.domain.project.models import Project, ProjectForge, ProjectGitInstallation
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
-)
-from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient
-from app.domain.review.github_pr import (
-    GitHubPRClient,
-    default_client,
-    parse_github_repo,
 )
 
 
@@ -352,32 +347,6 @@ async def ensure_author_email(
             emails = response.json()
         if not any(row["email"] == email and row["verified"] for row in emails):
             raise GatewayUnavailableError(say("forgeAuthorEmailUnverified"))
-
-
-async def proposal_client(project_id: uuid.UUID, session: AsyncSession):
-    binding = await binding_for_project(project_id, session)
-    if binding is None:
-        return None
-    tokens = await tokens_for_project(project_id, session)
-    if tokens is None:
-        raise GatewayUnavailableError(say("forgeCredentialsMissing"))
-    owner, repo = binding.repo.split("/", 1)
-    if binding.kind == "github_app":
-        return GitHubPRClient(
-            owner, repo, cast(GitHubAppTokens, tokens), api_base=binding.api_url
-        )
-    return ForgejoPRClient(owner, repo, tokens, api_base=binding.api_url)
-
-
-async def status_client(project_id: uuid.UUID, session: AsyncSession):
-    binding = await binding_for_project(project_id, session)
-    if binding is None:
-        raise GatewayUnavailableError(say("forgeNoRepository"))
-    if binding.kind == "github_app":
-        return default_client()
-    if binding.kind == "forgejo":
-        return ForgejoClient(binding.api_url)
-    raise GatewayUnavailableError(say("forgeKindUnknown"))
 
 
 async def repository_data(

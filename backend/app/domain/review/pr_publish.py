@@ -49,12 +49,11 @@ from app.domain.project.forge import (
     background_quota,
     branch_head,
     installation_known_closed,
-    proposal_client,
     quota_serves_background,
-    status_client,
 )
 from app.domain.repository import identity
 from app.domain.review import archive, notes, pr_text
+from app.domain.review.forge_clients import proposal_client, status_client
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
 from app.domain.review.models import AcceptCard, AcceptStatus

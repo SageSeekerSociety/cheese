@@ -22,6 +22,7 @@ from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
+from app.domain.review import forge_clients
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import TopicStatus
@@ -260,7 +261,12 @@ async def git_diff(
     return ok(
         {
             "diff": await ProjectFiles(
-                db, project_id, task, release_session=True, executor=execution.call
+                db,
+                project_id,
+                task,
+                release_session=True,
+                executor=execution.call,
+                compare_status=forge_clients.compare_status,
             ).diff(source, ref)
         }
     )

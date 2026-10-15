@@ -23,6 +23,7 @@ has its own installation_id, looked up from ``project_git_installations``.
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -370,6 +371,23 @@ async def github_app_tokens_for_project(
     return _tokens_for_installation(
         installation.installation_id, repository=installation.repo.split("/", 1)[1]
     )
+
+
+# Upstream URL shapes eligible for PR-based accept. SSH remotes are excluded on
+# purpose: an installation token only authenticates over https.
+_GITHUB_HTTPS_RE = re.compile(
+    r"^https://github\.com/(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+?)(?:\.git)?/?$"
+)
+
+
+def parse_github_repo(url: str | None) -> tuple[str, str] | None:
+    """(owner, repo) when the upstream is an https GitHub remote, else None."""
+    if not url:
+        return None
+    match = _GITHUB_HTTPS_RE.match(url.strip())
+    if match is None:
+        return None
+    return match.group("owner"), match.group("repo")
 
 
 async def locate_repo(
