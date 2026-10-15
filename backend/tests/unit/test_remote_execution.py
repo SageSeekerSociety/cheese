@@ -1713,6 +1713,101 @@ class RemoteExecutionTests(unittest.TestCase):
             "refreshed",
         )
 
+    def test_a_configure_takes_back_a_name_it_governs_but_did_not_state(self):
+        # A mirror that stopped answering cannot be expressed by leaving its
+        # variable out: this adds to what the room has, so the room would go on
+        # exporting the dead address, and npm and the browser download have no
+        # second source to fall back to (`bootstrap`, `governed`).
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment", "UV_INDEX": "dead"},
+                "env_reset": {"UV_INDEX": "dead"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "${UV_INDEX-unset}"'})[
+                "stdout"
+            ],
+            "dead",
+        )
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment"},
+                "env_reset": {"UV_INDEX": "dead"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "${UV_INDEX-unset}"'})[
+                "stdout"
+            ],
+            "unset",
+        )
+        # Stated again is not taken back: an upgrade defers a configure and
+        # passes the room's previous environment through the reset list.
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment", "UV_INDEX": "again"},
+                "env_reset": {"UV_INDEX": "dead"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "$UV_INDEX"'})["stdout"],
+            "again",
+        )
+
+    def test_a_configure_without_a_reset_list_removes_nothing(self):
+        # Every other sender of this request states an environment and nothing
+        # about names, and what it does not mention it does not touch.
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {
+                    "EXECUTOR_MARKER": "remote-environment",
+                    "PLAYWRIGHT_DOWNLOAD_HOST": "kept",
+                }
+            },
+        )
+        runtime.request(
+            self.state,
+            "configure",
+            {"env": {"EXECUTOR_MARKER": "remote-environment"}},
+        )
+        self.assertEqual(
+            self.invoke(
+                "Bash", {"command": 'printf "%s" "${PLAYWRIGHT_DOWNLOAD_HOST-unset}"'}
+            )["stdout"],
+            "kept",
+        )
+
+    def test_a_configure_leaves_a_value_the_room_filled_in_itself(self):
+        # These names reach a room two ways and only one of them is the
+        # platform's. A project's own index, or a machine's own registry, is in
+        # the environment the room's process starts with (`environment_runner`),
+        # which no prepare ever stated; the reset list names the address the
+        # policy would have put there, and this room's value is not that one.
+        self.stop()
+        with patch.dict(os.environ, {"UV_INDEX": "https://internal.test/simple"}):
+            self.start()
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment"},
+                "env_reset": {"UV_INDEX": "https://mirror.test/simple"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "$UV_INDEX"'})["stdout"],
+            "https://internal.test/simple",
+        )
+
     def test_request_replay_does_not_repeat_write(self):
         args = {"command": "printf x >> count.txt"}
         original = self.invoke("Bash", args, key="same-request")

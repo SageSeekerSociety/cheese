@@ -24,7 +24,6 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
-from app.domain.membership.services import MemberService
 from app.domain.memory.files import (
     INDEX_NAME,
     MemoryFileError,
@@ -70,18 +69,15 @@ async def _readable(
 ) -> str:
     """谁在读，读不读得到，一起答完；返回读的人自己的 handle。
 
-    team：项目里读得到它的人就读得到。private：本人，或者这个项目的管理员。
+    team：项目里读得到它的人就读得到。private：只有本人，项目管理员也不例外——
+    它多半是芝士从这个人的私聊里记下的，私聊管理员进不去，记忆也不该是后门。
     别人问起一个 private 作用域时答 403 而不是 404——private 的存在本身不是
     秘密，里面的内容才是，而 404 会让本人也以为自己的记忆不见了。
-
-    **读得到的范围不等于写得动的范围**：写和删另有一道 ``_writable``，private
-    那一侧只认本人。
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     if owner is not None and owner != actor.handle:
-        if not await MemberService(db).manages(project_id, actor.handle):
-            raise ForbiddenError(say("privateMemoryOwnerSees"))
+        raise ForbiddenError(say("privateMemoryOwnerSees"))
     return actor.handle
 
 
@@ -93,18 +89,12 @@ async def _writable(
 ) -> str:
     """谁在写/删，写不写得动，一起答完；返回动手的人自己的 handle。
 
-    private 只认本人，**管理员也不例外**：管理员看得见是为了出事时能查（比如说
-    有人把密钥写进去了），不是为了替谁改。给他一支笔，那一条记忆就同时有了两个
-    主人，而「这是谁的判断」正是 private 这一层唯一要保住的东西——查得到就够了。
-    越权答 403，和读的那一道同一个码：读得到而写不动，不是「这里没有这条记忆」。
+    private 只认本人，和读的那一道同一条规则、同一个码。
 
     team 没有这一道：项目集体的一份状态，读得到的人就写得动，改动在总览房间留
     一条带 diff 的记录（回写那条路发），所以「谁删的」追得回来。
     """
-    actor = await _readable(db, resolver, project_id, owner)
-    if owner is not None and owner != actor:
-        raise ForbiddenError(say("privateMemoryOwnerEdits"))
-    return actor
+    return await _readable(db, resolver, project_id, owner)
 
 
 def _checked_path(raw: str) -> str:

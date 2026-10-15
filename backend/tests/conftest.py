@@ -87,6 +87,7 @@ os.environ["CLOUD_VM_CREDITS_PER_HOUR"] = '{"4c8g": 30}'
 # engine is built from settings.database_url at import time). -------------------
 from app.core.config import settings  # noqa: E402
 from tests import isolation  # noqa: E402
+from tests.support.fast_timings import FastTimings  # noqa: E402
 from tests.support.hang import HANG_S  # noqa: E402
 from tests.support.processes import process_list  # noqa: E402
 
@@ -969,6 +970,21 @@ def bearer() -> Callable[[str], dict[str, str]]:
         return session_auth_headers(handle)
 
     return _headers
+
+
+@pytest.fixture
+def fast_timings(monkeypatch) -> FastTimings:
+    """The product's common waits at millisecond scale; undone at teardown.
+
+    Opt in by requesting it: the table in ``tests/support/fast_timings.py`` is
+    applied on the way in, so a test that only needs a retry, a poll or a
+    give-up timeout over reads as a normal test instead of a 50-second wait.
+    ``fast_timings.set(module, "NAME")`` adds a knob the table does not carry.
+
+    Not for a test asserting the arithmetic of a wait — see that module for what
+    is deliberately left out and why.
+    """
+    return FastTimings(monkeypatch).apply()
 
 
 @pytest.fixture(autouse=True)

@@ -646,16 +646,17 @@ ${connector.trim()}
 `,
   }
   const env = gen('env.py')
+  const envFiles = [...new Set(env.fields.map((f) => f.origin))]
   out['ref-env'] = {
-    title: '环境变量全表', kind: '参考', covers: ['backend/app/core/config.py'],
+    title: '环境变量全表', kind: '参考', covers: envFiles,
     summary: `后端读取的全部 ${env.fields.length} 个设置：环境变量名、类型、默认值和代码里的说明。`,
     body: `# 环境变量全表 {#ref-env}
 
-后端读取的全部 ${env.fields.length} 个设置：环境变量名、类型、默认值和代码里的说明。从 \`backend/app/core/config.py\` 的 \`Settings\` 解析，不导入模块，所以不需要一个可用的环境。
+后端读取的全部 ${env.fields.length} 个设置：环境变量名、类型、默认值和代码里的说明。从 \`backend/app/core/config.py\` 的 \`Settings\` 解析（它继承的几节设置也一并读出来），不导入模块，所以不需要一个可用的环境。
 
 | 环境变量 | 类型 | 默认值 | 说明 |
 |---|---|---|---|
-${env.fields.map((f) => `| ${f.env.map((e) => `\`${e}\``).join('<br>')} | \`${mdCell(f.type)}\` | \`${mdCell(f.default).slice(0, 80)}\` | ${mdCell(f.doc).slice(0, 400)} [↗](https://github.com/SageSeekerSociety/cheese/blob/main/backend/app/core/config.py#L${f.line}) |`).join('\n')}
+${env.fields.map((f) => `| ${f.env.map((e) => `\`${e}\``).join('<br>')} | \`${mdCell(f.type)}\` | \`${mdCell(f.default).slice(0, 80)}\` | ${mdCell(f.doc).slice(0, 400)} [↗](https://github.com/SageSeekerSociety/cheese/blob/main/${f.origin}#L${f.line}) |`).join('\n')}
 `,
   }
   const wfDir = path.join(REPO, '.github/workflows')

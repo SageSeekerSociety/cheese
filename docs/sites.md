@@ -3,9 +3,9 @@
 The project's home page pins a **网站** row at the top of its 做出了什么 column,
 and the row appears once the project has a published Site or an accepted revision
 holding one. Publishing itself opens a dialog naming the revision and the entry.
-Project owners, project leads and team administrators can publish; project and
-team members can open the published Site. Its access does not become public when
-it is published.
+Project owners and team administrators can publish; whoever may read the
+project can open the published Site, so leaving the project closes it too. Its
+access does not become public when it is published.
 
 ## Topic previews
 

@@ -66,6 +66,30 @@ async def may_read_project(
     ``handle is None`` (nobody authenticated) is False, never True: "nobody
     asked" must not read as "anybody may".
     """
+    return await _on_project(
+        session, project_id=project_id, handle=handle, observers=True
+    )
+
+
+async def may_write_project(
+    session: AsyncSession, *, project_id: uuid.UUID, handle: str | None
+) -> bool:
+    """Whether ``handle`` may change this project's content: :func:`may_read_project`
+    less the two who only look on, the 赛题's asker and its board's teacher. They
+    read a student's project; editing or deleting its documents, files and memory
+    is the project's own people's."""
+    return await _on_project(
+        session, project_id=project_id, handle=handle, observers=False
+    )
+
+
+async def _on_project(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    handle: str | None,
+    observers: bool,
+) -> bool:
     if not handle:
         return False
     if await MemberRepository(session).get(project_id=project_id, user_handle=handle):
@@ -78,7 +102,9 @@ async def may_read_project(
     user = await UserRepository(session).get_by_username(handle)
     if user is None:
         return False
-    if await _is_asker_of_the_task(session, project=project, user_id=user.id):
+    if observers and await _is_asker_of_the_task(
+        session, project=project, user_id=user.id
+    ):
         return True
     # The board's teacher: an admin (or creator) of the 题目板 the project's
     # 赛题 sits on. The product now says a 题目板 is a course and its 管理员 is
@@ -88,7 +114,7 @@ async def may_read_project(
     # ``app.auth.space_access``), not ``TaskVisibilityService.can_view_task``:
     # that would widen the audience with a participation row or an email
     # domain, i.e. hand a whole class of students every team's conversations.
-    if await is_admin_of_projects_task(
+    if observers and await is_admin_of_projects_task(
         session, external_task_id=project.external_task_id, user_id=user.id
     ):
         return True

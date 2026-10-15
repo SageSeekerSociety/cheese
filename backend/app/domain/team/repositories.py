@@ -6,7 +6,7 @@ from sqlalchemy import Select, and_, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import BadRequestError, ConflictError
+from app.core.errors import BadRequestError, ConflictError, ForbiddenError
 from app.core.sentences import say
 from app.domain.avatars.models import Avatar
 from app.domain.team.models import (
@@ -21,6 +21,17 @@ from app.domain.team.models import (
 )
 
 _HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
+
+
+async def refuse_admin_grant_by_non_owner(
+    repo: "TeamRepository", team_id: int, actor_user_id: int
+) -> None:
+    """Only the owner makes admins: changing a role is owner-only, so adding or
+    inviting someone straight in as an admin must be too, or an admin could
+    remove a member and add them back one rank up."""
+    relation = await repo.get_member_relation(team_id, actor_user_id)
+    if relation is None or relation.role != TeamMemberRole.OWNER:
+        raise ForbiddenError(say("teamAdminGrantOwnerOnly"))
 
 
 def refuse_anyone_but_the_owner(team: Team, user_id: int) -> None:

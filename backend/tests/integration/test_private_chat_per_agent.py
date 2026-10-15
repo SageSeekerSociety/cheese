@@ -189,7 +189,7 @@ def test_a_teammate_badge_cannot_be_confused_with_a_persons(client):
     """Teammate handles are chosen per project, so one can be named after a
     person on the roster. The two DMs must still be told apart."""
     project_id = _project(client)
-    _on_the_roster(client, project_id, "user-1")
+    _on_the_roster(client, project_id, "user-1", "mentor-1")
     _add_agent(client, project_id, "mentor-1", "同名队友")
 
     with_person = client.get(

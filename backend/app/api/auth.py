@@ -15,7 +15,11 @@ from typing import Annotated
 from fastapi import Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.project_access import may_read_project, outsiders_reading
+from app.auth.project_access import (
+    may_read_project,
+    may_write_project,
+    outsiders_reading,
+)
 from app.common.auth import verify_access_token
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import get_db
@@ -791,6 +795,12 @@ class ActorResolver:
             )
             return
         if await self._is_project_member(project_id, actor.handle):
+            if self._writes and not await may_write_project(
+                self._session, project_id=project_id, handle=actor.handle
+            ):
+                # The 赛题's asker and its board's teacher read the project;
+                # changing it is its own people's.
+                raise ForbiddenError(say("projectObserverReadOnly"))
             return
         if await ProjectRepository(self._session).get(project_id) is None:
             raise NotFoundError(say("projectNotFound"))

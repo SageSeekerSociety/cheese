@@ -27,11 +27,11 @@ from app.core.errors import (
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_rooms, room_column
+from app.domain.deliverables import artifacts
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
-from app.domain.project import artifacts, forge
+from app.domain.project import forge
 from app.domain.project.ports import FileStore, LibraryFiles
-from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
 
 # Which documents tasks keep. A bare table: ``room_task`` depends on this
@@ -39,6 +39,11 @@ from app.domain.topic.models import Topic
 _tasks = table(
     "tasks", column("id", Uuid), column("room_id", Uuid), column("document_id", Uuid)
 )
+
+# The cards filed in each room. Bare for the same sibling reason: ``review``
+# reads this package (the list of what a room has delivered), so reading its
+# model back from here would close a cycle (``.importlinter``, C3).
+_cards = table("accept_cards", column("id", Uuid), column("topic_id", Uuid))
 
 # The goals document a project names. Also bare, so the read below sees a
 # pointer written by ``living_doc.overview``: that write goes through the table,
@@ -305,7 +310,7 @@ async def create_archive(
         for row, room_id in weeklies
     )
     allowed_cards = set(
-        await db.scalars(select(AcceptCard.id).where(AcceptCard.topic_id.in_(visible)))
+        await db.scalars(select(_cards.c.id).where(_cards.c.topic_id.in_(visible)))
     )
     catalog = []
     copies = []

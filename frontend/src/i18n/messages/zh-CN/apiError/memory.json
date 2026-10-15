@@ -46,8 +46,7 @@
   "migrationUnknownSource": "决定里的 source 不是一条已知的旧记忆：{source}",
   "migrationUnplaced": "这些旧记忆没有去处（共 {count} 条）：{sources}{more}",
   "privateMemoryNeedsOwner": "private 记忆必须带 owner_handle",
-  "privateMemoryOwnerEdits": "私人记忆只有本人改得动——管理员看得见，但改不了",
-  "privateMemoryOwnerSees": "私人记忆只有本人和项目管理员看得见",
+  "privateMemoryOwnerSees": "无法访问他人的私人记忆",
   "projectIdInvalid": "project_id 无效",
   "versionMustBeInteger": "version 必须是整数"
 }
