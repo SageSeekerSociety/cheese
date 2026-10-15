@@ -90,6 +90,11 @@ def _among(ids):
     return any_(bindparam(None, list(ids), type_=ARRAY(Uuid)))
 
 
+def _became_a_task():
+    """Whether the 支线 became a task in place: the task has its id."""
+    return select(_tasks.c.id).where(_tasks.c.id == Thread.id).exists()
+
+
 #: How much of the last reply the main line shows: two lines of it.
 LAST_REPLY_CHARS = 200
 
@@ -212,12 +217,15 @@ async def under_messages(
     """The line under each of these main-line messages whose 支线 has a reply
     in it, an AI teammate answering in it now, or a turn that failed in it,
     keyed by the message: what `in_room` says of a 支线, and who is answering
-    (``replying``: the seats with a turn running in a 支线)."""
+    (``replying``: the seats with a turn running in a 支线). A 支线 that became
+    a task has no line: the message shows the task's card instead."""
     if not block_ids:
         return {}
     found = list(
         await session.scalars(
-            select(Thread).where(Thread.root_block_id == _among(block_ids))
+            select(Thread).where(
+                Thread.root_block_id == _among(block_ids), ~_became_a_task()
+            )
         )
     )
     failed = await _failed(session, [t for t in found if t.reply_count == 0])
@@ -311,8 +319,9 @@ async def in_room(
     session: AsyncSession, room_id: uuid.UUID, *, viewer: str | None, limit: int
 ) -> list[dict]:
     """A channel's 支线 that have replies or a failed turn, the latest first:
-    the message each hangs under, its last reply, who took part, whether it
-    became a task, and whether something new is waiting for ``viewer``."""
+    the message each hangs under, its last reply, who took part, the tasks
+    made from it, and whether something new is waiting for ``viewer``. One
+    that became a task is listed with the channel's tasks, not here."""
     failed_turn = (
         select(Block.id)
         .where(
@@ -325,7 +334,11 @@ async def in_room(
     threads = list(
         await session.scalars(
             select(Thread)
-            .where(Thread.room_id == room_id, or_(Thread.reply_count > 0, failed_turn))
+            .where(
+                Thread.room_id == room_id,
+                or_(Thread.reply_count > 0, failed_turn),
+                ~_became_a_task(),
+            )
             .order_by(Thread.last_reply_at.desc().nulls_last(), Thread.id)
             .limit(limit)
         )

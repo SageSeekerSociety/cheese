@@ -84,13 +84,3 @@ export function inlineDiff(before: string, after: string): Segment[] {
   }
   return out
 }
-
-/** 两版正文（一段一行）之间改了的每一段：先按行求最长公共子序列，拼成一份统一格式
- *  的 diff，再交给 `paragraphDiff` 配对、细分。 */
-export function compareTexts(before: string, after: string): ParagraphDiff {
-  const a = before ? before.split('\n') : []
-  const b = after ? after.split('\n') : []
-  const marks = { same: ' ', add: '+', del: '-' }
-  const lines = ['@@ -1 +1 @@', ...lcsOps(a, b, true).map(({ kind, item }) => `${marks[kind]}${item}`)]
-  return paragraphDiff(lines.join('\n'))
-}

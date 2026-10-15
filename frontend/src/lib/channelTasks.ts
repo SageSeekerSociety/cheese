@@ -5,6 +5,7 @@
 // 一个人时写出他的名字（「待 林晓 审阅」），是看的人自己就写「待你审阅」。
 import type { RoomTask } from '../cx_types'
 
+import { replySnippet } from './blockDisplay'
 import { myPhraseLabel, phraseLabel } from './board'
 
 import { t } from '@/i18n'
@@ -17,7 +18,7 @@ export type ChannelTask = RoomTask & {
 }
 
 /** 卡上状态那一格的样子：点的颜色和形状，或者一个勾、一道横线。 */
-export type TaskTone = 'discussing' | 'running' | 'idle' | 'waiting' | 'mine' | 'stuck' | 'done' | 'closed'
+export type TaskTone = 'running' | 'idle' | 'waiting' | 'mine' | 'stuck' | 'done' | 'closed'
 
 export interface TaskLine {
   id: string
@@ -32,12 +33,15 @@ export interface TaskLine {
   accepted: string | null
   /** 卡上一次变化的时间。 */
   at: string
+  /** 这件任务里最后说的一句，折成一行：主线上那张卡的第二行，说它此刻在做什么。 */
+  latest?: string | null
+  /** 支线原地转成的任务：点开时在频道页右半边打开，和支线一样。 */
+  fromThread?: boolean
 }
 
 const WAITING_ON: Record<string, string> = {
   awaiting_review: 'work.room.taskCard.waitingReview',
   awaiting_answer: 'work.room.taskCard.waitingAnswer',
-  discussing: 'work.room.taskCard.waitingStart',
 }
 
 function tone(task: ChannelTask, mine: boolean): TaskTone {
@@ -46,7 +50,6 @@ function tone(task: ChannelTask, mine: boolean): TaskTone {
   if (mine) return 'mine'
   if (phrase === 'checks_failed') return 'stuck'
   if (column === 'needs_you' || task.waiting_on) return 'waiting'
-  if (column === 'not_started') return 'discussing'
   if (phrase === 'running' || phrase === 'fixing_checks' || phrase === 'resolving_conflict') return 'running'
   return 'idle'
 }
@@ -79,8 +82,13 @@ export function taskLine(task: ChannelTask, viewer: string, nameOf: (handle: str
     tone: tone(task, mine),
     accepted: open && n > 0 ? t('work.room.taskCard.acceptedTimes', { n }) : null,
     at: task.last_message?.created_at ?? task.updated_at,
+    latest: task.last_message ? replySnippet(task.last_message, NO_NAMES, 120) || null : null,
+    fromThread: !!task.from_thread,
   }
 }
+
+/** 卡上那一句里点到的人照 handle 写：卡只要一行能读，不为这一行再去读名册。 */
+const NO_NAMES = { mentionNames: {}, topicTitles: {} }
 
 /** 每条消息下面挂着的任务，按创建的先后。 */
 export function tasksByOrigin(tasks: readonly RoomTask[]): Map<string, RoomTask[]> {

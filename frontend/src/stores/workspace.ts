@@ -1,5 +1,5 @@
 import type { TopicNotifyLevel, TopicNotifySetting, TopicUnread } from '@/api'
-import type { Project, Topic } from '@/cx_types'
+import type { Project, RoomTask, Topic } from '@/cx_types'
 
 import { computed, ref, toRef, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
@@ -651,12 +651,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     }
   }
 
-  /** 转为任务：频道里的一条消息变成这个频道的一个任务，返回任务的 id。 */
-  async function upgradeMessage(messageId: string): Promise<string | null> {
+  /** 转为任务：主线上一条消息的支线原地转成任务，或支线里的一条回复另开一件。返回那件任务。 */
+  async function upgradeMessage(messageId: string): Promise<RoomTask | null> {
     try {
       const made = await upgradeBlock(messageId)
       await refreshTopics()
-      return made.id
+      return made
     } catch (e) {
       reportError(e, t('shell.workspaceErrors.convertMessage'))
       return null

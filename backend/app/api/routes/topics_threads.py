@@ -30,7 +30,7 @@ from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
 from app.domain.thread import reads
 from app.domain.thread.schemas import ThreadOut
-from app.domain.thread.services import open_thread, thread_teammate
+from app.domain.thread.services import open_thread, thread_of, thread_teammate
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -142,19 +142,23 @@ async def get_thread(
 ) -> dict:
     """One 支线, the message it hangs under, and the seat of the AI teammate
     it is talking with (`thread_teammate`; null before anyone called one): the
-    one its composer offers to hand a message to."""
+    one its composer offers to hand a message to. A 支线 that became a task
+    is still one, and says so (``task``): the pane showing it shows the task's
+    title, state and owner."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    if place.thread is None:
+    thread = await thread_of(db, topic_id)
+    if thread is None:
         raise NotFoundError("Thread not found")
-    root = await reads.root_of(db, place.thread)
+    root = await reads.root_of(db, thread)
     return ok(
         {
             # `_thread_out` 定型之后是模型，不是 dict：展开之前先 dump，别直接 `**`。
-            **_thread_out(place.thread).model_dump(mode="json"),
+            **_thread_out(thread).model_dump(mode="json"),
             "root": BlockOut.model_validate(root).model_dump(mode="json")
             if root is not None
             else None,
-            "teammate": await thread_teammate(db, place.thread),
+            "teammate": await thread_teammate(db, thread),
+            "task": str(place.task.id) if place.task is not None else None,
         }
     )

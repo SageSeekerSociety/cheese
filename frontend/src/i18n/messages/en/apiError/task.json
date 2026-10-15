@@ -7,11 +7,13 @@
   "submissionClaimNotApproved": "Your claim must be approved before you can hand work in",
   "submissionPastDeadline": "Your submission deadline has passed, so no version can be handed in or changed. Ask the challenge's author to extend it",
   "taskCreatedByPerson": "Only a person can create a task this way",
-  "taskOpeningNotFailed": "Drafting the task's doc has not failed; there is nothing to retry",
+  "taskOpeningNotFailed": "The first turn has not failed; there is nothing to retry",
   "taskOwnSessionCloses": "Only the task's owner, or the task's own session, can close it",
   "taskOwnerNotInProject": "A task can only be handed to a project member",
   "taskOwnerOnly": "Only the task's owner can do this",
-  "taskParticipantsOnly": "Only the task's owner and collaborators can talk to its AI teammate here",
+  "taskParticipantsOnly": "Only the task's owner and collaborators can do this",
   "taskTitleTooLong": "This title doesn't fit one sidebar line: a line holds about {limit} half-width characters (a CJK character counts as 2) and this one is {now}. Write a shorter one and try again.",
-  "teammateTaskByTeammate": "Only an AI teammate creates tasks here"
+  "teammateTaskByTeammate": "Only an AI teammate creates tasks here",
+  "teammateTaskHereOnlyInThread": "Only a thread can be turned into a task in place",
+  "teammateTaskSummaryRequired": "A new task needs a summary of what it is for"
 }

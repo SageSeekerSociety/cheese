@@ -1,16 +1,20 @@
 <script setup lang="ts">
 // 频道主线上的一张任务卡：标题、谁负责、此刻到哪一步、上一次变化是什么时候。点它打开任务。
 // 同一张卡在原处变化（lib/channelTasks）；`inList` 时它是支线区里的一行，否则单独成卡。
+// 支线原地转成的任务单独成卡时多一行：这件任务里最后说的一句，说它此刻在做什么。
 import type { TaskLine } from '../../lib/channelTasks'
 
 import { relTime } from '../../lib/relTime'
 
+import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 
 defineProps<{
   task: TaskLine
   /** 负责人的名字（按房间里的叫法）。 */
   ownerName: string | null
+  /** 负责人的头像；不给就只写名字。 */
+  ownerAvatar?: string | null
   /** 是支线区里几行中的一行，不单独画边框。 */
   inList?: boolean
 }>()
@@ -31,26 +35,35 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
     :data-task-id="task.id"
     @click="emit('open', task.id)"
   >
-    <v-icon size="16" class="task-card__icon" aria-hidden="true">mdi-checkbox-marked-outline</v-icon>
-    <span class="task-card__title">{{ task.title }}</span>
-    <span v-if="ownerName" class="task-card__owner">{{ t('work.room.taskCard.owner', { name: ownerName }) }}</span>
-    <span class="task-card__gap" />
-    <span v-if="task.accepted" class="task-card__accepted">{{ task.accepted }}</span>
-    <span class="task-card__status" :data-tone="task.tone" data-testid="task-card-status">
-      <v-icon v-if="task.tone === 'done'" size="13" aria-hidden="true">mdi-check</v-icon>
-      <v-icon v-else-if="task.tone === 'closed'" size="13" aria-hidden="true">mdi-minus</v-icon>
-      <span v-else class="task-card__dot" aria-hidden="true" />
-      {{ task.status }}
+    <span class="task-card__main">
+      <v-icon size="16" class="task-card__icon" aria-hidden="true">mdi-checkbox-marked-outline</v-icon>
+      <span class="task-card__title">{{ task.title }}</span>
+      <span v-if="ownerName" class="task-card__owner">
+        <UserAvatar v-if="ownerAvatar !== undefined" :size="18" :name="ownerName" :avatar="ownerAvatar ?? undefined" />
+        {{ t('work.room.taskCard.owner', { name: ownerName }) }}
+      </span>
+      <span class="task-card__gap" />
+      <span v-if="task.accepted" class="task-card__accepted">{{ task.accepted }}</span>
+      <span class="task-card__status" :data-tone="task.tone" data-testid="task-card-status">
+        <v-icon v-if="task.tone === 'done'" size="13" aria-hidden="true">mdi-check</v-icon>
+        <v-icon v-else-if="task.tone === 'closed'" size="13" aria-hidden="true">mdi-minus</v-icon>
+        <span v-else class="task-card__dot" aria-hidden="true" />
+        {{ task.status }}
+      </span>
+      <span class="task-card__at t-meta">{{ relTime(task.at) }}</span>
     </span>
-    <span class="task-card__at t-meta">{{ relTime(task.at) }}</span>
+    <span v-if="!inList && task.fromThread && task.latest" class="task-card__latest" data-testid="task-card-latest">{{
+      task.latest
+    }}</span>
   </button>
 </template>
 
 <style scoped>
 .task-card {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
   width: 100%;
   max-width: 620px;
   min-width: 0;
@@ -67,6 +80,22 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
 }
 .task-card:hover {
   background: var(--fill);
+}
+.task-card__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/* 和标题对齐（图标 16 + 间距 10）。 */
+.task-card__latest {
+  margin-left: 26px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .task-card--row {
   max-width: none;
@@ -90,6 +119,11 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.task-card__owner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .task-card__owner,
 .task-card__accepted {
@@ -117,10 +151,6 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   height: 7px;
   border-radius: var(--radius-pill);
   background: var(--faint);
-}
-.task-card__status[data-tone='discussing'] .task-card__dot {
-  border: 1.5px solid var(--faint);
-  background: transparent;
 }
 .task-card__status[data-tone='running'],
 .task-card__status[data-tone='done'] {
@@ -150,7 +180,7 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   flex: none;
 }
 @media (max-width: 600px) {
-  .task-card {
+  .task-card__main {
     flex-wrap: wrap;
     row-gap: 2px;
   }

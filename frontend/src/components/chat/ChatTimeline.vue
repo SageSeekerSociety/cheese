@@ -609,6 +609,7 @@ const rowLabels = computed(() =>
                   v-guide-anchor="'task-card'"
                   :task="task"
                   :owner-name="ownerName(task)"
+                  :owner-avatar="!m.thread && task.owner ? avatarOf(task.owner) : undefined"
                   :in-list="!!m.thread"
                   @open="emit('open-card', $event)"
                 />

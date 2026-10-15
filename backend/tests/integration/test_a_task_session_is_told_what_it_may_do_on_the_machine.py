@@ -1,14 +1,10 @@
-"""A task's session is told what it may do on the work machine.
+"""A 支线's session is told when the 支线 becomes a task.
 
-Until its owner starts the task, nothing the session does on the machine is
-kept: its sync and its pushes are refused. Told nothing, it found out by being
-refused, read the refusal as a broken sandbox and booked a retry. Starting the
-task relaunches the session on the same conversation, so it is told again then,
-and only then does its work reach the project.
-
-A task somebody made is started where it is made, so the one that waits — and
-whose session hears this — is one an AI teammate raised on its own
-(``teammate_task``).
+In a 支线 nothing the session does on the machine is kept; once the 支线 is a
+task, its work reaches the project and the people whose word it acts on are
+the task's owner and collaborators. The session carries the same conversation
+on, so nothing it opened with says so: it is told on its next turn, once, and
+not on every turn after.
 """
 
 import asyncio
@@ -26,12 +22,12 @@ from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
     post_message,
     post_project,
+    room_agent_seat,
     session_auth_headers,
-    teammate_task,
 )
 
-NOT_STARTED = "这条任务还没开始"
-STARTED = "这条任务已经开始"
+THE_TASK = "## 这个任务"
+BECAME = "这条支线已经转为任务"
 
 
 def _until(predicate, what: str) -> None:
@@ -53,7 +49,7 @@ def _inputs(client, task: uuid.UUID) -> list[NativeInput]:
     return asyncio.run(read())
 
 
-def test_a_task_session_hears_its_work_is_not_kept_until_the_task_starts(client):
+def test_a_thread_session_hears_once_that_its_thread_became_a_task(client):
     data = post_project(client, {"name": "Reads"}, owner="alice").json()["data"]
     room = data["root_topic_id"]
     channel = StubChannel()
@@ -73,36 +69,43 @@ def test_a_task_session_hears_its_work_is_not_kept_until_the_task_starts(client)
         compute=stub_compute(channel),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    task = teammate_task(client, room, "先看看", owner="alice")
-    task_id = uuid.UUID(task["id"])
+    seat = room_agent_seat(client, room)
+    root = post_message(client, room, "alice", {"content": "登录要加验证码"})
+    thread = client.post(
+        f"/blocks/{root['id']}/thread", headers=session_auth_headers("alice")
+    ).json()["data"]["id"]
+    thread_id = uuid.UUID(thread)
 
-    # 停着的活：芝士写初稿的那一轮就被告知改动留不下。现状只在变了的时候再
-    # 告诉一次，所以听的是它开场那一轮，不是后来的每一轮。
+    post_message(client, thread, "alice", {"content": f"<@{seat}> 先看看现状"})
+    _until(lambda: any("先看看现状" in p for p in heard), "the 支线 never had a turn")
+    assert not any(THE_TASK in prompt for prompt in heard)
     _until(
-        lambda: any(NOT_STARTED in prompt for prompt in heard),
-        "the task's session was never told its work is not kept",
-    )
-    assert not any(STARTED in prompt for prompt in heard)
-    _until(
-        lambda: all(row.completed_at for row in _inputs(client, task_id)),
-        "the task's first turn never finished",
+        lambda: all(row.completed_at for row in _inputs(client, thread_id)),
+        "the 支线's turn never finished",
     )
 
-    started = client.post(
-        f"/topics/{task['id']}/start",
-        json={"reviewer_handle": "alice"},
-        headers=session_auth_headers("alice"),
+    made = client.post(
+        f"/blocks/{root['id']}/upgrade", headers=session_auth_headers("alice")
     )
-    assert started.status_code == 200, started.text
+    assert made.status_code == 200, made.text
     before = len(heard)
-    post_message(client, task["id"], "alice", {"content": "动手吧"})
+    post_message(client, thread, "alice", {"content": "动手吧"})
     _until(
         lambda: any("动手吧" in prompt for prompt in heard[before:]),
         "the task's next turn never reached its session",
     )
+    told = heard[before:]
+    assert sum(THE_TASK in prompt for prompt in told) == 1
+    assert any(BECAME in prompt for prompt in told)
 
-    # Told once, on the first input after the start (the start itself may
-    # bring one), and the read-only line never again.
-    after = heard[before:]
-    assert sum(STARTED in prompt for prompt in after) == 1
-    assert not any(NOT_STARTED in prompt for prompt in after)
+    _until(
+        lambda: all(row.completed_at for row in _inputs(client, thread_id)),
+        "the task's turn never finished",
+    )
+    again = len(heard)
+    post_message(client, thread, "alice", {"content": "再改一下按钮"})
+    _until(
+        lambda: any("再改一下按钮" in prompt for prompt in heard[again:]),
+        "the task's later turn never reached its session",
+    )
+    assert not any(THE_TASK in prompt for prompt in heard[again:])

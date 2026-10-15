@@ -8,6 +8,9 @@ import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
+
+import { getAvatarUrl } from '@/utils/materials'
 
 import { useSkillProposals } from './useSkillProposals'
 
@@ -15,9 +18,12 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
+import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
+import { queryClient } from '@/query/client'
+import { threadQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
@@ -42,6 +48,12 @@ const props = defineProps<{
   /** 这件事单独指定了队友时，那位的 handle（任务信息卡那行「AI 队友」挑的）。
    *  发送框那个 @ 跟着它走，而不是跟着房间名册上那位。 */
   taskAgentHandle?: string | null
+  /** 这件任务是一条支线原地转成的：对话最上面是它挂着的那条消息，前面写它来自哪个频道。 */
+  taskFromThread?: boolean
+  /** 这里说的话不用 @ 就是说给 AI 队友的：任务的负责人和协作者在任务里。 */
+  alwaysSummon?: boolean
+  /** 这个房间名册上每个 handle 叫什么。 */
+  memberNames?: Record<string, string>
   /** 这里此刻不能说话的原因，见 ChatPanel。 */
   composerClosed?: string | null
   /** 这里的提问已经不再等回答，见 ChatPanel。 */
@@ -118,6 +130,23 @@ function openSkill(skill: { id: string }) {
 
 const store = useWorkspaceStore()
 
+// 支线转成的任务：它挂着的那条主线消息，和右半边那一栏读的是同一份。
+const threadRead = useQuery(
+  computed(() => {
+    const id = props.taskFromThread ? props.taskId ?? '' : ''
+    return { ...threadQuery(id), enabled: !!id }
+  }),
+  queryClient
+)
+const root = computed<Block | null>(() => (props.taskFromThread ? threadRead.data.value?.root ?? null : null))
+const refs = computed(() => ({ mentionNames: props.memberNames ?? {}, topicTitles: {} as Record<string, string> }))
+function nameOf(handle: string): string {
+  return props.memberNames?.[handle] || handle
+}
+function avatarOf(handle: string): string {
+  return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
+}
+
 // 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。
 const joining = ref(false)
 async function join() {
@@ -152,7 +181,7 @@ defineExpose({
       :agent-handle="taskAgentHandle ?? null"
       :composer-closed="composerClosed"
       :ask-closed="askClosed"
-      :always-summon="!!taskId"
+      :always-summon="!!alwaysSummon"
       hide-header
       :show-composer="!rejecting"
       :members="members"
@@ -192,6 +221,13 @@ defineExpose({
           @review="emit('review')"
           @rejecting="rejecting = $event"
         />
+      </template>
+      <template v-if="root" #timeline-start>
+        <button type="button" class="from-room t-meta" @click="emit('open-room')">
+          {{ t('work.task.fromRoom', { room: topicTitle(topic) }) }}
+        </button>
+        <ThreadRoot :root="root" :name="nameOf(root.author)" :avatar="avatarOf(root.author)" :refs="refs" />
+        <div class="from-room__rule" aria-hidden="true" />
       </template>
       <template #timeline-end>
         <!-- Agent 反馈卡：「这一轮结束时，平台要人做的一个决定」，接在这一轮的
@@ -240,6 +276,24 @@ defineExpose({
 </template>
 
 <style scoped>
+.from-room {
+  align-self: flex-start;
+  margin: 12px 16px 0 54px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.from-room:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.from-room__rule {
+  height: 1px;
+  margin: 8px 16px 4px;
+  background: var(--line);
+}
 .archived-chip {
   font-size: 12px;
 }

@@ -31,6 +31,7 @@ from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
 from app.domain.room_task.place import Place
+from app.domain.room_task.services import TaskService
 from app.domain.thread.services import answered_in, thread_teammate
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -57,7 +58,9 @@ async def prepare_human(
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
         "mentioned": (
-            place.task is not None and not _names_only_people(mentions.content)
+            place.task is not None
+            and TaskService.takes_part(place.task, author)
+            and not _names_only_people(mentions.content)
         )
         or (seats is not None and looks_like_agent_handle(seats[1])),
     }
@@ -76,9 +79,12 @@ async def prepare_human(
 def _names_only_people(content: str) -> bool:
     """Whether ``content`` @-s someone and every one it @-s is a person.
 
-    A task calls its teammate with every message, except one that says whom it
-    is for and names no AI teammate there: an @ of a person is said to that
-    person, and the task's teammate does not pick it up. ``@all``/``@here``
+    A task calls its teammate with every message its owner or a collaborator
+    says, except one that says whom it is for and names no AI teammate there:
+    an @ of a person is said to that person, and the task's teammate does not
+    pick it up. Anyone else in the project may speak in a task as in a 支线:
+    their message calls the teammate only when it @-s it, and otherwise rides
+    into its next turn as something said there. ``@all``/``@here``
     name the whole channel, the teammate included."""
     handles = mentioned_handles(content)
     return bool(handles) and all(

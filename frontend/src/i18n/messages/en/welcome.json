@@ -251,12 +251,12 @@
     },
     "task": {
       "title": "Task",
-      "text": "{agent} turned this into a task. Open it to follow progress and changes.",
-      "textWaiting": "Once it starts, {agent} turns this into a task listed under your message."
+      "text": "{agent} turned this thread into a task. Open it to follow progress and changes.",
+      "textWaiting": "Before it starts, {agent} turns this thread into a task listed under your message."
     },
     "taskPage": {
       "title": "Task page",
-      "text": "Progress, changes and the delivery are all here. When it is done {agent} hands the result to you to review; a task it raised on its own waits for you to click Start.",
+      "text": "Progress, changes and the delivery are all on the task page. When it is done {agent} hands the result to you to review.",
       "textWaiting": "Open the task {agent} created; progress and the delivery are inside."
     },
     "accept": {

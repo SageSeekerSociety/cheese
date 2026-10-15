@@ -61,7 +61,22 @@ def test_the_line_names_who_took_part(client):
     assert line["tasks"] == []
 
 
-def test_the_line_names_the_tasks_the_thread_became(client):
+def test_the_line_names_the_tasks_made_from_the_thread(client):
+    tid = _channel(client)
+    root = post_message(client, tid, "alice", {"content": "预览有两个问题"})
+    thread = _thread(client, root["id"], "bob")
+    said = post_message(client, thread, "bob", {"content": "微信里打不开预览"})
+    r = client.post(
+        f"/blocks/{said['id']}/upgrade", headers=session_auth_headers("alice")
+    )
+    assert r.status_code == 200, r.text
+
+    line = _line_under(client, tid, root["id"])
+
+    assert [t["id"] for t in line["tasks"]] == [r.json()["data"]["id"]]
+
+
+def test_a_thread_that_became_the_task_has_no_line(client):
     tid = _channel(client)
     root = post_message(client, tid, "alice", {"content": "微信里打不开预览"})
     thread = _thread(client, root["id"], "bob")
@@ -71,9 +86,7 @@ def test_the_line_names_the_tasks_the_thread_became(client):
     )
     assert r.status_code == 200, r.text
 
-    line = _line_under(client, tid, root["id"])
-
-    assert [t["id"] for t in line["tasks"]] == [r.json()["data"]["id"]]
+    assert _line_under(client, tid, root["id"]) is None
 
 
 def test_an_empty_thread_with_nobody_answering_has_no_line(client):

@@ -60,11 +60,11 @@ class Place:
     @property
     def keeps_work(self) -> bool:
         """Whether what a session does here may reach the project. Not from a
-        支线, and from a task only once its owner started it: what changes the
-        project is done in a started task or in the room's own line."""
-        if self.thread is not None:
-            return False
-        return self.task is None or self.task.started_at is not None
+        支线: what changes the project is done in a task or in the room's own
+        line. A 支线 that became a task resolves as the task
+        (`PlaceResolver.conversation`), so its session keeps its work from then
+        on."""
+        return self.thread is None
 
 
 class PlaceResolver:
@@ -79,7 +79,7 @@ class PlaceResolver:
 
     async def conversation(self, conversation_id: uuid.UUID) -> Place | None:
         """The conversation ``conversation_id`` names — a room's id, a task's or
-        a 支线's."""
+        a 支线's. A 支线 that became a task shares its id and is the task."""
         place = await self.resolve(conversation_id)
         if place is not None:
             return place
@@ -127,7 +127,7 @@ async def session_keeps_work(
     """Whether the agent session ``session_id`` may carry its work into the
     project (`Place.keeps_work`): what a machine credential naming it asks
     before it is handed what pushes. One naming no session, or a session that
-    is gone, has no 支线 or unstarted task to answer for, and keeps its work.
+    is gone, has no 支线 to answer for, and keeps its work.
 
     ``session_id`` is whatever the caller holds — a claim read off a token, or
     the id of the session row it looked up, which is a UUID."""

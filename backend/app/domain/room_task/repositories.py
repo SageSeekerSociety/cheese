@@ -61,7 +61,6 @@ class ListedTask:
     reporter_handle: str | None
     contributor_handles: tuple[str, ...]
     accepted_at: datetime | None
-    started_at: datetime | None
     conclusion: str | None
     closing_since: datetime | None
     updated_at: datetime
@@ -96,9 +95,11 @@ class TaskRepository:
         reporter_handle: str | None = None,
         contributor_handles: list[str] | None = None,
         title_source: TaskTitleSource = TaskTitleSource.human,
+        task_id: uuid.UUID | None = None,
     ) -> Task:
         """Create a task; its service assigns the branch before checkout."""
         task = Task(
+            **({"id": task_id} if task_id is not None else {}),
             project_id=project_id,
             room_id=room_id,
             number=await take_number(self._session, project_id, Numbered.task),
@@ -165,7 +166,6 @@ class TaskRepository:
                 Task.reporter_handle,
                 Task.contributor_handles,
                 Task.accepted_at,
-                Task.started_at,
                 Task.conclusion,
                 Task.closing_since,
                 Task.updated_at,
@@ -186,7 +186,6 @@ class TaskRepository:
                 reporter_handle=row.reporter_handle,
                 contributor_handles=tuple(row.contributor_handles or ()),
                 accepted_at=row.accepted_at,
-                started_at=row.started_at,
                 conclusion=row.conclusion,
                 closing_since=row.closing_since,
                 updated_at=row.updated_at,

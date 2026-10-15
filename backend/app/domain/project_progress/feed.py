@@ -1,7 +1,7 @@
 """项目总览上的「最近进展」：这个项目最近发生了什么。
 
-不另存一张表：每一条都是已经记在别处的事实 —— 任务什么时候建的、开始的、采纳
-的、关掉的，卡什么时候被退回，产物什么时候出了新的一版，任务从什么时候起停住了。
+不另存一张表：每一条都是已经记在别处的事实 —— 任务什么时候建的、采纳的、关掉
+的，卡什么时候被退回，产物什么时候出了新的一版，任务从什么时候起停住了。
 这里只把它们按时间摆在一起。
 
 看得见什么由调用方给：`rooms` 是读者看得见、而且没有归档的频道，不在里面的频道
@@ -36,7 +36,6 @@ LIMIT = 40
 CLOSED_BY_LANDING = timedelta(minutes=5)
 
 CREATED = "created"
-STARTED = "started"
 ACCEPTED = "accepted"
 COMPLETED = "completed"
 CLOSED = "closed"
@@ -117,7 +116,6 @@ async def recent(
     accepted = await accepted_by_task(session, [t.id for t in tasks])
     for task in tasks:
         about(task, CREATED, task.created_at, task.created_by or task.owner_handle)
-        about(task, STARTED, task.started_at, task.started_by)
         for landed in accepted.get(task.id, []):
             about(task, ACCEPTED, landed.at, landed.by)
         if task.id not in accepted and task.accepted_at is not None:

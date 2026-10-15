@@ -129,9 +129,10 @@ async def send_chat_message(
     `request_id` makes a retry safe: the same id returns the message already
     stored instead of posting it twice.
 
-    In a task only the people working it speak — its owner and the
-    collaborators the owner brought in — and its own session, publishing in
-    its turn. What anyone else has to say about a task they say in the room.
+    Anyone in the project speaks in a task, as in a 支线 — it is often one
+    that became the task, with the same people in it. What its AI teammate
+    acts on is its owner's and collaborators' word (`agent.turn.intake.human`).
+    Of the agents, only the task's own session publishes there, in its turn.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -143,8 +144,6 @@ async def send_chat_message(
             if resolver.credential_conversation() != task.id:
                 raise ForbiddenError(say("taskOwnSessionSpeaks"))
             return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
-        if not TaskService.takes_part(task, actor.handle):
-            raise ForbiddenError(say("taskParticipantsOnly"))
         TaskService.require_open(task)
     elif await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
@@ -233,7 +232,7 @@ async def _publish_as_agent(
     )
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
-    # A task's session names nobody into its task: only its owner speaks there.
+    # A task's session names nobody into its task: it works for its owner.
     if payload is not None and place.task is None:
         await _summon_the_named(chat, runner, place, payload, author)
     return payload

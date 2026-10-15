@@ -13,10 +13,6 @@
   "closedNotice": "This task is closed",
   "collaborators": "Collaborators",
   "collaboratorsHint": "Can talk to the AI teammate in this task",
-  "compare": "Compare with the start",
-  "compareBack": "Back to the document",
-  "compareFailed": "Couldn't read the document as it was at the start",
-  "compareSame": "The document hasn't changed since the start",
   "conclusion": "Conclusion",
   "details": "Task details",
   "followsRoom": "Follows the channel",
@@ -32,13 +28,10 @@
   "outputs": "Outputs",
   "owner": "Owner",
   "ownerChip": "Owned by {name}",
-  "ownerOnlyNotice": "Only the owner and collaborators can talk to {name} here",
   "removeCollaborator": "Remove",
   "rename": "Rename",
   "renameLabel": "Task name",
   "renameTitle": "Rename task",
   "reopen": "Reopen task",
-  "start": "Start",
-  "startFailed": "Couldn't start. Try again later",
-  "startedLine": "{who} started {when}"
+  "fromRoom": "From #{room}"
 }

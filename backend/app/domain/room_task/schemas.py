@@ -38,7 +38,7 @@ class TaskOut(BaseModel):
     status: TaskStatus
     # 唯一的主. A room answers this with a roster; a task with one handle.
     owner_handle: str | None = None
-    # 开始时确定验收人；还没开始的任务和历史记录可能为空。
+    # 建任务时确定验收人；没有人能审阅时和历史记录可能为空。
     reviewer_handle: str | None = None
     reporter_handle: str | None = None
     contributor_handles: list[str] = Field(default_factory=list)
@@ -54,10 +54,6 @@ class TaskOut(BaseModel):
     agent_handle: str | None = None
     # 这件事的实况文档。
     document_id: uuid.UUID | None = None
-    # 负责人点「开始」的那一刻、点的人、实况文档当时的版本。
-    started_at: datetime | None = None
-    started_by: str | None = None
-    started_doc_version: int | None = None
     # The latest accepted delivery. Accepting the last step closes the task;
     # closing a task alone does not imply delivery.
     accepted_by: str | None = None

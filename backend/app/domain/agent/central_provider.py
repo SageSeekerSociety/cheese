@@ -268,9 +268,8 @@ class CentralChannel(DeviceChannel):
         # Its credential names that lease, as the one the lease hands out does:
         # the executor route admits nothing else, and this is the one the
         # session's calls carry again after each turn rewrites it.
-        # ``scratch``: a 支线, or a task its owner has not started, whose work
-        # stays on the machine and never reaches the project
-        # (`routes/execution.py`).
+        # ``scratch``: a 支线, whose work stays on the machine and never
+        # reaches the project (`routes/execution.py`).
         token = bind_resource_token(
             token,
             str(resource),

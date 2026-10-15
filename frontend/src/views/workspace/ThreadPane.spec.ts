@@ -1,4 +1,5 @@
-/** 打开一条支线就算读过它；一条支线可以转出几件任务，转出来的都列在挂着的那条消息下面。 */
+/** 打开一条支线就算读过它；页头一行写它说的事，「转为任务」把这条支线原地转成任务，转成以后
+ *  页头写任务名、状态、负责人和「整页打开」。从这里另开的几件任务列在挂着的那条消息下面。 */
 import type { Component } from 'vue'
 import type { Block, RoomTask, Topic } from '@/cx_types'
 import type { ThreadSummary } from '@/types/threads'
@@ -22,6 +23,7 @@ vi.mock('@/api', async (importOriginal) => ({
     const rows = roomTasks.value.filter((task) => (opts.blocks ?? []).includes(task.upgraded_from_block_id ?? ''))
     return { data: rows, total: rows.length }
   }),
+  getTask: vi.fn(async (id: string) => roomTasks.value.find((task) => task.id === id)),
 }))
 
 import ThreadPane from './ThreadPane.vue'
@@ -105,7 +107,7 @@ describe('支线', () => {
     await waitFor(() => expect(markRead).toHaveBeenCalledWith('th1'))
   })
 
-  it('「转为任务」转的是它挂着的那条消息，已经转过的也还能再转', async () => {
+  it('「转为任务」转的是它挂着的那条消息：这条支线原地转', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     roomTasks.value = [task('task9', 'b1')]
     const { findByTestId, emitted } = mount()
@@ -113,7 +115,41 @@ describe('支线', () => {
     expect(emitted()['to-task']).toEqual([['b1']])
   })
 
-  it('从这里转出的任务都列着，点开去那件任务', async () => {
+  it('页头只有一行，写那条消息说的事，开头点的名不写', async () => {
+    getThread.mockResolvedValue({
+      id: 'th1',
+      room_id: 'r1',
+      root_block_id: 'b1',
+      reply_count: 2,
+      root: root({ content: '<@cheese-1> 登录要不要加手机验证码？' }),
+    })
+    const { findByRole } = mount()
+    const heading = await findByRole('heading', { level: 2 })
+    await waitFor(() => expect(heading.textContent).toBe('登录要不要加手机验证码？'))
+  })
+
+  it('转成任务以后，页头写任务名、状态和负责人，整页打开去任务页', async () => {
+    roomTasks.value = [{ ...task('th1', 'b1', '登录验证码'), presentation: { column: 'building', phrase: 'running' } }]
+    getThread.mockResolvedValue({
+      id: 'th1',
+      room_id: 'r1',
+      root_block_id: 'b1',
+      reply_count: 2,
+      root: root(),
+      task: 'th1',
+    })
+    const { findByRole, findByTestId, queryByTestId, getByText, emitted } = mount()
+    const heading = await findByRole('heading', { level: 2 })
+    await waitFor(() => expect(heading.textContent).toBe('登录验证码'))
+    expect(getByText('李安 负责')).toBeTruthy()
+    expect(queryByTestId('thread-to-task')).toBeNull()
+    // 这条支线自己转成的那件写在页头，不在下面再列一遍。
+    expect(queryByTestId('task-card')).toBeNull()
+    await fireEvent.click(await findByTestId('thread-open-page'))
+    expect(emitted()['open-page']).toEqual([['th1']])
+  })
+
+  it('从这里另开的任务都列着，点开去那件任务', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     roomTasks.value = [
       task('task9', 'b1', '表单字段精简'),

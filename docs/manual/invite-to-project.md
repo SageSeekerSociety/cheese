@@ -119,6 +119,6 @@ parts:
 
 :::cards
 - [和同学一起做一个项目](/team-project#team-project)：建团队，在项目里分工，每人负责一个任务。
-- [把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)：写清要求、开始任务、采纳或退回结果。
+- [把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)：写清要求、跟进任务、采纳或退回结果。
 - [项目](/projects#project-members)：项目成员从哪里来，外部成员怎么管理。
 :::
