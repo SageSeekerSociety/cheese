@@ -8,8 +8,8 @@
       <v-app-bar-nav-icon v-if="hasDrawer" @click="toggleDrawer" />
     </template>
 
-    <!-- 中间这一格：这一屏声明的头部（composables/useScreenHeader.ts）——它自己的
-         标题行，或者标题和底下那行小字——没声明就是路由的标题。
+    <!-- 中间这一格：这一屏声明的头部，即它自己的标题行（composables/useScreenHeader.ts）；
+         没声明就是路由的标题。
          手机上只有这一条顶栏，从不卸载——页面各画各的头的时候，两条头交替
          出现，Vuetify 会把 v-main 的 padding 从 57 滑到 0（.v-main 是
          transition: .2s），整页跟着抖一下。所以顶栏不动，动的是里面的内容。 -->

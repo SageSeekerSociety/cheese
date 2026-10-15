@@ -190,10 +190,12 @@ async function confirmHandOver() {
       <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
         task ? taskTitle(task) : ''
       }}</span>
-      <span v-if="task" class="task-header__state" data-testid="task-phrase">{{ taskPhraseLabel(task, ME) }}</span>
-      <span v-if="connected === false" class="task-header__disconnected" role="status">{{
-        t('work.room.header.disconnected')
-      }}</span>
+      <span class="task-header__meta">
+        <span v-if="task" class="task-header__state" data-testid="task-phrase">{{ taskPhraseLabel(task, ME) }}</span>
+        <span v-if="connected === false" class="task-header__disconnected" role="status">{{
+          t('work.room.header.disconnected')
+        }}</span>
+      </span>
     </div>
 
     <v-menu v-if="task?.owner_handle" v-model="detailsOpen" location="bottom end" :close-on-content-click="false">
@@ -205,13 +207,13 @@ async function confirmHandOver() {
           :title="t('work.task.details')"
           data-testid="task-details"
         >
-          <UserAvatar :size="20" :name="ownerName" :avatar="avatarOf(task?.owner_handle)" />
+          <UserAvatar :size="mdAndUp ? 20 : 14" :name="ownerName" :avatar="avatarOf(task?.owner_handle)" />
           <span class="task-header__owner-name">{{ t('work.task.ownerChip', { name: ownerName }) }}</span>
           <span v-if="collaborators.length" class="task-header__helpers" aria-hidden="true">
             <UserAvatar
               v-for="handle in collaborators.slice(0, 3)"
               :key="handle"
-              :size="18"
+              :size="mdAndUp ? 18 : 14"
               :name="nameOf(handle)"
               :avatar="avatarOf(handle)"
               class="task-header__helper"
@@ -565,6 +567,65 @@ async function confirmHandOver() {
 }
 .task-header__owner-name {
   white-space: nowrap;
+}
+.task-header__meta {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+/* 手机顶栏里两行（和支线转成任务时的 ThreadHead 一个样子）：任务名独占第一行；状态和
+   负责人退到第二行，同一号字、同一种灰，各成一格，靠间距和小头像分开，不拿点号串。
+   负责人那颗照旧点开任务信息，⋯ 竖跨两行贴右。 */
+.task-header--bar {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 16px;
+  row-gap: 1px;
+}
+.task-header--bar .task-header__text {
+  display: contents;
+}
+.task-header--bar .task-header__title {
+  grid-column: 1 / 3;
+  grid-row: 1;
+  max-width: 100%;
+}
+.task-header--bar .task-header__meta {
+  grid-column: 1;
+  grid-row: 2;
+}
+.task-header--bar .task-header__state,
+.task-header--bar .task-header__owner {
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: var(--lh-13);
+}
+/* 手指要点得中：上下各撑出 8px，再用负外边距还回去，第二行不因此变高。 */
+.task-header--bar .task-header__owner {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: start;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  padding-block: 8px;
+  margin-block: -8px;
+}
+.task-header--bar .task-header__owner-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.task-header--bar [data-testid='task-more'] {
+  grid-column: 3;
+  grid-row: 1 / 3;
+  align-self: center;
 }
 .task-details {
   width: 320px;

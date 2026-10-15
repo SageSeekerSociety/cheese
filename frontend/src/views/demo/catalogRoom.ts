@@ -32,6 +32,7 @@ import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import ThreadHead from '@/components/room/ThreadHead.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
@@ -332,6 +333,42 @@ const TASK_ENTRIES: CatalogEntry[] = [
           refs: { mentionNames: {}, topicTitles: {} },
         },
         expect: '登录要不要加手机验证码',
+      },
+    ],
+  },
+  {
+    id: 'room-thread-head',
+    title: 'ThreadHead',
+    about:
+      '支线的页头一行：它挂着的那条消息说的事和「转为任务」；转成以后是任务名、状态、负责人和「整页打开」。桌面上在支线那一栏顶上，手机上是顶栏的内容。',
+    file: 'src/components/room/ThreadHead.vue',
+    component: ThreadHead,
+    needs: UI_T,
+    args: { viewer: 'alice', members: [], memberNames: { alice: 'Alice' }, canToTask: true },
+    states: [
+      {
+        name: '还是支线',
+        note: '写挂着的那条消息说的事，右边「转为任务」；桌面那一栏带关闭键。',
+        props: { heading: '登录要不要加手机验证码？', task: null, closable: true },
+        expect: '登录要不要加手机验证码',
+      },
+      {
+        name: '转成了任务',
+        note: '同一行换成任务：任务名、状态、负责人，「整页打开」进任务页。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, closable: true },
+        expect: '登录页加「记住我」',
+      },
+      {
+        name: '在手机顶栏里',
+        note: '`bar`：不带自己的高度、底线和左边距，顶栏给；返回在顶栏左边，没有关闭键。',
+        props: { heading: '登录要不要加手机验证码？', task: null, bar: true },
+        expect: '登录要不要加手机验证码',
+      },
+      {
+        name: '转成任务，在手机顶栏里',
+        note: '两行：任务名独占第一行，状态和负责人退到第二行，同一号字、同一种灰，各成一格。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, bar: true },
+        expect: '登录页加「记住我」',
       },
     ],
   },
