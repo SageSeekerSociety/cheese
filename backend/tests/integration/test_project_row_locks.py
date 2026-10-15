@@ -19,8 +19,8 @@ from sqlalchemy.pool import NullPool
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.living_doc.overview import overview_document
 from app.domain.project.models import Project
-from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import new_project
 
@@ -44,7 +44,7 @@ def test_a_projects_first_overview_does_not_hold_up_its_rooms(client):
             async with sessions() as turn, sessions() as room:
                 project = await turn.get(Project, project_id)
                 assert project is not None and project.root_topic_id is not None
-                await ProjectService(turn).overview_document(project)
+                await overview_document(turn, project_id)
                 # The turn has not committed. The room writes a note meanwhile.
                 await room.execute(text("SET LOCAL lock_timeout = '2s'"))
                 try:

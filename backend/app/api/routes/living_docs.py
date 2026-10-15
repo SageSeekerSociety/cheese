@@ -43,6 +43,7 @@ from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab, work_edits
+from app.domain.living_doc.overview import overview_document
 from app.domain.living_doc.schemas import (
     DocumentIn,
     DocumentRenameIn,
@@ -92,8 +93,8 @@ async def project_overview_document(
     time anyone asks."""
     actor = await resolver.resolve(project_id=project_id, read_only=True)
     await authorize_in_project(resolver, actor, project_id)
-    projects_ = ProjectService(db)
-    doc = await projects_.overview_document(await projects_.get_or_404(project_id))
+    await ProjectService(db).get_or_404(project_id)
+    doc = await overview_document(db, project_id)
     await db.commit()
     return ok({"id": str(doc.id)})
 

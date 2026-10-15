@@ -69,13 +69,13 @@ from app.domain.block.queries import (
     turn_history,
 )
 from app.domain.delivery.receipts import held_blocks
+from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import MemoryIndex, memory_index
 from app.domain.memory.scopes import MemoryScope
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
-from app.domain.project.services import ProjectService
 from app.domain.room_task import naming
 from app.domain.room_task.canvas_text import living_doc_canvases
 from app.domain.room_task.models import TaskStatus, TaskTitleSource
@@ -557,7 +557,7 @@ class TurnPreparation:
             # 召回那条路——写它的人（或 agent）留了痕，每段对话读到的是同一份，而
             # 这正是共享记忆池做不到的两件事。
             overview_doc = (
-                await ProjectService(session).overview_document(project)
+                await overview_document(session, project.id)
                 if project is not None
                 else None
             )

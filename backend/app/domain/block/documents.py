@@ -106,25 +106,6 @@ async def whose_document(
     return owner[1], owner[0]
 
 
-async def seed(session: AsyncSession, doc: Document, content: str) -> None:
-    """The first version of a document, written by the platform from words it
-    already had (a new project's goals). The caller holds its lock."""
-    if doc.version != 0:
-        raise _doc_conflict(doc.version)
-    written = await Documents(session).write(
-        doc, content, author="system", expected_version=0
-    )
-    if written is None:
-        raise _doc_conflict(doc.version)
-    await DocumentJournal(session).append(
-        document_id=doc.id,
-        version=doc.version,
-        content=content,
-        actor="system",
-        base_version=0,
-    )
-
-
 class DocumentWriter:
     def __init__(self, session: AsyncSession, summarize: Callable[[str, str], str]):
         self._session = session

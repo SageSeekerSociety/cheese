@@ -50,6 +50,7 @@ from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.ledger import deliver, settle, settle_card
 from app.domain.identity.actor import Actor
+from app.domain.living_doc.overview import seed_overview
 from app.domain.membership.services import InvitationService, MemberService
 from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
@@ -79,6 +80,7 @@ from app.domain.room_task import naming
 from app.domain.room_task.services import TaskService
 from app.domain.shell.service import effective_shells
 from app.domain.shell_catalog import Shell, ShellOut
+from app.domain.task.adapters import TaskTerms
 from app.domain.task.claims import deadline_for_project
 from app.domain.task.services import claim_backs_project
 from app.domain.team.services import TeamLabel, team_service
@@ -223,6 +225,8 @@ async def create_project(
         db,
         default_teammate=default_teammate,
         compute_credits=ComputeCredits(db),
+        overview=seed_overview,
+        task_terms=TaskTerms(db),
     ).create(
         **body.model_dump(exclude={"id"}),
         project_id=body.id,

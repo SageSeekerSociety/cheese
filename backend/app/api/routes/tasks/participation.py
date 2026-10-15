@@ -33,6 +33,7 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.agent_instance.adapters import default_teammate
+from app.domain.living_doc.overview import seed_overview
 from app.domain.notification.preferences import local_time
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
@@ -42,6 +43,7 @@ from app.domain.space.repositories import (
 from app.domain.task.access import (
     ensure_task_joinable,
 )
+from app.domain.task.adapters import TaskTerms, as_brief, as_claim
 from app.domain.task.claims import claim_of
 from app.domain.task.inputs import (
     map_approve_type_to_int,
@@ -119,10 +121,14 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
     if owner is None:
         raise NotFoundError("Participant user not found")
     service = ProjectService(
-        db, default_teammate=default_teammate, compute_credits=ComputeCredits(db)
+        db,
+        default_teammate=default_teammate,
+        compute_credits=ComputeCredits(db),
+        overview=seed_overview,
+        task_terms=TaskTerms(db),
     )
     project = await service.for_participation(
-        task=task, membership=membership, owner_handle=owner.username
+        task=as_brief(task), claim=as_claim(membership), owner_handle=owner.username
     )
     return ok(
         {
@@ -401,8 +407,12 @@ async def patch_task_participant(
     )
 
     await ProjectService(
-        db, default_teammate=default_teammate, compute_credits=ComputeCredits(db)
-    ).activate_participation(task=task, membership=updated)
+        db,
+        default_teammate=default_teammate,
+        compute_credits=ComputeCredits(db),
+        overview=seed_overview,
+        task_terms=TaskTerms(db),
+    ).activate_participation(task=as_brief(task), claim=as_claim(updated))
     # Commit before answering: the participant told they are approved can reload
     # the task on their next request and must see it as theirs (download and
     # submit). Same reason as the commit in ``create_task``.

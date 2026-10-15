@@ -10,18 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.documents import seed
 from app.domain.delivery_events import SettleCard
-from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
 from app.domain.project.models import AiMode, Project, ProjectGitInstallation
-from app.domain.project.ports import ComputeCredits, DefaultTeammate
+from app.domain.project.ports import (
+    Claim,
+    ComputeCredits,
+    DefaultTeammate,
+    SeedOverview,
+    TaskBrief,
+    TaskTerms,
+)
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
 )
-from app.domain.task.models import Task, TaskMembership
-from app.domain.task.teaching import protocol_for_task
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicKind
 from app.domain.topic.ports import ArchivedCards, SessionStore
@@ -36,7 +39,7 @@ def _intent_brief(intent: str) -> str:
     """把用户写的那句话拼成新项目目标的开头；没写就返回空串，调用方不写任何东西。
 
     纯模板，不调模型——``seed_overview`` 的约定是「平台把已有的文字搬个地方」，
-    所以它署 system 而不是芝士（见 ``ProjectService.seed_overview`` 的注释）。这也
+    所以它署 system 而不是芝士（见 ``app.domain.living_doc.overview``）。这也
     是赛题报名那条路径的形状：简报是拼出来的，房间里的第一句人话仍由人来说。
     """
     text = intent.strip()
@@ -76,6 +79,8 @@ class ProjectService:
         settle_card: SettleCard | None = None,
         default_teammate: DefaultTeammate | None = None,
         compute_credits: ComputeCredits | None = None,
+        overview: SeedOverview | None = None,
+        task_terms: TaskTerms | None = None,
         cards: ArchivedCards | None = None,
         sessions: SessionStore | None = None,
     ):
@@ -98,7 +103,17 @@ class ProjectService:
         ``cards`` 和 ``sessions``：归档项目会顺手做两件本包够不着的事 —— 把房间里
         还没结的验收卡收掉（第 4 层 `review`），把取消归档的房间记着的会话令牌忘掉
         （第 3 层 `agent_session`）。两样都只在 ``archive`` / ``unarchive`` 这两条路
-        上用，所以也不给也能构造，走到那里没递进来就当场炸掉。"""
+        上用，所以也不给也能构造，走到那里没递进来就当场炸掉。
+
+        ``overview``：新项目要说的话（用户写的意图、或者这道赛题的要求）是**一份文档**
+        的第一版，而文档在第 4 层 `living_doc` 里
+        （`app.domain.project.ports.SeedOverview`）。``create`` 和 ``for_participation``
+        这两条路要它，同样不给也能构造，走到那里没递进来就当场炸掉。
+
+        ``task_terms``：报名这条路要读赛题那几行（赛题、谁报的名、审过之后落什么
+        条款），那几行也在第 4 层（`app.domain.project.ports.TaskTerms`）。只有
+        ``for_participation``、``activate_participation`` 和 ``create`` 带着赛题 id
+        的那条路要它，同样不给也能构造。"""
         self._session = session
         self._repo = ProjectRepository(session)
         self._installations = ProjectGitInstallationRepository(session)
@@ -107,6 +122,8 @@ class ProjectService:
         self._settle_card = settle_card
         self._default_teammate = default_teammate
         self._compute_credits = compute_credits
+        self._overview = overview
+        self._task_terms = task_terms
         self._cards = cards
         self._sessions = sessions
 
@@ -150,6 +167,20 @@ class ProjectService:
             source_task_id=task_id,
             credits_total=credits_total,
         )
+
+    async def _seed_overview(self, project: Project, content: str) -> None:
+        """把平台已有的文字写成这个项目目标的第一版，理由同 ``_has_earmark``。"""
+        if self._overview is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("overview was not handed in")
+        await self._overview(self._session, project.id, content)
+
+    def _terms(self) -> TaskTerms:
+        """报名这条路上要问 `task` 的那几次，理由同 ``_has_earmark``。"""
+        if self._task_terms is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("task_terms was not handed in")
+        return self._task_terms
 
     async def create(
         self,
@@ -228,7 +259,7 @@ class ProjectService:
         # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)
         if brief:
-            await self.seed_overview(project, brief)
+            await self._seed_overview(project, brief)
         return project
 
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
@@ -244,18 +275,21 @@ class ProjectService:
         return team.id
 
     async def for_participation(
-        self, *, task: Task, membership: TaskMembership, owner_handle: str
+        self, *, task: TaskBrief, claim: Claim, owner_handle: str
     ) -> Project:
-        """Open the team's registration workspace, reusing it on reapplication."""
+        """Open the team's registration workspace, reusing it on reapplication.
+
+        ``task`` and ``claim`` are the two rows this needs as values
+        (`app.domain.project.ports.TaskBrief` / `Claim`): 赛题 and 报名 live one
+        layer up and are handed in by whoever has them.
+        """
 
         # Serialize registration workspace creation for this task. Two teammates
         # submitting together must not leave two projects for one application.
-        await self._session.execute(
-            select(Task.id).where(Task.id == task.id).with_for_update()
-        )
+        await self._repo.lock_external_task(task.id)
         team_id = (
-            membership.member_id
-            if membership.is_team
+            claim.member_id
+            if claim.is_team
             else await self._resolve_personal_team_id(owner_handle)
         )
         projects = await self._repo.list_for_external_task(task.id)
@@ -279,47 +313,8 @@ class ProjectService:
             f"## 赛题要求\n\n{task.intro}\n\n"
             f"[查看完整赛题要求](/spaces/{task.space_id}/tasks/{task.id})"
         )
-        await self.seed_overview(project, brief)
+        await self._seed_overview(project, brief)
         return project
-
-    async def overview_document(self, project: Project):
-        """The project's goals document, made empty (version 0) the first time anyone
-        needs it: whoever opens, writes or comments on it needs its id first."""
-
-        documents = Documents(self._session)
-        if project.overview_document_id is not None:
-            doc = await documents.get(project.overview_document_id)
-            if doc is not None:
-                return doc
-        # Two first readers at once must not make two goals documents. NO KEY
-        # UPDATE, not FOR UPDATE: this runs inside a turn's assembly, and a
-        # full row lock on the project stops every write whose foreign key
-        # names the project (each block takes KEY SHARE on it) until the turn
-        # commits — which deadlocked an archive that held its room's row and
-        # was writing its note. Two creators still wait for each other.
-        await self._session.execute(
-            select(Project.id)
-            .where(Project.id == project.id)
-            .with_for_update(key_share=True)
-        )
-        await self._session.refresh(project, ["overview_document_id"])
-        if project.overview_document_id is not None:
-            doc = await documents.get(project.overview_document_id)
-            if doc is not None:
-                return doc
-        doc = await documents.create(project_id=project.id)
-        project.overview_document_id = doc.id
-        await self._session.flush()
-        return doc
-
-    async def seed_overview(self, project: Project, content: str) -> None:
-        """Write a new project's goals from text it already had: what its
-        creator said they wanted, or its 赛题. Author is `system`: the platform
-        moved existing words, nobody wrote them here."""
-
-        doc = await self.overview_document(project)
-        await DocumentJournal(self._session).lock(doc.id)
-        await seed(self._session, doc, content)
 
     async def is_overview(self, document_id: uuid.UUID) -> bool:
         """Whether a document is some project's goals document."""
@@ -541,30 +536,17 @@ class ProjectService:
         nothing, leaves the project exactly as it was. Creating a project must
         not fail because an institution left its resource pack empty.
         """
-        # deferred-import: Task is bound at the top of this module already
-        from app.domain.task.models import Task
-
-        task = await self._session.get(Task, task_id)
+        terms_port = self._terms()
+        task = await terms_port.brief(task_id)
         if task is None:
             return
-        # deferred-import: TaskMembership is bound at the top of this module already
-        from app.domain.task.models import TaskMembership
-
         member_id = project.team_id
-        if task.submitter_type == 0:
+        if not task.is_team_submission:
             member_id = await self._session.scalar(
                 select(User.id).where(User.username == project.owner_handle)
             )
-        membership = await self._session.scalar(
-            select(TaskMembership)
-            .where(
-                TaskMembership.task_id == task_id,
-                TaskMembership.member_id == member_id,
-                TaskMembership.is_team == (task.submitter_type == 1),
-                TaskMembership.deleted_at.is_(None),
-            )
-            .order_by(TaskMembership.created_at.desc())
-            .limit(1)
+        claim = await terms_port.claim(
+            task_id=task_id, member_id=member_id, is_team=task.is_team_submission
         )
         # An application can prepare its workspace before approval, but cannot
         # claim the competition's resource pack while it is pending/rejected.
@@ -572,37 +554,34 @@ class ProjectService:
         # 这句话以前只写了「pending/rejected 不给」，条件也跟着写成
         # `membership is not None and ...`，于是漏掉了它前半句最该挡住的那种人：
         # **压根没报名**（`membership is None`）反而一路往下，每个新项目都白拿一份
-        # 资源包。过审（`ApproveType.APPROVED == 0`）是**唯一**发放条件，所以判据读作
-        # 「存在一条已通过的报名」——没有报名与没过审在这里是同一件事：不是这个赛题的
-        # 参与者，就不领它的资源包。审批之后那次发放走 `activate_participation`，所以
-        # 「先建工作区、过审时再拿资源」这条正路一点没变。
-        if membership is None or membership.approved != 0:
+        # 资源包。过审（``ApproveType.APPROVED == 0``，口子那边折成 ``approved``）
+        # 是**唯一**发放条件，所以判据读作「存在一条已通过的报名」——没有报名与没过审
+        # 在这里是同一件事：不是这个赛题的参与者，就不领它的资源包。审批之后那次发放
+        # 走 `activate_participation`，所以「先建工作区、过审时再拿资源」这条正路一点
+        # 没变。
+        if claim is None or not claim.approved:
             return
-        protocol = await protocol_for_task(self._session, task)
+        terms = await terms_port.terms(task_id)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
-        await self._seed_default_teammate(project, type_name=protocol.default_role)
-        if protocol.compute_credits > 0 and not await self._has_earmark(
-            project, task_id
-        ):
+        await self._seed_default_teammate(project, type_name=terms.default_role)
+        if terms.compute_credits > 0 and not await self._has_earmark(project, task_id):
             await self._grant_earmark(
-                project, task_id, credits_total=protocol.compute_credits
+                project, task_id, credits_total=terms.compute_credits
             )
 
-    async def activate_participation(
-        self, *, task: Task, membership: TaskMembership
-    ) -> None:
+    async def activate_participation(self, *, task: TaskBrief, claim: Claim) -> None:
         """Release the task's resources to its workspace after approval."""
-        if membership.approved != 0:
+        if not claim.approved:
             return
 
         owner = None
-        if not membership.is_team:
-            owner = await self._session.get(User, membership.member_id)
+        if not claim.is_team:
+            owner = await self._session.get(User, claim.member_id)
         for project in await self._repo.list_for_external_task(task.id):
             belongs = (
-                project.team_id == membership.member_id
-                if membership.is_team
+                project.team_id == claim.member_id
+                if claim.is_team
                 else owner is not None and project.owner_handle == owner.username
             )
             if belongs:

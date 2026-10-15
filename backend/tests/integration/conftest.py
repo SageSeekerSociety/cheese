@@ -121,18 +121,23 @@ async def a_team(session, owner_handle: str | None = None) -> int:
 
 
 def project_service(session):
-    """A ``ProjectService`` with its teammate port wired, for tests that build a
-    project in their own session.
+    """A ``ProjectService`` with its ports wired, for tests that build a project
+    in their own session.
 
-    Every project is born with its 芝士 (invariant I9b), and the seeding lives in
-    ``agent_instance``, out of ``project``'s reach — so whoever builds one hands
-    the port in (``app/domain/project/ports.py``). The route that creates projects
-    does the same; tests that go through HTTP need nothing here.
+    Every project is born with its 芝士 (invariant I9b) and, when the caller said
+    what it is for, with a goals document — the seeding lives in
+    ``agent_instance`` and ``living_doc``, both out of ``project``'s reach, so
+    whoever builds one hands the ports in (``app/domain/project/ports.py``). The
+    routes that create projects do the same; tests that go through HTTP need
+    nothing here.
     """
     from app.domain.agent_instance.adapters import default_teammate
+    from app.domain.living_doc.overview import seed_overview
     from app.domain.project.services import ProjectService
 
-    return ProjectService(session, default_teammate=default_teammate)
+    return ProjectService(
+        session, default_teammate=default_teammate, overview=seed_overview
+    )
 
 
 async def registered(session, handle: str) -> int:
