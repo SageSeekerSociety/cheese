@@ -27,6 +27,6 @@
   "stale": "Someone else just changed this teammate",
   "title": "Skills",
   "webAdd": "Fetch",
-  "webHint": "You can also paste a skill's address to fetch it straight onto this machine: a GitHub repository or subdirectory, or a direct link to a SKILL.md on raw.githubusercontent.com. It is checked against the agentskills.io spec, and only written if it passes.",
+  "webHint": "You can also paste a GitHub skill address.",
   "webPlaceholder": "https://github.com/…/tree/main/skills/pdf"
 }
