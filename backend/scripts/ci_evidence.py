@@ -13,19 +13,17 @@ signal. A worker that died mid-case is the one whose file ends on a ``start``.
 
 A lost worker also ends the run. xdist replaces a crashed worker, and under a
 scheduler that hands out one work unit at a time (``--dist loadfile``, which the
-CI uses, plus loadscope and loadgroup) that replacement can stall: a worker
-takes the next index before running the case it holds, so it needs an index
-beyond its last runnable case, and the scheduler sends the next unit only after
-a completed case. A dead worker's units return to the queue whole, finished ones
-included, so a replacement can be sent a unit with nothing left to run and wait
-for an index that never comes: seen when the worker died on a one-case module,
-on a module's last case, and on a unit the crash had already finished. The shard
-then sits until the job's ceiling, which is the freeze #3005 reports.
+CI uses, plus loadscope and loadgroup) that replacement can stall: it takes the
+next index before running the case it holds, and a dead worker's units return to
+the queue whole, so it can be sent a unit that leaves it short of one while
+other work is still queued, and wait there for an index that never comes. The
+shard then sits until the step's ``timeout-minutes`` (5-15 by layer) kills it:
+the kind of lost-worker hang #3005 reports.
 
 The case that was lost ends the shard either way: those schedulers leave
 ``mark_test_pending`` unimplemented, so ``--reruns`` fails a case whose worker
 died instead of requeuing it, and the shard is red however it ends. So it ends
-at the loss, named, rather than spending the job's remaining minutes on a
+at the loss, named, rather than spending the step's remaining minutes on a
 replacement that only sometimes carries on. The cases such a replacement would
 have run are not in that attempt; the failure rerun repeats the whole shard, so
 they run again there.
