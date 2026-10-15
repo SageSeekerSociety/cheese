@@ -283,7 +283,7 @@ frontend/src/
   stores/       只放客户端状态：外壳、草稿、偏好
 ```
 
-今天和终点的差：请求侧已经收成一套 —— `src/api.ts`（56 行，只有 `export … from`）加 `src/api/`（按域切的模块，`http.ts` 是传输层），旧的 `src/network/` 已经删掉，ESLint 挡着不让它回来；还差的是 `services/` 里的账户和推送，和 `stores/feedback.ts`（1,708 行）把服务端状态和客户端状态混在一起。
+今天和终点的差：请求侧已经收成一套 —— `src/api.ts`（56 行，只有 `export … from`）加 `src/api/`（按域切的模块，`http.ts` 是传输层），旧的 `src/network/` 已经删掉，ESLint 挡着不让它回来；还差的是 `services/` 里的账户和推送，和 `stores/feedback.ts` 那一层把服务端状态和客户端状态混在一起 —— 那个文件本身已经按职责拆进 `stores/feedback/`，剩下的差事是把服务端那半迁到 `query/`。
 
 ### 数据层 {#frontend-data}
 
