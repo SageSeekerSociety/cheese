@@ -6,6 +6,7 @@ private ones every person there is also in; from a DM, what that person may
 read. Its seat in a room is not enough on its own.
 """
 
+import asyncio
 import uuid
 
 from app.core.sandbox_auth import mint_delegated_credential, mint_scoped_token
@@ -168,3 +169,58 @@ def test_a_document_thread_answer_searches_only_what_every_reader_may(client):
 
     assert secret in found(shown_to_readers=False)
     assert secret not in found(shown_to_readers=True)
+
+
+def test_the_document_box_opens_with_the_project_only_for_a_project_reader(client):
+    """The box's answer is the asker's alone, so its opening context holds the
+    project's shared memory only when the asker may read the project."""
+    from app.domain.agent.document import question
+
+    p = _project(client)
+    note = (
+        "---\nname: answer-first\ndescription: 回答先给结论\ntype: feedback\n---\n\n"
+        "有结论就先说结论。\n"
+    )
+    put = client.put(
+        "/memory/files",
+        json={
+            "project_id": p["id"],
+            "scope": "team",
+            "path": "answer-first.md",
+            "content": note,
+        },
+        headers=session_auth_headers("dave"),
+    )
+    assert put.status_code == 200, put.text
+    indexed = client.put(
+        "/memory/files",
+        json={
+            "project_id": p["id"],
+            "scope": "team",
+            "path": "MEMORY.md",
+            "content": "- [Answer first](answer-first.md) — 回答先给结论\n",
+        },
+        headers=session_auth_headers("dave"),
+    )
+    assert indexed.status_code == 200, indexed.text
+    doc = client.post(
+        f"/projects/{p['id']}/documents",
+        json={"title": "笔记"},
+        headers=session_auth_headers("dave"),
+    )
+    assert doc.status_code == 200, doc.text
+    asked = question.Asked(
+        project_id=uuid.UUID(p["id"]),
+        document_id=uuid.UUID(doc.json()["data"]["id"]),
+        task_id=None,
+    )
+
+    async def opening(asker: str):
+        async with client.test_factory() as db:  # type: ignore[attr-defined]
+            return await question.surroundings(db, asked, seat="cheese", asker=asker)
+
+    member = asyncio.run(opening("alice"))
+    stranger = asyncio.run(opening("mallory"))
+
+    assert member.memory is not None and "answer-first" in member.memory
+    assert stranger.memory is None
