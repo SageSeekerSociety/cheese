@@ -96,7 +96,7 @@ repos:
       # `backend / static` job (test.yml) rather than through pre-commit, since
       # that job has the venv already synced — the pre-push entry point is what
       # reads this id. `stages: [manual]` for the reason the heavy hooks above
-      # carry it: about 40s on a work machine is too much for a commit gate.
+      # carry it: 23s on a work machine is too much for a commit gate.
       - id: openapi-document
         name: OpenAPI document builds, digest and untyped ratchet hold
         entry: bash -c 'cd backend && uv run python -m scripts.export_openapi --check'
