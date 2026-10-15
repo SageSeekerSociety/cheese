@@ -369,13 +369,13 @@ ${p.library.files.map((f) => fold(`${inline(f.title)} · ${f.chars} 字符`, cod
 
   out.push(`## 相关常量 {#constants}
 
-\`prompt.py\` 里模块级的东西：预算、上限，和那些整段拼进提示词的文本。行号链到 GitHub 上的源码。
+\`prompt.py\` 里模块级的东西：预算、上限，和那些整段拼进提示词的文本。行号链到 GitHub 上的源码——常量写在哪个文件就链到哪个文件（提示词分成 \`prompt.py\` 和它同目录的三个模块之后，预算和引用上限不在门面那一份里）。
 
 | 常量 | 类型 | 值 | 代码里的说明 |
 |---|---|---|---|
 ${p.constants.map((c) => {
     const shown = c.kind === 'int' ? `\`${c.value}\`` : c.value.length <= 40 ? `\`${c.value}\`` : `${c.value.length} 字符${c.in_blocks.length ? '，见上面「' + inline(c.in_blocks[0]) + '」那一块' : ''}`
-    return `| [\`${c.name}\`](${blob(PROMPT_SRC, c.line)}) | ${c.kind === 'int' ? '整数' : '文本'} | ${shown} | ${cell(c.comment || '—')} |`
+    return `| [\`${c.name}\`](${blob(c.file || PROMPT_SRC, c.line)}) | ${c.kind === 'int' ? '整数' : '文本'} | ${shown} | ${cell(c.comment || '—')} |`
   }).join('\n')}`)
 
   return {
