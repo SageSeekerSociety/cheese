@@ -19,6 +19,8 @@ import { nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
+import { useSelectionHighlight } from './selectionHighlight'
+
 type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 
 const props = defineProps<{
@@ -237,6 +239,14 @@ function onResize() {
   if (relayoutTimer) clearTimeout(relayoutTimer)
   relayoutTimer = setTimeout(relayout, 200)
 }
+
+// 选中那段文字的底色自己画。浏览器给每一段文字各画一层，而文字层里相邻两段是搭着
+// 的，叠出来的那块比别处深——读者看到的就是「字旁边多出来一个框」。见那个文件。
+useSelectionHighlight({
+  sheets: () => pages.value.map((slot) => slot.el).filter((el): el is HTMLElement => !!el),
+  layerClass: 'pv-text',
+  paintClass: 'pv-hl',
+})
 
 function onSelect() {
   const selection = window.getSelection()
@@ -528,15 +538,24 @@ onBeforeUnmount(() => {
   transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
 }
 
-/* 选中只剩底色：正文本来就是透明的，这里不点明 color 的话，浏览器会按「被选中的
-   文字」给它上色，选中的那几个字上又叠出一层同形状的字。 */
+/* 选中只剩底色，而底色不在这里画：浏览器是给每一段文字各画一层，文字层里相邻两段
+   的盒子是搭着的，搭着的那几个像素上就叠出更深的一块。这一条把浏览器那一层关掉，
+   自己画的那一层在下面。`color` 还是要点明：正文本来是透明的，不写的话浏览器会按
+   「被选中的文字」给它上色，选中的那几个字上又叠出一层同形状的字。 */
 .pv__page :deep(.pv-text ::selection) {
-  background: var(--selection-bg);
+  background: transparent;
   color: transparent;
 }
 
-/* 换行本身不该画成一块高亮。 */
-.pv__page :deep(.pv-text br::selection) {
-  background: transparent;
+/* 自己画的那一层。位置和大小由 `selectionHighlight.ts` 算，这里只管它长什么样：一块
+   都别挡住选中、底色是一次填充（选区的每一块收在同一条 path 里，搭着也只落一层）。 */
+.pv__page :deep(.pv-hl) {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pv__page :deep(.pv-hl path) {
+  fill: var(--selection-bg);
 }
 </style>

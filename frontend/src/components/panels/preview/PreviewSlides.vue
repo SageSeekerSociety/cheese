@@ -6,6 +6,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { useSlidesPdf } from '@/composables/useSlidesPdf'
 
 import { contextAround } from './markdownQuote'
+import { useSelectionHighlight } from './selectionHighlight'
 import SlideThumbRail from './SlideThumbRail.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -109,6 +110,15 @@ function keyboard(event: KeyboardEvent) {
     go(page)
   }
 }
+// 和 PreviewPages 同一件事：浏览器给每一段文字各画一层底色，文字层里相邻两段是搭着
+// 的，叠出来的那块比别处深。这一份的底色本来是实色，叠着看不出来，但换成自己画之后
+// 两份才是同一套写法，见 `selectionHighlight.ts`。
+useSelectionHighlight({
+  sheets: () => (sheet.value ? [sheet.value] : []),
+  layerClass: 'slide-text-layer',
+  paintClass: 'slide-hl',
+})
+
 function quote() {
   const selection = window.getSelection()
   if (!selection?.rangeCount || !sheet.value) return
@@ -453,15 +463,22 @@ onBeforeUnmount(() => {
 .slides__sheet :deep(.slide-text-layer .markedContent) {
   display: contents;
 }
-/* 选中只剩底色：正文本来是透明的，这里不点明 color 的话，浏览器会按「被选中的文字」
-   给它上色，选中的那几个字上又叠出一层同形状的字。 */
+/* 选中只剩底色，底色不在这里画——和 PreviewPages 里那一段同一套写法，改一处时两处
+   一起改。这一条把浏览器那一层关掉，自己画的那一层在下面。`color` 还是要点明：正文
+   本来是透明的，不写的话浏览器会按「被选中的文字」给它上色，选中的那几个字上又叠出
+   一层同形状的字。 */
 .slides__sheet :deep(.slide-text-layer ::selection) {
-  background: var(--accent-wash);
+  background: transparent;
   color: transparent;
 }
-/* 换行本身不该画成一块高亮。 */
-.slides__sheet :deep(.slide-text-layer br::selection) {
-  background: transparent;
+/* 自己画的那一层，由 `selectionHighlight.ts` 算位置和大小。 */
+.slides__sheet :deep(.slide-hl) {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.slides__sheet :deep(.slide-hl path) {
+  fill: var(--accent-wash);
 }
 .slides__sheet :deep(.slide-paint-error) {
   padding: 32px 16px;
