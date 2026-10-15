@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 定时与触发的画面：一条规则一行（`RoutineBoard`），加上新建 / 修改那张表单
+// 例行事务的画面：一条规则一行（`RoutineBoard`），加上新建 / 修改那张表单
 // （`RoutineFormDialog`）。规则本身和表单都是 `components/routine/` 里的共用件；
 // 取数、读地址、权限全留在容器 `ProjectRoutinesView.vue` 里 —— 这一半只收 props、
 // 只把动作抛上去。

@@ -1,5 +1,5 @@
 /**
- * 定时与触发：芝士起草的规则要人确认才跑；删一条规则之前要问一句；一次失败的执行
+ * 例行事务：芝士起草的规则要人确认才跑；删一条规则之前要问一句；一次失败的执行
  * 说得出为什么。
  */
 import { createVuetify } from 'vuetify'
@@ -107,7 +107,7 @@ function row(container: Element, id: string): Element {
 // These assertions read the Chinese copy; the English rendering is checked in its own case.
 beforeEach(() => setLocale('zh-CN'))
 
-describe('定时与触发', () => {
+describe('例行事务', () => {
   it('reads in English under the en locale', async () => {
     setLocale('en')
     const { container } = mount()

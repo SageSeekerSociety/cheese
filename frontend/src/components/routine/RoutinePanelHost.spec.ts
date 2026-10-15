@@ -1,6 +1,6 @@
-// 房间右侧「定时与触发」那一格的取数外壳：**只问这一个房间**。
+// 房间右侧「例行事务」那一格的取数外壳：**只问这一个房间**。
 //
-// 它和项目「定时与触发」页画的是同一串（`RoutineBoard`，经 `panels/PanelRoutines.vue`）、
+// 它和项目「例行事务」页画的是同一串（`RoutineBoard`，经 `panels/PanelRoutines.vue`）、
 // 填的是同一张表，差别只有范围：那一页是整个项目，这一格带着 `topicId` 去问后端。所以
 // 这一份钉的是三件只有这一格才成立的事：问的是这个房间、新建的规则长在这个房间（表单
 // 里连「在哪个房间执行」都不问）、拿不到权限的规则只读。
@@ -89,7 +89,7 @@ function button(label: string, scope: ParentNode = document.body): HTMLElement |
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
 }
 
-describe('房间右侧的「定时与触发」', () => {
+describe('房间右侧的「例行事务」', () => {
   it('问的是这一个房间，不是整个项目', async () => {
     const { findByText } = mount()
     await findByText('这个房间的日报')
@@ -99,7 +99,7 @@ describe('房间右侧的「定时与触发」', () => {
   it('还没有规则：写的是「点新建」，不是一个「暂无」', async () => {
     vi.mocked(listProjectRoutines).mockResolvedValue({ data: [], total: 0 })
     const { findByText } = mount()
-    await findByText('还没有定时或触发规则')
+    await findByText('还没有例行事务')
   })
 
   it('别人的规则：只读，一颗按钮都不画', async () => {

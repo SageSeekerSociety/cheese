@@ -4,7 +4,7 @@
  * 摆的是画面那一半，所以每一件都不带路由、不带接口就能单独渲染。
  *
  * 这一组有六件：设备审批（命令行把机器交给你批准）、已归档的项目（只有所有者看得到）、
- * 打开预览、打开网站（两件同形的落地页），以及项目里的定时与触发和内容搜索两个整页。
+ * 打开预览、打开网站（两件同形的落地页），以及项目里的例行事务和内容搜索两个整页。
  *
  * 条目和别的分册没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
  * `catalog.ts`），单放一份是因为 `catalog.ts` 已经顶到一千行的上限。这里的 `CatalogEntry`
@@ -188,7 +188,7 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
     id: 'project-routines-view',
     title: 'ProjectRoutinesViewView',
     about:
-      '项目里「定时与触发」那一整页的画面：这个项目所有房间的规则，一条一行；等确认的草稿摊开给人读，已经在跑的写清下次什么时候跑，页头两颗命令由页壳画。取数、读地址里的 `?routine=`、权限都在容器 `ProjectRoutinesView.vue` 里。',
+      '项目里「例行事务」那一整页的画面：这个项目所有房间的规则，一条一行；等确认的草稿摊开给人读，已经在跑的写清下次什么时候跑，页头两颗命令由页壳画。取数、读地址里的 `?routine=`、权限都在容器 `ProjectRoutinesView.vue` 里。',
     file: 'src/views/ProjectRoutinesViewView.vue',
     component: ProjectRoutinesViewView,
     needs: UI_T,
@@ -211,9 +211,9 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '还没有规则',
-        note: '一条规则都没有：就地说一句「还没有定时或触发规则」，并告诉他怎么来一条。',
+        note: '一条规则都没有：就地说一句「还没有例行事务」，并告诉他怎么来一条。',
         props: { routines: [] },
-        expect: '还没有定时或触发规则',
+        expect: '还没有例行事务',
       },
       {
         name: '一条等确认、一条在跑',
@@ -223,15 +223,15 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '正在读规则',
-        note: '规则还在路上的时候只有一颗转圈，读屏念的是「读取规则」。',
+        note: '规则还在路上的时候只有一颗转圈，读屏念的是「读取例行事务」。',
         props: { routines: [], loading: true },
-        expectSelector: '[aria-label="读取规则"]',
+        expectSelector: '[aria-label="读取例行事务"]',
       },
       {
         name: '读规则失败',
         note: '列表没读出来：一句话留在最上面（role=alert），不是「还没有规则」—— 那会让失败看着像本来就没有。',
-        props: { routines: [], error: '未能读取定时与触发规则' },
-        expect: '未能读取定时与触发规则',
+        props: { routines: [], error: '未能读取例行事务' },
+        expect: '未能读取例行事务',
       },
       {
         name: '展开执行记录',

@@ -331,12 +331,12 @@ describe('工作面板 · Tab 容器', () => {
   // 读的是「这件任务手上有什么」。
   const isEmpty = (tab: Element | undefined) => !!tab?.classList.contains('tabbar__tab--empty')
 
-  it('频道是人说话的地方：只有总览、支线、定时与触发', async () => {
+  it('频道是人说话的地方：只有总览、支线、例行事务', async () => {
     const { container } = mountChannel()
     await flush()
 
     // 总览上挂着这个频道有几件任务；这里只看有哪几格。
-    expect(tabLabels(container).map((label) => label.replace(/\s*\d+$/, ''))).toEqual(['概览', '支线', '定时与触发'])
+    expect(tabLabels(container).map((label) => label.replace(/\s*\d+$/, ''))).toEqual(['概览', '支线', '例行事务'])
   })
 
   it('频道不去问预览和改动：那两格它没有，一轮干完也不问', async () => {

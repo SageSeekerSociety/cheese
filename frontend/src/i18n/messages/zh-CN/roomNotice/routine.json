@@ -1,5 +1,5 @@
 {
-  "labelRoutineToConfirm": "待确认的配置",
+  "labelRoutineToConfirm": "待确认的例行事务",
   "labelRoutineWorkFor": "交给 {who} 的工作",
   "routineTriggerHourly": "每小时第 {minute} 分（{timezone}）",
   "routineTriggerDaily": "每天 {time}（{timezone}）",

@@ -21,7 +21,7 @@ const TABS: PanelTab[] = [
   { key: 'site', label: '现场', icon: 'mdi-progress-clock' },
   { key: 'changes', label: '改动', icon: 'mdi-file-diff' },
   { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
-  { key: 'routines', label: '定时与触发', icon: 'mdi-timer-outline' },
+  { key: 'routines', label: '例行事务', icon: 'mdi-timer-outline' },
 ]
 
 let vuetify: ReturnType<typeof createVuetify>

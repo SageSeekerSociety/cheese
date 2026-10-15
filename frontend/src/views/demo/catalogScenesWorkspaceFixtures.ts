@@ -24,9 +24,9 @@ import { messages } from '@/views/workspace/search/messages.palette'
 import { projectDocs } from '@/views/workspace/search/projectDocs.palette'
 import { tasks } from '@/views/workspace/search/tasks.palette'
 
-// ---- 定时与触发（ProjectRoutinesViewView）----------------------------------
+// ---- 例行事务（ProjectRoutinesViewView）----------------------------------
 
-/** 一条定时与触发规则：后端 `GET /routines/{id}` 那个形状。`state` 决定它是草稿还是已启用。 */
+/** 一条例行事务：后端 `GET /routines/{id}` 那个形状。`state` 决定它是草稿还是已启用。 */
 export function routine(over: Partial<Routine> = {}): Routine {
   return {
     id: 'routine-weekly',
@@ -75,7 +75,7 @@ export function routineRun(over: Partial<RoutineRun> = {}): RoutineRun {
   }
 }
 
-/** 一个房间：新建规则时要选一个，行里也写它叫什么。 */
+/** 一个房间：新建例行事务时要选一个，行里也写它叫什么。 */
 export function topic(over: Partial<Topic> = {}): Topic {
   return {
     id: 'topic-weekly',

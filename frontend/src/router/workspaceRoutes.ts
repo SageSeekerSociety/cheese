@@ -229,7 +229,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { titleKey: 'navigation.search.title', hideTabs: true, backTo: 'workspace-project' },
     },
     {
-      // 定时与触发：房间里的 AI 队友按时间或按项目事件自己开工的那些规则。项目级，
+      // 例行事务：房间里的 AI 队友按时间或按项目事件自己开工的那些规则。项目级，
       // 因为一条规则的结果可能要看别的房间，而人要在一处看全这个项目有哪些在自己跑。
       name: 'project-routines',
       path: 'routines',
