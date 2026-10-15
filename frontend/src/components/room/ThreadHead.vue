@@ -51,17 +51,34 @@ function avatarOf(handle: string): string {
 </script>
 
 <template>
-  <!-- One row, each thing in its own cell rather than strung into a sentence with dots. -->
+  <!-- One row, each thing in its own cell rather than strung into a sentence with dots. In the
+       phone bar the title takes the whole first line and the state and owner go under it. -->
   <header v-guide-anchor="task ? 'task-pane' : ''" class="thread-head" :class="{ 'thread-head--bar': bar }">
-    <v-icon v-if="task" size="18" class="thread-head__icon" aria-hidden="true">mdi-checkbox-marked-outline</v-icon>
-    <h2 class="thread-head__title t-title" :title="heading">{{ heading }}</h2>
+    <v-icon v-if="task && !bar" size="18" class="thread-head__icon" aria-hidden="true"
+      >mdi-checkbox-marked-outline</v-icon
+    >
+    <div class="thread-head__text">
+      <h2 class="thread-head__title t-title" :title="heading">{{ heading }}</h2>
+      <div v-if="task" class="thread-head__meta">
+        <span class="thread-head__state" data-testid="thread-task-phrase">{{ taskPhraseLabel(task, viewer) }}</span>
+        <span v-if="bar && task.owner_handle" class="thread-head__owner">
+          <UserAvatar :size="14" :name="nameOf(task.owner_handle)" :avatar="avatarOf(task.owner_handle)" />
+          <span class="thread-head__owner-name">{{
+            t('work.task.ownerChip', { name: nameOf(task.owner_handle) })
+          }}</span>
+        </span>
+      </div>
+    </div>
     <template v-if="task">
-      <span class="thread-head__state" data-testid="thread-task-phrase">{{ taskPhraseLabel(task, viewer) }}</span>
-      <span class="thread-head__gap" />
-      <span v-if="task.owner_handle" class="thread-head__owner">
-        <UserAvatar :size="20" :name="nameOf(task.owner_handle)" :avatar="avatarOf(task.owner_handle)" />
-        <span class="thread-head__owner-name">{{ t('work.task.ownerChip', { name: nameOf(task.owner_handle) }) }}</span>
-      </span>
+      <template v-if="!bar">
+        <span class="thread-head__gap" />
+        <span v-if="task.owner_handle" class="thread-head__owner">
+          <UserAvatar :size="20" :name="nameOf(task.owner_handle)" :avatar="avatarOf(task.owner_handle)" />
+          <span class="thread-head__owner-name">{{
+            t('work.task.ownerChip', { name: nameOf(task.owner_handle) })
+          }}</span>
+        </span>
+      </template>
       <BaseButton
         v-guide-anchor="'task-open-page'"
         icon="mdi-arrow-expand"
@@ -117,6 +134,17 @@ function avatarOf(handle: string): string {
   flex: none;
   color: var(--muted);
 }
+.thread-head__text,
+.thread-head__meta {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.thread-head__meta {
+  flex: none;
+}
 .thread-head__title {
   flex: 0 1 auto;
   min-width: 0;
@@ -151,5 +179,40 @@ function avatarOf(handle: string): string {
 }
 .thread-head__owner-name {
   white-space: nowrap;
+}
+
+/* 手机顶栏里两行：任务名独占第一行，状态和负责人退到第二行，同一号字、同一种灰，
+   各成一格，靠间距和负责人的小头像分开（不拿点号串）。 */
+.thread-head--bar .thread-head__text {
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+}
+.thread-head--bar .thread-head__title {
+  max-width: 100%;
+}
+.thread-head--bar .thread-head__meta {
+  gap: 16px;
+  max-width: 100%;
+}
+.thread-head--bar .thread-head__state,
+.thread-head--bar .thread-head__owner {
+  padding: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  line-height: var(--lh-13);
+}
+.thread-head--bar .thread-head__owner {
+  gap: 4px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+.thread-head--bar .thread-head__owner-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

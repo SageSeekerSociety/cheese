@@ -364,6 +364,12 @@ const TASK_ENTRIES: CatalogEntry[] = [
         props: { heading: '登录要不要加手机验证码？', task: null, bar: true },
         expect: '登录要不要加手机验证码',
       },
+      {
+        name: '转成任务，在手机顶栏里',
+        note: '两行：任务名独占第一行，状态和负责人退到第二行，同一号字、同一种灰，各成一格。',
+        props: { heading: '登录页加「记住我」', task: TASK_HEADER_PROPS.task, bar: true },
+        expect: '登录页加「记住我」',
+      },
     ],
   },
   {
