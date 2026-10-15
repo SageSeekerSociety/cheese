@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
@@ -169,6 +169,22 @@ def _host(case, seat) -> CloudHost | None:
             repo = CloudHostRepository(db)
             home = await repo.current_home(seat.session)
             return None if home is None else await repo.get(home.host_id)
+
+    return case.client.portal.call(read)
+
+
+def _homes_on(case, host_id) -> int:
+    """How many homes are left on that host. A home whose ``session_id`` was
+    cleared is no longer the one ``current_home`` finds, so after that the
+    host is what is left to ask by."""
+
+    async def read():
+        async with case.client.test_request_factory() as db:
+            return await db.scalar(
+                select(func.count())
+                .select_from(SandboxHome)
+                .where(SandboxHome.host_id == host_id)
+            )
 
     return case.client.portal.call(read)
 
@@ -645,7 +661,8 @@ def test_a_vm_whose_session_walked_away_goes(cloud):
     case = cloud
     seat = _room(case, WHOLE_VM)
     device_id, _ = _working(case, seat)
-    machine = _host(case, seat).machine_id
+    host = _host(case, seat)
+    machine, host_id = host.machine_id, host.id
     _idle_for(case, seat, timedelta(seconds=settings.cloud_vm_idle_release_s + 60))
 
     async def walked_away():
@@ -663,7 +680,7 @@ def test_a_vm_whose_session_walked_away_goes(cloud):
 
     # No session is left to push: the home and its machine simply go.
     assert not _pushed_on(case, device_id)
-    assert _host(case, seat) is None
+    assert _homes_on(case, host_id) == 0
     _sweep(case)
     assert case.provider.deleted == [machine]
 
