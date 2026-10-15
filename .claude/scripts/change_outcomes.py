@@ -717,7 +717,15 @@ def self_test():
     got3 = payload([], 0, d3, pairs, "2026-10-07", "2026-10-15", "2026-10-15 00:00 UTC")
     assert got3["no_files_lines"] == 1 and got3["never_merged"] == 0, got3
 
+    # 自检要摘掉一批环境变量，就得原样还回去：它自己加的键（`GIT_CONFIG_NOSYSTEM`
+    # 这些）留在这个进程里，同一次运行接下来跑的任何检查都会带着它们，别人那边也可能
+    # 被同一个进程影响到。整个环境照原样比一遍，多的、少的、改过的都算。
+    before_env = dict(os.environ)
     _loader_self_test()
+    after_env = dict(os.environ)
+    diff = sorted(set(before_env) ^ set(after_env)
+                  | {k for k in before_env if before_env[k] != after_env.get(k)})
+    assert not diff, "自检改动了进程环境：%s" % diff
     print("self-test ok")
 
 
@@ -728,7 +736,7 @@ def _loader_self_test():
     合并，再读回来，最后把 `main` 的接线也照原样跑一遍（`_wiring_self_test`）。
 
     临时仓库只吃本地配置（`git -C … config` 那两行），别的一概不读：`GIT_` 开头的环境
-    变量和 `HOME` 在自检期间都摘掉，全在 finally 里还原。"""
+    变量和 `HOME`、`XDG_CONFIG_HOME` 在自检期间都摘掉，全在 finally 里还原。"""
     global REPO_PATH, REF
     import shutil
     import tempfile
@@ -743,15 +751,20 @@ def _loader_self_test():
         # 这台机器上的全局配置和 git 相关的环境变量（`commit.gpgsign`、
         # `core.hooksPath`、`core.attributesFile`、`GIT_DIR`、`GIT_WORK_TREE`、逐个注入
         # 配置的 `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`…）不该让一个
-        # 正确的自检失败：`GIT_` 开头的一律摘掉，只留下面这几行。写在 os.environ 上而
-        # 不是只喂给 sh：被检查的那几个读取走的是模块级的 `git()`，得对它也生效。
-        # 全在 finally 里还原。
+        # 正确的自检失败：`GIT_` 开头的一律摘掉，`HOME` 和 `XDG_CONFIG_HOME` 指到临时
+        # 目录（属性文件在 `$XDG_CONFIG_HOME/git/attributes`，`GIT_CONFIG_GLOBAL` 管不到
+        # 它），只留下面这几行。写在 os.environ 上而不是只喂给 sh：被检查的那几个读取走
+        # 的是模块级的 `git()`，得对它也生效。finally 里按原样还原——本来没有的键要被
+        # 删掉，不能留在这个进程的环境里。
+        setenv = {"HOME": tmp, "XDG_CONFIG_HOME": tmp, "GIT_CONFIG_GLOBAL": os.devnull,
+                  "GIT_CONFIG_SYSTEM": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
         saved_env = {}
-        for k in [k for k in os.environ if k.startswith("GIT_")] + ["HOME"]:
-            if k in os.environ:
-                saved_env[k] = os.environ.pop(k)
-        os.environ.update(HOME=tmp, GIT_CONFIG_GLOBAL=os.devnull,
-                          GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        # 摘的名单里连下面要设的那几个键一起算：它们本来不在环境里时，还原要能把它们
+        # 摘掉，而不是留在进程里。只按 `GIT_` 前缀扫，扫到的都是已经存在的。
+        for k in dict.fromkeys([k for k in os.environ if k.startswith("GIT_")]
+                               + ["HOME", "XDG_CONFIG_HOME"] + list(setenv)):
+            saved_env[k] = os.environ.pop(k, None)
+        os.environ.update(setenv)
 
         def sh(*a):
             p = subprocess.run(["git", "-C", tmp, *a], capture_output=True, text=True)
@@ -777,19 +790,33 @@ def _loader_self_test():
         sh("commit", "-qm", 'Revert "feat: side branch work (#7)"')
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #8 from x/revfix", "revfix")
-        # 第二条线：它的文件到最后一版还在，留存那一段才有一个「全在」的对照。
+        # 第二条线：e.txt 和一份登记表。登记表接下来会被删掉——「去掉生成物后」那一项
+        # 要能把只丢了生成物的线排掉，光数「有没有文件消失」做不到。
+        reg = os.path.join(tmp, "frontend/src/i18n/messages/en.json")
         sh("checkout", "-q", "-b", "extra")
+        os.makedirs(os.path.dirname(reg))
         open(os.path.join(tmp, "e.txt"), "w").write("4\n")
-        sh("add", "e.txt"); sh("commit", "-qm", "feat: extra work")
+        open(reg, "w").write("{}\n")
+        sh("add", "e.txt", "frontend/src/i18n/messages/en.json")
+        sh("commit", "-qm", "feat: extra work")
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #9 from x/extra", "extra")
-        # 第三条线：f.txt 同样还在。三条线里两条全在、一条有文件消失，留存那一项的分母
-        # 才不是偶数——「数留下来的」和「数消失的」给的是 2/3 与 1/3、1 条与 2 条。
+        # 第三条线：删掉第二条线的登记表、加 f.txt。它自己也有文件消失，但丢的是生成物，
+        # 和第二条线一样要被那句排除。
         sh("checkout", "-q", "-b", "final")
+        os.remove(reg)
         open(os.path.join(tmp, "f.txt"), "w").write("5\n")
-        sh("add", "f.txt"); sh("commit", "-qm", "feat: final work")
+        sh("add", "frontend/src/i18n/messages/en.json", "f.txt")
+        sh("commit", "-qm", "feat: final work")
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #10 from x/final", "final")
+        # 第四条线：文件全在。留存那一项要有一个「全在」的对照，分母才不是偶数——
+        # 「数留下来的」和「数消失的」给的是 1/4 与 3/4、1 条与 3 条。
+        sh("checkout", "-q", "-b", "later")
+        open(os.path.join(tmp, "g.txt"), "w").write("6\n")
+        sh("add", "g.txt"); sh("commit", "-qm", "feat: later work")
+        sh("checkout", "-q", "main")
+        sh("merge", "-q", "--no-ff", "-m", "Merge pull request #11 from x/later", "later")
 
         hist = load_history("2000-01-01")
         merge = merge_commit(hist, 7)
@@ -810,8 +837,9 @@ def _loader_self_test():
         assert load_history("2099-01-01") == [], load_history("2099-01-01")
         # `head_files` 读的是 `REF`，生产里是 `origin/main`。上面那个仓库里
         # `REF == "HEAD"`，两种写法读到的文件一样，所以另起一个小仓库：HEAD 停在第一版，
-        # 第二版的文件只在 `main` 上。把 `head_files` 里的 `REF` 写成字面量 `"HEAD"`
-        # 就会读不到它。
+        # 第二版的文件只在分支上。把 `head_files` 里的 `REF` 写成字面量 `"HEAD"` 读不到
+        # 它；分支名故意不叫 main，写字面量 `"main"` 同样读不到（没有这个 ref，git 直接
+        # 报错），只有真的按 `REF` 取才通过。
         second = tempfile.mkdtemp(prefix="co-selftest-head-")
         try:
             def sh2(*a):
@@ -821,24 +849,27 @@ def _loader_self_test():
                     raise SystemExit("自检的 git %s 失败：%s" % (a[0], p.stderr[:300]))
                 return p.stdout
 
-            sh2("init", "-q", "-b", "main")
+            sh2("init", "-q", "-b", "trunk")
             sh2("config", "user.email", "t@t"); sh2("config", "user.name", "t")
             open(os.path.join(second, "g.txt"), "w").write("1\n")
             sh2("add", "g.txt"); sh2("commit", "-qm", "chore: g")
             open(os.path.join(second, "h.txt"), "w").write("2\n")
             sh2("add", "h.txt"); sh2("commit", "-qm", "feat: h")
-            sh2("checkout", "-q", "--detach", "main~1")
-            REPO_PATH = second
+            sh2("checkout", "-q", "--detach", "trunk~1")
+            REPO_PATH, REF = second, "trunk"
             assert "h.txt" in head_files(), head_files()
             assert "h.txt" not in sh2("ls-tree", "-r", "--name-only", "HEAD"), "HEAD 有 h.txt"
         finally:
-            REPO_PATH = tmp
+            REPO_PATH, REF = tmp, "main"
             shutil.rmtree(second, ignore_errors=True)
         _wiring_self_test(tmp, sh)
     finally:
         REPO_PATH, REF = old_path, old_ref
         for k, v in saved_env.items():
-            os.environ[k] = v
+            if v is None:
+                os.environ.pop(k, None)    # 本来没有的键要摘掉，不能留在进程里
+            else:
+                os.environ[k] = v
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -851,10 +882,12 @@ def _wiring_self_test(tmp, sh):
     cards = [{"task_id": "T1", "pr_number": 7, "pr_merged_at": day},
              {"task_id": "T1", "pr_number": 8, "pr_merged_at": day},
              {"task_id": "T2", "pr_number": 9, "pr_merged_at": day},
-             {"task_id": "T3", "pr_number": 10, "pr_merged_at": day}]
+             {"task_id": "T3", "pr_number": 10, "pr_merged_at": day},
+             {"task_id": "T4", "pr_number": 11, "pr_merged_at": day}]
     tasks = [{"id": "T1", "number": 30, "title": "t", "status": "closed"},
              {"id": "T2", "number": 31, "title": "u", "status": "closed"},
-             {"id": "T3", "number": 32, "title": "v", "status": "closed"}]
+             {"id": "T3", "number": 32, "title": "v", "status": "closed"},
+             {"id": "T4", "number": 33, "title": "w", "status": "closed"}]
     out = os.path.join(tmp, "wiring.md")
     # 只换平台那两个入口：`head_files` 不换，它读的就是这个临时仓库，留存那一段
     # 才算真的走过一遍。
@@ -871,17 +904,20 @@ def _wiring_self_test(tmp, sh):
         globals().update(saved)
     assert rc == 0, rc
     md = open(out, encoding="utf-8").read()
-    assert "队列：窗口内第一次合入的 **3 条线**" in md, md
-    assert "共 4 次合入（其中 4 次在默认分支上认出了对应提交）" in md, md
-    # 文件和行数来自真的 git：合并 #7 加 b.txt 一行，合并 #8 删 b.txt、加 d.txt 一行，
-    # 合并 #9 加 e.txt 一行（第三次合入在另一条线上，不是 T1 的）。两处都对不上时这里
-    # 先响：喂空字典会没有一条线，加删写反了净增就是 -1。
-    assert "| 改动文件数 | 1 |" in md, md
+    assert "队列：窗口内第一次合入的 **4 条线**" in md, md
+    assert "共 5 次合入（其中 5 次在默认分支上认出了对应提交）" in md, md
+    # 文件和行数来自真的 git：合并 #7 加 b.txt 一行，合并 #8 删 b.txt、加 d.txt 一行
+    # （所以 T1 是 2 个文件、净增 1），合并 #9 加 e.txt 和登记表，合并 #10 删登记表、
+    # 加 f.txt，合并 #11 加 g.txt。四处都对不上时这里先响：喂空字典会没有一条线，
+    # 加删写反了净增就是 -1。中位是 4 条线里的第 2 个（最近秩，不插值）。
+    assert "| 改动文件数 | 2 |" in md, md
     assert "| 净增行数 | 1 |" in md, md
-    # 留存那一段也走真的 `head_files`：T1 的 b.txt 被合入 #8 删掉了，T2 的 e.txt 还在。
-    # 分母是 3 不是 2，数反了（数消失的线）会得到 1/3 而不是 2/3；把 `main` 里的
-    # `present` 换成空集合，这行就掉到 0/3。
-    assert "- 改动文件今天仍在默认分支上：2/3 条线是 100%。" in md, md
+    # 留存那一段也走真的 `head_files`：只有 T4 的 g.txt 全在，T1 丢了 b.txt，T2/T3 丢了
+    # 登记表。分母是 4 不是 3，数反了（数消失的线）会得到 3/4 而不是 1/4；把 `main` 里的
+    # `present` 换成空集合，这行就掉到 0/4。
+    assert "- 改动文件今天仍在默认分支上：1/4 条线是 100%。" in md, md
+    # 丢登记表的 T2、T3 不算「代码文件消失」：把 `registry_of` 那层过滤去掉，这条会变成
+    # 3 条。留下的那一条是 T1 的 b.txt。
     assert "- 去掉生成物后仍有文件消失的线：1 条" in md, md
     # 回退那条只在 `load_subjects`（不限第一父链）里看得见。
     assert "读到的历史里有回退提交指向的线：1 条。" in md, md
