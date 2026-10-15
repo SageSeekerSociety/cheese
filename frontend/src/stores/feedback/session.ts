@@ -35,7 +35,7 @@ export const session = {
     pipeline: 0,
     product: 0,
     integrations: 0,
-  } as Record<StatsKind, number>,
+  } satisfies Record<StatsKind, number>,
   /** 管理端那一条详情的代次。它的两次操作会在**同一个 id** 上相遇（读一次、写完再回
    *  一次），所以「id 一样」不足以判断一份响应还算不算数 —— 见 `loadAdminDetail` 与
    *  `_adminWrite`。 */
