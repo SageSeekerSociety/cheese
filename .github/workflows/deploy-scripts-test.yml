@@ -15,8 +15,9 @@ name: Deploy Scripts Test
 # against the 10-minute limit set when the whole file was "under a minute", and
 # GitHub cancelled it at 603-611 s in 9 of the last 11 required checks — a
 # cancelled job is not a red run, but the `required` aggregator reads it as one.
-# The three groups below share no state (every suite builds its own mktemp tree
-# under `.tmp/`; nothing reads what an earlier step wrote), so they run side by
+# The three groups below share no state (every suite builds its own mktemp tree,
+# under `$ROOT/.tmp/` or `$TMPDIR`; nothing reads what an earlier step wrote), so
+# they run side by
 # side and the longest one sets the lane's wall clock: 406/112/120 s in the first
 # run after the split, against ~600 s for the single job. Each step is
 # byte-identical to the one in the old job, and required-ci.py reads this
