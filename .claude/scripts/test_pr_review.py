@@ -214,6 +214,36 @@ class PrReview(unittest.TestCase):
         self.assertEqual(self.run_script("show", str(d)).stdout, saved)
         self.assertFalse(any("comment" in c for c in self.gh_calls()))
 
+    def test_benchmark_requires_successful_classification(self):
+        benchmark = REPO_ROOT / ".claude/scripts/benchmark_review_prepare.py"
+        with tempfile.TemporaryDirectory(dir=self.tmp) as directory:
+            folder = Path(directory)
+            repo, result = folder / "repo", folder / "result.json"
+            git(folder, "clone", "--quiet", "--shared", "--branch", "main",
+                str(self.work), str(repo))
+
+            def run():
+                return subprocess.run(
+                    ["python3", str(benchmark), "--repo", str(repo),
+                     "--base", "HEAD", "--head", "HEAD", "--before", "HEAD",
+                     "--pairs", "2", "--out", str(result)],
+                    capture_output=True, text=True, timeout=60,
+                )
+
+            good = run()
+            self.assertEqual(good.returncode, 0, good.stderr)
+            self.assertTrue(json.loads(result.read_text())["outputs_equal"])
+            result.unlink()
+            # Both prepares can succeed with identical artifacts even though their
+            # shared classifier failed. That is not valid performance evidence.
+            (repo / ".claude/pr-review/tiers.py").write_text("raise SystemExit(1)\n")
+            git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+                "commit", "-qam", "classifier unavailable")
+            failed = run()
+            self.assertNotEqual(failed.returncode, 0, failed.stdout)
+            self.assertIn("prepare did not produce a classified tier", failed.stderr)
+            self.assertFalse(result.exists())
+
     def test_prepare_decides_the_tier_and_prints_its_criteria(self):
         _, text = self.prepare()
         self.assertIn("## Review tier", text)

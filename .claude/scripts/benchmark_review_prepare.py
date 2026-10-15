@@ -41,6 +41,16 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def validate_prepare_artifacts(artifacts):
+    """Reject equal artifacts when prepare failed to classify the range."""
+    meta = artifacts["meta"].decode("utf-8")
+    tier = next((line for line in meta.splitlines() if line.startswith("tier=")), "")
+    if tier not in {f"tier={letter}" for letter in "ABCDEFG"}:
+        raise ValueError("prepare did not produce a classified tier")
+    if b"\n## Review tier\n" not in artifacts["REVIEW.md"]:
+        raise ValueError("prepare did not write the review tier")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
@@ -89,6 +99,7 @@ def main():
             output = Path(process.stdout.strip()).parent
             artifacts = {name: (output / name).read_bytes()
                          for name in ("REVIEW.md", "meta", "pr.md")}
+            validate_prepare_artifacts(artifacts)
             if expected is None:
                 expected = artifacts
             if artifacts != expected:
