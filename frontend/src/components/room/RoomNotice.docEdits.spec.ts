@@ -138,10 +138,10 @@ describe('a document edit that belongs to no turn', () => {
   })
 
   it('lets a name lead to that person instead of opening the document', async () => {
-    const view = mount(living({ doc_requested_by: 'li-laoshi', doc_edits: EDITS }, { turn: null }), null)
+    const view = mount(living({ doc_edits: EDITS }, { turn: null }), null)
 
-    const name = screen.getByText('李老师')
-    expect(name.closest('[data-handle]')?.getAttribute('data-handle')).toBe('li-laoshi')
+    const name = screen.getByText('芝士S')
+    expect(name.closest('[data-handle]')?.getAttribute('data-handle')).toBe('cheese-a1')
     await fireEvent.click(name)
 
     expect(view.emitted('open-resource')).toBeUndefined()
