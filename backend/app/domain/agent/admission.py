@@ -8,6 +8,10 @@ room on it, and whatever else runs beside them, down together (#1544). So a turn
 that would start a new session on the host waits until the host has room for
 one more session at its cap, and the room reads the same queue notice it reads
 when the project is full.
+
+Beside those two this module holds what a seat and a room are serialized by
+(``Lease``): one at a time inside a process, and now one at a time across the
+processes, which an ``asyncio.Lock`` alone could not say.
 """
 
 import asyncio
@@ -18,6 +22,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from app.core.config import settings
 from app.core.redis import get_redis_client
@@ -530,6 +535,131 @@ async def enter(
         # it lapses, so those behind are not held back for nothing.
         await asyncio.shield(abandon())
         raise
+
+
+class Lease:
+    """One at a time under ``key``, in this process and in Valkey: one at a
+    time across the backend's processes, not merely inside one of them.
+
+    This is what a seat and a room are serialized by. The ``asyncio.Lock`` it
+    replaces could not see the other process — a turn that landed on the
+    process not holding the lock queued behind a lock that was never going to
+    be released on that side.
+
+    ``async with lease:`` waits for the process's lock and then for the key.
+    Both, always, and in that order: the lock is what orders the turns of one
+    process at no cost, and the key is what orders the processes. A take that
+    had only the key — because this process's lock was busy with a turn that
+    itself could not reach Valkey — would be a seat taken twice, since that
+    turn is inside without a key anyone can see. A take that had only the lock
+    is not a seat at all once there are two processes, which is the bug this
+    replaces. So the lock is taken first and the key under it, and by the time
+    a turn is inside it holds both.
+
+    Three things about it are not what an ``asyncio.Lock`` was:
+
+    - **Not re-entrant by itself.** A task taking the same seat twice waits
+      for itself. ``seat_admission`` is what a turn's nested admission goes
+      through, and its ``ContextVar`` is what makes that yield instead.
+    - **No order between processes.** The hold is a ``SET NX PX`` and a waiter
+      looks again every ``POLL_S``: whoever gets there first wins. Inside one
+      process the lock underneath still hands the seat to the waiter that has
+      been waiting longest, as a bare ``asyncio.Lock`` did; it is only the
+      waiting between processes, which never happened before this change, that
+      comes without an order.
+    - **A holder that dies without releasing is waited out.** A cancelled turn
+      lets the seat go at once, as before, but a process killed outright keeps
+      it until the hold runs out, ``LEASE_S`` (30 s). Only the crash path
+      differs. The lock lets go with the process, and is not what the other
+      process waits on.
+    """
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+        #: What orders the turns of this process. Let go by ``__aexit__``,
+        #: which is the frame that also has the Valkey hold to let go.
+        self._lock = asyncio.Lock()
+        #: The hold each turn inside the seat is inside with, one per take,
+        #: innermost last. The lock is let go by the holder of the lock; the
+        #: hold belongs to the caller and has to be handed to ``__aexit__``.
+        self._held: list[Slot | None] = []
+
+    def locked(self) -> bool:
+        """Whether THIS process holds the seat now. Another process holding it
+        is what ``async with`` waits for and is not what this answers: the
+        question is the one an ``asyncio.Lock`` answered, and it still answers
+        it the same way.
+
+        Read from what is held rather than from the lock, which is held from
+        the moment a take here starts waiting, key and all. A turn of this
+        process queued behind another process's turn does not hold the seat,
+        and a caller refused on this being true would be told to wait for a
+        turn of its own that is not running. ``_held`` is appended when the
+        take is inside and popped before the seat is let go, so it is the
+        seat, not the waiting for it.
+        """
+        return bool(self._held)
+
+    async def __aenter__(self) -> "Lease":
+        # Not `async with self._lock`: the lock has to outlive this call, and
+        # be let go by `__aexit__`, next to the hold it was taken for.
+        await self._lock.acquire()
+        try:
+            slot = await self._take()
+        except BaseException:
+            # Cancelled or broken between the seat here and the seat in
+            # Valkey. Whoever is next does not wait for a turn that never
+            # began, and the key this took is dropped by `_take` itself.
+            self._lock.release()
+            raise
+        self._held.append(slot)
+        return self
+
+    async def __aexit__(self, *_exc: object) -> None:
+        slot = self._held.pop()
+        try:
+            if slot is not None:
+                # Let the seat go even when the turn holding it was cancelled,
+                # or it stays taken for LEASE_S for nothing: the same reason
+                # `enter` shields its own release.
+                await asyncio.shield(slot.release())
+        finally:
+            # And the lock goes whatever happened above: a turn that ends has
+            # to leave the seat free here, or every later turn of this process
+            # waits for it for good.
+            self._lock.release()
+
+    async def _take(self) -> Slot | None:
+        """The Valkey hold, or None when there is no Valkey to hold it in.
+
+        Valkey being unreachable costs the cross-process half and nothing
+        else: the seat is what it was before there was a lease, and the next
+        take asks Valkey again. What this take wrote before it failed is taken
+        back, or the seat reads as taken for ``LEASE_S`` in every process
+        while this one goes on without it.
+        """
+        redis = get_redis_client()
+        if redis is None:
+            return None
+        ticket = str(uuid.uuid4())
+        try:
+            return await enter(redis, ticket, hold=Hold(self.key))
+        except (RedisError, OSError) as failure:
+            logger.warning(
+                "seat %s unheld in Valkey (%s); holding it in this process",
+                self.key,
+                failure,
+            )
+            # By this ticket's own value, so a hold another turn took is not
+            # touched.
+            try:
+                await redis.eval(_DROP_HOLD, 1, self.key, ticket)  # type: ignore[misc]
+            except (RedisError, OSError):
+                logger.warning(
+                    "seat %s left held in Valkey; it lapses by itself",
+                    self.key,
+                )
+            return None
 
 
 async def holding(redis: Redis, pool: Pool, tickets: list[str]) -> set[str]:

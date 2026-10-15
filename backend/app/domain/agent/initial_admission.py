@@ -1,6 +1,5 @@
 """Admit a turn's first input under its seat's lock, after project admission."""
 
-import asyncio
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
+from app.domain.agent.admission import Lease
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.owner_provider import owner_is_away
 from app.domain.agent.pending_messages import defer_message
@@ -53,7 +53,7 @@ class AdmissionEventWriter(Protocol):
 @asynccontextmanager
 async def admitted_initial(
     sessions: async_sessionmaker[AsyncSession],
-    seat_lock_for: Callable[[uuid.UUID, str], asyncio.Lock],
+    seat_lock_for: Callable[[uuid.UUID, str], Lease],
     resolve_seat: SeatResolver,
     post_event: AdmissionEventWriter,
     topic_id: uuid.UUID,
