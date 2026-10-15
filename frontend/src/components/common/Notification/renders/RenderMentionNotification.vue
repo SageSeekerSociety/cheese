@@ -1,6 +1,6 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">
+    <div class="n-title">
       <i18n-t
         v-if="mentioner && !inChannel && !documentId"
         scope="global"
@@ -11,11 +11,8 @@
       </i18n-t>
       <template v-else>{{ title }}</template>
     </div>
-    <div v-if="body" class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
-    <div v-if="previewContent" class="text-body-2 text-medium-emphasis mt-2 preview-box">
-      <v-icon icon="mdi-text-box-outline" size="14" class="me-1 text-medium-emphasis" />
-      {{ previewContent }}
-    </div>
+    <div v-if="body" class="n-sub">{{ body }}</div>
+    <div v-if="previewContent" class="n-quote">{{ previewContent }}</div>
   </div>
 </template>
 
@@ -94,21 +91,3 @@ defineExpose({
   content,
 })
 </script>
-
-<style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-
-.preview-box {
-  background-color: rgba(var(--v-theme-surface-variant), 0.5);
-  border-radius: 8px;
-  padding: 8px 12px;
-  margin-top: 8px;
-  position: relative;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-</style>

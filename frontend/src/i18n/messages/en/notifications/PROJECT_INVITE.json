@@ -1,16 +1,4 @@
 {
-  "action": {
-    "accept": "Accept",
-    "decline": "Decline"
-  },
-  "body": "Join \"{projectName}\"",
-  "ended": {
-    "accepted": "You joined \"{projectName}\"",
-    "declined": "You declined to join \"{projectName}\"",
-    "revoked": "The invitation to \"{projectName}\" was withdrawn"
-  },
-  "title": "{inviter} invited you to a project",
-  "title_anonymous": "You've been invited to a project",
   "toast": {
     "acceptFailed": "Couldn’t accept the invitation. Try again later",
     "accepted": "Invitation accepted",

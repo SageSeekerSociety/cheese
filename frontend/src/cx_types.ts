@@ -8,7 +8,7 @@ import type { EnvironmentFailure } from './types/environment'
 export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { DeviceScreen } from './types/deviceSessions'
-export type { WaitingItem } from './types/waiting'
+export type { WaitingAsk, WaitingFace, WaitingItem, WaitingWork } from './types/waiting'
 
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
 import type { Shell } from '@/lib/shell'

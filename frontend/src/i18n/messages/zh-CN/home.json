@@ -11,13 +11,29 @@
       "checksFailed": "检查未通过",
       "bounced": "已退回",
       "decide": "待你决定",
-      "read": "变更提醒"
+      "read": "变更提醒",
+      "invited": "待你答复",
+      "joinRequest": "待你审批"
     },
     "markRead": "标为已读",
     "answerLabel": "写下你的决定",
     "answer": "答复",
     "actionFailed": "操作失败",
-    "markAllRead": "全部标为已读"
+    "markAllRead": "全部标为已读",
+    "invite": {
+      "project": "{person} 邀请你加入项目",
+      "team": "{person} 邀请你加入团队",
+      "request": "{person} 申请加入团队",
+      "asRole": "以{role}身份加入",
+      "accept": "接受",
+      "approve": "同意",
+      "decline": "拒绝"
+    },
+    "role": {
+      "MEMBER": "成员",
+      "ADMIN": "管理员",
+      "OWNER": "所有者"
+    }
   },
   "nav": {
     "teamProjects": "项目",

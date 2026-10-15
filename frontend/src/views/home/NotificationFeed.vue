@@ -1,15 +1,20 @@
 <template>
-  <!-- 待办页的「动态」：提到你、回复你、邀请你、截止提醒。以前它是顶栏铃铛的下拉
-       卡片；铃铛拆了，这些东西就住在这里，和「等你处理」一页。 -->
+  <!-- The 待办 page's activity feed: things that happened, done once read. A
+       notification calling the person to act (a question, an invitation, a review)
+       is not here: the thing itself waits in 等你处理 above and leaves when handled
+       (backend `NotificationRepository._in_feed`). Grouped by day, newest first. -->
   <section class="notification-feed">
     <header class="notification-feed__head">
       <h2 class="notification-feed__title">{{ t('home.inbox.feed') }}</h2>
       <div class="notification-feed__controls">
-        <SegmentedControl
-          v-model="filter"
-          :options="filterOptions"
-          :label="t('notifications.common.filterLabel')"
-          size="md"
+        <v-switch
+          v-model="unreadOnly"
+          :label="t('notifications.common.unreadOnly')"
+          color="primary"
+          density="compact"
+          hide-details
+          inset
+          class="notification-feed__unread"
         />
         <BaseButton v-if="hasUnread" size="sm" @click="markAllAsRead">
           {{ t('notifications.common.markAllAsRead') }}
@@ -30,22 +35,23 @@
          skeleton instead of leaving a blank. -->
     <LoadingSkeleton v-else-if="loading && !notifications.length" variant="list" class="notification-feed__skel" />
     <div v-else-if="notifications.length > 0" class="notification-feed__list">
-      <!-- 看着列表时来了新的：不把正在读的那几行往下挤，先在顶上说一声，点了才换成最新的。 -->
+      <!-- New ones arrived while reading: say so on top instead of pushing the rows down. -->
       <div v-if="fresh > 0" class="notification-feed__fresh">
         <BaseButton size="sm" prepend-icon="mdi-arrow-up" @click="showFresh">
           {{ t('notifications.common.newItems', { count: fresh }) }}
         </BaseButton>
       </div>
-      <v-list density="compact" lines="three" class="py-0" bg-color="transparent">
-        <notification-item
-          v-for="notification in notifications"
+      <template v-for="day in days" :key="day.key">
+        <h3 class="notification-feed__day">{{ day.label }}</h3>
+        <NotificationItem
+          v-for="notification in day.items"
           :key="notification.id"
           :notification="notification"
-          :category-label="t(CATEGORY_LABEL[notificationCategoryOf(notification.type)])"
+          :time="clockTime(notification.createdAt)"
           :on-mark-as-read="markAsRead"
           :on-delete="deleteNotification"
         />
-      </v-list>
+      </template>
       <!-- Loading the next page failed: keep the pages we already have, append the
            error and a retry under them, and do not blank the feed. -->
       <BaseLoadError
@@ -62,13 +68,12 @@
       </div>
     </div>
     <p v-else-if="!loading" class="notification-feed__quiet t-body">
-      {{ t('notifications.common.noNotifications') }}
+      {{ unreadOnly ? t('notifications.common.noUnread') : t('notifications.common.noNotifications') }}
     </p>
   </section>
 </template>
 
 <script setup lang="ts">
-import type { NotificationCategory } from '@/components/common/Notification/categories'
 import type { Notification } from '@/types/apiNotifications'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -81,58 +86,19 @@ import { NotificationsApi } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
-import {
-  NOTIFICATION_CATEGORIES,
-  notificationCategoryOf,
-  typesOfCategory,
-} from '@/components/common/Notification/categories'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
-import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import { storageGet, storageSet } from '@/lib/browserStorage'
+import { dayKey, dayLabel } from '@/lib/chatGrouping'
+import { clockTime } from '@/lib/dateText'
 import { onInboxChange } from '@/lib/inboxLive'
 
 const { t } = useI18n()
 
 const unread = useUnreadNotifications()
 
-// 三档各自的词条（`notifications.category.*`）。写在这里而不是拼字符串，是为了
-// catalog 的「每个键都有调用处」那一关看得见它们。
-const CATEGORY_LABEL: Record<NotificationCategory, string> = {
-  mine: 'notifications.category.mine',
-  notice: 'notifications.category.notice',
-  system: 'notifications.category.system',
-}
-
-// 停在哪一档记在这台浏览器上，下次打开还是上次那样。读过的那几档（「全部」「未读」
-// 是上一版的写法）不认识了就回「需我处理」。
-const FILTER_KEY = 'cheesex.notificationFeed.filter'
-function readFilter(): NotificationCategory {
-  const saved = storageGet(FILTER_KEY)
-  return NOTIFICATION_CATEGORIES.find((category) => category === saved) ?? 'mine'
-}
-const filter = ref<NotificationCategory>(readFilter())
-
-// 每一档各有多少条。载荷里带「全部 12 条」那个数就是它；删掉一条之后要重新问一遍。
-const counts = ref<Record<NotificationCategory, number> | null>(null)
-const filterOptions = computed(() =>
-  NOTIFICATION_CATEGORIES.map((category) => ({
-    value: category,
-    label: counts.value ? `${t(CATEGORY_LABEL[category])} · ${counts.value[category]}` : t(CATEGORY_LABEL[category]),
-  }))
-)
-
-// 三档的数字各问一次服务端（一组类型只要一条，拿的是它的 total）。
-async function refreshCounts() {
-  try {
-    const [mine, notice, system] = await NotificationsApi.countByTypes(
-      NOTIFICATION_CATEGORIES.map((category) => typesOfCategory(category))
-    )
-    counts.value = { mine, notice, system }
-  } catch (error) {
-    // 数字取不到不影响读列表：三档的格子先只写名字。
-    console.error('获取动态条数失败:', error)
-  }
-}
+// 「只看未读」记在这台浏览器上，下次打开还是上次那样。
+const UNREAD_ONLY_KEY = 'cheesex.notificationFeed.unreadOnly'
+const unreadOnly = ref(storageGet(UNREAD_ONLY_KEY) === '1')
 
 const notifications = ref<Notification[]>([])
 const loading = ref(false)
@@ -143,14 +109,33 @@ const failed = ref(false)
 const moreFailed = ref(false)
 const errorReason = ref('')
 const cursorStart = ref<string | undefined>(undefined)
-const pageSize = ref(10)
+const pageSize = ref(20)
 const hasMore = ref(false)
 
 // 判断是否有未读通知
 const hasUnread = computed(() => notifications.value.some((notification) => !notification.read))
 
-// 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页
-// 属于上一档，丢掉，不然「需我处理」那一栏会混进别的档的通知。
+// 按本地日期分组，新的在前（服务端给的就是这个顺序）。读的人在哪个时区，「今天」就是
+// 那个时区的今天，和对话里的日期线同一个说法（`lib/chatGrouping.ts`）。
+const days = computed(() => {
+  const groups: { key: string; label: string; items: Notification[] }[] = []
+  for (const notification of notifications.value) {
+    // 一条时间读不出来的也得落在某一天，不能让整块因此画不出来。
+    const at = Number.isFinite(notification.createdAt) ? notification.createdAt : 0
+    const iso = new Date(at).toISOString()
+    const key = dayKey(iso)
+    const last = groups[groups.length - 1]
+    if (last && last.key === key) last.items.push(notification)
+    else groups.push({ key, label: dayLabel(iso), items: [notification] })
+  }
+  return groups
+})
+
+/** 这一次要什么：「只看未读」时只要没读的，否则全要。 */
+const readFilter = () => (unreadOnly.value ? false : undefined)
+
+// 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页属于
+// 上一种筛选，丢掉，不然「只看未读」里会混进读过的。
 let generation = 0
 const fetchNotifications = async (isMore = false) => {
   if (loading.value) return
@@ -163,9 +148,7 @@ const fetchNotifications = async (isMore = false) => {
   errorReason.value = ''
   try {
     const page = await NotificationsApi.list({
-      // 只问服务端要这一档的几种事由。已读未读不问服务端：读没读靠行的底色和「标为
-      // 已读」区分，不改变这一条属于哪一档。
-      type: typesOfCategory(filter.value),
+      read: readFilter(),
       pageStart: cursorStart.value,
       pageSize: pageSize.value,
     })
@@ -198,9 +181,9 @@ function reload() {
   void fetchNotifications()
 }
 
-watch(filter, (value) => {
+watch(unreadOnly, (value) => {
   // 存不进去就这一次有效。
-  storageSet(FILTER_KEY, value)
+  storageSet(UNREAD_ONLY_KEY, value ? '1' : '0')
   reload()
 })
 
@@ -214,11 +197,11 @@ const markAsRead = async (notificationId: number) => {
   try {
     await NotificationsApi.updateStatus(notificationId, true)
 
-    // 更新本地通知状态。读掉的那条还留在这一档里——它没换事由，只是不再是新的。
+    // 「只看未读」时读掉的那条也先留在原处，免得正在读的几行跳动；下次重新打开再按
+    // 筛选取。
     const notification = notifications.value.find((n) => n.id === notificationId)
     if (notification) notification.read = true
 
-    // 更新未读数量
     fetchUnreadCount()
   } catch (error) {
     console.error('标记通知已读失败:', error)
@@ -230,12 +213,10 @@ const markAllAsRead = async () => {
   try {
     await NotificationsApi.markAllAsRead()
 
-    // 更新本地通知状态
     notifications.value.forEach((notification) => {
       notification.read = true
     })
 
-    // 更新未读数量
     fetchUnreadCount()
   } catch (error) {
     console.error('标记所有通知已读失败:', error)
@@ -247,12 +228,9 @@ const deleteNotification = async (notificationId: number) => {
   try {
     await NotificationsApi.del(notificationId)
 
-    // 从列表中移除
     notifications.value = notifications.value.filter((n) => n.id !== notificationId)
 
-    // 更新未读数量；这一档的总数也少了一条。
     fetchUnreadCount()
-    void refreshCounts()
   } catch (error) {
     console.error('删除通知失败:', error)
   }
@@ -261,17 +239,16 @@ const deleteNotification = async (notificationId: number) => {
 // 读完、删完之后把首页那一格的小点对上。
 const fetchUnreadCount = () => unread.refresh()
 
-// 列表上面那几行之后又来了几条（这一档里的）。看第一页就够：新的一定排在最前。
+// 列表上面那几行之后又来了几条。看第一页就够：新的一定排在最前。
 const fresh = ref(0)
 
-// 有没有新的：问一遍这一档的第一页，比列表最上面那一条新的就是。列表还空着就直接
-// 摆上来——没有正在读的东西可打断。
+// 有没有新的：问一遍第一页，比列表最上面那一条新的就是。列表还空着就直接摆上来——
+// 没有正在读的东西可打断。
 async function lookForNew() {
-  void refreshCounts()
   if (loading.value || failed.value) return
   const mine = generation
   try {
-    const page = await NotificationsApi.list({ type: typesOfCategory(filter.value), pageSize: pageSize.value })
+    const page = await NotificationsApi.list({ read: readFilter(), pageSize: pageSize.value })
     if (mine !== generation || loading.value) return
     if (notifications.value.length === 0) {
       notifications.value = page.notifications
@@ -288,7 +265,6 @@ async function lookForNew() {
 
 function showFresh() {
   reload()
-  void refreshCounts()
 }
 
 // 新的一行一来服务端就说（`lib/inboxLive.ts`）。连接断开期间漏掉的，在这一页重新回
@@ -308,9 +284,7 @@ onBeforeUnmount(stopListening)
 useEventListener(document, 'visibilitychange', lookIfStale)
 useEventListener(window, 'focus', lookIfStale)
 
-// 初始化加载通知。三档的数字和第一页一起要，格子一出来就带着数。
 onMounted(() => {
-  void refreshCounts()
   fetchNotifications()
 })
 </script>
@@ -318,10 +292,11 @@ onMounted(() => {
 <style scoped>
 .notification-feed__head {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   justify-content: space-between;
-  margin: 24px 0 8px;
+  margin: 32px 0 8px;
 }
 .notification-feed__title {
   margin: 0;
@@ -329,11 +304,15 @@ onMounted(() => {
   font-weight: 600;
   color: var(--ink);
 }
-/* 筛选在左、批量动作在右：两个都是这一屏的次要动作，贴着标题那一条线。 */
 .notification-feed__controls {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
+}
+.notification-feed__unread :deep(.v-label) {
+  color: var(--muted);
+  font-size: 13px;
+  opacity: 1;
 }
 .notification-feed__fresh {
   display: flex;
@@ -346,6 +325,18 @@ onMounted(() => {
   border-radius: var(--radius-lg);
   background: var(--surface);
   overflow: hidden;
+}
+/* 一天的小标题。紧跟在它下面的那一行不再画顶上那条线：标题本身就把两天分开了。 */
+.notification-feed__day {
+  margin: 0;
+  padding: 12px 16px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: var(--lh-12);
+}
+.notification-feed__day + :deep(.inbox-row) {
+  border-top: none;
 }
 /* 首次加载的骨架坐在和真实列表同一张卡里，行到齐时这一块不换高度。 */
 .notification-feed__skel {

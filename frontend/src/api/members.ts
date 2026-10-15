@@ -1,5 +1,6 @@
 import type { ListPayload, Project, ProjectInvitation, ProjectMemberRow, Topic, TopicMemberRow } from '../cx_types'
 
+import { changesAwaiting } from './awaitingChanged'
 import { request } from './http'
 
 // 项目成员列表 (used by the 改验收人 menu). Returns {data:[{user_handle, role}]}.
@@ -69,11 +70,14 @@ export function listMyInvitations(): Promise<ListPayload<ProjectInvitation>> {
   return request<ListPayload<ProjectInvitation>>('/me/invitations')
 }
 
+// 答了这条邀请，它就从「等你处理」里了结，所以告诉角标重读。
 export function respondToInvitation(invitationId: string, accept: boolean): Promise<ProjectInvitation> {
-  return request<ProjectInvitation>(`/invitations/${encodeURIComponent(invitationId)}/respond`, {
-    method: 'POST',
-    body: JSON.stringify({ accept }),
-  })
+  return changesAwaiting(
+    request<ProjectInvitation>(`/invitations/${encodeURIComponent(invitationId)}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ accept }),
+    })
+  )
 }
 
 export function revokeInvitation(invitationId: string): Promise<ProjectInvitation> {

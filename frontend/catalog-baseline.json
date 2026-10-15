@@ -79,8 +79,6 @@
     "src/components/common/MyApp.vue",
     "src/components/common/Navigation/DesktopUpdateReady.vue",
     "src/components/common/Navigation/UserMenuCard.vue",
-    "src/components/common/Notification/renders/RenderCheeseQuestionNotification.vue",
-    "src/components/common/Notification/renders/RenderDeadlineRemindNotification.vue",
     "src/components/common/Notification/renders/RenderDefaultNotification.vue",
     "src/components/common/Notification/renders/RenderRoomNoticeNotification.vue",
     "src/components/common/Notification/renders/RenderSpaceAnnouncementNotification.vue",
