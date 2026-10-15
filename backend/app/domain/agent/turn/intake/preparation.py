@@ -3,9 +3,7 @@
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
-from dataclasses import dataclass
-from typing import Any, Protocol
+from collections.abc import AsyncIterator, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -13,10 +11,8 @@ from app.core.errors import BaseError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
-    TOPIC_DOC_CHAR_BUDGET,
     UNTITLED_TASK,
     build_session_opening,
-    fit_doc_to_budget,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -47,8 +43,23 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.room.system_prompt import session_system_prompt
 from app.domain.agent.room.thread_context import thread_context as _thread_context
 from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
-from app.domain.agent.session_host.contract import Image
 from app.domain.agent.session_host.host import keeps_memory
+
+# What used to be defined here now lives in `context`, and is imported — never
+# re-derived — so `from …intake.preparation import <one of these>` and a
+# monkeypatch on it keep resolving to the same object.
+from app.domain.agent.turn.intake.context import (
+    _FIT_NOTE_CHARS,  # noqa: F401  (imported only to be re-exported)
+    Launch,
+    ModelOptions,
+    TurnBail,
+    TurnContext,
+    _Machines,
+    _MemoryBooks,
+    _proposal_frames,
+    human_private_owner,
+    living_doc_text,
+)
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to, _pending_input_blocks
 from app.domain.agent.turn.state.live import LiveWork
@@ -56,11 +67,7 @@ from app.domain.agent.turn.steps.prepared import PreparedSend
 from app.domain.agent.turn.steps.send import SendEffects, send_prepared
 from app.domain.agent.turn_speakers import is_routine_run, turn_speakers
 from app.domain.agent_instance.own import owned_instance
-from app.domain.agent_instance.services import (
-    AgentInstanceService,
-    ResolvedAgent,
-    memory_pool,
-)
+from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.output_effects import count_prompt_attempt
 from app.domain.block.queries import (
@@ -70,223 +77,23 @@ from app.domain.block.queries import (
 )
 from app.domain.delivery.receipts import held_blocks
 from app.domain.living_doc.overview import overview_document
-from app.domain.memory.files_store import MemoryIndex, memory_index
-from app.domain.memory.scopes import MemoryScope
+from app.domain.memory.files_store import memory_index
 from app.domain.policy import gate
 from app.domain.project import artifacts as project_artifacts
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
-from app.domain.room_task.canvas_text import living_doc_canvases
 from app.domain.room_task.models import TaskStatus, TaskTitleSource
-from app.domain.room_task.place import Place, PlaceResolver, doc_text_of
+from app.domain.room_task.place import PlaceResolver
 from app.domain.task import teaching as teaching_context
-from app.domain.task.teaching import TeachingContext
 from app.domain.thread.services import thread_opening
-from app.domain.topic.models import Topic, TopicStatus
-from app.domain.topic.reads import (
-    conversation_progress,
-    open_rooms,
-    project_topics,
-)
-from app.domain.topic_membership.services import TopicMemberService
+from app.domain.topic.models import TopicStatus
+from app.domain.topic.reads import conversation_progress, project_topics
 from app.domain.usage.ledger import team_terms
 from app.domain.usage.model_access import overseas_approved
 from app.domain.user.services import language_of
 
 logger = logging.getLogger(__name__)
-
-
-#: At least as long as the note `fit_doc_to_budget` adds to a document it cut.
-_FIT_NOTE_CHARS = 300
-
-
-async def living_doc_text(
-    session: AsyncSession, place: Place, *, needs_place: bool
-) -> str | None:
-    """The living document as the system prompt carries it (`doc_text_of`),
-    and after it the canvases it holds, as text: the two together fit the
-    document's budget, the document giving way."""
-    text = await doc_text_of(session, place, needs_place=needs_place)
-
-    async def readable(rooms: set[uuid.UUID]) -> set[uuid.UUID]:
-        # A task of a channel only some may read is named on a card only when
-        # it is this conversation's own channel.
-        return await open_rooms(session, rooms) | ({place.room_id} & rooms)
-
-    canvases = await living_doc_canvases(session, place, readable) if text else ""
-    if not canvases or text is None:
-        return text
-    # The prompt fits the two again as one text; the room a compressed
-    # document's note takes is left, so that second fit has nothing to cut.
-    room = TOPIC_DOC_CHAR_BUDGET - len(canvases) - _FIT_NOTE_CHARS
-    return (
-        fit_doc_to_budget(text, room, full_read_hint="用 `cheese_doc_get` 读全文")
-        + canvases
-    )
-
-
-def _proposal_frames(landed: dict | None) -> list[dict]:
-    """撞上档位策略的那一轮怎么收场：房间里刚落下的那条提议，然后 done。
-
-    没有 error 帧——这一轮没有发生，但也没有出错，下一步在提议收件人手上（结论
-    40）。`landed` 是 `None` 时这条提议之前就提过了，房间里不再多一句一样的话。
-    """
-    frames: list[dict] = []
-    if landed is not None:
-        frames.append({"type": "event_block", "block": landed})
-    frames.append({"type": "done"})
-    return frames
-
-
-@dataclass(frozen=True, slots=True)
-class Launch:
-    """What a seat's session is started with, read without opening a turn
-    (``TurnPreparation.launch_inputs``): the same inputs a turn hands its session,
-    so a session started from them is the one the next turn would start."""
-
-    session: SessionRef
-    runtime: RoomSessions
-    system_prompt: str
-    resume_token: str | None
-    model: str | None
-    env: dict[str, str] | None
-    needs_place: bool
-
-
-@dataclass(frozen=True, slots=True)
-class TurnContext:
-    """Everything one turn needs to run, read once before anything runs it.
-
-    A turn is assembled and then executed, and the two halves want opposite
-    things from a database session: assembling is a dozen reads that belong in
-    one transaction, executing is minutes of streaming that must hold none. This
-    is what crosses between them — so a backend that runs a turn some other way
-    receives THIS, rather than a session and instructions on what to read.
-    """
-
-    # Who is here and what they are working under.
-    project_id: uuid.UUID
-    # Where: the room, and the task or 支线 when the conversation is one of
-    # theirs.
-    room_id: uuid.UUID
-    inner_id: uuid.UUID | None
-    acting_agent: str
-    agent: ResolvedAgent
-    agent_pool: tuple[MemoryScope, str] | None
-    role: str | None
-    roster: list[dict]
-    untitled: bool
-    # 本周教学范围 (#8d772257). None for every project that is not a course —
-    # and None is what keeps the prompt byte-identical to what it was before
-    # this key existed, which is the property the non-course tests pin.
-    teaching: TeachingContext | None
-
-    # What this turn was given, and what it is being asked about.
-    prompt_text: str
-    pending_ids: list[uuid.UUID]
-    # The platform notices this prompt carries. Stamped consumed alongside the
-    # human blocks and by the same turn — a notice this turn actually read must
-    # not be read again — but kept separate up to that point, because every
-    # other question asked of `pending_ids` is about who spoke.
-    notice_ids: list[uuid.UUID]
-    turn_images: list[Image]
-    replay_notice: str | None
-    resume_session_id: str | None
-
-    # What it should know: the doc, the memories, the checklist it left behind,
-    # the cards waiting on it, and which段 of the flow this topic is in.
-    doc_text: str | None
-    # 注入用的项目目标（`project/overview.py`），和芝士读写它时要用的编号。
-    overview_doc_text: str | None
-    overview_doc_id: uuid.UUID | None
-    # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
-    # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
-    # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
-    memory: MemoryIndex | None
-    prior_progress: list[dict]
-    # Chat messages already in the room, apart from the ones this turn delivers.
-    earlier_messages: int
-    # For a 支线: the message it hangs under and what the main line said just
-    # before it; and the channel's tasks still open. None elsewhere.
-    thread_context: str | None
-    thread_tasks: str | None
-    topic_refs: list[dict]
-    topic_refs_for_prompt: list[dict]
-    # 这个项目交出去过的东西 —— 下一次交付要从这几个名字里挑一个。空着是「还没交出
-    # 去过东西」，None 是「这间房间不交付」（私聊）。
-    artifacts: list[dict] | None
-
-    # Which machine, and whether it reports its own liveness (which decides who
-    # owns this turn's clock; see the `turn_ceiling` frame).
-    provider: RoomSessions
-    # 这一轮跑在哪个骨架上，解析过一次的那个答案（结论 28）。会话行的键里有它，
-    # 所以执行那一半必须读这里，不能自己再解析一次。
-    harness: str
-    # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
-    # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
-    needs_place: bool
-    # A 支线's work is not kept: it may read, run and try things on its own
-    # machine, and nothing it does there reaches the project. What changes the
-    # project is done in a task.
-    keeps_nothing: bool
-    # Whose word a task's session acts on and where it changes the project
-    # (`task_section`); None outside a task. It changes when a 支线 becomes
-    # the task or the task changes hands, and is told again then.
-    task_rules: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class TurnBail:
-    """The turn ended while it was still being assembled, and these are the
-    frames that say so. Not an error: nobody was waiting on an answer, or the
-    machine is still being built."""
-
-    frames: list[dict]
-
-
-class _Machines(Protocol):
-    """What a turn asks of the service's compute pool (``agent.compute``)."""
-
-    def choose(
-        self, project_settings: Mapping[str, Any] | None
-    ) -> tuple[str, RoomSessions | None]: ...
-
-    def owned(self, harness: str, *, on_account: bool) -> RoomSessions | None: ...
-
-    async def activate(self, session: SessionRef, runtime: RoomSessions) -> None: ...
-
-
-class _MemoryBooks(Protocol):
-    """What a turn tells the service's memory ledger (``agent.memory_ledger``)."""
-
-    def remember_turn(
-        self,
-        room_id: uuid.UUID,
-        seat: tuple[uuid.UUID, str],
-        *,
-        acting: str,
-        speakers: tuple[str, ...],
-    ) -> None: ...
-
-
-class ModelOptions(Protocol):
-    async def __call__(
-        self,
-        project_id: uuid.UUID,
-        provider: RoomSessions | None,
-        topic_id: uuid.UUID | None = None,
-        *,
-        agent: ResolvedAgent | None = None,
-        acting_agent: str | None = None,
-    ) -> tuple[dict, str]: ...
-
-
-async def human_private_owner(session: AsyncSession, topic: Topic) -> str | None:
-    if not _is_dm(topic):
-        return None
-    seats = await TopicMemberService(session).private_seats(topic.id)
-    return seats[0] if seats is not None else None
 
 
 class TurnPreparation:
