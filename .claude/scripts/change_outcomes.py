@@ -9,7 +9,7 @@ Usage:
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/change_outcomes.py \
       <频道 topic id> <YYYY-MM-DD> <YYYY-MM-DD> [--json out.json] [--md out.md]
   python3 .claude/scripts/change_outcomes.py --self-test   (离线：无 token、无网络；
-      会在临时目录起一个 git 仓库，把两个历史读取函数真的打一遍)
+      会在临时目录起一个 git 仓库，把两个历史读取函数和 main 的接线真的走一遍)
 
 口径（写进报告时必须一起给出，换口径数字就不可比）:
   队列   一条「任务线」= 一个 task 的全部验收卡按 pr_merged_at 排序；只有第一次
@@ -635,6 +635,7 @@ def self_test():
     out = summarize(rows, commits, {"frontend/a.ts"}, lines)   # a.ts 还在，b.py 没了
     a = [r for r in out if r["task_id"] == "A"][0]
     assert a["gone_files"] == ["backend/b.py"], a
+    assert a["survive_ratio"] == 0.5, a       # 2 个文件里走了 1 个
 
     # drop_report：G 的 #99 和 H 的 #98 认不出（2 次），H 一次都没认出来（1 条线），
     # 没有「认出来了但没有可计文件」的线。
@@ -665,6 +666,32 @@ def self_test():
     md3 = render([], 0, d3, "2026-10-07", "2026-10-15", "2026-10-15 00:00 UTC", pairs)
     assert "1 条线的合入认出来了但没有可计的文件（这些线不计入上表）" in md3, md3
 
+    # 外扩那两行：集合差、代码树过滤、两个数各是几，都要咬住。P 的后续合并一半
+    # 回头动同模块、一半动了文档——只取 later_tree 不减 first_tree 会把 frontend/
+    # 也算成外扩；漏掉 & CODE_TREES 会把 P、R 的 docs/ 记成「另一个代码树」。
+    dcommits = [
+        {"sha": "d1", "date": None, "subject": "feat: p one (#61)",
+         "files": {"frontend/a.ts": (1, 0)}},
+        {"sha": "d2", "date": None, "subject": "feat: p two (#62)",
+         "files": {"frontend/b.ts": (1, 0), "docs/y.md": (1, 0)}},
+        {"sha": "d3", "date": None, "subject": "fix: q (#63)",
+         "files": {"backend/e.py": (1, 0)}},
+        {"sha": "d4", "date": None, "subject": "docs: r (#64)",
+         "files": {"docs/z.md": (1, 0)}},
+    ]
+    dlines = {c["sha"]: c["files"] for c in dcommits}
+    dl = summarize(_line([61, 62], "P") + _line([61, 63], "Q") + _line([61, 64], "R"),
+                   dcommits, present, dlines)
+    assert dl[0]["drift_modules"] == ["docs/"] and dl[0]["drift_code"] == [], dl[0]
+    assert dl[1]["drift_modules"] == ["backend/"], dl[1]
+    assert dl[1]["drift_code"] == ["backend/"], dl[1]
+    assert dl[2]["drift_modules"] == ["docs/"] and dl[2]["drift_code"] == [], dl[2]
+    md4 = render(dl, 0, (0, 0, 0), "2026-10-07", "2026-10-15", "2026-10-15 00:00 UTC",
+                 pairs)
+    assert ("多条合入线里（3 条），后续合并动到了**另一个代码树**（backend/ 与 "
+            "frontend/ 之间互相跨界）的 **1** 条。") in md4, md4
+    assert "放宽到任意模块（含 docs/、.github/、.claude/ 等收尾件）：**3** 条。" in md4, md4
+
     # JSON 的键名是下游的接口，改名要连自检一起改。
     got = payload(two_out, never, dropped, pairs, "2026-10-07", "2026-10-15",
                   "2026-10-15 00:00 UTC")
@@ -672,6 +699,12 @@ def self_test():
                            "no_files_lines", "overlap_pairs", "ref",
                            "unmatched_merges", "window"], sorted(got)
     assert got["unmatched_merges"] == 2 and got["never_matched_lines"] == 1, got
+    assert got["never_merged"] == 1 and got["no_files_lines"] == 0, got
+    assert got["window"] == ["2026-10-07", "2026-10-15"], got
+    assert got["ref"] == REF and got["overlap_pairs"] == {"10-11": 1}, got
+    # 第三个数非 0 的那一路：换一个夹具，「认出来了但没有可计文件」才咬得住。
+    got3 = payload([], 0, d3, pairs, "2026-10-07", "2026-10-15", "2026-10-15 00:00 UTC")
+    assert got3["no_files_lines"] == 1 and got3["never_merged"] == 0, got3
 
     _loader_self_test()
     print("self-test ok")
@@ -681,7 +714,9 @@ def _loader_self_test():
     """`load_history` / `load_numstat` 要真的打到 git 上：自检喂的是现成的文件清单，
     看不出这两个函数的参数对不对（合并提交默认不输出文件，非 squash 的合并只有带
     `-m --first-parent` 才取得到改动）。这里临时起一个仓库，做一次真的非 squash
-    合并，再读回来。"""
+    合并，再读回来，最后把 `main` 的接线也照原样跑一遍（`_wiring_self_test`）。
+
+    临时仓库只吃本地配置：`git -C … config` 那两行，别的一概不读。"""
     global REPO_PATH, REF
     import shutil
     import tempfile
@@ -690,8 +725,14 @@ def _loader_self_test():
     try:
         REPO_PATH, REF = tmp, "HEAD"
 
+        # 这台机器上的全局配置（`commit.gpgsign`、`core.hooksPath`、提交模板）不该
+        # 让一个正确的自检失败：临时仓库只用上面那两行本地配置，其余一概不读。
+        env = dict(os.environ, HOME=tmp, GIT_CONFIG_GLOBAL=os.devnull,
+                   GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
         def sh(*a):
-            p = subprocess.run(["git", "-C", tmp, *a], capture_output=True, text=True)
+            p = subprocess.run(["git", "-C", tmp, *a], capture_output=True, text=True,
+                               env=env)
             if p.returncode:
                 raise SystemExit("自检的 git %s 失败：%s" % (a[0], p.stderr[:300]))
             return p.stdout
@@ -705,6 +746,15 @@ def _loader_self_test():
         sh("add", "b.txt"); sh("commit", "-qm", "feat: side branch work")
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #7 from x/y", "feature")
+        # 回退提交只经下一次合并的第二父到达：第一父链上看不见它（所以历史里读不到），
+        # 回退扫描由 `load_subjects` 单独看得到。
+        sh("checkout", "-q", "-b", "revfix")
+        os.remove(os.path.join(tmp, "b.txt"))
+        open(os.path.join(tmp, "d.txt"), "w").write("3\n")
+        sh("add", "b.txt", "d.txt")
+        sh("commit", "-qm", 'Revert "feat: side branch work (#7)"')
+        sh("checkout", "-q", "main")
+        sh("merge", "-q", "--no-ff", "-m", "Merge pull request #8 from x/revfix", "revfix")
 
         hist = load_history("2000-01-01")
         merge = merge_commit(hist, 7)
@@ -712,13 +762,55 @@ def _loader_self_test():
         assert sorted(merge["files"]) == ["b.txt"], merge["files"]
         # 只经第二父到达的提交不在第一父链里，但回退扫描要看得见它的标题。
         assert not any(c["subject"] == "feat: side branch work" for c in hist), hist
-        assert any(s["subject"] == "feat: side branch work"
-                   for s in load_subjects("2000-01-01"))
+        subs = load_subjects("2000-01-01")
+        assert any(s["subject"] == "feat: side branch work" for s in subs), subs
+        assert any(s["subject"].startswith("Revert") for s in subs), subs
+        # 行数要连方向一起咬：b.txt 是这一版加进来的 1 行，删 0 行。
         num = load_numstat([merge["sha"]])
         assert sorted(num[merge["sha"]]) == ["b.txt"], num
+        assert num[merge["sha"]]["b.txt"] == (1, 0), num
+        # `--since` 得真的传给 git：未来的下界什么都读不到。用 2099 不用 2999：
+        # git 认不出 2999 那种年份，会当成「没有这个限制」照常全给我。
+        assert load_subjects("2099-01-01") == [], load_subjects("2099-01-01")
+        assert load_history("2099-01-01") == [], load_history("2099-01-01")
+        _wiring_self_test(tmp, sh)
     finally:
         REPO_PATH, REF = old_path, old_ref
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _wiring_self_test(tmp, sh):
+    """`main` 里那几行的接线也要真的跑一遍：平台那两个入口换成桩，git 那半边是真的。
+    `load_numstat(shas)` 喂空、或者 `rework` 拿 `commits` 当标题来源（回退就看不见只
+    经第二父到达的那种提交），报告的数都会变。"""
+    today = datetime.now(timezone.utc).date()
+    day = today.isoformat() + "T00:00:00Z"
+    cards = [{"task_id": "T1", "pr_number": 7, "pr_merged_at": day},
+             {"task_id": "T1", "pr_number": 8, "pr_merged_at": day}]
+    tasks = [{"id": "T1", "number": 30, "title": "t", "status": "closed"}]
+    out = os.path.join(tmp, "wiring.md")
+    stubs = {
+        "login": lambda: "tok",
+        "get": lambda tok, path: {"data": cards if "accept-card" in path else tasks},
+        "head_files": lambda: set(sh("ls-tree", "-r", "--name-only", "HEAD").split()),
+    }
+    saved = {k: globals()[k] for k in stubs}
+    globals().update(stubs)
+    try:
+        rc = main(["room-1", (today - timedelta(days=2)).isoformat(),
+                   (today + timedelta(days=1)).isoformat(), "--md", out])
+    finally:
+        globals().update(saved)
+    assert rc == 0, rc
+    md = open(out, encoding="utf-8").read()
+    assert "队列：窗口内第一次合入的 **1 条线**" in md, md
+    assert "共 2 次合入（其中 2 次在默认分支上认出了对应提交）" in md, md
+    # 文件和行数来自真的 git：合并 #7 加 b.txt 一行，合并 #8 删 b.txt、加 d.txt 一行。
+    # 两处都对不上时这里先响：喂空字典会没有一条线，加删写反了净增就是 -1。
+    assert "| 改动文件数 | 2 |" in md, md
+    assert "| 净增行数 | 1 |" in md, md
+    # 回退那条只在 `load_subjects`（不限第一父链）里看得见。
+    assert "读到的历史里有回退提交指向的线：1 条。" in md, md
 
 
 def payload(data, never, dropped, pairs, start, end, as_of):
