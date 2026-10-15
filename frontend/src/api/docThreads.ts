@@ -1,4 +1,4 @@
-import type { DocThread, DocThreadWrite } from '../lib/docThreadTypes'
+import type { DocThread, DocThreadWrite, WrittenToWriter } from '../lib/docThreadTypes'
 
 import { request } from '../api'
 
@@ -13,7 +13,7 @@ export function writeDocThread(
   id: string,
   action: 'replies' | 'resolve' | 'reopen',
   body: DocThreadWrite
-): Promise<DocThread> {
+): Promise<DocThread & WrittenToWriter> {
   return request(`${root(document)}/${encodeURIComponent(id)}/${action}`, {
     method: 'POST',
     body: JSON.stringify(body),

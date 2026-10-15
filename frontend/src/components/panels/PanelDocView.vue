@@ -7,6 +7,7 @@
 // 在协同文档（`session`）上，没有一个「保存」要这一层去管。
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
+import type { useMentionOutside } from '../../composables/useMentionOutside'
 import type { PanelDocument } from '../../composables/usePanelDoc'
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, Topic } from '../../cx_types'
@@ -98,6 +99,8 @@ const props = withDefaults(
     sendComment?: (content: string, quote: string) => Promise<{ id: string }>
     /** 重读评论串。 */
     refreshThreads?: () => Promise<void>
+    /** 我刚写的评论 @ 了打不开这份文档的人：评论栏顶上问一句。 */
+    commentOutside?: ReturnType<typeof useMentionOutside>
     // ---- 装饰的原料（原样递给正文那一半） ----
     /** 修改建议的理由（建议 id → 理由），卡上写出来。 */
     suggestionReasons?: Record<string, string>
@@ -151,6 +154,7 @@ const props = withDefaults(
     commentAuthor: '',
     sendComment: undefined,
     refreshThreads: undefined,
+    commentOutside: undefined,
     askAgent: undefined,
     stopAgent: undefined,
     answerToComment: undefined,
@@ -522,6 +526,8 @@ defineExpose({
           :place-of="placeOfThread"
           :agent-name="agentName"
           :mention-names="mentionNames"
+          :mention-people="mentionPeople"
+          :outside="commentOutside"
           :name-of="nameOf"
           :avatar-of="avatarOf"
           :writable="!readOnly"

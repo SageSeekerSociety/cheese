@@ -35,7 +35,8 @@
     "title_anonymous": "Someone mentioned you in a discussion",
     "body": "In \"{discussionTitle}\"",
     "inChannel": "{who} mentioned you in “{topicTitle}”",
-    "inDocument": "{who} mentioned you in the document “{document}”"
+    "inDocument": "{who} mentioned you in the document “{document}”",
+    "inDocumentComment": "{who} mentioned you in a comment on “{document}”"
   },
   "THREAD_REPLY": {
     "title": "{who} replied in a thread in “{topicTitle}”"

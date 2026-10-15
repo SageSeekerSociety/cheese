@@ -18,6 +18,7 @@
 // 西就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
 import type { DocPeopleBundle } from '../../composables/useDocPeople'
 import type { DocThreadsBundle } from '../../composables/useDocThreads'
+import type { useMentionOutside } from '../../composables/useMentionOutside'
 import type { PanelDocBundle, PanelDocument } from '../../composables/usePanelDoc'
 import type { Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
@@ -56,6 +57,8 @@ const props = withDefaults(
     docThreads: DocThreadsBundle
     /** 名册读成名字那一包（`composables/useDocPeople.ts`）。 */
     docPeople: DocPeopleBundle
+    /** 评论 @ 了打不开这份文档的人时问的那一句（`composables/useMentionOutside.ts`）。 */
+    commentOutside?: ReturnType<typeof useMentionOutside>
   }>(),
   {
     taskId: null,
@@ -64,6 +67,7 @@ const props = withDefaults(
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     bare: false,
+    commentOutside: undefined,
     barTo: undefined,
     flow: false,
   }
@@ -104,13 +108,22 @@ const outsidePrompt = computed(() => {
   }
 })
 
-// 回复里 @ 的 AI 队友，和发评论一样写成点名。
+// 回复里 @ 的 AI 队友，和发评论一样写成点名。回执里说了谁打不开这份文档，就问一句。
 const threads = {
   state: docThreads.state,
   actions: {
     ...docThreads.actions,
-    reply: (id: string, content: string) => docThreads.actions.reply(id, doc.withMentions(content)),
+    reply: async (id: string, content: string) => {
+      const written = await docThreads.actions.reply(id, doc.withMentions(content))
+      if (written) props.commentOutside?.offer(written)
+      return written
+    },
   },
+}
+async function sendComment(content: string, quote: string) {
+  const posted = await doc.sendComment(content, quote)
+  props.commentOutside?.offer(posted)
+  return posted
 }
 
 // Dev-only probe hook: lets Playwright inspect the live document without
@@ -200,7 +213,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :peers="doc.peers.value"
     :error-msg="doc.errorMsg.value"
     :comment-author="doc.commentAuthor"
-    :send-comment="doc.sendComment"
+    :send-comment="sendComment"
+    :comment-outside="commentOutside"
     :refresh-threads="docThreads.refresh"
     :thread-state="threads.state"
     :thread-actions="threads.actions"

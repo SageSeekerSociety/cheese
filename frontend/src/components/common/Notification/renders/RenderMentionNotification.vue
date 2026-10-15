@@ -36,8 +36,9 @@ const { t } = useI18n()
 // `topicId`，后端 `agent.mentions`）。后者标题说谁、在哪个频道，正文是那条消息的
 // 开头，点开落在那条消息上。
 const inChannel = computed(() => !!getStringMetadata(props.notification, 'topicId'))
-// 第三种：文档正文里的 @（后端 `api.doc_mentions`，带着 `documentId`）。说是哪份文档，
-// 点开落在那份文档：任务的实况文档在任务里，项目自己的文档在文档页。
+// 第三种：文档里的 @（带着 `documentId`）：正文里的（后端 `api.doc_mentions`），或一条
+// 评论里的（再带着 `commentId`）。说是哪份文档，点开落在那份文档：任务的实况文档在
+// 任务里，项目自己的文档在文档页。
 const documentId = computed(() => getStringMetadata(props.notification, 'documentId'))
 
 // 获取实体和元数据
@@ -48,10 +49,14 @@ const previewContent = computed(() => getStringMetadata(props.notification, 'pre
 // 通知标题
 const title = computed(() => {
   if (documentId.value) {
-    return t('notifications.MENTION.inDocument', {
+    const words = {
       who: getStringMetadata(props.notification, 'authorName') || getStringMetadata(props.notification, 'author'),
       document: getStringMetadata(props.notification, 'documentTitle') || t('notifications.common.untitledDocument'),
-    })
+    }
+    // 评论里的 @ 带着 `commentId`（后端 `agent.mentions`），说「在评论里」。
+    return getStringMetadata(props.notification, 'commentId')
+      ? t('notifications.MENTION.inDocumentComment', words)
+      : t('notifications.MENTION.inDocument', words)
   }
   if (inChannel.value) {
     return t('notifications.MENTION.inChannel', {
