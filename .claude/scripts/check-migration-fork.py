@@ -28,6 +28,7 @@ Usage:
 import argparse
 import ast
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -177,16 +178,20 @@ def rechain_plan(
         )
     base_head = base_heads[0]
 
-    own = sorted(set(branch_graph) - set(base_graph))
-    if not own:
-        return ({}, "")
-
+    # This comes before the "nothing to move" case, not after it: the caller
+    # counts heads over the union with the base ref, so a tree that has not
+    # merged the base would be validated against migrations it does not contain
+    # — and its sentinel moved onto one of them.
     if base_head not in branch_graph:
         return None, (
             f"the base head {base_head} is not in this checkout, so merge {base_head}'s "
             "branch into this one first — re-chaining onto a revision this tree does not "
             "have would name a parent that is not there"
         )
+
+    own = sorted(set(branch_graph) - set(base_graph))
+    if not own:
+        return ({}, "")
 
     own_heads = [head for head in find_heads(branch_graph) if head in set(own)]
     if len(own_heads) != 1:
@@ -208,12 +213,27 @@ def rechain_plan(
     return rewrites, ""
 
 
-def write_sentinel(path: Path, tip: str) -> str:
-    """Point the sentinel at `tip`, the way reanchor-migration-head.py does.
+def replace_file(path: Path, data: bytes) -> None:
+    """Put `data` at `path` through a complete temporary and one rename.
 
-    A complete temporary beside it and one atomic rename: a write that fails
-    leaves the previous file in place instead of half of a new one.
+    The way reanchor-migration-head.py writes the sentinel, used for every file
+    this re-chains: a write that fails leaves the file that was there. Half of a
+    new migration is a syntax error in the tree, which is worse than a stale one.
     """
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(data)
+            handle.flush()
+            os.chmod(temporary, path.stat().st_mode if path.exists() else 0o644)
+            handle.close()
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def write_sentinel(path: Path, tip: str) -> str:
+    """Point the sentinel at `tip`, in one line or not at all."""
     desired = f"{tip}\n".encode()
     try:
         current = path.read_bytes()
@@ -223,16 +243,7 @@ def write_sentinel(path: Path, tip: str) -> str:
         return f"UNCHANGED: {path} already names {tip}"
 
     old = current.decode("utf-8", errors="replace").strip() if current is not None else "<missing>"
-    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        try:
-            handle.write(desired)
-            handle.flush()
-            os.chmod(temporary, path.stat().st_mode if path.exists() else 0o644)
-            handle.close()
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+    replace_file(path, desired)
     return f"UPDATED: {path} {old} -> {tip}"
 
 
@@ -273,7 +284,9 @@ def rechain(args) -> int:
     sources: dict[str, tuple[Path, str]] = {}
     duplicates: list[str] = []
     for path in sorted(Path(args.versions_dir).glob("*.py")):
-        text = path.read_text(encoding="utf-8")
+        # Bytes, not text: a file read with universal newlines would come back
+        # with every line ending rewritten.
+        text = path.read_bytes().decode("utf-8")
         revision, _ = parse_revision(text)
         if not revision:
             continue
@@ -322,7 +335,7 @@ def rechain(args) -> int:
         rendered.append((path, rewritten, parents))
 
     for path, rewritten, parents in rendered:
-        path.write_text(rewritten, encoding="utf-8")
+        replace_file(path, rewritten.encode("utf-8"))
         target = parents[0] if len(parents) == 1 else tuple(parents)
         print(f"RECHAINED: {path}: down_revision -> {target}")
 
@@ -562,12 +575,65 @@ def self_test() -> int:
     check("a branch that has not merged the base is refused", unmerged[0], None)
     check("... and told to merge it first", "merge" in unmerged[1] and "first" in unmerged[1], True)
 
+    # "Nothing of mine to move" and "this checkout does not have the base head"
+    # are two different states, and both have to be refused. Which one the
+    # function notices first is what decides it: tested the other way round, this
+    # pair is a happy no-op that writes the sentinel onto a revision no file in
+    # the tree declares, prints PASS, and reds the plain check one command later.
+    no_own = rechain_plan({"a": []}, base)
+    check("a branch with no migration of its own that has not merged is refused", no_own[0], None)
+    check("... for the same reason", "merge" in no_own[1], True)
+
     two_headed_base = rechain_plan({"a": [], "n": ["a"]}, {"a": [], "b": ["a"], "c": ["a"]})
     check("a base side with two heads is refused", two_headed_base[0], None)
     check("... naming the count", "2 heads" in two_headed_base[1], True)
 
     empty_base = rechain_plan({"a": [], "n": ["a"]}, {})
     check("an empty base side is refused", empty_base[0], None)
+
+    # --- the write path, in a repository ------------------------------------
+    # Everything above is a pure decision; the way `rechain()` uses them and the
+    # files it touches is not covered by any of it, and that is where the bug
+    # lived. One case drives the command itself: behind the base, carrying no
+    # migration of its own.
+    lab = Path(tempfile.mkdtemp(prefix="rechain-self-test-"))
+    try:
+        alembic = lab / "backend" / "alembic"
+        versions = alembic / "versions"
+        versions.mkdir(parents=True)
+        sentinel = alembic / "HEAD"
+        (versions / "a.py").write_text('revision = "a"\ndown_revision = None\n', encoding="utf-8")
+        sentinel.write_text("a\n", encoding="utf-8")
+        script = lab / ".claude" / "scripts" / Path(__file__).name
+        script.parent.mkdir(parents=True)
+        script.write_bytes(Path(__file__).read_bytes())
+
+        def git(*argv: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["git", *argv], cwd=lab, capture_output=True, text=True)
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "self-test@example.invalid")
+        git("config", "user.name", "self-test")
+        git("add", "-A")
+        git("commit", "-qm", "a")
+        git("checkout", "-q", "-b", "base")
+        (versions / "m.py").write_text('revision = "m"\ndown_revision = "a"\n', encoding="utf-8")
+        sentinel.write_text("m\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "m")
+        git("checkout", "-q", "main")
+
+        result = subprocess.run(
+            [sys.executable, str(script), "--rechain", "--base", "base"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+        )
+        check("the command refuses an un-merged branch with nothing of its own", result.returncode, 1)
+        check("... saying to merge the base first", "merge" in result.stdout, True)
+        check("... and leaving the sentinel where it was", sentinel.read_text(encoding="utf-8"), "a\n")
+    finally:
+        shutil.rmtree(lab, ignore_errors=True)
 
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}")
