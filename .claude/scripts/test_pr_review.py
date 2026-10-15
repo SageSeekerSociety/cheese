@@ -265,7 +265,9 @@ class PrReview(unittest.TestCase):
         _, text = self.prepare()
         line = next(l for l in text.splitlines() if l.startswith("- 子代理拓扑："))
         self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [2, 2, 2])
-        self.assertIn("2 路找茬", line)
+        # The effort is an enum the tier spends, not a phrase: rewording the sentence around
+        # it must not go red, and dropping it must.
+        self.assertIn("high", line)
         for severity in ("blocker", "major"):
             self.assertIn(severity, line)
 
