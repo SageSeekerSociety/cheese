@@ -607,9 +607,14 @@ class Lease:
         turn of another process is the one a take cannot see coming and waits
         for either way. Read a moment before a take, so a turn that is about to
         wait can say so in its room rather than looking like nothing happening
-        (#1561). The read is a moment early, so a seat let go in between can
-        still be answered as taken — that costs one notice about a wait that
-        did not happen, never a silence about one that did.
+        (#1561).
+
+        The read is a moment early, so it answers for the moment it was made,
+        not for the take that follows. A seat let go in between is answered as
+        taken, and two messages of one conversation arriving together can both
+        be answered "free" and then both wait, one of them without saying so.
+        The notice is a courtesy, not the gate: ``__aenter__`` waits for the
+        seat either way.
 
         Valkey being unreachable answers False, which costs the notice and not
         the take: ``__aenter__`` waits for the key if there is one and for this

@@ -390,8 +390,9 @@ class RunnerIntake:
         - credits exhausted → ("reject", None): the caller refuses the turn.
         - its session starts on a session host with no memory for it → wait.
         - the conversation's seat is held by another turn → wait for it, after
-          posting the same visible "排队中" system event the project's queue
-          posts.
+          posting a visible "排队中" system event — the one the host's memory
+          wait posts, because what waits here is a turn of the conversation's
+          own, not a place among the project's.
         - project concurrency full → wait for one of the project's slots, first
           come first served, after posting a visible "排队中" system event.
           Returns ("ok", ...) with both held (caller must release).
@@ -415,32 +416,29 @@ class RunnerIntake:
         if policy["credits_exhausted"]:
             logger.info("turn %s rejected: credits exhausted", turn_id)
             return "reject", None
+        said: set[str] = set()
+
+        async def say_queued(text: str, why: str, meta: dict = QUEUED_META) -> None:
+            """Say this turn is queued, and what for — once per sentence.
+
+            A turn can wait three times on its way in: for its host's memory,
+            for its conversation's seat, and then for a place among the
+            project's turns. The first two wait for the same thing — a machine
+            with room, not a position in a queue — and say so in the same
+            sentence, so only its first speaker is heard: the same line twice
+            on one message reads as two messages queued.
+            """
+            if text in said:
+                return
+            said.add(text)
+            await self._post_event(chat_service, topic_id, turn_id, text, meta=meta)
+            logger.info("turn %s queued (%s)", turn_id, why)
+
         await wait_for_host(
             self._host_has_room if policy.get("on_session_host") else None,
             topic_id,
-            lambda text: self._post_event(
-                chat_service, topic_id, turn_id, text, meta=HOST_BUSY_META
-            ),
+            lambda text: say_queued(text, "host has no room", HOST_BUSY_META),
         )
-
-        told = False
-
-        async def say_queued(text: str, why: str) -> None:
-            """Say this turn is queued, and what for — once.
-
-            A turn can wait twice on its way in, for its seat and then for a
-            place among the project's turns, and it is queued either way. Only
-            the first of the two speaks: a second identical line on one message
-            reads as two messages queued.
-            """
-            nonlocal told
-            if told:
-                return
-            told = True
-            await self._post_event(
-                chat_service, topic_id, turn_id, text, meta=QUEUED_META
-            )
-            logger.info("turn %s queued (%s)", turn_id, why)
 
         async def tell_queued(ahead: int) -> None:
             await say_queued(
@@ -448,7 +446,9 @@ class RunnerIntake:
             )
 
         async def tell_seat_taken() -> None:
-            await say_queued(queued_text(0), "seat held by another turn")
+            await say_queued(
+                say("turnQueuedHostBusy"), "seat held by another turn", HOST_BUSY_META
+            )
 
         seats = AsyncExitStack()
         try:

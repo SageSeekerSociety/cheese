@@ -13,8 +13,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.sentences import say
 from app.domain.agent import admission
-from app.domain.agent.admission import Lease, queued_text
+from app.domain.agent.admission import HOST_BUSY_META, Lease
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.seat_admission import seat_admission
@@ -36,6 +37,7 @@ class _Room:
 
     def __init__(self) -> None:
         self.events: list[str] = []
+        self.metas: list[dict | None] = []
         self.seat = Lease(f"admission:seat:{uuid.uuid4()}:cheese-seat")
         #: Never opened: the turns here come in without a delivery, which is
         #: the only thing that reads the database on the way in.
@@ -54,6 +56,7 @@ class _Room:
 
     async def post_system_event(self, topic_id, text, turn_id=None, *, meta=None):
         self.events.append(str(text))
+        self.metas.append(meta)
         return None
 
 
@@ -106,11 +109,13 @@ async def test_a_turn_waiting_for_its_seat_takes_no_project_place(monkeypatch):
     await running.wait()
     waiting = asyncio.create_task(a_turn_goes_in())
 
-    # It queued, in the words the room already reads when the project's turns
-    # are full, and it has asked for no place of the project's: that place
-    # would be held for as long as it waits for the seat.
+    # It queued, in the words the room already reads when a resource rather
+    # than a queue position is what holds a turn back, and it has asked for no
+    # place of the project's: that place would be held for as long as it waits
+    # for the seat.
     await _until(lambda: room.events)
-    assert room.events[0] == str(queued_text(0))
+    assert room.events[0] == str(say("turnQueuedHostBusy"))
+    assert room.metas[0] == HOST_BUSY_META
     assert places == []
 
     leave.set()
