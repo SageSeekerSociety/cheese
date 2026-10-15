@@ -15,6 +15,7 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from tests.conftest import stub_compute
 from tests.integration.conftest import (
+    approve_overseas,
     post_project,
     put_on_plan,
     session_auth_headers,
@@ -44,6 +45,7 @@ def create(client):
     async def reserve() -> None:
         async with client.test_request_factory() as session:  # type: ignore[attr-defined]
             await put_on_plan(session, project["team_id"], "reserve")
+            await approve_overseas(session, project["team_id"])
             await session.commit()
 
     client.portal.call(reserve)  # type: ignore[union-attr]

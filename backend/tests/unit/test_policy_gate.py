@@ -31,6 +31,7 @@ from app.domain.policy.gate import (
     PROPOSE,
     Allowed,
     Call,
+    OverseasNotApproved,
     OverTier,
     Proposal,
     Resource,
@@ -139,6 +140,40 @@ def test_an_unreadable_disposition_falls_back_to_refusing():
             policy_of({ALLOWED_TIERS_KEY: [TIER_INCLUDED], OVER_TIER_KEY: "降档"}),
             "cheese",
         )
+
+
+def test_a_model_that_needs_approval_is_refused_for_a_team_nobody_approved():
+    """方案再宽、项目没收紧，没开通的团队用不了需开通的模型；项目主人点头也不行。"""
+    call = Call(
+        resource=Resource.model,
+        subject="sonnet",
+        label="Claude Sonnet 5",
+        tier=TIER_PREMIUM,
+        approver="owner",
+        overseas=True,
+    )
+    for disposition in (DENY, PROPOSE):
+        with pytest.raises(OverseasNotApproved):
+            check(call, policy_of({OVER_TIER_KEY: disposition}), "cheese")
+    approved = policy_of(None, overseas_approved=True)
+    assert check(call, approved, "cheese") == Allowed(call)
+
+
+def test_approval_does_not_widen_the_plan():
+    """开通只放开「需开通」这一道，方案不许的档位照样拒。"""
+    call = Call(
+        resource=Resource.model,
+        subject="fable",
+        label="Claude Fable 5",
+        tier=TIER_FRONTIER,
+        approver="owner",
+        overseas=True,
+    )
+    policy = policy_of(
+        None, frozenset({TIER_INCLUDED, TIER_PREMIUM}), overseas_approved=True
+    )
+    with pytest.raises(OverTier):
+        check(call, policy, "cheese")
 
 
 def test_a_refused_call_never_comes_back_as_a_cheaper_one():

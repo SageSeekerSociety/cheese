@@ -96,7 +96,8 @@
     "filterKind": "类型",
     "all": "全部",
     "members": "{n} 名成员",
-    "windowed": "按时间窗口限额"
+    "windowed": "按时间窗口限额",
+    "overseas": "已开通"
   },
   "panel": {
     "close": "关闭",
@@ -121,7 +122,11 @@
     "historyFailed": "无法读取操作记录",
     "logPlan": "方案由 {from} 改为 {to}",
     "logGrant": "发放 {credits} 点，{expiry}",
-    "by": "{'@'}{name} · {time}"
+    "by": "{'@'}{name} · {time}",
+    "overseas": "可使用需开通的模型（Claude / GPT / Gemini）",
+    "overseasFailed": "更改模型开通失败",
+    "logOverseasOn": "模型开通：已开通",
+    "logOverseasOff": "模型开通：已收回"
   },
   "grantDialog": {
     "title": "给「{team}」发额度",

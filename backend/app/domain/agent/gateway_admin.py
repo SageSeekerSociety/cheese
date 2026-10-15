@@ -150,6 +150,8 @@ class AdminModel:
     priced: bool
     # 档位（网关的 ``cheese_tier``）,缺省 ``included``:方案按它限定可用的模型。
     tier: str
+    # 需要平台管理员给团队开通才能用(网关的 ``cheese_overseas``):Claude、GPT、Gemini。
+    overseas: bool
     upstream_model: str
     api_base: str | None
     provider: str
@@ -392,6 +394,7 @@ class GatewayAdmin:
         selectable: bool = False,
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
+        overseas: bool | None = None,
         order: int | None = None,
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
@@ -408,6 +411,8 @@ class GatewayAdmin:
             info["cheese_label"] = label
         if tier is not None:
             info["cheese_tier"] = tier
+        if overseas is not None:
+            info["cheese_overseas"] = bool(overseas)
         return await self._new(
             name,
             upstream_model=upstream_model,
@@ -505,6 +510,7 @@ class GatewayAdmin:
         selectable: bool | None = None,
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
+        overseas: bool | None = None,
         order: int | None = None,
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
@@ -534,6 +540,8 @@ class GatewayAdmin:
             info["cheese_selectable"] = bool(selectable)
         if tier is not None:
             info["cheese_tier"] = tier
+        if overseas is not None:
+            info["cheese_overseas"] = bool(overseas)
         info.update(_capability_params(capabilities))
         info.update(_source_info(free, session_header))
         params: dict[str, object] = {}
@@ -904,6 +912,7 @@ def _admin_model(name: str, rows: list[dict]) -> AdminModel:
         selectable=info.get("cheese_selectable") is True,
         priced=unpriced is None,
         tier=tier if isinstance(tier, str) and tier else "included",
+        overseas=info.get("cheese_overseas") is True,
         upstream_model=upstream if isinstance(upstream, str) else "",
         api_base=api_base if isinstance(api_base, str) and api_base else None,
         provider=provider,

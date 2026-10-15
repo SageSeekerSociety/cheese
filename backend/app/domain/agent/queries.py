@@ -483,6 +483,7 @@ def _model_policy_call(project, agent=None) -> gate.Call:
         label=choices[bound.model]["label"],
         tier=choices[bound.model]["tier"],
         approver=project.owner_handle or "",
+        overseas=choices[bound.model]["overseas"],
     )
 
 

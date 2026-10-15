@@ -250,6 +250,8 @@ class _ModelBodyBase(BaseModel):
     capabilities: ModelCapabilities | None = None
     # 档位（网关的 `cheese_tier`）：方案按它限定可用的模型（#2397）。
     tier: Literal["included", "premium", "frontier"] | None = None
+    # 只有平台管理员开通过的团队能用（网关的 `cheese_overseas`）：Claude、GPT、Gemini。
+    overseas: bool | None = None
 
     @field_validator("api_base")
     @classmethod

@@ -11,6 +11,7 @@ const listCreditTeams = vi.fn()
 const getCreditTeam = vi.fn()
 const getCreditTeamHistory = vi.fn()
 const setCreditTeamPlan = vi.fn()
+const setCreditTeamOverseas = vi.fn()
 const grantTeamCredits = vi.fn()
 const createPlan = vi.fn()
 const updatePlan = vi.fn()
@@ -23,6 +24,7 @@ vi.mock('@/api/adminCredits', () => ({
   getCreditTeam: (...a: unknown[]) => getCreditTeam(...a),
   getCreditTeamHistory: (...a: unknown[]) => getCreditTeamHistory(...a),
   setCreditTeamPlan: (...a: unknown[]) => setCreditTeamPlan(...a),
+  setCreditTeamOverseas: (...a: unknown[]) => setCreditTeamOverseas(...a),
   grantTeamCredits: (...a: unknown[]) => grantTeamCredits(...a),
   createPlan: (...a: unknown[]) => createPlan(...a),
   updatePlan: (...a: unknown[]) => updatePlan(...a),
@@ -105,6 +107,7 @@ const ROW = {
   plan_key: 'free',
   period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 46 },
   packs: [PERIOD_PACK],
+  overseas_approved: false,
 }
 
 function detail(packs: Record<string, unknown>[] = [PERIOD_PACK]) {
@@ -154,6 +157,7 @@ beforeEach(() => {
   getCreditTeam.mockReset().mockResolvedValue(detail())
   getCreditTeamHistory.mockReset().mockResolvedValue({ items: [] })
   setCreditTeamPlan.mockReset()
+  setCreditTeamOverseas.mockReset()
   grantTeamCredits.mockReset()
   updatePlan.mockReset().mockResolvedValue(FREE)
   deletePlan.mockReset().mockResolvedValue({ key: 'trial' })
@@ -309,6 +313,33 @@ describe('plans and credits', () => {
     const drawer = document.body.querySelector('.v-navigation-drawer') as HTMLElement
     expect(within(drawer).getByText('Free')).toBeTruthy()
     expect(within(drawer).queryByText('Reserve')).toBeNull()
+  })
+
+  it('approving a team for models that need approval saves it and the team then reads as approved', async () => {
+    setCreditTeamOverseas.mockResolvedValue({ team_id: 7, overseas_approved: true })
+    const page = mountPage()
+    await openTeam(page)
+    const body = within(document.body)
+    const toggle = body.getByRole('checkbox', { name: 'credits.panel.overseas' }) as HTMLInputElement
+    expect(toggle.checked).toBe(false)
+    getCreditTeam.mockResolvedValue({ ...detail(), overseas_approved: true })
+    listCreditTeams.mockResolvedValue({
+      items: [{ ...ROW, overseas_approved: true }],
+      total: 1,
+      page: 1,
+      page_size: 20,
+    })
+
+    // happy-dom 的 click 不派发 input，而开关认的是 input：照浏览器的顺序补上。
+    toggle.checked = true
+    await fireEvent.input(toggle)
+
+    await waitFor(() => expect(setCreditTeamOverseas).toHaveBeenCalledWith(7, true))
+    await waitFor(() =>
+      expect((body.getByRole('checkbox', { name: 'credits.panel.overseas' }) as HTMLInputElement).checked).toBe(true)
+    )
+    const teams = page.getByRole('table', { name: 'credits.teams.label' })
+    expect(await within(teams).findByText('credits.teams.overseas')).toBeTruthy()
   })
 
   it('searching asks the server for the first page of matching teams', async () => {

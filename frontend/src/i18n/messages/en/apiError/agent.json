@@ -58,6 +58,7 @@
   "modelConnectionRefused": "Not saved: the service failed the check ({reason})",
   "modelGatewayUnreachable": "Can't reach the model gateway",
   "modelNameInvalid": "A model name is 1 to 64 letters, digits, dots, underscores or hyphens",
+  "modelNeedsOverseasApproval": "\"{label}\" has to be enabled for this team by a platform administrator first.",
   "modelNotInPlan": "The current plan does not include the model \"{label}\".",
   "modelServiceIncomplete": "A custom model service needs its address and model name",
   "modelServiceNeedsHttps": "The model service address must start with https://",

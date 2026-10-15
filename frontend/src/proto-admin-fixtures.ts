@@ -50,6 +50,7 @@ function model(
     capabilities: { reasoning: true, vision: true },
     usage: u,
     series: [3, 5, 4, 8, 6, 9, 7].map((n) => n * (u.requests / 40)),
+    overseas: false,
     ...extra,
   }
 }

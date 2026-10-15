@@ -392,6 +392,18 @@ export function useAdminModels() {
     }
   }
 
+  /** 改一条模型要不要开通才能用：走同一条更新接口，只带 `overseas`。成功后整表重拉，失败落到写失败那条横条。 */
+  async function setOverseas(row: ModelRow, overseas: boolean) {
+    if (!!row.overseas === overseas) return
+    writeError.value = null
+    try {
+      await updateGatewayModel(row.name, { overseas })
+      await load()
+    } catch (e) {
+      writeError.value = message(e, t('models.table.overseasFailed'))
+    }
+  }
+
   /* ---- 线路 ---- */
 
   /** 一次线路写成功之后：横条说一句，列表与抽屉都重拉（抽屉里画的是写前的线路）。 */
@@ -602,6 +614,7 @@ export function useAdminModels() {
     closeBlock,
     confirmBlock,
     setTier,
+    setOverseas,
     // 详情抽屉
     drawerOpen,
     drawerName,

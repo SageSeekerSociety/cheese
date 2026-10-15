@@ -24,6 +24,7 @@ from app.domain.usage.models import (
     ComputeGrant,
     CreditAdminAudit,
     GrantSource,
+    OverseasModelApproval,
     Plan,
 )
 from app.domain.user.services import (
@@ -281,6 +282,37 @@ class PlanService:
         await self._audit(handle, "team.grant", str(team_id), None, out)
         return out
 
+    async def set_overseas_access(
+        self, *, handle: str, team_id: int, approved: bool
+    ) -> dict:
+        """Let a team use overseas models (Claude, GPT, Gemini), or stop it."""
+
+        if await team_service(self._session).get_team(team_id) is None:
+            raise NotFoundError(say("teamNotFoundById", team_id=team_id))
+        row = await self._session.get(OverseasModelApproval, team_id)
+        before = {"approved": row is not None}
+        if approved and row is None:
+            self._session.add(
+                OverseasModelApproval(team_id=team_id, approved_by=handle)
+            )
+        elif not approved and row is not None:
+            await self._session.delete(row)
+        await self._session.flush()
+        await self._audit(
+            handle, "team.overseas", str(team_id), before, {"approved": approved}
+        )
+        return {"team_id": team_id, "overseas_approved": approved}
+
+    async def _overseas_approved(self, team_ids: list[int]) -> set[int]:
+        if not team_ids:
+            return set()
+        rows = await self._session.execute(
+            select(OverseasModelApproval.team_id).where(
+                OverseasModelApproval.team_id.in_(team_ids)
+            )
+        )
+        return set(rows.scalars())
+
     async def teams(
         self,
         *,
@@ -317,6 +349,7 @@ class PlanService:
         members = await teams_svc.member_counts(
             [t.id for t in teams if not t.personal_owner_user_id]
         )
+        approved = await self._overseas_approved([t.id for t in teams])
         items = []
         for team in teams:
             held = packs.get(team.id, [])
@@ -335,6 +368,7 @@ class PlanService:
                     ),
                     "member_count": None if owner else members.get(team.id, 0),
                     "plan_key": team.plan_key,
+                    "overseas_approved": team.id in approved,
                     "period": _period(held),
                     "packs": [pack_out(p) for p in held],
                 }
@@ -368,6 +402,7 @@ class PlanService:
             ),
             "member_count": None if owner else members.get(team.id, 0),
             "plan": plan_out(plan),
+            "overseas_approved": team.id in await self._overseas_approved([team.id]),
             "period": _period(held),
             "packs": [pack_out(p) for p in held],
         }

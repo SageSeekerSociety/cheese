@@ -360,10 +360,14 @@ async def admission(
                     label=choice["label"],
                     tier=choice["tier"],
                     approver=project.owner_handle or "",
+                    overseas=choice["overseas"],
                 ),
                 gate.policy_of(
                     project.settings,
                     await UsageService(db).plan_model_tiers(project.team_id),
+                    overseas_approved=await UsageService(db).overseas_approved(
+                        project.team_id
+                    ),
                 ),
                 actor=claims.get("a") or "",
             )

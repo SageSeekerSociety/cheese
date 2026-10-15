@@ -58,6 +58,7 @@
   "modelConnectionRefused": "没有保存：服务没有通过检查（{reason}）",
   "modelGatewayUnreachable": "连不上模型网关",
   "modelNameInvalid": "模型名必须是 1..64 位的字母、数字、点、下划线或连字符",
+  "modelNeedsOverseasApproval": "模型「{label}」需要平台管理员为这个团队开通后才能使用。",
   "modelNotInPlan": "当前方案不能使用模型「{label}」。",
   "modelServiceIncomplete": "自定义模型服务要填写服务地址和模型名称",
   "modelServiceNeedsHttps": "模型服务地址要以 https:// 开头",

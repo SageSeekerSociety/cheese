@@ -58,6 +58,7 @@ from app.domain.room_task import binding
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.usage.ledger import Payer, payer_for_project, team_terms
+from app.domain.usage.model_access import overseas_approved
 
 logger = logging.getLogger(__name__)
 
@@ -319,6 +320,7 @@ async def _model_kwargs(
             gate.policy_of(
                 project.settings,
                 (await team_terms(session, project.team_id)).model_tiers,
+                overseas_approved=await overseas_approved(session, project.team_id),
             ),
             actor=acting_agent or agent.handle,
         )

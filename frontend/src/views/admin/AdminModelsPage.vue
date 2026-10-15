@@ -83,6 +83,7 @@ const {
   deleting,
   askDelete,
   setTier,
+  setOverseas,
   closeDelete,
   confirmDelete,
   blockTarget,
@@ -170,6 +171,7 @@ const {
             @block="askBlock"
             @delete="askDelete"
             @tier="setTier"
+            @overseas="setOverseas"
           />
         </section>
 

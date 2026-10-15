@@ -393,11 +393,10 @@ class AgentInstanceService:
             (c for c in model_choices(project.settings) if c["id"] == config.model),
             None,
         )
-        if choice is None:
-            raise ValidationError(say("modelUnavailable"))
-
         access = await UsageService(self._session).model_access(project.team_id)
-        if not access.allows(choice["tier"]):
+        if choice is None or not access.shows(choice):
+            raise ValidationError(say("modelUnavailable"))
+        if not access.allows(choice):
             raise ValidationError(say("modelNotInPlan", label=choice["label"]))
 
     async def rename(self, instance: AgentInstance, display_name: str) -> AgentInstance:

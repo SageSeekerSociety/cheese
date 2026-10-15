@@ -68,6 +68,8 @@ class Policy:
     #: 团队方案允许的模型档位（#2397），`None` 是不限。只管模型，不管机器；项目
     #: 只能在它里面再收紧。
     plan_model_tiers: frozenset[str] | None = None
+    #: 团队有没有被平台管理员开通境外模型。和方案一样只管模型，项目放不宽它。
+    overseas_approved: bool = False
 
     @property
     def lets_everything_through(self) -> bool:
@@ -82,7 +84,10 @@ class Policy:
 
 
 def policy_of(
-    project_settings: dict | None, plan_model_tiers: frozenset[str] | None = None
+    project_settings: dict | None,
+    plan_model_tiers: frozenset[str] | None = None,
+    *,
+    overseas_approved: bool = False,
 ) -> Policy:
     """从项目设置读出这两句话。读不懂的值按默认算。
 
@@ -100,6 +105,7 @@ def policy_of(
         allowed_tiers=allowed,
         over_tier=disposition if disposition in DISPOSITIONS else DENY,
         plan_model_tiers=plan_model_tiers,
+        overseas_approved=overseas_approved,
     )
 
 
@@ -119,6 +125,8 @@ class Call:
     label: str
     tier: str
     approver: str
+    #: 境外模型（Claude、GPT、Gemini）：团队要被平台管理员开通过才能用。
+    overseas: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +162,10 @@ class OverPlan(OverTier):
     """模型不在团队方案允许的档位内。总是拒绝：项目主人点头也解除不了方案。"""
 
 
+class OverseasNotApproved(OverPlan):
+    """境外模型，团队没被平台管理员开通。和方案一样总是拒绝：开通只在后台。"""
+
+
 def check(call: Call, policy: Policy, actor: str) -> Allowed | Proposal:
     """这次调用可以自己发生吗。
 
@@ -166,6 +178,12 @@ def check(call: Call, policy: Policy, actor: str) -> Allowed | Proposal:
         and call.tier not in policy.plan_model_tiers
     ):
         raise OverPlan(say("modelNotInPlan", label=call.label))
+    if (
+        call.resource == Resource.model
+        and call.overseas
+        and not policy.overseas_approved
+    ):
+        raise OverseasNotApproved(say("modelNeedsOverseasApproval", label=call.label))
     if policy.allowed_tiers is None or call.tier in policy.allowed_tiers:
         return Allowed(call)
     if policy.over_tier == PROPOSE:
