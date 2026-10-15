@@ -202,6 +202,23 @@ def _task_phrase(client, room: str, task_id: str) -> str | None:
     return None
 
 
+def test_an_open_turn_is_busy_without_a_local_mark(client):
+    _project, room, _seat = _a_room(client)
+    topic, work = uuid.UUID(room), uuid.uuid4()
+    reader = _service(client)
+    assert client.portal.call(reader.has_running_turn, topic) is False
+
+    _seed_open_row(client, topic, work, "cheese")
+    assert not reader.live.active_turn_ids.get(topic)
+    assert client.portal.call(reader.has_running_turn, topic) is True
+    assert client.portal.call(reader.has_running_turn, topic, "cheese") is True
+    assert client.portal.call(reader.has_running_turn, topic, "opus") is False
+
+    _close_row(client, work)
+    assert client.portal.call(reader.has_running_turn, topic) is False
+    assert client.portal.call(reader.has_running_turn, topic, "cheese") is False
+
+
 def test_a_message_from_another_backend_lands_in_the_running_turn(client):
     project, room, task_id, seat = _a_reviewed_task(client)
     conversation = uuid.UUID(task_id)

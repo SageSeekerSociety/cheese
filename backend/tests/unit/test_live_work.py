@@ -16,6 +16,7 @@ leaves the cache clear — no phantom running turn), and that dropping a mark ne
 closes a row (the authority's own lifecycle does).
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -189,6 +190,29 @@ async def test_mark_turn_inactive_never_closes_a_row():
     # Dropping the mark only dropped the cache key: the sole durable write is
     # still the one open, and nothing closed the interval behind the turn.
     assert writes == [(topic, work)]
+    assert topic not in live.active_turn_ids
+
+
+@pytest.mark.anyio
+async def test_a_confirm_cancelled_mid_await_still_lets_the_mark_go():
+    """Cancellation during confirmation propagates but still evicts the mark."""
+    entered = asyncio.Event()
+
+    async def confirm_closed(topic_id, work_id):
+        entered.set()
+        await asyncio.Event().wait()
+
+    live = LiveWork(confirm_closed=confirm_closed)
+    topic, work = uuid.uuid4(), uuid.uuid4()
+    await live.mark_turn_active(topic, work)
+    assert live.active_turn_ids[topic] == {work}
+
+    letting_go = asyncio.create_task(live.mark_turn_inactive(topic, work))
+    await asyncio.wait_for(entered.wait(), timeout=5)
+    letting_go.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await letting_go
+
     assert topic not in live.active_turn_ids
 
 

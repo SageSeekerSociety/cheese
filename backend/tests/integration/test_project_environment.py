@@ -132,6 +132,7 @@ def test_active_room_refuses_application_but_project_can_save_future_config(clie
         f"{base}/rooms/{topic_id}/apply", headers=headers, json={"latest": True}
     )
     assert applied.status_code == 422, applied.text
+    assert applied.json()["error"]["i18n"]["key"] == "roomBusyFinishBeforeEnvironment"
     current = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
     assert current["pinned_revision"] != saved.json()["data"]["revision"]
 
