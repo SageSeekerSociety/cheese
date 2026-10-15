@@ -1,0 +1,92 @@
+== channel detail (200, 1875 B) 37 statements ==
+   rows=     8 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task
+   rows=     8 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task
+   rows=     8 x  1  SELECT tasks.id, tasks.room_id FROM tasks WHERE tasks.room_id IN ($1::UUID)
+   rows=     5 x  1  SELECT tasks.id, tasks.room_id, tasks.accepted_at, greatest(topic_read_states_1
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_paren
+   rows=     1 x  1  SELECT topics.id, coalesce(greatest((SELECT max(blocks.created_at) AS max_1 FRO
+   rows=     1 x  1  SELECT tasks.id, tasks.room_id FROM tasks WHERE tasks.room_id IN ($2::UUID) AND
+   rows=     1 x  1  SELECT DISTINCT ON (coalesce((SELECT tasks.room_id FROM tasks WHERE tasks.id = 
+   rows=     1 x  1  SELECT tasks.room_id, count(tasks.id) AS count_1 FROM tasks WHERE tasks.room_id
+== channel task list (200, 12159 B) 16 statements ==
+   rows=     8 x  1  SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.number, tasks.title_
+   rows=     8 x  1  SELECT blocks.project_id, blocks.conversation_id, blocks.seq, blocks.kind, bloc
+   rows=     7 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task
+   rows=     7 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_paren
+   rows=     1 x  1  SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.author, anon_1.i
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".ha
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FRO
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_membership
+== channel blocks (200, 20544 B) 14 statements ==
+   rows=    51 x  1  SELECT blocks.project_id, blocks.conversation_id, blocks.seq, blocks.kind, bloc
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_paren
+   rows=     1 x  1  SELECT count(*) AS count_1 FROM blocks WHERE blocks.conversation_id = $1::UUID 
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".ha
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FRO
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_membership
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members
+   rows=     0 x  1  SELECT block_reactions.block_id, block_reactions.emoji, block_reactions.author,
+   rows=     0 x  1  SELECT threads.id, threads.project_id, threads.room_id, threads.root_block_id, 
+== channel environment (200, 174 B) 14 statements ==
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_paren
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".ha
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FRO
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_membership
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members
+   rows=     0 x  2  SELECT device_project.device_id FROM device_project WHERE device_project.projec
+   rows=     0 x  2  SELECT device_team.device_id FROM device_team JOIN projects ON projects.team_id
+   rows=     0 x  1  SELECT agent_sessions.conversation_id, agent_sessions.agent_handle, agent_sessi
+   rows=     0 x  1  SELECT agent_environments.conversation_id, agent_environments.agent_handle, age
+== channel members (200, 56 B) 12 statements ==
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_paren
+   rows=     1 x  1  SELECT agent_instances.project_id, agent_instances.handle, agent_instances.type
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".ha
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FRO
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_membership
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members
+   rows=     0 x  2  SELECT topic_memberships.topic_id, topic_memberships.member_handle, topic_membe
+   rows=     0 x  1  SELECT threads.room_id FROM threads WHERE threads.id = $1::UUID
+== channel pins (200, 37 B) 8 statements ==
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_paren
+   rows=     1 x  1  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".ha
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FRO
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_membership
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members
+   rows=     0 x  1  SELECT pins.room_id, pins.block_id, pins.pinned_by, pins.pinned_at, pins.id, bl
+== channel threads (200, 37 B) 8 statements ==
+   rows=     1 x  1  SELECT topics.project_id AS topics_project_id, topics.parent_id AS topics_paren
+   rows=     1 x  1  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".ha
+   rows=     0 x  2  SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id AS room_id FRO
+   rows=     0 x  1  SELECT topic_memberships.topic_id, topic_memberships.role FROM topic_membership
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members
+   rows=     0 x  1  SELECT threads.id, threads.project_id, threads.room_id, threads.root_block_id, 
+== project task list (200, 86747 B) 11 statements ==
+   rows=  1437 x  1  SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.number, tasks.title_
+   rows=   219 x  1  SELECT topics.project_id, topics.parent_id, topics.title, topics.number, topics
+   rows=    82 x  1  SELECT tasks.id, (SELECT max(blocks.created_at) AS max_1 FROM blocks WHERE bloc
+   rows=    28 x  1  SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards.delivered_task
+   rows=    12 x  1  SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.author, anon_1.i
+   rows=     2 x  2  SELECT projects.name AS projects_name, projects.slug AS projects_slug, projects
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".ha
+   rows=     0 x  1  SELECT project_members.project_id, project_members.user_handle, project_members
+   rows=     0 x  1  SELECT anon_1.place, said_since.author, said_since.at FROM unnest($1::UUID[], $
+   rows=     0 x  1  SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_turns.conversat
+== awaiting-me (reference) (200, 25300 B) 12 statements ==
+   rows=   621 x  1  SELECT topics.id FROM topics WHERE topics.project_id IN ($3::UUID, $4::UUID, $5
+   rows=   178 x  1  SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.author, anon_1.i
+   rows=   120 x  1  SELECT topics.id, topics.project_id, topics.title, topics.status, topics.accept
+   rows=   118 x  1  SELECT tasks.id, tasks.room_id, tasks.status = $1 AS underway, tasks.reporter_h
+   rows=   118 x  1  SELECT tasks.id, tasks.project_id, tasks.room_id, tasks.title, tasks.title_sour
+   rows=    40 x  1  SELECT accept_cards.id, accept_cards.topic_id, accept_cards.task_id, accept_car
+   rows=    13 x  1  SELECT projects.name, projects.slug, projects.owner_handle, projects.team_id, p
+   rows=    12 x  1  SELECT notification.id, notification.receiver_id, notification.recipient_handle
+   rows=     6 x  1  SELECT anon_1.place, said_since.author, said_since.at FROM unnest($1::UUID[], $
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".ha
