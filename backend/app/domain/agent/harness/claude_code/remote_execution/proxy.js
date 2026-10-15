@@ -296,6 +296,10 @@ export function register(on) {
         const result = [outcome.result.stdout, outcome.result.stderr]
           .filter((text) => typeof text === "string" && text !== "")
           .map((text) => ({ type: "text", text }));
+        // Pictures the tool hands back (a mini-app's, as the platform ran
+        // it) follow the text, as the build hands them here: already in the
+        // Messages API's shape, which is what the result must carry.
+        result.push(...response.content.filter((block) => block.type === "image"));
         return outcome.context ? { result, context: outcome.context } : { result };
       } catch (error) {
         return { deny: "Cheese tool failed: " + String(error) };

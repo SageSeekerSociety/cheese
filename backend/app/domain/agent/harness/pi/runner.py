@@ -63,6 +63,14 @@ SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 READING_TOOLS = ("read", "ls", "find", "grep", "git")
 
 
+def _said(text: str) -> dict:
+    """A platform tool's answer for the extension: its text, and the pictures
+    it hands back (a mini-app's, as the platform ran it), which go to the
+    model beside the text (`platform.ts`)."""
+    images = list(getattr(text, "images", ()))
+    return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
+
+
 class Runner(runner.Runner[Journal]):
     def __init__(self, state: Path, *, idle_exit_s: float = runner.IDLE_EXIT_S):
         super().__init__(state, Journal, "entries.sqlite", idle_exit_s=idle_exit_s)
@@ -532,7 +540,7 @@ class Runner(runner.Runner[Journal]):
                 )
             except Exception as error:  # noqa: BLE001 — the agent reads the reason
                 return {"status": 1, "stdout": "", "stderr": failure_text(error)}
-            return {"status": 0, "stdout": text, "stderr": ""}
+            return _said(text)
         command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
         code, output = await asyncio.to_thread(
             self.machine.run, f"exec {command} </dev/null", cwd=cwd
@@ -564,10 +572,7 @@ class Runner(runner.Runner[Journal]):
             text = catalog.run_platform_tool(tool, arguments, host)
         except Exception as error:  # noqa: BLE001 — the agent reads the reason
             return {"status": 1, "stdout": "", "stderr": failure_text(error)}
-        # Pictures a tool hands back (a mini-app's, as the platform ran it) go
-        # to the model beside the text (`platform.ts`).
-        images = list(getattr(text, "images", ()))
-        return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
+        return _said(text)
 
     async def tool_hooks(self, params: dict) -> dict:
         """The project's hooks for one event of one of pi's own tool calls,

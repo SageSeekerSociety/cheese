@@ -1123,16 +1123,6 @@ class Settings(BaseSettings):
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
     )
-    # The models whose deployment accepts image content blocks. The gateway
-    # hides which upstream model a name is, so this is said here, per model, not
-    # inferred: an image sent to a model that cannot read it is a wasted, billed
-    # call, or a refused one. Read where the platform would show a model a
-    # picture: a scanned PDF page for a task draft (`task_draft_model`), and
-    # pi's provider file, where a model not named here gets a tool's pictures
-    # as their text alone (`harness/pi/launch.py`). Deployment env name
-    # VISION_MODELS carries a JSON array (pydantic-settings parsing for a
-    # set/list field).
-    vision_models: set[str] = {"deepseek-flash"}
 
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")

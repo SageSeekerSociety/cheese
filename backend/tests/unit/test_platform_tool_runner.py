@@ -728,15 +728,30 @@ _WIDE = base64.b64encode(b"wide png").decode()
 _NARROW = base64.b64encode(b"narrow png").decode()
 
 
-def _app_host(saved, document_text=""):
-    return Host(
+class _AppHost(Host):
+    """The save routes as the backend answers them: the pictures only to a
+    save that asked for them (`?pictures=true`)."""
+
+    def request(self, plan):
+        answer = super().request(plan)
+        data = answer["data"]
+        if "pictures=true" not in plan["path"] and isinstance(data, dict):
+            answer["data"] = {k: v for k, v in data.items() if k != "pictures"}
+        return answer
+
+
+def _app_host(saved, document_text="", *, sees_pictures=True):
+    return _AppHost(
         {
             ("POST", f"/documents/{_DOC}/apps"): saved,
             ("POST", "/apps/k1/versions"): saved,
             ("GET", "/apps/k1"): {"document_id": _DOC},
             ("GET", f"/documents/{_DOC}"): {"content": document_text, "version": 1},
         },
-        environ={"CHEESE_DOCUMENT": _DOC},
+        environ={
+            "CHEESE_DOCUMENT": _DOC,
+            **({"CHEESE_PICTURES": "1"} if sees_pictures else {}),
+        },
     )
 
 
@@ -757,8 +772,26 @@ def test_a_saved_app_comes_back_with_its_pictures_and_the_block_still_to_place()
     assert all(i["mimeType"] == "image/png" for i in said.images)
     assert ":::app k1@1 试算" in said
     assert "截图" in said and said.rstrip().endswith("最后都要把块放进文档。")
-    # The pictures are asked for: the backend answers them only then.
-    assert "pictures=true" in host.requests[0]["path"]
+
+
+def test_a_writer_whose_model_cannot_read_pictures_is_neither_handed_nor_told_of_any():
+    """Pictures sent to a model that cannot read them are a refused request or
+    a billed one for nothing, and a text that says they are attached when the
+    model sees none is untrue."""
+    host = _app_host(
+        {
+            "key": "k1",
+            "version": 1,
+            "checked": True,
+            "pictures": {"400": _NARROW, "720": _WIDE},
+        },
+        sees_pictures=False,
+    )
+    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+
+    assert getattr(said, "images", ()) == ()
+    assert "截图" not in said
+    assert ":::app k1@1 试算" in said
 
 
 def test_an_app_kept_unchecked_comes_back_without_pictures():

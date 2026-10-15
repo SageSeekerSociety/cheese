@@ -66,6 +66,9 @@ class GatewayModel:
     # platform's own words (``EFFORTS``). Empty: it takes none, and a teammate
     # on it runs at the model's own default.
     efforts: tuple[str, ...] = ()
+    # True when the model reads pictures (``supports_vision``), as set on the
+    # gateway's model page. Unmarked: it is shown text only.
+    vision: bool = False
 
 
 #: The thinking efforts a teammate can ask for, lowest first. Claude Code
@@ -179,7 +182,8 @@ class LlmGateway:
 
         One LiteLLM key is read as well: ``supports_mid_conversation_system``
         set to ``false`` marks a route that loses mid-conversation system
-        messages, and Claude Code is launched without them on it.
+        messages, and Claude Code is launched without them on it; and
+        ``supports_vision`` set to ``true`` says the model reads pictures.
 
         A model may have several rows (sources, tried in ``order``). The keys
         above are read from the first; a model is offered while any row is not
@@ -236,6 +240,7 @@ class LlmGateway:
                         info.get("supports_mid_conversation_system") is not False
                     ),
                     efforts=declared_efforts(info.get("cheese_efforts")),
+                    vision=info.get("supports_vision") is True,
                 )
             )
         return out

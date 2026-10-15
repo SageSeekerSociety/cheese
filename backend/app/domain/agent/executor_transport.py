@@ -294,6 +294,38 @@ def read_file_on_the_machine(invoke, path, request_id):
     return data
 
 
+def tool_answer(outcome: dict, receipts: Path, pictures=()) -> dict:
+    """A tool call's outcome as the MCP answer the plugin (`proxy.js`) reads:
+    the outcome as JSON in one text block, then pictures as image blocks.
+
+    A native Read of an image keeps its metadata in the text and its pixels in
+    an image block: base64 in text hits Claude Code's MCP text-output limit.
+    MCP replaces large text with prose, and the plugin needs the original
+    receipt, including API JSON and Edit state, so a large outcome is written
+    under ``receipts`` and the text names the file. ``pictures`` are the ones
+    a platform tool hands back (`sandbox/cheese`'s `Said`), after its text.
+    """
+    pictures = list(pictures)
+    result = outcome.get("result", {})
+    if isinstance(result, dict) and result.get("type") == "image":
+        image = result["file"]
+        metadata = {k: v for k, v in image.items() if k != "base64"}
+        outcome = {"result": {**result, "file": metadata}}
+        pictures.insert(0, {"data": image["base64"], "mimeType": image["type"]})
+    encoded = json.dumps(outcome)
+    if len(encoded) > 32_000:
+        receipts.mkdir(exist_ok=True, mode=0o700)
+        receipt_path = receipts / f"{uuid.uuid4().hex}.json"
+        receipt_path.write_text(encoded)
+        receipt_path.chmod(0o600)
+        encoded = json.dumps({"receipt_path": str(receipt_path)})
+    images = [
+        {"type": "image", "data": p["data"], "mimeType": p["mimeType"]}
+        for p in pictures
+    ]
+    return {"content": [{"type": "text", "text": encoded}, *images]}
+
+
 class PlatformHost:
     """What a platform tool (`PLATFORM_TOOLS` in `sandbox/cheese`) runs against
     when the session is not on the machine (结论 63).
