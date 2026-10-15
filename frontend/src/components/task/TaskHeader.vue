@@ -11,6 +11,7 @@ import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { claimAppBar } from '@/composables/useAppBarSlot'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -60,6 +61,8 @@ const emit = defineEmits<{
 }>()
 
 const { mdAndUp } = useDisplay()
+// 手机上这一行就是顶栏那一格的内容（下面的 Teleport），顶栏于是不写路由的标题。
+claimAppBar(() => !mdAndUp.value)
 const ME = myHandle()
 const isOwner = computed(() => !!props.task && props.task.owner_handle === ME)
 const isOpen = computed(() => props.task?.status === 'open')

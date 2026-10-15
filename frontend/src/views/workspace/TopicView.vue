@@ -643,8 +643,10 @@ void openPlace()
         @open-room="backToRoom"
         @toggle-panel="togglePanel"
       />
+      <!-- Not on a phone's thread page: there the thread is a page of its own, the
+           top bar reads 支线 and ThreadPane draws which channel it is in. -->
       <TopicHeader
-        v-else
+        v-else-if="!(threadId && !mdAndUp)"
         :topic="selectedTopic"
         :members="store.members"
         :me="AUTHOR"

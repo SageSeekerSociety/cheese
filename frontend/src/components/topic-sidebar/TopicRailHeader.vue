@@ -12,6 +12,8 @@
 
 import { computed } from 'vue'
 
+import { claimAppBar } from '@/composables/useAppBarSlot'
+
 import TopicRailBadge from './TopicRailBadge.vue'
 
 import { t } from '@/i18n'
@@ -43,6 +45,9 @@ const props = defineProps<{
   canTransfer: boolean
   canLeave: boolean
 }>()
+
+// 整页形态下这一行就是顶栏那一格的内容（模板里的 Teleport），顶栏于是不写路由的标题。
+claimAppBar(() => props.page && !props.column)
 
 // 开着的是菜单里的一页（技能、成员、设置、项目文档……）：侧栏上别的行都不是它，
 // 这颗按钮就是它在侧栏上的位置，照选中的行那样标出来，不然整条侧栏一格都不亮。
