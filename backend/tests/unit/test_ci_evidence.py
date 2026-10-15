@@ -4,7 +4,7 @@ its retry keeps the run green without hiding that it needed one.
 Under the distribution CI runs (``--dist loadfile``) a lost worker ends its
 shard instead: the case cannot be retried there, and a replacement worker handed
 fewer than two runnable cases waits for a unit the scheduler only sends after a
-report that never comes, so the shard would sit until the job's ceiling."""
+report that never comes, so the shard sits until that step's timeout ends it."""
 
 import json
 import os
