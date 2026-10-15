@@ -20,20 +20,37 @@ from app.domain.notification.models import (
     NotificationType,
 )
 
+#: 叫人去处理一件事的那几种：芝士在等他回答，有人邀请他、申请加入他管的团队。它们
+#: 等的那件事，「等你处理」按当下的状态现算一份（`api/awaiting_deps.py`）——没办完
+#: 时在那里，办完就从那里消失。动态再列一遍，同一件事就在一页上出现两次，办完以后
+#: 这边还留着一条说「等你」的旧话。所以它们只负责把人叫回来（推送、邮件、桌面通知），
+#: 不进动态。
+_CALLS_TO_ACT = (
+    NotificationType.CHEESE_QUESTION,
+    NotificationType.PROJECT_INVITE,
+    NotificationType.TEAM_INVITATION,
+    NotificationType.TEAM_JOIN_REQUEST,
+)
 
-def wanted_types(
-    type_: NotificationType | Sequence[NotificationType] | None,
-) -> list[NotificationType] | None:
-    """把「只要一种」和「要这几种里的任意一种」收敛成同一个东西。
 
-    界面上的「动态」是按事由分档筛的，一档是好几种类型，所以这里两种形状都得收：
-    只传一个类型的老调用方照旧，传一串的按 `IN` 查。
+def _in_feed(stmt):
+    """动态里有哪些：发生过的事，不包括叫人去处理一件事的那些（`_CALLS_TO_ACT`）。
+
+    平台提示（`ROOM_NOTICE`）一个类别码走完所有事，分不出来的得看它说的是什么：带
+    着验收卡号的（`payload.cardId`，`agent/announce.py` 的 `about_card`）是「待你
+    审阅」「可以合并了」「不会自动合并」这几句等验收人动手的话，那张卡在「等你处理」
+    里；其余的（任务几天没有进展、到点的提醒、部署失败）没有一处列着，留在动态。
+
+    只管列表、条数、未读数和「全部标为已读」。推送和桌面通知不经过这里
+    （`pushable_after`）：把人叫回来正是那几种的用处。
     """
-    if type_ is None:
-        return None
-    if isinstance(type_, NotificationType):
-        return [type_]
-    return list(type_)
+    return stmt.where(
+        Notification.type.not_in(_CALLS_TO_ACT),
+        or_(
+            Notification.type != NotificationType.ROOM_NOTICE,
+            Notification.metadata_payload["cardId"].as_string().is_(None),
+        ),
+    )
 
 
 class NotificationRepository:
@@ -84,15 +101,13 @@ class NotificationRepository:
         limit: int,
         cursor_created_at: datetime | None = None,
         cursor_id: int | None = None,
-        type_: NotificationType | Sequence[NotificationType] | None = None,
         read: bool | None = None,
     ) -> Sequence[Notification]:
-        stmt: Select[tuple[Notification]] = self._my_mail(
-            select(Notification), user_id
+        """动态的一页（`_in_feed`），新的在前。"""
+        stmt: Select[tuple[Notification]] = _in_feed(
+            self._my_mail(select(Notification), user_id)
         ).where(Notification.finalized.is_(True))
 
-        if (types := wanted_types(type_)) is not None:
-            stmt = stmt.where(Notification.type.in_(types))
         if read is not None:
             stmt = stmt.where(Notification.read == read)
 
@@ -140,8 +155,11 @@ class NotificationRepository:
         return await self._session.scalar(stmt)
 
     async def mark_all_as_read_for_user(self, user_id: int) -> int:
+        """动态里的全部标为已读。看不见的那几种（`_in_feed`）不动：它们的已读由那件
+        事办完时结掉（`delivery/ledger.py` 的 `settle`），不由一下「全部已读」替人
+        说成办完了。"""
         stmt = (
-            self._my_mail(update(Notification), user_id)
+            _in_feed(self._my_mail(update(Notification), user_id))
             .where(Notification.read.is_(False))
             .values(read=True)
         )
@@ -157,9 +175,12 @@ class NotificationRepository:
         computed over rows nobody can be shown leaves the badge lit with an empty
         inbox under it — and the button that would clear it (mark all read) is
         drawn only while the list itself holds an unread row, so nothing on the
-        page could put it out.
+        page could put it out. For the same reason it counts only what the feed
+        holds (`_in_feed`).
         """
-        stmt = self._my_mail(select(func.count(Notification.id)), user_id).where(
+        stmt = _in_feed(
+            self._my_mail(select(func.count(Notification.id)), user_id)
+        ).where(
             Notification.finalized.is_(True),
             Notification.read.is_(False),
         )
@@ -201,7 +222,6 @@ class NotificationRepository:
         self,
         user_id: int,
         *,
-        type_: NotificationType | Sequence[NotificationType] | None = None,
         read: bool | None = None,
     ) -> int:
         """Count notifications for a given user with optional filters.
@@ -209,12 +229,10 @@ class NotificationRepository:
         Mirrors the filters used in ``list_for_user`` so that pagination
         metadata (total/hasMore/nextStart) can be computed consistently.
         """
-        stmt = self._my_mail(select(func.count(Notification.id)), user_id).where(
-            Notification.finalized.is_(True)
-        )
+        stmt = _in_feed(
+            self._my_mail(select(func.count(Notification.id)), user_id)
+        ).where(Notification.finalized.is_(True))
 
-        if (types := wanted_types(type_)) is not None:
-            stmt = stmt.where(Notification.type.in_(types))
         if read is not None:
             stmt = stmt.where(Notification.read == read)
 

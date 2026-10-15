@@ -78,6 +78,25 @@ async def _notify(
     )
 
 
+async def pending_invitations_for(
+    session: AsyncSession, user_id: int
+) -> list[TeamMembershipApplication]:
+    """邀请 ``user_id`` 加入、他还没回答的团队邀请。给「等你处理」读：只读，不发通知，
+    所以不必接投递那一套。"""
+    return await TeamMembershipApplicationRepository(session).pending_invitations_for(
+        user_id
+    )
+
+
+async def pending_requests_answerable_by(
+    session: AsyncSession, user_id: int
+) -> list[TeamMembershipApplication]:
+    """``user_id`` 管的团队里还没审的加入申请。"""
+    return await TeamMembershipApplicationRepository(
+        session
+    ).pending_requests_answerable_by(user_id)
+
+
 class TeamMembershipService:
     @classmethod
     def from_session(

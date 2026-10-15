@@ -213,7 +213,7 @@ async def test_push_intent_follows_the_pushable_rules(db_factory):
     """推送给谁，按偏好矩阵与旧的 `PUSHABLE` 一起算。
 
     ROOM_NOTICE（旧 `PUSHABLE`）与 MENTION（矩阵里推送开）都该有一条推送；
-    DEADLINE_REMIND 两边都不在，就不该有。
+    TEAM_REQUEST_APPROVED 两边都不在，就不该有。
     """
     async with db_factory() as session:
         handler = ChannelIntentHandler(session, push_enabled=True, now=lambda: NOON)
@@ -230,9 +230,9 @@ async def test_push_intent_follows_the_pushable_rules(db_factory):
                 ),
                 NotificationDelivery(
                     10,
-                    NotificationType.DEADLINE_REMIND,
-                    {"content": "Soon"},
-                    "deadline:10",
+                    NotificationType.TEAM_REQUEST_APPROVED,
+                    {"content": "Approved"},
+                    "approved:10",
                 ),
             ]
         )

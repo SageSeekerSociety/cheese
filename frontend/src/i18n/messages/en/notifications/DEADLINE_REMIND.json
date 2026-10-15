@@ -1,7 +1,0 @@
-{
-  "body": "Project \"{projectName}\" is due in {daysLeft} days",
-  "closed": "Closed",
-  "daysLeft": "Due today | 1 day left | {n} days left",
-  "dueToday": "Due today",
-  "title": "Deadline reminder"
-}

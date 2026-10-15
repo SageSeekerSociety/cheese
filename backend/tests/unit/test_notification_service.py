@@ -132,7 +132,6 @@ async def test_get_notifications_basic():
         limit=20,
         cursor_created_at=None,
         cursor_id=None,
-        type_=None,
         read=None,
     )
     assert len(result) == 2
@@ -150,7 +149,6 @@ async def test_get_notifications_with_all_filters():
         limit=5,
         cursor_created_at=cursor_time,
         cursor_id=100,
-        type_=NotificationType.REPLY,
         read=True,
     )
 
@@ -159,7 +157,6 @@ async def test_get_notifications_with_all_filters():
         limit=5,
         cursor_created_at=cursor_time,
         cursor_id=100,
-        type_=NotificationType.REPLY,
         read=True,
     )
     assert result == []
@@ -246,7 +243,7 @@ async def test_count_notifications_no_filters():
     svc = _make_service(repo=repo)
     result = await svc.count_notifications_for_current_user(user_id=10)
 
-    repo.count_for_user.assert_awaited_once_with(user_id=10, type_=None, read=None)
+    repo.count_for_user.assert_awaited_once_with(user_id=10, read=None)
     assert result == 42
 
 
@@ -256,13 +253,9 @@ async def test_count_notifications_with_filters():
     repo.count_for_user.return_value = 5
 
     svc = _make_service(repo=repo)
-    result = await svc.count_notifications_for_current_user(
-        user_id=10, type_=NotificationType.REACTION, read=False
-    )
+    result = await svc.count_notifications_for_current_user(user_id=10, read=False)
 
-    repo.count_for_user.assert_awaited_once_with(
-        user_id=10, type_=NotificationType.REACTION, read=False
-    )
+    repo.count_for_user.assert_awaited_once_with(user_id=10, read=False)
     assert result == 5
 
 

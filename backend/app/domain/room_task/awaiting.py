@@ -66,6 +66,8 @@ class WaitingItem:
 
     def as_dict(self) -> dict:
         return {
+            # 清单里还有不属于项目的那几件（`api/awaiting_asks.py`），读的一侧按它分。
+            "kind": "work",
             "projectId": str(self.project_id),
             "projectName": self.project_name,
             "topicId": None if self.topic_id is None else str(self.topic_id),

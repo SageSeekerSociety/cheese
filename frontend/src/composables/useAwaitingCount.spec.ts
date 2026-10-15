@@ -43,7 +43,7 @@ function answer(body: unknown, status = 200): Response {
 }
 
 function items(n: number): unknown[] {
-  return Array.from({ length: n }, (_, i) => ({ projectId: 'p1', alertId: i }))
+  return Array.from({ length: n }, (_, i) => ({ kind: 'work', projectId: 'p1', alertId: i }))
 }
 
 beforeEach(() => {

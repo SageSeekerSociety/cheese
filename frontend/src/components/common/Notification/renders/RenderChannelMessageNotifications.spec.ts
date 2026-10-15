@@ -53,7 +53,8 @@ async function openInTheInbox(notification: Notification) {
     props: { notification, onMarkAsRead: vi.fn(), onDelete: vi.fn() },
     global: { plugins: [createVuetify({ components, directives }), router, i18n] },
   })
-  await waitFor(() => expect(view.container.querySelector('.v-list-item--link')).not.toBeNull())
+  // 渲染器把去处交上来之后，这一行才能点。
+  await view.findByRole('link')
   return { view, router }
 }
 
@@ -62,7 +63,7 @@ it('a mention in a channel says who and where, and opens on the message', async 
 
   expect(view.getByText('Alice 在「前端」提到了你')).toBeTruthy()
   expect(view.getByText('看一下这个方案')).toBeTruthy()
-  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await fireEvent.click(view.getByRole('link'))
   await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-topic'))
   expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', topicId: 't1' })
   expect(router.currentRoute.value.query.block).toBe('block-3')
@@ -73,7 +74,7 @@ it('a reply in a 支线 says who and where, and opens the 支线 on the reply', 
 
   expect(view.getByText('Alice 在「前端」的支线里回复了')).toBeTruthy()
   expect(view.getByText('看一下这个方案')).toBeTruthy()
-  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await fireEvent.click(view.getByRole('link'))
   await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-thread'))
   expect(router.currentRoute.value.params).toMatchObject({ topicId: 't1', threadId: 'thread-5' })
   expect(router.currentRoute.value.query.block).toBe('block-3')
@@ -104,7 +105,7 @@ it('a mention in a project’s own document names the document and opens it', as
 
   expect(view.getByText('Alice 在文档「接口约定」提到了你')).toBeTruthy()
   expect(view.getByText('周五前定下分页参数')).toBeTruthy()
-  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await fireEvent.click(view.getByRole('link'))
   await waitFor(() => expect(router.currentRoute.value.name).toBe('project-document'))
   expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', docId: 'd-7' })
 })
@@ -113,7 +114,7 @@ it('a mention in a task’s document opens the task the document belongs to', as
   const { view, router } = await openInTheInbox(inADocument({ topicId: 't1', topicTitle: '前端', taskId: 'k-2' }))
 
   expect(view.getByText('Alice 在文档「接口约定」提到了你')).toBeTruthy()
-  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await fireEvent.click(view.getByRole('link'))
   await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-task'))
   expect(router.currentRoute.value.params).toMatchObject({ taskId: 'k-2' })
 })
@@ -145,7 +146,7 @@ it('a mention in a task document’s comment says which document, and opens the 
 
   expect(view.getByText('Alice 在文档「季度预算」的评论里提到了你')).toBeTruthy()
   expect(view.getByText('这里的数字再核一下')).toBeTruthy()
-  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await fireEvent.click(view.getByRole('link'))
   await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-task'))
   expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', taskId: 'k1' })
 })
@@ -153,7 +154,7 @@ it('a mention in a task document’s comment says which document, and opens the 
 it('a mention in a project document’s comment opens the document', async () => {
   const { router, view } = await openInTheInbox(commented({}))
 
-  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await fireEvent.click(view.getByRole('link'))
   await waitFor(() => expect(router.currentRoute.value.name).toBe('project-document'))
   expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', docId: 'd1' })
 })

@@ -30,6 +30,7 @@ from tests.conftest import seed_user
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
+    mail,
     open_task,
     post_message,
     post_project,
@@ -106,13 +107,7 @@ def _shown(client, project: str, room: str) -> dict:
 
 
 def _questions(client, token: str) -> list[dict]:
-    r = client.get(
-        "/notifications",
-        params={"type": "CHEESE_QUESTION"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["notifications"]
+    return mail(client, token, "CHEESE_QUESTION")
 
 
 def test_an_unanswered_question_puts_the_room_in_the_waiting_column(
