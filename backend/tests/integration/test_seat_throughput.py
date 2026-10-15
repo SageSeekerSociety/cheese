@@ -261,9 +261,7 @@ def test_a_turn_still_running_is_left_out(client, platform_room):
     assert data["rows"][0]["window_tps"] == round(1000 / 86400, 4)
 
 
-def test_a_zero_length_turn_counts_its_tokens_and_zero_seconds(
-    client, platform_room
-):
+def test_a_zero_length_turn_counts_its_tokens_and_zero_seconds(client, platform_room):
     """起止同一刻的一轮，token 照算，秒数按 0 记 —— 它不额外占轮内时间。"""
     _, room = platform_room
     now = datetime.now(UTC)
