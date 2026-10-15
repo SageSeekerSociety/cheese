@@ -88,23 +88,14 @@ const boardSkills = computed(() => {
     return true
   })
 })
-const skillUrl = ref('')
 // 市场停在哪个页签（页签照 Claude Desktop 的 Discover：技能 / 插件 / MCP，外加第四个
 // 货架「Agent 模板」）。市场那段画面在共享组件 SkillMarket 里，这里只留这份状态，好在
 // 每次打开面板时把它复位。
 type MarketTab = 'skills' | 'plugins' | 'mcp' | 'agents'
 const marketTab = ref<MarketTab>('skills')
 watch(open, () => {
-  skillUrl.value = ''
   marketTab.value = 'skills'
 })
-
-function importSkill() {
-  const url = skillUrl.value.trim()
-  if (!url || !props.deviceId || props.scanning) return
-  skillUrl.value = ''
-  emit('install', { url, kind: 'skill' })
-}
 
 // 改队友的 userskill 项目里每个人都做得的（后端 `projects_agents.py` 不再要 manager）；
 // 别人正占着「编辑中」的租约时改不动 —— 那是同一件事的另一半：现在改会撞上他。
@@ -147,23 +138,6 @@ const locked = () => !props.canManage || props.editingBlocked
           <p v-if="!boardSkills.length" class="skills__note t-meta-read">{{ t('work.room.skills.emptyCarried') }}</p>
         </template>
       </div>
-      <form class="skill-import" @submit.prevent="importSkill">
-        <p class="skills__note t-meta-read">{{ t('work.room.skills.webHint') }}</p>
-        <div class="skill-import__row">
-          <input
-            v-model="skillUrl"
-            class="skill-import__input t-meta-read"
-            type="url"
-            autocomplete="off"
-            :aria-label="t('work.room.skills.webPlaceholder')"
-            :placeholder="t('work.room.skills.webPlaceholder')"
-            :disabled="!deviceId || scanning"
-          />
-          <button type="submit" class="skill-import__submit" :disabled="!deviceId || scanning || !skillUrl.trim()">
-            {{ t('work.room.skills.webAdd') }}
-          </button>
-        </div>
-      </form>
     </div>
 
     <!-- 技能市场：琥珀块**下面**另一块，抽成共享组件 SkillMarket（全局市场页画同一份）。
@@ -213,36 +187,6 @@ const locked = () => !props.canManage || props.editingBlocked
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 10px;
-}
-.skill-import {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px dashed color-mix(in srgb, var(--warn-ink) 30%, transparent);
-}
-.skill-import__row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.skill-import__input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid color-mix(in srgb, var(--warn-ink) 35%, transparent);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-.skill-import__submit {
-  border: 0;
-  background: transparent;
-  color: var(--warn-ink);
-  font-size: 13px;
-  text-decoration: underline;
-  cursor: pointer;
-}
-.skill-import__submit:disabled {
-  cursor: default;
-  opacity: 0.6;
 }
 /* 洞的数量跟着技能走：窄了自动换行，不写死几行几个。 */
 .skills__grid {

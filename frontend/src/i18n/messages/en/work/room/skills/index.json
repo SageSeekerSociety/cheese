@@ -25,8 +25,5 @@
   "noMachine": "This room has no work computer bound, so the machine's skills can't be read.",
   "saveFailed": "Couldn't save the skill",
   "stale": "Someone else just changed this teammate",
-  "title": "Skills",
-  "webAdd": "Fetch",
-  "webHint": "You can also paste a GitHub skill address.",
-  "webPlaceholder": "https://github.com/…/tree/main/skills/pdf"
+  "title": "Skills"
 }

@@ -25,8 +25,5 @@
   "noMachine": "这个房间还没绑工作电脑，机器上的技能读不到。",
   "saveFailed": "技能没能保存",
   "stale": "别人刚改过这个队友",
-  "title": "技能",
-  "webAdd": "取回",
-  "webHint": "也可以贴一个 GitHub 技能地址。",
-  "webPlaceholder": "https://github.com/…/tree/main/skills/pdf"
+  "title": "技能"
 }
