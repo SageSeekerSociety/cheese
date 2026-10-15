@@ -16,8 +16,7 @@ import httpx
 from sqlalchemy import or_, select
 
 from app.core.sentences import say
-from app.domain.agent.chat import ChatService
-from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery_events import SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
     SEVERITY_INFO,
@@ -27,6 +26,16 @@ from app.domain.notice_meta import (
 from app.domain.project.models import ProjectForge
 from app.domain.review import landing_watch, pr_publish
 from app.domain.review.models import AcceptCard
+from app.domain.review.ports import (
+    Announce,
+    Chat,
+    DispatchPending,
+    RecordAgent,
+    RecordInstruction,
+    SeatInstanceId,
+    SweepCheckouts,
+    TaskTeammate,
+)
 from app.domain.review.task_landing import delivery_landed
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
@@ -53,7 +62,17 @@ UNCARDED_TASKS_PER_TICK = 10
 _uncarded_task_cursor: uuid.UUID | None = None
 
 
-async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) -> dict:
+async def poll_open_prs(
+    chat: Chat,
+    announce: Announce,
+    project_id: uuid.UUID | None = None,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    seat_instance_id: SeatInstanceId,
+    record_agent: RecordAgent,
+    task_teammate: TaskTeammate,
+) -> dict:
     """Reconcile returned batches and advance pending PR cards (#718) one step —
     mirror its merge state, send the events the 「谁的活」 table names, and merge
     an armed auto-merge card whose rules are satisfied
@@ -78,9 +97,15 @@ async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) 
     for card_id in card_ids:
         async with sessions() as session:
             try:
-                await AcceptService(session).advance_pr_card(
-                    card_id, chat_service=chat, runner=runner
-                )
+                await AcceptService(
+                    session,
+                    announce=announce,
+                    settle_card=settle_card,
+                    record_instruction=record_instruction,
+                    seat_instance_id=seat_instance_id,
+                    record_agent=record_agent,
+                    task_teammate=task_teammate,
+                ).advance_pr_card(card_id, chat_service=chat, runner=runner)
                 await session.commit()
                 checked += 1
                 _transient_misses.pop(card_id, None)
@@ -88,16 +113,29 @@ async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) 
                 await session.rollback()
                 errors.append(f"{card_id}: {exc}")
                 _report_card_failure(card_id, exc)
-                await _note_card_poll_crashed(chat, card_id, exc)
+                await _note_card_poll_crashed(
+                    chat,
+                    announce,
+                    card_id,
+                    exc,
+                    settle_card=settle_card,
+                    record_instruction=record_instruction,
+                    seat_instance_id=seat_instance_id,
+                    record_agent=record_agent,
+                    task_teammate=task_teammate,
+                )
     return {"cards_checked": checked, "errors": errors}
 
 
 async def poll_uncarded_task_prs(
-    chat: ChatService, project_id: uuid.UUID | None = None
+    chat: Chat,
+    announce: Announce,
+    project_id: uuid.UUID | None = None,
+    *,
+    record_instruction: RecordInstruction,
+    task_teammate: TaskTeammate,
 ) -> dict:
     """Record task PRs merged on the forge without an accept card."""
-    # deferred-import: tests replace this name on app.domain.agent.announce
-    from app.domain.agent.announce import announce
 
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import (
@@ -198,6 +236,8 @@ async def poll_uncarded_task_prs(
                     pr_number=number,
                     completes=True,
                     handed_over=None,
+                    record_instruction=record_instruction,
+                    task_teammate=task_teammate,
                 )
                 await announce(
                     session,
@@ -221,10 +261,23 @@ async def poll_uncarded_task_prs(
     return {"tasks_checked": checked, "tasks_merged": merged, "errors": errors}
 
 
-async def watch_landings(chat: ChatService) -> dict:
+async def watch_landings(
+    chat: Chat,
+    announce: Announce,
+    *,
+    record_instruction: RecordInstruction,
+    task_teammate: TaskTeammate,
+    machines: SweepCheckouts | None = None,
+) -> dict:
     """Merged task PRs, watched on the default branch for a while: the checks
     there and a deployment that includes them (`landing_watch`)."""
-    return await landing_watch.watch_landings(chat)
+    return await landing_watch.watch_landings(
+        chat,
+        announce,
+        record_instruction=record_instruction,
+        task_teammate=task_teammate,
+        machines=machines,
+    )
 
 
 def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:
@@ -255,7 +308,16 @@ def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:
 
 
 async def _note_card_poll_crashed(
-    chat: ChatService, card_id: uuid.UUID, exc: BaseException
+    chat: Chat,
+    announce: Announce,
+    card_id: uuid.UUID,
+    exc: BaseException,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    seat_instance_id: SeatInstanceId,
+    record_agent: RecordAgent,
+    task_teammate: TaskTeammate,
 ) -> None:
     """Leave the crash on the card, in its own transaction.
 
@@ -274,13 +336,27 @@ async def _note_card_poll_crashed(
 
     try:
         async with chat.session_factory() as session:
-            await AcceptService(session).note_poll_crashed(card_id, exc)
+            await AcceptService(
+                session,
+                announce=announce,
+                settle_card=settle_card,
+                record_instruction=record_instruction,
+                seat_instance_id=seat_instance_id,
+                record_agent=record_agent,
+                task_teammate=task_teammate,
+            ).note_poll_crashed(card_id, exc)
             await session.commit()
     except Exception:  # noqa: BLE001 — never let the explanation kill the loop
         logger.exception("could not record poll failure on card %s", card_id)
 
 
-async def open_draft_prs(chat: ChatService) -> dict:
+async def open_draft_prs(
+    chat: Chat,
+    announce: Announce,
+    *,
+    dispatch_pending: DispatchPending,
+    record_instruction: RecordInstruction,
+) -> dict:
     """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,
     without waiting for anyone to file a card.
 
@@ -288,18 +364,41 @@ async def open_draft_prs(chat: ChatService) -> dict:
     live in `pr_publish.sweep_draft_prs`; this is only the clock.
     """
 
-    result = dict(await pr_publish.sweep_draft_prs(chat.session_factory))
-    await deliver_dependency_notices(chat)
+    result = dict(
+        await pr_publish.sweep_draft_prs(
+            chat.session_factory,
+            announce=announce,
+            record_instruction=record_instruction,
+        )
+    )
+    await deliver_dependency_notices(chat, dispatch_pending=dispatch_pending)
     return result
 
 
-async def deliver_dependency_notices(chat: ChatService) -> None:
-    """Dispatch committed task-parent intent through the delivery ledger."""
-    await dispatch_pending(chat.session_factory, chat=chat, runner=chat.work_runner)
+async def deliver_dependency_notices(
+    chat: Chat, *, dispatch_pending: DispatchPending
+) -> None:
+    """Dispatch committed task-parent intent through the delivery ledger.
+
+    ``dispatch_pending`` 是包好了会话工厂、房间服务和跑机器的那个零参调用
+    （`app.domain.review.ports.DispatchPending`）—— 这里只决定「现在放」。
+    """
+    await dispatch_pending()
 
 
 async def forge_repository_changed(
-    chat: ChatService, kind: str, repo: str, project_id: str | None = None
+    chat: Chat,
+    kind: str,
+    repo: str,
+    project_id: str | None = None,
+    *,
+    announce: Announce,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    seat_instance_id: SeatInstanceId,
+    record_agent: RecordAgent,
+    dispatch_pending: DispatchPending,
+    task_teammate: TaskTeammate,
 ) -> None:
     """One repository moved — from a relayed forge event, or from a reconnect."""
 
@@ -312,6 +411,20 @@ async def forge_repository_changed(
     async with sessions() as session:
         projects = list(await session.scalars(query))
     for changed_project_id in projects:
-        await poll_open_prs(chat, changed_project_id)
-        await pr_publish.sweep_draft_prs(sessions, changed_project_id)
-    await deliver_dependency_notices(chat)
+        await poll_open_prs(
+            chat,
+            announce,
+            changed_project_id,
+            settle_card=settle_card,
+            record_instruction=record_instruction,
+            seat_instance_id=seat_instance_id,
+            record_agent=record_agent,
+            task_teammate=task_teammate,
+        )
+        await pr_publish.sweep_draft_prs(
+            sessions,
+            changed_project_id,
+            announce=announce,
+            record_instruction=record_instruction,
+        )
+    await deliver_dependency_notices(chat, dispatch_pending=dispatch_pending)

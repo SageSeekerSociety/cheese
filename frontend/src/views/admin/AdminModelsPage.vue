@@ -14,6 +14,7 @@ import AdminModelsConfirmDialog from '@/components/admin/models/AdminModelsConfi
 import AdminModelsFlash from '@/components/admin/models/AdminModelsFlash.vue'
 import AdminModelsHeader from '@/components/admin/models/AdminModelsHeader.vue'
 import AdminModelsTable from '@/components/admin/models/AdminModelsTable.vue'
+import AdminSourceFormDialog from '@/components/admin/models/AdminSourceFormDialog.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 
 // 管理后台的「模型管理」（`/admin/models`）。它管的是**网关那一侧的模型台账**，不是
@@ -91,7 +92,28 @@ const {
   confirmBlock,
   drawerOpen,
   drawerName,
+  drawerReload,
   openDetail,
+  sourceFormOpen,
+  sourceFormMode,
+  sourceModel,
+  sourceSeed,
+  sourceSiblings,
+  sourceSaving,
+  sourceError,
+  sourceBusy,
+  openAddSource,
+  openEditSource,
+  onSourceSubmit,
+  moveSource,
+  sourceDeleteTarget,
+  askSourceDelete,
+  closeSourceDelete,
+  confirmSourceDelete,
+  sourceBlockTarget,
+  askSourceBlock,
+  closeSourceBlock,
+  confirmSourceBlock,
   budgetOpen,
   budgetProject,
   budgetSaving,
@@ -186,7 +208,31 @@ const {
       </div>
     </AdminPage>
 
-    <AdminModelDetailDrawer v-model="drawerOpen" :name="drawerName" :days="days" />
+    <!-- 详情抽屉里有「线路」那一段：加 / 改 / 停 / 删 / 调先后都从这里发起，表单与确认框
+         仍归页面（同模型表）。 -->
+    <AdminModelDetailDrawer
+      v-model="drawerOpen"
+      :name="drawerName"
+      :days="days"
+      :reload-key="drawerReload"
+      :source-busy="sourceBusy"
+      @add-source="openAddSource"
+      @edit-source="openEditSource"
+      @block-source="askSourceBlock"
+      @delete-source="askSourceDelete"
+      @move-source="moveSource"
+    />
+
+    <AdminSourceFormDialog
+      v-model="sourceFormOpen"
+      :mode="sourceFormMode"
+      :model-name="sourceModel"
+      :seed="sourceSeed"
+      :siblings="sourceSiblings"
+      :saving="sourceSaving"
+      :error="sourceError"
+      @submit="onSourceSubmit"
+    />
 
     <AdminModelFormDialog
       v-model="formOpen"
@@ -231,6 +277,51 @@ const {
       :danger="!blockTarget?.blocked"
       @update:model-value="closeBlock"
       @confirm="confirmBlock"
+    />
+
+    <!-- 删一条线路：网关不再往那里转请求；删掉最后一条，模型也就没了。 -->
+    <AdminModelsConfirmDialog
+      :model-value="!!sourceDeleteTarget"
+      :title="t('models.source.confirm.delete.title')"
+      :body="
+        t('models.source.confirm.delete.body', {
+          name: sourceDeleteTarget?.name ?? '',
+          source: sourceDeleteTarget?.source.upstream_model ?? '',
+        })
+      "
+      :confirm-label="t('models.confirm.delete.confirm')"
+      :busy="sourceBusy"
+      danger
+      @update:model-value="closeSourceDelete"
+      @confirm="confirmSourceDelete"
+    />
+
+    <!-- 停用 / 启用一条线路：同模型别的线路照常路由。 -->
+    <AdminModelsConfirmDialog
+      :model-value="!!sourceBlockTarget"
+      :title="
+        t(
+          sourceBlockTarget?.source.blocked
+            ? 'models.source.confirm.unblock.title'
+            : 'models.source.confirm.block.title'
+        )
+      "
+      :body="
+        t(
+          sourceBlockTarget?.source.blocked ? 'models.source.confirm.unblock.body' : 'models.source.confirm.block.body',
+          {
+            name: sourceBlockTarget?.name ?? '',
+            source: sourceBlockTarget?.source.upstream_model ?? '',
+          }
+        )
+      "
+      :confirm-label="
+        t(sourceBlockTarget?.source.blocked ? 'models.confirm.unblock.confirm' : 'models.confirm.block.confirm')
+      "
+      :busy="sourceBusy"
+      :danger="!sourceBlockTarget?.source.blocked"
+      @update:model-value="closeSourceBlock"
+      @confirm="confirmSourceBlock"
     />
   </div>
 </template>

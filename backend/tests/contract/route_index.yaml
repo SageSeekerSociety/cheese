@@ -457,6 +457,11 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/admin/gateway/models/{name}", auth: "platform.admin", owner: "agent.models"}
   - {protocol: "http", method: "DELETE", path: "/admin/gateway/models/{name}", auth: "platform.admin", owner: "agent.models"}
   - {protocol: "http", method: "POST", path: "/admin/gateway/models/{name}/blocked", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "POST", path: "/admin/gateway/models/{name}/sources", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "PUT", path: "/admin/gateway/models/{name}/sources/order", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "PATCH", path: "/admin/gateway/models/{name}/sources/{source_id}", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "DELETE", path: "/admin/gateway/models/{name}/sources/{source_id}", auth: "platform.admin", owner: "agent.models"}
+  - {protocol: "http", method: "POST", path: "/admin/gateway/models/{name}/sources/{source_id}/blocked", auth: "platform.admin", owner: "agent.models"}
   - {protocol: "http", method: "GET", path: "/admin/gateway/projects", auth: "platform.admin", owner: "agent.models"}
   - {protocol: "http", method: "PUT", path: "/admin/gateway/projects/{project_id}/budget", auth: "platform.admin", owner: "agent.models"}
   - {protocol: "http", method: "GET", path: "/admin/gateway/audit", auth: "platform.admin", owner: "agent.models"}

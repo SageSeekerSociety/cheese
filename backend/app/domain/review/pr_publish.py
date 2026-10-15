@@ -33,8 +33,7 @@ from app.core.db import release_read_session
 from app.core.sentences import say
 from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
 from app.domain.conversation.services import of_room
-from app.domain.delivery.agent import record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.notice_meta import (
@@ -59,6 +58,7 @@ from app.domain.review import notes, pr_text
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.ports import Announce, RecordInstruction
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
@@ -248,7 +248,11 @@ async def sync_pr_text(
 
 
 async def sweep_draft_prs(
-    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+    session_factory: async_sessionmaker,
+    project_id: uuid.UUID | None = None,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction,
 ) -> dict[str, int]:
     """Open draft PRs for task branches with commits and no existing PR.
 
@@ -261,7 +265,12 @@ async def sweep_draft_prs(
     from app.domain.room_task.services import TaskService
 
     counts = {"opened": 0, "skipped": 0, "failed": 0}
-    await retarget_completed_dependencies(session_factory, project_id)
+    await retarget_completed_dependencies(
+        session_factory,
+        project_id,
+        announce=announce,
+        record_instruction=record_instruction,
+    )
     if not enabled():
         return counts
     async with session_factory() as session:
@@ -306,12 +315,13 @@ async def sweep_draft_prs(
 
 
 async def retarget_completed_dependencies(
-    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+    session_factory: async_sessionmaker,
+    project_id: uuid.UUID | None = None,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction,
 ) -> None:
     """Retarget delivered dependencies and persist instructions for the executor."""
-
-    # deferred-import: tests replace this name on app.domain.agent.announce
-    from app.domain.agent.announce import announce
 
     # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
@@ -571,7 +581,7 @@ async def retarget_completed_dependencies(
                 if block is None:
                     raise ValueError("Task room is missing")
 
-                await record_task_instruction(
+                await record_instruction(
                     session,
                     DeliveryEvent(
                         id=block.id,
@@ -579,7 +589,7 @@ async def retarget_completed_dependencies(
                         payload={"content": instruction},
                         occurred_at=block.created_at,
                     ),
-                    task=task,
+                    task_id=task.id,
                     content=instruction,
                 )
                 await idem.record_result(session, key, {"block_id": str(block.id)})

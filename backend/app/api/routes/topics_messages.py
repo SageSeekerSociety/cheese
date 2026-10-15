@@ -86,6 +86,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
 from app.domain.agent.mentions import mentioned_outside
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
@@ -156,7 +157,7 @@ async def send_chat_message(
         # and its tasks alike. Unarchiving it is how it is spoken in again.
         raise ForbiddenError(say("roomArchivedUnarchiveFirst"))
     if place.inner_id is None and not await TopicMemberService(db).may_speak(
-        place.room, actor.handle
+        place.room, actor.handle, team=project_team
     ):
         # A channel's main line is its members speaking. Anyone in the project
         # reads it and answers in a 支线 under it; speaking in the main line

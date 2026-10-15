@@ -62,6 +62,11 @@ const catalogTargets = [
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
   { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
   { path: '/spaces', name: 'HomeSpaces', component: blank },
+  // 题目那一层（`catalogScenesPages3.ts` 里题卡、单份回答、回答列表三件）互相指路：题卡上
+  // 「查看该回答」、回答卡片上面那颗「查看全部 N 条回答」都按名字指。名字与路径照
+  // `router/question.ts` 那棵子树；名字缺了按名字解析的那一条会当场抛，整段渲染不出来。
+  { path: '/questions/:questionId(\\d+)', name: 'QuestionAnswerList', component: blank },
+  { path: '/questions/:questionId(\\d+)/answers/:answerId(\\d+)', name: 'QuestionAnswer', component: blank },
 ]
 
 export function demoRouter() {

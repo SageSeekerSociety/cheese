@@ -36,21 +36,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say
-from app.domain.agent.harness.prompt import (
-    task_next_step_prompt,
-    task_step_landed_while_working_prompt,
-    task_summary_prompt,
-)
-from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery.agent import record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.review.landing_models import TaskLanding
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.ports import RecordInstruction, TaskTeammate
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
@@ -65,6 +59,18 @@ logger = logging.getLogger(__name__)
 WATCH_FOR = timedelta(hours=2)
 
 
+def handed_in(task_teammate: TaskTeammate | None) -> TaskTeammate:
+    """把 `review.ports.TaskTeammate` 要回来；没递进来当场炸掉，不走静默。
+
+    少递这一样不会有别的反应：这个队友自己干的活没人认（任务该接着开却关了），
+    或者它该署名的那些话没人署名 —— 两样都看着像什么都没发生，比报错难查得多
+    （`app.domain.review.ports`）。所以缺了就地报错。"""
+    if task_teammate is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("task_teammate was not handed in")
+    return task_teammate
+
+
 async def delivery_landed(
     session: AsyncSession,
     task: Task,
@@ -74,6 +80,8 @@ async def delivery_landed(
     pr_number: int | None,
     completes: bool,
     handed_over: datetime | None,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
 ) -> bool:
     """``task``'s delivery merged. ``completes``: it was the task's last step.
     ``handed_over``: when its card went up; None for a merge no card asked
@@ -93,20 +101,31 @@ async def delivery_landed(
     still_working = (
         completes
         and task.status == TaskStatus.open
-        and bool(await _asked_for_more(session, task, since=handed_over))
+        and bool(
+            await _asked_for_more(
+                session, task, since=handed_over, task_teammate=task_teammate
+            )
+        )
     )
     goes_on = task.status == TaskStatus.open and (not completes or still_working)
     if still_working:
-        await _go_on(session, task)
+        await _go_on(session, task, record_instruction=record_instruction)
     elif goes_on:
         await TaskService(session).next_step(task)
         await tell_agent(
-            session, task, task_next_step_prompt(title=task.title, task_id=task.id)
+            session,
+            task,
+            task_next_step_prompt(title=task.title, task_id=task.id),
+            record_instruction=record_instruction,
         )
     elif task.status == TaskStatus.open and task.closing_since is None:
         task.closing_since = now
         await tell_agent(
-            session, task, task_summary_prompt(title=task.title), closes=True
+            session,
+            task,
+            task_summary_prompt(title=task.title),
+            record_instruction=record_instruction,
+            closes=True,
         )
     await session.flush()
     await tell_origin(
@@ -119,11 +138,17 @@ async def delivery_landed(
         else say("taskLanded", title=said_title(task), pr=pr_number)
         if pr_number is not None
         else say("taskLandedNoPr", title=said_title(task)),
+        task_teammate=task_teammate,
     )
     return True
 
 
-async def go_on_while_working(sessions) -> list[uuid.UUID]:
+async def go_on_while_working(
+    sessions,
+    *,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+) -> list[uuid.UUID]:
     """Every task being written up whose AI teammate has started work in it
     since its last delivery went up, or has a message waiting there, stops
     being written up and goes on, like a last step that landed while that
@@ -143,14 +168,25 @@ async def go_on_while_working(sessions) -> list[uuid.UUID]:
     gone_on = []
     for task_id in being_written_up:
         try:
-            if await _go_on_if_asked(sessions, task_id):
+            if await _go_on_if_asked(
+                sessions,
+                task_id,
+                record_instruction=record_instruction,
+                task_teammate=task_teammate,
+            ):
                 gone_on.append(task_id)
         except Exception:  # noqa: BLE001 — one task must not stop the rest
             logger.warning("could not take task %s on", task_id, exc_info=True)
     return gone_on
 
 
-async def _go_on_if_asked(sessions, task_id: uuid.UUID) -> bool:
+async def _go_on_if_asked(
+    sessions,
+    task_id: uuid.UUID,
+    *,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+) -> bool:
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import default_branch
 
@@ -159,7 +195,10 @@ async def _go_on_if_asked(sessions, task_id: uuid.UUID) -> bool:
         if task is None or task.closing_since is None:
             return False
         if not await _asked_for_more(
-            session, task, since=await _handed_over(session, task)
+            session,
+            task,
+            since=await _handed_over(session, task),
+            task_teammate=task_teammate,
         ):
             return False
         base = await default_branch(task.project_id, session)
@@ -173,24 +212,30 @@ async def _go_on_if_asked(sessions, task_id: uuid.UUID) -> bool:
         if task is None:
             return False
         task.closing_since = None
-        await _go_on(session, task, base_branch=base)
+        await _go_on(
+            session, task, base_branch=base, record_instruction=record_instruction
+        )
         await session.commit()
     return True
 
 
 async def _asked_for_more(
-    session: AsyncSession, task: Task, *, since: datetime | None
+    session: AsyncSession,
+    task: Task,
+    *,
+    since: datetime | None,
+    task_teammate: TaskTeammate | None,
 ) -> list[str]:
     """What ``task``'s own AI teammate is doing in it, begun after ``since``,
     or has waiting there for it (`room_task.closing.unfinished`)."""
-    project = await session.get(Project, task.project_id)
-    room = await session.get(Topic, task.room_id)
-    if project is None or room is None:
-        return []
-    agent = await AgentInstanceService(session).for_task(
-        project, room, task.agent_handle
+    teammate = await handed_in(task_teammate)(
+        session, task.project_id, task.room_id, task.agent_handle
     )
-    return await unfinished(session, task.id, since=since, by=agent.handle)
+    if teammate is None:
+        # 项目和房间都不在了：这个任务无处落脚，也就没有队友的活要认。
+        return []
+    _instance_id, handle = teammate
+    return await unfinished(session, task.id, since=since, by=handle)
 
 
 async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:
@@ -208,7 +253,11 @@ async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:
 
 
 async def _go_on(
-    session: AsyncSession, task: Task, *, base_branch: str | None = None
+    session: AsyncSession,
+    task: Task,
+    *,
+    record_instruction: RecordInstruction | None,
+    base_branch: str | None = None,
 ) -> None:
     """``task``'s last step landed while its AI teammate was at work on more:
     it goes on to the next step, and its AI teammate hears so once that work's
@@ -219,6 +268,7 @@ async def _go_on(
         session,
         task,
         task_step_landed_while_working_prompt(title=task.title, task_id=task.id),
+        record_instruction=record_instruction,
     )
 
 
@@ -268,7 +318,13 @@ async def _watch(
     )
 
 
-async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
+async def tell_origin(
+    session: AsyncSession,
+    task: Task,
+    content: str,
+    *,
+    task_teammate: TaskTeammate | None,
+) -> None:
     """Say ``content`` in the 支线 under the message ``task`` was made from,
     opening it if nobody has replied there yet. It is said by the task's AI
     teammate, as a reply: whoever took part in the discussion hears it, and the
@@ -279,12 +335,18 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
     not take the task's own state back with it."""
     try:
         async with session.begin_nested():
-            await _tell_origin(session, task, content)
+            await _tell_origin(session, task, content, task_teammate=task_teammate)
     except Exception:  # noqa: BLE001 — a courtesy line never undoes a landing
         logger.warning("could not tell task %s's discussion", task.id, exc_info=True)
 
 
-async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
+async def _tell_origin(
+    session: AsyncSession,
+    task: Task,
+    content: str,
+    *,
+    task_teammate: TaskTeammate | None,
+) -> None:
 
     if task.upgraded_from_block_id is None:
         return
@@ -300,9 +362,12 @@ async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
         or project is None
     ):
         return
-    agent = await AgentInstanceService(session).for_task(
-        project, room, task.agent_handle
+    teammate = await handed_in(task_teammate)(
+        session, task.project_id, task.room_id, task.agent_handle
     )
+    if teammate is None:
+        return
+    instance_id, _handle = teammate
     thread = await open_thread(
         session, origin.id, by=task.owner_handle or origin.author
     )
@@ -310,7 +375,7 @@ async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
         id=uuid.uuid4(),
         project_id=task.project_id,
         conversation_id=thread.id,
-        author=agent_instance_handle(agent.instance_id),
+        author=agent_instance_handle(instance_id),
         author_type=AuthorType.participant,
         kind=BlockKind.message,
         content=str(content),
@@ -330,10 +395,23 @@ def _out(block) -> dict:
 
 
 async def tell_agent(
-    session: AsyncSession, task: Task, content: str, *, closes: bool = False
+    session: AsyncSession,
+    task: Task,
+    content: str,
+    *,
+    record_instruction: RecordInstruction | None,
+    closes: bool = False,
 ) -> None:
     """The task's AI teammate hears ``content`` on its next turn. ``closes``:
-    the task closes when that turn ends."""
+    the task closes when that turn ends.
+
+    ``record_instruction`` 是第 5 层那个 `delivery.agent.record_task_instruction`，
+    由调用链上的门递下来（`app.domain.review.ports.RecordInstruction`）：这句话
+    落在投递账本上，而本包够不着它。没递进来是接线漏了一处：当场炸掉，不静默
+    让这个 AI 队友永远收不到这一句。"""
+    if record_instruction is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("record_instruction was not handed in")
 
     payload: dict[str, object] = {
         "projectId": str(task.project_id),
@@ -341,7 +419,7 @@ async def tell_agent(
     }
     if closes:
         payload[CLOSES_TASK] = True
-    await record_task_instruction(
+    await record_instruction(
         session,
         DeliveryEvent(
             id=uuid.uuid4(),
@@ -349,6 +427,57 @@ async def tell_agent(
             payload=payload,
             occurred_at=datetime.now(UTC),
         ),
-        task=task,
+        task_id=task.id,
         content=content,
+    )
+
+
+# 下面这三段是「这次交付落地之后，任务本身怎么走」说给那个 AI 队友听的话。原先
+# 和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，可那个包里没有一处
+# 用它们 —— 说它们的只有这里，`delivery_landed` 和 `_go_on`。第 9 步把 review 够
+# 不着 `agent` 的那几条调用收进端口时，纯字符串没有理由走端口，就搬回说它的地方。
+
+
+def task_next_step_prompt(*, title: str, task_id) -> str:
+    """What a task's agent is told when one of its deliveries lands and the
+    task goes on."""
+    return (
+        f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
+        f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
+        "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
+        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
+        "这一步做完任务目标就全部达成时 completes_task 填 true，"
+        "还有没做完的就填 false，并在交付说明里写下一步做什么。"
+    )
+
+
+def task_step_landed_while_working_prompt(*, title: str, task_id) -> str:
+    """What a task's agent is told when the delivery it called the last lands
+    while it is working on something begun after that delivery went up: the
+    delivery counts as a step, and the work goes on as the next one."""
+    return (
+        f"任务「{title}」你标成最后一步的那次交付已经采纳并合并，"
+        "但交付之后你又开始了新的工作，它不在这次合并里，所以任务没有关闭，接着开着。"
+        f'手上这件做完后，先执行 cd "$(cheese worktree {task_id})"，'
+        "工作目录会换到一条从最新代码切出的新分支上，没合并的提交和改动会一起带过去；"
+        "再用 cheese_accept_request 把它作为下一步递交，"
+        "做完任务目标就全部达成时 completes_task 填 true。"
+        "新做的东西如果不需要交付，就用 cheese_close_task 关闭任务，结论里写明。"
+    )
+
+
+def task_summary_prompt(*, title: str) -> str:
+    """What a task's agent is told when its last delivery lands: one turn to
+    write the task up, after which the task closes."""
+    return (
+        f"任务「{title}」的最后一次交付已经采纳并合并，这一轮结束后任务关闭。"
+        "这一轮只做两件事：\n"
+        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
+        "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
+        "没有就不写；过程中被推翻的计划删掉。\n"
+        "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
+        "没有处理的发现逐条列出；工作目录里还有这次交付之外的提交或改动的，"
+        "写明是什么、没有交付。"
+        "没什么可补的，只写一句结果。\n"
+        "不要改动文件，不要提交审阅，不要关闭任务。"
     )

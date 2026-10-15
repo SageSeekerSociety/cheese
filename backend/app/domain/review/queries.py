@@ -62,7 +62,7 @@ class RailCard:
     merge_state: dict | None
     decided_by: str | None
     auto_merge_armed_by: str | None
-    #: 卡递给谁审阅 —— 「这一条在不在等看的这个人」要读它（`delivery.addressing`）。
+    #: 卡递给谁审阅 —— 「这一条在不在等看的这个人」要读它（`addressing`）。
     reviewer_handle: str | None = None
     #: 卡读在哪个房间、为哪条活递的（房间自己的卡 `task_id` 为空）——
     #: 「待我处理」按它们把卡认回各自那一行。

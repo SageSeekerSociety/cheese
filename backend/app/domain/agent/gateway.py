@@ -113,6 +113,11 @@ def price_is_set(*sources: object) -> bool:
     return bool(rate("input_cost_per_token") and rate("output_cost_per_token"))
 
 
+def _model_info(row: dict) -> dict:
+    info = row.get("model_info")
+    return info if isinstance(info, dict) else {}
+
+
 @dataclass
 class DailySpend:
     """One project's gateway spend for one UTC day (cumulative)."""
@@ -176,9 +181,12 @@ class LlmGateway:
         set to ``false`` marks a route that loses mid-conversation system
         messages, and Claude Code is launched without them on it.
 
-        A model the gateway reports as ``blocked`` is never selectable, however
-        ``cheese_selectable`` is set: the gateway refuses to route it, so
-        offering it would hand someone a route that cannot be called.
+        A model may have several rows (sources, tried in ``order``). The keys
+        above are read from the first; a model is offered while any row is not
+        ``blocked`` (the gateway refuses to route a blocked one), and priced
+        only when every unblocked row is (every row, once all are blocked;
+        ``price_is_set`` counts a ``cheese_free`` row with its rates written
+        as 0).
         """
         try:
             async with self._client() as client:
@@ -192,29 +200,37 @@ class LlmGateway:
             logger.warning("gateway models failed", exc_info=True)
             return None
 
-        out: list[GatewayModel] = []
-        seen: set[str] = set()
+        groups: dict[str, list[dict]] = {}
         for row in rows:
             if not isinstance(row, dict):
                 continue
             name = row.get("model_name")
-            if not isinstance(name, str) or not name or name in seen:
-                continue
-            seen.add(name)
-            info = row.get("model_info")
-            params = row.get("litellm_params")
-            info = info if isinstance(info, dict) else {}
+            if isinstance(name, str) and name:
+                groups.setdefault(name, []).append(row)
+
+        out: list[GatewayModel] = []
+        for name, group in groups.items():
+            # The menu keys are read off the first row: every row of a model
+            # carries the same ones (config.yaml's deepseek-flash, the admin
+            # page's sources). Whether it can be served is the group's answer,
+            # not the first row's: one source paused leaves the others routing,
+            # and one live source billing at zero is a brake that fails for
+            # whatever share of traffic lands there.
+            info = _model_info(group[0])
+            live = [row for row in group if _model_info(row).get("blocked") is not True]
             label = info.get("cheese_label")
             tier = info.get("cheese_tier")
             out.append(
                 GatewayModel(
                     id=name,
                     label=label if isinstance(label, str) and label else name,
-                    selectable=(
-                        info.get("cheese_selectable") is True
-                        and info.get("blocked") is not True
+                    selectable=info.get("cheese_selectable") is True and bool(live),
+                    # Priced and blocked stay independent: a paused model is
+                    # judged on all its rows, a serving one on those serving.
+                    priced=all(
+                        price_is_set(row.get("litellm_params"), _model_info(row))
+                        for row in (live or group)
                     ),
-                    priced=price_is_set(params, info),
                     tier=tier if isinstance(tier, str) and tier else "included",
                     mid_conversation_system=(
                         info.get("supports_mid_conversation_system") is not False

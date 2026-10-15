@@ -21,6 +21,7 @@ from app.domain.agent.device_provider import environment_status
 from app.domain.agent.environment_failures import open_failures, waiting_on
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import addressed_to_agent
+from app.domain.agent_instance.adapters import project_team
 from app.domain.conversation.services import of_room
 from app.domain.machine.services import HostPool, host_failed
 from app.domain.machine.session_reports import leases_on_peoples_devices
@@ -59,7 +60,7 @@ async def access(
     handle = user.username if user else ""
     steward = bool(user) and await MemberService(db).manages(project_id, handle)
     member = bool(user) and any(
-        m.handle == handle for m in await roster(db, project_id)
+        m.handle == handle for m in await roster(db, project_id, team=project_team)
     )
     if not steward and (write or not member):
         raise ForbiddenError(say("environmentAccessForbidden"))
@@ -94,7 +95,9 @@ async def room(
     topic = await db.scalar(statement)
     if topic is None or (
         viewer is not None
-        and not await TopicMemberService(db).seen([topic], await _handle(db, viewer))
+        and not await TopicMemberService(db).seen(
+            [topic], await _handle(db, viewer), team=project_team
+        )
     ):
         raise NotFoundError("Room not found")
     return topic
@@ -136,7 +139,9 @@ async def get_environment(project_id: uuid.UUID, db: DbSession, user: AuthUser) 
         )
     ).all()
     # A private channel is listed to its people only.
-    topics = await TopicMemberService(db).seen(list(topics), await _handle(db, user))
+    topics = await TopicMemberService(db).seen(
+        list(topics), await _handle(db, user), team=project_team
+    )
     failures = await open_failures(db, [t.id for t in topics])
     return ok(
         {

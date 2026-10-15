@@ -8,12 +8,15 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification.handlers import (
     InAppNotificationHandler,
     NotificationDelivery,
 )
-from app.domain.notification.models import Notification, NotificationType
+from app.domain.notification.models import (
+    ChannelDelivery,
+    Notification,
+    NotificationType,
+)
 from app.domain.notification.outbox import ChannelIntentHandler
 from app.domain.notification.preferences import (
     ChannelChoice,

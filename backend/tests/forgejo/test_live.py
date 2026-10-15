@@ -22,14 +22,16 @@ from app.api.routes.git_http import open_task_workspace, task_workspace
 from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.forgejo_tokens import ForgejoTokens, purge_expired_tokens
+from app.domain.agent.announce import announce
 from app.domain.agent.room_events import _known_commits, _turn_changeset
+from app.domain.agent_instance.adapters import project_team
 from app.domain.project.forge import (
     branch_head,
     ensure_repository_webhook,
     provision_repository,
     reconcile_repository_webhooks,
 )
+from app.domain.project.forgejo_tokens import ForgejoTokens, purge_expired_tokens
 from app.domain.project.models import ForgeToken, Project
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.forgejo_pr import ForgejoPRClient
@@ -39,6 +41,13 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
+from tests.support.review_ports import (
+    pumping,
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+    settle_card,
+)
 
 pytestmark = [
     pytest.mark.anyio,
@@ -393,7 +402,18 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         async with asyncio.timeout(10):
             while not server.started:
                 await asyncio.sleep(0.01)
-        consumer = asyncio.create_task(events.listen(chat, db_factory))
+        consumer = asyncio.create_task(
+            events.listen(
+                chat,
+                db_factory,
+                announce,
+                settle_card=settle_card,
+                record_instruction=record_task_instruction,
+                seat_instance_id=seat_instance_id,
+                record_agent=record_agent,
+                dispatch_pending=pumping(chat),
+            )
+        )
         async with asyncio.timeout(10):
             while "test" not in relay.connections:
                 await asyncio.sleep(0.01)
@@ -423,7 +443,11 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
             while not changed.await_count:
                 await asyncio.sleep(0.05)
         changed.assert_awaited_with(
-            chat, kind="forgejo", repo=binding.repo, project_id=str(project.id)
+            chat,
+            announce=announce,
+            kind="forgejo",
+            repo=binding.repo,
+            project_id=str(project.id),
         )
     finally:
         if consumer is not None:
@@ -654,10 +678,15 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "url": check_url,
                 }
             ]
-            refreshed = await AcceptService(session).push_fix(task.id)
+            refreshed = await AcceptService(
+                session, announce=announce, roster_team=project_team
+            ).push_fix(task.id)
             assert refreshed["pushed"] is True
             assert card.pr_head_sha == latest and card.rebase_count == 0
-            assert (await AcceptService(session).push_fix(task.id))["pushed"] is False
+            again = await AcceptService(
+                session, announce=announce, roster_team=project_team
+            ).push_fix(task.id)
+            assert again["pushed"] is False
             await session.commit()
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
         stale = await publisher.client.merge_pull_request(**args, sha=reviewed)
@@ -675,9 +704,9 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert verdict.state == "clean"
         async with db_factory() as session:
-            accepted = await AcceptService(session).accept(
-                card_id=card.id, decided_by="reviewer", head_sha=latest
-            )
+            accepted = await AcceptService(
+                session, announce=announce, roster_team=project_team
+            ).accept(card_id=card.id, decided_by="reviewer", head_sha=latest)
             await session.commit()
             assert accepted.status.value == "accepted"
             merged_sha = accepted.pr_head_sha

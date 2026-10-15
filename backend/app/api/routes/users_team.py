@@ -52,6 +52,7 @@ from app.api.teams_deps import application_to_api_model, load_application_maps
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
+from app.domain.delivery.ledger import deliver
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
@@ -68,8 +69,10 @@ async def get_team_membership_service(
 ) -> TeamMembershipService:
     team_repo = TeamRepository(session=db)
     app_repo = TeamMembershipApplicationRepository(session=db)
+    # The membership events go to the delivery ledger, one layer above `team`,
+    # so the composition root hands the write in (``Deliver``).
     return TeamMembershipService(
-        session=db, team_repo=team_repo, application_repo=app_repo
+        session=db, team_repo=team_repo, application_repo=app_repo, deliver=deliver
     )
 
 
