@@ -1,7 +1,6 @@
 {
   "_comment": "Frozen eslint-plugin-vuejs-accessibility violations per file. The ratchet blocks any NEW one; these are pre-existing and may only go down. Regenerate with `pnpm run lint:a11y:update`. The rules are in eslint.a11y.config.mjs.",
   "files": {
-    "src/App.vue": 1,
     "src/commands/palette/CommandPalette.vue": 8,
     "src/components/account/AccountField.vue": 1,
     "src/components/admin/AdminFeedbackTable.vue": 6,

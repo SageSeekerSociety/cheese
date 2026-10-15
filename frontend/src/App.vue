@@ -104,143 +104,7 @@
     <!-- The main app's keyboard shortcut sheet (? or the keyboard button by the message box). -->
     <AppShortcutSheet />
 
-    <!-- 新建项目 (opened by the rail's "+" affordance)。要填好几项，手机上是整页：
-         下一步 / 创建在页头右边，键盘弹起来也够得着。 -->
-    <AdaptiveDialog
-      v-model="newProjectDialog"
-      :title="newProjectStep === 1 ? t('work.newProject.title') : t('work.teammate.title')"
-      :primary-label="newProjectStep === 1 ? t('work.teammate.next') : t('work.teammate.create')"
-      :primary-loading="creatingProject"
-      :primary-disabled="
-        !newProjectName.trim() ||
-        loadingTeams ||
-        newProjectTeamId === null ||
-        !!teamLoadError ||
-        (newProjectStep === 2 && !newProjectAgentName.trim())
-      "
-      :cancel-label="t('work.newProject.cancel')"
-      :close-disabled="creatingProject"
-      :max-width="420"
-      persistent
-      @primary="newProjectStep === 1 ? advanceNewProject() : confirmNewProject()"
-    >
-      <div v-show="newProjectStep === 1">
-        <p v-if="sourceTask" class="t-body c-muted mb-3">
-          {{ t('work.newProject.fromTask', { task: sourceTask.name }) }}
-        </p>
-        <!-- 从一道题建项目时，先把「会继承什么」摆出来 (#944)：资源包、合成后的
-             指导（连来自哪一层）、以及会被带上的资料。建之前看得见，才有得选。 -->
-        <TaskInheritance
-          v-if="sourceTask"
-          class="mb-3"
-          :inheritance="sourceInheritance"
-          :loading="sourceInheritanceLoading"
-        />
-        <!-- Three lines of quota detail sat right under the floating label of the
-             field below. The one line that changes what a project can expect
-             stays; the rest moves behind the notice's own disclosure, and the
-             gap below clears the label. -->
-        <ResourceLimitsNotice v-if="newProjectDialog" class="mt-3 mb-6" />
-        <v-text-field
-          v-model="newProjectName"
-          autocomplete="off"
-          :label="t('work.newProject.name')"
-          variant="outlined"
-          color="primary"
-          autofocus
-          hide-details
-          :disabled="creatingProject"
-          @keyup.enter="advanceNewProject"
-        />
-        <!-- 可选：答案会跟着项目进房间（见 ProjectService.create）。不填也能建，
-             所以这不是必填项，标签里就写着「可选」。 -->
-        <v-textarea
-          v-model="newProjectIntent"
-          autocomplete="off"
-          :label="t('work.newProject.intent')"
-          :placeholder="t('work.newProject.intentExample')"
-          variant="outlined"
-          color="primary"
-          rows="2"
-          auto-grow
-          hide-details
-          class="mt-3"
-          :disabled="creatingProject"
-        />
-        <v-select
-          v-model="newProjectTeamId"
-          autocomplete="off"
-          :items="newProjectTeams"
-          item-title="name"
-          item-value="id"
-          :item-props="teamItemProps"
-          :label="t('work.newProject.team')"
-          variant="outlined"
-          color="primary"
-          class="mt-3"
-          hide-details
-          :loading="loadingTeams"
-          :disabled="creatingProject || loadingTeams"
-        />
-        <v-select
-          v-model="newProjectForgeKind"
-          autocomplete="off"
-          :items="[
-            { title: t('work.newProject.forgeHosted'), value: 'forgejo' },
-            { title: t('work.newProject.forgeGithub'), value: 'github_app' },
-          ]"
-          :label="t('work.newProject.forge')"
-          variant="outlined"
-          color="primary"
-          class="mt-3"
-          hide-details
-          :disabled="creatingProject"
-        />
-        <div class="t-meta-read mt-2">
-          {{
-            newProjectForgeKind === 'forgejo' ? t('work.newProject.forgeHint') : t('work.newProject.forgeGithubHint')
-          }}
-        </div>
-        <v-alert v-if="teamLoadError" type="error" density="compact" variant="tonal" class="mt-3">
-          {{ teamLoadError }}
-          <BaseButton kind="secondary" size="sm" :loading="loadingTeams" @click="loadProjectTeams">{{
-            t('work.newProject.retry')
-          }}</BaseButton>
-        </v-alert>
-      </div>
-      <div v-if="newProjectStep === 2">
-        <p class="t-body mb-4">{{ t('work.teammate.intro', { project: newProjectName.trim() }) }}</p>
-        <v-text-field
-          v-model="newProjectAgentName"
-          :label="t('work.teammate.name')"
-          variant="outlined"
-          autocomplete="off"
-          maxlength="64"
-          :disabled="creatingProject"
-          @keyup.enter="confirmNewProject"
-        >
-          <template #append-inner>
-            <BaseButton
-              icon="mdi-dice-multiple-outline"
-              size="sm"
-              :aria-label="t('work.teammate.random')"
-              :title="t('work.teammate.random')"
-              :disabled="creatingProject"
-              @click="newProjectAgentName = randomTeammateName(newProjectAgentName)"
-            />
-          </template>
-        </v-text-field>
-        <p class="t-meta-read">{{ t('work.teammate.more') }}</p>
-      </div>
-      <v-alert v-if="newProjectError" type="error" density="compact" variant="tonal" class="mt-3">
-        {{ newProjectError }}
-      </v-alert>
-      <template v-if="newProjectStep === 2" #actions>
-        <BaseButton kind="ghost" :disabled="creatingProject" @click="newProjectStep = 1">{{
-          t('work.teammate.back')
-        }}</BaseButton>
-      </template>
-    </AdaptiveDialog>
+    <NewProjectDialog />
 
     <!-- 内测: running-build badge, self-hides unless the box opted in. -->
     <VersionBadge :version="appVersion" />
@@ -285,7 +149,6 @@
 <script setup lang="ts">
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
-import type { Team } from '@/types/teams'
 import type { NavSources } from './components/common/Navigation/destinations'
 
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -302,7 +165,7 @@ import { pendingSudo } from '@/utils/sudo'
 import { provideAttachmentSource } from '@/composables/useAttachmentSource'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
-import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
+import { teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { providePageChrome } from '@/composables/usePageChrome'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { usePendingConsent } from '@/composables/usePendingConsent'
@@ -328,14 +191,11 @@ import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
-import { type AppVersion, createProject, getAppVersion } from '@/api'
+import { type AppVersion, getAppVersion } from '@/api'
 import { NotificationsApi } from '@/api/notifications'
-import { TeamsApi } from '@/api/teams'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
 import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
-import BaseButton from '@/components/base/BaseButton.vue'
-import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
@@ -360,7 +220,6 @@ import { landBootSplash } from '@/lib/desktopSplash'
 import { startInboxLive } from '@/lib/inboxLive'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { pageMotion } from '@/lib/pageMotion'
-import { randomTeammateName } from '@/lib/projectAgents'
 import {
   applyProjectOrder,
   type DropEdge,
@@ -374,7 +233,7 @@ import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
-import { useTaskInheritance } from '@/views/tasks/composables/useTaskInheritance'
+import NewProjectDialog from '@/views/workspace/NewProjectDialog.vue'
 
 // Activate the theme runtime app-wide. First paint is already correct without
 // this (the boot script in index.html stamps <html data-theme>, and Vuetify
@@ -463,8 +322,6 @@ const CommandPalette = defineAsyncComponent(() => import('@/commands/palette/Com
 const DeviceConnect = defineAsyncComponent(() => import('@/views/desktop/DeviceConnect.vue'))
 const GuideBubble = defineAsyncComponent(() => import('@/components/common/GuideBubble.vue'))
 const LeaveProjectDialog = defineAsyncComponent(() => import('@/components/LeaveProjectDialog.vue'))
-const ResourceLimitsNotice = defineAsyncComponent(() => import('@/components/ResourceLimitsNotice.vue'))
-const TaskInheritance = defineAsyncComponent(() => import('@/views/tasks/components/TaskInheritance.vue'))
 const sudoWanted = ref(false)
 watch(pendingSudo, (request) => {
   if (request) sudoWanted.value = true
@@ -754,43 +611,8 @@ const guideStep = computed(() => {
   }
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
-// The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
-// we create the project owned by the current user, refresh the rail so the new
-// tile appears, then open its workspace. The same dialog is what a team page's
-// 新建项目 opens (useNewProjectDialog), with that team preselected.
-const { open: newProjectDialog, presetTeam, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
-
-// 从一道题建项目时那份「会继承什么」(#944)。取数按 `sourceTask` 走：对话框换个
-// 来源就重新问一次，没来源时不发请求。
-const { inheritance: sourceInheritance, loading: sourceInheritanceLoading } = useTaskInheritance(
-  () => sourceTask.value?.id
-)
-const newProjectName = ref('')
-const newProjectStep = ref(1)
-const newProjectAgentName = ref('')
-const newProjectForgeKind = ref<'forgejo' | 'github_app'>('forgejo')
-// 这个项目打算做什么——建项目时问的那一句（#946 片 C）。问题只在人愿意答的时候
-// 才有价值，所以它是可选的：空着就和从前一样，只建一个空房间。
-const newProjectIntent = ref('')
-// The project's id, chosen once per opening of the dialog. Pressing 创建项目 again
-// after a failure sends the same id, so the server finishes that project rather
-// than starting another beside what the failed attempt already made.
-const newProjectId = ref('')
-const creatingProject = ref(false)
-const newProjectError = ref<string | null>(null)
-// 归属: which team the project belongs to decides who can see it. Without
-// this the rail ＋ always chose the personal team, so a project someone made
-// for their team was invisible to the rest of it.
-const newProjectTeams = ref<Team[]>([])
-const newProjectTeamId = ref<number | null>(null)
-const loadingTeams = ref(false)
-const teamLoadError = ref<string | null>(null)
-// 自己名下以自己的昵称出现（后端给的 name 就是昵称），和团队的区别写在下面那行小字里。
-const teamItemProps = (team: Team) => ({
-  subtitle: team.personal
-    ? t('work.newProject.ownHint')
-    : t('work.newProject.teamHint', { n: 1 + (team.admins?.total ?? 0) + (team.members?.total ?? 0) }),
-})
+// The "+" rail affordance opens the new-project dialog (views/workspace/NewProjectDialog.vue).
+const { show: showNewProjectDialog } = useNewProjectDialog()
 
 function createNewProject() {
   // From a team page, that team; elsewhere the dialog falls back to the caller's own name.
@@ -822,80 +644,6 @@ defineCommands(() => [
       run: () => appTheme.setPreference(mode),
     })),
 ])
-
-async function loadProjectTeams() {
-  loadingTeams.value = true
-  teamLoadError.value = null
-  newProjectTeamId.value = null
-  try {
-    const { teams } = await TeamsApi.getMyTeams()
-    newProjectTeams.value = teams
-    if (!teams.length) teamLoadError.value = t('work.newProject.teamsEmpty')
-  } catch {
-    newProjectTeams.value = []
-    teamLoadError.value = t('work.newProject.teamsFailed')
-  } finally {
-    loadingTeams.value = false
-  }
-  newProjectTeamId.value = defaultTeamFor(presetTeam.value, newProjectTeams.value)
-}
-
-watch(newProjectDialog, (opened) => {
-  if (!opened) return
-  newProjectName.value = sourceTask.value?.name ?? ''
-  newProjectStep.value = 1
-  newProjectAgentName.value = randomTeammateName()
-  newProjectForgeKind.value = 'forgejo'
-  // 上一次开的对话框留下的答案不该跟到这一次——那会让第二个项目凭空继承第一个
-  // 项目的说明，而人根本没说过。
-  newProjectIntent.value = ''
-  newProjectId.value = crypto.randomUUID()
-  newProjectError.value = null
-  void loadProjectTeams()
-})
-
-function advanceNewProject() {
-  if (newProjectName.value.trim() && !loadingTeams.value && !teamLoadError.value && newProjectTeamId.value !== null)
-    newProjectStep.value = 2
-}
-
-async function confirmNewProject() {
-  if (newProjectStep.value !== 2 || !newProjectAgentName.value.trim()) return
-  const name = newProjectName.value.trim()
-  if (!name || creatingProject.value || loadingTeams.value || teamLoadError.value || newProjectTeamId.value === null)
-    return
-  creatingProject.value = true
-  newProjectError.value = null
-  try {
-    const project = await createProject(
-      name,
-      newProjectTeamId.value,
-      sourceTask.value?.id,
-      newProjectForgeKind.value,
-      newProjectIntent.value.trim(),
-      newProjectAgentName.value.trim(),
-      newProjectId.value
-    )
-    await refreshProjects()
-    newProjectDialog.value = false
-    if (newProjectForgeKind.value === 'github_app') {
-      router.push(`/projects/${project.id}/settings/repository`)
-      return
-    }
-    // 直接落到大本营，而不是项目地址。一个刚建出来的项目没有任何活，而 /projects
-    // 的落点是看板——它此刻是四列空格子，答的是「什么在跑」，对一个还没开始的项目
-    // 只有一个答案：没有。人第一眼该看到的是能说话的地方。这里知道它是新的，所以
-    // 不用等话题列表回来才推断（WorkspaceEntry 负责那种情况）。
-    router.push(
-      project.root_topic_id ? `/projects/${project.id}/topics/${project.root_topic_id}` : `/projects/${project.id}`
-    )
-  } catch (e) {
-    // Inline error inside the dialog — not a native alert() chrome.
-    newProjectError.value = e instanceof Error ? e.message : t('work.newProject.createFailed')
-  } finally {
-    creatingProject.value = false
-  }
-}
 </script>
 
 <style lang="scss" scoped>
