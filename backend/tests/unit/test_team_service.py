@@ -890,6 +890,10 @@ class TestCreateInvitation:
         svc, team_repo, app_repo = _build_membership_service()
         team_repo.is_team_at_least_admin.return_value = True
         team_repo.is_team_member.return_value = False
+        # Only the owner may invite someone in as an admin.
+        team_repo.get_member_relation.return_value = MagicMock(
+            role=TeamMemberRole.OWNER
+        )
         app_repo.exists_pending_for_user_and_team.return_value = False
 
         saved = _make_application(id=300, role="ADMIN")
@@ -913,6 +917,10 @@ class TestCreateInvitation:
         svc, team_repo, app_repo = _build_membership_service()
         team_repo.is_team_at_least_admin.return_value = True
         team_repo.is_team_member.return_value = False
+        # Only the owner may invite someone in as an admin.
+        team_repo.get_member_relation.return_value = MagicMock(
+            role=TeamMemberRole.OWNER
+        )
         app_repo.exists_pending_for_user_and_team.return_value = False
 
         saved = _make_application(id=300, role="OWNER")

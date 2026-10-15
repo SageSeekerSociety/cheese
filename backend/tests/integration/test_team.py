@@ -262,6 +262,56 @@ class TestTeamIntegration:
         assert team_data["admins"]["total"] == 0
         assert team_data["members"]["total"] == 1
 
+    def test_only_the_owner_makes_admins(
+        self, api_client: TestClient, team_setup: dict
+    ) -> None:
+        """Changing a role is the owner's alone, so an admin cannot hand out the
+        admin role another way: not by adding someone, not by inviting them."""
+        creator = team_setup["creator"]
+        admin = team_setup["admin"]
+        owner_headers = {"Authorization": f"Bearer {creator.token}"}
+        admin_headers = {"Authorization": f"Bearer {admin.token}"}
+        team_id = api_client.post(
+            "/teams",
+            json={
+                "name": team_setup["team_name"],
+                "intro": team_setup["team_intro"],
+                "description": team_setup["team_description"],
+                "avatarId": team_setup["team_avatar_id"],
+            },
+            headers=owner_headers,
+        ).json()["data"]["team"]["id"]
+        invitation_id = api_client.post(
+            f"/teams/{team_id}/invitations",
+            json={"userId": admin.user_id, "role": "ADMIN"},
+            headers=owner_headers,
+        ).json()["data"]["invitation"]["id"]
+        assert (
+            api_client.post(
+                f"/users/me/team-invitations/{invitation_id}/accept",
+                headers=admin_headers,
+            ).status_code
+            == 204
+        )
+
+        added = api_client.post(
+            f"/teams/{team_id}/members",
+            json={"userId": team_setup["another_user"].user_id, "role": "ADMIN"},
+            headers=admin_headers,
+        )
+        invited = api_client.post(
+            f"/teams/{team_id}/invitations",
+            json={"userId": team_setup["member"].user_id, "role": "ADMIN"},
+            headers=admin_headers,
+        )
+
+        assert added.status_code == 403
+        assert invited.status_code == 403
+        admins = api_client.get(f"/teams/{team_id}", headers=owner_headers).json()[
+            "data"
+        ]["team"]["admins"]["total"]
+        assert admins == 1
+
     def test_invite_admin(self, api_client: TestClient, team_setup: dict) -> None:
         creator = team_setup["creator"]
         admin = team_setup["admin"]
