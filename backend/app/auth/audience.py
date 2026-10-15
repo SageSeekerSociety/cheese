@@ -29,8 +29,10 @@ from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 
-def _private(topic: Topic) -> bool:
-    return bool(topic.is_private or topic.members_only)
+def seats_only(topic: Topic | None) -> bool:
+    """Whether only the room's own seats may read it: a private chat (the one
+    place the access rules read that flag), or a private channel."""
+    return bool(topic and (topic.is_private or topic.members_only))
 
 
 async def _people_seated(session: AsyncSession, room_id: uuid.UUID) -> set[str]:
@@ -53,19 +55,21 @@ async def rooms_its_audience_may_read(
     """Which of ``room_ids`` an agent answering in ``answer_room`` may read."""
     rooms = {t.id: t for t in await TopicRepository(session).get_many(set(room_ids))}
     if answer_room is None:
-        return {rid for rid, room in rooms.items() if not _private(room)}
+        return {rid for rid, room in rooms.items() if not seats_only(room)}
     origin = rooms.get(answer_room) or await TopicRepository(session).get(answer_room)
     if origin is None:
         return set()
     public_ok = not await outsiders_reading(
         session, project_id=project_id, room_id=answer_room
     )
-    audience = await _people_seated(session, answer_room) if _private(origin) else None
+    audience = (
+        await _people_seated(session, answer_room) if seats_only(origin) else None
+    )
     allowed: set[uuid.UUID] = set()
     for rid, room in rooms.items():
         if rid == answer_room:
             allowed.add(rid)
-        elif not _private(room):
+        elif not seats_only(room):
             if public_ok:
                 allowed.add(rid)
         elif audience is not None and audience <= await _people_seated(session, rid):

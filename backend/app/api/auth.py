@@ -16,6 +16,7 @@ from fastapi import Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.audience import rooms_its_audience_may_read
+from app.auth.audience import seats_only as _private
 from app.auth.project_access import may_read_project, outsiders_reading
 from app.common.auth import verify_access_token
 from app.core.config import GATEWAY_MOUNT, settings
@@ -95,12 +96,6 @@ def _token_verifier(token: str) -> TokenIdentity | None:
     # The user id is kept alongside the handle: device binding
     # (device.owner_user_id, an int column) needs it.
     return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
-
-
-def _private(topic: Topic | None) -> bool:
-    """Whether only the room's own seats may read it: a private chat (the one
-    place this file reads that flag), or a private channel."""
-    return bool(topic and (topic.is_private or topic.members_only))
 
 
 class ActorResolver:
@@ -759,8 +754,9 @@ class ActorResolver:
         to somebody this answers yes about).
 
         The rule is not restated here. The handle is swapped on the actor and the
-        door's own method answers, which keeps ONE read of ``is_private`` in this
-        file (``tests/unit/test_is_private_read_points.py`` is a ratchet: a
+        door's own method answers, which keeps the one read of ``is_private``
+        where it is (``seats_only``; ``tests/unit/test_is_private_read_points.py``
+        is a ratchet: a
         second read point is a second declaration of the same fact, and two
         declarations drift). What is taken as given is the credential half only —
         a handle in a body presents nothing, and this asks whether the room would
