@@ -41,8 +41,8 @@ async def rooms_seen(
     private channels it sits in. On the development credential alone, which
     names nobody (``ActorResolver.on_the_dev_credential``), every channel."""
     viewer = None if resolver.on_the_dev_credential(actor) else actor.handle
-    rooms = await TopicRepository(db).list_for_project(project_id, only_seen_by=viewer)
-    return {room.id for room in rooms}
+    rooms = await TopicRepository(db).ids_for_project(project_id, only_seen_by=viewer)
+    return set(rooms)
 
 
 async def live_rooms_seen(
@@ -50,8 +50,10 @@ async def live_rooms_seen(
 ) -> set[uuid.UUID]:
     """``rooms_seen`` without the archived channels: what is still going on."""
     viewer = None if resolver.on_the_dev_credential(actor) else actor.handle
-    rooms = await TopicRepository(db).list_for_project(project_id, only_seen_by=viewer)
-    return {room.id for room in rooms if str(room.status) != "archived"}
+    rooms = await TopicRepository(db).ids_for_project(
+        project_id, only_seen_by=viewer, unarchived=True
+    )
+    return set(rooms)
 
 
 async def channels_unseen(
