@@ -823,6 +823,7 @@ defineExpose({
             :class="enterClass('routines')"
             :topic-id="topicId"
             :project-id="projectId"
+            :room-title="topic?.title ?? ''"
             :refresh-tick="refreshTick"
             @open-file="openFile"
           />

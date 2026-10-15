@@ -48,7 +48,6 @@
   "runsFailed": "Couldn't load run history",
   "actionFailed": "Something went wrong",
   "deleteFailed": "Couldn't delete",
-  "newTitle": "New routine",
   "editTitle": "Edit “{title}”",
   "pickRoom": "Choose a channel first: the work runs there and the results go there",
   "saveFailed": "Couldn't save",
@@ -62,26 +61,65 @@
   "listSeparator": ", ",
   "empty": "No routines yet",
   "emptyHint": "Click “New”, or ask the AI teammate in a channel to draft one",
+  "compose": {
+    "tab": {
+      "label": "The two pages for a new routine",
+      "new": "New",
+      "template": "Templates"
+    }
+  },
+  "template": {
+    "preset": "From the platform",
+    "mine": "Mine",
+    "mineNote": "(kept in this browser, so another machine won't have them)",
+    "when": {
+      "daily": "Every day at {time}",
+      "weekly": "Every {days} at {time}",
+      "monthly": "Day {day} of every month at {time}",
+      "hourly": "{minute} minutes past every hour"
+    },
+    "presets": {
+      "weekly": {
+        "title": "Weekly report",
+        "goal": "Sum up what the channels finished last week on one page"
+      },
+      "quiz": {
+        "title": "Weekly quiz",
+        "goal": "Write a short quiz on what was covered this week"
+      },
+      "daily": {
+        "title": "Daily digest",
+        "goal": "Put today's decisions and loose ends from the channel on one page"
+      },
+      "archive": {
+        "title": "File it away",
+        "goal": "Move it to the right folder and write one line on what it is for"
+      },
+      "unit": {
+        "title": "Unit summary",
+        "goal": "Sum up the key points of one learning task on one page"
+      }
+    }
+  },
+  "cancel": "Cancel",
   "form": {
-    "room": "Channel to run in",
-    "roomHint": "The channel's AI teammate does the work, and the results go in this channel",
-    "name": "Name",
-    "namePlaceholder": "e.g. Weekly project progress",
-    "nameHint": "Left blank, it is the goal's first sentence",
+    "room": "Channel",
+    "name": "Title",
     "goal": "Goal",
     "goalPlaceholder": "e.g. Sum up this week's finished tasks, work in progress and blockers across channels in a one-page weekly report",
     "note": "Notes",
     "notePlaceholder": "e.g. List results per channel; only files in the library",
-    "trigger": "Trigger",
+    "autoHint": "It fills the blanks from the goal, and starts running once that is done.",
+    "timeOn": "Time",
+    "conditionOn": "Condition",
+    "keepTemplate": "Save as a template",
+    "goalRequired": "The goal is required: it is what the AI teammate works from.",
+    "weekdaysRequired": "Pick a day: a weekly run has to name which day.",
     "freq": "Frequency",
     "time": "Time",
     "minute": "Minute",
     "day": "Day of month",
-    "timezone": "Time zone",
-    "scope": "Scope",
-    "scopeRoom": "This channel only",
-    "scopeProject": "Whole project",
-    "machineNote": "The AI teammate's environment must be online to start. Projects on the cloud can start any time; for projects on your own device, a run waits while the device is offline and is marked failed, with a notification, if it hasn't started within two hours"
+    "timezone": "Time zone"
   },
   "deleteTitle": "Delete “{title}”",
   "deleteBody": "It stops running and its run history is deleted too; result files already in the channel are kept",

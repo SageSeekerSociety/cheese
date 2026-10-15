@@ -48,7 +48,6 @@
   "runsFailed": "未能读取执行记录",
   "actionFailed": "操作没有成功",
   "deleteFailed": "未能删除",
-  "newTitle": "新建例行事务",
   "editTitle": "修改「{title}」",
   "pickRoom": "先选一个频道：工作在那个频道里执行，结果也放在那里",
   "saveFailed": "没有保存成功",
@@ -62,26 +61,65 @@
   "listSeparator": "、",
   "empty": "还没有例行事务",
   "emptyHint": "点「新建」，或在频道里让 AI 队友帮你起草一条",
+  "compose": {
+    "tab": {
+      "label": "新建例行事务的两页",
+      "new": "新建",
+      "template": "模板"
+    }
+  },
+  "template": {
+    "preset": "平台预置",
+    "mine": "我存的",
+    "mineNote": "（存在这台浏览器上，换一台机器就看不到）",
+    "when": {
+      "daily": "每天 {time}",
+      "weekly": "每{days} {time}",
+      "monthly": "每月 {day} 日 {time}",
+      "hourly": "每小时的 {minute} 分"
+    },
+    "presets": {
+      "weekly": {
+        "title": "周报",
+        "goal": "把上周各频道完成的事汇总成一页"
+      },
+      "quiz": {
+        "title": "周测",
+        "goal": "照本周学过的内容出一份小测"
+      },
+      "daily": {
+        "title": "日报",
+        "goal": "把今天频道里决定的事和还没回音的线索整理成一页"
+      },
+      "archive": {
+        "title": "归档",
+        "goal": "归到该去的文件夹，写一句它是干什么的"
+      },
+      "unit": {
+        "title": "单元总结",
+        "goal": "把一个学习任务里的重要知识点总结成一页"
+      }
+    }
+  },
+  "cancel": "取消",
   "form": {
-    "room": "执行频道",
-    "roomHint": "执行者是这个频道里的 AI 队友，结果也放在这个频道",
-    "name": "名称",
-    "namePlaceholder": "例如：每周项目进展",
-    "nameHint": "不填就取目标的第一句",
+    "room": "频道",
+    "name": "标题",
     "goal": "目标",
     "goalPlaceholder": "例如：汇总本周各频道完成的任务、进行中的事和阻碍，写成一页周报",
     "note": "补充说明",
     "notePlaceholder": "例如：结果按频道分开列；只用资料库里的文件",
-    "trigger": "执行条件",
+    "autoHint": "未填项，由芝士参照目标生成，生成完毕后开始执行。",
+    "timeOn": "时间",
+    "conditionOn": "条件",
+    "keepTemplate": "存成模板",
+    "goalRequired": "目标要填：芝士照它开工。",
+    "weekdaysRequired": "挑一天：每周一次得说清是哪一天。",
     "freq": "频率",
-    "time": "时间",
+    "time": "几点",
     "minute": "分钟",
     "day": "日期",
-    "timezone": "时区",
-    "scope": "范围",
-    "scopeRoom": "只看这个频道",
-    "scopeProject": "整个项目",
-    "machineNote": "AI 队友的环境在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，两小时内没开始会记为失败并通知你"
+    "timezone": "时区"
   },
   "deleteTitle": "删除「{title}」",
   "deleteBody": "删除后不再执行，执行记录也一起删除；已经放进频道的结果文件保留",

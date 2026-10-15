@@ -86,6 +86,16 @@ function button(label: string, scope: ParentNode = document.body): HTMLElement |
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
 }
 
+/** 勾上一颗勾选框（「时间」「条件」「存成模板」），按它那一行写着什么字认。
+ *  Vuetify 的事件挂在里面那颗 `input` 上、且只听 `input`，所以自己把它拨上再派一次。 */
+async function check(label: string) {
+  const box = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find((i) =>
+    i.closest('.v-input')?.textContent?.includes(label)
+  )!
+  box.checked = true
+  await fireEvent.input(box)
+}
+
 describe('房间右侧的「例行事务」', () => {
   it('问的是这一个房间，不是整个项目', async () => {
     const { findByText } = mount()
@@ -112,15 +122,20 @@ describe('房间右侧的「例行事务」', () => {
     expect(labels).toContain('修改')
   })
 
-  it('在这一格里新建：房间是定死的，不问「在哪个房间执行」', async () => {
+  it('在这一格里新建：频道是定死的，目标不填存不下去', async () => {
     vi.mocked(createRoutine).mockResolvedValue({ ...live, id: 'new-1' })
-    const { findByText } = mount()
+    const { findByText, container } = mount()
     await findByText('这个房间的日报')
 
     await fireEvent.click(button('新建')!)
     await waitFor(() => expect(button('保存')).toBeTruthy())
-    expect(document.body.textContent).not.toContain('在哪个房间执行')
 
+    // 目标必填（后端也这么判）：空着点保存，一次请求都不发，就地写一句为什么。
+    await fireEvent.click(button('保存')!)
+    expect(createRoutine).not.toHaveBeenCalled()
+    await waitFor(() => expect(container.textContent).toContain('目标要填'))
+
+    await fireEvent.update(container.querySelector('textarea')!, '把这个房间今天的进展写成一页')
     await fireEvent.click(button('保存')!)
 
     await waitFor(() => expect(createRoutine).toHaveBeenCalled())
@@ -128,6 +143,28 @@ describe('房间右侧的「例行事务」', () => {
     expect(room).toBe('room-1')
     expect(body.trigger).toBe('schedule')
     expect(body.spec).toEqual({ freq: 'weekly', time: '09:00', weekdays: [0] })
+  })
+
+  it('勾了「存成模板」：规则存下来之后，「我存的」里多一条，下次能从它开始', async () => {
+    vi.mocked(createRoutine).mockResolvedValue({ ...live, id: 'new-1' })
+    const { findByText, container } = mount()
+    await findByText('这个房间的日报')
+
+    await fireEvent.click(button('新建')!)
+    await waitFor(() => expect(button('保存')).toBeTruthy())
+    await fireEvent.update(container.querySelector('textarea')!, '把这个房间今天的进展写成一页')
+    await check('存成模板')
+    await fireEvent.click(button('保存')!)
+
+    await waitFor(() => expect(createRoutine).toHaveBeenCalled())
+    // 再开一次：模板那一页上有刚存的那一条。
+    await fireEvent.click(button('新建')!)
+    await waitFor(() => expect(button('保存')).toBeTruthy())
+    await fireEvent.click(
+      Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === '模板')!
+    )
+    await waitFor(() => expect(document.body.textContent).toContain('我存的'))
+    expect(document.body.textContent).toContain('把这个房间今天的进展写成一页')
   })
 
   it('改一条每日分诊的钟点：它附带的反馈条数跟着留下，不被表单丢掉', async () => {

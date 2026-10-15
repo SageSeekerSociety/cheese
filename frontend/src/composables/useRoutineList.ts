@@ -122,9 +122,9 @@ export function useRoutineList(options: RoutineListOptions) {
     return created
   }
 
-  // ---- 那张新建 / 修改的表单 ----
+  // ---- 建一条规则的那两页 ----
   // 表单开着没有、改的是哪一条、上一次存失败说了什么，和列表一样是这一份状态的一部分：
-  // 两个入口（项目总览页、房间右侧那一格）共用同一张 `RoutineFormDialog`，各自再写一遍
+  // 两个入口（项目总览页、房间右侧那一格）画的是同一份 `RoutineCompose`，各自再写一遍
   // 这三样就成了两份会走样的状态。
   const formOpen = ref(false)
   /** 正在改的那一条；`null` 是新建。 */
@@ -148,19 +148,26 @@ export function useRoutineList(options: RoutineListOptions) {
     formOpen.value = false
   }
 
-  /** 表单存下去。出错写在这张表里，人改了字段就地再存一次。 */
-  async function submit(payload: { room: string; body: RoutineInput }) {
+  /**
+   * 表单存下去。出错写在这张表里，人改了字段就地再存一次。
+   *
+   * 存成了把那一条交回去（`null` 是没存成）：调用方还要拿它办别的事（比如「存成模板」
+   * —— 存规则失败时那一条不该留下）。
+   */
+  async function submit(payload: { room: string; body: RoutineInput }): Promise<Routine | null> {
     if (!editing.value && !payload.room) {
       formError.value = t('routines.pickRoom')
-      return
+      return null
     }
     saving.value = true
     formError.value = ''
     try {
-      await save({ id: editing.value?.id, room: payload.room, body: payload.body })
+      const saved = await save({ id: editing.value?.id, room: payload.room, body: payload.body })
       formOpen.value = false
+      return saved
     } catch (e) {
       formError.value = e instanceof Error ? e.message : t('routines.saveFailed')
+      return null
     } finally {
       saving.value = false
     }

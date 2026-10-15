@@ -9,9 +9,10 @@
 // `can_delete` 是后端逐条算好的，这一格不自己算：删不掉的那一条在 `RoutineRow` 里
 // 不画删除，别的动作都在——读得到就改得动。
 import type { Routine, RoutineInput, RoutineRun } from '@/lib/routine'
+import type { RoutineTemplate } from '@/lib/routineTemplates'
 
 import RoutineBoard from '../routine/RoutineBoard.vue'
-import RoutineFormDialog from '../routine/RoutineFormDialog.vue'
+import RoutineCompose from '../routine/RoutineCompose.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -28,13 +29,17 @@ withDefaults(
     loading?: boolean
     /** 读列表或做动作失败的那句话，摆在列表最上面。 */
     error?: string
-    /** 新建 / 修改那张表：开着没有、改的是哪一条（`null` 是新建）、上次存失败说了什么。 */
+    /** 建规则那两页：开着没有、改的是哪一条（`null` 是新建）、上次存失败说了什么。 */
     formOpen?: boolean
     editing?: Routine | null
     formError?: string
     saving?: boolean
-    /** 新建时定死的那个房间：这一格里的规则长在这个房间，表单不画「在哪个房间执行」。 */
+    /** 新建时定死的那个频道：这一格里的规则长在这个频道，新建那一页不画选择框。 */
     defaultRoom: string
+    /** 那个频道叫什么：新建那一页的「频道」那一行上写出来给人看一眼。 */
+    roomName?: string
+    /** 人自己存下来的模板（「我存的」那一段）。预置在 `lib/routineTemplates.ts` 里。 */
+    templates?: RoutineTemplate[]
   }>(),
   {
     runs: () => ({}),
@@ -46,6 +51,8 @@ withDefaults(
     editing: null,
     formError: '',
     saving: false,
+    roomName: '',
+    templates: () => [],
   }
 )
 
@@ -63,13 +70,15 @@ const emit = defineEmits<{
   /** 表单开着 / 关上。 */
   (e: 'form-open-change', open: boolean): void
   /** 表单存下去。 */
-  (e: 'submit', payload: { room: string; body: RoutineInput }): void
+  (e: 'submit', payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }): void
+  /** 点了「我存的」那一条上的「删除」。 */
+  (e: 'delete-template', template: RoutineTemplate): void
 }>()
 </script>
 
 <template>
   <div class="routine-panel">
-    <div class="routine-panel__bar">
+    <div v-if="!formOpen" class="routine-panel__bar">
       <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" class="tap-target" @click="emit('start-new')">{{
         t('routines.action.new')
       }}</BaseButton>
@@ -85,7 +94,23 @@ const emit = defineEmits<{
     </div>
 
     <div class="routine-panel__body">
+      <!-- 建一条规则的那两页占满这一格：工具条上的「新建」此刻没有别的意思，那一串也
+           收起来（这一页自己带着「取消」）。 -->
+      <RoutineCompose
+        v-if="formOpen"
+        :model-value="formOpen"
+        :routine="editing"
+        :default-room="defaultRoom"
+        :room-name="roomName"
+        :templates="templates"
+        :saving="saving"
+        :error="formError"
+        @update:model-value="(open) => emit('form-open-change', open)"
+        @save="(p) => emit('submit', p)"
+        @delete-template="(tpl) => emit('delete-template', tpl)"
+      />
       <RoutineBoard
+        v-else
         :routines="routines"
         :runs="runs"
         :open-id="openId"
@@ -102,18 +127,6 @@ const emit = defineEmits<{
         @open-file="(path) => emit('open-file', path)"
       />
     </div>
-
-    <!-- 房间里的规则长在这个房间：表单不画「在哪个房间执行」那一格，省掉一次没有别的
-         答案的选择。 -->
-    <RoutineFormDialog
-      :model-value="formOpen"
-      :routine="editing"
-      :default-room="defaultRoom"
-      :saving="saving"
-      :error="formError"
-      @update:model-value="(open) => emit('form-open-change', open)"
-      @save="(p) => emit('submit', p)"
-    />
   </div>
 </template>
 

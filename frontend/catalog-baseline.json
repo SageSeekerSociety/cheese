@@ -118,7 +118,6 @@
     "src/components/room/PanelToggle.vue",
     "src/components/room/RollingNumber.vue",
     "src/components/routine/RoutineBoard.vue",
-    "src/components/routine/RoutineFormDialog.vue",
     "src/components/routine/RoutineRow.vue",
     "src/components/routine/RoutineRunLine.vue",
     "src/components/settings/ClaudeCodeLogin.vue",

@@ -62,13 +62,23 @@ const live: Routine = {
 
 function mount(props: Record<string, unknown> = {}) {
   return render(PanelRoutines, {
-    props: { routines: [live], defaultRoom: 'room-1', ...props },
+    props: { routines: [live], defaultRoom: 'room-1', roomName: '周报房间', ...props },
     global: { plugins: [vuetify, i18n] },
   })
 }
 
 function button(label: string, scope: ParentNode = document.body): HTMLElement | undefined {
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
+}
+
+/** 勾上一颗勾选框（「时间」「条件」「存成模板」），按它那一行写着什么字认。
+ *  Vuetify 的事件挂在里面那颗 `input` 上、且只听 `input`，所以自己把它拨上再派一次。 */
+async function check(label: string) {
+  const box = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find((i) =>
+    i.closest('.v-input')?.textContent?.includes(label)
+  )!
+  box.checked = true
+  await fireEvent.input(box)
 }
 
 describe('房间面板的「例行事务」（纯展示）', () => {
@@ -87,14 +97,58 @@ describe('房间面板的「例行事务」（纯展示）', () => {
     expect(emitted()['start-new']).toHaveLength(1)
   })
 
-  it('表单开着时：房间是定死的（不问「在哪个房间执行」），存是把内容抛出去', async () => {
-    const { emitted } = mount({ formOpen: true })
+  it('建规则那两页开着时：频道是定死的（不画选择框），存是把内容抛出去', async () => {
+    const { emitted, container } = mount({ formOpen: true })
     await waitFor(() => expect(button('保存')).toBeTruthy())
-    expect(document.body.textContent).not.toContain('在哪个房间执行')
+    // 定死的那一个写在「频道」那一行上：看得到是哪个频道，但没有得挑 —— 这一页里
+    // 没有一个写着频道名的下拉。
+    expect(container.textContent).toContain('频道')
+    expect(container.textContent).toContain('周报房间')
+    expect(Array.from(container.querySelectorAll('.v-select')).some((el) => el.textContent?.includes('频道'))).toBe(
+      false
+    )
+
+    // 目标必填：不填就不往下走（后端也这么判）。
+    await fireEvent.click(button('保存')!)
+    expect(emitted()['submit']).toBeUndefined()
+
+    await fireEvent.update(container.querySelector('textarea')!, '把这个房间今天的进展写成一页')
+    await fireEvent.click(button('保存')!)
+
+    await waitFor(() => expect(emitted()['submit']).toBeTruthy())
+    const [payload] = emitted()['submit'][0] as [{ room: string; keepAsTemplate: boolean }]
+    expect(payload.room).toBe('room-1')
+    expect(payload.keepAsTemplate).toBe(false)
+  })
+
+  it('模板那一页：预置五条，点一条把它铺进表里', async () => {
+    const { emitted, container } = mount({ formOpen: true })
+    await waitFor(() => expect(button('保存')).toBeTruthy())
+
+    await fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '模板')!
+    )
+
+    const presets = ['周报', '周测', '日报', '归档', '单元总结']
+    for (const name of presets) expect(container.textContent).toContain(name)
+
+    await fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('归档'))!
+    )
+    // 铺进来之后就翻回那张表：目标那一格写着这条模板要干什么。
+    const goal = container.querySelector('textarea') as HTMLTextAreaElement
+    expect(goal.value).toContain('归到该去的文件夹')
+
+    // 「存成模板」那一颗：勾上就跟着这次保存一起抛出去。
+    await check('存成模板')
 
     await fireEvent.click(button('保存')!)
     await waitFor(() => expect(emitted()['submit']).toBeTruthy())
-    const [payload] = emitted()['submit'][0] as [{ room: string }]
-    expect(payload.room).toBe('room-1')
+    const [payload] = emitted()['submit'][0] as [
+      { body: { trigger: string; spec: Record<string, unknown> }; keepAsTemplate: boolean },
+    ]
+    expect(payload.body.trigger).toBe('library_file_added')
+    expect(payload.body.spec).toEqual({ scope: 'room' })
+    expect(payload.keepAsTemplate).toBe(true)
   })
 })

@@ -205,6 +205,7 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       editing: null,
       saving: false,
       formError: '',
+      templates: [],
     },
     states: [
       {

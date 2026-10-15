@@ -1,14 +1,15 @@
 <script setup lang="ts">
-// 例行事务的画面：一条规则一行（`RoutineBoard`），加上新建 / 修改那张表单
-// （`RoutineFormDialog`）。规则本身和表单都是 `components/routine/` 里的共用件；
-// 取数、读地址留在容器 `ProjectRoutinesView.vue` 里 —— 这一半只收 props、只把动作
-// 抛上去。
+// 例行事务的画面：一条规则一行（`RoutineBoard`），建一条规则的那两页
+// （`RoutineCompose`）。两样都是 `components/routine/` 里的共用件 —— 房间右侧那一格
+// 画的是同一份；取数、读地址留在容器 `ProjectRoutinesView.vue` 里，这一半只收 props、
+// 只把动作抛上去。
 import type { Topic } from '@/cx_types'
 import type { Routine, RoutineInput, RoutineRun } from '@/lib/routine'
+import type { RoutineTemplate } from '@/lib/routineTemplates'
 
 import AppPage from '@/components/common/AppPage.vue'
 import RoutineBoard from '@/components/routine/RoutineBoard.vue'
-import RoutineFormDialog from '@/components/routine/RoutineFormDialog.vue'
+import RoutineCompose from '@/components/routine/RoutineCompose.vue'
 import { t } from '@/i18n'
 
 defineProps<{
@@ -27,6 +28,8 @@ defineProps<{
   editing: Routine | null
   saving: boolean
   formError: string
+  /** 人自己存下来的模板（「我存的」那一段）。预置在 `lib/routineTemplates.ts` 里。 */
+  templates: RoutineTemplate[]
 }>()
 
 defineEmits<{
@@ -37,13 +40,30 @@ defineEmits<{
   delete: [routine: Routine]
   'toggle-runs': [routine: Routine]
   'update:model-value': [open: boolean]
-  save: [payload: { room: string; body: RoutineInput }]
+  save: [payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }]
+  'delete-template': [template: RoutineTemplate]
 }>()
 </script>
 
 <template>
   <AppPage :title="t('navigation.project.routines')">
-    <div>
+    <!-- 建一条规则的那两页占满这一页：工具条上的「新建」此刻没有别的意思，那一串也
+         收起来（这一页自己带着「取消」）。 -->
+    <RoutineCompose
+      v-if="formOpen"
+      :model-value="formOpen"
+      :routine="editing"
+      :rooms="rooms"
+      :default-room="defaultRoom"
+      :templates="templates"
+      :saving="saving"
+      :error="formError"
+      @update:model-value="(open) => $emit('update:model-value', open)"
+      @save="(payload) => $emit('save', payload)"
+      @delete-template="(tpl) => $emit('delete-template', tpl)"
+    />
+
+    <div v-else>
       <p class="t-body c-muted mb-6">{{ t('routines.intro', { name: agentName }) }}</p>
 
       <RoutineBoard
@@ -62,16 +82,5 @@ defineEmits<{
         @toggle-runs="(r) => $emit('toggle-runs', r)"
       />
     </div>
-
-    <RoutineFormDialog
-      :model-value="formOpen"
-      :routine="editing"
-      :rooms="rooms"
-      :default-room="defaultRoom"
-      :saving="saving"
-      :error="formError"
-      @update:model-value="(open) => $emit('update:model-value', open)"
-      @save="(payload) => $emit('save', payload)"
-    />
   </AppPage>
 </template>
