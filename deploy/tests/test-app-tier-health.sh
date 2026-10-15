@@ -1354,7 +1354,7 @@ test_rollout_waits_for_model_streams_only_after_the_health_check() {
     APP_TIER_MODEL_STREAMS=1,0 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
     DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1 \
     || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
-  healthy="$(log_line "$docker_log" 'ps -a --filter label=com.docker.compose.project=cheese')"
+  healthy="$(log_line "$docker_log" 'ps -a --no-trunc --filter label=com.docker.compose.project=cheese')"
   probe="$(log_line "$docker_log" '/_internal/llm/streams')"
   [ -n "$healthy" ] && [ -n "$probe" ] && [ "$healthy" -lt "$probe" ] \
     || fail "the release waited on the old backend's model streams before its own health check"
