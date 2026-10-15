@@ -172,15 +172,30 @@ class RoutineService:
             query = query.where(Routine.topic_id == topic_id)
         return list(await self._session.scalars(query.order_by(Routine.created_at)))
 
-    async def runs(self, routine_id: uuid.UUID, limit: int = 50) -> list[RoutineRun]:
-        return list(
-            await self._session.scalars(
-                select(RoutineRun)
-                .where(RoutineRun.routine_id == routine_id)
-                .order_by(RoutineRun.created_at.desc())
-                .limit(limit)
-            )
+    async def runs(
+        self,
+        routine_id: uuid.UUID,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        failed_only: bool = False,
+    ) -> tuple[list[RoutineRun], int]:
+        """这条规则的一页执行记录，外加符合条件的**总数**。
+
+        倒序给，最近的一次在最前面。「没能执行」是失败和未执行两种 —— 那一颗筛子问的
+        是「哪几次没成」，不是状态本身叫什么，所以两种一起来。
+
+        总数和这一页一起回：翻页器上那句「共 N 次」说的是筛过之后的全部，不是这一页
+        有几行，分两次问就会在两次之间变。
+        """
+        where = [RoutineRun.routine_id == routine_id]
+        if failed_only:
+            where.append(RoutineRun.status.in_(("failed", "skipped")))
+        total = await self._session.scalar(select(func.count()).select_from(RoutineRun).where(*where))
+        rows = await self._session.scalars(
+            select(RoutineRun).where(*where).order_by(RoutineRun.created_at.desc()).offset(offset).limit(limit)
         )
+        return list(rows), int(total or 0)
 
     async def _agent_for(self, topic_id: uuid.UUID, requested: str | None) -> str:
         seats = await TopicMemberService(self._session).agent_handles(topic_id)
@@ -494,6 +509,27 @@ class RoutineService:
             Topic.id.in_(topic_ids), Topic.status == TopicStatus.archived
         )
         return set((await self._session.scalars(stmt)).all())
+
+    async def latest_run_statuses(
+        self, routine_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, str]:
+        """这些规则各自最近一次执行跑成什么样，一次查询问完。
+
+        行上那颗图形说的不止「启用中 / 已暂停」：正在排队的那条画沙漏，上一次没跑成的
+        那条画红叉。规则自己那一行不记最近一次跑得怎么样，所以列表上这两档只能问执行
+        记录 —— 一条一条问就是每行一次往返。
+        """
+        if not routine_ids:
+            return {}
+        stmt = (
+            select(RoutineRun.routine_id, RoutineRun.status)
+            .where(RoutineRun.routine_id.in_(routine_ids))
+            .order_by(RoutineRun.routine_id, RoutineRun.created_at.desc())
+        )
+        latest: dict[uuid.UUID, str] = {}
+        for routine_id, status in (await self._session.execute(stmt)).all():
+            latest.setdefault(routine_id, status)
+        return latest
 
     async def report(
         self,

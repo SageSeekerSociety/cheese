@@ -18,7 +18,7 @@ notifies (``owner_handle``) or a project manager. Every response carries
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,7 +79,11 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _routine(
-    row: Routine, *, can_delete: bool = False, room_archived: bool = False
+    row: Routine,
+    *,
+    can_delete: bool = False,
+    room_archived: bool = False,
+    last_run_status: str | None = None,
 ) -> dict:
     trigger_text = describe_trigger(row)
     return {
@@ -87,6 +91,7 @@ def _routine(
         "id": str(row.id),
         "can_delete": can_delete,
         "room_archived": room_archived,
+        "last_run_status": last_run_status,
         "project_id": str(row.project_id),
         "topic_id": str(row.topic_id),
         "title": row.title,
@@ -233,13 +238,19 @@ async def _present(
 
     归档不写规则那一行（结论：规则状态不变，取消归档后从下一个时刻继续），所以
     「已随话题归档停止」只能由房间答，一次问完这一批。
+
+    行上那颗图形还有两档要说：正在排队、上一次没跑成。这两档同样不写规则那一行，
+    一起在这里问完（`last_run_status`）。
     """
-    archived = await RoutineService(db).archived_room_ids([r.topic_id for r in rows])
+    service = RoutineService(db)
+    archived = await service.archived_room_ids([r.topic_id for r in rows])
+    latest = await service.latest_run_statuses([r.id for r in rows])
     return [
         _routine(
             r,
             can_delete=_may_delete(r, actor, admin=admin),
             room_archived=r.topic_id in archived,
+            last_run_status=latest.get(r.id),
         )
         for r in rows
     ]
@@ -357,7 +368,7 @@ async def get_routine(
 ) -> dict:
     row, actor = await _routine_actor(db, resolver, routine_id)
     presented = await _present_one(db, actor, row)
-    runs = await RoutineService(db).runs(row.id)
+    runs, _ = await RoutineService(db).runs(row.id)
     return ok({**presented, "runs": [_run(r) for r in runs]})
 
 
@@ -436,11 +447,22 @@ async def delete_routine(
 
 @router.get("/routines/{routine_id}/runs")
 async def list_runs(
-    routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    routine_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    failed_only: bool = Query(False),
 ) -> dict:
+    """这条规则的一页执行记录。行里展开时读最近几次，「看全部」那一页翻着读。
+
+    `total` 是**筛过之后的全部**：翻页器上那句「共 N 次」说的是它。
+    """
     row, _ = await _routine_actor(db, resolver, routine_id)
-    items = [_run(r) for r in await RoutineService(db).runs(row.id)]
-    return ok(page(items, len(items)))
+    items, total = await RoutineService(db).runs(
+        row.id, offset=offset, limit=limit, failed_only=failed_only
+    )
+    return ok(page([_run(r) for r in items], total))
 
 
 @router.post("/routine-runs/{run_id}/report")
