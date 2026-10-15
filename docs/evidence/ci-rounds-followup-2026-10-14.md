@@ -77,3 +77,5 @@ Recollection can change current-attempt checks and PR closure evidence; use the 
 ## Decision
 
 The sample is sufficient to report a descriptive difference: 2.327 to 2.167 across 66 follow-up PRs. The all-PR target is not met, and a reduction caused by the rule is not established. Keep the current checks and rule unchanged; revisit this same cohort's unfinished PRs with a later cutoff rather than claiming success or adding another gate from these results.
+
+The [2026-10-15 extension](ci-rounds-followup-2026-10-15.md) later re-observed this same cohort at 147 heads over the same 66 PRs; that later cutoff does not change the numbers recorded in this report.
