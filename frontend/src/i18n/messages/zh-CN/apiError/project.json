@@ -92,6 +92,7 @@
   "projectManageForbidden": "只有项目所有者或团队管理员能管理这个项目",
   "projectNeedsTeam": "项目需要归属一个团队",
   "projectNumberTaken": "这个项目编号已被使用",
+  "projectObserverReadOnly": "无法修改：出题人和题目板管理员只能查看这个项目",
   "projectSlugFormat": "短名只能用小写字母、数字和连字符，3 到 32 位，不能以连字符开头或结尾",
   "projectSlugReserved": "这个短名留作平台页面使用，换一个",
   "projectSlugTaken": "这个短名已被别的项目使用过，换一个",

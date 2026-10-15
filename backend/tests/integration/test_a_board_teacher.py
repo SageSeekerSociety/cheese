@@ -172,6 +172,48 @@ def test_a_board_admin_reads_the_conversations_of_its_students_projects(
     )
 
 
+def test_a_board_admin_reads_a_students_project_but_does_not_change_it(
+    api_client: TestClient, user_client: UserCreator
+):
+    """管理员看得见学生的项目，但项目里的文档、记忆是学生自己的：他不新建、不改。"""
+    board = _new_board(user_client, api_client)
+    task_id = _create_task(api_client, board, name="这门课的题")
+    teacher = user_client.create_user()
+    teacher_token = _login(user_client, api_client, teacher)
+    assert _make_admin(api_client, board, teacher.user_id).status_code == 201
+    student = user_client.create_user()
+    student_token = _login(user_client, api_client, student)
+    _claim(api_client, board, task_id, student, student_token)
+    pid = post_project(
+        api_client,
+        json={"name": "成员的项目", "external_task_id": task_id},
+        headers=_auth(student_token),
+        owner=student.username,
+    ).json()["data"]["id"]
+
+    listed = api_client.get(f"/projects/{pid}/documents", headers=_auth(teacher_token))
+    made = api_client.post(
+        f"/projects/{pid}/documents",
+        json={"title": "老师写的"},
+        headers=_auth(teacher_token),
+    )
+    remembered = api_client.put(
+        "/memory/files",
+        json={
+            "project_id": pid,
+            "scope": "team",
+            "path": "teacher-note.md",
+            "content": "---\nname: teacher-note\ndescription: 老师的话\n"
+            "type: feedback\n---\n\n照老师说的做。\n",
+        },
+        headers=_auth(teacher_token),
+    )
+
+    assert listed.status_code == 200, listed.text
+    assert made.status_code == 403
+    assert remembered.status_code == 403
+
+
 def test_a_plain_member_of_the_board_is_not_a_teacher(
     api_client: TestClient, user_client: UserCreator
 ):

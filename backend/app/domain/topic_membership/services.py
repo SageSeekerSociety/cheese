@@ -22,7 +22,12 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    ForbiddenError,
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.conversation.services import room_of, room_of_thread
 from app.domain.identity.handles import (
@@ -561,6 +566,9 @@ class TopicMemberService:
         team: ProjectTeam,
     ) -> TopicMembership:
         topic = await self._brought_in_by(topic_id, actor)
+        if not _public(topic):
+            # Whoever joins reads everything said before: a DM keeps its two.
+            raise UnprocessableEntityError(say("privateChatTwoPeopleOnly"))
         # Who is an agent is the binding's answer, not the handle's shape (I9):
         # a connector's bound account can be named anything.
         is_agent = handle.startswith(AGENT_HANDLE_PREFIX) or await IdentityService(
