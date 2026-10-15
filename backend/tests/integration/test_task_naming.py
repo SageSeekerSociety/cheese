@@ -818,22 +818,29 @@ def test_a_rename_is_heard_on_the_tasks_own_page_and_in_its_channel(
 ):
     """The task's page listens on the task's conversation and the channel's
     pages on the channel's: a new title reaches both without a reload."""
-    import app.domain.agent.staleness as staleness
+    from app.domain.agent import live_notices
 
     heard: list[tuple[str, str, str | None]] = []
 
-    async def announce(conversation_id, resource, *, id=None):
-        heard.append(
-            (str(conversation_id), resource, str(id) if id is not None else None)
-        )
+    class _Broker:
+        """发布出去的那几帧，代替 broker（`agent/live_notices` 在提交后发的）。"""
 
-    monkeypatch.setattr(staleness, "announce_stale", announce)
+        async def publish(self, channel, frame):
+            heard.append((str(channel), frame.get("resource"), frame.get("id")))
+
+    async def _told(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(live_notices, "get_broker", lambda: _Broker())
+    monkeypatch.setattr(live_notices, "tell_project", _told)
     project = _project(client, alice)
     room = project["root_topic_id"]
     tid = _task(client, alice, room)
     _say(client, tid, "帮我排查一下 dev 机器从外网访问很慢的问题")
     gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
     assert _run(client, tid, "message") is not None
+    # 帧是提交之后后台发的，再走一趟 portal 让那个循环把它发出去。
+    _shown(client, tid)
     assert (tid, "topics") in [(c, r) for c, r, _ in heard]
     assert (room, "topics") in [(c, r) for c, r, _ in heard]
     # Both frames name the ROOM's row: the sidebar holds rooms, and a task id is

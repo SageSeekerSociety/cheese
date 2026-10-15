@@ -48,7 +48,7 @@ from app.domain.agent.queries import _model_policy_call, _Proposed
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
-from app.domain.agent_instance.configuration import project_pool
+from app.domain.agent_instance.configuration import catalog, project_pool
 from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.policy import gate
@@ -158,7 +158,7 @@ def model_agents(project_settings: dict | None) -> dict[str, str]:
     """
     pool = project_pool(project_settings)
     agents: dict[str, str] = {}
-    for choice in binding.catalog(project_settings).values():
+    for choice in catalog(project_settings).values():
         if choice["supply"] != pool:
             continue
         # Agent names are stricter than model ids; the id itself rides `model`.
@@ -297,7 +297,7 @@ async def _model_kwargs(
     if owned is not None:
         return _own_model_kwargs(agent, acting_agent, environment), OWN_ROUTE
     # A saved teammate may override the project main model.
-    choices = binding.catalog(project.settings)
+    choices = catalog(project.settings)
     bound = binding.resolve(
         None,
         choices,
@@ -330,7 +330,7 @@ async def _model_kwargs(
     child_default = (project.settings or {}).get("default_subagent_model") or (
         project.settings or {}
     ).get("default_model")
-    child_choices = binding.catalog(project.settings)
+    child_choices = catalog(project.settings)
     # An unused invalid child default must not block a valid main override.
     # Preserve it for the child request's admission refusal, never replace it.
     child_model = child_default

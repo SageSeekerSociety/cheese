@@ -44,14 +44,62 @@ from . import accept as _accept
 from . import cards, decisions, merge_queue, notices, polling, reviewers
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
+    from app.domain.delivery_events import SettleCard
+    from app.domain.membership.ports import ProjectTeam
     from app.domain.project.protection import BranchProtection
+    from app.domain.repository.ports import ExecutorCall
     from app.domain.review.github_pr_status import PullRequestStatus
+    from app.domain.review.ports import (
+        Announce,
+        RecordAgent,
+        RecordInstruction,
+        SeatInstanceId,
+        TaskTeammate,
+    )
 
 
 class AcceptService:
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        announce: Announce | None = None,
+        settle_card: SettleCard | None = None,
+        record_instruction: RecordInstruction | None = None,
+        seat_instance_id: SeatInstanceId | None = None,
+        record_agent: RecordAgent | None = None,
+        task_teammate: TaskTeammate | None = None,
+        roster_team: ProjectTeam | None = None,
+        executor: ExecutorCall | None = None,
+    ):
+        """``announce`` 是这个包说不了的那句话 —— 往房间里留一行（`ports.Announce`）。
+
+        谁构造谁给：这个包上面一层（`agent.announce`）写的话，只看只读路径的门
+        （列卡、查卡）不接线，`None` 就是不接。真的走到要说话的那条路上还是没有它，
+        就是有个门漏了，`notices._announce_of` 当场炸掉，不会静默不发。
+
+        另外几个同理（`ports.py`）：结掉一张卡等着的那些话（`SettleCard`，形状就是
+        `delivery/ledger.settle_card`）、给任务自己的席位留一句指令
+        （`RecordInstruction`）、认一个席位是谁（`SeatInstanceId`）、往席位那本报账
+        上记一行（`RecordAgent`）、这个任务现在的 AI 队友是哪一个席位
+        （`TaskTeammate`）。前两个在说给任务听的那条路上，后两个在叫醒调度
+        座位的那条路上，最后一个在交付落地的那条路上 —— 都是上面一层的动作，
+        本包够不着。
+
+        ``executor`` 是建卡时把交付物从那条任务的工作目录里读下来的那次机器调用
+        （`repository.ports.ExecutorCall`），只在递卡带交付物时才用得上。同上一个
+        道理：够不着（`repository` 在本包下面），谁构造谁给。
+        """
 
         self._session = session
+        self._announce = announce
+        self._settle_card = settle_card
+        self._record_instruction = record_instruction
+        self._seat_instance_id = seat_instance_id
+        self._record_agent = record_agent
+        self._task_teammate = task_teammate
+        self._roster_team = roster_team
+        self._executor = executor
         # Set only while a claimed poll runs (): forge clients
         # then give the connection back before each call.
         self._commits_before_remote = False

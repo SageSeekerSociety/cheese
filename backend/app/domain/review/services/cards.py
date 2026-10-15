@@ -212,7 +212,13 @@ async def create_card(
     # 在清单上留下一项。
     handed_over = (deliver or "").strip()
     snapshot = (
-        await _read_deliverable(self._session, task.project_id, task.id, handed_over)
+        await _read_deliverable(
+            self._session,
+            task.project_id,
+            task.id,
+            handed_over,
+            executor=self._executor,
+        )
         if handed_over
         else None
     )
@@ -759,9 +765,12 @@ async def _enforce_protocol(
     # The condition asks for someone from outside the team to sign off: an
     # external member of this project.
 
+    if self._roster_team is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("roster_team was not handed in")
     outside = {
         m.handle
-        for m in await roster(self._session, topic.project_id)
+        for m in await roster(self._session, topic.project_id, team=self._roster_team)
         if m.source == "external"
     }
     if decided_by not in outside:

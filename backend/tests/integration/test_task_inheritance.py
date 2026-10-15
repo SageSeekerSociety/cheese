@@ -388,6 +388,7 @@ def test_a_tasks_default_teammate_lands_in_the_project_it_builds(client: TestCli
     这一条把它钉住：技能真的落进那一行 `configuration.skills`，而不是只出现在建项目
     之前的预览里 —— 「看得见」和「真的给了」是两件事，各自要有自己的证据。
     """
+    from app.domain.agent_instance.adapters import default_teammate
     from app.domain.agent_instance.models import AgentInstance
     from app.domain.agent_type.library import preset_types
     from app.domain.project.services import ProjectService
@@ -419,7 +420,9 @@ def test_a_tasks_default_teammate_lands_in_the_project_it_builds(client: TestCli
                 )
             )
             await session.flush()
-            project = await ProjectService(session).create(
+            project = await ProjectService(
+                session, default_teammate=default_teammate
+            ).create(
                 owner_handle=handle,
                 name="教育项目",
                 forge_kind="github_app",
@@ -481,6 +484,7 @@ def test_a_tasks_pack_prompt_and_skills_land_in_the_project_it_builds(
     机制是 `_accept_task_protocol` → `set_type` / `configure` 同一条 configure：技能
     并进 `configuration.skills`（去重），prompt 并进 `configuration.body`。
     """
+    from app.domain.agent_instance.adapters import default_teammate
     from app.domain.agent_instance.models import AgentInstance
     from app.domain.agent_type.library import preset_types
     from app.domain.project.services import ProjectService
@@ -518,7 +522,9 @@ def test_a_tasks_pack_prompt_and_skills_land_in_the_project_it_builds(
                 )
             )
             await session.flush()
-            project = await ProjectService(session).create(
+            project = await ProjectService(
+                session, default_teammate=default_teammate
+            ).create(
                 owner_handle=handle,
                 name="题目包项目",
                 forge_kind="github_app",

@@ -63,6 +63,7 @@ from app.api.topics_deps import BlockRepository, _actor_in_place
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
+from app.domain.agent.announce import announce
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.shown import add_shown_block, repeat_of_latest_shown
@@ -365,6 +366,7 @@ async def save_shown_to_library(
         path=clean_artifact_path(str(body.get("path") or "")),
         by=actor.handle,
         said_in=place.inner_id,
+        announce=announce,
     )
     await db.commit()
     return ok({"name": name})

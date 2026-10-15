@@ -6,6 +6,7 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.delivery.ledger import settle_card
 from app.domain.memory.models import MemoryDreamRun
 from app.domain.project.services import ProjectService
 from app.domain.usage.repositories import UsageRepository
@@ -14,6 +15,7 @@ from tests.integration.conftest import (
     _register,
     join_project_team,
     post_project,
+    project_service,
     registered,
     session_auth_headers,
 )
@@ -191,7 +193,9 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
     async def go() -> list:
         async with factory() as session:
             await registered(session, OWNER)
-            project = await ProjectService(session).create(name="P", owner_handle=OWNER)
+            project = await project_service(session).create(
+                name="P", owner_handle=OWNER
+            )
             project.settings = {
                 **(project.settings or {}),
                 "memory_dream": {"threshold_output_tokens": 1},
@@ -206,7 +210,9 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
                 kind="chat",
                 turn_id=None,
             )
-            await ProjectService(session).archive(project.id, by=OWNER)
+            await ProjectService(session, settle_card=settle_card).archive(
+                project.id, by=OWNER
+            )
             project_id = project.id
             await session.commit()
         await chat.sweep_memory_dreams()

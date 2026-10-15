@@ -20,19 +20,20 @@ async def test_unavailable_live_files_offer_committed_version(monkeypatch, failu
     task = SimpleNamespace(id=uuid.uuid4(), room_id=uuid.uuid4())
     room = SimpleNamespace(id=task.room_id, resource_id=None)
     session = SimpleNamespace(get=AsyncMock(return_value=room))
-    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id)
+    error = {
+        "timeout": TimeoutError(),
+        "offline": DeviceOffline("test-device"),
+        "starting": DeviceNotReady("starting"),
+    }[failure]
+    files = forge_files.ProjectFiles(
+        session, uuid.uuid4(), task.id, executor=AsyncMock(side_effect=error)
+    )
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
         forge_files.AgentSessionService,
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
-    error = {
-        "timeout": TimeoutError(),
-        "offline": DeviceOffline("test-device"),
-        "starting": DeviceNotReady("starting"),
-    }[failure]
-    monkeypatch.setattr(forge_files.execution, "call", AsyncMock(side_effect=error))
     with pytest.raises(GatewayUnavailableError, match="重新读取.*已提交版本"):
         await files.live("write", path="report.md", content="edit", version="old")
 
@@ -45,13 +46,6 @@ async def test_live_file_deadline_cancels_the_device_request(monkeypatch):
     task = SimpleNamespace(id=uuid.uuid4(), room_id=uuid.uuid4())
     room = SimpleNamespace(id=task.room_id, resource_id=None)
     session = SimpleNamespace(get=AsyncMock(return_value=room))
-    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id)
-    monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
-    monkeypatch.setattr(
-        forge_files.AgentSessionService,
-        "working_copy",
-        AsyncMock(return_value=({"kind": "device"}, False)),
-    )
     timeout = asyncio.timeout
     cancelled = asyncio.Event()
 
@@ -65,8 +59,14 @@ async def test_live_file_deadline_cancels_the_device_request(monkeypatch):
         finally:
             cancelled.set()
 
+    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id, executor=stalled)
+    monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
+    monkeypatch.setattr(
+        forge_files.AgentSessionService,
+        "working_copy",
+        AsyncMock(return_value=({"kind": "device"}, False)),
+    )
     monkeypatch.setattr(forge_files.asyncio, "timeout", fast_deadline)
-    monkeypatch.setattr(forge_files.execution, "call", stalled)
     with pytest.raises(GatewayUnavailableError):
         await files.live("tree")
     assert cancelled.is_set()
@@ -228,15 +228,6 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
     )
     room = SimpleNamespace(id=task.room_id, resource_id=None)
     session = SimpleNamespace(get=AsyncMock(return_value=room))
-    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id)
-    monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
-    monkeypatch.setattr(
-        forge_files.AgentSessionService,
-        "working_copy",
-        AsyncMock(return_value=({"kind": "device"}, False)),
-    )
-    # Nothing pushed yet: the forge has no branch for it.
-    monkeypatch.setattr(forge_files, "branch_head", AsyncMock(return_value=None))
     # The machine itself, whose home holds no directory for this task.
     executor = object.__new__(Executor)
     executor.env = {"HOME": str(tmp_path)}
@@ -245,7 +236,15 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
         assert method == "task_fs"
         return executor.task_fs(params)
 
-    monkeypatch.setattr(forge_files.execution, "call", call)
+    files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id, executor=call)
+    monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
+    monkeypatch.setattr(
+        forge_files.AgentSessionService,
+        "working_copy",
+        AsyncMock(return_value=({"kind": "device"}, False)),
+    )
+    # Nothing pushed yet: the forge has no branch for it.
+    monkeypatch.setattr(forge_files, "branch_head", AsyncMock(return_value=None))
 
     assert await files.files("live") == ([], "live")
     assert await files.diff("live") == ""

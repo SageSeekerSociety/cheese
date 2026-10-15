@@ -322,7 +322,7 @@ async def admission(
         agent = await agents.for_seat_handle(project, claims.get("a"))
         if agent is None:
             agent = await agents.for_project(project)
-    choices = binding.catalog(project.settings if project else None)
+    choices = configuration.catalog(project.settings if project else None)
     try:
         if project is not None and is_subagent and requested:
             bound = await _bind_requested_subagent_model(

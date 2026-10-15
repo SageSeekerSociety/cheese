@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
-from app.domain.delivery.models import ChannelDelivery
+from app.domain.notification.models import ChannelDelivery
 from app.domain.notification.preferences import (
     default_preferences,
     local_time,

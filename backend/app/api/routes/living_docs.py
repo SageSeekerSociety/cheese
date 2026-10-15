@@ -36,6 +36,7 @@ from app.core.errors import (
 from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.documents import whose_document
 from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
@@ -221,7 +222,9 @@ async def create_document(
         try:
             await collab.replace(
                 doc.id,
-                content=await canonicalize_refs(db, project_id, content)
+                content=await canonicalize_refs(
+                    db, project_id, content, team=project_team
+                )
                 if body.copy_of is None
                 else content,
                 base=None,
@@ -404,7 +407,9 @@ async def replace_document(
         }
         if receipt := await _replayed(db, doc, operation):
             return receipt
-    content = await canonicalize_refs(db, doc.project_id, body.content)
+    content = await canonicalize_refs(
+        db, doc.project_id, body.content, team=project_team
+    )
     base = await _base(db, doc, body.expected_version)
     settled = await _settled(
         db,

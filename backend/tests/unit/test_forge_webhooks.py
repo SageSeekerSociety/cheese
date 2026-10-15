@@ -8,8 +8,8 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.domain.agent.forgejo_tokens import seal_forge_password
 from app.domain.project.forge import ensure_repository_webhook
+from app.domain.project.forgejo_tokens import seal_forge_password
 
 
 @pytest.fixture

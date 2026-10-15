@@ -20,17 +20,16 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.chat import ChatService
-from app.domain.agent.liveness import running_tasks
-from app.domain.block.repositories import BlockRepository
-from app.domain.conversation.services import threads_of_rooms
-from app.domain.delivery.addressing import (
+from app.domain.addressing import (
     REASON_ASKED,
     REASON_REVIEWER,
     Event,
     address,
-    hand_of,
 )
+from app.domain.agent.chat import ChatService
+from app.domain.agent.liveness import running_tasks
+from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import threads_of_rooms
 from app.domain.notification.services import (
     ProjectNotificationService,
     asks_for_decision,
@@ -39,6 +38,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import listed_cards
 from app.domain.review.services import AcceptService
 from app.domain.room_task import awaiting, presentation
+from app.domain.room_task.presentation import hand_of
 from app.domain.room_task.repositories import ListedTask, TaskRepository
 from app.domain.thread.services import onto_rooms
 from app.domain.topic.repositories import TopicRepository

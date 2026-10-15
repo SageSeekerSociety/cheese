@@ -519,6 +519,9 @@ class PreviewHostMiddleware:
             return Response("Preview unavailable", status_code=404)
         # 只有 mcp-app 这一支（上面那个 `ui://` 资源）要用它：提到模块顶，每次
         # 预览请求都要连带拉起 remote_mcp 与它背后的 agent_instance。
+        # deferred-import: same branch — the call needs the seat-type lookup
+        from app.domain.agent_instance.services import type_of_seat
+
         # deferred-import: only the mcp-app branch reads a ui:// resource
         from app.domain.remote_mcp import service as remote_mcp
 
@@ -531,6 +534,7 @@ class PreviewHostMiddleware:
                 name=resource["server"],
                 method="resources/read",
                 params={"uri": resource["uri"]},
+                type_of_seat=type_of_seat,
             )
         except BaseError:
             return Response("Preview unavailable", status_code=404)

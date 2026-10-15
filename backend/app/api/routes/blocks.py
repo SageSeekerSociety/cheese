@@ -2,6 +2,7 @@
 skipping a question asked with quick replies or taking back an answer to one."""
 
 import uuid
+from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -24,7 +25,7 @@ from app.domain.block.editing import edit_message
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut, ReactionToggleIn
 from app.domain.conversation.services import room_of
-from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.agent import dispatch_pending, record_task_instruction
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
 
@@ -78,8 +79,11 @@ async def edit_block(
         notify_mentions=announce_edited_message,
         editor=actor.handle,
         content=body.content,
-        chat=chat,
-        runner=runner,
+        notify=chat,
+        dispatch=partial(
+            dispatch_pending, chat.session_factory, chat=chat, runner=runner
+        ),
+        record_instruction=record_task_instruction,
     )
     return ok(payload)
 

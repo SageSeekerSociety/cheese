@@ -29,6 +29,9 @@ from app.domain.review.nudges import (
 from app.domain.review.nudges import (
     _title_nudge as _title_nudge_from_nudges,
 )
+from app.domain.review.ports import (
+    Announce,
+)
 from app.domain.review.room_notices import (
     _announce_filed as _announce_filed_from_room,
 )
@@ -77,20 +80,38 @@ from app.domain.review.services._shared import (
 )
 
 
+def _announce_of(self: pkg.AcceptService) -> Announce:
+    """构造时递进来的那一个（`ports.Announce`）。
+
+    只有只读路径的门不接线，`None` 就是那种；这里还要说话，说明有个门漏了递 ——
+    当场炸掉，比静默不发好。
+    """
+    if self._announce is None:
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError(
+            "AcceptService was built without an `announce`, and this path speaks: "
+            "the door that built it must hand one in "
+            "(app/domain/review/ports.py)"
+        )
+    return self._announce
+
+
 async def _announce_filed(
     self: pkg.AcceptService,
     topic: Topic,
     card: AcceptCard,
     task: Task,
 ) -> None:
-    return await _announce_filed_from_room(self._session, topic, card, task)
+    return await _announce_filed_from_room(
+        self._session, topic, card, task, announce=_announce_of(self)
+    )
 
 
 async def _announce_new_artifact(
     self: pkg.AcceptService, topic: Topic, name: str, *, task_id: uuid.UUID
 ) -> None:
     return await _announce_new_artifact_from_room(
-        self._session, topic, name, task_id=task_id
+        self._session, topic, name, task_id=task_id, announce=_announce_of(self)
     )
 
 
@@ -103,7 +124,12 @@ def _notify_merge_result(
     meta: dict | None = None,
 ) -> None:
     return _notify_merge_result_from_room(
-        pkg.async_session_factory, topic, content, task_id=task_id, meta=meta
+        pkg.async_session_factory,
+        topic,
+        content,
+        task_id=task_id,
+        meta=meta,
+        announce=_announce_of(self),
     )
 
 
@@ -123,20 +149,37 @@ async def _tell_the_reviewer(
     also: Sequence[str] = (),
 ) -> None:
     return await _tell_the_reviewer_from_room(
-        self._session, card, topic, content, meta=meta, also=also
+        self._session,
+        card,
+        topic,
+        content,
+        meta=meta,
+        also=also,
+        announce=_announce_of(self),
+        seat_instance_id=self._seat_instance_id,
+        record_agent=self._record_agent,
     )
 
 
 async def _settle_the_card(
     self: pkg.AcceptService, card: AcceptCard, outcome: str
 ) -> None:
-    return await _settle_the_card_from_room(self._session, card, outcome)
+    return await _settle_the_card_from_room(
+        self._session, card, outcome, settle_card=self._settle_card
+    )
 
 
 async def _notify_ready(
     self: pkg.AcceptService, card: AcceptCard, topic: Topic
 ) -> None:
-    return await _notify_ready_from_room(self._session, card, topic)
+    return await _notify_ready_from_room(
+        self._session,
+        card,
+        topic,
+        announce=_announce_of(self),
+        seat_instance_id=self._seat_instance_id,
+        record_agent=self._record_agent,
+    )
 
 
 async def _note_needs_human(
@@ -148,7 +191,14 @@ async def _note_needs_human(
     explain: str | None = None,
 ) -> None:
     return await _note_needs_human_from_room(
-        self._session, card=card, topic=topic, reason=reason, explain=explain
+        self._session,
+        card=card,
+        topic=topic,
+        seat_instance_id=self._seat_instance_id,
+        record_agent=self._record_agent,
+        reason=reason,
+        explain=explain,
+        announce=_announce_of(self),
     )
 
 
@@ -163,6 +213,10 @@ async def _record_task_nudge(
         headline=headline,
         meta=meta,
         dispatch=dispatch,
+        announce=_announce_of(self),
+        record_instruction=self._record_instruction,
+        seat_instance_id=self._seat_instance_id,
+        record_agent=self._record_agent,
     )
 
 

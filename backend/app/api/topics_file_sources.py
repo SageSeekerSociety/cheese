@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
+from app.domain.agent import execution
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.repository.forge_files import ProjectFiles
@@ -48,6 +49,8 @@ async def source_bytes(
         if library.library_name(path) is not None:
             raise ValidationError(say("libraryFileNoTaskBranch"))
 
-        data, _ = await ProjectFiles(db, project_id, task).raw(path, source)
+        data, _ = await ProjectFiles(db, project_id, task, executor=execution.call).raw(
+            path, source
+        )
         return data
     return await library_records.read_attachment(db, project_id, room_id, path)

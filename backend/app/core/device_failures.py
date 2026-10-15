@@ -10,9 +10,13 @@ They live in ``app.core`` because the thing that registers those handlers is the
 error tree, and the error tree is core: this is the vocabulary the layer below
 the domains owns, and the domains import it rather than the other way round.
 ``app/domain/agent/device_contract.py`` is the device side of the same words —
-it adds what only the link needs (``DeviceUnreachable``, ``DeviceNotReady``,
-``HubScreen``, ``ViewerTransport``, the timeouts) and re-exports these, so
+it adds what only the link needs (``DeviceUnreachable``, ``HubScreen``,
+``ViewerTransport``, the timeouts) and re-exports these, so
 ``from app.domain.agent.device_hub import DeviceOffline`` keeps working.
+
+``DeviceNotReady`` is here with them: it answers over HTTP too
+(``api/routes/execution.py``), and a caller below ``agent`` that waits out a
+not-yet-ready machine has to be able to name it.
 """
 
 
@@ -58,6 +62,19 @@ class DeviceCallError(RuntimeError):
     def __init__(self, message: str, *, failure_code: str | None = None) -> None:
         super().__init__(message)
         self.failure_code = failure_code
+
+
+class DeviceNotReady(DeviceCallError):
+    """The link is up, but this machine cannot serve calls yet.
+
+    A connector that has just dialled in finishes updating itself before it can
+    run anything, and a call that arrives in that window has nothing to reach.
+    It is the same standing as the machine being away — the caller's next poll,
+    a second or two later, finds it ready — but as a bare RuntimeError it was an
+    unhandled 500 and one alert per release: 「Device connector must finish
+    updating before execution」 arrived that way at 01:47 UTC on 2026-09-20,
+    seconds after the owner was replaced and the fleet re-attached.
+    """
 
 
 def offline_headers(exc: DeviceOffline) -> dict[str, str]:

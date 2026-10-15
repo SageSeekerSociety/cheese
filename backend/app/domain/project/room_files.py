@@ -39,7 +39,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.announce import announce
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.notice_meta import (
@@ -50,6 +49,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.preview import office
 from app.domain.project.models import RoomFileRevision
+from app.domain.project.ports import Announce
 from app.domain.textfile import content_version
 
 #: Which door a revision's bytes came in by.
@@ -64,9 +64,13 @@ async def save_to_library(
     path: str,
     by: str,
     said_in: uuid.UUID | None = None,
+    announce: Announce,
 ) -> str:
     """把房间里的一份文件留进资料库，返回它在那里的名字。``said_in`` 是按下保存
     的那段对话（任务或支线）；在那里说一声，不在主线。
+
+    说那一句的 `announce` 是递进来的：本包在第 2 层、`agent.announce` 在第 5 层
+    （`ports.py`）。
 
     撞名不覆盖，跟着资料库自己的规矩走：两次保存就是两份，各自留着 —— 谁也说不准
     第二份是第一份的新版，还是另一样同名的东西。

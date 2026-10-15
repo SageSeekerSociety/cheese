@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.delivery.models import ChannelDelivery
+from app.domain.notification.models import ChannelDelivery
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,

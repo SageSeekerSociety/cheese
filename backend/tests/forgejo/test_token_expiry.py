@@ -10,7 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.domain.agent.forgejo_tokens import ForgejoTokens, seal_forge_password
+from app.domain.project.forgejo_tokens import ForgejoTokens, seal_forge_password
 from app.domain.project.models import ProjectForge
 
 

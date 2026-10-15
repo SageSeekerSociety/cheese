@@ -20,6 +20,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.announce import announce
+from app.domain.delivery.agent import (
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+)
+from app.domain.delivery.ledger import settle_card
 from app.domain.review import github_pr
 from app.domain.review.github_pr import OpenedPR
 from app.domain.review.github_pr_status import PullRequestStatus
@@ -36,6 +43,7 @@ from tests.integration.conftest import (
 from tests.landing import summary_turn_ends
 from tests.machine_work import machine_commits
 from tests.support import git_store
+from tests.support.review_ports import task_teammate
 
 REPO = "acme/widgets"
 
@@ -187,7 +195,17 @@ def _poll(client) -> dict:
     """
     from app.domain.review import pr_poll
 
-    return client.portal.call(pr_poll.poll_open_prs, _chat_service())
+    return client.portal.call(
+        lambda: pr_poll.poll_open_prs(
+            _chat_service(),
+            announce,
+            settle_card=settle_card,
+            record_instruction=record_task_instruction,
+            seat_instance_id=seat_instance_id,
+            record_agent=record_agent,
+            task_teammate=task_teammate,
+        )
+    )
 
 
 def _room(client, topic_id: str) -> str:
@@ -505,8 +523,8 @@ def app_world(client, monkeypatch):
     The fake records proposal edits and remote merges. Repository protection is
     disabled so the project approval policy is exercised by these tests.
     """
-    from app.domain.agent import github_app
     from app.domain.project import forge as project_forge
+    from app.domain.project import github_app
     from app.domain.project.models import ProjectForge
     from app.domain.repository import forge_files
     from app.domain.review import pr_publish
@@ -3094,7 +3112,13 @@ def _branch_holds(project_id: str, branch: str, sha: str) -> bool:
 def _sweep(client) -> dict:
     from app.domain.review import pr_publish
 
-    return client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
+    return client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
 
 
 def _room_with_work(client) -> tuple[str, str]:
@@ -3344,7 +3368,13 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
 
     monkeypatch.setattr(TaskService, "open_without_pr", _list_then_merge)
 
-    counts = client.portal.call(pr_publish.sweep_draft_prs, client.test_request_factory)
+    counts = client.portal.call(
+        lambda: pr_publish.sweep_draft_prs(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
 
     assert counts["opened"] == 0, counts
     assert sweeping["opened"] == []

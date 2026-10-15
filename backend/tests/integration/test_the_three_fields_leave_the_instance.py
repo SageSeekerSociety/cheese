@@ -15,8 +15,7 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-from app.domain.project.services import ProjectService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 RETIRED = {"model", "harness", "effort"}
 
@@ -43,7 +42,7 @@ def test_no_saved_configuration_still_carries_the_three_keys(db_session, _portal
 
     async def run():
         await registered(db_session, "owner")
-        project = await ProjectService(db_session).create(
+        project = await project_service(db_session).create(
             owner_handle="owner", name="Three fields", forge_kind="github_app"
         )
         await db_session.flush()

@@ -8,7 +8,7 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-from app.domain.agent.forgejo_tokens import (
+from app.domain.project.forgejo_tokens import (
     ForgejoTokenError,
     ForgejoTokens,
     purge_expired_tokens,

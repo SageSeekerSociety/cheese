@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
@@ -153,7 +154,11 @@ class DashboardService:
             raise NotFoundError("Project not found")
 
         member = next(
-            (m for m in await roster(self._s, project_id) if m.handle == user_handle),
+            (
+                m
+                for m in await roster(self._s, project_id, team=project_team)
+                if m.handle == user_handle
+            ),
             None,
         )
         topics = list(

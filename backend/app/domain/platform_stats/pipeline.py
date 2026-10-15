@@ -29,11 +29,10 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent.dispatch_log import DispatchRow
-from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.device.models import DeviceHealthRow
+from app.domain.platform_stats.ports import TurnCounts
 from app.domain.review.archive import OPEN_CARD_STATUSES
 from app.domain.review.models import AcceptCard, AcceptCardReviewer, AcceptStatus
 from app.domain.review.notes import _STUCK as STUCK_NOTE_CODES  # noqa: PLC2701
@@ -80,8 +79,14 @@ TURN_FAILURE_CODES: tuple[str, ...] = (
 class PipelineRepository:
     """交付管线的读。全部是**存量 + 窗口**两种口径，方法名里写清楚是哪一种。"""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        counts: TurnCounts | None = None,
+    ) -> None:
         self._session = session
+        self._counts = counts
 
     # ---- 存量：此刻的积压 -------------------------------------------------
 
@@ -198,7 +203,7 @@ class PipelineRepository:
     async def needs_you(self, *, limit: int = 20) -> dict[str, Any]:
         """平台版「待你处理」：跨项目、还没人动手的那些事，按原因分堆。
 
-        判据是 `delivery/addressing.py` 的三个码（`reviewer` / `reporter` /
+        判据是 `addressing.py` 的三个码（`reviewer` / `reporter` /
         `asked`），**不发明第四个** —— 那张表同时是通知收件人的判据，看板自己造一个
         新理由的后果是「看板说要人动手、通知没叫人」。
         """
@@ -305,21 +310,12 @@ class PipelineRepository:
             else:
                 other += int(n)
 
-        # `credits_refused_at` 是**唯一**可靠的额度拒答来源：那条 notice 故意不带
-        # 自己的 code（和通用 turn_failed 同路），按文案匹配是在拿句子当结构。
-        credits_refused = await self._count(
-            AgentTurn,
-            AgentTurn.credits_refused_at.is_not(None)
-            & (AgentTurn.started_at >= since)
-            & (AgentTurn.started_at < until),
-        )
-        undelivered = await self._count(
-            AgentTurn,
-            AgentTurn.delivered_at.is_(None)
-            & AgentTurn.stopped_at.is_not(None)
-            & (AgentTurn.started_at >= since)
-            & (AgentTurn.started_at < until),
-        )
+        # 轮次账上的两数走递进来的那份实现（`ports.TurnCounts`）：本包第 7 层够得着
+        # 第 5 层的 `agent`，可两个包同在 C3 那个强连通分量里，读它的表就要冻新边。
+        # 「额度拒答为什么只能看 `credits_refused_at`」写在 `agent/turn_counts.py`。
+        counts = self._turn_counts()
+        credits_refused = await counts.credits_refused(since=since, until=until)
+        undelivered = await counts.prompt_undelivered(since=since, until=until)
         return {
             "by_code": by_code,
             "other": other,
@@ -370,10 +366,17 @@ class PipelineRepository:
         """工具调用发出去了、结果永远不会回来的条数。`outcome IS NULL` 即是。
 
         这不是「慢」，按设计就是「不会再有人写回来」（`dispatch_log` 的 docstring）。
+        这句话是**口径**，数由递进来的那份实现去数（同 `turn_failures`）。
         """
-        return await self._count(DispatchRow, DispatchRow.outcome.is_(None))
+        return await self._turn_counts().unsettled_dispatches()
 
     # ---- 内部 -------------------------------------------------------------
+
+    def _turn_counts(self) -> TurnCounts:
+        if self._counts is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("turn counts were not handed in")
+        return self._counts
 
     async def _count(self, model: Any, *where: Any) -> int:
         stmt = select(func.count()).select_from(model)

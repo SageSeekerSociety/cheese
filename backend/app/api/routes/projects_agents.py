@@ -87,6 +87,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ConflictError
 from app.core.sentences import say
 from app.domain.agent_instance import editing
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.own import owned_instance
@@ -177,7 +178,9 @@ async def _may_configure(
     own = await owned_instance(db, instance.id)
     if own is not None and own.owner_user_id == actor.user_id:
         return True
-    if await TopicMemberService(db).on_project(project_id, actor.handle):
+    if await TopicMemberService(db).on_project(
+        project_id, actor.handle, team=project_team
+    ):
         return True
     return await MemberService(db).manages(project_id, actor.handle)
 

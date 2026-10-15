@@ -117,3 +117,26 @@ def clone_transcript_files(
 def mint_session_id() -> str:
     """A fresh Claude session id (a UUID, matching Claude Code's own format)."""
     return str(uuid.uuid4())
+
+
+def fork_for(
+    *,
+    source_session_dir: Path,
+    source_session_id: str,
+    target_session_dir: Path,
+    target_cwd: str,
+) -> str:
+    """`app.domain.topic.ports.ForkTranscript`：拷一份，还回新会话 id。
+
+    口子收四样、还一样，而下面那次调用要五样 —— 差的那一样正是新 id 本身，这里铸
+    一个再传下去。铸 id 是本模块的事（那是骨架自己的格式），第 2 层的 `topic` 不该
+    知道它长什么样，所以合成一步由这里做。"""
+    new_session_id = mint_session_id()
+    clone_transcript_files(
+        source_session_dir=source_session_dir,
+        source_session_id=source_session_id,
+        target_session_dir=target_session_dir,
+        new_session_id=new_session_id,
+        target_cwd=target_cwd,
+    )
+    return new_session_id

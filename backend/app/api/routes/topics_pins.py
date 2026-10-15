@@ -21,6 +21,7 @@ from app.api.response import ok
 from app.api.topic_pin_rows import pin_rows
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
 from app.domain.pin.services import Pins
 from app.domain.topic.services import TopicService
@@ -61,7 +62,7 @@ async def pin_block(
     """Pin a message or a file of the channel's main line. The main line says
     who pinned what."""
     room, actor = await _channel(db, resolver, topic_id, acting=True)
-    line = await Pins(db).pin(room, block_id, by=actor.handle)
+    line = await Pins(db, team=project_team).pin(room, block_id, by=actor.handle)
     out = BlockOut.model_validate(line).model_dump(mode="json") if line else None
     await db.commit()
     if out is not None:
@@ -79,7 +80,7 @@ async def unpin_block(
 ) -> dict:
     """Take a pin off. Nothing is said in the main line."""
     room, actor = await _channel(db, resolver, topic_id, acting=True)
-    await Pins(db).unpin(room, block_id, by=actor.handle)
+    await Pins(db, team=project_team).unpin(room, block_id, by=actor.handle)
     await db.commit()
     await announce_stale(room.id, "pins")
     return ok({"block_id": str(block_id), "pinned": False})
