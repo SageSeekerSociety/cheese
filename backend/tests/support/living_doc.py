@@ -13,8 +13,8 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.documents import DocumentWriter
+from app.domain.living_doc.overview import overview_document
 from app.domain.living_doc.services import Documents
-from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.services import TopicService
@@ -46,8 +46,7 @@ async def write_overview(
     actor: str = "alice",
 ):
     """Record ``content`` as the project goals' next version, by ``actor``."""
-    projects = ProjectService(session)
-    doc = await projects.overview_document(await projects.get_or_404(project_id))
+    doc = await overview_document(session, project_id)
     return await DocumentWriter(session, summarize_doc_change).record(
         doc, content=content, actors=[actor]
     )

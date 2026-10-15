@@ -9,9 +9,14 @@
 
 返回值是不透明的：``announce()`` 交回它写下的那个 ``Block``，而 ``block`` 也在本包
 上面。本包这里不关心落下了哪一行，只声明**可能什么都没落**（房间没了）。
+
+`SeedOverview` 和 `TaskTerms` 是本包在第 4 层 `living_doc` / `task` 里各取的那几次
+调用，它们进出的都是本包写得出来的东西：一个是本包手上就有的会话、项目 id 和一段
+文字，另一个是本包只当值读的三张小单子。
 """
 
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
@@ -200,4 +205,99 @@ class LibraryFiles(Protocol):
 
     def read_blob(self, location: str, key: str) -> bytes:
         """那双 ``(存储, 键)`` 底下的字节。"""
+        ...
+
+
+class SeedOverview(Protocol):
+    """把平台已经有的几句话写成某个项目目标的第一版。
+
+    项目目标是第 4 层 `living_doc` 里的一份文档（项目那一行只记着它的编号
+    ``overview_document_id``），本包在第 2 层，够不着：建一个项目要顺手把用户说的
+    意图、或者这道赛题的说明落成目标的第一版，那支笔在别人手里。
+
+    形状就是 `app.domain.living_doc.overview.seed_overview`：会话、项目 id、要写的
+    那段文字，全是本包手上就有的东西。它是单动作、返回 ``None`` 的口子，所以调用方
+    把那个函数原样递进来即可，不必再包一层 —— 和 ``preview.office.prewarm`` 一样。
+
+    第一版只有一份：已经写过（版本已经不是 0）时它当场报冲突，不覆盖人家改过的
+    东西。调用方不用自己先看一眼版本。
+    """
+
+    async def __call__(
+        self, session: AsyncSession, project_id: uuid.UUID, content: str
+    ) -> None: ...
+
+
+@dataclass(frozen=True)
+class TaskBrief:
+    """一道赛题：报名这条路要读的那几栏。
+
+    赛题那一行（`task.models.Task`）在第 4 层，本包够不着。这里只抄下本包用得上的
+    五样，全是内置类型：报名开工作区要它的名字和要求，``is_team_submission`` 决定
+    报名的是人还是小队 —— 赛题那边记的是 ``SubmitterType`` 的序号，那个约定不该出
+    到 `task` 外面，所以在这里就折成一个是非。
+    """
+
+    id: int
+    name: str
+    intro: str
+    space_id: int
+    is_team_submission: bool
+
+
+@dataclass(frozen=True)
+class Claim:
+    """一条赛题报名：谁报的、是不是小队、审过没有。
+
+    ``member_id`` 跟着 ``is_team`` 读：小队报名时是那个小队的 id，个人报名时是那个
+    人的 user id。``approved`` 是「审过了」这个结论本身 —— ``ApproveType`` 那个序号
+    同样留在家门里。
+    """
+
+    member_id: int
+    is_team: bool
+    approved: bool
+
+
+@dataclass(frozen=True)
+class AcceptedTerms:
+    """审过一道报名之后，项目要照着落的那两样。
+
+    ``default_role`` 是项目默认队友的人设，``compute_credits`` 是资源包里限定用途的
+    算力。赛题那边没有这套东西（没配过协议）时给的是 ``None`` 和 ``0.0``：人设不动、
+    也不发额度。
+    """
+
+    default_role: str | None
+    compute_credits: float
+
+
+class TaskTerms(Protocol):
+    """`task` 那边，报名这条路上本包要问的几次。
+
+    `ProjectService.for_participation` / `activate_participation` 手上拿到的本来是
+    ``Task`` 和 ``TaskMembership`` 两行本身，那两行在第 4 层。这里折成三张小单子：
+    报名开工作区要的赛题那几栏、报名是谁的哪一条、审过之后该落的条款。进出的都是
+    内置类型，实现按提供者放在 `app/domain/task/adapters.py`。
+
+    ``claim()`` 是**重新读一遍**（报名刚被审过，调用方手上那份可能是旧的）：一个人
+    带着他的报名来开工作区，本包照项目那一行推出 ``member_id`` 再回查，不是拿调用方
+    递进来的那份当准。没有这一条（压根没报名）给 ``None``。
+
+    ``terms()`` 只在一道赛题的报名确实过审之后才问，答的是那次报名要落的条款；赛题
+    那行要是已经没了，给「什么都不落」的那一份。
+    """
+
+    async def brief(self, task_id: int) -> TaskBrief | None:
+        """这道赛题。已经没了给 ``None``。"""
+        ...
+
+    async def claim(
+        self, *, task_id: int, member_id: int | None, is_team: bool
+    ) -> Claim | None:
+        """这个人（或小队）在这道赛题上最新的一条报名。没报过给 ``None``。"""
+        ...
+
+    async def terms(self, task_id: int) -> AcceptedTerms:
+        """这道赛题审过之后要落的条款。"""
         ...

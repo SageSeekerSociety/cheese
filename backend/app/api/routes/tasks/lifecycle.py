@@ -42,6 +42,7 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.agent_instance.adapters import default_teammate
+from app.domain.living_doc.overview import seed_overview
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -50,6 +51,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
+from app.domain.task.adapters import TaskTerms, as_brief, as_claim
 from app.domain.task.claims import own_claim
 from app.domain.task.inputs import (
     map_approve_type,
@@ -847,8 +849,12 @@ async def patch_task_membership_by_member(
     )
 
     await ProjectService(
-        db, default_teammate=default_teammate, compute_credits=ComputeCredits(db)
-    ).activate_participation(task=task, membership=membership)
+        db,
+        default_teammate=default_teammate,
+        compute_credits=ComputeCredits(db),
+        overview=seed_overview,
+        task_terms=TaskTerms(db),
+    ).activate_participation(task=as_brief(task), claim=as_claim(membership))
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
     all_memberships = await membership_service.list_memberships_for_task(

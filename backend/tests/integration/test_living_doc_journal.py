@@ -17,8 +17,8 @@ from app.domain.living_doc.models import (
     DocumentOperation,
     DocumentVersion,
 )
+from app.domain.living_doc.overview import overview_document, seed_overview
 from app.domain.living_doc.services import DocumentJournal, Documents, content_hash
-from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.services import TopicService
@@ -270,12 +270,10 @@ async def test_platform_brief_seed_has_raw_history_without_contribution_event(
         await session.commit()
     raw = "# 原稿\r\n😀"
     async with factory() as session:
-        projects = ProjectService(session)
-        await projects.seed_overview(await projects.get_or_404(project.id), raw)
+        await seed_overview(session, project.id, raw)
         await session.commit()
     async with factory() as session:
-        projects = ProjectService(session)
-        doc = await projects.overview_document(await projects.get_or_404(project.id))
+        doc = await overview_document(session, project.id)
         assert doc.content == raw
         versions = await DocumentJournal(session).history(doc.id)
         assert len(versions) == 1

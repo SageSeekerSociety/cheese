@@ -47,6 +47,7 @@ from app.domain.agent_instance.adapters import default_teammate, project_team
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
+from app.domain.living_doc.overview import seed_overview
 from app.domain.machine.environments import check_allowed
 from app.domain.membership.services import InvitationService
 from app.domain.project.protection import BRANCH_PROTECTION_KEY
@@ -105,7 +106,9 @@ async def finish_onboarding(
     if user is None:
         raise NotFoundError()
 
-    projects = ProjectService(session, default_teammate=default_teammate)
+    projects = ProjectService(
+        session, default_teammate=default_teammate, overview=seed_overview
+    )
     project = await projects.create(
         name=payload.project_name,
         owner_handle=user.username,

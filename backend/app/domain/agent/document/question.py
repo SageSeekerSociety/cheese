@@ -47,6 +47,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.living_doc.overview import pointed_overview
 from app.domain.living_doc.services import Documents
 from app.domain.memory.files_store import memory_index
 from app.domain.policy import gate
@@ -460,12 +461,11 @@ async def surroundings(db: AsyncSession, asked: Asked, *, seat: str) -> Surround
             seat=seat,
             ttl_s=TOKEN_TTL_S,
         )
-    project = await ProjectService(db).get_or_404(asked.project_id)
+    await ProjectService(db).get_or_404(asked.project_id)
     goals = None
-    if project.overview_document_id is not None:
-        overview = await Documents(db).get(project.overview_document_id)
-        if overview is not None and overview.id != asked.document_id:
-            goals = overview.content
+    overview = await pointed_overview(db, asked.project_id)
+    if overview is not None and overview.id != asked.document_id:
+        goals = overview.content
     index = await memory_index(db, asked.project_id, speaker_handles=[])
     memory = (
         "\n\n".join(section.text for section in index.sections)

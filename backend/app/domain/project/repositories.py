@@ -3,7 +3,7 @@
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import BigInteger, and_, column, func, or_, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -17,9 +17,14 @@ from app.domain.project.models import (
     ProjectMember,
     excluded_project_ids,
 )
-from app.domain.task.models import Task
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.user.models import User, UserProfile
+
+# Which 赛题 a project names, and which Space that 赛题 was published under. Bare
+# table: ``task`` depends on this domain, and importing back would make a cycle
+# (``.importlinter`` 的 C3）。表名是单数的 ``task`` —— ``room_task`` 那边的
+# ``tasks`` 是另一张表。
+_task = table("task", column("id", BigInteger), column("space_id", BigInteger))
 
 
 class ProjectRepository:
@@ -321,7 +326,7 @@ class ProjectRepository:
             select(Project.id)
             .where(
                 Project.external_task_id.in_(
-                    select(Task.id).where(Task.space_id == space_id)
+                    select(_task.c.id).where(_task.c.space_id == space_id)
                 )
             )
             .order_by(Project.created_at.asc())
@@ -340,7 +345,7 @@ class ProjectRepository:
             select(Project)
             .where(
                 Project.external_task_id.in_(
-                    select(Task.id).where(Task.space_id == space_id)
+                    select(_task.c.id).where(_task.c.space_id == space_id)
                 )
             )
             .order_by(Project.created_at.asc(), Project.id.asc())
@@ -355,6 +360,18 @@ class ProjectRepository:
             .order_by(Project.created_at)
         )
         return list(result.scalars())
+
+    async def lock_external_task(self, task_id: int) -> None:
+        """Serialize everything that opens a registration workspace for this 赛题.
+
+        Two teammates submitting together must not leave two projects for one
+        application, and the row they must both wait on is the 赛题's own — this
+        domain writes no column on it. The 赛题 row is read through the bare
+        ``task`` table for the cycle reason next door.
+        """
+        await self._session.execute(
+            select(_task.c.id).where(_task.c.id == task_id).with_for_update()
+        )
 
     async def list_visible_to(
         self, *, handle: str | None, user_id: int | None

@@ -30,7 +30,6 @@ from app.domain.conversation.services import of_rooms, room_column
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
 from app.domain.project import artifacts, forge
-from app.domain.project.models import Project
 from app.domain.project.ports import FileStore, LibraryFiles
 from app.domain.review.models import AcceptCard
 from app.domain.topic.models import Topic
@@ -40,6 +39,11 @@ from app.domain.topic.models import Topic
 _tasks = table(
     "tasks", column("id", Uuid), column("room_id", Uuid), column("document_id", Uuid)
 )
+
+# The goals document a project names. Also bare, so the read below sees a
+# pointer written by ``living_doc.overview``: that write goes through the table,
+# so a ``Project`` row this session already holds still says None.
+_projects = table("projects", column("id", Uuid), column("overview_document_id", Uuid))
 
 
 def _json(path: Path, value) -> None:
@@ -243,12 +247,15 @@ async def create_archive(
     # channels the caller reads, with their node trees: a document is `doc`,
     # its blocks are `doc_node` under it.
     living = Documents(db)
-    project = await db.get(Project, project_id)
-    overview = (
-        await living.get(project.overview_document_id)
-        if project is not None and project.overview_document_id is not None
-        else None
-    )
+    # The pointer, read from the table rather than off the row (the bare-table
+    # comment above says why), and not through ``living_doc.overview``: that
+    # module is one layer up, and this import would be a new upward edge.
+    pointed = (
+        await db.execute(
+            select(_projects.c.overview_document_id).where(_projects.c.id == project_id)
+        )
+    ).scalar_one()
+    overview = await living.get(pointed) if pointed is not None else None
     kept: list[tuple] = [(overview, None, None)] if overview else []
     for task_id, room_id, document_id in await db.execute(
         select(_tasks.c.id, _tasks.c.room_id, _tasks.c.document_id)
