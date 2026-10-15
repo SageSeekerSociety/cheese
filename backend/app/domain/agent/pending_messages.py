@@ -31,6 +31,27 @@ def current_runner():
     return _runner
 
 
+def _reserved_seats(runner) -> dict[tuple, "uuid.UUID"]:
+    """This process's reservation of a seat for a queued turn, taken when a scan
+    decides to start one and dropped once that turn has left the queue.
+
+    The durable half of 「这个座位有没有人在做」 is the open ``AgentTurn`` row,
+    read with the database hop the selection loop already awaits. What that hop
+    cannot do is keep two scans of THIS process — a nudge and the sweep, or two
+    nudges — from each scheduling a turn for the same waiting message when they
+    both looked before either had. An entry names the ``(conversation, seat)``
+    and the turn id reserved for it; the entry lives exactly as long as that
+    turn is queued (``runner.turn_pending``), so a turn that opened its own
+    interval, or died, releases the seat again. It rides on the runner so two
+    runners in one process keep their own books.
+    """
+    reservations = getattr(runner, "_reserved_seats", None)
+    if reservations is None:
+        reservations = {}
+        runner._reserved_seats = reservations
+    return reservations
+
+
 async def finish_work(chat, completion, settle):
     """Only a committed native completion can wake a deferred message."""
     async with chat.session_factory() as session:
@@ -212,15 +233,25 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
                 reason,
                 (now - block.created_at).total_seconds(),
             )
+    reserved = _reserved_seats(runner)
+    for key, turn_id in list(reserved.items()):
+        if not runner.turn_pending(turn_id):
+            del reserved[key]
     started = 0
     for (room, handle), block in seats.items():
-        # No await between this final reservation check and scheduling. Other
-        # scans may have selected the same row while this one awaited the DB.
+        # No await between this final reservation and scheduling: a turn is only
+        # started here, and only once. The durable 「这个座位忙不忙」 was already
+        # read in the selection loop above, over the database hop; all that is
+        # left is to claim the seat in this process so a scan running alongside
+        # this one — which looked at the same row before either had looked —
+        # cannot start a second turn for it. The claim is dropped as soon as
+        # that turn leaves the queue (turn_pending), so the seat is free again.
         if not runner.owns_sessions or not runner.accepting_turns:
             break
-        if runner.turn_pending(block.id) or await chat.has_running_turn(room, handle):
+        key = (room, handle)
+        if runner.turn_pending(block.id) or key in reserved:
             continue
-        recipient = (block.meta or {}).get("agent_recipient") or {}
+        reserved[key] = block.id
         runner._receive_message(
             chat,
             room,

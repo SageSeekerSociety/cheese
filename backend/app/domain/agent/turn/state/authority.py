@@ -73,9 +73,13 @@ async def consuming_turn(
     instead of a second turn being opened beside it. A row this process also
     holds keeps its richer local state; a row known only durably answers with
     its seat (`DurableTurnSeat`) — that half is what aims the steer and names the
-    input's ``seen_by`` when the turn runs elsewhere. A closed row is absent: the
-    cache cannot nominate a turn the authority has ended. ``TurnSeat`` is the
-    seat pair both kinds carry, which is all a caller reads from the result.
+    input's ``seen_by`` when the turn runs elsewhere. A closed row is absent from
+    the durable half — a row the authority has ended is never nominated by it —
+    but this process's own marks are offered as they stand, so a mark it has not
+    yet let go of, even one whose row is already closed, still stands as a
+    candidate here; the caller's ``matches`` and its own confirmation are what
+    settle whether that mark is a turn to consume. ``TurnSeat`` is the seat pair
+    both kinds carry, which is all a caller reads from the result.
     """
     local = live.active_turn_ids.get(topic_id) or set()
     async with sessions() as session:

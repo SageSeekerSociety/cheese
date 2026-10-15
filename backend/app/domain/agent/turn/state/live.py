@@ -312,24 +312,30 @@ class LiveWork:
         on the say-so of a cache that is not the authority. But the cache must
         not paper over a row still open either, so this CONFIRMS the lifecycle
         ended it (`confirm_closed`) before letting go, and logs the one case it
-        cannot.
+        cannot. Letting go is unconditional: a confirm that is cancelled (a
+        shutdown, a deadline) leaves the row exactly as it was — this never
+        closes it — while the mark this process was holding still goes. Keeping
+        the mark would be the worse of the two, since it claims a turn this
+        process is no longer running.
         """
-        if self._confirm_closed is not None:
-            try:
-                closed = await self._confirm_closed(topic_id, work_id)
-            except Exception:  # noqa: BLE001 — a failed confirm is not a close
-                logger.exception(
-                    "could not confirm turn %s closed (topic=%s)", work_id, topic_id
-                )
-            else:
-                if not closed:
-                    logger.warning(
-                        "letting go of turn %s while its row is still open "
-                        "(topic=%s): end it via the turn lifecycle",
-                        work_id,
-                        topic_id,
+        try:
+            if self._confirm_closed is not None:
+                try:
+                    closed = await self._confirm_closed(topic_id, work_id)
+                except Exception:  # noqa: BLE001 — a failed confirm is not a close
+                    logger.exception(
+                        "could not confirm turn %s closed (topic=%s)", work_id, topic_id
                     )
-        self.forget_active(topic_id, work_id)
+                else:
+                    if not closed:
+                        logger.warning(
+                            "letting go of turn %s while its row is still open "
+                            "(topic=%s): end it via the turn lifecycle",
+                            work_id,
+                            topic_id,
+                        )
+        finally:
+            self.forget_active(topic_id, work_id)
 
     def forget_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
         """Drop the cache mark with no durable hop.
