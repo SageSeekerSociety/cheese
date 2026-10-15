@@ -225,8 +225,13 @@ jobs:
       # and the English UI stays Chinese while every check passes. Zero
       # tolerance: the only Chinese allowed is data, marked on its own line with
       # `// i18n-data: <reason>` (`<!-- … -->` in a template). Spec: docs/i18n.md §5.
+      # A Chinese HTML comment counts too, and is the one kind held by a ratchet
+      # instead of refused outright: the production build strips comments, vitest
+      # and `vite dev` do not, so the Han reaches the DOM the no-Chinese specs
+      # read. 1422 lines in 230 files are frozen in
+      # frontend/i18n-comments-baseline.json; `lint:i18n:update` tightens it.
       #
-      # Pure node, no dependency, about a second. Read-only.
+      # Pure node, no dependency, about a second. Read-only unless `--update`.
       - name: Hardcoded Chinese (i18n)
         run: pnpm run lint:i18n
 
