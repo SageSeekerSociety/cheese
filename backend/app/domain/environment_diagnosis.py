@@ -8,7 +8,7 @@ nothing; a person reads the change and decides whether to take it (the
 settings page saves it and retries). It is asked about a project's channel, so
 the project pays for it, as for every model call made for a project.
 
-It lives at layer 4, not inside `project`, because it takes no project row: the
+It lives at layer 3, not inside `project`, because it takes no project row: the
 ids come in as `uuid.UUID` and the route has already read the settings and the
 failure. What it does read is `gateway_chat` and `usage.ledger`, which are this
 module's own layer.
