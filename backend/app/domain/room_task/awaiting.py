@@ -7,7 +7,7 @@
 处理」的列表要回答的恰恰是「现在还没处理完的有哪些」，所以它必须从当下的事实重新算
 一遍，而不是把收件箱换个标题。
 
-## 判据不在这里，在 `delivery/addressing.py`
+## 判据不在这里，在 `addressing.py`
 
 「点到的是谁」曾经在这里有一份，而投递那一侧另有一份 —— 同一个问题两处各答一遍，
 就是看板显示「待处理」而没有人被通知到的那个形状。现在只有一份：清单和投递都调
@@ -48,7 +48,7 @@ class WaitingItem:
     task_title_source: str | None
     #: 看板算的那一格 —— 和项目看板上同一个函数、同一句话（短语的码）。
     phrase: str
-    #: 为什么在等他 —— `delivery/addressing.py` 的那几个码。
+    #: 为什么在等他 —— `addressing.py` 的那几个码。
     reason: str
     #: 排序用：这件事最后一次动是什么时候。
     at: datetime

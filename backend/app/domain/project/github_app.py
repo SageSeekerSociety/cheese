@@ -145,7 +145,7 @@ class GitHubAppTokens:
     async def read_token(self) -> tuple[str, str]:
         """An installation token that reads what the installation may read and
         writes nothing: what ``/sandbox/forge-token`` hands a session whose
-        work is not kept (a 支线, a task not yet started). GitHub enforces it,
+        work is not kept (a 支线). GitHub enforces it,
         so a push or a new pull request from such a session is refused there."""
         return await self._mint("read", self.read_permissions)
 

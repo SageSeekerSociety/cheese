@@ -13,8 +13,10 @@ tracked changes in a `.docx` are listed (`GET .../documents/revisions`) and
 decided (`POST .../documents/revisions`) without Word.
 
 Where the shared names went. The names these four routes read from topics.py now
-have homes of their own: `clean_artifact_path` and `MAX_ARTIFACT_BYTES` are the
-room-file rules in `app.domain.project.room_files`, `source_bytes` is the API
+have homes of their own: `clean_artifact_path` is a room-file rule in
+`app.domain.project.room_files`, the ceiling it is read against is
+`library.service.MAX_ARTIFACT_BYTES` (written down once, where the bytes land),
+`source_bytes` is the API
 read-orchestration helper in `app.api.topics_file_sources`, and the binding
 check became `TaskService.require_source_in_room`. `_actor_in_place`
 is still imported from topics.py; `DbSession` comes from `app.api.request_deps`.
@@ -56,6 +58,7 @@ from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
 from app.core.sentences import exception_text, say
+from app.domain.agent import execution
 from app.domain.documents.convert import (
     ConvertFailed,
     ConvertUnavailable,
@@ -74,8 +77,9 @@ from app.domain.documents.spreadsheet import (
     recalculate,
 )
 from app.domain.library import service as library
+from app.domain.preview import office
 from app.domain.project import room_files
-from app.domain.project.room_files import MAX_ARTIFACT_BYTES, clean_artifact_path
+from app.domain.project.room_files import clean_artifact_path
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
@@ -251,9 +255,9 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(exception_text(exc)) from exc
     if task is not None:
-        await ProjectFiles(db, topic.project_id, task).write_bytes(
-            clean, made, expected
-        )
+        await ProjectFiles(
+            db, topic.project_id, task, executor=execution.call
+        ).write_bytes(clean, made, expected)
     else:
         await room_files.save_room_file(
             db,
@@ -266,6 +270,8 @@ async def decide_document_revisions(
             source="editor",
             note="处理修订",
             base_version=expected,
+            warm_preview=office.prewarm,
+            file_store=library,
         )
     return ok(
         {
@@ -306,8 +312,8 @@ def _document_bytes(
             raise ValidationError(say("contentB64Invalid")) from exc
     else:
         raw = library.read_room_file(project_id, topic_id, path)
-    if len(raw) > MAX_ARTIFACT_BYTES:
+    if len(raw) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
-            say("fileOverLimit", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+            say("fileOverLimit", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
         )
     return raw

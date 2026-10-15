@@ -17,6 +17,7 @@ from app.api.response import ok
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import project_team
 from app.domain.topic.directory import channel_directory
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -50,7 +51,7 @@ async def list_channels(
 ) -> dict:
     """The project's channels, archived ones too, as the reader may know them."""
     actor = await _person(resolver, project_id)
-    return ok(await channel_directory(db, project_id, actor.handle))
+    return ok(await channel_directory(db, project_id, actor.handle, team=project_team))
 
 
 @router.post("/{project_id}/channels/{topic_id}/step-in")
@@ -89,7 +90,9 @@ async def hand_over_channel(
     topic = await _channel(db, project_id, topic_id)
     members = TopicMemberService(db)
     before = await members.owner_of(topic.id)
-    await members.hand_over(topic.id, body.handle, actor=actor.handle)
+    await members.hand_over(
+        topic.id, body.handle, actor=actor.handle, team=project_team
+    )
     if before != body.handle:
         await TopicService(db).note(
             topic,

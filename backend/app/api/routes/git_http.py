@@ -23,6 +23,12 @@ from app.core.sandbox_auth import (
     verify_scoped_token,
 )
 from app.core.sentences import say
+from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import project_team, task_teammate
+from app.domain.delivery.agent import (
+    record_task_instruction,
+)
+from app.domain.delivery.ledger import settle_card
 from app.domain.repository import identity
 from app.domain.review.services import AcceptService
 from app.domain.room_task import snapshots
@@ -178,9 +184,6 @@ async def task_workspace(
     task = await _task_for(db, project_id, task_id, x_cheese_token)
     if task.branch_name is None:
         raise NotFoundError(say("workTaskNotInProject"))
-    # The project changes only once the task's owner started it.
-    if task.started_at is None:
-        raise ValidationError(say("taskNotStarted"))
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError(say("projectHasNoRepo"))
@@ -197,7 +200,14 @@ async def task_workspace(
     # A queued PR's branch is locked by the forge until the queue merges or
     # drops it; a machine that pushes to it is refused. It is told here so it
     # can say that, instead of reporting a failed push to be retried.
-    queued = await AcceptService(db).merge_queued_pr(task.id)
+    queued = await AcceptService(
+        db,
+        announce=announce,
+        settle_card=settle_card,
+        record_instruction=record_task_instruction,
+        task_teammate=task_teammate,
+        roster_team=project_team,
+    ).merge_queued_pr(task.id)
     return ok(
         {
             "task_id": str(task.id),

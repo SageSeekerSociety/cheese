@@ -51,6 +51,7 @@ if __package__:
         session_servers,
         stat_file_on_the_machine,
         to_machine,
+        tool_answer,
     )
     from app.domain.agent.harness.claude_code.remote_execution.context_service import (
         serve,
@@ -92,6 +93,7 @@ else:
         session_servers,
         stat_file_on_the_machine,
         to_machine,
+        tool_answer,
     )
 
     # Its siblings sit beside it, which a script run has first on sys.path and
@@ -1433,7 +1435,12 @@ def transport(config, target_path):
             text = cheese.run_platform_tool(tool, args, host)
         except Exception as exc:  # noqa: BLE001 — the agent reads the reason
             return {"error": failure_text(exc)}
-        return {"value": {"stdout": text, "stderr": ""}}
+        # Pictures the tool hands back (a mini-app's, as the platform ran it)
+        # travel as image blocks after the text, for `proxy.js` to pass on.
+        return {
+            "value": {"stdout": str(text), "stderr": ""},
+            "images": list(getattr(text, "images", ())),
+        }
 
     def handle(request):
         try:
@@ -1613,35 +1620,11 @@ def transport(config, target_path):
                         reached_skills(target_path, config, args)
                 if notice.getvalue():
                     outcome["context"] = [notice.getvalue().strip()]
-                image = outcome.get("result", {})
-                if isinstance(image, dict) and image.get("type") == "image":
-                    # Base64 in text hits Claude Code's MCP text-output limit.
-                    # Keep native Read metadata in text and pixels in an image block.
-                    image_file = image["file"]
-                    metadata = {k: v for k, v in image_file.items() if k != "base64"}
-                    outcome = {"result": {**image, "file": metadata}}
-                    value = {
-                        "content": [
-                            {"type": "text", "text": json.dumps(outcome)},
-                            {
-                                "type": "image",
-                                "data": image_file["base64"],
-                                "mimeType": image_file["type"],
-                            },
-                        ]
-                    }
-                else:
-                    encoded = json.dumps(outcome)
-                    if len(encoded) > 32_000:
-                        # MCP replaces large text with prose; the plugin needs
-                        # the original receipt, including API JSON and Edit state.
-                        receipts = Path(target_path).parent / "tool-results"
-                        receipts.mkdir(exist_ok=True, mode=0o700)
-                        receipt_path = receipts / f"{uuid.uuid4().hex}.json"
-                        receipt_path.write_text(encoded)
-                        receipt_path.chmod(0o600)
-                        encoded = json.dumps({"receipt_path": str(receipt_path)})
-                    value = {"content": [{"type": "text", "text": encoded}]}
+                value = tool_answer(
+                    outcome,
+                    Path(target_path).parent / "tool-results",
+                    receipt.get("images", ()),
+                )
             elif method == "ping":
                 value = {}
             else:

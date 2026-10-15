@@ -16,7 +16,6 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
-from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from app.domain.usage import pricing
@@ -26,13 +25,13 @@ from app.domain.usage.models import IngestCheckpoint, ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
 from app.domain.usage.subscription_ingest import ingest_once
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 
 async def _seed(factory, credits: float | None = 100.0):
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
@@ -373,7 +372,7 @@ async def test_a_row_for_a_missing_project_holds_the_log_until_it_appears(
 
     # The project lands → the next pass picks both rows up, once each.
     async with business_db_factory() as session:
-        await ProjectService(session).create(
+        await project_service(session).create(
             name="late", owner_handle="u", project_id=late
         )
         await Ledger(session).grant_earmark(

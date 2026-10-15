@@ -347,7 +347,7 @@ describe('组件预览站', () => {
       const view = mount(`/demo/catalog/${entry.id}`)
       const names = Array.from(view.container.querySelectorAll('.catalog-case-name')).map((el) => el.textContent)
       expect(names).toEqual(entry.states.map((s) => s.name))
-      expect(view.container.textContent).toContain('@爱丽丝')
+      expect(view.container.textContent).toContain('爱丽丝')
     })
 
     it('目录里没有的 id 说一句话，不是一块空白', () => {

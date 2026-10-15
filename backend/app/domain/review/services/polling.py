@@ -557,6 +557,8 @@ async def _mark_task_merged(
         pr_number=card.pr_number,
         completes=card.completes_task,
         handed_over=card.created_at,
+        record_instruction=self._record_instruction,
+        task_teammate=self._task_teammate,
     )
 
 

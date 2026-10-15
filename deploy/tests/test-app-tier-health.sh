@@ -659,6 +659,75 @@ test_rollout_installs_connection_route_without_recreating_api_front() {
   echo "PASS: rollout installs the owner route with a graceful api-front reload"
 }
 
+# Every api-front reload retires the workers carrying the box's device links,
+# terminals and tunnels, so a deploy reloads it only when what api-front would
+# load differs from what it loaded last: not for a comment, and always for a
+# config an earlier deploy wrote to disk but never got to load.
+test_api_front_reloads_only_for_a_new_config() {
+  local run_dir docker_log reloads
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # The running config differs from the release's in a comment only.
+  { printf '# a note that changes nothing\n'; cat "$ROOT/deploy/llm-tunnel/nginx.conf"; } > "$run_dir/nginx.conf"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  ! grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded for a comment"; }
+  cmp -s "$ROOT/deploy/llm-tunnel/nginx.conf" "$run_dir/nginx.conf" \
+    || { rm -rf "$run_dir"; fail "the release's api-front config was not installed"; }
+
+  # A deploy stopped after writing the files and before the reload: what is on
+  # disk is current, what api-front runs is not.
+  printf 'what an interrupted deploy left loaded\n' > "$run_dir/active/.api-front-loaded"
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  reloads="$(grep -cFx 'exec cheese-api-front nginx -s reload' "$docker_log" || true)"
+  [ "$reloads" = 1 ] \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded $reloads times for a config it had not loaded, not once"; }
+
+  # Loaded now: the next release with the same config leaves it alone.
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  ! grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded again for the config it had just loaded"; }
+
+  # Something else wrote and loaded another config since (a release of an older
+  # commit, tls-renew.sh): the record no longer says what api-front runs.
+  sed -i.bak 's/^worker_shutdown_timeout .*/worker_shutdown_timeout 30s;/' "$run_dir/nginx.conf"
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front kept a config another writer loaded, because the record was stale"; }
+  rm -rf "$run_dir"
+  echo "PASS: api-front is reloaded only for a config it has not loaded"
+}
+
+# The certificate renewal re-renders the front door. Without the preview
+# owner's port it would send the preview tunnels back to the rolling frontend
+# until the next deploy put them back.
+test_certificate_renewal_keeps_the_preview_owner_route() {
+  local run_dir docker_log domain=cheese.example
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087 >/dev/null
+  mkdir -p "$run_dir/tls/letsencrypt/live/$domain"
+  : > "$run_dir/tls/cloudflare.ini"
+  printf 'certificate\n' > "$run_dir/tls/letsencrypt/live/$domain/fullchain.pem"
+  printf 'key\n' > "$run_dir/tls/letsencrypt/live/$domain/privkey.pem"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" TLS_STATE_DIR="$run_dir/tls" HOME="$run_dir" \
+    bash "$ROOT/deploy/llm-tunnel/tls-renew.sh" "$run_dir/active" 18080 "$domain" >"$run_dir/renew.log" 2>&1 \
+    || { cat "$run_dir/renew.log"; rm -rf "$run_dir"; fail "certificate renewal failed"; }
+  grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the renewal did not reload api-front"; }
+  grep -F 'proxy_pass http://127.0.0.1:18087;' "$run_dir/active/sites-frontend.conf" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the renewal moved the front door's preview tunnel off the owner"; }
+  rm -rf "$run_dir"
+  echo "PASS: a certificate renewal keeps the front door's preview tunnel on the owner"
+}
+
 test_deploy_retains_ci_service_images() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/ci-service-images.XXXXXX")"
@@ -979,6 +1048,88 @@ test_unready_backend_without_slots_still_rolls_back() {
   echo "PASS: an unready backend on a box without slots still rolls back"
 }
 
+# Every commit's images carry that commit's tag, so naming collab, the two
+# renderers and the forge event relay by tag recreated them on every release,
+# even when build.yml had only promoted an unchanged image or rebuilt identical
+# inputs. Each recreate closes every open document, every page a renderer
+# holds and every deployment's event socket. A release whose images carry the
+# content already running must leave compose nothing to recreate: the model
+# compose builds for those services is the same as the last release's.
+test_unchanged_services_keep_their_containers() {
+  local run_dir real_docker sha content code hashes=() service chosen=() variable
+  real_docker="${APP_TIER_REAL_DOCKER_BIN:-}"
+  if [ -z "$real_docker" ] || ! "$real_docker" compose version >/dev/null 2>&1; then
+    fail "this case needs a real docker CLI with compose (none found on PATH)"
+  fi
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/unchanged-services.XXXXXX")"
+  # Two releases of the same content, then one whose images and relay code differ.
+  for release in same:aaaaaaa same:bbbbbbb changed:ccccccc; do
+    sha="${release#*:}"
+    content=old-layers code=running-code
+    [ "${release%%:*}" = same ] || content=new-layers code=release-code
+    : > "$run_dir/docker.log"
+    PATH="$FAKE_BIN:$PATH" APP_TIER_SCENARIO=healthy APP_TIER_MAIN_SHA="$sha" \
+      APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
+      APP_TIER_RUNNING_SERVICES="collab browser-render office-render forge-events" \
+      APP_TIER_PULLED_CONTENT="$content" APP_TIER_RELEASE_CODE="$code" \
+      DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
+      "$ROOT/deploy/deploy-docker.sh" "$sha" "$ROOT/deploy/compose/docker-compose.base.yml" \
+      > "$run_dir/release.log" 2>&1 \
+      || { cat "$run_dir/release.log"; rm -rf "$run_dir"; fail "release $sha failed"; }
+    # What compose would build each service from, given the references the
+    # release chose: compose recreates a container exactly when this changes.
+    mapfile -t chosen < <(sed -n 's/^[a-z-]*-up-env //p' "$run_dir/docker.log")
+    # The checks outside a deploy judge the digests by what it recorded.
+    for variable in COLLAB_IMAGE FORGE_EVENTS_IMAGE; do
+      grep -Fx "$(printf '%s\n' "${chosen[@]}" | grep "^$variable=" | tail -n 1)" "$run_dir/ops/app-tier-pins" >/dev/null \
+        || { rm -rf "$run_dir"; fail "release $sha did not record the $variable it chose"; }
+    done
+    hashes+=("$(env -i PATH="$PATH" HOME="$run_dir" IMAGE_TAG="$sha" \
+      FORGE_EVENTS_ENV_FILE="$FORGE_EVENTS_ENV_FILE" BACKEND_ENV_FILE="$BACKEND_ENV_FILE" \
+      "${chosen[@]}" \
+      "$real_docker" compose -f "$ROOT/deploy/compose/docker-compose.base.yml" \
+        -f "$ROOT/deploy/forge-events/compose.yml" -p cheese \
+        config --hash 'collab,browser-render,office-render,forge-events' 2>&1 | sort)")
+  done
+  [ "${hashes[0]}" = "${hashes[1]}" ] || {
+    printf 'first:\n%s\nsecond:\n%s\n' "${hashes[0]}" "${hashes[1]}" >&2
+    rm -rf "$run_dir"
+    fail "a release of unchanged content gave compose a different model, which recreates the containers"
+  }
+  for service in collab browser-render office-render forge-events; do
+    [ "$(printf '%s\n' "${hashes[1]}" | grep "^$service ")" != "$(printf '%s\n' "${hashes[2]}" | grep "^$service ")" ] || {
+      rm -rf "$run_dir"
+      fail "$service kept its container although its image changed"
+    }
+  done
+  rm -rf "$run_dir"
+  echo "PASS: unchanged collab, renderers and event relay keep their containers across releases"
+}
+
+# A release that fails its health check returns collab to the image that ran
+# before it, not the one it pinned for itself.
+test_rollback_returns_collab_to_the_previous_image() {
+  local run_dir
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/collab-rollback.XXXXXX")"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_SCENARIO=rollback APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$run_dir/docker.log" APP_TIER_RUNNING_SERVICES=collab \
+    DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha "$ROOT/deploy/compose/docker-compose.base.yml" \
+    > "$run_dir/release.log" 2>&1; then
+    rm -rf "$run_dir"
+    fail "rollback scenario unexpectedly passed health checks"
+  fi
+  grep -Fqx 'collab-up-env COLLAB_IMAGE=ghcr.io/sageseekersociety/cheese/collab@sha256:pulled' "$run_dir/docker.log" \
+    || { cat "$run_dir/release.log"; rm -rf "$run_dir"; fail "the release did not start collab on the image it pulled"; }
+  [ "$(grep '^collab-up-env ' "$run_dir/docker.log" | tail -n 1)" \
+    = 'collab-up-env COLLAB_IMAGE=ghcr.io/sageseekersociety/cheese/collab@sha256:previous' ] \
+    || { rm -rf "$run_dir"; fail "the rollback left collab on the failed release's image"; }
+  rm -rf "$run_dir"
+  echo "PASS: a rollback returns collab to the image that ran before the release"
+}
+
 # A box with an app-router (ACTIVE_BACKEND_DIR) releases by rollout: the idle
 # slot comes up beside the serving one, app-router is switched once, the old
 # slot drains and is stopped. These tests pin that order and the failures that
@@ -1203,7 +1354,7 @@ test_rollout_waits_for_model_streams_only_after_the_health_check() {
     APP_TIER_MODEL_STREAMS=1,0 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
     DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1 \
     || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
-  healthy="$(log_line "$docker_log" 'ps -a --filter label=com.docker.compose.project=cheese')"
+  healthy="$(log_line "$docker_log" 'ps -a --no-trunc --filter label=com.docker.compose.project=cheese')"
   probe="$(log_line "$docker_log" '/_internal/llm/streams')"
   [ -n "$healthy" ] && [ -n "$probe" ] && [ "$healthy" -lt "$probe" ] \
     || fail "the release waited on the old backend's model streams before its own health check"
@@ -2172,6 +2323,10 @@ case "$CASE" in
   preview-kill-switch-owner) test_kill_switch_stops_the_running_owner ;;
   preview-owner-release) test_release_preview_connection_requires_interrupt ;;
   owners-behind-schema) test_deploy_releases_owners_behind_the_schema ;;
+  api-front-reload) test_api_front_reloads_only_for_a_new_config ;;
+  tls-renew-owner) test_certificate_renewal_keeps_the_preview_owner_route ;;
+  unchanged-services) test_unchanged_services_keep_their_containers ;;
+  collab-rollback) test_rollback_returns_collab_to_the_previous_image ;;
   owners-behind-schema-failed-migration) test_failed_migration_resumes_the_drained_owner ;;
   owners-spared) test_deploy_leaves_owners_the_migrations_spare ;;
   owners-behind-database) test_deploy_releases_owners_the_database_left_behind ;;
@@ -2189,6 +2344,8 @@ case "$CASE" in
     test_owner_release_reuses_box_config_and_stops_when_busy
     test_cloud_control_has_an_independent_drained_release
     test_rollout_installs_connection_route_without_recreating_api_front
+    test_api_front_reloads_only_for_a_new_config
+    test_certificate_renewal_keeps_the_preview_owner_route
     test_deploy_warns_when_the_session_base_will_not_survive
     test_deploy_retains_ci_service_images
     test_deploy_delivers_private_executor
@@ -2196,6 +2353,8 @@ case "$CASE" in
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist
     test_rollback_restores_exact_previous_images
+    test_unchanged_services_keep_their_containers
+    test_rollback_returns_collab_to_the_previous_image
     test_unready_backend_without_slots_still_rolls_back
     test_ownership_handover_is_the_last_step_before_up
     test_rollback_hands_the_mounts_back

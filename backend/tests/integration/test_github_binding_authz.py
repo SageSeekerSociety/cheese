@@ -152,7 +152,7 @@ def test_callback_refuses_ambiguous_wrong_or_read_only_repo(
 
 def test_callback_rejects_foreign_installation_and_spent_state(client, monkeypatch):
     from app.api.routes import github_install
-    from app.domain.agent.github_app import GitHubAppError
+    from app.domain.project.github_app import GitHubAppError
 
     pid = _project(client)
     calls = []
@@ -230,7 +230,7 @@ def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatc
 
 def test_failed_reconnect_preserves_existing_binding(client, monkeypatch):
     from app.api.routes import github_install
-    from app.domain.agent.github_app import GitHubAppError
+    from app.domain.project.github_app import GitHubAppError
 
     pid = _project(client)
 

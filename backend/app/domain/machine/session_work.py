@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
 from app.core.sentences import say
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
@@ -32,12 +33,13 @@ from app.domain.agent.machine_address import device_api_base, site_forward, ws_u
 from app.domain.agent.market import cloud_provisionable
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
-from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.device import sandbox as device_sandbox
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -130,7 +132,7 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
 
     teammate = await _session_teammate(db, project, handle)
     agent = (
-        await TopicService(db).resolve_agent(topic)
+        await AgentInstanceService(db).for_topic_by_id(topic.id)
         if teammate is None
         else AgentInstanceService.resolved(teammate)
     )
@@ -212,7 +214,9 @@ async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> No
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
         return
-    if owner.username in await TopicMemberService(db).people_in(topic):
+    if owner.username in await TopicMemberService(db).people_in(
+        topic, team=project_team
+    ):
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)

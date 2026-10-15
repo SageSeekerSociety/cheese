@@ -21,7 +21,7 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent_instance.services import agent_stdio_servers
+from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
@@ -268,9 +268,8 @@ class CentralChannel(DeviceChannel):
         # Its credential names that lease, as the one the lease hands out does:
         # the executor route admits nothing else, and this is the one the
         # session's calls carry again after each turn rewrites it.
-        # ``scratch``: a 支线, or a task its owner has not started, whose work
-        # stays on the machine and never reaches the project
-        # (`routes/execution.py`).
+        # ``scratch``: a 支线, whose work stays on the machine and never
+        # reaches the project (`routes/execution.py`).
         token = bind_resource_token(
             token,
             str(resource),
@@ -326,7 +325,11 @@ class CentralChannel(DeviceChannel):
         # relaunches an idle session with it (`screen_identity.launch_identity`).
         async with factory() as db:
             remote = await remote_mcp.session_target(
-                db, project_id, topic_id, agent_handle
+                db,
+                project_id,
+                topic_id,
+                agent_handle,
+                type_of_seat=type_of_seat,
             )
             own = await agent_stdio_servers(db, project_id, agent_handle)
         if remote is not None:

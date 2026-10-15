@@ -21,6 +21,7 @@ from app.domain.usage import ledger
 from app.domain.usage import repositories as repo
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.model_access import ModelAccess, model_access
+from app.domain.usage.model_access import overseas_approved as _overseas_approved
 
 
 def _gateway_budget(balance: ledger.Balance, spent_usd: float) -> float | None:
@@ -50,6 +51,10 @@ class UsageService:
     async def plan_model_tiers(self, team_id: int) -> frozenset[str] | None:
         """The model tiers the team's plan allows; None is every tier."""
         return (await ledger.team_terms(self._session, team_id)).model_tiers
+
+    async def overseas_approved(self, team_id: int) -> bool:
+        """Has an administrator approved the team for overseas models."""
+        return await _overseas_approved(self._session, team_id)
 
     async def model_access(self, team_id: int) -> ModelAccess:
         """Which models the team's plan lets it pick, and which plan each of

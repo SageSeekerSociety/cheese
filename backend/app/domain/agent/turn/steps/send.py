@@ -253,6 +253,13 @@ async def send_prepared(
         nonce=nonce,
         at=datetime.now(UTC),
     )
+    # `open_interval` waited on its OWN commit, so the row is durable here and
+    # this process may name the turn running: the mark is placed with that
+    # commit, not with the session's first Working event, which a session may
+    # send before the row exists (and which the lifecycle must not let decide
+    # the mark). The confirm a write-through mark runs reads a row the step
+    # just awaited, so it sees it open.
+    await live.mark_turn_active(topic_id, turn_id)
     # From the interval opening (``started_at``) to the input stamped
     # delivered: where the platform's own time goes on every turn.
     delivery_ms: dict[str, float] = {}

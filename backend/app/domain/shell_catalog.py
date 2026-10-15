@@ -1,5 +1,4 @@
-"""壳 (shell) — the three declaration-only dials that make one platform look like
-several products without forking it.
+"""壳 (shell) — the declaration of a 壳 and the wire shape it resolves to.
 
 **Why this exists.** The platform has exactly one entry today: everybody who
 opens any project gets the same interface, and the desktop first screen is
@@ -22,9 +21,18 @@ one; it only turns the resolved NAME into the declaration below.
 **Adding a fifth 壳 is a declaration.** Append one `Shell(...)` to `CATALOG` and
 point a 项目集 at its name. No component changes, and
 `test_adding_a_shell_touches_no_component` is what keeps that true.
+
+**Why it sits at layer 1, apart from the `shell` package.** A declaration and a
+wire shape are vocabulary: `ShellOut` is a field of `ProjectOut`, so `project`
+read this module's contents, and by the C5 table that read pointed up. Resolving
+a project's 壳 to a declaration is not vocabulary — it reads `space.models`,
+`task.models` and `task.protocol` — so `app.domain.shell.service` keeps doing
+that and stays where it is, one layer above this one.
 """
 
 from dataclasses import dataclass, field
+
+from pydantic import BaseModel
 
 #: The 壳 nobody has to declare: what every project got before 壳 existed.
 DEFAULT_SHELL_NAME = "default"
@@ -173,3 +181,37 @@ def lookup(name: str | None) -> Shell:
 def is_known(name: str | None) -> bool:
     """Whether the name names a 壳 this build declares. `default` counts."""
     return bool(name) and name in CATALOG
+
+
+class ShellNavOut(BaseModel):
+    """The three surfaces' cells, in order. See `Nav`."""
+
+    rail: list[str]
+    tabs: list[str]
+    project: list[str]
+
+
+class ShellOut(BaseModel):
+    """A 壳 as the frontend receives it: data only, nothing to interpret.
+
+    This is the RESOLVED declaration, not the name that was declared. The
+    frontend must not own a second copy of the four built-in 壳 — a shell added
+    to the backend catalog has to reach the browser without a frontend release.
+    """
+
+    name: str
+    home: str | None
+    nav: ShellNavOut
+    terms: dict[str, str]
+
+    @classmethod
+    def of(cls, shell: Shell) -> "ShellOut":
+        nav: Nav = shell.nav
+        return cls(
+            name=shell.name,
+            home=shell.home,
+            nav=ShellNavOut(
+                rail=list(nav.rail), tabs=list(nav.tabs), project=list(nav.project)
+            ),
+            terms=dict(shell.terms),
+        )

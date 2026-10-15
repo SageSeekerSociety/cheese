@@ -39,6 +39,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.agent import environment
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
@@ -197,7 +198,8 @@ class HostPool:
             raise NotFoundError("Project not found")
 
         if not any(
-            m.handle == actor.handle for m in await roster(self._session, project_id)
+            m.handle == actor.handle
+            for m in await roster(self._session, project_id, team=project_team)
         ):
             raise ForbiddenError(say("cloudMembersOnly"))
 

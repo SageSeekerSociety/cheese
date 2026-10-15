@@ -14,10 +14,10 @@ import uuid
 
 import sqlalchemy as sa
 
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import seed_user
 from tests.integration.conftest import (
@@ -67,7 +67,9 @@ def _who_answers(client, topic_id: str) -> str:
         async with client.test_factory() as session:
             topic = await TopicRepository(session).get(uuid.UUID(topic_id))
             assert topic is not None
-            return (await TopicService(session).resolve_agent(topic)).handle
+            return (
+                await AgentInstanceService(session).for_topic_by_id(topic.id)
+            ).handle
 
     return asyncio.run(_run())
 

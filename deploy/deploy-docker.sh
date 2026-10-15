@@ -392,6 +392,7 @@ ensure_forge_events() {
     --backend-env "${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}" \
     --relay-env "$FORGE_EVENTS_ENV_FILE" \
     || fail "could not configure GitHub event subscriptions"
+  pin_relay_by_code
   dc up -d --no-deps forge-events || fail "forge event relay did not start"
   while [ "$waited" -lt 60 ]; do
     if curl -fsS -m 3 "http://127.0.0.1:${FORGE_EVENTS_PORT:-8093}/healthz" >/dev/null; then
@@ -459,9 +460,27 @@ ensure_journal_retention() {
   log "journal retention applied from journald-cheese.conf"
 }
 
+# What api-front's configuration says, as one digest: every file it reads that
+# a deploy writes, without the comments, indentation and blank lines that change
+# nothing it does. A reload retires api-front's workers, and with them, once
+# their shutdown deadline passes, every device link, terminal, model tunnel and
+# preview tunnel they carry; so the deploy reloads it only when this differs
+# from the digest it last loaded, kept in .api-front-loaded beside those files.
+# That is what api-front runs, which the files on disk are not when a deploy
+# stopped between writing them and the reload.
+api_front_digest() {
+  local file
+  for file in "$1" "$ACTIVE_BACKEND_DIR/preview-routing.conf" "$ACTIVE_BACKEND_DIR"/sites*.conf \
+    ${ACTIVE_FRONTEND_DIR:+"$ACTIVE_FRONTEND_DIR/sites-frontend.conf"}; do
+    [ -f "$file" ] || continue
+    printf '== %s\n' "${file##*/}"
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^#/d' -e '/^$/d' "$file"
+  done | sha256sum | cut -d ' ' -f 1
+}
+
 ensure_application_router() {
   [ -n "$ACTIVE_BACKEND_DIR" ] || return 0
-  local config backup frontend_backup changed=false router_changed=false
+  local config backup frontend_backup router_changed=false loaded rendered
   local owner_port routing_backup sites_backup site_domain
   config="${API_FRONT_CONF:-$(dirname "$ACTIVE_BACKEND_DIR")/nginx.conf}"
   [ -f "$config" ] || fail "api-front config not found: $config"
@@ -486,6 +505,19 @@ ensure_application_router() {
       || fail "application router cannot reach the serving frontend"
   fi
 
+  # What api-front runs. The record is trusted only while the files on disk
+  # still match it: anything else that wrote them since (tls-renew.sh, a
+  # release of an older commit, an operator) reloaded api-front without
+  # updating it, or did not reload it at all, so what runs is unknown and the
+  # deploy reloads. A box that never recorded it runs what is on disk, which
+  # is what the deploy compared against before the record existed.
+  loaded="$(cat "$ACTIVE_BACKEND_DIR/.api-front-loaded" 2>/dev/null || true)"
+  if [ -z "$loaded" ]; then
+    loaded="$(api_front_digest "$config")"
+  elif [ "$loaded" != "$(api_front_digest "$config")" ]; then
+    log "api-front's config on disk is not the one it last loaded here; reloading it"
+    loaded=""
+  fi
   # Everything api-front reads that this deploy may rewrite is backed up first,
   # so a rejected config restores all of it together.
   backup="${config}.pre-device-connection"
@@ -515,14 +547,7 @@ ensure_application_router() {
   else
     bash "$HERE/llm-tunnel/configure-preview.sh" legacy "$ACTIVE_BACKEND_DIR"
   fi || fail "could not write the preview routing file"
-  if [ ! -s "$routing_backup" ] \
-    || ! cmp -s "$routing_backup" "$ACTIVE_BACKEND_DIR/preview-routing.conf"; then
-    changed=true
-  fi
-  if ! cmp -s "$HERE/llm-tunnel/nginx.conf" "$config"; then
-    cp "$HERE/llm-tunnel/nginx.conf" "$config"
-    changed=true
-  fi
+  cmp -s "$HERE/llm-tunnel/nginx.conf" "$config" || cp "$HERE/llm-tunnel/nginx.conf" "$config"
   # Preview content hosts are matched by the content domain's wildcard server,
   # and no server_name can beat it (a middle wildcard is invalid; a regex loses).
   # So the split lives inside active/sites.conf, and this re-renders that file
@@ -538,7 +563,6 @@ ensure_application_router() {
       cp "$ACTIVE_BACKEND_DIR/sites.conf" "$sites_backup"
       bash "$HERE/llm-tunnel/configure-sites.sh" "$site_domain" "$ACTIVE_BACKEND_DIR" "$owner_port" \
         || fail "could not write the content-host routing"
-      cmp -s "$sites_backup" "$ACTIVE_BACKEND_DIR/sites.conf" || changed=true
     fi
   fi
   frontend_backup=""
@@ -546,9 +570,10 @@ ensure_application_router() {
     frontend_backup="$ACTIVE_FRONTEND_DIR/sites-frontend.conf.pre-app-router"
     cp "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" "$frontend_backup"
     bash "$HERE/llm-tunnel/configure-frontend.sh" "$ACTIVE_FRONTEND_DIR" 18086 "$FRONTEND_PROXY_PORT" "$owner_port"
-    cmp -s "$frontend_backup" "$ACTIVE_FRONTEND_DIR/sites-frontend.conf" || changed=true
   fi
-  if [ "$changed" = false ]; then
+  rendered="$(api_front_digest "$config")"
+  if [ "$rendered" = "$loaded" ]; then
+    printf '%s\n' "$rendered" > "$ACTIVE_BACKEND_DIR/.api-front-loaded"
     rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
     return 0
   fi
@@ -569,6 +594,7 @@ ensure_application_router() {
     rm -f "$backup"
     fail "api-front could not reload the preview/owner route; restored its config"
   fi
+  printf '%s\n' "$rendered" > "$ACTIVE_BACKEND_DIR/.api-front-loaded"
   rm -f "$backup" ${frontend_backup:+"$frontend_backup"} ${sites_backup:+"$sites_backup"} "$routing_backup"
   log "api-front routes application traffic through app-router; later business switches leave persistent connections untouched"
 }
@@ -1005,6 +1031,97 @@ service_image() {
   docker inspect --format '{{.Config.Image}}' "$container" 2>/dev/null || true
 }
 
+# ---- Unchanged services are not recreated ----
+# Compose recreates a container whenever the image reference it was created
+# from changes, and every commit's images carry that commit's tag, including
+# the ones build.yml only promoted because nothing in them changed. So collab,
+# browser-render and office-render were replaced on every release, closing
+# every open document's socket and every page a renderer was holding. They are
+# named by digest instead (repo@sha256:…), and when the image this release
+# pulled has the same content as the one running, by the running one's digest:
+# the reference compose sees does not change, and neither does the container.
+#
+# Content, not digest: a rebuild of unchanged inputs (every image is rebuilt
+# on a dispatched build) gets a new digest, because the image records when and
+# from which commit it was built, while its layers and runtime config are
+# identical. image_content is exactly those, without the build's own labels.
+image_content() {
+  docker image inspect --format '{{json .RootFS.Layers}} {{json .Config.Entrypoint}} {{json .Config.Cmd}} {{json .Config.Env}} {{json .Config.WorkingDir}} {{json .Config.User}} {{json .Config.ExposedPorts}} {{json .Config.Volumes}} {{json .Config.Healthcheck}} {{json .Config.StopSignal}} {{range $k, $v := .Config.Labels}}{{$k}}={{$v}};{{end}}' \
+    "$1" 2>/dev/null | sed 's/org\.opencontainers\.image\.[^=;]*=[^;]*;//g' || true
+}
+
+# repo_digest <image> <repository>: the image as <repository>@sha256:…, if the
+# registry gave it one.
+repo_digest() {
+  docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$1" 2>/dev/null \
+    | grep -F -m 1 "$2@" || true
+}
+
+# pin_by_content <variable> <service> <pulled image>: point the service's
+# image variable at the running image when the pulled one has the same
+# content, and at the pulled one by digest when it does not. An image the
+# operator named (the variable already set) or one without a registry digest
+# (a local build) is left as it is.
+pin_by_content() {
+  local variable="$1" service="$2" pulled="$3" repository="${3%:*}" pinned container running content
+  [ -z "${!variable:-}" ] || return 0
+  pinned="$(repo_digest "$pulled" "$repository")"
+  [ -n "$pinned" ] || return 0
+  container="$(service_container "$service")"
+  running="$([ -z "$container" ] || docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true)"
+  content="$(image_content "$pulled")"
+  if [ -n "$running" ] && [ -n "$content" ] && [ "$(image_content "$running")" = "$content" ] \
+    && [ -n "$(repo_digest "$running" "$repository")" ]; then
+    pinned="$(repo_digest "$running" "$repository")"
+    log "$service: $pulled has the content already running; keeping $pinned"
+  else
+    log "$service: $pulled is new content; it runs as $pinned"
+  fi
+  export "$variable=$pinned"
+  PINNED_IMAGES="$PINNED_IMAGES $variable"
+}
+PINNED_IMAGES=""
+
+# The collab image a rollback returns to: the one that ran before this release;
+# with none running, the previous release's by its tag, as compose names it
+# when nothing pins it.
+rollback_collab_image() {
+  if [ -n "$PREV_COLLAB_IMAGE" ]; then
+    printf '%s' "$PREV_COLLAB_IMAGE"
+  else
+    case " $PINNED_IMAGES " in
+      *" COLLAB_IMAGE "*) ;;
+      *) printf '%s' "${COLLAB_IMAGE:-}" ;;
+    esac
+  fi
+}
+
+# The forge event relay runs the backend image, which changes with nearly
+# every backend commit while the relay's own code rarely does, and recreating
+# the relay drops every deployment's event socket. So it keeps the image it
+# runs, by digest, until the code it runs differs (deploy/code-digest.py in the
+# running relay and in this release's image).
+pin_relay_by_code() {
+  local container repository release running pinned
+  repository="${FORGE_EVENTS_IMAGE%@*}"
+  repository="${repository%:*}"
+  container="$(service_container forge-events)"
+  release="$(dc run --rm --no-deps -T backend python - app.forge_events_app < "$HERE/code-digest.py" \
+    | sed -n 's/^code-digest //p' || true)"
+  running="$([ -z "$container" ] || docker exec -i "$container" python - app.forge_events_app < "$HERE/code-digest.py" 2>/dev/null \
+    | sed -n 's/^code-digest //p' || true)"
+  if [ -n "$release" ] && [ "$running" = "$release" ]; then
+    pinned="$(repo_digest "$(docker inspect --format '{{.Image}}' "$container")" "$repository")"
+    FORGE_EVENTS_IMAGE="${pinned:-$(service_image "$container")}"
+    log "forge event relay: its code is unchanged (${release:0:12}); keeping $FORGE_EVENTS_IMAGE"
+  else
+    pinned="$(repo_digest "$FORGE_EVENTS_IMAGE" "$repository")"
+    FORGE_EVENTS_IMAGE="${pinned:-$FORGE_EVENTS_IMAGE}"
+    log "forge event relay: its code differs from the running relay's; it runs $FORGE_EVENTS_IMAGE"
+  fi
+  export FORGE_EVENTS_IMAGE
+}
+
 NEXT_BACKEND="${PROJECT}-backend-next"
 NEXT_FRONTEND="${PROJECT}-frontend-next"
 # The one-off successors releases before the two slots started, on the ports
@@ -1036,6 +1153,7 @@ PREV_BACKEND_CONTAINER="$(running_backend)"
 PREV_FRONTEND_CONTAINER="$(running_frontend)"
 PREV_BACKEND_IMAGE="$(service_image "$PREV_BACKEND_CONTAINER")"
 PREV_FRONTEND_IMAGE="$(service_image "$PREV_FRONTEND_CONTAINER")"
+PREV_COLLAB_IMAGE="$(service_image "$(service_container collab)")"
 # The release running now is the tag its backend was started from, in whichever
 # slot it serves. Reading only the `backend` service left every release that
 # started while `backend-b` served with no previous release, so a failed health
@@ -1081,6 +1199,7 @@ case "$APP_IMAGE_SOURCE" in
       || [[ ! "${collab_err,,}" =~ manifest\ unknown|no\ such\ manifest|not\ found ]]; then
       retry_pull "collab pull" dc pull collab
       COLLAB_EXPECTED=true
+      pin_by_content COLLAB_IMAGE collab "$collab_ref"
     else
       log "$collab_ref does not exist: this release predates the collaboration service"
     fi
@@ -1089,13 +1208,21 @@ case "$APP_IMAGE_SOURCE" in
     # fetching falls back a rung (measured: 19 of 20 real sites becomes 17) and
     # everything else is unaffected, whereas failing the deploy over it would
     # trade the whole platform for one rung.
-    dc pull browser-render >/dev/null 2>&1 \
-      || log "WARNING: browser-render image unavailable; fetching will fall back a rung"
+    if dc pull browser-render >/dev/null 2>&1; then
+      pin_by_content BROWSER_RENDER_IMAGE browser-render \
+        "ghcr.io/sageseekersociety/cheese/browser-render:$IMAGE_TAG"
+    else
+      log "WARNING: browser-render image unavailable; fetching will fall back a rung"
+    fi
     # Same shape, same reason: without the renderer a Word or PowerPoint
     # deliverable falls back to a download, which the preview panel reports on
     # screen. Nothing else in the platform is affected.
-    dc pull office-render >/dev/null 2>&1 \
-      || log "WARNING: office-render image unavailable; documents will offer download only"
+    if dc pull office-render >/dev/null 2>&1; then
+      pin_by_content OFFICE_RENDER_IMAGE office-render \
+        "ghcr.io/sageseekersociety/cheese/office-render:$IMAGE_TAG"
+    else
+      log "WARNING: office-render image unavailable; documents will offer download only"
+    fi
     dc pull office-editor >/dev/null 2>&1 \
       || log "WARNING: office-editor image unavailable; room files stay read-only"
     # Same shape again: without the executor a private chat fails with an
@@ -1671,7 +1798,7 @@ code=""
 app_tier=""
 for _ in $(seq 1 "$HEALTH_ATTEMPTS"); do
   sleep "$HEALTH_INTERVAL_SECONDS"
-  app_tier="$(docker ps -a \
+  app_tier="$(docker ps -a --no-trunc \
     --filter "label=com.docker.compose.project=$PROJECT" \
     --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
     2>/dev/null || true)"
@@ -1724,6 +1851,9 @@ if [ "$code" != ok ]; then
           export BACKEND_IMAGE="$PREV_BACKEND_IMAGE" FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE"
         fi
         export IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE"
+        # shellcheck disable=SC2030 # the rollback's own choice, for this subshell only
+        COLLAB_IMAGE="$(rollback_collab_image)"
+        export COLLAB_IMAGE
         write_slots_overlay
         MODEL_STREAM_GRACE_SECONDS="$ROLLBACK_MODEL_STREAM_GRACE_SECONDS"
         # A subshell does not run the script's exit trap.
@@ -1733,11 +1863,12 @@ if [ "$code" != ok ]; then
       ) || log "WARNING: the rollback to $PREV_SHA did not complete; see the lines above"
     elif [ -n "$PREV_BACKEND_IMAGE" ] && [ -n "$PREV_FRONTEND_IMAGE" ]; then
       BACKEND_IMAGE="$PREV_BACKEND_IMAGE" \
-        FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE" \
+        FRONTEND_IMAGE="$PREV_FRONTEND_IMAGE" COLLAB_IMAGE="$(rollback_collab_image)" \
         IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE" \
         dc up -d backend frontend collab || true
     else
-      IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE" dc up -d backend frontend collab || true
+      COLLAB_IMAGE="$(rollback_collab_image)" IMAGE_TAG="$PREV_SHA" APP_RELEASE="$PREV_RELEASE" \
+        dc up -d backend frontend collab || true
     fi
   fi
   fail "deploy failed health check${PREV_SHA:+, rolled back to $PREV_SHA}"
@@ -1815,4 +1946,12 @@ bash "$HERE/reclaim-room-caches.sh" --apply 2>&1 | sed 's/^/  /' || true
 # user's only copy of it, and is kept and reported instead.
 python3 "$HERE/reclaim-legacy-room-checkouts.py" --apply 2>&1 | sed 's/^/  /' || true
 echo "$(date -Iseconds) $SHA" >> "$HERE/deploy-docker.log"
+# What this release chose for the services named by digest, for the checks
+# that run outside a deploy (deploy-drift.yml, scripts/whats-live.sh).
+mkdir -p "$HOME/ops"
+{
+  # shellcheck disable=SC2031 # this release's choice; only a rollback changed it, in its subshell
+  [ -z "${COLLAB_IMAGE:-}" ] || printf 'COLLAB_IMAGE=%s\n' "$COLLAB_IMAGE"
+  [ -z "${FORGE_EVENTS_IMAGE:-}" ] || [ "${FORGE_EVENTS_LOCAL:-false}" != true ] || printf 'FORGE_EVENTS_IMAGE=%s\n' "$FORGE_EVENTS_IMAGE"
+} > "$HOME/ops/app-tier-pins"
 log "DEPLOY OK: sha=$SHA healthy"

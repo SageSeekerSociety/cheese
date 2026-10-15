@@ -229,8 +229,8 @@ async def main() -> None:
     )
 
     def task(title: str, document: str) -> str:
-        """A task the way a person makes one: created, its document written,
-        started."""
+        """A task the way a person makes one: created, and its document
+        written."""
         made = api("POST", f"/topics/{form}/tasks", alice, json={"title": title})
         path = f"/topics/{made['id']}"
         doc = api("GET", f"{path}/document", alice)["id"]
@@ -240,7 +240,6 @@ async def main() -> None:
             alice,
             json={"content": document, "expected_version": 0},
         )
-        api("POST", f"{path}/start", alice, json={"reviewer_handle": "alice"})
         return made["id"]
 
     tasks = [

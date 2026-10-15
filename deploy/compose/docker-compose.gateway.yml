@@ -121,6 +121,8 @@ services:
       - RUC_DEEPSEEK_API_KEY_9=${RUC_DEEPSEEK_API_KEY_9:-}
       - MIMO_TOKEN_PLAN_API_KEY=${MIMO_TOKEN_PLAN_API_KEY:-}
       - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:?set MOONSHOT_API_KEY}
+      # Google AI Studio key on the Gemini Academic Program credit project.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:?set GEMINI_API_KEY}
       - STORE_MODEL_IN_DB=True
     volumes:
       - ${GATEWAY_CONFIG:?set the release configuration path}:/app/config.yaml:ro

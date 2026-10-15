@@ -81,7 +81,7 @@ from app.domain.topic.models import Topic
 from app.domain.topic.repositories import TopicRepository as TopicRepository
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
-    pass
+    from app.domain.repository.ports import ExecutorCall
 
 from app.domain.project.protection import branch_protection_of, github_repo_snapshot
 from app.domain.review import services as pkg
@@ -367,16 +367,26 @@ def _one_deliverable(deliver: str | None, deliver_url: str | None) -> None:
 
 
 async def _read_deliverable(
-    session: AsyncSession, project_id: uuid.UUID, task_id: uuid.UUID, path: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    path: str,
+    *,
+    executor: ExecutorCall | None = None,
 ) -> tuple[str, bytes]:
     """把交付物从这一轮的工作目录里读出来，连同它的文件名。
 
     读的是任务那棵树 —— 交付物是这条活做出来的，主干上还没有它。
+
+    ``executor`` 是那台机器上的文件操作（`repository.ports.ExecutorCall`），谁叫醒
+    这条就谁给（`AcceptService`，路由构造时递进来）。递卡不带交付物时不接线。
     """
     # deferred-import: tests replace this name on app.domain.repository.forge_files
     from app.domain.repository.forge_files import ProjectFiles
 
-    data, _ = await ProjectFiles(session, project_id, task_id).raw(path, "live")
+    data, _ = await ProjectFiles(session, project_id, task_id, executor=executor).raw(
+        path, "live"
+    )
     if len(data) > pkg._DELIVERABLE_MAX_BYTES:
         raise ValidationError(
             say(

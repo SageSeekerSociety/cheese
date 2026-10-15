@@ -251,7 +251,9 @@ def test_attachments_upload_library_and_raw_read_the_same(client):
         "attachment; filename*=UTF-8''shot.png"
     )
     assert raw.headers["content-type"] == "application/octet-stream"
-    assert raw.headers["cache-control"] == "private, max-age=3600"
+    # 房间里这一份的字节会变（芝士重做一版、人编辑后又存一版，路径还是那一个），
+    # 所以浏览器不许把它留一小时自己答；`uploads/<随机串>/` 下的贴图才是那种。
+    assert raw.headers["cache-control"] == "private, no-cache"
 
 
 def test_attachments_pdf_converts_the_same(client, monkeypatch):

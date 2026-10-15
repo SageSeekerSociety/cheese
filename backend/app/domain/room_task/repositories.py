@@ -61,7 +61,6 @@ class ListedTask:
     reporter_handle: str | None
     contributor_handles: tuple[str, ...]
     accepted_at: datetime | None
-    started_at: datetime | None
     conclusion: str | None
     closing_since: datetime | None
     updated_at: datetime
@@ -96,9 +95,11 @@ class TaskRepository:
         reporter_handle: str | None = None,
         contributor_handles: list[str] | None = None,
         title_source: TaskTitleSource = TaskTitleSource.human,
+        task_id: uuid.UUID | None = None,
     ) -> Task:
         """Create a task; its service assigns the branch before checkout."""
         task = Task(
+            **({"id": task_id} if task_id is not None else {}),
             project_id=project_id,
             room_id=room_id,
             number=await take_number(self._session, project_id, Numbered.task),
@@ -165,7 +166,6 @@ class TaskRepository:
                 Task.reporter_handle,
                 Task.contributor_handles,
                 Task.accepted_at,
-                Task.started_at,
                 Task.conclusion,
                 Task.closing_since,
                 Task.updated_at,
@@ -186,7 +186,6 @@ class TaskRepository:
                 reporter_handle=row.reporter_handle,
                 contributor_handles=tuple(row.contributor_handles or ()),
                 accepted_at=row.accepted_at,
-                started_at=row.started_at,
                 conclusion=row.conclusion,
                 closing_since=row.closing_since,
                 updated_at=row.updated_at,
@@ -282,7 +281,8 @@ class TaskRepository:
 
         - ``status``: only open, or only closed;
         - ``ids`` / ``origins``: only these tasks, or the ones made from these
-          blocks — either one matching is enough;
+          blocks — shown under one in the main line, or made from one said in
+          a 支线 — either one matching is enough;
         - ``with_branch``: only tasks that have a branch of their own;
         - ``latest``: only the newest N — by when they closed for closed tasks,
           by when they were created otherwise — newest first.
@@ -303,6 +303,7 @@ class TaskRepository:
                 or_(
                     Task.id == any_(_uuids("ids", ids)),
                     Task.upgraded_from_block_id == any_(_uuids("origins", origins)),
+                    Task.source_block_id == any_(_uuids("sources", origins)),
                 )
             )
         if with_branch:
@@ -317,7 +318,12 @@ class TaskRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def list_for_project(
-        self, project_id: uuid.UUID, *, accepted: bool | None = None
+        self,
+        project_id: uuid.UUID,
+        *,
+        accepted: bool | None = None,
+        rooms: Collection[uuid.UUID] | None = None,
+        status: str | None = None,
     ) -> list[Task]:
         """Every thread in the project, oldest first — the whole tree at once.
 
@@ -325,12 +331,23 @@ class TaskRepository:
         holds ~170 rooms: asking each room for its threads is 170 round trips to
         paint one sidebar. Same total order as `list_for_room` so a room's
         threads read identically whichever call produced them.
+
+        `rooms` and `status` narrow it the way a project-wide list does: the
+        rooms the reader sees, and one state. A caller that shows only part of
+        the tree gives both and lets the database drop the rest — the project
+        rail shows 82 open threads out of 1,437 on dev, and it used to assemble
+        all 1,437 and filter them in Python (2026-10-15,
+        `.claude/scripts/sql_census.py`).
         """
         stmt = (
             select(Task)
             .where(Task.project_id == project_id)
             .order_by(Task.created_at, Task.id)
         )
+        if rooms is not None:
+            stmt = stmt.where(Task.room_id.in_(list(rooms)))
+        if status is not None:
+            stmt = stmt.where(Task.status == TaskStatus(status))
         stmt = self._accepted(stmt, accepted)
         return list((await self._session.scalars(stmt)).all())
 
@@ -486,16 +503,16 @@ class TaskRepository:
         11.4ms，而一屏的代价本该跟着「点到我多少」走，不是「我看得见多少」。
 
         `underway`（还开着）也在其中：关了的活落「已结束」那一列，那一列的下一步在
-        平台手上，它永远点不到任何人（`delivery.addressing.address`），而一个项目有
+        平台手上，它永远点不到任何人（`addressing.address`），而一个项目有
         史以来派出去的活十之九都关了（dev 2026-10-12：1437 条里 1355 条），不先按它
         收一次，后面每一步都在为早就结束的事付钱。给的是算好的一个布尔而不是状态
         列本身：状态的词表是这个领域的，路由那边不认它。
 
         收出来的**只是候选**（题问到谁那一笔要多查一步，见调用点），所以只多不少；
-        真正算数的还是 `delivery.addressing` 那份判据。
+        真正算数的还是 `addressing` 那份判据。
 
         ``open_only`` 再收一次：判据只对还开着的活跑，关了的活下一步在平台手上，
-        永远点不到任何人（`delivery.addressing.address`），所以对它们要的只是「这条
+        永远点不到任何人（`addressing.address`），所以对它们要的只是「这条
         对话在哪个频道」那一个映射 —— 那一笔由调用点单独按 id 去认（见
         `awaiting.waiting_items`），不必把整行的钱先付了。dev 2026-10-12：一个项目
         有史以来派出去的活十之九都关了（1437 条里 1355 条），开着的一屏只有一百来

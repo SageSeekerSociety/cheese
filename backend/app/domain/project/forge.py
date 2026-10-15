@@ -24,12 +24,12 @@ from app.core.errors import GatewayUnavailableError
 from app.core.forge_events import project_secret
 from app.core.forge_http import forge_client
 from app.core.sentences import say
-from app.domain.agent.forgejo_tokens import (
+from app.domain.project.forgejo_tokens import (
     ForgejoTokens,
     forge_password,
     seal_forge_password,
 )
-from app.domain.agent.github_app import (
+from app.domain.project.github_app import (
     GitHubAppError,
     GitHubAppTokens,
     github_app_tokens_for_project,

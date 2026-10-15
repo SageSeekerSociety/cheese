@@ -11,7 +11,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.domain.agent.github_app import GitHubAppTokens
+from app.domain.project.github_app import GitHubAppTokens
 from app.domain.review.github_pr import (
     GitHubPRClient,
     GitHubPRError,

@@ -162,6 +162,26 @@ def test_an_edit_someone_asked_for_is_made_and_says_who_asked(client):
     assert latest["requested_by"] == "alice"
 
 
+def test_a_name_written_into_an_edit_is_stored_as_the_persons_token(client):
+    """A passage edit stores a friendly @name as the same ``<@handle>`` token a
+    whole-document write does, so the person reads as a reference to them and
+    not as the letters someone typed."""
+    task, seat, agent = _document(client)
+    _turn_started_by(client, task, seat, "alice")
+
+    response = _edit(
+        client,
+        task,
+        agent,
+        (ALICE_PARAGRAPH, "李老师写的第二段，讲范围，@bob 跟进。"),
+    )
+
+    assert response.status_code == 200, response.text
+    content = _doc(client, task)["content"]
+    assert "<@bob> 跟进" in content
+    assert "@bob 跟进" not in content.replace("<@bob>", "")
+
+
 def test_rewriting_a_persons_text_unasked_is_only_suggested(client):
     task, seat, agent = _document(client)
     _turn_started_by(client, task, seat, "system")

@@ -226,12 +226,15 @@ function isSay(b: Block): boolean {
 // 这一栏原来是把原文摆出来（mono + pre-wrap，Claude Code 会话那种），但一段汇报
 // 落到人眼里就是一堆星号和反引号，粗体、列表、代码块全丢了信息。引用 token 也照
 // 对话栏展开成 chip —— 光看 `<@handle>` `<&path>` 是认不出人的。
+// 发到对话里的那条（kind=message）走过点名，@ 到的人被通知了，画 @chip；只在现场
+// 说的过程话（kind=event）没有通知谁，提到的人只是名字。
 const sayRefs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
+const toldRefs = computed(() => ({ ...sayRefs.value, notified: true }))
 
 // chip 是 v-html 塞进来的，点击只能从容器上委派（同对话栏）。文件在哪一份里找，由
 // 面板按它此刻读的那段对话决定。
 function onSayClick(event: MouseEvent): void {
-  const chip = (event.target as HTMLElement | null)?.closest('.mention') as HTMLElement | null
+  const chip = (event.target as HTMLElement | null)?.closest('.mention, .name-ref') as HTMLElement | null
   if (!chip) return
   if (chip.dataset.handle) emit('mention-click', chip.dataset.handle)
   else if (chip.dataset.topic) emit('open-topic', chip.dataset.topic)
@@ -438,7 +441,7 @@ function isLive(index: number): boolean {
                     :data-site-body="b.id"
                     :source="b.content"
                     as="chat"
-                    :names="sayRefs"
+                    :names="b.kind === 'message' ? toldRefs : sayRefs"
                     @click="onSayClick($event)"
                   />
                 </div>

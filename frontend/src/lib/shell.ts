@@ -4,7 +4,7 @@
  * 一个壳只能**开关、排序、换词**（home / nav / terms），里面没有一行
  * 逻辑。它是一份声明，不是一段配置——这也是「加第五个壳」不用碰任何组件的原因。
  *
- * **权威在服务端。** 壳的真身在 `backend/app/domain/shell/catalog.py`，随
+ * **权威在服务端。** 壳的真身在 `backend/app/domain/shell_catalog.py`，随
  * `ProjectOut.shell` 一起下来；这个目录下没有第二份 catalog，所以服务端加一个壳
  * 不需要前端发版。唯一的例外是 `default-shell.json`：**没有任何项目可读的时候**
  * （首页、空间、还没进项目的桌面 rail）导航仍然要画出来，那时得有个答复，而那个

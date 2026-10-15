@@ -88,12 +88,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
     return room && id && id !== room.id ? { ...room, id } : room
   }
 
-  // Message rendering (markdown / plain / reference chips) lives in
-  // ../lib/renderMessage and happens in the row components; here we only fill the
-  // handle→name and id→title maps they render with, from the roster / topics props.
+  // Chips are drawn in the row components (../lib/renderMessage); here we only fill the
+  // maps they draw with (`refMaps`, below the roster, which decides `reachable`).
   const mentionNames = reactive<Record<string, string>>({})
   const topicTitles = reactive<Record<string, string>>({})
-  const refMaps = { mentionNames, topicTitles }
 
   const AUTHOR = myHandle()
 
@@ -103,6 +101,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
   // 房间名册和项目名册是两份，因为 AI 队友的座位只在前者上。
   const {
+    reachable,
     agentSeat: rosterSeat,
     mentionPool,
     memberByHandle,
@@ -121,6 +120,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       errorMsg.value = message
     },
   })
+  const refMaps = reactive({ mentionNames, topicTitles, reachable })
 
   // 谁在这间房说话、界面上怎么称呼它、@ 渲染成谁的名字 —— 见 useAgentNaming。
   const { agentSeat, agentName, composerHint } = useAgentNaming({

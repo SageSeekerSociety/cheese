@@ -38,17 +38,24 @@ from app.core.errors import (
 )
 from app.core.sentences import exception_text, say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.github_app import (
-    github_app_read_token_for_project,
-)
 from app.domain.agent.profiles import ProfileRegistry
+from app.domain.agent_instance.adapters import (
+    default_teammate,
+    named_teammate,
+    project_team,
+)
 from app.domain.agent_instance.own import may_chat_with
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
+from app.domain.delivery.ledger import deliver, settle, settle_card
 from app.domain.identity.actor import Actor
-from app.domain.membership.services import MemberService
+from app.domain.membership.services import InvitationService, MemberService
 from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
+from app.domain.project.github_app import (
+    github_app_read_token_for_project,
+)
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
     GITHUB_UNBOUND,
@@ -66,18 +73,19 @@ from app.domain.project.schemas import (
 from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.github_pr import parse_github_repo
 from app.domain.room_task import naming
 from app.domain.room_task.services import TaskService
-from app.domain.shell.catalog import Shell
-from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
+from app.domain.shell_catalog import Shell, ShellOut
 from app.domain.task.claims import deadline_for_project
 from app.domain.task.services import claim_backs_project
 from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.usage.adapters import ComputeCredits
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheesex.projects")
@@ -211,7 +219,11 @@ async def create_project(
     # 领了这道题才能用它新建项目：项目带着题目的访问权和资源包，不能凭一个题号拿到。
     if body.external_task_id is not None:
         await _require_claim(db, who, body.external_task_id, body.team_id)
-    project = await ProjectService(db).create(
+    project = await ProjectService(
+        db,
+        default_teammate=default_teammate,
+        compute_credits=ComputeCredits(db),
+    ).create(
         **body.model_dump(exclude={"id"}),
         project_id=body.id,
         owner_handle=who.handle,
@@ -487,11 +499,9 @@ async def list_project_tasks(
             ),
             if_none_match,
         )
-    tasks = [
-        t
-        for t in await TaskService(db).list_in_project(project_id, accepted=accepted)
-        if t.room_id in seen and (status is None or t.status == status)
-    ]
+    tasks = await TaskService(db).list_in_project(
+        project_id, accepted=accepted, rooms=seen, status=status
+    )
     items = await project_task_rows(db, chat, actor.handle or "", tasks)
     return conditional_json(ok(page(items, len(items))), if_none_match)
 
@@ -604,6 +614,7 @@ async def get_private_chat(
         user_handle=user_handle,
         peer_handle=peer_handle,
         agent_handle=agent_handle,
+        named_teammate=named_teammate,
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
@@ -762,9 +773,23 @@ async def archive_project(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """归档项目: hide it from everyone's lists and stop everything it runs.
-    Nothing is deleted; ``/unarchive`` puts it back."""
+    Nothing is deleted; ``/unarchive`` puts it back.
+
+    The project's pending invitations are withdrawn here, not inside
+    ``ProjectService.archive``: settling the invitee's notification lands on the
+    delivery ledger, which sits above both ``project`` and ``membership``. An
+    invitation to a project nobody can enter would sit in the invitee's inbox
+    with no answer that means anything.
+    """
     owner = await _project_owner(project_id, db, resolver)
-    project = await ProjectService(db).archive(project_id, by=owner.handle)
+    project = await ProjectService(
+        db,
+        settle_card=settle_card,
+        cards=close_cards_for_archived_topic,
+    ).archive(project_id, by=owner.handle)
+    await InvitationService(
+        db, deliver=deliver, settle=settle, team=project_team
+    ).revoke_all_pending(project_id)
     await db.commit()
     return ok(await _project_payload(db, project))
 
@@ -775,7 +800,9 @@ async def unarchive_project(
 ) -> dict:
     """取消归档: the project and the rooms archived with it come back."""
     owner = await _project_owner(project_id, db, resolver)
-    project = await ProjectService(db).unarchive(project_id, by=owner.handle)
+    project = await ProjectService(db, sessions=AgentSessionService(db)).unarchive(
+        project_id, by=owner.handle
+    )
     await db.commit()
     return ok(await _project_payload(db, project))
 
@@ -917,7 +944,6 @@ def _branch_protection_payload(bp: BranchProtection) -> dict:
         ),
         "approvals_required": bp.approvals_required,
         "default_reviewer": bp.default_reviewer,
-        "dispatch_seat": bp.dispatch_seat,
     }
 
 
@@ -974,7 +1000,6 @@ _BRANCH_PROTECTION_KEYS = (
     "auto_merge_allowed",
     "override_handles",
     "default_reviewer",
-    "dispatch_seat",
 )
 
 

@@ -370,8 +370,10 @@ export class AccountService {
     this.accessToken = accessToken
     this.user = user
     this.loggedIn = true
-    // 初始化完成后更新用户信息
-    await this.updateUserInfo()
+    // 本地那份用户记录已经够做路由决定，恢复到这里就算完成；最新的一份在后台取，
+    // 不挡第一页（冷打开时每多等一个往返，骨架屏就多挂一个往返）。取回来跟着变的
+    // 东西各自盯着它：缺邮箱的拦截（router/emailRequired.ts）、界面语言、时区。
+    void this.updateUserInfo()
   }
 
   /**

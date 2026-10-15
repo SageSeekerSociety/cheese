@@ -88,9 +88,45 @@ def test_upload_then_raw_roundtrip(client):
     assert raw.headers["content-type"].startswith("image/png")
     assert raw.content == PNG_1PX
     # 同一个地址下的字节会被替换（替换资料库文件），所以浏览器不许把它留一小时：
-    # 照资料库自己的字节端点的规矩。剪贴板贴进来的那一份相反，它钉在一次粘贴上、
-    # 字节不再变，留一小时是有意的（test_room_file_helpers_move.py）。
+    # 照资料库自己的字节端点的规矩。另外两种地址的规矩见下面那条测试。
     assert raw.headers["cache-control"] == "private, no-cache"
+
+
+def test_a_room_file_that_can_change_is_never_left_to_the_browsers_cache(client):
+    """房间里同一份文件重做过之后，那个地址下的字节变了，浏览器不许自己答「没变」。
+
+    芝士把一版重做完再摆出来（`POST /topics/{id}/shown`），路径还是那一个。留下
+    一小时的话，新的一版摆出来之后整整一小时里，点开画的还是旧的——2026-10-15
+    报的「同名文件显示不了新改动」就是这个。贴进来的那一份相反：`uploads/<随机串>/
+    <名字>` 里的随机串把它钉死在一次粘贴上，字节写完不会再变，留一小时是有意的。
+    """
+    _, topic_id = _create_project_and_topic(client)
+
+    for png in (PNG_1PX, PNG_1PX + b"\x00"):
+        shown = client.post(
+            f"/topics/{topic_id}/shown",
+            json={"path": "预览图.png", "content_b64": base64.b64encode(png).decode()},
+        )
+        assert shown.status_code == 200, shown.text
+
+    raw = client.get(
+        f"/topics/{topic_id}/attachments/raw", params={"path": "预览图.png"}
+    )
+    assert raw.status_code == 200, raw.text
+    assert raw.content == PNG_1PX + b"\x00"
+    assert raw.headers["cache-control"] == "private, no-cache"
+
+    pasted = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("shot.png", PNG_1PX, "image/png")},
+        data={"origin": "clipboard"},
+    )
+    assert pasted.status_code == 200, pasted.text
+    path = pasted.json()["data"]["path"]
+    assert path.startswith("uploads/")
+    kept = client.get(f"/topics/{topic_id}/attachments/raw", params={"path": path})
+    assert kept.status_code == 200, kept.text
+    assert kept.headers["cache-control"] == "private, max-age=3600"
 
 
 def test_video_can_be_referenced_and_seeked_without_opening_active_files(client):

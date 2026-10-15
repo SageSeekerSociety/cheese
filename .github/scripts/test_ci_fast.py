@@ -32,9 +32,13 @@ ALL_HOOKS = [
     "ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork",
     "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet",
     "repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references",
-    "pyright", "frontend-typecheck",
+    "pyright", "frontend-typecheck", "openapi-document",
 ]
 BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
+# Selected by the pre-push entry point ALONE, on top of FAST_HOOKS — a plain
+# `task ci:fast` run and Required CI's draft job do not run these. Kept in step
+# with `PRE_PUSH_HOOKS` in ci-fast.py.
+PRE_PUSH_HOOKS = {"openapi-document"}
 FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"}
 GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
 # Hooks that judge against the merge base, so they are the ones that must report
@@ -441,6 +445,33 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 2, proc.stdout)
         self.assertIn("eslint", proc.stdout)
         self.assertEqual(self.report()["status"], "unknown")
+
+    # --- the checks the entry point adds on top of the tier: a Required CI
+    # --- step a first push can be the first to break, which a work machine can
+    # --- still run. Added to the flag's selection only — `task ci:fast` and
+    # --- CI's draft tier read FAST_HOOKS, and neither should pay for it
+    def test_pre_push_adds_the_backend_checks_the_tier_does_not(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(PRE_PUSH_HOOKS <= self.ran_hooks())
+
+    def test_without_pre_push_the_added_checks_do_not_run(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertFalse(PRE_PUSH_HOOKS & self.ran_hooks())
+
+    # --- and they follow the scope like every other hook: a frontend-only push
+    # --- does not build the backend's API document
+    def test_pre_push_added_checks_follow_the_backend_scope(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertFalse(PRE_PUSH_HOOKS & self.ran_hooks())
 
     # --- a plain run is untouched: the node hooks are selected and executed
     # --- exactly as before (the narrowing belongs to the flag, not the tool)

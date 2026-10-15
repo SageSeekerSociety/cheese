@@ -69,7 +69,19 @@ ID, so replacing a backend waiter neither cancels the device call nor prevents a
 replacement backend from collecting its result.
 
 On boxes with `cheese-api-front`, the deploy copies the versioned nginx config,
-checks it, and gracefully reloads nginx before replacing the backend. The exact
+checks it, and gracefully reloads nginx before replacing the backend, but only
+when what api-front would load differs from what it last loaded: the deploy
+keeps a digest of its config files, comments and indentation aside, in
+`.api-front-loaded` in `ACTIVE_BACKEND_DIR`, and a release that changes none of
+them, or only their comments, leaves api-front alone. The record counts only
+while the files on disk still match it: after anything else wrote them (a
+release of an older commit, which reloads by its own rule, or `tls-renew.sh`)
+the next deploy reloads. Deleting the file makes the next deploy take the
+files on disk as what api-front runs; do that only after reloading api-front
+by hand. A reload's old workers
+keep the sockets they carry for up to 24 hours (`worker_shutdown_timeout` in
+`deploy/llm-tunnel/nginx.conf`, the longest idle timeout any of its routes
+grants), so a config change no longer drops every device link and tunnel. The exact
 `/connector/agent` and live-terminal paths go to the owner's loopback port;
 other API paths continue through the active backend switch. Updating the owner
 itself is a separate release operation because it closes the connections it
@@ -235,7 +247,11 @@ with `ACTIVE_FRONTEND_DIR` the frontend has two as well, `frontend` and
 The deploy starts the idle slot of each on the new image, waits for its health
 check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
-`collab` is replaced at once, while the old frontend still runs. After a
+`collab` is replaced at once, while the old frontend still runs, if its image
+content changed: collab, browser-render and office-render are named by digest,
+and keep the running one's when the pulled image has the same layers and
+runtime config (`pin_by_content` in `deploy/deploy-docker.sh`), so compose
+leaves an unchanged container alone. After a
 31-second drain (`DEPLOY_DRAIN_SECONDS`) the old frontend's nginx gets up to 120
 seconds to finish its requests. The old backend is stopped last, once the
 release has passed its health check, because it may still be relaying model

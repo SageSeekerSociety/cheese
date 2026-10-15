@@ -23,8 +23,8 @@ import httpx
 import pytest
 
 from app.core.config import settings
-from app.domain.agent.github_app import GitHubAppError
 from app.domain.project import forge as project_forge
+from app.domain.project.github_app import GitHubAppError
 from app.domain.project.models import Project, ProjectGitInstallation
 from app.domain.ratchet import ingest as ratchet_ingest
 from app.domain.ratchet.artifacts import Artifact, RatchetGitHubError

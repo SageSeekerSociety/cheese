@@ -240,6 +240,32 @@ def test_how_a_task_ended_is_said_where_it_came_from(client):
     from tests.integration.test_tasks import _room
 
     _project, room = _room(client)
+    said = post_message(client, room, "alice", {"content": "报名页有两处要改"})
+    thread = client.post(
+        f"/blocks/{said['id']}/thread", headers=session_auth_headers("alice")
+    ).json()["data"]["id"]
+    reply = post_message(client, thread, "alice", {"content": "报名表单太长了"})
+    task = client.post(
+        f"/blocks/{reply['id']}/upgrade", headers=session_auth_headers("alice")
+    ).json()["data"]
+
+    closed = client.post(
+        f"/topics/{task['id']}/close",
+        json={"conclusion": "必填项压到 4 项"},
+        headers=session_auth_headers("alice"),
+    )
+    assert closed.status_code == 200, closed.text
+
+    replies = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+    assert any("必填项压到 4 项" in b["content"] for b in replies)
+
+
+def test_a_thread_turned_into_the_task_says_how_it_ended_once(client):
+    """The discussion it came from is its own conversation: the ending is said
+    there once, not repeated as a reply from the discussion's side."""
+    from tests.integration.test_tasks import _room
+
+    _project, room = _room(client)
     said = post_message(client, room, "alice", {"content": "报名表单太长了"})
     task = client.post(
         f"/blocks/{said['id']}/upgrade", headers=session_auth_headers("alice")
@@ -252,10 +278,8 @@ def test_how_a_task_ended_is_said_where_it_came_from(client):
     )
     assert closed.status_code == 200, closed.text
 
-    threads = client.get(f"/topics/{room}/threads").json()["data"]
-    [thread] = [t for t in threads if t["root_block_id"] == said["id"]]
-    replies = client.get(f"/topics/{thread['id']}/blocks").json()["data"]["data"]
-    assert any("必填项压到 4 项" in b["content"] for b in replies)
+    lines = client.get(f"/topics/{task['id']}/blocks").json()["data"]["data"]
+    assert sum("必填项压到 4 项" in b["content"] for b in lines) == 1
 
 
 def test_a_task_from_something_that_is_not_a_message_still_closes(client):

@@ -32,6 +32,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.agent_instance.adapters import default_teammate
 from app.domain.notification.preferences import local_time
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
@@ -54,6 +55,7 @@ from app.domain.task.services import (
 )
 from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
+from app.domain.usage.adapters import ComputeCredits
 from app.domain.user.repositories import (
     UserRepository,
 )
@@ -116,7 +118,10 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
     owner = await UserRepository(session=db).get_by_id(owner_id)
     if owner is None:
         raise NotFoundError("Participant user not found")
-    project = await ProjectService(db).for_participation(
+    service = ProjectService(
+        db, default_teammate=default_teammate, compute_credits=ComputeCredits(db)
+    )
+    project = await service.for_participation(
         task=task, membership=membership, owner_handle=owner.username
     )
     return ok(
@@ -395,7 +400,9 @@ async def patch_task_participant(
         phone=payload.phone,
     )
 
-    await ProjectService(db).activate_participation(task=task, membership=updated)
+    await ProjectService(
+        db, default_teammate=default_teammate, compute_credits=ComputeCredits(db)
+    ).activate_participation(task=task, membership=updated)
     # Commit before answering: the participant told they are approved can reload
     # the task on their next request and must see it as theirs (download and
     # submit). Same reason as the commit in ``create_task``.

@@ -14,10 +14,9 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
-from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification import maintenance, push_delivery
 from app.domain.notification.handlers import NotificationDelivery
-from app.domain.notification.models import NotificationType
+from app.domain.notification.models import ChannelDelivery, NotificationType
 from app.domain.notification.outbox import ChannelIntentHandler, drain_channel
 from app.domain.notification.preferences import EmailMode, default_preferences
 from app.domain.notification.preferences_models import PreferencesRepository

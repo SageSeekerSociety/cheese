@@ -12,6 +12,12 @@ This bundle remeasures the existing CI artifact pair after the first run's raw f
 - `params.json` identifies newly seeded demo data. It contains no login/session credentials.
 - `harness/` is a frozen copy of the existing 19-page selectors and timing code. Its hashes are recorded in the results.
 
+## Interpretation after independent review
+
+The saved pair is not a clean before/after isolation of the Vuetify change. Both refs descend from `aca6674e58bdbbd8e05c1ab670dea5721a831d39`, but only base contains navigation fix #3720 (`e1dc2504`). The reported deltas describe these exact artifacts and cannot be attributed to the chunk change alone. Its numerical confounding effect has not been measured; the formal warm paths are identical.
+
+The head artifact still modulepreloads `vuetify-components-BqPsGN9T.js`, and `main-BCPFBE01.js` statically imports it. Modulepreloaded JavaScript is 1,663,233 bytes in base and 1,668,029 bytes in head. The components were not deferred beyond first paint. The ineffective grouping is withdrawn from the branch's current Vite configuration; this does not change either saved artifact or any recorded sample. This evidence does not establish a stable head performance benefit.
+
 ## Measurement
 
 Playwright 1.64.0; Chromium headless shell build 1248, Chrome 156.0.8078.4. Viewport 1440×900; locale en-US; service workers blocked; no explicit network or CPU throttling. The host exposed four CPUs with affinity `[11, 25, 48, 95]`.
@@ -22,7 +28,7 @@ For each page, eight cold pairs and four walk pairs alternate base/head. `(pair_
 - Walk: load the logged-in home, wait for networkidle plus 300 ms, then push the route with the real Vue router. Warm-up HTTP failures and script errors are stored separately.
 - `ready_ms`: unchanged content selector/text/skeleton criterion, stamped on an animation frame.
 - `long_task_ms`: original accumulated >50 ms main-thread task definition, read just after ready. Raw task entries and collection time are retained to inspect the boundary. The old live observer is disconnected before a walk reset so tasks cannot be counted twice.
-- `api_serial_ms`: sum of nonoverlapping API bursts after the first. Includes `/api/` calls and legacy XMLHttpRequest calls. Later bursts may be intentional background reads; the metric is not proven removable latency.
+- `api_serial_ms`: sum of nonoverlapping API bursts after the first. Includes `/api/` calls and legacy XMLHttpRequest calls, including responses with HTTP failures. Later bursts may be intentional background reads; the metric is not proven removable latency. The run recorded avatar 404s, warmup 500s, and two measured-phase `work-summary` 500s separately in `summary.json`.
 - `last_response_ms` includes all completed resource entries, not just API responses. It cannot by itself establish API causality.
 
 The local services share PostgreSQL 17.11.0 and fakeredis 2.39.0. Fakeredis is not CI's Valkey. The proxy serves base on 3000 and head on 3001, forwards both API URL forms to port 8081 and `/collab` WebSockets to 8902. Its static responses use `Cache-Control: no-cache` for both variants.
@@ -36,7 +42,7 @@ Fonts were extracted locally (DejaVu and Liberation). English text renders; Chin
 - `artifact_manifest.py`: BUILD_REF validation and artifact hashing; run with `python -I`.
 - `backup_watch.py`: immutable checkpoints and one backup attempt per batch. Stops if backup fails; no automatic failure-retry loop.
 - `results.json`: all formal samples in execution order. `smoke.json` is a separate preflight and is not included in formal results.
-- `checkpoint-*.json`: recoverable interim samples. They are duplicate evidence, not additional observations.
+- `checkpoint-*.json`: recoverable interim snapshots, not additional observations. Failure lists remain live after the timing window, through screenshot/context close, and a later write can update an earlier sample. In checkpoint 230, sample index 229 has no HTTP failure yet; the final sample includes two late avatar 404s. Timing values are unchanged. Keep both snapshots as recorded; their failure lists are not guaranteed identical.
 - `results-*.png`: representative screenshots taken after, not inside, each timing window.
 - `summarize.py`: validates complete balanced pairs, then writes per-page base/head medians and paired deltas to `summary.json` and `summary.md`.
 

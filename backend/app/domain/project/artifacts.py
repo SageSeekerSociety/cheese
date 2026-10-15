@@ -70,8 +70,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.library import service as library
 from app.domain.project.models import ProjectArtifact
+from app.domain.project.ports import FileStore
 from app.domain.review.models import AcceptCard, AcceptStatus
 
 #: 频道表里这里要的三列，按列名读：清单只问一个房间是不是私密频道，为这一句去依
@@ -478,10 +478,18 @@ class ArtifactVersion:
 
 
 def version_payload(
-    project_id: uuid.UUID, v: ArtifactVersion, rooms: dict[uuid.UUID, dict]
+    project_id: uuid.UUID,
+    v: ArtifactVersion,
+    rooms: dict[uuid.UUID, dict],
+    *,
+    file_store: FileStore,
 ) -> dict:
     """一版在接口上的样子。房间只在 `rooms` 里有它时才写名字：调用方只给
-    读者读得了的那些房间。"""
+    读者读得了的那些房间。
+
+    ``file_store`` 是递进来的：那一版留存下来的字节有多大，问的是落字节的那一层
+    （`ports.py`）。交付物落地之前递的那几张卡没有留存过字节，问出来是 ``None``，
+    和「这一版没有可下载的东西」本来就是同一件事。"""
     return {
         "number": v.number,
         "card_id": str(v.card_id),
@@ -492,7 +500,7 @@ def version_payload(
         "filename": v.filename,
         "url": v.url,
         "bytes": (
-            library.artifact_snapshot_size(project_id, v.card_id, v.filename)
+            file_store.artifact_snapshot_size(project_id, v.card_id, v.filename)
             if v.kind == "file" and v.filename
             else None
         ),

@@ -41,6 +41,7 @@ from app.domain.machine.sandbox_wait import SANDBOX_LOST
 from app.domain.machine.services import HostPool
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
 from app.domain.run_record.models import RunRecord
@@ -345,6 +346,7 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
     recorded the home on that host when it took its inventory — the rooms
     PR #2749 left waiting on "device … is offline". Returns what one sweep of
     room cleanups answered."""
+    from app.domain.delivery.ledger import settle_card
     from app.domain.room_cleanup import retire
     from app.domain.topic.services import TopicService
 
@@ -352,7 +354,12 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
 
     async def archive():
         async with case.client.test_request_factory() as db:
-            await TopicService(db).archive(seat.room, by="alice")
+            await TopicService(db).archive(
+                seat.room,
+                by="alice",
+                settle_card=settle_card,
+                cards=close_cards_for_archived_topic,
+            )
             await db.commit()
 
     run(case, archive)

@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent_instance.services import type_of_seat
 from app.domain.remote_mcp import declared
 from app.domain.remote_mcp.models import ProjectMcpConnection, ProjectMcpSecret
 from tests.integration.conftest import (
@@ -425,7 +426,9 @@ def _session_servers(client, pid) -> set[str]:
 
     async def ask():
         async with client.test_request_factory() as session:
-            found = await service.session_servers(session, pid, None)
+            found = await service.session_servers(
+                session, pid, None, type_of_seat=type_of_seat
+            )
             return {*found.usable, *found.unusable}
 
     return client.portal.call(ask)

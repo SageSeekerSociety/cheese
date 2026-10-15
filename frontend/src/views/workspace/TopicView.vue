@@ -16,10 +16,11 @@ import { useChannelThreads } from '@/composables/useChannelThreads'
 import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
+import { useScreenHeader } from '@/composables/useScreenHeader'
 import { useTopicPanel } from '@/composables/useTopicPanel'
 
 import { getTask } from '@/api/tasks'
-import { newThread, openThread } from '@/api/threads'
+import { newThread } from '@/api/threads'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
 import NewThreadDialog from '@/components/channel/NewThreadDialog.vue'
@@ -46,6 +47,7 @@ import { roomMembersQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
+import { useConversationOpening } from '@/views/workspace/useConversationOpening'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
 import { useTaskPage } from '@/views/workspace/useTaskPage'
 import { useTopicPanes } from '@/views/workspace/useTopicPanes'
@@ -105,10 +107,6 @@ const namedBlock = computed(() => {
 })
 const focusBlock = computed(() => (props.threadId ? null : namedBlock.value))
 const threadFocusBlock = computed(() => (props.threadId ? namedBlock.value : null))
-// 任务有自己的页面：点开一个任务就去那里，浏览器的返回退回房间。
-function onOpenCard(taskId: string) {
-  void router.push({ name: 'workspace-task', params: { projectId: props.projectId, topicId: props.topicId, taskId } })
-}
 // 已经写进提交历史的旧链接（`?card=<任务>`）：那一层下钻已经没有了，任务有自己
 // 的页面，照着链接来的人直接送过去。
 watch(
@@ -156,21 +154,11 @@ function jumpTo(blockId: string) {
 // ---- 支线 ----
 // 主线上一条消息的支线：有就打开，没有就先开一条。概览里「支线」那一格读同一份清单。
 const channelThreads = useChannelThreads(() => (props.taskId ? null : props.topicId))
-function showThread(threadId: string) {
-  channelThreads.markSeen(threadId)
-  void router.push({
-    name: 'workspace-thread',
-    params: { projectId: props.projectId, topicId: props.topicId, threadId },
-  })
-}
-async function onOpenThread(block: Block) {
-  if (block.thread?.id) return showThread(block.thread.id)
-  try {
-    showThread((await openThread(block.id)).id)
-  } catch (e) {
-    store.reportError(e, t('work.room.thread.openFailed'))
-  }
-}
+const { showThread, onOpenThread, openTaskPage, onOpenCard, upgradeMessage } = useConversationOpening({
+  router,
+  place: () => props,
+  markSeen: channelThreads.markSeen,
+})
 
 // 在频道下手动开一条支线（清单第 4 条）：填个标题就开，不必先有话。开了之后直接落进
 // 那条支线——建出来就是为了马上在里面说话，停在原地等于让人再点一次。
@@ -260,32 +248,18 @@ const {
   loadError: taskLoadError,
   isOwner: taskOwner,
   isOpen: taskOpen,
-  people: taskPeople,
-  machine: taskMachine,
-  machineError: taskMachineError,
-  starting: taskStarting,
-  startError: taskStartError,
-  actionError: taskActionError,
-  comparing: taskComparing,
-  comparison: taskComparison,
-  compareError: taskCompareError,
 } = taskPage
-// 任务里只有负责人能说话，关了就谁都不能说了：输入框的位置换成这一句。
+// 任务里项目的人都能说话，关了也能接着说：AI 队友只回答，不再改动项目。
 const composerClosed = computed(() => {
-  const task = taskPage.task.value
-  if (!props.taskId) {
-    // 频道的主线：归档了只能看；没加入的人在这里只读，加入后才能说话（支线里照样能回）。
-    const topic = selectedTopic.value
-    if (topic?.status === 'archived') return t('work.channel.archivedNotice')
-    return topic?.joined === false ? t('work.channel.notJoined') : null
-  }
-  if (!task) return null
-  if (!taskPage.isOpen.value) return t('work.task.closedNotice')
-  return taskPage.takesPart.value ? null : t('work.task.ownerOnlyNotice', { name: store.agentName })
+  if (props.taskId) return null
+  // 频道的主线：归档了只能看；没加入的人在这里只读，加入后才能说话（支线里照样能回）。
+  const topic = selectedTopic.value
+  if (topic?.status === 'archived') return t('work.channel.archivedNotice')
+  return topic?.joined === false ? t('work.channel.notJoined') : null
 })
 
 // 提问只在这件事还开着时等回答：任务关了、频道归档了，题跟着结束（待办里同样不再
-// 列它）。只是「我不能说话」（任务只有负责人能说）不算，题还在等别人。
+// 列它）。
 const askClosed = computed(() =>
   props.taskId ? !!taskPage.task.value && !taskPage.isOpen.value : selectedTopic.value?.status === 'archived'
 )
@@ -294,9 +268,11 @@ const askClosed = computed(() =>
 // 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
 const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
 watch(
-  () => [selectedTopic.value, taskPage.task.value] as const,
-  ([topic, task]) => {
-    if (props.threadId) setDynamicTitle(t('work.room.thread.title'), 'workspace-thread')
+  () => [selectedTopic.value, taskPage.task.value, props.threadId] as const,
+  ([topic, task, threadId]) => {
+    // 频道和它的支线是同一个组件：从频道进支线时它不重挂，所以支线这一条要跟着地址走。
+    if (threadId) setDynamicTitle(t('work.room.thread.title'), 'workspace-thread')
+    else clearDynamicTitle('workspace-thread')
     if (props.taskId && task) setDynamicTitle(taskTitle(task), 'workspace-topic')
     else if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
     else clearDynamicTitle('workspace-topic')
@@ -305,6 +281,44 @@ watch(
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
 onUnmounted(() => clearDynamicTitle('workspace-thread'))
+
+// 话题头部（任务页上是任务那一条），横跨对话和工作面板：桌面画在页面里，手机是顶栏那一行。
+const taskHeaderBinding = computed(() => {
+  const room = selectedTopic.value
+  if (!room) return null
+  return {
+    ...taskPage.headerProps.value,
+    room,
+    memberNames: memberNames.value,
+    agentName: store.agentName,
+    agents: roomAgents.value,
+    connected: roomConnected.value,
+    panelOpen: panelOpen.value,
+    'onOpen-room': backToRoom,
+    'onToggle-panel': togglePanel,
+  }
+})
+const topicHeaderBinding = computed(() => {
+  const topic = selectedTopic.value
+  if (!topic) return null
+  return {
+    topic,
+    members: store.members,
+    me: AUTHOR,
+    connected: roomConnected.value,
+    panelOpen: panelOpen.value,
+    'onToggle-panel': togglePanel,
+    'onOpen-topic': openTopic,
+    onRename: (title: string) => store.renameTopic(props.topicId, title),
+  }
+})
+useScreenHeader(() => {
+  if (mdAndUp.value || props.threadId) return null
+  const [component, binding] = props.taskId
+    ? [TaskHeader, taskHeaderBinding.value]
+    : [TopicHeader, topicHeaderBinding.value]
+  return binding ? { content: { component, props: binding } } : null
+})
 /** 支线清单里最后一条回复的时间：今天的写钟点，更早的写日期。 */
 function threadTime(iso: string): string {
   return dayStamp(new Date(iso).getTime())
@@ -398,7 +412,7 @@ const chatEvents = {
   'mention-click': handleMentionClick,
   'open-file': (path: string) => panelRef.value?.openFile?.(path),
   'open-resource': handleOpenResource,
-  'upgrade-message': handleUpgradeMessage,
+  'upgrade-message': upgradeMessage,
   'open-thread': onOpenThread,
   'open-topic': openTopic,
   'open-card': onOpenCard,
@@ -533,12 +547,6 @@ function handleMentionClick(handle: string) {
   void router.push(userRefRoute(handle, props.projectId))
 }
 
-// 转为任务 from a message bubble: the message becomes a task in this channel.
-async function handleUpgradeMessage(messageId: string) {
-  const taskId = await store.upgradeMessage(messageId)
-  if (taskId) onOpenCard(taskId)
-}
-
 // 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
 // 所以在归零之前抓一次，交给对话栏去画那条线。
 const unreadOnOpen = store.unreadMap[props.topicId]?.messages ?? 0
@@ -615,45 +623,13 @@ void openPlace()
       </h1>
       <!-- 一条话题头部，横跨对话和工作面板。任务页上是任务的那一条：同一个高度，
            写着它在哪个房间、谁负责。 -->
-      <TaskHeader
-        v-if="taskId"
-        :room="selectedTopic"
-        :task="currentTask"
-        :member-names="memberNames"
-        :agent-name="store.agentName"
-        :people="taskPeople"
-        :agents="roomAgents"
-        :machine="taskMachine"
-        :machine-error="taskMachineError"
-        :starting="taskStarting"
-        :start-error="taskStartError"
-        :action-error="taskActionError"
-        :connected="roomConnected"
-        :start="taskPage.start"
-        :close="taskPage.close"
-        :reopen="taskPage.reopen"
-        :hand-over="taskPage.handOver"
-        :rename="taskPage.rename"
-        :set-collaborators="taskPage.setCollaborators"
-        :set-agent="taskPage.setAgent"
-        :load-machine="taskPage.loadMachine"
-        :set-machine="taskPage.setMachine"
-        :set-machine-default="taskPage.setMachineDefault"
-        :panel-open="panelOpen"
-        @open-room="backToRoom"
-        @toggle-panel="togglePanel"
-      />
-      <TopicHeader
-        v-else
-        :topic="selectedTopic"
-        :members="store.members"
-        :me="AUTHOR"
-        :connected="roomConnected"
-        :panel-open="panelOpen"
-        @toggle-panel="togglePanel"
-        @open-topic="openTopic"
-        @rename="(title) => store.renameTopic(topicId, title)"
-      />
+      <!-- 手机上这一行是顶栏的内容（script 里的 useScreenHeader；支线页见 ThreadPane）。 -->
+      <template v-if="mdAndUp">
+        <template v-if="taskId">
+          <TaskHeader v-if="taskHeaderBinding" v-bind="taskHeaderBinding" />
+        </template>
+        <TopicHeader v-else-if="topicHeaderBinding" v-bind="topicHeaderBinding" />
+      </template>
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
          什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
@@ -675,9 +651,11 @@ void openPlace()
         :members="store.members"
         :topic-list="store.topics"
         :member-names="memberNames"
+        @title="(title: string) => setDynamicTitle(title, 'workspace-thread')"
         @close="backToRoom"
         @open-task="onOpenCard"
-        @to-task="handleUpgradeMessage"
+        @open-page="openTaskPage"
+        @to-task="upgradeMessage"
         @open-file="(path: string) => panelRef?.openFile?.(path)"
         @open-topic="openTopic"
         @mention-click="handleMentionClick"
@@ -705,6 +683,7 @@ void openPlace()
             :focus-block="focusBlock"
             :task-id="taskId ?? null"
             :task-agent-handle="currentTask?.agent_handle ?? null"
+            :member-names="memberNames"
             :composer-closed="composerClosed"
             :ask-closed="askClosed"
             :accept-elsewhere="focusMode"
@@ -756,7 +735,8 @@ void openPlace()
             :member-names="memberNames"
             @close="backToRoom"
             @open-task="onOpenCard"
-            @to-task="handleUpgradeMessage"
+            @open-page="openTaskPage"
+            @to-task="upgradeMessage"
             @open-file="(path: string) => panelRef?.openFile?.(path)"
             @open-topic="openTopic"
             @mention-click="handleMentionClick"
@@ -813,15 +793,11 @@ void openPlace()
                 :agent-name="store.agentName"
                 :agent-handle="store.agentHandle"
                 :members="store.members"
-                :comparing="taskComparing"
-                :comparison="taskComparison"
-                :compare-error="taskCompareError"
                 :checklist="taskOverview.checklist.value"
                 :related="taskOverview.related.value"
                 :can-retry="taskPage.takesPart.value"
                 :retrying="taskOverview.retrying.value"
                 :retry-error="taskOverview.retryError.value"
-                @toggle-compare="taskPage.toggleCompare"
                 @open-topic="openTopic"
                 @mention-click="handleMentionClick"
                 @retry-opening="taskOverview.retryOpening"
@@ -878,6 +854,7 @@ void openPlace()
                 :focus-block="focusBlock"
                 :task-id="taskId ?? null"
                 :task-agent-handle="currentTask?.agent_handle ?? null"
+                :member-names="memberNames"
                 :composer-closed="composerClosed"
                 :ask-closed="askClosed"
                 accept-review-button

@@ -120,6 +120,21 @@ async def a_team(session, owner_handle: str | None = None) -> int:
     return team.id
 
 
+def project_service(session):
+    """A ``ProjectService`` with its teammate port wired, for tests that build a
+    project in their own session.
+
+    Every project is born with its 芝士 (invariant I9b), and the seeding lives in
+    ``agent_instance``, out of ``project``'s reach — so whoever builds one hands
+    the port in (``app/domain/project/ports.py``). The route that creates projects
+    does the same; tests that go through HTTP need nothing here.
+    """
+    from app.domain.agent_instance.adapters import default_teammate
+    from app.domain.project.services import ProjectService
+
+    return ProjectService(session, default_teammate=default_teammate)
+
+
 async def registered(session, handle: str) -> int:
     """Make ``handle`` a registered person on ``session`` (get-or-create), the
     way :func:`tests.conftest.seed_user` does; return the user id.
@@ -382,12 +397,10 @@ def open_task(
     owner: str = "alice",
     contributors: list[str] | None = None,
 ) -> dict:
-    """A task in ``room_id``, made by ``owner``: whoever makes one owns it, and
-    making it starts it — its agent may work the project from now on, and
-    ``owner`` reviews what it delivers. The one kind of task nobody has started
-    yet is an idea an AI teammate raised on its own: :func:`teammate_task`.
-    ``contributors`` are brought in to work it beside the owner (they write its
-    document too)."""
+    """A task in ``room_id``, made by ``owner``: whoever makes one owns it, its
+    agent may work the project from the start, and ``owner`` reviews what it
+    delivers. ``contributors`` are brought in to work it beside the owner (what
+    they say is the agent's to act on too, and they write its document)."""
     r = client.post(
         f"/topics/{room_id}/tasks",
         json={"title": title},
@@ -420,15 +433,10 @@ def teammate_task(
     *,
     owner: str = "alice",
     summary: str = "把它记下来，回头做",
-    start: bool = False,
     said_by: str = "alice",
 ) -> dict:
-    """A task the room's AI teammate opened from a 支线 (``cheese_task``).
-
-    With ``start=False`` this is the one task that waits for its owner: made on
-    the teammate's own idea, nobody asked for it, so it stays in 讨论中 until
-    ``owner`` starts it. ``start=True`` is someone having asked for it — that
-    one starts where it stands, like a task a person makes."""
+    """A task the room's AI teammate made from a 支线 on someone's word
+    (``cheese_task``): a new task under the message the 支线 hangs under."""
     project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     thread = in_thread(client, room_id, said_by)
     token = mint_scoped_token(
@@ -446,7 +454,6 @@ def teammate_task(
                 "title": title,
                 "summary": summary,
                 "owner_handle": owner,
-                "start": start,
             },
             headers={"X-Cheese-Token": token},
         )
@@ -1107,3 +1114,12 @@ async def put_on_plan(session, team_id: int, key: str) -> None:
     from app.domain.team.models import Team
 
     await session.execute(update(Team).where(Team.id == team_id).values(plan_key=key))
+
+
+async def approve_overseas(session, team_id: int) -> None:
+    """Approve a team for overseas models: a test running the Claude
+    subscription models needs it whatever the team's plan."""
+    from app.domain.usage.models import OverseasModelApproval
+
+    session.add(OverseasModelApproval(team_id=team_id, approved_by="test-admin"))
+    await session.flush()

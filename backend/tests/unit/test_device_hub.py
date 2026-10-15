@@ -135,7 +135,7 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
             )
             recovered.extend(inventory)
 
-    async def last_step_of_recovery(sessions, *, device_id):
+    async def last_step_of_recovery(sessions, *, device_id, **_kwargs):
         await hub._device(device_id).send({"t": "recovery.finished"})
 
     monkeypatch.setattr(connector, "device_hub", hub)

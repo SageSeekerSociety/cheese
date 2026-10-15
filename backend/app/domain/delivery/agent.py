@@ -19,8 +19,9 @@ from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
-from app.domain.delivery.ledger import DeliveryEvent, dedup_key
+from app.domain.delivery.ledger import dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
@@ -84,6 +85,18 @@ async def instance_for_seat(session, project_id, seat):
     )
 
 
+async def active_seat_instance_id(session, project_id, seat) -> uuid.UUID | None:
+    """这个项目里 ``seat`` 那个席位的实例 id；这个项目里没有它、或者它不在了，
+    就返回 ``None``。
+
+    调用它的那一处（`routine.service`）分不出这两件事：都不该开工，说给主人的那句
+    话也一样。"""
+    instance = await instance_for_seat(session, project_id, seat)
+    if instance is None or not instance.is_active:
+        return None
+    return instance.id
+
+
 async def record_agent(
     session, event: DeliveryEvent, *, conversation_id, instance_id, content
 ):
@@ -111,26 +124,29 @@ async def record_agent(
 
 
 async def record_task_instruction(
-    session, event: DeliveryEvent, *, task: Task, content: str
-) -> uuid.UUID | None:
+    session, event: DeliveryEvent, *, task_id: uuid.UUID, content: str
+):
     """Keep an instruction for a task's own session until it is delivered.
 
     Addressed to the conversation, not the room: ``conversation_id`` is the task's
     id, which is what the runner runs a turn in, and the agent is the one working
     the task (its own pick, else its room's) — the one that answers there.
 
-    Returns the instance it addressed, or ``None`` when the task's project or
-    room is gone and nothing was recorded. A caller that also addresses a
-    configured seat compares against it: one event must not start two turns of
-    the same agent (``review.room_notices._tell_the_dispatch_seat``).
+    收的是 id 不是那一行：递进来的那几处（`block.editing`、`review` 的三处）
+    手里都有行，可它们的 `ports.py` 一旦写下 `Task` 就从自己那一层往
+    `room_task` 伸一条边 —— `block` 那条正好把 C3 的环封上。行归本包读，
+    它本来就在读这张表。
     """
     # deferred-import: Topic is bound at the top of this module already
     from app.domain.topic.models import Topic
 
+    task = await session.get(Task, task_id)
+    if task is None:
+        return
     project = await session.get(Project, task.project_id)
     room = await session.get(Topic, task.room_id)
     if project is None or room is None:
-        return None
+        return
     agent = await AgentInstanceService(session).for_task(
         project, room, task.agent_handle
     )
@@ -152,7 +168,6 @@ async def record_task_instruction(
         )
         .on_conflict_do_nothing(index_elements=["dedup_key"])
     )
-    return agent.instance_id
 
 
 async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
@@ -322,8 +337,12 @@ async def redispatch_undelivered(
     return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat):
-    """Renew admission ownership while queued; settle only this claimed attempt."""
+async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat, machines=None):
+    """Renew admission ownership while queued; settle only this claimed attempt.
+
+    ``machines`` closes a finished task's room checkouts with it
+    (`room_task.ports.SweepCheckouts`), handed in by whoever runs the turn.
+    """
 
     async def renew():
         while True:
@@ -376,7 +395,9 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat):
                 # the task when it ends (`room_task.closing.turns_ended`); with
                 # none running, the task closes now.
                 if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
-                    await close_after_summary(session, row.conversation_id, chat)
+                    await close_after_summary(
+                        session, row.conversation_id, chat, machines=machines
+                    )
             await session.commit()
 
 

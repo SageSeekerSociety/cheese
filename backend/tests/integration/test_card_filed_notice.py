@@ -13,8 +13,8 @@ import uuid
 
 import pytest
 
+from app.domain.addressing import Event
 from app.domain.agent.announce import announce
-from app.domain.delivery.addressing import Event
 from app.domain.notice_meta import (
     EVENT_TURN_QUEUED,
     SEVERITY_INFO,

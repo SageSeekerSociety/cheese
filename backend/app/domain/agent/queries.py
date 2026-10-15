@@ -29,6 +29,8 @@ from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
 )
+from app.domain.agent_instance.adapters import named_teammate
+from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.block.about import EventAbout, landing
@@ -316,7 +318,7 @@ async def _pass_policy_gate(
         return None
     if topic_id is None:
         raise gate.OverTier(verdict.content)
-    block = await propose(session, verdict, place_id=topic_id)
+    block = await propose(session, verdict, place_id=topic_id, announce=announce)
     return _Proposed(
         verdict, _block_payload(BlockOut.model_validate(block)) if block else None
     )
@@ -384,7 +386,7 @@ async def _private_room(
     from app.domain.topic.services import TopicService
 
     topic = await TopicService(session).get_or_create_private(
-        project_id=project_id, user_handle=owner
+        project_id=project_id, user_handle=owner, named_teammate=named_teammate
     )
     return topic.id
 
@@ -468,7 +470,7 @@ def _model_policy_call(project, agent=None) -> gate.Call:
     在寻址那一层被丢掉：房间里照样有这条提议，只是没有人被单独通知 —— 好过把它投
     给一个猜出来的人。
     """
-    choices = binding.catalog(project.settings)
+    choices = catalog(project.settings)
     bound = binding.resolve(
         None,
         choices,
@@ -481,6 +483,7 @@ def _model_policy_call(project, agent=None) -> gate.Call:
         label=choices[bound.model]["label"],
         tier=choices[bound.model]["tier"],
         approver=project.owner_handle or "",
+        overseas=choices[bound.model]["overseas"],
     )
 
 

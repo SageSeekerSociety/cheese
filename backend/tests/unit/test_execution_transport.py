@@ -332,6 +332,12 @@ def central_transport(executor, tmp_path):
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 publications.append(payload)
                 result = {"data": {"content": payload["content"]}}
+            elif self.path.startswith("/documents/fixture-doc/apps"):
+                # The save route as the backend answers it: the pictures only
+                # to a save that asked for them.
+                result = {"data": {"key": "k1", "version": 1, "checked": True}}
+                if "pictures=true" in self.path:
+                    result["data"]["pictures"] = {"720": "d2lkZQ=="}
             elif self.path == "/topics/fixture/shown":
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 platform_calls.append(payload)
@@ -372,6 +378,8 @@ def central_transport(executor, tmp_path):
             "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
             "CHEESE_TOPIC": "fixture",
             "CHEESE_TURN": "fixture-turn",
+            # The session's model reads pictures (`session_host.with_pictures`).
+            "CHEESE_PICTURES": "1",
         },
         log,
     )
@@ -436,6 +444,29 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
     assert len(clients) == discovery_clients + 2
     assert clients[-2] == clients[-1]
     assert not (work / "escaped").exists()
+
+
+def test_a_saved_apps_pictures_reach_claude_code_as_image_blocks(central_transport):
+    """The writer looks at what the platform ran: the pictures follow the
+    save's text as MCP image blocks, which `proxy.js` hands to the model."""
+    process, _, _, _ = central_transport
+    response = process.call(
+        "tools/call",
+        {
+            "name": "cheese_app_save",
+            "arguments": {
+                "id": "save",
+                "session_id": "fixture",
+                "code": "<p>x</p>",
+                "title": "试算",
+                "document": "fixture-doc",
+            },
+        },
+    )
+    text, *pictures = response["content"]
+    outcome = json.loads(text["text"])
+    assert ":::app k1@1 试算" in outcome["result"]["stdout"]
+    assert pictures == [{"type": "image", "data": "d2lkZQ==", "mimeType": "image/png"}]
 
 
 def test_large_platform_response_keeps_its_json_receipt(central_transport):

@@ -27,13 +27,14 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from app.core.config import settings
+from app.domain.agent import gateway_catalog
 from app.domain.agent.admission import HostMemory
 from app.domain.agent.device_hub import (
     DeviceCallError,
@@ -148,6 +149,20 @@ def keeps_memory(harness: str) -> bool:
     disagree about it."""
     entry = HARNESSES.get(harness)
     return bool(entry and entry.keeps_memory)
+
+
+#: Set to "1" for a session whose model reads pictures, so a tool that has
+#: some to hand back asks for them (`sandbox/cheese`'s `_app_save`); a
+#: session without it is told nothing of pictures.
+PICTURES = "CHEESE_PICTURES"
+
+
+def with_pictures(spec: SessionSpec) -> SessionSpec:
+    """``spec`` with its tools told whether its model reads pictures, as the
+    gateway says (``gateway_catalog.sees_pictures``)."""
+    if not gateway_catalog.sees_pictures(spec.model):
+        return spec
+    return replace(spec, env={**spec.env, PICTURES: "1"})
 
 
 def _seat(ref: SessionRef, access: Access) -> tuple[Seat, str]:
@@ -271,6 +286,7 @@ class SessionHost:
         ``spec.host_wait_s`` for the host to have memory for it, telling
         ``on_wait`` once when it starts waiting; past that it raises
         ``HostFull``, and ``StartAbandoned`` once ``give_up`` says so."""
+        spec = with_pictures(spec)
         driver = self._driver(ref)
         lock = self._locks.setdefault(ref, asyncio.Lock())
         async with lock:

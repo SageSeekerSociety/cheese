@@ -106,7 +106,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `gateway_admin.py` | 「会抛」的管理客户端（管理页必须看得见失败）：`GatewayUnreachable` / `GatewayRefused` 分开抛，凭据从不回显或落日志 |
 | `gateway_catalog.py` | 目录快照与定时刷新（上面那一节） |
 | `gateway_models.py` | 管理页的服务：模型与逐模型用量、项目额度；`_TTL_SECONDS = 15`，因为 `/model/info` 与一周用量都是百 KB 级 |
-| `api/routes/admin_models.py` | `/admin/gateway` 的九条路由：模型列表/详情/新建/改/删/停用、项目额度、审计 |
+| `api/routes/admin_models.py` | `/admin/gateway` 的路由：模型列表/详情/新建/改/删/停用，线路的加/改/删/停用/排序（`/models/{name}/sources/...`），项目额度、审计 |
 
 翻译的规矩：**连接性失败由路由层翻**（不可达 503、被拒 502），页面才能告诉人「是网关挂了，过会儿再试」还是「你这个动作本身不被允许」；「模型不存在」404、「请求体不合法 / 不变式被违反 / 对 config 模型写」400 由服务层抛，因为那几种要读库或读网关才知道。
 
@@ -117,9 +117,21 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 - **写 `config.yaml`**：加一条路由和价格，在 `model_info` 下写 `cheese_selectable: true`；`cheese_tier` 写这个模型的档位（included / premium / frontier，缺省 included），方案按它限定可用的模型。这是随镜像发布的基线，改它要发布网关。标记是 opt-in 的，因为网关也路由不上菜单的模型——`glm-4.5` 是分身别名指向的地方。
 - **管理页**：管理员增删改停运行时模型（`STORE_MODEL_IN_DB` 打开），不用发布；每次写都记审计（谁做的），写成功后刷新目录，模型立刻可选。`config.yaml` 里声明的模型在页面上是只读的，网关不许写它们。
 
+### 一个模型，几条线路 {#sources}
+
+同一个 `model_name` 在网关里可以有好几行（部署），网关按 `litellm_params.order` 从小到大试，相同的一起分流，没有 order 的只在所有有 order 的都冷却时才轮到。管理页把它们叫「线路」：任何模型都能加运行时线路，包括 `config.yaml` 声明的（`kimi-k3` 的官方行在 config 里，OpenCode Go 那一行可以从页面加），config 的那几行在页面上列出来但只读。不用发布网关，加完立刻生效。
+
+- **模型的元数据每一行都一样**：上架、名字、档位、思考档、能力，目录读 `/model/info` 列出的第一行，而哪一行排第一不由我们定。加线路时服务层从已有那一行抄（`cheese_*` 里属于模型的键，加上每一个显式写了的 `supports_*`，`supports_output_config` 这类决定思考档送不送得到上游），改模型时每一行都改；部署 id 不抄（共用一个 id，一行 429 冷却全组，#3294）。
+- **新线路默认是兜底**：默认优先级排在现有带 order 的线路之后。新线路会接走在用线路的流量时，请求体必须带 `make_primary: true`，页面上要勾「让它成为首选」，不带就 400。这种情况是它的数不大于在用线路里最小的那个，或者旁边的线路都没写 order。给停用的模型加线路，新线路也是停用的。
+- **请求头**：静态头写在这一行的 `litellm_params.extra_headers`，LiteLLM 原样发给上游（`hosted_vllm/` 与 `anthropic/` 两种都实测过）；接收 Claude Code 会话 id 的头名写在 `model_info.cheese_session_header`，由网关侧的钩子填值。`/model/info` 对每一把虚拟 key 都开放：`model_info` 原样回，`litellm_params` 过 LiteLLM 的掩码，而掩码只看头名——名字里有 key、token、secret、auth、password、credential、cookie 这一段的，值被打码，别的原样可读（1.103.3 上实测）。所以头的值按公开对待，上游凭据填 `api_key`；认证与传输相关的头不许按线路写。页面只列头名，审计里也只留头名。
+- **协议**：`anthropic` → `anthropic/<上游名>`（原生 Messages）；`openai-chat` → `hosted_vllm/<上游名>`（只有 chat/completions 的中转站与 OpenCode Go；不能用 `openai/`，那会被翻成 Responses API）；`openai-responses` → `openai/<上游名>`。不选协议时 `upstream_model` 就是完整的 LiteLLM 模型串。原生 Messages 的地址不带 `/v1`（LiteLLM 自己拼 `/v1/messages`，服务层把多填的 `/v1` 去掉）；Chat 线路的地址要带到 `/v1`。
+- **Chat 线路让整组折叠 system 消息**：Messages 翻成 chat/completions 会丢掉对话中间的 system 消息（实测 glm-5.2、MiMo），所以一个模型一旦有 `openai-chat` 线路，组里每一行都标 `supports_mid_conversation_system: false`，服务层加线路时顺手改齐运行时的行；config.yaml 的行没标就拒，先去改 config。
+- **免费**：唯一合法的零价是声明出来的——`cheese_free: true` 且输入、输出都写成 0（`price_is_set` 认它，`check_config.py` 同一条）；没标免费的零价一律拒。免费线路和付费线路在同一个模型里时，用量估价按付费线路里最高的那一档算，免费线路上的流量也一样（`usage.pricing`）。页面在混用时会提示这一点。
+- 目录对一个模型的判断看整组：有一行没停用就还能选，在用的每一行都有价（或声明免费）才算有价。
+
 还有一项要按模型手动标：**`supports_mid_conversation_system: false`**。Claude Code 会把技能清单、运行环境和日期放在对话中间的 system 消息里；有的线路收不了它，有的是网关转换时丢掉，有的是上游丢掉或整条请求拒绝。标了 `false` 的模型，平台启动 Claude Code 时设 `CLAUDE_CODE_MODEL_CAPABILITIES`，让它把这些内容并进第一条用户消息（`gateway_usage.model_capabilities`）。没标的照 Claude Code 的默认。这一项只在量过之后手动标，不按上游推断：线路以后支持了，把标记去掉就行。量法是从后端经网关发一条对话中间带暗号的 system 消息，问模型暗号是什么。`config.yaml` 里的模型写在条目里，运行时模型在管理页的能力开关里关掉。
 
-两条路欠同一个不变式，服务层与 `check_config.py` 各守一边：**没价的可选模型等于不上架**。它的 token 会按零计费，项目的 `max_budget` 永远不会跳，第一个征兆是发票——模型从选单里消失会被发现，一个悄悄失灵的刹车不会。改完清单跑：
+两条路欠同一个不变式，服务层与 `check_config.py` 各守一边：**没价的可选模型等于不上架**。它的 token 会按零计费，项目的 `max_budget` 永远不会跳，第一个征兆是发票——模型从选单里消失会被发现，一个悄悄失灵的刹车不会。唯一的例外是上游真不收钱的模型：`model_info` 里写 `cheese_free: true`，并把输入、输出单价都**写明**为 0（`usage.pricing.declared_free`；`check_config.py` 守同一条）。没有标记的 0 仍是没价。改完清单跑：
 
 ```sh
 docker exec -i cheese-gateway-litellm-blue-1 python - /app/config.yaml < deploy/gateway/check_config.py   # 或正在服务的 green
@@ -151,6 +163,19 @@ GATEWAY_KEY=<项目 key> python3 backend/scripts/gateway_conformance.py \
 - 不带 `--model` 就查 `/model/info` 里每个 `cheese_selectable` 的模型；`--checks stream_text,tool_call` 只跑其中几项；`--list` 列出模型和每个部署的 `model_info.id`。
 - `--deployment <model_info.id>` 只打模型组里的一个部署：LiteLLM 把 `model` 是部署 id 的请求直接路由到那一个部署。按模型组生效的 pre-call 钩子（去掉计费行、会话亲和）这时不起作用，所以钉住部署时缓存未命中只记 warn。
 - 请求逐个发，一个模型几美分；有一项 fail 就退出码 1。失败原因里带供应商的报错原文和模型回答的片段，所以输出是给操作的人看的，别贴进共享日志。
+
+### 订阅与中转：同一个模型挂多条供给 {#supply-rows}
+
+一个模型组可以有多行（多个 deployment），路由器按 `litellm_params.order` 从小往大用：先用最小 `order` 里健康的，任何错误（配额用完的 429 在内，上下文超长与内容审查除外）都在同一个请求里落到下一档；没写 `order` 的行只在所有带 `order` 的都不健康时才用。所以「订阅额度优先、按量付费兜底」就是订阅那行 `order: 1`、官方 API 那行在后面。被 429 的行冷却约 5 秒后再试。
+
+有的上游要自己的请求头（`upstream_headers.py`），按行声明在 `model_info` 里，只发给声明了的那一行，同组兜底的官方行收不到：
+
+- `cheese_upstream_headers: {user-agent: cheese-gateway/1.0}`：原样发送的固定头。
+- `cheese_session_header: x-opencode-session`：用这个头名带上会话。值是 Claude Code 的 `X-Claude-Code-Session-Id`（校验同 `chatgpt_session.caller_session`）；调用方没有（pi 走 `/v1/chat/completions`、后端 `GatewayChat` 的功能）时，用「调用方虚拟 key + 第一条用户消息」的哈希，同一段对话每次相同、不同 key 永不相同；只有连用户消息都没有的请求才给随机值。声明了就一定发——OpenCode Go 缺这个头直接 400 `MissingSessionID`。
+
+上游只有 OpenAI 兼容的 `chat/completions`、没有 Anthropic Messages 时，前缀用 `hosted_vllm/`，`api_base` 写到 `/v1` 为止：`openai/` 会被翻成 Responses API（`/responses`），`custom_openai/` 会丢掉 reasoning effort、还把 OpenAI SDK 的名字拼进 User-Agent。`test_chat_route.py` 用假上游守着 thinking、工具调用、工具历史和图片两个方向都完整。有原生 Messages 的上游用 `anthropic/`，`api_base` 写到 `/v1` 之前（LiteLLM 自己拼 `/v1/messages`）。
+
+这类行通常在管理页（数据库）加，不进 `config.yaml`，因为改 `config.yaml` 要发布网关、会打断正在流的会话。数据库行与 `config.yaml` 行可以同名同组，`model_info` 里的自定义键原样到达钩子。生效时间（2026-10-14 在固定版本上实测）：`POST /model/new` 和 `/model/delete` 一两秒内；改一行用 `PATCH /model/{id}/update`（约 1 秒）——`POST /model/update` 会丢掉 `order` 且不改 `model_info`；直接改库要等网关每 30 秒一次的轮询。
 
 ## 边界与坑 {#traps}
 

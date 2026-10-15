@@ -26,6 +26,7 @@ from app.api.response import ok, page
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import notice_keys, say
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.own import may_work_for
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
@@ -156,7 +157,9 @@ async def _sees_room(
     """
     if not settings.authz_enforce_topic_access:
         return True
-    seated = await TopicMemberService(db).joined_ids([topic_id], actor.handle)
+    seated = await TopicMemberService(db).joined_ids(
+        [topic_id], actor.handle, team=project_team
+    )
     if topic_id in seated:
         return True
     return await _manages_project(db, actor, project_id)
@@ -287,7 +290,7 @@ async def _readable_rules(
         )
         return [r for r in rows if r.topic_id in seen], True
     mine = await TopicMemberService(db).joined_ids(
-        list({r.topic_id for r in rows}), actor.handle
+        list({r.topic_id for r in rows}), actor.handle, team=project_team
     )
     return [r for r in rows if r.topic_id in mine], False
 

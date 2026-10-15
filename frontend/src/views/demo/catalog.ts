@@ -19,6 +19,8 @@
  */
 import type { Component } from 'vue'
 
+import { defineComponent, h, markRaw } from 'vue'
+
 import { avatarColor } from '@/utils/avatar'
 
 import { ACCEPT_ENTRIES } from './catalogAccept'
@@ -96,6 +98,7 @@ import LegalLinks from '@/components/account/LegalLinks.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
+import ScreenHeaderTitle from '@/components/common/Navigation/ScreenHeaderTitle.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
@@ -169,32 +172,33 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'user-ref',
     title: 'UserRef',
-    about: '句子里提到的一个人：@名字。给了去处才可点。',
+    about:
+      '句子里提到的一个人：画成名字引用，浅色 chip、不带 @（带 @ 的实心 chip 只留给真的通知到人的那一处）。给了去处才可点。',
     file: 'src/components/common/UserRef.vue',
     component: UserRef,
     needs: [],
     states: [
       {
         name: '有去处',
-        note: '给了 to 才是一颗「人可以点」的 chip：进 Tab 顺序，按一下 emit navigate。',
+        note: '给了 to 才是人可以点的名字：进 Tab 顺序，悬停加深底色，按一下 emit navigate。',
         props: { handle: 'alice', name: '爱丽丝', to: { path: '/projects/p1/members/alice' } },
-        expect: '@爱丽丝',
+        expect: '爱丽丝',
       },
       {
         name: '只知道名字',
-        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画 @名字，但不可点。',
+        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画名字，但不可点。',
         props: { name: '新来的同学' },
-        expect: '@新来的同学',
+        expect: '新来的同学',
       },
       {
         name: '长名字',
-        note: '名字长到换行也是这一颗，不缩字号、不截断。',
+        note: '名字长到换行也照常折行，不缩字号、不截断。',
         props: {
           handle: 'someone-with-a-long-handle',
           name: '一位名字很长的同学（校外）',
           to: { path: '/projects/p1/members/x' },
         },
-        expect: '@一位名字很长的同学（校外）',
+        expect: '一位名字很长的同学（校外）',
       },
     ],
   },
@@ -537,6 +541,33 @@ export const CATALOG: CatalogEntry[] = [
           ],
         },
         expect: '新建项目',
+      },
+    ],
+  },
+  {
+    id: 'screen-header-title',
+    title: 'ScreenHeaderTitle',
+    about: '手机顶栏中间那一格：这一屏交出来的标题行，没交就写路由的标题。',
+    file: 'src/components/common/Navigation/ScreenHeaderTitle.vue',
+    component: ScreenHeaderTitle,
+    needs: ['vuetify'],
+    states: [
+      {
+        name: '没声明',
+        note: '这一屏什么也没说（待办、资料库这类）：写路由上的标题。',
+        props: { header: null, fallback: '资料库' },
+        expect: '资料库',
+      },
+      {
+        name: '这一屏自己的标题行',
+        note: '频道页、任务页、频道列表：这一屏把它自己的标题行连同参数交给顶栏画（这里用一行字代替）。',
+        props: {
+          header: {
+            content: { component: markRaw(defineComponent({ setup: () => () => h('span', '频道自己的标题行') })) },
+          },
+          fallback: '项目工作台',
+        },
+        expect: '频道自己的标题行',
       },
     ],
   },

@@ -189,20 +189,13 @@ describe('删除频道', () => {
 
 // 手机上话题列表的行尾没有 ⋯，改名、归档在房间顶栏的 ⋯ 里也得找得到。
 describe('手机上话题头的 ⋯', () => {
-  let slot: HTMLElement
-
   beforeEach(() => {
     window.innerWidth = 390
     getTopicEnvironment.mockResolvedValue(profile())
-    // 手机上这一行画进外壳顶栏里的那一格。
-    slot = document.createElement('div')
-    slot.id = 'app-bar-slot'
-    document.body.appendChild(slot)
   })
 
   afterEach(() => {
     window.innerWidth = 1280
-    slot.remove()
   })
 
   async function openMore() {

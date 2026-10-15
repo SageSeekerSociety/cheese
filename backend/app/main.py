@@ -313,11 +313,41 @@ async def lifespan(application: FastAPI):
             name="cleanup startup recovery",
         )
         if settings.forge_event_relay_url:
+            # The relay's collaborators: wired here, not at module level, so a
+            # deployment that runs no relay pays nothing for them.
+            from app.domain.agent.announce import (  # deferred-import: startup cost
+                announce,
+            )
+
+            # deferred-import: startup cost
+            from app.domain.agent_instance.adapters import task_teammate
+            from app.domain.delivery.agent import (  # deferred-import: startup cost
+                dispatch_pending,
+                record_task_instruction,
+            )
+            from app.domain.delivery.ledger import (  # deferred-import: startup cost
+                settle_card,
+            )
             from app.domain.review.events import listen
+
+            chat = get_chat_service()
+
+            async def pump_pending() -> object:
+                return await dispatch_pending(
+                    chat.session_factory, chat=chat, runner=chat.work_runner
+                )
 
             forge_events.append(
                 asyncio.create_task(
-                    listen(get_chat_service(), async_session_factory),
+                    listen(
+                        chat,
+                        async_session_factory,
+                        announce,
+                        settle_card=settle_card,
+                        record_instruction=record_task_instruction,
+                        dispatch_pending=pump_pending,
+                        task_teammate=task_teammate,
+                    ),
                     name="forge events",
                 )
             )

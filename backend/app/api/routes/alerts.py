@@ -28,6 +28,7 @@ from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import project_team
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
@@ -128,7 +129,7 @@ async def create_notification(
             else await may_read_project(db, project_id=project_id, handle=target)
         ):
             raise ValidationError(say("alertRecipientOutside"))
-    rows = await ProjectNotificationService(db).create(
+    rows = await ProjectNotificationService(db, team=project_team).create(
         project_id=project_id,
         level=body.level,
         kind=body.kind,

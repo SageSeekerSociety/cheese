@@ -25,7 +25,7 @@ import httpx
 from app.core.config import settings
 from app.core.forge_http import forge_client
 from app.core.sentences import exception_text, say
-from app.domain.agent.github_app import GitHubAppTokens
+from app.domain.project.github_app import GitHubAppTokens
 from app.domain.review.github_pr_status import (
     PullRequestStatus,
     parse_pull_request_status,

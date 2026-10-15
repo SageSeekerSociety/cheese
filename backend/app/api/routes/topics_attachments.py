@@ -13,8 +13,9 @@ in the tree names. The size ceilings are the landing layer's
 (`library.max_bytes_for`).
 
 Where the shared names went. The three names this module used to read from
-topics.py now have their own homes: `clean_artifact_path` and
-`MAX_ARTIFACT_BYTES` are the room-file rules in `app.domain.project.room_files`,
+topics.py now have their own homes: `clean_artifact_path` is a room-file rule in
+`app.domain.project.room_files`, the ceiling it is read against is
+`library.service.MAX_ARTIFACT_BYTES` (written down once, where the bytes land),
 `source_bytes` is the API read-orchestration helper in
 `app.api.topics_file_sources`, and the binding check became
 `TaskService.require_source_in_room`. `DbSession` is still imported from
@@ -67,10 +68,7 @@ from app.domain.preview.office import (
     render_to_html,
     render_to_pdf,
 )
-from app.domain.project.room_files import (
-    MAX_ARTIFACT_BYTES,
-    clean_artifact_path,
-)
+from app.domain.project.room_files import clean_artifact_path
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
 from app.domain.topic.services import TopicService
@@ -244,22 +242,40 @@ async def upload_attachment(
     return ok({"path": library.library_ref(name), "mime": mime, "bytes": size})
 
 
+def _pasted(path: str) -> bool:
+    """这个地址是不是一次粘贴落下的那一份（`uploads/<随机串>/<名字>`）。
+
+    造这种地址的有两处，两处都是现取一个 `uuid4().hex` 当一层目录：输入栏贴进来的
+    图（这个模块的上传分支），和芝士送一份工作区外的文件
+    （`claude_code/remote_execution/client.py` 的 `send_user_file_paths`）。随机串把
+    这一份钉死在一次粘贴上，同一地址下的字节写下之后不会再变。
+    """
+    parts = path.split("/")
+    return (
+        len(parts) >= 3
+        and parts[0] == "uploads"
+        and len(parts[1]) == 32
+        and all(c in "0123456789abcdef" for c in parts[1])
+    )
+
+
 def _cache_control_of(path: str) -> str:
     """一条消息里的一个附件，浏览器可以留多久。
 
-    资料库里那一份（`library/<名字>`）**同一个地址下的字节会变**：替换就是「这个人
-    说了这是同一份文件的新版本」。所以它照资料库自己的字节端点（`routes/library.py`）
-    的规矩来，让人拿到的一点就是现在这一份——留一小时的话，替换之后整整一小时里，
-    旧消息还画着旧图。
+    **同一个地址下的字节会变的那些，不许浏览器自己答。** 资料库里那一份是这样
+    （替换就是「这个人说了这是同一份文件的新版本」），房间里摆出来的那一份也是这样
+    （芝士重做一版，路径还是那一个）。两份都照资料库自己的字节端点
+    （`routes/library.py`）的规矩来，每次问一句「变了没有」——留一小时的话，新的一版
+    发出来之后整整一小时里，点开画着的还是旧的。
 
-    房间文件那一份不是这样：剪贴板贴进来的图落在 `uploads/<随机串>/<名字>` 下，
-    随机串把它钉死在某一次粘贴上，字节写下之后不会再变，留一小时是有意的。
+    贴进来的那一份不是这样：`uploads/<随机串>/<名字>` 里的随机串把它钉死在某一次
+    粘贴上，字节写下之后不会再变，留一小时是有意的。
     """
-    return (
-        "private, no-cache"
-        if library.library_name(path) is not None
-        else "private, max-age=3600"
-    )
+    if library.library_name(path) is not None:
+        return "private, no-cache"
+    if _pasted(path):
+        return "private, max-age=3600"
+    return "private, no-cache"
 
 
 @router.get("/{topic_id}/attachments/raw")
@@ -365,9 +381,9 @@ async def attachment_as_pdf(
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
     data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
-    if len(data) > MAX_ARTIFACT_BYTES:
+    if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
-            say("previewTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+            say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
         )
     try:
         pdf = await render_to_pdf(data, clean, settings.office_render_endpoint)
@@ -426,9 +442,9 @@ async def attachment_as_html(
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
     data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
-    if len(data) > MAX_ARTIFACT_BYTES:
+    if len(data) > library.MAX_ARTIFACT_BYTES:
         raise ValidationError(
-            say("previewTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+            say("previewTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
         )
     try:
         page = await render_to_html(data, clean, settings.office_render_endpoint)

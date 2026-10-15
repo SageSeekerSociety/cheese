@@ -9,11 +9,14 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from functools import partial
 from typing import Unpack
 
 from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, say
+from app.domain.addressing import Addressed
 from app.domain.agent.admission import (
     HOST_BUSY_META,
     QUEUED_META,
@@ -22,12 +25,13 @@ from app.domain.agent.admission import (
     queued_text,
     wait_for_host,
 )
-from app.domain.agent.initial_admission import admitted_initial
+from app.domain.agent.initial_admission import admitted_initial, seat_instance
 from app.domain.agent.platform_notices import (
     delivery_checking_notice,
     delivery_fallback_notice,
 )
 from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.seat_admission import seat_admission
 from app.domain.agent.turn.intake.ports import (
     InitialSeatResolver,
     MessageScheduler,
@@ -38,7 +42,6 @@ from app.domain.agent.turn.intake.ports import (
 )
 from app.domain.agent.turn.state.execution import ExecutionState
 from app.domain.agent.turn_ledger import project_pool
-from app.domain.delivery.addressing import Addressed
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.notice_meta import (
@@ -51,6 +54,27 @@ from app.domain.thread.services import answer_place
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 
 logger = logging.getLogger("cheesex.runtime")
+
+
+@dataclass
+class Admitted:
+    """What a turn was let in by, held until the turn ends: its conversation's
+    seat and its place among the project's concurrent turns.
+
+    They are given up in the reverse of the order they were taken in — the
+    place in the project first, the seat last — and that order is the point
+    (#1561). A turn waits for the seat before it takes a project's place, so
+    releasing the seat first would hand it to a turn that then has to wait for
+    a place while this one's is still to come back.
+    """
+
+    slot: Slot | None
+    seat: AsyncExitStack
+
+    async def release(self) -> None:
+        if self.slot is not None:
+            await self.slot.release()
+        await self.seat.aclose()
 
 
 class RunnerIntake:
@@ -145,8 +169,9 @@ class RunnerIntake:
         # room. The handle is the same key `merge_into_running_turn` filters on,
         # so "a live handoff was expected" and "the handoff failed" answer with
         # one key rather than two that can disagree.
-        live_delivery_expected = recipient_handle is not None and (
-            chat_service.has_running_turn(topic_id, recipient_handle)
+        live_delivery_expected = (
+            recipient_handle is not None
+            and await chat_service.has_running_turn(topic_id, recipient_handle)
         )
         mentioned = any(
             (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
@@ -183,7 +208,7 @@ class RunnerIntake:
             chat_service.session_factory, user_block_id if mentioned else None, topic_id
         )
         if answer_in != topic_id:
-            live_delivery_expected = chat_service.has_running_turn(answer_in)
+            live_delivery_expected = await chat_service.has_running_turn(answer_in)
         self._schedule_message(
             chat_service,
             answer_in,
@@ -356,16 +381,31 @@ class RunnerIntake:
         topic_id: uuid.UUID,
         turn_id: uuid.UUID,
         agent=None,
-    ) -> tuple[str, Slot | None]:
+        *,
+        user_block_id: uuid.UUID | None = None,
+        recipient_handle: str | None = None,
+        delivery_id: uuid.UUID | None = None,
+    ) -> tuple[str, Admitted | None]:
         """Admission control (spec §9.1 算力额度真实化), before any execution:
 
         - credits exhausted → ("reject", None): the caller refuses the turn.
         - its session starts on a session host with no memory for it → wait.
+        - the conversation's seat is held by another turn → wait for it, after
+          posting a visible "排队中" system event — the one the host's memory
+          wait posts, because what waits here is a turn of the conversation's
+          own, not a place among the project's.
         - project concurrency full → wait for one of the project's slots, first
           come first served, after posting a visible "排队中" system event.
-          Returns ("ok", slot) with the slot held (caller must release).
+          Returns ("ok", ...) with both held (caller must release).
         - topic unknown / policy lookup failed → ("ok", None): admit ungated;
           the turn itself surfaces the real error.
+
+        The seat comes first, and that order is the point (#1561). A turn that
+        takes a project's place and only then finds its conversation's seat
+        taken holds that place until it ends, doing nothing — and the place is
+        what every other conversation's turns need, sixteen of them across the
+        whole project by default. Waiting for the seat costs this turn nothing
+        it was going to get and leaves the place to a turn that can run.
         """
         try:
             policy = await chat_service.work_policy(topic_id, agent)
@@ -377,32 +417,69 @@ class RunnerIntake:
         if policy["credits_exhausted"]:
             logger.info("turn %s rejected: credits exhausted", turn_id)
             return "reject", None
+        said: set[str] = set()
+
+        async def say_queued(text: str, why: str, meta: dict = QUEUED_META) -> None:
+            """Say this turn is queued, and what for — once per sentence.
+
+            A turn can wait three times on its way in: for its host's memory,
+            for its conversation's seat, and then for a place among the
+            project's turns. The first two wait for the same thing — a machine
+            with room, not a position in a queue — and say so in the same
+            sentence, so only its first speaker is heard: the same line twice
+            on one message reads as two messages queued.
+            """
+            if text in said:
+                return
+            said.add(text)
+            await self._post_event(chat_service, topic_id, turn_id, text, meta=meta)
+            logger.info("turn %s queued (%s)", turn_id, why)
+
         await wait_for_host(
             self._host_has_room if policy.get("on_session_host") else None,
             topic_id,
-            lambda text: self._post_event(
-                chat_service, topic_id, turn_id, text, meta=HOST_BUSY_META
-            ),
+            lambda text: say_queued(text, "host has no room", HOST_BUSY_META),
         )
 
         async def tell_queued(ahead: int) -> None:
-            await self._post_event(
-                chat_service, topic_id, turn_id, queued_text(ahead), meta=QUEUED_META
-            )
-            logger.info(
-                "turn %s queued (project=%s ahead=%s)",
-                turn_id,
-                policy["project_id"],
-                ahead,
+            await say_queued(
+                queued_text(ahead), f"project={policy['project_id']} ahead={ahead}"
             )
 
-        slot = await enter(
-            get_redis_client(),
-            str(turn_id),
-            pool=project_pool(policy["project_id"], policy["max_concurrent_turns"]),
-            on_queued=tell_queued,
-        )
-        return "ok", slot
+        async def tell_seat_taken() -> None:
+            await say_queued(
+                say("turnQueuedHostBusy"), "seat held by another turn", HOST_BUSY_META
+            )
+
+        seats = AsyncExitStack()
+        try:
+            seat = await self._resolve_initial_seat(
+                chat_service,
+                topic_id,
+                user_block_id=user_block_id,
+                recipient_instance_id=await seat_instance(
+                    chat_service.session_factory, delivery_id, agent
+                ),
+                recipient_handle=recipient_handle,
+            )
+            await seats.enter_async_context(
+                seat_admission(
+                    chat_service.live.seat_lock_for(topic_id, seat),
+                    on_queued=tell_seat_taken,
+                )
+            )
+            slot = await enter(
+                get_redis_client(),
+                str(turn_id),
+                pool=project_pool(policy["project_id"], policy["max_concurrent_turns"]),
+                on_queued=tell_queued,
+            )
+        except BaseException:
+            # Neither is this turn's: what it took on the way in is given back
+            # here, rather than by a caller that will never be handed it.
+            await seats.aclose()
+            raise
+        return "ok", Admitted(slot, seats)
 
     async def _refuse_exhausted(
         self,
@@ -556,7 +633,13 @@ class RunnerIntake:
         await self._wait_for_replay(chat_service, topic_id, turn_id)
         admit_started = time.monotonic()
         verdict, gate = await self._admit(
-            chat_service, topic_id, turn_id, recipient_instance_id
+            chat_service,
+            topic_id,
+            turn_id,
+            recipient_instance_id,
+            user_block_id=landed_user_block_id,
+            recipient_handle=recipient_handle,
+            delivery_id=delivery_id,
         )
         logger.info(
             "chat_admission_timing topic=%s turn=%s phase=admitted verdict=%s "

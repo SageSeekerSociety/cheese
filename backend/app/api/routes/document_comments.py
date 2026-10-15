@@ -7,7 +7,10 @@ comment keeps the quoted words for display. Replies, resolving and reopening
 are applied once per operation id, under the document's lock.
 
 A comment, or a reply, that @-mentions the document's agent hands the thread to
-it (``app.domain.agent.document.thread``); any other comment starts nothing.
+it (``app.domain.agent.document.thread``). A person it @s is told, once for that
+comment, when they can open the document; whom it named who cannot is said back
+to the writer alone (``mentioned_outside``), as a message in a channel does
+(``app.domain.agent.mentions.announce_comment_mentions``).
 """
 
 import uuid
@@ -28,13 +31,20 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.document import thread
 from app.domain.agent.document.question import answering
 from app.domain.agent.document.thread import hand_to_agent, mentioned_seat
+from app.domain.agent.mentions import (
+    CommentMentions,
+    announce_comment_mentions,
+    comment_notified,
+)
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.agent_instance.adapters import project_team
 from app.domain.living_doc import collab
 from app.domain.living_doc.comment_schemas import CommentIn, ReplyIn, ThreadMutation
 from app.domain.living_doc.comments import CommentThreads, comment_out
 from app.domain.living_doc.schemas import node_out
 from app.domain.living_doc.services import DocumentJournal, Documents
+from app.domain.mentions import canonicalize_refs
 
 router = APIRouter(prefix="/documents", tags=["document-comments"])
 
@@ -73,10 +83,11 @@ async def add_comment(
     comment = await CommentThreads(db).open(
         reached.doc,
         author=reached.actor.handle,
-        content=content,
+        content=await _as_stored(db, reached, content),
         quote=(body.quote or "").strip() or None,
     )
-    payload = comment_out(comment)
+    told = await _announce(db, reached, comment)
+    payload = {**comment_out(comment), "notified": told.notified, **_outside(told)}
     asked = asked_of(reached)
     seat = await mentioned_seat(db, asked, reached.actor, content)
     await db.commit()
@@ -91,6 +102,45 @@ async def add_comment(
             thread_id=comment.id,
         )
     return ok(payload)
+
+
+async def _as_stored(db, reached: Reached, content: str) -> str:
+    """A comment's text as stored: a friendly @名字 becomes the person's
+    ``<@handle>`` token, as every other text a person writes does."""
+    return await canonicalize_refs(
+        db,
+        reached.doc.project_id,
+        content,
+        team=project_team,
+        exclude_topic_id=reached.place.room_id if reached.place else None,
+    )
+
+
+async def _announce(db, reached: Reached, comment) -> CommentMentions:
+    place = reached.place
+    return await announce_comment_mentions(
+        db,
+        reached.doc,
+        place.room if place is not None else None,
+        comment,
+        title=reached.doc.title or (place.title if place is not None else ""),
+        task_id=reached.task.id if reached.task is not None else None,
+    )
+
+
+def _outside(told: CommentMentions) -> dict:
+    """Said to the writer alone, never stored: whom it named who cannot open
+    the document."""
+    return {"mentioned_outside": told.outside.as_json()} if told.outside else {}
+
+
+async def _with_notified(db, described: dict) -> dict:
+    """Each comment of a thread with whom its @s told."""
+    comments = [described["comment"]] + [r["comment"] for r in described["replies"]]
+    told = await comment_notified(db, [uuid.UUID(c["id"]) for c in comments])
+    for c in comments:
+        c["notified"] = told.get(c["id"], [])
+    return described
 
 
 async def _member(db, resolver, document_id: uuid.UUID) -> tuple[Reached, str]:
@@ -108,7 +158,10 @@ async def list_threads(
     reached, _ = await _member(db, resolver, document_id)
     await DocumentJournal(db).lock(reached.doc.id)
     service = CommentThreads(db)
-    items = [await service.describe(c) for c in await service.roots(reached.doc.id)]
+    items = [
+        await _with_notified(db, await service.describe(c))
+        for c in await service.roots(reached.doc.id)
+    ]
     await db.commit()
     states = await answering(
         reached.doc.project_id, [uuid.UUID(item["comment"]["id"]) for item in items]
@@ -128,7 +181,9 @@ async def read_thread(
     reached, _ = await _member(db, resolver, document_id)
     await DocumentJournal(db).lock(reached.doc.id)
     service = CommentThreads(db)
-    result = await service.describe(await service.root(reached.doc.id, comment_id))
+    result = await _with_notified(
+        db, await service.describe(await service.root(reached.doc.id, comment_id))
+    )
     await db.commit()
     return ok(result)
 
@@ -152,14 +207,23 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     if operation.receipt is not None:
         return operation.receipt
     await require_writable(db, reached)
+    reply = action == "reply"
+    assert not reply or isinstance(body, ReplyIn)
     result = await CommentThreads(db).mutate(
         reached.doc,
         comment_id=comment_id,
         author=reached.actor.handle,
         expected_revision=body.expected_revision,
         action=action,
-        content=body.content if isinstance(body, ReplyIn) else None,
+        content=await _as_stored(db, reached, body.content) if reply else None,
     )
+    told = None
+    if reply:
+        added = await CommentThreads(db).comment(
+            uuid.UUID(result["replies"][-1]["comment"]["id"])
+        )
+        told = await _announce(db, reached, added)
+    result = await _with_notified(db, result)
     receipt = ok(result)
     await journal.finish(operation, receipt)
     after = await hand_off(reached) if hand_off else None
@@ -167,7 +231,11 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     await collab.tell(reached.doc.id, {"type": "state", "resource": "comments"})
     if after is not None:
         after()
-    return receipt
+    # The writer's own answer, not the operation's stored receipt: a replay
+    # says nothing of who was outside.
+    return (
+        {**receipt, "data": {**receipt["data"], **_outside(told)}} if told else receipt
+    )
 
 
 @router.post("/{document_id}/comments/{comment_id}/replies")

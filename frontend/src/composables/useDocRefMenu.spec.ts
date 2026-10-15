@@ -77,7 +77,7 @@ describe('打 @ 挑一个人', () => {
 
   it('读的人看到的是名字，不是账号', () => {
     const { editor } = open('负责人 <@lixue>\n')
-    expect(editor.view.dom.textContent).toContain('@李雪')
+    expect(editor.view.dom.textContent).toContain('李雪')
   })
 
   it('名册比正文晚到，到了之后名字换上去', () => {
@@ -85,7 +85,7 @@ describe('打 @ 挑一个人', () => {
     expect(editor.view.dom.textContent).not.toContain('李雪')
     shown.names = { mentionNames: { lixue: '李雪' }, topicTitles: {} }
     editor.view.dispatch(editor.state.tr.setMeta(tokenChipsKey, true))
-    expect(editor.view.dom.textContent).toContain('@李雪')
+    expect(editor.view.dom.textContent).toContain('李雪')
   })
 
   it('紧跟在中文后面也能打开', async () => {

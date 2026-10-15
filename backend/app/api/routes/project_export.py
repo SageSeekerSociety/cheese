@@ -17,6 +17,8 @@ from app.auth.project_access import may_read_project
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
 from app.domain.identity.services import IdentityService
+from app.domain.library import records as library_records
+from app.domain.library import service as library
 from app.domain.project.export import create_archive
 
 
@@ -50,7 +52,14 @@ async def export_project(
         db, project_id=project_id, handle=actor.handle
     ):
         raise ForbiddenError("Project export requires project access")
-    archive, _ = await create_archive(project_id, db, actor, resolver)
+    archive, _ = await create_archive(
+        project_id,
+        db,
+        actor,
+        resolver,
+        file_store=library,
+        library_files=library_records,
+    )
     return ProjectArchiveResponse(
         archive,
         media_type="application/x-tar",

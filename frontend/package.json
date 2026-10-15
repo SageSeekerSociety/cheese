@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm run build:miniapp && vite",
-    "build": "pnpm run build:miniapp && vite build",
+    "build": "pnpm run build:miniapp && vite build && node scripts/prerender.mjs",
     "build:miniapp": "vite build --config vite.miniapp.config.mts --logLevel warn",
     "build:collab": "esbuild collab/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist-collab/main.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "test:collab": "vitest run --config collab/vitest.config.ts",
@@ -137,6 +137,7 @@
     "@vue/compiler-sfc": "3.5.18",
     "@vue/eslint-config-typescript": "^14.6.0",
     "@vue/tsconfig": "^0.9.1",
+    "beasties": "0.5.5",
     "esbuild": "0.25.8",
     "eslint": "^9.32.0",
     "eslint-config-prettier": "^9.1.2",

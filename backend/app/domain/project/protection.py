@@ -14,11 +14,7 @@
         "auto_merge_allowed": bool,
         "override_handles": ["alice", ...],
         "default_reviewer": "bob",
-        "dispatch_seat": "cheese-ab12cd34ef56",
     }
-
-``dispatch_seat`` 不是 GitHub 的规则，也不是验收人：它是「调度座位」——平台把
-「可以合并」和「离开合并队列」这两类事件叫它一遍，除了说给当事的那条线。
 
 ``approvals_required`` 是个例外：它早于本模块存在，留在
 ``settings["approvals_required"]`` 原地不动（不搬家、不双写）——
@@ -84,9 +80,6 @@ class BranchProtection:
     override_handles: tuple[str, ...] | None = None
     approvals_required: int = 1
     default_reviewer: str = ""
-    #: 调度座位：平台把「可以合并」和「离开合并队列」也叫它一遍。"" = 没设，
-    #: 和以前一样只叫当事的那条线。
-    dispatch_seat: str = ""
 
 
 def _approvals_required(settings: dict) -> int:
@@ -136,10 +129,6 @@ def branch_protection_of(project: Project | None) -> BranchProtection:
     if not isinstance(reviewer, str):
         reviewer = ""
 
-    seat = raw.get("dispatch_seat")
-    if not isinstance(seat, str):
-        seat = ""
-
     return BranchProtection(
         required_checks=tuple(checks),
         strict=bool(raw.get("strict", False)),
@@ -148,7 +137,6 @@ def branch_protection_of(project: Project | None) -> BranchProtection:
         override_handles=overrides,
         approvals_required=_approvals_required(settings),
         default_reviewer=reviewer.strip(),
-        dispatch_seat=seat.strip(),
     )
 
 
@@ -277,16 +265,6 @@ def apply_branch_protection_update(stored: object, body: dict) -> dict:
             new["default_reviewer"] = reviewer
         else:
             new.pop("default_reviewer", None)
-    if "dispatch_seat" in body:
-        seat = str(body["dispatch_seat"] or "").strip()
-        if len(seat) > MAX_HANDLE_CHARS:
-            raise ValueError(say("handleTooLong", max=MAX_HANDLE_CHARS))
-        if "\x00" in seat:
-            raise ValueError(say("dispatchSeatNul"))
-        if seat:
-            new["dispatch_seat"] = seat
-        else:
-            new.pop("dispatch_seat", None)
     return new
 
 

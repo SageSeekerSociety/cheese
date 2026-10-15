@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
 
-from app.domain.delivery.models import ChannelDelivery
+from app.domain.notification.models import ChannelDelivery
 from app.domain.user.models import User
 from tests.conftest import seed_user
 from tests.integration.conftest import (

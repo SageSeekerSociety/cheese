@@ -48,7 +48,7 @@ export const DOC_LINE_ENTRIES: CatalogEntry[] = [
   {
     id: 'doc-edit-line',
     title: 'DocEditLine',
-    about: 'AI 队友改了一份文档留下的那一行：在它那一轮里不再写名字，不在哪一轮里时名字是普通文字。',
+    about: 'AI 队友改了一份文档留下的那一行：在它那一轮里不再写名字，不在哪一轮里时名字是不带 @ 的浅色 chip。',
     file: 'src/components/room/DocEditLine.vue',
     component: DocEditLine,
     needs: ['vuetify'],
@@ -56,13 +56,13 @@ export const DOC_LINE_ENTRIES: CatalogEntry[] = [
       {
         name: '在一轮里',
         note: '前面一枚文档记号；点这一行打开文档，「查看改动」标出改过的几处。',
-        props: { block: LIBRARY_DOC_EDITED, line: docLine(LIBRARY_DOC_EDITED), inTurn: true },
+        props: { block: LIBRARY_DOC_EDITED, line: docLine(LIBRARY_DOC_EDITED), inTurn: true, names: ROOM_REFS },
         expect: '3 处',
       },
       {
         name: '不在哪一轮里',
-        note: '谁做的、谁让做的都写成普通的名字。',
-        props: { block: LIBRARY_DOC_ALONE, line: docLine(LIBRARY_DOC_ALONE), inTurn: false },
+        note: '谁做的、谁让做的都是不带 @ 的浅色 chip：这一行谁也不通知。',
+        props: { block: LIBRARY_DOC_ALONE, line: docLine(LIBRARY_DOC_ALONE), inTurn: false, names: ROOM_REFS },
         expect: '改了《第一周课件》',
       },
     ],

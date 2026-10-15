@@ -7,7 +7,7 @@ import { watch } from 'vue'
 import { createI18n } from 'vue-i18n'
 
 // zh-CN 跟着入口一起下（理由见下面 `catalogs`）。
-import zhCN from './messages/zh-CN'
+import zhCN, { loadDeferred as loadZhDeferred, loadSentences as loadZhSentences } from './messages/zh-CN'
 
 import { storageGet, storageSet } from '@/lib/browserStorage'
 
@@ -50,7 +50,13 @@ type Catalog = CatalogSchema[Locale]
 // 中文，动态取的那份填不上这个位；它也是入口那一门（`ENTRY_LOCALE`）——浏览器语言是
 // 中文的会话一开始就用它，少一次「先下入口、再发现还要下语言包」的往返。
 const catalogs: Record<Locale, () => Promise<Catalog>> = {
-  'zh-CN': () => Promise.resolve(zhCN),
+  // 入口带着的那一份，加上首屏用不上、另取的那部分（messages/zh-CN/deferred.ts）。那部分
+  // 取不回来（离线又没缓存、页面比部署旧）时只用入口那一份：缺的只是那几个命名空间，
+  // 界面照常。拼成一个新对象，入口那份本身不动。
+  'zh-CN': () =>
+    loadZhDeferred()
+      .then((rest) => ({ ...zhCN, ...rest }) as Catalog)
+      .catch(() => zhCN),
   en: () => import('./messages/en').then((m) => m.default),
 }
 
@@ -182,7 +188,26 @@ export async function awaitBootPack(pack: Promise<unknown>, ms: number = BOOT_PA
 
 /** 首屏那一份语言包到位了：zh-CN 进来就有，en 得等它取回来（四个入口在挂载前等它，
  *  所以 `main.ts` 那份启动骨架要留到挂载）。没人在等它的结果，所以走 `unattended`。 */
-export const localeReady = awaitBootPack(loadLocale(initialLocale, true))
+// zh-CN 首屏用不上的那部分（messages/zh-CN/deferred.ts）也在挂载前到位：入口跑起来就去取，
+// 和第一页要的那几次请求一起走，哪一页都不会有一瞬间缺字。界面是英文时也要它：英文缺键时
+// 兜底的是 zh-CN。
+export const localeReady = Promise.all([
+  awaitBootPack(loadLocale(initialLocale, true)),
+  loadLocale(ENTRY_LOCALE, true),
+]).then(() => undefined)
+
+let sentences: Promise<void> | null = null
+
+/** zh-CN 的第三部分，后端说的报错和系统消息（messages/zh-CN/sentences.ts）。挂载之后才取
+ *  （`main.ts`）：那之前查不到这两类键，显示的是后端随键发来的那句中文。接在 zh-CN 那份
+ *  登记完之后：登记是整份换掉，先并进来的会被冲掉。取不回来就一直用后端那句。 */
+export function loadPlatformSentences(): Promise<void> {
+  sentences ??= fetchCatalog(ENTRY_LOCALE)
+    .then(loadZhSentences)
+    .then((part) => i18n.global.mergeLocaleMessage(ENTRY_LOCALE, part))
+    .catch(() => {})
+  return sentences
+}
 
 export const { t } = i18n.global
 

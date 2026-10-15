@@ -91,6 +91,16 @@ def test_workspace_vcs_perms_is_carried_not_recognised_from_its_copy():
     )
 
 
+def test_workspace_vcs_perms_code_is_the_same_string_on_both_sides():
+    """仓库包里带的那份码，就是分类表按它索引的那一个。
+
+    两边各写一份（仓库包在第 3 层，够不着第 5 层的分类表），所以这一条是那两份
+    副本之间的钉子。漂移了 `_BY_CODE` 就查不到这个码，用户看到的是「失败」而不是
+    那句话 —— 而两份自己都不会报错。
+    """
+    assert WorkspacePermissionError.failure_code == WORKSPACE_VCS_PERMS_CODE
+
+
 def test_workspace_vcs_perms_walks_exception_chain():
     """Production wraps it twice (ValidationError → ScreenSetupError)."""
     try:

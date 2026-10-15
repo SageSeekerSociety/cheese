@@ -40,8 +40,8 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
-from app.domain.agent.forgejo_tokens import ForgejoTokenError, open_forge_token
-from app.domain.agent.github_app import GitHubAppError
+from app.domain.project.forgejo_tokens import ForgejoTokenError, open_forge_token
+from app.domain.project.github_app import GitHubAppError
 from app.domain.project.models import ForgeToken
 from app.domain.room_task.place import session_keeps_work
 
@@ -335,7 +335,7 @@ async def sandbox_forge_token(
         raise AuthenticationRequiredError("A scoped cheese token is required")
     project_id = uuid.UUID(claims["p"])
     await require_seated_agent(db, token, project_id=project_id, topic_id=None)
-    # A 支线, or a task not yet started, keeps nothing it does
+    # A 支线 keeps nothing it does
     # (`Place.keeps_work`): its token reads the repository, its issues and pull
     # requests, and the forge refuses its pushes and its writes.
     kept = await session_keeps_work(db, claims.get("session"))

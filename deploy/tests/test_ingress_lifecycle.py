@@ -241,6 +241,17 @@ def main():
                     except urllib.error.HTTPError as exc:
                         assert exc.code == 404, (host, exc.code)
                 print(f"PASS: business traffic switched to {target.name}; {len(sockets)} existing WebSockets survived 32s", flush=True)
+            # api-front's own config changes too (a route, a body limit), and a
+            # reload retires the workers holding every device link, terminal
+            # and tunnel on it. Those keep serving past the 30 s deadline that
+            # used to end them all.
+            subprocess.run([*commands[1], "-s", "reload"], check=True)
+            deadline = time.monotonic() + 32
+            while time.monotonic() < deadline:
+                for sock in sockets:
+                    echo(sock)
+                time.sleep(0.25)
+            print(f"PASS: an api-front reload kept its {len(sockets)} WebSockets past 32s", flush=True)
         finally:
             for sock in sockets:
                 sock.close()

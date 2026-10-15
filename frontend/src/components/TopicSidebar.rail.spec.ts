@@ -17,6 +17,9 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { screenHeader } from '@/composables/useScreenHeader'
+
+import ScreenHeaderTitle from './common/Navigation/ScreenHeaderTitle.vue'
 import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale } from '@/i18n'
@@ -64,22 +67,24 @@ const router = createRouter({
 
 // v-navigation-drawer 必须活在一个 v-layout 里，否则 Vuetify 直接抛
 // "Could not find injected layout"——所以挂一个最小宿主把它包起来。
+// Reads the declared header in its own render, after the sidebar beside it has set up.
+const BarTitle = defineComponent({
+  setup: () => () => h(ScreenHeaderTitle, { header: screenHeader.value, fallback: '' }),
+})
+
 const Host = defineComponent({
   props: { inner: { type: Object, required: true } },
   setup(props) {
-    return () => h(VLayout, null, { default: () => [h(Sidebar, props.inner as Record<string, unknown>)] })
+    // ScreenHeaderTitle stands in for the phone top bar: in page form the project row
+    // is the bar's content, declared by the sidebar (useScreenHeader).
+    return () =>
+      h(VLayout, null, {
+        default: () => [h(Sidebar, props.inner as Record<string, unknown>), h(BarTitle)],
+      })
   },
 })
 
 function mount(inner: Record<string, unknown> = {}, pinia = createPinia()) {
-  // 整页形态下项目头那一行填进顶栏那一格（Teleport 到 #app-bar-slot，真实环境里
-  // 由 MobileAppBar 画）。落点不存在时 Teleport 会在卸载时炸，所以这里把它摆出来
-  // ——和 v-navigation-drawer 必须有 v-layout 是同一类前置条件。
-  if (!document.getElementById('app-bar-slot')) {
-    const slot = document.createElement('div')
-    slot.id = 'app-bar-slot'
-    document.body.appendChild(slot)
-  }
   const vuetify = createVuetify({ components, directives })
   return render(Host, {
     props: {

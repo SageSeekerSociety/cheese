@@ -77,9 +77,8 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: '',
       component: () => import('@/views/workspace/WorkspaceEntry.vue'),
       props: addressProps,
-      // 手机上这一层就是话题列表，项目名 + 切换器由它自己填进顶栏（barSlot）。
+      // 手机上这一层就是话题列表，项目名 + 切换器由它自己填进顶栏（TopicRailHeader）。
       // 它同时是底栏「工作区」那一格的落点，所以底栏留着，也没有"回上一层"。
-      meta: { barSlot: true },
     },
     {
       name: 'workspace-topic',
@@ -87,9 +86,9 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/workspace/TopicView.vue'),
       props: addressProps,
       // 手机上这是页面栈的末端：底栏收起（它不是一级目的地），← 回到话题列表。
-      // `barSlot`: TopicHeader（标题 + #id + 阶段）填的就是顶栏那一格，不再自己
-      // 画一条横条；← 由顶栏按 backTo 出。
-      meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
+      // TopicHeader（标题 + #id + 阶段）填的就是顶栏那一格，不再自己画一条横条；
+      // ← 由顶栏按 backTo 出。
+      meta: { hideTabs: true, backTo: 'workspace-project' },
     },
     {
       // 一个频道自己的文件：贴进来的图、芝士交付的文档、定时任务交回的结果。整页打开
@@ -127,7 +126,7 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: `tasks/:taskId${NUMBER_OR_ID}`,
       component: () => import('@/views/workspace/TopicView.vue'),
       props: addressProps,
-      meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
+      meta: { hideTabs: true, backTo: 'workspace-project' },
     },
     {
       // 项目总览：进项目落在这一页（壳的 `home`）。它答的是「这个项目怎么样了」：项目

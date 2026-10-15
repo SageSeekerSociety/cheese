@@ -1,114 +1,54 @@
 <script setup lang="ts">
 // 小队所有者 / 管理员管理「别人怎么找到、怎么进来」的地方：团队地址（handle，
 // `/teams/<handle>`）、小队链接（长期有效，可重置）、加入要不要审批、搜不搜得到。
+//
+// 这一件只吃数据、往上报动作：几样东西取没取回来、写成了没有、换完地址把浏览器带到哪，
+// 都是页面（`Members.vue`）那一层的事。只有地址那一格自己拿着草稿 —— 改到一半的东西不该
+// 跟着下一个团队跑，确认时连要保存的那一串一起报上去。
+import type { TeamsApi } from '@/api/teams'
 import type { Team, TeamVisibility } from '@/types'
 
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 
-import { ApiError } from '@/api'
-import { TeamsApi } from '@/api/teams'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-const props = defineProps<{ team: Team }>()
-const emit = defineEmits<{ updated: [team: Team] }>()
+const props = defineProps<{
+  team: Team
+  /** 这一份小队链接；还没读回来时是 `null`。 */
+  link: TeamsApi.TeamJoinLink | null
+  /** 有事在做：这一段的按钮和开关都按不动。 */
+  busy: boolean
+  /** 上一次没做成的理由，画成一条红条。 */
+  error: string
+  /** 地址那一格上要说的话（被占用 / 不合法 / 没做成）。 */
+  handleError: string
+  /** 刚复制过：按钮上的字换成「已复制」。 */
+  copied: boolean
+}>()
 
-const link = ref<TeamsApi.TeamJoinLink | null>(null)
-const busy = ref(false)
-const error = ref('')
-const copied = ref(false)
-const url = computed(() => (link.value ? `${window.location.origin}/team-invites/${link.value.token}` : ''))
+const emit = defineEmits<{
+  /** 保存这一串地址（去掉了首尾空白）。 */
+  saveHandle: [handle: string]
+  /** 换一份新的小队链接，旧的立刻失效。 */
+  reset: []
+  /** 加入要不要审批。 */
+  setApproval: [approval: boolean]
+  /** 这个团队在搜索里露不露面。 */
+  setVisibility: [visibility: TeamVisibility]
+  /** 复制这一条链接。 */
+  copy: [url: string]
+}>()
 
-const route = useRoute()
-const router = useRouter()
 const addressPrefix = `${window.location.host}/teams/`
+const url = computed(() => (props.link ? `${window.location.origin}/team-invites/${props.link.token}` : ''))
+
 const handle = ref(props.team.handle)
-const handleError = ref('')
 const handleChanged = computed(() => handle.value.trim() !== props.team.handle)
 watch(
   () => props.team.handle,
   (current) => (handle.value = current)
 )
-
-// A new handle is a new address: the page moves to it, the old one stops working.
-async function saveHandle() {
-  handleError.value = ''
-  busy.value = true
-  try {
-    const { team } = await TeamsApi.update(props.team.id, { handle: handle.value.trim() })
-    emit('updated', team)
-    await router.replace({
-      name: route.name ?? 'TeamsDetailDefault',
-      params: { handle: team.handle },
-      query: route.query,
-    })
-  } catch (e) {
-    handleError.value =
-      e instanceof ApiError && e.status === 409
-        ? t('work.teamLink.handleTaken')
-        : e instanceof ApiError && e.status === 400
-          ? t('work.teamLink.handleInvalid')
-          : t('work.teamLink.failed')
-  } finally {
-    busy.value = false
-  }
-}
-
-async function run(action: () => Promise<void>) {
-  busy.value = true
-  error.value = ''
-  try {
-    await action()
-  } catch {
-    error.value = t('work.teamLink.failed')
-  } finally {
-    busy.value = false
-  }
-}
-
-watch(
-  () => props.team.id,
-  (teamId) => {
-    link.value = null
-    copied.value = false
-    void run(async () => {
-      const data = await TeamsApi.getJoinLink(teamId)
-      if (props.team.id === teamId) link.value = data
-    })
-  },
-  { immediate: true }
-)
-
-function reset() {
-  copied.value = false
-  void run(async () => {
-    link.value = await TeamsApi.resetJoinLink(props.team.id)
-  })
-}
-
-function setApproval(approval: boolean | null) {
-  void run(async () => {
-    link.value = await TeamsApi.updateJoinLink(props.team.id, { approval: !!approval })
-  })
-}
-
-function setVisibility(visibility: TeamVisibility) {
-  void run(async () => {
-    const { team } = await TeamsApi.update(props.team.id, { visibility })
-    emit('updated', team)
-  })
-}
-
-async function copy() {
-  error.value = ''
-  try {
-    await navigator.clipboard.writeText(url.value)
-    copied.value = true
-  } catch {
-    error.value = t('work.teamLink.copyFailed')
-  }
-}
 </script>
 
 <template>
@@ -129,7 +69,11 @@ async function copy() {
         variant="outlined"
         class="link-field"
       />
-      <BaseButton kind="primary" :disabled="busy || !handleChanged || !handle.trim()" @click="saveHandle">
+      <BaseButton
+        kind="primary"
+        :disabled="busy || !handleChanged || !handle.trim()"
+        @click="emit('saveHandle', handle.trim())"
+      >
         {{ t('work.teamLink.save') }}
       </BaseButton>
     </div>
@@ -150,10 +94,10 @@ async function copy() {
           variant="outlined"
           class="link-field"
         />
-        <BaseButton kind="primary" :disabled="busy" @click="copy">
+        <BaseButton kind="primary" :disabled="busy" @click="emit('copy', url)">
           {{ copied ? t('work.teamLink.copied') : t('work.teamLink.copy') }}
         </BaseButton>
-        <BaseButton :disabled="busy" @click="reset">{{ t('work.teamLink.reset') }}</BaseButton>
+        <BaseButton :disabled="busy" @click="emit('reset')">{{ t('work.teamLink.reset') }}</BaseButton>
       </div>
       <p class="t-meta c-muted mt-2">{{ t('work.teamLink.resetHint') }}</p>
 
@@ -165,7 +109,7 @@ async function copy() {
         hide-details
         inset
         class="mt-2"
-        @update:model-value="setApproval"
+        @update:model-value="(value) => emit('setApproval', !!value)"
       />
       <p class="t-meta c-muted">{{ t('work.teamLink.approvalHint') }}</p>
     </template>
@@ -175,7 +119,7 @@ async function copy() {
       :model-value="team.visibility"
       :disabled="busy"
       hide-details
-      @update:model-value="(value) => setVisibility(value as TeamVisibility)"
+      @update:model-value="(value) => emit('setVisibility', value as TeamVisibility)"
     >
       <v-radio value="public" :label="`${t('work.teamLink.public')} · ${t('work.teamLink.publicHint')}`" />
       <v-radio value="stealth" :label="`${t('work.teamLink.stealth')} · ${t('work.teamLink.stealthHint')}`" />

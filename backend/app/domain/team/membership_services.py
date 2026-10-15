@@ -12,9 +12,13 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import say
-from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
-from app.domain.notification.models import NotificationType
+from app.domain.addressing import Event, Hand, address
+from app.domain.delivery_events import (
+    Deliver,
+    DeliveryEvent,
+    NotificationType,
+    event_id_for,
+)
 from app.domain.team.models import (
     ApplicationStatus,
     ApplicationType,
@@ -32,6 +36,7 @@ from app.domain.user.services import faces_by_handle, handles_by_ids
 
 
 async def _notify(
+    deliver: Deliver,
     session: AsyncSession,
     application: TeamMembershipApplication,
     *,
@@ -42,10 +47,12 @@ async def _notify(
 ) -> None:
     """把这条申请上刚发生的事交给投递账本。
 
+    账本在第 5 层，这一包在第 2 层，写的那一下由服务在构造时递进来（`Deliver`）。
+
     这里的每一件事都长在一条 `team_membership_application` 上，而参与者和它的关系
     只有两种：**卡递给了他**（申请等管理员审、邀请等被邀请的人回应），或者**他等
     的东西有了结果**（申请被批/被拒、邀请被接受/被谢绝/被取消）。两种都是
-    `delivery/addressing.py` 里已经有的关系，所以这里不另写一份「谁会收到」。
+    `addressing.py` 里已经有的关系，所以这里不另写一份「谁会收到」。
 
     下一步一定在参与者手上：这几件事发生的那一刻，平台这边已经做完了。
 
@@ -72,11 +79,14 @@ async def _notify(
 
 class TeamMembershipService:
     @classmethod
-    def from_session(cls, session: AsyncSession) -> "TeamMembershipService":
+    def from_session(
+        cls, session: AsyncSession, deliver: Deliver
+    ) -> "TeamMembershipService":
         return cls(
             session=session,
             team_repo=TeamRepository(session=session),
             application_repo=TeamMembershipApplicationRepository(session=session),
+            deliver=deliver,
         )
 
     def __init__(
@@ -84,10 +94,12 @@ class TeamMembershipService:
         session: AsyncSession,
         team_repo: TeamRepository,
         application_repo: TeamMembershipApplicationRepository,
+        deliver: Deliver,
     ) -> None:
         self._session = session
         self._team_repo = team_repo
         self._app_repo = application_repo
+        self._deliver = deliver
         self._default_page_size = 20
 
     async def _validate_user_can_apply_or_be_invited(
@@ -177,6 +189,7 @@ class TeamMembershipService:
             "message": message or "",
         }
         await _notify(
+            self._deliver,
             self._session,
             saved,
             type_=NotificationType.TEAM_JOIN_REQUEST,
@@ -254,6 +267,7 @@ class TeamMembershipService:
             "message": message or "",
         }
         await _notify(
+            self._deliver,
             self._session,
             saved,
             type_=NotificationType.TEAM_INVITATION,
@@ -304,6 +318,7 @@ class TeamMembershipService:
             "inviter": {"type": "user", "id": str(initiator_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_INVITATION_ACCEPTED,
@@ -340,6 +355,7 @@ class TeamMembershipService:
             "inviter": {"type": "user", "id": str(initiator_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_INVITATION_DECLINED,
@@ -394,6 +410,7 @@ class TeamMembershipService:
             "requester": {"type": "user", "id": str(requester_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_REQUEST_APPROVED,
@@ -439,6 +456,7 @@ class TeamMembershipService:
             "requester": {"type": "user", "id": str(requester_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_REQUEST_REJECTED,
@@ -484,6 +502,7 @@ class TeamMembershipService:
             "invitedUser": {"type": "user", "id": str(invited_user_id)},
         }
         await _notify(
+            self._deliver,
             self._session,
             app,
             type_=NotificationType.TEAM_INVITATION_CANCELED,

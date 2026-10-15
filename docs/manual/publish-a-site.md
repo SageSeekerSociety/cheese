@@ -13,7 +13,7 @@ slug: publish-a-site
 
 ## 让芝士做展示页 {#build}
 
-在频道里把下面这条消息交给芝士，再打开它创建的任务——建好就已经开始。交给芝士、开始任务的步骤见[把一件事交给芝士并验收](/working-with-cheese#describe-goal)。
+在频道里把下面这条消息交给芝士，芝士把这条支线转为任务后接着动手，点消息下方的任务卡跟进。交给芝士、跟进任务的步骤见[把一件事交给芝士并验收](/working-with-cheese#describe-goal)。
 
 ```prompt
 给我们的课程项目做一个展示页：一句话介绍、三张截图的位置、四个人的分工。只用 HTML 和 CSS，放在 site/ 目录，入口是 site/index.html。

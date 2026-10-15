@@ -72,6 +72,8 @@ const props = withDefaults(
     topicList?: Topic[]
     /** handle → 名字：`<@handle>` chip 上写的字。 */
     mentionNames?: Record<string, string>
+    /** 这份文档 @ 到并通知过的人：他们的 `<@handle>` 画成 @chip，其余的画成名字。 */
+    notifiedMentions?: string[]
     /** 打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
     /** 能写评论（归档话题的文档不能）。 */
@@ -99,6 +101,7 @@ const props = withDefaults(
   {
     topicList: () => [],
     mentionNames: () => ({}),
+    notifiedMentions: () => [],
     mentionPeople: () => [],
     canComment: true,
     openThreads: () => new Set<string>(),
@@ -230,7 +233,7 @@ function onDocClick(e: MouseEvent) {
     }
     return
   }
-  const el = target?.closest('.mention') as HTMLElement | null
+  const el = target?.closest('.mention, .name-ref') as HTMLElement | null
   if (!el) return
   if (el.dataset.topic) emit('open-topic', el.dataset.topic)
   else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
@@ -363,6 +366,7 @@ function buildEditor(session: DocSession): DocEditor {
         names: () => ({
           mentionNames: props.mentionNames,
           topicTitles: Object.fromEntries(props.topicList.map((t) => [t.id, t.title])),
+          notified: (handle: string) => props.notifiedMentions.includes(handle),
         }),
       }),
       createCommentHighlights({ open: () => props.openThreads, active: () => props.activeThread ?? null }),
@@ -414,10 +418,10 @@ watch(
   () => [props.openThreads, props.activeThread],
   () => poke(commentHighlightKey)
 )
-// 名册比正文晚到：到了之后标签上的账号换成名字。`<#id>` 指着什么也是后到的
+// 名册比正文晚到：到了之后标签上的账号换成名字。通知过谁也是存回之后才知道的。`<#id>` 指着什么也是后到的
 // （lib/refDirectory）。
 watch(
-  () => [props.mentionNames, props.topicList, refsVersion.value],
+  () => [props.mentionNames, props.topicList, props.notifiedMentions, refsVersion.value],
   () => poke(tokenChipsKey)
 )
 function poke(key: PluginKey) {

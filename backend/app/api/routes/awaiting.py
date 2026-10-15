@@ -1,7 +1,7 @@
 """待我处理：跨项目的那一份清单。
 
 看板回答「这个项目现在有什么在等人」，这里回答「**我**现在要处理什么」—— 同一份规则
-（`room_task/presentation.py`）、同一份收件人判据（`delivery/addressing.py`，投递用的
+（`room_task/presentation.py`）、同一份收件人判据（`addressing.py`，投递用的
 也是它），范围换成我能看见的全部项目。为什么它不能由通知表拼出来，写在
 `room_task/awaiting.py` 的模块说明里。
 

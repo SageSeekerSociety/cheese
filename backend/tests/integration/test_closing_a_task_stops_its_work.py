@@ -23,8 +23,11 @@ from sqlalchemy import select, update
 
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
+from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_instance.adapters import task_teammate
+from app.domain.delivery.agent import record_task_instruction
 from app.domain.delivery.models import Delivery
 from app.domain.review import landing_watch
 from app.domain.room_task.closing import CLOSES_TASK
@@ -79,14 +82,20 @@ def _backend(client, channel: StubChannel) -> ChatService:
 
 
 def _a_while_ago(client, task_id: uuid.UUID) -> None:
-    """Let a minute pass since the task closed."""
+    """Let a minute pass since the task closed: the close, and the turn that
+    was running when it came, are both a minute old."""
 
     async def age() -> None:
         async with client.test_request_factory() as session:
             await session.execute(
                 update(Task)
                 .where(Task.id == task_id)
-                .values(closed_at=datetime.now(UTC) - timedelta(minutes=1))
+                .values(closed_at=Task.closed_at - timedelta(minutes=1))
+            )
+            await session.execute(
+                update(AgentTurn)
+                .where(AgentTurn.conversation_id == task_id)
+                .values(started_at=AgentTurn.started_at - timedelta(minutes=1))
             )
             await session.commit()
 
@@ -277,7 +286,14 @@ def test_a_task_closed_for_a_write_up_that_never_ended_stops_the_turn(client):
         _accepted_long_ago(client, task_id)
         assert _interrupts(channel, task_id) == []
 
-        client.portal.call(lambda: landing_watch.watch_landings(service))
+        client.portal.call(
+            lambda: landing_watch.watch_landings(
+                service,
+                announce,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
+            )
+        )
 
         assert _status(client, task) == "closed"
         _until(
@@ -298,11 +314,55 @@ def test_the_write_up_deadline_does_not_stop_other_work_in_the_task(client):
     try:
         _accepted_long_ago(client, task_id)
 
-        client.portal.call(lambda: landing_watch.watch_landings(service))
+        client.portal.call(
+            lambda: landing_watch.watch_landings(
+                service,
+                announce,
+                record_instruction=record_task_instruction,
+                task_teammate=task_teammate,
+            )
+        )
 
         assert _status(client, task) == "open"
         client.portal.call(service.stop_work_in_closed_tasks)
         assert _interrupts(channel, task_id) == []
     finally:
+        retire_topic(client, task_id)
+        app.dependency_overrides.pop(get_chat_service, None)
+
+
+def test_a_turn_begun_after_the_close_is_left_to_answer(client):
+    """Someone asks about a task after it closed: the teammate's answer is not
+    work in a task that is over, and the backend holding the session leaves
+    it to finish."""
+    channel, task, _ = _working_task(client)
+    task_id = uuid.UUID(task["id"])
+    holder = app.dependency_overrides[get_chat_service]()
+    try:
+        elsewhere = _backend(client, KeepsWorking())
+        app.dependency_overrides[get_chat_service] = lambda: elsewhere
+        closed = client.post(
+            f"/topics/{task['id']}/close",
+            json={"conclusion": "做完了"},
+            headers=session_auth_headers("alice"),
+        )
+        assert closed.status_code == 200, closed.text
+        _a_while_ago(client, task_id)
+
+        async def asked_after_the_close() -> None:
+            async with client.test_request_factory() as session:
+                await session.execute(
+                    update(AgentTurn)
+                    .where(AgentTurn.conversation_id == task_id)
+                    .values(started_at=datetime.now(UTC))
+                )
+                await session.commit()
+
+        client.portal.call(asked_after_the_close)
+        client.portal.call(holder.stop_work_in_closed_tasks)
+
+        assert _interrupts(channel, task_id) == []
+    finally:
+        app.dependency_overrides[get_chat_service] = lambda: holder
         retire_topic(client, task_id)
         app.dependency_overrides.pop(get_chat_service, None)

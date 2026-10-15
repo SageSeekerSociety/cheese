@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.doc_store import store
 from app.core.errors import ConflictError
+from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.block.documents import DocumentWriter
 from app.domain.block.models import Block, BlockKind
 from app.domain.living_doc.models import (
@@ -21,7 +22,7 @@ from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered, session_auth_headers
+from tests.integration.conftest import project_service, registered, session_auth_headers
 from tests.integration.test_docs import _topic
 from tests.support.living_doc import document_of
 
@@ -30,9 +31,12 @@ async def seed(factory):
     """A task, whose living document these tests write."""
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         task = await TopicService(session).create_task(
-            room_id=project.root_topic_id, created_by="alice"
+            room_id=project.root_topic_id,
+            created_by="alice",
+            seat_project=seat_project,
+            team=project_team,
         )
         await session.commit()
         return task.id
@@ -262,7 +266,7 @@ async def test_platform_brief_seed_has_raw_history_without_contribution_event(
     factory = business_db_factory
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         await session.commit()
     raw = "# 原稿\r\n😀"
     async with factory() as session:
@@ -375,7 +379,7 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
         )
         assert sum((block.meta or {}).get("action") == "doc" for block in blocks) == 1
         doc = await task_doc(session, task)
-        assert len(await TopicService(session).doc_nodes(doc)) == 1
+        assert len(await Documents(session).nodes(doc)) == 1
 
 
 @pytest.mark.anyio

@@ -121,6 +121,17 @@ convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
+Gemini 4 Argon runs on Google AI Studio. Set `GEMINI_API_KEY` in the same
+`.env` before releasing a configuration that includes it. Two adaptations make
+Claude Code's requests work there: `patch_gemini_generation.py` makes the
+pinned LiteLLM treat `gemini-4` as the Gemini 3+ generation (thought
+signatures, tool-call ids, thinking level), and `no_explicit_cache.py` strips
+`cache_control` from a deployment marked `cheese_no_explicit_cache: true`,
+because argon refuses explicit caching and LiteLLM would otherwise create a
+`cachedContents` object for every Claude Code request. Its key is capped at
+USD 1,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
+gateway database's daily spend, so the cap survives releases.
+
 `deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
 RUC key, and by DeepSeek's API when every RUC key fails or is past its 3
 parallel requests. Set `RUC_DEEPSEEK_API_BASE` (the endpoint's address, no
@@ -157,6 +168,13 @@ without this one broken picture fails every later request of a conversation.
 The replacement depends only on the image's bytes, so it is the same on every
 turn and the prompt cache keeps hitting. Images that open pass unchanged, and
 an image given by URL is not fetched.
+
+A deployment that declares `cheese_upstream_headers` or `cheese_session_header`
+under its `model_info` is sent those headers, and no other row of its model group
+is (`upstream_headers.py`, registered the same way). OpenCode Go needs both: its
+own User-Agent, and a session per conversation without which it refuses the
+request. How to put a subscription or relay row in front of a pay-per-use one:
+`docs/manual/dev/gateway.md`, "订阅与中转".
 
 The box's `backend/.env` must contain:
 
@@ -198,7 +216,8 @@ there read-only, because the gateway refuses to write them.
 
 Both routes owe one invariant, and the service behind the admin page enforces it
 as surely as `check_config.py` enforces it for the file: a selectable model with
-no price is not offered at all. Its tokens would meter at zero, the project's
+no price is not offered at all, unless its upstream is free and it says so with
+`cheese_free: true` and both prices written as 0. Its tokens would meter at zero, the project's
 `max_budget` would never trip, and the first sign of trouble would be the
 invoice; a model missing from the picker gets noticed, a brake that quietly
 stopped working does not. `check_config.py` asserts this for every selectable

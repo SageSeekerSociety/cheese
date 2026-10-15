@@ -18,6 +18,8 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.domain.agent_instance.adapters import project_team
+from app.domain.delivery.ledger import deliver, settle
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import (
     InvitationCreate,
@@ -29,6 +31,16 @@ from app.domain.membership.schemas import (
 from app.domain.membership.services import InvitationService, MemberService
 
 router = APIRouter(prefix="", tags=["members"])
+
+
+def _invitations(db: DbSession) -> InvitationService:
+    """The invitation service, with the two ledger writes wired in.
+
+    An invitation is delivered, and settled once it is answered or withdrawn —
+    both land on the delivery ledger, one layer above ``membership``, so this
+    door hands them in (``integration/ports.py`` wires its reader the same way).
+    """
+    return InvitationService(db, deliver=deliver, settle=settle, team=project_team)
 
 
 @router.post("/projects/{project_id}/members")
@@ -63,7 +75,7 @@ async def list_members(
     # written (an external member's acceptance, a teammate's seat).
     row_of = {m.user_handle: m for m in members}
     items = []
-    for member in await roster(db, project_id):
+    for member in await roster(db, project_id, team=project_team):
         row = row_of.get(member.handle)
         d = {
             **member.as_dict(),
@@ -123,7 +135,7 @@ async def invite_member(
     resolver: ActorResolverDep,
 ) -> dict:
     who = await resolver.resolve(project_id=project_id)
-    invitation = await InvitationService(db).invite(
+    invitation = await _invitations(db).invite(
         project_id=project_id,
         invitee_handle=body.user_handle,
         actor=who,
@@ -145,7 +157,7 @@ async def list_project_invitations(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    svc = InvitationService(db)
+    svc = _invitations(db)
     items = await svc.list_for_project(project_id)
     rows = [await svc.describe(i) for i in items]
     return ok(page(rows, len(rows)))
@@ -161,7 +173,7 @@ async def list_my_invitations(db: DbSession, resolver: ActorResolverDep) -> dict
     # 必须是**验证过的**身份：这条接口回的是「谁在等你答复」，匿名请求下 resolve
     # 会给出一个 anonymous 演员，那就成了一条不认人的邮箱。
     who = await resolver.require_verified_caller()
-    svc = InvitationService(db)
+    svc = _invitations(db)
     items = await svc.list_for_person(who.handle or "")
     rows = [await svc.describe(i) for i in items]
     return ok(page(rows, len(rows)))
@@ -175,7 +187,7 @@ async def respond_to_invitation(
     resolver: ActorResolverDep,
 ) -> dict:
     who = await resolver.require_verified_caller()
-    invitation = await InvitationService(db).respond(
+    invitation = await _invitations(db).respond(
         invitation_id=invitation_id, accept=body.accept, actor=who
     )
     await db.commit()
@@ -190,8 +202,6 @@ async def revoke_invitation(
 ) -> dict:
     """邀请方反悔。撤回不删行——谁在什么时候邀过谁，是这一行唯一的记录。"""
     who = await resolver.require_verified_caller()
-    invitation = await InvitationService(db).revoke(
-        invitation_id=invitation_id, actor=who
-    )
+    invitation = await _invitations(db).revoke(invitation_id=invitation_id, actor=who)
     await db.commit()
     return ok(InvitationOut.model_validate(invitation).model_dump(mode="json"))

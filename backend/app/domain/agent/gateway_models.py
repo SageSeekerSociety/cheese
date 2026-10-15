@@ -22,7 +22,15 @@ dict —— 平台那半每次现查，所以改了算力额度不必等缓存�
   `deploy/gateway/config.yaml` 并发布网关」说清楚。
 - 上架（`cheese_selectable`）必须同时有输入与输出两个单价。理由不是洁癖：没有单
   价的模型网关按 0 计费，项目 `max_budget` 这道刹车会**静默失效**，唯一还能拦住
-  它的就剩发票了 —— 与 `deploy/gateway/check_config.py` 是同一句话。
+  它的就剩发票了 —— 与 `deploy/gateway/check_config.py` 是同一句话。一个模型有几个
+  线路，每条线路各算一遍：哪一个没价，落到它那里的流量就按零计。唯一合法的零是
+  声明出来的：`cheese_free: true` 且输入、输出都写成 0（同 check_config）。
+
+一个模型（`model_name`）可以有好几条线路（网关里的几条部署），按 `order` 从小到大试。
+config.yaml 声明的线路只读，但照样列出来，人看得到完整的先后；运行时可以往任何模型
+（包括 config 声明的）上加线路。模型那一层的元数据（上架、名字、档位、思考档、能力）
+同组每一行一字不差：目录读 `/model/info` 列出的第一行，而哪一行排第一不由我们定。
+所以加线路时从已有那一行抄，改模型时每一行都改。
 
 写操作还会 `reset_cache()` 并刷新 `gateway_catalog`：选择器用的是那份目录，写完不
 刷，用户要等最长一个刷新周期才看得到新模型（或还看得到一个已停用的）。
@@ -48,6 +56,7 @@ from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_admin import (
     AdminKey,
     AdminModel,
+    AdminSource,
     GatewayAdmin,
     GatewayAdminError,
     GatewayUnreachable,
@@ -55,7 +64,15 @@ from app.domain.agent.gateway_admin import (
     UsageWindow,
 )
 from app.domain.agent.models import GatewayAdminAudit
-from app.domain.agent.schemas import ModelCreate, ModelUpdate, api_base_allowed
+from app.domain.agent.schemas import (
+    ModelCreate,
+    ModelUpdate,
+    SourceCreate,
+    SourceUpdate,
+    api_base_allowed,
+    split_upstream,
+    upstream_string,
+)
 from app.domain.project.services import ProjectService
 from app.domain.usage.services import UsageService
 
@@ -468,18 +485,22 @@ class GatewayModelsService:
 
     async def _add(self, name: str, data: dict) -> dict:
         _validate_name(name)
-        upstream_model = str(data.get("upstream_model") or "")
-        if not upstream_model:
-            # 上游标识是这条模型唯一「打到哪儿去」的答案，缺了它网关只会建出一条
-            # 谁调谁失败的模型 —— 那不是模型，是一条陷阱。
-            raise BadRequestError(say("upstreamModelRequired"))
-        api_base = data.get("api_base")
+        upstream_model = _upstream_of(data)
+        api_base = _api_base_for(upstream_model, data.get("api_base"))
         _validate_api_base(api_base)
+        capabilities = dict(data.get("capabilities") or {})
+        if _translated_to_chat(upstream_model):
+            capabilities[_MID_SYSTEM] = False
         selectable = bool(data.get("selectable"))
-        prices = data.get("prices") or {}
-        _require_price_when_selectable(selectable, prices)
+        free = bool(data.get("free"))
+        prices = _source_prices(data.get("prices"), free)
+        _require_price_when_selectable(selectable, prices, free)
 
-        await self._gateway_up()
+        models = await self._require_models()
+        if any(m.name == name for m in models):
+            # 同名再建一条，网关会把它当成这个模型的又一条线路，却带着另一份展示元数据
+            # —— 目录读哪一行就显示哪一份。加线路有自己的入口，它会把元数据抄齐。
+            raise BadRequestError(say("gatewayModelExists", name=name))
         model_id = await self._admin.add_model(  # type: ignore[union-attr]
             name=name,
             upstream_model=upstream_model,
@@ -488,8 +509,13 @@ class GatewayModelsService:
             prices=_prices_for_gateway(prices),
             label=data.get("label"),
             selectable=selectable,
-            capabilities=data.get("capabilities") or {},
+            capabilities=capabilities,
             tier=data.get("tier"),
+            overseas=data.get("overseas"),
+            order=data.get("order") or _FIRST_ORDER,
+            free=free or None,
+            upstream_headers=data.get("upstream_headers") or None,
+            session_header=data.get("session_header") or None,
         )
         await self._after_write()
         return await self._read_back(name, data, model_id)
@@ -526,28 +552,63 @@ class GatewayModelsService:
         api_base = data.get("api_base")
         if api_base is not None:
             _validate_api_base(api_base)
-        # 不变式永远看**合并之后**的样子：把已上架模型的单价删成一半，和一开始就
-        # 没价，对刹车是同一种损坏。
-        selectable = data.get("selectable", current.selectable)
-        prices = data.get("prices")
-        effective_prices = prices if prices is not None else current.prices
-        _require_price_when_selectable(bool(selectable), effective_prices)
+        api_key = data.get("api_key")
+        touches_key = bool(api_key) and not data.get("api_key_unchanged")
+        touches_source = touches_key or any(
+            field in data for field in ("upstream_model", "api_base", "prices")
+        )
+        if touches_source and len(current.sources) > 1:
+            raise BadRequestError(say("sourceModelHasSeveralSources", name=name))
 
-        kwargs: dict[str, Any] = {"model_id": current.model_id}
-        for field in ("upstream_model", "api_base", "label", "selectable", "tier"):
+        # 不变式永远看**合并之后**的样子：把已上架模型的单价删成一半，和一开始就
+        # 没价，对刹车是同一种损坏。有几条线路就逐个看。
+        selectable = bool(data.get("selectable", current.selectable))
+        prices = data.get("prices")
+        for source in current.sources:
+            effective = (
+                source.prices if prices is None else _source_prices(prices, source.free)
+            )
+            _require_price_when_selectable(selectable, effective, source.free)
+
+        wanted = (data.get("capabilities") or {}).get(_MID_SYSTEM)
+        if wanted is not False and any(
+            _translated_to_chat(s.upstream_model) for s in current.sources
+        ):
+            if wanted is True:
+                raise BadRequestError(say("sourceChatFoldsSystem", name=name))
+            if data.get("capabilities") is not None:
+                # 没提这一项的保存不能把它冲掉：有 Chat 线路的组，它只能是关。
+                data = {
+                    **data,
+                    "capabilities": {**data["capabilities"], _MID_SYSTEM: False},
+                }
+
+        model_kwargs: dict[str, Any] = {}
+        for field in ("label", "selectable", "tier", "overseas"):
             if field in data:
-                kwargs[field] = data[field]
+                model_kwargs[field] = data[field]
+        if data.get("capabilities") is not None:
+            model_kwargs["capabilities"] = data["capabilities"]
+        source_kwargs: dict[str, Any] = {}
+        for field in ("upstream_model", "api_base"):
+            if field in data:
+                source_kwargs[field] = data[field]
         # 编辑界面不回显上游凭据，所以「没填 key」是常态、不能当成「清空 key」。
         # 只有显式给了一个非空 key、且没声明 unchanged，才真的动凭据。
-        api_key = data.get("api_key")
-        if api_key and not data.get("api_key_unchanged"):
-            kwargs["api_key"] = api_key
+        if touches_key:
+            source_kwargs["api_key"] = api_key
         if prices is not None:
-            kwargs["prices"] = _prices_for_gateway(prices)
-        if data.get("capabilities") is not None:
-            kwargs["capabilities"] = data["capabilities"]
+            # 走到这里时这个模型至多一条线路（上面拒了多条的）。
+            free = any(source.free for source in current.sources)
+            source_kwargs["prices"] = _prices_for_gateway(_source_prices(prices, free))
 
-        await self._admin.update_model(**kwargs)  # type: ignore[union-attr]
+        # 模型层的元数据每一行都写，否则这一行与那一行说的不是同一个模型。
+        for source in current.sources:
+            kwargs = {**model_kwargs, **source_kwargs}
+            if kwargs:
+                await self._admin.update_model(  # type: ignore[union-attr]
+                    model_id=source.source_id, **kwargs
+                )
         await self._after_write()
         return await self._read_back(name, data, current.model_id)
 
@@ -571,7 +632,8 @@ class GatewayModelsService:
     async def _delete(self, name: str) -> None:
         current = await self._current_model(name)
         _refuse_config_write(current)
-        await self._admin.delete_model(current.model_id)  # type: ignore[union-attr]
+        for source in current.sources:
+            await self._admin.delete_model(source.source_id)  # type: ignore[union-attr]
         await self._after_write()
 
     async def set_blocked(self, *, handle: str, name: str, blocked: bool) -> dict:
@@ -604,8 +666,269 @@ class GatewayModelsService:
         # 网关不支持停用 config 模型 —— 页面上它对停用是只读的，这里也如实拒绝，
         # 而不是做一个只改平台数据的假象。
         _refuse_config_write(current, toggle=True)
-        await self._admin.set_blocked(current.model_id, blocked)  # type: ignore[union-attr]
+        for source in current.sources:
+            await self._admin.set_blocked(source.source_id, blocked)  # type: ignore[union-attr]
         await self._after_write()
+
+    # ------------------------------------------------------------------
+    # 线路：一个模型名下的一条部署
+    # ------------------------------------------------------------------
+    async def _audited(
+        self,
+        *,
+        handle: str,
+        action: str,
+        target: str,
+        work: Callable[[], Awaitable[dict]],
+        before: dict | None = None,
+        after: dict | None = None,
+    ) -> dict:
+        """跑一次线路写，成败都落一行审计（同模型那几个写，只是不再逐个抄一遍）。"""
+        try:
+            out = await work()
+        except _WRITE_ERRORS as exc:
+            await self._record(
+                handle=handle,
+                action=action,
+                target=target,
+                result="failed",
+                detail=str(exc),
+                before=before,
+                after=after,
+            )
+            raise
+        await self._record(
+            handle=handle,
+            action=action,
+            target=target,
+            result="ok",
+            before=before,
+            after=after,
+        )
+        return out
+
+    async def _current_source(
+        self, name: str, source_id: str
+    ) -> tuple[AdminModel, AdminSource]:
+        model = await self._current_model(name)
+        source = next((s for s in model.sources if s.source_id == source_id), None)
+        if source is None:
+            raise NotFoundError(say("sourceNotFound", name=name, source=source_id))
+        return model, source
+
+    async def _snapshot_source(self, name: str, source_id: str) -> dict | None:
+        try:
+            _, source = await self._current_source(name, source_id)
+        except (GatewayAdminError, NotFoundError):
+            return None
+        return _source_snapshot(source)
+
+    async def _fold_system_messages(self, model: AdminModel) -> None:
+        """这个模型要有一条走 OpenAI 兼容 Chat 的线路了：整组标
+        `supports_mid_conversation_system: false`。
+
+        Messages 翻成 chat/completions 时，对话中间的 system 消息会丢（实测 glm-5.2、
+        MiMo）；标了这一项，Claude Code 把那段内容并进第一条用户消息。目录只读第一行，
+        而请求可能落到组里任何一行，所以要么整组都标，要么都不标 —— config.yaml 的行
+        改不了，没标就拒，让人先去改 config。
+        """
+        for source in model.sources:
+            if source.catalogue.get(_MID_SYSTEM_FIELD) is False:
+                continue
+            if source.origin == "config":
+                raise BadRequestError(say("sourceChatNeedsConfigFlag", name=model.name))
+        for source in model.sources:
+            if source.catalogue.get(_MID_SYSTEM_FIELD) is not False:
+                await self._admin.update_model(  # type: ignore[union-attr]
+                    model_id=source.source_id, capabilities={_MID_SYSTEM: False}
+                )
+
+    async def add_source(
+        self, *, handle: str, name: str, payload: SourceCreate
+    ) -> dict:
+        data = payload.model_dump()
+
+        async def work() -> dict:
+            model = await self._current_model(name)
+            upstream_model = _upstream_of(data)
+            api_base = _api_base_for(upstream_model, data.get("api_base"))
+            _validate_api_base(api_base)
+            free = bool(data.get("free"))
+            prices = _source_prices(data.get("prices"), free)
+            _require_price_when_selectable(model.selectable, prices, free)
+            # 模型那一层的元数据从已有那一行抄：同组每一行必须一字不差。
+            catalogue = dict(model.sources[0].catalogue if model.sources else {})
+            # A cap and a cache rule belong to the upstream model: another row
+            # on it (another key) keeps them, so it neither 400s nor escapes
+            # the cap.
+            catalogue.update(
+                next(
+                    (
+                        s.upstream_info
+                        for s in model.sources
+                        if s.upstream_model == upstream_model and s.upstream_info
+                    ),
+                    {},
+                )
+            )
+            if _would_lead(model, data["order"]) and not data.get("make_primary"):
+                raise BadRequestError(
+                    say("sourceWouldBePrimary", name=name, order=data["order"])
+                )
+            if _translated_to_chat(upstream_model):
+                await self._fold_system_messages(model)
+                catalogue[_MID_SYSTEM_FIELD] = False
+            source_id = await self._admin.add_source(  # type: ignore[union-attr]
+                name=name,
+                catalogue=catalogue,
+                upstream_model=upstream_model,
+                order=data["order"],
+                api_base=api_base,
+                api_key=data.get("api_key"),
+                prices=_prices_for_gateway(prices),
+                free=free or None,
+                upstream_headers=data.get("upstream_headers") or None,
+                session_header=data.get("session_header") or None,
+            )
+            data["source_id"] = source_id
+            if model.blocked:
+                # 停用的模型加一条线路，不能顺手把模型启用了：新线路跟着停着，
+                # 要用的时候整组一起启用。
+                await self._admin.set_blocked(source_id, True)  # type: ignore[union-attr]
+            await self._after_write()
+            return {"model": await self._read_back(name, {}, model.model_id)}
+
+        return await self._audited(
+            handle=handle, action="source.add", target=name, work=work, after=data
+        )
+
+    async def update_source(
+        self, *, handle: str, name: str, source_id: str, payload: SourceUpdate
+    ) -> dict:
+        data = payload.model_dump(exclude_unset=True)
+        before = await self._snapshot_source(name, source_id)
+
+        async def work() -> dict:
+            model, source = await self._current_source(name, source_id)
+            _refuse_config_source(model, source)
+            kwargs: dict[str, Any] = {"model_id": source.source_id}
+            if "upstream_model" in data:
+                kwargs["upstream_model"] = _upstream_of(data)
+            elif data.get("protocol") is not None:
+                # 只换协议、不换模型名：把现有的上游名套上新协议的前缀。
+                bare = _bare_upstream(source)
+                kwargs["upstream_model"] = upstream_string(data["protocol"], bare)
+            upstream_model = kwargs.get("upstream_model", source.upstream_model)
+            api_base = data.get("api_base")
+            if api_base is None and "upstream_model" in kwargs:
+                # 换了协议：已存的地址也要按新协议的写法收一遍。
+                api_base = source.api_base
+            if api_base is not None:
+                api_base = _api_base_for(upstream_model, api_base)
+                _validate_api_base(api_base)
+                if api_base != source.api_base:
+                    kwargs["api_base"] = api_base
+            if _translated_to_chat(upstream_model):
+                await self._fold_system_messages(model)
+                kwargs["capabilities"] = {_MID_SYSTEM: False}
+            if data.get("api_key") and not data.get("api_key_unchanged"):
+                kwargs["api_key"] = data["api_key"]
+            free = source.free if data.get("free") is None else bool(data["free"])
+            prices = data.get("prices")
+            if prices is not None or data.get("free") is not None:
+                effective = _source_prices(
+                    source.prices if prices is None else prices, free
+                )
+                _require_price_when_selectable(model.selectable, effective, free)
+                kwargs["prices"] = _prices_for_gateway(effective)
+                kwargs["free"] = free
+            for field in ("order", "upstream_headers", "session_header"):
+                if data.get(field) is not None:
+                    kwargs[field] = data[field]
+            await self._admin.update_model(**kwargs)  # type: ignore[union-attr]
+            await self._after_write()
+            return {"model": await self._read_back(name, {}, model.model_id)}
+
+        return await self._audited(
+            handle=handle,
+            action="source.update",
+            target=_source_target(name, source_id),
+            work=work,
+            before=before,
+            after=data,
+        )
+
+    async def delete_source(self, *, handle: str, name: str, source_id: str) -> dict:
+        before = await self._snapshot_source(name, source_id)
+
+        async def work() -> dict:
+            model, source = await self._current_source(name, source_id)
+            _refuse_config_source(model, source)
+            await self._admin.delete_model(source.source_id)  # type: ignore[union-attr]
+            await self._after_write()
+            return {"deleted": True}
+
+        return await self._audited(
+            handle=handle,
+            action="source.delete",
+            target=_source_target(name, source_id),
+            work=work,
+            before=before,
+        )
+
+    async def set_source_blocked(
+        self, *, handle: str, name: str, source_id: str, blocked: bool
+    ) -> dict:
+        before = await self._snapshot_source(name, source_id)
+
+        async def work() -> dict:
+            model, source = await self._current_source(name, source_id)
+            _refuse_config_source(model, source)
+            await self._admin.set_blocked(source.source_id, blocked)  # type: ignore[union-attr]
+            await self._after_write()
+            return {"blocked": blocked}
+
+        return await self._audited(
+            handle=handle,
+            action="source.blocked",
+            target=_source_target(name, source_id),
+            work=work,
+            before=before,
+            after={"blocked": blocked},
+        )
+
+    async def reorder_sources(
+        self, *, handle: str, name: str, orders: dict[str, int]
+    ) -> dict:
+        before = await self._snapshot_model(name)
+
+        async def work() -> dict:
+            model = await self._current_model(name)
+            by_id = {s.source_id: s for s in model.sources}
+            # 先全部判完再写：写到一半才发现某一条是 config 的，前面几条已经改了。
+            for source_id in orders:
+                source = by_id.get(source_id)
+                if source is None:
+                    raise NotFoundError(
+                        say("sourceNotFound", name=name, source=source_id)
+                    )
+                _refuse_config_source(model, source)
+            for source_id, order in orders.items():
+                if by_id[source_id].order != order:
+                    await self._admin.update_model(  # type: ignore[union-attr]
+                        model_id=source_id, order=order
+                    )
+            await self._after_write()
+            return {"model": await self._read_back(name, {}, model.model_id)}
+
+        return await self._audited(
+            handle=handle,
+            action="source.order",
+            target=name,
+            work=work,
+            before=before,
+            after={"orders": dict(orders)},
+        )
 
     async def set_budget(
         self, *, handle: str, project_id: uuid.UUID, max_budget_usd: float | None
@@ -723,6 +1046,7 @@ class GatewayModelsService:
             "selectable": model.selectable,
             "priced": model.priced,
             "tier": model.tier,
+            "overseas": model.overseas,
             "offered": offered,
             "blocked_reasons": [] if offered else _offered_reasons(model),
             "unpriced_reason": None if model.priced else model.supports_notes,
@@ -738,6 +1062,8 @@ class GatewayModelsService:
             # （与详情折线同源同账，零额外网关调用 —— 另调一次就多打一枪，
             # 还会让两处的数对不上）。
             "series": _daily_tokens(model.name, usage),
+            # 这个模型的全部线路，按网关试它们的先后排好；config 的也在，只是只读。
+            "sources": [_source_item(source) for source in model.sources],
         }
         if model.origin == "config":
             # 只对 config 模型给这段可复制文本：它唯一的改法是编辑 config.yaml，
@@ -824,8 +1150,12 @@ def _price_is_positive(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
 
 
-def _require_price_when_selectable(selectable: bool, prices: dict | None) -> None:
-    if not selectable:
+def _require_price_when_selectable(
+    selectable: bool, prices: dict | None, free: bool = False
+) -> None:
+    """上架的模型，这一条线路必须两向有价，或者是声明出来的免费（`_source_prices`
+    已经保证免费线路两向都是 0）。"""
+    if not selectable or free:
         return
     prices = prices or {}
     if not (
@@ -833,6 +1163,131 @@ def _require_price_when_selectable(selectable: bool, prices: dict | None) -> Non
         and _price_is_positive(prices.get("output"))
     ):
         raise BadRequestError(say("offeredNeedsPrices"))
+
+
+def _source_prices(prices: dict | None, free: bool) -> dict:
+    """一条线路要写进网关的单价，按「零只属于免费」这条规则收一遍。
+
+    免费线路：输入、输出必须是 0，没填就写成 0 —— 写出来的 0 才是价（`declared_free`），
+    缺着的会被网关当成没价。不免费的线路：输入或输出写 0 就拒，那是一道看起来定了价、
+    其实按零计费的刹车。与 `deploy/gateway/check_config.py` 同一条规则。缓存那两项
+    不在此列：不少上游缓存写入本来就不收钱（MiMo 的 `cache_creation` 就是 0）。
+    """
+    out = dict(prices or {})
+    for field in ("input", "output"):
+        value = out.get(field)
+        if free:
+            if value is None:
+                out[field] = 0.0
+            elif value != 0:
+                raise BadRequestError(say("sourceFreeNeedsZeroPrices"))
+        elif value is not None and value == 0:
+            raise BadRequestError(say("sourceZeroPriceNeedsFree"))
+    return out
+
+
+# 新模型第一条线路的优先级。没有 order 的线路只在所有有 order 的都冷却时才轮到，
+# 所以第一条也给一个数，后加的线路才排得进它前后。
+_FIRST_ORDER = 1
+
+
+# 页面上的能力键：能不能收对话中间的 system 消息（网关的
+# `supports_mid_conversation_system`）。
+_MID_SYSTEM = "mid_conversation_system"
+_MID_SYSTEM_FIELD = "supports_mid_conversation_system"
+
+
+def _would_lead(model: AdminModel, order: int) -> bool:
+    """一条优先级为 `order` 的新线路，会不会接走这个模型在用线路的流量。
+
+    LiteLLM 先在健康的、带 order 的部署里取最小的那一档；没有 order 的只在所有带
+    order 的都不可用时才轮到。所以组里在用的线路要么都没有 order（新线路一来就排在
+    它们前面），要么新线路的数不大于其中最小的那个（排到最前或与之分流），就是
+    「接走流量」。整组都停着时谁也不接走谁。
+    """
+    live = [s.order for s in model.sources if not s.blocked]
+    if not live:
+        return False
+    ordered = [o for o in live if o is not None]
+    return not ordered or order <= min(ordered)
+
+
+def _translated_to_chat(upstream_model: str) -> bool:
+    """这条线路的请求要从 Messages 翻成 OpenAI chat/completions 吗。"""
+    return split_upstream(upstream_model)[0] == "openai-chat"
+
+
+def _api_base_for(upstream_model: str, api_base: str | None) -> str | None:
+    """按协议收一遍上游地址。
+
+    原生 Messages 的地址不带 `/v1`：LiteLLM 自己拼 `/v1/messages`，带了就成了
+    `/v1/v1/messages`（OpenCode Go 的 Anthropic 入口是 `https://opencode.ai/inference/go`）。
+    Chat 线路正相反，地址要带到 `/v1`，那由人填，这里不猜别家的路径。
+    """
+    if not api_base:
+        return api_base
+    base = api_base.rstrip("/")
+    if split_upstream(upstream_model)[0] == "anthropic" and base.endswith("/v1"):
+        base = base[: -len("/v1")]
+    return base
+
+
+def _upstream_of(data: dict) -> str:
+    upstream_model = str(data.get("upstream_model") or "").strip()
+    if not upstream_model:
+        # 上游标识是这条线路唯一「打到哪儿去」的答案，缺了它网关只会建出一条
+        # 谁调谁失败的部署 —— 那不是线路，是一条陷阱。
+        raise BadRequestError(say("upstreamModelRequired"))
+    return upstream_string(data.get("protocol"), upstream_model)
+
+
+def _bare_upstream(source: AdminSource) -> str:
+    """线路的上游模型名，去掉协议前缀（认不出前缀就是整串）。"""
+    return split_upstream(source.upstream_model)[1]
+
+
+def _refuse_config_source(model: AdminModel, source: AdminSource) -> None:
+    if source.origin == "config":
+        raise BadRequestError(say("sourceConfigReadOnly", name=model.name))
+
+
+def _source_target(name: str, source_id: str) -> str:
+    return f"{name}/{source_id}"[:128]
+
+
+def _source_item(source: AdminSource) -> dict:
+    """页面上的一条线路。上游凭据网关本就不给；请求头只给名字不给值。"""
+    return {
+        "source_id": source.source_id,
+        "origin": source.origin,
+        "blocked": source.blocked,
+        "order": source.order,
+        "protocol": source.protocol,
+        "upstream_model": _bare_upstream(source),
+        "upstream_raw": source.upstream_model,
+        "host": _host_of(source.api_base),
+        "prices": dict(source.prices),
+        "free": source.free,
+        "priced": source.priced,
+        "header_names": list(source.header_names),
+        "session_header": source.session_header,
+    }
+
+
+def _source_snapshot(source: AdminSource) -> dict:
+    """审计的 `before`：一条线路写前的样子。同 `_source_item`，没有凭据也没有头的值。"""
+    return {
+        "source_id": source.source_id,
+        "origin": source.origin,
+        "blocked": source.blocked,
+        "order": source.order,
+        "upstream_model": source.upstream_model,
+        "api_base": source.api_base,
+        "prices": dict(source.prices),
+        "free": source.free,
+        "header_names": list(source.header_names),
+        "session_header": source.session_header,
+    }
 
 
 def _prices_for_gateway(prices: dict | None) -> dict:
@@ -868,9 +1323,19 @@ def _is_key_field(field: object) -> bool:
 
 
 def _redact(value: Any) -> Any:
-    """递归剔掉任何 `api_key` 字段 —— 审计素材里绝不留上游凭据（契约 §2.2）。"""
+    """递归剔掉任何 `api_key` 字段 —— 审计素材里绝不留上游凭据（契约 §2.2）。
+
+    线路的静态请求头只留名字：认证头虽然不让按线路写，头的值仍可能是哪家中转站
+    认人的东西，页面上列线路时就只给名字，审计不该是读到它的后门。
+    """
     if isinstance(value, dict):
-        return {k: _redact(v) for k, v in value.items() if not _is_key_field(k)}
+        return {
+            k: sorted(v)
+            if k == "upstream_headers" and isinstance(v, dict)
+            else _redact(v)
+            for k, v in value.items()
+            if not _is_key_field(k)
+        }
     if isinstance(value, (list, tuple)):
         return [_redact(v) for v in value]
     return value
@@ -927,6 +1392,8 @@ def _config_yaml(model: AdminModel) -> str:
     lines.append(f"    cheese_selectable: {'true' if model.selectable else 'false'}")
     lines.append(f"    cheese_label: {model.label}")
     lines.append(f"    cheese_tier: {model.tier}")
+    if model.overseas:
+        lines.append("    cheese_overseas: true")
     for capability, enabled in model.capabilities.items():
         if enabled:
             lines.append(f"    supports_{capability}: true")
@@ -950,11 +1417,13 @@ def _model_snapshot(model: AdminModel) -> dict:
         "selectable": model.selectable,
         "priced": model.priced,
         "tier": model.tier,
+        "overseas": model.overseas,
         "upstream_model": model.upstream_model,
         "api_base": model.api_base,
         "provider": model.provider,
         "prices": dict(model.prices),
         "capabilities": dict(model.capabilities),
+        "sources": [_source_snapshot(source) for source in model.sources],
     }
 
 
@@ -990,6 +1459,7 @@ def _item_from_payload(
         "selectable": selectable,
         "priced": priced,
         "tier": data.get("tier") or "included",
+        "overseas": bool(data.get("overseas")),
         "offered": selectable and priced,
         # 网关还没读回这条新模型：`pending`。
         "blocked_reasons": [] if (selectable and priced) else ["pending"],
@@ -1003,4 +1473,5 @@ def _item_from_payload(
         "capabilities": dict(data.get("capabilities") or {}),
         "usage": _usage_to_dict(usage),
         "series": [],
+        "sources": [],
     }

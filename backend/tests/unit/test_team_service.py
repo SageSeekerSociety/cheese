@@ -123,8 +123,13 @@ def _build_membership_service(
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = 1
     session.execute.return_value = mock_result
+    # `_notify` is patched out in these tests, so the ledger the service was
+    # handed is never called; a stand-in keeps the constructor honest.
     svc = TeamMembershipService(
-        session=session, team_repo=team_repo, application_repo=app_repo
+        session=session,
+        team_repo=team_repo,
+        application_repo=app_repo,
+        deliver=AsyncMock(),
     )
     return svc, team_repo, app_repo
 

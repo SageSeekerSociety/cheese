@@ -40,6 +40,7 @@ from app.domain.machine.models import (
     WarmMachine,
     capacity,
 )
+from app.domain.platform_stats.ports import PreviewConnections
 from app.domain.project.models import Project
 from app.domain.usage import ledger
 from app.domain.usage.models import ComputeGrant, GrantSource, ResourceUsage
@@ -54,8 +55,14 @@ LOW_CREDIT_RATIO = 0.10
 
 
 class GapRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        previews: PreviewConnections | None = None,
+    ) -> None:
         self._session = session
+        self._previews = previews
 
     # ---- 用量：额度燃尽 ----------------------------------------------------
 
@@ -248,29 +255,28 @@ class GapRepository:
             "note_key": "platform.diskNote",
         }
 
-    @staticmethod
-    def _preview() -> dict[str, Any]:
+    def _preview(self) -> dict[str, Any]:
         """预览 helper 的在飞数量。**进程内存**，重启即清零。
 
         和 `MachineInventoryRepository` 报不了在线设备是同一类缺口：在线状态住在进程
         内存里，库里没有那一列。页面上写的是「这个进程里的预览连接」，不是「全平台」。
-        """
-        try:
-            # deferred-import: tests replace this name on app.domain.agent.preview_hub
-            from app.domain.agent.preview_hub import preview_hub
 
-            machines = getattr(preview_hub, "_machines", {})
-            return {
-                "available": True,
-                "attached": len(machines),
-                "note_key": "platform.previewNote",
-            }
-        except Exception:
-            return {
-                "available": False,
-                "attached": None,
-                "note_key": "platform.previewMissing",
-            }
+        从哪里数由外面递（`ports.PreviewConnections`）：本包在第 7 层、够得着第 5 层的
+        `agent`，可两个包落在同一个强连通分量里（C3），自己 import 一次就冻一条边。
+        原来那句 `getattr(preview_hub, "_machines", {})` 还多欠一层债：字段一改名就
+        静默报 0，看板上一个「一个预览都没有」看着完全正常。
+
+        `available` 现在恒为 `True` —— 数读不到的**唯一**情形是接线漏了，那当场炸
+        （下面那句 raise），不再假装成「这一项暂时没有」。键留着是因为前端按它写。
+        """
+        if self._previews is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("preview connections were not handed in")
+        return {
+            "available": True,
+            "attached": self._previews.attached(),
+            "note_key": "platform.previewNote",
+        }
 
     async def _machine_census(self) -> dict[str, Any]:
         """温机/云端宿主机按状态的存量普查，和宿主机上的沙箱槽位。

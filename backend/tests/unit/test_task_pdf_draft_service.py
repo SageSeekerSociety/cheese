@@ -87,13 +87,10 @@ def _scan_payload(name: str = "扫描题") -> str:
 
 
 @pytest.mark.anyio
-async def test_a_page_without_a_text_layer_is_rendered_and_read_as_an_image(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_page_without_a_text_layer_is_rendered_and_read_as_an_image() -> None:
     """没有文字层的页走兜底：整页渲染成 PNG，当图片发给能读图的模型。"""
-    monkeypatch.setattr(settings, "vision_models", {"vision-model"})
     chat = _RecordingChat("vision-model", _scan_payload())
-    service = TaskPdfDraftService(chat=chat)  # type: ignore[arg-type]
+    service = TaskPdfDraftService(chat=chat, sees_pictures=True)  # type: ignore[arg-type]
 
     drafts, _, _ = await service.generate_task_payloads_from_pdf(
         pdf_bytes=_scanned_pdf(),
@@ -114,18 +111,15 @@ async def test_a_page_without_a_text_layer_is_rendered_and_read_as_an_image(
 
 
 @pytest.mark.anyio
-async def test_a_page_with_no_text_but_with_graphics_is_treated_as_a_scan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_page_with_no_text_but_with_graphics_is_treated_as_a_scan() -> None:
     """判据是「没有文字层」，不是「markdown 为空」：只有图形的一页也得走兜底。
 
     ``pymupdf4llm`` 会给这种页留下一个 ``![](…)`` 占位标记（markdown 非空），但发
     进提示词的只是一句模型看不见的本地路径。若以 markdown 空为判据，这一页会被当成
     「有文字」而永远读不出东西。
     """
-    monkeypatch.setattr(settings, "vision_models", {"vision-model"})
     chat = _RecordingChat("vision-model", _scan_payload("图形页"))
-    service = TaskPdfDraftService(chat=chat)  # type: ignore[arg-type]
+    service = TaskPdfDraftService(chat=chat, sees_pictures=True)  # type: ignore[arg-type]
 
     drafts, _, _ = await service.generate_task_payloads_from_pdf(
         pdf_bytes=_vector_only_pdf(),
@@ -142,13 +136,10 @@ async def test_a_page_with_no_text_but_with_graphics_is_treated_as_a_scan(
 
 
 @pytest.mark.anyio
-async def test_a_scan_the_model_still_cannot_read_says_so(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_scan_the_model_still_cannot_read_says_so() -> None:
     """兜底也读不出来时，错误要说清是扫描件这条路，而不是那句笼统的「读不出文字」。"""
-    monkeypatch.setattr(settings, "vision_models", {"vision-model"})
     chat = _RecordingChat("vision-model", "not-json")
-    service = TaskPdfDraftService(chat=chat)  # type: ignore[arg-type]
+    service = TaskPdfDraftService(chat=chat, sees_pictures=True)  # type: ignore[arg-type]
 
     with pytest.raises(BadRequestError) as excinfo:
         await service.generate_task_payloads_from_pdf(
@@ -169,11 +160,8 @@ async def test_a_scan_the_model_still_cannot_read_says_so(
 
 
 @pytest.mark.anyio
-async def test_a_scanned_page_never_goes_to_a_model_that_cannot_read_images(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_scanned_page_never_goes_to_a_model_that_cannot_read_images() -> None:
     """读不了图的模型：一张图片都不发，当场说清换模型 —— 不是白花一次调用的钱。"""
-    monkeypatch.setattr(settings, "vision_models", {"vision-model"})
     chat = _RecordingChat("text-only-model", _scan_payload())
     service = TaskPdfDraftService(chat=chat)  # type: ignore[arg-type]
 
@@ -197,13 +185,10 @@ async def test_a_scanned_page_never_goes_to_a_model_that_cannot_read_images(
 
 
 @pytest.mark.anyio
-async def test_a_page_with_a_text_layer_is_never_sent_as_an_image(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_page_with_a_text_layer_is_never_sent_as_an_image() -> None:
     """有文字层的页照旧走文字那条路，一张图都不发。"""
-    monkeypatch.setattr(settings, "vision_models", {"vision-model"})
     chat = _RecordingChat("vision-model", _scan_payload("文字题"))
-    service = TaskPdfDraftService(chat=chat)  # type: ignore[arg-type]
+    service = TaskPdfDraftService(chat=chat, sees_pictures=True)  # type: ignore[arg-type]
 
     drafts, _, _ = await service.generate_task_payloads_from_pdf(
         pdf_bytes=_text_only_pdf(),
@@ -218,11 +203,6 @@ async def test_a_page_with_a_text_layer_is_never_sent_as_an_image(
     assert [d["name"] for d in drafts] == ["文字题"]
     assert chat.images == [None]
     assert "explain the segfault" in chat.prompts[0]
-
-
-def test_the_default_draft_model_is_opened_for_vision() -> None:
-    """默认草稿模型（deepseek-flash）在部署里标了 supports_vision：兜底默认开着。"""
-    assert "deepseek-flash" in settings.vision_models
 
 
 @pytest.mark.anyio
@@ -435,3 +415,63 @@ async def test_a_page_whose_answer_cannot_be_read_still_counts_as_spent() -> Non
             user_id=2,
         )
     assert service.spent == Usage(500, 40, 300, 0)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("sees", [True, False])
+async def test_a_scanned_page_is_sent_as_an_image_only_where_the_gateway_says_so(
+    monkeypatch: pytest.MonkeyPatch, sees: bool
+) -> None:
+    """The draft service as the route gets it: whether a scanned page is sent
+    to the draft model as a picture is the gateway's `supports_vision` on that
+    model, not a list kept here."""
+    from app.api.task_deps import get_task_pdf_draft_service
+    from app.domain.agent import gateway as gw
+    from app.domain.agent import gateway_catalog
+    from app.domain.task import task_pdf_draft_service as module
+
+    rows = [
+        {
+            "model_name": "draft-model",
+            "litellm_params": {"model": "openai/draft-model"},
+            "model_info": {"supports_vision": sees},
+        }
+    ]
+    gateway = gw.LlmGateway(
+        "http://gw",
+        "mk",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"data": rows})
+        ),
+    )
+    gateway_catalog.reset()
+    assert await gateway_catalog.refresh(gateway)
+    monkeypatch.setattr(settings, "task_draft_model", "draft-model")
+
+    async def a_key(db, spec):
+        return "key"
+
+    monkeypatch.setattr(module, "service_key", a_key)
+    chat = _RecordingChat("draft-model", _scan_payload())
+    monkeypatch.setattr(module, "GatewayChat", lambda *args, **kwargs: chat)
+    try:
+        service = await get_task_pdf_draft_service(db=None)
+        drafting = service.generate_task_payloads_from_pdf(
+            pdf_bytes=_scanned_pdf(),
+            template={},
+            space_id=1,
+            category_id=None,
+            forced_submitter_type=None,
+            user_id=2,
+            max_tasks=1,
+        )
+        if sees:
+            drafts, _, _ = await drafting
+            assert [d["name"] for d in drafts] == ["扫描题"]
+            assert chat.images and chat.images[0] is not None
+        else:
+            with pytest.raises(BadRequestError):
+                await drafting
+            assert chat.images == []
+    finally:
+        gateway_catalog.reset()

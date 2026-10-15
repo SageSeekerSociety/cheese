@@ -137,6 +137,16 @@ describe('a document edit that belongs to no turn', () => {
     expect(container.querySelector('.mention')).toBeNull()
   })
 
+  it('lets a name lead to that person instead of opening the document', async () => {
+    const view = mount(living({ doc_requested_by: 'li-laoshi', doc_edits: EDITS }, { turn: null }), null)
+
+    const name = screen.getByText('李老师')
+    expect(name.closest('[data-handle]')?.getAttribute('data-handle')).toBe('li-laoshi')
+    await fireEvent.click(name)
+
+    expect(view.emitted('open-resource')).toBeUndefined()
+  })
+
   it('still opens the document and its changes', async () => {
     const view = mount(library({ doc_edits: EDITS }, { turn: null }), null)
 

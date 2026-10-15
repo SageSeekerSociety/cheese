@@ -15,9 +15,8 @@ from sqlalchemy import update
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.services import last_block_at
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 
 @pytest.mark.anyio
@@ -26,7 +25,7 @@ async def test_last_block_at_reports_the_newest_block_per_topic(business_db_fact
 
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         chatty = await topics.create(project_id=project.id, title="A", created_by="u")
         quiet = await topics.create(project_id=project.id, title="Q", created_by="u")

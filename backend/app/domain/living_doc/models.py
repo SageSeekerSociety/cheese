@@ -220,3 +220,31 @@ class DocumentThread(Base):
         String(16), default="open", server_default="open"
     )
     reply_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class DocumentMention(Base):
+    """A person a document's text @-mentioned and told so: the first time a
+    person's save added ``<@handle>`` to it, while ``handle`` could open it.
+
+    One row per document and person, whoever wrote the mention and however
+    often it is removed and written again: the person was told once and is
+    not told again by this document. The row is also what the document's
+    readers go by to draw that person's name as a mention that reached them
+    rather than as a plain reference."""
+
+    __tablename__ = "document_mentions"
+
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="CASCADE",
+            name="fk_document_mentions_document_id_documents",
+        ),
+        primary_key=True,
+    )
+    handle: Mapped[str] = mapped_column(String(128), primary_key=True)
+    #: Whose save told them.
+    notified_by: Mapped[str] = mapped_column(String(128))
+    notified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )

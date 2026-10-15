@@ -214,7 +214,7 @@ describe('every row in the timeline has a name, on screen or not', () => {
     for (const item of items) item.replaceChildren()
 
     expect(screen.getByRole('article', { name: '10:00：平台 PR #1459 已在 GitHub 上被人工合并' })).toBeTruthy()
-    expect(screen.getByRole('article', { name: '芝士，10:00：@林 更新了文档「周报」' })).toBeTruthy()
+    expect(screen.getByRole('article', { name: '芝士，10:00：林 更新了文档「周报」' })).toBeTruthy()
     expect(screen.getByRole('article', { name: '林，10:00：新建了任务 Fix the login redirect' })).toBeTruthy()
     expect(screen.getByRole('article', { name: 'me，10:00：second' })).toBeTruthy()
   })

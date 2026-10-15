@@ -99,13 +99,13 @@ describe('现场里芝士说的话', () => {
     expect(container.querySelector('.site-msg__body pre code')?.textContent?.trim()).toBe('make test')
   })
 
-  it('@人 的 token 用名册上的名字，点了把 handle 报上去', async () => {
+  it('@人 的 token 用名册上的名字（芝士在现场说的话不通知谁，所以只是名字），点了把 handle 报上去', async () => {
     const { container, emitted } = await openSite([say('1', '等 <@caisongyang> 定位置')], {
       memberNames: { caisongyang: '蔡松洋' },
     })
 
-    const chip = container.querySelector<HTMLElement>('.mention[data-handle="caisongyang"]')!
-    expect(chip.textContent).toBe('@蔡松洋')
+    const chip = container.querySelector<HTMLElement>('[data-handle="caisongyang"]')!
+    expect(chip.textContent).toBe('蔡松洋')
 
     await fireEvent.click(chip)
     expect(emitted()['mention-click']).toEqual([['caisongyang']])

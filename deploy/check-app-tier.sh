@@ -59,25 +59,55 @@ while IFS=$'\t' read -r service image state status; do
 done
 
 failures=0
+# collab and the forge event relay are named by digest when nothing in them
+# changed since the running image (deploy-docker.sh, pin_by_content and
+# pin_relay_by_code): their containers then keep the reference they were
+# created from, which carries no release's tag. The deploy passes the
+# reference it chose ($6, from COLLAB_IMAGE or FORGE_EVENTS_IMAGE); a check run
+# outside a deploy (the drift check, scripts/whats-live.sh) reads the choice
+# the last healthy deploy recorded in APP_TIER_PINS (deploy-docker.sh writes
+# ~/ops/app-tier-pins). A digest reference must be exactly the one chosen; a
+# tag must be this release's. Feed it `docker ps --no-trunc`: without it,
+# Docker prints a digest reference as the image's short ID.
+pins="${APP_TIER_PINS:-${HOME:-}/ops/app-tier-pins}"
+pinned() {
+  [ -r "$pins" ] || return 0
+  sed -n "s/^$1=//p" "$pins" | tail -n 1
+}
 check_service() {
   service="$1"
   count="$2"
   image="$3"
   state="$4"
   status="$5"
+  chosen="${6:-}"
 
   if [ "$count" -ne 1 ]; then
     echo "APP-TIER ERROR: expected exactly one $service container, found $count" >&2
     failures=$((failures + 1))
     return
   fi
-  case "$image" in
-    *:"$expected_tag") ;;
-    *)
-      echo "APP-TIER ERROR: $service image '$image' is not tag '$expected_tag'" >&2
-      failures=$((failures + 1))
-      ;;
-  esac
+  if [[ "$image" == *@sha256:* ]] && [ -z "$chosen" ]; then
+    echo "APP-TIER ERROR: $service image '$image' is pinned by digest, but no deploy recorded choosing it" >&2
+    failures=$((failures + 1))
+  elif [ -n "$chosen" ] && [ "$image" != "$chosen" ] && [[ "$chosen" == *@sha256:* ]]; then
+    echo "APP-TIER ERROR: $service image '$image' is not '$chosen', which this release chose" >&2
+    failures=$((failures + 1))
+  else
+    case "$image" in
+      "$chosen" | *:"$expected_tag") ;;
+      *@sha256:*)
+        if [ -n "$chosen" ]; then
+          echo "APP-TIER ERROR: $service image '$image' is not '$chosen', which this release chose" >&2
+          failures=$((failures + 1))
+        fi
+        ;;
+      *)
+        echo "APP-TIER ERROR: $service image '$image' is not tag '$expected_tag'" >&2
+        failures=$((failures + 1))
+        ;;
+    esac
+  fi
   if [ "$state" != "running" ]; then
     echo "APP-TIER ERROR: $service state is '$state', not running" >&2
     failures=$((failures + 1))
@@ -96,10 +126,10 @@ check_service frontend "$frontend_count" "$frontend_image" "$frontend_state" "$f
 # The living documents are edited through it; without it no document opens.
 # A release that predates it has none (deploy-docker.sh decides which).
 if [ "${COLLAB_EXPECTED:-true}" = true ] || [ "$collab_count" -gt 0 ]; then
-  check_service collab "$collab_count" "$collab_image" "$collab_state" "$collab_status"
+  check_service collab "$collab_count" "$collab_image" "$collab_state" "$collab_status" "${COLLAB_IMAGE:-$(pinned COLLAB_IMAGE)}"
 fi
 if [ "${FORGE_EVENTS_LOCAL:-false}" = true ] || [ "$events_count" -gt 0 ]; then
-  check_service forge-events "$events_count" "$events_image" "$events_state" "$events_status"
+  check_service forge-events "$events_count" "$events_image" "$events_state" "$events_status" "${FORGE_EVENTS_IMAGE:-$(pinned FORGE_EVENTS_IMAGE)}"
 fi
 if [ "$forgejo_count" -ne 1 ] || [ "$forgejo_state" != running ] || [[ "$forgejo_status" != *"(healthy)"* ]]; then
   echo "APP-TIER ERROR: expected one running healthy forgejo container, found $forgejo_count ($forgejo_state, $forgejo_status)" >&2

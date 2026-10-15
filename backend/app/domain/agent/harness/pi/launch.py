@@ -15,7 +15,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.core.config import settings
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness.pi.bundle import build
 
 # The pinned agent, served by the platform the way the claude pin is: the
@@ -118,11 +118,11 @@ fi
 
 def model_entry(model: str) -> dict:
     """One model of the provider file: its id, and that it can look at
-    pictures when the deployment says so (``settings.vision_models``). pi
+    pictures when the gateway says it can (``gateway_catalog.sees_pictures``). pi
     hands a model that cannot only the text of a tool result that has
     pictures, such as a mini-app's save."""
     entry: dict = {"id": model}
-    if model in settings.vision_models:
+    if gateway_catalog.sees_pictures(model):
         entry["input"] = ["text", "image"]
     return entry
 

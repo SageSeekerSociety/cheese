@@ -12,6 +12,7 @@ route — C4 (`routes-independent`).
 
 import uuid
 
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
 from app.domain.pin.services import Pins
 
@@ -26,5 +27,5 @@ async def pin_rows(db, room_id: uuid.UUID) -> list[dict]:
             "pinned_at": pin.pinned_at.isoformat(),
             "block": BlockOut.model_validate(block).model_dump(mode="json"),
         }
-        for pin, block in await Pins(db).of_room(room_id)
+        for pin, block in await Pins(db, team=project_team).of_room(room_id)
     ]

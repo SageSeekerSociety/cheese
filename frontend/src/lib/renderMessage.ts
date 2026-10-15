@@ -24,11 +24,11 @@ export function editableText(text: string, maps: RefNames): string {
 // A person's words: as typed, with each reference token drawn as its chip.
 // The newlines survive as literal \n; the host element must render with
 // `white-space: pre-wrap` or the browser collapses them.
-export function renderPlain(text: string, maps: RefNames): string {
+export function renderPlain(text: string, maps: RefNames, opts: { focusable?: boolean } = {}): string {
   const box = document.createElement('span')
   let at = 0
   for (const ref of refTokens(text)) {
-    box.append(text.slice(at, ref.index), refChip(ref.kind, ref.id, maps))
+    box.append(text.slice(at, ref.index), refChip(ref.kind, ref.id, maps, opts))
     at = ref.index + ref.length
   }
   box.append(text.slice(at))

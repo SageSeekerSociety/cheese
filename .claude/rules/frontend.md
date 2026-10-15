@@ -51,7 +51,8 @@ parts no gate can see.
   the BACKGROUND. Same shape for `--ok` and `--accent`. Using the mark colour for
   text is the single most common defect and fails contrast in light theme (§1.5).
 - Amber (`--accent`) is reserved for the main action of an area, unread markers,
-  the current nav position, and the brand mark (§1.6). A page may have several
+  the current nav position, the brand mark, and an @ that notified someone
+  (§1.6). A page may have several
   areas, but a group of sibling buttons has only one amber button. Not avatars,
   not status chips, not ordinary icons — ~95% of any screen is neutral.
 

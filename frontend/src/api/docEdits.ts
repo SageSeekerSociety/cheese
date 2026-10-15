@@ -32,3 +32,9 @@ export async function getPendingSuggestions(document: string): Promise<PendingSu
   const doc = await request<{ pending_suggestions?: PendingSuggestionInfo[] } | null>(root(document))
   return doc?.pending_suggestions ?? []
 }
+
+/** 这份文档的正文 @ 到并通知过的人（`notified_mentions`）：只有他们的 `<@handle>` 画成 @chip。 */
+export async function getNotifiedMentions(document: string): Promise<string[]> {
+  const doc = await request<{ notified_mentions?: string[] } | null>(root(document))
+  return doc?.notified_mentions ?? []
+}
