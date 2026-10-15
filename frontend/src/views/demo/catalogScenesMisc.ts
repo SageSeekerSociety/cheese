@@ -283,7 +283,8 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
           return t('catalog.teamDetailView.s1.note')
         },
         props: {},
-        expect: '城市数据实验室',
+        // 小队名两面都画（成员这面在页头、非成员那面在资料卡里），认只有成员这面才有的那一句简介。
+        expect: '一起把城市数据用起来',
       },
       {
         get name() {
@@ -367,7 +368,8 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
           return t('catalog.teamIndexView.s2.note')
         },
         props: { createTeamDialog: true },
-        expect: '输入团队名称...',
+        // 名字那格的占位是 placeholder 属性，不在 textContent 里；认地址那一格的标签。
+        expect: '团队地址',
       },
       {
         get name() {

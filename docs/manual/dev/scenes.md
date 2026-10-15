@@ -305,7 +305,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 - **直接取数 / 经中间模块绕到取数（44 / 110 页）** 是「把这一段挪出去」的问题，机械，但要一页一页做。页面走容器配方——画面交给同目录 `<页面名>View.vue`，取数留在页面；面板走「取数进 composable、由挂它的 Host 调」。中间模块那 110 页里，最大的一条链是空间数据层（`api/spaces.ts`、`composables/useSpaceData.ts`）。
 - **读路由（75 页）** 是「这个页面怎么知道自己是谁」的问题。`views/account/` 那 17 页 2026-10-05 已经按「参数当 props 进视图」拆完。剩下最集中的一处是 `views/workspace/`：10 页里 6 页 D，`TopicView.vue` 一页就有 21 条理由；再往后是顶层 5 页、`views/feedback/` 3 页。
-- **11 页的 D 是因为模板里画了 `<router-view>` / `<router-link>`**（这一条 2026-10-08 起算 D），它们多半自己就是承重点：`views/workspace/ProjectShell.vue`、`views/spaces/Detail.vue`、`views/admin/AdminLayout.vue`。动它们等于动那棵路由树。
+- **13 页的 D 是因为模板里画了 `<router-view>` / `<router-link>`**（这一条 2026-10-08 起算 D），它们多半自己就是承重点：`views/workspace/ProjectShell.vue`、`views/spaces/Detail.vue`、`views/teams/Index.vue`、`views/admin/AdminLayout.vue`。动它们等于动那棵路由树。（13 是「档位判成 D」的页数，含 5 个容器页；容器不算欠债，所以还挂在欠债表上的只有 8 页。判据认标签本身、大小写都算 —— `views/admin/AdminLayout.vue` 写的是 `<RouterView>`。这一批拆的两页仍在这 13 里，只是从欠债换成了容器。）
 
 ## 这份清单怎么来的 {#how}
 

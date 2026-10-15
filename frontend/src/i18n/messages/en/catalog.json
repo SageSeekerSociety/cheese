@@ -1493,7 +1493,7 @@
     "about": "The team page's rendering half: someone who has not joined sees the team's public side, a member sees the workspace shell - header, parent link, and the middle column left to a child route. Which team to read, whether this person is a member, and how a failure differs from a denial all live in the container `teams/Detail.vue`.",
     "s1": {
       "name": "A member in the workspace",
-      "note": "Read, and this person is a member: the header carries this page's title and its parent (the team name), and the middle cell is left to a child route (empty in the catalog)."
+      "note": "Read, and this person is a member: the header carries this page's title and its parent (the team name), with the team intro beside the title - the member side is the only side that draws it - and the middle cell is left to a child route (empty in the catalog)."
     },
     "s2": {
       "name": "Not joined yet: the team's public side",
