@@ -727,23 +727,29 @@ def _loader_self_test():
     `-m --first-parent` 才取得到改动）。这里临时起一个仓库，做一次真的非 squash
     合并，再读回来，最后把 `main` 的接线也照原样跑一遍（`_wiring_self_test`）。
 
-    临时仓库只吃本地配置：`git -C … config` 那两行，别的一概不读。"""
+    临时仓库只吃本地配置（`git -C … config` 那两行），别的一概不读：`GIT_` 开头的环境
+    变量和 `HOME` 在自检期间都摘掉，全在 finally 里还原。"""
     global REPO_PATH, REF
     import shutil
     import tempfile
     tmp = tempfile.mkdtemp(prefix="co-selftest-")
     old_path, old_ref = REPO_PATH, REF
     try:
-        REPO_PATH, REF = tmp, "HEAD"
+        # `REF` 用分支名不用 `HEAD`：生产里它是 `origin/main`，用 `HEAD` 的话
+        # `head_files` 里那个 `REF` 换成字面量 `"HEAD"` 也照样通过。因此下面读完历史后
+        # 把 HEAD 挪到早一些的位置，让「读对分支」和「读 HEAD」给出不同的文件集合。
+        REPO_PATH, REF = tmp, "main"
 
-        # 这台机器上的全局配置（`commit.gpgsign`、`core.hooksPath`、提交模板、
-        # `core.attributesFile`）不该让一个正确的自检失败：临时仓库只用下面那两行本地
-        # 配置，其余一概不读。写在 os.environ 上而不是只喂给 sh：被检查的那几个读取
-        # (`load_history`/`load_subjects`/`load_numstat`) 走的是模块级的 `git()`，
-        # 环境变量得对它也生效。全在 finally 里还原。
-        saved_env = {k: os.environ.get(k) for k in
-                     ("HOME", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
-                      "GIT_CONFIG_NOSYSTEM")}
+        # 这台机器上的全局配置和 git 相关的环境变量（`commit.gpgsign`、
+        # `core.hooksPath`、`core.attributesFile`、`GIT_DIR`、`GIT_WORK_TREE`、逐个注入
+        # 配置的 `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`…）不该让一个
+        # 正确的自检失败：`GIT_` 开头的一律摘掉，只留下面这几行。写在 os.environ 上而
+        # 不是只喂给 sh：被检查的那几个读取走的是模块级的 `git()`，得对它也生效。
+        # 全在 finally 里还原。
+        saved_env = {}
+        for k in [k for k in os.environ if k.startswith("GIT_")] + ["HOME"]:
+            if k in os.environ:
+                saved_env[k] = os.environ.pop(k)
         os.environ.update(HOME=tmp, GIT_CONFIG_GLOBAL=os.devnull,
                           GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 
@@ -777,6 +783,13 @@ def _loader_self_test():
         sh("add", "e.txt"); sh("commit", "-qm", "feat: extra work")
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #9 from x/extra", "extra")
+        # 第三条线：留存那一项的分母不是偶数，「数留下来的」和「数消失的」才分得开
+        # （2/3 与 1/3、1 条与 2 条）。
+        sh("checkout", "-q", "-b", "final")
+        open(os.path.join(tmp, "f.txt"), "w").write("5\n")
+        sh("add", "f.txt"); sh("commit", "-qm", "feat: final work")
+        sh("checkout", "-q", "main")
+        sh("merge", "-q", "--no-ff", "-m", "Merge pull request #10 from x/final", "final")
 
         hist = load_history("2000-01-01")
         merge = merge_commit(hist, 7)
@@ -795,14 +808,15 @@ def _loader_self_test():
         # git 认不出 2999 那种年份，会当成「没有这个限制」照常全给我。
         assert load_subjects("2099-01-01") == [], load_subjects("2099-01-01")
         assert load_history("2099-01-01") == [], load_history("2099-01-01")
+        # HEAD 挪到 merge #7 上（那时还没有 d.txt/e.txt/f.txt）：`REF`（main）读到的
+        # 文件和 HEAD 不一样，`head_files` 里把 `REF` 写成字面量 `"HEAD"` 就会被接线
+        # 那几条断言抓住。历史读取一律走 `REF`，不受影响。
+        sh("checkout", "-q", "--detach", "main~2")
         _wiring_self_test(tmp, sh)
     finally:
         REPO_PATH, REF = old_path, old_ref
         for k, v in saved_env.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+            os.environ[k] = v
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -814,9 +828,11 @@ def _wiring_self_test(tmp, sh):
     day = today.isoformat() + "T00:00:00Z"
     cards = [{"task_id": "T1", "pr_number": 7, "pr_merged_at": day},
              {"task_id": "T1", "pr_number": 8, "pr_merged_at": day},
-             {"task_id": "T2", "pr_number": 9, "pr_merged_at": day}]
+             {"task_id": "T2", "pr_number": 9, "pr_merged_at": day},
+             {"task_id": "T3", "pr_number": 10, "pr_merged_at": day}]
     tasks = [{"id": "T1", "number": 30, "title": "t", "status": "closed"},
-             {"id": "T2", "number": 31, "title": "u", "status": "closed"}]
+             {"id": "T2", "number": 31, "title": "u", "status": "closed"},
+             {"id": "T3", "number": 32, "title": "v", "status": "closed"}]
     out = os.path.join(tmp, "wiring.md")
     # 只换平台那两个入口：`head_files` 不换，它读的就是这个临时仓库，留存那一段
     # 才算真的走过一遍。
@@ -833,16 +849,17 @@ def _wiring_self_test(tmp, sh):
         globals().update(saved)
     assert rc == 0, rc
     md = open(out, encoding="utf-8").read()
-    assert "队列：窗口内第一次合入的 **2 条线**" in md, md
-    assert "共 3 次合入（其中 3 次在默认分支上认出了对应提交）" in md, md
+    assert "队列：窗口内第一次合入的 **3 条线**" in md, md
+    assert "共 4 次合入（其中 4 次在默认分支上认出了对应提交）" in md, md
     # 文件和行数来自真的 git：合并 #7 加 b.txt 一行，合并 #8 删 b.txt、加 d.txt 一行，
-    # 合并 #9 加 e.txt 一行。两处都对不上时这里先响：喂空字典会没有一条线，加删写反了
-    # 净增就是 -1。
+    # 合并 #9 加 e.txt 一行，合并 #10 加 f.txt 一行。两处都对不上时这里先响：喂空字典
+    # 会没有一条线，加删写反了净增就是 -1。
     assert "| 改动文件数 | 1 |" in md, md
     assert "| 净增行数 | 1 |" in md, md
-    # 留存那一段也走真的 `head_files`：T1 的 b.txt 被合入 #8 删掉了，T2 的 e.txt 还在。
-    # 把 `main` 里的 `present` 换成空集合，这一行就从 1/2 掉到 0/2。
-    assert "- 改动文件今天仍在默认分支上：1/2 条线是 100%。" in md, md
+    # 留存那一段也走真的 `head_files`：T1 的 b.txt 被合入 #8 删掉了，T2 的 e.txt、T3 的
+    # f.txt 还在。分母是 3 不是 2，数反了（数消失的线）会得到 1/3 而不是 2/3；把 `main`
+    # 里的 `present` 换成空集合，这行就掉到 0/3。
+    assert "- 改动文件今天仍在默认分支上：2/3 条线是 100%。" in md, md
     assert "- 去掉生成物后仍有文件消失的线：1 条" in md, md
     # 回退那条只在 `load_subjects`（不限第一父链）里看得见。
     assert "读到的历史里有回退提交指向的线：1 条。" in md, md
