@@ -92,6 +92,7 @@
   "projectManageForbidden": "Only the project owner or a team admin can manage this project",
   "projectNeedsTeam": "A project has to belong to a team",
   "projectNumberTaken": "This project number is already in use",
+  "projectObserverReadOnly": "Can't make changes: a task's setter and its board's admins can only view this project",
   "projectSlugFormat": "A short name uses lowercase letters, digits and hyphens, 3 to 32 characters, and does not start or end with a hyphen",
   "projectSlugReserved": "This short name is kept for a platform page. Choose another",
   "projectSlugTaken": "Another project has used this short name. Choose another",
