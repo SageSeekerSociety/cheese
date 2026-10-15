@@ -21,7 +21,7 @@ import { parseDiffLines } from '../../lib/diff'
 import { docLineInTurn, docLineOf, isDocLine } from '../../lib/docEditLine'
 import { repeatsLine } from '../../lib/noticeRepeats'
 import { noticeNotified, noticeText } from '../../lib/noticeText'
-import { confirmTarget, environmentTarget } from '../../lib/platformNotice'
+import { confirmTarget, environmentTarget, routineTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
 import NavLink from '../common/NavLink.vue'
@@ -72,6 +72,13 @@ const emit = defineEmits<{
   (e: 'retry'): void
   /** 「置顶了一条消息」那一行的「查看」：去被置顶的那一条。 */
   (e: 'jump', blockId: string): void
+  // 这一行提到了一条规则：就在这个房间右栏把它打开、选中它。**不是一个去处** ——
+  // 组件不许自己跳转（边界闸），而这件事本来也不该换页：规则长在这个房间里。
+  (e: 'open-routine', routineId: string): void
+  // 同一行上的第二颗：不开那一串，直接开这一条的「执行记录」整页。
+  // 问的不是「这条规则长什么样」，是「它跑出来什么」—— 刚被 AI 补齐的那条规则，
+  // 人想一眼看到它填成什么样，那一页上有每次跑成什么、交回了哪几份文件。
+  (e: 'open-routine-records', routineId: string): void
   // 「标题自动更新为…」那一行的撤销：带着这一行自己的 id，后端据此找回原标题。
 }>()
 
@@ -152,8 +159,11 @@ const showRetry = computed(
       (props.notice.mode === 'fold' && props.notice.retryable))
 )
 
-// 芝士起草的规则 / 技能：这一行直接通到要确认的那一条。
+// 芝士整理的技能：这一行直接通到要确认的那一条。
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
+// 提到一条规则的那一行：打开右栏那一格。技能走 `confirmAt`（换一页去确认），规则不换
+// 页 —— 它已经在跑了。
+const routineId = computed(() => routineTarget(props.block))
 const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
 
 // 提示里的人只是被提到（浅色 chip、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
@@ -224,6 +234,8 @@ const ACTION_META: Record<string, { btn: string }> = {
         @open-resource="(...a) => emit('open-resource', ...a)"
         @open-card="emit('open-card', $event)"
         @jump="emit('jump', $event)"
+        @open-routine="emit('open-routine', $event)"
+        @open-routine-records="emit('open-routine-records', $event)"
       />
     </template>
   </div>
@@ -391,6 +403,25 @@ const ACTION_META: Record<string, { btn: string }> = {
           notice.who === 'cheese' ? t('work.room.notice.working', { name: name || agentName }) : notice.whoLabel
         }}</span>
         <!-- 在 summary 里点它不能顺带展开这一行。 -->
+        <button
+          v-if="routineId"
+          type="button"
+          class="sys-btn"
+          data-testid="notice-routine"
+          @click.prevent.stop="emit('open-routine', routineId)"
+        >
+          {{ t('work.room.notice.openRoutine') }}
+        </button>
+        <!-- 第二颗：不经过那一串，直接看这一条跑出来什么。 -->
+        <button
+          v-if="routineId"
+          type="button"
+          class="sys-btn"
+          data-testid="notice-routine-records"
+          @click.prevent.stop="emit('open-routine-records', routineId)"
+        >
+          {{ t('work.room.notice.openRoutineRecords') }}
+        </button>
         <NavLink v-if="confirmAt" :to="confirmAt" class="sys-btn" data-testid="notice-confirm" @click.stop>
           {{ t('work.room.notice.goConfirm') }}
         </NavLink>
@@ -449,6 +480,8 @@ const ACTION_META: Record<string, { btn: string }> = {
           @open-resource="(...a) => emit('open-resource', ...a)"
           @open-card="emit('open-card', $event)"
           @jump="emit('jump', $event)"
+          @open-routine="emit('open-routine', $event)"
+          @open-routine-records="emit('open-routine-records', $event)"
         />
       </div>
     </div>

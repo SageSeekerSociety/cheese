@@ -7,6 +7,8 @@
   "goConfirm": "去确认",
   "goEnvironment": "去环境设置",
   "moreFiles": "另 {n} 个文件",
+  "openRoutine": "打开这条",
+  "openRoutineRecords": "看执行记录",
   "platform": "平台",
   "quote": "「{text}」",
   "removed": "删除",

@@ -708,6 +708,34 @@ function siteBlock(block: Block) {
   siteRef.value?.receive(block)
 }
 
+// 房间里那一行提到一条规则：选中、展开、滚到眼前。那一串画在 `RoutinePanelHost` 里
+// （这一格还没打开过时不画，所以它那一刻是空的，那一行就什么都不做——见那里的说明）。
+const routinesRef = ref<InstanceType<typeof RoutinePanelHost> | null>(null)
+/**
+ * 打开「例行事务」这一格，指到某一条规则上。
+ *
+ * 先等 `setTab` 走完再指：那一格是**第一次被选中时才挂上**的（`mounted`），在此之前
+ * `routinesRef` 是空的，指过去只会落进空气里。守卫拦下这一次切换（图上还有没发出去的
+ * 批注）就当场收手，不把人硬拽走。
+ */
+async function showRoutine(routineId: string) {
+  if (!(await setTab('routines'))) return
+  await nextTick()
+  routinesRef.value?.showRoutine(routineId)
+}
+
+/**
+ * 同一行上的第二颗：这一格开成那条规则的「执行记录」整页。
+ *
+ * 和上面那条一样要先等 `setTab`。差别只在这一格进去之后是什么样子（见 `RoutinePanelHost`
+ * 里那段说明）：一颗问「这条规则长什么样」，另一颗问「它跑出来什么」。
+ */
+async function showRoutineRecords(routineId: string) {
+  if (!(await setTab('routines'))) return
+  await nextTick()
+  routinesRef.value?.showRoutineRecords(routineId)
+}
+
 // 面板此刻在画哪一格。地址不一定写得出来——平板横放里自动挑中的那一格就没写进地址，
 // 而收起浮层再打开要回到它，所以这里是那份记忆的出处（TopicView 打开浮层时来问）。
 defineExpose({
@@ -716,6 +744,8 @@ defineExpose({
   openDocument,
   siteBlock,
   previewShown,
+  showRoutine,
+  showRoutineRecords,
   activeTab: () => active.value,
 })
 </script>
@@ -819,6 +849,7 @@ defineExpose({
              在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoutinePanelHost
             v-if="mounted.has('routines')"
+            ref="routinesRef"
             v-show="active === 'routines'"
             :class="enterClass('routines')"
             :topic-id="topicId"

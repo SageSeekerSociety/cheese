@@ -74,6 +74,11 @@ export interface ChatPanelEmit {
   // An action card's button (doc → highlight the turn, or review the changes
   // someone asked the agent for; changes → diff tab…).
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
+  // 房间里提到一条规则的那一行：就在这个房间右栏把「例行事务」打开、选中那一条。
+  // 它不是一个去处（规则本来就长在这个房间里），所以不是 `open-resource` 那一串。
+  (e: 'open-routine', routineId: string): void
+  // 同一行上的第二颗：不看那一串，直接看这一条跑出来什么（执行记录整页）。
+  (e: 'open-routine-records', routineId: string): void
 }
 
 /** Everything the panel reads off its props, as accessors: a composable is not

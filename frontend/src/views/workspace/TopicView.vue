@@ -99,6 +99,25 @@ function onReview() {
   onPanelTab('changes')
 }
 
+// 房间里提到一条规则的那一行：那颗按钮不带人去别的页面，就把这个房间的右栏切到
+// 「例行事务」、指到那一条上。换页签这一步走工作面板自己的 `setTab`（它要过那道
+// 「图上还有没发出去的批注吗」的守卫，也要把这一格第一次挂上），所以这里不自己
+// 写地址 —— 面板换完会照常报回来。专注模式里对话让开了，内容和地址都得看得见：
+// 和上面 `open-resource` 那两处一样，先退出专注模式。
+async function onOpenRoutine(routineId: string) {
+  focusMode.value = false
+  await nextTick()
+  await panelRef.value?.showRoutine?.(routineId)
+}
+
+// 同一行上的第二颗：右栏开成这一条的执行记录整页。退出专注模式那一步和上面一样 ——
+// 否则人点了它，看到的还是那次对话，得自己再把右栏拉开。
+async function onOpenRoutineRecords(routineId: string) {
+  focusMode.value = false
+  await nextTick()
+  await panelRef.value?.showRoutineRecords?.(routineId)
+}
+
 // 地址点名的一条消息（搜索结果、别人发来的链接、任务页顶上那句话）：打开时停在它上
 // 面。支线页上点名的是支线里的一条，交给支线那一栏；频道主线那一栏里没有它。
 const namedBlock = computed(() => {
@@ -358,6 +377,10 @@ const panelRef = ref<{
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
   openDocument?: (document: OpenedDocument, review?: DocReviewRequest) => Promise<void>
+  /** 打开「例行事务」那一格并指到某一条规则上（房间里那一行提到它，人点了它）。 */
+  showRoutine?: (routineId: string) => Promise<void>
+  /** 同一行上的第二颗：那一格直接开成这一条的执行记录整页。 */
+  showRoutineRecords?: (routineId: string) => Promise<void>
   previewShown?: () => void
   // 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。
   activeTab: () => string
@@ -412,6 +435,8 @@ const chatEvents = {
   'mention-click': handleMentionClick,
   'open-file': (path: string) => panelRef.value?.openFile?.(path),
   'open-resource': handleOpenResource,
+  'open-routine': onOpenRoutine,
+  'open-routine-records': onOpenRoutineRecords,
   'upgrade-message': upgradeMessage,
   'open-thread': onOpenThread,
   'open-topic': openTopic,
