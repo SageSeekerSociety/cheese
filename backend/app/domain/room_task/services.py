@@ -155,9 +155,18 @@ class TaskService:
             raise NotFoundError("Task not found")
 
     async def list_in_project(
-        self, project_id: uuid.UUID, *, accepted: bool | None = None
+        self,
+        project_id: uuid.UUID,
+        *,
+        accepted: bool | None = None,
+        rooms: Collection[uuid.UUID] | None = None,
+        status: str | None = None,
     ) -> list[Task]:
         """这个项目里的活，最老的在前。
+
+        `rooms` 和 `status` 是把清单收窄交给数据库的两把刀（见 `list_for_project`）：
+        给了就只装配满足的那些行。项目任务列表接口把「我看得见的房间」和 `status`
+        都给上，不再把整个项目的活读进来再用 Python 筛一遍。
 
         交出去的是 ORM 行，**暂留**：room_task 这一期还没有自己的窄读出口，项目
         侧栏就是拿这批行就地折出展示态的（`presentation.facts_for_task`），行本身
@@ -167,7 +176,9 @@ class TaskService:
         Callers authorize and own this session and its transaction. This read
         does not explicitly begin, commit or roll back.
         """
-        return await self._repo.list_for_project(project_id, accepted=accepted)
+        return await self._repo.list_for_project(
+            project_id, accepted=accepted, rooms=rooms, status=status
+        )
 
     async def list_open(self) -> list[Task]:
         """全平台还开着的任务，交出 ORM 行（同 `list_in_project`，**暂留**）。"""

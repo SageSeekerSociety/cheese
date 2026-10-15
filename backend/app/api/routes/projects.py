@@ -495,11 +495,9 @@ async def list_project_tasks(
             ),
             if_none_match,
         )
-    tasks = [
-        t
-        for t in await TaskService(db).list_in_project(project_id, accepted=accepted)
-        if t.room_id in seen and (status is None or t.status == status)
-    ]
+    tasks = await TaskService(db).list_in_project(
+        project_id, accepted=accepted, rooms=seen, status=status
+    )
     items = await project_task_rows(db, chat, actor.handle or "", tasks)
     return conditional_json(ok(page(items, len(items))), if_none_match)
 

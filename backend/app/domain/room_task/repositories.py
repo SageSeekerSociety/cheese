@@ -317,7 +317,12 @@ class TaskRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def list_for_project(
-        self, project_id: uuid.UUID, *, accepted: bool | None = None
+        self,
+        project_id: uuid.UUID,
+        *,
+        accepted: bool | None = None,
+        rooms: Collection[uuid.UUID] | None = None,
+        status: str | None = None,
     ) -> list[Task]:
         """Every thread in the project, oldest first — the whole tree at once.
 
@@ -325,12 +330,23 @@ class TaskRepository:
         holds ~170 rooms: asking each room for its threads is 170 round trips to
         paint one sidebar. Same total order as `list_for_room` so a room's
         threads read identically whichever call produced them.
+
+        `rooms` and `status` narrow it the way a project-wide list does: the
+        rooms the reader sees, and one state. A caller that shows only part of
+        the tree gives both and lets the database drop the rest — the project
+        rail shows 82 open threads out of 1,437 on dev, and it used to assemble
+        all 1,437 and filter them in Python (2026-10-15,
+        `.claude/scripts/sql_census.py`).
         """
         stmt = (
             select(Task)
             .where(Task.project_id == project_id)
             .order_by(Task.created_at, Task.id)
         )
+        if rooms is not None:
+            stmt = stmt.where(Task.room_id.in_(list(rooms)))
+        if status is not None:
+            stmt = stmt.where(Task.status == TaskStatus(status))
         stmt = self._accepted(stmt, accepted)
         return list((await self._session.scalars(stmt)).all())
 

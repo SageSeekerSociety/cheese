@@ -392,6 +392,34 @@ class TopicRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def ids_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        only_seen_by: str | None = None,
+        unarchived: bool = False,
+    ) -> list[uuid.UUID]:
+        """同一棵树，只要主键 —— 调用方问的是「哪些频道算数」，不读那一行。
+
+        项目任务列表要的正是这个：它把「看得见的房间」当筛选条件交给数据库
+        （`room_task.ListedTask` 那边同理），原来却为拿这几个 id 装配了整个项目
+        的频道行 —— 219 行里除了 id 一个字段都不读，而 `Topic` 一行还背着环境
+        文档那两列 JSON（2026-10-15，48 万区块的库，一次项目任务列表）。
+
+        `unarchived` 排掉归档的频道：它们是只读的，里面没有还能推进的活。
+        走的还是 `_project_topics_stmt`，所以筛选和排序只有那一份定义。
+        """
+        stmt = self._project_topics_stmt(
+            [project_id],
+            sort=None,
+            order="asc",
+            active_since=None,
+            seen=None if only_seen_by is None else seen_by(only_seen_by),
+        ).with_only_columns(Topic.id)
+        if unarchived:
+            stmt = stmt.where(Topic.status != TopicStatus.archived)
+        return list((await self._session.scalars(stmt)).all())
+
     async def visible_unarchived_ids_for_projects(
         self, project_ids: list[uuid.UUID], *, viewer: str
     ) -> list[uuid.UUID]:
