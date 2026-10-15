@@ -83,7 +83,7 @@ resolve_sha() {
 prepare() {
   local pr=$1 want=${2:-} since_want=${3:-} spec_want=${4:-}
   local sha since="" base tree dir method_rev prev merge_base tier tier_txt
-  local rules_rev rules_txt rules_line spec_from="" spec_txt="" tiers_file
+  local rules_rev rules_txt rules_line spec_from="" spec_txt="" spec_note tiers_file
   sha=$(resolve_sha "$pr" "$want") || exit 1
   [ -z "$since_want" ] || since=$(resolve_sha "$pr" "$since_want") || exit 1
   base=$(gh api "repos/$REPO/pulls/$pr" -q .base.ref) || exit 1
@@ -197,6 +197,24 @@ prepare() {
     cp "$spec_from" "$dir/spec.md"
     spec_txt=$dir/spec.md
   fi
+  # Step 5b and the contract section are newer than the rest of the method: main's
+  # prompt.md has no 5b until this branch merges, and a section naming a step the method
+  # above it does not contain is one nobody can follow. The contract is left out in that
+  # window the way the 档位 is, with the review told there is none rather than handed a
+  # dangling one. `REVIEW.md` holds the method alone at this point.
+  spec_note="none — skip step 5b"
+  if [ -n "$spec_txt" ]; then
+    if grep -q "^## 5b" "$dir/REVIEW.md" 2>/dev/null; then
+      spec_note=$spec_txt
+    else
+      echo "pr-review: 这份 method 还没有 step 5b，这次不注入需求契约" >&2
+      spec_txt=""
+      spec_note="none — this review's method has no step 5b"
+      # No `spec.md` either: a delta round reuses the copy in the round it names, and one
+      # left here would hand a later, method-has-5b round a contract this one never used.
+      rm -f "$dir/spec.md"
+    fi
+  fi
 
   gh api "repos/$REPO/pulls/$pr" -q '"# " + .title + "\n\n" + (.body // "")' > "$dir/pr.md" || exit 1
   printf 'pr=%q\nsha=%q\nbase=%q\nmethod_rev=%q\ntree=%q\nsince=%q\ntier=%q\nspec=%q\n' \
@@ -304,7 +322,7 @@ EOF
 - Review tree: $tree
 - Changed files: \`git -C $tree diff --name-only ${since:-$merge_base} HEAD\`
 - Rules injected: ${rules_line:-none}${rules_txt:+ (at $rules_rev, text above)}
-- Spec: ${spec_txt:-none — skip step 5b}
+- Spec: ${spec_note}
 - PR title and body (step 5 only): $dir/pr.md
 - Schema: $dir/schema.json
 - Result: $dir/result.json

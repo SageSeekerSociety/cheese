@@ -27,6 +27,7 @@ must not be a lighter tier here either. `--self-test` fails when the two lists d
 """
 
 import fnmatch
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -346,6 +347,13 @@ def paths_frontmatter(text):
         return []
     globs, collecting = [], False
     for line in lines[1:end]:
+        # The list item is read before the key, because a block sequence may sit at column 0
+        # — `paths:` with the globs unindented is the same YAML as the indented spelling.
+        # Read as a key it is not `paths`, the globs are dropped, and an empty list makes
+        # the rule look unscoped, which injects it into every review there is.
+        if collecting and line.strip().startswith("-"):
+            globs.append(line.strip()[1:].strip().strip("'\""))
+            continue
         if line.strip() and not line[:1].isspace():
             collecting = False
             key, _, rest = line.partition(":")
@@ -356,8 +364,6 @@ def paths_frontmatter(text):
                 inner = rest[1:].rsplit("]", 1)[0]
                 return [g.strip().strip("'\"") for g in inner.split(",") if g.strip()]
             collecting = True
-        elif collecting and line.strip().startswith("-"):
-            globs.append(line.strip()[1:].strip().strip("'\""))
     return globs
 
 
@@ -542,16 +548,26 @@ def self_test():
           [2, 2, 1, 1, 1])
     check("每一档的块里都写了拓扑", [("子代理拓扑" in block(l, "x")) for l in "ABCDEG"],
           [True] * 6)
-    check("A 档的拓扑行报出并发数与各路数量",
-          [s in block("A", "x") for s in ("单轮最多 2 路并发", "2 路找茬", "最多 2 路证伪",
-                                          "1 路单查需求契约")], [True] * 4)
-    check("C 档只报 1 路并发", "单轮最多 1 路并发" in block("C", "x"), True)
+    # What the line has to say, not the sentence saying it: the numbers are the tier's own
+    # topology numbers and the severities are the ones a refuter is spent on, so a rewording
+    # that keeps the rules keeps the test green, and a count that drifts does not.
+    check("拓扑行里的数字就是这一档拓扑的数字",
+          [(sorted({int(n) for n in re.findall(r"\d+", topology_line(l))}),
+            len(re.findall(r"\d+", topology_line(l)))) for l in "ABCDE"],
+          [([1, 2], 4), ([2], 3), ([1], 3), ([1], 3), ([1], 3)])
+    check("带证伪的档都在拓扑行里点名 blocker 和 major",
+          [all(s in topology_line(l) for s in ("blocker", "major")) for l in "ABCDE"], [True] * 5)
+    check("拓扑行报出这一档的 effort",
+          [topology(l)["effort"] in topology_line(l) for l in "ABCDE"], [True] * 5)
     check("G 档的拓扑行说不派分身", "- 子代理拓扑：不派分身" in block("G", "x"), True)
 
     check("块状 paths 前言读出来", paths_frontmatter('---\npaths:\n  - "backend/tests/**"\n---\n\n# 标题\n'),
           ["backend/tests/**"])
     check("行内 paths 前言读出来", paths_frontmatter('---\npaths: ["a/**", "b.ts"]\n---\n'),
           ["a/**", "b.ts"])
+    check("顶格的块状 paths 前言也读出来",
+          paths_frontmatter('---\npaths:\n- "backend/tests/**"\n- "b.ts"\n---\n'),
+          ["backend/tests/**", "b.ts"])
     check("没有前言的规则文件算没写 paths", paths_frontmatter("# 规矩\n"), [])
     check("前言里没有 paths 也算没写", paths_frontmatter("---\ntype: rule\n---\n"), [])
     check("paths 列表遇到下一个前言键就收住",
@@ -584,6 +600,9 @@ def self_test():
         write(".claude/rules/backend-tests.md",
               '---\npaths:\n  - "backend/tests/**"\n---\n\n# 后端测试\n')
         write(".claude/rules/frontend.md", '---\npaths: ["frontend/**"]\n---\n\n# 前端\n')
+        # The block sequence at column 0: the same YAML as the indented spelling above, and
+        # the one a rule parsed as unscoped would be injected for every change there is.
+        write(".claude/rules/elsewhere.md", '---\npaths:\n- "cli/**"\n---\n\n# 命令行\n')
         subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True,
                        capture_output=True)
@@ -699,6 +718,11 @@ def self_test():
               True)
         check("改到前端，注入前端那条规则", rule_files(repo, base, ["frontend/src/a.vue"]),
               [".claude/rules/always.md", ".claude/rules/frontend.md"])
+        check("顶格写 paths 的规则在别的子树下不算没写 paths",
+              ".claude/rules/elsewhere.md" in rule_files(repo, base, ["backend/app/domain/x.py"]),
+              False)
+        check("顶格写 paths 的规则命中时照样注入",
+              ".claude/rules/elsewhere.md" in rule_files(repo, base, ["cli/main.py"]), True)
         check("读不到 rev 时一条都不注入", rule_files(repo, "deadbeef", ["f.py"]), [])
         # The rules come from the rev prepare passes, so a change that rewrites a rule
         # cannot rewrite what its own review is handed. Here the PR points the frontend

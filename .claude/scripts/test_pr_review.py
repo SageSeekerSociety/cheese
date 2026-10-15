@@ -9,6 +9,7 @@ log, so the test can say what was and was not asked of GitHub. No network, no cr
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -257,12 +258,16 @@ class PrReview(unittest.TestCase):
         self.assertIn("f.txt（实现代码）", text)
 
     def test_prepare_prints_the_topology_that_tier_spends(self):
-        # The topology is what the tier costs in subagents; it is written where the
-        # reviewer reads it, next to the tier it belongs to.
+        # The topology is what the tier costs in subagents; it is written where the reviewer
+        # reads it, next to the tier it belongs to. What it has to say is the numbers and
+        # the severities — tier B is two finders and at most two concurrent refuters, spent
+        # on blockers and majors — so the assertion is on those, not on the sentence.
         _, text = self.prepare()
-        self.assertIn("- 子代理拓扑：", text)
-        self.assertIn("单轮最多 2 路并发", text)
-        self.assertIn("最多 2 路证伪（只对 blocker 或 major）", text)
+        line = next(l for l in text.splitlines() if l.startswith("- 子代理拓扑："))
+        self.assertEqual(sorted(int(n) for n in re.findall(r"\d+", line)), [2, 2, 2])
+        self.assertIn("2 路找茬", line)
+        for severity in ("blocker", "major"):
+            self.assertIn(severity, line)
 
     def meta_of(self, review_md):
         return dict(
@@ -341,6 +346,37 @@ class PrReview(unittest.TestCase):
         out = self.run_script("prepare", PR, "--spec", str(self.tmp / "empty.md"))
         self.assertEqual(out.returncode, 1)
         self.assertIn("empty", out.stderr)
+
+    def test_a_method_that_predates_step_5b_is_handed_no_contract(self):
+        # The contract section names step 5b, and the method the reviewer is handed comes
+        # from the default branch: until 5b is on main, that section would name a step that
+        # is not above it. It is left out in that window the way the 档位 is, and the review
+        # is told there is no contract rather than handed a dangling one.
+        spec = self.tmp / "spec.md"
+        spec.write_text("# Contract\n\n- It must do the thing.\n")
+        main = git(self.work, "rev-parse", "origin/main")
+        git(self.work, "checkout", "-q", "-b", "old-main", main)
+        try:
+            (self.work / ".claude/pr-review/prompt.md").write_text(
+                "# Independent review\n\n## 5. Now read the PR's own words\n")
+            git(self.work, "commit", "-qam", "an older method")
+            old = git(self.work, "rev-parse", "HEAD")
+            git(self.work, "push", "-q", "-f", "origin", f"{old}:main")
+            git(self.work, "checkout", "-q", "pr")
+            out = self.run_script("prepare", PR, "--spec", str(spec))
+            self.assertEqual(out.returncode, 0, out.stderr)
+            d = Path(out.stdout.strip()).parent
+            text = (d / "REVIEW.md").read_text()
+            self.assertNotIn("## Requirement contract", text)
+            self.assertNotIn("It must do the thing.", text)
+            self.assertFalse((d / "spec.md").exists())
+            self.assertEqual(self.meta_of(Path(out.stdout.strip()))["spec"], "''")
+            self.assertIn("还没有 step 5b", out.stderr)
+        finally:
+            git(self.work, "checkout", "-q", "main")
+            git(self.work, "branch", "-qD", "old-main")
+            git(self.work, "push", "-q", "-f", "origin", f"{main}:main")
+            git(self.work, "fetch", "-q", "origin")
 
     def test_the_schema_takes_a_spec_finding_and_still_refuses_an_unknown_kind(self):
         review_md, _ = self.prepare()
@@ -692,11 +728,23 @@ class ReviewFindingsTrend(unittest.TestCase):
 
     def test_it_counts_what_a_refuter_did_not_confirm(self):
         self.round("7", "a" * 40, [
-            self.finding("runtime", "backend/app/a.py", "minor", rung=2),
-            self.finding("runtime", "backend/app/b.py", "minor", rung=5),
+            self.finding("runtime", "backend/app/a.py", "minor", rung=3),
+            self.finding("runtime", "backend/app/b.py", "minor", rung=4),
         ])
         out = json.loads(self.trend("--json").stdout)
         self.assertEqual(out["top"][0]["unverified"], 1)
+
+    def test_with_no_dir_it_reads_where_prepare_writes(self):
+        # prepare writes under $PR_REVIEW_DIR. Looking in /tmp regardless would tell a
+        # machine that moved it that its results are gone while they sit on disk.
+        self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
+        out = subprocess.run(
+            [sys.executable, str(REPO_ROOT / ".claude/scripts/review-findings-trend.py")],
+            capture_output=True, text=True,
+            env={**os.environ, "PR_REVIEW_DIR": str(self.tmp)},
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("backend/tests", out.stdout)
 
     def test_a_result_it_cannot_read_is_skipped_and_said_so(self):
         self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
@@ -705,6 +753,21 @@ class ReviewFindingsTrend(unittest.TestCase):
         out = self.trend()
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertIn("skip", out.stderr)
+        self.assertIn("backend/tests", out.stdout)
+
+    def test_a_result_of_the_wrong_shape_is_skipped_not_this_boards_problem(self):
+        # A seat writes result.json by hand and a round abandoned before `post` leaves one
+        # behind: a file that parses and is not a review result is one unreadable round, not
+        # a reason for the round that is readable to go unreported.
+        self.round("7", "a" * 40, [self.finding("test", "backend/tests/a.py", "minor")])
+        for name, body in (("an-array", "[]"),
+                           ("findings-not-a-list", '{"findings": {"a": 1}}'),
+                           ("a-finding-not-an-object", '{"findings": ["a"]}')):
+            (self.tmp / f"{name}.input").mkdir(exist_ok=True)
+            (self.tmp / f"{name}.input" / "result.json").write_text(body)
+        out = self.trend()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stderr.count("skip"), 3)
         self.assertIn("backend/tests", out.stdout)
 
     def test_top_limits_the_board(self):

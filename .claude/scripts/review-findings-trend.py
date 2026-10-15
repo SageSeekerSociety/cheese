@@ -28,13 +28,17 @@ of clean reviews would be invisible.
 
 import argparse
 import json
+import os
 import re
 import sys
 from collections import Counter
 from pathlib import Path
 
-#: What `prepare` leaves in $PR_REVIEW_DIR; the default is the same variable.
-DEFAULT_GLOB = "/tmp/pr-review-*.input"
+#: The directory `prepare` writes under — the same variable it reads, whose own default is
+#: /tmp. Read here too, or a machine that moved it is told its results are gone while they
+#: sit on disk.
+REVIEW_DIR = os.environ.get("PR_REVIEW_DIR") or "/tmp"
+DEFAULT_GLOB = os.path.join(REVIEW_DIR, "pr-review-*.input")
 PR_FROM_DIR = re.compile(r"^pr-review-(\d+)-")
 
 
@@ -52,13 +56,27 @@ def pr_of(dirname):
     return hit.group(1) if hit else "(unknown)"
 
 
+def is_result(result):
+    """Whether a parsed result.json has the shape everything below expects: an object whose
+    `findings`, when it has one, is a list of objects. A file can parse and still not be
+    this — a seat hand-writes result.json, and an abandoned round leaves one behind — so
+    the shape is checked where the file is read rather than trusted at each use."""
+    findings = result.get("findings", []) if isinstance(result, dict) else None
+    return isinstance(findings, list) and all(isinstance(f, dict) for f in findings)
+
+
 def rounds_of(dirs):
-    """Every result.json under `dirs`, oldest-looking order irrelevant: (dir, result)."""
+    """Every result.json under `dirs`, oldest-looking order irrelevant: (dir, result).
+    One that cannot be read, or that parses into something other than a review result, is
+    skipped with a note rather than taken: a directory of rounds hand-written over months
+    collects those, and one of them is not worth the whole board."""
     seen = []
     for root in dirs:
         for path in sorted(Path(root).glob("**/result.json")):
             try:
                 result = json.loads(path.read_text(encoding="utf-8"))
+                if not is_result(result):
+                    raise ValueError("not a review result")
             except (OSError, ValueError) as exc:
                 print(f"review-findings-trend: skip {path}: {exc}", file=sys.stderr)
                 continue
@@ -165,7 +183,7 @@ def main(argv):
     if args.top < 1:
         parser.error("--top 至少是 1")
 
-    dirs = args.dir or [str(p) for p in sorted(Path("/").glob(DEFAULT_GLOB.lstrip("/")))]
+    dirs = args.dir or [str(p) for p in sorted(Path(REVIEW_DIR).glob("pr-review-*.input"))]
     if not dirs:
         print(f"review-findings-trend: {DEFAULT_GLOB} 下一个目录都没有", file=sys.stderr)
     out = report(rounds_of(dirs), args.top)
