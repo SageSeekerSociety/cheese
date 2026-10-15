@@ -783,8 +783,8 @@ def _loader_self_test():
         sh("add", "e.txt"); sh("commit", "-qm", "feat: extra work")
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #9 from x/extra", "extra")
-        # 第三条线：留存那一项的分母不是偶数，「数留下来的」和「数消失的」才分得开
-        # （2/3 与 1/3、1 条与 2 条）。
+        # 第三条线：f.txt 同样还在。三条线里两条全在、一条有文件消失，留存那一项的分母
+        # 才不是偶数——「数留下来的」和「数消失的」给的是 2/3 与 1/3、1 条与 2 条。
         sh("checkout", "-q", "-b", "final")
         open(os.path.join(tmp, "f.txt"), "w").write("5\n")
         sh("add", "f.txt"); sh("commit", "-qm", "feat: final work")
@@ -808,10 +808,32 @@ def _loader_self_test():
         # git 认不出 2999 那种年份，会当成「没有这个限制」照常全给我。
         assert load_subjects("2099-01-01") == [], load_subjects("2099-01-01")
         assert load_history("2099-01-01") == [], load_history("2099-01-01")
-        # HEAD 挪到 merge #7 上（那时还没有 d.txt/e.txt/f.txt）：`REF`（main）读到的
-        # 文件和 HEAD 不一样，`head_files` 里把 `REF` 写成字面量 `"HEAD"` 就会被接线
-        # 那几条断言抓住。历史读取一律走 `REF`，不受影响。
-        sh("checkout", "-q", "--detach", "main~2")
+        # `head_files` 读的是 `REF`，生产里是 `origin/main`。上面那个仓库里
+        # `REF == "HEAD"`，两种写法读到的文件一样，所以另起一个小仓库：HEAD 停在第一版，
+        # 第二版的文件只在 `main` 上。把 `head_files` 里的 `REF` 写成字面量 `"HEAD"`
+        # 就会读不到它。
+        second = tempfile.mkdtemp(prefix="co-selftest-head-")
+        try:
+            def sh2(*a):
+                p = subprocess.run(["git", "-C", second, *a], capture_output=True,
+                                   text=True)
+                if p.returncode:
+                    raise SystemExit("自检的 git %s 失败：%s" % (a[0], p.stderr[:300]))
+                return p.stdout
+
+            sh2("init", "-q", "-b", "main")
+            sh2("config", "user.email", "t@t"); sh2("config", "user.name", "t")
+            open(os.path.join(second, "g.txt"), "w").write("1\n")
+            sh2("add", "g.txt"); sh2("commit", "-qm", "chore: g")
+            open(os.path.join(second, "h.txt"), "w").write("2\n")
+            sh2("add", "h.txt"); sh2("commit", "-qm", "feat: h")
+            sh2("checkout", "-q", "--detach", "main~1")
+            REPO_PATH = second
+            assert "h.txt" in head_files(), head_files()
+            assert "h.txt" not in sh2("ls-tree", "-r", "--name-only", "HEAD"), "HEAD 有 h.txt"
+        finally:
+            REPO_PATH = tmp
+            shutil.rmtree(second, ignore_errors=True)
         _wiring_self_test(tmp, sh)
     finally:
         REPO_PATH, REF = old_path, old_ref
@@ -852,13 +874,13 @@ def _wiring_self_test(tmp, sh):
     assert "队列：窗口内第一次合入的 **3 条线**" in md, md
     assert "共 4 次合入（其中 4 次在默认分支上认出了对应提交）" in md, md
     # 文件和行数来自真的 git：合并 #7 加 b.txt 一行，合并 #8 删 b.txt、加 d.txt 一行，
-    # 合并 #9 加 e.txt 一行，合并 #10 加 f.txt 一行。两处都对不上时这里先响：喂空字典
-    # 会没有一条线，加删写反了净增就是 -1。
+    # 合并 #9 加 e.txt 一行（第三次合入在另一条线上，不是 T1 的）。两处都对不上时这里
+    # 先响：喂空字典会没有一条线，加删写反了净增就是 -1。
     assert "| 改动文件数 | 1 |" in md, md
     assert "| 净增行数 | 1 |" in md, md
-    # 留存那一段也走真的 `head_files`：T1 的 b.txt 被合入 #8 删掉了，T2 的 e.txt、T3 的
-    # f.txt 还在。分母是 3 不是 2，数反了（数消失的线）会得到 1/3 而不是 2/3；把 `main`
-    # 里的 `present` 换成空集合，这行就掉到 0/3。
+    # 留存那一段也走真的 `head_files`：T1 的 b.txt 被合入 #8 删掉了，T2 的 e.txt 还在。
+    # 分母是 3 不是 2，数反了（数消失的线）会得到 1/3 而不是 2/3；把 `main` 里的
+    # `present` 换成空集合，这行就掉到 0/3。
     assert "- 改动文件今天仍在默认分支上：2/3 条线是 100%。" in md, md
     assert "- 去掉生成物后仍有文件消失的线：1 条" in md, md
     # 回退那条只在 `load_subjects`（不限第一父链）里看得见。
