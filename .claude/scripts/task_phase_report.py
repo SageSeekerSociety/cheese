@@ -26,9 +26,7 @@ from lead_time_stages import collect, stages  # noqa: E402
 from orchestrator_sweep import get, login, ts  # noqa: E402
 
 
-PHASE_ORDER = (
-    "first_action", "worktree", "dependencies", "local_stack", "first_check", "coding"
-)
+PHASE_ORDER = ("worktree", "dependencies", "local_stack", "first_check", "coding")
 WORKTREE_RE = re.compile(r"(?:^|\s)cheese\s+worktree(?:\s|$)")
 DEPENDENCY_RE = re.compile(
     r"(?:pnpm|npm|yarn|bun|uv|pip|poetry|cargo)\b[^\n]*(?:install|sync|setup|venv|lock)|"
@@ -66,9 +64,13 @@ def page_transcript(token: str, topic: str, stop_before: str | None = None) -> l
         rows.extend(page)
         if not body.get("has_more") or not page:
             break
-        oldest = min((row.get("created_at") or "") for row in page)
-        if stop_before and oldest and oldest <= stop_before:
-            rows = [row for row in rows if (row.get("created_at") or "") >= stop_before]
+        stamps = [ts(row["created_at"]) for row in page if row.get("created_at")]
+        if stop_before and stamps and min(stamps) <= ts(stop_before):
+            cutoff = ts(stop_before)
+            rows = [
+                row for row in rows
+                if row.get("created_at") and ts(row["created_at"]) >= cutoff
+            ]
             break
         before = body.get("oldest_id") or page[0].get("id")
         if not before:
@@ -196,7 +198,7 @@ def report(token: str, channel: str, start: str, end: str) -> dict:
 def render(data: dict) -> None:
     lines = data["lines"]
     print(f"task phase report: {len(lines)} lines with a first response and commit")
-    observed = ("cloud_startup_at", "cloud_ready_at",
+    observed = ("cloud_startup_at", "cloud_ready_at", "first_action_at",
                 *[f"{phase}_at" for phase in PHASE_ORDER])
     for phase in observed:
         count = sum(1 for row in lines if row["markers"].get(phase))
