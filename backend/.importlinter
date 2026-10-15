@@ -429,6 +429,12 @@ unmatched_ignore_imports_alerting = warn
 # `space.models`, `task.models` and `task.protocol` and so cannot follow. That
 # split is what takes `project -> shell` off the graph, which is the one edge
 # under `project` that was holding `shell` inside the largest cycle.
+#
+# `environment_diagnosis` joined at layer 4 (2026-10-14), out of the `project`
+# package it was written in. It takes no project row — the route hands it two
+# ids, the settings and the failure — and what it reads is `gateway_chat` and
+# `usage.ledger`, both of this row. Living in `project` made `project ->
+# gateway_chat` an upward edge for a module that never needed the layer.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
@@ -436,7 +442,7 @@ layers =
     routine : task_quiet : admin : room_cleanup : wake_watch
     agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet
-    repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session
+    repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
     common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog
 containers =
