@@ -1,5 +1,6 @@
 // 申请加入团队，在管理员「待办」的动态里就能批准或拒绝，不用再绕到团队成员页。
 // 通知的形状照后端 /notifications 真实返回的写：申请是 entities.application，带它此刻的状态。
+// 行本身不取数：答那一下的请求在容器那份桥（`useNotificationAnswers`）上，宿主把它递给这一行。
 import type { Notification } from '@/types/apiNotifications'
 
 import { defineComponent, h } from 'vue'
@@ -12,12 +13,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import NotificationItem from '../NotificationItem.vue'
 
+import { useNotificationAnswers } from '@/views/home/useNotificationAnswers'
+
 import { TeamsApi } from '@/api/teams'
 import i18n, { setLocale } from '@/i18n'
 
 vi.mock('@/api/teams', () => ({
   TeamsApi: { approveJoinRequest: vi.fn(), rejectJoinRequest: vi.fn() },
 }))
+
+// 宿主那份桥：答过的申请记在它模块作用域里（跨行重挂还在），这里直接取一份接上。
+const { answering } = useNotificationAnswers()
 
 beforeEach(() => {
   setLocale('zh-CN')
@@ -63,7 +69,7 @@ async function mount(notification: Notification) {
   await router.isReady()
   const onMarkAsRead = vi.fn()
   const view = render(NotificationItem, {
-    props: { notification, onMarkAsRead, onDelete: vi.fn() },
+    props: { notification, answering, onMarkAsRead, onDelete: vi.fn() },
     global: { plugins: [createVuetify({ components, directives }), router, i18n] },
   })
   return { view, onMarkAsRead }
@@ -97,6 +103,32 @@ it('a second click while the answer is on its way sends nothing more', async () 
   await waitFor(() => expect(view.queryByRole('button', { name: '批准' })).toBeNull())
   expect(TeamsApi.approveJoinRequest).toHaveBeenCalledTimes(1)
   expect(TeamsApi.rejectJoinRequest).not.toHaveBeenCalled()
+})
+
+// 答完这一行会跟着重画（换成带链接的那一种），渲染件跟着重建：答过的状态记在桥上，
+// 不记在实例里，所以重挂之后不会又冒出那两颗按钮。
+it('a remount after answering does not bring the buttons back', async () => {
+  const notification = joinRequest('PENDING', '66')
+  const first = await mount(notification)
+  await fireEvent.click(await first.view.findByRole('button', { name: '批准' }))
+  await waitFor(() => expect(first.view.queryByRole('button', { name: '批准' })).toBeNull())
+  cleanup()
+
+  const again = await mount(notification)
+  await again.view.findByRole('button', { name: '删除' })
+  expect(again.view.queryByRole('button', { name: '批准' })).toBeNull()
+  expect(again.view.queryByRole('button', { name: '拒绝' })).toBeNull()
+})
+
+it('a failed answer leaves the request open to try again', async () => {
+  vi.mocked(TeamsApi.approveJoinRequest).mockRejectedValueOnce(new Error('network'))
+  const { view, onMarkAsRead } = await mount(joinRequest('PENDING', '67'))
+
+  await fireEvent.click(await view.findByRole('button', { name: '批准' }))
+
+  await waitFor(() => expect(TeamsApi.approveJoinRequest).toHaveBeenCalled())
+  expect(onMarkAsRead).not.toHaveBeenCalled()
+  expect(view.getByRole('button', { name: '批准' })).toBeTruthy()
 })
 
 it('rejects a waiting request right from the notification', async () => {

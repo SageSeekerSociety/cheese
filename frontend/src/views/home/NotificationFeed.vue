@@ -5,8 +5,9 @@
        **只认 props**：这一档有哪些条、三档各多少、翻到哪儿了、要不要顶上那条「有 N 条
        新动态」，全是从外面递进来的；换一档、标已读、删一条、接着往下翻、重来一次，都
        往上发事件。看哪一档、问服务端、存偏好、来了新的怎么补问，都在
-       `useNotificationFeed.ts`，`views/InboxView.vue` 那只容器把它接上——于是这一块在
-       测试和 /demo 里都只需要一串 props。 -->
+       `useNotificationFeed.ts`，答那三类邀请的动作在 `useNotificationAnswers.ts`，
+       `views/InboxView.vue` 那只容器把两样都接上——于是这一块在测试和 /demo 里都只需要
+       一串 props。 -->
   <section class="notification-feed">
     <header class="notification-feed__head">
       <h2 class="notification-feed__title">{{ t('home.inbox.feed') }}</h2>
@@ -44,16 +45,17 @@
         </BaseButton>
       </div>
       <v-list density="compact" lines="three" class="py-0" bg-color="transparent">
-        <!-- 行本身（`NotificationItem`）由外面递进来：它自己会问到后端（那几类邀请的
-             接受 / 拒绝是在行里办的），这一块要能只收 props 单独画，就不能把它写死
-             在这儿。行为一点没变——递进来的那件照样收到同一串 props，标记已读和删除
-             这两只动作由下面那两只只发事件的适配器接。 -->
-        <component
-          :is="itemComponent"
+        <!-- 行本身还是 `NotificationItem`：它自己会问到后端的那几类邀请（接受 / 拒绝在
+             行里办），但那条路不是它自己的 —— 答邀请的请求、话术和跨行记着的状态都在
+             宿主那份桥（`answering`）上，由外面一路递进来。这一块于是仍旧只吃 props：
+             清单、哪一档、答邀请那串动作，全从外面进；标记已读和删除这两只动作由下面
+             那两只只发事件的适配器接。 -->
+        <NotificationItem
           v-for="notification in notifications"
           :key="notification.id"
           :notification="notification"
           :category-label="t(CATEGORY_LABEL[notificationCategoryOf(notification.type)])"
+          :answering="answering"
           :on-mark-as-read="onMarkAsRead"
           :on-delete="onDelete"
         />
@@ -80,8 +82,8 @@
 </template>
 
 <script setup lang="ts">
-import type { Component } from 'vue'
 import type { NotificationCategory } from '@/components/common/Notification/categories'
+import type { NotificationAnswerBridge } from '@/components/common/Notification/renders/NotificationRenderUtils'
 import type { Notification } from '@/types/apiNotifications'
 
 import { computed } from 'vue'
@@ -91,6 +93,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import { NOTIFICATION_CATEGORIES, notificationCategoryOf } from '@/components/common/Notification/categories'
+import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 
 defineOptions({ name: 'NotificationFeed' })
@@ -112,8 +115,8 @@ const props = defineProps<{
   hasMore: boolean
   /** 列表上面那几行之后又来了几条。 */
   fresh: number
-  /** 一行长什么样。见模板里那段：行自己会问到后端，所以由外面递进来。 */
-  itemComponent: Component
+  /** 行里那三类邀请 / 申请要答时的动作与状态；宿主没接就没有那几颗按钮。 */
+  answering?: NotificationAnswerBridge
 }>()
 
 const emit = defineEmits<{

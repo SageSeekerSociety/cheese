@@ -144,15 +144,44 @@
       </section>
     </template>
 
-    <!-- 「动态」那块和它那些对话框由这一页的容器递进来：这一件只负责「等你处理」的
-         画面，动态自己的取数在别处。 -->
-    <slot name="feed" />
-    <slot name="dialogs" />
+    <!-- The activity feed and its dialog are drawn right here: both take props only. The
+         requests behind the feed and behind answering an invitation, which bucket is
+         remembered, and the join dialog's state all live in the container. -->
+    <NotificationFeed
+      :filter="feedFilter"
+      :counts="feedCounts"
+      :notifications="feedNotifications"
+      :loading="feedLoading"
+      :failed="feedFailed"
+      :more-failed="feedMoreFailed"
+      :error-reason="feedErrorReason"
+      :has-more="feedHasMore"
+      :fresh="feedFresh"
+      :answering="answering"
+      @update:filter="emit('update:feed-filter', $event)"
+      @mark-all-read="emit('feed-mark-all-read')"
+      @mark-as-read="emit('feed-mark-read', $event)"
+      @delete="emit('feed-delete', $event)"
+      @more="emit('feed-more')"
+      @retry="emit('feed-retry')"
+      @show-fresh="emit('feed-show-fresh')"
+    />
+
+    <JoinSpaceDialog
+      :model-value="joinOpen"
+      :busy="joinBusy"
+      :error="joinError"
+      @update:model-value="emit('update:join-open', $event)"
+      @submit="emit('join-submit', $event)"
+    />
   </AppPage>
 </template>
 
 <script setup lang="ts">
+import type { NotificationCategory } from '@/components/common/Notification/categories'
+import type { NotificationAnswerBridge } from '@/components/common/Notification/renders/NotificationRenderUtils'
 import type { WaitingItem } from '@/cx_types'
+import type { Notification } from '@/types/apiNotifications'
 
 import { computed, ref } from 'vue'
 
@@ -164,6 +193,8 @@ import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 import { DEFAULT_SHELL, termParams } from '@/lib/shell'
 import { taskTitle, topicTitle } from '@/lib/topicState'
+import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
+import NotificationFeed from '@/views/home/NotificationFeed.vue'
 
 // 「待办」的画面：上面是**等你处理**，下面是**动态**。
 //
@@ -174,10 +205,11 @@ import { taskTitle, topicTitle } from '@/lib/topicState'
 // 选项就摆在这一行上；芝士写给你的变更提醒读过就点「标为已读」。
 //
 // **只认 props**：清单、有没有项目、加载到哪一步、哪一件正在提交、哪个项目在清，
-// 全是从外面递进来的；重来一次、拍板、答复、标已读、整项目清掉、新建项目、用邀请码
-// 加入，都往上发事件。取数、读 store 和那些动作在 `views/InboxView.vue` 那只容器里，
-// 动态在 `views/home/NotificationFeed.vue`（它那一段取数在
-// `views/home/useNotificationFeed.ts`）——于是这一件在测试和 /demo 里都只要一串 props。
+// 动态那一档有哪些条、答邀请那串动作，全是从外面递进来的；重来一次、拍板、答复、标已读、
+// 整项目清掉、新建项目、用邀请码加入、换档、翻页、答邀请，都往上发事件。取数、读 store
+// 和那些动作在 `views/InboxView.vue` 那只容器里（动态的取数在
+// `views/home/useNotificationFeed.ts`，答邀请在 `views/home/useNotificationAnswers.ts`）
+// ——于是这一件在测试和 /demo 里都只要一串 props，动态和它的行也只是收 props 的子件。
 defineOptions({ name: 'InboxViewView' })
 
 const props = defineProps<{
@@ -195,6 +227,32 @@ const props = defineProps<{
   acting: number | null
   /** 正在整项目清已读的那个项目。 */
   clearing: string | null
+  /** 「动态」现在看的是哪一档。 */
+  feedFilter: NotificationCategory
+  /** 三档各有多少条；还没问到就是 null。 */
+  feedCounts: Record<NotificationCategory, number> | null
+  /** 这一档当前这一页。 */
+  feedNotifications: Notification[]
+  /** 动态正在读这一档。 */
+  feedLoading: boolean
+  /** 动态整块读失败。 */
+  feedFailed: boolean
+  /** 只往下翻那一页失败。 */
+  feedMoreFailed: boolean
+  /** 动态上一次失败的那句话。 */
+  feedErrorReason: string
+  /** 动态还能往下翻。 */
+  feedHasMore: boolean
+  /** 动态列表上面那几行之后又来了几条。 */
+  feedFresh: number
+  /** 问答邀请 / 申请的那串动作与状态；宿主没接就没有那几颗按钮。 */
+  answering?: NotificationAnswerBridge
+  /** 用邀请码加入空间那个对话框开着没有。 */
+  joinOpen: boolean
+  /** 正在加入。 */
+  joinBusy: boolean
+  /** 上一次没加进去的理由。 */
+  joinError: string
 }>()
 
 const emit = defineEmits<{
@@ -205,6 +263,15 @@ const emit = defineEmits<{
   'dismiss-all': [projectId: string]
   'new-project': []
   join: []
+  'update:feed-filter': [value: NotificationCategory]
+  'feed-mark-all-read': []
+  'feed-mark-read': [notificationId: number]
+  'feed-delete': [notificationId: number]
+  'feed-more': []
+  'feed-retry': []
+  'feed-show-fresh': []
+  'update:join-open': [value: boolean]
+  'join-submit': [code: string]
 }>()
 
 const projectTerm = termParams(DEFAULT_SHELL)

@@ -1,5 +1,6 @@
 // 团队邀请在「待办」的动态里就能接受或拒绝，不用再绕到 团队 →「待定」。
 // 通知的形状照后端 /notifications 真实返回的写：邀请是 entities.application，带它此刻的状态。
+// 行本身不取数：答那一下的请求在容器那份桥（`useNotificationAnswers`）上，宿主把它递给这一行。
 import type { Notification } from '@/types/apiNotifications'
 
 import { defineComponent, h } from 'vue'
@@ -12,12 +13,17 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import NotificationItem from '../NotificationItem.vue'
 
+import { useNotificationAnswers } from '@/views/home/useNotificationAnswers'
+
 import { TeamsApi } from '@/api/teams'
 import i18n, { setLocale } from '@/i18n'
 
 vi.mock('@/api/teams', () => ({
   TeamsApi: { acceptInvitation: vi.fn(), declineInvitation: vi.fn() },
 }))
+
+// 宿主那份桥：答过的邀请记在它模块作用域里（跨行重挂还在），这里直接取一份接上。
+const { answering } = useNotificationAnswers()
 
 beforeEach(() => {
   setLocale('zh-CN')
@@ -51,23 +57,42 @@ function invitation(status: string, id: string, read = false): Notification {
   }
 }
 
-async function mount(notification: Notification) {
+function router() {
   const Blank = defineComponent({ render: () => h('div') })
-  const router = createRouter({
+  return createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/', component: Blank },
       { path: '/teams/:handle/members', name: 'TeamsDetailMembers', component: Blank },
     ],
   })
-  await router.push('/')
-  await router.isReady()
+}
+
+async function mount(notification: Notification) {
+  const r = router()
+  await r.push('/')
+  await r.isReady()
   const onMarkAsRead = vi.fn()
   const view = render(NotificationItem, {
-    props: { notification, onMarkAsRead, onDelete: vi.fn() },
-    global: { plugins: [createVuetify({ components, directives }), router, i18n] },
+    props: { notification, answering, onMarkAsRead, onDelete: vi.fn() },
+    global: { plugins: [createVuetify({ components, directives }), r, i18n] },
   })
   return { view, onMarkAsRead }
+}
+
+/** 两行一起挂：锁住「一行还在路上，另一行照样答得动」。 */
+async function mountTwo(first: Notification, second: Notification) {
+  const r = router()
+  await r.push('/')
+  await r.isReady()
+  const Host = defineComponent({
+    render: () =>
+      h('div', [
+        h(NotificationItem, { notification: first, answering, onMarkAsRead: vi.fn(), onDelete: vi.fn() }),
+        h(NotificationItem, { notification: second, answering, onMarkAsRead: vi.fn(), onDelete: vi.fn() }),
+      ]),
+  })
+  return render(Host, { global: { plugins: [createVuetify({ components, directives }), r, i18n] } })
 }
 
 it('accepts a waiting invitation right from the notification', async () => {
@@ -99,6 +124,46 @@ it('a second click while the answer is on its way sends nothing more', async () 
   await waitFor(() => expect(view.queryByRole('button', { name: '接受' })).toBeNull())
   expect(TeamsApi.acceptInvitation).toHaveBeenCalledTimes(1)
   expect(TeamsApi.declineInvitation).not.toHaveBeenCalled()
+})
+
+// 一行还在路上不该把另一行锁住：两行答的是两条邀请，各发各的。
+it('two rows answer in parallel, each with its own id', async () => {
+  vi.mocked(TeamsApi.acceptInvitation).mockImplementation(() => new Promise(() => {}))
+  const view = await mountTwo(invitation('PENDING', '71'), invitation('PENDING', '72'))
+
+  const accepts = await view.findAllByRole('button', { name: '接受' })
+  await fireEvent.click(accepts[0])
+  await fireEvent.click(accepts[1])
+
+  await waitFor(() => expect(TeamsApi.acceptInvitation).toHaveBeenCalledTimes(2))
+  expect(TeamsApi.acceptInvitation).toHaveBeenNthCalledWith(1, 71)
+  expect(TeamsApi.acceptInvitation).toHaveBeenNthCalledWith(2, 72)
+})
+
+// 答完这一行会跟着重画（换成带链接的那一种），渲染件跟着重建：答过的状态记在桥上，
+// 不记在实例里，所以重挂之后不会又冒出那两颗按钮。
+it('a remount after answering does not bring the buttons back', async () => {
+  const notification = invitation('PENDING', '73')
+  const first = await mount(notification)
+  await fireEvent.click(await first.view.findByRole('button', { name: '接受' }))
+  await waitFor(() => expect(first.view.queryByRole('button', { name: '接受' })).toBeNull())
+  cleanup()
+
+  const again = await mount(notification)
+  await again.view.findByRole('button', { name: '删除' })
+  expect(again.view.queryByRole('button', { name: '接受' })).toBeNull()
+  expect(again.view.queryByRole('button', { name: '拒绝' })).toBeNull()
+})
+
+it('a failed answer leaves the invitation open to try again', async () => {
+  vi.mocked(TeamsApi.acceptInvitation).mockRejectedValueOnce(new Error('network'))
+  const { view, onMarkAsRead } = await mount(invitation('PENDING', '74'))
+
+  await fireEvent.click(await view.findByRole('button', { name: '接受' }))
+
+  await waitFor(() => expect(TeamsApi.acceptInvitation).toHaveBeenCalled())
+  expect(onMarkAsRead).not.toHaveBeenCalled()
+  expect(view.getByRole('button', { name: '接受' })).toBeTruthy()
 })
 
 it('declines a waiting invitation right from the notification', async () => {

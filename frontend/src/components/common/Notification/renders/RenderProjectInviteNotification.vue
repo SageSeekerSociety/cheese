@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="inviter" keypath="notifications.PROJECT_INVITE.title" tag="span">
+      <i18n-t v-if="inviter" scope="global" keypath="notifications.PROJECT_INVITE.title" tag="span">
         <template #inviter><UserRef :handle="inviter.handle" :name="inviter.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>
@@ -15,8 +15,6 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-
-import { useProjectInvitationAnswer } from '@/composables/useProjectInvitationAnswer'
 
 import { getEntity, getStringMetadata } from './NotificationRenderUtils'
 
@@ -34,8 +32,9 @@ const projectName = computed(() => getStringMetadata(props.notification, 'projec
 const invitationId = computed(() => getStringMetadata(props.notification, 'invitationId', ''))
 
 // How the invitation ended. The server writes it once the invitation is answered or
-// withdrawn; an answer given from this row is known here before the list reloads.
-const { answered: answeredHere, answer: answerInvitation } = useProjectInvitationAnswer()
+// withdrawn; an answer given from this row is known here before the list reloads —— it
+// lives on the host's answer bridge (`props.answering`), the same place the request does.
+const answeredHere = computed(() => props.answering?.projectInvitationAnswer(invitationId.value) ?? null)
 const settled = computed(() => getStringMetadata(props.notification, 'status', ''))
 const status = computed(() => answeredHere.value ?? settled.value)
 const isOpen = computed(() => !status.value)
@@ -66,11 +65,14 @@ const routerLink = computed(() => {
 })
 
 async function answer(accept: boolean) {
-  if (await answerInvitation(invitationId.value, accept)) emit('update-notification', props.notification.id)
+  if (await props.answering?.answerProjectInvitation(invitationId.value, accept)) {
+    emit('update-notification', props.notification.id)
+  }
 }
 
+// 宿主没接上答邀请那份桥（`props.answering` 不在）就没有这条路：这一行只画它收到的状态。
 const actions = computed(() => {
-  if (!invitationId.value || !isOpen.value) return []
+  if (!props.answering || !invitationId.value || !isOpen.value) return []
   return [
     { text: t('notifications.PROJECT_INVITE.action.accept'), color: 'success', handler: () => answer(true) },
     { text: t('notifications.PROJECT_INVITE.action.decline'), color: 'error', handler: () => answer(false) },

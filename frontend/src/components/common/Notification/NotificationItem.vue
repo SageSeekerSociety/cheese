@@ -22,6 +22,7 @@
             :is="contentComponent"
             ref="contentRef"
             :notification="notification"
+            :answering="answering"
             class="flex-grow-1"
             @update-notification="onUpdateNotification"
           />
@@ -91,6 +92,7 @@
             :is="contentComponent"
             ref="contentRef"
             :notification="notification"
+            :answering="answering"
             class="flex-grow-1"
             @update-notification="onUpdateNotification"
           />
@@ -155,7 +157,7 @@
 import type { Component } from 'vue'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Notification } from '@/types/apiNotifications'
-import type { RenderedNotificationContent } from './renders/NotificationRenderUtils'
+import type { NotificationAnswerBridge, RenderedNotificationContent } from './renders/NotificationRenderUtils'
 
 import { computed, markRaw, onMounted, onUpdated, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -177,6 +179,9 @@ const props = defineProps<{
   notification: Notification
   // 这一条属于哪一档，已经译好；列表按事由算好递进来，行自己不做这个判断。
   categoryLabel?: string
+  // 答邀请 / 申请的那串动作与状态（正文那几件自己会问到后端的三类要它）；宿主没接就没有
+  // 那几颗按钮。见 `renders/NotificationRenderUtils.ts` 的 `NotificationAnswerBridge`。
+  answering?: NotificationAnswerBridge
   onMarkAsRead: (notificationId: number) => void
   onDelete: (notificationId: number) => void
 }>()

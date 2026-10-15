@@ -1,4 +1,4 @@
-/* eslint-disable vue/one-component-per-file -- 测试里要同时摆下宿主与那一行的替身 */
+/* eslint-disable vue/one-component-per-file -- 测试里要同时摆下宿主与那一页 */
 /** 待办页的「动态」那一块：以前是一整件自己取数、自己记偏好的 C 级组件，读失败只
  *  console.error，页面上留一片空白，和「暂无通知」分不出来。现在判断在
  *  `useNotificationFeed.ts` 里、画面只吃 props —— 这一份用一个宿主把两半接起来，锁住
@@ -6,18 +6,17 @@
  *  本来就没有时说「暂无通知」、重试真的再问一遍），以及换档、翻页、来了新的这几条。
  *
  *  宿主就是 `views/InboxView.vue` 里那几行连线的写照：判断那一半（`useNotificationFeed`）
- *  在宿主里跑，画面只收结果、只往上发事件。行本身由外面递（`itemComponent`），这一份
- *  递一个认得出 id 的替身。
+ *  在宿主里跑，画面只收结果、只往上发事件。行是 `NotificationItem` 本身，它画的是一颗
+ *  真行（自带头像、时间、通用动作），所以这里按它真会画出来的东西认。
  */
-import type { Component } from 'vue'
 import type { NotificationCategory } from '@/components/common/Notification/categories'
-import type { NotificationType } from '@/types/apiNotifications'
+import type { Notification, NotificationType } from '@/types/apiNotifications'
 
-import { defineComponent, h, markRaw } from 'vue'
+import { defineComponent, h } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const list = vi.fn()
@@ -57,28 +56,8 @@ import { useNotificationFeed } from './useNotificationFeed'
 
 import i18n, { setLocale, t } from '@/i18n'
 
-/** 列表里那一行的替身：认得出是哪一条就够，标为已读 / 删除那两只动作照真行的办法收
- *  （`NotificationItem` 收的是函数 props，不是事件）。 */
-const FeedRow: Component = markRaw(
-  defineComponent({
-    name: 'FeedRow',
-    props: {
-      notification: { type: Object, required: true },
-      onMarkAsRead: { type: Function, default: undefined },
-      onDelete: { type: Function, default: undefined },
-    },
-    setup: (props) => () => {
-      const id = (props.notification as { id: number }).id
-      return h('div', { class: 'feed-row' }, [
-        h('span', String(id)),
-        h('button', { class: 'row-read', onClick: () => (props.onMarkAsRead as (n: number) => void)?.(id) }, 'read'),
-        h('button', { class: 'row-del', onClick: () => (props.onDelete as (n: number) => void)?.(id) }, 'del'),
-      ])
-    },
-  })
-)
-
-/** 宿主：判断那一半在这里跑，画面只收结果。连线就是 `views/InboxView.vue` 里那一段。 */
+/** 宿主：判断那一半在这里跑，画面只收结果。连线就是 `views/InboxView.vue` 里那一段。
+ *  行是 `NotificationItem` 本身：它画的是一颗真行，标为已读 / 删除按它自己那两颗按钮认。 */
 const FeedHost = defineComponent({
   name: 'FeedHost',
   setup() {
@@ -94,7 +73,6 @@ const FeedHost = defineComponent({
         errorReason: feed.errorReason.value,
         hasMore: feed.hasMore.value,
         fresh: feed.fresh.value,
-        itemComponent: FeedRow,
         'onUpdate:filter': (value: NotificationCategory) => {
           feed.filter.value = value
         },
@@ -116,6 +94,9 @@ beforeAll(() => {
 
 beforeEach(() => {
   setLocale('zh-CN')
+  // 删除那颗按钮弹的确认框是 Vuetify 的浮层，量位置时会读 visualViewport：happy-dom 没
+  // 有这一个，补一个空的就够了（和 NotificationItem.spec 一样）。
+  vi.stubGlobal('visualViewport', new EventTarget())
   localStorage.clear()
   list.mockReset()
   countByTypes.mockReset()
@@ -130,6 +111,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 interface Deferred<T> {
@@ -151,12 +133,26 @@ function emptyPage() {
   return { notifications: [], page: { hasMore: false, nextStart: undefined } }
 }
 
+/** 一条通知：`types/apiNotifications.ts` 的 `Notification`。行是 `NotificationItem` 真画出来的，
+ *  它要读 `type` / `entities` / `createdAt`，所以不能只给 id 和 read。 */
+function notice(id: number, over: Partial<Notification> = {}): Notification {
+  return {
+    id,
+    type: 'MENTION',
+    read: false,
+    createdAt: Date.now(),
+    entities: {},
+    contextMetadata: {},
+    ...over,
+  }
+}
+
 async function mount() {
   return render(FeedHost, { global: { plugins: [vuetify, i18n] } })
 }
 
-/** 画出来的行数。 */
-const rows = (container: Element) => container.querySelectorAll('.feed-row').length
+/** 画出来的行数。行是 `NotificationItem` 自己（`.notification-item`），不是替身。 */
+const rows = (container: Element) => container.querySelectorAll('.notification-item').length
 
 describe('待办页「动态」这一块', () => {
   it('首次加载还在路上时先画行的骨架，不留一片空白', async () => {
@@ -209,8 +205,8 @@ describe('待办页「动态」这一块', () => {
   it('加载更多失败：到手的那几页留着，错误接在下面，重试接着翻', async () => {
     list.mockResolvedValueOnce({
       notifications: [
-        { id: 1, read: false },
-        { id: 2, read: false },
+        notice(1),
+        notice(2),
       ],
       page: { hasMore: true, nextStart: 'c1' },
     })
@@ -226,7 +222,7 @@ describe('待办页「动态」这一块', () => {
     expect(screen.getByRole('button', { name: t('global.loadError.retry') })).toBeTruthy()
 
     list.mockResolvedValueOnce({
-      notifications: [{ id: 3, read: false }],
+      notifications: [notice(3)],
       page: { hasMore: false, nextStart: undefined },
     })
     await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
@@ -275,12 +271,12 @@ describe('待办页「动态」这一块', () => {
 
     const { container } = await mount()
 
-    list.mockResolvedValueOnce({ notifications: [{ id: 2, read: false }], page: { hasMore: false } })
+    list.mockResolvedValueOnce({ notifications: [notice(2)], page: { hasMore: false } })
     await fireEvent.click(await screen.findByRole('radio', { name: t('notifications.category.notice') }))
     await waitFor(() => expect(rows(container)).toBe(1))
 
     // 上一档那一页现在才回来：id 更大也不进这一档，它的「还能往下翻」也不算数。
-    stale.resolve({ notifications: [{ id: 99, read: false }], page: { hasMore: true, nextStart: 'x' } })
+    stale.resolve({ notifications: [notice(99)], page: { hasMore: true, nextStart: 'x' } })
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
     await new Promise((resolve) => setTimeout(resolve))
     expect(rows(container)).toBe(1)
@@ -301,15 +297,15 @@ describe('待办页「动态」这一块', () => {
   // 看着列表时来了新的：不把正在读的那几行往下挤，顶上说一声「有 N 条新动态」，点了
   // 才换成最新的。
   it('来了新的先在顶上说一声，点了才换成最新的', async () => {
-    list.mockResolvedValueOnce({ notifications: [{ id: 5, read: true }], page: { hasMore: false } })
+    list.mockResolvedValueOnce({ notifications: [notice(5, { read: true })], page: { hasMore: false } })
     const { container } = await mount()
     await waitFor(() => expect(rows(container)).toBe(1))
 
     list.mockResolvedValue({
       notifications: [
-        { id: 7, read: false },
-        { id: 6, read: false },
-        { id: 5, read: true },
+        notice(7),
+        notice(6),
+        notice(5, { read: true }),
       ],
       page: { hasMore: false },
     })
@@ -326,7 +322,7 @@ describe('待办页「动态」这一块', () => {
   })
 
   it('说有变化、这一档里却没有新的时，什么也不提示', async () => {
-    list.mockResolvedValue({ notifications: [{ id: 5, read: true }], page: { hasMore: false } })
+    list.mockResolvedValue({ notifications: [notice(5, { read: true })], page: { hasMore: false } })
     const { container } = await mount()
     await waitFor(() => expect(rows(container)).toBe(1))
 
@@ -341,7 +337,7 @@ describe('待办页「动态」这一块', () => {
     const { container } = await mount()
     await screen.findByText(t('notifications.common.noNotifications'))
 
-    list.mockResolvedValue({ notifications: [{ id: 9, read: false }], page: { hasMore: false } })
+    list.mockResolvedValue({ notifications: [notice(9)], page: { hasMore: false } })
     somethingNewArrives()
 
     await waitFor(() => expect(rows(container)).toBe(1))
@@ -360,27 +356,32 @@ describe('待办页「动态」这一块', () => {
   })
 
   it('标为已读和删除带的是那一条自己的 id', async () => {
-    list.mockResolvedValueOnce({ notifications: [{ id: 7, read: false }], page: { hasMore: false } })
+    list.mockResolvedValueOnce({ notifications: [notice(7)], page: { hasMore: false } })
     const { container } = await mount()
     await waitFor(() => expect(rows(container)).toBe(1))
 
     updateStatus.mockResolvedValue({})
-    await fireEvent.click(container.querySelector('.feed-row .row-read')!)
+    // 行是 `NotificationItem` 自己：标已读那颗按钮在行里，按它的字认。
+    await fireEvent.click(await screen.findByRole('button', { name: t('notifications.common.markAsRead') }))
     await waitFor(() => expect(updateStatus).toHaveBeenCalledWith(7, true))
     // 读掉的那条还留在这一档里：它没换事由，只是不再是新的。
     expect(rows(container)).toBe(1)
     expect(refresh).toHaveBeenCalled()
 
+    // 删除是一条不可撤销的动，先弹确认框：确认之后才真的删，带的是这一条自己的 id。
     del.mockResolvedValue({})
-    await fireEvent.click(container.querySelector('.feed-row .row-del')!)
+    await fireEvent.click(screen.getByRole('button', { name: t('notifications.common.delete') }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(del).not.toHaveBeenCalled()
+    await fireEvent.click(within(dialog).getByRole('button', { name: t('notifications.common.delete') }))
     await waitFor(() => expect(del).toHaveBeenCalledWith(7))
     await waitFor(() => expect(rows(container)).toBe(0))
   })
 
   it('「全部标为已读」把这一档的动作交给服务端', async () => {
-    list.mockResolvedValueOnce({ notifications: [{ id: 7, read: false }], page: { hasMore: false } })
-    await mount()
-    await screen.findByText('7')
+    list.mockResolvedValueOnce({ notifications: [notice(7)], page: { hasMore: false } })
+    const { container } = await mount()
+    await waitFor(() => expect(rows(container)).toBe(1))
 
     markAllAsRead.mockResolvedValue({})
     await fireEvent.click(screen.getByRole('button', { name: t('notifications.common.markAllAsRead') }))

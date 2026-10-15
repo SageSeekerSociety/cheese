@@ -7,11 +7,9 @@ import { useJoinSpace } from '@/composables/useJoinSpace'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
-import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
-import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
-import NotificationFeed from '@/views/home/NotificationFeed.vue'
+import { useNotificationAnswers } from '@/views/home/useNotificationAnswers'
 import { useNotificationFeed } from '@/views/home/useNotificationFeed'
 import InboxViewView from '@/views/InboxViewView.vue'
 
@@ -26,12 +24,12 @@ import InboxViewView from '@/views/InboxViewView.vue'
 // 下面是**动态**：提到你、回复你、邀请你、截止提醒。它们是一条条事件，读过就算。以前
 // 它们在顶栏的铃铛里；铃铛拆了，两样东西放在同一页，人回来只看这一处。
 //
-// 这一件是**容器**：画面整个交给 `InboxViewView.vue`，动态交给
-// `views/home/NotificationFeed.vue`。这只保留要动后端和 store 的那部分——读「等你处理」
-// 的清单、拍板 / 标已读 / 整项目清、新建项目的对话框、用邀请码加入空间，以及动态那一块
-// 的取数与偏好（`views/home/useNotificationFeed.ts`）——再把两串状态递进去、把两边发上来
-// 的动作接住。行本身（`NotificationItem`）会自己问到后端，所以由这里递给动态，不由动态
-// 写死。
+// 这一件是**容器**：整个画面连同下面的动态和那个加入空间的小对话框都交给
+// `InboxViewView.vue` 就地画出来，这里只留要动后端和 store 的那部分——读「等你处理」
+// 的清单、拍板 / 标已读 / 整项目清、新建项目的对话框、用邀请码加入空间，动态那一块的
+// 取数与偏好（`views/home/useNotificationFeed.ts`），以及行里那三类邀请 / 申请答一下
+// 的请求与状态（`views/home/useNotificationAnswers.ts`）——再把这串状态递进去、把两边
+// 发上来的动作接住。行里答邀请的桥就由这里交给动态，往后一路传到那一行。
 defineOptions({ name: 'InboxView' })
 
 const items = ref<WaitingItem[]>([])
@@ -117,6 +115,10 @@ const {
   deleteNotification,
   showFresh,
 } = useNotificationFeed()
+
+// 行里那三类邀请 / 申请（项目邀请、团队邀请、加入申请）答一下的动作与状态：动态只收
+// 这一份桥，往后传给那一行，行自己不去取数。
+const { answering } = useNotificationAnswers()
 </script>
 
 <template>
@@ -129,6 +131,19 @@ const {
     :action-error="actionError"
     :acting="acting"
     :clearing="clearing"
+    :feed-filter="filter"
+    :feed-counts="counts"
+    :feed-notifications="notifications"
+    :feed-loading="feedLoading"
+    :feed-failed="feedFailed"
+    :feed-more-failed="feedMoreFailed"
+    :feed-error-reason="feedErrorReason"
+    :feed-has-more="feedHasMore"
+    :feed-fresh="feedFresh"
+    :answering="answering"
+    :join-open="joinOpen"
+    :join-busy="joinBusy"
+    :join-error="joinError"
     @reload="load"
     @decide="decide"
     @answer="decide"
@@ -136,30 +151,14 @@ const {
     @dismiss-all="dismissAll"
     @new-project="showNewProjectDialog"
     @join="joinOpen = true"
-  >
-    <template #feed>
-      <NotificationFeed
-        v-model:filter="filter"
-        :counts="counts"
-        :notifications="notifications"
-        :loading="feedLoading"
-        :failed="feedFailed"
-        :more-failed="feedMoreFailed"
-        :error-reason="feedErrorReason"
-        :has-more="feedHasMore"
-        :fresh="feedFresh"
-        :item-component="NotificationItem"
-        @mark-all-read="markAllFeedRead"
-        @mark-as-read="markFeedRead"
-        @delete="deleteNotification"
-        @more="loadMoreFeed"
-        @retry="reloadFeed"
-        @show-fresh="showFresh"
-      />
-    </template>
-
-    <template #dialogs>
-      <JoinSpaceDialog v-model="joinOpen" :busy="joinBusy" :error="joinError" @submit="joinSpace" />
-    </template>
-  </InboxViewView>
+    @update:feed-filter="filter = $event"
+    @feed-mark-all-read="markAllFeedRead"
+    @feed-mark-read="markFeedRead"
+    @feed-delete="deleteNotification"
+    @feed-more="loadMoreFeed"
+    @feed-retry="reloadFeed"
+    @feed-show-fresh="showFresh"
+    @update:join-open="joinOpen = $event"
+    @join-submit="joinSpace"
+  />
 </template>

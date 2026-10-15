@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="inviter" keypath="notifications.TEAM_INVITATION.title" tag="span">
+      <i18n-t v-if="inviter" scope="global" keypath="notifications.TEAM_INVITATION.title" tag="span">
         <template #inviter><UserRef :handle="inviter.handle" :name="inviter.name" :project-id="null" /></template
         ><template #team>{{ team?.name || '' }}</template>
       </i18n-t>
@@ -22,8 +22,6 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { useTeamInvitationAnswer } from '@/composables/useTeamInvitationAnswer'
-
 import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -34,8 +32,7 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 
-// 答过的邀请记在这份 composable 的模块作用域里，不记在这个实例里——见那里的注释。
-const { answeredHere, answer: answerInvitation } = useTeamInvitationAnswer()
+// 答过的邀请记在宿主那份桥的模块作用域里，不记在这个实例里——见 `useNotificationAnswers` 的注释。
 
 // 获取实体和元数据
 const inviter = computed(() => getEntity(props.notification, 'inviter'))
@@ -54,7 +51,13 @@ const role = computed(() => {
 const message = computed(() => getStringMetadata(props.notification, 'message', ''))
 // 这条邀请本身：后端把它解析成 entities.application，状态是此刻的，不是发通知那一刻的。
 const application = computed(() => getEntity(props.notification, 'application'))
-const waiting = computed(() => application.value?.status === 'PENDING' && !answeredHere.has(application.value.id))
+// 宿主没接上答邀请那份桥（`props.answering` 不在）就没有那几颗按钮，只剩一条去处的链接。
+const waiting = computed(
+  () =>
+    !!props.answering &&
+    application.value?.status === 'PENDING' &&
+    !props.answering.teamInvitationAnswered(application.value.id)
+)
 
 // 通知标题
 const title = computed(() => {
@@ -85,7 +88,9 @@ const routerLink = computed(() => {
 })
 
 async function answer(accept: boolean) {
-  const answered = await answerInvitation(application.value!.id, accept)
+  const applicationId = application.value?.id
+  if (!props.answering || !applicationId) return
+  const answered = await props.answering.answerTeamInvitation(applicationId, accept)
   // 答成了才告诉宿主：列表要重拉，这一行也该跟着换成答过的那一种。
   if (answered) emit('update-notification', props.notification.id)
 }

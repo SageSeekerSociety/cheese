@@ -6,6 +6,8 @@
  *  一条去处（任务 / 支线 / 频道 / 项目总览，带不带 `block`）也在这里锁住。
  */
 import type { Component } from 'vue'
+import type { NotificationCategory } from '@/components/common/Notification/categories'
+import type { Notification } from '@/types/apiNotifications'
 import type { WaitingItem } from '@/types/waiting'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -13,11 +15,11 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen } from '@testing-library/vue'
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import InboxViewView from './InboxViewView.vue'
 
-import { setLocale, t } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 const View = InboxViewView as unknown as Component
 
@@ -49,6 +51,18 @@ function props(over: Record<string, unknown> = {}) {
     actionError: '',
     acting: null as number | null,
     clearing: null as string | null,
+    feedFilter: 'mine' as NotificationCategory,
+    feedCounts: null,
+    feedNotifications: [] as Notification[],
+    feedLoading: false,
+    feedFailed: false,
+    feedMoreFailed: false,
+    feedErrorReason: '',
+    feedHasMore: false,
+    feedFresh: 0,
+    joinOpen: false,
+    joinBusy: false,
+    joinError: '',
     ...over,
   }
 }
@@ -62,6 +76,9 @@ beforeAll(() => {
 
 beforeEach(async () => {
   setLocale('zh-CN')
+  // 「用邀请码加入」那枚弹窗是 Vuetify 的浮层，量位置时会读 visualViewport：happy-dom
+  // 没有这一个，补一个空的就够了（和 NotificationItem.spec 一样）。
+  vi.stubGlobal('visualViewport', new EventTarget())
   router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -83,7 +100,7 @@ beforeEach(async () => {
 
 /** 只装画法、语言包和路由 —— 没有 pinia，也没有任何 store / 接口。 */
 function mount(over: Record<string, unknown> = {}) {
-  return render(View, { props: props(over), global: { plugins: [vuetify, router] } })
+  return render(View, { props: props(over), global: { plugins: [vuetify, router, i18n] } })
 }
 
 describe('待办页「等你处理」这半张画面', () => {
@@ -230,5 +247,43 @@ describe('待办页「等你处理」这半张画面', () => {
 
     expect(container.innerHTML.trim()).not.toBe('')
     expect(screen.getByText(t('home.inbox.waiting'))).toBeTruthy()
+  })
+
+  // 动态和加入空间那个弹窗现在就地画在这一页里（不再由容器用插槽塞进来）：两者都只吃
+  // props、只发事件，所以这一件不接任何 store / 接口也画得出、点得动。
+  it('动态那一块就画在这一页里，换档 / 翻页 / 标已读都往上发事件', async () => {
+    const feedNotification: Notification = {
+      id: 5,
+      type: 'MENTION',
+      read: false,
+      createdAt: 0,
+      entities: {},
+      contextMetadata: {},
+    }
+    const { emitted } = mount({
+      feedCounts: { mine: 3, notice: 7, system: 2 },
+      feedNotifications: [feedNotification],
+      feedHasMore: true,
+    })
+
+    // 三档的格子和条数由 props 进来。
+    expect(screen.getByRole('radio', { name: `${t('notifications.category.mine')} · 3` })).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('radio', { name: `${t('notifications.category.notice')} · 7` }))
+    expect(emitted()['update:feed-filter']).toEqual([['notice']])
+
+    await fireEvent.click(screen.getByRole('button', { name: t('notifications.common.loadMore') }))
+    expect(emitted()['feed-more']).toHaveLength(1)
+
+    await fireEvent.click(screen.getByRole('button', { name: t('notifications.common.markAllAsRead') }))
+    expect(emitted()['feed-mark-all-read']).toHaveLength(1)
+  })
+
+  it('用邀请码加入那个弹窗就画在这一页里，开 / 关 / 提交都往上发事件', async () => {
+    const { emitted } = mount({ noProjects: true, joinOpen: true })
+
+    await fireEvent.update(screen.getByLabelText(t('work.joinLabel')), 'abc123')
+    await fireEvent.click(screen.getByRole('button', { name: t('work.joinSubmit') }))
+    expect(emitted()['join-submit']).toEqual([['abc123']])
   })
 })

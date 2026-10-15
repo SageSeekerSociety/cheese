@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
     <div class="text-subtitle-2 font-weight-medium">
-      <i18n-t v-if="requester" keypath="notifications.TEAM_JOIN_REQUEST.title" tag="span">
+      <i18n-t v-if="requester" scope="global" keypath="notifications.TEAM_JOIN_REQUEST.title" tag="span">
         <template #requester><UserRef :handle="requester.handle" :name="requester.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>
@@ -21,8 +21,6 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { useTeamJoinRequestAnswer } from '@/composables/useTeamJoinRequestAnswer'
-
 import { getEntity, getStringMetadata, teamHandle } from './NotificationRenderUtils'
 
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -33,16 +31,20 @@ const emit = defineEmits<{
 }>()
 const { t } = useI18n()
 
-// 答过的申请记在这份 composable 的模块作用域里，不记在这个实例里——见那里的注释。
-const { answeredHere, answer: answerJoinRequest } = useTeamJoinRequestAnswer()
+// 答过的申请记在宿主那份桥的模块作用域里，不记在这个实例里——见 `useNotificationAnswers` 的注释。
 
 const requester = computed(() => getEntity(props.notification, 'requester'))
 const team = computed(() => getEntity(props.notification, 'team'))
 const message = computed(() => getStringMetadata(props.notification, 'message', ''))
 // 这条申请本身：后端把它解析成 entities.application，状态是此刻的，不是发通知那一刻的。
 const application = computed(() => getEntity(props.notification, 'application'))
+// 宿主没接上答申请那份桥（`props.answering` 不在）就没有那几颗按钮，只剩一条去处的链接。
 const waiting = computed(
-  () => !!team.value && application.value?.status === 'PENDING' && !answeredHere.has(application.value.id)
+  () =>
+    !!props.answering &&
+    !!team.value &&
+    application.value?.status === 'PENDING' &&
+    !props.answering.joinRequestAnswered(application.value.id)
 )
 
 const title = computed(() => {
@@ -71,7 +73,10 @@ const routerLink = computed(() => {
 })
 
 async function answer(approve: boolean) {
-  const answered = await answerJoinRequest(application.value!.id, Number(team.value!.id), approve)
+  const applicationId = application.value?.id
+  const teamId = team.value?.id
+  if (!props.answering || !applicationId || teamId == null) return
+  const answered = await props.answering.answerJoinRequest(applicationId, Number(teamId), approve)
   // 答成了才告诉宿主：列表要重拉，这一行也该跟着换成答过的那一种。
   if (answered) emit('update-notification', props.notification.id)
 }

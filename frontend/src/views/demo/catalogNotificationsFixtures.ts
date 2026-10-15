@@ -1,18 +1,25 @@
 /**
- * 预览站喂给那 10 个「通知渲染」组件的数据（`catalogNotifications.ts` 的条目读它）。
+ * 预览站喂给「通知」那一组组件的数据（`catalogNotifications.ts` 的条目读它）：每一条动态
+ * 的脸（`Render*Notification.vue`）、那一行本身（`NotificationItem.vue`）和它画在左边的
+ * 头像（`NotificationAvatar.vue`）。
  *
  * 全部是 `/notifications` 真会返回的形状，照着各渲染组件自己的 `.spec.ts` 造：`entities`
- * 按角色给（`mentioner`、`reactor`、`replier`、`team`、`accepter`……），`contextMetadata`
- * 是那一句话的原料（`discussionTitle`、`reactionEmoji`、`reason`、`machineAccess`……）。
- * 渲染组件正文都靠 `getEntity` / `getStringMetadata` 从这两处取，所以这里给的就是它们
- * 真正会读到的那几个键。
+ * 按角色给（`mentioner`、`reactor`、`replier`、`team`、`accepter`、`inviter`、`requester`……），
+ * `contextMetadata` 是那一句话的原料（`discussionTitle`、`reactionEmoji`、`reason`、
+ * `machineAccess`、`invitationId`……）。渲染组件正文都靠 `getEntity` / `getStringMetadata`
+ * 从这两处取，所以这里给的就是它们真正会读到的那几个键。
  *
  * 每一件给两格：**有实体**（`entities` 里点了名的那一位在）和**没有实体**（后端没解析出
  * 那个人，渲染组件退回「有人……」的匿名标题）。走得是组件里 `computed` 真会有的岔路，
  * 不是编出来的。
  *
- * 这里只出通知对象，不引任何依赖：哪一份配哪个组件、每一格看什么，在 `catalogNotifications.ts`。
+ * 行里就能办的那三类还多一份 `answering` 桥（`answeringBridge`）：它不是取数，是宿主递给
+ * 渲染件的那一串显式 props，预览站按每一格给一份同样形状的桩。
+ *
+ * 这里只出通知对象和那份桥，不引任何组件或取数依赖：哪一份配哪个组件、每一格看什么，在
+ * `catalogNotifications.ts`。
  */
+import type { NotificationAnswerBridge } from '@/components/common/Notification/renders/NotificationRenderUtils'
 import type { EntityInfo, Notification, NotificationType } from '@/types/apiNotifications'
 
 /** 一条通知的外壳：`id` / `createdAt` 取固定值，测试和预览站都不看它们。 */
@@ -30,6 +37,9 @@ const BOBI: EntityInfo = { id: 'u-bobi', type: 'user', name: '波比', handle: '
 
 /** 一个团队实体：`url` 是后端解析好的 `/teams/<handle>`，`teamHandle` 从它上面读。 */
 const TEAM_DATA: EntityInfo = { id: 't-data', type: 'team', name: '数据组', url: '/teams/data' }
+
+/** 想加入数据组的那个人（团队加入申请里的 `requester`）。 */
+const ZHOUYUAN: EntityInfo = { id: 'u-zhouyuan', type: 'user', name: '周远', handle: 'zhouyuan' }
 
 // ---- 提醒 · 提及 / 回复 / 表情回应（MENTION / REPLY / REACTION）----------------
 
@@ -150,4 +160,74 @@ export function teamRequestCanceledNotification(withCanceler: boolean): Notifica
   return notif('TEAM_REQUEST_CANCELED', withCanceler ? { canceler: LINXIA, team: TEAM_DATA } : {}, {
     applicationId: 'app-1',
   })
+}
+
+// ---- 行里就能办的三类（PROJECT_INVITE / TEAM_INVITATION / TEAM_JOIN_REQUEST）----
+//
+// 这三类不只是「说一声」：还在等答复时整行摆着接受 / 拒绝那几颗，点一下就把这份邀请
+// 办了。请求住在容器那份桥上（`useNotificationAnswers`），宿主把它显式递给渲染件。
+
+/**
+ * 一份答法桥（`NotificationAnswerBridge`），按预览站每一格想讲的那一种给。
+ *
+ * 真实那份由容器侧 `useNotificationAnswers()` 提供：它问服务端、按 id 记着答过没有。
+ * 预览站要的是「这一格长什么样」，所以这里给的是一份同样形状的**桩**：默认谁都没答过
+ * （还在等答复的那几格于是画得出接受 / 拒绝），某一格要看「已经答过」就把它那一个读
+ * 状态的函数盖掉。它不是替身组件、也不全局注入 —— 就是渲染件本来就吃的那个显式 props。
+ */
+export function answeringBridge(over: Partial<NotificationAnswerBridge> = {}): NotificationAnswerBridge {
+  return {
+    projectInvitationAnswer: () => null,
+    answerProjectInvitation: async () => true,
+    teamInvitationAnswered: () => false,
+    answerTeamInvitation: async () => true,
+    joinRequestAnswered: () => false,
+    answerJoinRequest: async () => true,
+    ...over,
+  }
+}
+
+/** 「{inviter} 邀请你加入项目」。`withInviter` 关掉就是 `inviter` 没解析出来的那一格；
+ *  不写 `status` 就是还在等答复，写了（accepted / declined / revoked）就是后端记下的
+ *  那一种结局。 */
+export function projectInviteNotification(withInviter: boolean, status?: string): Notification {
+  return notif(
+    'PROJECT_INVITE',
+    {
+      ...(withInviter ? { inviter: LINXIA } : {}),
+      project: { id: 'p-1', type: 'project', name: '课件平台' },
+    },
+    { invitationId: 'inv-1', projectName: '课件平台', ...(status ? { status } : {}) }
+  )
+}
+
+/** 「{inviter} 邀请你加入团队」。邀请本身是 `entities.application`，`status` 是它此刻
+ *  的状态（PENDING / ACCEPTED / DECLINED……），渲染件照它判还在不在等人。`withInviter`
+ *  关掉就是 `inviter` 没解析出来的那一格；`message` 是邀请人附的那一句，给了就在正文
+ *  下面引出来。 */
+export function teamInvitationNotification(withInviter: boolean, status = 'PENDING', message = ''): Notification {
+  return notif(
+    'TEAM_INVITATION',
+    {
+      ...(withInviter ? { inviter: LINXIA } : {}),
+      team: TEAM_DATA,
+      application: { id: 'app-1', type: 'team_membership_application', name: '', status },
+    },
+    { role: 'MEMBER', message }
+  )
+}
+
+/** 「{requester} 请求加入团队」。申请本身是 `entities.application`，`status` 是它此刻
+ *  的状态；`withRequester` 关掉就是 `requester` 没解析出来的那一格，`message` 是申请人
+ *  写的那一句理由，给了就在正文下面引出来。 */
+export function teamJoinRequestNotification(withRequester: boolean, status = 'PENDING', message = ''): Notification {
+  return notif(
+    'TEAM_JOIN_REQUEST',
+    {
+      ...(withRequester ? { requester: ZHOUYUAN } : {}),
+      team: TEAM_DATA,
+      application: { id: 'app-1', type: 'team_membership_application', name: '', status },
+    },
+    { message }
+  )
 }

@@ -8,19 +8,20 @@
  * 取数、`listAwaitingMe` / `NotificationsApi` 和浏览器里那份偏好留在容器与
  * `views/home/useNotificationFeed.ts` 里，所以这里不用起假后端。
  *
- * 动态那一块的行由外面递（`itemComponent`）：行自己会问到后端，写死在动态里它就不是
- * 一件能只收 props 单独画的东西了。这里递一个认得出 id 的替身，够看清单长什么样。
+ * 动态那一块的行就是真的 `NotificationItem`（`views/home/NotificationFeed.vue` 直接画
+ * 它）：一条动态在列表里长什么样没有别处要换，收到 props 就画得出来（那一行自己的条目见
+ * `catalogNotifications.ts`）。行里那三类邀请 / 申请要办的事由宿主递下来的 `answering`
+ * 桥接上，这里给一份同样形状的桩。
  *
  * 条目和别的分册没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
  * `catalog.ts`），单放一份是因为 `catalog.ts` 已经顶到一千行的上限。这里的 `CatalogEntry`
  * 是 type-only 引用：`catalog.ts` 反过来要 `INBOX_ENTRIES` 这个值，运行时不构成循环。
  */
-import type { Component } from 'vue'
 import type { Notification } from '@/types/apiNotifications'
 import type { WaitingItem } from '@/types/waiting'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { defineComponent, h, markRaw } from 'vue'
+import { answeringBridge } from './catalogNotificationsFixtures'
 
 import NotificationFeed from '@/views/home/NotificationFeed.vue'
 import InboxViewView from '@/views/InboxViewView.vue'
@@ -94,15 +95,6 @@ const FREE_DECIDE = item({
   options: [],
 })
 
-/** 动态列表里那一行的替身：认得出是哪一条就够，真行（`NotificationItem`）自己会问到后端。 */
-const FeedRow: Component = markRaw(
-  defineComponent({
-    name: 'FeedRow',
-    props: { notification: { type: Object, required: true } },
-    setup: (props) => () => h('div', { class: 'feed-row' }, `#${(props.notification as Notification).id}`),
-  })
-)
-
 /** 一条动态：`types/apiNotifications.ts` 的 `Notification`。 */
 function notice(id: number, over: Partial<Notification> = {}): Notification {
   return { id, type: 'MENTION', read: false, createdAt: 0, entities: {}, contextMetadata: {}, ...over }
@@ -126,6 +118,19 @@ export const INBOX_ENTRIES: CatalogEntry[] = [
       actionError: '',
       acting: null,
       clearing: null,
+      feedFilter: 'mine',
+      feedCounts: null,
+      feedNotifications: [] as Notification[],
+      feedLoading: false,
+      feedFailed: false,
+      feedMoreFailed: false,
+      feedErrorReason: '',
+      feedHasMore: false,
+      feedFresh: 0,
+      answering: answeringBridge(),
+      joinOpen: false,
+      joinBusy: false,
+      joinError: '',
     },
     states: [
       {
@@ -188,7 +193,7 @@ export const INBOX_ENTRIES: CatalogEntry[] = [
     id: 'notification-feed',
     title: 'NotificationFeed',
     about:
-      '待办页下面的「动态」：提到你、回复你、邀请你、截止提醒，按事由分三档，读过就点一下。它只收 props、只发事件——问服务端、记着停在哪一档、翻页、有没有新的，全在 `useNotificationFeed.ts` 里，由容器接上。行本身由外面递进来（`itemComponent`）：行自己会问到后端。',
+      '待办页下面的「动态」：提到你、回复你、邀请你、截止提醒，按事由分三档，读过就点一下。它只收 props、只发事件——问服务端、记着停在哪一档、翻页、有没有新的，全在 `useNotificationFeed.ts` 里，由容器接上。每一行是那一件真实的 `NotificationItem`，行里那三类邀请 / 申请要办的事由宿主递下来的 `answering` 桥接上。',
     file: 'src/views/home/NotificationFeed.vue',
     component: NotificationFeed,
     needs: UI_T,
@@ -202,7 +207,7 @@ export const INBOX_ENTRIES: CatalogEntry[] = [
       errorReason: '',
       hasMore: false,
       fresh: 0,
-      itemComponent: FeedRow,
+      answering: answeringBridge(),
     },
     states: [
       {
