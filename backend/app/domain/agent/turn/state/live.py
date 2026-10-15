@@ -2,7 +2,9 @@
 keyed by room and by turn. Held and owned by ``ChatService`` (``ChatService.live``)
 and read by the handlers that decide, persist and broadcast. None of it is a
 source of truth: it lives and dies with the process, and the durable rows are
-written elsewhere.
+written elsewhere. The seat and room leases are the one thing here whose
+subject outlives the process — the cache of them dies with it, the seat they
+hand out is held in Valkey until the turn lets it go.
 """
 
 import asyncio
@@ -11,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from app.domain.agent.admission import Lease
 from app.domain.memory.scopes import MemoryScope
 
 #: 现场状态查表的键：一间房 + 这一轮。
@@ -90,14 +93,16 @@ class LiveWork:
 
     def __init__(self) -> None:
         # --- 房间 -----------------------------------------------------------
-        # Room-level locks for the few operations that are nobody's turn:
+        # Room-level leases for the few operations that are nobody's turn:
         # swapping the room's environment mid-turn and memory consolidation on
         # the root topic.
-        self.topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
+        self.topic_locks: dict[uuid.UUID, Lease] = {}
         # Prompt construction is serialized per (topic, agent) seat: two agents
         # addressed in one room run their turns in parallel, while one agent's
-        # turns still queue.
-        self.seat_locks: dict[tuple[uuid.UUID, str], asyncio.Lock] = {}
+        # turns still queue. The lease objects are this process's cache of them;
+        # the seat itself is held in Valkey, so the next backend process queues
+        # behind the same seat rather than starting a turn beside it.
+        self.seat_locks: dict[tuple[uuid.UUID, str], Lease] = {}
         # 房间里此刻那个会话是哪位队友的（最近一次 AgentSessionInfo 说的）。
         self.room_session_agents: dict[uuid.UUID, str] = {}
         # Where each live session's model traffic goes, remembered from the last
@@ -142,23 +147,23 @@ class LiveWork:
         # Settlement never depends on this process cache.
         self.unread_inputs: dict[uuid.UUID, dict[uuid.UUID, float]] = {}
 
-    def lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock:
-        """The room's lock for operations that are nobody's turn."""
-        lock = self.topic_locks.get(topic_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self.topic_locks[topic_id] = lock
-        return lock
+    def lock_for(self, topic_id: uuid.UUID) -> Lease:
+        """The room's lease for operations that are nobody's turn."""
+        lease = self.topic_locks.get(topic_id)
+        if lease is None:
+            lease = Lease(f"admission:room:{topic_id}")
+            self.topic_locks[topic_id] = lease
+        return lease
 
-    def seat_lock_for(self, topic_id: uuid.UUID, agent_handle: str) -> asyncio.Lock:
-        """The (topic, agent) seat's lock: one agent's turns queue, two seats
+    def seat_lock_for(self, topic_id: uuid.UUID, agent_handle: str) -> Lease:
+        """The (topic, agent) seat's lease: one agent's turns queue, two seats
         in one room run side by side."""
         key = (topic_id, agent_handle)
-        lock = self.seat_locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self.seat_locks[key] = lock
-        return lock
+        lease = self.seat_locks.get(key)
+        if lease is None:
+            lease = Lease(f"admission:seat:{topic_id}:{agent_handle}")
+            self.seat_locks[key] = lease
+        return lease
 
     def mark_turn_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
         self.active_turn_ids.setdefault(topic_id, set()).add(work_id)

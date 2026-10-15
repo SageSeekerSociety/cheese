@@ -10,12 +10,18 @@
   keeps the place it holds instead of taking a second one.
 - A conversation answers one question at a time: one that will not wait is
   refused while another is being answered.
+- A seat is one at a time across processes too: the second backend process
+  waits for the first, and a seat held by a process that died comes back only
+  once the lease runs out.
+- Without Valkey a seat is serialized inside the process instead, which is what
+  admission did before a seat was a lease.
 
 Against a real Redis, through two clients: the holds are what other backend
 processes see.
 """
 
 import asyncio
+import time
 import uuid
 
 import pytest
@@ -23,7 +29,7 @@ from redis.asyncio import Redis
 
 from app.core.config import settings
 from app.domain.agent import admission
-from app.domain.agent.admission import Hold, Pool, enter
+from app.domain.agent.admission import Hold, Lease, Pool, enter
 
 
 @pytest.fixture
@@ -152,3 +158,120 @@ async def test_a_conversation_answers_one_question_at_a_time(clients):
     again = await enter(two, str(uuid.uuid4()), hold=hold, wait_s=0)
     assert again is not None
     await again.release()
+
+
+@pytest.mark.anyio
+async def test_a_seat_is_one_at_a_time_across_processes(clients, monkeypatch):
+    one, two = clients
+    monkeypatch.setattr(admission, "POLL_S", 0.05)
+    lease = Lease(f"test-seat:{uuid.uuid4()}")
+    inside: list[str] = []
+
+    async def hold(redis: Redis, tag: str, seconds: float) -> None:
+        monkeypatch.setattr(admission, "get_redis_client", lambda: redis)
+        async with lease:
+            inside.append(f"{tag}-in")
+            await asyncio.sleep(seconds)
+            inside.append(f"{tag}-out")
+
+    first = asyncio.create_task(hold(one, "first", 0.5))
+    await asyncio.sleep(0.2)
+    second = asyncio.create_task(hold(two, "second", 0))
+
+    await asyncio.gather(first, second)
+
+    # The second process waited for the first: it entered after the first had
+    # left, not beside it. As an asyncio.Lock this passed for both processes at
+    # once, which is the bug this replaces.
+    assert inside == ["first-in", "first-out", "second-in", "second-out"]
+
+
+@pytest.mark.anyio
+async def test_a_seat_lapses_when_the_process_holding_it_dies(clients, monkeypatch):
+    one, two = clients
+    monkeypatch.setattr(admission, "POLL_S", 0.05)
+    monkeypatch.setattr(admission, "LEASE_S", 0.5)
+    monkeypatch.setattr(admission, "RENEW_S", 3600.0)  # the holder never renews
+    lease = Lease(f"test-seat:{uuid.uuid4()}")
+    # A process killed outright: its hold is left there and nothing renews it.
+    dead = await enter(one, str(uuid.uuid4()), hold=Hold(lease.key))
+
+    monkeypatch.setattr(admission, "get_redis_client", lambda: two)
+    started = time.monotonic()
+    async with lease:
+        pass
+    took = time.monotonic() - started
+
+    # It is waited out for the whole lease, not let go of: the one thing a
+    # lease does worse than an asyncio.Lock, and only on the crash path.
+    assert took >= 0.3
+    assert took < 3
+    assert dead is not None
+
+
+@pytest.mark.anyio
+async def test_a_seat_lets_go_at_once_when_the_turn_is_cancelled(clients, monkeypatch):
+    one, two = clients
+    monkeypatch.setattr(admission, "POLL_S", 0.05)
+    monkeypatch.setattr(admission, "LEASE_S", 30.0)
+    lease = Lease(f"test-seat:{uuid.uuid4()}")
+    inside = asyncio.Event()
+
+    async def hold() -> None:
+        monkeypatch.setattr(admission, "get_redis_client", lambda: one)
+        async with lease:
+            inside.set()
+            await asyncio.sleep(30)
+
+    running = asyncio.create_task(hold())
+    await inside.wait()
+    running.cancel()
+    await asyncio.gather(running, return_exceptions=True)
+
+    monkeypatch.setattr(admission, "get_redis_client", lambda: two)
+    started = time.monotonic()
+    async with lease:
+        pass
+
+    # A cancelled turn is not a dead process: it gives the seat up as it goes,
+    # rather than leaving the next turn to wait out the lease.
+    assert time.monotonic() - started < 1.0
+
+
+@pytest.mark.anyio
+async def test_without_valkey_a_seat_is_held_in_the_process(monkeypatch):
+    monkeypatch.setattr(admission, "get_redis_client", lambda: None)
+    lease = Lease(f"test-seat:{uuid.uuid4()}")
+    inside: list[str] = []
+
+    async def hold(tag: str, seconds: float) -> None:
+        async with lease:
+            inside.append(f"{tag}-in")
+            await asyncio.sleep(seconds)
+            inside.append(f"{tag}-out")
+
+    assert not lease.locked()
+    first = asyncio.create_task(hold("first", 0.3))
+    await asyncio.sleep(0.1)
+    assert lease.locked()
+    second = asyncio.create_task(hold("second", 0))
+
+    await asyncio.gather(first, second)
+
+    assert inside == ["first-in", "first-out", "second-in", "second-out"]
+    assert not lease.locked()
+
+
+@pytest.mark.anyio
+async def test_a_seat_falls_back_to_the_process_when_valkey_is_unreachable(monkeypatch):
+    class Unreachable(Redis):
+        async def set(self, *args, **kwargs):  # noqa: A003 — the client's own name
+            raise ConnectionError("valkey is down")
+
+    monkeypatch.setattr(admission, "get_redis_client", lambda: Unreachable())
+    lease = Lease(f"test-seat:{uuid.uuid4()}")
+
+    async with lease:
+        assert lease.locked()
+
+    assert not lease.locked()
