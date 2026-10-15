@@ -99,6 +99,7 @@ class ChannelIntentHandler:
                             # 它，不是回到频道（`push.push_link` 是同一条规则）。
                             "taskId": delivery.payload.get("taskId"),
                             "threadId": delivery.payload.get("threadId"),
+                            "blockId": delivery.payload.get("blockId"),
                         },
                     )
                 )

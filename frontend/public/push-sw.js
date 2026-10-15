@@ -30,6 +30,7 @@ function readPayload(event) {
     // 是同一条规则）。
     const taskId = data.taskId
     const threadId = data.threadId
+    const block = data.blockId ? `?block=${encodeURIComponent(data.blockId)}` : ''
     // 项目自己的一份文档（不在哪个频道里）：落到那份文档。
     return {
       title: data.title || fallback.title,
@@ -38,17 +39,26 @@ function readPayload(event) {
       // 这两个 id 缺一个就退回待办列表：那里一定列着这件事。
       url:
         projectId && topicId && taskId
-          ? `/projects/${projectId}/topics/${topicId}/tasks/${taskId}`
+          ? `/projects/${projectId}/topics/${topicId}/tasks/${taskId}${block}`
           : projectId && topicId && threadId
-            ? `/projects/${projectId}/topics/${topicId}/threads/${threadId}`
+            ? `/projects/${projectId}/topics/${topicId}/threads/${threadId}${block}`
             : projectId && topicId
-              ? `/projects/${projectId}/topics/${topicId}`
+              ? `/projects/${projectId}/topics/${topicId}${block}`
               : projectId && data.documentId
                 ? `/projects/${projectId}/docs/${data.documentId}`
                 : '/inbox',
     }
   } catch {
     return fallback
+  }
+}
+
+function safeTarget(value) {
+  try {
+    const url = new URL(value || '/inbox', self.location.origin)
+    return url.origin === self.location.origin ? `${url.pathname}${url.search}${url.hash}` : '/inbox'
+  } catch {
+    return '/inbox'
   }
 }
 
@@ -61,7 +71,7 @@ self.addEventListener('push', (event) => {
       badge: '/pwa-192x192.png',
       // 同一个房间的后一条盖掉前一条：平台在一个房间里连着说两句时，通知栏里该
       // 留最新那句，而不是攒成一列。
-      tag: payload.url,
+      tag: payload.url.split('?')[0],
       renotify: true,
       data: { url: payload.url },
     })
@@ -70,23 +80,26 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
-  const target = (event.notification.data && event.notification.data.url) || '/inbox'
+  const target = safeTarget(event.notification.data && event.notification.data.url)
   event.waitUntil(
     (async () => {
       const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true })
-      // 已经开着这个站就复用那个标签页：再开一个等于让人自己去关。能不能直接导航
-      // 取决于浏览器（focus 一定有，navigate 不一定），所以两步都试。
+      // 已经开着这个站就复用那个标签页：再开一个等于让人自己去关。导航失败时继续
+      // 尝试下一个窗口，所有窗口都不能接手才新开一个，避免点击通知后停在旧页面。
       for (const client of windows) {
-        if (new URL(client.url).origin !== self.location.origin) continue
-        await client.focus()
-        if (typeof client.navigate === 'function') {
-          try {
-            await client.navigate(target)
-          } catch {
-            // 跨源或已卸载的页面会拒绝导航；聚焦已经完成了，就到此为止。
-          }
+        try {
+          if (new URL(client.url).origin !== self.location.origin) continue
+        } catch {
+          continue
         }
-        return
+        if (typeof client.navigate !== 'function') continue
+        try {
+          await client.focus()
+          const navigated = await client.navigate(target)
+          if (navigated) return
+        } catch {
+          // 页面可能刚被关闭，继续尝试其他窗口或新开窗口。
+        }
       }
       await clients.openWindow(target)
     })()
