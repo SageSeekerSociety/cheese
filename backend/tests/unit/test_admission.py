@@ -18,6 +18,8 @@
 - A take that cannot reach Valkey waits for the turn inside all the same, and
   leaves no key behind when it breaks on the way; and the seat comes free when
   the task that closes a turn is not the one that took it.
+- A seat this process is only queued for reads as free here, not as taken: a
+  caller that refuses a held seat must not refuse it for one it is waiting on.
 
 Against a real Redis, through two clients: the holds are what other backend
 processes see.
@@ -386,3 +388,37 @@ async def test_a_seat_is_let_go_by_the_task_that_closes_the_turn(clients, monkey
 
     assert not lease.locked()
     assert await one.get(key) is None
+
+
+@pytest.mark.anyio
+async def test_a_seat_waited_for_here_does_not_read_as_taken_here(clients, monkeypatch):
+    """``locked()`` answers for this process holding the seat, not for it
+    queueing behind another process for one. Read from the process lock — which
+    a take holds from the moment it starts waiting for the key — a caller that
+    refuses a busy seat would refuse a second turn merely because the first was
+    queued, and tell it to wait for a turn of its own that is not running."""
+    one, two = clients
+    key = f"test-seat:{uuid.uuid4()}"
+    lease = Lease(key)
+    monkeypatch.setattr(admission, "get_redis_client", lambda: one)
+    inside: list[str] = []
+
+    # The other process's hold, written as `enter` writes it.
+    await two.set(key, "another-process", px=int(admission.LEASE_S * 1000))
+
+    async def take() -> None:
+        async with lease:
+            inside.append("in")
+            assert lease.locked()
+            inside.append("out")
+
+    waiting = asyncio.create_task(take())
+    await asyncio.sleep(0.3)
+    assert inside == [], "the take did not wait for the other process"
+    assert not lease.locked(), "a seat only waited for is not held here"
+
+    await two.delete(key)
+
+    await asyncio.wait_for(waiting, timeout=10)
+    assert inside == ["in", "out"]
+    assert not lease.locked()

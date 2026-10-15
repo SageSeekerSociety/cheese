@@ -588,8 +588,17 @@ class Lease:
         """Whether THIS process holds the seat now. Another process holding it
         is what ``async with`` waits for and is not what this answers: the
         question is the one an ``asyncio.Lock`` answered, and it still answers
-        it the same way."""
-        return self._lock.locked()
+        it the same way.
+
+        Read from what is held rather than from the lock, which is held from
+        the moment a take here starts waiting, key and all. A turn of this
+        process queued behind another process's turn does not hold the seat,
+        and a caller refused on this being true would be told to wait for a
+        turn of its own that is not running. ``_held`` is appended when the
+        take is inside and popped before the seat is let go, so it is the
+        seat, not the waiting for it.
+        """
+        return bool(self._held)
 
     async def __aenter__(self) -> "Lease":
         # Not `async with self._lock`: the lock has to outlive this call, and
