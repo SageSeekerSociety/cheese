@@ -1,5 +1,5 @@
 <template>
-  <!-- One row of the 待办 page, shared by 等你处理 and 动态 so the two read alike.
+  <!-- One row of the inbox page, shared by its waiting list and its activity feed so the two read alike.
        A face or a faint mark on the left, a title line and details in the middle, the
        time on the right. Unread is an amber dot and a bold title (design-system §1.6);
        a settled row's title drops to the secondary colour.

@@ -1,8 +1,8 @@
 <template>
-  <!-- 发来通知的那个人画成他自己的头像；他没有挑过头像就画彩色首字母 —— 一格空白
-       或一张所有人的共用脸，都不如「这个人的首字母和他的颜色」。没有可画的人时，
-       画一个这一类事的淡色小图标：它只是装饰，不垫色块，免得一列同样的色块成了这一行
-       最抢眼的东西。 -->
+  <!-- The sender is drawn as their own avatar, or their coloured initial when they
+       never picked one: a blank or a face everyone shares says less. With nobody to
+       draw, a faint mark for the kind of thing: decoration only, no tinted tile, so a
+       column of identical tiles is never the loudest thing on the row. -->
   <UserAvatar
     v-if="face"
     :size="size"

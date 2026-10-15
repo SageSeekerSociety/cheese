@@ -1,5 +1,5 @@
 <template>
-  <!-- 等你处理: what still waits on the person, gone once handled. The backend computes
+  <!-- The waiting list: what still waits on the person, gone once handled. The backend computes
        it from current state (`/awaiting-me`), so this lists what the badge counts. Work
        groups by project; invitations and join requests by the project or team to join,
        answered on the row. -->
