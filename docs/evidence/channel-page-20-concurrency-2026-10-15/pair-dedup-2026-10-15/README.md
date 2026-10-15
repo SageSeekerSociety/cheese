@@ -1,7 +1,10 @@
 # 第二轮改动（去掉重复取数）的原始输出
 
 这是 2026-10-15 第二轮那四处改动的前后配对测量。四份 `pair-*.json` 是原始样本，
-`run.log` 是四次运行的完整 stdout，其余是各装置的原始输出。
+`run.txt` 是四次运行的完整 stdout，其余是各装置的原始输出。
+
+跑出来的 `.log` 一律进不了仓库（根目录 `.gitignore` 第 14 行是 `*.log`），所以这里的
+stdout 存的是 `run.txt`。
 
 ## 被测的两棵树
 
@@ -22,7 +25,7 @@ export PERF_DB_URL=postgresql+asyncpg://…@127.0.0.1:5433/cheese_perf
 export PERF_REDIS_URL=redis://127.0.0.1:6379/0
 ```
 
-### 1. 20 并发配对（`pair-*.json`、`run.log`）
+### 1. 20 并发配对（`pair-*.json`、`run.txt`）
 
 ```bash
 export PERF_LEG=asgi PERF_CONCURRENCY=20 PERF_BATCHES=5
@@ -32,19 +35,21 @@ cd <树> && PERF_OUT=<输出>.json \
 ```
 
 四轮按 before / after / before / after 交替跑，同样的库、同样的房间。
-每轮开头的 `loadavg` 记在 `run.log` 里：96.2 / 92.0 / 73.6 / 67.1。
+每轮开头的 `loadavg` 记在 `run.txt` 里：96.2 / 92.0 / 73.6 / 67.1。
 `pair-b*` 是 before，`pair-a*` 是 after。
 
 ### 2. 每条请求发了哪些 SQL（`sql-census-{before,after}.txt`）
 
 ```bash
-export PERF_LEG=asgi PERF_CONCURRENCY=1 PERF_ROUNDS=5 PERF_BY_CALLER=1
+export PERF_LEG=asgi PERF_CONCURRENCY=1 PERF_ROUNDS=5
 export PERF_ONLY="channel detail,awaiting"
 cd <树> && uv run --project "$W/backend" python .claude/scripts/sql_census.py
 ```
 
-`PERF_BY_CALLER=1` 按发语句的那一行代码归组，所以同一个函数发两次只算一行，
-`statements/req` 与 `distinct` 的差就是重复取数。
+`sql_census.py` 按「动词 + 碰到的表」把语句归成形状：表头的 `statements/req` 是每请求
+**执行**了多少条，下面列的是耗时最高的八种形状，各自的 `calls/req` 加起来就是它。它不认
+`PERF_BY_CALLER`（那是 `sql_callers.py` 的开关），也不打印 distinct——「29 条不同」要看
+第 5 节那两份。
 
 ### 3. 每条语句读回多少行（`sql-rowcounts-{before,after}.txt`）
 
@@ -67,9 +72,11 @@ cd <树> && uv run --project "$W/backend" \
 ## 结论
 
 改动是实的（频道详情每请求 34 → 32 条语句；待我处理的房间行 144 → 87），
-但在这个负载下测不出 CPU 的差别：四轮的单请求循环 CPU 是 35.5/36.1（before）
-与 41.2/33.3（after）一组，噪声带 ±6 ms，大于这次该省下的约 1.4 ms。
-确定性证据是语句数和行数，不是 CPU 表。
+但在这个负载下测不出 CPU 的差别。四轮的单请求循环 CPU，取每轮的最小值是
+35.5/36.1（before）与 41.2/33.3（after），取每轮的中位数是 38.1/38.8 与 45.7/34.0
+（`pair-*.json` 里的 `asgi["channel detail"]["single"][*]["cpu"]`，探针自己的汇总用的是
+中位数）。两种取法下，同一棵树两轮之间的差（6 ms 和 12 ms）都大于这次该省下的约
+1.4 ms——结论一样，但报的是哪个统计量得说清楚。确定性证据是语句数和行数。
 
 ### 5. 每条语句由哪一行代码发出（`sql-callers-channel-detail-{before,after}.txt`）
 
@@ -84,9 +91,9 @@ cd <树> && uv run --project "$W/backend" python .claude/scripts/sql_callers.py
 
 表头那行就是结论：before 树「34 statements, 29 distinct」，after 树「32 statements,
 29 distinct」——两边不同的都是 29 个问题，去掉的那两条正是同一张表问三遍。
-`by-caller-before.txt` 是同一条命令在 before 树上的另一次运行（表头相同，语句排列
-次序不同），留着做交叉核对。加 `PERF_BY_CALLER=1` 时表头换成「by call site, N sites」，
-那是另一种口径，不是上面这张表。
+`…-before-2.txt` 是同一条命令在 before 树上的另一次运行（表头相同，语句次序不同），
+留着做交叉核对。加 `PERF_BY_CALLER=1` 时表头换成「by call site, N sites」，那是另一种
+口径；这批读数没有用到它。
 
 ### 6. 单请求循环 CPU 的分段去向（`burst-cpu-split-channel-detail.txt`）
 

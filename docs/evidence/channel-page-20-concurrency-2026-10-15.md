@@ -318,14 +318,18 @@ SQL，要接着挖得从 `sql-census-after.txt` 那张排行往下走；频道 b
 
 **行为没变是验过的**，不是推的：把九个端点的响应体规范化后落盘、两棵树逐字节比对，
 九份全部相同（`pair-dedup-2026-10-15/response-bodies.sha256.txt`，两列哈希一致）。
-覆盖这些路径的 283 个后端测试通过。
+这九份是频道详情那一族（`/topics/{id}` 和它的 tasks、blocks、environment、members、
+pins、threads）、`/projects/{id}/tasks` 和 `/awaiting-me`，**不含 `GET /topics`**——
+`list_topics` 服务的那条，同一个 `threads` 改动也落在它上面。那一半的保证来自既有行为
+测试（`test_topic_awaiting_reply.py` 里走 `GET /topics`、依赖支线被折进房间的那几条），
+不是这九份哈希。覆盖这些路径的 283 个后端测试通过。
 
 **这几处省下的 CPU 量不出来。** 四轮 before/after 交替配对（`pair-*.json`）里，频道详情
-的单请求循环 CPU 是 35.5 / 36.1（before）与 41.2 / 33.3（after）——同一棵树两轮之间
-就差 6 ms，而按语句数算这次该省下约 1.4 ms，落在噪声里。能拿的确定性证据是语句数和
-行数，不是 CPU 表。按去掉的这两条语句、每条 0.7–1.5 ms 的固定成本算（`burst-cpu-split
--channel-detail.txt`：28 次 `sql.execute` 合计 19.95 ms），20 并发下最多让最坏值少
-30–60 ms，**离 1 秒还差得远**。
+的单请求循环 CPU，取每轮最小值是 35.5 / 36.1（before）与 41.2 / 33.3（after），取每轮
+中位数是 38.1 / 38.8 与 45.7 / 34.0——同一棵树两轮之间相差 6–12 ms，而按语句数算这次
+该省下约 1.4 ms，落在噪声里。能拿的确定性证据是语句数和行数，不是 CPU 表。按去掉的
+这两条语句、每条 0.7–1.5 ms 的固定成本算（`burst-cpu-split-channel-detail.txt`：28 次
+`sql.execute` 合计 19.95 ms），20 并发下最多让最坏值少 30–60 ms，**离 1 秒还差得远**。
 
 ### 这条线真正卡在哪
 
