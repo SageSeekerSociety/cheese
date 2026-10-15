@@ -382,13 +382,18 @@ const runJoinLink = async (action: () => Promise<void>) => {
   }
 }
 
-// 换一个团队就是换一份链接：上一队的先放下，别让它在下一队闪一下。
+// 换一个团队就是换一份链接：上一队的先放下，别让它在下一队闪一下——上一次的报错也一样，
+// 409 之后换到另一队那条「已被占用」不该还挂在卡上。取数还看权限：普通成员读这条链接后端
+// 只回 403，卡在画面上是 v-if 挡的，请求也得一并挡住，不然一打开页面就发一个注定失败的那一下；
+// 权限被给到（升管理员）或被收回（降回成员）时，同一条跟着走：给到才读，收回就把链接放下。
 watch(
-  () => teamData.value?.id,
-  (teamId) => {
+  [() => teamData.value?.id, canBringPeopleIn],
+  ([teamId, allowed]) => {
     joinLink.value = null
     joinCopied.value = false
-    if (teamId === undefined) {
+    joinError.value = ''
+    joinHandleError.value = ''
+    if (teamId === undefined || !allowed) {
       return
     }
     void runJoinLink(async () => {

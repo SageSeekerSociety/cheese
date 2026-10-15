@@ -41,7 +41,6 @@ function mount(
   const team = overrides.team ?? makeTeam()
   return render(TeamJoinLinkCard as unknown as Component, {
     props: {
-      team,
       link: { token: 'first', approval: true },
       busy: false,
       error: '',

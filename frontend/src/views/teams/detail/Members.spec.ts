@@ -111,6 +111,39 @@ describe('who manages the team link', () => {
   })
 })
 
+// 加入链接是「能把人带进来」的人的东西：读它对普通成员只回 403。取数在这层，所以
+// 「谁去读」也断在这层——卡片由 v-if 挡住，取数要一并挡住，权限变动时也一样。
+describe('who the join link is read for', () => {
+  it('an ordinary member never asks for it', async () => {
+    mount({ role: 'MEMBER' })
+
+    await screen.findByText('成员列表')
+    expect(TeamsApi.getJoinLink).not.toHaveBeenCalled()
+  })
+
+  it('reads it once the reader is given the right to bring people in', async () => {
+    const { team } = mount({ role: 'MEMBER' })
+    await screen.findByText('成员列表')
+    expect(TeamsApi.getJoinLink).not.toHaveBeenCalled()
+
+    team.value.role = 'ADMIN'
+
+    await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledWith(7))
+    await screen.findByText('团队地址与加入')
+  })
+
+  it('drops the link and stops asking for it when the right is taken away', async () => {
+    const { team } = mount({ role: 'OWNER' })
+    await screen.findByText('团队地址与加入')
+    await waitFor(() => expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1))
+
+    team.value.role = 'MEMBER'
+
+    await waitFor(() => expect(screen.queryByText('团队地址与加入')).toBeNull())
+    expect(TeamsApi.getJoinLink).toHaveBeenCalledTimes(1)
+  })
+})
+
 // 加入链接那张卡的取数在这层：卡片自己一件都不做，所以行为要在这里断。
 describe('running the team link', () => {
   const linkField = () => (screen.getByLabelText('团队链接') as HTMLInputElement).value
@@ -197,6 +230,22 @@ describe('the team address', () => {
 
     await screen.findByText('这个地址已被占用')
     expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('does not carry a rejected address over to the next team', async () => {
+    vi.mocked(TeamsApi.update).mockRejectedValue(
+      new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'handle' })
+    )
+    const { team } = mount({ role: 'OWNER' })
+
+    await fireEvent.update(await screen.findByLabelText('团队地址'), 'taken-name')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await screen.findByText('这个地址已被占用')
+
+    // 换一个团队：上一队那条「被占用」不该在下一队还挂着。
+    team.value.id = 8
+
+    await waitFor(() => expect(screen.queryByText('这个地址已被占用')).toBeNull())
   })
 })
 
