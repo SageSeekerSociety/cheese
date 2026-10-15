@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import spawn
 from app.core.sentences import say
 from app.domain.addressing import Event
+from app.domain.deliverables import artifacts
 from app.domain.delivery_events import DeliveryEvent, SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_READY,
@@ -60,7 +61,6 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.notification.models import NotificationType
-from app.domain.project import artifacts
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
 from app.domain.review.ports import Announce, RecordInstruction

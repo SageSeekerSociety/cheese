@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.queries import awaiting_an_answer
-from app.domain.project import artifacts
+from app.domain.deliverables import artifacts
 from app.domain.review.queries import (
     accepted_by_task,
     latest_cards_by_task,

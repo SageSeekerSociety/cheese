@@ -16,10 +16,10 @@ from app.api.auth import ActorResolverDep
 from app.auth.project_access import may_read_project
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
+from app.domain.deliverables.export import create_archive
 from app.domain.identity.services import IdentityService
 from app.domain.library import records as library_records
 from app.domain.library import service as library
-from app.domain.project.export import create_archive
 
 
 class ProjectArchiveResponse(FileResponse):
