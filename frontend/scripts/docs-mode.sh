@@ -58,3 +58,8 @@ find "$HTML_ROOT/docs" -type f \( -name '*.html' -o -name '*.js' -o -name '*.jso
 find "$DOCS_HOST_ROOT" -type f \( -name '*.html' -o -name '*.js' -o -name '*.json' -o -name '*.md' -o -name '*.txt' -o -name '*.xml' \) |
   while read -r f; do fill "$f" "s|__DOCS_SITE__|$docs|g; s|__DOCS_PLATFORM__|$platform|g"; done
 find "$HTML_ROOT/assets" -name '*.js' | while read -r f; do fill "$f" "s|__VITE_DOCS_ORIGIN__|$docs|g"; done
+# The public pages prerendered at build time (scripts/prerender.mjs) carry the
+# app's docs links in their HTML.
+if [ -d "$HTML_ROOT/prerender" ]; then
+  find "$HTML_ROOT/prerender" -name '*.html' | while read -r f; do fill "$f" "s|__VITE_DOCS_ORIGIN__|$docs|g"; done
+fi
