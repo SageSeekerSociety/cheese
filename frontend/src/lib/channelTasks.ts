@@ -35,8 +35,6 @@ export interface TaskLine {
   at: string
   /** 这件任务里最后说的一句，折成一行：主线上那张卡的第二行，说它此刻在做什么。 */
   latest?: string | null
-  /** 支线原地转成的任务：点开时在频道页右半边打开，和支线一样。 */
-  fromThread?: boolean
 }
 
 const WAITING_ON: Record<string, string> = {
@@ -83,18 +81,18 @@ export function taskLine(task: ChannelTask, viewer: string, nameOf: (handle: str
     accepted: open && n > 0 ? t('work.room.taskCard.acceptedTimes', { n }) : null,
     at: task.last_message?.created_at ?? task.updated_at,
     latest: task.last_message ? replySnippet(task.last_message, NO_NAMES, 120) || null : null,
-    fromThread: !!task.from_thread,
   }
 }
 
 /** 卡上那一句里点到的人照 handle 写：卡只要一行能读，不为这一行再去读名册。 */
 const NO_NAMES = { mentionNames: {}, topicTitles: {} }
 
-/** 每条消息下面挂着的任务，按创建的先后。 */
-export function tasksByOrigin(tasks: readonly RoomTask[]): Map<string, RoomTask[]> {
+/** 每条消息下面挂着的任务，按创建的先后。主线上是它挂在哪条主线消息下面；`inside` 一段
+ *  支线（或支线转成的任务）里，是它出自哪句话，这段对话自己转成的那件不算。 */
+export function tasksByOrigin(tasks: readonly RoomTask[], inside?: string | null): Map<string, RoomTask[]> {
   const under = new Map<string, RoomTask[]>()
   for (const task of [...tasks].sort((a, b) => a.created_at.localeCompare(b.created_at))) {
-    const origin = task.upgraded_from_block_id
+    const origin = !inside ? task.upgraded_from_block_id : task.id === inside ? null : task.source_block_id
     if (!origin) continue
     const list = under.get(origin)
     if (list) list.push(task)

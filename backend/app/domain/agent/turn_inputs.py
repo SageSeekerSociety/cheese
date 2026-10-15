@@ -34,7 +34,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, String, column, or_, select, table, update
+from sqlalchemy import DateTime, String, column, exists, or_, select, table, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -550,7 +550,9 @@ async def stop_work_in_closed_tasks(session_factory, compute: "ComputePool") -> 
     session: a close that lands on the backend taking over in a deploy, or on
     the one leaving, finds nothing to stop. The session's holder is the one
     that can, and the task's closed state is what it goes by, whoever closed
-    it and whenever."""
+    it and whenever. A turn begun after the close is someone asking about the
+    finished task, which its teammate answers changing nothing: that task's
+    session is left to it."""
     working = compute.working_conversations()
     if not working:
         return 0
@@ -562,6 +564,11 @@ async def stop_work_in_closed_tasks(session_factory, compute: "ComputePool") -> 
                     _tasks.c.id.in_(working),
                     _tasks.c.status == "closed",
                     or_(_tasks.c.closed_at.is_(None), _tasks.c.closed_at <= before),
+                    ~exists().where(
+                        AgentTurn.conversation_id == _tasks.c.id,
+                        AgentTurn.stopped_at.is_(None),
+                        AgentTurn.started_at > _tasks.c.closed_at,
+                    ),
                 )
             )
         )
@@ -580,7 +587,8 @@ async def open_turns(session_factory) -> dict:
     (`ChatService.stop_work_in_closed_tasks`) leaves its row as it is. Such a
     turn kept its room reading as busy, and its inputs refused the seat, for
     good. They are ended here and never handed to the
-    sweep, which would otherwise offer the work again.
+    sweep, which would otherwise offer the work again. A turn begun after the
+    close is not that work: someone asked about the finished task.
 
     Whether reading this can fail is the sweep's business, not this function's:
     it raises, and the callers that must survive a database blip say so where
@@ -591,10 +599,14 @@ async def open_turns(session_factory) -> dict:
         turns = AgentTurnRepository(session)
         ended = list(
             await session.scalars(
-                select(AgentTurn.id).where(
+                select(AgentTurn.id)
+                .join(_tasks, _tasks.c.id == AgentTurn.conversation_id)
+                .where(
                     AgentTurn.stopped_at.is_(None),
-                    AgentTurn.conversation_id.in_(
-                        select(_tasks.c.id).where(_tasks.c.status == "closed")
+                    _tasks.c.status == "closed",
+                    or_(
+                        _tasks.c.closed_at.is_(None),
+                        AgentTurn.started_at <= _tasks.c.closed_at,
                     ),
                 )
             )

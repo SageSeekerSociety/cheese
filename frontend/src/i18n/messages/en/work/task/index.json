@@ -5,17 +5,17 @@
   "agentEdit": "Change",
   "agentHeading": "Which AI teammate does this",
   "agentHint": "Whoever you pick takes over from the next turn",
-  "backToRoom": "Back to # {room}",
   "checklist": "{name}'s checklist for this turn",
   "close": "Close task",
   "closeBody": "Write a conclusion if it is done; leave it empty if it is no longer needed.",
   "closeTitle": "Close this task?",
-  "closedNotice": "This task is closed",
+  "closedHint": "Task closed. You can keep discussing it here.",
   "collaborators": "Collaborators",
   "collaboratorsHint": "Can talk to the AI teammate in this task",
   "conclusion": "Conclusion",
   "details": "Task details",
   "followsRoom": "Follows the channel",
+  "fromRoom": "From #{room}",
   "handOver": "Hand over",
   "handOverTitle": "Hand over to whom?",
   "handOverTo": "Choose the new owner",
@@ -32,6 +32,5 @@
   "rename": "Rename",
   "renameLabel": "Task name",
   "renameTitle": "Rename task",
-  "reopen": "Reopen task",
-  "fromRoom": "From #{room}"
+  "reopen": "Reopen task"
 }

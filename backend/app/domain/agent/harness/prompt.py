@@ -452,12 +452,21 @@ TRACKED_SECTIONS = (
 )
 
 
-def task_section(*, owner: str | None, contributors: Sequence[str] = ()) -> str:
+def task_section(
+    *, owner: str | None, contributors: Sequence[str] = (), closed: bool = False
+) -> str:
     """任务会话那一段：谁的话是指令，在哪里改项目。
 
     它会变：支线转为任务时，会话接着原来的那段对话，开场不会再发一遍；负责人换人、
-    协作者进出时也一样。所以它是一段会再告诉一次的现状（``TRACKED_SECTIONS``），
-    不写死在开场里。"""
+    协作者进出、任务关闭和重新打开时也一样。所以它是一段会再告诉一次的现状
+    （``TRACKED_SECTIONS``），不写死在开场里。"""
+    if closed:
+        return (
+            "## 这个任务\n"
+            "这件任务已关闭。大家还可以在这里说话：回答关于这件任务的问题，"
+            "可以查看项目，但不改动项目，也不提交审阅。有人要接着做这件事，"
+            "告诉他重新打开任务；说的是另一件事，建议他回到频道主线说，或者另开任务。"
+        )
     people = [f"@{h}" for h in (owner, *contributors) if h]
     who = (
         f"负责人是 {people[0]}"
@@ -476,13 +485,15 @@ def task_section(*, owner: str | None, contributors: Sequence[str] = ()) -> str:
 
 
 def became_task_prompt(*, owner: str | None) -> str:
-    """支线转为任务以后，AI 队友下一轮读到的那一句。"""
+    """支线转为任务那一刻交给 AI 队友的话：人点「转为任务」时是一条指令，叫它马上
+    开工；它自己转的（`cheese_task` 的 ``here``）在工具的回复里读到同样的话。"""
     who = f"负责人是 @{owner}。" if owner else ""
     return (
         f"这条支线已经转为任务，{who}从现在起你可以改动项目：在任务自己的工作目录里"
         "做（`cheese worktree`），在支线里临时改过、要留下的内容带过去，做完提交审阅。"
-        "负责人已经说了要做什么就接着做，还没说就等他的话。实况文档边做边写，"
-        "不用先写完再动手。"
+        "先把这段讨论整理进任务文档：要做什么、已经定了什么、还有什么没定。"
+        "然后，负责人已经说了要做什么就接着做；还没说，回复一两句说明文档整理了什么，"
+        "停下来等他的话。之后文档边做边写，不用先写完再动手。"
     )
 
 

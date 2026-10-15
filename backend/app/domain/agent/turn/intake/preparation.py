@@ -407,8 +407,6 @@ class TurnPreparation:
             topic, task = place.room, place.task
             if topic.status == TopicStatus.archived:
                 raise self.refuse(say("roomArchivedUnarchiveFirst"))
-            if task is not None and task.status == TaskStatus.closed:
-                raise self.refuse(say("taskClosedNoTurn"))
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on
@@ -809,7 +807,9 @@ class TurnPreparation:
             task_rules=None
             if task is None
             else task_section(
-                owner=task.owner_handle, contributors=task.contributor_handles or ()
+                owner=task.owner_handle,
+                contributors=task.contributor_handles or (),
+                closed=task.status == TaskStatus.closed,
             ),
             acting_agent=acting_agent,
             agent=agent,

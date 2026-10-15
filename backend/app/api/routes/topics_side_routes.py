@@ -57,7 +57,7 @@ from app.api.topics_deps import BlockRepository
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.prompt import task_opening_prompt
+from app.domain.agent.harness.prompt import became_task_prompt, task_opening_prompt
 from app.domain.agent.project_feed import UNREAD, tell_project_once_committed
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team, seat_handles, seat_project
@@ -233,10 +233,15 @@ async def upgrade_block(
             **TaskOut.model_validate(task).model_dump(mode="json"),
             "from_thread": True,
         }
+        if made:
+            # Its AI teammate starts at once: the discussion into the task's
+            # document, then on with the work if its owner already said what.
+            await tell_task(db, task, became_task_prompt(owner=task.owner_handle))
         await db.commit()
         await announce_stale(parent.id, "topics", id=parent.id)
         if made:
             naming.nudge(task.id, "message")
+            await dispatch(chat)
         return ok(out)
     room, task = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,

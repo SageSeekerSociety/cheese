@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession
 from app.domain.living_doc.services import Documents
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic
 
@@ -63,8 +63,11 @@ class Place:
         支线: what changes the project is done in a task or in the room's own
         line. A 支线 that became a task resolves as the task
         (`PlaceResolver.conversation`), so its session keeps its work from then
-        on."""
-        return self.thread is None
+        on. A closed task is talked in as a 支线 is: about what was done, with
+        nothing more done; reopening it is how the work goes on."""
+        return self.thread is None and (
+            self.task is None or self.task.status == TaskStatus.open
+        )
 
 
 class PlaceResolver:

@@ -60,6 +60,8 @@ class TaskOut(BaseModel):
     accepted_at: datetime | None = None
     closed_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
+    # 它出自的那句话：主线消息本身，或支线里的一条回复。
+    source_block_id: uuid.UUID | None = None
     # 关闭时留下的一句话。
     conclusion: str | None = None
     created_at: datetime

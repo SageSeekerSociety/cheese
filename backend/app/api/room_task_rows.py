@@ -203,8 +203,10 @@ async def tasks_under_blocks(
     blocks: Sequence[Block],
 ) -> dict[uuid.UUID, list[dict]]:
     """The tasks each of ``blocks`` carries, as rows: the tasks made from a
-    message, under that message, and the task a room-line row says began, on
-    that row. Blocks that carry none are left out."""
+    message, under that message — in the main line the message a task hangs
+    under, in a 支线 the reply it was made from, except the task the 支线
+    itself became — and the task a room-line row says began, on that row.
+    Blocks that carry none are left out."""
     named = {block.id: task_id for block in blocks if (task_id := named_task(block))}
     if not blocks:
         return {}
@@ -221,10 +223,14 @@ async def tasks_under_blocks(
             strict=True,
         )
     )
+    said_in = {block.id: block.conversation_id for block in blocks}
     carried: dict[uuid.UUID, list[dict]] = {}
     for task, _ in threads:
-        if task.upgraded_from_block_id is not None:
-            carried.setdefault(task.upgraded_from_block_id, []).append(rows[task.id])
+        hung, said = task.upgraded_from_block_id, task.source_block_id
+        if hung is not None and hung in said_in:
+            carried.setdefault(hung, []).append(rows[task.id])
+        elif said is not None and said in said_in and said_in[said] != task.id:
+            carried.setdefault(said, []).append(rows[task.id])
     for block_id, task_id in named.items():
         if task_id in rows:
             carried.setdefault(block_id, []).append(rows[task_id])

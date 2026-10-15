@@ -52,7 +52,12 @@ export function useTimelineTasks(opts: {
   })
   function carriedBy(block: Block, rows: RoomTask[]): RoomTask[] {
     const named = namedTask(block)
-    return rows.filter((task) => task.upgraded_from_block_id === block.id || task.id === named)
+    return rows.filter(
+      (task) =>
+        task.upgraded_from_block_id === block.id ||
+        (task.source_block_id === block.id && task.id !== block.conversation_id) ||
+        task.id === named
+    )
   }
 
   async function readFor(blocks: Block[]) {

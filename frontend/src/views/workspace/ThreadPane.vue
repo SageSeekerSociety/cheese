@@ -3,8 +3,10 @@
 // 任务，还是这段对话、还是这位 AI 队友。转成以后页头写任务名、状态和负责人，多一颗
 // 「整页打开」。下面先是它挂着的那条消息和从这里另开的任务，再是支线自己的对话和输入框。
 //
-// 对话就是频道那一栏，换了一段对话来读（`conversationId` 是支线的 id）：消息、连接、
-// 已读都走支线，名册和附件还是频道的。桌面上它占频道页右边那一半，手机上是一整页。
+// 对话就是频道和任务页用的那一栏（TopicChatColumn 的 `beside`），换了一段对话来读：
+// 消息、连接、已读都走支线（或任务），名册和附件还是频道的。谁说话叫醒 AI 队友、输入
+// 框写什么、等审阅时那一条，都由那一栏定，这里只管页头。桌面上它占频道页右边那一半，
+// 手机上是一整页。
 //
 // AI 队友的一条回复上点「查看过程」，这一栏换成那一轮的现场，「返回支线」回来。支线的
 // 对话只是藏起来，连接和滚动位置都还在。
@@ -22,23 +24,19 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { ApiError } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
-import ChatPanel from '@/components/ChatPanel.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
-import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
-import TaskCard from '@/components/room/TaskCard.vue'
-import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { t } from '@/i18n'
 import { threadHeading } from '@/lib/blockDisplay'
 import { taskPhraseLabel } from '@/lib/board'
-import { taskLine } from '@/lib/channelTasks'
 import { openThreadDocument } from '@/lib/libraryDocumentNavigation'
 import { taskTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
+import { roomTaskQuery, threadQuery } from '@/query/room'
 import { currentUserName } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
+import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 
 defineOptions({ name: 'ThreadPane' })
 
@@ -74,10 +72,12 @@ const store = useWorkspaceStore()
 const viewer = computed(() => currentUserName.value ?? myHandle())
 
 // A thread occupies the room's panel, and on phones there is no WorkPanel.
-// Open its library-document cards on the document's own page instead.
+// Open its library-document cards on the document's own page instead, and a
+// task's own document (「编辑了文档」) on the task's page, where 概览 shows it.
 function openResource(resource: string, _turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
-  if (resource !== 'doc' || !document) return
-  void openThreadDocument(router, props.room.project_id, document, review)
+  if (resource !== 'doc') return
+  if (document) return void openThreadDocument(router, props.room.project_id, document, review)
+  if (task.value) emit('open-page', task.value.id)
 }
 // 正在看哪一轮的过程；null 是在看支线本身。
 const processTurn = ref<string | null>(null)
@@ -109,7 +109,7 @@ watch(
 )
 
 const root = computed<Block | null>(() => thread.value?.root ?? null)
-// 这条支线原地转成的任务：任务名、状态、负责人写在页头。它的 id 就是支线的 id。
+// 这是一件任务（支线原地转成的、另开的、新建的）时：任务名、状态、负责人写在页头。
 const taskRead = useQuery(
   computed(() => {
     const id = thread.value?.task ?? ''
@@ -118,24 +118,6 @@ const taskRead = useQuery(
   queryClient
 )
 const task = computed<RoomTask | null>(() => (thread.value?.task ? taskRead.data.value ?? null : null))
-// 负责人和协作者说的话就是说给 AI 队友的，不用 @；别人说的话它当参考，要它回答就 @ 它。
-const takesPart = computed(
-  () =>
-    !!task.value &&
-    (task.value.owner_handle === viewer.value || (task.value.contributor_handles ?? []).includes(viewer.value))
-)
-// 从这条支线挂着的那条消息拆出去的任务，和频道主线上那条消息下面的卡是同一份：只读
-// 这一条带着的（`blocks=`），不读整个频道的。
-// 卡片是装饰：读不到就照旧画上一份。任务变了（频道推来的帧）这一份跟着重读
-// （`query/changes`）。
-const madeRead = useQuery(
-  computed(() => {
-    const rootId = root.value?.id
-    return { ...roomTasksQuery(props.room.id, { limit: 0, blocks: rootId ? [rootId] : [] }), enabled: !!rootId }
-  }),
-  queryClient
-)
-const madeHere = computed<RoomTask[]>(() => madeRead.data.value?.data ?? [])
 // The 支线's messages: each `<@handle>` in them told its person, drawn as the @chip.
 const refs = computed(() => ({
   mentionNames: props.memberNames,
@@ -154,22 +136,12 @@ function avatarOf(handle: string): string {
 watch(task, (made) => {
   if (made) emit('title', taskTitle(made))
 })
-// 归档的频道只能看；转成的任务关了，这段对话也就不再说话。
-const composerClosed = computed(() => {
-  if (props.room.status === 'archived') return t('work.channel.archivedNotice')
-  return task.value?.status === 'closed' ? t('work.task.closedNotice') : null
-})
+// 归档的频道只能看。
+const composerClosed = computed(() => (props.room.status === 'archived' ? t('work.channel.archivedNotice') : null))
 // 页头那一行：转成任务后是任务名，之前是它挂着的那条消息说的事。
 const heading = computed(() => {
   if (task.value) return taskTitle(task.value)
   return root.value ? threadHeading(root.value, refs.value) : ''
-})
-// 从这里另开的任务，列在那条消息下面；这条支线自己转成的那件写在页头，不再列一遍。
-const tasks = computed(() => {
-  const id = root.value?.id
-  return madeHere.value
-    .filter((made) => made.upgraded_from_block_id === id && made.id !== props.threadId)
-    .map((made) => taskLine(made, viewer.value, nameOf))
 })
 
 function toTask() {
@@ -235,60 +207,29 @@ function toTask() {
 
     <p v-if="error" class="thread-pane__error t-meta" role="alert">{{ error }}</p>
     <template v-else>
-      <ChatPanel
+      <TopicChatColumn
         v-show="!processTurn"
         class="thread-pane__chat"
+        beside
         :topic="room"
-        :conversation-id="threadId"
+        :task-id="task ? task.id : null"
+        :thread-id="task ? null : threadId"
+        :task-agent-handle="task ? task.agent_handle ?? thread?.teammate ?? null : thread?.teammate ?? null"
         :focus-block="focusBlock ?? null"
-        hide-header
-        show-composer
         :composer-closed="composerClosed"
         :ask-closed="room.status === 'archived' || task?.status === 'closed'"
-        in-thread
-        :always-summon="takesPart"
-        :hint="task ? t('work.room.thread.taskPlaceholder') : null"
-        :agent-handle="task ? task.agent_handle ?? thread?.teammate ?? null : thread?.teammate ?? null"
         :members="members"
         :topic-list="topicList"
+        :member-names="memberNames"
         @open-file="emit('open-file', $event)"
         @open-resource="openResource"
         @open-topic="emit('open-topic', $event)"
         @open-card="emit('open-task', $event)"
         @mention-click="emit('mention-click', $event)"
-        @upgrade-message="emit('to-task', $event)"
+        @upgrade-message="emit('to-task', $event as string)"
         @open-process="processTurn = $event"
-      >
-        <!-- 这条支线挂着的那条消息（连同从这里转出的任务、回复条数）交给对话的滚动区：
-             它跟着回复一起滚，而不是钉在面板顶上。钉着的话，长消息一展开就把回复挤没、
-             把正文末尾那颗「收起」顶到看不见的地方——点开就再收不回来了。 -->
-        <template #timeline-start>
-          <ThreadRoot
-            v-if="root"
-            :root="root"
-            :name="nameOf(root.author)"
-            :avatar="avatarOf(root.author)"
-            :refs="refs"
-          />
-          <div v-if="tasks.length" class="thread-pane__tasks">
-            <TaskCard
-              v-for="made in tasks"
-              :key="made.id"
-              :task="made"
-              :owner-name="made.owner ? nameOf(made.owner) : null"
-              in-list
-              @open="emit('open-task', $event)"
-            />
-          </div>
-          <div v-if="thread" class="thread-pane__divider t-meta">
-            <span>{{ t('work.room.thread.replies', { count: thread.reply_count }) }}</span>
-            <span class="thread-pane__rule" />
-          </div>
-        </template>
-        <template #timeline-end>
-          <AgentFeedbackCard :topic-id="threadId" />
-        </template>
-      </ChatPanel>
+        @review="task && emit('open-page', task.id)"
+      />
       <template v-if="processTurn">
         <div class="thread-pane__process-head">
           <BaseButton
@@ -377,27 +318,6 @@ function toTask() {
 .thread-pane__error {
   padding: 16px;
   color: var(--muted);
-}
-/* 从这里出来的任务：和消息正文对齐（左内边距 16 + 头像 28 + 间距 10），几行一块。 */
-.thread-pane__tasks {
-  display: flex;
-  flex-direction: column;
-  margin: 6px 16px 4px 54px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-.thread-pane__divider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 4px 16px;
-  color: var(--muted);
-}
-.thread-pane__rule {
-  flex: 1;
-  height: 1px;
-  background: var(--line);
 }
 .thread-pane__chat {
   flex: 1;

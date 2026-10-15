@@ -281,7 +281,8 @@ class TaskRepository:
 
         - ``status``: only open, or only closed;
         - ``ids`` / ``origins``: only these tasks, or the ones made from these
-          blocks — either one matching is enough;
+          blocks — shown under one in the main line, or made from one said in
+          a 支线 — either one matching is enough;
         - ``with_branch``: only tasks that have a branch of their own;
         - ``latest``: only the newest N — by when they closed for closed tasks,
           by when they were created otherwise — newest first.
@@ -302,6 +303,7 @@ class TaskRepository:
                 or_(
                     Task.id == any_(_uuids("ids", ids)),
                     Task.upgraded_from_block_id == any_(_uuids("origins", origins)),
+                    Task.source_block_id == any_(_uuids("sources", origins)),
                 )
             )
         if with_branch:

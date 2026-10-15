@@ -435,7 +435,8 @@ class TaskService:
 
     @staticmethod
     def require_open(task: Task) -> None:
-        """Refuse what only an open task takes: a message to its session."""
+        """Refuse what only an open task takes: its first instruction given
+        again, a handover. A closed task is still talked in."""
         if task.status != TaskStatus.open:
             raise UnprocessableEntityError(say("taskClosedNoTurn"))
 

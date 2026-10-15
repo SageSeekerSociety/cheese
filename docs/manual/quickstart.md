@@ -220,9 +220,8 @@ parts:
     pressing: 采纳并完成任务
     press: 3
     until: 3
-  - kind: notice
-    text: 任务已关闭
-    button: 回到 # 综合
+  - kind: composer
+    placeholder: 任务已关闭，可以继续讨论
     at: 3
 ```
 :::

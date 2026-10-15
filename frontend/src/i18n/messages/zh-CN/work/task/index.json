@@ -5,17 +5,17 @@
   "agentEdit": "改",
   "agentHeading": "这件事由哪位 AI 队友来做",
   "agentHint": "选中的那位从下一轮开始接手",
-  "backToRoom": "回到 # {room}",
   "checklist": "{name}这一轮的清单",
   "close": "关闭任务",
   "closeBody": "写下结论表示已经做完；不写表示不再做。",
   "closeTitle": "关闭这个任务？",
-  "closedNotice": "任务已关闭",
+  "closedHint": "任务已关闭，可以继续讨论",
   "collaborators": "协作者",
   "collaboratorsHint": "可以在任务里和 AI 队友对话",
   "conclusion": "结论",
   "details": "任务信息",
   "followsRoom": "跟随频道",
+  "fromRoom": "来自 # {room}",
   "handOver": "转交",
   "handOverTitle": "转交给谁？",
   "handOverTo": "选择新的负责人",
@@ -32,6 +32,5 @@
   "rename": "重命名",
   "renameLabel": "任务名称",
   "renameTitle": "重命名任务",
-  "reopen": "重新打开任务",
-  "fromRoom": "来自 # {room}"
+  "reopen": "重新打开任务"
 }

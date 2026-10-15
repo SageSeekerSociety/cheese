@@ -12,8 +12,6 @@ from app.api.topics_deps import BlockRepository
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.prompt import became_task_prompt
-from app.domain.block.models import AGENT_NOTICE_META_KEY
 
 #: How many messages before the one a task comes from its agent is shown: what
 #: was being talked about when it was said.
@@ -103,9 +101,8 @@ async def dispatch(chat: ChatService) -> None:
 
 async def say_became_task(db, task) -> None:
     """「已转为任务，某某 负责」，说在这段对话里：从这一行起它是一个任务，谁负责。
-
-    这一行也是 AI 队友读到的：平台的提示跟着下一轮进它的输入，它由此知道这段对话
-    已经是任务，从下一轮起可以改动项目。"""
+    AI 队友怎么知道：人转的，转的那一刻交给它一条指令（`tell_task`）；它自己转的，
+    读工具的回复。两样说的都是 `became_task_prompt`。"""
     await announce(
         db,
         place_id=task.room_id,
@@ -115,6 +112,5 @@ async def say_became_task(db, task) -> None:
             "platform": True,
             "action": "thread_became_task",
             "task_id": str(task.id),
-            AGENT_NOTICE_META_KEY: became_task_prompt(owner=task.owner_handle),
         },
     )

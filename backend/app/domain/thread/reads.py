@@ -218,14 +218,13 @@ async def under_messages(
     in it, an AI teammate answering in it now, or a turn that failed in it,
     keyed by the message: what `in_room` says of a 支线, and who is answering
     (``replying``: the seats with a turn running in a 支线). A 支线 that became
-    a task has no line: the message shows the task's card instead."""
+    a task keeps its line: the task's card is drawn on top of it, the same
+    conversation with an owner."""
     if not block_ids:
         return {}
     found = list(
         await session.scalars(
-            select(Thread).where(
-                Thread.root_block_id == _among(block_ids), ~_became_a_task()
-            )
+            select(Thread).where(Thread.root_block_id == _among(block_ids))
         )
     )
     failed = await _failed(session, [t for t in found if t.reply_count == 0])

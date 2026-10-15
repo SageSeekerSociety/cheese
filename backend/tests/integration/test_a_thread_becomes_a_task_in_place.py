@@ -3,9 +3,10 @@
 The rules a person can state without the code: turning a 支线 into a task keeps
 the conversation — the same id, everything said in it, the AI teammate's
 session — and from then on that session's work is kept. Turning it twice
-makes one task. The message it hangs under shows the task, not a line of
-replies. Anyone in the project speaks in it, and what its AI teammate acts on
-unasked is its owner's word.
+makes one task. The message it hangs under shows the same conversation, now
+with an owner. Anyone in the project speaks in it, and what its AI teammate
+acts on unasked is its owner's word; once it is closed, it is talked in as a
+支线 is.
 """
 
 import uuid
@@ -149,7 +150,7 @@ def test_a_message_nobody_replied_to_becomes_a_task_with_its_own_conversation(
     assert thread.json()["data"]["task"] == task["id"]
 
 
-def test_the_message_shows_the_task_not_a_line_of_replies(client, stub_hooks):
+def test_the_message_shows_the_same_conversation_as_a_task(client, stub_hooks):
     _, room = _channel(client)
     root, thread, _ = _thread_with_a_turn(client, room)
     alice = session_auth_headers("alice")
@@ -164,7 +165,8 @@ def test_the_message_shows_the_task_not_a_line_of_replies(client, stub_hooks):
         "data"
     ]
     under = next(b for b in main_line if b["id"] == root["id"])
-    assert not under.get("thread")
+    assert under["thread"]["id"] == thread
+    assert [t["id"] for t in under["tasks"]] == [thread]
 
 
 def test_someone_else_speaks_in_the_task_without_calling_its_teammate(
@@ -213,3 +215,85 @@ def test_its_teammate_turns_the_thread_on_someones_word(client, stub_hooks):
     assert task["id"] == thread
     assert task["owner_handle"] == "bob"
     assert task["title"] == "登录验证码"
+
+
+def test_a_closed_task_is_still_talked_in_and_keeps_nothing(client, stub_hooks):
+    """After a task closes, people can still ask about it there; its teammate
+    answers when named, as in a 支线, and nothing it does reaches the project
+    until the task is reopened."""
+    _, room = _channel(client)
+    root, thread, seat = _thread_with_a_turn(client, room)
+    alice = session_auth_headers("alice")
+    client.post(f"/blocks/{root['id']}/upgrade", headers=alice)
+    closed = client.post(f"/topics/{thread}/close", json={}, headers=alice)
+    assert closed.status_code == 200, closed.text
+
+    plain = post_message(client, thread, "alice", {"content": "这个验证码几分钟过期？"})
+    named = post_message(
+        client, thread, "alice", {"content": f"<@{seat}> 这个验证码几分钟过期？"}
+    )
+
+    assert plain["meta"]["agent_recipient"]["mentioned"] is False
+    assert named["meta"]["agent_recipient"]["mentioned"] is True
+
+    async def keeps_work() -> bool:
+        async with client.test_factory() as db:
+            place = await PlaceResolver(db).conversation(uuid.UUID(thread))
+            return place.keeps_work
+
+    assert client.portal.call(keeps_work) is False
+
+
+def test_a_task_made_from_a_reply_shows_under_the_reply_and_the_message(
+    client, stub_hooks
+):
+    """A task split off from something said in a 支线 is found both where it
+    was said and under the main-line message the 支线 hangs on, and opens
+    beside the channel as a 支线 does, quoting what it was made from."""
+    _, room = _channel(client)
+    root, thread, _ = _thread_with_a_turn(client, room)
+    alice = session_auth_headers("alice")
+    reply = post_message(client, thread, "alice", {"content": "短信接口单独做一件"})
+
+    made = client.post(f"/blocks/{reply['id']}/upgrade", headers=alice)
+    assert made.status_code == 200, made.text
+    task = made.json()["data"]["id"]
+    assert task != thread
+
+    in_thread = next(b for b in _messages(client, thread) if b["id"] == reply["id"])
+    assert [t["id"] for t in in_thread["tasks"]] == [task]
+    main_line = _messages(client, room)
+    under = next(b for b in main_line if b["id"] == root["id"])
+    assert [t["id"] for t in under["tasks"]] == [task]
+
+    beside = client.get(f"/topics/{task}/thread", headers=alice)
+    assert beside.status_code == 200, beside.text
+    assert beside.json()["data"]["task"] == task
+    assert beside.json()["data"]["root"]["id"] == reply["id"]
+
+
+def test_turning_it_starts_its_teammate_at_once(client, stub_hooks):
+    """A person turning a 支线 does not leave it waiting for someone to speak:
+    its AI teammate is handed the work at once (to put the discussion in the
+    task's document first)."""
+    from app.domain.delivery.models import Delivery
+
+    _, room = _channel(client)
+    root, thread, _ = _thread_with_a_turn(client, room)
+
+    async def handed() -> int:
+        async with client.test_factory() as db:
+            return len(
+                list(
+                    await db.scalars(
+                        select(Delivery).where(
+                            Delivery.conversation_id == uuid.UUID(thread)
+                        )
+                    )
+                )
+            )
+
+    before = client.portal.call(handed)
+    client.post(f"/blocks/{root['id']}/upgrade", headers=session_auth_headers("alice"))
+
+    assert client.portal.call(handed) == before + 1

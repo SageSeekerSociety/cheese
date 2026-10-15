@@ -30,6 +30,7 @@ from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
+from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place
 from app.domain.room_task.services import TaskService
 from app.domain.thread.services import answered_in, thread_teammate
@@ -59,6 +60,7 @@ async def prepare_human(
         "handle": agent.handle,
         "mentioned": (
             place.task is not None
+            and place.task.status == TaskStatus.open
             and TaskService.takes_part(place.task, author)
             and not _names_only_people(mentions.content)
         )

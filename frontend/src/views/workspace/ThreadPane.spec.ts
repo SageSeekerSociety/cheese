@@ -26,6 +26,22 @@ vi.mock('@/api', async (importOriginal) => ({
   getTask: vi.fn(async (id: string) => roomTasks.value.find((task) => task.id === id)),
 }))
 
+// 对话那一栏也会问这段对话里有没有待存的技能提议：这里没有。
+vi.mock('./useSkillProposals', async () => {
+  const { ref } = await import('vue')
+  return {
+    useSkillProposals: () => ({
+      proposals: ref([]),
+      saved: ref([]),
+      busy: ref(null),
+      error: ref(null),
+      load: async () => {},
+      save: async () => {},
+      decline: async () => {},
+    }),
+  }
+})
+
 import ThreadPane from './ThreadPane.vue'
 
 import { setLocale } from '@/i18n'
@@ -81,7 +97,8 @@ function summary(): ThreadSummary {
 // #timeline-start，落在 `.messages` 那一格里），所以替身也把两个槽摆出来。槽摆出来，
 // 页脚那张反馈卡就跟着挂了上来（真卡片要 pinia 和两个仓库），照下面那条用例的做法换成替身。
 const CHAT_PANEL_STUB = {
-  template: '<div data-testid="chat-scroll"><slot name="timeline-start" /><slot name="timeline-end" /></div>',
+  template:
+    '<div data-testid="chat-scroll"><slot name="timeline-start" /><slot name="timeline-end" /><slot name="above-composer" /></div>',
 }
 
 function mount() {
@@ -89,7 +106,13 @@ function mount() {
     props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
     global: {
       plugins: [vuetify],
-      stubs: { ChatPanel: CHAT_PANEL_STUB, MarkdownView: true, AgentFeedbackCard: true },
+      stubs: {
+        ChatPanel: CHAT_PANEL_STUB,
+        MarkdownView: true,
+        AgentFeedbackCard: true,
+        SkillProposalCard: true,
+        TopicAcceptCard: true,
+      },
     },
   })
 }
@@ -147,6 +170,29 @@ describe('支线', () => {
     expect(queryByTestId('task-card')).toBeNull()
     await fireEvent.click(await findByTestId('thread-open-page'))
     expect(emitted()['open-page']).toEqual([['th1']])
+  })
+
+  // 任务都在右半边打开：等人审阅的那一条（采纳框）在这里也看得见，不用先去整页。
+  it('打开的是任务时，输入框上方有这件任务的审阅那一条；支线没有', async () => {
+    roomTasks.value = [task('th1', 'b1', '登录验证码')]
+    getThread.mockResolvedValue({
+      id: 'th1',
+      room_id: 'r1',
+      root_block_id: 'b1',
+      reply_count: 2,
+      root: root(),
+      task: 'th1',
+    })
+    const asTask = mount()
+    await waitFor(() => expect(asTask.container.querySelector('topic-accept-card-stub')).not.toBeNull())
+    expect(asTask.container.querySelector('topic-accept-card-stub')?.getAttribute('taskid')).toBe('th1')
+    asTask.unmount()
+
+    getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
+    queryClient.clear()
+    const asThread = mount()
+    await asThread.findByTestId('thread-to-task')
+    expect(asThread.container.querySelector('topic-accept-card-stub')).toBeNull()
   })
 
   it('从这里另开的任务都列着，点开去那件任务', async () => {

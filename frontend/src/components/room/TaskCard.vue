@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 频道主线上的一张任务卡：标题、谁负责、此刻到哪一步、上一次变化是什么时候。点它打开任务。
-// 同一张卡在原处变化（lib/channelTasks）；`inList` 时它是支线区里的一行，否则单独成卡。
-// 支线原地转成的任务单独成卡时多一行：这件任务里最后说的一句，说它此刻在做什么。
+// 频道主线上的一件任务：标题、谁负责、此刻到哪一步、上一次变化是什么时候。点它打开任务。
+// 同一张卡在原处变化（lib/channelTasks）。和支线长成同一块：单独成块时底色和支线一样，
+// 多一行这件任务里最后说的一句；`inList` 时是消息下面那一块里的一行；`head` 时是支线
+// 转成任务后，支线那一块顶上的任务名那一行。
 import type { TaskLine } from '../../lib/channelTasks'
 
 import { relTime } from '../../lib/relTime'
@@ -15,8 +16,12 @@ defineProps<{
   ownerName: string | null
   /** 负责人的头像；不给就只写名字。 */
   ownerAvatar?: string | null
-  /** 是支线区里几行中的一行，不单独画边框。 */
+  /** 是消息下面那一块里的一行，不单独画底。 */
   inList?: boolean
+  /** 那一块里只有它：照单独成块那样多写最后一句。 */
+  lone?: boolean
+  /** 支线那一块顶上的任务名：回复数、时间和最后一句在下面的支线那几行里。 */
+  head?: boolean
 }>()
 
 const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
@@ -27,8 +32,9 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
     type="button"
     class="task-card"
     :class="{
-      'task-card--row': inList,
-      'task-card--mine': task.tone === 'mine' && !inList,
+      'task-card--row': inList || head,
+      'task-card--head': head,
+      'task-card--mine': task.tone === 'mine' && !inList && !head,
       'task-card--crowded': !!task.accepted,
     }"
     data-testid="task-card"
@@ -50,9 +56,9 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
         <span v-else class="task-card__dot" aria-hidden="true" />
         {{ task.status }}
       </span>
-      <span class="task-card__at t-meta">{{ relTime(task.at) }}</span>
+      <span v-if="!head" class="task-card__at t-meta">{{ relTime(task.at) }}</span>
     </span>
-    <span v-if="!inList && task.fromThread && task.latest" class="task-card__latest" data-testid="task-card-latest">{{
+    <span v-if="!head && (!inList || lone) && task.latest" class="task-card__latest" data-testid="task-card-latest">{{
       task.latest
     }}</span>
   </button>
@@ -68,9 +74,9 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   max-width: 620px;
   min-width: 0;
   padding: 8px 12px;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
-  background: var(--surface);
+  background: var(--fill);
   color: var(--text);
   font-size: 14px;
   line-height: var(--lh-14);
@@ -79,7 +85,7 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .task-card:hover {
-  background: var(--fill);
+  background: var(--line-2);
 }
 .task-card__main {
   display: flex;
@@ -101,9 +107,17 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   max-width: none;
   border: 0;
   border-radius: 0;
+  background: transparent;
 }
 .task-card--row + .task-card--row {
   border-top: 1px solid var(--line);
+}
+/* 支线那一块顶上：和下面的回复行是一段对话，一起变色（ChatTimeline 的 msg-work__talk）。 */
+.task-card--head {
+  padding-bottom: 2px;
+}
+.task-card--head:hover {
+  background: transparent;
 }
 .task-card--mine {
   border-color: var(--warn);

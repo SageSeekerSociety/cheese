@@ -97,7 +97,6 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.room_task.services import TaskService
 from app.domain.thread.services import answered_in
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -132,7 +131,9 @@ async def send_chat_message(
     Anyone in the project speaks in a task, as in a 支线 — it is often one
     that became the task, with the same people in it. What its AI teammate
     acts on is its owner's and collaborators' word (`agent.turn.intake.human`).
-    Of the agents, only the task's own session publishes there, in its turn.
+    A closed task is still talked in: its teammate answers when named and
+    changes nothing (`Place.keeps_work`). Of the agents, only the task's own
+    session publishes there, in its turn.
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -144,7 +145,6 @@ async def send_chat_message(
             if resolver.credential_conversation() != task.id:
                 raise ForbiddenError(say("taskOwnSessionSpeaks"))
             return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
-        TaskService.require_open(task)
     elif await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle):
         return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
     if task is None and actor.via == "cheese":

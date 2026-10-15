@@ -490,7 +490,10 @@ def test_a_tasks_own_session_speaks_in_its_task_and_no_other(client):
     assert _task(client, room_id, other["id"])["status"] == "open"
 
 
-def test_a_closed_task_takes_no_more_messages(client):
+def test_a_closed_task_is_still_talked_in(client):
+    """A closed task is over as work, not as a conversation: people go on
+    asking about it there (its teammate answers when named and changes
+    nothing — `test_a_thread_becomes_a_task_in_place`)."""
     _project_id, room_id = _room(client)
     task = open_task(client, room_id)
     closed = client.post(
@@ -502,7 +505,7 @@ def test_a_closed_task_takes_no_more_messages(client):
 
     r = _say_in_task(client, room_id, task["id"], session_auth_headers("alice"))
 
-    assert r.status_code == 422
+    assert r.status_code == 200, r.text
 
 
 def test_only_the_owner_closes_a_task(client):

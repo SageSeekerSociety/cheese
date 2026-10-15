@@ -17,11 +17,11 @@ order: 2
 
 1. 打开项目，在左侧栏选择一个频道，例如「综合」。频道是项目成员交流的地方。
 2. 在底部输入框中写明要做的事。
-3. 按 `Ctrl/Cmd+Enter` 发送。芝士会在这条消息下方回复，这组回复称为「支线」。要修改项目文件的事，你说了要做，芝士就把这条支线转为任务，消息下方换成任务卡。
+3. 按 `Ctrl/Cmd+Enter` 发送。芝士会在这条消息下方回复，这组回复称为「支线」。要修改项目文件的事，你说了要做，芝士就把这条支线转为任务，支线那一块顶上多出一行任务名、负责人和状态。
 
 ```demo-panel
 title: 在频道里把要求交给芝士
-caption: 芝士把这条支线转为任务「组会报名说明」，消息下方换成任务卡。
+caption: 芝士把这条支线转为任务「组会报名说明」，支线那一块顶上多出任务名。
 head: 综合
 parts:
   - kind: bars
@@ -40,6 +40,8 @@ parts:
     title: 组会报名说明
     owner: 你 负责
     status: 进行中
+    replies: 1 条回复
+    last: 芝士：好，我先整理报名时间、地点和要带的材料。
     at: 3
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
@@ -104,6 +106,7 @@ parts:
     title: 组会报名说明
     owner: 你 负责
     status: 进行中
+    replies: 1 条回复
     until: 1
   - kind: line
     text: 芝士 刚刚开始
@@ -197,9 +200,8 @@ parts:
     pressing: 采纳并完成任务
     press: 3
     until: 3
-  - kind: notice
-    text: 任务已关闭
-    button: 回到 # 综合
+  - kind: composer
+    placeholder: 任务已关闭，可以继续讨论
     at: 3
 ```
 :::

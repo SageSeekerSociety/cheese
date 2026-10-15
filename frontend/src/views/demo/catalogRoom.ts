@@ -151,7 +151,6 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
     accepted: null,
     at: new Date(Date.now() - 5 * 60_000).toISOString(),
     latest: null,
-    fromThread: false,
     ...over,
   }
 }
@@ -283,11 +282,10 @@ const TASK_ENTRIES: CatalogEntry[] = [
         expect: '已采纳 2 次',
       },
       {
-        name: '支线转成的',
-        note: '支线原地转成的任务单独成卡时多一行：任务里最后说的一句，说它此刻在做什么。负责人带头像。',
+        name: '单独成块',
+        note: '单独成块时多一行：任务里最后说的一句，说它此刻在做什么。负责人带头像。',
         props: {
           task: taskLine({
-            fromThread: true,
             latest: '发送验证码的接口写好了，正在写校验那一个',
             status: '芝士在做',
           }),
@@ -295,6 +293,16 @@ const TASK_ENTRIES: CatalogEntry[] = [
           ownerAvatar: '',
         },
         expect: '正在写校验那一个',
+      },
+      {
+        name: '支线顶上',
+        note: '支线转成任务后，画在支线那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的支线那几行里。',
+        props: {
+          task: taskLine({ latest: '这一句不画', status: '芝士在做' }),
+          ownerName: '王一鸣',
+          head: true,
+        },
+        expect: '王一鸣',
       },
     ],
   },

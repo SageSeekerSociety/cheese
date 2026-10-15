@@ -4,10 +4,9 @@
 `POST /topics/{conversation}/teammate-tasks` is an AI teammate creating one
 from where it is talking: those are the room's. Everything about one task is
 addressed by the task's own conversation id — `GET|PATCH /topics/{task}/task`
-(the task, handing it over), `POST /topics/{task}/start`, `/close` and
-`/reopen`. Talking in a task, naming it and reading its
-document go through the same routes as a room's (`/messages`, `/title`,
-`/document`), with the task's id.
+(the task, handing it over), `POST /topics/{task}/close` and `/reopen`.
+Talking in a task, naming it and reading its document go through the same
+routes as a room's (`/messages`, `/title`, `/document`), with the task's id.
 
 `_actor_in_place`, `DbSession` and the block/project/usage repositories come from
 `app.api.topics_deps` (they lived in `topics.py` until that module's siblings

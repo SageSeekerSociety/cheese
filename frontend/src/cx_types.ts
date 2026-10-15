@@ -280,6 +280,8 @@ export interface RoomTask {
   accepted_at?: string | null
   closed_at?: string | null
   upgraded_from_block_id?: string | null
+  /** 它出自的那句话：主线消息本身，或支线里的一条回复。 */
+  source_block_id?: string | null
   /** 支线原地转成的任务：对话挂在主线那条消息下面，在频道页右半边打开，和支线一样。 */
   from_thread?: boolean
   created_at: string

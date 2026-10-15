@@ -252,17 +252,13 @@ const {
   machineError: taskMachineError,
   actionError: taskActionError,
 } = taskPage
-// 任务里项目的人都能说话，关了就谁都不能说了：输入框的位置换成这一句。
+// 任务里项目的人都能说话，关了也能接着说：AI 队友只回答，不再改动项目。
 const composerClosed = computed(() => {
-  const task = taskPage.task.value
-  if (!props.taskId) {
-    // 频道的主线：归档了只能看；没加入的人在这里只读，加入后才能说话（支线里照样能回）。
-    const topic = selectedTopic.value
-    if (topic?.status === 'archived') return t('work.channel.archivedNotice')
-    return topic?.joined === false ? t('work.channel.notJoined') : null
-  }
-  if (!task) return null
-  return taskPage.isOpen.value ? null : t('work.task.closedNotice')
+  if (props.taskId) return null
+  // 频道的主线：归档了只能看；没加入的人在这里只读，加入后才能说话（支线里照样能回）。
+  const topic = selectedTopic.value
+  if (topic?.status === 'archived') return t('work.channel.archivedNotice')
+  return topic?.joined === false ? t('work.channel.notJoined') : null
 })
 
 // 提问只在这件事还开着时等回答：任务关了、频道归档了，题跟着结束（待办里同样不再
@@ -679,8 +675,6 @@ void openPlace()
             :focus-block="focusBlock"
             :task-id="taskId ?? null"
             :task-agent-handle="currentTask?.agent_handle ?? null"
-            :task-from-thread="!!currentTask?.from_thread"
-            :always-summon="!!taskId && taskPage.takesPart.value"
             :member-names="memberNames"
             :composer-closed="composerClosed"
             :ask-closed="askClosed"
@@ -852,8 +846,6 @@ void openPlace()
                 :focus-block="focusBlock"
                 :task-id="taskId ?? null"
                 :task-agent-handle="currentTask?.agent_handle ?? null"
-                :task-from-thread="!!currentTask?.from_thread"
-                :always-summon="!!taskId && taskPage.takesPart.value"
                 :member-names="memberNames"
                 :composer-closed="composerClosed"
                 :ask-closed="askClosed"
