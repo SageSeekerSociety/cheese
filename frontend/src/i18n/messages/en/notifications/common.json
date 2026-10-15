@@ -1,0 +1,22 @@
+{
+  "delete": "Delete",
+  "deleteHint": "It will disappear from your inbox and can’t be brought back.",
+  "deleteTitle": "Delete this notification?",
+  "filterLabel": "Filter notifications",
+  "justNow": "Just now",
+  "loadFailed": "Couldn't load activity",
+  "loadMore": "Load more",
+  "markAllAsRead": "Mark all as read",
+  "markAsRead": "Mark as read",
+  "member": "Member",
+  "newItems": "New notifications: {count}",
+  "noNotifications": "No notifications",
+  "reason": "Reason",
+  "teamAdmin": "Team admin",
+  "unknownDiscussion": "Unknown discussion",
+  "unknownProject": "Unknown project",
+  "unknownTeam": "Unknown team",
+  "unreachable": "Can’t open this page. It may not exist, or you may not have access",
+  "untitledDocument": "Untitled document",
+  "yesterday": "Yesterday {time}"
+}

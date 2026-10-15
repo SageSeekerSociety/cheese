@@ -1,0 +1,6 @@
+{
+  "comment": "Comment: {comment}",
+  "passed": "Passed · {score} points",
+  "pending": "Awaiting review",
+  "rejected": "Rejected"
+}

@@ -1,0 +1,19 @@
+{
+  "anonymousBody": "平台上的日常活动保持匿名，其他用户无法看到你的真实身份信息",
+  "anonymousTitle": "匿名参与",
+  "certificationBody": "用于题目结题后的证书发放、学分认定和成果展示",
+  "certificationTitle": "项目认证",
+  "eligibilityBody": "用于根据你的学业信息判断是否符合参与特定题目的资格要求",
+  "eligibilityTitle": "参与资格筛选",
+  "encryptionBody": "使用行业标准的加密技术保护你的个人资料，防止未授权访问",
+  "encryptionTitle": "加密存储",
+  "isolationBody": "严格隔离你的实名信息与平台账号，确保两者无法被关联",
+  "isolationTitle": "身份隔离",
+  "purposeBody": "你的实名信息仅在必要的题目报名环节使用，不用于其他目的",
+  "purposeTitle": "用途限制",
+  "rightsBody": "我们的系统采用多层保护机制，在满足少数题目对实名信息的需求的同时，确保你在平台上的隐私安全。所有对你信息的访问都会被记录，你可以随时查看这些记录。",
+  "rightsTitle": "你的权利",
+  "scenariosTitle": "实名信息使用场景",
+  "verificationBody": "用于确认参与者身份，保证题目参与的真实性和有效性",
+  "verificationTitle": "身份验证"
+}

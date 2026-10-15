@@ -19,7 +19,7 @@ const modules = import.meta.glob(
     '!./models.json',
     '!./ratchet.json',
     '!./routines.json',
-    '!./notifications.json',
+    '!./notifications/**',
     '!./credits.json',
     '!./toolLabels.json',
     '!./questions.json',

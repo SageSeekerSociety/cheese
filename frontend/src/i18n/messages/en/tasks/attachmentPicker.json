@@ -1,0 +1,9 @@
+{
+  "add": "Add files",
+  "limit": "Up to {size} per file",
+  "remove": "Remove {name}",
+  "removeFailed": "Could not remove “{name}”: {error}",
+  "title": "Attachments",
+  "uploadFailed": "Couldn't upload \"{name}\": {error}",
+  "uploading": "Uploading…"
+}
