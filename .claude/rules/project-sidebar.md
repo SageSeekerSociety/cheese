@@ -5,6 +5,7 @@ paths:
   - "frontend/src/views/workspace/ProjectSidebar.vue"
   - "frontend/src/lib/shell.ts"
   - "backend/app/domain/shell/**"
+  - "backend/app/domain/shell_catalog.py"
 ---
 
 # 项目侧栏：项目名下那一行就两格

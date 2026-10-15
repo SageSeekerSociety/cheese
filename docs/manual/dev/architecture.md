@@ -43,7 +43,7 @@ covers:
 
 ### 分层 {#backend-tiers}
 
-层的归属按实测的依赖定，不按包名猜。下表按 2026-10-07 的依赖图排（`skill_library`、`notice_meta` 是 2026-10-13 拆出来的，`addressing`、`delivery_events` 是 2026-10-14 从 `delivery` 下沉下来的，`shell_catalog` 是 2026-10-15 从 `shell` 下沉下来的，都归第 1 层；`agent_session` 是 2026-10-14 从第 5 层落到第 3 层，`environment_diagnosis` 是 2026-10-14 从 `project` 独立出来的，归第 3 层）：
+层的归属按实测的依赖定，不按包名猜。下表按 2026-10-07 的依赖图排（`skill_library`、`notice_meta` 是 2026-10-13 拆出来的，`addressing`、`delivery_events` 是 2026-10-14 从 `delivery` 下沉下来的，`shell_catalog` 是 2026-10-14 从 `shell` 下沉下来的，都归第 1 层；`agent_session` 是 2026-10-14 从第 5 层落到第 3 层，`environment_diagnosis` 是 2026-10-14 从 `project` 独立出来的，归第 3 层）：
 
 | 层 | 是什么 | 包 |
 |---|---|---|
