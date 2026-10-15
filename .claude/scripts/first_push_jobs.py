@@ -5,7 +5,10 @@ The unit is one merged PR. Its "first head" is the head SHA of the earliest
 `required-ci.yml` `pull_request` run associated with the PR's branch. Every
 leaf job of every run on that head is read; each job name that concluded
 `failure`/`timed_out` is recorded once per PR. The aggregating jobs (`CI
-required`, `scope`) are not leaf judgements and are kept separately.
+required`, `CI required (draft quick)`, `scope`) are not leaf judgements and
+are not counted among those; the conclusions the gate itself reached are kept
+per PR in `gate_conclusions`, so whether the PR was ever a gate red is
+readable from this file alone.
 
 This is a measurement, not a gate. It reuses `trace_retro._gh` for GitHub
 access and caches every response, so a re-run over the same window is free and
@@ -27,6 +30,9 @@ REQUIRED_CI = ".github/workflows/required-ci.yml"
 
 # Jobs that aggregate the run rather than judge a change.
 AGGREGATORS = frozenset({"CI required", "CI required (draft quick)", "scope"})
+# The one aggregator branch protection reads. A PR whose first head ever left
+# this red is a gate red, whatever its draft branch did.
+GATE_JOB = "CI required"
 
 CONCLUDED_RED = frozenset({"failure", "timed_out", "action_required"})
 
@@ -149,11 +155,14 @@ def collect(repo: str, base: str, since: datetime, until: datetime, cache: Cache
         head, head_runs = first_head_runs(pr, runs, until)
         red: dict[str, int] = {}
         cancelled = False
+        gate: set[str] = set()
         for run in head_runs:
             if run["conclusion"] == "cancelled":
                 cancelled = True
             for job in run_jobs(repo, run["id"], cache):
-                if job.get("conclusion") in CONCLUDED_RED and job["name"] not in AGGREGATORS:
+                if job["name"] == GATE_JOB:
+                    gate.add(job.get("conclusion"))
+                elif job.get("conclusion") in CONCLUDED_RED and job["name"] not in AGGREGATORS:
                     red[job["name"]] = red.get(job["name"], 0) + 1
         return {
             "number": pr["number"],
@@ -164,6 +173,7 @@ def collect(repo: str, base: str, since: datetime, until: datetime, cache: Cache
             "first_head_runs": [r["id"] for r in head_runs],
             "first_head_cancelled": cancelled,
             "red_jobs": sorted(red),
+            "gate_conclusions": sorted(g for g in gate if g),
             "no_run": head is None,
         }
 
@@ -187,6 +197,7 @@ def collect(repo: str, base: str, since: datetime, until: datetime, cache: Cache
         "pr_count": len(rows),
         "with_first_head": sum(1 for r in rows if r["first_head"]),
         "prs_with_any_red": sum(1 for r in rows if r["red_jobs"]),
+        "prs_with_gate_red": sum(1 for r in rows if set(r["gate_conclusions"]) & CONCLUDED_RED),
         "failures_by_job": dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))),
         "rows": sorted(rows, key=lambda r: r["number"]),
     }
