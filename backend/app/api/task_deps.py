@@ -23,9 +23,11 @@
 
 from fastapi import Depends
 
+from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
+from app.domain.agent import gateway_catalog
 from app.domain.attachment.services import AttachmentService
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
@@ -91,7 +93,11 @@ async def get_team_service(db=Depends(get_db)) -> TeamService:
 
 
 async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
-    return await TaskPdfDraftService.on_gateway(db, await pricing.model_rates())
+    return await TaskPdfDraftService.on_gateway(
+        db,
+        await pricing.model_rates(),
+        sees_pictures=gateway_catalog.sees_pictures(settings.task_draft_model),
+    )
 
 
 def _task_attachment_service(db) -> TaskAttachmentService:
