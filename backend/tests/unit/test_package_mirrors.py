@@ -231,9 +231,10 @@ def test_the_feature_can_be_turned_off(monkeypatch):
     """A deployment that wants the old behaviour gets precisely it: no probe,
     and not one variable.
 
-    The addresses are still named, and that is the half that reaches a room
-    that is already running: a room carrying a mirror from before the switch
-    can only be told to drop it by name.
+    The addresses are still named, with the values this policy would have set,
+    and that is the half that reaches a room that is already running: a room
+    carrying a mirror from before the switch can only be told to drop it by the
+    name and the value it was given.
     """
     probes = []
 
@@ -499,22 +500,25 @@ def test_a_mirror_that_stopped_answering_is_named_for_removal(tmp_path, monkeypa
         assert config["env"]["UV_INDEX"] == settings.package_mirror_pypi_index
 
 
-def test_a_room_that_named_an_index_of_its_own_keeps_it(tmp_path, monkeypatch):
+def test_a_room_that_named_an_index_of_its_own_is_handed_its_own(tmp_path, monkeypatch):
     """Why the reset list carries a value and not just a name.
 
     A project's own index reaches the room through the environment its process
     starts with (`environment_runner` folds the project's variables in), so it
     is under a governed name without ever having been prepared. A name alone
     cannot tell it from the platform's, and the executor would drop it along
-    with the mirror that stopped answering — an install that had its own index
-    would go to the public one instead.
+    with the mirror — an install that had its own index would go to the public
+    one instead. What a prepare hands this room is its own index in the
+    environment and the policy's address in the reset list, which is the pair
+    the executor tells apart (`runtime`; the executor's own half of this is
+    `test_remote_execution`).
     """
     own = "https://internal.test/simple"
-    dead = settings.package_mirror_pypi_index
     payload = _room_payload()
     payload["environment"] = {"variables": {"PIP_INDEX_URL": own}}
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
-    asked = _the_machine_answers(monkeypatch, dead=dead)
+    asked = _the_machine_answers(monkeypatch)
+    mirror = settings.package_mirror_pypi_index
 
     with bootstrap.prepared(payload, tmp_path, fetch_toolchain=False) as (
         _home,
@@ -522,9 +526,13 @@ def test_a_room_that_named_an_index_of_its_own_keeps_it(tmp_path, monkeypatch):
         _state,
         _env,
     ):
-        assert dead.rstrip("/") + "/" in asked
-        assert "PIP_INDEX_URL" not in config["env"]
-        # The address this policy would have held, not the room's own: the two
-        # are what the executor tells apart (`runtime`, `configure`).
-        assert config["env_reset"]["PIP_INDEX_URL"] == dead
+        # The mirror answers, so `PIP_INDEX_URL` is a name this prepare has an
+        # address for at all — the room's own value is what survives it.
+        assert mirror.rstrip("/") + "/" in asked
+        assert config["env"]["PIP_INDEX_URL"] == own
+        # The address this policy would have set, not the room's own: the two
+        # are what the executor tells apart (`runtime`, `configure`), and they
+        # differ, which is the whole of why this room keeps its own.
+        assert config["env_reset"]["PIP_INDEX_URL"] == mirror
+        assert own != mirror
         assert config["env_reset"]["PIP_INDEX_URL"] != own

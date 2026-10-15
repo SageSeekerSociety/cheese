@@ -29,11 +29,18 @@ and the prepare hands its environment to the executor as something to add to
 what the room already has (`runtime`, the `configure` request). So a mirror that
 stops answering cannot be expressed by leaving a variable out: the room is
 already carrying it. `governed` is the other half — every name the deployment
-has given an address for — and it travels beside the environment so the
-executor can take away the ones this prepare did not set. That is also how a
-deployment that turns the feature off gets the old behaviour back in rooms that
-are already running, and it is why the names are computed from the addresses
-whether or not the feature is on.
+gave an address for, with the value this policy puts there — and it travels
+beside the environment so a room can be told to stop using one. The executor
+takes that back for a name this prepare does not state, and only where the room
+holds the value named: with the name alone there is no telling the policy's
+value from a project's, or a machine's, own under the same name, and that one is
+not this policy's to take away. It is how a deployment that turns the feature
+off, or a mirror that stops answering, gets the old behaviour back in rooms that
+are already running, and why the names are computed from the addresses whether
+or not the feature is on. Two things it does not reach: a room holding an
+address the deployment has since MOVED (the value named is the new one, so that
+room is on the old mirror until it restarts), and a machine whose own value
+happens to equal the policy's, which is taken away along with it.
 
 WHAT ANSWERS MEANS. A reply, not a 200. `cdn.npmmirror.com` answers 404 for the
 directory above the browsers and 200 for a browser; a mirror behind a private
@@ -137,7 +144,7 @@ def configuration(settings) -> dict:
 
     The addresses are named whether or not the feature is on, because
     `governed` is asked of this and a deployment that turns the feature off
-    still has to take the variables back out of the rooms that are running.
+    still has to take its own values back out of the rooms that are running.
     """
     return {
         "enabled": bool(settings.package_mirror_enabled),

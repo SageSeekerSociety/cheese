@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.package_mirror_config import PackageMirrorSettings
+
 # The gateway mounts this whole app under `/api` and strips that one segment
 # (`proxy_pass http://backend:8081/`), so a backend route is bare while the URL
 # the browser used is `/api` + that route. Anything the BROWSER will resolve
@@ -58,7 +60,11 @@ def parse_data_encryption_keys(value: str) -> tuple[bytes, ...]:
     return tuple(keys)
 
 
-class Settings(BaseSettings):
+class Settings(BaseSettings, PackageMirrorSettings):
+    # The base class above is the mirror addresses and the switch that turns
+    # them off, and it is a base class rather than a section below because this
+    # module is at the size cap it is held to and that section stands alone
+    # (`core/package_mirror_config`).
     # `validate_by_name` exists for exactly one field, `platform_admin_handles`:
     # it carries a `validation_alias` (so the deploy keeps working through the
     # env-name change), and in pydantic a field with an alias is otherwise
@@ -582,25 +588,6 @@ class Settings(BaseSettings):
     # while it runs. Sized for the longest honest stretch of pure writing, a
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
-
-    # --- Package downloads in a room, through a domestic mirror ---
-    # The policy — a mirror used once a probe says it answers, the official
-    # index behind it where the tool takes two — is in
-    # `domain/agent/package_mirrors`, applied as process environment. None of
-    # it reaches an agent's prompt, skills or memory.
-    package_mirror_enabled: bool = True
-    # The index pip and uv fetch from first, and the official one behind it.
-    package_mirror_pypi_index: str = "https://pypi.tuna.tsinghua.edu.cn/simple"
-    package_mirror_pypi_fallback: str = "https://pypi.org/simple"
-    # npm and pnpm's registry, and `playwright install`'s browser host.
-    package_mirror_npm_registry: str = "https://registry.npmmirror.com"
-    package_mirror_playwright_host: str = (
-        "https://cdn.npmmirror.com/binaries/playwright"
-    )
-    # uv's standalone CPython builds. Empty by default: those are GitHub
-    # release assets, and the mirrors carrying them are third-party proxies
-    # rather than a distribution's own archive.
-    package_mirror_uv_python: str = ""
 
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in
