@@ -5,8 +5,8 @@
 //
 // 对话就是频道和任务页用的那一栏（TopicChatColumn 的 `beside`），换了一段对话来读：
 // 消息、连接、已读都走支线（或任务），名册和附件还是频道的。谁说话叫醒 AI 队友、输入
-// 框写什么、等审阅时那一条，都由那一栏定，这里只管页头。桌面上它占频道页右边那一半，
-// 手机上是一整页。
+// 框写什么、等审阅时那一条，都由那一栏定，这里只管页头（ThreadHead）。桌面上它占频道页
+// 右边那一半，页头在这一栏顶上；手机上是一整页，页头是顶栏的内容。
 //
 // AI 队友的一条回复上点「查看过程」，这一栏换成那一轮的现场，「返回支线」回来。支线的
 // 对话只是藏起来，连接和滚动位置都还在。
@@ -18,17 +18,15 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
-import { getAvatarUrl } from '@/utils/materials'
-
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
+import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { ApiError } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
+import ThreadHead from '@/components/room/ThreadHead.vue'
 import PanelSiteHost from '@/components/work/PanelSiteHost.vue'
 import { t } from '@/i18n'
 import { threadHeading } from '@/lib/blockDisplay'
-import { taskPhraseLabel } from '@/lib/board'
 import { openThreadDocument } from '@/lib/libraryDocumentNavigation'
 import { taskTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -124,15 +122,7 @@ const refs = computed(() => ({
   topicTitles: {} as Record<string, string>,
   notified: true,
 }))
-function nameOf(handle: string): string {
-  return props.memberNames[handle] || handle
-}
-// 这个人的头像图：从成员名册查他挑过的素材 id。名册上没有他、或者他从没挑过
-// （avatar_id 是 null）都给空串，让 UserAvatar 画彩色首字母——别再退回全站默认脸。
-function avatarOf(handle: string): string {
-  return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
-}
-// 支线转成了任务：页面标题（手机上的顶栏）跟着写任务名，不再写「支线」。
+// 支线转成了任务：页面标题（浏览器标签上那一行）跟着写任务名，不再写「支线」。
 watch(task, (made) => {
   if (made) emit('title', taskTitle(made))
 })
@@ -151,6 +141,27 @@ function toTask() {
   // 转成以后页头跟着换成任务那一行；没转成（失败了）就让按钮回来。
   setTimeout(() => (busy.value = false), 1500)
 }
+// 页头那一行。桌面上画在这一栏顶上；手机上这一页就是一整屏，这一行交给顶栏
+// （useScreenHeader），页里不再写第二遍。还没读回来（或读不到）时不交，顶栏写路由的
+// 标题「支线」。
+const headBinding = computed(() => ({
+  heading: heading.value,
+  task: task.value,
+  viewer: viewer.value,
+  members: props.members,
+  memberNames: props.memberNames,
+  canToTask: !!root.value && props.room.status !== 'archived',
+  busy: busy.value,
+  closable: !props.page,
+  onToTask: toTask,
+  onOpenPage: (taskId: string) => emit('open-page', taskId),
+  onClose: () => emit('close'),
+}))
+useScreenHeader(() =>
+  props.page && heading.value
+    ? { content: { component: ThreadHead, props: { ...headBinding.value, bar: true } } }
+    : null
+)
 </script>
 
 <template>
@@ -160,50 +171,8 @@ function toTask() {
     :aria-label="t('work.room.thread.title')"
     data-testid="thread-pane"
   >
-    <!-- 页头一行，各样东西各自成一格，不拿点号串成一句。 -->
-    <header v-guide-anchor="task ? 'task-pane' : ''" class="thread-pane__head">
-      <v-icon v-if="task" size="18" class="thread-pane__icon" aria-hidden="true">mdi-checkbox-marked-outline</v-icon>
-      <h2 class="thread-pane__title t-title" :title="heading">{{ heading }}</h2>
-      <template v-if="task">
-        <span class="thread-pane__state" data-testid="thread-task-phrase">{{ taskPhraseLabel(task, viewer) }}</span>
-        <span class="thread-pane__gap" />
-        <span v-if="task.owner_handle" class="thread-pane__owner">
-          <UserAvatar :size="20" :name="nameOf(task.owner_handle)" :avatar="avatarOf(task.owner_handle)" />
-          <span class="thread-pane__owner-name">{{
-            t('work.task.ownerChip', { name: nameOf(task.owner_handle) })
-          }}</span>
-        </span>
-        <BaseButton
-          v-guide-anchor="'task-open-page'"
-          icon="mdi-arrow-expand"
-          size="sm"
-          :title="t('work.room.thread.openPage')"
-          :aria-label="t('work.room.thread.openPage')"
-          data-testid="thread-open-page"
-          @click="emit('open-page', task.id)"
-        />
-      </template>
-      <template v-else>
-        <span class="thread-pane__gap" />
-        <BaseButton
-          v-if="root && room.status !== 'archived'"
-          kind="secondary"
-          size="sm"
-          :loading="busy"
-          data-testid="thread-to-task"
-          @click="toTask"
-          >{{ t('work.room.thread.toTask') }}</BaseButton
-        >
-      </template>
-      <BaseButton
-        v-if="!page"
-        icon="mdi-close"
-        size="sm"
-        :title="t('work.room.thread.close')"
-        :aria-label="t('work.room.thread.close')"
-        @click="emit('close')"
-      />
-    </header>
+    <!-- Desktop: the head row tops this column. Phone: it is the top bar's content (useScreenHeader). -->
+    <ThreadHead v-if="!page" v-bind="headBinding" />
 
     <p v-if="error" class="thread-pane__error t-meta" role="alert">{{ error }}</p>
     <template v-else>
@@ -267,53 +236,6 @@ function toTask() {
   min-height: 0;
   height: 100%;
   background: var(--surface);
-}
-.thread-pane__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 48px;
-  padding: 0 12px 0 16px;
-  border-bottom: 1px solid var(--line);
-}
-.thread-pane__icon {
-  flex: none;
-  color: var(--muted);
-}
-.thread-pane__title {
-  flex: 0 1 auto;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.thread-pane__gap {
-  flex: 1 1 0;
-}
-/* 和任务页页头那一格同一个样子：同一件任务，两处写法一样。 */
-.thread-pane__state {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  padding: 1px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--fill);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-.thread-pane__owner {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  padding: 0 4px;
-  color: var(--text);
-  font-size: 13px;
-}
-.thread-pane__owner-name {
-  white-space: nowrap;
 }
 .thread-pane__error {
   padding: 16px;
