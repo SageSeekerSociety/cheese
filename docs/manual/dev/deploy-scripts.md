@@ -120,7 +120,7 @@ covers:
 | `check-app-tier.sh` | 读 `docker ps` 的输出，断言 app 层跑着的镜像 tag 等于给定值；发版和 drift 巡检都用它 |
 | `check-auto-deploy.py` | 只允许不把线上往回退的自动发版；同一版本已在跑、后端只因数据库或 Redis 连不上而不健康时，不再重发同一版本 |
 | `release-device-connection.sh` | 单独替换常驻的设备 WebSocket owner（普通发版永不调它，因为替换会断连接） |
-| `release-gateway.sh` | 网关平面单独发版；只在 GitHub Actions 里跑，且要 `GATEWAY_ALLOW_INTERRUPT=1` 明确承认会断流 |
+| `release-gateway.sh` | 网关平面单独发版，颜色和代理都蓝绿切换、不断流；只在 GitHub Actions 里跑，只有要换地址本身（`gateway-netns`）时才要 `GATEWAY_ALLOW_INTERRUPT=1` |
 | `release-metering-proxy.sh` | 计量代理平面单独发版；同样要求 `METERING_ALLOW_INTERRUPT=1` |
 | `release-cloud-control.sh` | 云机器加密隧道单独发版 |
 
@@ -173,7 +173,7 @@ covers:
 | 计量代理 | `release-metering-proxy.sh` | `.github/workflows/release-metering-proxy.yml` |
 | 云隧道 | `release-cloud-control.sh` | `.github/workflows/release-cloud-control.yml` |
 
-共同点：都要求完整的 40 位 main sha（`^[0-9a-f]{40}$`），都必须显式承认会打断在跑的流；网关和计量那两个脚本干脆只认 GitHub Actions 环境加 `*_ALLOW_INTERRUPT=1`，手动在盒子上跑会被拒。dev 的发版流程在完成 app 层替换后会顺带发一次计量代理（`.github/workflows/deploy-dev.yml` 的 "Release the verified metering image" 一步；它先过 `check-auto-deploy.py --require-ci` 再发）。
+共同点：都要求完整的 40 位 main sha（`^[0-9a-f]{40}$`）。会打断在跑的流的，都必须显式承认；网关和计量那两个脚本只认 GitHub Actions 环境，手动在盒子上跑会被拒。计量代理每次都要 `METERING_ALLOW_INTERRUPT=1`；网关平时发版不断流，只有要换地址本身（`gateway-netns`）时才要 `GATEWAY_ALLOW_INTERRUPT=1`（见[模型网关](/dev/gateway#release)）。dev 的发版流程在完成 app 层替换后会顺带发一次计量代理（`.github/workflows/deploy-dev.yml` 的 "Release the verified metering image" 一步；它先过 `check-auto-deploy.py --require-ci` 再发）。
 
 ## 这些脚本的测试 {#tests}
 

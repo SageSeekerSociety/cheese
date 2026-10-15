@@ -1,7 +1,7 @@
 {
   "backend": [
     "backend/**",
-    "frontend/src/i18n/messages/*/roomNotice.json",
+    "frontend/src/i18n/messages/*/roomNotice/*.json",
     "frontend/src/i18n/messages/*/apiError/*.json",
     "frontend/src/i18n/messages/*/global.json",
     "deploy/metering-proxy/**",
@@ -47,6 +47,7 @@
   ],
   "deploy": [
     "deploy/**",
+    "backend/alembic/versions/**",
     ".github/scripts/ensure-apt.sh",
     ".claude/scripts/pr-watch.sh",
     "backend/scripts/gateway_supply_probe.py",

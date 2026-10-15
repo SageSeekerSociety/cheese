@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 
 from app.api.routes.connector import router as connector_router
 from app.api.routes.execution import router as execution_router
@@ -93,8 +94,12 @@ app.include_router(execution_router, dependencies=[Depends(admit_execution_reque
 
 
 @app.get("/healthz")
-async def healthz() -> dict[str, bool]:
-    return {"ok": True}
+async def healthz() -> JSONResponse:
+    """503 while draining: an owner left draining refuses every call, and a
+    release must replace it rather than take it for a healthy one."""
+    if _release_draining:
+        return JSONResponse({"ok": False, "draining": True}, status_code=503)
+    return JSONResponse({"ok": True})
 
 
 @app.post("/internal/device-connection/release-drain")

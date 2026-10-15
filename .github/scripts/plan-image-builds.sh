@@ -172,7 +172,7 @@ else
     # The backend image carries the sentence catalogs it renders push and
     # desktop notices from (backend/Dockerfile, the `i18n` context).
     case "$changed_path" in
-      frontend/src/i18n/messages/*/roomNotice.json \
+      frontend/src/i18n/messages/*/roomNotice/* \
         | frontend/src/i18n/messages/*/apiError/* \
         | frontend/src/i18n/messages/*/global.json)
         backend=true

@@ -6,7 +6,13 @@
 # stack is brought up once per box and then left alone; app deploys never touch
 # it, and a gateway restart never restarts the app.
 #
-# Released independently by the Release gateway workflow.
+# Released independently by the Release gateway workflow, without dropping a
+# request: callers reach the address `gateway-netns` owns, where a proxy
+# (`gateway-proxy-a` or `-b`) sends them to one of two LiteLLM instances
+# (`litellm-blue`, `litellm-green`). A release starts the idle instance on the
+# new image, moves traffic to it and stops the other once its streams have
+# ended; a proxy change starts the idle proxy beside the running one
+# (deploy/release-gateway.sh). Outside a release one of each runs.
 #
 # What it buys (docs in backend/app/domain/agent/gateway.py):
 #   - real per-project token accounting, which the hooks backends cannot produce
@@ -14,13 +20,78 @@
 #   - a per-project virtual key, so a sandbox never holds the upstream key;
 #   - a budget brake (max_budget) that refuses calls once a grant is spent.
 services:
-  litellm:
+  gateway-netns:
+    # Owns the gateway's address and nothing else: the published port, the
+    # `litellm` alias, the address on `colors`. The proxies run inside its
+    # network namespace, so replacing a proxy leaves the address, and every
+    # connection the other proxy still carries, where they are. A release never
+    # recreates it; a change here cuts every open stream.
+    image: mirror.gcr.io/library/busybox:1.37.0
+    command: ["sh", "-c", "trap 'exit 0' TERM; sleep 2147483647 & wait"]
+    restart: unless-stopped
+    sysctls:
+      # When a proxy is soft-stopped, connections already queued on its
+      # listener move to the other proxy's listener instead of being reset.
+      net.ipv4.tcp_migrate_req: "1"
+    ports:
+      # The docker0 bridge address, NOT 0.0.0.0 and NOT loopback. Sandbox
+      # containers are created by the backend on the default bridge, so they
+      # cannot use the app network alias; loopback is unreachable from any
+      # container. Binding the bridge address reaches every container on the box
+      # while staying off the LAN, which matters because this port carries the
+      # admin API and spends the upstream keys.
+      - "172.17.0.1:4000:4000"
+    networks:
+      # Its published port.
+      default:
+      colors:
+        ipv4_address: 10.213.47.4
+      # The app's network, so the backend reaches the gateway as
+      # http://litellm:4000 (LLM_GATEWAY_ADMIN_BASE).
+      app:
+        aliases:
+          - litellm
+
+  gateway-proxy-a: &gateway-proxy
+    image: mirror.gcr.io/library/haproxy:3.2.25-alpine
+    restart: unless-stopped
+    network_mode: service:gateway-netns
+    logging:
+      driver: journald
+      options:
+        tag: "{{.Name}}"
+    environment:
+      # gateway-proxy.cfg reads the colors' addresses from these.
+      - GATEWAY_BLUE_ADDR=10.213.47.2
+      - GATEWAY_GREEN_ADDR=10.213.47.3
+    volumes:
+      # A directory, not the file: the release replaces haproxy.cfg in it by
+      # rename (deploy/compose/gateway-proxy.cfg), and a file mount would keep
+      # showing the old one.
+      - ${GATEWAY_PROXY_DIR:?set the proxy configuration directory}:/usr/local/etc/haproxy:ro
+      # The colors' states, written by the release before it starts a proxy.
+      - ${GATEWAY_PROXY_STATE_DIR:?set the proxy state directory}:/var/lib/gateway-proxy:ro
+    healthcheck:
+      # Healthy only while a color answers through it: what callers get.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:4000/health/liveliness"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # Checked every second while it starts, so a release waiting for it is
+      # not held up by the 15 s interval.
+      start_period: 60s
+      start_interval: 1s
+
+  gateway-proxy-b: *gateway-proxy
+
+  litellm-blue: &litellm
     # The Dockerfile pins the upstream digest and verifies the patched file hash.
+    # One variable for both colors: a release only ever starts the idle one.
     image: ${GATEWAY_IMAGE:?set the CI-built gateway image}
     restart: unless-stopped
     # journald, for the reason the app containers use it
-    # (docs/infrastructure.md, "Logs"): every release recreates this
-    # container, and a json-file log goes with the container it belonged to.
+    # (docs/infrastructure.md, "Logs"): every release recreates a color, and a
+    # json-file log goes with the container it belonged to.
     logging:
       driver: journald
       options:
@@ -54,26 +125,22 @@ services:
     volumes:
       - ${GATEWAY_CONFIG:?set the release configuration path}:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--port", "4000"]
-    ports:
-      # The docker0 bridge address, NOT 0.0.0.0 and NOT loopback. Sandbox
-      # containers are created by the backend on the default bridge, so they
-      # cannot use the app network alias; loopback is unreachable from any
-      # container. Binding the bridge address reaches every container on the box
-      # while staying off the LAN, which matters because this port carries the
-      # upstream keys and the admin API.
-      - "172.17.0.1:4000:4000"
-    networks:
-      # Its own network for the database, plus the app's, so the backend reaches
-      # it by name. No published port at all: a host binding is either on
-      # loopback (which containers cannot reach — the app is on its own bridge)
-      # or on the bridge address (which exposes the upstream keys and the admin
-      # API to the box's LAN). Joining the network removes the choice.
-      - default
-      - app
+    # A color is stopped only after the proxy has sent it nothing for the whole
+    # drain, so what remains on SIGTERM is LiteLLM writing its queued spend
+    # counters and spend logs to the database. Docker's 10 s default would
+    # SIGKILL a slow flush and lose that spend.
+    stop_grace_period: 60s
+    networks: &litellm-networks
+      # The database, the Redis and the way out to the upstreams. No published
+      # port and not on the app network: callers reach the gateway only
+      # through the proxy.
+      default:
       # The metering proxy's ChatGPT listener, http://metering-proxy:8445, is
       # reachable only here: an internal network with the proxy and this
       # container on it.
-      - meter-gateway
+      meter-gateway:
+      colors:
+        ipv4_address: 10.213.47.2
     healthcheck:
       # This image has Python at this exact path but no curl/wget. A probe whose
       # executable is absent reports the live gateway as unhealthy forever.
@@ -85,6 +152,13 @@ services:
       interval: 15s
       timeout: 8s
       retries: 10
+
+  litellm-green:
+    <<: *litellm
+    networks:
+      <<: *litellm-networks
+      colors:
+        ipv4_address: 10.213.47.3
 
   litellm-db:
     # Its own database rather than a schema in the app's: LiteLLM runs its own
@@ -119,6 +193,15 @@ services:
       retries: 10
 
 networks:
+  # Where the proxy reaches the colors, at addresses fixed here rather than
+  # by name (gateway-proxy.cfg says why). Internal: the colors reach the
+  # upstreams through `default`. The subnet is outside Docker's default pools
+  # (172.17-31.0.0/16, 192.168.0.0/16), so no network the box creates takes it.
+  colors:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.213.47.0/28
   # Created by the app stack (compose project `cheese`); referenced, never owned.
   app:
     external: true

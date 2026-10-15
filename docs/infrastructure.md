@@ -69,7 +69,19 @@ ID, so replacing a backend waiter neither cancels the device call nor prevents a
 replacement backend from collecting its result.
 
 On boxes with `cheese-api-front`, the deploy copies the versioned nginx config,
-checks it, and gracefully reloads nginx before replacing the backend. The exact
+checks it, and gracefully reloads nginx before replacing the backend, but only
+when what api-front would load differs from what it last loaded: the deploy
+keeps a digest of its config files, comments and indentation aside, in
+`.api-front-loaded` in `ACTIVE_BACKEND_DIR`, and a release that changes none of
+them, or only their comments, leaves api-front alone. The record counts only
+while the files on disk still match it: after anything else wrote them (a
+release of an older commit, which reloads by its own rule, or `tls-renew.sh`)
+the next deploy reloads. Deleting the file makes the next deploy take the
+files on disk as what api-front runs; do that only after reloading api-front
+by hand. A reload's old workers
+keep the sockets they carry for up to 24 hours (`worker_shutdown_timeout` in
+`deploy/llm-tunnel/nginx.conf`, the longest idle timeout any of its routes
+grants), so a config change no longer drops every device link and tunnel. The exact
 `/connector/agent` and live-terminal paths go to the owner's loopback port;
 other API paths continue through the active backend switch. Updating the owner
 itself is a separate release operation because it closes the connections it
@@ -80,20 +92,34 @@ waits for the owner to atomically enter draining after all device calls finish,
 and reads the same box-local deploy environment and compose overlays as the app
 deployment.
 
-An app deploy runs the same script itself in one case: its migrations may drop
-schema the owner's image still maps. The owner's models list every column their
-tables had when its image was built, and a query that loads a model asks for
-all of them, so a dropped column fails every such query until the owner is
-released; #3411 left the dev owner answering ~1500 executor calls with 500 that
-way. Before migrating, `hold_owners_behind_schema` in `deploy/deploy-docker.sh`
-runs `deploy/schema-map.py` in the owner and in the release image. A migration
-only drops what the previous release no longer mapped
-(`check-migration-safety.py`), so anything the owner maps and the release does
-not may go. If there is any, the deploy drains the device owner (waiting the
-usual 45 s, then interrupting what still runs), migrates, and recreates it on the
+An app deploy runs the same script itself in one case: its migrations drop,
+rename or alter schema the owner's image maps. The owner's models list every
+column their tables had when its image was built, and a query that loads a
+model asks for all of them, so a dropped column fails every such query until
+the owner is released; #3411 left the dev owner answering ~1500 executor calls
+with 500 that way. Before migrating, `hold_owners_behind_schema` in
+`deploy/deploy-docker.sh` runs `deploy/migration-touches.py` in the release
+image, which reads the database's revision and lists every table and column the
+pending migrations drop, rename or alter (a change it cannot read statically
+counts as touching everything), and runs `deploy/schema-map.py` in each running
+owner. If they meet, the deploy drains the device owner (waiting the usual
+45 s, then interrupting what still runs), migrates, and recreates it on the
 release's image; a failed migration resumes the old owner instead. The preview
-owner, which has no drain, is recreated after the migrations the same way. An
-owner that maps nothing the release dropped is left running.
+owner, which has no drain, is recreated after the migrations the same way. A
+release that only stops mapping a column, the first of the two releases a drop
+takes, leaves the owners running; so does one whose migrations add tables or
+columns or change only tables the owners do not map. The same script reports
+every table and column the database has, and an owner that maps one it lacks
+is released too: migrations commit one by one, so a deploy whose second
+migration failed keeps the first one's drop and resumes the old owner on it,
+and the next deploy no longer lists that migration as pending.
+
+A dispatched release of the image and compose configuration a healthy owner
+already runs leaves it running: replacing it would change nothing it serves
+and close every connection it holds. The configuration is compared by the
+hash compose labels each container with, so a rotated secret or a changed env
+file still releases it. An unhealthy owner on that image is still replaced,
+and the device owner's `/healthz` answers 503 while it is draining.
 
 Each standing owner's database pool is set in the compose file
 (`DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=5` on `device-connection`; `3` and `2` on
@@ -222,9 +248,22 @@ The deploy starts the idle slot of each on the new image, waits for its health
 check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
 `collab` is replaced at once, while the old frontend still runs. After a
-31-second drain (`DEPLOY_DRAIN_SECONDS`) the old slots stop gracefully, in
-parallel: the frontend's nginx gets up to 120 seconds to finish its requests, the
-backend 60 seconds to finish its handover. The next release goes back into the
+31-second drain (`DEPLOY_DRAIN_SECONDS`) the old frontend's nginx gets up to 120
+seconds to finish its requests. The old backend is stopped last, once the
+release has passed its health check, because it may still be relaying model
+streams through `/llm/v1`: those cannot move to the next backend, wait up to
+minutes for a reasoning model's first byte, and run for minutes after it.
+`deploy/wait-model-streams.sh` asks its `/_internal/llm/streams` count every 5
+seconds and lets it stop once that is zero, or 15 minutes after the switch's
+drain (`DEPLOY_MODEL_STREAM_GRACE_SECONDS`), when the stop ends what is left. It
+then gets 60 seconds to finish its handover. A release that fails its health
+check stops it at once, without waiting, so the previous release can go back
+into that slot, and the rollback gives the failed release's streams 30 seconds
+(`DEPLOY_ROLLBACK_MODEL_STREAM_GRACE_SECONDS`); the exit trap stops it without
+waiting on any other way out. The release job waits for all of it, so the next
+release never finds three backends, and its migrations never run under one
+still streaming. The health check leaves the old backend out while it waits.
+The next release goes back into the
 slots this one left. The `-b` services are written at deploy time from
 compose's merged model, after every value the deploy exports, so they carry
 every overlay and differ only in their port and in answering to the service's
@@ -267,11 +306,12 @@ and the next release takes them at its switch. A one-off
 from before the slots is removed by the next release when app-router does not
 send traffic to it, and stops the release when it does.
 
-App-router's `worker_shutdown_timeout` is 240 seconds, longer than the
-handover pause, the drain and the longer graceful stop together (5 + 31 + 120),
-so the workers the one reload
+App-router's `worker_shutdown_timeout` is 1080 seconds, longer than the
+handover pause, the drain, the model-stream wait and the backend's graceful stop
+together (5 + 31 + 900 + 60), so the workers the one reload
 retires keep their connections until the container they lead to stops. Device
-and model connections bypass these workers. The persistent **:18080** entry
+connections and the model tunnel bypass these workers; `/llm/v1` streams do not,
+which is why the deadline covers the wait. The persistent **:18080** entry
 routes to app-router's frontend upstream. Frontends still reach APIs through
 `API_UPSTREAM=host.docker.internal:8081`.
 
@@ -620,7 +660,7 @@ gone:
 # by container name; on a box with an app-router the backend is one of two
 sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "2 hours ago"
 sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
-sudo journalctl -t cheese-metering-proxy -t cheese-gateway-litellm-1 --since today # model traffic
+sudo journalctl -t cheese-metering-proxy -t cheese-gateway-litellm-blue-1 -t cheese-gateway-litellm-green-1 -t cheese-gateway-gateway-proxy-a-1 -t cheese-gateway-gateway-proxy-b-1 --since today # model traffic
 sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "09:00" --until "09:30"
 ```
 

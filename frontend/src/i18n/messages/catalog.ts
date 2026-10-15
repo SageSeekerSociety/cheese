@@ -9,10 +9,12 @@
 export type Messages = { [key: string]: string | Messages }
 
 // 平表命名空间：文件名只表示「这句话是哪个后端模块说的」，不是键的一部分（同一句话
-// 换到别的分片，它的键一个字不用改）。apiError 的键
-// 就是错误码本身（后端 `say("键")`、前端 `apiError.<键>`），所以它在磁盘上分成许多
-// 份，读出来仍是一张平表。见 `docs/i18n.md` 第 2 节。
-const FLAT: ReadonlySet<string> = new Set(['apiError'])
+// 换到别的分片，它的键一个字不用改）。两个都在里面，成因一样：键是后端自己说的那句话
+// 的名字，不是它落在哪条路径上——apiError 的键就是错误码本身（后端 `say("键")`、
+// 前端 `apiError.<键>`），roomNotice 的键是房间那一行的名字（后端 `say("键")`、
+// 前端 `roomNotice.<键>`）。所以它们在磁盘上分成许多份，读出来仍是一张平表。
+// 见 `docs/i18n.md` 第 2 节。
+const FLAT: ReadonlySet<string> = new Set(['apiError', 'roomNotice'])
 
 const isTree = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
