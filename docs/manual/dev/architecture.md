@@ -283,7 +283,7 @@ frontend/src/
   stores/       只放客户端状态：外壳、草稿、偏好
 ```
 
-今天和终点的差：请求侧已经收成一套 —— `src/api.ts`（56 行，只有 `export … from`）加 `src/api/`（按域切的模块，`http.ts` 是传输层），旧的 `src/network/` 已经删掉，ESLint 挡着不让它回来；还差的是 `services/` 里的账户和推送，和 `stores/feedback.ts`（1,708 行）把服务端状态和客户端状态混在一起。
+今天和终点的差：请求侧已经收成一套 —— `src/api.ts`（56 行，只有 `export … from`）加 `src/api/`（按域切的模块，`http.ts` 是传输层），旧的 `src/network/` 已经删掉，ESLint 挡着不让它回来；还差的是 `services/` 里的账户和推送，和 `stores/feedback.ts` 那一层把服务端状态和客户端状态混在一起 —— 那个文件本身已经按职责拆进 `stores/feedback/`，剩下的差事是把服务端那半迁到 `query/`。
 
 ### 数据层 {#frontend-data}
 
@@ -297,7 +297,7 @@ frontend/src/
 - **KeepAlive 里的页面停下观察**：保活页面的查询把 `enabled` 绑到页面在不在屏幕上（`composables/usePageActive.ts`）。
 - **项目推送代替轮询**：项目外框在房间连接上订阅这个项目（`query/projectFeed.ts`），频道清单的哪一行、未读、私聊未读、提醒档位哪一样变了就重读哪一样；订上和每次重连时四样各读一次。频道清单那一行重读回来后按最后有动静的时刻挪到该在的位置。任务概览的清单由任务连接上的 `todo` 帧直接放进缓存。
 - **聊天时间线不迁**：双向翻页、跳到中间、实时追加、发送中的消息、按 id 合并，`useInfiniteQuery` 给不了；时间线留在 `useTimeline` / `useChatPaging`，只有每个房间最新那一段窗口在缓存里（`query/blocks.ts`），打开房间、预取、未读增加时的后台预取共用它。
-- **还没迁的**：反馈中心（`stores/feedback.ts`）、管理后台、空间、资料库。
+- **还没迁的**：反馈中心（服务端那半，`stores/feedback/`）、管理后台、空间、资料库。
 
 | 方案 | 结论 |
 |---|---|
