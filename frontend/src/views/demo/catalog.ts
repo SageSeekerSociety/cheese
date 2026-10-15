@@ -681,9 +681,10 @@ export const CATALOG: CatalogEntry[] = [
     about: '反馈列表里的一行：正文那一块整块点进详情，支持按钮在链接外面。',
     file: 'src/components/feedback/FeedbackCard.vue',
     component: FeedbackCard,
-    // 支持那颗按钮读反馈 store（`toggleSupport`），所以 store 要在场；路由是给正文
-    // 那条链接用的（不装就画成一行点不动的字）。Vuetify 是按钮和图标要的。
-    needs: ['vuetify', 'pinia', 'router'],
+    // 支持那颗按钮**只发事件**（`support`，带 id），请求由渲染它的页面发 —— 所以这一件
+    // 不再需要 pinia 在场，这也正是它自己能单独挂起来的原因。路由是给正文那条链接用的
+    // （不装就画成一行点不动的字）。Vuetify 是按钮和图标要的。
+    needs: ['vuetify', 'router'],
     states: [
       {
         name: '一行',
