@@ -211,6 +211,12 @@ class RequiredCITest(unittest.TestCase):
                 self.assertTrue(gate.select([path])["frontend"])
         self.assertFalse(gate.select([".claude/scripts/check.sh"])["frontend"])
 
+    def test_the_digest_is_what_carries_a_route_change_into_the_frontend_suite(self):
+        self.assertTrue(gate.select(["backend/openapi.sha256"])["frontend"])
+        self.assertFalse(
+            gate.select(["backend/app/api/routes/projects.py"])["frontend"]
+        )
+
     def test_combined_merge_group_checks_every_changed_area(self):
         selected = gate.select(["frontend/src/main.ts", "cli/main.go"])
         self.assertTrue(all(selected[k] for k in ("frontend", "cli", "e2e")))
