@@ -180,7 +180,9 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
   reason fails.
 - The gate is two commands, seconds each, runs anywhere: `pnpm exec vitest run
   --dir src/i18n` and `pnpm run lint:i18n` (Chinese typed into `src/` outside the
-  catalog, none allowed except annotated data lines).
+  catalog, none allowed except annotated data lines; a Chinese HTML comment in a
+  template is counted against `frontend/i18n-comments-baseline.json`, which only
+  goes down — `pnpm run lint:i18n:update` after removing some).
 
 ## The two ratchets
 
