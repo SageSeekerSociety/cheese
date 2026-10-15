@@ -80,17 +80,21 @@ from app.domain.agent.gateway_models_helpers import (
     _PRICE_KEYS,  # noqa: F401
     _ZERO_USAGE,  # noqa: F401
     _api_base_for,
-    _bare_upstream,  # noqa: F401 — 这里不用，留着是给按原路径取名字的调用方
+    # `_bare_upstream` 是这批重导出里唯一真被本模块用到的名字（`update_source`
+    # 换协议、不换模型名时用它剥前缀），所以它不带 noqa，其余几个才是纯重导出。
+    _bare_upstream,
     _config_yaml,
     _daily_model_row,
     _daily_tokens,
     _host_of,
-    _is_key_field,  # noqa: F401 — 同上
+    # `_is_key_field`、`_price_is_positive` 也只被搬走的函数读，本模块不再引用；
+    # 留着同样是给按原路径取名字的调用方。
+    _is_key_field,  # noqa: F401
     _item_from_payload,
     _key_snapshot,
     _model_snapshot,
     _offered_reasons,
-    _price_is_positive,  # noqa: F401 — 同上
+    _price_is_positive,  # noqa: F401
     _prices_for_gateway,
     _redact,
     _refuse_config_source,
