@@ -31,6 +31,7 @@ from app.api.admin_deps import PlatformAdminDep
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
+from app.core.deleted_accounts import ClosedAccountGuard
 from app.core.errors import register_exception_handlers
 from app.core.metrics import active_requests, registry
 from app.core.obs import (
@@ -587,6 +588,9 @@ app.add_middleware(EndBusinessSocketsAtHandover)
 # to read it; inside `request_context`, so a 429 is in the access log like any
 # other answer. Pure ASGI: see `app/core/request_limits.py`.
 app.add_middleware(RequestLimits)
+
+# Inside CORS for the same reason: a closed account's refusal must be readable.
+app.add_middleware(ClosedAccountGuard)
 
 app.add_middleware(
     CORSMiddleware,

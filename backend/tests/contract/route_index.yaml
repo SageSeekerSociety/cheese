@@ -42,6 +42,7 @@ auth_entries:
   review.comment: "review_comments: task_conversation (or, for /review-comments/{comment_id}, the comment's task place) resolves the actor in the task room and authorize_topic; _person rejects unauthenticated callers and agent credentials. ReviewCommentService decides who may write (task owner, reviewer, contributors, the pending card's reviewer) and that only the author edits or deletes a draft. Source: app/api/routes/review_comments.py and domain/review/comments.py."
   review.download: "accept.download_card_deliverable resolves the card project and authorize_project before artifact snapshot delivery. It is the project access path rather than _task_actor. Source: app/api/routes/accept.py."
   team.member.read: "authenticated(require_permission rejects guest, then checks Action.READ, Resource.TEAM_MEMBERSHIP, 'teamId'): the caller is a member of the team. Source: app/api/routes/credit_usage.py, app/auth/checker.py."
+  account.close: "users_account_close.close_my_account: Depends(require_auth_user), then the typed username must equal the caller's own, then a sudo ticket for account:delete is spent (users_common._spend_sudo_ticket); it closes only the caller's account. Source: app/api/routes/users_account_close.py; app/domain/account/deletion.py."
   user.session: "Depends(require_auth_user) rejects guest after numeric-account access-token verification (or X-User-Id only in non-compose development/test); this shared numeric seam does not itself consult sign-in session revocation. Domain service and cited handler retain ownership checks. get_auth_user alone is not used as a synonym. Source: app/auth/checker.py and app/common/auth.py."
   assistant.task: "assistant AuthUser -> require_auth_user, _readable_task -> tasks.ensure_task_readable for task-scoped operations; conversation _owned binds user_id for reads/asks. Source: app/api/routes/assistant.py,73,106."
   controller.room: "agent_control.controller: resolve in canonical room/project, explicitly require authenticated actor, authorize_topic(enforce=True). Source: app/api/routes/agent_control.py."
@@ -373,6 +374,7 @@ owners:
   account.admission: "Registration admission credentials; domain/invite/InviteCodeService, managed through platform-admin approval."
   user.2fa: "Account second factor and recovery codes; domain/user credential services."
   user.realname: "Real-name identity and access history; domain/user/realname_services.py."
+  account: "Closing an account (注销) and telling closed accounts' handles apart; domain/account/deletion.py."
   passkey: "Passkey credentials/enrollment/assertion; domain/passkey/PasskeyService, composed with user session issue."
   user.password: "Account passwords/recovery; domain/user password/reset services and sessions."
   user.sessions: "Sign-in sessions and trusted browsers; domain/user/sessions.py and trusted_devices.py."
@@ -432,6 +434,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/admin/users", auth: "platform.admin", owner: "admin"}
   - {protocol: "http", method: "POST", path: "/admin/admins", auth: "platform.admin", owner: "admin"}
   - {protocol: "http", method: "DELETE", path: "/admin/admins/{target}", auth: "platform.admin", owner: "admin"}
+  - {protocol: "http", method: "DELETE", path: "/admin/users/{handle}", auth: "platform.admin", owner: "account"}
   - {protocol: "http", method: "GET", path: "/admin/plans", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "GET", path: "/admin/plans/models", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "POST", path: "/admin/plans", auth: "platform.admin", owner: "usage.plans"}
@@ -1290,6 +1293,8 @@ routes:
   - {protocol: "http", method: "PUT", path: "/users/{userId}/identity", auth: "legacy.users_identity.put_user_identity", owner: "user.realname"}
   - {protocol: "http", method: "PATCH", path: "/users/{userId}/identity", auth: "legacy.users_identity.put_user_identity", owner: "user.realname"}
   - {protocol: "http", method: "DELETE", path: "/users/{userId}/identity", auth: "legacy.users_identity.delete_user_identity", owner: "user.realname"}
+  - {protocol: "http", method: "DELETE", path: "/users/me", auth: "account.close", owner: "account"}
+  - {protocol: "http", method: "GET", path: "/closed-accounts", auth: "user.session", owner: "account"}
   - {protocol: "http", method: "GET", path: "/users/{userId}/identity/access-logs", auth: "legacy.users.patch_user_profile", owner: "user.realname"}
   # app.api.routes.users_passkey
   - {protocol: "http", method: "POST", path: "/users/{userId}/passkeys/options", auth: "legacy.users_passkey.passkey_register_challenge", owner: "passkey"}

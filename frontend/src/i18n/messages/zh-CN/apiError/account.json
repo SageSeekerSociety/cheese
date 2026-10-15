@@ -28,5 +28,8 @@
   "tokenOtherTopic": "这个 token 属于别的频道，不能在这里操作",
   "topicMemberOnly": "你不是这个频道的成员，无权在此操作",
   "twoFactorUnavailable": "暂时无法完成两步验证，请稍后重试",
-  "usernameReserved": "该用户名是平台保留字，请换一个"
+  "usernameReserved": "该用户名是平台保留字，请换一个",
+  "accountCloseUsernameMismatch": "输入的用户名和你的账号不一致",
+  "accountCloseNotOwnViaAdmin": "不能在管理后台注销你自己的账号，请在个人设置中注销",
+  "accountAlreadyClosed": "这个账号已经注销"
 }

@@ -152,6 +152,10 @@ export namespace UserApi {
   export const deleteRealNameInfo = (userId: number, sudoTicket: string) =>
     axiosMutation({ url: `/users/${userId}/identity`, method: 'DELETE', data: { sudoTicket } }, true)
 
+  /** Close the signed-in account for good, after the person typed their username. */
+  export const closeAccount = (username: string, sudoTicket: string) =>
+    axiosMutation({ url: '/users/me', method: 'DELETE', data: { username, sudoTicket } }, true)
+
   export const getRealNameAccessLogs = (userId: number, pageStart?: number, pageSize: number = 20) =>
     axiosRequest<{ logs: UserIdentityAccessLog[]; page: Page }>(
       {

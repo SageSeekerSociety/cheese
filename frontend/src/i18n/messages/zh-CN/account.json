@@ -250,7 +250,8 @@
       "unbindOAuthConnection": "解除第三方账号关联",
       "viewRealName": "查看完整实名信息",
       "updateRealName": "修改实名信息",
-      "deleteRealName": "删除实名信息"
+      "deleteRealName": "删除实名信息",
+      "closeAccount": "注销账号"
     },
     "sendEmailCode": "发送邮箱验证码",
     "sendFailed": "发送失败，稍后重试",
@@ -348,7 +349,16 @@
     "unlinkFailed": "解除关联失败，稍后重试",
     "lastWayIn": "这是你唯一的登录方式。先设置密码或添加通行密钥",
     "loadFailed": "部分信息加载失败，刷新页面",
-    "methodEmailCode": "邮箱验证码登录"
+    "methodEmailCode": "邮箱验证码登录",
+    "closeTitle": "注销账号",
+    "closeNote": "注销后不能恢复。你的登录方式、个人资料、实名信息和接入的设备都会删除；你在共享项目里发过的消息和文档会保留，署名显示为「已注销用户」。你的邮箱可以再注册新账号，用户名不能再用。",
+    "closeButton": "注销账号",
+    "closeDialogTitle": "确认注销账号",
+    "closeDialogBody": "这一步不能撤销。请输入你的用户名 {username} 确认。",
+    "closeUsernameLabel": "用户名",
+    "closeConfirm": "永久注销",
+    "closeFailed": "注销失败",
+    "closed": "账号已注销"
   },
   "profile": {
     "title": "个人资料",
@@ -764,5 +774,6 @@
       "removeOld": "旧版连接程序未能移除，无法接入这台设备",
       "busy": "这台设备正在接入，稍后重试"
     }
-  }
+  },
+  "closedUser": "已注销用户"
 }

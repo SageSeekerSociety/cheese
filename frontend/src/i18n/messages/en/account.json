@@ -250,7 +250,8 @@
       "unbindOAuthConnection": "unlink a connected account",
       "viewRealName": "view your full real-name information",
       "updateRealName": "change your real-name information",
-      "deleteRealName": "delete your real-name information"
+      "deleteRealName": "delete your real-name information",
+      "closeAccount": "close your account"
     },
     "sendEmailCode": "Email me a code",
     "sendFailed": "Couldn't send the code. Try again.",
@@ -348,7 +349,16 @@
     "unlinkFailed": "Could not unlink. Try again.",
     "lastWayIn": "This is your only way to sign in. Set a password or add a passkey first.",
     "loadFailed": "Some details could not load. Refresh the page.",
-    "methodEmailCode": "Email code sign-in"
+    "methodEmailCode": "Email code sign-in",
+    "closeTitle": "Close account",
+    "closeNote": "This can't be undone. Your sign-in methods, profile, real-name record and connected devices are deleted; messages and documents you wrote in shared projects stay, signed as “Closed account”. Your email can register a new account; your username can't be used again.",
+    "closeButton": "Close account",
+    "closeDialogTitle": "Close your account?",
+    "closeDialogBody": "This can't be undone. Type your username {username} to confirm.",
+    "closeUsernameLabel": "Username",
+    "closeConfirm": "Close for good",
+    "closeFailed": "Couldn't close the account",
+    "closed": "Your account is closed"
   },
   "profile": {
     "title": "Profile",
@@ -764,5 +774,6 @@
       "removeOld": "The old connector wasn't removed, so this device can't connect",
       "busy": "This device is already connecting. Try again later"
     }
-  }
+  },
+  "closedUser": "Closed account"
 }

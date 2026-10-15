@@ -116,11 +116,13 @@ class UserRepository:
 
     async def is_username_taken(self, username: str) -> bool:
         """Case-insensitive, matching ``uq_user_username_lower`` — and a team's
-        handle takes the name too: users and teams share one namespace."""
+        handle takes the name too: users and teams share one namespace.
+
+        A closed account keeps its name for good (``app.domain.account.deletion``):
+        rooms, rosters and reviews still name it, and a newcomer under that name
+        would inherit them."""
         lowered = username.lower()
-        user = select(User.id).where(
-            func.lower(User.username) == lowered, User.deleted_at.is_(None)
-        )
+        user = select(User.id).where(func.lower(User.username) == lowered)
         team = select(Team.id).where(
             func.lower(Team.handle) == lowered, Team.deleted_at.is_(None)
         )

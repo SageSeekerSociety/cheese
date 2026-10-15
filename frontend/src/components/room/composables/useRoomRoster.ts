@@ -31,6 +31,8 @@ export function useRoomRoster(options: {
   author: string
   /** 名册拉不到时说给用户听——静默的表现是「@ 不出芝士」而屏幕上没有解释。 */
   onError: (message: string) => void
+  /** 已注销账号的 handle：它们留下的消息署「已注销用户」，不署那个 handle。 */
+  closed?: () => ReadonlySet<string>
 }) {
   // 这个房间里有谁。
   //
@@ -190,7 +192,9 @@ export function useRoomRoster(options: {
   }
   function displayName(m: Block): string {
     if (isAgentBlock(m)) return agentDisplayName(m.author)
-    return memberByHandle.value.get(m.author)?.name || m.author
+    const name = memberByHandle.value.get(m.author)?.name
+    if (name) return name
+    return options.closed?.().has(m.author) ? t('account.closedUser') : m.author
   }
   // 真头像加载失败过的 URL —— 退回彩色首字母，不留破图。
   //

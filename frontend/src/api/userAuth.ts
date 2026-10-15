@@ -70,6 +70,7 @@ export namespace UserAuthApi {
     | 'realname:view'
     | 'realname:update'
     | 'realname:delete'
+    | 'account:delete'
 
   export interface TOTPAuthResponseDataType extends AuthResponseDataType {
     requires2FA: boolean

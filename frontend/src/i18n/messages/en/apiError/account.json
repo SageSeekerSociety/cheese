@@ -28,5 +28,8 @@
   "tokenOtherTopic": "This token belongs to another channel and can't be used here",
   "topicMemberOnly": "You're not a member of this channel, so you can't do this here",
   "twoFactorUnavailable": "Two-step verification isn't available right now. Try again later",
-  "usernameReserved": "This username is reserved by the platform. Choose another"
+  "usernameReserved": "This username is reserved by the platform. Choose another",
+  "accountCloseUsernameMismatch": "The username you typed doesn't match your account",
+  "accountCloseNotOwnViaAdmin": "You can't close your own account from the admin console; close it from your settings",
+  "accountAlreadyClosed": "This account has already been closed"
 }
