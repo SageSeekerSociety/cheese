@@ -140,6 +140,38 @@ def test_backend_lint_is_a_separate_hosted_job():
     )
 
 
+def test_the_pre_push_added_hook_stays_out_of_the_commit_gate():
+    """`openapi-document` is the one check the pre-push entry point adds on top of
+    the draft tier's selection: before this, the push was the first thing to build
+    the API document, and it red `backend / static` for a digest or a ratchet the
+    author never saw. Building takes ~23 s, which is why it must never join a
+    commit gate — `stages: [manual]` is the only thing keeping it out, and it is
+    declared in a file no test of the entry point reads. CI runs the same command
+    as a step of the `static` job (test.yml) instead of through pre-commit, so the
+    two ends are pinned to one `--check`.
+    """
+    config = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())
+    declared = {h["id"]: h for repo in config["repos"] for h in repo["hooks"]}
+    hook = declared.get("openapi-document")
+    assert hook, _rule("openapi-document 没在 .pre-commit-config.yaml 里声明")
+    assert hook.get("stages") == ["manual"], _rule(
+        "openapi-document 不在 manual 阶段——它会进提交闸门，每次提交白付 23s"
+    )
+    assert hook.get("files") == "^backend/", _rule(
+        "openapi-document 的 files 不再只管 backend——前端改动也会付这 23s"
+    )
+    assert "export_openapi --check" in hook.get("entry", ""), _rule(
+        "openapi-document 跑的已经不是 CI 那一步的 export_openapi --check"
+    )
+    static = load_workflow("test.yml")["jobs"]["static"]
+    step = step_named(
+        static, "OpenAPI document builds, digest and untyped ratchet hold"
+    )
+    assert "export_openapi --check" in step["run"], _rule(
+        "static job 里那一步和本地钩子不再跑同一条命令"
+    )
+
+
 def test_merged_checks_are_not_hidden_by_an_earlier_failure():
     static = load_workflow("test.yml")["jobs"]["static"]
     for name in (
