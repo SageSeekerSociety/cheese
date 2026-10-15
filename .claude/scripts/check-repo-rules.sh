@@ -405,15 +405,22 @@ check_room_derived_agent_handle() {
 #
 # The environment is chosen per FILE, so this reads the file's own text and not
 # the config: a spec that forgets the pragma still passes, and nothing else in
-# the build can tell the difference. Position does not matter — vitest 5 matches
-# the pragma against the whole file (its detectCodeBlock runs on the raw text),
-# so a check that looked only at the top would report specs that run under jsdom
-# perfectly well.
+# the build can tell the difference. What decides the environment is the FIRST
+# annotation anywhere in the raw text — vitest 5.0.3's detectCodeBlock runs
+# `content.match(/@(?:vitest|jest)-environment\s+([\w-]+)\b/)` over the whole
+# file — so a check that looked only at the top reports specs that run under
+# jsdom perfectly well, and one that asks whether jsdom appears anywhere clears
+# a spec whose first pragma names happy-dom. Both ends of that regex are
+# reproduced here: the name starts at the first annotation, and ends at the
+# first character that cannot be in one.
 check_dompurify_specs_use_jsdom() {
-  local f files=()
+  local f files=() first
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    grep -qE '@(vitest|jest)-environment[[:space:]]+jsdom([[:space:]]|$)' "$f" || files+=("$f")
+    # Newlines to spaces first: vitest's `\s+` crosses them, grep's does not.
+    first="$(tr '\n' ' ' < "$f" \
+      | grep -oE '@(vitest|jest)-environment[[:space:]]+[A-Za-z0-9_-]+' | head -n 1 || true)"
+    case "$first" in *[[:space:]]jsdom) ;; *) files+=("$f") ;; esac
   done < <(grep -rlE --include='*.spec.ts' 'DOMPurify|\.sanitize\(' "$ROOT/frontend/src" 2>/dev/null || true)
   [ ${#files[@]} -eq 0 ] && return 0
   echo "FAIL: a spec on DOMPurify that does not run under jsdom"
@@ -761,6 +768,23 @@ if [ "$SELF_TEST" = 1 ]; then
   printf "import DOMPurify from 'dompurify'\n\n// c\n// c\n// c\n// @vitest-environment jsdom\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
     > "$tmp/frontend/src/utils/clean.spec.ts"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a pragma below the imports must pass"
+  # It is the FIRST annotation that decides, so a file that names happy-dom and
+  # only mentions jsdom further down runs under happy-dom however this guard
+  # reads it — "jsdom appears somewhere in here" would clear that file.
+  printf "// @vitest-environment happy-dom\nimport DOMPurify from 'dompurify'\n\n// not @vitest-environment jsdom\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a later jsdom must not clear a file whose first pragma is happy-dom"
+  # What ends the name is vitest's business and not this file's: it stops at the
+  # first character that cannot be in one, so a block comment closing straight
+  # after `jsdom` still selects jsdom and must not be reported.
+  printf "/* @vitest-environment jsdom*/\nimport DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a pragma closed by a block comment must pass"
+  # And vitest's `\s+` crosses a newline, so the file has to be on one line
+  # before the name is read — otherwise a spec vitest runs under jsdom is red.
+  printf "/* @vitest-environment\njsdom */\nimport DOMPurify from 'dompurify'\n\nexpect(DOMPurify.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
+    > "$tmp/frontend/src/utils/clean.spec.ts"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a pragma split across two lines must pass"
   # Either spelling triggers, so a spec that reaches the sanitiser through an
   # alias — and never writes the library's name — is still this guard's business.
   printf "import dp from 'dompurify'\n\nexpect(dp.sanitize('<b>x</b>')).toBe('<b>x</b>')\n" \
@@ -796,6 +820,13 @@ if [ "$SELF_TEST" = 1 ]; then
   printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/*.py ./scripts/\n' \
     > "$tmp/backend/Dockerfile"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an image that copies the whole directory must stand down"
+  # The other way to say the same thing, and the one where the directory branch
+  # is the only thing between a correct document and a red build: the stage does
+  # name a file, so there is a set to compare against — and the module the
+  # release step names, beta_two, is not in it.
+  printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha_one.py ./scripts/\nCOPY --chown=cheese:python scripts/ ./scripts/\n' \
+    > "$tmp/backend/Dockerfile"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an image that takes the whole directory must stand down even when it also names a file"
   printf 'FROM python:3.12-slim AS production\nCOPY --chown=cheese:python scripts/alpha_one.py ./scripts/\n' \
     > "$tmp/backend/Dockerfile"
   # `uv run` is a checkout command — the source tree is right there — so a
