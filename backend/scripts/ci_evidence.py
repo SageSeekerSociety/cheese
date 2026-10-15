@@ -14,13 +14,13 @@ signal. A worker that died mid-case is the one whose file ends on a ``start``.
 A lost worker also ends the run. xdist replaces a crashed worker, and under a
 scheduler that hands out one work unit at a time (``--dist loadfile``, which the
 CI uses, plus loadscope and loadgroup) that replacement can stall: a worker
-takes the next index before running the case it holds, and the scheduler sends
-the next unit only after a completed case, so a replacement handed fewer than
-two runnable cases waits for one that never comes. Seen when the worker died on
-a one-case module, on a module's last case, and on a unit the crash had already
-finished; the shard then sits until the job's ceiling, which is the freeze
-#3005 reports. Handed two or more cases, a replacement runs them and the shard
-finishes.
+takes the next index before running the case it holds, so it needs an index
+beyond its last runnable case, and the scheduler sends the next unit only after
+a completed case. A dead worker's units return to the queue whole, finished ones
+included, so a replacement can be sent a unit with nothing left to run and wait
+for an index that never comes: seen when the worker died on a one-case module,
+on a module's last case, and on a unit the crash had already finished. The shard
+then sits until the job's ceiling, which is the freeze #3005 reports.
 
 The case that was lost ends the shard either way: those schedulers leave
 ``mark_test_pending`` unimplemented, so ``--reruns`` fails a case whose worker
@@ -55,8 +55,9 @@ _HANG_LOG = pytest.StashKey[object]()
 _PENDING = pytest.StashKey[str]()
 
 # Schedulers that hand a worker a whole work unit at a time: loadfile groups by
-# module, loadscope by scope, loadgroup by xdist_group. The others (load,
-# worksteal) send a case at a time and can requeue one whose worker died.
+# module, loadscope by scope, loadgroup by xdist_group. These, and each, leave
+# mark_test_pending unimplemented, so a case whose worker died cannot be
+# requeued; only load and worksteal send a case at a time and requeue it.
 _SCOPE_SCHEDULERS = ("loadfile", "loadscope", "loadgroup")
 
 
