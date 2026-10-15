@@ -68,30 +68,30 @@ const props = withDefaults(defineProps<PreviewViewProps>(), {
   docPageHtml: null,
 })
 const emit = defineEmits<{
-  (e: 'frame-load', id: number, event: Event): void
-  (e: 'frame-error', id: number, event: Event): void
+  'frame-load': [id: number, event: Event]
+  'frame-error': [id: number, event: Event]
   /** ⋯ 里的刷新和首屏那次加载走同一条路，只是不转圈。 */
-  (e: 'refresh'): void
+  refresh: []
   /** 下载当前这一份：地址和文件名都在取数那一层。 */
-  (e: 'download'): void
+  download: []
   /** 这一份的字节变了（编辑器关了、修订处理完了、恢复了一版），按新版本重取。 */
-  (e: 'document-changed'): void
+  'document-changed': []
   /** 读者指着文档里的一处提了一句话，交给房间的对话。 */
-  (e: 'locate', payload: PreviewLocate): void
+  locate: [payload: PreviewLocate]
   /** 编辑器打开了一份文件：开成自由区的一个页签。 */
-  (e: 'open-file', path: string): void
+  'open-file': [path: string]
   /** 圈选开关变了：有桥的网页要把它递进帧（取数那一层把消息送过去）。 */
-  (e: 'pick-mode', on: boolean): void
+  'pick-mode': [on: boolean]
   /** 按了「编辑」：开哪一份的编辑会话由外面记。 */
-  (e: 'open-editor', path: string): void
+  'open-editor': [path: string]
   /** 编辑器关了（或者按了叉）：外面要收掉会话并让这一页按新版本重取。 */
-  (e: 'close-editor'): void
+  'close-editor': []
   /** 文档条上按了「历史」：那一栏的开合由外面记（编辑器那一栏也归它管）。 */
-  (e: 'toggle-history'): void
+  'toggle-history': []
   /** 文档条上换了一种读法（印出来的样子 / 网页）：取数那一层从此按那一种去取。 */
-  (e: 'toggle-doc-page'): void
+  'toggle-doc-page': []
   /** 点了一个人名（历史栏、编辑器上那句「谁改的」）：去他的主页由会读路由的那一层做。 */
-  (e: 'mention-click', handle: string): void
+  'mention-click': [handle: string]
 }>()
 
 const panelElement = ref<HTMLElement | null>(null)

@@ -56,14 +56,14 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'edit-overview'): void
-  (e: 'open-task', task: { taskId: string; roomId: string }): void
+  'edit-overview': []
+  'open-task': [task: { taskId: string; roomId: string }]
   // 鼠标左键按下去了：任务页的代码是懒加载的，等松开再下就白等这几十毫秒
   //（和侧栏任务行的 `press` 同一条）。
-  (e: 'press-task', task: { taskId: string; roomId: string }): void
-  (e: 'open-artifact', artifactId: string): void
-  (e: 'all-tasks'): void
-  (e: 'retry-progress'): void
+  'press-task': [task: { taskId: string; roomId: string }]
+  'open-artifact': [artifactId: string]
+  'all-tasks': []
+  'retry-progress': []
 }>()
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')

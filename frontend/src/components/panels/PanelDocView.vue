@@ -172,14 +172,14 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
-  (e: 'mention-click', handle: string): void
-  (e: 'open-file', path: string): void
+  'open-topic': [topicId: string]
+  'mention-click': [handle: string]
+  'open-file': [path: string]
   /** 资料库文档的标题改成了这样。 */
-  (e: 'rename', title: string): void
-  (e: 'delete'): void
-  (e: 'mention-outside-add'): void
-  (e: 'mention-outside-dismiss'): void
+  rename: [title: string]
+  delete: []
+  'mention-outside-add': []
+  'mention-outside-dismiss': []
 }>()
 
 /** 大标题：对话的名字，或者资料库文档自己的名字（没起名时是「未命名文档」）。 */
