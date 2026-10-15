@@ -294,7 +294,9 @@ async def ask(
     try:
         async with factory() as db:
             await question.admit(db, asked.project_id, bound)
-            around = await question.surroundings(db, asked, seat=bound.agent_handle)
+            around = await question.surroundings(
+                db, asked, seat=bound.agent_handle, asker=asker
+            )
     except ValidationError as exc:
         # Refused before anything was asked: the refusal is what the box says.
         await slot.release()

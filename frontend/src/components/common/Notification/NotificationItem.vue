@@ -1,5 +1,5 @@
 <template>
-  <!-- One entry of the activity feed, drawn as the 待办 page's row (`InboxRow`): the
+  <!-- One entry of the activity feed, drawn as the inbox page's row (`InboxRow`): the
        sender (or a mark for the kind) on the left, this type's renderer in the middle,
        the time on the right, swapped for mark-read / delete under the pointer. Opening
        it goes where it points and marks it read. -->

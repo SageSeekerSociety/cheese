@@ -15,6 +15,8 @@ from typing import Annotated
 from fastapi import Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.audience import rooms_its_audience_may_read
+from app.auth.audience import seats_only as _private
 from app.auth.project_access import (
     may_read_project,
     may_write_project,
@@ -100,12 +102,6 @@ def _token_verifier(token: str) -> TokenIdentity | None:
     return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
 
 
-def _private(topic: Topic | None) -> bool:
-    """Whether only the room's own seats may read it: a private chat (the one
-    place this file reads that flag), or a private channel."""
-    return bool(topic and (topic.is_private or topic.members_only))
-
-
 class ActorResolver:
     """Per-request resolver. Reads the human bearer token + agent scoped token,
     then resolves/authorizes against the DB."""
@@ -128,6 +124,10 @@ class ActorResolver:
         # or a room of one, is refused while that project is archived — here,
         # once, so that no write route can forget to ask (see ``resolve``).
         self._writes = writes
+        self._project_credential = False
+        # Set when a delegated answer is shown to a document's readers: the
+        # document's task, or None for a document of no task.
+        self._answer_for_readers: tuple[uuid.UUID | None] | None = None
         self._bearer = bearer
         self._cheese_token = cheese_token
         # A ``cheese`` call made from inside a self-hosted device screen carries that
@@ -206,6 +206,10 @@ class ActorResolver:
                 raise ForbiddenError(say("tokenOtherTopic"))
         if not read_only:
             await self._refuse_archived_write(project_id=project_id, topic_id=topic_id)
+        if claims.shown_to_readers:
+            self._answer_for_readers = (
+                uuid.UUID(claims.topic_id) if claims.topic_id else None,
+            )
         return Actor(handle=claims.handle, user_id=claims.user_id, via="delegated")
 
     def credential_agent(self) -> str | None:
@@ -273,6 +277,7 @@ class ActorResolver:
         # traffic pays for neither the parse nor the extra read.
         credential_project: uuid.UUID | None = None
         if looks_like_project_agent_credential(self._cheese_token):
+            self._project_credential = True
             credential_project = project_id or (
                 await self.project_of_topic(topic_id) if topic_id else None
             )
@@ -718,7 +723,7 @@ class ActorResolver:
                 member = await self._is_project_member(pid, handle)
             return member
 
-        return {
+        readable = {
             room_id
             for room_id, private in rooms
             if await authorize_topic_access(
@@ -730,6 +735,28 @@ class ActorResolver:
                 seats_only=private,
             )
         }
+        if self._writes or not readable:
+            return readable
+        # An agent's reads end up in its answer: only what everyone the answer
+        # reaches may read themselves (``app.auth.audience``).
+        conversation = self.turn_conversation(actor)
+        if conversation is not None:
+            answer_room = await conversations.room_of(self._session, conversation)
+        elif self._project_credential and actor.via == "cheese":
+            answer_room = None
+        elif self._answer_for_readers is not None and actor.via == "delegated":
+            (task,) = self._answer_for_readers
+            answer_room = (
+                await conversations.room_of(self._session, task) if task else None
+            )
+        else:
+            return readable
+        return readable & await rooms_its_audience_may_read(
+            self._session,
+            project_id=project_id,
+            answer_room=answer_room,
+            room_ids=list(readable),
+        )
 
     async def topic_admits_handle(
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID, handle: str
@@ -743,8 +770,9 @@ class ActorResolver:
         to somebody this answers yes about).
 
         The rule is not restated here. The handle is swapped on the actor and the
-        door's own method answers, which keeps ONE read of ``is_private`` in this
-        file (``tests/unit/test_is_private_read_points.py`` is a ratchet: a
+        door's own method answers, which keeps the one read of ``is_private``
+        where it is (``seats_only``; ``tests/unit/test_is_private_read_points.py``
+        is a ratchet: a
         second read point is a second declaration of the same fact, and two
         declarations drift). What is taken as given is the credential half only —
         a handle in a body presents nothing, and this asks whether the room would

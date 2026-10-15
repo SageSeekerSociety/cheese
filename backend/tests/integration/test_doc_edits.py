@@ -1,11 +1,9 @@
-"""The task's agent changes passages of its living document, and whether a
-change is made or only proposed depends on who asked for it.
+"""The task's agent changes passages of its living document the way a person
+does: its edits are made and are its own, whoever started its turn and whoever
+wrote the text it changes. It proposes them as suggestions only when it says
+so.
 
-- Someone asked (the agent's turn was started by a person): the change is made
-  and recorded as made for them — 「<@alice> 让芝士改了文档」.
-- Nobody asked (a platform-started turn, such as the document-upkeep nudge):
-  rewriting what a person wrote becomes a suggestion; adding new text, or
-  changing what the agent itself wrote, is still made directly.
+- An edit records no one but its editor: no "who asked for it".
 - A person editing a passage (restoring one change) edits as themselves.
 - A change that lands on a pending suggestion: one an agent seat left is
   dropped and the change goes in, one a person left is refused. The same holds
@@ -137,9 +135,9 @@ def _history(client, task: str) -> list[dict]:
     ).json()["data"]["versions"]
 
 
-def test_an_edit_someone_asked_for_is_made_and_says_who_asked(client):
+def test_an_edit_in_a_person_started_turn_is_the_agents_own(client):
     task, seat, agent = _document(client)
-    _turn_started_by(client, task, seat, "alice")
+    _turn_started_by(client, task, _instance_handle(client, task, seat), "alice")
 
     response = _edit(
         client,
@@ -150,16 +148,18 @@ def test_an_edit_someone_asked_for_is_made_and_says_who_asked(client):
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["mode"] == "direct"
+    assert "requested_by" not in response.json()["data"]
     assert "不做的事" in _doc(client, task)["content"]
     line = _doc_lines(client, task)[-1]
-    assert "<@alice>" in line["content"]
-    assert line["meta"]["doc_requested_by"] == "alice"
+    assert line["author"] == seat
+    assert "<@alice>" not in line["content"]
+    assert "doc_requested_by" not in line["meta"]
     assert line["meta"]["doc_edits"] == [
         {"old": ALICE_PARAGRAPH, "new": "李老师写的第二段，讲范围和不做的事。"}
     ]
     latest = _history(client, task)[-1]
     assert latest["actor"] == seat
-    assert latest["requested_by"] == "alice"
+    assert "requested_by" not in latest
 
 
 def test_a_name_written_into_an_edit_is_stored_as_the_persons_token(client):
@@ -182,9 +182,26 @@ def test_a_name_written_into_an_edit_is_stored_as_the_persons_token(client):
     assert "@bob 跟进" not in content.replace("<@bob>", "")
 
 
-def test_rewriting_a_persons_text_unasked_is_only_suggested(client):
+def test_rewriting_a_persons_text_in_a_platform_started_turn_is_made(client):
+    """A person's edit is never turned into a suggestion, and neither is the
+    agent's: in a turn nobody started, such as the document-upkeep nudge, its
+    rewrite of what a person wrote goes in like any other edit."""
     task, seat, agent = _document(client)
-    _turn_started_by(client, task, seat, "system")
+    _turn_started_by(client, task, _instance_handle(client, task, seat), "system")
+    before = _doc(client, task)
+
+    response = _edit(client, task, agent, ("讲范围", "讲边界"))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["mode"] == "direct"
+    doc = _doc(client, task)
+    assert "讲边界" in doc["content"]
+    assert doc["doc_version"] > before["doc_version"]
+    assert doc["pending_suggestions"] == []
+
+
+def test_the_agent_proposes_instead_only_when_it_says_so(client):
+    task, seat, agent = _document(client)
     before = _doc(client, task)
 
     response = _edit(
@@ -192,6 +209,7 @@ def test_rewriting_a_persons_text_unasked_is_only_suggested(client):
         task,
         agent,
         ("讲范围", "讲边界"),
+        mode="suggest",
         reason="范围这个词太宽",
     )
 
@@ -262,9 +280,9 @@ def test_a_person_restoring_a_change_edits_as_themselves(client):
 
     assert response.status_code == 200, response.text
     data = response.json()["data"]
-    assert data["mode"] == "direct" and data["requested_by"] is None
+    assert data["mode"] == "direct" and "requested_by" not in data
     latest = _history(client, task)[-1]
-    assert latest["actor"] == "bob" and latest["requested_by"] is None
+    assert latest["actor"] == "bob" and "requested_by" not in latest
     assert "讲目的" in _doc(client, task)["content"]
 
 
@@ -292,13 +310,18 @@ def test_an_agent_edit_over_its_own_pending_suggestion_drops_it(client):
     The change goes in and the stale suggestion goes with it — refusing would
     leave the passage uneditable until a person decided."""
     task, seat, agent = _document(client)
-    _turn_started_by(client, task, seat, "system")
-    proposed = _edit(client, task, agent, ("讲范围", "讲边界"), reason="范围这个词太宽")
+    proposed = _edit(
+        client,
+        task,
+        agent,
+        ("讲范围", "讲边界"),
+        mode="suggest",
+        reason="范围这个词太宽",
+    )
     assert proposed.status_code == 200, proposed.text
     assert proposed.json()["data"]["mode"] == "suggest"
     assert _doc(client, task)["pending_suggestions"]
 
-    _turn_started_by(client, task, seat, "alice")
     response = _edit(client, task, agent, ("讲范围", "讲边界和不做的事"))
 
     assert response.status_code == 200, response.text
@@ -331,8 +354,8 @@ def test_a_whole_document_write_goes_through_when_only_a_seats_suggestion_pends(
     """An agent's own suggestion is not a person's to decide: cheese_doc_set
     still replaces the whole document, dropping it."""
     task, seat, agent = _document(client)
-    _turn_started_by(client, task, seat, "system")
-    assert _edit(client, task, agent, ("讲范围", "讲边界")).status_code == 200
+    proposed = _edit(client, task, agent, ("讲范围", "讲边界"), mode="suggest")
+    assert proposed.status_code == 200, proposed.text
     now = _doc(client, task)
     assert now["pending_suggestions"]
 
@@ -395,51 +418,13 @@ def test_an_edit_outside_a_turn_of_its_editor_belongs_to_no_turn(client):
     assert line["turn_id"] is None
 
 
-# A running turn names its agent by the instance, as the platform records every
-# turn; the edit arrives under the seat. The rule must hold across the two.
+def test_an_edits_line_names_the_document_by_its_task(client):
+    """A task's document has no title of its own; it goes by its task's, and
+    the line about a change to it says which document that was."""
+    task, _, agent = _document(client)
 
+    _edit(client, task, agent, ("讲目标。", "讲目标和进度。"))
+    assert _doc_lines(client, task)[-1]["meta"]["doc_title"] == "一个任务"
 
-def test_a_person_started_turn_records_who_asked(client):
-    task, seat, agent = _document(client)
-    _turn_started_by(client, task, _instance_handle(client, task, seat), "alice")
-
-    response = _edit(
-        client, task, agent, (ALICE_PARAGRAPH, "李老师写的第二段，讲范围和不做的事。")
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["requested_by"] == "alice"
-    line = _doc_lines(client, task)[-1]
-    assert line["meta"]["doc_requested_by"] == "alice"
-    assert "<@alice>" in line["content"]
-    assert _history(client, task)[-1]["requested_by"] == "alice"
-
-
-def test_a_person_started_turn_edits_a_persons_text_directly(client):
-    task, seat, agent = _document(client)
-    _turn_started_by(client, task, _instance_handle(client, task, seat), "alice")
-    before = _doc(client, task)
-
-    response = _edit(client, task, agent, ("讲范围", "讲边界"))
-
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["mode"] == "direct"
-    doc = _doc(client, task)
-    assert "讲边界" in doc["content"]
-    assert doc["doc_version"] > before["doc_version"]
-    assert doc["pending_suggestions"] == []
-
-
-def test_a_platform_started_turn_still_only_suggests_a_persons_text(client):
-    task, seat, agent = _document(client)
-    _turn_started_by(client, task, _instance_handle(client, task, seat), "system")
-    before = _doc(client, task)
-
-    response = _edit(client, task, agent, ("讲范围", "讲边界"))
-
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["mode"] == "suggest"
-    assert response.json()["data"]["requested_by"] is None
-    doc = _doc(client, task)
-    assert doc["content"] == before["content"]
-    assert [s["new"] for s in doc["pending_suggestions"]] == ["讲边界"]
+    _edit(client, task, agent, ("讲范围", "讲边界"), mode="suggest")
+    assert _doc_lines(client, task)[-1]["meta"]["doc_title"] == "一个任务"

@@ -107,7 +107,6 @@ class Snippets:
         code: str,
         note: str,
         author: str,
-        requested_by: str | None,
         ran: Ran | None,
     ) -> WebSnippetVersion:
         """The next version of ``snippet``, with what the platform's browser
@@ -126,7 +125,6 @@ class Snippets:
             shell=SHELL,
             note=note,
             author=author,
-            requested_by=requested_by,
             checked=ran is not None,
             heights={str(w): h for w, h in (ran.heights if ran else {}).items()},
             shots=shots,
@@ -143,7 +141,6 @@ class Snippets:
             "version": version.version,
             "note": version.note,
             "author": version.author,
-            "requested_by": version.requested_by,
             "checked": version.checked,
             "created_at": version.created_at.isoformat(),
         }

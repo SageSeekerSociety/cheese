@@ -34,7 +34,6 @@ const version = (n: number, actor: string, minutesAgo: number, content = `第 ${
   version: n,
   content,
   actor,
-  requested_by: null,
   created_at: at(minutesAgo),
 })
 

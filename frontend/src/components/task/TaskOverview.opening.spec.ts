@@ -163,7 +163,7 @@ describe('新任务的第一轮', () => {
   // 以前会被 `?.` 静默吞掉——不报错，高亮也不发生。
   it('递进来时文档那一格还没长出来：等它挂上也得标上改过的那几处', async () => {
     const { ui, api } = mountWithRef('failed')
-    api().reviewEdits({ requester: '芝士', edits: [{ old: '30 天', new: '60 天' }] })
+    api().reviewEdits({ edits: [{ old: '30 天', new: '60 天' }] })
     expect(docHostCalls).toEqual([])
 
     await fireEvent.click(ui.getByRole('button', { name: '自己写' }))
@@ -191,7 +191,7 @@ describe('新任务的第一轮', () => {
   it('还没递出去又来了一个：只补最后那一个，不把前一个也发了', async () => {
     const { ui, api } = mountWithRef('failed')
     api().highlightTurn('turn-1')
-    api().reviewEdits({ requester: '芝士', edits: [{ old: '30 天', new: '60 天' }] })
+    api().reviewEdits({ edits: [{ old: '30 天', new: '60 天' }] })
 
     await fireEvent.click(ui.getByRole('button', { name: '自己写' }))
     await waitFor(() => expect(docHostCalls).toContain('review'))

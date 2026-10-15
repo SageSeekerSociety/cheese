@@ -240,12 +240,7 @@ describe('agent status messages', () => {
     expect(emitted()['open-resource']).toEqual([
       ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
       ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
-      [
-        'doc',
-        undefined,
-        { requester: '', edits: [{ old: '年付', new: '年付折扣' }] },
-        { id: 'lib-doc', title: '竞品定价对比' },
-      ],
+      ['doc', undefined, { edits: [{ old: '年付', new: '年付折扣' }] }, { id: 'lib-doc', title: '竞品定价对比' }],
     ])
   })
 
@@ -347,10 +342,12 @@ describe('agent status messages', () => {
     expect(inTurn.textContent).toContain('频道体验改进')
     expect(inTurn.textContent).not.toContain('芝士S')
 
-    // 不在哪一轮里的：两个名字都写出来，写成普通的字。
+    // 不在哪一轮里的：写出改的人。早先存下的那一行还记着「谁让改的」，也不再说它：
+    // 队友改文档和人一样是它自己的事。
     const alone = container.querySelector('[data-row-id="edit-alone"]')!
     const aloneText = alone.querySelector('[data-testid="doc-edit-line"]')!.textContent ?? ''
-    expect(aloneText).toMatch(/李老师.*芝士S/)
+    expect(aloneText).toContain('芝士S 改了文档')
+    expect(aloneText).not.toContain('李老师')
     expect(alone.querySelector('[role="img"]')).toBeNull()
 
     for (const id of ['edit-in-turn', 'edit-alone']) {

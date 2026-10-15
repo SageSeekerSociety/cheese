@@ -1,7 +1,7 @@
 <template>
-  <!-- The 待办 page's activity feed: things that happened, done once read. A
+  <!-- The inbox page's activity feed: things that happened, done once read. A
        notification calling the person to act (a question, an invitation, a review)
-       is not here: the thing itself waits in 等你处理 above and leaves when handled
+       is not here: the thing itself waits in the list above and leaves when handled
        (backend `NotificationRepository._in_feed`). Grouped by day, newest first. -->
   <section class="notification-feed">
     <header class="notification-feed__head">

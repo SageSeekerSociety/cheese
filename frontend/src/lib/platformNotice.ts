@@ -245,8 +245,8 @@ export type PlatformNotice =
       text: string
       detail?: string
       detailLabel?: string
-      /** 文档：有人让 AI 队友改的，谁让改的（handle）和改的那几处。 */
-      docRequest?: { requestedBy: string; edits: DocEdit[] }
+      /** 文档：这一串改动改了哪几处（逐处改的才有）。 */
+      docEdits?: DocEdit[]
       /** 文档：AI 队友提的修改建议有几处。 */
       docSuggestions?: number
       /** 项目资料库里的一份文档：AI 队友在这个对话里新建了它或者改了它。 */
@@ -335,9 +335,9 @@ function docEdits(raw: unknown): DocEdit[] {
     : []
 }
 
-/** 文档那一行带的「谁让改的、改了哪几处」和「提了几处建议」（后端写在 meta 里）。 */
+/** 文档那一行带的「改了哪几处」和「提了几处建议」（后端写在 meta 里）。 */
 function docChange(block: Block): {
-  docRequest?: { requestedBy: string; edits: DocEdit[] }
+  docEdits?: DocEdit[]
   docSuggestions?: number
   libraryDoc?: LibraryDocCard
 } {
@@ -359,9 +359,8 @@ function docChange(block: Block): {
     const ids = Array.isArray(m.doc_suggestions) ? m.doc_suggestions.filter((id) => typeof id === 'string') : []
     return { docSuggestions: ids.length }
   }
-  const by = str(m.doc_requested_by)
   const edits = docEdits(m.doc_edits)
-  return by && edits.length ? { docRequest: { requestedBy: by, edits } } : {}
+  return edits.length ? { docEdits: edits } : {}
 }
 
 /** meta.action 事件的 content 自带主语（张衡/芝士 编辑了文档）；老卡片要补「芝士」。 */
@@ -671,7 +670,7 @@ export function rendersInRoom(block: Block): boolean {
 function summaryPart(row: NoticeRow): boolean {
   if (row.notice?.mode === 'action' && row.notice.detail) return false
   // 带着「查看改动 / 查看建议」的文档行要有自己的按钮，不折进摘要。
-  if (row.notice?.mode === 'action' && (row.notice.docRequest || row.notice.docSuggestions || row.notice.libraryDoc))
+  if (row.notice?.mode === 'action' && (row.notice.docEdits || row.notice.docSuggestions || row.notice.libraryDoc))
     return false
   return row.notice?.mode === 'action' || changeSummary(row.block) !== null
 }

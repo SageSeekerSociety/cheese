@@ -54,10 +54,9 @@ function open(e: MouseEvent) {
   else emit('open-resource', 'doc', turnId.value)
 }
 
-// 有逐处改动的：打开文档，标出那几处。房间自己那份文档的，「谁让改的」跟着一起去，
-// 文档那边按这个人的名字说「应谁要求」。
+// 有逐处改动的：打开文档，标出那几处。
 function review() {
-  const review = { requester: props.line.library ? '' : props.line.requester ?? '', edits: props.line.edits }
+  const review = { edits: props.line.edits }
   if (opened.value) emit('open-resource', 'doc', turnId.value, review, opened.value)
   else emit('open-resource', 'doc', turnId.value, review)
 }

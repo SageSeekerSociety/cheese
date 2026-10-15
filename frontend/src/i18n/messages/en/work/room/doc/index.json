@@ -33,7 +33,6 @@
   "historyDiff": "Compare with previous",
   "historyEmpty": "No versions yet",
   "historyFailed": "Couldn't load the version history",
-  "historyFor": "{who}, asked by {requester}",
   "historyFull": "Full text",
   "historyMore": "Earlier versions",
   "historyView": "Show",

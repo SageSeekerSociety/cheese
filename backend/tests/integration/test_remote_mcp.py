@@ -361,6 +361,43 @@ def test_only_members_manage_the_projects_servers(client, upstream):
     )
 
 
+def test_an_agent_reads_the_servers_but_does_not_manage_them(client, upstream):
+    """Which servers the project reaches is the people's call: an agent acting on
+    whatever it last read does not connect, drop or re-key them."""
+    pid = _project(client, upstream)
+    tid = _topic(client, pid)
+    rows = client.get(
+        f"/topics/{tid}/members", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    seat = next(row["member_handle"] for row in rows if row["agent"])
+    agent = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=str(pid),
+            topic_id=tid,
+            access_scope="project",
+            agent_handle=seat,
+        )
+    }
+
+    listed = client.get(f"/projects/{pid}/mcp/servers", headers=agent)
+    connected = client.post(
+        f"/projects/{pid}/mcp/servers/tracker/connect", headers=agent
+    )
+    keyed = client.put(
+        f"/projects/{pid}/mcp/secrets/SEARCH_KEY", json={"value": "x"}, headers=agent
+    )
+    dropped = client.delete(
+        f"/projects/{pid}/mcp/servers/tracker/connection", headers=agent
+    )
+
+    assert listed.status_code == 200, listed.text
+    assert (connected.status_code, keyed.status_code, dropped.status_code) == (
+        403,
+        403,
+        403,
+    )
+
+
 def test_a_state_is_spent_once(client, upstream):
     pid = _project(client, upstream)
     started = client.post(

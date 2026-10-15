@@ -24,9 +24,11 @@ import pathlib
 #: 其余文件是登记，不是认可：它们多半是 ``WHERE is_private IS FALSE`` 这类「私聊
 #: 不进这张列表」的过滤，和轮次组装不是一回事，各自有各自的去向。
 BASELINE = {
-    # 1: `_private`. The policy's parameter is named for what it decides
-    # (`seats_only`: a private chat or a private channel), not for this flag.
-    "app/api/auth.py": 1,
+    # 0: the access rules ask it once, in `app/auth/audience.py`.
+    "app/api/auth.py": 0,
+    # 1: `seats_only`. The policy's parameter is named for what it decides
+    # (a private chat or a private channel), not for this flag.
+    "app/auth/audience.py": 1,
     "app/api/routes/project_environment.py": 2,
     # 0：项目这一侧本来有一处，现在推回 `_is_dm` 那一类了（结论 19）。留着这一行
     # 是把它钉在 0，谁再加一处回来，红的就是这条。

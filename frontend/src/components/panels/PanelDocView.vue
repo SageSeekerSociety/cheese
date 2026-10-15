@@ -482,7 +482,6 @@ defineExpose({
           <DocReviewStrip
             v-if="review.request.value"
             :agent-name="agentName"
-            :requester="review.request.value.requester"
             :count="review.live.value.length"
             @step="review.step"
             @close="review.close"
