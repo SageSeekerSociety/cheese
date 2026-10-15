@@ -15,11 +15,11 @@
 //   3. **两个草稿（新检查的名字与路径范围）留在这一层**：添加成功后要清空、失败要
 //      留着，而「成功」只有发请求的这一层知道。
 import type { BranchProtection, BranchProtectionPatch } from '@/branchProtection'
-import type { ProjectAgent, ProjectMemberRow } from '@/cx_types'
+import type { ProjectMemberRow } from '@/cx_types'
 
 import { computed, ref } from 'vue'
 
-import { getBranchProtection, listProjectAgents, listProjectMembers, setBranchProtection } from '@/api'
+import { getBranchProtection, listProjectMembers, setBranchProtection } from '@/api'
 import { t } from '@/i18n'
 import { parseApprovalsInput, parseCheckPaths } from '@/lib/branchProtection'
 
@@ -31,8 +31,6 @@ export function useBranchProtection(projectId: () => string) {
   const bpLoadError = ref<string | null>(null)
   const bp = ref<BranchProtection | null>(null)
   const bpMembers = ref<ProjectMemberRow[]>([])
-  // 调度座位的可选项：这一项填的是 AI 队友的席位，不是人，所以名单另取一份。
-  const bpAgents = ref<ProjectAgent[]>([])
   const bpError = ref<string | null>(null)
   // Which rule's save is in flight ('' = none): every control disables while any
   // save runs (same as the pool rows), the spinner sits on the one being saved.
@@ -64,35 +62,13 @@ export function useBranchProtection(projectId: () => string) {
     { title: t('work.projectSettings.merge.unassigned'), value: '' },
     ...bpMemberItems.value,
   ])
-  // 存的是席位 handle（`seat_handle`），所以可选项的 value 就是它 —— 名字只给人看。
-  // 停用的（`is_active: false`）不列：这一项是「给以后的活挑一个队友」，而停用的席位
-  // 在别处也一样不被挑（见 `cx_types.ProjectAgent` 那句注释）。它已经在这个项目的房间
-  // 里干的活不受影响 —— 只是不再被派新活。
-  const bpDispatchItems = computed(() => [
-    { title: t('work.projectSettings.merge.unassigned'), value: '' },
-    ...bpAgents.value
-      .filter((a) => a.is_active)
-      .map((a) => ({
-        title: t('work.projectSettings.merge.memberOption', {
-          name: a.display_name,
-          handle: a.seat_handle,
-        }),
-        value: a.seat_handle,
-      })),
-  ])
-
   async function loadBranchProtection() {
     bpLoadState.value = 'loading'
     bpLoadError.value = null
     try {
-      const [rules, membersP, agentsP] = await Promise.all([
-        getBranchProtection(projectId()),
-        listProjectMembers(projectId()),
-        listProjectAgents(projectId()),
-      ])
+      const [rules, membersP] = await Promise.all([getBranchProtection(projectId()), listProjectMembers(projectId())])
       bp.value = rules
       bpMembers.value = membersP.data
-      bpAgents.value = agentsP.data
       approvalsDraft.value = String(rules.approvals_required)
       bpLoadState.value = 'loaded'
     } catch (e) {
@@ -175,7 +151,6 @@ export function useBranchProtection(projectId: () => string) {
     bpBusy,
     bpMemberItems,
     bpReviewerItems,
-    bpDispatchItems,
     loadBranchProtection,
     saveBranchProtection,
     addRequiredCheck,

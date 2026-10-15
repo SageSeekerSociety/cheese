@@ -140,13 +140,12 @@ async def test_closed_task_keeps_failure_notice_without_invalid_repair_command()
 
 
 @pytest.mark.anyio
-async def test_leaving_the_merge_queue_wakes_the_seat_only_while_the_task_is_open():
-    """出队这条的老账新账分开：任务还开着才把指令投到座位上。
+async def test_leaving_the_merge_queue_only_wakes_a_task_that_is_still_open():
+    """出队这条的老账新账分开：任务还开着才说那份能照做的指令。
 
-    `_note_left_merge_queue` 是这条尾巴里**唯一**一处自带 `dispatch` 的调用
-    （独立复核 #3569 第 2 条）。它以前不管任务关没关都投，座位那边照做不了
-    （`delivery.agent.dispatch_pending` 只会把这行标成失败），还留下一行理由
-    误导的账。房间和任务那份文字照旧 ---- 关了的活写的是「请由新任务承接」。
+    `_note_left_merge_queue` 走的是 `_note_merge_stop_and_wake`，那里按任务
+    开着没有挑一句 `action`。关了的活照做不了，写的是「请由新任务承接」，
+    房间那行文字照旧看得见。
     """
     service, card, topic = _service_and_card()
     closed = SimpleNamespace(status="closed")
@@ -155,7 +154,6 @@ async def test_leaving_the_merge_queue_wakes_the_seat_only_while_the_task_is_ope
     ):
         await service._note_left_merge_queue(card=card, topic=topic)
     call = service._record_task_nudge.call_args.kwargs
-    assert call["dispatch"] is None
     assert "新任务" in call["content"]
     assert "cheese worktree" not in call["content"]
 
@@ -167,8 +165,8 @@ async def test_leaving_the_merge_queue_wakes_the_seat_only_while_the_task_is_ope
     ):
         await service._note_left_merge_queue(card=card, topic=topic)
     call = service._record_task_nudge.call_args.kwargs
-    assert "cheese worktree" in call["dispatch"]
-    assert call["dispatch"].endswith("需要人重新采纳。")
+    assert "cheese worktree" in call["content"]
+    assert call["content"].endswith("需要人重新采纳。")
 
 
 @pytest.mark.anyio

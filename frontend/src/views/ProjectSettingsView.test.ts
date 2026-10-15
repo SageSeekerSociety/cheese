@@ -134,7 +134,6 @@ describe('project settings', () => {
       override_handles: null,
       approvals_required: 1,
       default_reviewer: '',
-      dispatch_seat: '',
       merge_method: 'squash',
       github_protection: { enforced, status: enforced ? 'enforced' : 'none' },
     })

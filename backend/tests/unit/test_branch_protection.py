@@ -43,7 +43,6 @@ def test_defaults_when_nothing_is_configured():
     assert bp.override_handles is None  # = owner + leads
     assert bp.approvals_required == 1
     assert bp.default_reviewer == ""
-    assert bp.dispatch_seat == ""  # 没设 = 只叫当事的那条线，和以前一样
 
 
 def test_reads_a_configured_policy():
@@ -58,7 +57,6 @@ def test_reads_a_configured_policy():
                     "auto_merge_allowed": True,
                     "override_handles": ["alice"],
                     "default_reviewer": "bob",
-                    "dispatch_seat": "cheese-ab12cd34ef56",
                 },
             }
         )
@@ -72,7 +70,6 @@ def test_reads_a_configured_policy():
     assert bp.override_handles == ("alice",)
     assert bp.approvals_required == 2
     assert bp.default_reviewer == "bob"
-    assert bp.dispatch_seat == "cheese-ab12cd34ef56"
 
 
 def test_a_malformed_stored_value_never_raises():
@@ -90,7 +87,6 @@ def test_a_malformed_stored_value_never_raises():
                     "strict": 1,
                     "override_handles": "everyone",
                     "default_reviewer": {"x": 1},
-                    "dispatch_seat": ["not-a-handle"],
                 },
             }
         )
@@ -99,7 +95,6 @@ def test_a_malformed_stored_value_never_raises():
     assert bp.strict is True  # truthy 1, coerced not crashed
     assert bp.override_handles is None  # wrong shape = unconfigured
     assert bp.approvals_required == 1
-    assert bp.dispatch_seat == ""  # wrong shape = unset, not a crash
 
     assert branch_protection_of(_project({"branch_protection": "zzz"})) == (
         BranchProtection()
@@ -121,26 +116,14 @@ def test_update_normalizes_and_clears():
         {
             "override_handles": ["alice"],
             "default_reviewer": "bob",
-            "dispatch_seat": "cheese-ab12cd34ef56",
         },
         {
             "required_checks": [{"name": "  test ", "paths": ["backend/**"]}],
             "override_handles": None,
             "default_reviewer": "",
-            # 清空 = 把这一项从库里去掉，不是存一个空串。
-            "dispatch_seat": "",
         },
     )
     assert new == {"required_checks": [{"name": "test", "paths": ["backend/**"]}]}
-
-    # 首尾空白去掉；只在 body 里出现才动它。
-    new = apply_branch_protection_update(
-        {}, {"dispatch_seat": "  cheese-ab12cd34ef56  "}
-    )
-    assert new == {"dispatch_seat": "cheese-ab12cd34ef56"}
-    assert apply_branch_protection_update(new, {"strict": True})["dispatch_seat"] == (
-        "cheese-ab12cd34ef56"
-    )
 
     # Duplicate handles collapse; an omitted paths key stays omitted.
     new = apply_branch_protection_update(
@@ -164,8 +147,6 @@ def test_update_normalizes_and_clears():
         {"override_handles": "everyone"},
         {"override_handles": [""]},
         {"default_reviewer": "x" * 100},
-        {"dispatch_seat": "x" * 100},
-        {"dispatch_seat": "cheese-ab12\x00cd"},
     ],
 )
 def test_update_rejects_bad_input(body):

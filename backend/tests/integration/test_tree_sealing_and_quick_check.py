@@ -21,8 +21,6 @@ from tests.integration.test_accept_pr import app_world as app_world
 from tests.machine_work import machine_commits
 from tests.support import git_store
 from tests.support.review_ports import (
-    record_agent,
-    seat_instance_id,
     settle_card,
     task_teammate,
 )
@@ -125,8 +123,6 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
                 announce=announce,
                 settle_card=settle_card,
                 record_instruction=record_task_instruction,
-                seat_instance_id=seat_instance_id,
-                record_agent=record_agent,
                 task_teammate=task_teammate,
                 roster_team=project_team,
             )

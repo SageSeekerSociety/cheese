@@ -37,7 +37,6 @@
   "defaultReviewerNul": "default_reviewer can't contain a NUL byte",
   "deliveryVersionsMissing": "This item doesn't have the selected delivered versions",
   "directMessageOwnOnly": "You can only open direct messages you're part of",
-  "dispatchSeatNul": "The dispatch seat can't contain a NUL byte",
   "environmentScriptNul": "Scripts can't contain NUL characters",
   "environmentVariableNameInvalid": "The environment variable {name} is reserved or isn't a valid name",
   "environmentVariableValueInvalid": "The value of the environment variable {name} is invalid: no NUL characters, at most 16384 characters",

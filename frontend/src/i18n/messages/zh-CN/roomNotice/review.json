@@ -79,7 +79,6 @@
   "labelWhyVoided": "为什么作废",
   "lines": "{items}",
   "mergeQueueLeft": "PR #{pr} 离开了合并队列但未合并",
-  "dispatchSeatWoken": "你是这个项目设置里的「调度座位」，平台把「可以合并」和「离开合并队列」两类事件也叫一份给你：\n\n{headline}\n{detail}",
   "mergeRefused": "PR #{pr} 被 GitHub 拒绝合并",
   "mergeRefusedDetail": "{reason}\n{url}",
   "mergeRefusedOnAccept": "采纳未完成：GitHub 拒绝合并 PR #{pr}",

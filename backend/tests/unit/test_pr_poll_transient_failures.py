@@ -26,23 +26,19 @@ from app.domain.agent.announce import announce
 from app.domain.review import pr_poll
 from app.domain.review.pr_poll import TRANSIENT_MISSES_BEFORE_ERROR
 from tests.support.review_ports import (
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
     settle_card,
     task_teammate,
 )
 
 pytestmark = pytest.mark.anyio
 
-# 生产里这四个口子由 `app/api/routes/accept.py` 的接线递进来（`review` 够不着
+# 生产里这三个口子由 `app/api/routes/accept.py` 的接线递进来（`review` 够不着
 # `delivery`）。这里 AcceptService 是假的、口子用不到，递真实现即可 —— 跑的还是
 # poll 自己那条路。
 _PORTS = {
     "settle_card": settle_card,
     "record_instruction": record_task_instruction,
-    "seat_instance_id": seat_instance_id,
-    "record_agent": record_agent,
     "task_teammate": task_teammate,
 }
 
