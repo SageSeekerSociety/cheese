@@ -678,17 +678,28 @@ def self_test():
          "files": {"backend/e.py": (1, 0)}},
         {"sha": "d4", "date": None, "subject": "docs: r (#64)",
          "files": {"docs/z.md": (1, 0)}},
+        {"sha": "d5", "date": None, "subject": "fix: s same tree (#65)",
+         "files": {"frontend/c.ts": (1, 0)}},
     ]
     dlines = {c["sha"]: c["files"] for c in dcommits}
-    dl = summarize(_line([61, 62], "P") + _line([61, 63], "Q") + _line([61, 64], "R"),
-                   dcommits, present, dlines)
+    # S 的后续合并还在首合入那棵树里：它是「多条合入」但不是「外扩」，所以
+    # 「任意模块」那个数（3）必须小于多条合入的条数（4）——两边相等时
+    # `drift_any = list(multi)` 也过得去，那一项就等于没咬住。
+    dpresent = {"frontend/a.ts", "backend/e.py"}
+    dl = summarize(_line([61, 62], "P") + _line([61, 63], "Q") + _line([61, 64], "R")
+                   + _line([61, 65], "S"), dcommits, dpresent, dlines)
     assert dl[0]["drift_modules"] == ["docs/"] and dl[0]["drift_code"] == [], dl[0]
     assert dl[1]["drift_modules"] == ["backend/"], dl[1]
     assert dl[1]["drift_code"] == ["backend/"], dl[1]
     assert dl[2]["drift_modules"] == ["docs/"] and dl[2]["drift_code"] == [], dl[2]
+    assert dl[3]["drift_modules"] == [] and dl[3]["drift_code"] == [], dl[3]
+    # 留存率要在分母不等于两倍的夹具上咬：P 有 3 个文件、走了 2 个，1/3 和 2/3
+    # 才分得开（原来的夹具两走一，正反都是 0.5）。
+    assert dl[0]["survive_ratio"] == 0.333, dl[0]
+    assert dl[1]["survive_ratio"] == 1.0, dl[1]
     md4 = render(dl, 0, (0, 0, 0), "2026-10-07", "2026-10-15", "2026-10-15 00:00 UTC",
                  pairs)
-    assert ("多条合入线里（3 条），后续合并动到了**另一个代码树**（backend/ 与 "
+    assert ("多条合入线里（4 条），后续合并动到了**另一个代码树**（backend/ 与 "
             "frontend/ 之间互相跨界）的 **1** 条。") in md4, md4
     assert "放宽到任意模块（含 docs/、.github/、.claude/ 等收尾件）：**3** 条。" in md4, md4
 
@@ -725,14 +736,19 @@ def _loader_self_test():
     try:
         REPO_PATH, REF = tmp, "HEAD"
 
-        # 这台机器上的全局配置（`commit.gpgsign`、`core.hooksPath`、提交模板）不该
-        # 让一个正确的自检失败：临时仓库只用上面那两行本地配置，其余一概不读。
-        env = dict(os.environ, HOME=tmp, GIT_CONFIG_GLOBAL=os.devnull,
-                   GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+        # 这台机器上的全局配置（`commit.gpgsign`、`core.hooksPath`、提交模板、
+        # `core.attributesFile`）不该让一个正确的自检失败：临时仓库只用下面那两行本地
+        # 配置，其余一概不读。写在 os.environ 上而不是只喂给 sh：被检查的那几个读取
+        # (`load_history`/`load_subjects`/`load_numstat`) 走的是模块级的 `git()`，
+        # 环境变量得对它也生效。全在 finally 里还原。
+        saved_env = {k: os.environ.get(k) for k in
+                     ("HOME", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+                      "GIT_CONFIG_NOSYSTEM")}
+        os.environ.update(HOME=tmp, GIT_CONFIG_GLOBAL=os.devnull,
+                          GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 
         def sh(*a):
-            p = subprocess.run(["git", "-C", tmp, *a], capture_output=True, text=True,
-                               env=env)
+            p = subprocess.run(["git", "-C", tmp, *a], capture_output=True, text=True)
             if p.returncode:
                 raise SystemExit("自检的 git %s 失败：%s" % (a[0], p.stderr[:300]))
             return p.stdout
@@ -755,6 +771,12 @@ def _loader_self_test():
         sh("commit", "-qm", 'Revert "feat: side branch work (#7)"')
         sh("checkout", "-q", "main")
         sh("merge", "-q", "--no-ff", "-m", "Merge pull request #8 from x/revfix", "revfix")
+        # 第二条线：它的文件到最后一版还在，留存那一段才有一个「全在」的对照。
+        sh("checkout", "-q", "-b", "extra")
+        open(os.path.join(tmp, "e.txt"), "w").write("4\n")
+        sh("add", "e.txt"); sh("commit", "-qm", "feat: extra work")
+        sh("checkout", "-q", "main")
+        sh("merge", "-q", "--no-ff", "-m", "Merge pull request #9 from x/extra", "extra")
 
         hist = load_history("2000-01-01")
         merge = merge_commit(hist, 7)
@@ -776,6 +798,11 @@ def _loader_self_test():
         _wiring_self_test(tmp, sh)
     finally:
         REPO_PATH, REF = old_path, old_ref
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -786,13 +813,16 @@ def _wiring_self_test(tmp, sh):
     today = datetime.now(timezone.utc).date()
     day = today.isoformat() + "T00:00:00Z"
     cards = [{"task_id": "T1", "pr_number": 7, "pr_merged_at": day},
-             {"task_id": "T1", "pr_number": 8, "pr_merged_at": day}]
-    tasks = [{"id": "T1", "number": 30, "title": "t", "status": "closed"}]
+             {"task_id": "T1", "pr_number": 8, "pr_merged_at": day},
+             {"task_id": "T2", "pr_number": 9, "pr_merged_at": day}]
+    tasks = [{"id": "T1", "number": 30, "title": "t", "status": "closed"},
+             {"id": "T2", "number": 31, "title": "u", "status": "closed"}]
     out = os.path.join(tmp, "wiring.md")
+    # 只换平台那两个入口：`head_files` 不换，它读的就是这个临时仓库，留存那一段
+    # 才算真的走过一遍。
     stubs = {
         "login": lambda: "tok",
         "get": lambda tok, path: {"data": cards if "accept-card" in path else tasks},
-        "head_files": lambda: set(sh("ls-tree", "-r", "--name-only", "HEAD").split()),
     }
     saved = {k: globals()[k] for k in stubs}
     globals().update(stubs)
@@ -803,12 +833,17 @@ def _wiring_self_test(tmp, sh):
         globals().update(saved)
     assert rc == 0, rc
     md = open(out, encoding="utf-8").read()
-    assert "队列：窗口内第一次合入的 **1 条线**" in md, md
-    assert "共 2 次合入（其中 2 次在默认分支上认出了对应提交）" in md, md
-    # 文件和行数来自真的 git：合并 #7 加 b.txt 一行，合并 #8 删 b.txt、加 d.txt 一行。
-    # 两处都对不上时这里先响：喂空字典会没有一条线，加删写反了净增就是 -1。
-    assert "| 改动文件数 | 2 |" in md, md
+    assert "队列：窗口内第一次合入的 **2 条线**" in md, md
+    assert "共 3 次合入（其中 3 次在默认分支上认出了对应提交）" in md, md
+    # 文件和行数来自真的 git：合并 #7 加 b.txt 一行，合并 #8 删 b.txt、加 d.txt 一行，
+    # 合并 #9 加 e.txt 一行。两处都对不上时这里先响：喂空字典会没有一条线，加删写反了
+    # 净增就是 -1。
+    assert "| 改动文件数 | 1 |" in md, md
     assert "| 净增行数 | 1 |" in md, md
+    # 留存那一段也走真的 `head_files`：T1 的 b.txt 被合入 #8 删掉了，T2 的 e.txt 还在。
+    # 把 `main` 里的 `present` 换成空集合，这一行就从 1/2 掉到 0/2。
+    assert "- 改动文件今天仍在默认分支上：1/2 条线是 100%。" in md, md
+    assert "- 去掉生成物后仍有文件消失的线：1 条" in md, md
     # 回退那条只在 `load_subjects`（不限第一父链）里看得见。
     assert "读到的历史里有回退提交指向的线：1 条。" in md, md
 
