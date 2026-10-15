@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,12 +25,21 @@ REPO = "SageSeekerSociety/cheese"
 
 
 def fetch_pages(endpoint: str, key: str | None = None) -> list[dict]:
-    result = subprocess.run(
-        ["gh", "api", "--paginate", "--slurp", endpoint],
-        check=True, capture_output=True, text=True,
-    )
-    pages = json.loads(result.stdout)
-    return [row for page in pages for row in (page[key] if key else page)]
+    for attempt in range(3):
+        result = subprocess.run(
+            ["gh", "api", "--paginate", "--slurp", endpoint],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            pages = json.loads(result.stdout)
+            return [row for page in pages for row in (page[key] if key else page)]
+        # Never hide permission failures behind retries. Retry transport/server
+        # faults only, and keep the original diagnostic if all attempts fail.
+        transient = re.search(r"HTTP 50[234]|TLS handshake timeout|connection reset|(?:unexpected |: )EOF\b", result.stderr)
+        if not transient or attempt == 2:
+            raise RuntimeError(f"gh api {endpoint} failed: {result.stderr.strip()}")
+        time.sleep(2 ** attempt)
+    raise RuntimeError("GitHub retries exhausted")
 
 
 def snapshot(path: Path, load) -> dict:

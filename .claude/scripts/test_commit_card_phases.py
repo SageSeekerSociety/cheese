@@ -65,6 +65,14 @@ class AccountingTests(unittest.TestCase):
         self.assertEqual(result["wall_seconds"], 1200)
         self.assertEqual(result["exclusive_seconds"]["ci"], 1200)
 
+    def test_different_task_windows_do_not_absorb_each_others_evidence(self):
+        cohort = {"lines": [line(), line("two")]}
+        evidence = {"observations": [event("x", "ci", 10, 14),
+                                     event("y", "ci", 16, 20, "two")]}
+        result = measure(cohort, evidence)
+        self.assertEqual(result["exclusive_seconds"]["ci"], 480)
+        self.assertEqual(result["exclusive_seconds"]["unknown"], 720)
+
     def test_touching_boundaries_do_not_create_overlap(self):
         result = measure_line(line(), [event("a", "edit", 10, 15),
                                        event("b", "review", 15, 20)])
@@ -85,6 +93,17 @@ class AccountingTests(unittest.TestCase):
             measure({"lines": [line()]}, {"observations": [event("a", "ci", 10, 20, "two")]})
         with self.assertRaisesRegex(ValueError, "timezone"):
             measure_line({**line(), "start": "2026-10-08T10:10:00"}, [])
+
+    def test_cohort_and_observation_validation_guards(self):
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            measure({"lines": []}, {"observations": []})
+        with self.assertRaisesRegex(ValueError, "one row per task"):
+            measure({"lines": [line(), line()]}, {"observations": []})
+        with self.assertRaisesRegex(ValueError, "source ID"):
+            measure_line(line(), [{"topic": "one", "phase": "ci",
+                                   "start": at(10), "end": at(11)}])
+        with self.assertRaisesRegex(ValueError, "unknown phase"):
+            measure_line(line(), [event("a", "not-a-phase", 10, 11)])
 
     def test_report_preserves_unknown_and_non_additive_inclusive_column(self):
         result = measure({"lines": [line()]}, {"observations": []})

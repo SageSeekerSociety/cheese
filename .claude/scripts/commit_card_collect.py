@@ -4,7 +4,8 @@
 OKCHEESE_USER / OKCHEESE_PASS are consumed by the existing login helper.
 Usage: python3 .claude/scripts/commit_card_collect.py cohort.json --out evidence-dir
 
-Files contain IDs, timestamps and classification rules, never commands or output.
+Files contain IDs, timestamps and classification rules, never commands or output. History pages embed
+output only transiently so background launches can be distinguished from foreground calls.
 A per-task file is an immutable checkpoint: existing files are reused. Use a new
 output directory for a new observation. Platform result timestamps are receipt
 boundaries, not process exit timestamps. Missing/background completions stay null.
@@ -27,12 +28,40 @@ from pathlib import Path
 from commit_card_phases import timestamp
 from orchestrator_sweep import get, login
 
-CHECK = re.compile(
-    r"(?:^|\s)(?:pytest|vitest|ruff|mypy|vue-tsc|pre-commit)(?:\s|$)|"
-    r"(?:^|/)(?:ci-fast\.py|prove-regression\.py|test_[\w-]+\.py)(?:\s|$)|"
-    r"\btask ci:fast\b|\b(?:pnpm|npm) (?:run )?(?:test[\w:-]*|lint[\w:-]*|typecheck)\b|"
-    r"\bpython[\d.]* -m unittest\b"
-)
+CHECK_TOOLS = {"pytest", "vitest", "ruff", "mypy", "vue-tsc", "pre-commit"}
+COLLECTOR_VERSION = 2
+
+
+def command_phase(command: str) -> str | None:
+    """Recognize executable positions, not mentions in grep/log arguments."""
+    words = shlex.split(command, comments=True)
+    while words and re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
+        words.pop(0)
+    while words and words[0] in ("env", "nohup", "uv", "uvx", "run", "exec"):
+        words.pop(0)
+    if not words:
+        return None
+    exe, args = Path(words[0]).name, words[1:]
+    if exe in ("cd", "export", "printf", "echo"):
+        return None
+    if exe == "gh" and (args[:2] == ["run", "watch"] or
+                        (args[:2] == ["pr", "checks"] and "--watch" in args)):
+        return "ci_wait"
+    if exe == "sleep" and len(args) == 1 and re.fullmatch(r"[\d.]+[smhd]?", args[0]):
+        return "explicit_wait"
+    if exe in CHECK_TOOLS or (exe == "task" and args[:1] == ["ci:fast"]):
+        return "local_check"
+    if exe in ("npm", "pnpm"):
+        if args[:1] in (["run"], ["exec"]):
+            args = args[1:]
+        if args and (args[0] in CHECK_TOOLS or re.fullmatch(r"test[\w:-]*|lint[\w:-]*|typecheck", args[0])):
+            return "local_check"
+    if re.fullmatch(r"python[\d.]*", exe) and args:
+        if args[:1] == ["-m"] and len(args) > 1 and args[1] in CHECK_TOOLS | {"unittest"}:
+            return "local_check"
+        if re.fullmatch(r"ci-fast\.py|prove-regression\.py|test_[\w-]+\.py", Path(args[0]).name):
+            return "local_check"
+    return "other_tool"
 BACKGROUND = re.compile(
     r"Command running in background|running in the background|"
     r"Process running with session ID|Async agent launched|Background task|"
@@ -44,15 +73,18 @@ _REQUEST_LOCK = threading.Lock()
 _LAST_REQUEST = 0.0
 
 
-def read_api(token: str, path: str) -> dict:
+def read_api(token: list[str], path: str) -> dict:
     global _LAST_REQUEST
     for attempt in range(4):
         with _REQUEST_LOCK:
             time.sleep(max(0, 1.1 - (time.monotonic() - _LAST_REQUEST)))
             _LAST_REQUEST = time.monotonic()
             try:
-                return get(token, path)
+                return get(token[0], path)
             except urllib.error.HTTPError as error:
+                if error.code == 401 and attempt == 0:
+                    token[0] = login()
+                    continue
                 if error.code != 429 or attempt == 3:
                     raise
                 delay = error.headers.get("Retry-After", "60")
@@ -75,27 +107,30 @@ def classify(tool: str, detail: str) -> tuple[str, str]:
     if re.search(r"<<|\b(?:for|while|if|function)\b|\$\(", detail):
         return "other_tool", "shell-program-unclassified"
     try:
-        tokens = list(shlex.shlex(detail, posix=True, punctuation_chars=";&|\n"))
+        tokens = list(shlex.shlex(detail, posix=True, punctuation_chars=";&|<>\n"))
     except ValueError:
         return "other_tool", "unparseable-shell"
-    if "&" in tokens or "nohup" in tokens:
+    if "&" in tokens:
         return "other_tool", "shell-background"
+    # Do not split separators embedded in quoted strings or shell comments.
+    if re.search(r"[\"'`#]", detail):
+        return "other_tool", "quoted-shell-unclassified"
     segments = re.split(r"&&|;|\n|\|\|", detail)
     phases = []
     for segment in segments:
-        command = segment.strip()
-        if not command or re.match(r"^(?:cd|export|printf|echo)\s", command):
+        pipeline = segment.strip().split("|")
+        if not pipeline[0].strip():
             continue
-        if re.fullmatch(r"\w+=[^\s]+", command):
-            continue
-        if re.search(r"\bgh (?:pr checks|run watch)\b", command) and ("--watch" in command or "run watch" in command):
-            phases.append("ci_wait")
-        elif re.fullmatch(r"sleep\s+[\d.]+[smhd]?", command):
-            phases.append("explicit_wait")
-        elif not re.search(r"(?:^|\s)(?:-c|-e)\s|[\"']|#", command) and CHECK.search(command):
-            phases.append("local_check")
-        else:
+        # A display-only suffix does not change the purpose of a foreground check.
+        if any(not re.match(r"^\s*(?:tail|head|tee|cat)(?:\s|$)", part) for part in pipeline[1:]):
             phases.append("other_tool")
+            continue
+        try:
+            phase = command_phase(pipeline[0])
+        except ValueError:
+            return "other_tool", "unparseable-shell-segment"
+        if phase:
+            phases.append(phase)
     if phases and len(set(phases)) == 1:
         return phases[0], "simple-shell-" + phases[0]
     return "other_tool", "mixed-or-unclassified-shell"
@@ -125,19 +160,19 @@ def observation(row: dict, output: str | None = None) -> dict:
     }
 
 
-def collect_line(token: str, line: dict, out: Path) -> dict:
+def collect_line(token: list[str], line: dict, out: Path) -> dict:
     path = out / (line["topic"] + ".json")
     if path.exists():
         data = json.loads(path.read_text())
-        if data["window"] != line:
-            raise ValueError("checkpoint belongs to another cohort window")
+        if data["window"] != line or data.get("collector_version") != COLLECTOR_VERSION:
+            raise ValueError("checkpoint belongs to another cohort window or collector version")
         return data
     before, seen, observations, pages = None, set(), [], 0
     errors = []
     lo, hi = timestamp(line["start"]), timestamp(line["end"])
     complete = False
     while True:
-        response = read_api(token, f"/topics/{line['topic']}/transcript?limit=200" +
+        response = read_api(token, f"/topics/{line['topic']}/history?limit=200&kind=event" +
                        (f"&before={before}" if before else ""))
         pages += 1
         rows = response["data"]
@@ -157,13 +192,10 @@ def collect_line(token: str, line: dict, out: Path) -> dict:
                 continue
             if start < lo and end is None:
                 continue
-            output = None
-            if meta["tool"] == "Bash" and meta.get("output_bytes") is not None:
-                try:
-                    result = read_api(token, f"/topics/{line['topic']}/transcript/{row['id']}/output")
-                    output = result.get("output")
-                except Exception as error:
-                    errors.append({"source": row["id"], "error": type(error).__name__})
+            # history embeds output in event metadata. It is used only to decide
+            # whether a Bash result is a platform background launch; observation()
+            # stores hashes and timestamps, never this content.
+            output = meta.get("output")
             observations.append(observation(row, output))
         if not response.get("has_more"):
             complete = True
@@ -175,6 +207,7 @@ def collect_line(token: str, line: dict, out: Path) -> dict:
             raise ValueError("transcript pagination did not advance")
         before = cursor
     data = {
+        "collector_version": COLLECTOR_VERSION,
         "window": line, "observed_at": datetime.now(timezone.utc).isoformat(),
         "pages": pages, "complete": complete, "errors": errors,
         "observations": observations,
@@ -194,11 +227,12 @@ def main() -> None:
     args = parser.parse_args()
     cohort = json.loads(args.cohort.read_text())
     args.out.mkdir(parents=True, exist_ok=True)
-    token = login()
+    token = [login()]
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         results = list(pool.map(lambda line: collect_line(token, line, args.out), cohort["lines"]))
     evidence = {
-        "provenance": {"cohort": cohort["provenance"], "source": "platform transcript",
+        "provenance": {"cohort": cohort["provenance"], "source": "platform history event records",
+                       "collector_version": COLLECTOR_VERSION,
                        "timestamp_semantics": "tool call to last result receipt; not execution duration"},
         "coverage": [{k: row[k] for k in ("window", "pages", "complete", "errors")} for row in results],
         "observations": [event for row in results for event in row["observations"]],
