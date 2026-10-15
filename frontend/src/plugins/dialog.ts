@@ -1,7 +1,7 @@
 import type { VNode } from 'vue'
 
 import { h, reactive } from 'vue'
-import { VTextField } from 'vuetify/lib/components/index.mjs'
+import { VTextField } from 'vuetify/components/VTextField'
 
 import { t } from '@/i18n'
 

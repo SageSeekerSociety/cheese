@@ -28,11 +28,16 @@ vi.mock('@/services/account', () => ({
 // 登录后的根地址先问一遍项目清单：一个项目都没有，就落在待办上。
 vi.mock('@/api', () => ({ listProjects: async () => ({ data: [] }) }))
 vi.mock('@/lib/desktopChangelog', () => ({ fetchDesktopRelease: async () => ({ version: null, days: [] }) }))
-// happy-dom has no IntersectionObserver; the scroll-driven room simply stays on its first step.
+// happy-dom has no IntersectionObserver, and no layout to scroll: everything the page
+// observes is reported on screen, so the parts that wait to be scrolled near (the film,
+// the story's room) are there to test.
 vi.stubGlobal(
   'IntersectionObserver',
   class {
-    observe() {}
+    constructor(private readonly callback: (entries: Partial<IntersectionObserverEntry>[]) => void) {}
+    observe(target: Element) {
+      queueMicrotask(() => this.callback([{ target, isIntersecting: true, intersectionRatio: 1 }]))
+    }
     disconnect() {}
   }
 )
@@ -194,7 +199,9 @@ describe('公开首页', () => {
 
   it('shows the film on its poster, and plays it from the start with sound and no player controls when asked', async () => {
     const home = await mount()
-    const video = home.getByRole('figure', { name: '影片：众智成事' }).querySelector('video')!
+    const film = home.getByRole('figure', { name: '影片：众智成事' })
+    await waitFor(() => expect(film.querySelector('video')).not.toBeNull())
+    const video = film.querySelector('video')!
     expect(video.paused).toBe(true)
     expect(video.controls).toBe(false)
     video.currentTime = 12

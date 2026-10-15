@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import LandingFilm from './LandingFilm.vue'
-import LandingRoom from './LandingRoom.vue'
 import LandingShell from './LandingShell.vue'
 import LandingUseCases from './LandingUseCases.vue'
 
@@ -10,6 +9,13 @@ import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import i18n, { t } from '@/i18n'
+
+// The story's room renders real message rows, and those pull in the whole document
+// renderer (tiptap, prosemirror, marked: ~350 KB gzipped). It sits below the fold,
+// so it is fetched and mounted only once the story is about to scroll in. It is
+// never part of the prerendered page either (its rows build DOM nodes while
+// rendering): `.story-room` keeps its height, so nothing moves when it arrives.
+const LandingRoom = defineAsyncComponent(() => import('./LandingRoom.vue'))
 
 // The manifesto lights up clause by clause once it is on screen, beside the film
 // that shows it happening, and goes dim again once it has left, to replay.
@@ -59,7 +65,9 @@ const typing = ref(false)
 const modBox = ref<HTMLElement>()
 const sizer = ref<HTMLElement>()
 const sizerText = ref('')
-const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+// Read once in the browser; the page is also rendered at build time, where there is no window.
+const reducedMotion =
+  typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
 let typingTimer: ReturnType<typeof setTimeout> | undefined
 // Each run of the cycle holds a number; a newer run, or leaving the page, retires it.
 let run = 0
@@ -134,6 +142,9 @@ const step = ref(0)
 const stepEls = ref<HTMLElement[]>([])
 let observer: IntersectionObserver | null = null
 let manifestoObserver: IntersectionObserver | null = null
+let roomObserver: IntersectionObserver | null = null
+const storyEl = ref<HTMLElement>()
+const roomNear = ref(false)
 
 onMounted(() => {
   observer = new IntersectionObserver(
@@ -153,12 +164,23 @@ onMounted(() => {
     { threshold: [0, 0.6] }
   )
   if (manifestoEl.value) manifestoObserver.observe(manifestoEl.value)
+  roomObserver = new IntersectionObserver(
+    ([entry]) => {
+      if (!entry.isIntersecting) return
+      roomNear.value = true
+      roomObserver?.disconnect()
+    },
+    // Half a screen early, so on a working connection it is there before it is seen.
+    { rootMargin: '50% 0px' }
+  )
+  if (storyEl.value) roomObserver.observe(storyEl.value)
   restartTyping()
 })
 
 onBeforeUnmount(() => {
   observer?.disconnect()
   manifestoObserver?.disconnect()
+  roomObserver?.disconnect()
   run += 1
   clearTimeout(typingTimer)
 })
@@ -208,7 +230,7 @@ onBeforeUnmount(() => {
       <LandingFilm v-if="i18n.global.locale.value === 'zh-CN'" />
     </section>
 
-    <section id="story" class="story">
+    <section id="story" ref="storyEl" class="story">
       <div class="story-steps">
         <div
           v-for="(item, i) in steps"
@@ -225,7 +247,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="story-stage">
         <div class="story-room">
-          <LandingRoom :step="step" />
+          <LandingRoom v-if="roomNear" :step="step" />
         </div>
       </div>
     </section>

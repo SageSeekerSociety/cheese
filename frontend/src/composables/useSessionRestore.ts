@@ -1,58 +1,32 @@
-// 冷打开时「正在恢复登录状态 / 连不上、可以重试」那一层的逻辑。
+// 冷打开时「连不上、可以重试」那一层的逻辑。
 //
 // 访问令牌只活 15 分钟，所以回访的人几乎每次冷打开都要先续签一次（一次网络往返）。
-// 弱网下这段时间屏幕上以前什么都没有（外壳的内容区被藏起来等首屏路由，而首屏路由
-// 又在等这次确认），确认失败更糟：会话明明还好好的，人被当成生人送去推广页，也没
-// 有任何重试。见 services/account.ts 的 RestorePhase。
+// 续签的这段时间里应用还没挂载，屏幕上是按落点画的启动骨架（main.ts 等它有了结果才
+// 挂载），这一层不出来。确认不了的时候才轮到它：会话明明还好好的，不能把人当生人送去
+// 推广页、也不给重试。见 services/account.ts 的 RestorePhase。
 //
 // 逻辑放在这里（而不是组件里）有两个原因：视图那一层才认得路由和账号服务——组件
 // 边界规则不允许 src/components 下的文件碰 services/router（见
 // scripts/import-boundary-ratchet-core.mjs）；以及这段「等多久才露面、网络回来怎么
 // 重试」的决定本来就不该和一段模板绑死。
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import router from '@/router'
 import { landingForMember } from '@/router/home'
 import AccountService from '@/services/account'
-
-// 展示层（SessionRestoreGate）也要用这个类型，但从组件里 import services 会被组件
-// 边界规则拦下——从这里替它转出去，类型的出处仍然只有 services/account.ts 一处。
-export type { RestorePhase } from '@/services/account'
-
-// 恢复得快（正常的冷打开、网好）时不要让这一层闪一下。
-const SHOW_DELAY_MS = 300
 
 export function useSessionRestore() {
   const phase = computed(() => AccountService.restorePhase)
   const retrying = ref(false)
   const navigationFailed = ref(false)
 
-  // 这一层什么时候该在：恢复中 / 连不上 / 正在重试 / 恢复成功但没能落回上次的地方。
+  // 这一层什么时候该在：连不上 / 正在重试 / 恢复成功但没能落回上次的地方。正在恢复
+  // （`restoring`）不算：那一段有启动骨架盖着。
   //
-  // `retrying` 也算在内，答案才诚实：重试成功时 phase 立刻回到 idle，而那时导航还
-  // 没走完——只看 phase 的话，那一层会在导航有结果之前就收起来，`navigationFailed`
-  // 那段说明（路由那一下失败了）也就永远没机会露面。
-  const active = computed(() => phase.value !== 'idle' || retrying.value || navigationFailed.value)
-
-  const visible = ref(false)
-  let showTimer: ReturnType<typeof setTimeout> | undefined
-
-  watch(
-    active,
-    (on) => {
-      clearTimeout(showTimer)
-      if (!on) {
-        visible.value = false
-        return
-      }
-      if (visible.value) return
-      showTimer = setTimeout(() => {
-        visible.value = active.value
-      }, SHOW_DELAY_MS)
-    },
-    { immediate: true }
-  )
-  onBeforeUnmount(() => clearTimeout(showTimer))
+  // `retrying` 也算在内：重试成功时 phase 立刻回到 idle，而那时导航还没走完——只看
+  // phase 的话，那一层会在导航有结果之前就收起来，`navigationFailed` 那段说明（路由
+  // 那一下失败了）也就永远没机会露面。
+  const visible = computed(() => phase.value === 'unreachable' || retrying.value || navigationFailed.value)
 
   async function retry() {
     if (retrying.value) return
@@ -98,5 +72,5 @@ export function useSessionRestore() {
     document.removeEventListener('visibilitychange', retryWhenBack)
   })
 
-  return { visible, phase, retrying, navigationFailed, retry, continueAsGuest }
+  return { visible, retrying, navigationFailed, retry, continueAsGuest }
 }
