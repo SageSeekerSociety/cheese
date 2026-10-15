@@ -46,6 +46,7 @@ its spec's idle time (``cloud_vm``), on the same clock
 import json
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -318,16 +319,30 @@ class SandboxLifecycle:
         await self._session.commit()
         return answer
 
+    async def evict(
+        self,
+        home_id: uuid.UUID,
+        room_id: uuid.UUID | None,
+        device_id: str,
+        tell: Callable[[AsyncSession, SandboxHome], Awaitable[dict | None]],
+    ) -> bool:
+        """Destroy one sandbox now, idle or not, and tell its room why with
+        ``tell`` (``disk_guard``). Returns whether it was destroyed."""
+        return await self._destroy(home_id, room_id, device_id, None, tell=tell)
+
     async def _destroy(
         self,
         home_id: uuid.UUID,
         room_id: uuid.UUID | None,
         device_id: str,
         idle: timedelta | None,
+        *,
+        tell: Callable[[AsyncSession, SandboxHome], Awaitable[dict | None]]
+        | None = None,
     ) -> bool:
         """Destroy one sandbox: idle for ``idle``, or, with ``idle`` None,
-        because its project's credits ran out (``metering.unpaid_sandboxes``)
-        or an earlier removal did not finish."""
+        because its project's credits ran out (``metering.unpaid_sandboxes``),
+        an earlier removal did not finish, or it is evicted (``tell``)."""
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
@@ -350,7 +365,7 @@ class SandboxLifecycle:
             # Another sweep is removing it.
             await self._session.commit()
             return False
-        unpaid = home.stopped_at is None and idle is None
+        unpaid = home.stopped_at is None and idle is None and tell is None
         home.stopped_at = now
         project, resource = str(home.project_id), home.resource_id
         await self._session.commit()
@@ -389,7 +404,9 @@ class SandboxLifecycle:
                     LOST_KEY: True,
                 }
             line = (
-                await tell_unpaid(self._session, home)
+                await tell(self._session, home)
+                if tell is not None
+                else await tell_unpaid(self._session, home)
                 if unpaid
                 else await tell_released(
                     self._session,
@@ -403,6 +420,10 @@ class SandboxLifecycle:
         logger.info(
             "sandbox %s destroyed %s",
             home_id,
-            "with its credits spent" if unpaid else f"after {idle} idle",
+            "evicted"
+            if tell is not None
+            else "with its credits spent"
+            if unpaid
+            else f"after {idle} idle",
         )
         return True

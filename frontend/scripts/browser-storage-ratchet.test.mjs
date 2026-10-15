@@ -11,8 +11,7 @@
 //   3. a plant — a file that reaches for storage is written into the tree and the
 //      ratchet is required to go red on it, then green once the baseline is
 //      allowed to know about it. A gate nobody has watched fail is not a gate,
-//      and the references frozen in browser-storage-baseline.json make today's
-//      tree pass either way.
+//      and today's tree passes the ratchet with nothing planted in it.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -376,9 +375,11 @@ describe('the ratchet on a planted reference', () => {
     // Not a full re-run (that is the `lint:storage` step in frontend.yml): this
     // only asserts the file is readable and every key is a path under src/, so a
     // baseline written from absolute paths — the shape that silently matches
-    // nothing on another machine — fails here.
+    // nothing on another machine — fails here. An empty baseline is not an error
+    // here: zero references is where the migration ends, and a baseline of zero
+    // refuses every new one. What an accidentally emptied baseline would let
+    // through, the `lint:storage` step already refuses.
     const files = JSON.parse(readFileSync(BASELINE, 'utf8')).files
-    assert.ok(Object.keys(files).length > 0, 'the baseline is empty; run pnpm run lint:storage:update')
     for (const key of Object.keys(files)) {
       assert.match(key, /^src\//, `baseline key is not a src path: ${key}`)
       assert.equal(typeof files[key], 'number')

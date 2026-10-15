@@ -1,0 +1,2605 @@
+{
+  "metadata": {
+    "started_at": "2026-10-14T21:26:45.729259+00:00",
+    "run_id": 38582677052,
+    "pr": 3724,
+    "base_ref": "e1dc25047d3597414b301a77b30526f153163eff",
+    "head_ref": "433848defa1c466582ff58473dca45842dac73dc",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "locale": "en-US",
+    "service_workers": "block",
+    "launch_args": [
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu"
+    ],
+    "cold_pairs": 8,
+    "walk_pairs": 4,
+    "order": "base first iff (pair_index + page_index) % 2 == 0",
+    "cold": "fresh context with login storage; cold HTTP cache, not first-ever storage",
+    "walk": "fresh context; warm logged-in home, networkidle + 300 ms, then real router push",
+    "probe_fixes": [
+      "legacy XHR API collection",
+      "disconnect old long-task observer on reset",
+      "separate warm-up failures from measured failures"
+    ],
+    "harness_sha256": {
+      "measure.py": "55597d5c1b7510d259399516ee059de10928890190db23c96adf6c745e6230c0",
+      "pages.py": "e0aeac9157bceddcec30c9ab7ea1179a5af986a1529976f41433ba0acf2b053f"
+    },
+    "params_sha256": "094715756ecb90f96eb24a01b182b81f0ab9e34fc02d2d5cdcffdfd8e6c4764d",
+    "backend": "shared local recovered snapshot; PostgreSQL 17.11.0, fakeredis 2.39.0",
+    "metric_limit": "later API bursts are not proven blocking; long tasks sampled just after ready",
+    "browser_version": "156.0.8078.4",
+    "warm_paths": {
+      "base": "/projects/zxeqxple",
+      "head": "/projects/zxeqxple"
+    },
+    "finished_at": "2026-10-14T21:47:22.630204+00:00"
+  },
+  "sample_count": 456,
+  "modes": {
+    "cold": {
+      "pages": [
+        {
+          "page": "inbox",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1193.5,
+              "head_median": 1219.8,
+              "difference_of_medians": 26.3,
+              "median_paired_delta": 45.4,
+              "paired_delta_range": [
+                -217.1,
+                526.1
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                961.1,
+                1281.2
+              ],
+              "head_range": [
+                1029.4,
+                1681.0
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 434.0,
+              "head_median": 450.5,
+              "difference_of_medians": 16.5,
+              "median_paired_delta": 16.0,
+              "paired_delta_range": [
+                -247,
+                297
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                313,
+                733
+              ],
+              "head_range": [
+                359,
+                744
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 357.4,
+              "head_median": 311.7,
+              "difference_of_medians": -45.7,
+              "median_paired_delta": -37.8,
+              "paired_delta_range": [
+                -245.8,
+                299.5
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                234.7,
+                530.2
+              ],
+              "head_range": [
+                254.2,
+                582.0
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "settings-devices",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1237.7,
+              "head_median": 1178.3,
+              "difference_of_medians": -59.4,
+              "median_paired_delta": -66.2,
+              "paired_delta_range": [
+                -916.8,
+                88.8
+              ],
+              "head_faster_pairs": 6,
+              "base_range": [
+                1049.1,
+                2909.0
+              ],
+              "head_range": [
+                1034.0,
+                1992.2
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 436.0,
+              "head_median": 446.0,
+              "difference_of_medians": 10.0,
+              "median_paired_delta": -33.5,
+              "paired_delta_range": [
+                -688,
+                136
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                297,
+                1571
+              ],
+              "head_range": [
+                354,
+                883
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 411.8,
+              "head_median": 394.1,
+              "difference_of_medians": -17.7,
+              "median_paired_delta": -2.5,
+              "paired_delta_range": [
+                -232.3,
+                215.8
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                305.1,
+                496.8
+              ],
+              "head_range": [
+                239.2,
+                588.6
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "settings-connections",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 991.8,
+              "head_median": 1103.6,
+              "difference_of_medians": 111.8,
+              "median_paired_delta": 85.0,
+              "paired_delta_range": [
+                -1193.1,
+                203.4
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                955.4,
+                2409.1
+              ],
+              "head_range": [
+                970.7,
+                1261.4
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 379.0,
+              "head_median": 493.0,
+              "difference_of_medians": 114.0,
+              "median_paired_delta": -8.0,
+              "paired_delta_range": [
+                -609,
+                172
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                329,
+                1159
+              ],
+              "head_range": [
+                328,
+                550
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 208.6,
+              "head_median": 253.8,
+              "difference_of_medians": 45.2,
+              "median_paired_delta": 31.8,
+              "paired_delta_range": [
+                -260.1,
+                180.8
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                170.6,
+                503.2
+              ],
+              "head_range": [
+                196.7,
+                409.1
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "settings-notifications",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 930.5,
+              "head_median": 935.9,
+              "difference_of_medians": 5.4,
+              "median_paired_delta": 25.1,
+              "paired_delta_range": [
+                -191.7,
+                120.9
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                813.5,
+                1482.0
+              ],
+              "head_range": [
+                892.3,
+                1349.8
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 316.0,
+              "head_median": 338.0,
+              "difference_of_medians": 22.0,
+              "median_paired_delta": 4.0,
+              "paired_delta_range": [
+                -155,
+                95
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                285,
+                449
+              ],
+              "head_range": [
+                263,
+                502
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 165.1,
+              "head_median": 178.9,
+              "difference_of_medians": 13.8,
+              "median_paired_delta": 28.2,
+              "paired_delta_range": [
+                -73.3,
+                134.3
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                139.2,
+                242.3
+              ],
+              "head_range": [
+                160.5,
+                376.6
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "user-profile",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1283.0,
+              "head_median": 1203.9,
+              "difference_of_medians": -79.0,
+              "median_paired_delta": -33.4,
+              "paired_delta_range": [
+                -721.1,
+                531.8
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                1097.2,
+                1968.8
+              ],
+              "head_range": [
+                1109.7,
+                2244.3
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 498.5,
+              "head_median": 483.0,
+              "difference_of_medians": -15.5,
+              "median_paired_delta": 33.5,
+              "paired_delta_range": [
+                -200,
+                273
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                437,
+                811
+              ],
+              "head_range": [
+                438,
+                1084
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 340.4,
+              "head_median": 293.5,
+              "difference_of_medians": -46.9,
+              "median_paired_delta": -59.8,
+              "paired_delta_range": [
+                -830.9,
+                96.9
+              ],
+              "head_faster_pairs": 7,
+              "base_range": [
+                279.1,
+                1208.5
+              ],
+              "head_range": [
+                245.3,
+                478.0
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "project-channels",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1261.3,
+              "head_median": 1248.5,
+              "difference_of_medians": -12.8,
+              "median_paired_delta": -15.8,
+              "paired_delta_range": [
+                -416.2,
+                193.9
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1093.1,
+                2122.0
+              ],
+              "head_range": [
+                1112.4,
+                1831.3
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 477.5,
+              "head_median": 558.0,
+              "difference_of_medians": 80.5,
+              "median_paired_delta": 47.0,
+              "paired_delta_range": [
+                -58,
+                141
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                425,
+                942
+              ],
+              "head_range": [
+                423,
+                966
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 506.4,
+              "head_median": 483.1,
+              "difference_of_medians": -23.3,
+              "median_paired_delta": -31.5,
+              "paired_delta_range": [
+                -382.3,
+                101.6
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                389.8,
+                1044.1
+              ],
+              "head_range": [
+                380.9,
+                661.8
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "project-tasks",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1376.2,
+              "head_median": 1263.7,
+              "difference_of_medians": -112.5,
+              "median_paired_delta": 1.9,
+              "paired_delta_range": [
+                -923.0,
+                284.8
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1194.0,
+                2146.2
+              ],
+              "head_range": [
+                1205.1,
+                1814.5
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 606.0,
+              "head_median": 584.5,
+              "difference_of_medians": -21.5,
+              "median_paired_delta": -97.0,
+              "paired_delta_range": [
+                -472,
+                140
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                470,
+                928
+              ],
+              "head_range": [
+                370,
+                745
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 469.9,
+              "head_median": 403.4,
+              "difference_of_medians": -66.4,
+              "median_paired_delta": -45.0,
+              "paired_delta_range": [
+                -960.5,
+                159.6
+              ],
+              "head_faster_pairs": 6,
+              "base_range": [
+                385.7,
+                1352.4
+              ],
+              "head_range": [
+                379.9,
+                757.0
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "project-library",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1390.7,
+              "head_median": 1420.1,
+              "difference_of_medians": 29.4,
+              "median_paired_delta": -31.7,
+              "paired_delta_range": [
+                -169.4,
+                214.6
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                1307.7,
+                1818.4
+              ],
+              "head_range": [
+                1306.8,
+                1750.5
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 677.5,
+              "head_median": 698.5,
+              "difference_of_medians": 21.0,
+              "median_paired_delta": 18.5,
+              "paired_delta_range": [
+                -192,
+                192
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                539,
+                855
+              ],
+              "head_range": [
+                623,
+                789
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 400.1,
+              "head_median": 385.7,
+              "difference_of_medians": -14.4,
+              "median_paired_delta": -41.4,
+              "paired_delta_range": [
+                -235.7,
+                58.8
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                330.3,
+                651.4
+              ],
+              "head_range": [
+                246.0,
+                433.0
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "project-docs-charter",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 2090.4,
+              "head_median": 1971.7,
+              "difference_of_medians": -118.8,
+              "median_paired_delta": -64.8,
+              "paired_delta_range": [
+                -385.1,
+                243.2
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                1739.8,
+                3008.6
+              ],
+              "head_range": [
+                1911.5,
+                2623.5
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 758.0,
+              "head_median": 668.5,
+              "difference_of_medians": -89.5,
+              "median_paired_delta": -31.5,
+              "paired_delta_range": [
+                -501,
+                121
+              ],
+              "head_faster_pairs": 6,
+              "base_range": [
+                617,
+                1077
+              ],
+              "head_range": [
+                576,
+                1080
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 1017.5,
+              "head_median": 953.2,
+              "difference_of_medians": -64.3,
+              "median_paired_delta": -6.3,
+              "paired_delta_range": [
+                -297.7,
+                74.6
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                830.4,
+                1627.1
+              ],
+              "head_range": [
+                823.5,
+                1555.7
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "project-artifact",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1371.0,
+              "head_median": 1258.2,
+              "difference_of_medians": -112.8,
+              "median_paired_delta": 1.6,
+              "paired_delta_range": [
+                -268.3,
+                277.4
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1167.3,
+                1651.7
+              ],
+              "head_range": [
+                1167.0,
+                1929.1
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 559.5,
+              "head_median": 513.0,
+              "difference_of_medians": -46.5,
+              "median_paired_delta": 3.0,
+              "paired_delta_range": [
+                -148,
+                78
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                434,
+                668
+              ],
+              "head_range": [
+                370,
+                746
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 473.1,
+              "head_median": 456.6,
+              "difference_of_medians": -16.5,
+              "median_paired_delta": -11.8,
+              "paired_delta_range": [
+                -107.1,
+                280.3
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                447.9,
+                649.4
+              ],
+              "head_range": [
+                379.8,
+                913.5
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "project-members",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1322.4,
+              "head_median": 1313.3,
+              "difference_of_medians": -9.1,
+              "median_paired_delta": -1.3,
+              "paired_delta_range": [
+                -55.8,
+                202.9
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1184.8,
+                1777.9
+              ],
+              "head_range": [
+                1216.7,
+                1804.1
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 564.0,
+              "head_median": 571.5,
+              "difference_of_medians": 7.5,
+              "median_paired_delta": -38.0,
+              "paired_delta_range": [
+                -258,
+                155
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                449,
+                1033
+              ],
+              "head_range": [
+                364,
+                819
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 532.6,
+              "head_median": 482.9,
+              "difference_of_medians": -49.7,
+              "median_paired_delta": -95.6,
+              "paired_delta_range": [
+                -187.6,
+                -6.6
+              ],
+              "head_faster_pairs": 8,
+              "base_range": [
+                470.1,
+                688.7
+              ],
+              "head_range": [
+                367.3,
+                520.3
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "project-settings",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1136.4,
+              "head_median": 1150.7,
+              "difference_of_medians": 14.3,
+              "median_paired_delta": 2.8,
+              "paired_delta_range": [
+                -371.2,
+                77.8
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1088.8,
+                1774.2
+              ],
+              "head_range": [
+                1052.1,
+                1403.0
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 513.5,
+              "head_median": 518.0,
+              "difference_of_medians": 4.5,
+              "median_paired_delta": 2.0,
+              "paired_delta_range": [
+                -209,
+                125
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                395,
+                819
+              ],
+              "head_range": [
+                397,
+                821
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 240.9,
+              "head_median": 164.6,
+              "difference_of_medians": -76.3,
+              "median_paired_delta": -6.6,
+              "paired_delta_range": [
+                -332.8,
+                212.2
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                72.9,
+                421.4
+              ],
+              "head_range": [
+                88.6,
+                320.3
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "project-skills",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1297.8,
+              "head_median": 1335.5,
+              "difference_of_medians": 37.8,
+              "median_paired_delta": 7.2,
+              "paired_delta_range": [
+                -452.6,
+                109.1
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                1221.6,
+                2263.1
+              ],
+              "head_range": [
+                1235.5,
+                1810.5
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 598.5,
+              "head_median": 562.0,
+              "difference_of_medians": -36.5,
+              "median_paired_delta": -33.0,
+              "paired_delta_range": [
+                -272,
+                57
+              ],
+              "head_faster_pairs": 6,
+              "base_range": [
+                482,
+                1099
+              ],
+              "head_range": [
+                479,
+                827
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 475.8,
+              "head_median": 462.0,
+              "difference_of_medians": -13.8,
+              "median_paired_delta": -14.4,
+              "paired_delta_range": [
+                -88.8,
+                236.4
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                271.8,
+                664.6
+              ],
+              "head_range": [
+                349.6,
+                629.1
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "teams",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1279.5,
+              "head_median": 1276.2,
+              "difference_of_medians": -3.3,
+              "median_paired_delta": -6.1,
+              "paired_delta_range": [
+                -713.2,
+                169.9
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1151.1,
+                2343.9
+              ],
+              "head_range": [
+                1212.3,
+                1630.7
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 478.0,
+              "head_median": 518.0,
+              "difference_of_medians": 40.0,
+              "median_paired_delta": 24.0,
+              "paired_delta_range": [
+                -184,
+                169
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                404,
+                963
+              ],
+              "head_range": [
+                385,
+                851
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 476.3,
+              "head_median": 461.0,
+              "difference_of_medians": -15.3,
+              "median_paired_delta": -47.5,
+              "paired_delta_range": [
+                -676.1,
+                145.7
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                380.0,
+                1139.8
+              ],
+              "head_range": [
+                376.3,
+                525.7
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "team-detail",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1194.9,
+              "head_median": 1256.3,
+              "difference_of_medians": 61.4,
+              "median_paired_delta": 4.1,
+              "paired_delta_range": [
+                -214.2,
+                341.7
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1114.1,
+                1472.7
+              ],
+              "head_range": [
+                1146.4,
+                1455.8
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 348.5,
+              "head_median": 413.0,
+              "difference_of_medians": 64.5,
+              "median_paired_delta": 77.5,
+              "paired_delta_range": [
+                -45,
+                129
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                282,
+                463
+              ],
+              "head_range": [
+                352,
+                514
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 428.1,
+              "head_median": 423.9,
+              "difference_of_medians": -4.2,
+              "median_paired_delta": -23.7,
+              "paired_delta_range": [
+                -116.8,
+                184.2
+              ],
+              "head_faster_pairs": 6,
+              "base_range": [
+                366.3,
+                516.5
+              ],
+              "head_range": [
+                289.6,
+                550.5
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "spaces",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1206.7,
+              "head_median": 1214.8,
+              "difference_of_medians": 8.1,
+              "median_paired_delta": 29.0,
+              "paired_delta_range": [
+                -402.2,
+                230.7
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1029.5,
+                1585.8
+              ],
+              "head_range": [
+                1083.7,
+                1410.5
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 492.0,
+              "head_median": 452.0,
+              "difference_of_medians": -40.0,
+              "median_paired_delta": -42.0,
+              "paired_delta_range": [
+                -201,
+                94
+              ],
+              "head_faster_pairs": 6,
+              "base_range": [
+                350,
+                649
+              ],
+              "head_range": [
+                356,
+                548
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 369.5,
+              "head_median": 416.9,
+              "difference_of_medians": 47.3,
+              "median_paired_delta": 59.7,
+              "paired_delta_range": [
+                -346.7,
+                211.7
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                332.2,
+                742.3
+              ],
+              "head_range": [
+                329.1,
+                543.9
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "channel",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1799.2,
+              "head_median": 1881.1,
+              "difference_of_medians": 81.8,
+              "median_paired_delta": 14.9,
+              "paired_delta_range": [
+                -492.6,
+                350.3
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                1571.1,
+                2191.9
+              ],
+              "head_range": [
+                1624.0,
+                2014.1
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 924.0,
+              "head_median": 995.0,
+              "difference_of_medians": 71.0,
+              "median_paired_delta": 62.0,
+              "paired_delta_range": [
+                -359,
+                276
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                775,
+                1158
+              ],
+              "head_range": [
+                784,
+                1066
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 662.5,
+              "head_median": 791.3,
+              "difference_of_medians": 128.8,
+              "median_paired_delta": -8.5,
+              "paired_delta_range": [
+                -468.3,
+                487.2
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                351.7,
+                1123.8
+              ],
+              "head_range": [
+                409.4,
+                875.9
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "thread",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 2397.7,
+              "head_median": 2231.6,
+              "difference_of_medians": -166.1,
+              "median_paired_delta": -211.6,
+              "paired_delta_range": [
+                -3349.4,
+                763.2
+              ],
+              "head_faster_pairs": 6,
+              "base_range": [
+                2070.6,
+                5926.1
+              ],
+              "head_range": [
+                1632.3,
+                3656.6
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 903.0,
+              "head_median": 880.5,
+              "difference_of_medians": -22.5,
+              "median_paired_delta": -63.5,
+              "paired_delta_range": [
+                -3796,
+                599
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                744,
+                4697
+              ],
+              "head_range": [
+                623,
+                1612
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 1205.5,
+              "head_median": 1199.8,
+              "difference_of_medians": -5.8,
+              "median_paired_delta": -112.5,
+              "paired_delta_range": [
+                -2520.7,
+                1215.9
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                921.3,
+                3777.1
+              ],
+              "head_range": [
+                816.3,
+                2458.9
+              ]
+            }
+          },
+          "successful_pairs": 8
+        },
+        {
+          "page": "workspace-task",
+          "pairs": 8,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1906.7,
+              "head_median": 1841.2,
+              "difference_of_medians": -65.5,
+              "median_paired_delta": -117.6,
+              "paired_delta_range": [
+                -651.9,
+                264.9
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                1591.4,
+                2520.6
+              ],
+              "head_range": [
+                1770.2,
+                1963.6
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 789.0,
+              "head_median": 766.0,
+              "difference_of_medians": -23.0,
+              "median_paired_delta": -74.5,
+              "paired_delta_range": [
+                -732,
+                288
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                608,
+                1595
+              ],
+              "head_range": [
+                661,
+                996
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 867.7,
+              "head_median": 769.8,
+              "difference_of_medians": -97.9,
+              "median_paired_delta": -136.9,
+              "paired_delta_range": [
+                -326.0,
+                662.4
+              ],
+              "head_faster_pairs": 5,
+              "base_range": [
+                532.9,
+                1208.8
+              ],
+              "head_range": [
+                657.6,
+                1195.3
+              ]
+            }
+          },
+          "successful_pairs": 8
+        }
+      ],
+      "aggregates": {
+        "ready_ms": {
+          "median_of_base_page_medians": 1283.0,
+          "median_of_head_page_medians": 1258.2,
+          "median_of_page_median_differences": -3.3,
+          "median_of_page_paired_deltas": 1.6,
+          "head_lower_page_medians": 10
+        },
+        "long_task_ms": {
+          "median_of_base_page_medians": 513.5,
+          "median_of_head_page_medians": 518.0,
+          "median_of_page_median_differences": 7.5,
+          "median_of_page_paired_deltas": 2.0,
+          "head_lower_page_medians": 8
+        },
+        "api_serial_ms": {
+          "median_of_base_page_medians": 469.9,
+          "median_of_head_page_medians": 423.9,
+          "median_of_page_median_differences": -16.5,
+          "median_of_page_paired_deltas": -23.7,
+          "head_lower_page_medians": 15
+        }
+      }
+    },
+    "walk": {
+      "pages": [
+        {
+          "page": "inbox",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 322.6,
+              "head_median": 380.8,
+              "difference_of_medians": 58.2,
+              "median_paired_delta": 60.6,
+              "paired_delta_range": [
+                -91.6,
+                169.3
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                253.3,
+                444.3
+              ],
+              "head_range": [
+                227.7,
+                552.4
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 64.5,
+              "head_median": 81.0,
+              "difference_of_medians": 16.5,
+              "median_paired_delta": 20.5,
+              "paired_delta_range": [
+                -11,
+                87
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                55,
+                78
+              ],
+              "head_range": [
+                67,
+                150
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "settings-devices",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 358.0,
+              "head_median": 366.9,
+              "difference_of_medians": 8.9,
+              "median_paired_delta": 9.8,
+              "paired_delta_range": [
+                -22.2,
+                40.3
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                251.4,
+                395.2
+              ],
+              "head_range": [
+                291.7,
+                374.8
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 95.0,
+              "head_median": 86.5,
+              "difference_of_medians": -8.5,
+              "median_paired_delta": -12.5,
+              "paired_delta_range": [
+                -23,
+                3
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                74,
+                114
+              ],
+              "head_range": [
+                63,
+                97
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "settings-connections",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 295.5,
+              "head_median": 307.0,
+              "difference_of_medians": 11.5,
+              "median_paired_delta": 9.9,
+              "paired_delta_range": [
+                -26.7,
+                55.9
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                276.8,
+                315.1
+              ],
+              "head_range": [
+                266.1,
+                351.8
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 101.5,
+              "head_median": 96.0,
+              "difference_of_medians": -5.5,
+              "median_paired_delta": -4.5,
+              "paired_delta_range": [
+                -46,
+                22
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                83,
+                131
+              ],
+              "head_range": [
+                85,
+                107
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "settings-notifications",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 231.1,
+              "head_median": 228.0,
+              "difference_of_medians": -3.1,
+              "median_paired_delta": -3.1,
+              "paired_delta_range": [
+                -31.9,
+                18.2
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                203.1,
+                277.7
+              ],
+              "head_range": [
+                221.3,
+                245.8
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 77.0,
+              "head_median": 68.0,
+              "difference_of_medians": -9.0,
+              "median_paired_delta": -11.5,
+              "paired_delta_range": [
+                -36,
+                0
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                65,
+                116
+              ],
+              "head_range": [
+                60,
+                80
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "user-profile",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 400.8,
+              "head_median": 400.8,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 14.4,
+              "paired_delta_range": [
+                -22.0,
+                61.7
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                337.1,
+                434.5
+              ],
+              "head_range": [
+                368.5,
+                471.7
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 177.0,
+              "head_median": 172.0,
+              "difference_of_medians": -5.0,
+              "median_paired_delta": 0.5,
+              "paired_delta_range": [
+                -23,
+                4
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                166,
+                187
+              ],
+              "head_range": [
+                164,
+                181
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "project-channels",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 247.6,
+              "head_median": 248.3,
+              "difference_of_medians": 0.7,
+              "median_paired_delta": 4.1,
+              "paired_delta_range": [
+                -37.6,
+                78.0
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                161.1,
+                275.9
+              ],
+              "head_range": [
+                221.6,
+                262.6
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 72.0,
+              "head_median": 77.5,
+              "difference_of_medians": 5.5,
+              "median_paired_delta": 7.5,
+              "paired_delta_range": [
+                -17,
+                55
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                0,
+                95
+              ],
+              "head_range": [
+                55,
+                82
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "project-tasks",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 125.2,
+              "head_median": 119.2,
+              "difference_of_medians": -6.0,
+              "median_paired_delta": -16.3,
+              "paired_delta_range": [
+                -26.0,
+                39.5
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                78.8,
+                154.0
+              ],
+              "head_range": [
+                97.8,
+                128.0
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 75.0,
+              "head_median": 73.5,
+              "difference_of_medians": -1.5,
+              "median_paired_delta": -7.5,
+              "paired_delta_range": [
+                -20,
+                72
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                0,
+                91
+              ],
+              "head_range": [
+                53,
+                78
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "project-library",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 224.8,
+              "head_median": 195.4,
+              "difference_of_medians": -29.3,
+              "median_paired_delta": -30.1,
+              "paired_delta_range": [
+                -137.2,
+                34.9
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                178.8,
+                333.6
+              ],
+              "head_range": [
+                185.8,
+                222.7
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 84.0,
+              "head_median": 95.0,
+              "difference_of_medians": 11.0,
+              "median_paired_delta": 6.0,
+              "paired_delta_range": [
+                -84,
+                15
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                73,
+                191
+              ],
+              "head_range": [
+                78,
+                107
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "project-docs-charter",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 409.9,
+              "head_median": 431.1,
+              "difference_of_medians": 21.2,
+              "median_paired_delta": 21.2,
+              "paired_delta_range": [
+                -115.2,
+                721.1
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                393.8,
+                459.9
+              ],
+              "head_range": [
+                344.7,
+                1114.9
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 74.0,
+              "head_median": 122.0,
+              "difference_of_medians": 48.0,
+              "median_paired_delta": 57.5,
+              "paired_delta_range": [
+                -6,
+                99
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                54,
+                112
+              ],
+              "head_range": [
+                77,
+                201
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 127.7,
+              "head_median": 133.4,
+              "difference_of_medians": 5.8,
+              "median_paired_delta": 3.4,
+              "paired_delta_range": [
+                -80.1,
+                546.2
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                125.1,
+                206.8
+              ],
+              "head_range": [
+                121.1,
+                672.1
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "project-artifact",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 242.4,
+              "head_median": 207.3,
+              "difference_of_medians": -35.1,
+              "median_paired_delta": -37.6,
+              "paired_delta_range": [
+                -74.2,
+                -25.8
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                216.1,
+                265.9
+              ],
+              "head_range": [
+                141.9,
+                235
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 59.0,
+              "head_median": 53.0,
+              "difference_of_medians": -6.0,
+              "median_paired_delta": -2.0,
+              "paired_delta_range": [
+                -33,
+                0
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                53,
+                84
+              ],
+              "head_range": [
+                51,
+                61
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "project-members",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 261.6,
+              "head_median": 242.2,
+              "difference_of_medians": -19.4,
+              "median_paired_delta": -23.1,
+              "paired_delta_range": [
+                -68.8,
+                25.0
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                221.0,
+                311.3
+              ],
+              "head_range": [
+                235.2,
+                246.0
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 98.0,
+              "head_median": 85.5,
+              "difference_of_medians": -12.5,
+              "median_paired_delta": -21.0,
+              "paired_delta_range": [
+                -37,
+                42
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                74,
+                127
+              ],
+              "head_range": [
+                73,
+                116
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "project-settings",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 151.2,
+              "head_median": 138.2,
+              "difference_of_medians": -13.0,
+              "median_paired_delta": 0.9,
+              "paired_delta_range": [
+                -27.1,
+                5.4
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                130.6,
+                185.8
+              ],
+              "head_range": [
+                131.3,
+                191.2
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 89.5,
+              "head_median": 79.0,
+              "difference_of_medians": -10.5,
+              "median_paired_delta": -8.5,
+              "paired_delta_range": [
+                -15,
+                20
+              ],
+              "head_faster_pairs": 3,
+              "base_range": [
+                87,
+                100
+              ],
+              "head_range": [
+                76,
+                120
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "project-skills",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 310.2,
+              "head_median": 285.8,
+              "difference_of_medians": -24.4,
+              "median_paired_delta": 18.5,
+              "paired_delta_range": [
+                -67.9,
+                252.3
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                226.6,
+                315.1
+              ],
+              "head_range": [
+                244.6,
+                567.4
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 131.0,
+              "head_median": 122.0,
+              "difference_of_medians": -9.0,
+              "median_paired_delta": 13.5,
+              "paired_delta_range": [
+                -51,
+                126
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                94,
+                144
+              ],
+              "head_range": [
+                88,
+                270
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "teams",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 533.0,
+              "head_median": 493.6,
+              "difference_of_medians": -39.3,
+              "median_paired_delta": -39.3,
+              "paired_delta_range": [
+                -159.0,
+                -1.3
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                423.5,
+                773.8
+              ],
+              "head_range": [
+                422.2,
+                614.8
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 122.5,
+              "head_median": 120.5,
+              "difference_of_medians": -2.0,
+              "median_paired_delta": -9.5,
+              "paired_delta_range": [
+                -48,
+                19
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                107,
+                332
+              ],
+              "head_range": [
+                111,
+                284
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "team-detail",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 400.6,
+              "head_median": 420.9,
+              "difference_of_medians": 20.3,
+              "median_paired_delta": 20.3,
+              "paired_delta_range": [
+                -81.5,
+                36.1
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                370.6,
+                458.0
+              ],
+              "head_range": [
+                289.1,
+                494.1
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 110.5,
+              "head_median": 115.5,
+              "difference_of_medians": 5.0,
+              "median_paired_delta": -0.5,
+              "paired_delta_range": [
+                -37,
+                54
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                65,
+                132
+              ],
+              "head_range": [
+                57,
+                146
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                -64.4,
+                83.9
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                0,
+                64.4
+              ],
+              "head_range": [
+                0,
+                83.9
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "spaces",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 435.8,
+              "head_median": 446.5,
+              "difference_of_medians": 10.8,
+              "median_paired_delta": -20.5,
+              "paired_delta_range": [
+                -90.3,
+                64.9
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                380.3,
+                659.6
+              ],
+              "head_range": [
+                382.6,
+                569.3
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 114.5,
+              "head_median": 155.5,
+              "difference_of_medians": 41.0,
+              "median_paired_delta": 3.5,
+              "paired_delta_range": [
+                -24,
+                85
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                106,
+                268
+              ],
+              "head_range": [
+                116,
+                244
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "channel",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 718.3,
+              "head_median": 707.8,
+              "difference_of_medians": -10.6,
+              "median_paired_delta": -18.1,
+              "paired_delta_range": [
+                -25.4,
+                -1.1
+              ],
+              "head_faster_pairs": 4,
+              "base_range": [
+                577.0,
+                1196.6
+              ],
+              "head_range": [
+                551.6,
+                1180.4
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 373.0,
+              "head_median": 452.5,
+              "difference_of_medians": 79.5,
+              "median_paired_delta": -5.0,
+              "paired_delta_range": [
+                -85,
+                134
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                295,
+                766
+              ],
+              "head_range": [
+                260,
+                681
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 108.2,
+              "head_median": 133.8,
+              "difference_of_medians": 25.5,
+              "median_paired_delta": -5.3,
+              "paired_delta_range": [
+                -11.4,
+                61.6
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                0,
+                245.6
+              ],
+              "head_range": [
+                0,
+                234.2
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "thread",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 1180.1,
+              "head_median": 1043.9,
+              "difference_of_medians": -136.2,
+              "median_paired_delta": -31.5,
+              "paired_delta_range": [
+                -182.7,
+                97.3
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                965.5,
+                1574.6
+              ],
+              "head_range": [
+                1002.7,
+                1661.4
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 245.5,
+              "head_median": 300.0,
+              "difference_of_medians": 54.5,
+              "median_paired_delta": 23.0,
+              "paired_delta_range": [
+                -283,
+                74
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                196,
+                677
+              ],
+              "head_range": [
+                207,
+                394
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                0
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                0
+              ]
+            }
+          },
+          "successful_pairs": 4
+        },
+        {
+          "page": "workspace-task",
+          "pairs": 4,
+          "metrics": {
+            "ready_ms": {
+              "base_median": 455.7,
+              "head_median": 476.6,
+              "difference_of_medians": 20.9,
+              "median_paired_delta": 16.0,
+              "paired_delta_range": [
+                -8.2,
+                309.9
+              ],
+              "head_faster_pairs": 2,
+              "base_range": [
+                439.8,
+                467.5
+              ],
+              "head_range": [
+                449.4,
+                749.7
+              ]
+            },
+            "long_task_ms": {
+              "base_median": 198.5,
+              "head_median": 255.0,
+              "difference_of_medians": 56.5,
+              "median_paired_delta": 56.5,
+              "paired_delta_range": [
+                -17,
+                96
+              ],
+              "head_faster_pairs": 1,
+              "base_range": [
+                184,
+                217
+              ],
+              "head_range": [
+                200,
+                280
+              ]
+            },
+            "api_serial_ms": {
+              "base_median": 0.0,
+              "head_median": 0.0,
+              "difference_of_medians": 0.0,
+              "median_paired_delta": 0.0,
+              "paired_delta_range": [
+                0,
+                230.1
+              ],
+              "head_faster_pairs": 0,
+              "base_range": [
+                0,
+                0
+              ],
+              "head_range": [
+                0,
+                230.1
+              ]
+            }
+          },
+          "successful_pairs": 4
+        }
+      ],
+      "aggregates": {
+        "ready_ms": {
+          "median_of_base_page_medians": 322.6,
+          "median_of_head_page_medians": 366.9,
+          "median_of_page_median_differences": -3.1,
+          "median_of_page_paired_deltas": 0.9,
+          "head_lower_page_medians": 10
+        },
+        "long_task_ms": {
+          "median_of_base_page_medians": 98.0,
+          "median_of_head_page_medians": 96.0,
+          "median_of_page_median_differences": -1.5,
+          "median_of_page_paired_deltas": -0.5,
+          "head_lower_page_medians": 10
+        },
+        "api_serial_ms": {
+          "median_of_base_page_medians": 0.0,
+          "median_of_head_page_medians": 0.0,
+          "median_of_page_median_differences": 0.0,
+          "median_of_page_paired_deltas": 0.0,
+          "head_lower_page_medians": 0
+        }
+      }
+    }
+  },
+  "measurement_errors": [],
+  "page_errors": [],
+  "http_failures": [
+    {
+      "phase": "measured",
+      "status": 404,
+      "path": "api/avatars/2",
+      "count": 122
+    },
+    {
+      "phase": "measured",
+      "status": 404,
+      "path": "api/avatars/3",
+      "count": 106
+    },
+    {
+      "phase": "measured",
+      "status": 404,
+      "path": "api/avatars/4",
+      "count": 21
+    },
+    {
+      "phase": "measured",
+      "status": 404,
+      "path": "api/avatars/5",
+      "count": 16
+    },
+    {
+      "phase": "measured",
+      "status": 500,
+      "path": "api/projects/2ccce357-eee5-4274-83b8-172b36dadc7c/topics/7ae6ed05-6507-4bf6-bf7a-e005540e2477/work-summary",
+      "count": 2
+    },
+    {
+      "phase": "warmup",
+      "status": 404,
+      "path": "api/avatars/2",
+      "count": 152
+    },
+    {
+      "phase": "warmup",
+      "status": 404,
+      "path": "api/avatars/3",
+      "count": 152
+    },
+    {
+      "phase": "warmup",
+      "status": 404,
+      "path": "api/avatars/4",
+      "count": 152
+    },
+    {
+      "phase": "warmup",
+      "status": 404,
+      "path": "api/avatars/5",
+      "count": 152
+    },
+    {
+      "phase": "warmup",
+      "status": 500,
+      "path": "api/projects/2ccce357-eee5-4274-83b8-172b36dadc7c/site",
+      "count": 152
+    }
+  ],
+  "notes": [
+    "All samples kept, including the first pair; no outlier exclusions.",
+    "Descriptive medians only; eight cold pairs/four walk pairs do not establish a stable benefit.",
+    "API later-burst totals and main-thread totals overlap; neither proves a critical-path bottleneck.",
+    "Long tasks use the original accumulated-window metric, sampled just after content ready.",
+    "The old lost run is not pooled with this rerun.",
+    "Project-docs-charter retains the original tabs-ready criterion; both first-pair screenshots still show the document-body skeleton. It is not document-body readiness.",
+    "Screenshots use English UI and lack CJK fonts; Chinese demo text renders as missing-glyph boxes in both variants."
+  ]
+}

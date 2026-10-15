@@ -11,11 +11,12 @@ def test_gateway_healthcheck_only_uses_tools_in_the_gateway_image():
     compose = yaml.safe_load(
         (ROOT / "deploy/compose/docker-compose.gateway.yml").read_text()
     )
-    probe = compose["services"]["litellm"]["healthcheck"]["test"]
+    for color in ("litellm-blue", "litellm-green"):
+        probe = compose["services"][color]["healthcheck"]["test"]
 
-    assert probe[:3] == ["CMD", "/app/.venv/bin/python", "-c"]
-    assert "urllib.request.urlopen" in probe[3]
-    assert "curl" not in probe
+        assert probe[:3] == ["CMD", "/app/.venv/bin/python", "-c"]
+        assert "urllib.request.urlopen" in probe[3]
+        assert "curl" not in probe
 
 
 def test_center_host_fuse_runtime_is_installed_by_normal_deploy():

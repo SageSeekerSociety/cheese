@@ -130,13 +130,15 @@ line_of() {
 # The owners outlive app releases, so a release whose migrations drop what an
 # owner's image still maps would leave that owner failing every query that
 # loads it. Such an owner is drained before the migrations and recreated on
-# the release after them; one that maps nothing extra is left alone (above).
+# the release after them; one whose schema the migrations leave alone keeps
+# running, whatever its models map that the release's no longer do.
 test_deploy_releases_owners_behind_the_schema() {
   local run_dir docker_log drained migrated device_back preview_back
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
     APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config" \
+    APP_TIER_PENDING_TOUCHES=$'pending c4e9a2f7d153\ntopics.compute_config' \
     DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
     || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed with owners behind the schema"; }
   drained="$(line_of 'device-connection/release-drain' "$docker_log")"
@@ -151,8 +153,71 @@ test_deploy_releases_owners_behind_the_schema() {
     || { rm -rf "$run_dir"; fail "the preview owner was not recreated after the migrations"; }
   grep -q -- '--force-recreate backend' "$docker_log" \
     || { rm -rf "$run_dir"; fail "the deploy did not roll the app tier"; }
+  grep -F 'device connection owner maps schema the migrations change or the database lacks: topics.compute_config' "$run_dir/deploy.log" >/dev/null \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "the deploy did not say which schema held the owner"; }
   rm -rf "$run_dir"
-  echo "PASS: owners that map schema the release dropped are released across its migrations"
+  echo "PASS: owners that map schema the migrations drop are released across them"
+}
+
+# The first half of a drop only stops mapping a column (.claude/rules/migrations.md);
+# the column stays until a later release's migration drops it. Until then no
+# owner query can fail on it, so nothing is gained by closing their connections:
+# not when the release merely maps less, and not when its migrations change
+# other tables.
+test_deploy_leaves_owners_the_migrations_spare() {
+  local run_dir docker_log touches
+  for touches in "" $'pending ea1b19de526b\nroom_locks\ntasks.compute_config'; do
+    run_dir="$(new_rollout_run_dir)"
+    docker_log="$run_dir/docker.log"
+    rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
+      APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config tasks tasks.id" \
+      APP_TIER_PENDING_TOUCHES="$touches" \
+      DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
+      || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed with owners the migrations spare"; }
+    ! grep -E 'release-drain|force-recreate (device|preview)-connection' "$docker_log" >/dev/null \
+      || { rm -rf "$run_dir"; fail "an owner was released although the migrations (${touches:-none}) change nothing it maps"; }
+    grep -q -- '--force-recreate backend' "$docker_log" \
+      || { rm -rf "$run_dir"; fail "the deploy did not roll the app tier"; }
+    rm -rf "$run_dir"
+  done
+  echo "PASS: owners whose schema the migrations leave alone keep running"
+}
+
+# Migrations commit one by one: a deploy whose second migration failed keeps
+# the first one's drop and resumes the old owner on it, and the next deploy no
+# longer lists that migration. The database itself shows the owner is behind.
+test_deploy_releases_owners_the_database_left_behind() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config" \
+    APP_TIER_DB_SCHEMA="topics topics.id" \
+    DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed with an owner behind the database"; }
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "an owner mapping a column the database no longer has was left running"; }
+  grep -F 'topics.compute_config (not in the database)' "$run_dir/deploy.log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the deploy did not say what the owner maps that the database lacks"; }
+  rm -rf "$run_dir"
+  echo "PASS: an owner mapping what the database no longer has is released"
+}
+
+# A migration whose changes cannot be read is not proof that it spares them.
+test_deploy_releases_owners_when_migrations_unreadable() {
+  local run_dir docker_log released
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_PENDING_TOUCHES_BROKEN=1 \
+    DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed when the migrations could not be read"; }
+  for released in 'device-connection/release-drain' 'force-recreate device-connection' 'force-recreate preview-connection'; do
+    grep -F "$released" "$docker_log" >/dev/null \
+      || { rm -rf "$run_dir"; fail "owners were left on migrations nobody could read ($released missing)"; }
+  done
+  rm -rf "$run_dir"
+  echo "PASS: migrations that cannot be read release the owners"
 }
 
 test_failed_migration_resumes_the_drained_owner() {
@@ -161,6 +226,7 @@ test_failed_migration_resumes_the_drained_owner() {
   docker_log="$run_dir/docker.log"
   if rollout_run "$run_dir" env APP_TIER_SCENARIO=stable_owner \
     APP_TIER_OWNER_SCHEMA="topics topics.id topics.compute_config" \
+    APP_TIER_PENDING_TOUCHES=$'pending c4e9a2f7d153\ntopics.compute_config' \
     APP_TIER_DOCKER_FAIL_MATCH='alembic upgrade head' \
     DEVICE_CONNECTION_SECRET=test-owner-secret >"$run_dir/deploy.log" 2>&1; then
     rm -rf "$run_dir"
@@ -335,6 +401,79 @@ EOF
     || { rm -rf "$run_dir"; fail "failed owner release left the old owner draining"; }
   rm -rf "$run_dir"
   echo "PASS: owner release waits for atomic idle drain and stops safely on failure"
+}
+
+# Releasing an owner onto the image it already runs changes nothing it serves
+# and still closes every connection it holds. A wedged one is still replaced.
+test_owner_release_of_the_running_image_keeps_connections() {
+  local run_dir docker_log owner
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/owner-same-image.XXXXXX")"
+  docker_log="$run_dir/docker.log"
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    DEVICE_CONNECTION_SECRET=test-owner-secret PREVIEW_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    bash -c '"$1/deploy/release-device-connection.sh" testsha "$2" && "$1/deploy/release-preview-connection.sh" testsha "$2"' \
+      _ "$ROOT" "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null \
+    || { rm -rf "$run_dir"; fail "a release of the running image failed"; }
+  ! grep -E 'release-drain|force-recreate (device|preview)-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an owner was drained or recreated onto the image it already runs"; }
+
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    APP_TIER_CURL_FAIL_MATCH=/healthz DEVICE_CONNECTION_SECRET=test-owner-secret HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1 || true
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an unhealthy owner on the release's image was not replaced"; }
+
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:old APP_TIER_RELEASE_IMAGE_ID=sha256:new \
+    DEVICE_CONNECTION_SECRET=test-owner-secret HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null \
+    || { rm -rf "$run_dir"; fail "a release of a new image failed"; }
+  grep -F 'force-recreate device-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an owner was not moved onto a new image"; }
+  # Same image, different configuration (a rotated secret, a changed env file).
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    APP_TIER_RUNNING_CONFIG_HASH=before APP_TIER_CONFIG_HASH=after \
+    DEVICE_CONNECTION_SECRET=test-owner-secret PREVIEW_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    bash -c '"$1/deploy/release-device-connection.sh" testsha "$2" && "$1/deploy/release-preview-connection.sh" testsha "$2"' \
+      _ "$ROOT" "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null \
+    || { rm -rf "$run_dir"; fail "a release of a changed configuration failed"; }
+  for owner in device preview; do
+    grep -F "force-recreate $owner-connection" "$docker_log" >/dev/null \
+      || { rm -rf "$run_dir"; fail "the $owner owner kept a configuration the release changed"; }
+  done
+
+  # The deploy's own drain across its migrations is not a release to skip.
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    DEVICE_CONNECTION_SECRET=test-owner-secret HOME="$run_dir" \
+    "$ROOT/deploy/release-device-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" drain >/dev/null \
+    || { rm -rf "$run_dir"; fail "the deploy's drain step failed"; }
+  grep -F 'release-drain' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the deploy's drain step was skipped as a release of the running image"; }
+
+  # A wedged preview owner on the release's image is replaced.
+  : > "$docker_log"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" APP_TIER_SCENARIO=stable_owner \
+    APP_TIER_RUNNING_IMAGE=sha256:same APP_TIER_RELEASE_IMAGE_ID=sha256:same \
+    APP_TIER_CURL_FAIL_MATCH=/healthz PREVIEW_CONNECTION_INTERRUPT=1 HOME="$run_dir" \
+    "$ROOT/deploy/release-preview-connection.sh" testsha \
+      "$ROOT/deploy/compose/docker-compose.base.yml" >/dev/null 2>&1 || true
+  grep -F 'force-recreate preview-connection' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "an unhealthy preview owner on the release's image was not replaced"; }
+  rm -rf "$run_dir"
+  echo "PASS: an owner release of the image already running keeps its connections"
 }
 
 test_cloud_control_has_an_independent_drained_release() {
@@ -518,6 +657,75 @@ test_rollout_installs_connection_route_without_recreating_api_front() {
   fi
   rm -rf "$run_dir"
   echo "PASS: rollout installs the owner route with a graceful api-front reload"
+}
+
+# Every api-front reload retires the workers carrying the box's device links,
+# terminals and tunnels, so a deploy reloads it only when what api-front would
+# load differs from what it loaded last: not for a comment, and always for a
+# config an earlier deploy wrote to disk but never got to load.
+test_api_front_reloads_only_for_a_new_config() {
+  local run_dir docker_log reloads
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # The running config differs from the release's in a comment only.
+  { printf '# a note that changes nothing\n'; cat "$ROOT/deploy/llm-tunnel/nginx.conf"; } > "$run_dir/nginx.conf"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  ! grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded for a comment"; }
+  cmp -s "$ROOT/deploy/llm-tunnel/nginx.conf" "$run_dir/nginx.conf" \
+    || { rm -rf "$run_dir"; fail "the release's api-front config was not installed"; }
+
+  # A deploy stopped after writing the files and before the reload: what is on
+  # disk is current, what api-front runs is not.
+  printf 'what an interrupted deploy left loaded\n' > "$run_dir/active/.api-front-loaded"
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  reloads="$(grep -cFx 'exec cheese-api-front nginx -s reload' "$docker_log" || true)"
+  [ "$reloads" = 1 ] \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded $reloads times for a config it had not loaded, not once"; }
+
+  # Loaded now: the next release with the same config leaves it alone.
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  ! grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded again for the config it had just loaded"; }
+
+  # Something else wrote and loaded another config since (a release of an older
+  # commit, tls-renew.sh): the record no longer says what api-front runs.
+  sed -i.bak 's/^worker_shutdown_timeout .*/worker_shutdown_timeout 30s;/' "$run_dir/nginx.conf"
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front kept a config another writer loaded, because the record was stale"; }
+  rm -rf "$run_dir"
+  echo "PASS: api-front is reloaded only for a config it has not loaded"
+}
+
+# The certificate renewal re-renders the front door. Without the preview
+# owner's port it would send the preview tunnels back to the rolling frontend
+# until the next deploy put them back.
+test_certificate_renewal_keeps_the_preview_owner_route() {
+  local run_dir docker_log domain=cheese.example
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  bash "$ROOT/deploy/llm-tunnel/configure-frontend.sh" "$run_dir/active" 18086 18080 18087 >/dev/null
+  mkdir -p "$run_dir/tls/letsencrypt/live/$domain"
+  : > "$run_dir/tls/cloudflare.ini"
+  printf 'certificate\n' > "$run_dir/tls/letsencrypt/live/$domain/fullchain.pem"
+  printf 'key\n' > "$run_dir/tls/letsencrypt/live/$domain/privkey.pem"
+  PATH="$FAKE_BIN:$PATH" APP_TIER_DOCKER_LOG="$docker_log" TLS_STATE_DIR="$run_dir/tls" HOME="$run_dir" \
+    bash "$ROOT/deploy/llm-tunnel/tls-renew.sh" "$run_dir/active" 18080 "$domain" >"$run_dir/renew.log" 2>&1 \
+    || { cat "$run_dir/renew.log"; rm -rf "$run_dir"; fail "certificate renewal failed"; }
+  grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the renewal did not reload api-front"; }
+  grep -F 'proxy_pass http://127.0.0.1:18087;' "$run_dir/active/sites-frontend.conf" >/dev/null \
+    || { rm -rf "$run_dir"; fail "the renewal moved the front door's preview tunnel off the owner"; }
+  rm -rf "$run_dir"
+  echo "PASS: a certificate renewal keeps the front door's preview tunnel on the owner"
 }
 
 test_deploy_retains_ci_service_images() {
@@ -988,6 +1196,163 @@ test_rollout_never_signals_a_backend_without_the_handler() {
   grep -q 'stop --time 60 blue-container' "$run_dir/docker.log" || fail "the old backend was not stopped"
   rm -rf "$run_dir"
   echo "PASS: a backend without the handover handler is left to hand over at stop"
+}
+
+# A model stream relayed through /llm/v1 cannot move to the next backend, and
+# stopping the backend relaying it ends it. The backend traffic has left is
+# asked how many it still relays, on its own port, and is stopped only once
+# none are left; the old frontend does not wait for that.
+test_rollout_stops_the_old_backend_after_its_model_streams() {
+  local run_dir docker_log drain first_probe last_probe stopped
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container \
+    APP_TIER_MODEL_STREAMS=2,1,0 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
+    DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
+  drain="$(log_line "$docker_log" 'sleep 31')"
+  first_probe="$(log_line "$docker_log" ':18081/_internal/llm/streams')"
+  last_probe="$(last_log_line "$docker_log" ':18081/_internal/llm/streams')"
+  stopped="$(log_line "$docker_log" 'stop --time 60 blue-container')"
+  [ -n "$first_probe" ] || fail "the old backend was never asked about its model streams on its own port"
+  [ "$(grep -c '/_internal/llm/streams' "$docker_log")" = 3 ] \
+    || fail "the wait did not ask until the old backend had no model stream left"
+  [ "$drain" -lt "$first_probe" ] && [ -n "$stopped" ] && [ "$last_probe" -lt "$stopped" ] \
+    || fail "the old backend was stopped while it still relayed model streams"
+  grep -Fq 'finished its model streams after 14s' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "the release does not say how long the model streams held it"; }
+
+  # The next release waits on the slot it is leaving, the second one.
+  : > "$docker_log"
+  rm -f "$run_dir/streams"
+  rollout_run "$run_dir" env APP_TIER_BACKEND_B_CONTAINER=green-container \
+    APP_TIER_MODEL_STREAMS=1,0 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
+    DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "the release after it did not succeed"; }
+  grep -q ':18082/_internal/llm/streams' "$docker_log" \
+    || fail "the second release did not ask the slot it was leaving"
+  ! grep -q ':18081/_internal/llm/streams' "$docker_log" \
+    || fail "the second release asked the slot traffic had just moved to"
+  rm -rf "$run_dir"
+  echo "PASS: the old backend is stopped only once its model streams have ended"
+}
+
+# A stream that outlives the bound is ended by the stop: a release never keeps
+# the old backend longer than the handover pause, the drain and
+# DEPLOY_MODEL_STREAM_GRACE_SECONDS after the switch. (The fakes' drain takes
+# no time, so the wait itself sees most of that window.)
+test_rollout_stops_a_model_stream_at_its_bound() {
+  local run_dir docker_log polls
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container \
+    APP_TIER_MODEL_STREAMS=1 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
+    DEPLOY_HANDOVER_AFTER_SECONDS=0 DEPLOY_MODEL_STREAM_POLL_SECONDS=7 \
+    DEPLOY_MODEL_STREAM_GRACE_SECONDS=14 >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
+  polls="$(grep -c '^sleep 7$' "$docker_log" || true)"
+  # 31 s drain + 14 s bound, polled every 7 s: at most 7 polls.
+  [ "$polls" -ge 1 ] && [ "$polls" -le 7 ] || fail "the wait polled $polls times, past its bound"
+  grep -q 'stop --time 60 blue-container' "$docker_log" || fail "the old backend was not stopped at the bound"
+  grep -Eq 'still relays 1 model stream\(s\) after [0-9]+s; stopping it ends them' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "the release does not say it ended a model stream"; }
+  rm -rf "$run_dir"
+  echo "PASS: a model stream past its bound is ended by the stop"
+}
+
+# The old backend's model streams are waited for only once this release has
+# passed its health check: a release that then fails it rolls back at once,
+# stopping the old backend without waiting, so the previous release can take
+# that slot back.
+test_rollout_waits_for_model_streams_only_after_the_health_check() {
+  local run_dir docker_log healthy probe
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container \
+    APP_TIER_MODEL_STREAMS=1,0 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
+    DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
+  healthy="$(log_line "$docker_log" 'ps -a --filter label=com.docker.compose.project=cheese')"
+  probe="$(log_line "$docker_log" '/_internal/llm/streams')"
+  [ -n "$healthy" ] && [ -n "$probe" ] && [ "$healthy" -lt "$probe" ] \
+    || fail "the release waited on the old backend's model streams before its own health check"
+  grep -Fq 'finished its model streams after 7s' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "the release did not wait for the streams after a healthy check"; }
+
+  # A release that fails its health check does not wait.
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  if rollout_run "$run_dir" env APP_TIER_SCENARIO=frontend_absent APP_TIER_BACKEND_CONTAINER=blue-container \
+    APP_TIER_MODEL_STREAMS=1 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
+    DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1; then
+    fail "a release that failed its health check reported success"
+  fi
+  grep -q 'HEALTH CHECK FAILED' "$run_dir/release.log" || { cat "$run_dir/release.log"; fail "the release did not fail its health check"; }
+  ! grep -q '^sleep 7$' "$docker_log" || fail "a failed release waited on the old backend's model streams"
+  grep -Fq 'stopping blue-container without waiting for its model streams: this release failed its health check' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "the failed release did not stop the old backend at once"; }
+  grep -q 'stop --time 60 blue-container' "$docker_log" || fail "the old backend was left running"
+  rm -rf "$run_dir"
+  echo "PASS: model streams are waited for after the health check, and not by a failed release"
+}
+
+# One lost probe is not the end of the old backend's streams: the wait asks
+# again, and gives up only after several in a row.
+test_model_stream_wait_survives_a_lost_probe() {
+  local dir out
+  mkdir -p "$ROOT/.tmp"
+  dir="$(mktemp -d "$ROOT/.tmp/stream-wait.XXXXXX")"
+  out="$(PATH="$FAKE_BIN:$PATH" APP_TIER_MODEL_STREAMS=1,x,1,0 \
+    APP_TIER_MODEL_STREAMS_COUNT_FILE="$dir/streams" DEPLOY_MODEL_STREAM_POLL_SECONDS=7 \
+    bash "$ROOT/deploy/wait-model-streams.sh" 18081 old-backend 60 7)"
+  printf '%s\n' "$out" | grep -Fq 'old-backend finished its model streams after 21s' \
+    || { printf '%s\n' "$out"; rm -rf "$dir"; fail "one lost probe ended the wait"; }
+  rm -f "$dir/streams"
+  out="$(PATH="$FAKE_BIN:$PATH" APP_TIER_MODEL_STREAMS=1,x \
+    APP_TIER_MODEL_STREAMS_COUNT_FILE="$dir/streams" DEPLOY_MODEL_STREAM_POLL_SECONDS=7 \
+    bash "$ROOT/deploy/wait-model-streams.sh" 18081 old-backend 60 7)"
+  rm -rf "$dir"
+  printf '%s\n' "$out" | grep -Fq 'has not said how many model streams it relays for 3 probes' \
+    || { printf '%s\n' "$out"; fail "a backend that stopped answering held the wait"; }
+  echo "PASS: the model-stream wait outlasts a lost probe, and not three"
+}
+
+# A backend from before the count answers nothing about its model streams; it
+# is stopped after the drain exactly as before, without waiting.
+test_rollout_does_not_wait_on_a_backend_without_the_count() {
+  local run_dir docker_log
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container \
+    DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
+  ! grep -q '^sleep 7$' "$docker_log" || fail "the release waited on a backend that does not count its streams"
+  grep -q 'stop --time 60 blue-container' "$docker_log" || fail "the old backend was not stopped"
+  grep -Fq 'does not say how many model streams it relays' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "the release does not say it did not wait"; }
+  rm -rf "$run_dir"
+  echo "PASS: a backend without the stream count is stopped without waiting"
+}
+
+# The worker that carries a model stream through app-router belongs to the
+# generation the release's reload retires. It must outlast the longest the
+# release keeps the old backend: the handover pause, the drain, the model-stream
+# bound and the backend's stop grace, or it ends the stream the wait kept alive.
+test_app_router_outlasts_the_model_stream_wait() {
+  local script="$ROOT/deploy/deploy-docker.sh" router timeout handover drain grace stop
+  default_of() { { grep -o "\${$1:-[0-9]*}" "$script" || true; } | head -n 1 | tr -dc '0-9'; }
+  handover="$(default_of DEPLOY_HANDOVER_AFTER_SECONDS)"
+  drain="$(default_of DEPLOY_DRAIN_SECONDS)"
+  grace="$(default_of DEPLOY_MODEL_STREAM_GRACE_SECONDS)"
+  stop="$(default_of DEPLOY_BACKEND_STOP_GRACE_SECONDS)"
+  router="$ROOT/deploy/llm-tunnel/app-router.conf"
+  timeout="$(sed -n 's/^worker_shutdown_timeout \([0-9]*\)s;$/\1/p' "$router")"
+  for value in "$handover" "$drain" "$grace" "$stop" "$timeout"; do
+    [ -n "$value" ] || fail "could not read a deadline (handover=$handover drain=$drain grace=$grace stop=$stop router=$timeout)"
+  done
+  [ "$timeout" -gt $((handover + drain + grace + stop)) ] \
+    || fail "app-router retires its workers after ${timeout}s, before the ${handover}+${drain}+${grace}+${stop}s a release keeps the old backend"
+  echo "PASS: app-router's old workers outlast the longest a release keeps the old backend"
 }
 
 # app-router names a port that is neither slot: something else is serving, and
@@ -1861,6 +2226,12 @@ case "$CASE" in
   rollout-unhealthy-next) test_rollout_leaves_the_running_backend_alone_when_next_never_comes_up ;;
   rollout-handover) test_rollout_moves_running_work_with_the_traffic ;;
   rollout-handover-old-backend) test_rollout_never_signals_a_backend_without_the_handler ;;
+  rollout-model-streams) test_rollout_stops_the_old_backend_after_its_model_streams ;;
+  rollout-model-stream-bound) test_rollout_stops_a_model_stream_at_its_bound ;;
+  rollout-model-streams-after-health) test_rollout_waits_for_model_streams_only_after_the_health_check ;;
+  model-stream-lost-probe) test_model_stream_wait_survives_a_lost_probe ;;
+  rollout-model-streams-old-backend) test_rollout_does_not_wait_on_a_backend_without_the_count ;;
+  app-router-deadline) test_app_router_outlasts_the_model_stream_wait ;;
   preview-owner-ordering) test_deploy_starts_preview_owner_before_routes_and_backends ;;
   preview-owner-unhealthy) test_deploy_fails_before_routing_when_preview_owner_unhealthy ;;
   preview-owner-stable) test_deploy_keeps_preview_owner_running ;;
@@ -1870,7 +2241,13 @@ case "$CASE" in
   preview-kill-switch-owner) test_kill_switch_stops_the_running_owner ;;
   preview-owner-release) test_release_preview_connection_requires_interrupt ;;
   owners-behind-schema) test_deploy_releases_owners_behind_the_schema ;;
+  api-front-reload) test_api_front_reloads_only_for_a_new_config ;;
+  tls-renew-owner) test_certificate_renewal_keeps_the_preview_owner_route ;;
   owners-behind-schema-failed-migration) test_failed_migration_resumes_the_drained_owner ;;
+  owners-spared) test_deploy_leaves_owners_the_migrations_spare ;;
+  owners-behind-database) test_deploy_releases_owners_the_database_left_behind ;;
+  owners-unreadable-migrations) test_deploy_releases_owners_when_migrations_unreadable ;;
+  owner-release-same-image) test_owner_release_of_the_running_image_keeps_connections ;;
   all)
     test_missing_forge_fails_health_check
     test_forge_migration_release
@@ -1883,6 +2260,8 @@ case "$CASE" in
     test_owner_release_reuses_box_config_and_stops_when_busy
     test_cloud_control_has_an_independent_drained_release
     test_rollout_installs_connection_route_without_recreating_api_front
+    test_api_front_reloads_only_for_a_new_config
+    test_certificate_renewal_keeps_the_preview_owner_route
     test_deploy_warns_when_the_session_base_will_not_survive
     test_deploy_retains_ci_service_images
     test_deploy_delivers_private_executor
@@ -1905,6 +2284,12 @@ case "$CASE" in
     test_rollout_switches_once
     test_rollout_moves_running_work_with_the_traffic
     test_rollout_never_signals_a_backend_without_the_handler
+    test_rollout_stops_the_old_backend_after_its_model_streams
+    test_rollout_stops_a_model_stream_at_its_bound
+    test_rollout_waits_for_model_streams_only_after_the_health_check
+    test_model_stream_wait_survives_a_lost_probe
+    test_rollout_does_not_wait_on_a_backend_without_the_count
+    test_app_router_outlasts_the_model_stream_wait
     test_rollout_recovers_after_forge_stops_backend
     test_rollout_refuses_an_upstream_it_did_not_write
     test_rollout_rollback_returns_to_the_previous_slot
@@ -1926,6 +2311,10 @@ case "$CASE" in
     test_release_preview_connection_requires_interrupt
     test_deploy_releases_owners_behind_the_schema
     test_failed_migration_resumes_the_drained_owner
+    test_deploy_leaves_owners_the_migrations_spare
+    test_deploy_releases_owners_the_database_left_behind
+    test_deploy_releases_owners_when_migrations_unreadable
+    test_owner_release_of_the_running_image_keeps_connections
     ;;
   *) fail "unknown case: $CASE" ;;
 esac

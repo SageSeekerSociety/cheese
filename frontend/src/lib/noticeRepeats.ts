@@ -8,6 +8,7 @@
 // 操作、上面那几种行），合并就断。
 import type { NoticeRow } from './platformNotice'
 
+import { docLineInTurn } from './docEditLine'
 import { noticeText } from './noticeText'
 
 import { t } from '@/i18n'
@@ -51,6 +52,8 @@ function delivers(row: NoticeRow): boolean {
 function actorKey(row: NoticeRow): string | null {
   const mode = row.notice?.mode
   if ((mode !== 'plain' && mode !== 'action') || delivers(row)) return null
+  // 队友在一轮里改文档的那一行是那一轮里的一步，各自留在那一轮里（lib/docEditLine）。
+  if (docLineInTurn(row.block)) return null
   const m = meta(row)
   const system = row.block.author === 'system'
   if (system && !row.block.turn_id) return null

@@ -27,10 +27,13 @@
 // here. That also makes this check and a11y-ratchet.mjs complements rather than
 // duplicates.
 //
-// WHY A RATCHET. The pages start with real sub-floor runs. The amber CTA labels
-// at 2.65:1 are a deliberate trade — the brand colour is frozen and only the
-// label colour can move — so blocking on zero would mean restyling first or
-// leaving the check off. Freeze what is there, block what is new.
+// WHY A RATCHET. The pages started with real sub-floor runs — the amber CTA
+// labels at 2.65:1 among them, since the brand colour is frozen and only the
+// label colour can move — so blocking on zero would have meant restyling first
+// or leaving the check off. Freeze what is there, block what is new; those
+// labels have since been paid off (the door pages put dark ink on the amber,
+// LandingShell.vue), which is what the ratchet exists to let a page do one run
+// at a time.
 
 /**
  * WCAG relative luminance of an `[r, g, b]` triple, channels 0-255.

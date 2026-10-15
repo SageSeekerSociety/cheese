@@ -8,6 +8,8 @@ export interface RouteIcon {
 export interface RouteMetaTitle {
   title?: string
   titleKey?: string
+  /** 整个窗口标题，不再拼站名：给搜索引擎看的公开页用，和 index.html 里的 <title> 同一句。 */
+  documentTitleKey?: string
   icon?: RouteIcon
   isDynamic?: boolean
   getDynamicTitle?: (route: RouteLocationNormalized) => string

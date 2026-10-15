@@ -1,0 +1,6 @@
+{
+  "deliveryGaveUp": "{agent} 30 分钟内未能开始处理",
+  "labelTimedDeliveryNote": "你当时写下的",
+  "reminder": "提醒：{text}",
+  "timedDelivery": "你请平台在这个时刻把它递给你"
+}

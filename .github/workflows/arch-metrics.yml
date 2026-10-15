@@ -94,6 +94,35 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
 
+      # The contrast check is the one check that walks pages in a browser, and
+      # it runs out of `e2e/` — a package of its own with a lockfile of its own.
+      #
+      # `--dir` rather than `working-directory: e2e` on purpose. `corepack
+      # enable` above resolves the pnpm version from the nearest
+      # `package.json`, and the repo's pin lives in `frontend/package.json`;
+      # started in `e2e/` — which has no such field, and no `package.json`
+      # above it either — corepack falls back to the version it ships as its
+      # own default, which on this image is a different major from the pin.
+      # Started in `frontend/`, the same pinned pnpm that just installed
+      # frontend's own dependencies reads `e2e/pnpm-lock.yaml`, and the store
+      # below stays the one key this job restores.
+      - name: Install e2e dependencies
+        continue-on-error: true
+        working-directory: frontend
+        run: pnpm --dir ../e2e install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
+
+      # Headless shell only, which is the same choice `e2e/browser/Dockerfile`
+      # makes for the PR job: Playwright's headless default has been the shell
+      # build since 1.49, and nothing here ever opens a headed browser.
+      #
+      # Taking the CLI through the same pinned pnpm as the step above, rather
+      # than off `PATH`: `e2e/node_modules/.bin` is pnpm's to assemble, so it
+      # finds it where pnpm put it.
+      - name: Install the browser
+        continue-on-error: true
+        working-directory: frontend
+        run: pnpm --dir ../e2e exec playwright install --with-deps --only-shell chromium
+
       - name: Install uv
         continue-on-error: true
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0

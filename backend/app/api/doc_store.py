@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_broker
+from app.api.doc_edits import edit_turn
 from app.api.response import ok
 from app.domain.agent.chat import ChatService
 from app.domain.block.documents import (
@@ -108,9 +109,25 @@ async def store(
         # service sent still holds it, so keeping that state loses nothing.
         return Stored(answer=claim.receipt, conversation_id=conversation_id)
     writer = DocumentWriter(db, summarize_doc_change)
+    # An AI teammate's change is a step of its running turn there: the line
+    # about it carries that turn, so the conversation draws it inside the turn.
+    turn_id = (
+        await edit_turn(
+            db,
+            project_id=doc.project_id,
+            conversation_id=conversation_id,
+            actor=actors[0],
+        )
+        if conversation_id is not None and actors and not quiet
+        else None
+    )
     if suggested:
         notice = await writer.suggest(
-            doc, actor=actors[0], suggestion_ids=proposed, reason=reason
+            doc,
+            actor=actors[0],
+            suggestion_ids=proposed,
+            reason=reason,
+            turn_id=turn_id,
         )
         return Stored(
             answer=snapshot(doc, None),
@@ -130,6 +147,7 @@ async def store(
         quiet=quiet,
         requested_by=requested_by,
         edits=edits,
+        turn_id=turn_id,
     )
     changed = recorded is not None
     if claim is None or operation is None or operation_id is None:
@@ -218,6 +236,12 @@ async def tell_origin_room(
         created=created,
         edits=edits,
         suggested=suggested,
+        turn_id=await edit_turn(
+            db,
+            project_id=doc.project_id,
+            conversation_id=conversation_id,
+            actor=actor,
+        ),
     )
     await db.commit()
     await get_broker().publish(

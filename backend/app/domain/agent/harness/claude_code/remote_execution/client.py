@@ -181,30 +181,6 @@ PRIVATE_INSTRUCTIONS = (
 )
 
 
-def _ensure_sync_agents_hook(hooks: dict) -> None:
-    """发现层（session_launch.session_settings 的同款）：模型分身定义随会话启动
-    和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
-    这里确定性地补一份（幂等），不指望 seed 够新。
-    """
-    command = "cheese sync-agents || true"
-    for event in ("SessionStart", "UserPromptSubmit"):
-        groups = hooks.setdefault(event, [])
-        existing = [
-            hook
-            for group in groups
-            for hook in group.get("hooks", [])
-            if hook.get("command") in ("cheese sync-agents", command)
-        ]
-        if existing:
-            # Older seed settings can still contain the prompt-blocking form.
-            for hook in existing:
-                hook["command"] = command
-            continue
-        groups.append(
-            {"hooks": [{"type": "command", "command": command, "timeout": 15}]}
-        )
-
-
 def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) -> Path:
     """The plugin a room's session is started with: the function hook that runs
     its tools where the project is (`proxy.js`), and the Stop hook that keeps a
@@ -467,7 +443,6 @@ def prepare(
                 ]
             },
         )
-    _ensure_sync_agents_hook(hooks)
     settings.update(
         skipDangerousModePermissionPrompt=True,
         enableArtifact=False,

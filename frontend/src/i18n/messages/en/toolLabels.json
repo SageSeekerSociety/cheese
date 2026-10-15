@@ -72,7 +72,6 @@
   "cheeseMembers": "List channel members",
   "cheeseGhToken": "Get a GitHub token",
   "cheeseStatus": "View platform status",
-  "cheeseSyncAgents": "Refresh subagent settings",
   "cheeseServe": "Set up the preview",
   "cheeseLibraryLs": "List project library files",
   "cheeseLibraryGet": "Fetch a project library file",

@@ -14,6 +14,7 @@ from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.documents import seed
 from app.domain.living_doc.services import DocumentJournal, Documents
+from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
 from app.domain.project.models import AiMode, Project, ProjectGitInstallation
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
@@ -326,9 +327,38 @@ class ProjectService:
         """改 settings 里那几个键，其余照数据库当下的样子留着。
 
         写 settings 的正路，改一个键的调用点都走它——见
-        :meth:`ProjectRepository.merge_settings`。
+        :meth:`ProjectRepository.merge_settings`。成员能改的那几项不走这里，走
+        :meth:`change_member_settings`：每一次改动都要在综合里说出来。
         """
+        if MEMBER_SETTINGS & {*patch, *remove}:
+            # i18n-exempt: a call site that skipped the announcement; a developer's bug
+            raise ValueError(
+                "a member setting is changed through app.api.member_settings, "
+                "which says the change in the project's room"
+            )
         return await self._repo.merge_settings(project, patch, remove=remove)
+
+    async def change_member_settings(
+        self,
+        project: Project,
+        patch: Mapping[str, object],
+        *,
+        remove: Iterable[str] = (),
+    ) -> list[SettingChange]:
+        """Write settings any member may change (``member_settings``), and
+        return each one this write changed, as it was and as it is now.
+
+        ``before`` is read under the same row lock the write takes, so two
+        members changing one setting at once each see what the other left.
+        """
+        await self._repo.lock_settings(project)
+        before = dict(project.settings or {})
+        after = await self._repo.merge_settings(project, patch, remove=remove)
+        return [
+            SettingChange(key, before.get(key), after.get(key))
+            for key in sorted(MEMBER_SETTINGS & {*patch, *remove})
+            if before.get(key) != after.get(key)
+        ]
 
     async def archive(self, project_id: uuid.UUID, *, by: str) -> Project:
         """Archive the project (idempotent): it leaves its members' lists,

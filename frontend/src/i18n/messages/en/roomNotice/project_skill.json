@@ -1,0 +1,11 @@
+{
+  "labelSkillToConfirm": "Skill to confirm",
+  "skillEditNotSavedBy": "{who}'s change to the skill “{title}” was not saved",
+  "skillEditProposedBy": "{who} proposes a change to the skill “{title}”",
+  "skillEditProposedDetail": "Why: {reason}\n\n{body}",
+  "skillEditSavedBy": "{who}'s change to the skill “{title}” was saved",
+  "skillProposalNotSavedBy": "{who}'s proposed skill “{title}” was not saved",
+  "skillProposalSavedBy": "{who}'s proposed skill “{title}” was saved",
+  "skillProposedBy": "{who} proposes a new skill, “{title}”",
+  "skillProposedDetail": "Purpose: {description}\n\n{body}"
+}

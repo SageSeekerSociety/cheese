@@ -38,6 +38,8 @@ from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
+from app.domain.usage.pricing import declared_free
+
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 60.0
@@ -82,7 +84,8 @@ def declared_efforts(value: object) -> tuple[str, ...]:
 
 
 def price_is_set(*sources: object) -> bool:
-    """Will the gateway bill this model at a non-zero rate?
+    """Will the gateway bill this model at a non-zero rate, or is it declared
+    free (``declared_free``)?
 
     Both directions must carry a rate. A model priced on one side only bills
     half its traffic at zero, which is the same silent-brake failure as no price
@@ -105,6 +108,8 @@ def price_is_set(*sources: object) -> bool:
                     return float(value)
         return 0.0
 
+    if declared_free(*sources):
+        return True
     return bool(rate("input_cost_per_token") and rate("output_cost_per_token"))
 
 

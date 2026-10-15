@@ -1,0 +1,5 @@
+{
+  "labelSaveToLibrary": "保存到资料库",
+  "librarySaved": "{name} 已存进资料库",
+  "librarySavedDetail": "{actor} 把这个频道里的 {file} 留进了资料库，每个频道都引用得到"
+}

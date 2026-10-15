@@ -130,6 +130,8 @@ class CloudHostRepository:
             .where(
                 SandboxHome.topic_id == topic_id,
                 SandboxHome.room_resource_id == room_resource_id,
+                # A home its session left is the idle sweep's, not the room's.
+                SandboxHome.session_id.is_not(None),
             )
         )
         return [(home, host) for home, host in rows.all()]

@@ -13,7 +13,7 @@
 变化只有两类，都是「没有 `self` 可用了」：
 
 - 实例上那几件共享的东西（``_sessions``、``_gateway``、``_profiles``、
-  ``_gateway_lock``、``_background_tasks``）→ 同名入参，逐字不变；
+  ``_background_tasks``）→ 同名入参，逐字不变；
   ``self._GW_KEY`` / ``_GW_CKPT`` / ``_GW_BUDGET`` 三个字符串 → 同名的模块级常量，
   这条线之外没有第二处读它们；
 - 留在 ``ChatService`` 上、这条路回头要问的那些事（这一轮署谁的名、模型过不过
@@ -30,6 +30,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Protocol
@@ -47,6 +48,7 @@ from app.domain.agent.queries import _model_policy_call, _Proposed
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.supply import SUBSCRIPTION
+from app.domain.agent_instance.configuration import project_pool
 from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.policy import gate
@@ -139,6 +141,46 @@ def model_capabilities(*models: str | None) -> str:
     )
 
 
+def model_agents(project_settings: dict | None) -> dict[str, str]:
+    """The project's models as Claude Code subagent definitions, by file name.
+
+    The Agent tool takes a model only as one of Claude's family aliases, so a
+    session runs a subagent on `kimi-k3` by starting the subagent type of that
+    name, whose definition names the model; admission still decides whether
+    it may (`/llm/admission`). Only the project's own pool is listed: a model
+    from the other one is refused there.
+
+    Claude Code reads its agent definitions once, when it starts, and a file
+    written into a running session's agents directory is never seen by it. So
+    the launch writes them (`device_launch`), and they are in the session's
+    configuration hash: a model the gateway adds reaches a running session when
+    it is next reopened, at a task boundary.
+    """
+    pool = project_pool(project_settings)
+    agents: dict[str, str] = {}
+    for choice in binding.catalog(project_settings).values():
+        if choice["supply"] != pool:
+            continue
+        # Agent names are stricter than model ids; the id itself rides `model`.
+        name = re.sub(r"[^a-z0-9._-]+", "-", choice["id"].lower()).strip("-.")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}", name):
+            continue
+        # The line the main agent reads in the Agent tool's list of types.
+        description = (
+            f"在 {choice['label']}（{choice['id']}）上跑一个分身。要用这个模型派活，"
+            f"subagent_type 填 {name}；Agent 工具的 model 参数只认 Claude 的别名。"
+        )
+        agents[f"model-{name}.md"] = (
+            "---\n"
+            f"name: {name}\n"
+            f"description: {json.dumps(description, ensure_ascii=False)}\n"
+            f"model: {choice['id']}\n"
+            "---\n\n"
+            "完成委派给你的任务，结束时把结果完整交回给委派你的 agent。\n"
+        )
+    return agents
+
+
 def launch_env(configuration: dict, efforts: list[str] | tuple[str, ...]) -> dict:
     """The environment that carries a teammate's thinking effort and compaction
     share into its Claude Code session.
@@ -205,7 +247,6 @@ async def _model_kwargs(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
     profiles: ProfileRegistry | None,
-    gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
     provider: RoomSessions | None,
     topic_id: uuid.UUID | None = None,
@@ -298,6 +339,7 @@ async def _model_kwargs(
             None, child_choices, default_model=child_default
         ).wire_model
     capabilities = model_capabilities(model, child_model)
+    agent_types = model_agents(project.settings)
     config_hash = hashlib.sha256(
         # Author identity, chat skills, and native RC arguments are installed
         # at process birth; refresh them together at the next task boundary.
@@ -324,6 +366,7 @@ async def _model_kwargs(
                         "default_subagent_model"
                     ),
                     "capabilities": capabilities,
+                    "model_agents": agent_types,
                 },
                 sort_keys=True,
             )
@@ -340,6 +383,8 @@ async def _model_kwargs(
             # self-description for the model the turn actually runs on.
             "ANTHROPIC_MODEL": model,
             "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
+            # Written as subagent definitions by the launch (`model_agents`).
+            "CHEESE_MODEL_AGENTS": json.dumps(agent_types),
             # The teammate's thinking effort and compaction share. Both are in
             # `agent.configuration`, and so in the hash above: changing either
             # restarts the session at the next task boundary, which is when
@@ -378,9 +423,7 @@ async def _model_kwargs(
     if routed:
         # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
         # the master key (containment), attributable + budget-capped.
-        override = await _gateway_project_env(
-            service, sessions, gateway, gateway_lock, project_id
-        )
+        override = await _gateway_project_env(service, sessions, gateway, project_id)
         if not override:
             raise GatewayUnavailableError(
                 "AI gateway could not provision a project-scoped key; "
@@ -394,7 +437,6 @@ async def project_gateway_key(
     service: _GatewayUsage,
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
-    gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
     *,
     dream: bool = False,
@@ -408,7 +450,6 @@ async def project_gateway_key(
         service,
         sessions,
         gateway,
-        gateway_lock,
         project_id,
         slot=_DREAM_SLOT if dream else _ROOM_SLOT,
     )
@@ -419,7 +460,6 @@ async def _gateway_project_env(
     service: _GatewayUsage,
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
-    gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
     *,
     slot: _KeySlot = _ROOM_SLOT,
@@ -430,17 +470,18 @@ async def _gateway_project_env(
     must refuse the turn rather than expose default pool credentials.
 
     **Answering a project that needs nothing written takes no lock at all.**
-    `_gateway_lock` serialises the settings read-modify-write, but this
-    method used to hold it across the whole body — including the two gateway
-    HTTP calls — so one project minting a key, or one drain asking the
-    gateway for spend, stalled every admission on the box behind it. These
-    calls are on the hot path of every model request (routes/llm_proxy.py
-    asks once per turn, and the metering proxy asks per request), and the
-    queued wait is what the /llm/admission p95 is made of. Measured on dev,
-    2026-09-23: 20 concurrent admissions for ONE project — key long since
-    minted, no budget drift to apply — still fanned out into a 5.8 s tail.
-    Nothing about answering that request is exclusive, so it is answered
-    before the lock is reached.
+    The write is serialised by the project's settings row lock alone
+    (`repo.lock_settings`, held to the commit) — the in-process
+    `_gateway_lock` that used to stand beside it is gone. That lock used to be
+    held across the whole body, including the two gateway HTTP calls, so one
+    project minting a key, or one drain asking the gateway for spend, stalled
+    every admission on the box behind it. These calls are on the hot path of
+    every model request (routes/llm_proxy.py asks once per turn, and the
+    metering proxy asks per request), and the queued wait is what the
+    /llm/admission p95 is made of. Measured on dev, 2026-09-23: 20 concurrent
+    admissions for ONE project — key long since minted, no budget drift to
+    apply — still fanned out into a 5.8 s tail. Nothing about answering that
+    request is exclusive, so it is answered before the write is reached.
     """
     try:
         # Read path: the key exists and is in step → nothing to write.
@@ -455,39 +496,36 @@ async def _gateway_project_env(
                 if s.get(slot.budget) == target:
                     return {"ANTHROPIC_AUTH_TOKEN": key}
 
-        # Write path: something must be minted or re-priced. Serialised, and the
-        # settings are read under the row lock here so a mint that landed while
-        # this call waited on the lock is the one that gets used.
-        async with gateway_lock:
-            async with sessions() as session:
-                repo = ProjectRepository(session)
-                project = await repo.get(project_id)
-                if project is None or gateway is None:
+        # Write path: something must be minted or re-priced. The row lock
+        # serialises it, and the settings are read under it here so a mint that
+        # landed while this call waited is the one that gets used.
+        async with sessions() as session:
+            repo = ProjectRepository(session)
+            project = await repo.get(project_id)
+            if project is None or gateway is None:
+                return None
+            await repo.lock_settings(project)
+            s = project.settings or {}
+            key = s.get(slot.key)
+            patch: dict[str, object] = {}
+            remove: tuple[str, ...] = ()
+            if not isinstance(key, str) or not key:
+                key = await gateway.mint_project_key(project_id, purpose=slot.purpose)
+                if not key:
                     return None
-                await repo.lock_settings(project)
-                s = project.settings or {}
-                key = s.get(slot.key)
-                patch: dict[str, object] = {}
-                remove: tuple[str, ...] = ()
-                if not isinstance(key, str) or not key:
-                    key = await gateway.mint_project_key(
-                        project_id, purpose=slot.purpose
-                    )
-                    if not key:
-                        return None
-                    patch[slot.key] = key
-                target = await service._gateway_budget_target(session, project_id)
-                # No target clears the brake: a budget left on the key from
-                # before would refuse calls the platform now admits.
-                if s.get(slot.budget) != target:
-                    if await gateway.set_key_budget(key, target):
-                        if target is None:
-                            remove = (slot.budget,)
-                        else:
-                            patch[slot.budget] = target
-                if patch or remove:
-                    await repo.merge_settings(project, patch, remove=remove)
-                    await session.commit()
+                patch[slot.key] = key
+            target = await service._gateway_budget_target(session, project_id)
+            # No target clears the brake: a budget left on the key from
+            # before would refuse calls the platform now admits.
+            if s.get(slot.budget) != target:
+                if await gateway.set_key_budget(key, target):
+                    if target is None:
+                        remove = (slot.budget,)
+                    else:
+                        patch[slot.budget] = target
+            if patch or remove:
+                await repo.merge_settings(project, patch, remove=remove)
+                await session.commit()
         return {"ANTHROPIC_AUTH_TOKEN": key}
     except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
         logger.exception("gateway project-env failed for %s", project_id)
@@ -543,7 +581,6 @@ LATE_S = 20.0
 async def charge_turn_spend(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
-    gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
     topic_id: uuid.UUID | None,
     turn_id: uuid.UUID,
@@ -560,14 +597,12 @@ async def charge_turn_spend(
             turn_id=turn_id,
         ),
         retry_after=TURN_RETRY_AFTER,
-        lock=gateway_lock,
     )
 
 
 def _schedule_deferred_drain(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
-    gateway_lock: asyncio.Lock,
     background_tasks: set[asyncio.Task],
     project_id: uuid.UUID,
     topic_id: uuid.UUID | None,
@@ -579,7 +614,7 @@ def _schedule_deferred_drain(
     async def _later() -> None:
         await asyncio.sleep(LATE_S)
         usages = await charge_turn_spend(
-            sessions, gateway, gateway_lock, project_id, topic_id, turn_id
+            sessions, gateway, project_id, topic_id, turn_id
         )
         if not usages:
             return  # still nothing — the next turn's charge picks it up

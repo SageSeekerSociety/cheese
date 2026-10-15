@@ -1,6 +1,5 @@
 {
   "advanced": "高级设置",
-  "advancedReadOnly": "只有项目所有者或团队管理员能改高级设置",
   "allowMax": "允许「极高」：更慢、更贵",
   "body": "角色设定（可留空）",
   "compact": "自动整理上下文",

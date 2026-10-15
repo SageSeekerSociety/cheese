@@ -94,7 +94,7 @@ function resetToDeploymentDefault() {
           item-title="label"
           item-value="id"
           :item-props="modelChoiceProps"
-          :disabled="saving || !state.can_manage"
+          :disabled="saving"
           autocomplete="off"
           density="compact"
           variant="outlined"
@@ -107,7 +107,7 @@ function resetToDeploymentDefault() {
           item-title="label"
           item-value="id"
           :item-props="modelChoiceProps"
-          :disabled="saving || !state.can_manage"
+          :disabled="saving"
           autocomplete="off"
           density="compact"
           variant="outlined"
@@ -116,11 +116,11 @@ function resetToDeploymentDefault() {
           persistent-hint
         />
         <div class="d-flex align-center" style="gap: 12px">
-          <BaseButton v-if="state.can_manage" kind="primary" size="sm" :disabled="saving || !dirty" @click="save">
+          <BaseButton kind="primary" size="sm" :disabled="saving || !dirty" @click="save">
             {{ t('work.projectSettings.defaultModelBlock.save') }}
           </BaseButton>
           <BaseButton
-            v-if="state.can_manage && state.model !== null"
+            v-if="state.model !== null"
             kind="secondary"
             size="sm"
             :disabled="saving"
@@ -131,9 +131,6 @@ function resetToDeploymentDefault() {
           <SaveStatus :saving="saving" :saved="saved" :error="saveError" />
         </div>
       </div>
-      <p v-if="!state.can_manage" class="text-body-2 text-medium-emphasis mt-3">
-        {{ t('work.models.readOnly') }}
-      </p>
     </template>
   </div>
 </template>

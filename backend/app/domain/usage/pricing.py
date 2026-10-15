@@ -64,6 +64,33 @@ class Rate(NamedTuple):
 _cache: tuple[float, dict[str, Rate] | None] | None = None
 
 
+def declared_free(*sources: object) -> bool:
+    """Does the model say its upstream charges nothing?
+
+    ``cheese_free: true`` in ``model_info``, with both token rates written as
+    0. A zero that is merely absent is a missing price, not a free model; the
+    marker is what tells the two apart. ``deploy/gateway/check_config.py``
+    holds config.yaml to the same rule, and ``gateway.price_is_set`` counts it
+    as a price.
+    """
+
+    def written_zero(field: str) -> bool:
+        for src in sources:
+            if isinstance(src, dict) and field in src:
+                value = src[field]
+                return type(value) in (int, float) and value == 0
+        return False
+
+    marked = any(
+        isinstance(src, dict) and src.get("cheese_free") is True for src in sources
+    )
+    return (
+        marked
+        and written_zero("input_cost_per_token")
+        and written_zero("output_cost_per_token")
+    )
+
+
 def _rate(sources: tuple[object, ...], field: str) -> float:
     """The first positive rate among the places LiteLLM may carry it."""
     for source in sources:
@@ -95,11 +122,20 @@ def _rates_from_info(payload: object) -> dict[str, Rate]:
     A model priced on one side only is left out entirely rather than priced at
     zero on that side: half a rate is the same silent under-count as no rate,
     and it would be the harder one to notice.
+
+    A model served by several rows (a subscription in front of a pay-per-use
+    API) is charged the highest rate any of its paid rows carries, field by
+    field, whichever row served the tokens: the charge never falls below what
+    a serving row costs, and this table cannot tell which row served them. It
+    is free only when every row with a price is declared free; a free row added
+    beside a paid one does not make the paid one's tokens cost nothing.
     """
     rates: dict[str, Rate] = {}
     rows = payload.get("data") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return rates
+    paid: dict[str, list[Rate]] = {}
+    free: set[str] = set()
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -108,6 +144,9 @@ def _rates_from_info(payload: object) -> dict[str, Rate]:
             continue
         info = row.get("model_info")
         params = row.get("litellm_params")
+        if declared_free(params, info):
+            free.add(name)
+            continue
         inp = _rate((params, info), "input_cost_per_token")
         out = _rate((params, info), "output_cost_per_token")
         if inp > 0 and out > 0:
@@ -117,13 +156,20 @@ def _rates_from_info(payload: object) -> dict[str, Rate]:
                 (params, info), "cache_creation_input_token_cost_above_1hr"
             )
             write = inp if cache_write is None else cache_write
-            rates[name] = Rate(
-                inp,
-                out,
-                inp if cache_read is None else cache_read,
-                write,
-                write if cache_write_1h is None else cache_write_1h,
+            paid.setdefault(name, []).append(
+                Rate(
+                    inp,
+                    out,
+                    inp if cache_read is None else cache_read,
+                    write,
+                    write if cache_write_1h is None else cache_write_1h,
+                )
             )
+    for name, options in paid.items():
+        rates[name] = Rate(*(max(field) for field in zip(*options, strict=True)))
+    for name in free - paid.keys():
+        # Free is a price: its tokens cost nothing and are not unpriced.
+        rates[name] = Rate(0.0, 0.0, 0.0, 0.0, 0.0)
     return rates
 
 

@@ -282,6 +282,29 @@ CHECKS: tuple[Check, ...] = (
         argv=("bash", ".claude/scripts/check-repo-rules.sh", "--json"),
         rules=(".claude/scripts/check-repo-rules.sh",),
     ),
+    Check(
+        id="fe-contrast",
+        area=TYPES,
+        # The one check that needs a browser: it walks the three public pages in
+        # both themes and judges the colours they actually painted, which no
+        # reading of the source can decide. The driver starts the frontend and a
+        # headless Chromium itself, so this is still one command whose stdout is
+        # one record. It is the same walk the e2e gate runs on a pull request —
+        # e2e/contrast-walk.mjs, shared — so the number frozen here and the
+        # verdict that blocks a change come out of one piece of code.
+        argv=("node", "contrast-ratchet.mjs", "--json"),
+        cwd="e2e",
+        rules=(
+            "e2e/contrast-ratchet.mjs",
+            "e2e/contrast-walk.mjs",
+            # The rule itself: the floors, the ratio, the ratchet logic and the
+            # walker that runs inside the page.
+            "frontend/scripts/contrast-ratchet-core.mjs",
+            # The record's shape and the cannot-judge path, shared with the
+            # other ratchets.
+            "frontend/scripts/ratchet-report.mjs",
+        ),
+    ),
 )
 
 #: The board: arch-metrics.py's own output, stored as it wrote it. Reference
@@ -483,9 +506,11 @@ def run_check(check: Check, root: Path) -> dict:
 def _strip_ignore_imports(text: str) -> bytes:
     """`.importlinter` with every `ignore_imports` block removed.
 
-    The baseline lives in the same file as the contracts there, so a fingerprint
-    over the whole file would call every exemption change a change of rule. It
-    is not: the rules are the contract declarations.
+    The exceptions live in the same file as the contracts, so a fingerprint over
+    the whole file would call writing one of them down a change of rule. It is
+    not: the rules are the contract declarations. (The bulk of what used to be
+    here — the frozen baseline — is not in the file at all any more; the gate
+    measures it from the tree at the merge base on every run.)
     """
     kept: list[str] = []
     skipping = False
@@ -589,11 +614,7 @@ def fingerprint(
 NOT_A_RULE: dict[str, dict[str, str]] = {
     **{check_id: {
         "frontend/scene-debt-baseline.json": "baseline: exact child, route and network debt sets",
-        "frontend/scene-baseline.json": "baseline: the scene rule's frozen ready and debt sets",
     } for check_id in ("scene-non-a-children", "scene-use-route", "legacy-network")},
-    "scene-ratchet": {
-        "frontend/scene-baseline.json": "baseline: the frozen scene debt",
-    },
     "catalog-ratchet": {
         "frontend/catalog-baseline.json": "baseline: the grade-A components not in the catalog yet",
     },
@@ -630,6 +651,11 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
         # in the repository (2026-10-14), so there is nothing left to excuse: the
         # generator asks the backend to build it, and the guard below requires
         # every excused path to exist.
+    },
+    "fe-contrast": {
+        "frontend/contrast-baseline.json": (
+            "baseline: the frozen rendered-contrast debt on the public pages"
+        ),
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",
@@ -1127,15 +1153,15 @@ def self_test() -> int:
               _runnable(root, "no_such_module_anywhere"), False)
         check("... and one it does have is", _runnable(root, "json"), True)
 
-        # The .importlinter exception: freezing one more import is not a change
-        # of rule, and must not open a new comparison run.
+        # The .importlinter exception: writing one more exception down is not a
+        # change of rule, and must not open a new comparison run.
         base = "root_package = app\n\n[importlinter:contract:c1]\ntype = layers\nlayers =\n    a\n    b\n"
         with_one = base + "ignore_imports =\n    a.x -> b.y\n"
         with_two = base + "ignore_imports =\n    a.x -> b.y\n    a.z -> b.w\n"
         (root / "contracts.ini").write_text(with_one)
         first = fingerprint(root, ("contracts.ini",), "ignore_imports")
         (root / "contracts.ini").write_text(with_two)
-        check("freezing another exception is not a rule change", fingerprint(root, ("contracts.ini",), "ignore_imports"), first)
+        check("writing another exception is not a rule change", fingerprint(root, ("contracts.ini",), "ignore_imports"), first)
         (root / "contracts.ini").write_text(with_two.replace("type = layers", "type = forbidden"))
         check("changing the contract is", fingerprint(root, ("contracts.ini",), "ignore_imports") != first, True)
 

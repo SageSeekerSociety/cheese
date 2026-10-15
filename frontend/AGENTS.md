@@ -61,9 +61,9 @@ layout or a shell is not a candidate.
 
 A **scene** is a router page under `src/views` or an SFC under
 `src/components/panels`. `pnpm run lint:scenes` freezes the standalone-ready ones
-in `scene-baseline.json`; a frozen scene that stops being ready fails, and a
-**new** page or panel that is not ready fails from day one, with no baseline edit
-to excuse it. Standalone-ready means grade A — props and events only, no
+in the tree at the merge base with `origin/main`; a scene that is ready there and
+stops being ready fails, and a **new** page or panel that is not ready fails from
+day one. Nothing is written down, so there is no baseline edit to excuse either. Standalone-ready means grade A — props and events only, no
 fetching, no `useRoute`/`$route`, no business store. To get there, lift the read
 into a composable or the shell: `PanelDoc` (shell, fetches) →
 `composables/usePanelDoc.ts` → `PanelDocView.vue` (props only). Full reasoning,

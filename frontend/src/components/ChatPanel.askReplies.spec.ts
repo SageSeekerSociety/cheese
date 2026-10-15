@@ -14,7 +14,7 @@ import type { Block, Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, screen, within } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
@@ -176,7 +176,15 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     // 每一格一间房：时间线按房间缓存在模块里，同一间会串味。
     history = [question('t-open')]
     const { container, getByRole } = await open('t-open')
-    expect(container.textContent).toContain('预算按哪个口径统计？')
+    // 题目就是卡片的标题，按 markdown 画（渲染器是按需载入的）。
+    // 渲染器按需载入，冷的 CI 上要几百毫秒：按时间等，不按空转的次数等。
+    await waitFor(
+      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
+      {
+        timeout: 5_000,
+      }
+    )
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？')
     expect(getByRole('button', { name: /按部门/ })).toBeTruthy()
     expect(container.querySelector('.composer')).toBeTruthy()
   })
@@ -195,7 +203,15 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
   it('任务关了、没人答过的题不再给点，说它不再等回答', async () => {
     history = [question('t-closed')]
     const { container, queryByRole } = await open('t-closed', { askClosed: true })
-    expect(container.textContent).toContain('预算按哪个口径统计？')
+    // 题目就是卡片的标题，按 markdown 画（渲染器是按需载入的）。
+    // 渲染器按需载入，冷的 CI 上要几百毫秒：按时间等，不按空转的次数等。
+    await waitFor(
+      () => expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？'),
+      {
+        timeout: 5_000,
+      }
+    )
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('预算按哪个口径统计？')
     expect(queryByRole('button', { name: /按部门/ })).toBeNull()
     expect(container.querySelector('.ask-replies')?.textContent).toContain('已结束，不再等回答')
   })
@@ -258,6 +274,44 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     history = [question('t-other-empty')]
     const { getByRole } = await open('t-other-empty')
     await fireEvent.keyDown(getByRole('textbox', { name: '其他回答' }), { key: 'Enter' })
+    await settle()
+    expect(sent).toHaveLength(0)
+  })
+})
+
+describe('卡有焦点时按数字键选选项', () => {
+  it('按 2 就是点第二个选项', async () => {
+    history = [question('t-key')]
+    const { container } = await open('t-key')
+    const card = container.querySelector('.ask-replies') as HTMLElement
+    await fireEvent.keyDown(card, { key: '2' })
+    await until(() => sent.length > 0)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].body.content).toBe('按项目')
+    expect(sent[0].body.reply_to).toBe('q-t-key')
+  })
+
+  it('在末行输入框里打数字是在打字，不选选项；没有那一项的数字也不算', async () => {
+    history = [question('t-key-typing')]
+    const { container, getByRole } = await open('t-key-typing')
+    await fireEvent.keyDown(getByRole('textbox', { name: '其他回答' }), { key: '1' })
+    await fireEvent.keyDown(container.querySelector('.ask-replies') as HTMLElement, { key: '9' })
+    await settle()
+    expect(sent).toHaveLength(0)
+  })
+
+  it('带修饰键的数字是别的快捷键，不选选项', async () => {
+    history = [question('t-key-mod')]
+    const { container } = await open('t-key-mod')
+    await fireEvent.keyDown(container.querySelector('.ask-replies') as HTMLElement, { key: '1', metaKey: true })
+    await settle()
+    expect(sent).toHaveLength(0)
+  })
+
+  it('问的是别人：按数字键也不发', async () => {
+    history = [question('t-key-theirs', null, ['alice'])]
+    const { container } = await open('t-key-theirs')
+    await fireEvent.keyDown(container.querySelector('.ask-replies') as HTMLElement, { key: '1' })
     await settle()
     expect(sent).toHaveLength(0)
   })
@@ -348,21 +402,37 @@ describe('被问的人可以跳过这道题', () => {
 })
 
 describe('题问了几个人', () => {
-  it('卡上写着问了谁', async () => {
+  it('卡上写着谁问了谁：问到我就是「你」，别人写名字，不画 @ 的 chip', async () => {
     history = [question('t-asks', null, ['me', 'alice'])]
     const { container } = await open('t-asks')
-    const line = container.querySelector('.ask-replies__asked')?.textContent ?? ''
-    expect(line).toContain('问')
-    expect(line).toContain('@me')
-    expect(line).toContain('@alice')
+    const card = container.querySelector('.ask-replies') as HTMLElement
+    expect(card.textContent).toContain('问你和 alice')
+    expect(card.textContent).not.toContain('@')
+    expect(card.querySelectorAll('.mention')).toHaveLength(0)
+  })
+
+  it('题是一串消息的第一条：名字那一行就在卡片上面，页头不再说一遍名字', async () => {
+    history = [question('t-who-first')]
+    const { container } = await open('t-who-first')
+    const who = container.querySelector('.ask-replies__who')?.textContent?.trim()
+    expect(who).toBe('问你')
+  })
+
+  it('题接在同一个人的上一条后面（上面没有名字那一行）：页头写出是谁问的', async () => {
+    const before = { ...question('t-who-cont'), id: 'm-before', content: '我先看了一遍原始表。', meta: {} } as Block
+    history = [before, question('t-who-cont')]
+    const { container } = await open('t-who-cont')
+    await until(() => container.querySelectorAll('[data-mid]').length === 2)
+    const who = container.querySelector('.ask-replies__who')?.textContent?.trim()
+    expect(who).toMatch(/^\S+ 问你$/)
   })
 
   it('问所有人的题写「所有人」，不逐个列名字', async () => {
     history = [question('t-asks-all', null, ['me', 'alice', 'bob'], [], true)]
     const { container } = await open('t-asks-all')
-    const line = container.querySelector('.ask-replies__asked')?.textContent ?? ''
-    expect(line).not.toContain('@bob')
-    expect(container.querySelectorAll('.ask-replies__asked .mention')).toHaveLength(1)
+    const card = container.querySelector('.ask-replies') as HTMLElement
+    expect(card.textContent).toContain('问所有人')
+    expect(card.textContent).not.toContain('bob')
   })
 
   it('我跳过了，别人还在等：我这里只剩「已跳过」和撤销', async () => {
@@ -393,8 +463,8 @@ describe('只有被问到的人能点选项', () => {
   it('问的是别人：选项看得到但点不动，末行也打不了字，没有 ✕', async () => {
     history = [question('t-chip-theirs', null, ['alice'])]
     const { container, getByRole, queryByRole } = await open('t-chip-theirs')
-    // 卡上那行「问 @alice」说明了在等谁。
-    expect(container.querySelector('.ask-replies__asked')?.textContent).toContain('@alice')
+    // 卡上那句「… 问 alice」说明了在等谁。
+    expect(container.querySelector('.ask-replies')?.textContent).toContain('问 alice')
     const option = getByRole('button', { name: /按项目/ }) as HTMLButtonElement
     const other = getByRole('textbox', { name: '其他回答' }) as HTMLTextAreaElement
     // 灰掉的按钮浏览器不派发点击（happy-dom 照样派发，所以这里看的是 disabled 本身）。

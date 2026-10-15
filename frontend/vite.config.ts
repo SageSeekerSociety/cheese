@@ -238,6 +238,12 @@ const CHUNKS = [
   'marked',
   'prosemirror',
   'vuetify',
+  // The components sit after the framework so it claims whatever they share
+  // first. They are the bulk of the package (VOtpInput, VFileInput, VSlider
+  // and VRating are the only ones a lazy page uses) and every one of them rode
+  // first paint, because `plugins/vuetify.ts` statically imports `vuetify` and
+  // a group takes whatever its modules import.
+  'vuetify-components',
   'tiptap',
   'editorjs',
   'monaco',
@@ -291,6 +297,15 @@ function chunkName(id: string): string | null {
     }
     if (pkg.includes('tiptap')) {
       return 'tiptap'
+    }
+    // The components, not the framework. `vite-plugin-vuetify`'s autoImport
+    // writes deep `vuetify/components/VXxx` imports into the compiled
+    // templates, so what the app reaches is exactly this directory (and
+    // `labs/`); the framework, styles and locales stay in `vuetify`. Without
+    // this arm every component joins the chunk `plugins/vuetify.ts` imports
+    // statically, and first paint pays for pages it never opens.
+    if (pkg.includes('vuetify/lib/components') || pkg.includes('vuetify/lib/labs')) {
+      return 'vuetify-components'
     }
     if (pkg.includes('vuetify')) {
       return 'vuetify'

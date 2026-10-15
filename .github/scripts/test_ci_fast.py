@@ -37,6 +37,11 @@ ALL_HOOKS = [
 BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
 FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"}
 GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
+# Hooks that judge against the merge base, so they are the ones that must report
+# not-run — never a pass — when there is no base or the caller names another one.
+# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py, minus `file-size`, which
+# is one of the guard hooks this file tracks separately.
+BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 
 
 def git(repo, *args):
@@ -186,12 +191,14 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(rep["status"], "unknown")
         self.assertTrue(rep["fallback"])
         # everything ran except the checks that themselves need the merge base
-        self.assertTrue((BACKEND_HOOKS - {"migration-fork"}) | FRONTEND_HOOKS <= self.ran_hooks())
+        self.assertTrue((BACKEND_HOOKS | FRONTEND_HOOKS) - BASE_JUDGING_HOOKS <= self.ran_hooks())
         self.assertNotIn("file-size", self.ran_hooks())
-        self.assertNotIn("migration-fork", self.ran_hooks())
+        for hook in BASE_JUDGING_HOOKS:
+            self.assertNotIn(hook, self.ran_hooks())
         skipped = {n["id"] for n in rep["not_run"]}
         self.assertIn("file-size", skipped)
-        self.assertIn("migration-fork", skipped)
+        for hook in BASE_JUDGING_HOOKS:
+            self.assertIn(hook, skipped)
 
     # --- a custom --base cannot be honored by the base-judging hooks (they
     # --- always judge origin/main), so the run must NOT pass — exit 2
@@ -272,6 +279,27 @@ class CiFastTest(unittest.TestCase):
         self.assertNotIn("scene-ratchet", results)
         not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
         self.assertIn("无相关文件", not_run["scene-ratchet"])
+
+    # --- a base-judging hook whose own `files:` matches nothing changed must
+    # --- still be named as not run when there is no base: the widened selector
+    # --- that runs everything must not promote it to have-run, and the reason
+    # --- must name the base, which is the thing that could not be checked
+    def test_base_judging_hook_with_no_files_is_still_not_run(self):
+        self.write_hooks(extra_entries="""      - id: scene-ratchet
+        name: scene-ratchet filtered stub
+        entry: bash -c 'echo scene-ratchet >> .ci-fast-ran'
+        language: system
+        files: '\\.xyz$'
+""", omit={"scene-ratchet"})
+        self.commit_file("frontend/src/x.ts")  # no refs/remotes/origin/main
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertEqual(self.report()["status"], "unknown")
+        self.assertTrue(self.report()["fallback"])
+        self.assertNotIn("scene-ratchet", self.ran_hooks())
+        not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
+        self.assertIn("merge base", not_run["scene-ratchet"])
+        self.assertNotIn("无相关文件", not_run["scene-ratchet"])
 
     # --- the pre-push entry point (the platform's task-worktree hook calls
     # --- this): the three hooks that spawn the node toolchain leave the
@@ -1075,10 +1103,10 @@ sys.exit(0)
         self.assertTrue(any(r["id"] == "backend-pure" for r in report["ran"]))
 
     def test_shared_i18n_catalog_needs_no_local_widening(self):
-        # roomNotice.json already sets backend scope in the shared map, so the
-        # local guard must not claim it did anything.
+        # a roomNotice shard already sets backend scope in the shared map, so
+        # the local guard must not claim it did anything.
         self.write_hooks()
-        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice.json")
+        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice/agent.json")
         env = self.quick_tools()
         proc = self.run_ci_fast("--tier", "quick", "--title", "feat: shared catalog", env_extra=env)
         report = self.report()
@@ -1774,9 +1802,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         # edit. A deletion with no surviving root is the same case.
         from ci_fast_checks import test_plan
         self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
-        self.put("frontend/scene-baseline.json", "{}\n")
+        self.put("frontend/catalog-baseline.json", "{}\n")
         for changed in (["frontend/src/i18n/messages/en/tasks.json"],
-                        ["frontend/scene-baseline.json"],
+                        ["frontend/catalog-baseline.json"],
                         ["frontend/src/styles/docBlocks.css"],
                         ["frontend/src/gone.ts"]):
             plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)

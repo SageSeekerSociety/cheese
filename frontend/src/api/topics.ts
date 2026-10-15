@@ -53,7 +53,6 @@ export interface TaskNaming {
   mode: TaskNamingMode
   /** Whether the deployment can name tasks at all (a model gateway is configured). */
   available: boolean
-  can_manage: boolean
 }
 
 export function getTaskNaming(projectId: string): Promise<TaskNaming> {

@@ -158,13 +158,10 @@ def test_a_teammate_saves_how_hard_it_thinks_and_when_it_compacts(client):
         assert answer.status_code == 400, answer.text
 
 
-def test_cost_knobs_are_a_managers_and_skills_are_the_projects(client):
-    """Two gates, not one.
-
-    The cost knobs (the highest effort, compaction) stay a manager's, as the
-    project main model is. The skills a teammate carries are the project's: bob
-    is on the project, so arming it is his to do.
-    """
+def test_a_member_changes_a_teammates_costly_settings_and_the_project_is_told(client):
+    """The highest effort, compaction and skills change what every turn of a
+    teammate costs or can do. Any member may change them; the project's 综合
+    says who changed which, from what to what."""
     project = post_project(client, json={"name": "Advanced"}, owner="alice").json()[
         "data"
     ]
@@ -176,54 +173,45 @@ def test_cost_knobs_are_a_managers_and_skills_are_the_projects(client):
     ]
     url = f"/projects/{pid}/agents/{default['id']}"
 
-    # The cost knobs are a manager's, and bob is not one.
-    for managed in ({"effort": "max"}, {"compact_percent": 60}):
-        refused = client.put(url, json={"configuration": managed}, headers=bob)
-        assert refused.status_code == 403, (managed, refused.text)
-
-    # Skills are the project's: bob is on the roster (``_may_configure``).
-    armed = client.put(
-        url, json={"configuration": {"skills": ["documents"]}}, headers=bob
+    saved = client.put(
+        url,
+        json={"configuration": {"compact_percent": 60, "skills": ["documents"]}},
+        headers=bob,
     )
-    assert armed.status_code == 200, armed.text
-    assert armed.json()["data"]["configuration"]["skills"] == ["documents"]
-
-    # Creating a teammate is still the old gate: no instance exists to judge,
-    # so a manager seeds it or nobody does.
-    for advanced in ({"skills": ["documents"]}, {"compact_percent": 60}):
-        made = client.post(
-            f"/projects/{pid}/agents",
-            json={"display_name": "x", "configuration": advanced},
-            headers=bob,
-        )
-        assert made.status_code == 403, (advanced, made.text)
-    preset = client.post(
+    assert saved.status_code == 200, saved.text
+    # A save that leaves them as they were says nothing more.
+    renamed = client.put(
+        url,
+        json={
+            "configuration": {
+                "body": "Review",
+                "compact_percent": 60,
+                "skills": ["documents"],
+            }
+        },
+        headers=bob,
+    )
+    assert renamed.status_code == 200, renamed.text
+    made = client.post(
         f"/projects/{pid}/agents",
-        json={"display_name": "y", "type_name": "fullstack-engineer"},
+        json={"display_name": "x", "configuration": {"effort": "max"}},
         headers=bob,
     )
-    assert preset.status_code == 200, preset.text
+    assert made.status_code == 200, made.text
 
-    basic = client.put(
-        url,
-        json={"configuration": {"body": "Review", "effort": "high"}},
-        headers=bob,
-    )
-    assert basic.status_code == 200, basic.text
-
-    owner = client.put(
-        url,
-        json={"configuration": {"body": "Review", "compact_percent": 60}},
+    blocks = client.get(
+        f"/topics/{project['root_topic_id']}/blocks",
         headers=session_auth_headers("alice"),
-    )
-    assert owner.status_code == 200, owner.text
-    # Saving it back as it is, with the role rewritten, is still bob's to do.
-    kept = client.put(
-        url,
-        json={"configuration": {"body": "Review again", "compact_percent": 60}},
-        headers=bob,
-    )
-    assert kept.status_code == 200, kept.text
+    ).json()["data"]["data"]
+    told = [
+        (b["author"], b["meta"]["agent"], b["meta"]["setting"], b["meta"]["to"])
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "setting_changed"
+    ]
+    assert told == [
+        ("bob", default["seat_handle"], "compact_percent", 60),
+        ("bob", default["seat_handle"], "skills", ["documents"]),
+    ]
 
 
 #: Four room layouts that say the same thing about a person — bob is on the
@@ -236,15 +224,14 @@ _ROOM_SHAPES = ("no_rooms", "no_root", "archived_only", "private_only")
 def test_arming_a_teammate_does_not_depend_on_rooms(
     api_client, db_session, _portal, shape
 ):
-    """A teammate belongs to the project, not to a room.
+    """Arming a teammate is any member's, whatever shape the rooms take.
 
-    The gate asks whether bob is **on the project** (`on_project`, the roster),
-    so the room layout cannot change the answer. It used to ask whether the two
-    sat in some room together, and each of these four layouts landed on a
-    different branch of that question: no public room at all returned False
-    outright, a project without 综合 fell back to explicit seats nobody had
-    taken, and a private chat is not part of the topic tree so it counted for
-    nothing. Bob is the same person in all four, so all four must arm.
+    Bob is a plain member of this project in all four layouts — the same person,
+    the same roster — so arming a teammate must land in every one of them. The
+    four shapes are exactly the layouts that used to read differently to the one
+    gate that asked whether two handles shared a room (``share_a_room_with``):
+    a project with no public room at all, one without 综合, one whose only rooms
+    are archived, and one whose only room is a private chat.
 
     ``api_client`` and not ``client``: this test reshapes rooms through
     ``db_session``, and only the integration client shares that session.
@@ -256,14 +243,6 @@ def test_arming_a_teammate_does_not_depend_on_rooms(
     bob = session_auth_headers("bob")
     agents = api_client.get(f"/projects/{pid}/agents", headers=bob)
     url = f"/projects/{pid}/agents/{agents.json()['data']['data'][0]['id']}"
-
-    # Bob is a plain member, not a manager, and owns none of these agents — so
-    # the 200 below can only come from the 「on the project」 branch. The cost
-    # knobs (which no member may touch) say so out loud.
-    refused = api_client.put(
-        url, json={"configuration": {"effort": "max"}}, headers=bob
-    )
-    assert refused.status_code == 403, refused.text
 
     async def reshape() -> None:
         rows = list(
