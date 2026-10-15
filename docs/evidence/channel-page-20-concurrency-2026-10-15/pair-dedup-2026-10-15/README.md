@@ -71,19 +71,22 @@ cd <树> && uv run --project "$W/backend" \
 与 41.2/33.3（after）一组，噪声带 ±6 ms，大于这次该省下的约 1.4 ms。
 确定性证据是语句数和行数，不是 CPU 表。
 
-### 5. 每条语句由哪一行代码发出（`sql-callers-{channel-detail,by-caller}.txt`）
+### 5. 每条语句由哪一行代码发出（`sql-callers-channel-detail-{before,after}.txt`）
 
 ```bash
 export PERF_LEG=asgi PERF_CONCURRENCY=1 PERF_ONLY="channel detail,awaiting"
-export PERF_BY_CALLER=1
 cd <树> && uv run --project "$W/backend" python .claude/scripts/sql_callers.py
 ```
 
 `sql_callers.py` 把 `AsyncSession.execute/scalars/get/flush/stream` 包起来，记下
 最内层的 `backend/app` 帧，再从 `before_cursor_execute` 读回来（SQLAlchemy 异步版把
 同步会话跑在 greenlet 里，直接在监听器里取栈是取不到我们自己的帧的）。
-`sql-callers-channel-detail.txt` 是按调用点归组，`sql-callers-by-caller.txt` 是同一批
-读数按语句归组——「34 条语句、29 条不同」就是这两份对出来的。
+
+表头那行就是结论：before 树「34 statements, 29 distinct」，after 树「32 statements,
+29 distinct」——两边不同的都是 29 个问题，去掉的那两条正是同一张表问三遍。
+`by-caller-before.txt` 是同一条命令在 before 树上的另一次运行（表头相同，语句排列
+次序不同），留着做交叉核对。加 `PERF_BY_CALLER=1` 时表头换成「by call site, N sites」，
+那是另一种口径，不是上面这张表。
 
 ### 6. 单请求循环 CPU 的分段去向（`burst-cpu-split-channel-detail.txt`）
 
@@ -92,11 +95,15 @@ PERF_ONLY="channel detail,awaiting" PERF_ROUNDS=7 \
   uv run --project "$W/backend" python .claude/scripts/split_topic_cpu.py
 ```
 
-### 7. worker 数（`worker-scaling.json`）
+### 7. worker 数（`worker-scaling-run1.json`、`worker-scaling-run2.json`）
 
 ```bash
-uv run --project "$W/backend" python .claude/scripts/worker_scaling_probe.py
+PERF_OUT=<输出>.json \
+  uv run --project "$W/backend" python .claude/scripts/worker_scaling_probe.py
 ```
 
-CPU 是所有 worker 进程加起来的（worker 由 multiprocessing 起，按 `--port` 找命令行
-是找不到的）。这份读数只用来支持「多进程是明确排在外面的」这个判断，不是一条候选路线。
+两次运行都留了原始样本，报告里那四个数按每批的最坏值取：run1 是 2014 / 7779 ms，
+run2 是 1648 / 12182 ms（前者 1 个 worker，后者 2 个）。CPU 是所有 worker 进程加起来
+的（worker 由 multiprocessing 起，按 `--port` 找命令行是找不到的）；run1 里 2 worker
+那一列的 CPU 读成 0，是那一次的快照没走到 worker 进程，所以那一份只用它的 wall。
+这份读数只用来支持「多进程是明确排在外面的」这个判断，不是一条候选路线。
