@@ -37,7 +37,8 @@ async def overview_document(session: AsyncSession, project_id: uuid.UUID) -> Doc
     Written back through the bare ``projects`` row, so the ``Project`` instance
     its caller holds is not refreshed and its ``overview_document_id`` stays as
     it was read (``ProjectOut`` does not carry the column either). Anyone who
-    needs the pointer afterwards re-reads it.
+    needs the pointer afterwards re-reads it — ``pointed_overview`` below is
+    that read.
     """
     documents = Documents(session)
     seen = await _pointed_at(session, project_id)
@@ -68,6 +69,20 @@ async def overview_document(session: AsyncSession, project_id: uuid.UUID) -> Doc
         .values(overview_document_id=doc.id)
     )
     return doc
+
+
+async def pointed_overview(
+    session: AsyncSession, project_id: uuid.UUID
+) -> Document | None:
+    """The document the project names as its goals; None if none exists.
+
+    This is how anyone else reads that pointer. Reading it off a ``Project``
+    row instead goes through the identity map, and the pointer is written
+    without the ORM (see ``overview_document`` above), so a row the same session
+    loaded earlier still says None.
+    """
+    seen = await _pointed_at(session, project_id)
+    return None if seen is None else await Documents(session).get(seen)
 
 
 async def seed_overview(
