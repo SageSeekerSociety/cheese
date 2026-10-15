@@ -148,6 +148,8 @@ steps:
 
 这个串行是**跨进程**的：座位和房间的准入在 Valkey 上拿一条租约（`admission.Lease`，座位是 `admission:seat:<话题>:<队友>`，房间是 `admission:room:<话题>`）。进程内那把 `asyncio.Lock` 看不见进程边界，消息落到没持有座位的进程会拿到准入、谎报投递失败；租约不会。Valkey 不可用时退回进程内锁，行为和从前一样。
 
+两半是**一起拿、一起放**的：进程内的 `asyncio.Lock` 先拿，Valkey 的那条钥匙在它下面拿，`async with` 结束时同时放。`asyncio.Lock` 没有删掉——删掉会退两步：进程内等的人不再按先来后到（Valkey 的 `SET NX PX` 不排队），而且一次够得着 Valkey 的占用会和一次退回进程内的占用同时进行，等于一个座位两个回合。够不着 Valkey 的那一半只丢跨进程语义，不影响进程内。
+
 租约和 `asyncio.Lock` 有三处不同，都写在 `admission.Lease` 的注释里：
 
 - **可重入靠 `seat_admission` 的 `ContextVar`**：同一个任务嵌套取同一个座位不自锁；租约本身取第二次会等自己。

@@ -15,6 +15,9 @@
   once the lease runs out.
 - Without Valkey a seat is serialized inside the process instead, which is what
   admission did before a seat was a lease.
+- A take that cannot reach Valkey waits for the turn inside all the same, and
+  leaves no key behind when it breaks on the way; and the seat comes free when
+  the task that closes a turn is not the one that took it.
 
 Against a real Redis, through two clients: the holds are what other backend
 processes see.
@@ -279,3 +282,107 @@ async def test_a_seat_falls_back_to_the_process_when_valkey_is_unreachable(monke
         assert lease.locked()
 
     assert not lease.locked()
+
+
+@pytest.mark.anyio
+async def test_a_seat_does_not_open_for_a_take_that_cannot_reach_valkey(
+    clients, monkeypatch
+):
+    """The half that reached Valkey and the half that fell back are the same
+    seat here. A take that cannot reach Valkey is one this process holds the
+    lock for, so it waits for the turn inside rather than running beside it —
+    the turn inside is one Valkey never saw, and the other process's turn is
+    the one it would have run into."""
+    one, _ = clients
+    key = f"test-seat:{uuid.uuid4()}"
+    lease = Lease(key)
+    inside: list[str] = []
+
+    class Unreachable(Redis):
+        async def set(self, *args, **kwargs):  # noqa: A003 — the client's own name
+            raise ConnectionError("valkey is down")
+
+        async def eval(self, *args, **kwargs):  # noqa: A003 — the client's own name
+            raise ConnectionError("valkey is down")
+
+    offline = Unreachable()
+
+    def client_for_this_task() -> Redis:
+        return offline if asyncio.current_task().get_name() == "offline" else one
+
+    monkeypatch.setattr(admission, "get_redis_client", client_for_this_task)
+
+    async def hold(tag: str, seconds: float) -> None:
+        async with lease:
+            inside.append(f"{tag}-in")
+            await asyncio.sleep(seconds)
+            inside.append(f"{tag}-out")
+
+    first = asyncio.create_task(hold("valkey", 0.3), name="valkey")
+    await asyncio.sleep(0.1)
+    second = asyncio.create_task(hold("offline", 0), name="offline")
+    await asyncio.gather(first, second)
+
+    assert inside == ["valkey-in", "valkey-out", "offline-in", "offline-out"]
+
+
+@pytest.mark.anyio
+async def test_a_seat_a_broken_take_wrote_is_not_left_held_in_valkey(
+    clients, monkeypatch
+):
+    """A take writes the hold and then renews it. A Valkey that goes between
+    the two leaves the key behind while this process, which never got the
+    seat, runs on — and every process reads the seat as taken for ``LEASE_S``
+    for nothing."""
+    one, _ = clients
+    key = f"test-seat:{uuid.uuid4()}"
+    lease = Lease(key)
+    real_eval = one.eval
+    calls = 0
+
+    async def flaky_eval(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:  # the renewal inside `enter`, right after the write
+            raise ConnectionError("valkey went down mid-take")
+        return await real_eval(*args, **kwargs)
+
+    monkeypatch.setattr(one, "eval", flaky_eval)
+    monkeypatch.setattr(admission, "get_redis_client", lambda: one)
+
+    async with lease:
+        assert lease.locked()
+
+    assert calls > 1, "the take never got as far as dropping what it wrote"
+    assert await one.get(key) is None
+
+
+@pytest.mark.anyio
+async def test_a_seat_is_let_go_by_the_task_that_closes_the_turn(clients, monkeypatch):
+    """A frame abandoned by a timeout is closed by the loop in a task of its
+    own, not the one that took the seat. The seat comes free either way: the
+    lock lets go for whoever gets there, and the hold goes with it. Keyed to
+    the task that took it, the release was skipped and the seat stayed taken
+    for as long as the process lived."""
+    one, _ = clients
+    key = f"test-seat:{uuid.uuid4()}"
+    lease = Lease(key)
+    monkeypatch.setattr(admission, "get_redis_client", lambda: one)
+
+    async def frames():
+        async with lease:
+            yield "held"
+
+    frames_taken = frames()
+    assert await frames_taken.__anext__() == "held"
+    assert lease.locked()
+    assert await one.get(key) is not None
+
+    async def close_the_frame() -> None:
+        assert asyncio.current_task().get_name() == "closer"
+        await frames_taken.aclose()
+
+    await asyncio.create_task(close_the_frame(), name="closer")
+
+    assert not lease.locked()
+    assert await one.get(key) is None
