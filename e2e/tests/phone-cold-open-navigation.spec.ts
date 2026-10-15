@@ -43,7 +43,8 @@ test('手机上从待办打开一条支线再返回，之后照样换得了页',
   }, thread);
   await expect(page).toHaveURL(new RegExp(`${thread}$`));
 
-  await expect(page.locator('.thread-pane')).toBeVisible();
+  // The thread page draws once the channel it sits in has loaded.
+  await expect(page.locator('.thread-pane')).toBeVisible({ timeout: 15_000 });
 
   // Back on 待办, the thread is gone from the screen, not just from the address bar.
   await page.goBack();

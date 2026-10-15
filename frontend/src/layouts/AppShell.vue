@@ -22,9 +22,9 @@
       <!-- 二级导航：通过路由渲染 -->
       <router-view name="sidebar" />
 
-      <!-- 移动端：唯一的一条顶栏，从不卸载。内容由当前页填（MobileAppBar 里的
-           #app-bar-slot）——挂上/卸下这条横条会让 v-main 的 padding 滑一下，
-           页面跟着抖。 -->
+      <!-- 移动端：唯一的一条顶栏，从不卸载。中间画的是当前这一屏声明的头部
+           （composables/useScreenHeader.ts）——挂上/卸下这条横条会让 v-main 的
+           padding 滑一下，页面跟着抖。 -->
       <mobile-app-bar v-if="!hideAppBar" />
 
       <!-- 一级导航：桌面端左侧 Rail，移动端底部。页面栈里的那几层（hideTabs）没有它；
@@ -59,9 +59,8 @@
                v-memo="[]" 是这里的必需品，不是优化。带 v-slot 的 router-view 就
                有了 slot，而 Vue 对「有 slot 的子组件」在父组件重渲染时一律强制更
                新；RouterView 每次重渲染都给页面组件换一个新的 onVnodeUnmounted，
-               于是页面组件也跟着在**父组件的 patch 中途**重渲染。断点从桌面切到
-               手机时这个中途正好排在移动顶栏挂上之前，Home 的 Teleport 因此找不
-               到 #app-bar-slot：首页的分段 tab 消失，卸载时还会崩。空的依赖数组
+               于是页面组件也跟着在**父组件的 patch 中途**重渲染，排在外框自己
+               那一轮更新的半路上（比如断点切换时顶栏、底栏正在换）。空的依赖数组
                让这棵子树不再被父组件的重渲染碰到（路由自己的重渲染照常），也就
                是加 v-slot 之前 router-view 本来的样子。想挪动它、或者改白名单
                之前，先看 App.keepAlive.spec.ts：那三条用例分别钉住「白名单里的
