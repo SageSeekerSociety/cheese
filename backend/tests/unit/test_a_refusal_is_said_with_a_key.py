@@ -427,7 +427,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/discussion/reaction_services.py": 2,
     "app/domain/discussion/services.py": 6,
     "app/domain/documents/editor.py": 1,
-    "app/domain/feedback/repositories.py": 1,
+    "app/domain/feedback/queries.py": 1,
     "app/domain/fetch/addresses.py": 2,
     "app/domain/fetch/guard.py": 6,
     "app/domain/groups/services.py": 26,
