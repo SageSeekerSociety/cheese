@@ -9,7 +9,7 @@
     <!-- 桌面端：使用 StatusBar -->
     <template v-if="$vuetify.display.mdAndUp">
       <keep-alive>
-        <app-bar v-if="!hideAppBar" :links="[]" />
+        <app-bar v-if="!hideAppBar" :links="[]" :logged-in="loggedIn" />
       </keep-alive>
       <keep-alive>
         <LeftAppRail v-if="!hideAppBar" :items="rail" @reorder="reorderRail" />
@@ -264,6 +264,10 @@ watch(pendingSudo, (request) => {
 const hideAppBar = computed(() => {
   return currentRoute.meta.hideAppBar
 })
+
+/** 顶栏要的登录态。外壳是布局，可以直接读 `services/account`；`AppBar` 在
+ *  `src/components/**` 下，不行，所以从这里传下去（`.claude/rules/architecture.md`）。 */
+const loggedIn = computed(() => AccountService.loggedIn)
 
 // 页面栈的末端（话题页、私聊页）收起底栏：它们是栈里的一层，不是一级目的地。
 const hideTabs = computed(() => currentRoute.meta.hideTabs === true)

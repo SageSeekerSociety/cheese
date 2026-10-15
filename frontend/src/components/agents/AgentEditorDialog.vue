@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import type { AgentConfiguration, AgentType, ProjectAgent } from '../../cx_types'
-import type { AgentFieldChoice } from '../../lib/modelChoices'
 import type { AgentEffort } from '../../lib/projectAgents'
 
 import { computed, ref, toRaw, watch } from 'vue'
 
-import { createProjectAgent, getProjectDefaultModel, updateProjectAgent } from '../../api'
+import { useAgentEditor } from '../../composables/useAgentEditor'
 import { t } from '../../i18n'
 import { teammateName } from '../../lib/agentNames'
 import { modelChoiceProps } from '../../lib/modelChoices'
@@ -27,32 +26,20 @@ const shownName = ref('')
 const handle = ref('')
 const presetName = ref<string | null>(null)
 const draft = ref<AgentConfiguration>(blankConfiguration())
-const saving = ref(false)
-const error = ref<string | null>(null)
 const submitted = ref(false)
-const choices = ref<AgentFieldChoice[]>([])
-const modelsLoading = ref(false)
 const advancedOpen = ref(false)
 const allowMax = ref(false)
 const customCompact = ref(false)
 const compactPercent = ref(80)
 
+// 模型目录和「新建 / 更新」那两下都在这里，组件只画和接线
+// （`.claude/rules/architecture.md`：`src/components/**` 不碰 API 层）。
+const { choices, modelsLoading, saving, error, clearError, loadModels, save } = useAgentEditor(() => props.projectId)
+
 function blankConfiguration(): AgentConfiguration {
   return { body: '', skills: [], model: null, effort: null, compact_percent: null }
 }
 
-async function loadModels() {
-  modelsLoading.value = true
-  choices.value = []
-  try {
-    const state = await getProjectDefaultModel(props.projectId)
-    choices.value = state.choices
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.models.loadError')
-  } finally {
-    modelsLoading.value = false
-  }
-}
 const presetItems = computed(() => [
   { title: t('work.projectSettings.agents.editor.presetCustom'), value: null },
   ...props.types.map((preset) => ({ title: preset.title || preset.name, value: preset.name })),
@@ -121,7 +108,7 @@ watch(
   ([open]) => {
     if (!open) return
     submitted.value = false
-    error.value = null
+    clearError()
     advancedOpen.value = false
     displayName.value = props.agent ? teammateName(props.agent.display_name, props.agent.name_source) : ''
     shownName.value = displayName.value
@@ -150,46 +137,30 @@ function close() {
   emit('update:modelValue', false)
 }
 
-async function save() {
+async function submit() {
   submitted.value = true
   if (nameProblem.value || handleProblem.value) return
   if (draft.value.model && !choices.value.some((choice) => choice.id === draft.value.model && choice.allowed)) {
     error.value = t('work.models.chooseAvailable')
     return
   }
-  saving.value = true
-  error.value = null
-  try {
-    const payload = {
-      display_name: displayName.value.trim(),
-      configuration: {
-        ...draft.value,
-        model: draft.value.model ?? null,
-        effort: draft.value.effort ?? null,
-        compact_percent: customCompact.value ? compactPercent.value : null,
-      },
-    }
+  const saved = await save(props.agent, {
+    display_name: displayName.value.trim(),
+    configuration: {
+      ...draft.value,
+      model: draft.value.model ?? null,
+      effort: draft.value.effort ?? null,
+      compact_percent: customCompact.value ? compactPercent.value : null,
+    },
     // A name left as it was shown stays unset: saving the default teammate's
     // settings must not turn the name it is shown by into one somebody chose.
-    if (props.agent?.id)
-      await updateProjectAgent(
-        props.projectId,
-        props.agent.id,
-        payload.display_name === shownName.value ? { configuration: payload.configuration } : payload
-      )
-    else
-      await createProjectAgent(props.projectId, {
-        ...payload,
-        handle: handle.value.trim() || undefined,
-        type_name: presetName.value,
-      })
-    emit('saved')
-    close()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.agents.editor.saveFailed')
-  } finally {
-    saving.value = false
-  }
+    nameUnchanged: displayName.value.trim() === shownName.value,
+    handle: handle.value.trim() || undefined,
+    type_name: presetName.value,
+  })
+  if (!saved) return
+  emit('saved')
+  close()
 }
 </script>
 
@@ -204,7 +175,7 @@ async function save() {
     :primary-loading="saving"
     :max-width="720"
     @update:model-value="emit('update:modelValue', $event)"
-    @primary="save"
+    @primary="submit"
   >
     <v-alert v-if="error" type="error" density="comfortable" class="mb-4">{{ error }}</v-alert>
     <v-text-field
