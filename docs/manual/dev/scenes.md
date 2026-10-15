@@ -298,7 +298,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | 读路由（`useRoute` / `$route`） | 75 | |
 | 读 store | 39 | `workspace` 16、`space` 16、`feedback` 5、`signup` 2 |
 | 经中间模块绕到取数 | 110 | `api/spaces.ts` 17、`composables/useSpaceData.ts` 15、`api/userAuth.ts` 13、`api/axiosHttp.ts` 11、`query/project.ts` 8、`api/taskBoard.ts` 8、`api/teams.ts` 7、`composables/useChosenAvatar.ts` 6、`api/users.ts` 5、`lib/desktop.ts` / `views/account/passkeyEnrollment.ts` / `api/avatars.ts` / `lib/routePrefetch.ts` 各 4、其余 121 个各 ≤3 |
-| 模板里画 `<router-view>` / `<router-link>` | 12 | |
+| 模板里画 `<router-view>` / `<router-link>` | 13 | |
 | `provide()` / `inject()`、`$parent` / `$root`、事件总线 | 1 | `views/question/DetailAnswerList.vue` 一页，这次拆页时从 `components/questions/AnswerList.vue` 收上来的 |
 
 修法按前两条分：

@@ -283,8 +283,9 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
           return t('catalog.teamDetailView.s1.note')
         },
         props: {},
-        // 小队名两面都画（成员这面在页头、非成员那面在资料卡里），认只有成员这面才有的那一句简介。
-        expect: '一起把城市数据用起来',
+        // 小队名两面都画（成员这面在页头、非成员那面在资料卡里），简介那一句也是；认页头上那个 span，
+        // 只有成员这一面才有（非成员那面走 TeamProfile）。
+        expectSelector: '.team-intro',
       },
       {
         get name() {

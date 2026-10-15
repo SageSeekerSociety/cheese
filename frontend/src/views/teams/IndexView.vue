@@ -108,8 +108,8 @@ function introOf(): string {
             ></v-text-field>
 
             <p class="text-body-2 text-medium-emphasis mb-2">{{ t('teams.index.description') }}</p>
-            <!-- 编辑器整棵画在 `<Teleport to="body">` 里，class 传不进去（Vue 会静默丢掉）：
-                 原来这两个 class 从来没落到元素上，删掉画面不变。 -->
+            <!-- The editor renders inside a `<Teleport to="body">`, so classes never reach
+                 its root element: these two never landed anywhere, dropping them changes nothing. -->
             <tip-tap-editor
               ref="teamDescriptionEditor"
               v-model="teamDescription"
