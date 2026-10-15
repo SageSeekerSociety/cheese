@@ -2,39 +2,54 @@
 """Collect the first-push job failures of PRs merged into a base branch.
 
 The unit is one merged PR. Its "first head" is the head SHA of the earliest
-`required-ci.yml` `pull_request` run associated with the PR's branch. Every
-leaf job of every run on that head is read; each job name that concluded
-`failure`/`timed_out` is recorded once per PR. The aggregating jobs (`CI
-required`, `CI required (draft quick)`, `scope`) are not leaf judgements and
-are not counted among those; the conclusions the gate itself reached are kept
-per PR in `gate_conclusions`, so whether the PR was ever a gate red is
-readable from this file alone.
+`required-ci.yml` `pull_request` run associated with the PR's branch. Every job
+of every run on that head is read; each name that concluded `failure` or
+`timed_out` is recorded once per PR, except the ones that only restate another
+job's verdict: `CI required`, `CI required (draft quick)`, `scope`. `fast` (the
+draft tier's inline verdict job) and `Backend coverage complete` (the backend
+matrix's aggregator) are kept — they judge something a leaf cannot see — but
+they are not leaf jobs either, so a ranking built from this file says which row
+is which instead of calling all of them leaves. Whether the PR was ever a gate
+red is readable from `gate_conclusions` alone: a gate that concluded `failure`
+counts even when another run on the same head was cancelled, because that one
+did conclude — `first_head_cancelled` says the head was superseded, not that
+nothing was judged. A first head whose runs all ended before `CI required`
+concluded is not a gate red.
 
 This is a measurement, not a gate. It reuses `trace_retro._gh` for GitHub
-access and caches every response, so a re-run over the same window is free and
-deterministic.
+access, and every response — the merged-PR listing included — goes through the
+cache, so a re-run over the same window with the same `--cache` is free and
+deterministic. The cache is keyed by the request alone, so a different window
+wants its own directory: pages fetched for one window answer for any other.
+`--csv` writes the per-PR rows, which is what `docs/evidence/` links to.
 """
 
 from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import csv
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import trace_retro
 
 REQUIRED_CI = ".github/workflows/required-ci.yml"
 
-# Jobs that aggregate the run rather than judge a change.
+# Jobs that restate another job's verdict rather than judge a change.
 AGGREGATORS = frozenset({"CI required", "CI required (draft quick)", "scope"})
 # The one aggregator branch protection reads. A PR whose first head ever left
 # this red is a gate red, whatever its draft branch did.
 GATE_JOB = "CI required"
 
 CONCLUDED_RED = frozenset({"failure", "timed_out", "action_required"})
+
+CSV_COLUMNS = (
+    "since", "until", "pr", "branch", "merged_at", "first_head",
+    "first_head_cancelled", "gate_conclusions", "red_jobs",
+)
 
 
 def instant(value: str) -> datetime:
@@ -48,6 +63,18 @@ def stamp(value: datetime) -> str:
     return value.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def cache_key(repo: str, kind: str, name: str, page: int) -> str:
+    """A file name the request maps to one-to-one.
+
+    Folding `/` to `_` is not injective: branches `a/b` and `a_b` would share a
+    file, and so would page 2 of branch `x` and page 1 of branch `x-p2`. Either
+    collision hands a PR another branch's runs with nothing to notice, so the
+    name is quoted and the page number is in every key — the trailing `-p<digits>`
+    is then an anchor that recovers both parts exactly.
+    """
+    return f"{kind}-{repo.replace('/', '_')}-{quote(name, safe='')}-p{page}"
+
+
 class Cache:
     """One JSON file per key. A cache is an observation, not a live view."""
 
@@ -58,9 +85,16 @@ class Cache:
     def get(self, key: str, fetch):
         path = self.root / f"{key}.json"
         if path.exists():
-            return json.loads(path.read_text())
+            try:
+                return json.loads(path.read_text())
+            except ValueError:
+                # A run killed mid-write leaves half a file. It is an observation
+                # that never finished: refetch it instead of taking the sweep down.
+                path.unlink()
         value = fetch()
-        path.write_text(json.dumps(value))
+        partial = path.with_name(path.name + ".partial")
+        partial.write_text(json.dumps(value))
+        partial.replace(path)
         return value
 
 
@@ -68,15 +102,17 @@ def api(endpoint: str) -> object:
     return trace_retro._gh(["api", endpoint])
 
 
-def merged_prs(repo: str, base: str, since: datetime, until: datetime) -> list[dict]:
+def merged_prs(repo: str, base: str, since: datetime, until: datetime, cache: Cache) -> list[dict]:
     """PRs whose merged_at lies in [since, until)."""
     rows: dict[int, dict] = {}
     for page in range(1, 2001):
-        endpoint = (
-            f"repos/{repo}/pulls?state=closed&base={base}"
-            f"&sort=updated&direction=desc&per_page=100&page={page}"
-        )
-        data = api(endpoint)
+        def fetch(p: int = page) -> object:
+            return api(
+                f"repos/{repo}/pulls?state=closed&base={base}"
+                f"&sort=updated&direction=desc&per_page=100&page={p}"
+            )
+
+        data = cache.get(cache_key(repo, "prs", base, page), fetch)
         if not isinstance(data, list):
             raise ValueError("invalid PR page")
         for pull in data:
@@ -90,20 +126,15 @@ def merged_prs(repo: str, base: str, since: datetime, until: datetime) -> list[d
 
 
 def branch_runs(repo: str, branch: str, cache: Cache) -> list[dict]:
-    key = "branch-" + branch.replace("/", "_")
-
-    def fetch():
-        return api(
-            f"repos/{repo}/actions/runs?"
-            + urlencode({"event": "pull_request", "branch": branch, "per_page": 100})
-        )
-
     runs = []
     for page in range(1, 21):
-        data = cache.get(key if page == 1 else f"{key}-p{page}", lambda p=page: api(
-            f"repos/{repo}/actions/runs?"
-            + urlencode({"event": "pull_request", "branch": branch, "per_page": 100, "page": p})
-        ))
+        def fetch(p: int = page) -> object:
+            return api(
+                f"repos/{repo}/actions/runs?"
+                + urlencode({"event": "pull_request", "branch": branch, "per_page": 100, "page": p})
+            )
+
+        data = cache.get(cache_key(repo, "branch", branch, page), fetch)
         items = data["workflow_runs"]
         runs.extend(items)
         if len(items) < 100:
@@ -121,7 +152,7 @@ def run_jobs(repo: str, run_id: int, cache: Cache) -> list[dict]:
                 break
         return jobs
 
-    return cache.get(f"jobs-{run_id}", fetch)
+    return cache.get(cache_key(repo, "jobs", str(run_id), 1), fetch)
 
 
 def first_head_runs(pr: dict, runs: list[dict], until: datetime) -> tuple[str | None, list[dict]]:
@@ -145,7 +176,7 @@ def first_head_runs(pr: dict, runs: list[dict], until: datetime) -> tuple[str | 
 
 
 def collect(repo: str, base: str, since: datetime, until: datetime, cache: Cache) -> dict:
-    prs = merged_prs(repo, base, since, until)
+    prs = merged_prs(repo, base, since, until, cache)
     print(f"merged PRs in window: {len(prs)}", flush=True)
 
     rows = []
@@ -203,6 +234,26 @@ def collect(repo: str, base: str, since: datetime, until: datetime, cache: Cache
     }
 
 
+def write_csv(path: Path, snapshot: dict) -> None:
+    """The per-PR rows, with the window on every row so two windows can be told
+    apart by reading one of them."""
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(CSV_COLUMNS)
+        for row in snapshot["rows"]:
+            writer.writerow([
+                snapshot["since"],
+                snapshot["until"],
+                row["number"],
+                row["branch"],
+                row["merged_at"],
+                row["first_head"] or "",
+                "true" if row["first_head_cancelled"] else "false",
+                "|".join(row["gate_conclusions"]),
+                "|".join(row["red_jobs"]),
+            ])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", default="SageSeekerSociety/cheese")
@@ -211,6 +262,7 @@ def main() -> int:
     parser.add_argument("--until", required=True)
     parser.add_argument("--cache", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--csv", help="also write the per-PR rows as CSV")
     args = parser.parse_args()
 
     snapshot = collect(
@@ -222,6 +274,9 @@ def main() -> int:
     )
     Path(args.output).write_text(json.dumps(snapshot, indent=2))
     print(f"wrote {args.output}")
+    if args.csv:
+        write_csv(Path(args.csv), snapshot)
+        print(f"wrote {args.csv}")
     return 0
 
 
