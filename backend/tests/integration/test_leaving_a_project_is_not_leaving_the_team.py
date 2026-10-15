@@ -477,3 +477,18 @@ def test_a_team_admin_who_left_a_project_no_longer_manages_it(client, bearer):
     assert took_over.status_code in (403, 404)
     assert not reads(client, pid, root, "mate")
     assert invite(client, pid, by="mate", who="pal").status_code in (403, 404)
+
+
+def test_the_team_page_does_not_list_a_project_you_left(client, bearer):
+    """团队页列的是你在里面的项目：退出了的那个不该还摆在那里，点进去却被拒。"""
+    tid = team_of(client, owner="cap", members=("mate",))
+    pid = project_in(client, tid, owner="cap")
+    assert leave(client, pid, "mate").status_code == 200
+
+    listed = client.get(
+        "/projects", params={"team_id": tid}, headers=auth(seed_user(client, "mate"))
+    )
+
+    assert listed.status_code == 200, listed.text
+    assert pid not in {p["id"] for p in listed.json()["data"]["data"]}
+    assert still_on_the_team(client, pid, "mate")
