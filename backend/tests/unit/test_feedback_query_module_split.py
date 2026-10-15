@@ -6,15 +6,17 @@
 import ...` 取这些名字，按名字打 monkeypatch 也指着这个路径。它们现在定义在
 `queries.py`，`repositories.py` 负责再导出。
 
-**再导出不是再定义。** 两边必须是同一个对象。拆开之后最可能的退化是有人照着又写
-一份 —— 而 `PUBLIC_ONLY`、`hot_score()` 的 docstring 讲的正是「两份拷贝就是数字和
-列表对不上的来路」。
+**再导出不是再定义。** 两边必须是同一个对象，这个模块里也不该再出现一份定义。拆开
+之后最可能的退化是有人照着又写一份 —— 而 `PUBLIC_ONLY`、`hot_score()` 的 docstring
+讲的正是「两份拷贝就是数字和列表对不上的来路」。
 
 **批大小的那个开关仍然长在这个模块上。** `tests/integration/test_feedback.py` 是
 按**本模块**的对象把 `_IN_BATCH` 压到 2 来验分块的。`batched` 跟着名字搬去
 `queries.py` 的话，那条测试再也压不动它，等于不再验分块，而且不会红。
 """
 
+import ast
+import pathlib
 from typing import cast
 
 import pytest
@@ -59,6 +61,32 @@ def test_the_move_did_not_become_a_second_definition(name: str) -> None:
     assert getattr(repositories, name) is getattr(queries, name), (
         f"`{name}` 在 `repositories.py` 和 `queries.py` 里是两个对象 —— "
         "这是把名字又定义了一遍，不是再导出。"
+    )
+
+
+def test_none_of_the_moved_names_is_defined_here() -> None:
+    """`is` 一个人挡不住「又写了一份」：`HOT_MIN_ITEMS = 5` 再写一行，取到的还是
+    同一个对象 —— 解释器把 -5..256 的整数驻留了，`5 is 5` 为真。也就是说只查对象
+    相等的话，再定义一份小整数常量会无声通过，而 `_hot_ids` 用它定 `LIMIT`、路由
+    用它报给客户端，两边漂开就是「标签写 5、点开只有 2 条」。
+
+    所以这里读源码：被搬走的名字在这个模块里只许出现在那条再导出的 import 里，
+    不许作为定义出现。
+    """
+    tree = ast.parse(pathlib.Path(repositories.__file__).read_text())
+    defined: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, ast.Assign):
+            defined.update(
+                target.id for target in node.targets if isinstance(target, ast.Name)
+            )
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            defined.add(node.target.id)
+    assert not defined & set(MOVED), (
+        "这些名字在 `repositories.py` 里被又定义了一份，而不是再导出："
+        f"{sorted(defined & set(MOVED))}"
     )
 
 
