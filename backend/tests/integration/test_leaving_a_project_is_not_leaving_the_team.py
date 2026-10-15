@@ -438,3 +438,42 @@ def test_a_project_handed_to_someone_who_left_it_still_has_an_owner(client, bear
     assert rows["mate"]["source"] == "owner"
     assert reads(client, pid, root, "mate")
     assert "P" in my_projects(client, "mate")
+
+
+def test_a_team_admin_who_left_a_project_no_longer_manages_it(client, bearer):
+    """退出了，就不再管这个项目：管理里包括把项目交给自己，那等于把「退出」撤销。"""
+    from sqlalchemy import update
+
+    from app.domain.team.models import TeamMemberRole, TeamUserRelation
+    from app.domain.user.repositories import UserRepository
+
+    tid = team_of(client, owner="cap", members=("mate", "pal"))
+
+    async def _promote() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            mate = await UserRepository(session).get_by_username("mate")
+            assert mate is not None
+            await session.execute(
+                update(TeamUserRelation)
+                .where(
+                    TeamUserRelation.team_id == tid,
+                    TeamUserRelation.user_id == mate.id,
+                )
+                .values(role=TeamMemberRole.ADMIN)
+            )
+            await session.commit()
+
+    asyncio.run(_promote())
+    pid = project_in(client, tid, owner="cap")
+    root = root_topic(client, pid, who="cap")
+    assert leave(client, pid, "mate").status_code == 200
+
+    took_over = client.put(
+        f"/projects/{pid}/owner",
+        json={"owner_handle": "mate"},
+        headers=auth(seed_user(client, "mate")),
+    )
+
+    assert took_over.status_code in (403, 404)
+    assert not reads(client, pid, root, "mate")
+    assert invite(client, pid, by="mate", who="pal").status_code in (403, 404)

@@ -97,7 +97,10 @@ class MemberService:
         return await self._team_admin(project, handle)
 
     async def _team_admin(self, project: Project, handle: str) -> bool:
-
+        # A team admin who left this project no longer manages it: managing
+        # includes handing the project to yourself, which would undo leaving.
+        if await self._repo.is_excluded(project_id=project.id, user_handle=handle):
+            return False
         user = await user_by_handle(self._session, handle)
         if user is None:
             return False
