@@ -21,10 +21,9 @@ TOPIC_ID = uuid.UUID(sys.argv[1])
 async def main() -> int:
     from sqlalchemy import select
 
+    from app.api.routes.accept import _accept_service
     from app.core.db import async_session_factory
-    from app.domain.agent.announce import announce
     from app.domain.review.models import AcceptCard, AcceptStatus
-    from app.domain.review.services import AcceptService
 
     async with async_session_factory() as session:
         card = (
@@ -43,7 +42,11 @@ async def main() -> int:
             print("STATUS=none")
             print("NOTE=no pending card on this topic")
             return 1
-        decided = await AcceptService(session, announce=announce).accept(
+        # Built the way the route builds it, not again from scratch: the ports
+        # `review` cannot reach are handed in at the API ring, and this script is
+        # the button's own path run from a shell. Listing them here a second time
+        # is what let this call go stale when the ports became required.
+        decided = await _accept_service(session).accept(
             card_id=card.id, decided_by="andy"
         )
         await session.commit()

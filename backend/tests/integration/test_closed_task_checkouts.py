@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,8 @@ import pytest
 
 from app.domain.agent import device_hub as hub_module
 from app.domain.agent.checkout_sweep import sweep
+from app.domain.agent.models import AgentTurn
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.room_task.checkouts import remove_closed_checkouts
@@ -275,3 +278,43 @@ async def test_a_room_with_more_closed_tasks_than_a_command_line_holds_is_swept(
     assert counts == {"removed": 1, "kept": 0}
     assert not last.exists()
     assert len(hub.ran) > 1
+
+
+async def test_a_write_up_ending_takes_its_tasks_checkout_along(
+    client, tmp_path, monkeypatch
+):
+    """The route most closes take is a turn ending, not `close_task`: the
+    write-up's interval stops and the task closes behind it. The repository is
+    built the way its callers build it — without naming a sweep — so the sweep
+    has to be the one its own package supplies, or the room's closed checkout
+    stays on the machine."""
+    room = await _room(client, tmp_path)
+    machine = room.machines["a"]
+    (task,) = await _tasks(client, room, 1)
+    path = machine.checkout(task, push=True)
+    hub = _hub(monkeypatch, room.machines, online={"a"})
+
+    async with client.test_factory() as db:
+        row = await db.get(Task, task)
+        assert row is not None
+        # Waiting for its write-up: what a task is once its last step landed.
+        row.closing_since = datetime.now(UTC)
+        turn = uuid.uuid4()
+        db.add(
+            AgentTurn(
+                id=turn,
+                continuation_id=turn,
+                conversation_id=task,
+                author="alice",
+                content="写一下总结",
+                started_at=datetime.now(UTC),
+                delivered_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+        await AgentTurnRepository(db).close([turn], datetime.now(UTC))
+        await db.commit()
+
+    await _until(lambda: hub.ran == ["a"])
+    assert not path.exists()
+    assert str(path) not in git(machine.cache, "worktree", "list")

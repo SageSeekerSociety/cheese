@@ -327,13 +327,23 @@ async def close_after_summary(
     return await close_task(session, task, work, machines=machines)
 
 
-async def turns_ended(session: AsyncSession, conversations: list[uuid.UUID]) -> None:
+async def turns_ended(
+    session: AsyncSession,
+    conversations: list[uuid.UUID],
+    *,
+    machines: SweepCheckouts | None = None,
+) -> None:
     """Turns stopped in these conversations, in ``session``: each of them that
     is a task waiting for its summary turn closes if that was the write-up, or
     the last thing besides it (`close_after_summary`). Every way a turn ends
     records it through `agent.repositories.AgentTurnRepository`, which calls
     this, so a write-up that ends, fails, times out or dies with its session
-    closes its task when its interval does."""
+    closes its task when its interval does.
+
+    ``machines`` is `close_task`'s. This is the path most tasks close by, so a
+    caller that leaves it out leaves the room's closed checkouts on the
+    machines it works on; `AgentTurnRepository` hands in the sweep this
+    package implements."""
     if not conversations:
         return
     waiting = list(
@@ -344,7 +354,7 @@ async def turns_ended(session: AsyncSession, conversations: list[uuid.UUID]) -> 
         )
     )
     for task_id in waiting:
-        await close_after_summary(session, task_id, None)
+        await close_after_summary(session, task_id, None, machines=machines)
 
 
 @dataclass(frozen=True)
