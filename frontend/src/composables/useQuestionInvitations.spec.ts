@@ -13,8 +13,9 @@
 //   4. **点那颗按钮真发出邀请**，成了之后那个人当场变成「已邀请」。
 //   5. **换一道题就换一份名单**。这一份实例跟着页面一直活着，页面换题时不重建
 //      （`views/question/Detail.vue` 拿的就是同一个实例），所以名单得自己认题：
-//      新题开读先清空，旧题的响应迟到就丢掉。少了这个，新题的弹窗先画出上一题的
-//      人，点到谁都会邀请到新题上。
+//      新题开读先清空，旧题的响应（不管成没成）迟到就丢掉。少了这个，新题的弹窗
+//      先画出上一题的人，点到谁都会邀请到新题上。**读失败也留下空名单**，不留上一题
+//      的——留下的每一个按钮都会邀请到新题上。发出去的那封邀请同样认题。
 //
 // 挂的是一个和页面同款的小壳（composable + 画面），因为这一层的行为只有和画面接上
 // 才有意义——光调 `useQuestionInvitations()` 得到的是一堆 ref，看不出屏幕上有没有
@@ -201,6 +202,45 @@ describe('the invitation roster', () => {
     expect(inviteUser).toHaveBeenCalledWith(QUESTION_ID, FULU.id)
     // 成了之后当场变成「已邀请」——不必等下一次读名单。
     await waitFor(() => expect(container.textContent).toContain(INVITED))
+  })
+
+  it('an invitation sent on the question we left does not mark the person on the new one', async () => {
+    AccountService.loggedIn = true
+    // 两道题的推荐名单里都有这个人：他在上一题里被邀请了，不该在新题上显示成已邀请。
+    invitationRecommend.mockResolvedValue({ users: [FULU] })
+    const sent = pending<unknown>()
+    inviteUser.mockReturnValue(sent.promise)
+
+    const { container, rerender } = mountList({ questionId: QUESTION_ID })
+    await waitFor(() => expect(container.textContent).toContain('福禄'))
+    await fireEvent.click(container.querySelector('button')!)
+    expect(inviteUser).toHaveBeenCalledWith(QUESTION_ID, FULU.id)
+
+    await rerender({ questionId: 43 })
+    await waitFor(() => expect(invitationRecommend).toHaveBeenCalledWith(43))
+    await waitFor(() => expect(container.textContent).toContain('福禄'))
+
+    // 上一题那封邀请这时才成：它记的是上一题，新题这份名单上不该多出「已邀请」。
+    sent.settle({ id: 1 })
+    await flush()
+    expect(container.textContent).not.toContain(INVITED)
+  })
+
+  it('a failed reload empties the roster instead of leaving the old one up', async () => {
+    AccountService.loggedIn = true
+    invitationRecommend.mockResolvedValue({ users: [FULU] })
+
+    const { container, rerender } = mountList({ questionId: QUESTION_ID })
+    await waitFor(() => expect(container.textContent).toContain('福禄'))
+
+    // 换题后那两趟失败：名单得是空的加一句报错，不能把上一题的人留在屏幕上——
+    // 留着的每一个按钮都会邀请到新题上。
+    invitationRecommend.mockRejectedValue(new Error('Unauthorized'))
+    getInvitaions.mockRejectedValue(new Error('Unauthorized'))
+    await rerender({ questionId: 43 })
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith(t(LOAD_FAILED)))
+    expect(container.textContent).not.toContain('福禄')
   })
 
   it('switching questions drops the roster the old question filled', async () => {
