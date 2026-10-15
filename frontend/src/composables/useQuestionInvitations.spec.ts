@@ -1,5 +1,5 @@
 /// <reference types="node" />
-// 邀请弹窗里那份名单的取数接线，钉四件事：
+// 邀请弹窗里那份名单的取数接线，钉五件事：
 //
 //   1. **没登录就不发那两趟请求**。后端这两条读侧要登录，匿名会拿到 401
 //      （apps 那边的口径见 backend/app/api/routes/questions.py 的邀请读侧）。
@@ -11,6 +11,10 @@
 //      请求一失败，组件没人接，控制台多一条 unhandled rejection，而名单空着——
 //      「失败了」被画成了「没有人可以邀请」。现在落在一句 toast 上。
 //   4. **点那颗按钮真发出邀请**，成了之后那个人当场变成「已邀请」。
+//   5. **换一道题就换一份名单**。这一份实例跟着页面一直活着，页面换题时不重建
+//      （`views/question/Detail.vue` 拿的就是同一个实例），所以名单得自己认题：
+//      新题开读先清空，旧题的响应迟到就丢掉。少了这个，新题的弹窗先画出上一题的
+//      人，点到谁都会邀请到新题上。
 //
 // 挂的是一个和页面同款的小壳（composable + 画面），因为这一层的行为只有和画面接上
 // 才有意义——光调 `useQuestionInvitations()` 得到的是一堆 ref，看不出屏幕上有没有
@@ -64,6 +68,19 @@ const FULU: User = {
   intro: '在做题',
   question_count: 0,
   answer_count: 0,
+}
+
+const ZHISHI: User = { ...FULU, id: 9, username: 'zhishi', nickname: '芝士' }
+
+/** 一趟还没回来的请求：由测试决定它什么时候落地、落成什么。 */
+function pending<T>() {
+  let settle!: (value: T) => void
+  let fail!: (reason: unknown) => void
+  const promise = new Promise<T>((resolve, reject) => {
+    settle = resolve
+    fail = reject
+  })
+  return { promise, settle, fail }
 }
 
 /** 页面那一层的样子：composable 拿名单，「已经邀请过谁」比成 id，其余交给画面。 */
@@ -184,5 +201,81 @@ describe('the invitation roster', () => {
     expect(inviteUser).toHaveBeenCalledWith(QUESTION_ID, FULU.id)
     // 成了之后当场变成「已邀请」——不必等下一次读名单。
     await waitFor(() => expect(container.textContent).toContain(INVITED))
+  })
+
+  it('switching questions drops the roster the old question filled', async () => {
+    AccountService.loggedIn = true
+    invitationRecommend.mockResolvedValue({ users: [FULU] })
+
+    const { container, rerender } = mountList({ questionId: QUESTION_ID })
+    await waitFor(() => expect(container.textContent).toContain('福禄'))
+
+    // 换一道题，那两趟还没回来：这一步里画的是上一题的人，而上一题的人在这一题上
+    // 一个都不该被邀请。
+    invitationRecommend.mockReturnValue(pending<{ users: User[] }>().promise)
+    getInvitaions.mockReturnValue(pending<{ invitations: never[] }>().promise)
+    await rerender({ questionId: 43 })
+
+    await waitFor(() => expect(invitationRecommend).toHaveBeenCalledWith(43))
+    expect(container.textContent).not.toContain('福禄')
+  })
+
+  it('a late response for the question we left does not land on the new one', async () => {
+    AccountService.loggedIn = true
+    const oldQuestion = pending<{ users: User[] }>()
+    const oldInvitations = pending<{ invitations: never[] }>()
+    const newQuestion = pending<{ users: User[] }>()
+    const newInvitations = pending<{ invitations: never[] }>()
+    invitationRecommend.mockImplementation((id: number) =>
+      id === QUESTION_ID ? oldQuestion.promise : newQuestion.promise
+    )
+    getInvitaions.mockImplementation((id: number) =>
+      id === QUESTION_ID ? oldInvitations.promise : newInvitations.promise
+    )
+
+    const { container, rerender } = mountList({ questionId: QUESTION_ID })
+    await waitFor(() => expect(invitationRecommend).toHaveBeenCalledWith(QUESTION_ID))
+
+    await rerender({ questionId: 43 })
+    await waitFor(() => expect(invitationRecommend).toHaveBeenCalledWith(43))
+
+    // 新题先回来。
+    newQuestion.settle({ users: [ZHISHI] })
+    newInvitations.settle({ invitations: [] })
+    await waitFor(() => expect(container.textContent).toContain('芝士'))
+
+    // 旧题的那一趟迟到：它属于上一题，不许把新题这份名单盖回去。
+    oldQuestion.settle({ users: [FULU] })
+    oldInvitations.settle({ invitations: [] })
+    await flush()
+    expect(container.textContent).not.toContain('福禄')
+    expect(container.textContent).toContain('芝士')
+  })
+
+  it('a failed load for the question we left does not blame the new one', async () => {
+    AccountService.loggedIn = true
+    const oldQuestion = pending<{ users: User[] }>()
+    const oldInvitations = pending<{ invitations: never[] }>()
+    invitationRecommend.mockImplementation((id: number) =>
+      id === QUESTION_ID ? oldQuestion.promise : Promise.resolve({ users: [ZHISHI] })
+    )
+    getInvitaions.mockImplementation((id: number) =>
+      id === QUESTION_ID ? oldInvitations.promise : Promise.resolve({ invitations: [] })
+    )
+
+    const { container, rerender } = mountList({ questionId: QUESTION_ID })
+    await waitFor(() => expect(invitationRecommend).toHaveBeenCalledWith(QUESTION_ID))
+
+    await rerender({ questionId: 43 })
+    await waitFor(() => expect(container.textContent).toContain('芝士'))
+
+    // 上一题那两趟是失败回来的：那句话说的是「新题的名单拉不到」，而这两趟不是新题的。
+    oldQuestion.fail(new Error('Unauthorized'))
+    oldInvitations.fail(new Error('Unauthorized'))
+    await flush()
+
+    expect(toastError).not.toHaveBeenCalled()
+    expect(unhandled).toEqual([])
+    expect(container.textContent).toContain('芝士')
   })
 })
