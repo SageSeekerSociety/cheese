@@ -184,12 +184,14 @@ async def credential(
     asker: str,
     work: uuid.UUID,
     may_edit: bool,
+    shown_to_readers: bool = False,
 ) -> str:
     """What the session's tools act with while answering ``asker``'s question:
     that person's permissions, in the document's task (in its project, for a
     document of no task), for no longer than the answer may take; edits authored
     by ``agent`` at the asker's request, and only when the question may change
-    the document."""
+    the document. An answer every reader of the document sees reads only what
+    all of them may (``shown_to_readers``)."""
     person = await user_by_handle(db, asker)
     return mint_delegated_credential(
         user_id=person.id if person is not None else None,
@@ -199,6 +201,7 @@ async def credential(
         topic_id=str(asked.task_id) if asked.task_id is not None else None,
         work=str(work),
         read_only=not may_edit,
+        shown_to_readers=shown_to_readers,
         ttl_s=int(ANSWER_S) + CREDENTIAL_MARGIN_S,
     )
 

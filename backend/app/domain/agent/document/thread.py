@@ -205,6 +205,8 @@ async def answer(
                 asker=asker,
                 work=work,
                 may_edit=True,
+                # A thread is read by everyone who reads the document.
+                shown_to_readers=True,
             )
         return Prompt(work, prompt, acting=acting)
 

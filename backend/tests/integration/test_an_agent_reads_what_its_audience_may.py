@@ -6,10 +6,13 @@ private ones every person there is also in; from a DM, what that person may
 read. Its seat in a room is not enough on its own.
 """
 
-from app.core.sandbox_auth import mint_scoped_token
+import uuid
+
+from app.core.sandbox_auth import mint_delegated_credential, mint_scoped_token
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
+    post_message,
     post_project,
     session_auth_headers,
 )
@@ -135,3 +138,33 @@ def test_a_project_credential_reads_no_dm(client):
 
     assert _reads(client, root, token) == 200
     assert _reads(client, dm, token) in REFUSED
+
+
+def test_a_document_thread_answer_searches_only_what_every_reader_may(client):
+    """A question asked in a comment thread is answered in the thread, which every
+    reader of the document reads; asked in the asker's own box, the answer is
+    theirs alone. What 芝士 may search for it follows who reads the answer."""
+    p = _project(client)
+    secret = _private_channel(client, p["id"], "alice")
+    post_message(client, secret, "alice", {"content": "紫色长颈鹿的预算"})
+
+    def found(shown_to_readers: bool) -> set[str]:
+        token = mint_delegated_credential(
+            user_id=None,
+            handle="alice",
+            agent=None,
+            project_id=p["id"],
+            work=str(uuid.uuid4()),
+            ttl_s=600,
+            shown_to_readers=shown_to_readers,
+        )
+        r = client.get(
+            f"/projects/{p['id']}/context/search",
+            params={"q": "预算"},
+            headers={"X-Cheese-Token": token},
+        )
+        assert r.status_code == 200, r.text
+        return {h["room_id"] for h in r.json()["data"]["hits"]["records"]}
+
+    assert secret in found(shown_to_readers=False)
+    assert secret not in found(shown_to_readers=True)

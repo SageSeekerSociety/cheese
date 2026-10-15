@@ -420,6 +420,9 @@ class DelegatedClaims:
     work: str
     #: A question that may only be answered changes nothing.
     read_only: bool
+    #: Whether the answer is shown to every reader of the document, not only
+    #: the asker: then it reads only what all of them may.
+    shown_to_readers: bool = False
 
 
 def mint_delegated_credential(
@@ -432,6 +435,7 @@ def mint_delegated_credential(
     project_id: str | None = None,
     topic_id: str | None = None,
     read_only: bool = True,
+    shown_to_readers: bool = False,
 ) -> str:
     now = int(time.time())
     payload = {
@@ -442,6 +446,7 @@ def mint_delegated_credential(
         "t": topic_id,
         "w": work,
         "ro": read_only,
+        "sh": shown_to_readers,
         "iat": now,
         "exp": now + ttl_s,
     }
@@ -501,6 +506,7 @@ def delegated_claims(token: str) -> DelegatedClaims | None:
         topic_id=topic,
         work=work,
         read_only=payload.get("ro") is not False,
+        shown_to_readers=payload.get("sh") is True,
     )
 
 

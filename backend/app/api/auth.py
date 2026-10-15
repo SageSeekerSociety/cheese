@@ -121,6 +121,9 @@ class ActorResolver:
         # once, so that no write route can forget to ask (see ``resolve``).
         self._writes = writes
         self._project_credential = False
+        # Set when a delegated answer is shown to a document's readers: the
+        # document's task, or None for a document of no task.
+        self._answer_for_readers: tuple[uuid.UUID | None] | None = None
         self._bearer = bearer
         self._cheese_token = cheese_token
         # A ``cheese`` call made from inside a self-hosted device screen carries that
@@ -199,6 +202,10 @@ class ActorResolver:
                 raise ForbiddenError(say("tokenOtherTopic"))
         if not read_only:
             await self._refuse_archived_write(project_id=project_id, topic_id=topic_id)
+        if claims.shown_to_readers:
+            self._answer_for_readers = (
+                uuid.UUID(claims.topic_id) if claims.topic_id else None,
+            )
         return Actor(handle=claims.handle, user_id=claims.user_id, via="delegated")
 
     def credential_agent(self) -> str | None:
@@ -733,6 +740,11 @@ class ActorResolver:
             answer_room = await conversations.room_of(self._session, conversation)
         elif self._project_credential and actor.via == "cheese":
             answer_room = None
+        elif self._answer_for_readers is not None and actor.via == "delegated":
+            (task,) = self._answer_for_readers
+            answer_room = (
+                await conversations.room_of(self._session, task) if task else None
+            )
         else:
             return readable
         return readable & await rooms_its_audience_may_read(
