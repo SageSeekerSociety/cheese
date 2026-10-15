@@ -164,10 +164,14 @@ async def test_a_conversation_answers_one_question_at_a_time(clients):
 async def test_a_seat_is_one_at_a_time_across_processes(clients, monkeypatch):
     one, two = clients
     monkeypatch.setattr(admission, "POLL_S", 0.05)
-    lease = Lease(f"test-seat:{uuid.uuid4()}")
+    key = f"test-seat:{uuid.uuid4()}"
     inside: list[str] = []
 
     async def hold(redis: Redis, tag: str, seconds: float) -> None:
+        # Its own Lease, as a second process has: one shared object would queue
+        # the two tasks on its own asyncio.Lock and pass without Valkey, which
+        # is the bug this replaces.
+        lease = Lease(key)
         monkeypatch.setattr(admission, "get_redis_client", lambda: redis)
         async with lease:
             inside.append(f"{tag}-in")
