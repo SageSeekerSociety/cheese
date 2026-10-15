@@ -430,7 +430,7 @@ unmatched_ignore_imports_alerting = warn
 # split is what takes `project -> shell` off the graph, which is the one edge
 # under `project` that was holding `shell` inside the largest cycle.
 #
-# `environment_diagnosis` joined at layer 4 (2026-10-14), out of the `project`
+# `environment_diagnosis` joined at layer 3 (2026-10-14), out of the `project`
 # package it was written in. It takes no project row — the route hands it two
 # ids, the settings and the failure — and what it reads is `gateway_chat` and
 # `usage.ledger`, both of this row. Living in `project` made `project ->

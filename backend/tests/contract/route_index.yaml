@@ -306,7 +306,7 @@ owners:
   project.address: "Project slugs, former slugs and per-project numbers for tasks, documents and channels; domain/project/address.py."
   project.rail: "Project rail assembly in projects.list_project_tasks: authorize_project -> TaskService -> latest_cards_by_task -> beats -> asked -> one now -> presentation. Domain owners of facts remain room_task/review/block; v6 says assembly owner is the route."
   project.artifacts: "Published project artifact catalogue/version comparisons; domain/project/artifacts.py, composed with library/preview/repository bytes by the route."
-  project.environment: "Project/channel execution environment, its failures and their diagnosis; domain/project/environment.py and environment_diagnosis.py, domain/agent/environment_failures.py, composed with machine/device state."
+  project.environment: "Project/channel execution environment, its failures and their diagnosis; domain/project/environment.py and app/domain/environment_diagnosis.py, domain/agent/environment_failures.py, composed with machine/device state."
   project.export: "Caller-visible offline project export; domain/project/export.create_archive owns archive construction and delegated auth."
   project.skills: "Project-owned reusable skills/revisions; domain/project_skill/ProjectSkillService."
   skill.bundle: "Content-addressed delivery of a session's shipped platform skills plus this project's own skills to the launching machine; domain/project_skill/service.session_skill_bundle and the device launcher cache. Derived content, not new business state."
