@@ -371,6 +371,43 @@ test('checkSource: an annotation does not cover an unrelated Chinese comment on 
   )
 })
 
+test('checkSource: an annotation beside a Chinese comment has nothing to excuse', () => {
+  // The comment is prose, never the Chinese an annotation covers, so the
+  // annotation is stale. Reporting the comment instead would count the line and
+  // let the annotation stand, ready to exempt whatever copy lands there next.
+  const vue = `<template>
+  <div>{{ t('global.ok') }}</div> <!-- i18n-data: collation anchor --> <!-- 顺带一句说明 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'stale' }]
+  )
+})
+
+test('checkSource: an i18n-data comment whose reason wraps is still exempt', () => {
+  // `annotationOn` reads one line, where the marker is recognizable before the
+  // `-->` arrives; the whole comment has to be read the same way, or a reason
+  // written over two lines turns its own comment into a finding.
+  const vue = `<template>
+  <code>【PDF · 第 N 页】</code> <!-- i18n-data: 写进题目简介的固定标记，
+  原样展示 -->
+</template>
+`
+  assert.deepEqual(checkSource('src/a.vue', vue), { problems: [], annotated: [2] })
+})
+
+test('checkSource: a Chinese comment that merely quotes the marker is not exempt', () => {
+  const vue = `<template>
+  <!-- 写法参照 <!-- i18n-data: 理由 --> 的样子 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'comment' }]
+  )
+})
+
 test('checkSource: unannotated copy beside a comment reports the copy, then the comment', () => {
   const vue = `<template>
   <div>确定</div> <!-- 确认按钮 -->

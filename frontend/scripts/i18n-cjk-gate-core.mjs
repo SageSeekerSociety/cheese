@@ -401,6 +401,17 @@ function chineseLines(relPath, text) {
 
 /** An exempting comment: the marker right after the comment opener, then the reason. */
 const MARKUP_ANNOTATION = /<!--\s*i18n-data:(.*?)(?:-->|$)/
+/**
+ * The same marker asked of a whole `<!-- … -->` comment instead of one line:
+ * does it OPEN with the marker? `MARKUP_ANNOTATION` cannot answer that for a
+ * comment several lines long — its `(.*?)` stops at the newline, so the `-->`
+ * alternative never reaches and the `$` alternative is not at the end of a
+ * string that continues — and a reason that wraps onto the next line is one
+ * `annotationOn` accepts, line by line. Asking the question this way also keeps
+ * a plain Chinese comment that merely quotes `<!-- i18n-data:` in its prose
+ * counted: only the marker at the opener exempts.
+ */
+const ANNOTATION_COMMENT = /^<!--\s*i18n-data:/
 const ANNOTATIONS = {
   code: [/\/\/\s*i18n-data:(.*)$/, /\/\*\s*i18n-data:(.*?)(?:\*\/|$)/],
   markup: [MARKUP_ANNOTATION],
@@ -425,7 +436,7 @@ function commentLines(relPath, text) {
     const comments = /<!--[\s\S]*?-->/g
     for (let m = comments.exec(template.body); m; m = comments.exec(template.body)) {
       const comment = m[0]
-      if (!CJK.test(comment) || MARKUP_ANNOTATION.test(comment)) continue
+      if (!CJK.test(comment) || ANNOTATION_COMMENT.test(comment)) continue
       const first = lineOf(template.start + m.index)
       comment.split('\n').forEach((line, index) => {
         if (CJK.test(line)) found.set(first + index, 'comment')
@@ -469,8 +480,8 @@ const hasReason = (reason) => /[\p{L}\p{N}]/u.test(reason)
  * plus the lines that are correctly annotated, so the run can say how many.
  *
  * One line gets one finding, in this order: an annotation with no reason wins,
- * then unannotated copy, then a Chinese comment, then a stale annotation. The
- * comment comes before the annotation on purpose — see the branch below.
+ * then unannotated copy, then a stale annotation, then a Chinese comment. The
+ * comment comes before the annotated branch on purpose — see the branches below.
  * @param {string} relPath
  * @param {string} text
  * @returns {{ problems: Array<{line: number, problem: 'copy' | 'comment' | 'no-reason' | 'stale', text: string}>, annotated: number[] }}
@@ -489,6 +500,12 @@ export function checkSource(relPath, text) {
     const shown = raw.trim().slice(0, 110)
     if (note && !hasReason(note.reason)) problems.push({ line, problem: 'no-reason', text: shown })
     else if (!note && kind) problems.push({ line, problem: 'copy', text: shown })
+    // An annotation with nothing to excuse comes before the comment, not after:
+    // a comment is prose and never the Chinese an annotation covers, so an
+    // annotation beside one is stale — refusing it is stricter than counting the
+    // comment and letting the annotation stand, which would leave it to exempt
+    // whatever copy lands on that line next.
+    else if (note && !kind) problems.push({ line, problem: 'stale', text: shown })
     // A comment is prose, not data, so an annotation beside it excuses nothing:
     // this branch ahead of the annotated one is what stops `<!-- i18n-data: … -->`
     // from covering an unrelated Chinese comment on the same line. A line still
@@ -496,7 +513,6 @@ export function checkSource(relPath, text) {
     // the copy, and the comment is counted by the run after that is translated
     // (no line in the tree carries both today).
     else if (commented) problems.push({ line, problem: 'comment', text: shown })
-    else if (note && !kind) problems.push({ line, problem: 'stale', text: shown })
     else if (note) annotated.push(line)
   })
   return { problems, annotated }
@@ -662,7 +678,9 @@ export function formatCommentReport(comparison, comments = {}) {
     lines.push('removing some. Rule: docs/i18n.md §5.')
   }
   if (comparison.improvements.length) {
-    lines.push(comparison.regressions.length ? 'Also improved:' : 'Chinese HTML comments went down — tighten the baseline:')
+    lines.push(
+      comparison.regressions.length ? 'Also improved:' : 'Chinese HTML comments went down — tighten the baseline:'
+    )
     for (const { file, base, now } of comparison.improvements) lines.push(`  ${file}: ${base} -> ${now}`)
     lines.push('')
     lines.push('Run: pnpm run lint:i18n:update  (then commit i18n-comments-baseline.json)')

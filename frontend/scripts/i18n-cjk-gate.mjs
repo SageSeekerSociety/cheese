@@ -8,7 +8,8 @@
 //   node scripts/i18n-cjk-gate.mjs --update   rewrite i18n-comments-baseline.json
 //                                             downward; refuses to freeze a new
 //                                             file unless --freeze-new is typed
-//                                             too
+//                                             too, and refuses to write at all
+//                                             while a line is refused outright
 //   node scripts/i18n-cjk-gate.mjs --update --freeze-new   accept new debt
 //
 // The scan itself lives in i18n-cjk-gate-core.mjs and is unit-tested; this file
@@ -46,7 +47,7 @@ function walk(dir, out = []) {
 
 function option(name, fallback) {
   const at = process.argv.indexOf(name)
-  return at === -1 ? fallback : (process.argv[at + 1] ?? fallback)
+  return at === -1 ? fallback : process.argv[at + 1] ?? fallback
 }
 
 const update = process.argv.includes('--update')
@@ -68,6 +69,19 @@ const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath
 const comparison = compare(baseline, commentCounts(comments))
 
 if (update) {
+  // A run that refuses a line must not exit 0 from its writing form: whoever
+  // reached for --update to lower the count would take the zero for the tree
+  // being fine. One line still carries its copy and its comment as one finding
+  // (see checkSource), which also makes the count read low enough to look like
+  // an improvement — so nothing is written while anything is refused.
+  const hardFiles = Object.keys(hard)
+  if (hardFiles.length) {
+    console.error(formatReport({ ok: false, problems: hard, annotated: result.annotated }))
+    console.error('')
+    console.error(`${hardFiles.length} file(s) above are refused outright; the baseline was not`)
+    console.error('rewritten. Fix those, then run --update again.')
+    process.exit(1)
+  }
   // Shrink-only, like every other ratchet here: `tightenedBaseline` never raises
   // a frozen count, but it does admit a file the baseline has not seen yet —
   // which is exactly where a new comment lands. New debt is a decision someone
