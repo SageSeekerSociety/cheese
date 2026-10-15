@@ -73,7 +73,7 @@ def login(user, password):
 
 
 def fmt(value, width, numeric=False):
-    """右对齐的数字、左对齐的字。None 是没算出来（这组里没有一轮秒数大于 0）。
+    """右对齐的数字、左对齐的字。`None` 打成 `-`：那是「这个数没算出来」，不是 0。
 
     数是多少就打多少，不用 `:g` —— 它把 `1234567` 打成 `1.23457e+06`，丢掉一位；
     带小数的 `2591999.757` 也被它收成 `2.592e+06`。整值的 float 打成整数
@@ -125,15 +125,16 @@ def self_test():
          "turns": 12, "output_tokens": 48000, "calls": 14, "turn_seconds": 612.5,
          "window_tps": 0.5556},
         {"seat": "cheese-mimo", "model": "mimo-v2.6-pro", "supply": "gateway",
-         "turns": 3, "output_tokens": 900, "calls": 3, "turn_seconds": None,
+         "turns": 3, "output_tokens": 900, "calls": 3, "turn_seconds": 87.25,
          "window_tps": 0.0104},
     ]
     out = table(sample)
     assert "cheese" in out and "claude-sonnet-5" in out, out
-    assert "78.4" in out and "0.5556" in out, out
+    assert "0.5556" in out and "0.0104" in out, out
     assert "48000" in out and "612.5" in out, out
-    # 没有值的列写成 `-`，不是 0 —— 0 是一个算出来的数。
-    assert "   -  " in out, out
+    # 没有值的列写成 `-`，不是 0 —— 0 是一个算出来的数。载荷每一列都有值（会为空的那
+    # 两列跟着按轮速率一起拆了），所以这条守的是渲染器本身，用 `None` 直接喂它。
+    assert fmt(None, 13, numeric=True).strip() == "-", fmt(None, 13, numeric=True)
     try:
         table([{"seat": "cheese"}])
     except KeyError as exc:
