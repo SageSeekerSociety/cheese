@@ -8,11 +8,12 @@
 //
 // `can_delete` 是后端逐条算好的，这一格不自己算：删不掉的那一条在 `RoutineRow` 里
 // 不画删除，别的动作都在——读得到就改得动。
-import type { Routine, RoutineInput, RoutineRun } from '@/lib/routine'
+import type { Routine, RoutineInput, RoutineRecordsView, RoutineRun } from '@/lib/routine'
 import type { RoutineTemplate } from '@/lib/routineTemplates'
 
 import RoutineBoard from '../routine/RoutineBoard.vue'
 import RoutineCompose from '../routine/RoutineCompose.vue'
+import RoutineRecords from '../routine/RoutineRecords.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -29,6 +30,8 @@ withDefaults(
     loading?: boolean
     /** 读列表或做动作失败的那句话，摆在列表最上面。 */
     error?: string
+    /** 「看全部」那一整页此刻的样子；`null` = 没在看记录，这一格画的是这一串规则。 */
+    records?: RoutineRecordsView | null
     /** 建规则那两页：开着没有、改的是哪一条（`null` 是新建）、上次存失败说了什么。 */
     formOpen?: boolean
     editing?: Routine | null
@@ -44,6 +47,7 @@ withDefaults(
   {
     runs: () => ({}),
     openId: null,
+    records: null,
     busy: '',
     loading: false,
     error: '',
@@ -65,6 +69,12 @@ const emit = defineEmits<{
   (e: 'edit', routine: Routine): void
   (e: 'delete', routine: Routine): void
   (e: 'toggle-runs', routine: Routine): void
+  /** 行里那三次看完，要看这一条的整页记录。 */
+  (e: 'open-records', routine: Routine): void
+  /** 记录那一页：返回、翻到第几页、筛不筛没能执行的。 */
+  (e: 'records-back'): void
+  (e: 'records-page', page: number): void
+  (e: 'records-failed-only', value: boolean): void
   /** 点了某次执行交回的一份结果文件：打开它。 */
   (e: 'open-file', path: string): void
   /** 表单开着 / 关上。 */
@@ -78,7 +88,7 @@ const emit = defineEmits<{
 
 <template>
   <div class="routine-panel">
-    <div v-if="!formOpen" class="routine-panel__bar">
+    <div v-if="!formOpen && !records" class="routine-panel__bar">
       <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" class="tap-target" @click="emit('start-new')">{{
         t('routines.action.new')
       }}</BaseButton>
@@ -109,6 +119,22 @@ const emit = defineEmits<{
         @save="(p) => emit('submit', p)"
         @delete-template="(tpl) => emit('delete-template', tpl)"
       />
+      <!-- 看记录的时候这一格就只剩记录：返回箭头自己带着回列表那条路，上面那串工具
+           （新建、刷新）此刻没有别的意思。 -->
+      <RoutineRecords
+        v-else-if="records"
+        :title="records.title"
+        :runs="records.runs"
+        :total="records.total"
+        :page="records.page"
+        :pages="records.pages"
+        :failed-only="records.failedOnly"
+        :loading="records.loading"
+        @back="emit('records-back')"
+        @page="(p) => emit('records-page', p)"
+        @failed-only="(v) => emit('records-failed-only', v)"
+        @open-file="(path) => emit('open-file', path)"
+      />
       <RoutineBoard
         v-else
         :routines="routines"
@@ -124,6 +150,7 @@ const emit = defineEmits<{
         @edit="(r) => emit('edit', r)"
         @delete="(r) => emit('delete', r)"
         @toggle-runs="(r) => emit('toggle-runs', r)"
+        @open-records="(r) => emit('open-records', r)"
         @open-file="(path) => emit('open-file', path)"
       />
     </div>

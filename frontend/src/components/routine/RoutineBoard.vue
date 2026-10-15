@@ -51,6 +51,8 @@ const emit = defineEmits<{
   (e: 'edit', routine: Routine): void
   (e: 'delete', routine: Routine): void
   (e: 'toggle-runs', routine: Routine): void
+  /** 行里那三次看完，要看整页：换这一条的执行记录那一页来画（谁来换由调用方办）。 */
+  (e: 'open-records', routine: Routine): void
   /** 点了某次执行交回的一份结果文件。谁来开它由调用方办。 */
   (e: 'open-file', path: string): void
 }>()
@@ -102,6 +104,7 @@ function confirmDelete() {
           @run-now="emit('run-now', r)"
           @edit="emit('edit', r)"
           @toggle-runs="emit('toggle-runs', r)"
+          @open-records="emit('open-records', r)"
           @open-file="(path) => emit('open-file', path)"
           @delete="confirming = r"
         />
@@ -125,12 +128,15 @@ function confirmDelete() {
 </template>
 
 <style scoped>
+/* 整串是一张卡片，行与行之间一条线（由 RoutineRow 画）：三条规则不该像三张各说各话的
+   小卡 —— 它们是同一件事的三条。 */
 .routine-list {
   list-style: none;
   padding: 0;
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
 }
 </style>

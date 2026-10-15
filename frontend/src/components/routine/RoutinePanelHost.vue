@@ -38,6 +38,7 @@ const {
   routines,
   runs,
   openId,
+  records,
   busy,
   loading,
   error,
@@ -53,6 +54,10 @@ const {
   startNew,
   closeForm,
   submit,
+  openRecords,
+  closeRecords,
+  goRecordsPage,
+  setRecordsFailedOnly,
 } = useRoutineList({
   // 工作面板只在选中了话题之后才画这一格，所以这两个值此刻是有的；组合式函数对
   // 空项目名也守得住（`reload` 直接不请求），话题一到那次 watch 会重来。
@@ -75,6 +80,7 @@ async function onSubmit(payload: { room: string; body: RoutineInput; keepAsTempl
     :routines="routines"
     :runs="runs"
     :open-id="openId"
+    :records="records"
     :busy="busy"
     :loading="loading"
     :error="error"
@@ -93,6 +99,10 @@ async function onSubmit(payload: { room: string; body: RoutineInput; keepAsTempl
     @edit="startEdit"
     @delete="remove"
     @toggle-runs="(r) => toggleRuns(r)"
+    @open-records="openRecords"
+    @records-back="closeRecords"
+    @records-page="goRecordsPage"
+    @records-failed-only="setRecordsFailedOnly"
     @open-file="(path) => emit('open-file', path)"
     @form-open-change="(open) => (open ? (formOpen = true) : closeForm())"
     @submit="onSubmit"

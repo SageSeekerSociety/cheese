@@ -39,6 +39,7 @@ const {
   routines,
   runs,
   openId,
+  records,
   busy,
   loading,
   error,
@@ -54,6 +55,10 @@ const {
   startNew,
   closeForm,
   submit,
+  openRecords,
+  closeRecords,
+  goRecordsPage,
+  setRecordsFailedOnly,
 } = useRoutineList({ projectId: props.projectId })
 
 // 新建时落在哪个房间：地址里点名了就用它（房间面板里的「新建」也是这么带过来的），
@@ -131,6 +136,7 @@ useCommands(() => [
     :routines="routines"
     :runs="runs"
     :open-id="openId"
+    :records="records"
     :busy="busy"
     :loading="loading"
     :error="error"
@@ -148,6 +154,10 @@ useCommands(() => [
     @edit="startEdit"
     @delete="remove"
     @toggle-runs="(r) => toggleRuns(r)"
+    @open-records="openRecords"
+    @records-back="closeRecords"
+    @records-page="goRecordsPage"
+    @records-failed-only="setRecordsFailedOnly"
     @update:model-value="(open) => (open ? (formOpen = true) : closeForm())"
     @save="onSubmit"
     @delete-template="(tpl) => removeTemplate(tpl.id)"

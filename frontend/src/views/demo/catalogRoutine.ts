@@ -11,10 +11,11 @@
  */
 import type { CatalogEntry } from './catalog'
 
-import { ROUTINE_WEEKLY } from './catalogPanelsFixtures'
+import { ROUTINE_RECORDS_RUNS, ROUTINE_WEEKLY } from './catalogPanelsFixtures'
 import { DEMO_TOPIC } from './demoPanels'
 
 import RoutineCompose from '@/components/routine/RoutineCompose.vue'
+import RoutineRecords from '@/components/routine/RoutineRecords.vue'
 
 /** 建一条规则的那两页要 vuetify（一排输入框和按钮）和目录里的字。 */
 const UI_T = ['vuetify', 'i18n'] as const
@@ -58,6 +59,35 @@ export const ROUTINE_ENTRIES: CatalogEntry[] = [
         note: '存下去失败：那句话写在这一页里（不是弹一条提示就没了），人改了字段就地再存一次。',
         props: { modelValue: true, rooms: ROOMS, defaultRoom: DEMO_TOPIC, error: '没有保存成功' },
         expect: '没有保存成功',
+      },
+    ],
+  },
+  {
+    id: 'routine-records',
+    title: 'RoutineRecords',
+    about:
+      '一条规则的执行记录，整页：行里只摊开最近三次，再多就翻这儿。一次一页十条，能只留没能执行的那几次，也能翻页。',
+    file: 'src/components/routine/RoutineRecords.vue',
+    component: RoutineRecords,
+    needs: [...UI_T],
+    states: [
+      {
+        name: '一整页',
+        note: '十条：成了的那几次写着结果文件的名字，没能执行的那几次写着「原因 ▸」。底下是页数。',
+        props: { title: '频道日报', runs: ROUTINE_RECORDS_RUNS, total: 34, page: 1, pages: 4 },
+        expect: '频道日报 · 执行记录',
+      },
+      {
+        name: '只看未能执行',
+        note: '筛上之后「共 N 次」跟着变（后端把筛过的总数一起回）：变的是总数，不是这一页有几行。',
+        props: { title: '频道日报', runs: ROUTINE_RECORDS_RUNS, total: 11, page: 1, pages: 2, failedOnly: true },
+        expect: '只看未能执行',
+      },
+      {
+        name: '这一页翻完了',
+        note: '没有记录（或者筛过之后一条都不剩）：写的是一句实话，不是一片空白。',
+        props: { title: '频道日报', runs: [], total: 0, page: 1, pages: 1 },
+        expect: '还没有执行过',
       },
     ],
   },

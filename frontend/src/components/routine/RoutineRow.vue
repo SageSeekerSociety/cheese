@@ -1,19 +1,22 @@
 <script setup lang="ts">
-// 一条规则。项目总览页和房间右侧那一格画的是同一条：名字、什么时候跑、下次什么时候
-// 跑、以及此刻你能对它做什么。
+// 一条规则。项目总览页和房间右侧那一格画的是同一条：名字、什么时候跑、此刻它怎么了，
+// 以及此刻你能对它做什么。
+//
+// 行上只有三样：名字、什么时候跑、一颗状态图形。**状态不写字**，四档各是一个图形
+// （`routineStateIcon`）加一个颜色，读屏靠 `aria-label` 说那句话。动手的那几件全收进
+// 行尾的 ⋯ —— 桌面上不再是一排文字按钮：一行的块头要留给「这条现在是活的吗」。
 //
 // 只吃 props（`Routine` 的形状在 `lib/routine.ts`：画的那一半碰不得 API 层），动作一律
 // 往上抛 —— 「谁去调接口」是页面的事。**删得掉删不掉由这条规则自己说**：`can_delete` 是
 // 后端逐条算好的（规则主人或项目管理员），前端不猜第二遍；其余的动手都不再问一次权限，
 // 读得到就改得动。
 //
-// 操作摆在哪儿按屏幕分：桌面上是行里的一排文字按钮，手机上收进行首的 ⋯（五颗文字按钮
-// 在窄屏上要折成两三行）；右键一行弹的是同一份，弹在鼠标那一点上。
+// 展开的记录只画最近三次（看全部去那一整页）：想看一眼刚才跑成什么样，不想翻。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { NavTarget } from '@/lib/navTarget'
-import type { Routine, RoutineRun } from '@/lib/routine'
+import type { Routine, RoutineRun, RoutineStateKind } from '@/lib/routine'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { useRowMenu } from '@/composables/useRowMenu'
@@ -23,8 +26,15 @@ import NavLink from '../common/NavLink.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
-import { responseText } from '@/lib/noticeText'
-import { formatRoutineTime, routineRunLabel, routineStateLabel } from '@/lib/routine'
+import {
+  routineFileName,
+  routineRunLabel,
+  routineRunTime,
+  routineStateIcon,
+  routineStateKind,
+  routineStateText,
+  routineWhenLine,
+} from '@/lib/routine'
 
 const props = withDefaults(
   defineProps<{
@@ -52,86 +62,106 @@ const emit = defineEmits<{
   (e: 'edit'): void
   (e: 'delete'): void
   (e: 'toggle-runs'): void
+  /** 展开的那三次看完，去整页：那一页会翻页、能只筛没能执行的。 */
+  (e: 'open-records'): void
   /** 点了某次执行交回的一份结果文件：打开它。只有房间里那一格会给这件事接去处。 */
   (e: 'open-file', path: string): void
 }>()
 
-const stateLabel = computed(() => routineStateLabel(props.routine.state))
+/** 这条规则此刻怎么了：图形和颜色都跟着它走。 */
+const kind = computed<RoutineStateKind>(() => routineStateKind(props.routine))
+/**
+ * 「什么时候跑」。停着的规则说它为什么停（话题归档了，没有下一回）；其余照后端那句话，
+ * 只是把括号里的时区换成人读的说法（见 `routineWhenLine`）。
+ */
+const whenLine = computed(() =>
+  props.routine.room_archived ? t('routines.archivedStopped') : routineWhenLine(props.routine)
+)
+const roomLine = computed(() => [props.roomName, whenLine.value].filter(Boolean).join(' · '))
 const running = computed(() => props.routine.state === 'active')
-/** 「下次 …」只在真有个下次的时候才说：随话题归档停下的规则没有下一回。 */
-const whenText = computed(() => {
-  if (props.routine.room_archived) return t('routines.archivedStopped')
-  if (!running.value || props.routine.trigger !== 'schedule') return ''
-  const at = formatRoutineTime(props.routine.next_run_at, props.routine.timezone)
-  return at === '—' ? '' : t('routines.next', { time: at })
-})
 const busyOn = (action: string) => props.busy === action
 
+/** 展开的那一段只画最近三次；再多就有「看全部」。 */
+const RECENT = 3
+const shownRuns = computed(() => props.runs.slice(0, RECENT))
+const hasMore = computed(() => props.runs.length > RECENT)
+
+/**
+ * 「原因 ▸」：每次执行各自收放。没能执行的那几次才有 —— 跑成了的没什么好问的。
+ * 收着的人不看原因（一行够长了），要问就点开。
+ */
+const whyOpen = ref<Set<string>>(new Set())
+function toggleWhy(run: RoutineRun) {
+  const next = new Set(whyOpen.value)
+  if (next.has(run.id)) next.delete(run.id)
+  else next.add(run.id)
+  whyOpen.value = next
+}
+const missed = (run: RoutineRun) => run.status === 'failed' || run.status === 'skipped'
+
 const { mdAndUp } = useDisplay()
-// 手机上一行的操作收进行首的 ⋯（底部面板）。
-function rowActions(): MenuAction[] {
-  return [
+// 桌面上右键一行弹的和 ⋯ 里那份是同一份，弹在鼠标那一点上。
+const rowMenu = useRowMenu<'row'>()
+
+/** 行尾 ⋯ 里那几件。设计稿上就没有图标：每一行都是两个字，读得懂，图形只是噪声。 */
+const actions = computed<MenuAction[]>(() =>
+  [
     running.value
       ? {
           key: 'pause',
           label: t('routines.action.pause'),
-          icon: 'mdi-pause',
           loading: busyOn('pause'),
           onSelect: () => emit('pause'),
         }
       : {
           key: 'resume',
           label: t('routines.action.resume'),
-          icon: 'mdi-play',
           loading: busyOn('resume'),
           onSelect: () => emit('resume'),
         },
     {
       key: 'run',
       label: t('routines.action.runNow'),
-      icon: 'mdi-play-circle-outline',
       loading: busyOn('run-now'),
       onSelect: () => emit('run-now'),
     },
-    { key: 'edit', label: t('routines.action.edit'), icon: 'mdi-pencil-outline', onSelect: () => emit('edit') },
+    { key: 'edit', label: t('routines.action.edit'), onSelect: () => emit('edit') },
     {
       key: 'runs',
       label: props.open ? t('routines.action.hideRuns') : t('routines.action.showRuns'),
-      icon: 'mdi-history',
       onSelect: () => emit('toggle-runs'),
     },
     {
       key: 'delete',
       label: t('routines.action.delete'),
-      icon: 'mdi-delete-outline',
       danger: true,
+      // 删除不可撤销（记录一起走）：和上面几件用一条线分开。
+      divider: true,
       onSelect: () => emit('delete'),
     },
   ].filter((a) => a.key !== 'delete' || props.routine.can_delete)
-}
-/** 手机上摆在 ⋯ 里的那几件（桌面摆在行里）。 */
-const inMenu = computed(() => (mdAndUp.value ? [] : rowActions()))
-// 桌面上操作摆在行里，右键一行弹的是同一份，弹在鼠标那一点上。
-const rowMenu = useRowMenu<'row'>()
+)
 </script>
 
 <template>
   <li class="routine-row" :data-routine="routine.id" @contextmenu="mdAndUp && rowMenu.open('row', $event)">
-    <AdaptiveMenu v-if="mdAndUp" v-bind="rowMenu.bind('row')" :actions="rowActions()" :title="routine.title">
+    <AdaptiveMenu v-if="mdAndUp" v-bind="rowMenu.bind('row')" :actions="actions" :title="routine.title">
       <template #activator />
     </AdaptiveMenu>
     <div class="routine-row__head">
       <div class="routine-row__id">
         <div class="t-body routine-row__title">{{ routine.title }}</div>
-        <div class="t-meta c-faint">
-          {{ responseText(routine, 'trigger_text') }}<template v-if="roomName"> · {{ roomName }}</template>
-          <template v-if="whenText"> · {{ whenText }}</template>
-        </div>
+        <div v-if="roomLine" class="t-meta c-faint">{{ roomLine }}</div>
       </div>
-      <v-chip size="small" :color="running ? 'success' : undefined" variant="tonal">
-        {{ stateLabel }}
-      </v-chip>
-      <AdaptiveMenu v-if="inMenu.length" :actions="inMenu" :title="routine.title">
+      <span
+        class="routine-row__state"
+        :class="`routine-row__state--${kind}`"
+        role="img"
+        :aria-label="routineStateText(kind)"
+      >
+        <v-icon :icon="routineStateIcon(kind)" size="16" aria-hidden="true" />
+      </span>
+      <AdaptiveMenu :actions="actions" :title="routine.title">
         <template #activator="{ props: menuProps }">
           <BaseButton
             v-bind="menuProps"
@@ -144,68 +174,51 @@ const rowMenu = useRowMenu<'row'>()
       </AdaptiveMenu>
     </div>
 
-    <div v-if="mdAndUp" class="routine-row__actions">
-      <BaseButton v-if="running" kind="ghost" size="sm" :loading="busyOn('pause')" @click="emit('pause')">
-        {{ t('routines.action.pause') }}
-      </BaseButton>
-      <BaseButton v-else kind="ghost" size="sm" :loading="busyOn('resume')" @click="emit('resume')">
-        {{ t('routines.action.resume') }}
-      </BaseButton>
-      <BaseButton kind="ghost" size="sm" :loading="busyOn('run-now')" @click="emit('run-now')">
-        {{ t('routines.action.runNow') }}
-      </BaseButton>
-      <BaseButton kind="ghost" size="sm" @click="emit('edit')">{{ t('routines.action.edit') }}</BaseButton>
-      <BaseButton kind="ghost" size="sm" @click="emit('toggle-runs')">
-        {{ open ? t('routines.action.hideRuns') : t('routines.action.showRuns') }}
-      </BaseButton>
-      <BaseButton v-if="routine.can_delete" kind="ghost" size="sm" @click="emit('delete')">
-        {{ t('routines.action.delete') }}
-      </BaseButton>
-    </div>
-
     <div v-if="open" class="routine-runs">
-      <p v-if="!runs.length" class="t-meta c-faint">{{ t('routines.neverRun') }}</p>
-      <ol v-else class="routine-runs__list">
-        <li v-for="run in runs" :key="run.id" class="routine-run">
-          <div class="routine-run__head t-meta">
-            <v-chip
-              size="x-small"
-              variant="tonal"
-              :color="run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'error' : undefined"
-            >
-              {{ routineRunLabel(run.status) }}
-            </v-chip>
-            <span>{{ formatRoutineTime(run.scheduled_for || run.created_at, routine.timezone) }}</span>
-            <span v-if="run.finished_at" class="c-faint">
-              {{ t('routines.finishedAt', { time: formatRoutineTime(run.finished_at, routine.timezone) }) }}
-            </span>
-          </div>
-          <div class="t-meta c-muted">{{ run.trigger_detail }}</div>
-          <div v-if="run.status === 'failed' || run.status === 'skipped'" class="t-body c-danger">
-            {{ run.error || t('routines.noReason') }}
-          </div>
-          <div v-else-if="run.summary" class="t-body">{{ run.summary }}</div>
-          <!-- 这次执行交回的结果文件。记录里写下的只是它们当时的路径，频道面板上没有对应
-               的文件夹 —— 房间里这一格就是它们的入口，所以每一份都当场点得开；项目页上
-               没有能开文件的面板，整串指回规则所在的频道。 -->
-          <div v-if="run.outputs.length" class="t-meta routine-run__outputs">
-            <span class="routine-run__outputs-label">{{ t('routines.outputs') }}</span>
-            <NavLink v-if="roomTo" :to="roomTo">{{ run.outputs.join(t('routines.listSeparator')) }}</NavLink>
-            <template v-else>
+      <p v-if="!runs.length" class="t-meta c-faint routine-runs__none">{{ t('routines.neverRun') }}</p>
+      <ul v-else class="routine-runs__list">
+        <li v-for="run in shownRuns" :key="run.id" class="routine-run">
+          <span class="t-meta c-faint">{{ routineRunTime(run.scheduled_for || run.created_at) }}</span>
+          <span class="routine-run__what">
+            <span class="t-body routine-run__status">{{ routineRunLabel(run.status) }}</span>
+            <!-- 没能执行的这几次：原因收在「原因 ▸」后面。 -->
+            <template v-if="missed(run)">
               <button
-                v-for="path in run.outputs"
-                :key="path"
                 type="button"
-                class="routine-run__file"
-                :title="path"
-                @click="emit('open-file', path)"
+                class="routine-run__why"
+                :aria-expanded="whyOpen.has(run.id) ? 'true' : 'false'"
+                @click="toggleWhy(run)"
               >
-                {{ path.split('/').pop() || path }}
+                {{ t('routines.records.reason') }}
+                <span class="routine-run__caret" aria-hidden="true">{{ whyOpen.has(run.id) ? '▾' : '▸' }}</span>
               </button>
+              <span v-if="whyOpen.has(run.id)" class="t-meta c-danger">{{ run.error || t('routines.noReason') }}</span>
             </template>
-          </div>
+            <!-- 跑成了的这几次：结果那一份文件名。记录里写下的是它在频道文件区的路径。 -->
+            <template v-else-if="run.outputs.length">
+              <NavLink v-if="roomTo" :to="roomTo" class="routine-run__file">
+                {{ run.outputs.map(routineFileName).join(t('routines.listSeparator')) }}
+              </NavLink>
+              <template v-else>
+                <button
+                  v-for="path in run.outputs"
+                  :key="path"
+                  type="button"
+                  class="routine-run__file"
+                  :title="path"
+                  @click="emit('open-file', path)"
+                >
+                  {{ routineFileName(path) }}
+                </button>
+              </template>
+            </template>
+            <span v-else-if="run.summary" class="t-meta c-muted">{{ run.summary }}</span>
+          </span>
         </li>
-      </ol>
+      </ul>
+      <button v-if="hasMore" type="button" class="routine-runs__all" @click="emit('open-records')">
+        {{ t('routines.records.all') }}
+      </button>
     </div>
   </li>
 </template>
@@ -213,17 +226,19 @@ const rowMenu = useRowMenu<'row'>()
 <style scoped>
 .routine-row {
   padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
   background: var(--surface);
+}
+/* 一条规则和上一条之间那一条线：整串是一个卡片（见 RoutineBoard），行自己不画框。 */
+.routine-row + .routine-row {
+  border-top: 1px solid var(--line);
 }
 .routine-row.row--focus {
   outline: 2px solid rgb(var(--v-theme-primary));
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .routine-row__head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
 }
 .routine-row__id {
@@ -233,36 +248,76 @@ const rowMenu = useRowMenu<'row'>()
 .routine-row__title {
   color: var(--text);
 }
-.routine-row__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 8px;
+/* 状态：一颗圆里的一个图形。四档四色，色从不是唯一的信号 —— 图形本身说的是同一件事。 */
+.routine-row__state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--fill);
+  color: var(--muted);
+}
+.routine-row__state--active {
+  background: var(--ok-wash);
+  color: var(--ok-ink);
+}
+.routine-row__state--queued {
+  background: color-mix(in srgb, var(--signal-blue) 14%, transparent);
+  color: var(--signal-blue);
+}
+.routine-row__state--missed {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
 }
 .routine-runs {
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
 }
-.routine-runs__list {
-  list-style: none;
-  padding: 0;
+.routine-runs__none {
   margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
-.routine-run__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* 两列：左边是「哪一次的」，右边是「那一次怎么了」。列宽由最长的那一格定，三次的时间
+   长短不一也对得齐（`display: contents` 让每一次的两格直接进这两列）。 */
+.routine-runs__list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  align-items: baseline;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.routine-run__outputs {
+.routine-run {
+  display: contents;
+}
+.routine-run__what {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   gap: 4px 8px;
   min-width: 0;
+}
+.routine-run__status {
+  color: var(--text);
+}
+/* 「原因 ▸」：一个箭头，点开看那句话。 */
+.routine-run__why {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+}
+.routine-run__why:hover {
+  color: var(--ink);
+}
+.routine-run__caret {
+  font-size: 12px;
 }
 /* 一份结果文件：一颗文字按钮，点开它就打开了文件。下划线是说这件事，不是装饰。 */
 .routine-run__file {
@@ -270,14 +325,31 @@ const rowMenu = useRowMenu<'row'>()
   border: 0;
   background: none;
   font: inherit;
-  color: var(--muted);
+  color: var(--accent);
   text-decoration: underline;
-  text-decoration-color: var(--line);
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
   text-underline-offset: 3px;
   cursor: pointer;
   transition: color var(--dur-quick) var(--ease-standard);
 }
 .routine-run__file:hover {
-  color: var(--ink);
+  color: var(--accent-ink);
+}
+/* 看全部：整页那条路的入口。*/
+.routine-runs__all {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 0 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  text-align: start;
+  cursor: pointer;
+}
+.routine-runs__all:hover {
+  color: var(--accent-ink);
 }
 </style>

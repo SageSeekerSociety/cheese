@@ -315,15 +315,15 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '展开了执行记录',
-        note: '最近两次：一次成了（写着做了什么），一次没成（写着为什么）。',
+        note: '最近三次：成了的那次写着交回的文件名，没能执行的那次把原因收在「原因 ▸」后面。',
         props: { routines: [ROUTINE_WEEKLY], runs: ROUTINE_RUNS, openId: ROUTINE_WEEKLY.id },
-        expect: '工作电脑没有连上',
+        expect: '原因',
       },
       {
         name: '删不掉的那一条',
-        note: '这一条不归你管：别的动作都在，就是不画「删除」。',
+        note: '这一条不归你管：别的动作都在行尾的 ⋯ 里，就是不画「删除」。',
         props: { routines: [{ ...ROUTINE_WEEKLY, can_delete: false }] },
-        expect: '立即执行一次',
+        expectSelector: 'button[aria-label="更多操作"]',
       },
       {
         name: '还没有规则',

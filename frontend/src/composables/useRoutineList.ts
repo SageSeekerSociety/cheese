@@ -9,7 +9,7 @@
 // 画的人不在这里：这一层不碰 DOM，也不认识 Vuetify。`can_delete` 是后端逐条给的
 // （规则主人或项目管理员），这一层原样传下去，不自己算 —— 「谁能删这条规则」是后端的
 // 判断，前端算一遍就是第二个答案。
-import type { Routine, RoutineInput, RoutineRun } from '../lib/routine'
+import type { Routine, RoutineInput, RoutineRecordsView, RoutineRun } from '../lib/routine'
 
 import { ref, watch } from 'vue'
 
@@ -18,9 +18,11 @@ import {
   deleteRoutine,
   getRoutine,
   listProjectRoutines,
+  listRoutineRuns,
   routineAction,
   updateRoutine,
 } from '../api/routines'
+import { routineRoomTarget } from '../lib/routine'
 
 import { t } from '@/i18n'
 
@@ -122,6 +124,80 @@ export function useRoutineList(options: RoutineListOptions) {
     return created
   }
 
+  // ---- 「看全部」那一整页 ----
+  // 行里只摊开最近三次，再多就得翻页。看的是哪一条、第几页、筛不筛没能执行的那几次，
+  // 和列表一样是这一份状态的一部分：两个入口（项目总览页、房间右侧那一格）都会展开
+  // 记录，各自再写一遍这三样就成了两份会走样的状态。
+  const RECORDS_PER_PAGE = 10
+  const records = ref<RoutineRecordsView | null>(null)
+  /** 正看着的是哪一条。筛和翻页都还要它。 */
+  let recordsId: string | null = null
+
+  /** 读当前这一页。筛变了、页变了、刚打开，都走这里 —— 问的是同一个问题。 */
+  async function loadRecords() {
+    const state = records.value
+    if (!recordsId || !state) return
+    state.loading = true
+    try {
+      const page = await listRoutineRuns(recordsId, {
+        offset: (state.page - 1) * RECORDS_PER_PAGE,
+        limit: RECORDS_PER_PAGE,
+        failedOnly: state.failedOnly,
+      })
+      state.runs = page.data
+      state.total = page.total
+      // 总数是在这一页才知道的：筛过之后一共几页，只有后端答得上来。
+      state.pages = Math.max(1, Math.ceil(page.total / RECORDS_PER_PAGE))
+    } catch (e) {
+      fail(e, t('routines.runsFailed'))
+      state.runs = []
+      state.total = 0
+      state.pages = 1
+    } finally {
+      state.loading = false
+    }
+  }
+
+  function openRecords(r: Routine) {
+    recordsId = r.id
+    records.value = {
+      title: r.title,
+      page: 1,
+      failedOnly: false,
+      runs: [],
+      total: 0,
+      pages: 1,
+      loading: false,
+      // 点一份结果文件要去哪个房间：项目总览页用得上（那一页上没有能开文件的面板），
+      // 房间面板自己不用这一项（它就在那个房间里，点一份当场打开）。
+      roomTo: routineRoomTarget(r),
+    }
+    void loadRecords()
+  }
+
+  function closeRecords() {
+    recordsId = null
+    records.value = null
+  }
+
+  function goRecordsPage(page: number) {
+    const state = records.value
+    if (!state) return
+    const next = Math.min(Math.max(1, page), state.pages)
+    if (next === state.page) return
+    state.page = next
+    void loadRecords()
+  }
+
+  function setRecordsFailedOnly(failedOnly: boolean) {
+    const state = records.value
+    if (!state || state.failedOnly === failedOnly) return
+    state.failedOnly = failedOnly
+    // 筛过之后的行数变了，接着看第 7 页没有意义：回到第一页。
+    state.page = 1
+    void loadRecords()
+  }
+
   // ---- 建一条规则的那两页 ----
   // 表单开着没有、改的是哪一条、上一次存失败说了什么，和列表一样是这一份状态的一部分：
   // 两个入口（项目总览页、房间右侧那一格）画的是同一份 `RoutineCompose`，各自再写一遍
@@ -179,6 +255,7 @@ export function useRoutineList(options: RoutineListOptions) {
       routines.value = []
       runs.value = {}
       openId.value = null
+      closeRecords()
       void reload()
     },
     { immediate: true }
@@ -196,6 +273,11 @@ export function useRoutineList(options: RoutineListOptions) {
     busy,
     openId,
     runs,
+    records,
+    openRecords,
+    closeRecords,
+    goRecordsPage,
+    setRecordsFailedOnly,
     formOpen,
     editing,
     formError,

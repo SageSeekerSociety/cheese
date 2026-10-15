@@ -553,6 +553,7 @@ function routine(over: Partial<Routine>): Routine {
     spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
     timezone: 'Asia/Shanghai',
     state: 'active',
+    last_run_status: 'succeeded',
     agent_handle: 'cheese',
     owner_handle: 'wang',
     created_by: 'cheese',
@@ -575,6 +576,8 @@ export const ROUTINE_ACCEPTED = routine({
   trigger_text: '成果被采纳时',
   spec: { scope: 'room' },
   next_run_at: null,
+  // 事件触发的那条还没轮上过：行上画的是「启用中」，不是「没能执行」。
+  last_run_status: null,
 })
 
 /** 周报那条最近两次执行：一次成了，一次没成。 */
@@ -610,3 +613,27 @@ export const ROUTINE_RUNS: Record<string, RoutineRun[]> = {
     },
   ],
 }
+
+/**
+ * 「看全部」那一页上的一整页：十条，成的那几次交回一份文件，没能执行的那几次带着原因。
+ *
+ * 一天一条往回排（第 index 天前），所以行上「今天 / 昨天 / 10月12日」三种写法都在。
+ */
+export const ROUTINE_RECORDS_RUNS: RoutineRun[] = Array.from({ length: 10 }, (_, index) => {
+  const at = new Date(Date.UTC(2026, 9, 14, 10, 2) - index * 86_400_000)
+  const missed = index % 3 === 1
+  return {
+    id: `page-run-${index}`,
+    routine_id: ROUTINE_WEEKLY.id,
+    trigger_detail: '',
+    routine_revision: 1,
+    scheduled_for: at.toISOString(),
+    status: missed ? 'failed' : 'succeeded',
+    summary: missed ? '' : '今天频道里决定的事和还没回音的线索，整理成一页',
+    outputs: missed ? [] : [`日报/2026-10-${String(14 - index).padStart(2, '0')}.md`],
+    error: missed ? '工作电脑没有连上' : '',
+    created_at: at.toISOString(),
+    started_at: at.toISOString(),
+    finished_at: at.toISOString(),
+  }
+})

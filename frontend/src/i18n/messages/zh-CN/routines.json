@@ -25,7 +25,9 @@
   },
   "state": {
     "active": "启用中",
-    "paused": "已暂停"
+    "paused": "已暂停",
+    "queued": "排队中，这就跑",
+    "missed": "上一次没能执行"
   },
   "line": {
     "chip": "例行 · {title}",
@@ -53,12 +55,28 @@
   "saveFailed": "没有保存成功",
   "intro": "到点或项目里发生某件事时，频道里的 AI 队友自己开工，做完把结果放进频道并通知你。在频道里说「每周一早上整理一次进展」，{name}也会建一条，存下来就在跑。",
   "loading": "读取例行事务",
-  "next": "下次 {time}",
+  "today": "今天 {time}",
+  "yesterday": "昨天 {time}",
   "neverRun": "还没有执行过",
-  "finishedAt": "结束于 {time}",
   "noReason": "没有给出原因",
-  "outputs": "结果：",
   "listSeparator": "、",
+  "zone": {
+    "beijing": "北京时间"
+  },
+  "records": {
+    "all": "看全部",
+    "title": "{title} · 执行记录",
+    "count": "共 {n} 次",
+    "missedOnly": "只看未能执行",
+    "back": "返回",
+    "reason": "原因",
+    "noneMissed": "没有未能执行的",
+    "prev": "上一页",
+    "next": "下一页",
+    "pageBefore": "第",
+    "pageAfter": "/ {pages} 页",
+    "pageInput": "跳到第几页"
+  },
   "empty": "还没有例行事务",
   "emptyHint": "点「新建」，或在频道里让 AI 队友帮你起草一条",
   "compose": {

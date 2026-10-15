@@ -15,6 +15,7 @@ import i18n, { setLocale } from '@/i18n'
 vi.mock('../../api/routines', () => ({
   listProjectRoutines: vi.fn(),
   getRoutine: vi.fn(),
+  listRoutineRuns: vi.fn(),
   createRoutine: vi.fn(),
   updateRoutine: vi.fn(),
   routineAction: vi.fn(),
@@ -45,6 +46,10 @@ beforeAll(() => {
       value: { width: 1024, height: 768, offsetLeft: 0, offsetTop: 0, addEventListener() {}, removeEventListener() {} },
     })
   }
+  // 行尾的 ⋯ 走 Vuetify 的浮层定位，它读 devicePixelRatio；jsdom 里没有这个全局。
+  if (!('devicePixelRatio' in globalThis)) {
+    ;(globalThis as unknown as { devicePixelRatio: number }).devicePixelRatio = 1
+  }
 })
 
 const live = {
@@ -61,6 +66,7 @@ const live = {
   spec: { freq: 'daily', time: '09:00' },
   timezone: 'Asia/Shanghai',
   state: 'active' as const,
+  last_run_status: 'succeeded' as const,
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
   created_by: 'cheese-x',
@@ -86,6 +92,15 @@ function button(label: string, scope: ParentNode = document.body): HTMLElement |
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
 }
 
+/** 行尾那个 ⋯ 里此刻有哪几件。一行上动手的都在那儿，行里只剩名字、什么时候跑和状态。 */
+async function rowActions(row: Element): Promise<string[]> {
+  await fireEvent.click(row.querySelector<HTMLButtonElement>('button[aria-label="更多操作"]')!)
+  await waitFor(() => expect(document.querySelectorAll('.v-overlay .v-list-item-title').length).toBeGreaterThan(0))
+  return Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map(
+    (el) => el.textContent?.trim() as string
+  )
+}
+
 /** 勾上一颗勾选框（「时间」「条件」「存成模板」），按它那一行写着什么字认。
  *  Vuetify 的事件挂在里面那颗 `input` 上、且只听 `input`，所以自己把它拨上再派一次。 */
 async function check(label: string) {
@@ -109,15 +124,14 @@ describe('房间右侧的「例行事务」', () => {
     await findByText('还没有例行事务')
   })
 
-  it('删不掉的那一条：删除不画，别的动作还在', async () => {
+  it('删不掉的那一条：⋯ 里没有删除，别的动作还在', async () => {
     vi.mocked(listProjectRoutines).mockResolvedValue({
       data: [{ ...live, can_delete: false, owner_handle: 'u-other' }],
       total: 1,
     })
     const { container, findByText } = mount()
     await findByText('这个房间的日报')
-    const row = container.querySelector('[data-routine="live-1"]')!
-    const labels = Array.from(row.querySelectorAll('button')).map((b) => b.textContent?.trim())
+    const labels = await rowActions(container.querySelector('[data-routine="live-1"]')!)
     expect(labels).not.toContain('删除')
     expect(labels).toContain('修改')
   })
@@ -175,7 +189,13 @@ describe('房间右侧的「例行事务」', () => {
     await findByText('这个房间的日报')
 
     const row = document.querySelector('[data-routine="live-1"]')!
-    await fireEvent.click(button('修改', row)!)
+    await fireEvent.click(row.querySelector<HTMLButtonElement>('button[aria-label="更多操作"]')!)
+    await waitFor(() => expect(document.querySelector('.v-overlay .v-list-item-title')).toBeTruthy())
+    await fireEvent.click(
+      Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).find(
+        (el) => el.textContent?.trim() === '修改'
+      ) as HTMLElement
+    )
     await waitFor(() => expect(button('保存')).toBeTruthy())
     await fireEvent.click(button('保存')!)
 

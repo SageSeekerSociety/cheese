@@ -35,6 +35,10 @@ beforeAll(() => {
       value: { width: 1024, height: 768, offsetLeft: 0, offsetTop: 0, addEventListener() {}, removeEventListener() {} },
     })
   }
+  // 行尾的 ⋯ 走 Vuetify 的浮层定位，它读 devicePixelRatio；jsdom 里没有这个全局。
+  if (!('devicePixelRatio' in globalThis)) {
+    ;(globalThis as unknown as { devicePixelRatio: number }).devicePixelRatio = 1
+  }
 })
 
 const live: Routine = {
@@ -55,6 +59,7 @@ const live: Routine = {
   owner_handle: 'u1',
   created_by: 'cheese-x',
   next_run_at: '2026-09-28T01:00:00Z',
+  last_run_status: 'succeeded',
   revision: 1,
   created_at: '2026-09-25T00:00:00Z',
   updated_at: '2026-09-25T00:00:00Z',
@@ -82,10 +87,15 @@ async function check(label: string) {
 }
 
 describe('房间面板的「例行事务」（纯展示）', () => {
-  it('给一组 props 出画面：删不掉的那一条，删除那一颗不画', () => {
+  it('给一组 props 出画面：删不掉的那一条，删除那一颗不画', async () => {
     const { container } = mount({ routines: [{ ...live, can_delete: false }] })
     const row = container.querySelector('[data-routine="live-1"]')!
-    const labels = Array.from(row.querySelectorAll('button')).map((b) => b.textContent?.trim())
+    // 一行上动手的都在行尾那个 ⋯ 里；行里只剩名字、什么时候跑和状态。
+    await fireEvent.click(row.querySelector<HTMLButtonElement>('button[aria-label="更多操作"]')!)
+    await waitFor(() => expect(document.querySelectorAll('.v-overlay .v-list-item-title').length).toBeGreaterThan(0))
+    const labels = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) =>
+      el.textContent?.trim()
+    )
     expect(labels).not.toContain('删除')
     expect(labels).toContain('修改')
     expect(row.textContent).toContain('这个房间的日报')

@@ -25,7 +25,9 @@
   },
   "state": {
     "active": "On",
-    "paused": "Paused"
+    "paused": "Paused",
+    "queued": "Queued, starting now",
+    "missed": "Last run didn't go"
   },
   "line": {
     "chip": "Routine · {title}",
@@ -53,12 +55,28 @@
   "saveFailed": "Couldn't save",
   "intro": "At a set time, or when something happens in the project, the AI teammate in a channel starts on its own, puts the results in the channel and notifies you. Say “sum up progress every Monday morning” in a channel and {name} creates one too — saving it is what sets it running.",
   "loading": "Loading routines",
-  "next": "Next {time}",
+  "today": "Today {time}",
+  "yesterday": "Yesterday {time}",
   "neverRun": "Not run yet",
-  "finishedAt": "Finished {time}",
   "noReason": "No reason given",
-  "outputs": "Results: ",
   "listSeparator": ", ",
+  "zone": {
+    "beijing": "Beijing time"
+  },
+  "records": {
+    "all": "See all",
+    "title": "{title} · Run history",
+    "count": "{n} runs",
+    "missedOnly": "Only the runs that didn't go",
+    "back": "Back",
+    "reason": "Reason",
+    "noneMissed": "None of them missed",
+    "prev": "Previous",
+    "next": "Next",
+    "pageBefore": "Page",
+    "pageAfter": "of {pages}",
+    "pageInput": "Jump to a page"
+  },
   "empty": "No routines yet",
   "emptyHint": "Click “New”, or ask the AI teammate in a channel to draft one",
   "compose": {

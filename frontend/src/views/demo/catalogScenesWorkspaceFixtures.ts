@@ -42,6 +42,7 @@ export function routine(over: Partial<Routine> = {}): Routine {
     spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
     timezone: 'Asia/Shanghai',
     state: 'active',
+    last_run_status: 'succeeded',
     agent_handle: 'cheese-demo',
     owner_handle: 'cheese',
     created_by: 'cheese',
@@ -86,10 +87,11 @@ export function topic(over: Partial<Topic> = {}): Topic {
   }
 }
 
-/** 两条规则：一条按时间跑，一条暂停着。 */
+/** 三条规则：一条按时间跑，一条上一次没能执行，一条暂停着 —— 行上那三颗图形各来一颗。 */
 export const ROUTINES: Routine[] = [
   routine({ id: 'routine-daily', title: '每天提醒作业截止', trigger_text: '每天 18:00' }),
-  routine({ id: 'routine-paused', state: 'paused', next_run_at: null }),
+  routine({ id: 'routine-missed', last_run_status: 'failed' }),
+  routine({ id: 'routine-paused', state: 'paused', last_run_status: null, next_run_at: null }),
 ]
 
 /** 键是规则 id：展开某一条时它下面那一串。 */

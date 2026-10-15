@@ -30,6 +30,24 @@ export function getRoutine(id: string): Promise<Routine & { runs: RoutineRun[] }
   return request<Routine & { runs: RoutineRun[] }>(`/routines/${encodeURIComponent(id)}`)
 }
 
+/**
+ * 这条规则的一页执行记录，「看全部」那一页翻着读。
+ *
+ * `failedOnly` 问的是「哪几次没成」：失败和未执行两种一起来（后端那一边）。回来的
+ * `total` 是**筛过之后的全部**，翻页器上那句「共 N 次」说的是它。
+ */
+export function listRoutineRuns(
+  id: string,
+  opts: { offset?: number; limit?: number; failedOnly?: boolean } = {}
+): Promise<ListPayload<RoutineRun>> {
+  const q = new URLSearchParams()
+  if (opts.offset) q.set('offset', String(opts.offset))
+  if (opts.limit) q.set('limit', String(opts.limit))
+  if (opts.failedOnly) q.set('failed_only', 'true')
+  const suffix = q.toString()
+  return request<ListPayload<RoutineRun>>(`/routines/${encodeURIComponent(id)}/runs${suffix ? `?${suffix}` : ''}`)
+}
+
 export function createRoutine(topicId: string, body: RoutineInput): Promise<Routine> {
   return request<Routine>(`/topics/${encodeURIComponent(topicId)}/routines`, {
     method: 'POST',
