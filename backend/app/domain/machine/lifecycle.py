@@ -50,7 +50,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -126,6 +126,49 @@ def _idle_for(spec: str) -> timedelta:
     return timedelta(seconds=known.idle_s)
 
 
+#: How long an open turn's interval may stand and still count as its session at
+#: work. A process killed inside a turn leaves its row open and nothing closes
+#: it (`AgentWorkRunner.ORPHAN_STALE_S`, which this module cannot import): past
+#: that age the platform has already given up on the turn, and the row must not
+#: hold a machine for good.
+STALE_TURN = timedelta(hours=2)
+
+
+def _of_session(session_id, column, correlate):
+    """``column`` of the session ``session_id`` names, as a scalar subquery:
+    for the two things a turn has to be of to be this session's work."""
+    query = select(column).where(AgentSession.id == session_id)
+    if correlate is not None:
+        query = query.correlate(correlate)
+    return query.scalar_subquery()
+
+
+def _mine(conversation, seat) -> ColumnElement[bool]:
+    """The clauses saying a turn belongs to the session ``conversation`` and
+    ``seat`` name.
+
+    The conversation is the session's own, never its room's: every task of a
+    channel hangs under the room, and reading the room kept every other task's
+    sandbox in it up for days. The seat is the session's own too — another
+    teammate's turn in the same conversation is not this session's work — and a
+    row whose seat was never recorded counts as anybody's, which is how every
+    other reader counts one (``agent.turn.state.authority``).
+    """
+    return and_(
+        AgentTurn.conversation_id == conversation,
+        or_(AgentTurn.agent_handle.is_(None), AgentTurn.agent_handle == seat),
+    )
+
+
+def _own_turns(session_id, *, correlate=None) -> ColumnElement[bool]:
+    """``_mine`` for the session ``session_id`` names, for a query already over
+    the homes."""
+    return _mine(
+        _of_session(session_id, AgentSession.conversation_id, correlate),
+        _of_session(session_id, AgentSession.agent_handle, correlate),
+    )
+
+
 class SandboxLifecycle:
     def __init__(self, session: AsyncSession, hub=None) -> None:
         self._session = session
@@ -153,22 +196,18 @@ class SandboxLifecycle:
         # held to its own spec's.
         idle_for = _idle_for(STANDARD)
 
-        # A turn running in the conversation the home's session works in, or
-        # one that ended within the idle time, keeps that sandbox up. Not the
-        # room's turns: every task of a channel hangs under it, and one task at
-        # work kept the sandboxes of all the others up for days. Decided here,
-        # not after a limit: busy homes would otherwise take every place in the
-        # batch.
+        # A turn of the session's own, running or ended within the idle time,
+        # keeps that sandbox up. Decided here, not after a limit: busy homes
+        # would otherwise take every place in the batch.
         session_active = (
             select(AgentTurn.id)
             .where(
-                AgentTurn.conversation_id
-                == select(AgentSession.conversation_id)
-                .where(AgentSession.id == SandboxHome.session_id)
-                .correlate(SandboxHome)
-                .scalar_subquery(),
+                _own_turns(SandboxHome.session_id, correlate=SandboxHome),
                 or_(
-                    AgentTurn.stopped_at.is_(None),
+                    and_(
+                        AgentTurn.stopped_at.is_(None),
+                        AgentTurn.started_at > now - STALE_TURN,
+                    ),
                     AgentTurn.stopped_at > now - idle_for,
                 ),
             )
@@ -230,6 +269,24 @@ class SandboxLifecycle:
                 destroyed += 1
         return destroyed
 
+    async def at_work(self, conversation_id, agent_handle, now: datetime) -> bool:
+        """Whether a turn of this session's own is running: one in the
+        conversation it works in, under its own seat (``_mine``), and not a row
+        left open past ``STALE_TURN`` — a corpse must not hold a machine for
+        good either. Asked of a whole cloud VM's session before its VM is
+        checkpointed or released (``cloud_vm``)."""
+        return (
+            await self._session.scalar(
+                select(AgentTurn.id)
+                .where(
+                    _mine(conversation_id, agent_handle),
+                    AgentTurn.stopped_at.is_(None),
+                    AgentTurn.started_at > now - STALE_TURN,
+                )
+                .limit(1)
+            )
+        ) is not None
+
     async def _idle_since(
         self, home, now: datetime, idle_for: timedelta
     ) -> datetime | None:
@@ -241,14 +298,14 @@ class SandboxLifecycle:
         turns = (
             await self._session.execute(
                 select(
-                    func.count().filter(AgentTurn.stopped_at.is_(None)),
+                    # An interval left open past the orphan sweep's limit is a
+                    # corpse, and must not read as this session still at work.
+                    func.count().filter(
+                        AgentTurn.stopped_at.is_(None),
+                        AgentTurn.started_at > now - STALE_TURN,
+                    ),
                     func.max(AgentTurn.stopped_at),
-                ).where(
-                    AgentTurn.conversation_id
-                    == select(AgentSession.conversation_id)
-                    .where(AgentSession.id == home.session_id)
-                    .scalar_subquery()
-                )
+                ).where(_own_turns(home.session_id))
             )
         ).one()
         await self._session.commit()
