@@ -21,7 +21,7 @@ import { computed, ref } from 'vue'
 import { fetchMachineSkill, fetchSkillMarket, listMachineSkills } from '../api/machineSkills'
 import { getSkillHealth, listProjectSkills, listSkillCatalog } from '../api/projectSkills'
 
-import { getProjectDefaultModel, listMyDevices, setAgentEditing, updateProjectAgent } from '@/api'
+import { listMyDevices, setAgentEditing, updateProjectAgent } from '@/api'
 import { ApiError } from '@/api/http'
 import { t } from '@/i18n'
 import { pickMyDevice } from '@/lib/myDevice'
@@ -62,7 +62,11 @@ export function useAgentSkills(
   const loading = ref(false)
   const scanning = ref(false)
   const saving = ref(false)
-  const canManage = ref(false)
+  // 改一个队友带的技能，是项目里每个人都做得的（后端 `projects_agents.py` 不再要
+  // manager，见 main 的 `say_agent_changes`）；真正拦住丢更新的是保存带上的
+  // `expected_version` 和别人正占着的编辑租约。所以这里恒为可改，不再去 default-model
+  // 读一个后端从来不发、类型里也没有的 `can_manage`。
+  const canManage = ref(true)
   // 「正在编辑」的占用：打开面板时占一把，关掉就放掉。占不到（别人拿着）就把面板转只读，
   // 并把持有者记下来画出来。这是礼貌性提示，不是锁 —— 真正拦住丢更新的是保存带上去的
   // `expected_version`（409）。Valkey 没配时后端一律答「没人编辑」，这里自然也不拦。
@@ -91,7 +95,7 @@ export function useAgentSkills(
     carriedNames.value = [...(subject.configuration.skills ?? [])]
 
     // 平台目录是面板的核心：这一条读不到就说一声，机器和项目那两段照常出来。
-    const [catalog, project, devices, model] = await Promise.all([
+    const [catalog, project, devices] = await Promise.all([
       listSkillCatalog(pid).then(
         (r) => r.data,
         (e) => {
@@ -107,13 +111,8 @@ export function useAgentSkills(
         (r) => r.devices,
         () => []
       ),
-      getProjectDefaultModel(pid).then(
-        (r) => r,
-        () => null
-      ),
     ])
     if (projectId() !== pid) return
-    canManage.value = model?.can_manage === true
     deviceId.value = pickMyDevice(devices)?.device_id ?? null
 
     machineSkills.value = []

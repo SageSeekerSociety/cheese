@@ -106,8 +106,8 @@ function importSkill() {
   emit('install', { url, kind: 'skill' })
 }
 
-// 改队友的 userskill 要 manager（后端 `projects_agents.py`）；别人正占着「编辑中」
-// 的租约时也改不动 —— 那是同一件事的另一半：现在改会撞上他。
+// 改队友的 userskill 项目里每个人都做得的（后端 `projects_agents.py` 不再要 manager）；
+// 别人正占着「编辑中」的租约时改不动 —— 那是同一件事的另一半：现在改会撞上他。
 const locked = () => !props.canManage || props.editingBlocked
 </script>
 

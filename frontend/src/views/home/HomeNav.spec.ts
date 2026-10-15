@@ -134,7 +134,7 @@ describe('首页目录的画面', () => {
 
   // 手机端不占底栏格（底栏固定三格），市场从这份目录进——两端都要到得着。
   it('目录里有通往「市场」的一行', async () => {
-    await mount('/inbox')
+    await mount({ teams: [team('crew', '知是开发组')] })
     await screen.findByText('知是开发组')
     expect(screen.getByText('市场')).toBeTruthy()
     expect(hrefs()).toContain('/market')
