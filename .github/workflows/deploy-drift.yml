@@ -52,7 +52,7 @@ jobs:
           set -euo pipefail
           main_sha="$(bash deploy/image-tag.sh origin/main 2>/dev/null || bash deploy/image-tag.sh HEAD)"
           # The runner IS the box, so ask docker directly rather than over ssh.
-          live="$(docker ps -a \
+          live="$(docker ps -a --no-trunc \
             --filter 'label=com.docker.compose.project=cheese' \
             --format '{{.Label "com.docker.compose.service"}}\t{{.Image}}\t{{.State}}\t{{.Status}}' \
             || true)"

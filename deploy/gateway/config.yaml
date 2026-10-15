@@ -84,6 +84,11 @@ model_list:
       # K3 always reasons: keep native effort, but omit adaptive thinking.
       supports_output_config: true
       supports_max_reasoning_effort: true
+      # Measured 2026-10-14 with gateway_conformance.py on the OpenCode Go row
+      # (anthropic/, order 1, added from the admin side): a mid-conversation
+      # system message is dropped there. The flag tells Claude Code to fold it
+      # into the first user message, which every upstream of the group receives.
+      supports_mid_conversation_system: false
   # 芝士's own turns and the agents' Claude Code both speak the Anthropic
   # protocol, so both arrive on /v1/messages and are metered by the same rows.
   - model_name: glm-4.6

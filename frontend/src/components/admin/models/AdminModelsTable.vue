@@ -105,7 +105,13 @@ function rateTitle(row: ModelRow): string {
           </button>
         </td>
         <td class="amd__cell" :data-label="t('models.table.column.origin')">
-          <span class="amd__tag">{{ t(originKey(row)) }}</span>
+          <span class="amd__usage">
+            <span class="amd__tag">{{ t(originKey(row)) }}</span>
+            <!-- 不止一条线路时说一声：哪几条、谁先谁后在详情抽屉里。 -->
+            <span v-if="(row.sources?.length ?? 0) > 1" class="t-meta-read amd__dim">{{
+              t('models.source.count', { n: row.sources?.length ?? 0 })
+            }}</span>
+          </span>
         </td>
         <td class="amd__cell" :data-label="t('models.table.column.price')">
           <AdminModelPriceCell :priced="row.priced" :prices="row.prices" :reason="row.unpriced_reason" />
