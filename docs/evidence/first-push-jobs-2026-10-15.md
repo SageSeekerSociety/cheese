@@ -213,6 +213,11 @@ about the node toolchain, neither of which is this task's scope.
   sampled RSS 497.6 MiB)`, whole run `0` in 46.27s.
 - Negative control: zeroing `backend/openapi.sha256` took the entry point to exit 1 with the
   digest-mismatch message; the tree was restored afterwards.
+- The collector itself: eight threads were given one key and the fetch was counted — one
+  call, eight identical results. Before the per-key lock the same shape fetched eight times
+  and, with two writers on one `.partial`, died with `FileNotFoundError` out of `replace`.
+  With the lock in place both windows were collected again from the same `--cache`
+  directories and compared byte for byte with the two CSVs here: identical.
 
 Not run here: the CI draft tier and the full `backend / static` job. The unittest suite that
 covers this file is the one the workflow runs; the acceptance card's required checks are the

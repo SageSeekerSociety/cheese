@@ -32,6 +32,7 @@ import csv
 from datetime import UTC, datetime, timedelta
 import json
 from pathlib import Path
+import threading
 from urllib.parse import quote, urlencode
 
 import trace_retro
@@ -76,26 +77,47 @@ def cache_key(repo: str, kind: str, name: str, page: int) -> str:
 
 
 class Cache:
-    """One JSON file per key. A cache is an observation, not a live view."""
+    """One JSON file per key. A cache is an observation, not a live view.
+
+    Eight threads read this cache at once and several PRs share a head branch,
+    so the same key is asked for by more than one thread. A lock per key is what
+    keeps that from turning into two writers: without it both miss, both write
+    the same `...json.partial`, and whichever replaces second finds the name
+    gone — `FileNotFoundError` from `replace`, which nothing up the stack
+    catches, so the whole sweep dies on a cold cache. Holding the lock across
+    the fetch also keeps the branch's page to one request instead of one per PR
+    that happens to sit on it.
+    """
 
     def __init__(self, root: Path):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    def _lock(self, key: str) -> threading.Lock:
+        with self._locks_guard:
+            lock = self._locks.get(key)
+            if lock is None:
+                lock = self._locks[key] = threading.Lock()
+        return lock
 
     def get(self, key: str, fetch):
         path = self.root / f"{key}.json"
-        if path.exists():
-            try:
-                return json.loads(path.read_text())
-            except ValueError:
-                # A run killed mid-write leaves half a file. It is an observation
-                # that never finished: refetch it instead of taking the sweep down.
-                path.unlink()
-        value = fetch()
-        partial = path.with_name(path.name + ".partial")
-        partial.write_text(json.dumps(value))
-        partial.replace(path)
-        return value
+        with self._lock(key):
+            if path.exists():
+                try:
+                    return json.loads(path.read_text())
+                except ValueError:
+                    # A run killed mid-write leaves half a file. It is an
+                    # observation that never finished: refetch it instead of
+                    # taking the sweep down.
+                    path.unlink(missing_ok=True)
+            value = fetch()
+            partial = path.with_name(path.name + ".partial")
+            partial.write_text(json.dumps(value))
+            partial.replace(path)
+            return value
 
 
 def api(endpoint: str) -> object:
