@@ -249,6 +249,29 @@ class TreeModeTests(unittest.TestCase):
         self.assertNotIn("conflicts when replayed", out)
         self.assertNotIn("does not reconstruct cleanly", out)
 
+    def test_a_pair_that_conflicts_and_one_the_clone_lacks_are_reported_apart(self):
+        # Both exclusions in one run, beside a row that did compare: the two counts
+        # are of different things, and a reader who sees one number for both goes
+        # after the wrong cause. The percentage is over what was compared, not over
+        # every row.
+        left = self.branch("left2", {"shared.txt": "left\n"})
+        right = self.branch("right2", {"shared.txt": "right\n"})
+        rows = [
+            self.row(6, self.base, self.base),
+            self.row(7, left, left) | {"head": right},
+            self.row(8, self.base, self.base) | {"head": "1" * 40},
+        ]
+        code, out, err = self.run_trees(rows, self.merged_tree(self.base, self.head))
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("pr     7: the pinned pair does not reconstruct cleanly", out)
+        self.assertIn("pr     8: this clone cannot build the pair", out)
+        self.assertIn("Excluded 1 of 3 row(s) (the pair conflicts when replayed): pr 7.", out)
+        self.assertIn(
+            "Excluded 1 of 3 row(s) (this clone cannot rebuild the pair", out
+        )
+        # The percentage rides on the same denominator as the count beside it.
+        self.assertIn("1/1 merge_group runs tested the SAME tree as the PR run (100.0%)", out)
+
 
 if __name__ == "__main__":
     unittest.main()

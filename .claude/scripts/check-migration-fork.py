@@ -594,9 +594,16 @@ def self_test() -> int:
     # --- the write path, in a repository ------------------------------------
     # Everything above is a pure decision; the way `rechain()` uses them and the
     # files it touches is not covered by any of it, and that is where the bug
-    # lived. One case drives the command itself: behind the base, carrying no
-    # migration of its own.
+    # lived. Two cases drive the command itself: the one it has to refuse, and the
+    # one that writes.
+    #
+    # The fixture runs git with this machine's configuration switched off. A global
+    # `commit.gpgsign` fails the commits below — that reds a script which works, and
+    # worse, the exit-code check would still pass, because the run dies before it
+    # reaches the decision under test.
     lab = Path(tempfile.mkdtemp(prefix="rechain-self-test-"))
+    lab_env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    lab_env.pop("GIT_DIR", None)
     try:
         alembic = lab / "backend" / "alembic"
         versions = alembic / "versions"
@@ -608,8 +615,20 @@ def self_test() -> int:
         script.parent.mkdir(parents=True)
         script.write_bytes(Path(__file__).read_bytes())
 
-        def git(*argv: str) -> subprocess.CompletedProcess:
-            return subprocess.run(["git", *argv], cwd=lab, capture_output=True, text=True)
+        def git(*argv: str, expect: int = 0) -> subprocess.CompletedProcess:
+            done = subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *argv],
+                cwd=lab,
+                capture_output=True,
+                text=True,
+                env=lab_env,
+            )
+            if done.returncode != expect:
+                raise AssertionError(
+                    f"self-test fixture: git {' '.join(argv)} exited {done.returncode}, "
+                    f"wanted {expect}: {done.stderr.strip()}"
+                )
+            return done
 
         git("init", "-q", "-b", "main")
         git("config", "user.email", "self-test@example.invalid")
@@ -628,10 +647,49 @@ def self_test() -> int:
             cwd=lab,
             capture_output=True,
             text=True,
+            env=lab_env,
         )
         check("the command refuses an un-merged branch with nothing of its own", result.returncode, 1)
         check("... saying to merge the base first", "merge" in result.stdout, True)
         check("... and leaving the sentinel where it was", sentinel.read_text(encoding="utf-8"), "a\n")
+
+        # The other way round: this branch carries a migration of its own beside the
+        # base's, and has already merged the base. The merge leaves the sentinel
+        # conflicted, which is the state the command exists for.
+        git("checkout", "-q", "main")
+        (versions / "n.py").write_text('revision = "n"\ndown_revision = "a"\n', encoding="utf-8")
+        sentinel.write_text("n\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-qm", "n")
+        git("checkout", "-q", "base")
+        git("merge", "--no-autostash", "--no-edit", "main", expect=1)
+
+        result = subprocess.run(
+            [sys.executable, str(script), "--rechain", "--base", "main"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+            env=lab_env,
+        )
+        check("the command re-chains a forked branch onto the base head", result.returncode, 0)
+        check(
+            "... pointing this branch's migration at the base head",
+            "down_revision -> n" in result.stdout,
+            True,
+        )
+        check(
+            "... writing this branch's own head into the sentinel",
+            sentinel.read_text(encoding="utf-8"),
+            "m\n",
+        )
+        settled = subprocess.run(
+            [sys.executable, str(script), "--base", "main"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+            env=lab_env,
+        )
+        check("... leaving a chain the plain check accepts", settled.returncode, 0)
     finally:
         shutil.rmtree(lab, ignore_errors=True)
 
@@ -641,7 +699,7 @@ def self_test() -> int:
         return 1
     print(
         "PASS: check-migration-fork self-test (parser variants, merge parents, head "
-        "detection, re-chain splice and re-chain decisions)"
+        "detection, re-chain splice, re-chain decisions and the re-chain itself)"
     )
     return 0
 
