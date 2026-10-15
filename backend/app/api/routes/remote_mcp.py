@@ -34,7 +34,9 @@ from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import exception_text, say
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import project_types, type_of_seat
+from app.domain.authz import policy
 from app.domain.conversation import services as conversations
+from app.domain.identity.services import IdentityService
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
 from app.domain.remote_mcp import oauth, service, upstream
@@ -63,6 +65,22 @@ async def member(
     return actor.handle
 
 
+async def manager(
+    db: AsyncSession, project_id: uuid.UUID, resolver: ActorResolver
+) -> str:
+    """:func:`member`, and a person in their own session: connecting a server,
+    dropping it or setting its secret changes what every room of the project
+    can reach, which no agent decides, prompted by whatever it last read."""
+    handle = await member(db, project_id, resolver)
+    refusal = await policy.refuse_management_action(
+        await resolver.resolve(project_id=project_id),
+        carries_agent_binding=IdentityService(db).is_agent,
+    )
+    if refusal is not None:
+        raise ForbiddenError(refusal)
+    return handle
+
+
 @router.get("/projects/{project_id}/mcp/servers")
 async def list_servers(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -79,7 +97,7 @@ async def connect(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    handle = await member(db, project_id, resolver)
+    handle = await manager(db, project_id, resolver)
     url = await service.begin_connect(
         db,
         project_id,
@@ -95,7 +113,7 @@ async def connect(
 async def disconnect(
     project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    await member(db, project_id, resolver)
+    await manager(db, project_id, resolver)
     await service.disconnect(db, project_id, name)
     return ok(None)
 
@@ -112,7 +130,7 @@ async def set_secret(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    handle = await member(db, project_id, resolver)
+    handle = await manager(db, project_id, resolver)
     await service.set_secret(
         db, project_id, name, body.value, handle, project_types=project_types
     )
@@ -123,7 +141,7 @@ async def set_secret(
 async def clear_secret(
     project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    await member(db, project_id, resolver)
+    await manager(db, project_id, resolver)
     await service.clear_secret(db, project_id, name)
     return ok(None)
 
