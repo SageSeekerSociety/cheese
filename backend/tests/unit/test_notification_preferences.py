@@ -196,7 +196,7 @@ class TestTypesOutsideTheMatrix:
 
     def test_a_non_pushable_legacy_type_does_not_push(self):
         intent = resolve(
-            default_preferences(), NotificationType.DEADLINE_REMIND, now=NOON
+            default_preferences(), NotificationType.TEAM_REQUEST_APPROVED, now=NOON
         )
         assert intent.push is False
 

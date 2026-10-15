@@ -391,8 +391,6 @@ async def _seed_project(session, project: Project, owner: str, authors: list[str
          "有一张验收卡等你验收", "「补齐登录页的错误提示」已经交付，请验收。"),
         (NotificationType.MENTION, NotificationLevel.light,
          "有人 @ 了你", "在「需求讨论」里点名了 alice。"),
-        (NotificationType.DEADLINE_REMIND, NotificationLevel.silent,
-         "任务即将到期", "「梳理一下慢查询」今天到期。"),
     ]:
         await notifications.create(
             project_id=project.id, level=level, kind=kind, title=title, body=body,

@@ -1,7 +1,9 @@
 """待我处理那份清单共用的东西：几个码、两段摘要，和查询本身。
 
-`waiting_items` 是这份清单的查询。「待我处理」那一页（`routes/awaiting.py`）拿它渲染，
-桌面图标上那个数字（`routes/notifications_live.py`）拿它来数，所以两处的数永远一样。
+`all_waiting` 是这份清单的查询：项目里的事（`waiting_items`），加上等他回答的邀请
+和申请（`awaiting_asks.membership_asks`）。「待我处理」那一页（`routes/awaiting.py`）
+拿它渲染，桌面图标上那个数字（`routes/notifications_live.py`）拿它来数，所以两处的
+数永远一样。
 
 它留在 API 层、被两个调用方 import，而不留在路由模块里：路由模块之间不互相 import
 （C4 `routes-independent`）。它也不进领域层 —— 要问项目、房间、活、验收卡、消息块、
@@ -20,6 +22,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.awaiting_asks import MembershipAsk, membership_asks
 from app.domain.addressing import (
     REASON_ASKED,
     REASON_REVIEWER,
@@ -363,3 +366,15 @@ async def waiting_items(
 
     items.sort(key=lambda item: item.at, reverse=True)
     return items
+
+
+async def all_waiting(
+    db: AsyncSession, chat: ChatService, *, handle: str, user_id: int | None
+) -> list[awaiting.WaitingItem | MembershipAsk]:
+    """等 `handle` 处理的全部事项，最近的在前：项目里的事，和等他回答的邀请、申请。"""
+    rows: list[awaiting.WaitingItem | MembershipAsk] = [
+        *await waiting_items(db, chat, handle=handle, user_id=user_id),
+        *await membership_asks(db, handle=handle, user_id=user_id),
+    ]
+    rows.sort(key=lambda row: row.at, reverse=True)
+    return rows

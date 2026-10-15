@@ -240,6 +240,14 @@ class MemberService:
         )
 
 
+async def pending_invitations_for(
+    session: AsyncSession, handle: str
+) -> list[ProjectInvitation]:
+    """请 ``handle`` 加入、他还没回答的项目邀请，新的在前。给「等你处理」读：只读，
+    用不着 ``InvitationService`` 要的投递与结账那两只手。"""
+    return await InvitationRepository(session).list_pending_for_person(handle)
+
+
 class InvitationService:
     """邀请 —— 加人这件事的另一半。
 
