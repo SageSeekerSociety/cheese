@@ -147,7 +147,10 @@ def _viewer(actor: Actor) -> str | None:
 
 
 async def _awaiting_an_answer(
-    db: AsyncSession, room_ids: list[uuid.UUID]
+    db: AsyncSession,
+    room_ids: list[uuid.UUID],
+    *,
+    threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
 ) -> dict[uuid.UUID, Awaited]:
     """Which channels wait on an answer, and from whom: their own line's
     question, or one 芝士 asked in one of their tasks or 支线.
@@ -156,8 +159,13 @@ async def _awaiting_an_answer(
     走的是同一条规矩，`notification/repositories.decision_topic_ids`）：芝士在一条活
     里问的那道题，题落在那条活自己的线上，可这个频道也在等那个人回答。少了任务这一
     头，人就看得见「有一条待办」而侧栏一处都不亮。
+
+    ``threads``：调用方已经问过的那一份（`topics_signals.working_in_threads` 要的是
+    同一个答案）。这里会往上面叠任务，所以先拷一份，不动调用方那份。
     """
-    inner_rooms = await threads_of_rooms(db, room_ids)
+    inner_rooms = dict(
+        await threads_of_rooms(db, room_ids) if threads is None else threads
+    )
     inner_rooms.update(await TaskService(db).tasks_of_rooms(room_ids))
     found = await BlockRepository(db).awaiting_an_answer([*room_ids, *inner_rooms])
     return {
@@ -330,20 +338,23 @@ async def list_topics(
         if actor.authenticated
         else set()
     )
+    # 这一页的房间支线，下面三处都要（见 `get_topic` 同一行），问一次。
+    room_threads = await threads_of_rooms(db, [t.id for t in topics])
     # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
-    asked = await _awaiting_an_answer(db, [t.id for t in topics])
+    asked = await _awaiting_an_answer(db, [t.id for t in topics], threads=room_threads)
     asks_me = _asks_me(asked, _viewer(actor))
-    # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
+    # 一次，给整页用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
     # 每个房间在等哪几位成员，一次查完。
     waits = await MemberWaits(db).for_rooms(
         [t.id for t in topics],
         now=now,
         stuck_rooms=topics_signals.stuck_on_checks(live),
+        threads=room_threads,
     )
     # 支线里在跑的轮次也是「在管这间房」，`waits` 里这些成员要去掉（一次查完）。
     threads_working = await topics_signals.working_in_threads(
-        db, broker, [t.id for t in topics]
+        db, broker, [t.id for t in topics], threads=room_threads
     )
     # 在跑的那几个各自「多久没有新输出了」——侧栏的红灯靠它（`silent_of`）。
     silent = silent_gaps(runner, [t.id for t in topics if t.id in moving_ids])
@@ -476,6 +487,10 @@ async def get_topic(
         raise NotFoundError("Topic not found")
     topic = place.room
     actor = await _actor_in_place(resolver, place)
+    # 这三处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
+    # 遍（`_awaiting_an_answer`、`MemberWaits.for_rooms`、
+    # `topics_signals.working_in_threads`）。
+    room_threads = await threads_of_rooms(db, [topic.id])
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics(
         [topic],
@@ -491,13 +506,16 @@ async def get_topic(
         if actor.authenticated
         else set()
     )
-    asked = await _awaiting_an_answer(db, [topic.id])
+    asked = await _awaiting_an_answer(db, [topic.id], threads=room_threads)
     waits = await MemberWaits(db).for_rooms(
         [topic.id],
         now=datetime.now(UTC),
         stuck_rooms=topics_signals.stuck_on_checks(live),
+        threads=room_threads,
     )
-    threads_working = await topics_signals.working_in_threads(db, broker, [topic.id])
+    threads_working = await topics_signals.working_in_threads(
+        db, broker, [topic.id], threads=room_threads
+    )
     # 同 `list_topics`：这一行自己那条线上在跑的是 `running_ids`（`presentation`
     # 读它），连着名下的活和支线的那一份是 `moving_ids`（侧栏那盏呼吸绿读它）。
     running_ids = runner.running_topic_ids()
