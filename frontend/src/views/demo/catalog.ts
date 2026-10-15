@@ -547,7 +547,7 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'screen-header-title',
     title: 'ScreenHeaderTitle',
-    about: '手机顶栏中间那一格：这一屏声明的头部，没声明就写路由的标题。',
+    about: '手机顶栏中间那一格：这一屏交出来的标题行，没交就写路由的标题。',
     file: 'src/components/common/Navigation/ScreenHeaderTitle.vue',
     component: ScreenHeaderTitle,
     needs: ['vuetify'],
@@ -559,13 +559,7 @@ export const CATALOG: CatalogEntry[] = [
         expect: '资料库',
       },
       {
-        name: '标题和一行小字',
-        note: '手机上的支线页：标题写「支线」，底下那行是它在哪个频道、最后一条回复。',
-        props: { header: { title: '支线', subtitle: '#综合 · 林夏：图表改好了' }, fallback: '综合' },
-        expect: '#综合',
-      },
-      {
-        name: '整行换成这一屏自己的',
+        name: '这一屏自己的标题行',
         note: '频道页、任务页、频道列表：这一屏把它自己的标题行连同参数交给顶栏画（这里用一行字代替）。',
         props: {
           header: {

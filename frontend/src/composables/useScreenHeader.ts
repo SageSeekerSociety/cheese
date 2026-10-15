@@ -1,5 +1,5 @@
-// 手机上这一屏的头部：页面说它叫什么、底下那行小字、或者整行换成它自己的标题行，
-// 唯一的那条顶栏（MobileAppBar）照着画。没说的那一屏用路由上的标题。
+// 手机上这一屏的头部：页面把它自己的标题行连同参数和事件交出来，唯一的那条顶栏
+// （MobileAppBar）照着画。没交的那一屏写路由上的标题。
 //
 // 头部是数据，不是页面里的一段 DOM：以前页面把自己的标题行 Teleport 进顶栏里那一格，
 // 那一格又只在路由声明过的页面上才有，两处对不上就挂不上、卸不掉（手机上从待办进支线
@@ -13,12 +13,8 @@ import type { Component } from 'vue'
 import { computed, onActivated, onDeactivated, onScopeDispose, shallowRef } from 'vue'
 
 export interface ScreenHeader {
-  /** 这一屏叫什么；不说就用路由上的标题。 */
-  title?: string
-  /** 标题下面那一行小字（支线在哪个频道里）。 */
-  subtitle?: string
-  /** 整行换成这一屏自己的标题行（频道名和成员、项目切换器），连同它要的参数和事件。 */
-  content?: { component: Component; props?: Record<string, unknown> }
+  /** 这一屏自己的标题行（频道名和成员、项目切换器），连同它要的参数和事件。 */
+  content: { component: Component; props?: Record<string, unknown> }
 }
 
 interface Entry {

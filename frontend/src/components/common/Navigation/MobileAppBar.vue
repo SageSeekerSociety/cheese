@@ -164,3 +164,11 @@ const updateTitle = () => {
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
 </script>
+
+<style scoped>
+/* 根上左边没有 ←（ParentBackButton）时，一屏交来的标题行和路由标题从同一处起头：
+   路由标题是 Vuetify 给顶栏直接子标题的 20px 左距，标题行自己只带 8px。 */
+:deep(.v-toolbar__prepend:empty) + .screen-title {
+  padding-inline-start: 12px;
+}
+</style>

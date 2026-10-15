@@ -4,7 +4,7 @@
 // 切换时 v-main 的 padding 从 57 滑到 0（Vuetify 给 .v-main 定的 transition
 // 是 .2s），整页跟着抖一下，看起来像两条头在打架。现在那些页面改成把自己的
 // 东西交给顶栏画（useScreenHeader），所以这里测的是：一屏声明了自己的标题行，顶栏就画
-// 它、不写路由的标题；只声明标题和小字，就画那两行；那一屏走了，路由的标题回来。
+// 它、不写路由的标题；那一屏走了，路由的标题回来。
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -84,16 +84,6 @@ describe('手机顶栏', () => {
     const { container } = await mountAt('/projects/p1')
     await nextTick()
     expect(container.textContent).toContain('页面自己的头')
-    expect(container.textContent).not.toContain('项目工作台')
-  })
-
-  it('只声明标题和小字，就画那两行', async () => {
-    filling.value = true
-    declared.value = { title: '支线', subtitle: '#综合' }
-    const { container } = await mountAt('/projects/p1')
-    await nextTick()
-    expect(container.textContent).toContain('支线')
-    expect(container.textContent).toContain('#综合')
     expect(container.textContent).not.toContain('项目工作台')
   })
 

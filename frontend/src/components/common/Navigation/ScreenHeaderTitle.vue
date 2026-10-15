@@ -1,15 +1,13 @@
 <template>
-  <!-- The screen's own title row, or its title and the line under it; the route's
-       title when the screen declared nothing (composables/useScreenHeader.ts). -->
-  <div v-if="header?.content" class="screen-title screen-title--row">
+  <!-- The screen's own title row; the route's title when the screen declared none
+       (composables/useScreenHeader.ts). -->
+  <div v-if="header" class="screen-title">
     <component :is="header.content.component" v-bind="header.content.props" />
   </div>
-  <!-- 标题读页头那一号字 (.t-title 15/600)：屏幕上这条横条和页内页头是同一条，
-       Vuetify 默认的 20px 会让它们看起来是两种东西。 -->
-  <div v-else class="screen-title">
-    <v-app-bar-title class="t-title">{{ header?.title ?? fallback }}</v-app-bar-title>
-    <div v-if="header?.subtitle" class="screen-title__sub t-meta">{{ header.subtitle }}</div>
-  </div>
+  <!-- A bare title is the toolbar's own child, so Vuetify's toolbar spacing applies to
+       it as before. 标题读页头那一号字 (.t-title 15/600)：屏幕上这条横条和页内页头是
+       同一条，Vuetify 默认的 20px 会让它们看起来是两种东西。 -->
+  <v-app-bar-title v-else class="t-title">{{ fallback }}</v-app-bar-title>
 </template>
 
 <script setup lang="ts">
@@ -32,24 +30,9 @@ defineProps<{
 .screen-title {
   display: flex;
   flex: 1 1 auto;
-  flex-direction: column;
-  justify-content: center;
+  align-items: center;
   min-width: 0;
   height: 100%;
-}
-.screen-title--row {
-  flex-direction: row;
-  align-items: center;
-}
-.screen-title :deep(.v-toolbar-title__placeholder),
-.screen-title__sub {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.screen-title__sub {
-  margin-inline-start: 16px;
-  color: var(--muted);
 }
 
 /* Vuetify 的工具栏标题自带 20px/400，比页内页头的标题 (.t-title 15/600) 大一号——
