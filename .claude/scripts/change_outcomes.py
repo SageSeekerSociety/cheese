@@ -15,8 +15,10 @@ Usage:
          合入落在 [start, end) 里的线进队列。之后这条线上的每一次合入都算它的。
   首次合入  该线最早一张已合并卡的时间。
   合并提交  squash 合并在默认分支上的提交标题以 `(#N)` 结尾；非 squash 的 GitHub
-         合并提交标题是 `Merge pull request #N from …`。两种都认。认不出的那次
-         合入不计入改动，报告里按「对不上的合并」单独报数——它不等于没有合并。
+         合并提交标题是 `Merge pull request #N from …`。两种都认。真正的合并提交
+         git 默认不输出文件，所以历史和 numstat 都带 `-m --first-parent`，取它相对
+         第一父的改动。认不出的那次合入不计入改动，报告里按「对不上的合并」单独
+         报数——它不等于没有合并。
   改动文件  该线全部认出合并提交动到的文件并集；行数取 numstat 的增/删合计。二进制
          文件 numstat 记 `-`，不计入行数但计入文件数。
   模块   文件路径去掉档名前缀后的第一段（backend/、frontend/、docs/、.claude/…）；
@@ -30,9 +32,12 @@ Usage:
          改动还在，这条只回答「文件被整体删掉/改名」这一类消失。
   返工     该线某个文件，在它自己第一次合入（按时间）之后，又被**不属于这条线**的
          提交改过。说明同一片代码在窗口里被反复动。提交按 git log 的时间倒序读，
-         「之后」= 列表中更靠前的提交。
-  回退     窗口里的提交标题匹配 `Revert` 且提到该线的 PR 号，且这条提交本身不是该线
-         自己的合并提交（标题里带 rever 的 PR 不算被回退）。
+         「之后」= 列表中更靠前的提交。不属这条线 = 这条线的合并提交之外的提交，
+         别的线的合并提交也算——两条线动了同一片文件，正是这一项要量的东西。
+  回退     读到的提交里，标题匹配 `Revert` 且提到该线的 PR 号的那些（读的历史从
+         窗口下界再往前看 `--lookback-days` 天，到观察时刻为止，比窗口本身宽），
+         且这条提交本身不是该线自己的合并提交（标题里带 rever 的 PR 不算被回退）。
+         另一条线的合并提交若回退了这条线，算这条线被回退。
   分位     最近秩：p=0.5 取排序后第 ⌈0.5n⌉ 个，不做插值。
 
 窗口短（一周）时，「返工」只看得到窗口内的后续提交；报告里要写明观察截止时间。
@@ -100,9 +105,12 @@ def norm_path(p):
 
 def load_history(since):
     """默认分支上每条提交动了哪些文件，git log 顺序（**新的在前**）。只读 tree
-    不读 blob，在 blobless 克隆上不联网。调用方要记住这个顺序。"""
-    out = git("log", "--name-only", "--format=%x01%H%x02%cI%x02%s",
-              "--since=" + since, REF)
+    不读 blob，在 blobless 克隆上不联网。调用方要记住这个顺序。
+
+    `-m --first-parent`：真正的合并提交默认不输出任何文件，这样才取到它相对第一
+    父的改动。对普通提交和它们之间的顺序没有影响。"""
+    out = git("log", "--name-only", "-m", "--first-parent",
+              "--format=%x01%H%x02%cI%x02%s", "--since=" + since, REF)
     commits, cur = [], None
     for line in out.split("\n"):
         if line.startswith("\x01"):
@@ -116,10 +124,13 @@ def load_history(since):
 
 def load_numstat(shas):
     """只对点名的提交取行数。numstat 要读 blob，blobless 克隆会按需从远端拉，
-    所以这里只喂合并提交，不要对整段历史跑（那会按提交个数逐次联网）。"""
+    所以这里只喂合并提交，不要对整段历史跑（那会按提交个数逐次联网）。
+
+    `-m --first-parent` 同 `load_history`：合并提交要它才有行数。"""
     if not shas:
         return {}
-    out = git("log", "--no-walk", "--numstat", "--format=%x01%H", *shas)
+    out = git("log", "--no-walk", "--numstat", "-m", "--first-parent",
+              "--format=%x01%H", *shas)
     res, cur = {}, None
     for line in out.split("\n"):
         if line.startswith("\x01"):
@@ -212,7 +223,8 @@ def merge_commit(commits, pr_number):
 
 
 def summarize(rows, commits, present_at_head, lines):
-    """把每条线的合并提交翻成指标。认不出合并提交的线仍然计数，只记 0 个文件。"""
+    """把每条线的合并提交翻成指标。一个文件也没有的线不进结果：报告把它按
+    「合入认不出」和「认出来了但没有可计的文件」分开报数，不当作记 0 个文件。"""
     out = []
     for i, r in enumerate(rows):
         files = collections.defaultdict(lambda: [0, 0])  # path -> [add, del]
@@ -268,12 +280,17 @@ def rework(rows, commits):
     """线的文件在它自己第一次合入之后被别的提交改过。
 
     `commits` 是 git log 顺序，索引越小越新，所以「之后」是索引更小的一侧。
-    认不出首个合并提交的线不判返工。
+    认不出首个合并提交的线不判返工。「别的提交」= 不是**这条线自己**的合并提交；
+    另一条线的合并提交动了同一条线的文件，算这条线被返工。
+
+    回退同理：一条标题带 `Revert` 的提交提到该线的 PR 号就算，除非它就是该线
+    自己的合并提交（那种是这条线自己在做回退，不是被回退）。别的线的合并提交
+    回退了它，照样算。
     """
     pos = {c["sha"]: k for k, c in enumerate(commits)}
-    own = {s for r in rows for s in r["merge_shas"]}
     for r in rows:
         r["files_set"] = set()
+        r["own"] = set(r["merge_shas"])
         for s in r["merge_shas"]:
             if s in pos:
                 r["files_set"] |= set(commits[pos[s]]["files"])
@@ -282,11 +299,10 @@ def rework(rows, commits):
             if first in pos:
                 r["_base"] = pos[first]
     for k, c in enumerate(commits):
-        if c["sha"] in own:
-            continue
         for p in c["files"]:
             for r in rows:
-                if "_base" in r and k < r["_base"] and p in r["files_set"]:
+                if (c["sha"] not in r["own"] and "_base" in r
+                        and k < r["_base"] and p in r["files_set"]):
                     r["rework_files"].append(p)
     for r in rows:
         r["rework_files"] = sorted(set(r["rework_files"]))
@@ -295,12 +311,15 @@ def rework(rows, commits):
         r.pop("files_set", None)
         r.pop("_base", None)
     for c in commits:
-        # 这条提交自己就是某条线的合并提交时，标题里的 rever 是它的正文，不是回退。
-        if not REVERT_RE.search(c["subject"]) or c["sha"] in own:
+        if not REVERT_RE.search(c["subject"]):
             continue
         for r in rows:
+            if c["sha"] in r["own"]:
+                continue
             if any("(#%d)" % p in c["subject"] for p in r["prs"]):
                 r["reverted"] = True
+    for r in rows:
+        r.pop("own", None)
     return rows
 
 
@@ -331,8 +350,21 @@ def pct(values, p):
     return v[min(len(v) - 1, max(0, math.ceil(p * len(v)) - 1))]
 
 
+def drop_report(cohort, data, commits):
+    """上表之外的线：合入认不出的次数（unmatched）、一次都没认出的线数
+    （never_matched）、认出来了但没有可计文件的线数（no_files）。"""
+    matched = {r["task_id"]: sum(1 for p in r["prs"] if merge_commit(commits, p))
+               for r in cohort}
+    unmatched = sum(len(r["prs"]) - matched[r["task_id"]] for r in cohort)
+    never_matched = sum(1 for r in cohort if not matched[r["task_id"]])
+    no_files = len(cohort) - never_matched - len(data)
+    return unmatched, never_matched, no_files
+
+
 def render(rows, never, dropped, start, end, as_of, pairs):
-    """报告文本。每一句都从 rows 里算出来，不写死任何数字。"""
+    """报告文本。每一句都从 rows 里算出来，不写死任何数字。
+
+    `dropped` 是 `drop_report` 的三元组，只用来写表外那几种线。"""
     n = len(rows)
     files = [r["files"] for r in rows]
     net = [r["net"] for r in rows]
@@ -348,7 +380,8 @@ def render(rows, never, dropped, start, end, as_of, pairs):
     rev = [r for r in rows if r["reverted"]]
     tot_reg = sum(r["registry_files"] for r in rows)
     tot_files = sum(files) or 1
-    unmatched = sum(r["merges_declared"] - r["merges_matched"] for r in rows)
+    merged_twice = [r for r in rows if r["merges_matched"] >= 2]
+    unmatched, never_matched, no_files = dropped
     top_pairs = pairs.most_common(5) if isinstance(pairs, collections.Counter) else []
 
     def p(v):
@@ -359,9 +392,15 @@ def render(rows, never, dropped, start, end, as_of, pairs):
     L.append("")
     L.append("队列：窗口内第一次合入的 **%d 条线**，共 %d 次合并；同期有卡但从未合入的 "
              "%d 条。" % (n, sum(r["merges_matched"] for r in rows), never))
-    if unmatched or dropped:
-        L.append("其中 %d 次合入在默认分支上认不出对应提交，%d 条线一次合并都没认出"
-                 "（不计入上表，也不计入任何一项）。" % (unmatched, dropped))
+    if unmatched or never_matched or no_files:
+        bits = []
+        if unmatched:
+            bits.append("%d 次合入在默认分支上认不出对应提交" % unmatched)
+        if never_matched:
+            bits.append("%d 条线一次合并都没认出" % never_matched)
+        if no_files:
+            bits.append("%d 条线的合入认出来了但没有可计的文件" % no_files)
+        L.append("（%s。这些线不计入上表，也不计入任何一项。）" % "；".join(bits))
     L.append("口径见脚本头。窗口短，返工只看得到窗口内的后续提交。")
     L.append("")
     L.append("## 一次改动多大")
@@ -377,7 +416,8 @@ def render(rows, never, dropped, start, end, as_of, pairs):
     L.append("- 生成物与登记表（i18n、openapi、baseline、ratchet 这类每次都会被带着重算"
              "的文件）占全部改动文件的 **%d%%**（%d/%d）；改动文件一半以上是生成物的线 "
              "%d 条。" % (round(100 * tot_reg / tot_files), tot_reg, tot_files, len(reg_heavy)))
-    L.append("- 只有 1 次合并的线 %d 条，≥2 次的 %d 条。" % (n - len(multi), len(multi)))
+    L.append("- 只有 1 次合并的线 %d 条，≥2 次的 %d 条。"
+             % (n - len(merged_twice), len(merged_twice)))
     L.append("")
     L.append("## 打在该解决的问题上了吗")
     L.append("")
@@ -402,7 +442,7 @@ def render(rows, never, dropped, start, end, as_of, pairs):
              "%d 条线、共 %d 个文件。" % (len(rew), sum(r["rework"] for r in rew)))
     if rew_reg:
         L.append("- 只看生成物被再改：%d 条线（几乎每条线都在重算同一批登记表）。" % len(rew_reg))
-    L.append("- 窗口内有回退提交指向的线：%d 条。" % len(rev))
+    L.append("- 读到的历史里有回退提交指向的线：%d 条。" % len(rev))
     L.append("")
     L.append("## 同一片文件上的线")
     L.append("")
@@ -425,11 +465,13 @@ def _fixture():
         {"task_id": "D", "pr_number": 5, "pr_merged_at": None},          # 从未合入
         {"task_id": "E", "pr_number": 6, "pr_merged_at": "2026-10-20T00:00:00Z"},  # 窗口之后
         {"task_id": "F", "pr_number": 8, "pr_merged_at": "2026-10-08T06:00:00Z"},
+        {"task_id": "J", "pr_number": 21, "pr_merged_at": "2026-10-15T00:00:00Z"},  # 恰好在上界
     ]
     tasks = [{"id": "A", "number": 10, "title": "a", "status": "closed"},
              {"id": "B", "number": 11, "title": "b", "status": "closed"},
              {"id": "E", "number": 12, "title": "e", "status": "closed"},
-             {"id": "F", "number": 13, "title": "f", "status": "closed"}]
+             {"id": "F", "number": 13, "title": "f", "status": "closed"},
+             {"id": "J", "number": 14, "title": "j", "status": "closed"}]
     commits = [   # 索引越小越新
         {"sha": "s10", "date": None, "subject": 'Revert "feat: x (#1)"',
          "files": {"frontend/a.ts": (0, 10)}},
@@ -456,11 +498,13 @@ def self_test():
     rows, never = build_cohort(cards, tasks,
                                datetime(2026, 10, 7, tzinfo=timezone.utc),
                                datetime(2026, 10, 15, tzinfo=timezone.utc))
-    # 窗口两端都要咬：10-01 的 C 和 10-20 的 E 都不进队列；D 没合入过。
+    # 窗口两端都要咬：10-01 的 C、10-20 的 E、以及**恰好落在上界**的 J 都不进队列；
+    # D 没合入过。
     assert [r["number"] for r in rows] == [10, 13, 11], rows
     assert never == 1, never
 
     assert merge_commit(commits, 1)["sha"] == "s1"     # 不是正文里带 (#1) 的 s10
+    assert merge_commit(commits, 7)["sha"] == "s7"     # 非 squash 的 `Merge pull request #7 …`
     assert merge_commit(commits, 99) is None
 
     assert kind_of("frontend/a.spec.ts") == "测试"
@@ -480,7 +524,6 @@ def self_test():
     lines = {c["sha"]: c["files"] for c in commits}
     present = {"frontend/a.ts", "backend/b.py", "other/c.py"}
     out = summarize(rows, commits, present, lines)
-    dropped = len(rows) - len(out)
     a = [r for r in out if r["task_id"] == "A"][0]
     assert a["files"] == 2 and a["net"] == 12, a
     assert a["kinds"] == {"代码": 2}, a["kinds"]          # 按文件去重，不是按提交次数
@@ -493,20 +536,51 @@ def self_test():
 
     out = rework(out, commits)
     a = [r for r in out if r["task_id"] == "A"][0]
-    # 合入之后被动过的只有 frontend/a.ts（s9、s10）；更早的 s0 动 backend/b.py 不算。
+    # 合入之后被动过的只有 frontend/a.ts（s3、s9、s10）；更早的 s0 动 backend/b.py 不算。
     assert a["rework_files"] == ["frontend/a.ts"], a["rework_files"]
     assert a["rework"] == 1, a
     assert a["reverted"] is True, a
     f = [r for r in out if r["task_id"] == "F"][0]
     assert f["reverted"] is False, f     # 自己的标题里有 revert，不是被回退
 
+    # 返工和回退都只排除**这条线自己**的合并提交，不排除别的线的（口径第 31–35 行）。
+    # n1 提到 (#9) 但不是 revert；r1 是线 M 的合并提交，回退了线 L 的 #1；m1 是线 L
+    # 自己的合入。行 L 应当被 r1 返工、被 r1 回退；行 M 两样都不算。
+    cross = [
+        {"sha": "n1", "date": None, "subject": "chore: mention (#9) again",
+         "files": {"frontend/y.ts": (1, 0)}},
+        {"sha": "r1", "date": None, "subject": 'Revert "feat: y (#1)" (#9)',
+         "files": {"frontend/x.ts": (0, 5)}},
+        {"sha": "m1", "date": None, "subject": "feat: mine (#1)",
+         "files": {"frontend/x.ts": (5, 0)}},
+    ]
+
+    def _row(tid, number, prs, shas):
+        return {"task_id": tid, "number": number, "prs": prs, "merge_shas": shas,
+                "rework_files": [], "reverted": False}
+
+    l_row, m_row = _row("L", 20, [1], ["m1"]), _row("M", 21, [9], ["r1"])
+    test = rework([l_row, m_row], cross)
+    assert test[0]["rework_files"] == ["frontend/x.ts"], test[0]
+    assert test[0]["reverted"] is True, test[0]
+    assert test[1]["rework_files"] == [], test[1]
+    assert test[1]["reverted"] is False, test[1]
+
+    # kinds 按文件去重：线 I 的两次合并都动 frontend/a.ts，只算一个代码文件。
+    i_line = summarize([{"task_id": "I", "number": 92, "title": "i", "owner": None,
+                         "agent": None, "status": "closed",
+                         "first_merged": "2026-10-08T00:00:00+00:00",
+                         "prs": [1, 3]}], commits, present, lines)[0]
+    assert i_line["files"] == 1 and i_line["kinds"] == {"代码": 1}, i_line
+
     shared, pairs = overlap(out)
     assert shared == {"frontend/a.ts": ["A", "B"]}, shared   # A 与 B 撞同一个文件
     assert pairs == {(10, 11): 1}, pairs
 
-    # 首个合并提交认不出来时不判外扩；一次都认不出来时仍旧计数，只是没有文件。
-    def _line(prs):
-        return [{"task_id": "G", "number": 90, "title": "g", "owner": None, "agent": None,
+    # 首个合并提交认不出来时不判外扩；一次都认不出来的线不进结果，由 drop_report
+    # 单独报数。
+    def _line(prs, tid="G"):
+        return [{"task_id": tid, "number": 90, "title": "g", "owner": None, "agent": None,
                  "status": "closed", "first_merged": "2026-10-08T00:00:00+00:00", "prs": prs}]
 
     g = summarize(_line([99, 3]), commits, present, lines)[0]
@@ -518,10 +592,20 @@ def self_test():
     a = [r for r in out if r["task_id"] == "A"][0]
     assert a["gone_files"] == ["backend/b.py"], a
 
-    md = render(out, never, dropped, "2026-10-07", "2026-10-15", "2026-10-15 00:00 UTC",
-                pairs)
-    assert "队列：窗口内第一次合入的 **%d 条线**" % len(out) in md, md
+    # drop_report：G 的 #99 和 H 的 #98 认不出（2 次），H 一次都没认出来（1 条线），
+    # 没有「认出来了但没有可计文件」的线。
+    two = rows + _line([99, 3], "G") + _line([98], "H")
+    two_out = summarize(two, commits, present, lines)
+    dropped = drop_report(two, two_out, commits)
+    assert dropped == (2, 1, 0), dropped
+
+    md = render(two_out, never, dropped, "2026-10-07", "2026-10-15",
+                "2026-10-15 00:00 UTC", pairs)
+    assert "队列：窗口内第一次合入的 **%d 条线**" % len(two_out) in md, md
     assert "生成物与登记表" in md and "返工" in md
+    # 表外那句不能自相矛盾：说得出「N 条线一次合并都没认出」，就得说得出是几次。
+    assert "2 次合入在默认分支上认不出对应提交" in md, md
+    assert "1 条线一次合并都没认出" in md, md
     print("self-test ok")
 
 
@@ -565,10 +649,13 @@ def main(argv):
     data = rework(data, commits)
     shared, pairs = overlap(data)
     as_of = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    md = render(data, never, len(cohort) - len(data), start, end, as_of, pairs)
+    dropped = drop_report(cohort, data, commits)
+    md = render(data, never, dropped, start, end, as_of, pairs)
     if opts["--json"]:
         json.dump({"cohort": data, "never_merged": never,
-                   "unresolved_lines": len(cohort) - len(data),
+                   "unmatched_merges": dropped[0],
+                   "never_matched_lines": dropped[1],
+                   "no_files_lines": dropped[2],
                    "overlap_pairs": {"%s-%s" % k: v for k, v in pairs.items()},
                    "window": [start, end], "ref": REF, "as_of": as_of},
                   open(opts["--json"], "w"), ensure_ascii=False, indent=1)
