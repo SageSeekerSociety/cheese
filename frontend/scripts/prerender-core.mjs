@@ -191,3 +191,21 @@ export function withBootPreload(template, script) {
   if (!template.includes(marker)) throw new Error('prerender: index.html 里找不到定落点的启动脚本')
   return template.replace(marker, `${marker}    ${script}\n`)
 }
+
+/**
+ * 异步加载的样式表前面各补一条高优先级的预加载。beasties 的 `media` 写法把它们挂成
+ * `<link rel="stylesheet" media="print" onload="this.media='all'">`：一直是样式表，
+ * Vite 给后来加载的代码块补样式时认得出它们已经在页头里（它只认 rel 是 stylesheet 的
+ * link），不会再挂一份到最后——挂到最后的那份 Vuetify 会压过页面自己写的同级覆盖，首页
+ * 就是这样滚不动的。可打印样式表浏览器排在最后下，前面这条预加载把它提回样式表的优先级，
+ * 两条是同一次下载。`crossorigin` 跟着样式表那条：两边不一样，浏览器会各下一遍。
+ */
+export function withStylePreloads(html) {
+  return html.replace(/<link\b[^>]*>/g, (tag) => {
+    if (!/\brel="stylesheet"/.test(tag) || !/\bmedia="print"/.test(tag) || !/\bonload=/.test(tag)) return tag
+    const href = tag.match(/\bhref="([^"]+)"/)?.[1]
+    if (!href) return tag
+    const cors = tag.match(/\bcrossorigin(="[^"]*")?/)?.[0]
+    return `<link rel="preload" as="style" href="${href}"${cors ? ` ${cors}` : ''}>${tag}`
+  })
+}

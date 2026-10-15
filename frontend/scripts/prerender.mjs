@@ -9,7 +9,8 @@
 //   3. 每份 HTML 里写上按落点预加载第一页代码块的那段脚本（prerender-core.mjs 的 BOOT_ROUTES）。
 //   4. beasties 把每份 HTML（连同 dist/index.html）首屏用到的样式内联进去，其余样式表改成
 //      不挡首次绘制的异步加载——以前 <head> 里那十几张样式表要全部下完，浏览器才肯画第一帧，
-//      慢网下前三秒是白屏。挂载前等样式表到齐的那一步在 main.ts。
+//      慢网下前三秒是白屏。挂载前等样式表到齐的那一步在 main.ts。异步的写法见
+//      prerender-core.mjs 的 withStylePreloads。
 //
 // 哪一步失败都让构建失败：发出去一份半截的页面，比不预渲染更糟。
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
@@ -29,6 +30,7 @@ import {
   PAGES,
   stripThemeClass,
   withBootPreload,
+  withStylePreloads,
 } from './prerender-core.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -52,10 +54,9 @@ const themeCss = dualThemeCss(server.themeStyles('light'), server.themeStyles('d
 const beasties = new Beasties({
   path: dist,
   publicPath: '/',
-  // 改写成 <link rel="preload" as="style">，下完再换成样式表：不挡首次绘制，也照样按
-  // 样式表的高优先级去下。media="print" 那种写法会被浏览器排到最后，应用挂载要等它们，
-  // 慢网下登录后的那一页因此晚出来半秒多。
-  preload: 'swap',
+  // 先按打印样式挂上、下完换成 all：不挡首次绘制，又一直是样式表（为什么必须是，见
+  // withStylePreloads）。浏览器把它们排在最后下，withStylePreloads 再补一条预加载提回来。
+  preload: 'media',
   // 字体由 index.html 里那条 preload 管（vite.config.ts 的 mdiFont）。
   inlineFonts: false,
   preloadFonts: false,
@@ -77,13 +78,13 @@ for (const page of PAGES) {
   const assembled = assemblePage(template, { url: page.url, html: stripThemeClass(html), title, css, js, themeCss })
   const target = join(dist, page.file)
   await mkdir(dirname(target), { recursive: true })
-  await writeFile(target, await beasties.process(assembled))
+  await writeFile(target, withStylePreloads(await beasties.process(assembled)))
   written.push(page.file)
 }
 
 // 应用本体那一份（所有没预渲染的地址都落到它上面）：首屏只有启动骨架，内联的就是骨架
 // 和 <html>/<body> 用到的那几条，其余样式表一样改成异步。
-await writeFile(join(dist, 'index.html'), await beasties.process(template))
+await writeFile(join(dist, 'index.html'), withStylePreloads(await beasties.process(template)))
 
 // 两份清单只在构建期用，不随镜像发出去；Node 那份包同理。
 await rm(join(dist, '.vite'), { recursive: true, force: true })
