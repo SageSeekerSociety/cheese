@@ -561,11 +561,12 @@ class Lease:
     - **Not re-entrant by itself.** A task taking the same seat twice waits
       for itself. ``seat_admission`` is what a turn's nested admission goes
       through, and its ``ContextVar`` is what makes that yield instead.
-    - **No order between waiters.** The hold is a ``SET NX PX`` and a waiter
-      looks again every ``POLL_S``: whoever gets there first wins, where an
-      ``asyncio.Lock`` hands itself to the waiter that has been waiting
-      longest. Seat admission never promised first come first served — do not
-      read fairness into this.
+    - **No order between processes.** The hold is a ``SET NX PX`` and a waiter
+      looks again every ``POLL_S``: whoever gets there first wins. Inside one
+      process the lock underneath still hands the seat to the waiter that has
+      been waiting longest, as a bare ``asyncio.Lock`` did; it is only the
+      waiting between processes, which never happened before this change, that
+      comes without an order.
     - **A holder that dies without releasing is waited out.** A cancelled turn
       lets the seat go at once, as before, but a process killed outright keeps
       it until the hold runs out, ``LEASE_S`` (30 s). Only the crash path

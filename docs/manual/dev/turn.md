@@ -153,7 +153,7 @@ steps:
 租约和 `asyncio.Lock` 有三处不同，都写在 `admission.Lease` 的注释里：
 
 - **可重入靠 `seat_admission` 的 `ContextVar`**：同一个任务嵌套取同一个座位不自锁；租约本身取第二次会等自己。
-- **没有先来后到**：租约是 `SET NX PX`，等的人每 `POLL_S` 重试一次，谁先抢到谁上。座位准入从前也不保证顺序；要排队得换 `admission.Pool`。
+- **跨进程没有先来后到**：Valkey 那条钥匙是 `SET NX PX`，等的人每 `POLL_S` 重试一次，谁先抢到谁上。进程内还是先来后到——下面那把 `asyncio.Lock` 按等待最久的叫醒，和从前一样；要连跨进程也排队得换 `admission.Pool`。
 - **持有者进程被 `kill -9` 后座位要等 `LEASE_S`（30 s）**：正常放手和任务被取消都是立刻放，差别只在这条崩溃路径上。
 
 ### 队友之间点名 {#seats-mention}
