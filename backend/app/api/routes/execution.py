@@ -186,7 +186,7 @@ async def execute(
         "control",
     }:
         raise ForbiddenError("This executor operation is not available to the session")
-    # A session whose work is not kept (a 支线, a task not yet started) does
+    # A session whose work is not kept (a 支线) does
     # anything on a machine that is its own (`session_work`, ``own``) except
     # carry the work off it. On one it shares — a person's whole machine, a
     # Windows machine, a whole cloud VM — what it changed would stay among
@@ -195,7 +195,7 @@ async def execute(
     #
     # ``scratch`` is what the place said when the credential was signed, and a
     # session that is working keeps that credential until it goes quiet
-    # (`screen_identity`, ``CHEESE_KEEPS_NOTHING``): a task its owner starts
+    # (`screen_identity`, ``CHEESE_KEEPS_NOTHING``): a 支线 that becomes a task
     # mid-turn goes on presenting one that says its work is not kept, and on a
     # machine it shares it would only be allowed to read. So ask the place now,
     # the question the forge token already asks (`session_keeps_work`) — which

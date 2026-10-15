@@ -25,7 +25,7 @@ class TaskLine:
 
     number: int | None
     title: str
-    #: Where it stands: 未开始, 已开始, 已结束.
+    #: Where it stands: 进行中, 已结束.
     state: str
 
 

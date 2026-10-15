@@ -186,9 +186,6 @@ async def task_workspace(
     task = await _task_for(db, project_id, task_id, x_cheese_token)
     if task.branch_name is None:
         raise NotFoundError(say("workTaskNotInProject"))
-    # The project changes only once the task's owner started it.
-    if task.started_at is None:
-        raise ValidationError(say("taskNotStarted"))
     binding = await binding_for_project(project_id, db)
     if binding is None:
         raise NotFoundError(say("projectHasNoRepo"))

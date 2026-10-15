@@ -32,6 +32,7 @@ import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 
@@ -149,11 +150,12 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
     tone: 'running',
     accepted: null,
     at: new Date(Date.now() - 5 * 60_000).toISOString(),
+    latest: null,
     ...over,
   }
 }
 
-/** 任务页页头那一格：一件还没开始的任务，一位 AI 队友，它的会话在标准沙箱里。 */
+/** 任务页页头那一格：一件在做的任务，一位 AI 队友，它的会话在标准沙箱里。 */
 const TASK_HEADER_PROPS = {
   room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
   task: {
@@ -164,10 +166,9 @@ const TASK_HEADER_PROPS = {
     title_source: 'human',
     status: 'open',
     owner_handle: 'alice',
-    started_at: null,
     created_at: '2026-10-05T00:00:00Z',
     updated_at: '2026-10-05T00:00:00Z',
-    presentation: { column: 'not_started', phrase: 'discussing' },
+    presentation: { column: 'building', phrase: 'started' },
   },
   memberNames: { 'cheese-topica': AGENT_NAME },
   agentName: AGENT_NAME,
@@ -190,10 +191,7 @@ const TASK_HEADER_PROPS = {
     ],
   },
   machineError: false,
-  starting: false,
-  startError: null,
   actionError: null,
-  start: async () => {},
   close: async () => true,
   reopen: async () => true,
   handOver: async () => true,
@@ -216,8 +214,8 @@ const TASK_ENTRIES: CatalogEntry[] = [
     needs: UI_T,
     states: [
       {
-        name: '还没开始',
-        note: '一件刚建好的任务：标题在左，状态写着在讨论；数据都从 props 来，开始、改环境这些动作交给上面。',
+        name: '在做',
+        note: '一件在做的任务：标题在左，状态在后面；数据都从 props 来，转交、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
       },
@@ -282,6 +280,58 @@ const TASK_ENTRIES: CatalogEntry[] = [
           ownerName: AGENT_NAME,
         },
         expect: '已采纳 2 次',
+      },
+      {
+        name: '单独成块',
+        note: '单独成块时多一行：任务里最后说的一句，说它此刻在做什么。负责人带头像。',
+        props: {
+          task: taskLine({
+            latest: '发送验证码的接口写好了，正在写校验那一个',
+            status: '芝士在做',
+          }),
+          ownerName: '王一鸣',
+          ownerAvatar: '',
+        },
+        expect: '正在写校验那一个',
+      },
+      {
+        name: '支线顶上',
+        note: '支线转成任务后，画在支线那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的支线那几行里。',
+        props: {
+          task: taskLine({ latest: '这一句不画', status: '芝士在做' }),
+          ownerName: '王一鸣',
+          head: true,
+        },
+        expect: '王一鸣',
+      },
+    ],
+  },
+  {
+    id: 'room-thread-root',
+    title: 'ThreadRoot',
+    about: '一条支线挂着的那条主线消息，画在这段对话最上面：支线的右半边和支线转成的任务页开头都是它。',
+    file: 'src/components/room/ThreadRoot.vue',
+    component: ThreadRoot,
+    needs: UI_T,
+    states: [
+      {
+        name: '一条人说的话',
+        note: '署名、时间、正文；长了收起，点「展开」看全。',
+        props: {
+          root: {
+            id: 'b-root',
+            conversation_id: 'demo-room',
+            kind: 'message',
+            author_type: 'participant',
+            author: 'wangyiming',
+            content: '登录要不要加手机验证码？老师上次好像提过',
+            created_at: '2026-10-15T02:15:00Z',
+          },
+          name: '王一鸣',
+          avatar: '',
+          refs: { mentionNames: {}, topicTitles: {} },
+        },
+        expect: '登录要不要加手机验证码',
       },
     ],
   },

@@ -42,7 +42,7 @@ class LinkedTask:
     title: str
     room_id: uuid.UUID
 
-    #: 未开始, 已开始 or 已结束: what the task row itself says.
+    #: 进行中 or 已结束: what the task row itself says.
     state: str
 
     def line(self) -> TaskLine:
@@ -50,9 +50,7 @@ class LinkedTask:
 
 
 def task_state(task: Task) -> str:
-    if task.status != TaskStatus.open:
-        return "已结束"
-    return "已开始" if task.started_at is not None else "未开始"
+    return "进行中" if task.status == TaskStatus.open else "已结束"
 
 
 async def linked_tasks(

@@ -1,5 +1,5 @@
-"""Where a new task's first instruction is: drafting its document from where
-the task came from.
+"""Where a new task's first instruction is: the turn that sets to work from
+where the task came from, writing the task's document as it goes.
 
 Nothing new is stored for it. The instruction is a delivery like any other,
 marked with what it is for (``purpose``), and the turn it started is an agent
@@ -8,7 +8,7 @@ should be told while its document is still empty.
 
 Pages showing the task hear when the instruction moves on its ledger — waits to
 try again, gives up — through the task's own live path (`room_task.live`), so
-an open overview does not keep saying 正在整理 after it failed.
+an open overview does not keep saying 正在做 after it failed.
 """
 
 from __future__ import annotations

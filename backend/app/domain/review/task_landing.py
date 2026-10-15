@@ -329,7 +329,8 @@ async def tell_origin(
     opening it if nobody has replied there yet. It is said by the task's AI
     teammate, as a reply: whoever took part in the discussion hears it, and the
     line under the message shows it. A task made on its own, or from something
-    that is not a message in a live channel, has nowhere to say it.
+    that is not a message in a live channel, has nowhere to say it; nor does a
+    task that is that 支线, turned into the task in place.
 
     Best effort: what landed has landed, and a line that cannot be said must
     not take the task's own state back with it."""
@@ -371,6 +372,10 @@ async def _tell_origin(
     thread = await open_thread(
         session, origin.id, by=task.owner_handle or origin.author
     )
+    if thread.id == task.id:
+        # The 支线 became this task: the discussion is the task's own
+        # conversation, which the landing already speaks in.
+        return
     said = Block(
         id=uuid.uuid4(),
         project_id=task.project_id,

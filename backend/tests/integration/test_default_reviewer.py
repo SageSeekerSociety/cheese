@@ -5,11 +5,11 @@
 或没人可指）时才是它。
 
 Who resolves it, and when, is the load-bearing decision: the reviewer is written
-onto the TASK when it is started, not read out of the project setting when the
+onto the TASK when it is made, not read out of the project setting when the
 card is filed. A setting is a policy that can change; who a piece of work was
 handed to is a fact about the moment it was handed over.
 
-These go through the real doors — `POST /topics/{task}/start` and
+These go through the real doors — `POST /topics/{room}/tasks` and
 `POST /topics/{task}/accept-card` — and read the answer off the card, because
 the interesting part is precisely that a value travels from one door to the
 other.
@@ -25,7 +25,6 @@ from tests.integration.conftest import (
     open_task,
     post_project,
     session_auth_headers,
-    teammate_task,
 )
 from tests.machine_work import declare_task, machine_commits
 
@@ -63,24 +62,10 @@ def _room(client, pid: str) -> str:
 
 
 def _started(client, room: str, title: str, *, owner: str = "alice") -> dict:
-    """``owner`` makes a task: making it starts it, and what it delivers comes
-    back to them."""
+    """``owner`` makes a task, and what it delivers comes back to them."""
     task = open_task(client, room, title, owner=owner)
     wait_work_idle()
     return task
-
-
-def _start_naming(client, room: str, title: str, reviewer: str) -> dict:
-    """芝士自己想的活停在讨论中，负责人开始它时点名由谁验收。"""
-    task = teammate_task(client, room, title)
-    wait_work_idle()
-    r = client.post(
-        f"/topics/{task['id']}/start",
-        json={"reviewer_handle": reviewer},
-        headers=session_auth_headers(task["owner_handle"]),
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]
 
 
 def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
@@ -97,7 +82,7 @@ def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
     return client.post(f"/topics/{task_id}/accept-card", json=body)
 
 
-# --- 开始 -----------------------------------------------------------------
+# --- 建任务 -----------------------------------------------------------------
 
 
 def test_the_person_who_asked_for_the_work_reviews_it(client):
@@ -111,21 +96,10 @@ def test_the_person_who_asked_for_the_work_reviews_it(client):
     assert task["reviewer_handle"] == "alice"
 
 
-def test_naming_a_reviewer_when_starting_beats_the_project_default(client):
-    """开始的时候点了名就听点名的，设置仍然排在后面。"""
-    pid = _project(client)
-    _default_reviewer(client, pid, "bob")
-    room = _room(client, pid)
-
-    task = _start_naming(client, room, "这条给别人验", "carol")
-
-    assert task["reviewer_handle"] == "carol"
+# --- 建任务 → 递卡（端到端） -------------------------------------------------
 
 
-# --- 开始 → 递卡（端到端） -------------------------------------------------
-
-
-def test_the_card_goes_to_whoever_the_task_was_started_with(client):
+def test_the_card_goes_to_whoever_the_task_was_made_with(client):
     pid = _project(client)
     _default_reviewer(client, pid, "bob")
     room = _room(client, pid)
@@ -159,19 +133,19 @@ def test_naming_a_reviewer_on_the_card_beats_the_one_the_work_carries(client):
 
 
 def test_the_card_keeps_the_reviewer_the_work_got_when_the_setting_changes(client):
-    """设置在开始和交付之间改了，这批活还是交给当初接下它的人。
+    """设置在建任务和交付之间改了，这批活还是交给当初接下它的人。
 
-    重新读设置的话，一批在旧策略下开始的活会被悄悄改判给另一个人，而卡面上
+    重新读设置的话，一批在旧策略下建的活会被悄悄改判给另一个人，而卡面上
     看不出发生过这件事。"""
     pid = _project(client)
     _default_reviewer(client, pid, "bob")
     room = _room(client, pid)
-    task = _start_naming(client, room, "一条活", "dave")
+    task = _started(client, room, "一条活")
     _default_reviewer(client, pid, "erin")
 
     r = _file(client, pid, room, task["id"], "feat(x): deliver it")
 
-    assert r.json()["data"]["reviewer_handle"] == "dave"
+    assert r.json()["data"]["reviewer_handle"] == "alice"
 
 
 def test_independent_tasks_keep_their_different_reviewers(client):

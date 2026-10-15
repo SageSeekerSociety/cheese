@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, Topic } from '@/cx_types'
+import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
 import type { OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
@@ -8,6 +8,9 @@ import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, onMounted, ref, toRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
+
+import { getAvatarUrl } from '@/utils/materials'
 
 import { useSkillProposals } from './useSkillProposals'
 
@@ -15,16 +18,24 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
+import TaskCard from '@/components/room/TaskCard.vue'
+import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import { t } from '@/i18n'
+import { taskLine } from '@/lib/channelTasks'
 import { topicTitle } from '@/lib/topicState'
+import { myHandle } from '@/me'
+import { queryClient } from '@/query/client'
+import { roomTaskQuery, roomTasksQuery, threadQuery } from '@/query/room'
+import { currentUserName } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-// 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
+// 一段对话：时间线 + 输入框 + 贴在输入框上的采纳框 + 输入框旁边的 chips。
 //
-// 它是一个组件而不是 TopicView 模板里的一段，只因为它要挂在两个地方：桌面上是
-// 左边那一栏，手机上是工作面板 tab 栏里「对话」那一格的内容（一屏放不下两栏）。
-// 同一份接线写两遍是这两处早晚长歪的原因，所以它只写一遍。
+// 它是一个组件而不是 TopicView 模板里的一段，因为同一段对话要挂在好几个地方：频道
+// 主线和任务页左边那一栏、手机上工作面板「对话」那一格，以及频道页右半边打开的支线
+// 和任务（`beside`，外面套 ThreadPane 的页头）。同一份接线写两遍是这几处早晚长歪的
+// 原因：谁说话叫醒 AI 队友、输入框写什么、任务等审阅时那一条，都只在这里定。
 defineOptions({ name: 'TopicChatColumn' })
 
 const props = defineProps<{
@@ -39,9 +50,16 @@ const props = defineProps<{
   /** 这一栏是房间里一个任务的对话：每句话都说给做它的 AI 队友，采纳卡是这个任务的，
    *  房间才有的提议卡（技能、任务、反馈）不在这里。 */
   taskId?: string | null
-  /** 这件事单独指定了队友时，那位的 handle（任务信息卡那行「AI 队友」挑的）。
-   *  发送框那个 @ 跟着它走，而不是跟着房间名册上那位。 */
+  /** 这一栏是一条还没转成任务的支线。 */
+  threadId?: string | null
+  /** 开在频道页右半边（手机上是一整页）：对话最上面是它挂着的那条消息、从那条消息
+   *  另开的任务和回复条数；不在任务页上时才有。 */
+  beside?: boolean
+  /** 发送框那个 @ 给谁：任务单独指定的队友，或支线里一直在答的那位。不给就是房间
+   *  名册上那位。 */
   taskAgentHandle?: string | null
+  /** 这个房间名册上每个 handle 叫什么。 */
+  memberNames?: Record<string, string>
   /** 这里此刻不能说话的原因，见 ChatPanel。 */
   composerClosed?: string | null
   /** 这里的提问已经不再等回答，见 ChatPanel。 */
@@ -82,6 +100,8 @@ const emit = defineEmits<{
   (e: 'open-thread', block: Block): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
+  // AI 队友一条回复上的「查看过程」：右半边换成那一轮的现场。
+  (e: 'open-process', turnId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
   (e: 'phase', phase: CardPhase): void
   // 采纳框上的「去看改动」：面板换到 改动 那一格。
@@ -100,7 +120,7 @@ const rejecting = ref(false)
 const router = useRouter()
 // 卡片属于提出它的那段对话：在任务里就是这个任务，否则是房间本身。三种卡都按它
 // 取、按它决定 —— 任务里提的卡落在任务里，按房间去取就一张也看不到。
-const conversationId = computed(() => props.taskId ?? props.topic.id)
+const conversationId = computed(() => props.taskId ?? props.threadId ?? props.topic.id)
 // 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换对话就重读。
 const skills = useSkillProposals(
   toRef(() => props.topic.project_id),
@@ -117,6 +137,72 @@ function openSkill(skill: { id: string }) {
 }
 
 const store = useWorkspaceStore()
+
+// 这一栏是任务时，那件任务（任务页、右半边页头读的是同一份）。
+const taskRead = useQuery(
+  computed(() => ({ ...roomTaskQuery(props.taskId ?? ''), enabled: !!props.taskId })),
+  queryClient
+)
+const task = computed<RoomTask | null>(() => (props.taskId ? taskRead.data.value ?? null : null))
+const viewer = computed(() => currentUserName.value ?? myHandle())
+const closed = computed(() => task.value?.status === 'closed')
+// 负责人和协作者在开着的任务里说的话就是说给 AI 队友的，不用 @；别人说的话它当参考，
+// 要它回答就 @ 它。任务关了，和支线一样，@ 了才答。
+const alwaysSummon = computed(
+  () =>
+    !!task.value &&
+    !closed.value &&
+    (task.value.owner_handle === viewer.value || (task.value.contributor_handles ?? []).includes(viewer.value))
+)
+const hint = computed(() => {
+  if (closed.value) return t('work.task.closedHint')
+  return props.beside && task.value ? t('work.room.thread.taskPlaceholder') : null
+})
+
+// 它挂着的那条主线消息：右半边打开的支线和任务都有；任务页上只有支线原地转成的那件
+// 有，前面写它来自哪个频道（另开的任务，来源在「概览」顶上那一行）。
+const fromThread = computed(() => !!task.value?.from_thread)
+const threadRead = useQuery(
+  computed(() => {
+    const id = props.beside || fromThread.value ? props.taskId ?? props.threadId ?? '' : ''
+    return { ...threadQuery(id), enabled: !!id }
+  }),
+  queryClient
+)
+const thread = computed(() => threadRead.data.value ?? null)
+const root = computed<Block | null>(() => (props.beside || fromThread.value ? thread.value?.root ?? null : null))
+// 从那条消息本身另开的任务，列在它下面；从支线里某句回复拆出去的，挂在那句下面
+// （ChatPanel）；这段对话自己转成的那件写在页头，不再列一遍。
+const madeRead = useQuery(
+  computed(() => {
+    const rootId = props.beside ? root.value?.id : undefined
+    return { ...roomTasksQuery(props.topic.id, { limit: 0, blocks: rootId ? [rootId] : [] }), enabled: !!rootId }
+  }),
+  queryClient
+)
+const madeHere = computed(() => {
+  const id = root.value?.id
+  return (madeRead.data.value?.data ?? [])
+    .filter(
+      (made) =>
+        made.upgraded_from_block_id === id &&
+        made.id !== conversationId.value &&
+        (!made.source_block_id || made.source_block_id === id)
+    )
+    .map((made) => taskLine(made, viewer.value, nameOf))
+})
+// The message it hangs under: each `<@handle>` in it told its person, drawn as the @chip.
+const refs = computed(() => ({
+  mentionNames: props.memberNames ?? {},
+  topicTitles: {} as Record<string, string>,
+  notified: true,
+}))
+function nameOf(handle: string): string {
+  return props.memberNames?.[handle] || handle
+}
+function avatarOf(handle: string): string {
+  return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
+}
 
 // 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。
 const joining = ref(false)
@@ -148,11 +234,13 @@ defineExpose({
     <ChatPanel
       ref="chatRef"
       :topic="topic"
-      :conversation-id="taskId"
+      :conversation-id="taskId ?? threadId ?? null"
       :agent-handle="taskAgentHandle ?? null"
       :composer-closed="composerClosed"
+      :hint="hint"
       :ask-closed="askClosed"
-      :always-summon="!!taskId"
+      :always-summon="alwaysSummon"
+      :in-thread="beside"
       hide-header
       :show-composer="!rejecting"
       :members="members"
@@ -177,12 +265,13 @@ defineExpose({
       @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"
+      @open-process="emit('open-process', $event)"
     >
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
            见，但平时只占一行，不把对话挤到只剩几行。 -->
       <template #above-composer>
         <TopicAcceptCard
-          v-if="!acceptElsewhere"
+          v-if="!acceptElsewhere && !threadId"
           class="chat-dock"
           :topic-id="topic.id"
           :task-id="taskId ?? undefined"
@@ -192,6 +281,40 @@ defineExpose({
           @review="emit('review')"
           @rejecting="rejecting = $event"
         />
+      </template>
+      <!-- 它挂着的那条消息交给对话的滚动区：跟着回复一起滚，而不是钉在顶上。钉着的话，
+           长消息一展开就把回复挤没、把正文末尾那颗「收起」顶到看不见的地方。 -->
+      <template v-if="beside || root" #timeline-start>
+        <template v-if="beside">
+          <ThreadRoot
+            v-if="root"
+            :root="root"
+            :name="nameOf(root.author)"
+            :avatar="avatarOf(root.author)"
+            :refs="refs"
+          />
+          <div v-if="madeHere.length" class="made-here">
+            <TaskCard
+              v-for="made in madeHere"
+              :key="made.id"
+              :task="made"
+              :owner-name="made.owner ? nameOf(made.owner) : null"
+              in-list
+              @open="emit('open-card', $event)"
+            />
+          </div>
+          <div v-if="thread && root" class="replies-rule t-meta">
+            <span>{{ t('work.room.thread.replies', { count: thread.reply_count }) }}</span>
+            <span class="replies-rule__line" />
+          </div>
+        </template>
+        <template v-else-if="root">
+          <button type="button" class="from-room t-meta" @click="emit('open-room')">
+            {{ t('work.task.fromRoom', { room: topicTitle(topic) }) }}
+          </button>
+          <ThreadRoot :root="root" :name="nameOf(root.author)" :avatar="avatarOf(root.author)" :refs="refs" />
+          <div class="from-room__rule" aria-hidden="true" />
+        </template>
       </template>
       <template #timeline-end>
         <!-- Agent 反馈卡：「这一轮结束时，平台要人做的一个决定」，接在这一轮的
@@ -217,11 +340,8 @@ defineExpose({
          （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占
          位置：队友进了成员名册（它本来就是这个房间的成员），工作电脑在话题头的 ⋯ 里。 -->
       <template #composer-closed>
-        <button v-if="taskId" type="button" class="back-to-room" @click="emit('open-room')">
-          {{ t('work.task.backToRoom', { room: topicTitle(topic) }) }}
-        </button>
         <BaseButton
-          v-else-if="topic.joined === false && topic.status !== 'archived'"
+          v-if="topic.joined === false && topic.status !== 'archived'"
           kind="primary"
           size="sm"
           :loading="joining"
@@ -240,20 +360,48 @@ defineExpose({
 </template>
 
 <style scoped>
-.archived-chip {
-  font-size: 12px;
-}
-.back-to-room {
-  flex: none;
+.from-room {
+  align-self: flex-start;
+  margin: 12px 16px 0 54px;
   padding: 0;
   border: 0;
   background: none;
-  color: var(--text);
+  color: var(--muted);
   cursor: pointer;
 }
-.back-to-room:hover {
+.from-room:hover {
   color: var(--ink);
   text-decoration: underline;
+}
+.from-room__rule {
+  height: 1px;
+  margin: 8px 16px 4px;
+  background: var(--line);
+}
+/* 从这里出来的任务：和消息正文对齐（左内边距 16 + 头像 28 + 间距 10），几行一块。 */
+.made-here {
+  display: flex;
+  flex-direction: column;
+  max-width: 620px;
+  margin: 6px 16px 4px 54px;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+  overflow: hidden;
+}
+.replies-rule {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 16px;
+  color: var(--muted);
+}
+.replies-rule__line {
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+.archived-chip {
+  font-size: 12px;
 }
 /* 和对话同一栏：时间线（ChatTimeline）、输入框（ChatPanel）各把自己收成一栏居中，
    贴在输入框上的这一条（验收卡）跟着收同一个值，不然它比上下两块都宽。桌面上是读

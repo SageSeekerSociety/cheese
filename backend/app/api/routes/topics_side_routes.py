@@ -49,21 +49,23 @@ from app.api.response import ok
 from app.api.task_instructions import (
     dispatch,
     source_text,
-    start_task_at_once,
     tell_task,
 )
 from app.api.task_origin import discussion, materials, materials_text
+from app.api.thread_task import turn_into_task, turns_in_place
 from app.api.topics_deps import BlockRepository
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.harness.prompt import task_opening_prompt
+from app.domain.agent.harness.prompt import became_task_prompt, task_opening_prompt
 from app.domain.agent.project_feed import UNREAD, tell_project_once_committed
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team, seat_handles, seat_project
 from app.domain.conversation.services import room_of
+from app.domain.room_task import naming
 from app.domain.room_task.schemas import TaskOut
 from app.domain.thread.adapters import root_block_of
+from app.domain.thread.services import open_thread
 from app.domain.topic.services import TopicService
 
 # Per-project unread map lives under /api/projects (a "/unread" path under
@@ -195,10 +197,17 @@ async def upgrade_block(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
-    """转为任务：a message in a channel, or a reply in its 支线, becomes a task
-    owned by whoever turned it, and its agent drafts the task's document from
-    the message and what was said around it. One message can become several
-    tasks. A private chat's messages do not leave it.
+    """转为任务, owned by whoever turned it.
+
+    A message in a channel's main line: its 支线 becomes the task, in place
+    (`thread_task.turn_into_task`) — opened first if nobody has replied yet.
+    The discussion and the AI teammate in it carry on as the task's.
+
+    A reply in a 支线, a message in a task, or a file sent in the main line
+    becomes a task of its own that hangs under the main-line message: one
+    discussion can lay out several pieces of work. Its agent starts from the
+    message and what was said around it. A private chat's messages do not
+    leave it.
 
     这是一条**在频道里造东西**的写：凭据由 resolve/authorize_topic 认，频道由 block
     自己带 —— block 的对话所在的频道就是那个频道，不是它自己去请求体里说。转的人也
@@ -214,6 +223,26 @@ async def upgrade_block(
     )
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
+    TopicService.refuse_tasks_in_private(parent)
+    if turns_in_place(block, parent.id):
+        thread = await open_thread(db, block.id, by=actor.handle)
+        task, made = await turn_into_task(
+            db, thread, owner=actor.handle, by=actor.handle
+        )
+        out = {
+            **TaskOut.model_validate(task).model_dump(mode="json"),
+            "from_thread": True,
+        }
+        if made:
+            # Its AI teammate starts at once: the discussion into the task's
+            # document, then on with the work if its owner already said what.
+            await tell_task(db, task, became_task_prompt(owner=task.owner_handle))
+        await db.commit()
+        await announce_stale(parent.id, "topics", id=parent.id)
+        if made:
+            naming.nudge(task.id, "message")
+            await dispatch(chat)
+        return ok(out)
     room, task = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
         created_by=actor.handle,
@@ -221,12 +250,10 @@ async def upgrade_block(
         team=project_team,
         main_line=root_block_of,
     )
-    # 转出来即已开始：审阅人默认就是转它的人，不用再挑一次。
-    await start_task_at_once(db, task, by=actor.handle)
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    # The task's agent drafts its document from the message and what was said
-    # around it. Recorded in this transaction, so a rolled-back upgrade leaves
-    # no instruction for a task that does not exist.
+    out = {**TaskOut.model_validate(task).model_dump(mode="json"), "from_thread": False}
+    # The task's agent starts from the message and what was said around it.
+    # Recorded in this transaction, so a rolled-back upgrade leaves no
+    # instruction for a task that does not exist.
     await tell_task(
         db,
         task,
@@ -235,7 +262,6 @@ async def upgrade_block(
             owner=task.owner_handle,
             source=await source_text(db, block),
             materials=materials_text(materials((await discussion(db, task))[1])),
-            started=task.started_at is not None,
             reviewer=task.reviewer_handle,
         ),
         opening=True,

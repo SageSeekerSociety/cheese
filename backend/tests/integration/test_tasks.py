@@ -3,14 +3,13 @@ conversation of its own, beside the room it came from.
 
 The rules a person could state before any of this was built:
 
-- a person creates a task, and owns it; an AI teammate may only propose one;
-- only the people working the task talk in it — its owner and the
-  collaborators the owner brought in; everyone else says what they have to
-  say in the room;
-- making a task starts it, and who asked for the work reviews it; the one task
-  that waits is an idea an AI teammate raised with nobody asking for it, and
-  what the task's document said when it started is what its changes are
-  reviewed against;
+- a person creates a task, and owns it; an AI teammate makes one only on
+  someone's word, and that person owns it;
+- anyone in the project speaks in a task, and what its AI teammate acts on
+  unasked is the word of the people working it — its owner and the
+  collaborators the owner brought in;
+- a task is at work from the moment it exists, and who asked for the work
+  reviews it;
 - the task's conversation and its AI session are its own: talking in it leaves
   the room's history and the room's session alone, and the reverse;
 - a task's document is readable by whoever can see the task and written only
@@ -21,17 +20,13 @@ The rules a person could state before any of this was built:
 import uuid
 from datetime import UTC, datetime, timedelta
 
-import pytest
 from sqlalchemy import text
 
 from app.api import deps as session_turn_deps
-from app.core.errors import UnprocessableEntityError
 from app.core.sandbox_auth import mint_scoped_token
-from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
-from app.domain.room_task.services import TaskService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
@@ -42,7 +37,6 @@ from tests.integration.conftest import (
     room_agent_headers,
     room_agent_seat,
     session_auth_headers,
-    teammate_task,
 )
 
 
@@ -107,16 +101,15 @@ def _room_contents(client, room_id) -> list[str]:
 
 
 def test_the_person_who_creates_a_task_owns_it_and_it_is_already_at_work(client):
-    """建的人拥有它，而且建出来就在做了：不用再点一次「开始」，改出来的东西
-    回到他自己手里验收（谁提的活谁看，见 test_default_reviewer）。"""
+    """建的人拥有它，而且建出来就在做了，改出来的东西回到他自己手里验收（谁提的
+    活谁看，见 test_default_reviewer）。"""
     project_id, room_id = _room(client)
     _with_bob(client, project_id, room_id)
 
     task = open_task(client, room_id, "整理接口", owner="bob")
 
     assert task["owner_handle"] == "bob"
-    assert task["started_at"] is not None
-    assert task["started_by"] == "bob"
+    assert task["presentation"]["column"] == "building"
     assert task["reviewer_handle"] == "bob"
 
 
@@ -196,7 +189,7 @@ def _tasks(client, room_id: str) -> list[dict]:
     return client.get(f"/topics/{room_id}/tasks").json()["data"]["data"]
 
 
-def test_a_task_someone_asked_for_is_theirs_and_starts_at_once(client):
+def test_a_task_someone_asked_for_is_theirs_and_at_work(client):
     project_id, room_id = _room(client)
     _with_bob(client, project_id, room_id)
     _default_reviewer(client, project_id, "alice")
@@ -208,20 +201,17 @@ def test_a_task_someone_asked_for_is_theirs_and_starts_at_once(client):
             "title": "迁移旧数据",
             "summary": "把旧表搬到新表",
             "owner_handle": "bob",
-            "start": True,
         },
         headers=_teammate_in(client, room_id, thread),
     )
 
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["started"] is True
     [task] = _tasks(client, room_id)
     assert task["owner_handle"] == "bob"
-    assert task["started_at"] is not None
-    assert task["presentation"]["phrase"] != "discussing"
+    assert task["presentation"]["column"] == "building"
 
 
-def test_a_teammates_own_idea_waits_for_its_owner_to_start(client):
+def test_a_task_a_teammate_makes_is_for_whoever_it_was_answering(client):
     project_id, room_id = _room(client)
     _default_reviewer(client, project_id, "alice")
     thread = in_thread(client, room_id, "alice")
@@ -234,9 +224,8 @@ def test_a_teammates_own_idea_waits_for_its_owner_to_start(client):
 
     assert r.status_code == 200, r.text
     [task] = _tasks(client, room_id)
-    # Nobody named: whoever wrote the message the 支线 hangs under.
+    # Nobody named: the person whose message the teammate is answering.
     assert task["owner_handle"] == "alice"
-    assert task["started_at"] is None
 
 
 def test_one_message_becomes_several_tasks_under_it(client):
@@ -330,137 +319,20 @@ def test_a_person_creates_tasks_their_own_way_not_as_a_teammate(client):
 # —— 开始 ————————————————————————————————————————————————————————————————
 
 
-def test_only_the_owner_starts_a_task(client):
-    """停在讨论中的活等着它的负责人点头，别人点不动它 —— 一件活开不开工，
-    是提这件事的人的决定（`cheese_task` 建的那些，见 test_default_reviewer）。"""
-    project_id, room_id = _room(client)
-    _with_bob(client, project_id, room_id)
-    task = teammate_task(client, room_id, owner="alice")
-
-    r = client.post(
-        f"/topics/{task['id']}/start",
-        json={"reviewer_handle": "alice"},
-        headers=session_auth_headers("bob"),
-    )
-
-    assert r.status_code == 403
-    assert _task(client, room_id, task["id"])["started_at"] is None
-
-
-def test_a_task_starts_once(client):
-    """开始只写下一次：谁验收、文档当时是哪一版。再点一次是拒绝，不是把
-    这两件事改到此刻。"""
-    _project_id, room_id = _room(client)
-    task = open_task(client, room_id)
-
-    r = client.post(
-        f"/topics/{task['id']}/start",
-        json={"reviewer_handle": "bob"},
-        headers=session_auth_headers("alice"),
-    )
-
-    assert r.status_code == 422
-    assert _task(client, room_id, task["id"])["reviewer_handle"] == "alice"
-
-
-def test_starting_needs_nobody_named_to_review_it(client):
-    """开始不再问「谁审」：提这件事的人自己就是验收的人。项目里没设过默认
-    审阅人，也没点名，这件活照样开工、照样有人收（#718）。"""
-    _project_id, room_id = _room(client)
-    task = teammate_task(client, room_id, owner="alice")
-
-    r = client.post(
-        f"/topics/{task['id']}/start",
-        json={},
-        headers=session_auth_headers("alice"),
-    )
-
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["reviewer_handle"] == "alice"
-
-
-def test_a_task_with_nobody_to_review_it_is_refused(client):
-    """阶梯四档全空时开始被拒 —— 没人收的活不开工。
-
-    从门口走不到这一档：任务的负责人永远是人（`project_people` 里没有 AI
-    队友），人自己总能验收，所以「负责人」那一档平时必然命中。这里直接问
-    服务，量的是老数据那一头：没有负责人的任务（提的人已经不在项目里）。"""
-    _project_id, room_id = _room(client)
-    task = teammate_task(client, room_id)
-
-    async def start_it():
-        async with client.test_factory() as db:
-            row = await TaskService(db).get(uuid.UUID(task["id"]))
-            row.owner_handle = None
-            row.reviewer_handle = None
-            row.started_at = None
-            with pytest.raises(UnprocessableEntityError) as refused:
-                await TaskService(db).start(row, by="alice")
-            return str(refused.value)
-
-    assert client.portal.call(start_it) == say("reviewerRequired")
-
-
-def test_starting_records_what_the_document_said_then(client):
-    """Review compares the document now with the document at the start, so
-    the start must pin a version that later edits do not move. 这份「之前」
-    只有停着的活才有（建出来即开始的活，那一刻已经在建它的时候写下了）。"""
-    _project_id, room_id = _room(client)
-    task = teammate_task(client, room_id, owner="alice")
-    doc_id = client.get(
-        f"/topics/{task['id']}/document",
-        headers=session_auth_headers("alice"),
-    ).json()["data"]["id"]
-    wrote = client.put(
-        f"/documents/{doc_id}",
-        json={"content": "# 目标\n\n先做导出。", "expected_version": 0},
-        headers=session_auth_headers("alice"),
-    )
-    assert wrote.status_code == 200, wrote.text
-
-    started = client.post(
-        f"/topics/{task['id']}/start",
-        json={"reviewer_handle": "alice"},
-        headers=session_auth_headers("alice"),
-    ).json()["data"]
-    at_start = started["started_doc_version"]
-    rewrote = client.put(
-        f"/documents/{doc_id}",
-        json={"content": "# 目标\n\n先做导入。", "expected_version": at_start},
-        headers=session_auth_headers("alice"),
-    )
-    assert rewrote.status_code == 200, rewrote.text
-
-    compared = client.get(
-        f"/documents/{doc_id}/compare",
-        params={"before": at_start},
-        headers=session_auth_headers("alice"),
-    ).json()["data"]
-    assert "导出" in compared["before"]["content"]
-    assert "导入" in compared["after"]["content"]
-    assert _task(client, room_id, task["id"])["started_doc_version"] == at_start
-
-
 def test_a_change_answers_with_the_task_as_its_page_reads_it(client):
-    """The task page replaces what it shows with what a start, a hand-over or
-    a close answers; an answer without the task's board cell left the page
-    with nothing to render. Each answer puts the task in the column reading
-    it does. The phrase is not compared: a started task's session may begin
-    its first turn between the answer and the read, and running is its own
-    phrase. 人建的活建出来即已在做，所以这里量的那次「开始」是负责人对一件
-    芝士自己想的活点头（`teammate_task`）。"""
+    """The task page replaces what it shows with what a hand-over or a close
+    answers; an answer without the task's board cell left the page with
+    nothing to render. Each answer puts the task in the column reading it
+    does. The phrase is not compared: the task's session may begin a turn
+    between the answer and the read, and running is its own phrase."""
     _project_id, room_id = _room(client)
-    task = teammate_task(client, room_id, owner="alice")
+    task = open_task(client, room_id, owner="alice")
     alice = session_auth_headers("alice")
 
     def read() -> str:
         r = client.get(f"/topics/{task['id']}/task", headers=alice)
         return r.json()["data"]["presentation"]["column"]
 
-    started = client.post(
-        f"/topics/{task['id']}/start", json={"reviewer_handle": "alice"}, headers=alice
-    ).json()["data"]
-    assert started["presentation"]["column"] == read()
     handed = client.patch(
         f"/topics/{task['id']}/task", json={"agent_handle": None}, headers=alice
     ).json()["data"]
@@ -474,17 +346,24 @@ def test_a_change_answers_with_the_task_as_its_page_reads_it(client):
 # —— 在任务里说话 ——————————————————————————————————————————————————————————
 
 
-def test_only_the_owner_talks_in_a_task(client):
+def _calls_its_teammate(said) -> bool:
+    assert said.status_code == 200, said.text
+    return said.json()["data"]["meta"]["agent_recipient"]["mentioned"] is True
+
+
+def test_anyone_in_the_project_speaks_in_a_task_and_its_owner_is_heard(client):
     project_id, room_id = _room(client)
     _with_bob(client, project_id, room_id)
     task = open_task(client, room_id, owner="alice")
 
+    by_alice = _say_in_task(client, room_id, task["id"], session_auth_headers("alice"))
     by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
     by_room_agent = _say_in_task(
         client, room_id, task["id"], room_agent_headers(client, room_id)
     )
 
-    assert by_bob.status_code == 403
+    assert _calls_its_teammate(by_alice)
+    assert not _calls_its_teammate(by_bob)
     assert by_room_agent.status_code == 403
 
 
@@ -507,7 +386,7 @@ def _set_collaborators(client, task_id, handles, by="alice"):
     )
 
 
-def test_a_collaborator_talks_in_the_task_and_others_still_do_not(client):
+def test_a_collaborator_is_heard_in_the_task_and_others_are_not(client):
     project_id, room_id = _room(client)
     _seated(client, project_id, room_id, "bob")
     _seated(client, project_id, room_id, "carol")
@@ -518,9 +397,9 @@ def test_a_collaborator_talks_in_the_task_and_others_still_do_not(client):
     assert added.status_code == 200, added.text
     assert added.json()["data"]["contributor_handles"] == ["bob"]
     by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
-    assert by_bob.status_code == 200, by_bob.text
+    assert _calls_its_teammate(by_bob)
     by_carol = _say_in_task(client, room_id, task["id"], session_auth_headers("carol"))
-    assert by_carol.status_code == 403
+    assert not _calls_its_teammate(by_carol)
 
 
 def test_only_the_owner_brings_collaborators_in(client):
@@ -530,7 +409,7 @@ def test_only_the_owner_brings_collaborators_in(client):
     task = open_task(client, room_id, owner="alice")
     assert _set_collaborators(client, task["id"], ["bob"]).status_code == 200
 
-    # A collaborator cannot bring someone else in, nor start or hand it over.
+    # A collaborator cannot bring someone else in, nor hand it over.
     assert (
         _set_collaborators(client, task["id"], ["bob", "carol"], by="bob").status_code
         == 403
@@ -547,7 +426,7 @@ def test_only_the_owner_brings_collaborators_in(client):
     assert _task(client, room_id, task["id"])["contributor_handles"] == ["bob"]
 
 
-def test_a_collaborator_can_leave_and_then_no_longer_talks(client):
+def test_a_collaborator_can_leave_and_then_is_no_longer_heard(client):
     project_id, room_id = _room(client)
     _seated(client, project_id, room_id, "bob")
     task = open_task(client, room_id, owner="alice")
@@ -557,7 +436,7 @@ def test_a_collaborator_can_leave_and_then_no_longer_talks(client):
 
     assert left.status_code == 200, left.text
     by_bob = _say_in_task(client, room_id, task["id"], session_auth_headers("bob"))
-    assert by_bob.status_code == 403
+    assert not _calls_its_teammate(by_bob)
 
 
 def test_handing_a_task_to_its_collaborator_makes_them_its_owner_only(client):
@@ -611,7 +490,10 @@ def test_a_tasks_own_session_speaks_in_its_task_and_no_other(client):
     assert _task(client, room_id, other["id"])["status"] == "open"
 
 
-def test_a_closed_task_takes_no_more_messages(client):
+def test_a_closed_task_is_still_talked_in(client):
+    """A closed task is over as work, not as a conversation: people go on
+    asking about it there (its teammate answers when named and changes
+    nothing — `test_a_thread_becomes_a_task_in_place`)."""
     _project_id, room_id = _room(client)
     task = open_task(client, room_id)
     closed = client.post(
@@ -623,7 +505,7 @@ def test_a_closed_task_takes_no_more_messages(client):
 
     r = _say_in_task(client, room_id, task["id"], session_auth_headers("alice"))
 
-    assert r.status_code == 422
+    assert r.status_code == 200, r.text
 
 
 def test_only_the_owner_closes_a_task(client):

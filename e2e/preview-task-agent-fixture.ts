@@ -29,8 +29,7 @@ const task = reactive<Record<string, unknown>>({
   owner_handle: 'alice',
   contributor_handles: ['chiruotong'],
   agent_handle: null,
-  started_at: null,
-  presentation: { phrase: 'discussing' },
+  presentation: { phrase: 'started' },
 })
 
 const memberNames: Record<string, string> = {

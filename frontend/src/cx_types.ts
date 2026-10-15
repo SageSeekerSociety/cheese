@@ -262,15 +262,12 @@ export interface RoomTask {
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
-  contributor_handles?: string[] // 协作者：负责人拉进来的人，也能在任务里和 AI 队友对话
-  reviewer_handle?: string | null // 谁审阅它的改动，开始时定下
+  contributor_handles?: string[] // 协作者：负责人拉进来的人，说的话和负责人一样是给 AI 队友的指令
+  reviewer_handle?: string | null // 谁审阅它的改动，建任务时定下
   created_by?: string | null
   branch_name?: string | null
   agent_handle?: string | null // 做它的 AI 队友；空的时候是项目的
   document_id?: string | null // 实况文档；第一次打开任务时才建
-  started_at?: string | null // 开始的时刻、人和文档版本：审阅时与它相比
-  started_by?: string | null
-  started_doc_version?: number | null
   conclusion?: string | null
   base_branch?: string | null
   base_task_id?: string | null
@@ -283,6 +280,10 @@ export interface RoomTask {
   accepted_at?: string | null
   closed_at?: string | null
   upgraded_from_block_id?: string | null
+  /** 它出自的那句话：主线消息本身，或支线里的一条回复。 */
+  source_block_id?: string | null
+  /** 支线原地转成的任务：对话挂在主线那条消息下面，在频道页右半边打开，和支线一样。 */
+  from_thread?: boolean
   created_at: string
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
@@ -306,7 +307,7 @@ export interface RoomTask {
   card?: ThreadCard | null
   // 落在哪一格、写哪句话。必有：状态只在后端算一次，前端不另推（见 lib/board.ts）。
   presentation: Presentation
-  /** 从讨论转出来的任务，第一轮整理文档到哪了；文档有内容后是 null。只在单个任务上。 */
+  /** 从讨论另开的任务，第一轮做到哪了；文档有内容后是 null。只在单个任务上。 */
   opening?: 'drafting' | 'waiting' | 'failed' | null
   /** 这件任务里最后说的一句：频道概览上的「最新进展」。只在频道的任务列表里。 */
   last_message?: Block | null
@@ -314,20 +315,19 @@ export interface RoomTask {
 
 /** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
  *  下一步在平台手上还是在人手上，落在不同的列里。
- *    not_started 未开始 —— 还在讨论，负责人还没点「开始」
- *    building   进行中 —— 已开始，还没递出交付
+ *    building   进行中 —— 在做，还没递出交付
  *    delivering 检查中 —— 下一步在平台/芝士手上
  *    needs_you  待处理 —— 下一步在人手上
  *    done       已关闭 —— 任务关了：最后一步已采纳，或没交付就关了
  *    archived   已归档 —— 房间才有；活不归档
  */
-export type BoardColumn = 'not_started' | 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
+export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
 
 type BuildingPhrase = 'running' | 'started' | 'idle' | 'draft'
 type DeliveringPhrase = 'gate_running' | 'awaiting_checks' | 'fixing_checks' | 'resolving_conflict' | 'updating_branch'
 type NeedsYouPhrase = 'checks_failed' | 'awaiting_review' | 'bounced' | 'awaiting_answer'
 type DonePhrase = 'accepted' | 'completed' | 'closed' | 'archived'
-export type BoardPhrase = 'discussing' | BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | DonePhrase
+export type BoardPhrase = BuildingPhrase | DeliveringPhrase | NeedsYouPhrase | DonePhrase
 
 /** 后端算好的呈现（`room_task/presentation.py`），前端不推状态。`phrase` 是码，由 `lib/board.ts` 按读者的语言画。 */
 export interface Presentation {

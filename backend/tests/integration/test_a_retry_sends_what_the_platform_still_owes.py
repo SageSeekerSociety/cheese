@@ -59,7 +59,7 @@ def _started_task(client, title: str = "接口分页") -> str:
         json={"project_id": project["id"], "title": "频道"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    task = teammate_task(client, room, title, start=True)
+    task = teammate_task(client, room, title)
     wait_work_idle()
     return task["id"]
 

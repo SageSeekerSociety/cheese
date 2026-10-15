@@ -1076,11 +1076,17 @@ class TopicService:
         named_by_teammate: bool = False,
         origin_block_id: uuid.UUID | None = None,
         source_block_id: uuid.UUID | None = None,
+        thread_id: uuid.UUID | None = None,
         seat_project: SeatProject,
         team: ProjectTeam,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
-        with an empty living document for its agent to draft.
+        with an empty living document for its agent to write.
+
+        ``thread_id`` turns a 支线 into the task, in place: the task takes its
+        id, so its conversation and its AI teammate's session go on as they
+        were, and it shows under the message the 支线 hangs under
+        (``origin_block_id``, which the caller passes as that message).
 
         ``teammate`` is the seat of the AI teammate the work came from — the one
         that created it, or the one a message turned into it was addressed to.
@@ -1102,7 +1108,8 @@ class TopicService:
         The owner is the person named, else the person creating it, else — when
         no person is identifiable — the room's owner, then the project's. A task
         belongs to someone; a task nobody owns is one nobody can start or answer
-        for. Who reviews its changes is decided when it is started, not here.
+        for. Who reviews its changes is its owner, or the project's default
+        reviewer when the owner cannot (`TaskService.default_reviewer`).
 
         ``seat_project`` 是递进来的口子，落座那一步用它挡住别家的队友；本包在第 2
         层，读不出「这一席落在哪个项目上」（`app.domain.topic.ports.SeatProject`）。
@@ -1141,6 +1148,7 @@ class TopicService:
             else TaskTitleSource.human,
             owner_handle=owner,
             created_by=created_by,
+            task_id=thread_id,
         )
         task.upgraded_from_block_id = origin_block_id
         task.source_block_id = source_block_id

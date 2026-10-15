@@ -110,6 +110,6 @@ parts:
 
 :::cards
 - [和同学一起做一个项目](/team-project#team-project)：在团队的项目里分工，每人负责一个任务。
-- [把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)：写清要求、开始任务、采纳或退回结果。
+- [把一件事交给芝士并验收](/working-with-cheese#working-with-cheese)：写清要求、跟进任务、采纳或退回结果。
 - [团队](/teams#teams)：成员角色、审批与「隐身」设置、退出团队。
 :::
