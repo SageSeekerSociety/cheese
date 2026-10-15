@@ -160,6 +160,7 @@ from app.domain.agent.turn.intake.rooms import room_roster
 # 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
+from app.domain.agent.turn.state import authority
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
 from app.domain.agent.turn.state.live import LiveWork
 
@@ -255,7 +256,11 @@ class ChatService(SessionRecovery):
         # 全在 `turn/state/live.py` 那片叶子里。本对象唯一持有它，处理器按一个方向读
         # 它——见那里的文档；不是服务依赖（`_compute`/`_sessions` 那种），而是
         # 这台进程此刻手上正接着什么。
-        self.live = LiveWork()
+        # 写穿回调把「在跑」落到权威的那行 `AgentTurn`：leaf 不认识库，这一层认识。
+        self.live = LiveWork(
+            write_open=self._confirm_turn_row_open,
+            confirm_closed=self._confirm_turn_row_closed,
+        )
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -482,12 +487,16 @@ class ChatService(SessionRecovery):
     ) -> AsyncIterator[None]:
 
         async with seat_admission(self.live.seat_lock_for(topic_id, seat_handle)):
-            self.live.mark_turn_active(topic_id, work_id)
+            # 这里不标「在跑」：轮次那行 `AgentTurn` 要到 `yield` 里面
+            # （`open_turn` / `open_interval`）才提交，先标就是让缓存替一个不
+            # 存在的轮次说话。记号落在提交之后那一步：`steps/send.py`
+            # （`send_prepared`），自起的轮次在 `native_turns.begin`——见
+            # `mark_turn_active`。
             try:
                 yield
             finally:
                 if (topic_id, work_id) not in self.live.hook_work:
-                    self.live.mark_turn_inactive(topic_id, work_id)
+                    await self.live.mark_turn_inactive(topic_id, work_id)
 
     async def converse(
         self,
@@ -609,7 +618,9 @@ class ChatService(SessionRecovery):
         # than queue behind it. 判据是收件人自己那一席在不在跑，不是房间里有没有
         # 人在跑 —— 另一位队友在跑、收件人空闲时，排队本来就是正常路径，不记降级。
         # 这一支进去就说明本来指望实时递交，所以除了真递进去，剩下的都是降级。
-        if user_block_id is not None and self.has_running_turn(topic_id, seat_handle):
+        if user_block_id is not None and await self.has_running_turn(
+            topic_id, seat_handle
+        ):
             delivered = await self.merge_into_running_turn(
                 topic_id,
                 user_block_ids,
@@ -716,7 +727,9 @@ class ChatService(SessionRecovery):
         providers resolve that path into a native image block before the model
         sees the message; a remote device first stages the exact bytes and acks
         the file write."""
-        consuming_turn_id = self.live.consuming_work_id(
+        matched = await authority.consuming_turn(
+            self.live,
+            self._sessions,
             topic_id,
             lambda state: (
                 recipient_handle is None
@@ -724,16 +737,18 @@ class ChatService(SessionRecovery):
                 or state.agent_instance_handle == recipient_handle
             ),
         )
-        if consuming_turn_id is None:
+        if matched is None:
             return None
-        state = self.live.hook_work.get((topic_id, consuming_turn_id))
+        # The state names whose turn this is: the local hook work when this
+        # process runs it, the durable row's seat when another one does. Either
+        # way it aims the steer and stamps seen_by at that same seat.
+        consuming_turn_id, state = matched
         async with self._sessions() as session:
             stored, replied = await live_inputs(session, user_block_ids)
             # 中途插进来的话也带着平台自己那几句，同样按正在说话的那个人的
             # 语言走（`user.language`）。
             language = await language_of(session, author)
         recipient = state.acting_agent if state else None
-        state = self.live.hook_work.get((topic_id, consuming_turn_id))
         files = [
             (str(a["path"]), str(a.get("mime") or ""))
             for a in attachments or []
@@ -863,21 +878,23 @@ class ChatService(SessionRecovery):
         reads the doc fresh anyway, and the next turn does not — a reused
         session keeps the system prompt it was started with.
         """
-        consuming_turn_id = self.live.consuming_work_id(
+        matched = await authority.consuming_turn(
+            self.live,
+            self._sessions,
             topic_id,
             lambda state: (
                 recipient_seat is None or state.acting_agent == recipient_seat
             ),
             strict=recipient_seat is not None,
         )
-        if consuming_turn_id is None:
+        if matched is None:
             return False
+        consuming_turn_id, state = matched
         line = platform_prompt(strip_platform_notice(notice))
         registrar = self._input_registrar(
             InputEffects(held_block_ids=tuple(blocks), block_ids=tuple(blocks)),
             probe_unread=bool(blocks),
         )
-        state = self.live.hook_work.get((topic_id, consuming_turn_id))
         seat_agent = (
             (state.agent_instance_handle or state.acting_agent) if state else None
         )
@@ -973,25 +990,42 @@ class ChatService(SessionRecovery):
         """Platform tools back for this room; True when they had been gone."""
         return await self._compute.recover_native_tools(topic_id, agent_handle)
 
-    def has_running_turn(
+    async def has_running_turn(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> bool:
-        """Whether this process currently owns live work for the topic.
+        """Whether a turn is running in the topic — durably, across processes.
 
-        With ``agent_handle``, work of that agent's: teammates in one room run
-        side by side, so another seat working leaves this one free. A turn
-        whose agent is not known yet counts as anybody's.
+        The open ``AgentTurn`` row answers (`turn/state/authority.py`), not this
+        process's cache: a teammate's turn from another backend is seen here, a
+        finished one is not kept alive by a stale entry.
         """
-        active = self.live.active_turn_ids.get(topic_id)
-        if not active:
-            return False
-        if agent_handle is None:
+        return await authority.has_running_turn(self._sessions, topic_id, agent_handle)
+
+    async def _confirm_turn_row_open(
+        self, topic_id: uuid.UUID, work_id: uuid.UUID
+    ) -> bool:
+        """The `LiveWork` write-through: confirm the turn's row is open.
+
+        Reads only, and invents nothing: the row is the turn lifecycle's to open
+        (`open_turn`), so a mark that lands before the row exists is told no and
+        leaves the cache clear until the lifecycle commits the real row. A row a
+        sweep closed stays closed. No database (unit tests) means cache only.
+        """
+        if self._sessions is None:
             return True
-        for work_id in active:
-            state = self.live.hook_work.get((topic_id, work_id))
-            if state is None or state.agent_instance_handle in (None, agent_handle):
-                return True
-        return False
+        return await authority.confirm_open(self._sessions, work_id)
+
+    async def _confirm_turn_row_closed(
+        self, topic_id: uuid.UUID, work_id: uuid.UUID
+    ) -> bool:
+        """The `LiveWork` release check: did the lifecycle end this turn?
+
+        Closing is the lifecycle's; a row still open when the cache lets go is
+        the one divergence worth a warning (raised in `mark_turn_inactive`).
+        """
+        if self._sessions is None:
+            return True
+        return await authority.confirm_closed(self._sessions, work_id)
 
     async def has_unread_input(self, topic_id: uuid.UUID) -> bool:
         """Whether anything said in the room is still waiting to reach 芝士.
@@ -1037,10 +1071,10 @@ class ChatService(SessionRecovery):
     async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
         """Prevent a new prompt from racing an explicit environment change."""
         lock = self.live.lock_for(topic_id)
-        if lock.locked() or self.has_running_turn(topic_id):
+        if lock.locked() or await self.has_running_turn(topic_id):
             raise ValidationError(say("roomBusyFinishBeforeEnvironment"))
         async with lock:
-            if self.has_running_turn(topic_id):
+            if await self.has_running_turn(topic_id):
                 raise ValidationError(say("roomBusyRetryLater"))
             yield
 
@@ -1248,10 +1282,14 @@ class ChatService(SessionRecovery):
         state = self.live.hook_work.get((topic_id, work_id))
         agent = (state.acting_agent if state is not None else None) or agent_handle
         if active:
-            self.live.mark_turn_active(topic_id, work_id)
+            # A Working event is a session SPEAKING about a turn, not the step
+            # that opened it: the mark belongs to that step, after its own await
+            # commits the row (`steps/send.py`, `native_turns.begin`). Nor may
+            # it drop a mark — `mark_turn_active`'s confirm can say no for a row
+            # committed a moment ago, leaving a running turn unmarked.
             frame = {"type": "turn_started", "turn_id": str(work_id), "agent": agent}
         else:
-            self.live.mark_turn_inactive(topic_id, work_id)
+            await self.live.mark_turn_inactive(topic_id, work_id)
             frame = {"type": "turn_finished", "turn_id": str(work_id), "agent": agent}
         await get_broker().publish(str(topic_id), frame)
         if not active:

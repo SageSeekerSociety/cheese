@@ -30,7 +30,12 @@ from app.domain.agent.session_host.host import SessionHost
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
-from tests.integration.conftest import project_service, put_on_plan, registered
+from tests.integration.conftest import (
+    approve_overseas,
+    project_service,
+    put_on_plan,
+    registered,
+)
 from tests.support.hang import HANG_S
 
 
@@ -654,6 +659,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
         assert project is not None
         project.settings = {**(project.settings or {}), "supply": "subscription"}
         await put_on_plan(session, project.team_id, "reserve")
+        await approve_overseas(session, project.team_id)
         await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())
@@ -688,6 +694,7 @@ async def test_a_turn_on_a_machine_is_metered_by_the_subscription_proxy(
         assert project is not None
         project.settings = {**(project.settings or {}), "supply": "subscription"}
         await put_on_plan(session, project.team_id, "reserve")
+        await approve_overseas(session, project.team_id)
         await session.commit()
 
     kwargs, route = await svc._model_kwargs(pid, _on_a_machine())

@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.domain.addressing import Event, Hand, address
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.queries import DEFERRED_INPUT, queued_messages
 from app.domain.delivery.input_holds import seat_has_unfinished_input
@@ -138,13 +139,10 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
         begun = set(
             await session.scalars(select(AgentTurn.id).where(AgentTurn.id.in_(ids)))
         )
-        busy = {}
-        for conversation, handle in await session.execute(
-            select(AgentTurn.conversation_id, AgentTurn.agent_handle).where(
-                AgentTurn.stopped_at.is_(None)
-            )
-        ):
-            busy.setdefault(conversation, set()).add(handle)
+        # 一趟读全项目的开着的轮次：这个扫描是跨进程的，判据只能是库里那一行，
+        # 不是本进程的内存缓存。这一读法与 `ChatService.has_running_turn` 共用同一
+        # 个 `AgentTurnRepository` 方法，别处不许再抄一份近似查询。
+        busy = await AgentTurnRepository(session).open_turn_seats()
         # Anything the turn left behind says it began, in the conversation or
         # in its run records, but a queue it is waiting in.
         answered = {
@@ -181,7 +179,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             if None in running or handle in running:
                 skipped.append((block, "turn_open_in_db"))
                 continue
-            if chat.has_running_turn(*key):
+            if await chat.has_running_turn(*key):
                 skipped.append((block, "turn_running_in_process"))
                 continue
             seated = await conversation_seat(session, conversation, handle)
@@ -216,11 +214,13 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             )
     started = 0
     for (room, handle), block in seats.items():
+        if await chat.has_running_turn(room, handle):
+            continue
         # No await between this final reservation check and scheduling. Other
         # scans may have selected the same row while this one awaited the DB.
         if not runner.owns_sessions or not runner.accepting_turns:
             break
-        if runner.turn_pending(block.id) or chat.has_running_turn(room, handle):
+        if runner.turn_pending(block.id):
             continue
         recipient = (block.meta or {}).get("agent_recipient") or {}
         runner._receive_message(

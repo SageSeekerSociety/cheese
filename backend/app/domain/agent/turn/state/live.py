@@ -8,16 +8,113 @@ hand out is held in Valkey until the turn lets it go.
 """
 
 import asyncio
+import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Protocol
 
 from app.domain.agent.admission import Lease
 from app.domain.memory.scopes import MemoryScope
 
+logger = logging.getLogger(__name__)
+
 #: 现场状态查表的键：一间房 + 这一轮。
 TurnKey = tuple[uuid.UUID, uuid.UUID]
+
+#: 写穿回调：确认库里那行开着的 `AgentTurn` 就是这一轮（`turn/state/authority.py`
+#: 的 `confirm_open`：只读、不发明一行）。签名的两个参数就是标记自己的那两个
+#: （topic_id、work_id）——写穿不许自己另发明一套键。它答的是「行在不在」：
+#: 说不在（行还没提交、或已被清场）就不许把这一轮标进缓存。
+WriteThrough = Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]]
+
+#: 松手回调：确认生命周期已经把这一轮收场了（`authority.confirm_closed`）。只在
+#: mark_turn_inactive 时问一次——缓存松手而库里的行还开着，是缓存唯一不该替它遮
+#: 掩的事，但收场仍归生命周期，这里不代它关。
+ConfirmClosed = Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]]
+
+
+@dataclass(frozen=True, slots=True)
+class DurableTurnSeat:
+    """A live turn known only from its durable row.
+
+    What the process-local ``hook_work`` would have told a reader in one
+    process — the seat the turn authors under and the seat whose session answers
+    for it — reconstructed from the open ``AgentTurn`` row, so the cross-process
+    half of 「这条消息该进哪一轮」 sees a turn this process never assembled.
+    ``agent_handle`` is the one column the row holds for both questions; it is
+    ``None`` on a row that reached the table before it was assembled.
+    """
+
+    agent_instance_handle: str | None
+    acting_agent: str | None
+
+
+class TurnSeat(Protocol):
+    """What names whose turn it is: the two seats a live turn is read by.
+
+    Both ``HookWorkState`` (this process's own work) and ``DurableTurnSeat`` (a
+    row another process opened) carry these, and that is the whole reason the
+    pickers below can ask one question of a mixed set — the durable row cannot
+    offer more, and a caller aiming a steer or stamping ``seen_by`` needs only
+    these two. Declared as a Protocol so the reader of a turn does not name
+    either concrete class. Read-only members: a class's ``acting_agent: str``
+    then satisfies it, which a writable ``str | None`` member would reject.
+    """
+
+    @property
+    def agent_instance_handle(self) -> str | None: ...
+
+    @property
+    def acting_agent(self) -> str | None: ...
+
+
+def pick_unambiguous_entry[StateT: TurnSeat](
+    entries: Iterable[tuple[uuid.UUID, StateT | None]],
+    matches: Callable[[StateT], bool] | None,
+    *,
+    strict: bool,
+) -> tuple[uuid.UUID, StateT | None] | None:
+    """The one live turn an inbound message belongs to, with the state naming it.
+
+    With no ``matches``, a single live turn on the topic is the answer. With
+    several (parallel seats in one room) only an exact ``matches`` hit decides,
+    and only when exactly one hits: delivering to a guessed turn is worse than
+    holding the message for none. A live id with no state cannot be ruled out —
+    the old single-slot tolerance — unless ``strict``, which refuses to deliver
+    without a state. Shared by the process-local set and the durable rows so the
+    two answer the question the same way. Returns the state beside the id so a
+    caller can aim the steer and name ``seen_by`` at the turn's own seat.
+
+    Generic in the state so a caller keeping one concrete kind (the local
+    ``HookWorkState``) reads that kind back, while the mixed authority set is
+    typed as the ``TurnSeat`` they share.
+    """
+    entries = list(entries)
+    if not entries:
+        return None
+    if matches is None:
+        return entries[0] if len(entries) == 1 else None
+    hits: list[tuple[uuid.UUID, StateT | None]] = []
+    for work_id, state in entries:
+        if state is None:
+            if not strict:
+                hits.append((work_id, None))
+        elif matches(state):
+            hits.append((work_id, state))
+    return hits[0] if len(hits) == 1 else None
+
+
+def pick_unambiguous[StateT: TurnSeat](
+    entries: Iterable[tuple[uuid.UUID, StateT | None]],
+    matches: Callable[[StateT], bool] | None,
+    *,
+    strict: bool,
+) -> uuid.UUID | None:
+    """The id alone — `pick_unambiguous_entry` without the state."""
+    picked = pick_unambiguous_entry(entries, matches, strict=strict)
+    return picked[0] if picked is not None else None
 
 
 @dataclass
@@ -91,7 +188,20 @@ class LiveWork:
     handler owns.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        write_open: WriteThrough | None = None,
+        confirm_closed: ConfirmClosed | None = None,
+    ) -> None:
+        #: 写穿回调（`ChatService` 注入）：确认库里那行开着的 `AgentTurn` 就是
+        #: 这一轮（`authority.confirm_open`，只读）。默认 None = 纯缓存（测试、
+        #: 以及没有库的那条路）。见 `mark_turn_active` 为什么不在这里发明一行。
+        self._write_open = write_open
+        #: 松手回调（`ChatService` 注入）：确认生命周期已把这一轮收场
+        #: （`authority.confirm_closed`，只读）。见 `mark_turn_inactive`：库里那行
+        #: 还开着是缓存唯一不该替它遮掩的事，但收场仍归生命周期，这里不代它关。
+        self._confirm_closed = confirm_closed
         # --- 房间 -----------------------------------------------------------
         # Room-level leases for the few operations that are nobody's turn:
         # swapping the room's environment mid-turn and memory consolidation on
@@ -165,10 +275,80 @@ class LiveWork:
             self.seat_locks[key] = lease
         return lease
 
-    def mark_turn_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+    async def mark_turn_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> bool:
+        """Mark a turn this process is holding as active, write-through.
+
+        The cache is a memo; the durable `AgentTurn` row is the authority. The
+        write-through (`write_open`) only CONFIRMS that row is open — it never
+        inserts one, because the row is the turn lifecycle's to open with its
+        real author and content (`authority.confirm_open`). The confirm runs
+        FIRST, in the same awaited step as the mark, so a reader never sees the
+        turn as running before the authority says its row is there: a confirm
+        that raises, or that answers no (the lifecycle has not committed the row
+        yet, or a sweep closed it), leaves no cache entry behind — and drops any
+        stale one, because a closed or absent row must not be revived by the
+        cache. Returns whether the turn is now marked in this process.
+        """
+        if self._write_open is not None:
+            if not await self._write_open(topic_id, work_id):
+                self.forget_active(topic_id, work_id)
+                return False
+        self.active_turn_ids.setdefault(topic_id, set()).add(work_id)
+        return True
+
+    def activate_cached(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+        """Record a turn this process just saw committed, with no read.
+
+        For a caller whose own awaited step committed the row — the turn
+        lifecycle right after `open_turn` / `open_interval`. There the write the
+        mark mirrors is ALREADY durable, so confirming it AGAIN is the one read
+        that cannot be trusted: a fresh connection can see the row as not yet
+        open at the commit boundary and answer no, which would drop a mark that
+        belongs on. Marking on the caller's word is the point.
+        """
         self.active_turn_ids.setdefault(topic_id, set()).add(work_id)
 
-    def mark_turn_inactive(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+    async def mark_turn_inactive(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+        """Let go of a turn this process was holding.
+
+        Only the cache moves. Closing the row is the turn's own lifecycle's
+        (`close_turns` at its end, `close_one` on its Stop), and closing it from
+        here would be the one thing the design forbids: ending a real turn early
+        on the say-so of a cache that is not the authority. But the cache must
+        not paper over a row still open either, so this CONFIRMS the lifecycle
+        ended it (`confirm_closed`) before letting go, and logs the one case it
+        cannot. Letting go is unconditional: a confirm that is cancelled (a
+        shutdown, a deadline) leaves the row exactly as it was — this never
+        closes it — while the mark this process was holding still goes. Keeping
+        the mark would be the worse of the two, since it claims a turn this
+        process is no longer running.
+        """
+        try:
+            if self._confirm_closed is not None:
+                try:
+                    closed = await self._confirm_closed(topic_id, work_id)
+                except Exception:  # noqa: BLE001 — a failed confirm is not a close
+                    logger.exception(
+                        "could not confirm turn %s closed (topic=%s)", work_id, topic_id
+                    )
+                else:
+                    if not closed:
+                        logger.warning(
+                            "letting go of turn %s while its row is still open "
+                            "(topic=%s): end it via the turn lifecycle",
+                            work_id,
+                            topic_id,
+                        )
+        finally:
+            self.forget_active(topic_id, work_id)
+
+    def forget_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+        """Drop the cache mark with no durable hop.
+
+        For a caller that cannot await and whose row is already closed — the
+        orphan sweep let go of a turn it ended, so there is nothing to write
+        (`retire_unheard`).
+        """
         active = self.active_turn_ids.get(topic_id)
         if active is None:
             return
@@ -183,30 +363,16 @@ class LiveWork:
         *,
         strict: bool = False,
     ) -> uuid.UUID | None:
-        """The live turn an inbound message belongs to, if unambiguous.
-
-        With no ``matches``, a single active turn on the topic is the answer.
-        With several live turns (parallel seats in one room) only an exact
-        ``matches`` hit decides, and only when exactly one hits: delivering to
-        a guessed turn is worse than holding the message for none. A live id
-        with no hook state cannot be ruled out — the old single-slot tolerance
-        — unless the caller passes ``strict``, which refuses to deliver
-        without a state.
-        """
+        """The live turn an inbound message belongs to, if unambiguous — the
+        turns THIS process is holding. `authority.consuming_turn` adds the rows
+        another process opened and asks the same question of both."""
         active = self.active_turn_ids.get(topic_id)
         if not active:
             return None
-        if matches is None:
-            return next(iter(active)) if len(active) == 1 else None
-        hits = []
-        for work_id in active:
-            state = self.hook_work.get((topic_id, work_id))
-            if state is None:
-                if not strict:
-                    hits.append(work_id)
-            elif matches(state):
-                hits.append(work_id)
-        return hits[0] if len(hits) == 1 else None
+        entries = [
+            (work_id, self.hook_work.get((topic_id, work_id))) for work_id in active
+        ]
+        return pick_unambiguous(entries, matches, strict=strict)
 
     def attributed_work_id(self, topic_id: uuid.UUID, author: str) -> uuid.UUID | None:
         """Which live hook work a room publication with no turn id belongs to."""

@@ -69,7 +69,7 @@ class FakeChat(WorkChat):
         self.system_event_meta.append(meta)
         return {"content": content, "meta": meta}
 
-    def has_running_turn(
+    async def has_running_turn(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> bool:
         return False
@@ -733,7 +733,7 @@ async def test_live_delivery_fallback_is_noted_then_runs_normally(
     delivery_result,
 ):
     class FailedLiveDelivery(FakeChat):
-        def has_running_turn(
+        async def has_running_turn(
             self, topic_id: uuid.UUID, agent_handle: str | None = None
         ) -> bool:
             # 收件人自己那一轮在跑 —— 有人正面问「这个席位在跑吗」时才是真的
@@ -783,7 +783,7 @@ async def test_another_teammates_turn_is_not_a_lost_delivery(db_factory):
             super().__init__(*args, **kwargs)
             self.merge_seats: list[str | None] = []
 
-        def has_running_turn(
+        async def has_running_turn(
             self, topic_id: uuid.UUID, agent_handle: str | None = None
         ) -> bool:
             # 房间里有人在跑（不带座位的询问），但收件人自己没在跑（带了座位）。

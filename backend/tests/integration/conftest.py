@@ -1122,3 +1122,12 @@ async def put_on_plan(session, team_id: int, key: str) -> None:
     from app.domain.team.models import Team
 
     await session.execute(update(Team).where(Team.id == team_id).values(plan_key=key))
+
+
+async def approve_overseas(session, team_id: int) -> None:
+    """Approve a team for overseas models: a test running the Claude
+    subscription models needs it whatever the team's plan."""
+    from app.domain.usage.models import OverseasModelApproval
+
+    session.add(OverseasModelApproval(team_id=team_id, approved_by="test-admin"))
+    await session.flush()

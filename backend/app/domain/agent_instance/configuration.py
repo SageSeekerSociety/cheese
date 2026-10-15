@@ -72,6 +72,8 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             default=item.default and subscription_default,
             supply=SUBSCRIPTION,
             efforts=SUBSCRIPTION_EFFORTS,
+            # Claude: only teams an administrator approved may use it.
+            overseas=True,
         )
         for item in subscription_model_listings()
     ]
@@ -90,6 +92,8 @@ def model_choices(project_settings: dict | None) -> list[dict]:
             "tier": item.tier,
             # The thinking efforts it honours (`cheese_efforts`).
             "efforts": list(item.efforts),
+            # Only teams an administrator approved may use it (`cheese_overseas`).
+            "overseas": item.overseas,
         }
         for item in gateway_catalog.offerable()
     )
@@ -114,6 +118,7 @@ def model_choices(project_settings: dict | None) -> list[dict]:
                 "supply": GATEWAY,
                 "tier": TIER_INCLUDED,
                 "efforts": [],
+                "overseas": False,
             }
         )
     # 按这个项目真会跑的骨架筛。跑哪个骨架是部署设置加项目设置答的（结论 28），

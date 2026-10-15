@@ -69,6 +69,9 @@ class GatewayModel:
     # True when the model reads pictures (``supports_vision``), as set on the
     # gateway's model page. Unmarked: it is shown text only.
     vision: bool = False
+    # Only teams a platform administrator approved may use it
+    # (``cheese_overseas: true``): Claude, GPT, Gemini.
+    overseas: bool = False
 
 
 #: The thinking efforts a teammate can ask for, lowest first. Claude Code
@@ -241,6 +244,7 @@ class LlmGateway:
                     ),
                     efforts=declared_efforts(info.get("cheese_efforts")),
                     vision=info.get("supports_vision") is True,
+                    overseas=info.get("cheese_overseas") is True,
                 )
             )
         return out

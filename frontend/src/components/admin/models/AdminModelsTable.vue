@@ -40,6 +40,7 @@ const emit = defineEmits<{
   block: [row: ModelRow]
   delete: [row: ModelRow]
   tier: [row: ModelRow, tier: 'included' | 'premium' | 'frontier']
+  overseas: [row: ModelRow, overseas: boolean]
 }>()
 
 const { t } = useI18n()
@@ -58,8 +59,8 @@ function rateTitle(row: ModelRow): string {
   <div class="amd__gridwrap">
     <BaseTable
       :label="t('models.table.label')"
-      :cols="[null, '96px', '150px', '150px', '210px', '180px', '110px', '140px']"
-      :bone-widths="['64%', '54%', '70%', '60%', '58%', '62%', '50%', '46%']"
+      :cols="[null, '96px', '150px', '150px', '96px', '210px', '180px', '110px', '140px']"
+      :bone-widths="['64%', '54%', '70%', '60%', '40%', '58%', '62%', '50%', '46%']"
       :loading="props.loading && !props.models"
       :skeleton-rows="6"
       :state="props.state"
@@ -72,6 +73,7 @@ function rateTitle(row: ModelRow): string {
           <th scope="col">{{ t('models.table.column.origin') }}</th>
           <th scope="col">{{ t('models.table.column.price') }}</th>
           <th scope="col">{{ t('models.table.column.tier') }}</th>
+          <th scope="col">{{ t('models.table.column.overseas') }}</th>
           <th scope="col">{{ t('models.table.column.usage') }}</th>
           <th scope="col">{{ t('models.table.column.offered') }}</th>
           <th scope="col">{{ t('models.table.column.status') }}</th>
@@ -130,6 +132,17 @@ function rateTitle(row: ModelRow): string {
             :disabled="row.origin === 'config'"
             :aria-label="t('models.table.column.tier')"
             @update:model-value="emit('tier', row, $event)"
+          />
+        </td>
+        <td class="amd__cell" :data-label="t('models.table.column.overseas')">
+          <!-- 和档位同一条：配置文件里来的模型改不了，只显示。 -->
+          <v-checkbox
+            :model-value="!!row.overseas"
+            density="compact"
+            hide-details
+            :disabled="row.origin === 'config'"
+            :aria-label="t('models.table.overseas')"
+            @update:model-value="emit('overseas', row, !!$event)"
           />
         </td>
         <td class="amd__cell" :data-label="t('models.table.column.usage')">

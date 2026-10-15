@@ -11,6 +11,10 @@ const credits = useAdminCredits()
 function dismissPlanError() {
   credits.teamPlanError.value = null
 }
+
+function dismissOverseasError() {
+  credits.overseasError.value = null
+}
 </script>
 
 <template>
@@ -38,6 +42,8 @@ function dismissPlanError() {
     :history-error="credits.historyError.value"
     :team-plan-saving="credits.teamPlanSaving.value"
     :team-plan-error="credits.teamPlanError.value"
+    :overseas-saving="credits.overseasSaving.value"
+    :overseas-error="credits.overseasError.value"
     :grant-open="credits.grantOpen.value"
     :grant-saving="credits.grantSaving.value"
     :grant-error="credits.grantError.value"
@@ -56,6 +62,8 @@ function dismissPlanError() {
     @retry-team="credits.retryTeam"
     @change-plan="credits.changeTeamPlan"
     @dismiss-plan-error="dismissPlanError"
+    @set-overseas="credits.setTeamOverseas"
+    @dismiss-overseas-error="dismissOverseasError"
     @open-grant="credits.openGrant"
     @update:grant-open="credits.grantOpen.value = $event"
     @grant="credits.grant"

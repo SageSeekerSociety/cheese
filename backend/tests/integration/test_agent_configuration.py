@@ -5,6 +5,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_type.library import preset_types
 from tests.integration.conftest import (
     add_external_member,
+    approve_overseas,
     post_project,
     project_service,
     put_on_plan,
@@ -67,6 +68,7 @@ def test_a_saved_agent_can_override_model_but_not_harness(client):
     async def reserve() -> None:
         async with client.test_request_factory() as session:
             await put_on_plan(session, project["team_id"], "reserve")
+            await approve_overseas(session, project["team_id"])
             await session.commit()
 
     client.portal.call(reserve)

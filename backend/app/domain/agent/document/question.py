@@ -281,10 +281,14 @@ async def admit(session: AsyncSession, project_id: uuid.UUID, bound: Bound) -> N
             label=choice["label"],
             tier=choice["tier"],
             approver=project.owner_handle or "",
+            overseas=choice["overseas"],
         ),
         gate.policy_of(
             project.settings,
             await UsageService(session).plan_model_tiers(project.team_id),
+            overseas_approved=await UsageService(session).overseas_approved(
+                project.team_id
+            ),
         ),
         actor=bound.agent_handle,
     )

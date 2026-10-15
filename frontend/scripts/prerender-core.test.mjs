@@ -9,7 +9,7 @@ import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { assemblePage, dualThemeCss, pageAssets, PAGES, stripThemeClass } from './prerender-core.mjs'
+import { assemblePage, dualThemeCss, pageAssets, PAGES, stripThemeClass, withStylePreloads } from './prerender-core.mjs'
 
 const TEMPLATE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'index.html'), 'utf8')
 const NGINX = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'nginx.conf'), 'utf8')
@@ -72,4 +72,14 @@ test('a page links only the chunks and stylesheets the entry does not already ca
     css: ['/assets/Landing.css'],
     js: ['/assets/Landing.js'],
   })
+})
+
+test('a stylesheet loaded off the first paint is still a stylesheet, fetched early at its own priority', () => {
+  const late = `<link rel="stylesheet" crossorigin href="/assets/vuetify.css" media="print" onload="this.media='all'">`
+  const blocking = '<link rel="stylesheet" href="/assets/blocking.css">'
+  const out = withStylePreloads(`<head>${late}${blocking}<noscript>${blocking}</noscript></head>`)
+  // The stylesheet itself is left as it was: the app's code loader recognises it only as rel="stylesheet".
+  assert.ok(out.includes(late))
+  assert.match(out, /<link rel="preload" as="style" href="\/assets\/vuetify\.css" crossorigin><link rel="stylesheet"/)
+  assert.equal(out.match(/rel="preload"/g).length, 1)
 })

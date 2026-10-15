@@ -126,6 +126,8 @@ export interface GatewayModelInfo {
   series?: number[]
   /** 全部线路，按网关试它们的先后排好；config 的也在，只是只读。 */
   sources?: GatewaySource[]
+  /** 需开通才能用：只有管理员开通了的团队能看到、能用它。 */
+  overseas: boolean
 }
 
 export interface GatewayModelsPayload {
@@ -156,6 +158,7 @@ export interface GatewayModelCreateInput extends GatewaySourceFields {
   label?: string
   selectable?: boolean
   capabilities?: GatewayCapabilities
+  overseas?: boolean
 }
 
 /** 改一个运行时模型（契约 §3.3）。PATCH 语义：只传要改的字段，缺的表示「别动它」。
@@ -172,6 +175,7 @@ export interface GatewayModelUpdateInput {
   selectable?: boolean
   prices?: GatewayPrices
   capabilities?: GatewayCapabilities
+  overseas?: boolean
 }
 
 export interface GatewayProjectCredits {
