@@ -600,6 +600,31 @@ class Lease:
         """
         return bool(self._held)
 
+    async def taken(self) -> bool:
+        """Whether the seat is held now, here or in another process.
+
+        Both halves, unlike ``locked``, which answers for this process alone: a
+        turn of another process is the one a take cannot see coming and waits
+        for either way. Read a moment before a take, so a turn that is about to
+        wait can say so in its room rather than looking like nothing happening
+        (#1561). The read is a moment early, so a seat let go in between can
+        still be answered as taken — that costs one notice about a wait that
+        did not happen, never a silence about one that did.
+
+        Valkey being unreachable answers False, which costs the notice and not
+        the take: ``__aenter__`` waits for the key if there is one and for this
+        process's lock either way.
+        """
+        if self._lock.locked():
+            return True
+        redis = get_redis_client()
+        if redis is None:
+            return False
+        try:
+            return bool(await redis.exists(self.key))
+        except (RedisError, OSError):
+            return False
+
     async def __aenter__(self) -> "Lease":
         # Not `async with self._lock`: the lock has to outlive this call, and
         # be let go by `__aexit__`, next to the hold it was taken for.
