@@ -13,14 +13,22 @@ signal. A worker that died mid-case is the one whose file ends on a ``start``.
 
 A lost worker also ends the run. xdist replaces a crashed worker, and under a
 scheduler that hands out one work unit at a time (``--dist loadfile``, which the
-CI uses, plus loadscope and loadgroup) the replacement then deadlocks: before
-running the unit it was handed it waits for the next one, which the scheduler
-sends only after a completed case, which the replacement never reports. The
-shard sits there until the job's ceiling, which is the freeze #3005 reports.
-Those schedulers leave ``mark_test_pending`` unimplemented too, so a case whose
-worker died cannot be retried either, and the shard is red however it ends — so
-it ends at the loss, named, instead of spending the job's remaining minutes
-waiting on a worker that will never report.
+CI uses, plus loadscope and loadgroup) that replacement can stall: a worker
+takes the next index before running the case it holds, and the scheduler sends
+the next unit only after a completed case, so a replacement handed fewer than
+two runnable cases waits for one that never comes. Seen when the worker died on
+a one-case module, on a module's last case, and on a unit the crash had already
+finished; the shard then sits until the job's ceiling, which is the freeze
+#3005 reports. Handed two or more cases, a replacement runs them and the shard
+finishes.
+
+The case that was lost ends the shard either way: those schedulers leave
+``mark_test_pending`` unimplemented, so ``--reruns`` fails a case whose worker
+died instead of requeuing it, and the shard is red however it ends. So it ends
+at the loss, named, rather than spending the job's remaining minutes on a
+replacement that only sometimes carries on. The cases such a replacement would
+have run are not in that attempt; the failure rerun repeats the whole shard, so
+they run again there.
 
 ``--reruns`` turns a failed or crashed case into a retry, and a case that then
 passes leaves the JUnit report looking clean. The process that collects the
