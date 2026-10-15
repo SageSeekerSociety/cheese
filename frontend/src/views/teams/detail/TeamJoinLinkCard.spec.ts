@@ -169,4 +169,3 @@ describe('the address draft', () => {
     expect((screen.getByRole('button', { name: '保存' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
-

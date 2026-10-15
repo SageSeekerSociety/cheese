@@ -35,12 +35,12 @@ import { t } from '@/i18n'
 import AdminIntegrationsPageView from '@/views/admin/AdminIntegrationsPageView.vue'
 import AdminSpacesPageView from '@/views/admin/AdminSpacesPageView.vue'
 import ComputeView from '@/views/teams/detail/ComputeView.vue'
+import MembersView from '@/views/teams/detail/MembersView.vue'
+import TeamJoinLinkCard from '@/views/teams/detail/TeamJoinLinkCard.vue'
 import DetailView from '@/views/teams/DetailView.vue'
 import ExploreView from '@/views/teams/ExploreView.vue'
 import IndexView from '@/views/teams/IndexView.vue'
-import MembersView from '@/views/teams/detail/MembersView.vue'
 import MineView from '@/views/teams/MineView.vue'
-import TeamJoinLinkCard from '@/views/teams/detail/TeamJoinLinkCard.vue'
 
 /** 画法要 Vuetify、文案要语言包；那几条按 name 指路的去处（团队详情、我的设备）要一条 route。 */
 const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']

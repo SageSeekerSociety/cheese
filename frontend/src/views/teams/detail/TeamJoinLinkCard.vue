@@ -5,8 +5,8 @@
 // 这一件只吃数据、往上报动作：几样东西取没取回来、写成了没有、换完地址把浏览器带到哪，
 // 都是页面（`Members.vue`）那一层的事。只有地址那一格自己拿着草稿 —— 改到一半的东西不该
 // 跟着下一个团队跑，确认时连要保存的那一串一起报上去。
-import type { Team, TeamVisibility } from '@/types'
 import type { TeamsApi } from '@/api/teams'
+import type { Team, TeamVisibility } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 

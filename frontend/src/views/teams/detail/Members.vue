@@ -18,12 +18,13 @@ import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { useAccountLookup } from '@/composables/useAccountLookup'
+
 import MembersView from './MembersView.vue'
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
 import { ApiError } from '@/api'
 import { TeamsApi } from '@/api/teams'
-import { useAccountLookup } from '@/composables/useAccountLookup'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { useDialog } from '@/plugins/dialog'

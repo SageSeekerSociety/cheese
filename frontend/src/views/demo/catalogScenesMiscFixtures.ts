@@ -9,8 +9,8 @@
  * 这里只出数据（外加几个把参数拼成 props 的小函数），不引运行时要装的东西：哪一份配
  * 哪个组件、每一格看什么，在 `catalogScenesMisc.ts`。
  */
-import type { DeviceUser, MyDevice } from '@/cx_types'
 import type { LookedUpUser } from '@/api'
+import type { DeviceUser, MyDevice } from '@/cx_types'
 import type { SpaceApplication, Team, TeamMember, TeamMembershipApplication } from '@/types'
 import type { User } from '@/types/users'
 

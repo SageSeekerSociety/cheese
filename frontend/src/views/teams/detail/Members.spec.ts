@@ -139,7 +139,6 @@ describe('running the team link', () => {
     mount({ role: 'OWNER' })
     const approval = await screen.findByLabelText('加入需要审批')
     await waitFor(() => expect((approval as HTMLInputElement).checked).toBe(true))
-
     ;(approval as HTMLInputElement).click()
 
     await waitFor(() => expect(TeamsApi.updateJoinLink).toHaveBeenCalledWith(7, { approval: false }))

@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import type { MenuAction } from '@/components/common/menuAction'
 import type { LookedUpUser } from '@/api'
+import type { MenuAction } from '@/components/common/menuAction'
 import type { TeamMember, TeamMembershipApplication } from '@/types'
 
 import { computed } from 'vue'
 
-import { useRowMenu } from '@/composables/useRowMenu'
 import { getAvatarUrl } from '@/utils/materials'
 
-import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { useRowMenu } from '@/composables/useRowMenu'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
