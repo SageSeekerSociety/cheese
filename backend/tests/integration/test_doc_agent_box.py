@@ -77,7 +77,7 @@ def test_a_shortcut_changes_the_selection_and_the_box_gets_the_change(client, se
         f"/documents/{document_of(client, task)}/history",
         headers=session_auth_headers("alice"),
     ).json()["data"]["versions"][-1]
-    assert latest["actor"] == seat and latest["requested_by"] == "bob"
+    assert latest["actor"] == seat and "requested_by" not in latest
     [(_, question)] = sessions.asked
     assert "范围" in question
 

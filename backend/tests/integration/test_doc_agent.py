@@ -289,7 +289,7 @@ def test_what_the_session_changes_is_recorded_as_asked_by_the_commenter(
         f"/documents/{document_of(client, task)}/history",
         headers=session_auth_headers("alice"),
     ).json()["data"]["versions"][-1]
-    assert latest["actor"] == seat and latest["requested_by"] == "bob"
+    assert latest["actor"] == seat and "requested_by" not in latest
 
 
 def test_the_tools_stop_working_once_the_answer_is_over(client, sessions, monkeypatch):

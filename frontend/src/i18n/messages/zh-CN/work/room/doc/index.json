@@ -33,7 +33,6 @@
   "historyDiff": "与上一版比较",
   "historyEmpty": "暂无修改记录",
   "historyFailed": "修改记录读取失败",
-  "historyFor": "{requester}让{who}改",
   "historyFull": "这一版全文",
   "historyMore": "更早的版本",
   "historyView": "右边显示",

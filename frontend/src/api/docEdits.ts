@@ -9,7 +9,6 @@ const json = (body: unknown): RequestInit => ({ method: 'POST', body: JSON.strin
 
 export interface DocEditsResult {
   mode: 'direct' | 'suggest'
-  requested_by: string | null
   edits: (DocEdit & { suggestion_id?: string })[]
   doc_version: number
 }

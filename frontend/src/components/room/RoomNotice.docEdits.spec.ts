@@ -1,7 +1,8 @@
 // The line an AI teammate's document edit leaves in the conversation. It is a
 // record of the teammate's own tool call: inside its turn it does not name the
 // teammate again, outside a turn it names who did it — and in neither does a
-// name read as an @ mention, because the line notifies nobody. The line opens
+// name read as an @ mention, because the line notifies nobody. The edit is the
+// teammate's own, like a person's: the line never says who asked for it. The line opens
 // the document; 「查看改动」 opens it with the changes marked.
 import type { Component } from 'vue'
 import type { Block } from '@/cx_types'
@@ -88,12 +89,11 @@ describe('a document edit inside the teammate turn that made it', () => {
     expect(container.querySelector('.mention')).toBeNull()
   })
 
-  it('says in plain words who asked for it', () => {
+  it('never says who asked for it, even on a line stored with that', () => {
     const { container } = mount(living({ doc_requested_by: 'li-laoshi', doc_edits: EDITS }))
 
-    expect(lineText(container)).toContain('李老师')
-    expect(lineText(container)).not.toContain('@')
-    expect(container.querySelector('.mention')).toBeNull()
+    expect(lineText(container)).toContain(t('work.room.notice.docLine.editedDoc'))
+    expect(lineText(container)).not.toContain('李老师')
   })
 
   it('opens the library document itself, and 「查看改动」 opens it with the changes marked', async () => {
@@ -104,16 +104,16 @@ describe('a document edit inside the teammate turn that made it', () => {
 
     expect(view.emitted('open-resource')).toEqual([
       ['doc', 'turn-1', undefined, { id: 'lib-doc', title: '频道体验改进' }],
-      ['doc', 'turn-1', { requester: '', edits: EDITS }, { id: 'lib-doc', title: '频道体验改进' }],
+      ['doc', 'turn-1', { edits: EDITS }, { id: 'lib-doc', title: '频道体验改进' }],
     ])
   })
 
-  it('opens the changes someone asked for, named the way the room calls them', async () => {
-    const view = mount(living({ doc_requested_by: 'li-laoshi', doc_edits: EDITS }))
+  it("opens the changes to the conversation's own document", async () => {
+    const view = mount(living({ doc_edits: EDITS }))
 
     await fireEvent.click(screen.getByRole('button', { name: t('work.room.notice.viewChanges') }))
 
-    expect(view.emitted('open-resource')).toEqual([['doc', 'turn-1', { requester: '李老师', edits: EDITS }]])
+    expect(view.emitted('open-resource')).toEqual([['doc', 'turn-1', { edits: EDITS }]])
   })
 
   it('opens the document for the suggestions it left', async () => {
@@ -127,12 +127,12 @@ describe('a document edit inside the teammate turn that made it', () => {
 })
 
 describe('a document edit that belongs to no turn', () => {
-  it('names who did it and who asked, in plain words and not as @ mentions', () => {
+  it('names who did it, not who asked, and not as an @ mention', () => {
     const { container } = mount(living({ doc_requested_by: 'li-laoshi', doc_edits: EDITS }, { turn: null }), null)
 
     const text = lineText(container)
-    expect(text).toContain('李老师')
     expect(text).toContain('芝士S')
+    expect(text).not.toContain('李老师')
     expect(text).not.toContain('@')
     expect(container.querySelector('.mention')).toBeNull()
   })
@@ -155,7 +155,7 @@ describe('a document edit that belongs to no turn', () => {
 
     expect(view.emitted('open-resource')).toEqual([
       ['doc', undefined, undefined, { id: 'lib-doc', title: '频道体验改进' }],
-      ['doc', undefined, { requester: '', edits: EDITS }, { id: 'lib-doc', title: '频道体验改进' }],
+      ['doc', undefined, { edits: EDITS }, { id: 'lib-doc', title: '频道体验改进' }],
     ])
   })
 

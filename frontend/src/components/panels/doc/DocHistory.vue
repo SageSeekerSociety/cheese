@@ -81,17 +81,13 @@ watch(
   { immediate: true }
 )
 
-/** 同一个人（同一个人让 AI 队友改）相隔不到这么久连着存的几版，算一条。 */
+/** 同一个人相隔不到这么久连着存的几版，算一条。 */
 const RUN_MS = 10 * 60_000
 const entries = computed(() => {
   const out: DocVersion[] = []
   let newer: DocVersion | null = null
   for (const v of versions.value) {
-    const joins =
-      newer &&
-      newer.actor === v.actor &&
-      newer.requested_by === v.requested_by &&
-      Date.parse(newer.created_at) - Date.parse(v.created_at) < RUN_MS
+    const joins = newer && newer.actor === v.actor && Date.parse(newer.created_at) - Date.parse(v.created_at) < RUN_MS
     if (!joins) out.push(v)
     newer = v
   }
@@ -131,10 +127,7 @@ const names = computed(() => {
 })
 
 function who(version: DocVersion): string {
-  const name = props.nameOf(version.actor)
-  return version.requested_by
-    ? t('work.room.doc.historyFor', { who: name, requester: props.nameOf(version.requested_by) })
-    : name
+  return props.nameOf(version.actor)
 }
 
 async function restoreSelected() {

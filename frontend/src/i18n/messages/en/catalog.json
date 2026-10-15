@@ -189,10 +189,10 @@
     }
   },
   "panelDocReviewStrip": {
-    "about": "The strip above the body when 'View changes' opens the doc: who asked the AI teammate to edit, how many are left, previous/next, collapse.",
+    "about": "The strip above the body when 'View changes' opens the doc: how many of the AI teammate's changes are left, previous/next, collapse.",
     "s1": {
       "name": "Some left",
-      "note": "'3 spots changed by Cheese at a person's request', with previous/next and collapse."
+      "note": "'3 changes by Cheese', with previous/next and collapse."
     },
     "s2": {
       "name": "All reverted",

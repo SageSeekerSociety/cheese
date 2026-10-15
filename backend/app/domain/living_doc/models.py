@@ -109,9 +109,6 @@ class DocumentVersion(UuidPk, Base):
     previous_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     base_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     actor: Mapped[str] = mapped_column(String(128))
-    #: The person a change was made for, when someone else (the room's agent)
-    #: made it at their request.
-    requested_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     operation_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     event_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(

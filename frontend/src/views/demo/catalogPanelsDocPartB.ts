@@ -302,8 +302,8 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocReviewStrip.s1.note')
         },
-        props: { agentName: DOC_AGENT, requester: DOC_PERSON, count: 3 },
-        expect: '王长鑫让芝士改的 3 处',
+        props: { agentName: DOC_AGENT, count: 3 },
+        expect: '芝士改的 3 处',
       },
       {
         get name() {
@@ -312,7 +312,7 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocReviewStrip.s2.note')
         },
-        props: { agentName: DOC_AGENT, requester: DOC_PERSON, count: 0 },
+        props: { agentName: DOC_AGENT, count: 0 },
         expect: '都已还原',
       },
     ],

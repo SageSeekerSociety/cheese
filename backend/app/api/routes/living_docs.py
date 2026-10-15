@@ -19,7 +19,6 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.doc_access import authorize_in_project, frozen, reach, require_writable
-from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
 from app.api.doc_mentions import notified_handles
 from app.api.doc_store import announce, store, tell_origin_room
@@ -453,11 +452,12 @@ async def edit_doc_passages(
     resolver: ActorResolverDep,
 ) -> dict:
     """Change passages of the document: each ``old`` (once in its Markdown)
-    becomes ``new``, directly or as suggestions (``app.api.doc_edits``).
+    becomes ``new``, directly, or as suggestions when an AI teammate asks for
+    that (``mode: "suggest"``).
 
-    For the room's agent and for people alike: a person restoring one change
-    edits directly, as themselves. Nothing is applied unless every edit can
-    be; a refusal names the edit (``data.index``)."""
+    For the room's agent and for people alike, each edits as themselves.
+    Nothing is applied unless every edit can be; a refusal names the edit
+    (``data.index``)."""
     reached = await reach(db, resolver, document_id, enforce=True)
     if not reached.actor.authenticated:
         raise AuthenticationRequiredError(say("docEditNeedsWriter"))
@@ -484,34 +484,26 @@ async def edit_doc_passages(
         )
         edit["new"] = one.text
         settled.append(one)
-    # A 芝士 answering someone's question edits as itself, for that person,
-    # directly: the person asked for exactly this change.
+    # A 芝士 answering someone's question on the document edits as itself.
     delegation = resolver.delegation()
     if delegation is not None:
         if delegation.agent is None:
             raise ForbiddenError("This credential names no agent to edit as")
         author = delegation.agent
-        decision = Decision(mode="direct", requested_by=actor.handle)
     else:
         author = actor.handle
-        decision = await decide(
-            db,
-            doc=doc,
-            actor=actor.handle,
-            content=doc.content,
-            edits=edits,
-            asked=body.mode,
-        )
-    # The service's store takes the document's lock in a transaction of its own.
     editor_is_agent = await IdentityService(db).is_agent(author)
+    # Only an AI teammate proposes instead of editing, and only when it says so:
+    # a person's edit, like the agent's by default, is made.
+    mode = "suggest" if editor_is_agent and body.mode == "suggest" else "direct"
+    # The service's store takes the document's lock in a transaction of its own.
     agent_authors = await _agent_authors(db, doc.id)
     await db.commit()
     result = await collab.edit(
         doc.id,
         edits=edits,
         actor=author,
-        requested_by=decision.requested_by,
-        mode=decision.mode,
+        mode=mode,
         reason=body.reason,
         editor_is_agent=editor_is_agent,
         agent_authors=agent_authors,
@@ -528,7 +520,7 @@ async def edit_doc_passages(
             author,
             edits=changed,
             suggested=[e["suggestion_id"] for e in changed if e.get("suggestion_id")]
-            if decision.mode == "suggest"
+            if mode == "suggest"
             else None,
         )
     stored = result.get("stored") or {}
@@ -539,8 +531,7 @@ async def edit_doc_passages(
         _with_canvases(
             ok(
                 {
-                    "mode": decision.mode,
-                    "requested_by": decision.requested_by,
+                    "mode": mode,
                     "edits": result.get("edits") or [],
                     "doc_version": (stored.get("data") or {}).get("doc_version"),
                 },
@@ -690,8 +681,6 @@ class StoreIn(BaseModel):
     converted: bool = False
     #: Every suggestion pending in the stored state: ``{id, author, old, new}``.
     suggestions: list[dict] = Field(default_factory=list)
-    #: An edit made for someone (``/edit``): who asked for it.
-    requested_by: str | None = None
     #: An edit's passages, ``{old, new, suggestion_id?}``.
     edits: list[dict] | None = None
     #: The edit proposed its changes instead of making them.
@@ -719,7 +708,6 @@ async def store_document(
         operation=body.operation,
         quiet=body.converted,
         suggestions=body.suggestions,
-        requested_by=body.requested_by,
         edits=body.edits,
         suggested=body.suggested,
         reason=body.reason,
