@@ -2200,12 +2200,14 @@ def _app_save(args: dict, host) -> str:
     body = {"code": str(args["code"]), "note": str(args.get("note") or "")}
     key = str(args.get("app") or "").strip()
     # The pictures the platform took come back with the answer, for the writer
-    # to look at what it made (`_LOOK`).
+    # to look at what it made (`_LOOK`), when its model reads pictures
+    # (CHEESE_PICTURES, which the platform sets from the gateway's word).
+    pictures = "?pictures=true" if host.environ.get("CHEESE_PICTURES") == "1" else ""
     if key:
-        path = _app_path(key) + "/versions?pictures=true"
+        path = _app_path(key) + "/versions" + pictures
     else:
         document = _document(host, args)["CHEESE_DOCUMENT"]
-        path = f"/documents/{document}/apps?pictures=true"
+        path = f"/documents/{document}/apps" + pictures
     plan = {"method": "POST", "path": path, "body": body}
     try:
         answer = host.request(plan)

@@ -18,11 +18,12 @@
 // 西就是这一格的接口，谁传谁看得见；将来哪一样不传了，typecheck 也会点名。
 import type { DocPeopleBundle } from '../../composables/useDocPeople'
 import type { DocThreadsBundle } from '../../composables/useDocThreads'
+import type { useMentionOutside } from '../../composables/useMentionOutside'
 import type { PanelDocBundle, PanelDocument } from '../../composables/usePanelDoc'
 import type { Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import PanelDocView from './PanelDocView.vue'
 
@@ -56,6 +57,8 @@ const props = withDefaults(
     docThreads: DocThreadsBundle
     /** 名册读成名字那一包（`composables/useDocPeople.ts`）。 */
     docPeople: DocPeopleBundle
+    /** 评论 @ 了打不开这份文档的人时问的那一句（`composables/useMentionOutside.ts`）。 */
+    commentOutside?: ReturnType<typeof useMentionOutside>
   }>(),
   {
     taskId: null,
@@ -64,6 +67,7 @@ const props = withDefaults(
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     bare: false,
+    commentOutside: undefined,
     barTo: undefined,
     flow: false,
   }
@@ -92,13 +96,34 @@ const people = props.docPeople
 // 或不在名册上的人给空串，由 UserAvatar 画他自己的首字母 —— 不再退回全站那张默认脸。
 const avatarOf = (handle: string) => people.avatars.value[handle] ?? ''
 
-// 回复里 @ 的 AI 队友，和发评论一样写成点名。
+// 我在文档里 @ 了打不开它的人：那一条提示要写成名字。
+const outsidePrompt = computed(() => {
+  const asked = doc.mentionOutside.prompt.value
+  if (!asked) return null
+  return {
+    names: asked.handles.map((h) => people.names.value[h] ?? h).join(t('work.room.roster.listSeparator')),
+    membersOnly: asked.members_only,
+    mayAdd: asked.may_add,
+    adding: doc.mentionOutside.adding.value,
+  }
+})
+
+// 回复里 @ 的 AI 队友，和发评论一样写成点名。回执里说了谁打不开这份文档，就问一句。
 const threads = {
   state: docThreads.state,
   actions: {
     ...docThreads.actions,
-    reply: (id: string, content: string) => docThreads.actions.reply(id, doc.withMentions(content)),
+    reply: async (id: string, content: string) => {
+      const written = await docThreads.actions.reply(id, doc.withMentions(content))
+      if (written) props.commentOutside?.offer(written)
+      return written
+    },
   },
+}
+async function sendComment(content: string, quote: string) {
+  const posted = await doc.sendComment(content, quote)
+  props.commentOutside?.offer(posted)
+  return posted
 }
 
 // Dev-only probe hook: lets Playwright inspect the live document without
@@ -173,6 +198,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :agent-handle="props.agentHandle"
     :mention-names="people.names.value"
     :mention-people="people.people.value"
+    :notified-mentions="doc.notifiedMentions.value"
+    :fetch-notified-mentions="doc.fetchNotifiedMentions"
     :bare="props.bare"
     :untitled="!!props.taskId"
     :bar-to="props.barTo"
@@ -186,7 +213,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :peers="doc.peers.value"
     :error-msg="doc.errorMsg.value"
     :comment-author="doc.commentAuthor"
-    :send-comment="doc.sendComment"
+    :send-comment="sendComment"
+    :comment-outside="commentOutside"
     :refresh-threads="docThreads.refresh"
     :thread-state="threads.state"
     :thread-actions="threads.actions"
@@ -206,6 +234,9 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :avatar-of="avatarOf"
     :load-versions="doc.loadVersions"
     :restore-version="doc.restoreVersion"
+    :mention-outside="outsidePrompt"
+    @mention-outside-add="doc.mentionOutside.add"
+    @mention-outside-dismiss="doc.mentionOutside.dismiss"
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"

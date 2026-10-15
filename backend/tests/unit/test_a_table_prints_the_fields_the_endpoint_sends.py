@@ -8,8 +8,8 @@
 
 守的是七条能在写代码之前就说出来的规则：表打的是接口送的字段；表打得出聚合算出来
 的数；`--json` 的行是对象不是字符串；载荷里没有的字段要出声，不能默默打成横杠（两
-个脚本各测一次，库里那份每一段、每一行都查）；没算出来的速率打横杠，那是「这组里
-没有一轮秒数大于 0」不是缺字段；数是多少就打多少，不打科学计数法，带小数的也不收
+个脚本各测一次，库里那份每一段、每一行都查）；没有值的列打横杠，不是 0；
+数是多少就打多少，不打科学计数法，带小数的也不收
 成整数；一行打出来要和表头一样宽，哪一列占满列宽都不能把右边的列顶歪。走文档里那条命令的
 入口 `main()`，所以老代码上红的是断言，不是 import。
 """
@@ -38,7 +38,7 @@ def _cli():
     return module
 
 
-def _rate(**over) -> SeatRateOut:
+def _row(**over) -> SeatRateOut:
     base = {
         "seat": "cheese",
         "model": "claude-sonnet-5",
@@ -47,8 +47,6 @@ def _rate(**over) -> SeatRateOut:
         "output_tokens": 48000,
         "calls": 14,
         "turn_seconds": 612.5,
-        "p50_tps": 78.4,
-        "p90_tps": 120.0,
         "window_tps": 0.5556,
     }
     base.update(over)
@@ -101,13 +99,13 @@ def test_the_columns_are_the_fields_the_endpoint_actually_sends():
 
 def test_the_table_prints_the_numbers_the_aggregation_computed(monkeypatch):
     """`seats()` 交的是 pydantic 模型，不是 dict —— 打印路径必须吃得下它。"""
-    out = _printed(monkeypatch, [_rate()], as_json=False)
+    out = _printed(monkeypatch, [_row()], as_json=False)
     assert "48000" in out and "612.5" in out, out
 
 
 def test_json_rows_are_objects_with_the_fields_the_endpoint_sends(monkeypatch):
     """`--json` 的行是对象。打成每个模型的字符串长相，谁都取不到数。"""
-    parsed = json.loads(_printed(monkeypatch, [_rate()], as_json=True))
+    parsed = json.loads(_printed(monkeypatch, [_row()], as_json=True))
     row = parsed["rows"][0]
     assert isinstance(row, dict), row
     assert row["output_tokens"] == 48000 and row["turn_seconds"] == 612.5
@@ -163,8 +161,8 @@ def test_a_later_row_missing_a_column_is_reported_too(monkeypatch, capsys):
             "since": "2026-10-13T00:00:00+00:00",
             "now": "2026-10-14T00:00:00+00:00",
             "window_seconds": 86400.0,
-            "rows": [_rate(), _PartialRow()],
-            "seats": [_rate(), _PartialRow()],
+            "rows": [_row(), _PartialRow()],
+            "seats": [_row(), _PartialRow()],
         }
 
     monkeypatch.setattr(throughput, "seats", seats)
@@ -205,8 +203,6 @@ def test_a_wide_count_keeps_the_row_the_same_width_as_the_header():
         "output_tokens": 1234567890123,
         "calls": 12345678,
         "turn_seconds": 123456789.123,
-        "p50_tps": 12345678.1234,
-        "p90_tps": 12345678.1234,
         "window_tps": 12345678.1234,
     }
     for columns, fmt in (
@@ -222,8 +218,11 @@ def test_a_wide_count_keeps_the_row_the_same_width_as_the_header():
         assert len(lines[0]) == len(lines[2]), out
 
 
-def test_a_rate_that_was_never_computed_still_renders_as_a_dash():
-    """`None` 是「这组里没有一轮秒数大于 0」，不是缺字段——照旧写成 `-`。"""
+def test_a_value_that_was_never_computed_still_renders_as_a_dash():
+    """`None` 是「没算出这个数」，不是缺字段——照旧写成 `-`，不是 `0`。
+
+    现在的载荷每一列都有值（按轮速率拆掉之后没有了会为空的那两个字段），这一条守着
+    的是渲染器：哪一列给到 `None` 都得吃得下，别打成 `0` 或者崩掉。"""
     row = {
         "seat": "cheese",
         "model": "mimo-v2.6-pro",
@@ -231,9 +230,7 @@ def test_a_rate_that_was_never_computed_still_renders_as_a_dash():
         "turns": 3,
         "output_tokens": 900,
         "calls": 3,
-        "turn_seconds": 0.0,
-        "p50_tps": None,
-        "p90_tps": None,
+        "turn_seconds": None,
         "window_tps": 0.0104,
     }
     out = _cli().table([row])

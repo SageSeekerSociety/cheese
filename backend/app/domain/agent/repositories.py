@@ -10,9 +10,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
+from app.domain.agent.checkout_sweep import sweep
 from app.domain.agent.models import AgentTurn
 from app.domain.room_task.closing import turns_ended
 from app.domain.room_task.live import turns_moved
+from app.domain.room_task.ports import SweepCheckouts
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +55,15 @@ class TurnRecord:
 
 
 class AgentTurnRepository:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self, session: AsyncSession, *, machines: SweepCheckouts | None = None
+    ) -> None:
         self._session = session
+        # Ending an interval can close the task it belonged to, and that close
+        # sweeps the room's closed checkouts (`room_task.closing.turns_ended`).
+        # The sweep is this package's, so a repository built without one still
+        # hands in the real thing; a caller passes its own only to replace it.
+        self._machines = machines if machines is not None else sweep
 
     async def open(
         self,
@@ -319,7 +328,7 @@ class AgentTurnRepository:
         )
         conversations = list(closed.scalars())
         await turns_moved(self._session, conversations)
-        await turns_ended(self._session, conversations)
+        await turns_ended(self._session, conversations, machines=self._machines)
 
     async def still_open(
         self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
@@ -404,7 +413,7 @@ class AgentTurnRepository:
         )
         conversations = list(closed.scalars())
         await turns_moved(self._session, conversations)
-        await turns_ended(self._session, conversations)
+        await turns_ended(self._session, conversations, machines=self._machines)
         return len(conversations)
 
     async def started_at_of(

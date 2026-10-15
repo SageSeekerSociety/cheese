@@ -20,6 +20,34 @@
 #                              / high / max), offered on a teammate's settings
 #                              and passed by Claude Code as output_config.effort.
 #                              None when absent: the model's own default.
+#   cheese_overseas: true      only teams a platform administrator approved
+#                              may use it (Claude, GPT, Gemini); other teams
+#                              are not shown it at all.
+#   cheese_free: true          its upstream charges nothing, and both token
+#                              prices are written as 0 on purpose. The one way
+#                              a selectable model may be priced at zero; a
+#                              zero without it is a missing price.
+#
+# Two keys are per deployment, not per model group, for an upstream that wants
+# headers of its own (upstream_headers.py). Other rows of the same group, such
+# as the pay-per-use API behind a subscription, are sent neither:
+#
+#   cheese_upstream_headers: {user-agent: cheese-gateway/1.0}
+#                              sent as written.
+#   cheese_session_header: x-opencode-session
+#                              carries the caller's Claude Code session.
+#
+# Two more belong to the upstream model a deployment calls. A source added
+# from the admin page on the same upstream model takes them from a row that
+# has them; one on another upstream does not:
+#
+#   cheese_no_explicit_cache: true
+#                              strips Claude Code's cache_control marks, for an
+#                              upstream that refuses explicit caching
+#                              (no_explicit_cache.py).
+#   cheese_spend_cap_usd: 1000 refuses the deployment's calls once its upstream
+#                              model has cost this much in all, by the gateway's
+#                              own ledger (spend_cap.py).
 #
 # A selectable model with no price is not offered — see the pricing note below
 # for why a missing price is worse than a missing model.
@@ -71,6 +99,11 @@ model_list:
       # K3 always reasons: keep native effort, but omit adaptive thinking.
       supports_output_config: true
       supports_max_reasoning_effort: true
+      # Measured 2026-10-14 with gateway_conformance.py on the OpenCode Go row
+      # (anthropic/, order 1, added from the admin side): a mid-conversation
+      # system message is dropped there. The flag tells Claude Code to fold it
+      # into the first user message, which every upstream of the group receives.
+      supports_mid_conversation_system: false
   # 芝士's own turns and the agents' Claude Code both speak the Anthropic
   # protocol, so both arrive on /v1/messages and are metered by the same rows.
   - model_name: glm-4.6
@@ -117,6 +150,11 @@ model_list:
     model_info:
       cheese_selectable: true
       cheese_label: GLM-5.2
+      # Measured 2026-10-14 on the OpenCode Go chat route this group is getting
+      # (hosted_vllm/, added from the admin page): a mid-conversation system
+      # message is dropped there. The flag tells Claude Code to fold it into the
+      # first user message, which every upstream of the group then receives.
+      supports_mid_conversation_system: false
 
   # One model, tried in `order`: RUC's self-hosted copy first, DeepSeek's API
   # when every RUC key fails or is cooling down. RUC admits 3 parallel
@@ -240,6 +278,40 @@ model_list:
       # was refused before Claude Code thought it was time to compact.
       # 1,048,576 - 128,000, rounded down.
       max_input_tokens: 920000
+
+  # Gemini through Google AI Studio. LiteLLM translates Claude Code's Messages
+  # requests to Gemini; patch_gemini_generation.py makes it treat gemini-4 as
+  # the Gemini 3+ generation, without which tool results fail on a missing
+  # thought signature. Measured 2026-10-15 with gateway_conformance.py: text,
+  # tool calls, parallel calls, tool results, images in tool results, the
+  # mid-conversation system message and the implicit prompt cache (74% on the
+  # second request) pass; effort low lets it skip thinking on an easy prompt;
+  # a prompt asking to read /etc/hostname is refused by Google's own filter
+  # (promptFeedback.blockReason OTHER).
+  - model_name: gemini-4-argon
+    litellm_params:
+      model: gemini/gemini-4-argon
+      api_key: os.environ/GEMINI_API_KEY
+      # Per million tokens: $2 in, $10 out (thinking included), $0.10 cache
+      # read through 2026-11-30; $4 / $20 / $0.20 from 2026-12-01. The later
+      # rates, so the brake does not go soft on 12-01.
+      # https://ai.google.dev/gemini-api/docs/pricing read 2026-10-15.
+      input_cost_per_token: 0.000004
+      output_cost_per_token: 0.00002
+      cache_read_input_token_cost: 0.0000002
+    model_info:
+      cheese_selectable: true
+      cheese_label: Gemini 4 Argon
+      cheese_overseas: true
+      cheese_efforts: [low, high]
+      # 400 "Explicit caching is not supported" on every Claude Code request
+      # otherwise; Gemini's implicit cache still applies.
+      cheese_no_explicit_cache: true
+      # The Google key's lifetime cap, at the prices above (spend_cap.py).
+      cheese_spend_cap_usd: 1000
+      supports_reasoning: true
+      supports_vision: true
+      supports_output_config: true
 
   # Price-only entries: the Claude models served through the platform's
   # subscription (the metering proxy), never through this gateway. Their tokens
@@ -381,6 +453,17 @@ litellm_settings:
   # (`system_billing_line.py`).
   # An image no model can decode is replaced by a line saying so, since one
   # such image fails every later request of its conversation (`image_guard.py`).
-  callbacks: ["cheese_chatgpt_session.handler", "cheese_billing_line.handler", "cheese_image_guard.handler"]
+  # A deployment that declares cheese_upstream_headers or cheese_session_header
+  # is sent them (`upstream_headers.py`), and one that declares
+  # cheese_no_explicit_cache loses its cache_control marks
+  # (`no_explicit_cache.py`), and one that declares cheese_spend_cap_usd is
+  # refused past that total (`spend_cap.py`).
+  callbacks:
+    - cheese_chatgpt_session.handler
+    - cheese_billing_line.handler
+    - cheese_image_guard.handler
+    - cheese_upstream_headers.handler
+    - cheese_no_explicit_cache.handler
+    - cheese_spend_cap.handler
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true

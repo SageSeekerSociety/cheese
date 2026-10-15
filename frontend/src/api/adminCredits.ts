@@ -68,6 +68,17 @@ export function setCreditTeamPlan(teamId: number, planKey: string): Promise<{ te
   })
 }
 
+/** 开通或收回这个团队用需开通才能用的模型（Claude / GPT / Gemini）。个人用户开通的是他的个人团队。 */
+export function setCreditTeamOverseas(
+  teamId: number,
+  approved: boolean
+): Promise<{ team_id: number; overseas_approved: boolean }> {
+  return request<{ team_id: number; overseas_approved: boolean }>(`/admin/teams/${teamId}/overseas-access`, {
+    method: 'PUT',
+    body: JSON.stringify({ approved }),
+  })
+}
+
 /** 改一条模型的档位：走模型管理同一条更新接口（只带 `tier`，别的字段不动）。
  *  配置文件里来的模型改不了，服务端会拒绝。 */
 export function setGatewayModelTier(name: string, tier: ModelTier): Promise<unknown> {

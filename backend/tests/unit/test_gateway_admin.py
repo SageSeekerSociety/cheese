@@ -449,7 +449,11 @@ async def test_a_new_model_is_sent_with_only_the_fields_the_gateway_understands(
         "api_key",
         "input_cost_per_token",
         "output_cost_per_token",
+        # 第一条线路也带优先级：没有 order 的部署只在所有有 order 的都冷却时才
+        # 轮到，后加的线路要排得进它前后，它自己就得有一个数。
+        "order",
     }
+    assert params["order"] == 1
     # 显式给了 null 的单价不能当 0 发下去：0 是「免费」，null 是「没定价」。
     assert "cache_read_input_token_cost" not in params
     info = body["model_info"]

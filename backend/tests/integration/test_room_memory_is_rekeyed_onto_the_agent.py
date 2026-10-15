@@ -24,9 +24,8 @@ from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.memory.models import MemoryEntry, agent_project_scope_id
 from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import live_entries, memory_store
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -67,7 +66,7 @@ def test_the_same_cheese_recalls_the_same_facts_after_the_rekey(
 
     async def run() -> None:
         await registered(db_session, "owner")
-        project = await ProjectService(db_session).create(
+        project = await project_service(db_session).create(
             owner_handle="owner", name="Rekey", forge_kind="github_app"
         )
         room = await TopicService(db_session).create(
@@ -84,7 +83,7 @@ def test_the_same_cheese_recalls_the_same_facts_after_the_rekey(
         )
         # 另一个项目的同名形状不许被顺手带走。
         await registered(db_session, "owner")
-        other = await ProjectService(db_session).create(
+        other = await project_service(db_session).create(
             owner_handle="owner", name="Bystander", forge_kind="github_app"
         )
         await store.remember(

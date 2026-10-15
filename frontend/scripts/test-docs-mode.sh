@@ -17,9 +17,10 @@ lacks() { if grep -qF -- "$2" "$1"; then fail "$1 still contains '$2'"; fi; }
 fixture() {
   d="$ROOT/$1"
   rm -rf "$d"
-  mkdir -p "$d/etc" "$d/html/assets" "$d/html/docs" "$d/docs-host/dev"
+  mkdir -p "$d/etc" "$d/html/assets" "$d/html/docs" "$d/html/prerender" "$d/docs-host/dev"
   cp -R "$MODES" "$d/etc/docs-modes"
   echo 'const d="__VITE_DOCS_ORIGIN__"' > "$d/html/assets/main.js"
+  echo '<a href="__VITE_DOCS_ORIGIN__/spaces">' > "$d/html/prerender/index.html"
   echo '<a href="__DOCS_SITE__/docs/llms.txt">' > "$d/html/docs/index.html"
   echo '<a href="__DOCS_PLATFORM__/legal/terms"><iframe src="__DOCS_PLATFORM__/demo/turn?embed=1">' > "$d/docs-host/index.html"
   echo '- [x](__DOCS_SITE__/quickstart.md)' > "$d/docs-host/llms.txt"
@@ -37,6 +38,7 @@ contains "$d/etc/docs/platform.conf" "location /docs/ {"
 [ ! -s "$d/etc/docs/host.conf" ] || fail "a docs server was written with no docs host"
 contains "$d/html/docs/index.html" 'href="https://okcheese.com/docs/llms.txt"'
 contains "$d/html/assets/main.js" 'const d=""'
+contains "$d/html/prerender/index.html" 'href="/docs/spaces"'
 echo "PASS: blank DOCS_ORIGIN is unset"
 
 # ---------- a docs host ----------
@@ -46,6 +48,7 @@ contains "$d/etc/docs/host.conf" "server_name docs.example.test;"
 contains "$d/etc/docs/platform.conf" "return 301 https://docs.example.test/"
 lacks "$d/etc/docs/platform.conf" ":443"
 contains "$d/html/assets/main.js" 'const d="https://docs.example.test"'
+contains "$d/html/prerender/index.html" 'href="https://docs.example.test/spaces"'
 contains "$d/docs-host/index.html" 'href="https://app.example.test/legal/terms"'
 contains "$d/docs-host/index.html" 'src="https://app.example.test/demo/turn?embed=1"'
 contains "$d/docs-host/llms.txt" '(https://docs.example.test/quickstart.md)'

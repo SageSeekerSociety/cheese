@@ -1,4 +1,4 @@
-"""额度后台：方案、团队挂哪个方案、给团队发额度（#2397）。
+"""额度后台：方案、团队挂哪个方案、给团队发额度（#2397），以及哪些团队开通了境外模型。
 
 全部要平台管理员（`PlatformAdminDep`），每一次写都落 `credit_admin_audit`：谁、对
 哪个方案或团队、改前改后。把团队挂到 Reserve、给机构发采购的额度都走这里，不手跑
@@ -13,7 +13,8 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.domain.agent_instance.configuration import model_choices
 from app.domain.project.services import ProjectService
 from app.domain.task.services import TaskService
@@ -59,6 +60,15 @@ class PlanUpdate(BaseModel):
 
 class TeamPlanUpdate(BaseModel):
     plan_key: str = Field(min_length=1, max_length=32)
+
+
+class OverseasAccessUpdate(BaseModel):
+    approved: bool
+
+
+class OverseasAccessOut(BaseModel):
+    team_id: int
+    overseas_approved: bool
 
 
 class GrantCreate(BaseModel):
@@ -183,6 +193,26 @@ async def set_team_plan(
 ) -> dict:
     out = await PlanService(db).set_team_plan(
         handle=handle, team_id=team_id, key=body.plan_key
+    )
+    await db.commit()
+    return ok(out)
+
+
+@router.put(
+    "/teams/{teamId}/overseas-access",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(OverseasAccessOut),
+)
+async def set_team_overseas_access(
+    team_id: Annotated[int, Path(ge=1, alias="teamId")],
+    body: OverseasAccessUpdate,
+    db: DbSession,
+    handle: PlatformAdminDep,
+) -> dict:
+    """Let the team use overseas models (Claude, GPT, Gemini), or stop it. A
+    person is let in through their personal team."""
+    out = await PlanService(db).set_overseas_access(
+        handle=handle, team_id=team_id, approved=body.approved
     )
     await db.commit()
     return ok(out)

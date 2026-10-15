@@ -1,0 +1,10 @@
+{
+  "docEdited": "{actor} 编辑了文档",
+  "docEditedFor": "{requester} 让{agent}改了文档",
+  "docCreatedInLibrary": "{actor} 新建了文档《{title}》",
+  "docEditedInLibrary": "{actor} 改了文档《{title}》",
+  "docSuggestedInLibrary": "{actor} 对文档《{title}》提了修改建议",
+  "docUntitled": "未命名文档",
+  "docSuggested": "{agent} 提了 {n} 处修改建议",
+  "messageEdited": "{actor} 改了一条之前的消息"
+}

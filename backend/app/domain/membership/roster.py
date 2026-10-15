@@ -15,18 +15,16 @@ agent 在项目里列不出另一个 agent——结论 12 那句「不同 handle
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from typing import cast
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance.own import allows_own_agents, owned_in_project
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService
+from app.domain.membership.ports import ProjectTeam, TeammateSeat
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.services import ProjectService
-from app.domain.user.models import User
 
 
 @dataclass(frozen=True)
@@ -117,7 +115,9 @@ class Member:
         return row
 
 
-async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, ...]:
+async def roster(
+    session: AsyncSession, project_id: uuid.UUID, *, team: ProjectTeam
+) -> tuple[Member, ...]:
     """这个项目的名册：人在前，队友在后，每一行是一个 handle 加它的角色。
 
     人这一半来自 ``ProjectRepository.people``（授权行、所有者、小队带进来的人），队
@@ -137,12 +137,12 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     认它 —— 不认的话他在名册上照样有一行 ``source == 'team'``，而那句话说的是他还在
     这个项目里。所有者不在其内：排除说的是「小队带来的人不在这儿」，所有者是另一条
     来路（他也走不了 ``leave``），而且一个退出过项目的人后来接手了它照样是所有者。
+
+    队友那一半由调用方递进来的 ``team`` 读（`ports.py` 的 ``ProjectTeam``）：实例和
+    它们在项目里该不该在列，都是第 5 层 ``agent_instance`` 的一行，本包够不着。
     """
     projects = ProjectService(session)
     project = await projects.get(project_id)
-    default_instance_id = (
-        project.default_agent_instance_id if project is not None else None
-    )
     rows = [
         Member(
             handle=person["handle"],
@@ -172,84 +172,56 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
         for row in rows
     ]
     at = {row.handle: index for index, row in enumerate(rows)}
-    owners = await _owners_of_own_agents(session, project_id)
-    # A project closed to members' own agents has withdrawn them: they are not
-    # in it, not merely uncallable. Opened again, they are back. One its owner
-    # removed from the project is not in it either, until they add it again.
-    withdrawn = not allows_own_agents(project.settings if project else None)
-    for instance in await AgentInstanceService(session).list_for_project(project_id):
-        if instance.id in owners and (withdrawn or not instance.is_active):
-            continue
-        seat = agent_instance_handle(instance.id)
-        name = instance.display_name or instance.handle
-        name_source = AgentInstanceService.resolved(instance).name_source.value
-        own_owner, own_callers = owners.get(instance.id, (None, None))
-        index = at.get(seat)
+    # 已有的席位和还没坐下的那几位是同一张表的两半，后一半由 `team` 读：一个关了
+    # 「成员自带 agent」的项目已经把成员那几位收回了，谁该在列由它筛（`ports.py`）。
+    # 行类型在这里认下来：口子上写的是「一列东西」（`ports.py` 里说了为什么），
+    # 递回来的每一行都是本包声明的 ``TeammateSeat``，唯一的实现也是照它填的。
+    seats = cast("Sequence[TeammateSeat]", await team(session, project_id))
+    for seat in seats:
+        index = at.get(seat.seat)
         if index is None:
             rows.append(
                 Member(
-                    handle=seat,
-                    name=name,
+                    handle=seat.seat,
+                    name=seat.name,
                     agent=True,
-                    active=instance.is_active,
-                    project_default=instance.id == default_instance_id,
+                    active=seat.active,
+                    project_default=seat.is_default,
                     source="agent",
-                    instance_handle=instance.handle,
-                    name_source=name_source,
-                    owner_handle=own_owner,
-                    callers=own_callers,
+                    instance_handle=seat.session_handle,
+                    name_source=seat.name_source,
+                    owner_handle=seat.owner_handle,
+                    callers=seat.callers,
                 )
             )
-            at[seat] = len(rows) - 1
+            at[seat.seat] = len(rows) - 1
             continue
         # 已经有授权行的队友：角色照授权行，名字和启用与否照实例——座位账号的昵称是
         # 建号时写死的常量，拿它当名字会让每个队友都叫「芝士」。
         held = rows[index]
         rows[index] = Member(
             handle=held.handle,
-            name=name,
+            name=seat.name,
             agent=True,
             avatar_id=held.avatar_id,
-            active=instance.is_active,
-            project_default=instance.id == default_instance_id,
+            active=seat.active,
+            project_default=seat.is_default,
             source=held.source,
             team_id=held.team_id,
             team_handle=held.team_handle,
             team_name=held.team_name,
             created_at=held.created_at,
-            instance_handle=instance.handle,
-            name_source=name_source,
-            owner_handle=own_owner,
-            callers=own_callers,
+            instance_handle=seat.session_handle,
+            name_source=seat.name_source,
+            owner_handle=seat.owner_handle,
+            callers=seat.callers,
         )
     return tuple(rows)
 
 
-async def _owners_of_own_agents(
-    session: AsyncSession, project_id: uuid.UUID
-) -> dict[uuid.UUID, tuple[str, str]]:
-    """Which of the project's agents are members' own: whose, and who may call
-    each."""
-
-    owned = await owned_in_project(session, project_id)
-    if not owned:
-        return {}
-    rows = await session.execute(
-        select(User.id, User.username).where(
-            User.id.in_({owner for _, owner, _ in owned})
-        )
-    )
-    users: dict[int, str] = {user_id: name for user_id, name in rows.all()}
-    # 谁可以叫它随行读出来：``OwnAgent`` 那一行是 ``agent_instance`` 的，读它的
-    # 地方在 ``own``（C5 分层：membership 在第 2 层，够不到第 5 层的 models）。
-    return {
-        instance.id: (users[owner], callers.value)
-        for instance, owner, callers in owned
-        if owner in users
-    }
-
-
-async def roster_rows(session: AsyncSession, project_id: uuid.UUID) -> list[dict]:
+async def roster_rows(
+    session: AsyncSession, project_id: uuid.UUID, *, team: ProjectTeam
+) -> list[dict]:
     """:func:`roster` 的同一次读，给还按 ``list[dict]`` 传名册的那几条路。
 
     @ 解析、prompt 渲染、通知寻址一路传的都是行字典（``m["handle"]`` / ``m["name"]``），
@@ -260,6 +232,6 @@ async def roster_rows(session: AsyncSession, project_id: uuid.UUID) -> list[dict
     # its prompt would only learn a name it cannot call.
     return [
         member.as_dict()
-        for member in await roster(session, project_id)
+        for member in await roster(session, project_id, team=team)
         if member.owner_handle is None
     ]

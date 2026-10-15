@@ -40,8 +40,8 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
-from app.domain.agent.forgejo_tokens import ForgejoTokenError, open_forge_token
-from app.domain.agent.github_app import GitHubAppError
+from app.domain.project.forgejo_tokens import ForgejoTokenError, open_forge_token
+from app.domain.project.github_app import GitHubAppError
 from app.domain.project.models import ForgeToken
 from app.domain.room_task.place import session_keeps_work
 

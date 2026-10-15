@@ -18,6 +18,7 @@ from app.api.response import ok
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import project_team
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -46,7 +47,7 @@ async def join_channel(
 ) -> dict:
     """Join a public channel of a project I am in."""
     _, actor = await _person(db, resolver, topic_id)
-    await TopicMemberService(db).join(topic_id, actor.handle)
+    await TopicMemberService(db).join(topic_id, actor.handle, team=project_team)
     await db.commit()
     await announce_stale(topic_id, "topics", id=topic_id)
     return ok({"topic_id": str(topic_id), "joined": True})

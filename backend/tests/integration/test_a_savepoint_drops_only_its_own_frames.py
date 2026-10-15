@@ -1,9 +1,9 @@
 """一条 savepoint 回滚只丢它自己排的帧，释放一条更不是提交。
 
-页面上的实时帧攒在会话的 `session.info` 里，等会话提交才发出去 —— 三处各有一个
+页面上的实时帧攒在会话的 `session.info` 里，等会话提交才发出去 —— 两处各有一个
 槽位：平台说的话（`agent/live_notices` 的 `SHOW_ONCE_COMMITTED`，`room_task/live`
-把任务的帧排进同一个槽）、项目频道列表（`agent/project_feed`）、验收卡
-（`review/live`）。回滚了就不发。
+把任务的帧、`review/live` 把验收卡的帧排进同一个槽）、项目频道列表
+（`agent/project_feed`）。回滚了就不发。
 
 #3511 挡住了这件事的一半：`after_commit` 在 savepoint 被释放时也会响，而在那时发
 帧，另一个连接读到的还是提交之前的库。三处在 `after_commit` 里各加了一句
@@ -19,7 +19,8 @@
 
 所以帧按 savepoint 分桶（`core/live_frames`）：每层 savepoint 一桶，回滚只丢自己那
 一桶（连同它里面已经释放的那几层），其余等会话自己那次提交一起发。下面三节各钉一
-处槽位，每节都能在把分桶去掉、或者把那句「释放不是提交」去掉时变红。
+处槽位（后两节钉的是同一个槽的两条路），每节都能在把分桶去掉、或者把那句「释放不
+是提交」去掉时变红。
 """
 
 import asyncio
@@ -30,7 +31,6 @@ from sqlalchemy import text
 
 from app.core.live_frames import show_once_committed
 from app.domain.agent import live_notices, project_feed
-from app.domain.review import live as review_live
 from app.domain.review.models import AcceptCard, AcceptStatus
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_accept import _make_project, _make_topic
@@ -48,9 +48,13 @@ class _Published:
 
 @pytest.fixture
 def published(monkeypatch) -> _Published:
+    """Everything queued in `SHOW_ONCE_COMMITTED`, instead of a broker.
+
+    平台说的话、任务的帧、验收卡的帧都在这一个槽里，也都由 `agent/live_notices`
+    发出去。
+    """
     broker = _Published()
     monkeypatch.setattr(live_notices, "get_broker", lambda: broker)
-    monkeypatch.setattr(review_live, "get_broker", lambda: broker)
     return broker
 
 
@@ -191,7 +195,7 @@ def test_a_rolled_back_savepoint_s_feed_is_never_sent(db_session, _portal, told)
     assert told == []
 
 
-# —— 验收卡：review/live 的 _PENDING ——————————————————————————————————————
+# —— 验收卡：review/live 排进 SHOW_ONCE_COMMITTED 的帧 ——————————————————————
 
 
 @pytest.fixture

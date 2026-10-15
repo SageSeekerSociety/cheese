@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import film from '@/assets/landing/zhongzhi-film.mp4'
 import poster from '@/assets/landing/zhongzhi-film-poster.jpg'
@@ -14,7 +14,32 @@ import { t } from '@/i18n'
 const video = ref<HTMLVideoElement>()
 const playing = ref(false)
 
-function play() {
+// The film and its poster (~70 KB before a byte of the film) sit below the fold,
+// and on a slow link they took bandwidth from the scripts the page waits on. So
+// the frame keeps its 16:9 box and gets its picture only once it is about to
+// scroll in; it is not in the prerendered page either.
+const frame = ref<HTMLElement>()
+const near = ref(false)
+let observer: IntersectionObserver | null = null
+onMounted(() => {
+  observer = new IntersectionObserver(
+    ([entry]) => {
+      if (!entry.isIntersecting) return
+      near.value = true
+      observer?.disconnect()
+    },
+    { rootMargin: '50% 0px' }
+  )
+  if (frame.value) observer.observe(frame.value)
+})
+onBeforeUnmount(() => observer?.disconnect())
+
+async function play() {
+  // Asked for before it scrolled near (a quick click on the caption): put it there now.
+  if (!near.value) {
+    near.value = true
+    await nextTick()
+  }
   const el = video.value
   if (!el) return
   if (playing.value) {
@@ -42,8 +67,9 @@ function rewind() {
       </button>
       <template v-else>{{ t('publicSite.filmCaption') }}</template>
     </figcaption>
-    <div class="film-frame" :style="{ '--film-poster': `url(${poster})` }">
+    <div ref="frame" class="film-frame" :style="near ? { '--film-poster': `url(${poster})` } : undefined">
       <video
+        v-if="near"
         ref="video"
         class="film-video"
         :src="film"

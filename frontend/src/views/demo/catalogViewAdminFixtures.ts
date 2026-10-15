@@ -112,6 +112,7 @@ export const CRV_TEAMS: CreditTeamPage = {
       plan_key: 'reserve',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: null, credits_used: 0 },
       packs: [],
+      overseas_approved: true,
     },
     {
       id: 2,
@@ -123,6 +124,7 @@ export const CRV_TEAMS: CreditTeamPage = {
       plan_key: 'free',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 115 },
       packs: CRV_LAB_PACKS,
+      overseas_approved: false,
     },
   ],
   total: 2,
@@ -140,6 +142,7 @@ export const CRV_TEAM_DETAIL: CreditTeamDetail = {
   plan: CRV_FREE,
   period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 115 },
   packs: CRV_LAB_PACKS,
+  overseas_approved: false,
 }
 
 export const CRV_HISTORY: CreditAudit[] = [

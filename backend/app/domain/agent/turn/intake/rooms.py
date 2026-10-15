@@ -4,6 +4,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_instance.adapters import project_team
 from app.domain.membership.roster import roster_rows
 from app.domain.topic.models import Topic
 from app.domain.user.about import about_by_handles
@@ -41,7 +42,7 @@ async def room_roster(
     none at all in a private room."""
     if topic is None or _is_dm(topic):
         return []
-    rows = await roster_rows(session, project_id)
+    rows = await roster_rows(session, project_id, team=project_team)
     # A person's zone goes with their row: the times an agent reads are UTC,
     # and what it writes for someone is read on that person's clock.
     people = [row["handle"] for row in rows if not row["agent"]]

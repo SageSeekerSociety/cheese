@@ -13,6 +13,8 @@ import pytest
 from app.core.config import settings
 from app.domain.notification import maintenance
 from app.domain.notification.letter import letter_for, render_html, render_text
+from app.domain.notification.models import NotificationType
+from app.domain.notification.push import push_link, push_text
 from app.domain.team.models import Team
 from app.domain.user.models import User, UserProfile
 
@@ -239,3 +241,25 @@ def test_a_question_mail_calls_the_teammate_by_its_name():
     )
     assert letter.subject == "Nova 问你：先做哪一页？"
     assert "芝士" not in letter.subject + letter.eyebrow
+
+
+def test_a_mention_in_a_projects_own_document_names_the_document_and_opens_it():
+    """文档正文里的 @：说是哪份文档、那一行原话，按钮落到那份文档
+    （它不在任何频道里）。"""
+    payload = {
+        "projectId": "p-1",
+        "documentId": "d-7",
+        "documentTitle": "接口约定",
+        "author": "alice",
+        "authorName": "李老师",
+        "content": "<@bob> 周五前定下分页参数",
+    }
+    letter = letter_for({"type": "MENTION", "payload": payload})
+
+    assert "接口约定" in letter.subject and "李老师" in letter.subject
+    assert "周五前定下分页参数" in render_html(letter)
+    assert f"{settings.frontend_url}/projects/p-1/docs/d-7" in render_html(letter)
+    assert push_link(payload) == "/projects/p-1/docs/d-7"
+    title, body = push_text(NotificationType.MENTION, payload, "zh-CN")
+    assert "接口约定" in title and "李老师" in title
+    assert "周五前定下分页参数" in body

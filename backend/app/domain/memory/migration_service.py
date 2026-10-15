@@ -35,10 +35,10 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import exception_text, say
-from app.domain.agent.announce import announce
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.living_doc.services import Documents
+from app.domain.membership.ports import ProjectTeam
 from app.domain.membership.roster import roster
 from app.domain.memory.files import MemoryFileScope, prefix_of
 from app.domain.memory.files_store import (
@@ -64,6 +64,7 @@ from app.domain.memory.models import (
     MemoryMigrationStatus,
     parse_user_scope_id,
 )
+from app.domain.memory.ports import Announce
 from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import live_entries
 from app.domain.notice_meta import (
@@ -107,11 +108,27 @@ class Gathered:
 
 
 class MemoryMigrationService:
-    """一个请求一个实例，跟着那一个 session 走。"""
+    """一个请求一个实例，跟着那一个 session 走。
 
-    def __init__(self, session: AsyncSession, *, chat: GatewayChat | None = None):
+    说进房间的那一句（`_say_report` / `_say_applied`）是 `announce` 递进来的，
+    本包在第 4 层、`agent.announce` 在第 5 层（`ports.py`）。
+    """
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        chat: GatewayChat | None = None,
+        announce: Announce,
+        team: ProjectTeam | None = None,
+    ):
         self._session = session
         self._chat = chat
+        self._announce = announce
+        # 名册那一读要「这个项目有哪些队友」，本包在第 4 层够不着
+        # （`membership.ports.ProjectTeam`）。只有 `gather` 那条路读名册，所以它是
+        # 可选的：真走到那儿还是没有它，`gather` 当场炸掉，不会拿半张名册做决定。
+        self._team = team
 
     async def _model(self) -> GatewayChat | None:
         """The model that judges where each old memory goes. The platform runs
@@ -192,7 +209,10 @@ class MemoryMigrationService:
         # included` 守着这件事）：直接读 `people()` 是第二份名册。私人记忆的主人
         # 只能是**人**，所以这里把名册上那些 `agent=True` 的席位滤掉——它们是队友，
         # 而队友没有 `private/<handle>`。
-        members = await roster(self._session, project_id)
+        if self._team is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("team was not handed in")
+        members = await roster(self._session, project_id, team=self._team)
         owners = sorted(
             people
             | {member.handle for member in members if not member.agent}
@@ -548,6 +568,6 @@ class MemoryMigrationService:
     async def _say(self, gathered: Gathered, *, content: str, meta: dict) -> None:
         if gathered.root_topic_id is None:
             return
-        await announce(
+        await self._announce(
             self._session, place_id=gathered.root_topic_id, content=content, meta=meta
         )

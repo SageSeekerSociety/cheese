@@ -1488,5 +1488,51 @@
       "name": "An empty pool",
       "note": "Read, and there really is no host: only then does it say so."
     }
+  },
+  "teamDetailView": {
+    "about": "The team page's rendering half: someone who has not joined sees the team's public side, a member sees the workspace shell - header, parent link, and the middle column left to a child route. Which team to read, whether this person is a member, and how a failure differs from a denial all live in the container `teams/Detail.vue`.",
+    "s1": {
+      "name": "A member in the workspace",
+      "note": "Read, and this person is a member: the workspace shell - header, parent link (the team name), the team intro beside the title, the middle cell left to a child route (empty in the catalog), and no public-facing profile card."
+    },
+    "s2": {
+      "name": "Not joined yet: the team's public side",
+      "note": "The same team, but not a member: the public side - intro, owner, member count - with \"Join team\" or \"Apply to join\" below, depending on whether approval is on; no workspace."
+    },
+    "s3": {
+      "name": "No team at this address",
+      "note": "404: it says no team is at this address, which is not \"this read failed\", and offers no retry."
+    },
+    "s4": {
+      "name": "This read failed",
+      "note": "A network or server error: this cell says the read failed, with the real reason and a retry."
+    },
+    "s5": {
+      "name": "No permission",
+      "note": "401/403 is \"you may not see this\", drawn apart from \"this read failed\": it says so and offers no retry."
+    }
+  },
+  "teamIndexView": {
+    "about": "The header of the teams page and its create-team dialog: three tabs (find / mine / pending) and a \"Create team\" button, with the middle column left to a child route; the dialog holds avatar, name, address and intro. Where the tabs go, that column's content and the create request all live in the container `teams/Index.vue`.",
+    "s1": {
+      "name": "The header and three tabs",
+      "note": "Default state: the three tabs and the \"Create team\" button on the right, with the middle column empty (the catalog has no child route)."
+    },
+    "s2": {
+      "name": "The create dialog, open",
+      "note": "After tapping \"Create team\": avatar, name, address (prefixed with the current host) and the intro editor are all there, and the primary button is \"Create team\"."
+    },
+    "s3": {
+      "name": "The create is in flight",
+      "note": "After submitting: the primary button spins and cannot be pressed, and the dialog stays open so nobody presses it again thinking it did not register."
+    },
+    "s4": {
+      "name": "The name is taken",
+      "note": "The duplicate-name error sits under the name field; the dialog and everything typed stay."
+    },
+    "s5": {
+      "name": "The address is taken",
+      "note": "Same for a taken address: the error sits under the address field, and the person just edits the address."
+    }
   }
 }

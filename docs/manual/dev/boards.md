@@ -38,7 +38,7 @@ covers:
 
 ## 待我处理 {#awaiting}
 
-「全部任务」回答「这个项目现在有什么在等人」，「待我处理」（`GET /awaiting-me`）回答「**我**现在要处理什么」。两者读的是同一个 `presentation`、同一份收件人判据（`delivery/addressing.py` 的 `address()`），差别只有范围：从一个项目扩到我能看见的全部项目。
+「全部任务」回答「这个项目现在有什么在等人」，「待我处理」（`GET /awaiting-me`）回答「**我**现在要处理什么」。两者读的是同一个 `presentation`、同一份收件人判据（`addressing.py` 的 `address()`），差别只有范围：从一个项目扩到我能看见的全部项目。
 
 `room_task/awaiting.py` 只给形状，不碰 I/O——拉哪些项目、房间、卡是 API 那一层的事（`api/awaiting_deps.py` 的 `waiting_items`，要问六个地方，和项目任务列表那两份是同一个形状）。这有两个硬理由：
 

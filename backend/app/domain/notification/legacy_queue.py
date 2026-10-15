@@ -16,7 +16,7 @@ from redis.asyncio import Redis
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.config import settings
-from app.domain.delivery.models import ChannelDelivery
+from app.domain.notification.models import ChannelDelivery
 
 logger = logging.getLogger(__name__)
 _STAGE = """

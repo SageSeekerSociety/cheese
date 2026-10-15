@@ -19,6 +19,9 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.project_feed import TOPICS, tell_project
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.delivery.ledger import settle_card
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -41,7 +44,12 @@ async def archive_topic(
     if not actor.authenticated:
         raise ForbiddenError(say("archiveSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
-    topic = await TopicService(db).archive(topic_id, by=actor.handle)
+    topic = await TopicService(db).archive(
+        topic_id,
+        by=actor.handle,
+        settle_card=settle_card,
+        cards=close_cards_for_archived_topic,
+    )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
     await db.commit()
     await tell_project(topic_id, TOPICS)
@@ -87,7 +95,9 @@ async def unarchive_topic(
     if not actor.authenticated:
         raise ForbiddenError(say("unarchiveSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
-    topic = await TopicService(db).unarchive(topic_id, by=actor.handle)
+    topic = await TopicService(db).unarchive(
+        topic_id, by=actor.handle, sessions=AgentSessionService(db)
+    )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
@@ -111,7 +121,12 @@ async def delete_topic(
     if not actor.authenticated:
         raise ForbiddenError(say("deleteChannelSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
-    await TopicService(db).delete(topic_id, by=actor.handle)
+    await TopicService(db).delete(
+        topic_id,
+        by=actor.handle,
+        settle_card=settle_card,
+        cards=close_cards_for_archived_topic,
+    )
     await db.commit()
     await tell_project(topic_id, TOPICS)
     return ok({"deleted": True})

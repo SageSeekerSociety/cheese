@@ -5,6 +5,7 @@ import { queryOptions } from '@tanstack/vue-query'
 
 import { listProjects } from '@/api'
 import { rememberProjects } from '@/lib/addresses'
+import { takeEarlyProjects } from '@/lib/earlyProjects'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 
@@ -12,7 +13,8 @@ export function projectsQuery() {
   return queryOptions({
     queryKey: keys.projects(),
     queryFn: async (): Promise<Project[]> => {
-      const list = (await listProjects()).data
+      // 冷打开后的第一次读：启动脚本多半已经替它问过了。
+      const list = ((await takeEarlyProjects()) ?? (await listProjects())).data
       rememberProjects(list)
       return list
     },

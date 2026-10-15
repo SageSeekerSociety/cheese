@@ -96,8 +96,9 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 def _default_model_state(project_settings: dict | None, access: ModelAccess) -> dict:
 
     # Each model says whether the team's plan allows it and, when not, which
-    # plan would; the picker shows that plan and does not offer the model.
-    choices = [access.mark(c) for c in model_choices(project_settings)]
+    # plan would; the picker shows that plan and does not offer the model. A
+    # model that needs an administrator's approval the team lacks is not listed.
+    choices = access.offered(model_choices(project_settings))
     chosen = (project_settings or {}).get("default_model")
     # The saved name goes back as saved, even when it has left the catalog: turns
     # refuse it (binding.resolve) rather than fall back to the deployment default,
@@ -153,9 +154,9 @@ async def save_default_model(
         chosen = getattr(body, field)
         if chosen is None:
             remove.append(key)
-        elif chosen not in valid:
+        elif chosen not in valid or not access.shows(valid[chosen]):
             raise ValidationError(say("modelUnavailableNamed", model=repr(chosen)))
-        elif not access.allows(valid[chosen]["tier"]):
+        elif not access.allows(valid[chosen]):
             raise ValidationError(say("modelNotInPlan", label=valid[chosen]["label"]))
         else:
             patch[key] = chosen

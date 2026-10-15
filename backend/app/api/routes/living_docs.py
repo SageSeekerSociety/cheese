@@ -21,6 +21,7 @@ from app.api.deps import get_chat_service
 from app.api.doc_access import authorize_in_project, frozen, reach, require_writable
 from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
+from app.api.doc_mentions import notified_handles
 from app.api.doc_store import announce, store, tell_origin_room
 from app.api.request_deps import DbSession
 from app.api.response import ok
@@ -36,6 +37,7 @@ from app.core.errors import (
 from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.documents import whose_document
 from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
@@ -221,7 +223,9 @@ async def create_document(
         try:
             await collab.replace(
                 doc.id,
-                content=await canonicalize_refs(db, project_id, content)
+                content=await canonicalize_refs(
+                    db, project_id, content, team=project_team
+                )
                 if body.copy_of is None
                 else content,
                 base=None,
@@ -307,6 +311,9 @@ async def get_document(
         return ok(None)
     snapshot = document_snapshot(doc)
     snapshot["pending_suggestions"] = await DocumentJournal(db).suggestions(doc.id)
+    # Whose ``<@handle>`` in the text reached them: drawn as a mention, every
+    # other one as a reference to the person.
+    snapshot["notified_mentions"] = await notified_handles(db, doc.id)
     return await _with_ref_warnings(db, doc, ok(snapshot))
 
 
@@ -404,7 +411,9 @@ async def replace_document(
         }
         if receipt := await _replayed(db, doc, operation):
             return receipt
-    content = await canonicalize_refs(db, doc.project_id, body.content)
+    content = await canonicalize_refs(
+        db, doc.project_id, body.content, team=project_team
+    )
     base = await _base(db, doc, body.expected_version)
     settled = await _settled(
         db,
@@ -458,11 +467,17 @@ async def edit_doc_passages(
     edits = [edit.model_dump() for edit in body.edits]
     settled: list[Settled] = []
     for edit in edits:
+        # The same friendly @名字 / @话题名 → token rewrite a whole-document
+        # write gets (``replace_document``): a passage is stored as the
+        # document stores everything else.
+        new = await canonicalize_refs(
+            db, doc.project_id, edit["new"], team=project_team
+        )
         one = await _settled(
             db,
             resolver,
             doc,
-            edit["new"],
+            new,
             actor=actor.handle,
             keep=Counter(canvas_ids(edit["old"])),
         )

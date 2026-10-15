@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -7,7 +7,9 @@ import { createI18n } from 'vue-i18n'
 import { describe, expect, it, vi } from 'vitest'
 
 import en from './messages/en'
-import zhCN from './messages/zh-CN'
+import zhFirstPaint from './messages/zh-CN'
+import zhDeferred from './messages/zh-CN/deferred'
+import zhSentences from './messages/zh-CN/sentences'
 
 // The two catalog directories must describe the same product. A namespace that
 // exists in one locale and not the other is how PR #929 shipped: an English
@@ -35,6 +37,10 @@ function leaves(catalog: Messages, prefix = ''): { id: string; value: string }[]
   })
 }
 
+// zh-CN ships in three parts (the one the entry carries, the namespaces no first
+// page uses, and the backend's sentences); the app shows all of them, so every
+// rule below is about all of them.
+const zhCN = { ...(zhFirstPaint as Catalog), ...(zhDeferred as Catalog), ...(zhSentences as Catalog) }
 const zhEntries = leaves(zhCN as Catalog)
 const enEntries = leaves(en as Catalog)
 const zhIds = zhEntries.map((e) => e.id)
@@ -116,6 +122,23 @@ for (const template of dynamicTemplates) {
   for (const id of zhIds) if (pattern.test(id)) referenced.add(id)
 }
 
+describe('the zh-CN catalog in three parts', () => {
+  it('has every namespace in exactly one of them', () => {
+    const files = readdirSync(join(SRC, 'i18n/messages/zh-CN')).filter((name) => !name.endsWith('.ts'))
+    const namespaces = files.map((name) => name.replace(/\.json$/, '')).sort()
+    const parts = [zhFirstPaint, zhDeferred, zhSentences].flatMap((part) => Object.keys(part as Catalog))
+    expect(parts.filter((name, index) => parts.indexOf(name) !== index)).toEqual([])
+    expect(parts.sort()).toEqual(namespaces)
+  })
+
+  // The part that arrives after the first page holds only sentences the backend
+  // sends with their Chinese text beside the key, so a page drawn before it
+  // arrives shows that text instead. Anything else there would show raw keys.
+  it('leaves until after the first page only what the backend says', () => {
+    expect(Object.keys(zhSentences as Catalog).sort()).toEqual(['apiError', 'roomNotice'])
+  })
+})
+
 describe('locale catalogs', () => {
   it('has a non-empty English value for every zh-CN key', () => {
     const missing = zhIds.filter((id) => !enById.get(id)?.trim())
@@ -151,6 +174,39 @@ describe('locale catalogs', () => {
   it('never ships Chinese text as the English translation', () => {
     const withCjk = enEntries.filter((e) => CJK.test(e.value)).map((e) => e.id)
     expect(withCjk, '英文词条里出现了中日韩字符——多半是复制中文凑数').toEqual([])
+  })
+})
+
+// The two catalogs whose keys the backend writes out itself (`apiError`,
+// `roomNotice`) are one flat key space each, split across a directory by the
+// backend module that says the sentence — the shard's name is not part of the
+// key (`messages/catalog.ts`, FLAT). The tests above would catch a shard only
+// one locale has, but they report the missing keys, not the file somebody forgot
+// to add; this names it.
+//
+// The directory form is asserted, not just the two listings matching: putting
+// either catalog back into one file is the regression the split exists to
+// prevent (every change to any sentence collides in git, and the shared file
+// becomes the merge base for unrelated PRs — `route_index.yaml`).
+const MESSAGES = resolve(SRC, 'i18n/messages')
+const FLAT_CATALOGS = ['apiError', 'roomNotice']
+
+describe('flat catalogs are split the same way in both locales', () => {
+  it.each(FLAT_CATALOGS)('%s is a shard directory with the same shards in both locales', (namespace) => {
+    const shardsIn = (locale: string) => {
+      const dir = join(MESSAGES, locale, namespace)
+      if (!existsSync(dir)) {
+        throw new Error(`messages/${locale}/${namespace} 不是分片目录：这个平表命名空间按模块分片放在目录里`)
+      }
+      return readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+        .map((entry) => entry.name)
+        .sort()
+    }
+    const zh = shardsIn('zh-CN')
+    const en = shardsIn('en')
+    expect(zh.length, `${namespace} 一片都没有`).toBeGreaterThan(0)
+    expect(en, `${namespace} 的分片两个 locale 对不上：译文要落在同名的分片里`).toEqual(zh)
   })
 })
 

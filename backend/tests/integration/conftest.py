@@ -120,6 +120,21 @@ async def a_team(session, owner_handle: str | None = None) -> int:
     return team.id
 
 
+def project_service(session):
+    """A ``ProjectService`` with its teammate port wired, for tests that build a
+    project in their own session.
+
+    Every project is born with its 芝士 (invariant I9b), and the seeding lives in
+    ``agent_instance``, out of ``project``'s reach — so whoever builds one hands
+    the port in (``app/domain/project/ports.py``). The route that creates projects
+    does the same; tests that go through HTTP need nothing here.
+    """
+    from app.domain.agent_instance.adapters import default_teammate
+    from app.domain.project.services import ProjectService
+
+    return ProjectService(session, default_teammate=default_teammate)
+
+
 async def registered(session, handle: str) -> int:
     """Make ``handle`` a registered person on ``session`` (get-or-create), the
     way :func:`tests.conftest.seed_user` does; return the user id.
@@ -1107,3 +1122,12 @@ async def put_on_plan(session, team_id: int, key: str) -> None:
     from app.domain.team.models import Team
 
     await session.execute(update(Team).where(Team.id == team_id).values(plan_key=key))
+
+
+async def approve_overseas(session, team_id: int) -> None:
+    """Approve a team for overseas models: a test running the Claude
+    subscription models needs it whatever the team's plan."""
+    from app.domain.usage.models import OverseasModelApproval
+
+    session.add(OverseasModelApproval(team_id=team_id, approved_by="test-admin"))
+    await session.flush()

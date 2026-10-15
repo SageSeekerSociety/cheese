@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.documents import seed
+from app.domain.delivery_events import SettleCard
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.project.member_settings import MEMBER_SETTINGS, SettingChange
 from app.domain.project.models import AiMode, Project, ProjectGitInstallation
+from app.domain.project.ports import DefaultTeammate
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
     ProjectRepository,
@@ -23,6 +24,7 @@ from app.domain.task.models import Task, TaskMembership
 from app.domain.task.teaching import protocol_for_task
 from app.domain.team.services import team_service
 from app.domain.topic.models import TopicKind
+from app.domain.topic.ports import ArchivedCards, SessionStore
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import Ledger
@@ -68,13 +70,58 @@ async def refuse_writes_if_archived(
 
 
 class ProjectService:
-    def __init__(self, session: AsyncSession):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        settle_card: SettleCard | None = None,
+        default_teammate: DefaultTeammate | None = None,
+        cards: ArchivedCards | None = None,
+        sessions: SessionStore | None = None,
+    ):
+        """``settle_card``：归档项目要把房间里等验收人的那几句话一起收掉，
+        而结一张卡是 `review` 和 `delivery` 做的事，本包够不着
+        （`app.domain.review.ports.SettleCard`）。不给也能构造 —— 只有归档这条
+        路要它，而那条路会把 ``None`` 交给 `topic.archive_with_project` 再交给
+        `review.archive`，由那里当场说清是哪个门漏了。
+
+        ``default_teammate``：项目的芝士由本包在 ``create`` 里播种
+        （`app.domain.project.ports.DefaultTeammate`），而播种是第 5 层
+        `agent_instance` 的事。同样不给也能构造，理由一样：只有 ``create`` 和
+        ``_accept_task_protocol`` 这两条路要它，走到那里没递进来就当场炸掉。
+
+        ``cards`` 和 ``sessions``：归档项目会顺手做两件本包够不着的事 —— 把房间里
+        还没结的验收卡收掉（第 4 层 `review`），把取消归档的房间记着的会话令牌忘掉
+        （第 3 层 `agent_session`）。两样都只在 ``archive`` / ``unarchive`` 这两条路
+        上用，所以也不给也能构造，走到那里没递进来就当场炸掉。"""
         self._session = session
         self._repo = ProjectRepository(session)
         self._installations = ProjectGitInstallationRepository(session)
         self._topics = TopicRepository(session)
         self._ledger = Ledger(session)
         self._members = TopicMemberService(session)
+        self._settle_card = settle_card
+        self._default_teammate = default_teammate
+        self._cards = cards
+        self._sessions = sessions
+
+    async def _seed_default_teammate(
+        self,
+        project: Project,
+        *,
+        display_name: str | None = None,
+        type_name: str | None = None,
+    ) -> None:
+        """这个项目的那一位芝士：没有就播一个，人设按调用方说的落上去。
+
+        口子没递进来是接线漏了一处，当场炸掉 —— 静默留下一个没有芝士的项目更糟
+        （不变量 I9b：项目出生就有芝士）。"""
+        if self._default_teammate is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("default_teammate was not handed in")
+        await self._default_teammate(
+            self._session, project, display_name=display_name, type_name=type_name
+        )
 
     async def create(
         self,
@@ -131,13 +178,13 @@ class ProjectService:
         # 项目的芝士和它在总览里的席位，与项目同一个事务里出生（结论 4、不变量
         # I9b）：一个项目不会有「还没有 agent」的那一刻，所以「谁答这一句」全仓
         # 只有一条席位可读。根房间先建出来，这一句才播得下席位。
-        agents = AgentInstanceService(self._session)
-        instance = await agents.materialize_default(project, display_name=agent_name)
-        if agent_type:
-            # 类型（人设）落在 agent 上，不落在项目上：一个项目可以坐好几个 agent，
-            # 只有 agent 自己知道这套人设是从哪个记忆池里说话的。
-            await agents.set_type(instance, agent_type)
-            await self._session.flush()
+        #
+        # 类型（人设）落在 agent 上，不落在项目上：一个项目可以坐好几个 agent，只有
+        # agent 自己知道这套人设是从哪个记忆池里说话的。这里传下去的人设总能落上
+        # —— 播种刚生出来的实例本来就没有人设。
+        await self._seed_default_teammate(
+            project, display_name=agent_name, type_name=agent_type
+        )
         # Apply task terms when eligible; a pending application gets a workspace
         # now and receives its competition resources when approved. After the
         # 芝士 above, because the terms may give it a type — and a type goes on
@@ -358,22 +405,28 @@ class ProjectService:
     async def archive(self, project_id: uuid.UUID, *, by: str) -> Project:
         """Archive the project (idempotent): it leaves its members' lists,
         writes to it are refused, and its rooms are archived with it — which is
-        what stops its sessions, machines, PR polling and routines. Its pending
-        invitations are withdrawn: an invitation to a project nobody can enter
-        would sit in the invitee's inbox with no answer that means anything.
-        Nothing is deleted."""
+        what stops its sessions, machines, PR polling and routines. Nothing is
+        deleted.
+
+        The project's pending invitations are withdrawn by whoever archives it,
+        right after this returns: settling the invitee's notification lands on
+        the delivery ledger, one layer above this package. The door does it
+        (``api/routes/projects.archive_project``); ``archive`` cannot, and
+        neither can ``membership``, without reaching upward.
+        """
         project = await self.get_or_404(project_id)
         if project.archived_at is not None:
             return project
-        # deferred-import: breaks the cycle membership.services -> project.services
-        from app.domain.membership.services import InvitationService
-
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
+        if self._cards is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("cards was not handed in")
         project.archived_at = datetime.now(UTC)
-        await TopicService(self._session).archive_with_project(project_id, by=by)
-        await InvitationService(self._session).revoke_all_pending(project_id)
+        await TopicService(self._session).archive_with_project(
+            project_id, by=by, settle_card=self._settle_card, cards=self._cards
+        )
         await self._session.flush()
         return project
 
@@ -386,7 +439,12 @@ class ProjectService:
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
-        await TopicService(self._session).unarchive_with_project(project_id, by=by)
+        if self._sessions is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("sessions was not handed in")
+        await TopicService(self._session).unarchive_with_project(
+            project_id, by=by, sessions=self._sessions
+        )
         project.archived_at = None
         await self._session.flush()
         return project
@@ -495,11 +553,7 @@ class ProjectService:
         protocol = await protocol_for_task(self._session, task)
         # The 项目集 supplies a default agent type; a project that already picked
         # one keeps it, so accepting the protocol never overwrites a choice.
-        agents = AgentInstanceService(self._session)
-        instance = await agents.materialize_default(project)
-        if protocol.default_role and instance.type_name is None:
-            await agents.set_type(instance, protocol.default_role)
-            await self._session.flush()
+        await self._seed_default_teammate(project, type_name=protocol.default_role)
         grants = await self._ledger.earmarks(project.id)
         if protocol.compute_credits > 0 and not any(
             grant.source_task_id == task_id for grant in grants

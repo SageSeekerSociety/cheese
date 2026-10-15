@@ -20,7 +20,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { parseDiffLines } from '../../lib/diff'
 import { docLineInTurn, docLineOf, isDocLine } from '../../lib/docEditLine'
 import { repeatsLine } from '../../lib/noticeRepeats'
-import { noticeText } from '../../lib/noticeText'
+import { noticeNotified, noticeText } from '../../lib/noticeText'
 import { confirmTarget, environmentTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
@@ -83,6 +83,12 @@ function nameOf(handle: string): string {
   return props.refs.mentionNames[handle] || handle
 }
 const docLine = computed(() => docLineOf(props.block, props.notice, nameOf))
+// 这一行的名字按 nameOf 的叫法画（这一轮的队友按它在这里的名字）。
+const docNames = computed(() =>
+  props.agent?.handle
+    ? { ...props.refs, mentionNames: { ...props.refs.mentionNames, [props.agent.handle]: props.agent.name } }
+    : props.refs
+)
 const docInTurn = computed(() => !!docLine.value && !!props.agent && docLineInTurn(props.block))
 
 const name = computed(() => (docLine.value && !docInTurn.value ? null : props.agent?.name ?? null))
@@ -150,8 +156,12 @@ const showRetry = computed(
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
 
+// 提示里的人只是被提到（浅色 chip、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
+// 被派去修合并后检查的那一位）才是带 @ 的实心 chip（lib/noticeText 的 noticeNotified）。
+const refs = computed(() => ({ ...props.refs, notified: noticeNotified(props.block) }))
+
 function renderPlain(text: string): string {
-  return renderPlainWith(text, props.refs)
+  return renderPlainWith(text, refs.value)
 }
 
 // 文档 diff 里的空行不画出来：一行只有空白时留一个空格子比留一条假的「改动」好。
@@ -307,6 +317,7 @@ const ACTION_META: Record<string, { btn: string }> = {
       :block="block"
       :line="docLine"
       :in-turn="docInTurn"
+      :names="docNames"
       @open-resource="(...a) => emit('open-resource', ...a)"
     />
     <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
@@ -369,7 +380,8 @@ const ACTION_META: Record<string, { btn: string }> = {
       data-testid="platform-notice"
     >
       <summary class="sys-line">
-        <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }">{{ notice.line }}</span>
+        <!-- 这一行里提到的人是 `<@handle>` token，和别的提示行一样画成名字，不露出原文。 -->
+        <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }" v-html="renderPlain(notice.line)" />
         <span v-if="notice.quote" class="sys-quote" data-user-content>{{
           t('work.room.notice.quote', { text: notice.quote })
         }}</span>
@@ -712,12 +724,15 @@ details[open]::details-content {
 .cv-measure .room-happening {
   content-visibility: visible;
 }
-.room-happening :deep(.mention) {
+/* 居中的淡行（置顶、归档、加入、改设置……）里的频道、文件：淡字、不垫底，悬停加下划线。
+   提到的人照常是浅色 chip（.name-ref），叫醒了谁的那一颗照常是实心 @chip——这一行和
+   别处同一条规则。 */
+.room-happening :deep(.mention:is(.file-ref, .topic-ref)) {
   color: var(--muted);
   background: none;
   cursor: pointer;
 }
-.room-happening :deep(.mention:hover) {
+.room-happening :deep(.mention:is(.file-ref, .topic-ref):hover) {
   text-decoration: underline;
 }
 .room-happening__go {

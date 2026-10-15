@@ -62,6 +62,7 @@ import {
   WANG_CLOSING,
   WANG_LINES,
 } from './catalogFixtures'
+import { HOME_ENTRIES } from './catalogHome'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
@@ -168,32 +169,33 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'user-ref',
     title: 'UserRef',
-    about: '句子里提到的一个人：@名字。给了去处才可点。',
+    about:
+      '句子里提到的一个人：画成名字引用，浅色 chip、不带 @（带 @ 的实心 chip 只留给真的通知到人的那一处）。给了去处才可点。',
     file: 'src/components/common/UserRef.vue',
     component: UserRef,
     needs: [],
     states: [
       {
         name: '有去处',
-        note: '给了 to 才是一颗「人可以点」的 chip：进 Tab 顺序，按一下 emit navigate。',
+        note: '给了 to 才是人可以点的名字：进 Tab 顺序，悬停加深底色，按一下 emit navigate。',
         props: { handle: 'alice', name: '爱丽丝', to: { path: '/projects/p1/members/alice' } },
-        expect: '@爱丽丝',
+        expect: '爱丽丝',
       },
       {
         name: '只知道名字',
-        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画 @名字，但不可点。',
+        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画名字，但不可点。',
         props: { name: '新来的同学' },
-        expect: '@新来的同学',
+        expect: '新来的同学',
       },
       {
         name: '长名字',
-        note: '名字长到换行也是这一颗，不缩字号、不截断。',
+        note: '名字长到换行也照常折行，不缩字号、不截断。',
         props: {
           handle: 'someone-with-a-long-handle',
           name: '一位名字很长的同学（校外）',
           to: { path: '/projects/p1/members/x' },
         },
-        expect: '@一位名字很长的同学（校外）',
+        expect: '一位名字很长的同学（校外）',
       },
     ],
   },
@@ -936,6 +938,9 @@ export const CATALOG: CatalogEntry[] = [
   // 公共站那几页（三个公共页共用的外壳、首页、方案页，和首页里那段房间）在自己的文件
   // 里：`catalogPublic.ts`。
   ...PUBLIC_ENTRIES,
+  // 首页那一格（那份目录、它两端的两个画面、它带的四个弹窗）在自己的文件里：
+  // `catalogHome.ts`。
+  ...HOME_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */

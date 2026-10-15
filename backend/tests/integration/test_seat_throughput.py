@@ -2,14 +2,15 @@
 
 要钉的规则：
 
-* 主口径是**按轮速率**：一轮的 `output_tokens` 除以这一轮起止的秒数，按组取
-  p50 / p90。分母是整轮墙钟。
+* 口径是**窗口吞吐**：`output_tokens ÷ 窗口秒数`，把空档也算进分母。按轮速率
+  （一轮的 token 除以这一轮的秒数）2026-10-15 拆掉了：网关那一层的分子是整把
+  虚拟 key 自上次结算以来的增量，不是这一轮的产出，两者配不成一对。
 * `output_tokens = 0` 的行不算 —— 那是「这轮没拿到用量」的占位标记，不是实跑。
 * 供给（`resource_usage.route`）分开列，所以被限流的席位看得出是速率掉了，
   不是没在跑。
 * 还开着的轮次（`stopped_at IS NULL`）不算：它的产出到此刻为止，除以到此刻为止的
   时长会把一个正在跑的轮次报成慢。
-* 秒数为 0 的一轮不进分位（没有速率可言），但它的 token 照算。
+* 秒数为 0 的一轮照算 token，秒数按 0 记。
 * `calls` 加的是 `sum(calls)`，不是行数 —— 网关一栏能把多次调用灌成一行。
 * 只在平台自己的项目里读得到。
 """
@@ -119,8 +120,10 @@ def _row(data: dict, **match) -> dict:
     return hits[0]
 
 
-def test_each_turn_contributes_its_own_rate_to_percentiles(client, platform_room):
-    """一轮一速率：1000 token / 100 秒是 10 tps，1000 / 50 秒是 20 tps，p50 在中间。"""
+def test_a_group_reports_its_turns_its_tokens_and_its_window_throughput(
+    client, platform_room
+):
+    """一组报的是这几轮的合计产出，和它占窗口的吞吐；不报任何按轮的速率。"""
     _, room = platform_room
     now = datetime.now(UTC)
     _seed(
@@ -160,9 +163,7 @@ def test_each_turn_contributes_its_own_rate_to_percentiles(client, platform_room
     assert row["turns"] == 2
     assert row["output_tokens"] == 2000
     assert row["turn_seconds"] == 150.0
-    assert row["p50_tps"] == 15.0
-    assert row["p90_tps"] == 19.0
-    # 窗口吞吐把空档也算进分母，所以远小于按轮速率。
+    # 窗口吞吐把空档也算进分母。
     assert row["window_tps"] == round(2000 / 86400, 4)
 
 
@@ -195,8 +196,10 @@ def test_supply_is_split_so_a_throttled_seat_shows_a_fall_not_silence(
 
     throttled = _row(data, seat="cheese", model="m", supply="subscription")
     fine = _row(data, seat="cheese", model="m", supply="gateway")
-    assert throttled["p50_tps"] == 10.0
-    assert fine["p50_tps"] == 50.0
+    assert throttled["output_tokens"] == 1000
+    assert throttled["window_tps"] == round(1000 / 86400, 4)
+    assert fine["output_tokens"] == 500
+    assert fine["window_tps"] == round(500 / 86400, 4)
     assert len(data["rows"]) == 2
 
 
@@ -225,7 +228,8 @@ def test_a_zero_token_filler_row_is_not_a_run(client, platform_room):
     data = _throughput(client, room, window="24h")
 
     assert [r["model"] for r in data["rows"]] == ["真跑的"]
-    assert data["rows"][0]["p50_tps"] == 100.0
+    assert data["rows"][0]["output_tokens"] == 1000
+    assert data["rows"][0]["window_tps"] == round(1000 / 86400, 4)
 
 
 def test_a_turn_still_running_is_left_out(client, platform_room):
@@ -254,12 +258,11 @@ def test_a_turn_still_running_is_left_out(client, platform_room):
 
     assert data["rows"][0]["turns"] == 1
     assert data["rows"][0]["output_tokens"] == 1000
-    assert data["rows"][0]["p50_tps"] == 100.0
+    assert data["rows"][0]["window_tps"] == round(1000 / 86400, 4)
 
 
-def test_a_zero_length_turn_counts_its_tokens_but_has_no_rate(client, platform_room):
-    """起止同一刻没有速率可言，除出来的无穷大会把 p90 顶飞；但它的 token 是真的
-    产出，要算进吞吐。"""
+def test_a_zero_length_turn_counts_its_tokens_and_zero_seconds(client, platform_room):
+    """起止同一刻的一轮，token 照算，秒数按 0 记 —— 它不额外占轮内时间。"""
     _, room = platform_room
     now = datetime.now(UTC)
     same = now - timedelta(hours=1)
@@ -287,8 +290,7 @@ def test_a_zero_length_turn_counts_its_tokens_but_has_no_rate(client, platform_r
     row = data["rows"][0]
     assert row["turns"] == 2
     assert row["output_tokens"] == 1700
-    assert row["p50_tps"] == 100.0
-    assert row["p90_tps"] == 100.0
+    assert row["turn_seconds"] == 10.0
     assert row["window_tps"] == round(1700 / 86400, 4)
 
 
@@ -368,10 +370,9 @@ def test_the_seat_rollup_lumps_every_model_and_supply(client, platform_room):
     assert lump["turns"] == 3
     assert lump["output_tokens"] == 2500
     assert lump["turn_seconds"] == 160.0
-    # 速率样本是每一轮一个：10、20、50。
-    assert lump["p50_tps"] == 20.0
-    assert lump["p90_tps"] == 44.0
-    assert seats["cheese-mimo"]["p50_tps"] == 20.0
+    assert lump["window_tps"] == round(2500 / 86400, 4)
+    assert seats["cheese-mimo"]["turns"] == 1
+    assert seats["cheese-mimo"]["output_tokens"] == 100
 
 
 def test_the_window_holds_rows_back(client, platform_room):
@@ -428,7 +429,54 @@ def test_a_turn_of_a_seat_nobody_picked_up_still_shows_up(client, platform_room)
     data = _throughput(client, room, window="24h")
 
     assert data["rows"][0]["seat"] == ""
-    assert data["rows"][0]["p50_tps"] == 100.0
+    assert data["rows"][0]["output_tokens"] == 1000
+    assert data["rows"][0]["window_tps"] == round(1000 / 86400, 4)
+
+
+def test_the_row_carries_no_per_turn_rate(client, platform_room):
+    """按轮速率拆掉之后，行里只剩产出和窗口吞吐。
+
+    一轮产出 1000 token 用 10 秒（100 tps 的按轮速率），另一轮 1 token 用 0.001 秒
+    （把分位顶飞的样本）。这两个数一个都不报：网关那一层的分子不是这一轮的产出，
+    拿这一轮的秒数当分母就是把两件事凑一对（模块 docstring）。"""
+    _, room = platform_room
+    now = datetime.now(UTC)
+    _seed(
+        client,
+        room,
+        [
+            {
+                "seat": "cheese",
+                "started_at": now - timedelta(hours=2),
+                "stopped_at": now - timedelta(hours=2) + timedelta(seconds=10),
+                "usages": [{"output_tokens": 1000, "model": "m"}],
+            },
+            {
+                "seat": "cheese",
+                "started_at": now - timedelta(hours=1),
+                "stopped_at": now - timedelta(hours=1) + timedelta(milliseconds=1),
+                "usages": [{"output_tokens": 1, "model": "m"}],
+            },
+        ],
+    )
+
+    data = _throughput(client, room, window="24h")
+
+    row = data["rows"][0]
+    assert set(row) == {
+        "seat",
+        "model",
+        "supply",
+        "turns",
+        "output_tokens",
+        "calls",
+        "turn_seconds",
+        "window_tps",
+    }, sorted(row)
+    assert row["turns"] == 2
+    assert row["output_tokens"] == 1001
+    assert row["window_tps"] == round(1001 / 86400, 4)
+    assert set(data["seats"][0]) == set(row)
 
 
 def test_a_room_in_another_project_is_refused(client, platform_room):

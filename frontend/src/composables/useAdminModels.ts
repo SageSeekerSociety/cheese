@@ -1,4 +1,4 @@
-// 模型管理页**取数**的那一半：三段各自的读、各自的失败，写操作的四处状态，窗口，
+// 模型管理页**取数**的那一半：三段各自的读、各自的失败，模型与线路的写操作状态，窗口，
 // 以及页头和 KPI 要的那几个判据。
 //
 // 分家的理由和 `useAdminStats` 是同一个形状：这一页原先一份 `<script setup>` 一千
@@ -15,22 +15,37 @@
 // 三种失败在这一页是三句话，由三段各自说，页顶那条横条只说**写**失败。
 import type { ModelFormPayload } from '@/components/admin/AdminModelFormDialog.vue'
 import type { ModelTier } from '@/lib/adminCredits'
-import type { AuditItem, ModelRow, ModelsListing, ModelUsage, ProjectRow, ProjectsPayload } from '@/lib/adminModels'
+import type {
+  AuditItem,
+  ModelRow,
+  ModelsListing,
+  ModelUsage,
+  ProjectRow,
+  ProjectsPayload,
+  SourceRow,
+} from '@/lib/adminModels'
+import type { SourceDraft } from '@/lib/adminSources'
 
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import {
+  addGatewaySource,
   createGatewayModel,
   deleteGatewayModel,
+  deleteGatewaySource,
   getGatewayAudit,
   getGatewayModels,
   getGatewayProjects,
+  reorderGatewaySources,
   setGatewayModelBlocked,
   setGatewayProjectBudget,
+  setGatewaySourceBlocked,
   updateGatewayModel,
+  updateGatewaySource,
 } from '@/api'
 import { setGatewayModelTier } from '@/api/adminCredits'
+import { draftToFields } from '@/lib/adminSources'
 import { relTime } from '@/lib/relTime'
 import { fmtCost, fmtNum, fmtSI } from '@/lib/usageFormat'
 
@@ -88,6 +103,21 @@ export function useAdminModels() {
   const deleting = ref(false)
   const blockTarget = ref<ModelRow | null>(null)
   const blocking = ref(false)
+
+  /* 线路（详情抽屉里那一段）的写状态。表单、两种确认、提前 / 延后共用一个 `sourceBusy`：
+     同一个模型的线路一次只改一处，连点出来的第二次写只会让人看不懂最后是谁生效。 */
+  const sourceFormOpen = ref(false)
+  const sourceFormMode = ref<'add' | 'edit'>('add')
+  const sourceModel = ref('')
+  const sourceSeed = ref<SourceRow | null>(null)
+  const sourceSiblings = ref<SourceRow[]>([])
+  const sourceSaving = ref(false)
+  const sourceError = ref<string | null>(null)
+  const sourceBusy = ref(false)
+  const sourceDeleteTarget = ref<{ name: string; source: SourceRow } | null>(null)
+  const sourceBlockTarget = ref<{ name: string; source: SourceRow } | null>(null)
+  /** 抽屉开着时写完一条线路就加一，让抽屉重拉。 */
+  const drawerReload = ref(0)
 
   /** 服务端的原话在 `message` 里（`ApiError` 带上来的）。取不到才用兜底那句。 */
   function message(e: unknown, fallback: string): string {
@@ -265,13 +295,19 @@ export function useAdminModels() {
     formError.value = null
     writeError.value = null
     try {
+      const { source, ...model } = payload
       if (formMode.value === 'add') {
-        // add 模式表单必带 `name`（空时不放行），这里用 `?? ''` 只是把它从可选收成必填，
-        // 真正的校验仍在服务端。
-        await createGatewayModel({ ...payload, name: payload.name ?? '' })
+        // add 模式表单必带 `name` 与第一条线路（空时不放行），这里的 `?? ''` 只是把它们
+        // 从可选收成必填，真正的校验仍在服务端。
+        await createGatewayModel({
+          ...source,
+          ...model,
+          name: payload.name ?? '',
+          upstream_model: source?.upstream_model ?? '',
+        })
         notice.value = t('models.notice.added', { name: payload.name ?? '' })
       } else {
-        await updateGatewayModel(formSeed.value?.name ?? '', payload)
+        await updateGatewayModel(formSeed.value?.name ?? '', model)
         notice.value = t('models.notice.updated', { name: formSeed.value?.name ?? '' })
       }
       formOpen.value = false
@@ -353,6 +389,143 @@ export function useAdminModels() {
       await load()
     } catch (e) {
       writeError.value = message(e, t('models.table.tierFailed'))
+    }
+  }
+
+  /** 改一条模型要不要开通才能用：走同一条更新接口，只带 `overseas`。成功后整表重拉，失败落到写失败那条横条。 */
+  async function setOverseas(row: ModelRow, overseas: boolean) {
+    if (!!row.overseas === overseas) return
+    writeError.value = null
+    try {
+      await updateGatewayModel(row.name, { overseas })
+      await load()
+    } catch (e) {
+      writeError.value = message(e, t('models.table.overseasFailed'))
+    }
+  }
+
+  /* ---- 线路 ---- */
+
+  /** 一次线路写成功之后：横条说一句，列表与抽屉都重拉（抽屉里画的是写前的线路）。 */
+  async function afterSourceWrite(text: string) {
+    notice.value = text
+    drawerReload.value += 1
+    await load()
+  }
+
+  function openAddSource(name: string, siblings: SourceRow[]) {
+    sourceFormMode.value = 'add'
+    sourceModel.value = name
+    sourceSeed.value = null
+    sourceSiblings.value = siblings
+    sourceError.value = null
+    sourceFormOpen.value = true
+  }
+
+  function openEditSource(name: string, source: SourceRow) {
+    sourceFormMode.value = 'edit'
+    sourceModel.value = name
+    sourceSeed.value = source
+    sourceError.value = null
+    sourceFormOpen.value = true
+  }
+
+  async function onSourceSubmit(draft: SourceDraft) {
+    const name = sourceModel.value
+    sourceSaving.value = true
+    sourceBusy.value = true
+    sourceError.value = null
+    writeError.value = null
+    try {
+      if (sourceFormMode.value === 'add') {
+        const fields = draftToFields(draft, 'add')
+        await addGatewaySource(name, {
+          ...fields,
+          upstream_model: fields.upstream_model ?? '',
+          order: fields.order ?? 1,
+        })
+        sourceFormOpen.value = false
+        await afterSourceWrite(t('models.source.notice.added', { name }))
+      } else {
+        await updateGatewaySource(name, sourceSeed.value?.source_id ?? '', draftToFields(draft, 'edit'))
+        sourceFormOpen.value = false
+        await afterSourceWrite(t('models.source.notice.updated', { name }))
+      }
+    } catch (e) {
+      // 同模型表单：失败不关框、原因照原话显示。
+      sourceError.value = message(e, t('models.source.failed'))
+    } finally {
+      sourceSaving.value = false
+      sourceBusy.value = false
+    }
+  }
+
+  /** 提前 / 延后：这一条的优先级改成 `order`。失败落到页顶那条横条。 */
+  async function moveSource(name: string, source: SourceRow, order: number) {
+    sourceBusy.value = true
+    writeError.value = null
+    try {
+      await reorderGatewaySources(name, { [source.source_id]: order })
+      await afterSourceWrite(t('models.source.notice.reordered', { name }))
+    } catch (e) {
+      writeError.value = message(e, t('models.source.failed'))
+    } finally {
+      sourceBusy.value = false
+    }
+  }
+
+  function askSourceDelete(name: string, source: SourceRow) {
+    writeError.value = null
+    sourceDeleteTarget.value = { name, source }
+  }
+
+  function closeSourceDelete() {
+    sourceDeleteTarget.value = null
+  }
+
+  async function confirmSourceDelete() {
+    const target = sourceDeleteTarget.value
+    if (!target) return
+    sourceBusy.value = true
+    writeError.value = null
+    try {
+      await deleteGatewaySource(target.name, target.source.source_id)
+      sourceDeleteTarget.value = null
+      await afterSourceWrite(t('models.source.notice.deleted', { name: target.name }))
+    } catch (e) {
+      writeError.value = message(e, t('models.source.failed'))
+      sourceDeleteTarget.value = null
+    } finally {
+      sourceBusy.value = false
+    }
+  }
+
+  function askSourceBlock(name: string, source: SourceRow) {
+    writeError.value = null
+    sourceBlockTarget.value = { name, source }
+  }
+
+  function closeSourceBlock() {
+    sourceBlockTarget.value = null
+  }
+
+  async function confirmSourceBlock() {
+    const target = sourceBlockTarget.value
+    if (!target) return
+    const next = !target.source.blocked
+    sourceBusy.value = true
+    writeError.value = null
+    try {
+      await setGatewaySourceBlocked(target.name, target.source.source_id, next)
+      sourceBlockTarget.value = null
+      await afterSourceWrite(
+        t(next ? 'models.source.notice.blocked' : 'models.source.notice.unblocked', { name: target.name })
+      )
+    } catch (e) {
+      writeError.value = message(e, t('models.source.failed'))
+      sourceBlockTarget.value = null
+    } finally {
+      sourceBusy.value = false
     }
   }
 
@@ -441,10 +614,33 @@ export function useAdminModels() {
     closeBlock,
     confirmBlock,
     setTier,
+    setOverseas,
     // 详情抽屉
     drawerOpen,
     drawerName,
+    drawerReload,
     openDetail,
+    // 线路
+    sourceFormOpen,
+    sourceFormMode,
+    sourceModel,
+    sourceSeed,
+    sourceSiblings,
+    sourceSaving,
+    sourceError,
+    sourceBusy,
+    openAddSource,
+    openEditSource,
+    onSourceSubmit,
+    moveSource,
+    sourceDeleteTarget,
+    askSourceDelete,
+    closeSourceDelete,
+    confirmSourceDelete,
+    sourceBlockTarget,
+    askSourceBlock,
+    closeSourceBlock,
+    confirmSourceBlock,
     // 额度段
     budgetOpen,
     budgetProject,

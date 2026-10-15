@@ -1,0 +1,13 @@
+{
+  "mentionFused": "AI 队友之间的点名本小时已到上限，这次没有叫醒对方",
+  "mentionFusedDetail": "同一个频道里，AI 队友点名每小时最多叫起 {limit} 轮，防止互相点名停不下来。这次没叫醒：{names}。人点名不受这个限制。",
+  "pendingHandedOver": "{actor} 交出了之前的消息",
+  "pendingHandedTo": "{actor} 把之前的消息交给了 {seat}",
+  "roomArchived": "{actor} 归档了频道「{room}」",
+  "channelSteppedIn": "{actor}（项目管理员）加入了频道",
+  "channelManagerChanged": "{actor} 将频道管理者改为 {manager}",
+  "roomArchivedWithParent": "频道「{room}」随上级频道「{parent}」一同归档",
+  "roomUnarchived": "{actor} 取消归档，频道「{room}」恢复活跃",
+  "taskCreated": "{actor} 创建了任务「{title}」，由 {owner} 负责",
+  "threadArchivedWithRoom": "随所在频道「{room}」一同归档"
+}

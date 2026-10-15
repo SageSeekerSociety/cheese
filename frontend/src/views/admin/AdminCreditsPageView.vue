@@ -51,6 +51,8 @@ const props = defineProps<{
   historyError: string | null
   teamPlanSaving: boolean
   teamPlanError: string | null
+  overseasSaving: boolean
+  overseasError: string | null
   grantOpen: boolean
   grantSaving: boolean
   grantError: string | null
@@ -72,6 +74,8 @@ const emit = defineEmits<{
   'retry-team': []
   'change-plan': [planKey: string]
   'dismiss-plan-error': []
+  'set-overseas': [approved: boolean]
+  'dismiss-overseas-error': []
   'open-grant': []
   'update:grantOpen': [open: boolean]
   grant: [input: GrantInput]
@@ -187,11 +191,15 @@ const kindOptions = computed(() => [
       :plans="props.plans ?? []"
       :plan-saving="props.teamPlanSaving"
       :plan-error="props.teamPlanError"
+      :overseas-saving="props.overseasSaving"
+      :overseas-error="props.overseasError"
       :history="props.history"
       :history-error="props.historyError"
       @update:model-value="emit('update:panelOpen', $event)"
       @change-plan="emit('change-plan', $event)"
       @dismiss-plan-error="emit('dismiss-plan-error')"
+      @set-overseas="emit('set-overseas', $event)"
+      @dismiss-overseas-error="emit('dismiss-overseas-error')"
       @grant="emit('open-grant')"
       @retry="emit('retry-team')"
     />

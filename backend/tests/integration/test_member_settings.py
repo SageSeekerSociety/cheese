@@ -12,6 +12,7 @@ import pytest
 
 from app.core.config import settings
 from tests.integration.conftest import (
+    approve_overseas,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -31,6 +32,14 @@ def project(client, monkeypatch):
     monkeypatch.setattr(settings, "microcloud_vm_offering_id", "vm-offering")
     data = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     join_project_team(client, data["id"], "bob")
+
+    # Approved, so Claude is shown and its tier is what Free leaves out.
+    async def approve() -> None:
+        async with client.test_request_factory() as session:
+            await approve_overseas(session, data["team_id"])
+            await session.commit()
+
+    client.portal.call(approve)
     return data
 
 

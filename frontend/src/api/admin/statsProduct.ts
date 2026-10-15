@@ -63,7 +63,7 @@ export interface StatsPipeline {
     reviewer_pending: number
     open_tasks: number
     awaiting_answer: number
-    /** 判据是 `delivery/addressing.py` 的三个码，不发明第四个。 */
+    /** 判据是 `domain/addressing.py` 的三个码，不发明第四个。 */
     reasons: { reviewer: number; reporter: number; asked: number }
     items: {
       kind: string

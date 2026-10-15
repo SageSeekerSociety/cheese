@@ -38,23 +38,34 @@ def _service() -> ChatService:
     )
 
 
-def test_one_seat_shares_a_lock_and_two_seats_do_not():
+def test_one_seat_shares_a_lease_and_two_seats_do_not():
     live = LiveWork()
     room, other = uuid.uuid4(), uuid.uuid4()
-    # The same (room, seat) is the same lock, so that agent's turns queue…
+    # The same (room, seat) is the same lease, so that agent's turns queue…
     assert live.seat_lock_for(room, "cheese") is live.seat_lock_for(room, "cheese")
     # …while another seat in the room, or the same seat in another room, is
-    # a different lock and runs beside it.
+    # a different lease and runs beside it.
     assert live.seat_lock_for(room, "cheese") is not live.seat_lock_for(room, "other")
     assert live.seat_lock_for(room, "cheese") is not live.seat_lock_for(other, "cheese")
 
 
-def test_the_room_lock_is_its_own_key_space():
+def test_a_seat_is_one_key_for_every_process():
+    live = LiveWork()
+    room, other = uuid.uuid4(), uuid.uuid4()
+    # Two backend processes hold one seat: they agree on it by this key, where
+    # an asyncio.Lock only ever agreed with itself.
+    seat = live.seat_lock_for(room, "cheese")
+    assert seat.key == f"admission:seat:{room}:cheese"
+    assert seat.key != live.seat_lock_for(other, "cheese").key
+    assert live.lock_for(room).key == f"admission:room:{room}"
+
+
+def test_the_room_lease_is_its_own_key_space():
     live = LiveWork()
     room = uuid.uuid4()
     assert live.lock_for(room) is live.lock_for(room)
     assert live.lock_for(room) is not live.lock_for(uuid.uuid4())
-    # A room lock and a seat lock for the same room are different locks.
+    # A room lease and a seat lease for the same room are different leases.
     assert live.lock_for(room) is not live.seat_lock_for(room, "cheese")
 
 

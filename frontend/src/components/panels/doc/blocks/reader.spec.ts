@@ -80,7 +80,7 @@ describe('reading Markdown outside the editor', () => {
       names: { mentionNames: { zhangsan: '张三' }, topicTitles: {} },
     })
     const chip = host.querySelector('[data-handle="zhangsan"]')
-    expect(chip?.textContent).toBe('@张三')
+    expect(chip?.textContent).toBe('张三')
     expect(host.querySelector('code')?.textContent).toBe('<@zhangsan>')
   })
 

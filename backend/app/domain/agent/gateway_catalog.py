@@ -93,6 +93,14 @@ def offerable() -> list[GatewayModel]:
     return picked or _floor()
 
 
+def sees_pictures(model: str) -> bool:
+    """Whether ``model`` reads pictures, as the gateway last said. A model it
+    has not described, or before it has answered at all, is shown text only:
+    a picture sent to a model that cannot read one is a refused request, or a
+    billed one for nothing."""
+    return any(m.id == model and m.vision for m in snapshot())
+
+
 async def refresh(gateway: LlmGateway | None) -> bool:
     """Ask the gateway what it routes. True when the catalogue was updated.
 

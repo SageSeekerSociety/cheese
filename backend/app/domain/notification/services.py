@@ -20,6 +20,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.membership.ports import ProjectTeam
 from app.domain.notification.dto import NotificationDTO, ResolvedEntityInfoDTO
 from app.domain.notification.entity_resolvers import EntityInfoResolver
 from app.domain.notification.models import (
@@ -346,8 +347,12 @@ class ProjectNotificationService:
     `notification`，和人对人的那些同住一张表、同一个收件箱。
     """
 
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, team: ProjectTeam | None = None):
         self._session = session
+        # 广播到「这个项目里谁」是上面几层的事（`membership.ports.ProjectTeam`）：
+        # 只看只读路径（列收件箱、数未读）不接线，`None` 就是不接。真的走到广播那
+        # 条路上还是没有它，`_broadcast_roster` 当场炸掉，不会把通知扔了。
+        self._team = team
         self._repo = NotificationRepository(session)
         self._projects = ProjectRepository(session)
         self._prefs = PreferencesRepository(session)
@@ -430,13 +435,16 @@ class ProjectNotificationService:
         agent 不在里面：它在自己房间的时间线上读到这件事，往它的收件箱里塞一行写
         的是一条谁都不会打开的记录（`identity/arrival.py`）。
         """
+        if self._team is None:  # pragma: no cover - 接线漏了才会走到
+            # i18n-exempt: developer miswiring, not a refusal a reader can act on
+            raise RuntimeError("team was not handed in")
         service = TopicMemberService(self._session)
         if conversation_id is not None:
             handles = await service.people_of(
-                await room_of(self._session, conversation_id)
+                await room_of(self._session, conversation_id), team=self._team
             )
         else:
-            handles = await service.project_people(project_id)
+            handles = await service.project_people(project_id, team=self._team)
         return [
             handle
             for handle in dict.fromkeys(handles)
