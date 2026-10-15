@@ -1,18 +1,17 @@
 import type { RouteHierarchyItem } from '@/types/title'
 
 import { computed } from 'vue'
-import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 
 import { extractParamNames, normalizeRouteParams } from '@/utils/route'
 
+import { t } from '@/i18n'
 import { usePageTitleStore } from '@/stores/title'
 
 export function usePageTitle() {
   const route = useRoute()
   const router = useRouter()
   const store = usePageTitleStore()
-  const { t } = useI18n()
   const siteName = computed(() => t('global.cheese'))
 
   const getRouteHierarchy = computed((): RouteHierarchyItem[] => {

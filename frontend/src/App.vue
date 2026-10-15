@@ -151,12 +151,11 @@ import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
 import type { NavSources } from './components/common/Navigation/destinations'
 
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
-import { useEventListener } from '@vueuse/core'
 import { useQuery } from '@tanstack/vue-query'
 
 import { scrollBehavior } from '@/utils/motion'
@@ -167,7 +166,6 @@ import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwait
 import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
 import { teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { providePageChrome } from '@/composables/usePageChrome'
-import { usePageTitle } from '@/composables/usePageTitle'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
 import { useProjectTour } from '@/composables/useProjectTour'
@@ -189,36 +187,22 @@ import {
 } from './components/common/Navigation/destinations'
 import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
-import { usePageTitleStore } from './stores/title'
 
 import { type AppVersion, getAppVersion } from '@/api'
-import { NotificationsApi } from '@/api/notifications'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
-import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import SessionRestoreGate from '@/components/common/SessionRestoreGate.vue'
-import { appShortcutSheetOpen } from '@/components/common/shortcutSheet'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { rememberRailCount } from '@/lib/bootShape'
-import { offerToConnect } from '@/lib/desktop'
-import {
-  desktopBadge,
-  desktopListenForNotices,
-  desktopStopNotices,
-  inDesktopApp,
-  onDesktopOpenPage,
-  tellDesktopTheme,
-} from '@/lib/desktopApp'
+import { desktopBadge, inDesktopApp, tellDesktopTheme } from '@/lib/desktopApp'
 import { landBootSplash } from '@/lib/desktopSplash'
-import { startInboxLive } from '@/lib/inboxLive'
-import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { pageMotion } from '@/lib/pageMotion'
 import {
   applyProjectOrder,
@@ -245,15 +229,9 @@ const appTheme = useAppTheme()
 // The desktop app paints its first page and its title bar in the same theme.
 watch(appTheme.preference, tellDesktopTheme, { immediate: true })
 
-// 软键盘盖住多少，写进 --keyboard-inset 供布局减掉 (style.css)。
-trackKeyboardInset()
-
 const currentRoute = useRoute()
 const router = useRouter()
 const workspace = useWorkspaceStore()
-
-const titleManager = usePageTitle()
-const store = usePageTitleStore()
 
 // 外壳给内容区注入的四样东西：人名 chip 的名册（lib/userRefDirectory.ts）、页头的
 // 面包屑与操作区（lib/pageChrome.ts）、公共页要的登录状态（lib/publicVisitor.ts）、
@@ -263,19 +241,6 @@ provideUserRefDirectory()
 providePageChrome()
 providePublicVisitor()
 provideAttachmentSource()
-
-router.isReady().then(async () => {
-  const updateDocumentTitle = () => {
-    nextTick(() => {
-      document.title = titleManager.fullTitle.value
-    })
-  }
-
-  watch(() => router.currentRoute.value.path, updateDocumentTitle, { immediate: true })
-  watch(() => store.updateTrigger, updateDocumentTitle)
-  watch(titleManager.fullTitle, updateDocumentTitle)
-  watch(() => store.separator, updateDocumentTitle)
-})
 
 // 手机上换页的那一下（桌面上没有）：新页从右边（往里走一层）或左边（退回一层）
 // 挪进来 24px 并淡入，平级切换（底栏换格）只淡入。方向由 lib/pageMotion 按路由声明的
@@ -462,46 +427,6 @@ watch(
   }
 )
 
-// In the desktop app, signing in asks once whether to connect this computer as a
-// device; one connected before comes back on its own (lib/desktop.ts).
-watch(
-  () => AccountService.loggedIn && AccountService.user?.id,
-  (userId) => {
-    if (typeof userId === 'number') void offerToConnect(userId)
-  },
-  { immediate: true }
-)
-
-// The desktop app calls the person back while its window is closed: once handed
-// a credential it keeps its own connection for this account's notices, and it
-// shows the count of things waiting on its icon. A clicked notification or the
-// tray menu opens its page here.
-watch(
-  () => AccountService.loggedIn && AccountService.user?.id,
-  (userId, previous) => {
-    if (typeof userId === 'number') {
-      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).token).catch(() => {})
-    } else if (typeof previous === 'number') {
-      desktopStopNotices()
-    }
-  },
-  { immediate: true }
-)
-// 收件箱有新的一行时服务端当场说一声：「动态」和首页的未读小点据此去读（`lib/inboxLive.ts`）。
-let stopInboxLive: (() => void) | null = null
-watch(
-  () => AccountService.loggedIn && AccountService.user?.id,
-  (userId) => {
-    stopInboxLive?.()
-    stopInboxLive =
-      typeof userId === 'number' ? startInboxLive(async () => (await NotificationsApi.liveToken()).token) : null
-  },
-  { immediate: true }
-)
-onBeforeUnmount(() => stopInboxLive?.())
-const stopOpeningPages = onDesktopOpenPage((path) => void router.push(path))
-onBeforeUnmount(stopOpeningPages)
-
 // 上次开过的那个项目存在 workspace store 的布局里，所以冷启动也落得回去。
 const workspaceProjectId = computed<string | null>(() =>
   workspaceProject(railProjects.value, workspace.projectId, lastOpenedProjectId())
@@ -568,18 +493,6 @@ defineCommands(() =>
       : []
   })
 )
-let stopShortcuts: (() => void) | undefined
-onMounted(() => (stopShortcuts = installShortcuts(router)))
-onBeforeUnmount(() => stopShortcuts?.())
-// `?` 打开快捷键表：焦点不在输入框里、不带修饰键（Shift 本身是打出 ? 的那一下）。后台
-// 有自己那张表（AdminLayout），那里不开这一张。
-useEventListener(window, 'keydown', (event: KeyboardEvent) => {
-  if (event.key !== '?' || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return
-  // 门口页面（官网）上没有应用外壳，这张表不在 DOM 里；后台有自己那张。
-  if (isTypingTarget(event.target) || currentRoute.meta.publicLanding || currentRoute.path.startsWith('/admin')) return
-  event.preventDefault()
-  appShortcutSheetOpen.value = true
-})
 // 新手引导此刻在哪一步、指着什么。动作步做到了自己往下走（`settle`），所以页面上一
 // 出现新东西（登记表一变）、服务端的事实一变，就重新判一次。
 const guide = useProjectTour()
