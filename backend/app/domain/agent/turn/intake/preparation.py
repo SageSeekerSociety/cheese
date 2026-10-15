@@ -92,6 +92,7 @@ from app.domain.topic.reads import (
 )
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import team_terms
+from app.domain.usage.model_access import overseas_approved
 from app.domain.user.services import language_of
 
 logger = logging.getLogger(__name__)
@@ -699,7 +700,11 @@ class TurnPreparation:
             if project is not None:
                 actor_handle = acting_agent or agent.handle
                 tiers = (await team_terms(session, project.team_id)).model_tiers
-                policy = gate.policy_of(project.settings, tiers)
+                policy = gate.policy_of(
+                    project.settings,
+                    tiers,
+                    overseas_approved=await overseas_approved(session, project.team_id),
+                )
                 proposed = await _pass_policy_gate(
                     session,
                     place.room_id,

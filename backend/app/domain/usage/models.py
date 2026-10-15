@@ -102,6 +102,26 @@ class PlanWindowUse(Base):
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
 
 
+class OverseasModelApproval(Timestamps, Base):
+    """A team a platform administrator has let use overseas models (Claude,
+    GPT, Gemini). A team without a row may not, whatever its plan allows; a
+    person is let in through their personal team. Withdrawing deletes the row,
+    and ``credit_admin_audit`` keeps who did either and when."""
+
+    __tablename__ = "overseas_model_approvals"
+
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "team.id",
+            ondelete="CASCADE",
+            name="fk_overseas_model_approvals_team_id_team",
+        ),
+        primary_key=True,
+    )
+    approved_by: Mapped[str] = mapped_column(String(64))
+
+
 class CreditAdminAudit(UuidPk, Timestamps, Base):
     """Every change an administrator makes to plans and credit packs: who, to
     what, and what it was before and after."""

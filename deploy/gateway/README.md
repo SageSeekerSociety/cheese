@@ -121,6 +121,17 @@ convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
+Gemini 4 Argon runs on Google AI Studio. Set `GEMINI_API_KEY` in the same
+`.env` before releasing a configuration that includes it. Two adaptations make
+Claude Code's requests work there: `patch_gemini_generation.py` makes the
+pinned LiteLLM treat `gemini-4` as the Gemini 3+ generation (thought
+signatures, tool-call ids, thinking level), and `no_explicit_cache.py` strips
+`cache_control` from a deployment marked `cheese_no_explicit_cache: true`,
+because argon refuses explicit caching and LiteLLM would otherwise create a
+`cachedContents` object for every Claude Code request. Its key is capped at
+USD 1,000 in all (`cheese_spend_cap_usd`, `spend_cap.py`), counted from the
+gateway database's daily spend, so the cap survives releases.
+
 `deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
 RUC key, and by DeepSeek's API when every RUC key fails or is past its 3
 parallel requests. Set `RUC_DEEPSEEK_API_BASE` (the endpoint's address, no

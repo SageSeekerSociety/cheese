@@ -73,6 +73,8 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
       historyError: null,
       teamPlanSaving: false,
       teamPlanError: null,
+      overseasSaving: false,
+      overseasError: null,
       grantOpen: false,
       grantSaving: false,
       grantError: null,

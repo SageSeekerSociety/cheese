@@ -56,7 +56,8 @@
       "offered": "上架",
       "status": "状态",
       "actions": "操作",
-      "tier": "档位"
+      "tier": "档位",
+      "overseas": "需开通"
     },
     "origin": {
       "config": "配置文件",
@@ -73,7 +74,9 @@
       "unblock": "启用"
     },
     "loadFailed": "模型加载失败",
-    "tierFailed": "更改档位失败"
+    "tierFailed": "更改档位失败",
+    "overseas": "需开通才能用",
+    "overseasFailed": "更改开通要求失败"
   },
   "price": {
     "input": "输入",

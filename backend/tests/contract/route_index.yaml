@@ -441,6 +441,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/admin/teams/{teamId}", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "GET", path: "/admin/teams/{teamId}/history", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "PUT", path: "/admin/teams/{teamId}/plan", auth: "platform.admin", owner: "usage.plans"}
+  - {protocol: "http", method: "PUT", path: "/admin/teams/{teamId}/overseas-access", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "POST", path: "/admin/teams/{teamId}/grants", auth: "platform.admin", owner: "usage.plans"}
   - {protocol: "http", method: "GET", path: "/admin/credits/audit", auth: "platform.admin", owner: "usage.plans"}
   # app.api.routes.admin_memory

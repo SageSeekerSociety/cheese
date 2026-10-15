@@ -56,7 +56,8 @@
       "offered": "Offered",
       "status": "Status",
       "actions": "Actions",
-      "tier": "Tier"
+      "tier": "Tier",
+      "overseas": "Approval"
     },
     "origin": {
       "config": "Config file",
@@ -73,7 +74,9 @@
       "unblock": "Unblock"
     },
     "loadFailed": "Models failed to load",
-    "tierFailed": "Couldn't change the tier"
+    "tierFailed": "Couldn't change the tier",
+    "overseas": "Requires approval",
+    "overseasFailed": "Couldn't change the approval requirement"
   },
   "price": {
     "input": "Input",

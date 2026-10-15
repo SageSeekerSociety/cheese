@@ -511,6 +511,7 @@ class GatewayModelsService:
             selectable=selectable,
             capabilities=capabilities,
             tier=data.get("tier"),
+            overseas=data.get("overseas"),
             order=data.get("order") or _FIRST_ORDER,
             free=free or None,
             upstream_headers=data.get("upstream_headers") or None,
@@ -583,7 +584,7 @@ class GatewayModelsService:
                 }
 
         model_kwargs: dict[str, Any] = {}
-        for field in ("label", "selectable", "tier"):
+        for field in ("label", "selectable", "tier", "overseas"):
             if field in data:
                 model_kwargs[field] = data[field]
         if data.get("capabilities") is not None:
@@ -757,6 +758,19 @@ class GatewayModelsService:
             _require_price_when_selectable(model.selectable, prices, free)
             # 模型那一层的元数据从已有那一行抄：同组每一行必须一字不差。
             catalogue = dict(model.sources[0].catalogue if model.sources else {})
+            # A cap and a cache rule belong to the upstream model: another row
+            # on it (another key) keeps them, so it neither 400s nor escapes
+            # the cap.
+            catalogue.update(
+                next(
+                    (
+                        s.upstream_info
+                        for s in model.sources
+                        if s.upstream_model == upstream_model and s.upstream_info
+                    ),
+                    {},
+                )
+            )
             if _would_lead(model, data["order"]) and not data.get("make_primary"):
                 raise BadRequestError(
                     say("sourceWouldBePrimary", name=name, order=data["order"])
@@ -1032,6 +1046,7 @@ class GatewayModelsService:
             "selectable": model.selectable,
             "priced": model.priced,
             "tier": model.tier,
+            "overseas": model.overseas,
             "offered": offered,
             "blocked_reasons": [] if offered else _offered_reasons(model),
             "unpriced_reason": None if model.priced else model.supports_notes,
@@ -1377,6 +1392,8 @@ def _config_yaml(model: AdminModel) -> str:
     lines.append(f"    cheese_selectable: {'true' if model.selectable else 'false'}")
     lines.append(f"    cheese_label: {model.label}")
     lines.append(f"    cheese_tier: {model.tier}")
+    if model.overseas:
+        lines.append("    cheese_overseas: true")
     for capability, enabled in model.capabilities.items():
         if enabled:
             lines.append(f"    supports_{capability}: true")
@@ -1400,6 +1417,7 @@ def _model_snapshot(model: AdminModel) -> dict:
         "selectable": model.selectable,
         "priced": model.priced,
         "tier": model.tier,
+        "overseas": model.overseas,
         "upstream_model": model.upstream_model,
         "api_base": model.api_base,
         "provider": model.provider,
@@ -1441,6 +1459,7 @@ def _item_from_payload(
         "selectable": selectable,
         "priced": priced,
         "tier": data.get("tier") or "included",
+        "overseas": bool(data.get("overseas")),
         "offered": selectable and priced,
         # 网关还没读回这条新模型：`pending`。
         "blocked_reasons": [] if (selectable and priced) else ["pending"],

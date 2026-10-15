@@ -63,7 +63,15 @@ EXTRA_HEADERS = "extra_headers"
 UPSTREAM_HEADERS = "cheese_upstream_headers"
 SESSION_HEADER = "cheese_session_header"
 FREE = "cheese_free"
-_SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE})
+# What one upstream model needs (no_explicit_cache.py, spend_cap.py), not
+# the model as people pick it: a new source on the same upstream model takes
+# them from a row that has them, one on another upstream does not.
+NO_EXPLICIT_CACHE = "cheese_no_explicit_cache"
+SPEND_CAP = "cheese_spend_cap_usd"
+_UPSTREAM_INFO_KEYS = frozenset({NO_EXPLICIT_CACHE, SPEND_CAP})
+_SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE}) | (
+    _UPSTREAM_INFO_KEYS
+)
 
 
 def catalogue_info(info: Mapping[str, object]) -> dict[str, object]:
@@ -126,6 +134,8 @@ class AdminSource:
     header_names: tuple[str, ...]
     session_header: str | None
     catalogue: dict[str, object]
+    # This row's keys for its upstream model (``_UPSTREAM_INFO_KEYS``).
+    upstream_info: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -150,6 +160,8 @@ class AdminModel:
     priced: bool
     # 档位（网关的 ``cheese_tier``）,缺省 ``included``:方案按它限定可用的模型。
     tier: str
+    # 需要平台管理员给团队开通才能用(网关的 ``cheese_overseas``):Claude、GPT、Gemini。
+    overseas: bool
     upstream_model: str
     api_base: str | None
     provider: str
@@ -392,6 +404,7 @@ class GatewayAdmin:
         selectable: bool = False,
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
+        overseas: bool | None = None,
         order: int | None = None,
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
@@ -408,6 +421,8 @@ class GatewayAdmin:
             info["cheese_label"] = label
         if tier is not None:
             info["cheese_tier"] = tier
+        if overseas is not None:
+            info["cheese_overseas"] = bool(overseas)
         return await self._new(
             name,
             upstream_model=upstream_model,
@@ -505,6 +520,7 @@ class GatewayAdmin:
         selectable: bool | None = None,
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
+        overseas: bool | None = None,
         order: int | None = None,
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
@@ -534,6 +550,8 @@ class GatewayAdmin:
             info["cheese_selectable"] = bool(selectable)
         if tier is not None:
             info["cheese_tier"] = tier
+        if overseas is not None:
+            info["cheese_overseas"] = bool(overseas)
         info.update(_capability_params(capabilities))
         info.update(_source_info(free, session_header))
         params: dict[str, object] = {}
@@ -855,6 +873,7 @@ def _admin_source(row: dict) -> AdminSource:
         header_names=tuple(sorted(header_names)),
         session_header=session if isinstance(session, str) and session else None,
         catalogue=catalogue_info(info),
+        upstream_info={k: v for k, v in info.items() if k in _UPSTREAM_INFO_KEYS},
     )
 
 
@@ -904,6 +923,7 @@ def _admin_model(name: str, rows: list[dict]) -> AdminModel:
         selectable=info.get("cheese_selectable") is True,
         priced=unpriced is None,
         tier=tier if isinstance(tier, str) and tier else "included",
+        overseas=info.get("cheese_overseas") is True,
         upstream_model=upstream if isinstance(upstream, str) else "",
         api_base=api_base if isinstance(api_base, str) and api_base else None,
         provider=provider,
