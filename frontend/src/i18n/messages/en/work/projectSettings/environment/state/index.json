@@ -1,0 +1,9 @@
+{
+  "failed": "Preparation failed",
+  "offline": "Computer offline",
+  "pending": "Waiting for next start",
+  "preparing": "Preparing",
+  "ready": "Ready",
+  "stopped": "AI teammate stopped",
+  "unbound": "No computer connected"
+}

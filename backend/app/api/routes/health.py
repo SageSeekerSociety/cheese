@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app.api.routes.admin_common import PlatformAdminDep
+from app.api.admin_deps import PlatformAdminDep
 from app.core.health import _REQUIRED_CHECKS, health_report
 from app.core.metrics import registry
 

@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import (
     get_user_auth_service,
 )
-from app.api.routes.legal import client_context
+from app.api.legal_deps import client_context
+from app.api.response import ok
 from app.api.routes.users._common import (
     RegisterUserRequest,
     SendEmailCodeRequest,
@@ -23,7 +24,7 @@ from app.api.routes.users._common import (
     _signup_consent,
     _too_many_from_client,
 )
-from app.api.routes.users_common import (
+from app.api.users_deps import (
     issue_session,
 )
 from app.core.client_address import resolved_client_address
@@ -111,10 +112,7 @@ async def send_register_email_code(
     finally:
         await redis.aclose()
 
-    return {
-        "code": 201,
-        "message": "Send email successfully.",
-    }
+    return ok(None, "Send email successfully.")
 
 
 @router.get(
@@ -124,13 +122,11 @@ async def send_register_email_code(
 )
 async def get_registration_config() -> dict:
     """Return public registration settings so the frontend can adapt its UI."""
-    return {
-        "code": 200,
-        "message": "Success",
-        "data": {
+    return ok(
+        {
             "requireInviteCode": settings.require_invite_code,
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -262,11 +258,10 @@ async def register_user(
     # its pending consents the moment it holds the token: uncommitted, the
     # consent given here reads as missing and the rules are put to it again.
     await session.commit()
-    return {
-        "code": 201,
-        "message": "Register successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
             "accessToken": access_token,
         },
-    }
+        "Register successfully.",
+    )

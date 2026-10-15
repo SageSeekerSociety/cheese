@@ -18,6 +18,7 @@ import { oauthProviderName } from './oauthProvider'
 import OAuthSuccessView from './OAuthSuccessView.vue'
 
 import { t } from '@/i18n'
+import { storageRemove } from '@/lib/browserStorage'
 import { takeOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -35,7 +36,7 @@ onMounted(async () => {
   if (provider) providerName.value = oauthProviderName(provider)
 
   // 登录用的 state 由后端签发和核对，出站时存下的这一份用不上，清掉。
-  localStorage.removeItem('oauth_state')
+  storageRemove('oauth_state')
 
   // 回跳地址里不带令牌：后端只设了刷新 cookie，拿它换访问令牌。
   const outcome = await AccountService.resumeFromCookie()

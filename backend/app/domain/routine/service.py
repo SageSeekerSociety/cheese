@@ -25,7 +25,19 @@ from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import listing, say, with_keys
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.platform_notices import (
+from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent_instance.adapters import project_team
+from app.domain.block.authorship import AuthorType
+from app.domain.block.models import Block, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
+from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
+from app.domain.delivery.models import Delivery
+from app.domain.delivery_events import DeliveryEvent
+from app.domain.feedback import claims as feedback_claims
+from app.domain.feedback import triage as feedback_triage
+from app.domain.library import listing as library_listing
+from app.domain.notice_meta import (
     EVENT_ROUTINE_PROPOSED,
     EVENT_ROUTINE_RUN,
     EVENT_ROUTINE_STOPPED,
@@ -36,17 +48,6 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent.realtime.broker import get_broker
-from app.domain.block.authorship import AuthorType
-from app.domain.block.models import Block, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
-from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
-from app.domain.delivery.ledger import DeliveryEvent
-from app.domain.delivery.models import Delivery
-from app.domain.feedback import claims as feedback_claims
-from app.domain.feedback import triage as feedback_triage
-from app.domain.library import listing as library_listing
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -96,7 +97,7 @@ EVENT_TRIGGERS = frozenset(
 TRIGGER_LABELS = {
     RoutineTrigger.schedule: "定时",
     RoutineTrigger.library_file_added: "资料库新增文件",
-    RoutineTrigger.task_closed: "任务完成",
+    RoutineTrigger.task_closed: "任务关闭",
     RoutineTrigger.card_accepted: "成果被采纳",
 }
 
@@ -207,7 +208,9 @@ class RoutineService:
             # The owner is told the results, so they are a person of the
             # project, and the channel the routine runs in becomes theirs too.
             members = TopicMemberService(self._session)
-            if owner_handle not in await members.project_people(topic.project_id):
+            if owner_handle not in await members.project_people(
+                topic.project_id, team=project_team
+            ):
                 raise ValidationError(
                     say("routineOwnerNotInProject", handle=owner_handle)
                 )
@@ -472,7 +475,9 @@ class RoutineService:
                 )
             )
             for rule in rules:
-                await ProjectNotificationService(self._session).create(
+                await ProjectNotificationService(
+                    self._session, team=project_team
+                ).create(
                     project_id=rule.project_id,
                     level=NotificationLevel.light,
                     kind=NotificationType.CHANGE_ALERT,
@@ -781,7 +786,7 @@ async def _events_for(
             found.append(
                 (
                     f"task:{task.id}",
-                    f"任务《{task.title}》（{task.id}）已完成。",
+                    f"任务《{task.title}》（{task.id}）已关闭。",
                     task.closed_at,
                 )
             )

@@ -12,12 +12,12 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project, outsiders_reading
 from app.common.auth import verify_access_token
-from app.core.config import settings
+from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -64,6 +64,10 @@ _log = get_logger("cheesex.auth")
 DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.living_docs.get_document": False,
     "app.api.routes.living_docs.edit_doc_passages": True,
+    "app.api.routes.doc_apps.get_app": False,
+    "app.api.routes.doc_apps.get_app_version": False,
+    "app.api.routes.doc_apps.create_app": True,
+    "app.api.routes.doc_apps.add_app_version": True,
     "app.api.routes.project_context.search_project_context": False,
     "app.api.routes.topics_preview.preview_file": False,
     "app.api.routes.memory_files.list_memory_files": False,
@@ -748,12 +752,19 @@ class ActorResolver:
             replace(actor, handle=handle), project_id=project_id, topic_id=topic_id
         )
 
-    async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
+    async def authorize_project(
+        self, actor: Actor, *, project_id: uuid.UUID, member_setting: bool = False
+    ) -> None:
         """Require a verified participant with project membership.
 
         An agent's per-turn credential reads the project from the conversation
         it was minted in instead (``authorize_reading_from``); what it writes
-        still needs the membership it does not have.
+        still needs the membership it does not have. ``member_setting`` is the
+        one exception: a setting any member may change
+        (``app/api/member_settings.py``) an agent changes from that
+        conversation too, on the same two conditions as its reads. Nobody it
+        answers to there is outside the project, so the change is one any of
+        them could have made themselves.
 
         A project that is not there is 404, not 403: the id is a UUID and
         answering "you are not a member of it" about a project that does not
@@ -771,9 +782,12 @@ class ActorResolver:
                 return  # Trusted development credential; anonymous access stays denied.
             raise AuthenticationRequiredError(say("signInForProject"))
         conversation = self.turn_conversation(actor)
-        if conversation is not None and not self._writes:
+        if conversation is not None and (not self._writes or member_setting):
             await self.authorize_reading_from(
-                actor, project_id=project_id, conversation_id=conversation
+                actor,
+                project_id=project_id,
+                conversation_id=conversation,
+                writes=self._writes,
             )
             return
         if await self._is_project_member(project_id, actor.handle):
@@ -802,7 +816,12 @@ class ActorResolver:
             return None
 
     async def authorize_reading_from(
-        self, actor: Actor, *, project_id: uuid.UUID, conversation_id: uuid.UUID
+        self,
+        actor: Actor,
+        *,
+        project_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        writes: bool = False,
     ) -> None:
         """Let an agent read the project from the conversation it works in.
 
@@ -811,6 +830,8 @@ class ActorResolver:
         room shows its answer to may read the project themselves: what the
         agent reads ends up in the room, so a room with somebody from outside
         the project would hand that person what the project keeps from them.
+        ``writes`` is a member setting being changed from there, which the
+        refusal names instead.
         """
         if await conversations.project_of(self._session, conversation_id) != project_id:
             raise ForbiddenError(say("projectMemberOnly"))
@@ -821,7 +842,13 @@ class ActorResolver:
         if await outsiders_reading(
             self._session, project_id=project_id, room_id=room_id
         ):
-            raise ForbiddenError(say("projectReadsWithOutsiders"))
+            raise ForbiddenError(
+                say(
+                    "projectSettingWithOutsiders"
+                    if writes
+                    else "projectReadsWithOutsiders"
+                )
+            )
 
     async def authorize_task(self, actor: Actor, *, task_id: int) -> None:
         """Require a verified caller who may see this 赛题.
@@ -922,17 +949,62 @@ class ActorResolver:
         return await conversations.project_of(self._session, topic_id)
 
 
-def get_actor_resolver(
-    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+def _resolver_for(
+    request: Request, db: AsyncSession, bearer: str | None
 ) -> ActorResolver:
     return ActorResolver(
         session=db,
-        bearer=_bearer(request.headers.get("authorization")),
+        bearer=bearer,
         cheese_token=request.headers.get("x-cheese-token") or "",
         screen_token=request.headers.get("x-cheese-screen") or "",
         writes=request.method not in ("GET", "HEAD", "OPTIONS"),
         endpoint=_endpoint_name(request),
     )
+
+
+def get_actor_resolver(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+) -> ActorResolver:
+    return _resolver_for(request, db, _bearer(request.headers.get("authorization")))
+
+
+#: The cookie a ``<video>`` element's own requests prove the viewer with. The
+#: element streams a recording by asking for one byte range after another and
+#: cannot add an ``Authorization`` header to any of them, so the one fetch the
+#: page makes with the header leaves this cookie behind, scoped to that room's
+#: raw-attachment path (``topics_attachments.attachment_raw``). It carries the
+#: same access token the page already holds — it grants nothing new and dies
+#: with that token — and it is read on that one read-only route alone.
+MEDIA_COOKIE = "cheese_media"
+
+
+def remember_for_media(response: Response, request: Request) -> None:
+    """Leave :data:`MEDIA_COOKIE` behind for the ``<video>`` element's own
+    requests to this same path, carrying the token this request was made with.
+
+    Only a token sent as ``Authorization`` is mirrored: a cookie is never
+    turned into a fresh cookie, so it cannot outlive the page's own token.
+    """
+    token = _bearer(request.headers.get("authorization"))
+    if token:
+        response.set_cookie(
+            MEDIA_COOKIE,
+            token,
+            path=f"{GATEWAY_MOUNT}{request.url.path}",
+            max_age=settings.access_token_expires_seconds,
+            httponly=True,
+            secure=settings.environment not in ("development", "test"),
+            samesite="lax",
+        )
+
+
+def get_media_actor_resolver(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+) -> ActorResolver:
+    """``get_actor_resolver`` that also takes the :data:`MEDIA_COOKIE` when the
+    request carries no ``Authorization`` header."""
+    bearer = _bearer(request.headers.get("authorization"))
+    return _resolver_for(request, db, bearer or request.cookies.get(MEDIA_COOKIE))
 
 
 def _endpoint_name(request: Request) -> str | None:
@@ -946,6 +1018,7 @@ def _endpoint_name(request: Request) -> str | None:
 # builds the resolver from the ?token= query param itself (照 reference
 # viewer_authz.py) — see app/api/routes/chat.py.
 ActorResolverDep = Annotated[ActorResolver, Depends(get_actor_resolver)]
+MediaActorResolverDep = Annotated[ActorResolver, Depends(get_media_actor_resolver)]
 
 
 async def require_seated_agent(

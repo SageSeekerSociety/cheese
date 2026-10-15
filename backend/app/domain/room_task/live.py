@@ -27,7 +27,7 @@ conversation are told when it flushed
 Both frames name the ROOM: the sidebar's row is the room's, and a task id is not
 an address (`GET /topics/{task}` answers 404). A rollback tells nobody. A bulk
 `update(Task)` is not seen here; the one that renames a task tells the pages
-itself (`naming._publish`).
+itself (`naming._tell_pages`).
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from sqlalchemy import event, inspect, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
-from app.core.live_frames import SHOW_ONCE_COMMITTED
+from app.core.live_frames import SHOW_ONCE_COMMITTED, stage
 from app.domain.block.models import Block, BlockKind
 from app.domain.room_task.models import Task
 
@@ -64,14 +64,10 @@ def _a_question_moved(session: Session, block: Block) -> bool:
     return block in session.new or inspect(block).attrs.meta.history.has_changes()
 
 
-def _tell(
-    session: Session | AsyncSession, task_id: uuid.UUID, room_id: uuid.UUID
-) -> None:
+def _tell(session: Session, task_id: uuid.UUID, room_id: uuid.UUID) -> None:
     frame = {"type": "state", "resource": "topics", "id": str(room_id)}
-    queued = session.info.setdefault(SHOW_ONCE_COMMITTED, [])
     for channel in (str(room_id), str(task_id)):
-        if (channel, frame) not in queued:
-            queued.append((channel, frame))
+        stage(session, SHOW_ONCE_COMMITTED, (channel, frame))
 
 
 @event.listens_for(Session, "after_flush")
@@ -118,4 +114,4 @@ async def turns_moved(
         return
     rows = await session.execute(select(Task.id, Task.room_id).where(Task.id.in_(ids)))
     for task_id, room_id in rows:
-        _tell(session, task_id, room_id)
+        _tell(session.sync_session, task_id, room_id)

@@ -1,11 +1,11 @@
 """A member's own Claude Code as a teammate in a project (#2991).
 
-It belongs to its owner and follows them into every project they are in, as
-long as the project lets members bring their own and the owner has logged it
-in on a machine. Only its owner may call it — by naming it, giving it a task
-they are responsible for, or chatting with it — because it runs on its owner's
-own account, which may serve its owner alone. It is not one of the project's
-teammates the others pick from or the agents name.
+It belongs to its owner, who adds it to a project that lets members bring
+their own — one per model connection they logged in on a machine — and removes
+it again. It runs on the account its owner set up, so its owner decides
+who may call it — by naming it, giving it a task they are responsible for, or
+chatting with it: themselves alone, which is where it starts, or any person in
+the project. No agent calls it.
 """
 
 import asyncio
@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from app.domain.agent.harness.claude_code import owner_login
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -27,14 +28,15 @@ from tests.integration.conftest import (
 )
 
 
-def _log_in_claude_code(client, handle: str) -> None:
-    """``handle`` has logged in their own Claude Code on a machine of theirs."""
+def _log_in_claude_code(client, handle: str, machine: str = "", **login) -> str:
+    """``handle`` has logged in their own Claude Code on a machine of theirs:
+    one model connection, named by the machine."""
 
     async def run():
         async with client.test_factory() as db:
             user = await db.scalar(select(User).where(User.username == handle))
             devices = sql_device_service(db)
-            code = await devices.start(f"{handle}-laptop")
+            code = await devices.start(machine or f"{handle}-laptop")
             device = await devices.approve(
                 code, owner_user_id=user.id, supply=Supply.self_hosted
             )
@@ -44,16 +46,42 @@ def _log_in_claude_code(client, handle: str) -> None:
                     installed=True,
                     logged_in=True,
                     checked_at=datetime.now(UTC),
+                    **login,
                 )
             )
             await db.commit()
+            return device.device_id
 
-    asyncio.run(run())
+    return asyncio.run(run())
+
+
+def _add(client, project_id, handle: str, connection: str):
+    return client.post(
+        f"/projects/{project_id}/own-agents",
+        json={"connection_id": connection},
+        headers=session_auth_headers(handle),
+    )
+
+
+def _bring_in(client, project_id, handle: str) -> str:
+    """``handle`` logs in their own Claude Code and adds it to the project;
+    the seat it sits on there."""
+    added = _add(client, project_id, handle, _log_in_claude_code(client, handle))
+    assert added.status_code == 200, added.text
+    return _own_row(_members(client, project_id, handle), handle)["handle"]
 
 
 def _project_with_bob(client):
+    """A project alice manages and bob is in, which lets members bring their
+    own Claude Code."""
     project = new_project(client, "Own teammate", owner="alice")
     join_project_team(client, project["id"], "bob")
+    opened = client.put(
+        f"/projects/{project['id']}/own-agents",
+        json={"allowed": True},
+        headers=session_auth_headers("alice"),
+    )
+    assert opened.status_code == 200, opened.text
     room = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "Room"},
@@ -75,22 +103,106 @@ def _own_row(rows, owner):
     return found[0] if found else None
 
 
-def test_it_follows_its_owner_into_the_project_once_logged_in(client):
+def test_it_is_in_a_project_only_once_its_owner_adds_it(client):
     project_id, _room = _project_with_bob(client)
+    laptop = _log_in_claude_code(client, "alice")
 
+    # Logged in and reading the roster does not bring it in.
     assert _own_row(_members(client, project_id, "alice"), "alice") is None
-    _log_in_claude_code(client, "alice")
+
+    added = _add(client, project_id, "alice", laptop)
+    assert added.status_code == 200, added.text
     own = _own_row(_members(client, project_id, "alice"), "alice")
 
     assert own is not None and own["agent"]
-    assert own["name"].endswith("的 Claude Code")
     # Everyone sees whose it is.
     assert _own_row(_members(client, project_id, "bob"), "alice") == own
 
 
+def test_a_person_brings_one_per_connection_each_named_after_it(client):
+    project_id, _room = _project_with_bob(client)
+    max_plan = _log_in_claude_code(
+        client,
+        "alice",
+        "alice-laptop",
+        auth_method="claude.ai",
+        subscription_type="max",
+    )
+    kimi = _log_in_claude_code(
+        client,
+        "alice",
+        "alice-desk",
+        auth_method="model_service",
+        model="kimi-k2",
+    )
+
+    for connection in (max_plan, kimi):
+        added = _add(client, project_id, "alice", connection)
+        assert added.status_code == 200, added.text
+
+    names = sorted(
+        row["name"]
+        for row in _members(client, project_id, "bob")
+        if row.get("owner_handle") == "alice"
+    )
+    assert names == ["alice的 Claude Code（Max）", "alice的 Claude Code（kimi-k2）"]
+
+
+def test_adding_the_same_connection_again_brings_no_second_one(client):
+    project_id, _room = _project_with_bob(client)
+    laptop = _log_in_claude_code(client, "alice")
+
+    for _ in range(2):
+        assert _add(client, project_id, "alice", laptop).status_code == 200
+
+    rows = [r for r in _members(client, project_id, "alice") if r.get("owner_handle")]
+    assert len(rows) == 1
+
+
+def test_nobody_adds_a_connection_that_is_not_theirs(client):
+    project_id, _room = _project_with_bob(client)
+    alices = _log_in_claude_code(client, "alice")
+
+    taken = _add(client, project_id, "bob", alices)
+
+    assert taken.status_code == 404, taken.text
+    assert _own_row(_members(client, project_id, "bob"), "bob") is None
+    assert _own_row(_members(client, project_id, "bob"), "alice") is None
+
+
+def test_its_owner_removes_it_from_the_project_and_nobody_else_can(client):
+    project_id, room_id = _project_with_bob(client)
+    seat = _bring_in(client, project_id, "alice")
+    post_message(client, room_id, "alice", {"content": f"<@{seat}> 你好"})
+
+    refused = client.delete(
+        f"/projects/{project_id}/own-agents/{seat}",
+        headers=session_auth_headers("bob"),
+    )
+    assert refused.status_code == 403, refused.text
+    assert _own_row(_members(client, project_id, "bob"), "alice") is not None
+
+    removed = client.delete(
+        f"/projects/{project_id}/own-agents/{seat}",
+        headers=session_auth_headers("alice"),
+    )
+    assert removed.status_code == 200, removed.text
+    for viewer in ("alice", "bob"):
+        assert _own_row(_members(client, project_id, viewer), "alice") is None
+    seated = client.get(
+        f"/topics/{room_id}/members", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    assert seat not in {row["member_handle"] for row in seated}
+    called = post_message(client, room_id, "alice", {"content": f"<@{seat}> 在吗"})
+    assert (called["meta"] or {}).get("agent_recipient", {}).get("mentioned") in (
+        None,
+        False,
+    )
+
+
 def test_a_project_closed_to_them_has_none(client):
     project_id, _room = _project_with_bob(client)
-    _log_in_claude_code(client, "alice")
+    _bring_in(client, project_id, "alice")
     r = client.put(
         f"/projects/{project_id}/own-agents",
         json={"allowed": False},
@@ -116,8 +228,7 @@ def test_only_a_manager_closes_the_project_to_them(client):
 
 def test_its_owner_calls_it_and_nobody_else_does(client):
     project_id, room_id = _project_with_bob(client)
-    _log_in_claude_code(client, "alice")
-    seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
+    seat = _bring_in(client, project_id, "alice")
 
     joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
     assert joined.status_code == 200, joined.text
@@ -142,8 +253,7 @@ def test_its_owner_calls_it_and_nobody_else_does(client):
 
 def test_a_project_closed_to_them_stops_its_owner_calling_it(client):
     project_id, room_id = _project_with_bob(client)
-    _log_in_claude_code(client, "alice")
-    seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
+    seat = _bring_in(client, project_id, "alice")
     post_message(client, room_id, "alice", {"content": f"<@{seat}> 你好"})
     client.put(
         f"/projects/{project_id}/own-agents",
@@ -158,8 +268,7 @@ def test_a_project_closed_to_them_stops_its_owner_calling_it(client):
 
 def test_it_works_only_its_owners_tasks(client):
     project_id, room_id = _project_with_bob(client)
-    _log_in_claude_code(client, "alice")
-    seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
+    seat = _bring_in(client, project_id, "alice")
     bobs = open_task(client, room_id, "bob 的任务", owner="bob")
     alices = open_task(client, room_id, "alice 的任务", owner="alice")
 
@@ -187,8 +296,7 @@ def test_it_works_only_its_owners_tasks(client):
 
 def test_nobody_else_chats_with_it_privately(client):
     project_id, _room = _project_with_bob(client)
-    _log_in_claude_code(client, "alice")
-    _members(client, project_id, "alice")
+    _bring_in(client, project_id, "alice")
     own = client.get(
         f"/projects/{project_id}/own-agents", headers=session_auth_headers("alice")
     ).json()["data"]["agents"][0]
@@ -221,8 +329,7 @@ def test_nobody_else_chats_with_it_privately(client):
 
 def test_a_project_closed_to_them_does_not_seat_it_in_a_room(client):
     project_id, room_id = _project_with_bob(client)
-    _log_in_claude_code(client, "alice")
-    seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
+    seat = _bring_in(client, project_id, "alice")
     client.put(
         f"/projects/{project_id}/own-agents",
         json={"allowed": False},
@@ -239,8 +346,8 @@ def test_a_project_closed_to_them_does_not_seat_it_in_a_room(client):
 
 def test_it_carries_its_owners_current_name(client):
     project_id, _room = _project_with_bob(client)
-    _log_in_claude_code(client, "alice")
-    _members(client, project_id, "alice")
+    laptop = _log_in_claude_code(client, "alice", auth_method="claude.ai")
+    assert _add(client, project_id, "alice", laptop).status_code == 200
 
     async def rename():
         async with client.test_factory() as db:
@@ -268,5 +375,182 @@ def test_it_carries_its_owners_current_name(client):
 
     asyncio.run(rename())
 
+    async def machine_reports_again():
+        # As it does when it connects, and before a session starts there.
+        async with client.test_factory() as db:
+            await owner_login.remember(
+                db,
+                laptop,
+                owner_login.ClaudeLogin(
+                    installed=True,
+                    logged_in=True,
+                    auth_method="claude.ai",
+                    subscription_type="pro",
+                ),
+            )
+            await db.commit()
+
+    asyncio.run(machine_reports_again())
+
     own = _own_row(_members(client, project_id, "alice"), "alice")
-    assert own["name"] == "小艾的 Claude Code"
+    # Its owner's nickname, and the plan the connection is on now.
+    assert own["name"] == "小艾的 Claude Code（Pro）"
+
+
+def _name_connection(client, device_id, name, as_whom="alice"):
+    return client.patch(
+        f"/connector/my/devices/{device_id}/claude-code",
+        json={"name": name},
+        headers=session_auth_headers(as_whom),
+    )
+
+
+def _machine_reports(client, device_id, **login):
+    """The machine says what its login is, as it does when it connects and
+    before a session starts there."""
+
+    async def report():
+        async with client.test_factory() as db:
+            await owner_login.remember(
+                db,
+                device_id,
+                owner_login.ClaudeLogin(installed=True, logged_in=True, **login),
+            )
+            await db.commit()
+
+    asyncio.run(report())
+
+
+def test_its_owner_names_a_machines_connection_and_it_carries_that_name(client):
+    project_id, _room = _project_with_bob(client)
+    laptop = _log_in_claude_code(
+        client, "alice", auth_method="claude.ai", subscription_type="max"
+    )
+    assert _add(client, project_id, "alice", laptop).status_code == 200
+
+    named = _name_connection(client, laptop, "实验室的 Max")
+
+    assert named.status_code == 200, named.text
+    assert named.json()["name"] == "实验室的 Max"
+    own = _own_row(_members(client, project_id, "bob"), "alice")
+    assert own["name"] == "alice的 Claude Code（实验室的 Max）"
+
+    # The machine reports its login again, on another plan: the name stays.
+    _machine_reports(client, laptop, auth_method="claude.ai", subscription_type="pro")
+
+    own = _own_row(_members(client, project_id, "bob"), "alice")
+    assert own["name"] == "alice的 Claude Code（实验室的 Max）"
+    connections = client.get(
+        "/connector/my/model-connections", headers=session_auth_headers("alice")
+    ).json()["connections"]
+    assert [c["name"] for c in connections] == ["实验室的 Max"]
+
+
+def test_a_connection_whose_name_is_taken_away_is_named_after_its_plan_again(client):
+    project_id, _room = _project_with_bob(client)
+    laptop = _log_in_claude_code(
+        client, "alice", auth_method="claude.ai", subscription_type="max"
+    )
+    assert _add(client, project_id, "alice", laptop).status_code == 200
+    assert _name_connection(client, laptop, "实验室的 Max").status_code == 200
+
+    cleared = _name_connection(client, laptop, "")
+
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["name"] is None
+    own = _own_row(_members(client, project_id, "alice"), "alice")
+    assert own["name"] == "alice的 Claude Code（Max）"
+
+
+def test_a_removed_connection_takes_its_name_with_it(client):
+    _project_with_bob(client)
+    laptop = _log_in_claude_code(
+        client, "alice", auth_method="claude.ai", subscription_type="max"
+    )
+    assert _name_connection(client, laptop, "实验室的 Max").status_code == 200
+
+    removed = client.delete(
+        f"/connector/my/devices/{laptop}/claude-code",
+        headers=session_auth_headers("alice"),
+    )
+
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["name"] is None
+    # Nothing is left to name until the machine logs in again.
+    assert _name_connection(client, laptop, "又一个").status_code == 404
+
+
+def test_only_its_owner_names_a_machines_connection(client):
+    project_id, _room = _project_with_bob(client)
+    laptop = _log_in_claude_code(
+        client, "alice", auth_method="claude.ai", subscription_type="max"
+    )
+    assert _add(client, project_id, "alice", laptop).status_code == 200
+
+    refused = _name_connection(client, laptop, "bob 起的名字", as_whom="bob")
+
+    assert refused.status_code == 404, refused.text
+    own = _own_row(_members(client, project_id, "alice"), "alice")
+    assert own["name"] == "alice的 Claude Code（Max）"
+
+
+def _open_to_project(client, project_id, seat, as_whom="alice"):
+    return client.put(
+        f"/projects/{project_id}/own-agents/{seat}/callers",
+        json={"callers": "project"},
+        headers=session_auth_headers(as_whom),
+    )
+
+
+def test_its_owner_opens_it_to_the_project(client):
+    project_id, room_id = _project_with_bob(client)
+    seat = _bring_in(client, project_id, "alice")
+    joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
+
+    opened = _open_to_project(client, project_id, seat)
+    assert opened.status_code == 200, opened.text
+    assert _own_row(_members(client, project_id, "bob"), "alice")["callers"] == (
+        "project"
+    )
+
+    called = post_message(client, room_id, "bob", {"content": f"<@{seat}> 帮我改"})
+    assert (called["meta"] or {})["agent_recipient"]["mentioned"] is True
+
+    bobs = open_task(client, room_id, "bob 的任务", owner="bob")
+    given = client.patch(
+        f"/topics/{bobs['id']}/task",
+        json={"agent_handle": seat},
+        headers=session_auth_headers("bob"),
+    )
+    assert given.status_code == 200, given.text
+
+
+def test_only_its_owner_decides_who_calls_it(client):
+    project_id, room_id = _project_with_bob(client)
+    seat = _bring_in(client, project_id, "alice")
+    joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
+
+    refused = _open_to_project(client, project_id, seat, as_whom="bob")
+
+    assert refused.status_code == 403, refused.text
+    still = post_message(client, room_id, "bob", {"content": f"<@{seat}> 帮我改"})
+    assert (still["meta"] or {})["agent_recipient"]["mentioned"] is False
+
+
+def test_closing_it_again_stops_the_others_calling_it(client):
+    project_id, room_id = _project_with_bob(client)
+    seat = _bring_in(client, project_id, "alice")
+    client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
+    _open_to_project(client, project_id, seat)
+
+    closed = client.put(
+        f"/projects/{project_id}/own-agents/{seat}/callers",
+        json={"callers": "owner"},
+        headers=session_auth_headers("alice"),
+    )
+    assert closed.status_code == 200, closed.text
+
+    after = post_message(client, room_id, "bob", {"content": f"<@{seat}> 再来"})
+    assert (after["meta"] or {})["agent_recipient"]["mentioned"] is False

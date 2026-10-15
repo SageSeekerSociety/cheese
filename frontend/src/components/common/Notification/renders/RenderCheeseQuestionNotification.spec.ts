@@ -53,6 +53,16 @@ it('an answered question says what was chosen, not that it is still waiting', ()
   expect(view.queryByText(/待你回答/)).toBeNull()
 })
 
+it('a skipped question no longer says it is waiting', () => {
+  const view = render(RenderCheeseQuestionNotification, {
+    props: { notification: question({ skipped: 'me' }) },
+    global: { plugins: [i18n] },
+  })
+
+  expect(view.getByText('在「预算复核」，已跳过')).toBeTruthy()
+  expect(view.queryByText(/待你回答/)).toBeNull()
+})
+
 // 收件箱「动态」里点一条提问：落到的不是房间最新那几条，而是问题本身 —— 地址里带上
 // `?block=`，房间页拿它把人停在提问那条消息上（`TopicView` 读 route.query.block，对话
 // 栏按它把窗口开到那儿）。这条钉的是「那个 id 真的走到了地址里」——一个查询串名字写

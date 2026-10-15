@@ -26,9 +26,9 @@ from sqlalchemy import or_, select
 
 from app.core.errors import UpstreamUnavailableError
 from app.core.sentences import listing, say
-from app.domain.agent.announce import announce
-from app.domain.agent.harness.prompt import main_checks_failed_prompt
-from app.domain.agent.platform_notices import (
+from app.domain.addressing import Event
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import (
     EVENT_DEPLOY_DONE,
     EVENT_DEPLOY_FAILED,
     EVENT_MAIN_CHECKS_FAILED,
@@ -38,19 +38,22 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.delivery.addressing import Event
-from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.forge import background_quota, quota_serves_background
-from app.domain.project.models import Project
 from app.domain.review import landing_forge
 from app.domain.review.landing_forge import Check, ForgeUnavailable, LandingReads
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
-from app.domain.review.task_landing import tell_agent
+from app.domain.review.ports import (
+    Announce,
+    Chat,
+    RecordInstruction,
+    SweepCheckouts,
+    TaskTeammate,
+)
+from app.domain.review.room_notices import tell_room_undelivered
+from app.domain.review.task_landing import go_on_while_working, handed_in, tell_agent
 from app.domain.room_task.closing import close_overdue
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
-from app.domain.topic.models import Topic
 
 logger = logging.getLogger("cheesex.review.landing_watch")
 
@@ -59,12 +62,31 @@ logger = logging.getLogger("cheesex.review.landing_watch")
 _FAILED = frozenset({"failure", "timed_out", "startup_failure"})
 
 
-async def watch_landings(chat) -> dict:
-    """One look at every merge still being watched, and the overdue closings."""
+async def watch_landings(
+    chat: Chat,
+    announce: Announce,
+    *,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+    machines: SweepCheckouts | None = None,
+) -> dict:
+    """One look at every merge still being watched, the tasks being written up
+    whose AI teammate has gone on working, and the overdue closings.
+
+    ``machines`` is used only by the overdue closings: a task closed here has
+    its checkouts removed on the machines holding it (`ports.SweepCheckouts`).
+    """
 
     sessions = chat.session_factory
+    gone_on = await go_on_while_working(
+        sessions,
+        record_instruction=record_instruction,
+        task_teammate=task_teammate,
+    )
     async with sessions() as session:
-        closed = await close_overdue(session, chat)
+        closed = await close_overdue(session, chat, machines=machines)
+        for overdue in closed:
+            await tell_room_undelivered(session, overdue, announce=announce)
         await session.commit()
         ids = list(
             await session.scalars(
@@ -82,14 +104,32 @@ async def watch_landings(chat) -> dict:
     errors: list[str] = []
     for landing_id in ids:
         try:
-            looked += await _look(chat, landing_id)
+            looked += await _look(
+                chat,
+                landing_id,
+                announce=announce,
+                record_instruction=record_instruction,
+                task_teammate=task_teammate,
+            )
         except Exception as exc:  # noqa: BLE001 — one merge must not stop the rest
             errors.append(f"{landing_id}: {exc}")
             logger.warning("landing watch failed for %s", landing_id, exc_info=True)
-    return {"closed": len(closed), "landings_looked_at": looked, "errors": errors}
+    return {
+        "gone_on": len(gone_on),
+        "closed": len(closed),
+        "landings_looked_at": looked,
+        "errors": errors,
+    }
 
 
-async def _look(chat, landing_id: uuid.UUID) -> int:
+async def _look(
+    chat,
+    landing_id: uuid.UUID,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+) -> int:
 
     sessions = chat.session_factory
     async with sessions() as session:
@@ -143,7 +183,15 @@ async def _look(chat, landing_id: uuid.UUID) -> int:
             outcome, failed = checks
             landing.checks = outcome
             if outcome == ChecksOutcome.failed:
-                await _checks_failed(session, task, sha, failed)
+                await _checks_failed(
+                    session,
+                    task,
+                    sha,
+                    failed,
+                    announce=announce,
+                    record_instruction=record_instruction,
+                    task_teammate=task_teammate,
+                )
         if deployed is not None and landing.deploy == DeployOutcome.watching:
             if deployed == DeployOutcome.unavailable:
                 landing.deploy = DeployOutcome.unavailable
@@ -154,7 +202,9 @@ async def _look(chat, landing_id: uuid.UUID) -> int:
                     if deployed.state == "success"
                     else DeployOutcome.failed
                 )
-                await _deployment_seen(session, task, landing.deploy, deployed)
+                await _deployment_seen(
+                    session, task, landing.deploy, deployed, announce=announce
+                )
         await session.commit()
     return 1
 
@@ -192,7 +242,16 @@ async def _judge_checks(
     return ChecksOutcome.failed, ours
 
 
-async def _checks_failed(session, task, sha: str, failed: list[Check]) -> None:
+async def _checks_failed(
+    session,
+    task,
+    sha: str,
+    failed: list[Check],
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+) -> None:
     """The merge broke a check on the default branch: the task's AI teammate
     fixes it, in the task, reopened if it had closed."""
 
@@ -216,8 +275,9 @@ async def _checks_failed(session, task, sha: str, failed: list[Check]) -> None:
             failed=[(run.name, run.url) for run in failed],
             reopened=reopened,
         ),
+        record_instruction=record_instruction,
     )
-    agent = f"<@{await _seat(session, task)}>"
+    agent = f"<@{await _seat(session, task, task_teammate=task_teammate)}>"
     names = listing([run.name for run in failed])
     await announce(
         session,
@@ -236,7 +296,9 @@ async def _checks_failed(session, task, sha: str, failed: list[Check]) -> None:
     )
 
 
-async def _deployment_seen(session, task, outcome: DeployOutcome, deployed) -> None:
+async def _deployment_seen(
+    session, task, outcome: DeployOutcome, deployed, *, announce: Announce
+) -> None:
 
     environment = deployed.environment
     if outcome == DeployOutcome.deployed:
@@ -268,11 +330,44 @@ async def _deployment_seen(session, task, outcome: DeployOutcome, deployed) -> N
     )
 
 
-async def _seat(session, task) -> str:
+async def _seat(session, task, *, task_teammate: TaskTeammate | None) -> str:
+    """The seat the task's own AI teammate sits under — the handle a line about
+    that task points at. A task whose project or room is gone has no such seat,
+    and a line that names nobody is what there is to say (`""`)."""
 
-    project = await session.get(Project, task.project_id)
-    room = await session.get(Topic, task.room_id)
-    agent = await AgentInstanceService(session).for_task(
-        project, room, task.agent_handle
+    teammate = await handed_in(task_teammate)(
+        session, task.project_id, task.room_id, task.agent_handle
     )
-    return agent_instance_handle(agent.instance_id)
+    if teammate is None:
+        return ""
+    instance_id, _handle = teammate
+    return agent_instance_handle(instance_id)
+
+
+# 这一段原先和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，但那个包里
+# 没有一处用得到它 —— 说它的只有上面的 `_checks_failed`。第 9 步把 review 够不着
+# `agent` 的调用收进端口时，纯字符串不走端口，搬回说它的地方。
+
+
+def main_checks_failed_prompt(
+    *, title: str, task_id, sha: str, failed: list[tuple[str, str]], reopened: bool
+) -> str:
+    """What a task's agent is told when a check its merge broke fails on the
+    default branch."""
+    checks = "\n".join(f"- {name} {url}".rstrip() for name, url in failed)
+    told = (
+        f"任务「{title}」合并到默认分支的提交 {sha[:12]} 上，下面的检查未通过，"
+        f"而它们在合并前的那个提交上是通过的：\n{checks}\n"
+    )
+    if not reopened:
+        return told + (
+            "看失败日志找到原因，把修复放进这一步一起交付。"
+            "确认是偶发失败、和这次改动无关的，在任务里说明理由。"
+        )
+    return told + (
+        "任务已重新打开。从项目最新的代码修复："
+        f'先执行 cd "$(cheese worktree {task_id})"，'
+        "看失败日志找到原因再改，修好后用 cheese_accept_request 递交付，"
+        "completes_task 填 true。确认是偶发失败、和这次改动无关的，"
+        "在任务里说明理由，然后用 cheese_close_task 关闭任务，不提交改动。"
+    )

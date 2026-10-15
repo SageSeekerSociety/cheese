@@ -13,8 +13,9 @@ import uuid
 
 import pytest
 
+from app.domain.addressing import Event
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_TURN_QUEUED,
     SEVERITY_INFO,
     WHO_CHEESE,
@@ -22,7 +23,6 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.delivery.addressing import Event
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id

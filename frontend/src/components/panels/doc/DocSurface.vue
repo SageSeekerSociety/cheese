@@ -72,6 +72,8 @@ const props = withDefaults(
     topicList?: Topic[]
     /** handle → 名字：`<@handle>` chip 上写的字。 */
     mentionNames?: Record<string, string>
+    /** 这份文档 @ 到并通知过的人：他们的 `<@handle>` 画成 @chip，其余的画成名字。 */
+    notifiedMentions?: string[]
     /** 打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
     /** 能写评论（归档话题的文档不能）。 */
@@ -99,6 +101,7 @@ const props = withDefaults(
   {
     topicList: () => [],
     mentionNames: () => ({}),
+    notifiedMentions: () => [],
     mentionPeople: () => [],
     canComment: true,
     openThreads: () => new Set<string>(),
@@ -120,8 +123,8 @@ const emit = defineEmits<{
   (e: 'locate-comment', threadId: string): void
   /** 选中一段正文点了「评论」：转给页面去开写评论的框。 */
   (e: 'open-comment', payload: CommentSpot): void
-  /** 选中一段正文点了 AI 队友。 */
-  (e: 'agent', payload: CommentSpot): void
+  /** 选中一段正文点了 AI 队友；带着 `request` 时，开框就替读者说这一句。 */
+  (e: 'agent', payload: CommentSpot, request?: string): void
   /** 当场要说的失败（目前只有复制代码失败）。 */
   (e: 'error', message: string): void
 }>()
@@ -230,7 +233,7 @@ function onDocClick(e: MouseEvent) {
     }
     return
   }
-  const el = target?.closest('.mention') as HTMLElement | null
+  const el = target?.closest('.mention, .name-ref') as HTMLElement | null
   if (!el) return
   if (el.dataset.topic) emit('open-topic', el.dataset.topic)
   else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
@@ -347,7 +350,10 @@ function buildEditor(session: DocSession): DocEditor {
         docExtensions({ loadImage: (src) => props.imageSrc(src) }),
         () =>
           props.agentHandle
-            ? { name: props.agentName, run: (ed, from, to) => emit('agent', spotAt(ed, from, to)) }
+            ? {
+                name: props.agentName,
+                run: (ed, from, to, request) => emit('agent', spotAt(ed, from, to), request),
+              }
             : null,
         props.canvas ? { ...props.canvas, openTask: (id) => emit('open-topic', id) } : null
       ),
@@ -360,6 +366,7 @@ function buildEditor(session: DocSession): DocEditor {
         names: () => ({
           mentionNames: props.mentionNames,
           topicTitles: Object.fromEntries(props.topicList.map((t) => [t.id, t.title])),
+          notified: (handle: string) => props.notifiedMentions.includes(handle),
         }),
       }),
       createCommentHighlights({ open: () => props.openThreads, active: () => props.activeThread ?? null }),
@@ -411,10 +418,10 @@ watch(
   () => [props.openThreads, props.activeThread],
   () => poke(commentHighlightKey)
 )
-// 名册比正文晚到：到了之后标签上的账号换成名字。`<#id>` 指着什么也是后到的
+// 名册比正文晚到：到了之后标签上的账号换成名字。通知过谁也是存回之后才知道的。`<#id>` 指着什么也是后到的
 // （lib/refDirectory）。
 watch(
-  () => [props.mentionNames, props.topicList, refsVersion.value],
+  () => [props.mentionNames, props.topicList, props.notifiedMentions, refsVersion.value],
   () => poke(tokenChipsKey)
 )
 function poke(key: PluginKey) {

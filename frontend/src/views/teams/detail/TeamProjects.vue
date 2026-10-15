@@ -13,10 +13,9 @@ import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { useProjectMenu } from '@/composables/useProjectMenu'
 import { useRowMenu } from '@/composables/useRowMenu'
 
+import TeamProjectsView from './TeamProjectsView.vue'
+
 import { listProjects } from '@/api'
-import BaseButton from '@/components/base/BaseButton.vue'
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
@@ -63,72 +62,15 @@ watch(teamId, load)
 </script>
 
 <template>
-  <v-container class="px-6 py-4" fluid>
-    <div class="mb-4 d-flex align-start">
-      <div>
-        <p class="text-body-2 text-medium-emphasis mb-0">
-          {{ t(teamData?.personal ? 'teams.projects.ownSubtitle' : 'teams.projects.subtitle') }}
-        </p>
-      </div>
-      <v-spacer />
-      <BaseButton kind="primary" prepend-icon="mdi-plus" @click="newProject">{{
-        t('teams.projects.newProject')
-      }}</BaseButton>
-    </div>
-
-    <div v-if="loading" class="py-10 text-center">
-      <v-progress-circular indeterminate color="primary" />
-    </div>
-
-    <v-alert v-else-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
-      {{ error }}
-    </v-alert>
-
-    <BaseEmptyState
-      v-else-if="projects.length === 0"
-      icon="mdi-rocket-launch-outline"
-      :title="t('teams.projects.emptyTitle')"
-      :desc="t('teams.projects.emptyHint')"
-    >
-      <BaseButton kind="secondary" size="sm" prepend-icon="mdi-plus" class="mt-4" @click="newProject">{{
-        t('teams.projects.newProject')
-      }}</BaseButton>
-    </BaseEmptyState>
-
-    <v-row v-else>
-      <v-col v-for="p in projects" :key="p.id" cols="12" sm="6" lg="4">
-        <v-card
-          variant="outlined"
-          rounded="lg"
-          class="pa-4 fill-height project-card"
-          @click="open(p)"
-          @contextmenu="rowMenu.open(p.id, $event)"
-        >
-          <AdaptiveMenu v-bind="rowMenu.bind(p.id)" :actions="projectMenu(p)" :title="p.name">
-            <template #activator />
-          </AdaptiveMenu>
-          <div class="d-flex align-center mb-1">
-            <v-icon size="20" color="primary" class="mr-2">mdi-robot-happy-outline</v-icon>
-            <span class="text-subtitle-2 font-weight-medium text-truncate">{{ p.name }}</span>
-          </div>
-          <div class="text-caption text-medium-emphasis">
-            {{ t('teams.projects.createdAt', { date: fmtDate(p.created_at) }) }}
-          </div>
-        </v-card>
-      </v-col>
-    </v-row>
-  </v-container>
+  <TeamProjectsView
+    v-model:error="error"
+    :team-data="teamData"
+    :loading="loading"
+    :projects="projects"
+    :row-menu="rowMenu"
+    :project-menu="projectMenu"
+    :fmt-date="fmtDate"
+    @new-project="newProject"
+    @open="open"
+  />
 </template>
-
-<style scoped>
-.project-card {
-  cursor: pointer;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-}
-.project-card:hover {
-  border-color: rgba(var(--v-theme-primary), 0.5);
-  background: rgba(var(--v-theme-primary), 0.03);
-}
-</style>

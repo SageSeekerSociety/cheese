@@ -1,0 +1,4 @@
+{
+  "_comment": "Frozen direct localStorage/sessionStorage references under src/. The ratchet blocks any NEW one; these are pre-existing and may only go down, by importing from src/lib/browserStorage.ts instead. Regenerate with `pnpm run lint:storage:update`, which refuses to freeze a new file unless --freeze-new is typed too. The rule and its messages live in scripts/browser-storage-ratchet-core.mjs.",
+  "files": {}
+}

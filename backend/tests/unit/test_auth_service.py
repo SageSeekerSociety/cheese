@@ -28,6 +28,26 @@ class TestAccessToken:
         assert claims is not None
         assert (claims.user_id, claims.handle) == (None, "alice")
 
+    def test_a_token_says_when_its_handle_is_the_id_it_fell_back_to(self) -> None:
+        """``handle`` is a name only when the token states one.
+
+        An all-digit username is legal, and ``sub`` is the int user PK, so the
+        value cannot say which it is — a reader that treats it as a name either
+        way is looking up a roster that never heard of ``"470"``.
+        """
+        stated = verify_access_token(create_access_token(470, "2026201782"))
+        assert stated is not None
+        assert (stated.handle, stated.handle_from_claim) == ("2026201782", True)
+
+        fell_back = verify_access_token(create_access_token(470))
+        assert fell_back is not None
+        assert (fell_back.handle, fell_back.handle_from_claim) == ("470", False)
+
+        # A handle-only token states one, whatever it looks like.
+        alone = verify_access_token(create_access_token(None, handle="2026201782"))
+        assert alone is not None
+        assert (alone.handle, alone.handle_from_claim) == ("2026201782", True)
+
     @pytest.mark.anyio
     async def test_a_handle_alone_does_not_pass_as_a_user(self) -> None:
         token = create_access_token(None, handle="alice")
@@ -72,16 +92,16 @@ class TestAccessToken:
 class TestUserAuthService:
     @pytest.fixture
     def mock_repos(self):
+        from app.domain.user.ports import UserStatistics
         from app.domain.user.repositories import (
             UserProfileRepository,
             UserRepository,
-            UserStatisticsRepository,
         )
 
         return {
             "user_repo": AsyncMock(spec=UserRepository),
             "profile_repo": AsyncMock(spec=UserProfileRepository),
-            "stats_repo": AsyncMock(spec=UserStatisticsRepository),
+            "stats_repo": AsyncMock(spec=UserStatistics),
         }
 
     @pytest.fixture

@@ -68,10 +68,14 @@ def _room(client) -> tuple[str, str]:
     return data["id"], thread
 
 
-def _ask_in_a_turn(client, stub_hooks, monkeypatch, room, *, by="alice") -> dict:
-    """The agent asks inside the turn ``by``'s message started, and the turn ends."""
+def _ask_in_a_turn(
+    client, stub_hooks, monkeypatch, room, *, by="alice", to=None
+) -> dict:
+    """The agent asks inside the turn ``by``'s message started, and the turn ends.
+    ``to`` is whom it asks; left out, ``by``."""
+    body = QUESTION if to is None else {**QUESTION, "to": to}
     with active_ask(client, stub_hooks, monkeypatch, room, actor=by) as headers:
-        response = client.post(f"/topics/{room}/asks", json=QUESTION, headers=headers)
+        response = client.post(f"/topics/{room}/asks", json=body, headers=headers)
         assert response.status_code == 200, response.text
     wait_turn_idle(client, room)
     (question,) = response.json()["data"]["blocks"]
@@ -136,7 +140,7 @@ def test_a_question_is_an_ordinary_message_carrying_its_options(
         "按部门",
         "按项目",
     ]
-    assert shown["meta"]["asked"] == "alice"
+    assert shown["meta"]["asked"] == ["alice"]
     assert shown["meta"]["answer_log"] == []
     # The turn that asked is over: the question waits on its own.
     assert all(turn.stopped_at is not None for turn in _turns(client, room))
@@ -277,7 +281,7 @@ def test_asking_needs_no_turn_this_backend_is_holding(client):
     response = answered["response"]
     assert response.status_code == 200, response.text
     (question,) = response.json()["data"]["blocks"]
-    assert question["meta"]["asked"] == "alice"
+    assert question["meta"]["asked"] == ["alice"]
 
 
 def test_an_answer_reaches_the_agent_after_the_conversation_that_asked_is_gone(
@@ -349,10 +353,10 @@ def test_a_typed_reply_goes_to_the_teammate_who_asked_last_only(
     first = room_agent_seat(client, room)
     second = _teammate(client, pid, room)
     earlier = question_row(
-        client, room, seat=first, question="用哪份数据？", asked="alice"
+        client, room, seat=first, question="用哪份数据？", asked=["alice"]
     )
     later = question_row(
-        client, room, seat=second, question="图用什么颜色？", asked="alice"
+        client, room, seat=second, question="图用什么颜色？", asked=["alice"]
     )
     agents: list = []
     emit = stub_hooks.emit_turn
@@ -379,7 +383,7 @@ def test_people_talking_is_no_answer_to_a_question_that_waits_on_nobody(
     one addressed to the asker is."""
     _, room = _room(client)
     seat = room_agent_seat(client, room)
-    question = question_row(client, room, question="周报发给谁？", asked=None)
+    question = question_row(client, room, question="周报发给谁？", asked=[])
     prompts = _prompts(stub_hooks, monkeypatch)
 
     _say(client, room, "alice", {"content": "今天谁值班？"})
@@ -520,7 +524,9 @@ def test_the_question_takes_an_answer_again_after_one_is_taken_back(
     pid, room = _room(client)
     seed_user(client, "bob")
     join_project_team(client, pid, "bob")
-    question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
+    question = _ask_in_a_turn(
+        client, stub_hooks, monkeypatch, room, to=["alice", "bob"]
+    )
     _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
 
     _withdraw_and_settle(client, question["id"])

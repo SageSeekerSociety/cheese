@@ -2,11 +2,13 @@
 
 from app.core.obs import scrub_secrets
 from app.core.sentences import NoticeText, say
+from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
     classify_platform_failure,
+    is_request_refused,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
     WHO_HUMAN,
@@ -63,12 +65,22 @@ def _turn_failure_notice(
             return line, _with_log(failure.meta, log)
         return failure.content, _with_log(failure.meta, log)
     detail = (text or "").strip()
+    if not _is_out_of_credit(detail) and (said := cli_notice(scrub_secrets(detail))):
+        # Claude Code's own one-line refusal ("API Error: ..."): the same card
+        # it gets when it is printed as a reply, whose line names the cause.
+        return said
     if _is_out_of_credit(detail):
         # A spent balance is not a wait — no amount of retrying refills it, and
         # telling someone to try again later sends them into a loop that cannot
         # succeed. Say what actually has to happen.
         line = say("turnFailedOutOfCredit")
         hint = say("turnFailedOutOfCreditHint")
+        retryable = False
+    elif is_request_refused(detail):
+        # The same conversation goes out again on a retry and is refused the
+        # same way, so a retry is not offered.
+        line = say("turnFailedService")
+        hint = say("turnFailedRequestRefusedHint")
         retryable = False
     else:
         first = detail.splitlines()[0].strip() if detail else ""

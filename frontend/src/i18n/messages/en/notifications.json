@@ -6,13 +6,12 @@
     "deleteTitle": "Delete this notification?",
     "deleteHint": "It will disappear from your inbox and can’t be brought back.",
     "noNotifications": "No notifications",
-    "noUnread": "No unread notifications",
     "loadFailed": "Couldn't load activity",
     "markAllAsRead": "Mark all as read",
+    "newItems": "New notifications: {count}",
     "loadMore": "Load more",
-    "filterAll": "All",
-    "filterUnread": "Unread",
     "filterLabel": "Filter notifications",
+    "untitledDocument": "Untitled document",
     "unknownTeam": "Unknown team",
     "unknownDiscussion": "Unknown discussion",
     "teamAdmin": "Team admin",
@@ -22,6 +21,11 @@
     "unreachable": "Can’t open this page. It may not exist, or you may not have access",
     "yesterday": "Yesterday {time}"
   },
+  "category": {
+    "mine": "Needs me",
+    "notice": "FYI",
+    "system": "System"
+  },
   "default": {
     "title": "Unknown notification type: {type}",
     "body": "This notification can't be displayed"
@@ -30,7 +34,8 @@
     "title": "{mentioner} mentioned you in a discussion",
     "title_anonymous": "Someone mentioned you in a discussion",
     "body": "In \"{discussionTitle}\"",
-    "inChannel": "{who} mentioned you in “{topicTitle}”"
+    "inChannel": "{who} mentioned you in “{topicTitle}”",
+    "inDocument": "{who} mentioned you in the document “{document}”"
   },
   "THREAD_REPLY": {
     "title": "{who} replied in a thread in “{topicTitle}”"
@@ -144,7 +149,8 @@
   "CHEESE_QUESTION": {
     "body": "In \"{topicTitle}\" — paused, waiting for your answer",
     "answered": "In \"{topicTitle}\" — answered: {answer}",
-    "untitled": "Cheese has a question for you"
+    "untitled": "Cheese has a question for you",
+    "skipped": "In \"{topicTitle}\" — skipped"
   },
   "DEVICE_IN_USE": {
     "title": "{agent} started working on {device}",

@@ -78,8 +78,7 @@ describe('topic and room surfaces in English', () => {
       hiddenCount: 3,
       hiddenUnread: 2,
       unreadTotal: 2,
-      hiddenWorking: true,
-      hiddenAwaits: false,
+      hiddenLight: { kind: 'green', breathe: true },
       hiddenStalled: false,
     } as unknown as VisibleRow<Topic>
     mount(TopicRailRow, {
@@ -143,7 +142,7 @@ describe('topic and room surfaces in English', () => {
       'mention',
       null,
     ]) {
-      const text = stallReasonText({ reason, since: '2026-09-28T12:00:00Z', pr: 12 }, 'Moss', now)
+      const text = stallReasonText({ reason, since: '2026-09-28T12:00:00Z' }, 'Moss', now)
       expect(text).not.toMatch(CJK)
     }
     expect(waitText({ member: 'cheese-a1', reason: 'failed', since: '2026-09-28T12:00:00Z' }, 'Moss', now)).not.toMatch(

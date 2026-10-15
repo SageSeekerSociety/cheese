@@ -17,6 +17,7 @@ from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.library import service as library
 from app.main import app
 from tests.ask_fixtures import wait_turn_idle
 from tests.conftest import StubChannel
@@ -28,6 +29,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.pictures import BROKEN_PNG
 
 # A valid 1x1 transparent PNG (67 bytes) — small but real image bytes.
 PNG_1PX = bytes.fromhex(
@@ -136,6 +138,109 @@ def test_video_can_be_referenced_and_seeked_without_opening_active_files(client)
             params={"path": uploaded_bad["path"]},
         )
         assert blocked.status_code == 422
+
+
+# 压小的两道上限：「超过」与那个数多大无关，而两百兆的请求在测试里发不动。整 MB，
+# 报出去的那个数才认得出来。
+SMALL_FILE_CEILING = 1024 * 1024
+SMALL_VIDEO_CEILING = 2 * 1024 * 1024
+
+
+def test_a_video_gets_the_video_ceiling_and_every_other_file_keeps_its_own(
+    client, monkeypatch
+):
+    """手机录屏动辄几十上百 MB：视频按视频的上限收，别的文件照旧，拒的时候说的是
+    这一类自己的上限。"""
+    monkeypatch.setattr(library, "MAX_FILE_BYTES", SMALL_FILE_CEILING)
+    monkeypatch.setattr(library, "MAX_VIDEO_BYTES", SMALL_VIDEO_CEILING)
+    project_id, topic_id = _create_project_and_topic(client)
+    over_general = b"x" * (SMALL_FILE_CEILING + 1)
+
+    refused = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("report.pdf", over_general, "application/pdf")},
+    )
+    assert refused.status_code == 422, refused.text
+    assert refused.json()["error"]["i18n"] == {
+        "key": "fileTooLarge",
+        "params": {"mb": 1},
+    }
+
+    # An iPhone records HEVC in a QuickTime container: `.MOV`, video/quicktime.
+    for filename, mime, origin in (
+        ("screen.mp4", "video/mp4", "file"),
+        ("IMG_0001.MOV", "video/quicktime", "file"),
+        ("pasted.mov", "video/quicktime", "clipboard"),
+    ):
+        taken = client.post(
+            f"/topics/{topic_id}/attachments",
+            files={"file": (filename, over_general, mime)},
+            data={"origin": origin},
+        )
+        assert taken.status_code == 200, taken.text
+        att = taken.json()["data"]
+        assert att["mime"] == mime
+        assert att["bytes"] == len(over_general)
+        played = client.get(
+            f"/topics/{topic_id}/attachments/raw", params={"path": att["path"]}
+        )
+        assert played.status_code == 200
+        assert played.headers["content-type"] == mime
+        assert played.content == over_general
+
+    too_long = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("long.mp4", b"x" * (SMALL_VIDEO_CEILING + 1), "video/mp4")},
+    )
+    assert too_long.status_code == 422, too_long.text
+    assert too_long.json()["error"]["i18n"] == {
+        "key": "fileTooLarge",
+        "params": {"mb": 2},
+    }
+    # Nothing over a ceiling landed: the library holds the three videos only.
+    listed = client.get(f"/projects/{project_id}/library")
+    names = sorted(f["path"] for f in listed.json()["data"]["data"])
+    assert names == ["IMG_0001.MOV", "screen.mp4"]
+
+
+def test_the_player_streams_a_video_with_the_cookie_its_first_read_left(client):
+    """`<video>` 自己发的按段请求带不了 Authorization：带着头读过一次之后，这个房间
+    的这条路上留下一个 cookie，播放器凭它接着按段读；它只在这条路上作数。"""
+    _, topic_id = _create_project_and_topic(client)
+    content = b"0123456789"
+    att = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("screen.mov", content, "video/quicktime")},
+    ).json()["data"]
+    raw = f"/topics/{topic_id}/attachments/raw"
+
+    first = client.get(
+        raw, params={"path": att["path"]}, headers={"Range": "bytes=0-0"}
+    )
+    assert first.status_code == 206
+    assert first.content == b"0"
+    cookie = first.headers["set-cookie"]
+    assert f"Path=/api/topics/{topic_id}/attachments/raw" in cookie
+    assert "HttpOnly" in cookie
+    name, value = cookie.split(";", 1)[0].split("=", 1)
+
+    client.headers.clear()
+    client.cookies.clear()
+    without = client.get(raw, params={"path": att["path"]})
+    assert without.status_code in (401, 403)
+
+    seek = client.get(
+        raw,
+        params={"path": att["path"]},
+        headers={"Range": "bytes=3-6", "Cookie": f"{name}={value}"},
+    )
+    assert seek.status_code == 206
+    assert seek.headers["content-range"] == "bytes 3-6/10"
+    assert seek.content == b"3456"
+
+    # The same cookie opens nothing else.
+    elsewhere = client.get(f"/topics/{topic_id}", headers={"Cookie": f"{name}={value}"})
+    assert elsewhere.status_code in (401, 403)
 
 
 @pytest.mark.parametrize(
@@ -423,7 +528,9 @@ def test_image_only_message_allowed(client, stub_hooks):
 
 @pytest.mark.parametrize("midturn", [False, True])
 def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
-    """The actual session input carries one image, not ZIP/PDF/unknown bytes."""
+    """The actual session input carries one image, not ZIP/PDF/unknown bytes,
+    and not a PNG whose bytes do not decode — the browser calling it image/png
+    at upload, or the message calling it that, changes nothing."""
     _, topic_id = _create_project_and_thread(client)
     image = _upload(client, topic_id)
     files = [
@@ -434,9 +541,16 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
         for name, data, mime in (
             ("source.zip", b"PK\x03\x04source", "application/zip"),
             ("paper.pdf", b"%PDF-1.7 test", "application/pdf"),
+            ("broken.png", BROKEN_PNG, "image/png"),
+            ("claimed.png", BROKEN_PNG, "image/png"),
             ("unknown.bin", b"unknown", "application/octet-stream"),
         )
     ]
+    broken, claimed = files[2], files[3]
+    # The upload keeps it, as a plain file.
+    assert broken["mime"] == claimed["mime"] == "application/octet-stream"
+    # A message may still call it a picture: a client's word is a claim too.
+    claimed["mime"] = "image/png"
     # Legacy records can have no MIME; never guess image/png from their path.
     files[-1]["mime"] = ""
 
@@ -495,6 +609,9 @@ def test_mixed_files_only_embed_the_image(client, tmp_path, midturn):
     assert "已附在本条消息里" in prompt
     for file in files:
         assert f"发来一个文件：{file['path']}" in prompt
+    for file in (broken, claimed):
+        line = next(x for x in prompt.splitlines() if file["path"] in x)
+        assert "不要用 Read 打开它" in line
 
 
 # --- 图片输入 on a backend that does NOT embed images -----------------------

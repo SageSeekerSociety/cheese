@@ -55,7 +55,7 @@ covers:
 
 四格（提问、待办、提醒、自动同步）今天长这样：
 
-| | Claude Code 2.1.282 | Codex 0.154.0 | pi 1.0.0 |
+| | Claude Code 2.1.299 | Codex 0.154.0 | pi 1.0.0 |
 | --- | --- | --- | --- |
 | 提问 | 自己带，两侧都拒（`DISALLOWED_TOOLS` + `settings.json` 的 deny），平台用 `cheese_ask` | 自己带；同步那个关得掉，异步那个这个 build 关不掉（#1880） | 不自带（工具联合八个里没有，内建扩展四个里也没有），平台用 `cheese_ask` |
 | 待办 | 自己带，`TodoWrite`/`Task*` 两侧都拒，平台用 `todo_write` | 自己带，`tools.update_plan.enabled=False`，平台用 `todo_write` | 不自带，清单由平台建 |
@@ -78,7 +78,7 @@ Codex 和 pi 的驱动方式一样：会话机上一个 runner 拥有 agent 进�
 
 | 骨架 | pin | 在哪 | 谁管 |
 | --- | --- | --- | --- |
-| Claude Code | `2.1.282` | `claude_code/device_launch.py` 的 `CLAUDE_PINNED_VERSION` | `backend/scripts/test_harness_contracts.py` |
+| Claude Code | `2.1.299` | `claude_code/device_launch.py` 的 `CLAUDE_PINNED_VERSION` | `backend/scripts/test_harness_contracts.py` |
 | Codex | `0.154.0` | `codex/host.py` 的 `VERSION` | 同上；不在注册表也照样被它管着 |
 | pi | `1.0.0` | `pi/launch.py` 的 `VERSION` | 不走那份脚本：它是按平台分的 tarball（`app/domain/machine/pi_dist.py`），契约由 `backend/tests/fixtures/harness-contract/` 那套夹具核 |
 

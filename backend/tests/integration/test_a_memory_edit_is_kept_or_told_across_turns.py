@@ -12,7 +12,6 @@ agent 在某一间房里改 `team/MEMORY.md`，回合结束时对一次账，下
 览里那位 agent 什么都没写过。
 """
 
-import asyncio
 import os
 import uuid
 from pathlib import Path
@@ -27,9 +26,8 @@ from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio
 
@@ -70,7 +68,7 @@ async def _setup(factory) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     """一个项目、它的总览、另一间房；team 的索引里已经有一行。"""
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         room = await TopicService(session).create(
             project_id=project.id, title="排查", created_by="u"
         )
@@ -102,7 +100,6 @@ def _ledger(factory, sessions: _Session) -> MemoryLedger:
         sessions=factory,
         compute=sessions,  # type: ignore[arg-type]
         gateway=None,
-        gateway_lock=asyncio.Lock(),
         base_prompt="",
         host=None,  # type: ignore[arg-type]
         live=LiveWork(),

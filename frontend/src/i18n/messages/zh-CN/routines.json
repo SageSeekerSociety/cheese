@@ -16,7 +16,7 @@
   "trigger": {
     "schedule": "按时间",
     "library_file_added": "资料库新增文件时",
-    "task_closed": "任务完成时",
+    "task_closed": "任务关闭时",
     "card_accepted": "成果被采纳时"
   },
   "freq": {

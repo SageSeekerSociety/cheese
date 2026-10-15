@@ -18,7 +18,7 @@
 
 import pytest
 
-from app.domain.delivery.addressing import (
+from app.domain.addressing import (
     NOBODY,
     REASON_ASKED,
     REASON_REPORTER,
@@ -27,9 +27,8 @@ from app.domain.delivery.addressing import (
     Hand,
     Recipient,
     address,
-    hand_of,
 )
-from app.domain.room_task.presentation import Column
+from app.domain.room_task.presentation import Column, hand_of
 
 # —— 下一步在平台手上：谁都不通知 ————————————————————————————————
 

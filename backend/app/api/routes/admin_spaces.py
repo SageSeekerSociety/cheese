@@ -3,8 +3,9 @@ from typing import Literal
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
-from app.api.routes.admin_common import PlatformAdminDep
+from app.api.response import ok
 from app.domain.space.review_service import SpaceReviewService
 
 router = APIRouter(prefix="/admin/spaces", tags=["admin"])
@@ -26,7 +27,7 @@ async def list_space_reviews(
     items = await SpaceReviewService(db).list_applications(
         status=status, offset=offset, limit=limit
     )
-    return {"code": 200, "data": {"items": items}}
+    return ok({"items": items})
 
 
 @router.post("/{space_id}/review")
@@ -42,4 +43,4 @@ async def review_space(
     # ("Space must be approved before creating tasks"). Same reason as the
     # commit in ``create_space``.
     await db.commit()
-    return {"code": 200, "data": {"application": item}}
+    return ok({"application": item})

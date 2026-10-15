@@ -10,6 +10,7 @@
 import type { NavigationGuardWithThis } from 'vue-router'
 import type { BrowserSignInEntry } from '@/lib/desktopApp'
 
+import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
 import { desktopCan } from '@/lib/desktopApp'
 
 const CHALLENGE_KEY = 'cheese.appChallenge'
@@ -17,18 +18,18 @@ const CHALLENGE_KEY = 'cheese.appChallenge'
 /** False for anything that is not a challenge the app could have made. */
 export function keepAppChallenge(challenge: string): boolean {
   if (!/^[A-Za-z0-9_-]{43}$/.test(challenge)) return false
-  sessionStorage.setItem(CHALLENGE_KEY, challenge)
+  storageSet(CHALLENGE_KEY, challenge, 'session')
   return true
 }
 
 /** The challenge of the sign-in the app asked for in this tab, still waiting to be handed over. */
 export function pendingAppChallenge(): string | null {
-  return sessionStorage.getItem(CHALLENGE_KEY)
+  return storageGet(CHALLENGE_KEY, 'session')
 }
 
 /** Used once: after a hand-off, the tab is an ordinary one again. */
 export function forgetAppChallenge(): void {
-  sessionStorage.removeItem(CHALLENGE_KEY)
+  storageRemove(CHALLENGE_KEY, 'session')
 }
 
 const ENTRY_OF: Record<string, BrowserSignInEntry> = {

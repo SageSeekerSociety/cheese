@@ -14,7 +14,8 @@ note、以及要不要把某个人叫起来。它们原先都是 `services.py` �
 级的那个单例，和这一片其余函数拿 session 的方式是同一条规矩：谁调用谁给。
 
 说什么、说到什么程度、以及「同一件事不重复说」不在这一层：note 的码在
-`notes.py`，提示统一契约（meta / detail / severity）在 `agent/platform_notices.py`，
+`notes.py`，提示统一契约（meta / detail / severity）在 `notice_meta`，几句人话在
+`agent/platform_notices.py`，
 内容签名在 `pr_signals.py`。这里只把已经定好的事实说出去。
 
 ## 卡的结局写在最后一句里，等的话在决定时一起结掉
@@ -45,26 +46,35 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
 from app.core.sentences import say
-from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
+from app.domain.addressing import Event
+from app.domain.delivery_events import DeliveryEvent, SettleCard
+from app.domain.notice_meta import (
     EVENT_ACCEPT_READY,
     EVENT_ARTIFACT_DECLARED,
     EVENT_CARD_FILED,
     EVENT_MERGE_WITHHELD,
+    EVENT_TURN_TIMEOUT,
     SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
     notice,
 )
-from app.domain.delivery.addressing import Event
-from app.domain.delivery.agent import record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent, settle_card
 from app.domain.notification.models import NotificationType
 from app.domain.project import artifacts
+from app.domain.project.models import Project
+from app.domain.project.protection import branch_protection_of
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
+from app.domain.review.ports import (
+    Announce,
+    RecordAgent,
+    RecordInstruction,
+    SeatInstanceId,
+)
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.closing import Overdue
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.services import said_title
 from app.domain.topic.models import Topic
 from app.domain.webhook import service as webhook_service
 
@@ -78,6 +88,7 @@ def _notify_merge_result(
     *,
     task_id: uuid.UUID | None,
     meta: dict | None = None,
+    announce: Announce,
 ) -> None:
     """merge 后结果回房间: post the accept's merge outcome into the topic
     timeline via the webhook primitive's internal function (卡1) — no HTTP
@@ -88,7 +99,7 @@ def _notify_merge_result(
 
     `content` is the one line the room shows; everything else — why, what
     to do about it, the service's own words — goes in `meta`'s detail and
-    is opened only by whoever wants it (platform_notices.notice).
+    is opened only by whoever wants it (notice_meta.notice).
 
     Fire-and-forget, but through `spawn`, which holds a strong reference:
     asyncio keeps only a weak one, and this coroutine sleeps up to 35s across
@@ -109,6 +120,7 @@ def _notify_merge_result(
     spawn(
         webhook_service.post_with_retries(
             session_factory,
+            poster=announce,
             topic_id=topic.id,
             task_id=task_id,
             content=content,
@@ -126,8 +138,12 @@ async def _tell_the_reviewer(
     content: str,
     *,
     meta: dict,
+    announce: Announce,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
     also: Sequence[str] = (),
     about_card: uuid.UUID | None = None,
+    dispatch: bool = False,
 ) -> None:
     """房间里说这一句，并通知这张卡的验收人（`also` 再加几个人）。
 
@@ -149,7 +165,7 @@ async def _tell_the_reviewer(
     `about_card` 填一句话是不是「等你动手」那一类：是就填卡的 id，卡一有决定它
     就从收件箱里消失（`_settle_the_card`）；说结局的那几句不填。
     """
-    await announce(
+    block = await announce(
         session,
         place_id=topic.id,
         task_id=card.task_id,
@@ -159,10 +175,85 @@ async def _tell_the_reviewer(
         points_at=Event(reviewers=(card.reviewer_handle, *also)),
         about_card=about_card,
     )
+    if dispatch:
+        await _tell_the_dispatch_seat(
+            session,
+            topic=topic,
+            block=block,
+            headline=content,
+            detail=str(meta.get("detail") or ""),
+            seat_instance_id=seat_instance_id,
+            record_agent=record_agent,
+        )
+
+
+async def _tell_the_dispatch_seat(
+    session,
+    *,
+    topic,
+    block,
+    headline,
+    detail,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
+    skip_instance_id=None,
+) -> None:
+    """项目设了「调度座位」时，这条事件也在它那里开工一轮。
+
+    验收人收到的是站内信，调度座位要的是**这一轮跑起来**：它是管着十几条线的
+    那个 agent，等它自己巡检到就晚了。所以这里不走通知账本 —— agent 席位在那本
+    账上不记行（`delivery/ledger`）—— 走的是点名、定时投递、周期任务共用的那一
+    本报账（`delivery/agent.record_agent`），一轮就跑在**这句话刚才落下的那段
+    对话**里：平台手里只有这一段对话，事件出在哪，就在哪儿告诉它。
+
+    `dispatch_seat` 为空（默认）时什么都不做，和以前一样。设了一个解析不到
+    队友的 handle 也不做：那是个写坏了的设置，不是一条要送出去的话。
+
+    `skip_instance_id` 是同一件事已经因为别的理由投给了某个席位：出队那一条已经
+    给任务自己的席位投了一份完整指令（`delivery.agent.record_task_instruction`），
+    调度座位恰好就是它时再投一条，等于同一件事叫它跑两轮 —— 而且第二轮手里的
+    话比第一轮少。一个事件只叫一个席位一次。
+    """
+    if block is None:
+        return
+    # 没接线不当成错误：这个函数的 docstring 说了，解析不到队友的设置「不做」；
+    # 没递进端口是门没接线，同样只是这一次没叫醒谁 —— 端口类型写成可空，走到
+    # 底也说得通（`review/ports.py`、`AcceptService` 的构造参数）。
+    if seat_instance_id is None or record_agent is None:
+        return
+    project = await session.get(Project, topic.project_id)
+    seat = branch_protection_of(project).dispatch_seat
+    if not seat:
+        return
+    instance_id = await seat_instance_id(session, topic.project_id, seat)
+    if instance_id is None or instance_id == skip_instance_id:
+        return
+    meta = block.meta or {}
+    await record_agent(
+        session,
+        DeliveryEvent(
+            id=block.id,
+            type=NotificationType.ROOM_NOTICE,
+            payload={
+                "projectId": str(topic.project_id),
+                "topicId": str(topic.id),
+                "eventType": str(meta.get("event_type") or ""),
+                "severity": str(meta.get("severity") or SEVERITY_INFO),
+            },
+            occurred_at=block.created_at,
+        ),
+        conversation_id=block.conversation_id,
+        instance_id=instance_id,
+        content=say("dispatchSeatWoken", headline=headline, detail=detail),
+    )
 
 
 async def _settle_the_card(
-    session: AsyncSession, card: AcceptCard, outcome: str
+    session: AsyncSession,
+    card: AcceptCard,
+    outcome: str,
+    *,
+    settle_card: SettleCard | None,
 ) -> None:
     """卡有了决定：等它的那几句话一起结掉，结局记在它们身上。
 
@@ -174,12 +265,23 @@ async def _settle_the_card(
 
     由让卡离开验收人手上的那几处调用：采纳、驳回、作废、归档。别的地方改
     `card.status` 不代表卡不再等人 —— 改验收人就不是，卡只是换到别人手上。
+
+    ``settle_card`` 没递进来是接线漏了一处（第 4 层的 review 够不着第 5 层的
+    投递账本，得由门递）：当场炸掉，不比静默留下一条说着「等你」的提醒好。
     """
+    if settle_card is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("settle_card was not handed in")
     await settle_card(session, card.id, {"outcome": outcome})
 
 
 async def _announce_filed(
-    session: AsyncSession, topic: Topic, card: AcceptCard, task: Task
+    session: AsyncSession,
+    topic: Topic,
+    card: AcceptCard,
+    task: Task,
+    *,
+    announce: Announce,
 ) -> None:
     """递卡说一声，并通知等着这件事的两个人。
 
@@ -227,7 +329,12 @@ async def _announce_filed(
 
 
 async def _announce_new_artifact(
-    session: AsyncSession, topic: Topic, name: str, *, task_id: uuid.UUID
+    session: AsyncSession,
+    topic: Topic,
+    name: str,
+    *,
+    task_id: uuid.UUID,
+    announce: Announce,
 ) -> None:
     """清单上多出一项 —— 在房间里说一声 (#1085 结论三)。
 
@@ -269,7 +376,15 @@ async def _announce_new_artifact(
     )
 
 
-async def _notify_ready(session: AsyncSession, card: AcceptCard, topic: Topic) -> None:
+async def _notify_ready(
+    session: AsyncSession,
+    card: AcceptCard,
+    topic: Topic,
+    *,
+    announce: Announce,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
+) -> None:
     """CLEAN → 通知验收人，按 (head, clean) 经账本去重 —— 一个 head 只说
     一次「可以采纳了」，重跑的检查、反复的轮询都不重复。"""
     ledger = pr_signals.NudgeLedger.load(card.nudge_state)
@@ -288,7 +403,11 @@ async def _notify_ready(session: AsyncSession, card: AcceptCard, topic: Topic) -
             detail=say("acceptReadyDetail", url=card.pr_url or ""),
             detail_label=say("labelNextStep"),
         ),
+        announce=announce,
+        seat_instance_id=seat_instance_id,
+        record_agent=record_agent,
         about_card=card.id,
+        dispatch=True,
     )
     ledger.record(pr_signals.NudgeKind.ready, signature)
     card.nudge_state = ledger.dump()
@@ -300,6 +419,9 @@ async def _note_needs_human(
     card: AcceptCard,
     topic: Topic,
     reason: str,
+    announce: Announce,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
     explain: str | None = None,
 ) -> None:
     """The machine ran out of moves on this card: say so on the card and
@@ -334,6 +456,9 @@ async def _note_needs_human(
             detail=say("mergeWithheldDetail", reason=reason, why=why, url=card.pr_url),
             detail_label=say("labelReason"),
         ),
+        announce=announce,
+        seat_instance_id=seat_instance_id,
+        record_agent=record_agent,
         about_card=card.id,
     )
 
@@ -363,10 +488,28 @@ def _note_poll_failed(card: AcceptCard, exc: BaseException) -> None:
 
 
 async def _record_task_nudge(
-    session: AsyncSession, *, topic, task, content, headline, meta
+    session: AsyncSession,
+    *,
+    topic,
+    task,
+    content,
+    headline,
+    meta,
+    announce: Announce,
+    record_instruction: RecordInstruction | None,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
+    dispatch=None,
 ):
-    """Commit the task event and parent delivery with the source state."""
+    """Commit the task event and parent delivery with the source state.
 
+    `dispatch` 非空时，这句话在项目的调度座位那里也开工一轮（`dispatch` 是那一段
+    要给它看的话）。只有「离开合并队列」那一条这么用。
+
+    递给调度座位的那一份带着任务自己席位的 id：两者是同一个席位时它不再投 ——
+    上面那份指令已经更全，同一件事只该开工一轮。
+    """
+    told: uuid.UUID | None = None
     block = await announce(
         session,
         place_id=topic.id,
@@ -374,8 +517,13 @@ async def _record_task_nudge(
         content=headline,
         meta=meta,
     )
-    if block is not None and task is not None and task.status == TaskStatus.open:
-        await record_task_instruction(
+    if (
+        block is not None
+        and task is not None
+        and task.status == TaskStatus.open
+        and record_instruction is not None
+    ):
+        told = await record_instruction(
             session,
             DeliveryEvent(
                 id=block.id,
@@ -386,8 +534,19 @@ async def _record_task_nudge(
                 },
                 occurred_at=block.created_at,
             ),
-            task=task,
+            task_id=task.id,
             content=content,
+        )
+    if block is not None and dispatch:
+        await _tell_the_dispatch_seat(
+            session,
+            topic=topic,
+            block=block,
+            headline=headline,
+            detail=dispatch,
+            seat_instance_id=seat_instance_id,
+            record_agent=record_agent,
+            skip_instance_id=told,
         )
 
 
@@ -410,3 +569,40 @@ async def _note_outside_accept_txn(
             await session.commit()
     except Exception:  # noqa: BLE001
         logger.exception("could not record the PR-open failure on card %s", card_id)
+
+
+async def tell_room_undelivered(
+    session: AsyncSession, closed: Overdue, *, announce: Announce
+) -> None:
+    """``closed`` was closed past its deadline with work still going on or
+    asked for in it (`room_task.closing.STOP_WORK_AFTER`): its room hears that
+    the task closed, that work was stopped, and what it was. Best effort,
+    like `task_landing.tell_origin`."""
+    if not closed.undelivered:
+        return
+    try:
+        async with session.begin_nested():
+            await announce(
+                session,
+                place_id=closed.task.room_id,
+                content=say("taskClosedUndelivered", title=said_title(closed.task)),
+                meta=notice(
+                    EVENT_TURN_TIMEOUT,
+                    severity=SEVERITY_WARN,
+                    who=WHO_HUMAN,
+                    detail=say(
+                        "taskClosedUndeliveredDetail",
+                        items=[_gist(said) for said in closed.undelivered],
+                    ),
+                    detail_label=say("labelDetails"),
+                ),
+            )
+    except Exception:  # noqa: BLE001 — a courtesy line never undoes a close
+        logger.warning(
+            "could not tell task %s's room what it left", closed.task.id, exc_info=True
+        )
+
+
+def _gist(said: str) -> str:
+    line = " ".join(said.split())
+    return line if len(line) <= 120 else line[:119] + "…"

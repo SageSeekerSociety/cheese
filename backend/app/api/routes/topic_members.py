@@ -1,27 +1,29 @@
 """Who is in a channel (nested under /api/topics): reading the list, and its
 managers adding and removing people and AI teammates. Joining and leaving by
-oneself is in `topics_channel.py`."""
+oneself is in `topics_channel.py`.
+
+The rows the list answers with are `app.api.topic_member_rows.roster_rows`,
+which live outside this file: the room snapshot reads the same roster and is not
+a route, so the builder sits under `app.api` where both may ask for it (C4
+`routes-independent`)."""
 
 import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.topic_member_rows import roster_rows
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.project_feed import TOPICS, tell_project
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.identity.handles import agent_instance_handle
-from app.domain.identity.repositories import AgentBindingRepository
+from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import TopicMemberCreate, TopicMemberOut
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(prefix="/topics", tags=["topic-members"])
 
@@ -41,66 +43,6 @@ async def list_topic_members(
     return ok(page(items, len(items)))
 
 
-async def roster_rows(db: AsyncSession, topic) -> list[dict]:
-    """A room's roster as `GET /topics/{id}/members` lists it; also the
-    `members` of the room snapshot a subscription opens with (`room_snapshot`).
-    The caller has authorised the reader."""
-    seats = await TopicMemberService(db).seats(topic)
-    # Attach display names and avatars so the UI can draw the roster without a
-    # second round-trip.
-    users = UserRepository(db)
-    profiles = UserProfileRepository(db)
-    bindings = AgentBindingRepository(db)
-    # Resolve handles → users once, then derive is-agent from the binding (never
-    # a hard-coded handle check): a member is an agent iff it carries a binding.
-    rows = await users.get_by_handles([m.member_handle for m in seats])
-    user_ids = [u.id for u in rows.values()]
-    agent_ids = await bindings.agent_user_ids(user_ids)
-    # The human-readable display name lives on the profile (nickname); the core
-    # User row only carries the handle (username). Fall back to the handle.
-    profile_by_uid = await profiles.get_profiles_by_user_ids(user_ids)
-    avatar_by_uid = await profiles.chosen_avatar_ids(user_ids)
-    # An agent seat's profile nickname is a constant fixed when the seat's user
-    # row was created, so the name has to come from the agent. Each seat carries
-    # its OWN agent's: a room may seat several, and one name for all of them
-    # showed two teammates as the same person — the same defect the mention
-    # roster had. A seat still under the room-derived handle belongs to the
-    # agent the room points at, which is what `fallback_name` is.
-    instances = {
-        agent_instance_handle(instance.id): instance
-        for instance in await AgentInstanceService(db).list_for_project(
-            topic.project_id
-        )
-    }
-    fallback = await TopicService(db).resolve_agent(topic)
-    items = []
-    for m in seats:
-        d = m.model_dump(mode="json")
-        user = rows.get(m.member_handle)
-        profile = profile_by_uid.get(user.id) if user is not None else None
-        # Agent members wear an Agent badge — derived from the execution binding.
-        is_agent = user is not None and user.id in agent_ids
-        d["agent"] = is_agent
-        if is_agent:
-            instance = instances.get(m.member_handle)
-            agent = AgentInstanceService.resolved(instance) if instance else fallback
-            d["name"] = agent.display_name
-            d["name_source"] = agent.name_source.value
-            # The teammate's own handle (`cheese`), which the project roster
-            # shows under its name; `member_handle` is its seat (`cheese-<hex>`),
-            # an internal id nobody types.
-            d["instance_handle"] = agent.handle
-        else:
-            d["name"] = (
-                profile.nickname if profile and profile.nickname else m.member_handle
-            )
-        # Absent = this person never picked an avatar; the UI draws its coloured
-        # initial rather than the one face everybody else who never picked has.
-        d["avatar_id"] = avatar_by_uid.get(user.id) if user is not None else None
-        items.append(d)
-    return items
-
-
 @router.post("/{topic_id}/members")
 async def add_topic_member(
     topic_id: uuid.UUID,
@@ -112,7 +54,11 @@ async def add_topic_member(
     if not who.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).add(
-        topic_id=topic_id, handle=body.handle, actor=who.handle
+        topic_id=topic_id,
+        handle=body.handle,
+        actor=who.handle,
+        seat_project=seat_project,
+        team=project_team,
     )
     await db.commit()
     # A private channel appears in the list of whoever was brought in.

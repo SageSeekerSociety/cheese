@@ -212,7 +212,7 @@ function runStart(index: number) {
   margin-left: auto;
   font-size: 12px;
   line-height: var(--lh-12);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .room-body {
@@ -243,7 +243,7 @@ function runStart(index: number) {
   padding: 0 12px;
   margin: 12px 16px 0;
   font-size: 14px;
-  color: var(--faint);
+  color: var(--muted);
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);
   align-items: center;
@@ -285,7 +285,7 @@ function runStart(index: number) {
   margin: 0;
   font-size: 12px;
   line-height: var(--lh-12);
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .room-preview-query {

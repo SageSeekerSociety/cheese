@@ -1,12 +1,12 @@
 /**
- * 预览站里「小队与后台那几屏拆出来的半张画面」：我的团队、发现小队、团队算力、飞书应用、
- * 空间申请。
+ * 预览站里「小队与后台那几屏拆出来的半张画面」：我的团队、发现小队、团队算力、小队详情、
+ * 小队那一页的页头与建队弹窗、飞书应用、空间申请。
  *
  * 这几屏在应用里由各自的路由页取数（`Mine.vue`、`Explore.vue`、`detail/Compute.vue`、
- * `AdminIntegrationsPage.vue`、`AdminSpacesPage.vue`），路由页碰接口层，预览站碰不得。
- * 好在它们都已经拆成「路由页 → 只吃 props 的画面」：这里展示的正是产品里真会走到的那
- * 几格 —— 数据到货 / 首次加载 / 读失败 / 空 / 没权限 / 表单与驳回框。各屏公用的一份
- * 数据见 `catalogScenesMiscFixtures.ts`。
+ * `Detail.vue`、`Index.vue`、`AdminIntegrationsPage.vue`、`AdminSpacesPage.vue`），路由页碰
+ * 接口层，预览站碰不得。好在它们都已经拆成「路由页 → 只吃 props 的画面」：这里展示的正是
+ * 产品里真会走到的那几格 —— 数据到货 / 首次加载 / 读失败 / 空 / 没权限 / 表单与驳回框。
+ * 各屏公用的一份数据见 `catalogScenesMiscFixtures.ts`。
  *
  * 条目和别的分册没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
  * `catalog.ts`），单放一份是因为 `catalog.ts` 已经顶到一千行的上限。这里的
@@ -23,6 +23,7 @@ import {
   MY_DEVICES,
   MY_TEAMS,
   SEARCH_TEAMS,
+  team,
   TEAM_DEVICE_ID,
 } from './catalogScenesMiscFixtures'
 
@@ -30,7 +31,9 @@ import { t } from '@/i18n'
 import AdminIntegrationsPageView from '@/views/admin/AdminIntegrationsPageView.vue'
 import AdminSpacesPageView from '@/views/admin/AdminSpacesPageView.vue'
 import ComputeView from '@/views/teams/detail/ComputeView.vue'
+import DetailView from '@/views/teams/DetailView.vue'
 import ExploreView from '@/views/teams/ExploreView.vue'
+import IndexView from '@/views/teams/IndexView.vue'
 import MineView from '@/views/teams/MineView.vue'
 
 /** 画法要 Vuetify、文案要语言包；那几条按 name 指路的去处（团队详情、我的设备）要一条 route。 */
@@ -246,6 +249,167 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
         },
         props: { error: '这台设备已经被别的团队占用了' },
         expect: '这台设备已经被别的团队占用了',
+      },
+    ],
+  },
+  {
+    id: 'team-detail-view',
+    title: 'DetailView',
+    get about() {
+      return t('catalog.teamDetailView.about')
+    },
+    file: 'src/views/teams/DetailView.vue',
+    component: DetailView,
+    needs: UI_T_R,
+    args: {
+      teamData: team(),
+      isMember: true,
+      notFound: false,
+      failed: false,
+      failureReason: null,
+      forbidden: false,
+      pageTitle: '城市数据实验室',
+      pageWidth: 'read',
+      teamIntro: '一起把城市数据用起来',
+      // 「加入」走哪条接口由容器接上，预览站上走一遍就完：这里只看画出来的样子。
+      join: async () => {},
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.teamDetailView.s1.name')
+        },
+        get note() {
+          return t('catalog.teamDetailView.s1.note')
+        },
+        props: {},
+        // 小队名两面都画（成员这面在页头、非成员那面在资料卡里），简介那一句也是；认页头上那个 span，
+        // 只有成员这一面才有（非成员那面走 TeamProfile）。
+        expectSelector: '.team-intro',
+      },
+      {
+        get name() {
+          return t('catalog.teamDetailView.s2.name')
+        },
+        get note() {
+          return t('catalog.teamDetailView.s2.note')
+        },
+        props: { isMember: false },
+        expect: '加入团队',
+      },
+      {
+        get name() {
+          return t('catalog.teamDetailView.s3.name')
+        },
+        get note() {
+          return t('catalog.teamDetailView.s3.note')
+        },
+        props: { teamData: undefined, notFound: true },
+        expect: '找不到这个团队，它可能已解散或不对你公开',
+      },
+      {
+        get name() {
+          return t('catalog.teamDetailView.s4.name')
+        },
+        get note() {
+          return t('catalog.teamDetailView.s4.note')
+        },
+        props: { teamData: undefined, failed: true, failureReason: 'connect ECONNREFUSED 127.0.0.1:5432' },
+        expect: '团队信息没读出来',
+      },
+      {
+        get name() {
+          return t('catalog.teamDetailView.s5.name')
+        },
+        get note() {
+          return t('catalog.teamDetailView.s5.note')
+        },
+        props: { teamData: undefined, failed: true, failureReason: null, forbidden: true },
+        expect: '你没有权限查看',
+      },
+    ],
+  },
+  {
+    id: 'team-index-view',
+    title: 'IndexView',
+    get about() {
+      return t('catalog.teamIndexView.about')
+    },
+    file: 'src/views/teams/IndexView.vue',
+    component: IndexView,
+    needs: UI_T_R,
+    teleport: true,
+    args: {
+      createTeamDialog: false,
+      teamName: '',
+      teamHandle: '',
+      teamDescription: { type: 'doc', content: [] },
+      teamAvatar: undefined,
+      creatingTeam: false,
+      teamNameError: '',
+      teamHandleError: '',
+      addressPrefix: 'cheese.example/teams/',
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.teamIndexView.s1.name')
+        },
+        get note() {
+          return t('catalog.teamIndexView.s1.note')
+        },
+        props: {},
+        expect: '创建团队',
+      },
+      {
+        get name() {
+          return t('catalog.teamIndexView.s2.name')
+        },
+        get note() {
+          return t('catalog.teamIndexView.s2.note')
+        },
+        props: { createTeamDialog: true },
+        // 名字那格的占位是 placeholder 属性，不在 textContent 里；认地址那一格的标签。
+        expect: '团队地址',
+      },
+      {
+        get name() {
+          return t('catalog.teamIndexView.s3.name')
+        },
+        get note() {
+          return t('catalog.teamIndexView.s3.note')
+        },
+        props: { createTeamDialog: true, creatingTeam: true, teamName: '城市数据实验室', teamHandle: 'city-lab' },
+        expectSelector: '.v-progress-circular',
+      },
+      {
+        get name() {
+          return t('catalog.teamIndexView.s4.name')
+        },
+        get note() {
+          return t('catalog.teamIndexView.s4.note')
+        },
+        props: {
+          createTeamDialog: true,
+          teamName: '城市数据实验室',
+          teamNameError: '这个名称已被占用，换一个试试',
+        },
+        expect: '这个名称已被占用，换一个试试',
+      },
+      {
+        get name() {
+          return t('catalog.teamIndexView.s5.name')
+        },
+        get note() {
+          return t('catalog.teamIndexView.s5.note')
+        },
+        props: {
+          createTeamDialog: true,
+          teamName: '城市数据实验室',
+          teamHandle: 'city-lab',
+          teamHandleError: '这个地址已被占用',
+        },
+        expect: '这个地址已被占用',
       },
     ],
   },

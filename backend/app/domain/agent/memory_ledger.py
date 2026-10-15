@@ -36,13 +36,6 @@ from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import build_session_opening, build_system_prompt
-from app.domain.agent.platform_notices import (
-    EVENT_MEMORY_CHANGED,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.agent.queries import (
     _agent_handle,
     _dream_refusal_phrase,
@@ -61,6 +54,13 @@ from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import memory_index, private_owners
 from app.domain.memory.models import MemoryDreamRunStatus
 from app.domain.memory.session import apply_tree, read_tree
+from app.domain.notice_meta import (
+    EVENT_MEMORY_CHANGED,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.project.forge import binding_for_project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.run_record.service import record as keep_record
@@ -97,8 +97,6 @@ class _MemoryHost(Protocol):
         project_id: uuid.UUID,
         provider: RoomSessions | None,
         topic_id: uuid.UUID | None = None,
-        *,
-        platform: bool = False,
     ) -> tuple[dict, str]: ...
 
 
@@ -120,7 +118,6 @@ class MemoryLedger:
         sessions: async_sessionmaker,
         compute: ComputePool,
         gateway: LlmGateway | None,
-        gateway_lock: asyncio.Lock,
         base_prompt: str,
         host: _MemoryHost,
         live: LiveWork,
@@ -128,7 +125,6 @@ class MemoryLedger:
         self._sessions = sessions
         self._compute = compute
         self._gateway = gateway
-        self._gateway_lock = gateway_lock
         self._base_prompt = base_prompt
         self._host = host
         self._live = live
@@ -375,11 +371,9 @@ class MemoryLedger:
         failed = False
         try:
             async with self._live.lock_for(root_topic_id):
-                model_kwargs = (
-                    await self._host._model_kwargs(
-                        project_id, runtime, root_topic_id, platform=True
-                    )
-                )[0]
+                model_kwargs, route = await self._host._model_kwargs(
+                    project_id, runtime, root_topic_id
+                )
                 dreamer = SessionRef(
                     project_id,
                     root_topic_id,
@@ -428,6 +422,15 @@ class MemoryLedger:
             # 按「删多了就整轮作废」处理。
             self._dreams.discard(root_topic_id)
         refusal = self._refusals.pop(root_topic_id, None)
+        # 这一轮花的钱在项目的 key 上：当场按 dream 记下，不留给下一轮对话当成
+        # 它自己的花费收走。
+        drained = await drain_dream_spend(
+            self._sessions,
+            self._gateway,
+            project_id,
+            root_topic_id,
+            run_id,
+        )
 
         async with self._sessions() as session:
             after = await read_tree(session, project_id, scopes)
@@ -475,6 +478,8 @@ class MemoryLedger:
                 root_topic_id=root_topic_id,
                 usage=usage,
                 turn_id=run_id,
+                route=route,
+                drained=bool(drained),
             )
             await session.commit()
         logger.info(
@@ -482,14 +487,6 @@ class MemoryLedger:
             status.value,
             project_id,
             len(changed),
-        )
-        await drain_dream_spend(
-            self._sessions,
-            self._gateway,
-            self._gateway_lock,
-            project_id,
-            root_topic_id,
-            run_id,
         )
         team_changed = [path for path in changed if path.startswith("team/")]
         if status is MemoryDreamRunStatus.completed and team_changed:

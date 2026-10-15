@@ -9,7 +9,7 @@ import type { ProjectMemberRow, RoomTask, TodoItem, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
 import type { TaskRelated, TaskSource } from '@/types/taskOrigin'
 
-import { computed, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
@@ -17,9 +17,14 @@ import TaskDocCompare from '@/components/task/TaskDocCompare.vue'
 import TaskOutputs from '@/components/task/TaskOutputs.vue'
 import TaskRelatedList from '@/components/task/TaskRelatedList.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
-import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { renderPlain } from '@/lib/renderMessage'
+
+// 实况文档的正文编辑器（tiptap + prosemirror + 文档 schema，压缩后约 1.1 MB）按需取，不
+// 跟这一页的路由 chunk 一起下来。任务页默认那一格是「总览」，编辑器这一格只是在最后，
+// 静态引入的话它连着自己那一大坨被钉在 chunk 上——标题还在等网络，一兆字节先到了。
+const PanelDocHost = defineAsyncComponent(() => import('@/components/work/PanelDocHost.vue'))
 
 const props = defineProps<{
   room: Topic
@@ -53,6 +58,19 @@ const emit = defineEmits<{
   (e: 'open-file', path: string): void
 }>()
 
+// 结论里写到的人、频道、文件：存的是 token，读的是名字。提到的人没有因此被通知，
+// 所以画成名字引用，不是 @chip（lib/refChip 的 notified）。
+const conclusionHtml = computed(() =>
+  props.task.conclusion ? renderPlain(props.task.conclusion, { mentionNames: props.memberNames, topicTitles: {} }) : ''
+)
+function onConclusionClick(event: MouseEvent): void {
+  const el = (event.target as HTMLElement | null)?.closest<HTMLElement>('.mention, .name-ref')
+  if (!el) return
+  if (el.dataset.handle) emit('mention-click', el.dataset.handle)
+  else if (el.dataset.topic) emit('open-topic', el.dataset.topic)
+  else if (el.dataset.file) emit('open-file', el.dataset.file)
+}
+
 // 第一轮失败后选了「自己写」：不再拦在文档前面。
 const writingMyself = ref(false)
 watch(
@@ -67,10 +85,42 @@ const docRef = ref<{
   highlightTurn: (turnId: string) => void
   reviewEdits: (request: DocReviewRequest) => void
 } | null>(null)
+// 外面递进来的三种调用（「查看改动」的高亮、某一轮的高亮、闪一下）都可能赶在文档那一格
+// 前面：整理中那一屏挡在它前面，或者它自己这一块还在网络上（按需取）。那一格要等文档到
+// 了才认得出该高亮哪儿，所以三样都先记下来，等它挂上再补一次；不记就会被 `?.` 静默吞掉
+// ——不报错，什么也不发生。三样来自同一个入口，一次只会有一个，用一个格子装。
+type PendingCall = { kind: 'review'; request: DocReviewRequest } | { kind: 'turn'; turnId: string } | { kind: 'pulse' }
+const pending = ref<PendingCall | null>(null)
+function handOver(host: NonNullable<typeof docRef.value>, call: PendingCall): void {
+  if (call.kind === 'review') host.reviewEdits(call.request)
+  else if (call.kind === 'turn') host.highlightTurn(call.turnId)
+  else host.pulse()
+}
+watch(docRef, (host) => {
+  if (!host) {
+    // 那一格没了（换了任务、切去看对比）：没递出去的那一次跟着作废，别留到下一次。
+    pending.value = null
+    return
+  }
+  const call = pending.value
+  if (call) {
+    pending.value = null
+    handOver(host, call)
+  }
+})
 defineExpose({
-  pulse: () => docRef.value?.pulse(),
-  highlightTurn: (turnId: string) => docRef.value?.highlightTurn(turnId),
-  reviewEdits: (request: DocReviewRequest) => docRef.value?.reviewEdits(request),
+  pulse: () => {
+    if (docRef.value) docRef.value.pulse()
+    else pending.value = { kind: 'pulse' }
+  },
+  highlightTurn: (turnId: string) => {
+    if (docRef.value) docRef.value.highlightTurn(turnId)
+    else pending.value = { kind: 'turn', turnId }
+  },
+  reviewEdits: (request: DocReviewRequest) => {
+    if (docRef.value) docRef.value.reviewEdits(request)
+    else pending.value = { kind: 'review', request }
+  },
 })
 </script>
 
@@ -98,7 +148,8 @@ defineExpose({
     </div>
     <div v-if="task.conclusion" class="task-overview__conclusion">
       <div class="t-meta c-faint">{{ t('work.task.conclusion') }}</div>
-      <p class="t-body task-overview__conclusion-text">{{ task.conclusion }}</p>
+      <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the paragraph only delegates: each name in it is its own button (role, tabindex, Enter/Space via installRefChipKeys) -->
+      <p class="t-body task-overview__conclusion-text" @click="onConclusionClick" v-html="conclusionHtml" />
     </div>
 
     <section v-if="opening" class="task-overview__opening" role="status" data-testid="task-opening">

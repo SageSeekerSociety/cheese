@@ -69,7 +69,19 @@ ID, so replacing a backend waiter neither cancels the device call nor prevents a
 replacement backend from collecting its result.
 
 On boxes with `cheese-api-front`, the deploy copies the versioned nginx config,
-checks it, and gracefully reloads nginx before replacing the backend. The exact
+checks it, and gracefully reloads nginx before replacing the backend, but only
+when what api-front would load differs from what it last loaded: the deploy
+keeps a digest of its config files, comments and indentation aside, in
+`.api-front-loaded` in `ACTIVE_BACKEND_DIR`, and a release that changes none of
+them, or only their comments, leaves api-front alone. The record counts only
+while the files on disk still match it: after anything else wrote them (a
+release of an older commit, which reloads by its own rule, or `tls-renew.sh`)
+the next deploy reloads. Deleting the file makes the next deploy take the
+files on disk as what api-front runs; do that only after reloading api-front
+by hand. A reload's old workers
+keep the sockets they carry for up to 24 hours (`worker_shutdown_timeout` in
+`deploy/llm-tunnel/nginx.conf`, the longest idle timeout any of its routes
+grants), so a config change no longer drops every device link and tunnel. The exact
 `/connector/agent` and live-terminal paths go to the owner's loopback port;
 other API paths continue through the active backend switch. Updating the owner
 itself is a separate release operation because it closes the connections it
@@ -80,20 +92,34 @@ waits for the owner to atomically enter draining after all device calls finish,
 and reads the same box-local deploy environment and compose overlays as the app
 deployment.
 
-An app deploy runs the same script itself in one case: its migrations may drop
-schema the owner's image still maps. The owner's models list every column their
-tables had when its image was built, and a query that loads a model asks for
-all of them, so a dropped column fails every such query until the owner is
-released; #3411 left the dev owner answering ~1500 executor calls with 500 that
-way. Before migrating, `hold_owners_behind_schema` in `deploy/deploy-docker.sh`
-runs `deploy/schema-map.py` in the owner and in the release image. A migration
-only drops what the previous release no longer mapped
-(`check-migration-safety.py`), so anything the owner maps and the release does
-not may go. If there is any, the deploy drains the device owner (waiting the
-usual 45 s, then interrupting what still runs), migrates, and recreates it on the
+An app deploy runs the same script itself in one case: its migrations drop,
+rename or alter schema the owner's image maps. The owner's models list every
+column their tables had when its image was built, and a query that loads a
+model asks for all of them, so a dropped column fails every such query until
+the owner is released; #3411 left the dev owner answering ~1500 executor calls
+with 500 that way. Before migrating, `hold_owners_behind_schema` in
+`deploy/deploy-docker.sh` runs `deploy/migration-touches.py` in the release
+image, which reads the database's revision and lists every table and column the
+pending migrations drop, rename or alter (a change it cannot read statically
+counts as touching everything), and runs `deploy/schema-map.py` in each running
+owner. If they meet, the deploy drains the device owner (waiting the usual
+45 s, then interrupting what still runs), migrates, and recreates it on the
 release's image; a failed migration resumes the old owner instead. The preview
-owner, which has no drain, is recreated after the migrations the same way. An
-owner that maps nothing the release dropped is left running.
+owner, which has no drain, is recreated after the migrations the same way. A
+release that only stops mapping a column, the first of the two releases a drop
+takes, leaves the owners running; so does one whose migrations add tables or
+columns or change only tables the owners do not map. The same script reports
+every table and column the database has, and an owner that maps one it lacks
+is released too: migrations commit one by one, so a deploy whose second
+migration failed keeps the first one's drop and resumes the old owner on it,
+and the next deploy no longer lists that migration as pending.
+
+A dispatched release of the image and compose configuration a healthy owner
+already runs leaves it running: replacing it would change nothing it serves
+and close every connection it holds. The configuration is compared by the
+hash compose labels each container with, so a rotated secret or a changed env
+file still releases it. An unhealthy owner on that image is still replaced,
+and the device owner's `/healthz` answers 503 while it is draining.
 
 Each standing owner's database pool is set in the compose file
 (`DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=5` on `device-connection`; `3` and `2` on
@@ -221,10 +247,27 @@ with `ACTIVE_FRONTEND_DIR` the frontend has two as well, `frontend` and
 The deploy starts the idle slot of each on the new image, waits for its health
 check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
-`collab` is replaced at once, while the old frontend still runs. After a
-31-second drain (`DEPLOY_DRAIN_SECONDS`) the old slots stop gracefully, in
-parallel: the frontend's nginx gets up to 120 seconds to finish its requests, the
-backend 60 seconds to finish its handover. The next release goes back into the
+`collab` is replaced at once, while the old frontend still runs, if its image
+content changed: collab, browser-render and office-render are named by digest,
+and keep the running one's when the pulled image has the same layers and
+runtime config (`pin_by_content` in `deploy/deploy-docker.sh`), so compose
+leaves an unchanged container alone. After a
+31-second drain (`DEPLOY_DRAIN_SECONDS`) the old frontend's nginx gets up to 120
+seconds to finish its requests. The old backend is stopped last, once the
+release has passed its health check, because it may still be relaying model
+streams through `/llm/v1`: those cannot move to the next backend, wait up to
+minutes for a reasoning model's first byte, and run for minutes after it.
+`deploy/wait-model-streams.sh` asks its `/_internal/llm/streams` count every 5
+seconds and lets it stop once that is zero, or 15 minutes after the switch's
+drain (`DEPLOY_MODEL_STREAM_GRACE_SECONDS`), when the stop ends what is left. It
+then gets 60 seconds to finish its handover. A release that fails its health
+check stops it at once, without waiting, so the previous release can go back
+into that slot, and the rollback gives the failed release's streams 30 seconds
+(`DEPLOY_ROLLBACK_MODEL_STREAM_GRACE_SECONDS`); the exit trap stops it without
+waiting on any other way out. The release job waits for all of it, so the next
+release never finds three backends, and its migrations never run under one
+still streaming. The health check leaves the old backend out while it waits.
+The next release goes back into the
 slots this one left. The `-b` services are written at deploy time from
 compose's merged model, after every value the deploy exports, so they carry
 every overlay and differ only in their port and in answering to the service's
@@ -267,11 +310,12 @@ and the next release takes them at its switch. A one-off
 from before the slots is removed by the next release when app-router does not
 send traffic to it, and stops the release when it does.
 
-App-router's `worker_shutdown_timeout` is 240 seconds, longer than the
-handover pause, the drain and the longer graceful stop together (5 + 31 + 120),
-so the workers the one reload
+App-router's `worker_shutdown_timeout` is 1080 seconds, longer than the
+handover pause, the drain, the model-stream wait and the backend's graceful stop
+together (5 + 31 + 900 + 60), so the workers the one reload
 retires keep their connections until the container they lead to stops. Device
-and model connections bypass these workers. The persistent **:18080** entry
+connections and the model tunnel bypass these workers; `/llm/v1` streams do not,
+which is why the deadline covers the wait. The persistent **:18080** entry
 routes to app-router's frontend upstream. Frontends still reach APIs through
 `API_UPSTREAM=host.docker.internal:8081`.
 
@@ -426,8 +470,10 @@ uv run python -m pytest tests/ --ignore=tests/forgejo -m integration \
 Every suite Required CI selects runs on GitHub-hosted Ubuntu runners, including
 the CLI boot e2e and remote-execution acceptance. The organisation is on the
 Free plan, whose documented limit is 20 concurrent hosted jobs; this repository
-is not held to it. Over 2026-09-30/10-01 up to 61 hosted jobs ran at once, and
-merge-queue jobs waited 0.1 minutes for a runner at the 90th percentile.
+is not held to it. Historical measurements from 2026-09-30/10-01 observed up to
+61 hosted jobs running concurrently and a 0.1-minute p90 runner wait for
+merge-queue jobs. This is a historical baseline, not representative of the
+2026-10-14 busy window, when hosted-runner waits were substantially longer.
 The **cheese-ci** label is a pool of MicroCloud VMs (prod tenant, customer
 `cheese-ci`, offering 103 standard-vm, 8c/8G/40G, `cheese-ci-runner-{1..3}` at
 `192.168.30.{3..5}`, two runner slots each), NOT on the dev box. The box
@@ -618,7 +664,7 @@ gone:
 # by container name; on a box with an app-router the backend is one of two
 sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "2 hours ago"
 sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
-sudo journalctl -t cheese-metering-proxy -t cheese-gateway-litellm-1 --since today # model traffic
+sudo journalctl -t cheese-metering-proxy -t cheese-gateway-litellm-blue-1 -t cheese-gateway-litellm-green-1 -t cheese-gateway-gateway-proxy-a-1 -t cheese-gateway-gateway-proxy-b-1 --since today # model traffic
 sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "09:00" --until "09:30"
 ```
 
@@ -1064,7 +1110,7 @@ restores the proxied CNAME to the tunnel from the saved copy. After that the
 to before going back to a Caddy binary without the DNS module, which rejects
 their `tls` block.
 
-## Beijing edge (pre-filing): the mainland entry for okcheese, hand-managed
+## Beijing edge: okcheese.cn, the mainland entry, hand-managed
 
 A second edge sits in the mainland so that visitors in China stop paying the
 Beijing → Hong Kong → Beijing detour. It is the Hong Kong design moved to
@@ -1073,17 +1119,26 @@ Caddy ends TLS and sends plain HTTP into two reverse SSH tunnels from the dev
 box, each landing on the dev front door's `127.0.0.1:18080`. The client address
 travels in `X-Forwarded-For`, as through Hong Kong.
 
-**It serves nothing public until the ICP filing for `okcheese.cn` is approved.**
-A mainland server may not serve an unfiled domain on 80/443, so:
+`okcheese.cn` is ICP-filed under 知是科创（北京）信息技术有限公司 as
+京ICP备2026068086号, and the filing is tied to this Aliyun server: a mainland
+server may serve only filed domains on 80/443, and the filing lapses if the domain
+stops resolving to an Aliyun mainland server. The public pages' footer shows the
+number, linked to beian.miit.gov.cn, as the filing requires.
 
-- Caddy listens only on `:8443` with its internal CA (`scripts/ops/Caddyfile.beijing`).
-- Both firewalls (Aliyun's instance firewall and ufw) allow `:8443` only from a
-  few test addresses; 80 and 443 are disabled in the Aliyun firewall, not deleted.
-- No DNS record points at the box.
+- `okcheese.cn` and `www.okcheese.cn` (Aliyun DNS) resolve to the box. Caddy
+  serves `okcheese.cn` on 443 with a public certificate, redirects `www` to it
+  and plain http to https (`scripts/ops/Caddyfile.beijing`).
+- The Aliyun instance firewall and ufw allow 22, 80 and 443.
+- `okcheese.com` stays in Hong Kong and is not served here.
 
-When the filing is approved: give the site a public certificate, move it to
-`:443`, re-enable 80/443 in the Aliyun firewall, drop the `:8443` rules, and point
-`okcheese.cn` at the box.
+The backend knows one public address, `FRONTEND_URL` (okcheese.com). Password
+and email-code sign-in and the workspace work on okcheese.cn because nothing
+checks the Host, and links copied there are okcheese.cn links. What is bound to
+okcheese.com does not work on okcheese.cn: passkeys (their rpId is okcheese.com),
+GitHub and Google sign-in (their callback is okcheese.com, where the state
+cookie set on .cn is missing), embedded previews and Sites (their CSP and grant
+check name okcheese.com), and docs sign-in. Mailed links point to okcheese.com.
+Cookies are per host, so the two addresses keep separate sign-ins.
 
 The tunnels are plain SSH on `:22`. The cross-border stalls that put the Hong
 Kong tunnels inside TLS on `:443` do not apply inside the mainland.

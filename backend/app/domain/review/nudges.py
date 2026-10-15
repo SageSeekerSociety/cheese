@@ -21,13 +21,15 @@ from __future__ import annotations
 from typing import Final, Protocol
 
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_CI_FAILED,
+    EVENT_MERGE_REFUSED,
     EVENT_PR_CONFLICT,
     EVENT_PR_REVIEW,
 )
-from app.domain.review import notes, pr_signals
+from app.domain.review import notes, pr_signals, pr_text
 from app.domain.review.models import AcceptCard
+from app.domain.topic.models import Topic
 
 
 class _ReadToken(Protocol):
@@ -247,4 +249,69 @@ def _conflict_nudge(*, card: AcceptCard, status) -> pr_signals.PendingNudge | No
         note=f"PR #{card.pr_number} 与目标分支冲突，正在解决",
         note_code=notes.NoteCode.merge_conflict,
         event_type=EVENT_PR_CONFLICT,
+    )
+
+
+def _title_nudge(
+    *, card: AcceptCard, topic: Topic, status
+) -> pr_signals.PendingNudge | None:
+    """「PR 上的标题和这张卡不是同一行」排成一条待发，或者 None（一致）。
+
+    一个字符串三个读者：平台按卡片的 subject 写 PR 标题、按同一行落 squash 提交
+    标题，而**仓库自己的检查评判的是 PR 上那个标题**（编辑 PR 会重跑它的
+    `pull_request` 工作流）。两行一旦分家，平台再合下去，落进历史的是一行仓库从
+    没检查过的字 —— 所以这里不是「提示一下」，是两条合并路径都要停下的理由
+    （`pr_text.pr_title_matches_subject`）。
+
+    平台不判断哪一行才对：标题该怎么写是仓库自己的规矩（它的 CI 说了算），平台
+    只看这两个读者是不是在读同一个字符串。修法只有一条，而且必须从**卡**这边
+    改：`cheese_describe` 会把 PR 标题一起改掉，仓库的检查会按新标题重跑。反过来
+    在 GitHub 上直接改 PR 标题绕不过去 —— 卡片仍是落地的唯一源头。
+
+    去重按内容：签名取「卡片 subject + PR 当前标题」。谁变了都是芝士没见过的新
+    事实，都要再说一次（和 CI 失败带上 commit 是同一个理由）。
+    """
+    subject = pr_text.change_subject(card, topic)
+    # 比对用**原样**的标题，和两道合并闸（`merge_queue` 的点击合、`decisions` 的
+    # 放行合）读的是同一个字符串。这里先洗再比的话，一行只差几个不可见字节的标题
+    # 在轮询这条路上会判成「一致」—— 布防的自动合照合，而点击那条路上同一个 PR
+    # 会被拒：同一个事实两条车道两种结论，落进历史的那一行也就没个准。
+    raw = (getattr(status, "title", "") or "").strip()
+    # 展示用洗过的那一份：两个都是外部可控、会被贴进终端或提交历史的字符串。
+    live = pr_signals.sanitize_external(raw).strip()
+    if pr_text.pr_title_matches_subject(card, topic, raw):
+        return None
+    shown = live or "（此刻读不出来）"
+    if raw != live:
+        # 差别只在不可见字节上，两行看上去一模一样。不点破的话读的人只会以为
+        # 平台在无理取闹 —— 仓库的检查评判的是 PR 上原样的那一串字节。
+        shown += "（含不可见字符）"
+    return pr_signals.PendingNudge(
+        kind=pr_signals.NudgeKind.pr_title,
+        signature=pr_signals.signature("pr-title", subject, raw),
+        event=say("prTitleDisagrees", pr=card.pr_number),
+        content=(
+            f"PR #{card.pr_number}（{card.pr_url}）在 GitHub 上的标题和这张卡不是"
+            f"同一行：\n"
+            f"- PR 标题：{shown}\n"
+            f"- 卡片标题：{subject}\n"
+            "平台按卡片标题落 squash 提交标题，而仓库自己的检查评判的是 PR 上那个"
+            "标题 —— 现在合下去，写进历史的就是一行没人检查过的字，所以平台停下"
+            "不合。\n"
+            "标题该怎么写是仓库自己的规矩，平台不猜哪一行才对，也不会替你把 PR "
+            "标题改回来。要合并，就用 cheese_describe 把这张卡的标题改成该落的那"
+            "一行（`subject` 参数）：平台会同时把 GitHub 上的 PR 标题改成它，仓库"
+            "的检查会按新标题重跑。改完等检查绿了，再采纳或等自动合并。\n"
+            "如果改的是 PR 标题而不是卡片，请在话题里说清为什么卡片那行才是对的。"
+        ),
+        # 平台提示统一契约：房间那条可见的一行是 `event`，两行标题（都来自外部、
+        # 都可能很长）折进 `meta.detail`，谁看都能一眼对上。
+        detail=f"PR 标题：{shown}\n卡片标题：{subject}",
+        detail_label=say("labelReason"),
+        note=f"PR #{card.pr_number} 的标题和卡片不一致，合并已暂停",
+        note_code=notes.NoteCode.pr_title_disagrees,
+        # 复用 `merge_refused`：标题分家的后果正是「这次不能这样合并」，语义够用，
+        # 也不需要为一个新事件码重建 `CHECKS_FOR_THE_AGENT` 那个部分索引（那会牵出
+        # 一份 alembic 迁移）。文案在 `prTitleDisagrees` / `note` 上区分。
+        event_type=EVENT_MERGE_REFUSED,
     )

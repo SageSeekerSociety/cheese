@@ -95,7 +95,18 @@ async def _seed(session) -> dict[str, object]:
     apart. Behind the cases, because the bulk is signed by the agent handle: a
     bulk block newer than a question in the same conversation reads as the asker
     speaking again, which `_awaiting_an_answer` takes for the question
-    withdrawn."""
+    withdrawn.
+
+    The table is truncated first, inside the test's transaction (so the
+    rollback at the end restores it). The worker's database is emptied between
+    tests by DELETE, which leaves `blocks` and every index on it as large as
+    the earlier tests on that worker made them, and the planner prices a scan
+    by those page counts. Which conversation-leading index wins then depends on
+    what ran before: after some tests the small `ix_blocks_conversation_eid`
+    (which cannot cut on time) undercuts the ones keyed on created_at. A fresh
+    file for the table and each index makes every plan here the one this seed
+    alone produces."""
+    await session.execute(text("TRUNCATE blocks CASCADE"))
     now = datetime.now(UTC)
     project = Project(team_id=await a_team(session), name="P", owner_handle="o")
     session.add(project)
@@ -126,7 +137,7 @@ async def _seed(session) -> dict[str, object]:
             created_at=now - ago,
         )
 
-    asked = {"options": ["yes", "no"], "asked": "u1"}
+    asked = {"options": ["yes", "no"], "asked": ["u1"]}
     hour = timedelta(hours=1)
     session.add_all(
         [
@@ -268,7 +279,10 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             )
             waits = await MemberWaits(session).for_rooms(room_ids, now=seeded["now"])
 
-        assert asked == {rooms["asks"].id: "u1", tasks["asks"].id: "u1"}
+        assert {place: w.waiting() for place, w in asked.items()} == {
+            rooms["asks"].id: ("u1",),
+            tasks["asks"].id: ("u1",),
+        }
         assert {room: [w.reason for w in ws] for room, ws in waits.items()} == {
             rooms["failed"].id: ["failed"],
             rooms["machine"].id: ["device_waiting"],
@@ -324,6 +338,111 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
         [(sql, params)] = seen
         plan = await _generic_plan(conn, "probe_beats", sql, params)
         assert "Backward using ix_blocks_conversation_created_at" in plan, plan
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factory):
+    """`_awaiting_an_answer` asks, for each place, whether anyone spoke after the
+    question it is still holding. The batch asks it in one read, each place
+    carrying its own question as the bound — without a bound the read brings
+    back every message of every place and groups them, which on dev is 80k
+    blocks over 426 places for an answer that was almost always "nobody"
+    (2026-10-12: 89ms, twice per `/awaiting-me` before the two calls were
+    merged).
+
+    The bound is what lets the read walk an index keyed on (conversation_id,
+    created_at) instead of the place's whole run. Both halves are asserted — the
+    predicate is in the SQL, and the plan reads through an index on both of
+    those rather than scanning the blocks of every place. Which of the two
+    conversation-scoped indexes the planner takes is its business (at fixture
+    size it takes `ix_blocks_conversation_kind_created`, which also covers it);
+    what must hold is that the time bound is part of what the scan cuts on.
+
+    The bound has to be the asking place's own question, not one time for the
+    batch, so a place is seeded whose question is the oldest of the three and
+    whose asked person answers it after it was asked but before the other two
+    asked theirs. A batch-wide bound could only be the newest question, which
+    would cut that answer away and leave the place on the list — the case the
+    answer assertion reads, and the only one that tells a per-place bound apart
+    from a batch-wide one here.
+    """
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        hour = timedelta(hours=1)
+        spoken_since = Topic(
+            project_id=seeded["rooms"]["asks"].project_id,
+            title="spoken since",
+            kind=TopicKind.topic,
+        )
+        session.add(spoken_since)
+        await session.flush()
+        session.add_all(
+            [
+                Block(
+                    project_id=spoken_since.project_id,
+                    conversation_id=spoken_since.id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="u2",
+                    content="x",
+                    meta={"options": ["yes", "no"], "asked": ["u1"]},
+                    created_at=seeded["now"] - 3 * hour,
+                ),
+                Block(
+                    project_id=spoken_since.project_id,
+                    conversation_id=spoken_since.id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="u1",
+                    content="yes",
+                    meta={},
+                    created_at=seeded["now"] - 2 * hour,
+                ),
+            ]
+        )
+        await session.flush()
+        rooms, tasks = seeded["rooms"], seeded["tasks"]
+        ids = [
+            *(room.id for room in rooms.values()),
+            *(t.id for t in tasks.values()),
+            spoken_since.id,
+        ]
+        # Every path is still open to the planner; this only makes reading the
+        # whole table the last resort, so the plan says whether the index was
+        # usable at all rather than whether it was cheapest today.
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+        with statements(session) as seen:
+            asked = await BlockRepository(session).awaiting_an_answer(ids)
+        assert {place: w.waiting() for place, w in asked.items()} == {
+            rooms["asks"].id: ("u1",),
+            tasks["asks"].id: ("u1",),
+        }
+
+        conn = await session.connection()
+        # Who spoke since the question is one question, not two: the same read
+        # answers it for the agents and for the participants, split in Python on
+        # the shape of the author's handle.
+        reads = [
+            (sql, params) for sql, params in seen if "max(blocks.created_at)" in sql
+        ]
+        assert len(reads) == 1, seen
+        for sql, params in reads:
+            # The bound is the row's own question, carried in alongside the place
+            # ids (`anon_1.asked_at`), not one time picked for the batch: a
+            # batch-wide bound would come back as a bind parameter and read the
+            # same way here, so this is asserted against the column it compares.
+            assert re.search(r"blocks\.created_at > \w+\.asked_at", sql), sql
+            plan = await _generic_plan(conn, "probe_spoke", sql, params)
+            assert "Seq Scan on blocks" not in plan, plan
+            # The bound has to be something the index cuts on, not a `Filter:`
+            # the scan throws rows away with afterwards. A plan that only cuts
+            # on the conversation and filters on the time passes a bare
+            # `"created_at >" in plan` while reading the place's whole run.
+            cuts_on_the_bound = re.search(
+                r"(Index Cond|Recheck Cond):[^\n]*created_at >", plan
+            )
+            assert cuts_on_the_bound, plan
         await session.rollback()
 
 
@@ -498,7 +617,7 @@ async def test_a_page_of_what_the_room_shows_skips_the_steps_by_index(db_factory
 async def test_the_waiting_messages_come_back_and_are_read_by_their_index(db_factory):
     """The pending-message scan runs on a clock, so it must read its few rows
     from `ix_blocks_queued_messages`, not the table of everything ever said."""
-    from app.domain.agent.pending_messages import queued_messages
+    from app.domain.block.queries import queued_messages
 
     async with db_factory() as session:
         seeded = await _seed(session)

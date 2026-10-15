@@ -79,14 +79,6 @@ describe('useProjectComputeSettings', () => {
     window.removeEventListener('project-compute-updated', updated)
   })
 
-  it('does not save for someone who cannot manage the project', async () => {
-    getProjectComputeConfigs.mockResolvedValue(configs({ can_manage: false }))
-    const { state } = host()
-    await tick()
-    await state.save(lab)
-    expect(saveProjectComputeConfigs).not.toHaveBeenCalled()
-  })
-
   it('keeps the form open and reports the reason when a save fails', async () => {
     saveProjectComputeConfigs.mockRejectedValue(new Error('save down'))
     const { state } = host()

@@ -235,10 +235,11 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     # "compute" for a charge of cloud compute (``COMPUTE_ROUTE``).
     # "" on rows that predate the column.
     route: Mapped[str] = mapped_column(String(16), default="")
-    # The team that paid, and the credits charged for this row (#2397). A row
-    # with no team, no project and no person is a call the platform made on its
-    # own and paid for (``Ledger.record_platform``); ``kind`` names the job.
-    # Rows written before the team was recorded carry a project or a person.
+    # The team that paid, and the credits charged for this row (#2397). Every
+    # new row names one: the platform's own calls for a project are the
+    # project's (``Ledger.record_project_call``). Rows with no team are older:
+    # written before the team was recorded (they carry a project or a person),
+    # or calls the platform once paid for itself, ``kind`` naming the job.
     team_id: Mapped[int | None] = mapped_column(
         ForeignKey("team.id", ondelete="CASCADE"), nullable=True
     )

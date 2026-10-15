@@ -16,8 +16,8 @@
  *
  * 不登记 `ProjectSettingsView` 整页：它现在只剩接线（实例化那五个 composable、把
  * 把 `DeviceSessionsSwitch` 作为设备入口组件传入、按 `section` 门控取数），
- * 而且它在 `scene-baseline.json` 的 debt 里 —— 场景是路由页和 `components/panels/**`，
- * 整页不是给预览站单独画的。
+ * 而且它自己不是 A 级，在场景棘轮眼里是那棵树上的欠债 —— 场景是路由页和
+ * `components/panels/**`，整页不是给预览站单独画的。
  *
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `SETTINGS_DATA_ENTRIES`
  * 这个值，运行时不构成循环。
@@ -72,12 +72,6 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
         expect: '当前部署无法自动起名',
       },
       {
-        name: '只读',
-        note: '不能管理的人：两档都灰掉，底下写一句仅项目管理员可修改。',
-        props: { state: taskNamingState({ can_manage: false }), error: '', busy: false },
-        expect: '仅项目管理员可修改',
-      },
-      {
         name: '读失败',
         note: '还没读到就是 null：那两档不画，只在上面留一句后端原话。',
         props: { state: null, error: '加载任务命名设置失败', busy: false },
@@ -105,18 +99,6 @@ export const SETTINGS_DATA_ENTRIES: CatalogEntry[] = [
           editing: true,
         },
         expect: '设备会话入口',
-      },
-      {
-        name: '只读',
-        note: '不能管理：没有「更换」那颗按钮，最底下写一句仅项目负责人可更换默认环境。',
-        props: {
-          projectId: 'demo',
-          state: computeState({ can_manage: false }),
-          error: '',
-          busy: false,
-          editing: false,
-        },
-        expect: '仅项目负责人可更换默认环境',
       },
       {
         name: '保存中',

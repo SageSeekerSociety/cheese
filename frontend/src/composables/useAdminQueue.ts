@@ -6,8 +6,9 @@
 // 单独看 —— 挂在预览站里得先起假后端、把整页拉起来。现在三件事各归各位：
 //
 //   - 判断与接线 → 这里（页面只吃返回值，把动作报回来）；
-//   - 画 → `components/admin/queue/*.vue`，只吃 props、只往上发事件；
-//   - 顶层容器与两个列表的挂法 → 页面自己。
+//   - 画 → `views/admin/AdminQueuePageView.vue` 与 `components/admin/queue/*.vue`，
+//     只吃 props、只往上发事件；
+//   - 顶层容器 → `views/admin/AdminQueuePage.vue` 自己（它只把这里的东西转给 View）。
 //
 // **三件事留在这一层，不往组件里掉**（和拆之前同一个分工）：
 //
@@ -16,6 +17,9 @@
 //      `items`，拿不到写入口 —— 分诊键要落 store，所以键在这一层分发（§8 的「列表」档）。
 //   2. **「手上这一条是谁」**。光标、详情、已读、撤销条都挂在同一个 id 上，所以这个
 //      判断只能有一份，也就是这里。`AdminQueueDetail` 的注释把同一个理由写了一遍。
+//      「指派给谁」那个搜索框的**词**也挂在这儿：详情一关就得清掉（关的时候人还在
+//      输一个字的一半，那条待发的请求也不该再打出去），而「详情还开着没有」是这一层
+//      的判断 —— 放在选择器里的话，它看不见详情是什么时候关的。
 //   3. **四态**。加载/空/错误/筛空里，「错误」和「筛空」是页面才知道的两件事：卡片
 //      只知道「我手上一条都没有」。所以两个列表组件都留了 `empty` 插槽，内容由页面
 //      填 —— 填的那一件（`AdminQueueEmpty`）只认这里算出来的 `copy` / `state`。
@@ -30,13 +34,14 @@
 // 三个日期窗口各有可见的一颗 chip（`windowChips`）：看板 KPI 深链带着 `?since=7d`
 // 进来时它是唯一的筛选指示；值在 store 里存原文、发请求时才折成日期
 // （`lib/feedbackWindows.ts` —— 后端的参数是 datetime，'7d' 原样发出去是 422）。
-import type AdminQueueDetail from '@/components/admin/AdminQueueDetail.vue'
-import type { FeedbackCard, FeedbackStatus } from '@/cx_types'
+import type { FeedbackCard, FeedbackPriority, FeedbackStatus } from '@/cx_types'
 import type { AdminTab } from '@/stores/feedback'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+
+import { useAdminCandidateSearch } from '@/composables/useAdminCandidateSearch'
 
 import { allStatuses, statusMeta } from '@/lib/feedbackMeta'
 import { relativeDays } from '@/lib/feedbackWindows'
@@ -88,9 +93,12 @@ const ADMIN_TABS: AdminTab[] = ['public', 'private', 'agent', 'security']
 export type QueueWindowKey = 'since' | 'resolved_since' | 'deployed_since'
 
 /** 搜索框住在 `AdminQueueToolbar` 里，而 `/` 键和 chip 清空都把焦点送进去。搜索框的
- *  位置是**页面**的事（那一件只吃 props），所以页面把那件事包成一个回调交给这一层。 */
+ *  位置是**页面**的事（那一件只吃 props），所以页面把那件事包成一个回调交给这一层。
+ *  同理 `focusAssignee`：详情里那颗 combobox 住在 View 里，宽屏那一档在页面正文、
+ *  窄屏那一档在抽屉里，两个实例长什么样只有 View 知道。 */
 export interface AdminQueueDeps {
   focusSearch: () => void
+  focusAssignee: () => void
 }
 
 export function useAdminQueue(deps: AdminQueueDeps) {
@@ -120,7 +128,18 @@ export function useAdminQueue(deps: AdminQueueDeps) {
    *  的那一个词，前者是手上正在打的。分开的理由见 `QUERY_MIN_CHARS` 和 `clearFilters`。 */
   const draft = ref(store.adminQuery)
 
-  const detailRef = ref<InstanceType<typeof AdminQueueDetail> | null>(null)
+  /** 「指派给谁」那个框的字与候选。两份都在这儿，因为**关详情时要把词清掉**（见文件
+   *  开头第 2 条）；清词那一下由下面那个 `watch(detailOpen)` 统一接住 —— `Esc`、返回
+   *  键、抽屉外面的遮罩都走 `detailOpen`，不各写一遍。 */
+  const {
+    search: assigneeSearch,
+    candidates: assigneeCandidates,
+    searching: assigneeSearching,
+  } = useAdminCandidateSearch()
+
+  watch(detailOpen, (open) => {
+    if (!open) assigneeSearch.value = ''
+  })
 
   const media =
     typeof window !== 'undefined' && typeof window.matchMedia === 'function' ? window.matchMedia(WIDE_QUERY) : null
@@ -348,12 +367,35 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     select(id, { open: true })
   }
 
-  /** 详情里按了那颗主按钮（`triage` 事件）。**状态从 `triage` 走、别的写操作直接落 store**
-   *  的那条分工写在 `AdminQueueDetail` 里；撤销条是页面级的栈，所以这条路必须经过这里。 */
+  /** 详情里按了那颗主按钮（`triage` 事件）。撤销条是页面级的栈，所以这条路必须经过这里。 */
   function onDetailTriage(to: FeedbackStatus) {
     const id = current.value?.id
     if (id) void writeStatus(id, to, false)
   }
+
+  /* ---- 详情里的另外四样写操作 ---- */
+
+  /** 指派 / 优先级 / 安全问题 / 内部备注。它们是详情那一层报上来的事件，落 store 在这儿 ——
+   *  这四样**没有撤销条**（撤销是给单键误触的保险，而这四样都要先点开面板、再选一个值），
+   *  所以不必像 `writeStatus` 那样往后传一层。 */
+  function assign(id: string, handle: string | null) {
+    void store.assign(id, handle)
+  }
+
+  function setPriority(id: string, priority: FeedbackPriority) {
+    void store.setPriority(id, priority)
+  }
+
+  function setSecurity(id: string, security: boolean) {
+    void store.setSecurity(id, security)
+  }
+
+  function addNote(id: string, body: string) {
+    void store.addNote(id, body)
+  }
+
+  /** 写操作失败时服务端那句原话，画在详情底部那一条 alert 上。 */
+  const detailWriteError = computed(() => store.error ?? '')
 
   /** 详情那两档状态的写入口。宽屏的整页接管和窄屏的抽屉是**两个容器、一份状态**，
    *  所以这里给一个入口而不是让页面各处直接赋值 —— 两份容器说的话走同一条路。 */
@@ -443,20 +485,15 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     void store.markRead()
   }
 
-  /** `A`：把焦点送进「指派」那个 combobox（§8）。宽屏那一档那个实例上有 `focusAssignee`；
-   *  抽屉里的那个没有转发它（`AdminFeedbackDetailDrawer` 的 emits 里没有这一条），所以
-   *  退一步在 DOM 上找 —— 详情里只有这一颗 combobox。 */
+  /** `A`：把焦点送进「指派」那个 combobox（§8）。**哪一个实例上有一颗这样的框**归
+   *  View 管（宽屏在正文里、窄屏在抽屉里），所以落点由 View 报回来。 */
   async function focusAssignee() {
     if (!detailOpen.value) {
       if (!current.value) return
       detailOpen.value = true
       await nextTick()
     }
-    if (detailRef.value?.focusAssignee) {
-      detailRef.value.focusAssignee()
-      return
-    }
-    document.querySelector<HTMLInputElement>('.v-navigation-drawer .v-field input')?.focus()
+    deps.focusAssignee()
   }
 
   /* ---- 四态上的动作 ---- */
@@ -800,7 +837,6 @@ export function useAdminQueue(deps: AdminQueueDeps) {
 
   return {
     // 详情
-    detailRef,
     isWide,
     detailOpen,
     setDetailOpen,
@@ -810,7 +846,21 @@ export function useAdminQueue(deps: AdminQueueDeps) {
     detail: computed(() => store.detail),
     detailLoading: computed(() => store.detailLoading),
     detailError,
+    detailWriteError,
+    /** 服务端 meta 那份状态梯子，转给详情画分诊面板。 */
+    statuses: computed(() => store.meta?.statuses),
     onDetailTriage,
+    assign,
+    setPriority,
+    setSecurity,
+    addNote,
+    // 「指派给谁」的候选搜索
+    assigneeSearch,
+    setAssigneeSearch: (v: string) => {
+      assigneeSearch.value = v
+    },
+    assigneeCandidates,
+    assigneeSearching,
     // 页头
     unread,
     markCurrentRead,

@@ -41,6 +41,8 @@ from app.domain.machine.sandbox_wait import SANDBOX_LOST
 from app.domain.machine.services import HostPool
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
+from app.domain.review.archive import close_cards_for_archived_topic
+from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
 from app.domain.run_record.models import RunRecord
 from app.domain.team.models import Team
@@ -344,6 +346,7 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
     recorded the home on that host when it took its inventory — the rooms
     PR #2749 left waiting on "device … is offline". Returns what one sweep of
     room cleanups answered."""
+    from app.domain.delivery.ledger import settle_card
     from app.domain.room_cleanup import retire
     from app.domain.topic.services import TopicService
 
@@ -351,7 +354,12 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
 
     async def archive():
         async with case.client.test_request_factory() as db:
-            await TopicService(db).archive(seat.room, by="alice")
+            await TopicService(db).archive(
+                seat.room,
+                by="alice",
+                settle_card=settle_card,
+                cards=close_cards_for_archived_topic,
+            )
             await db.commit()
 
     run(case, archive)
@@ -380,6 +388,113 @@ def cleanup_of(case, seat) -> dict:
     return case.client.get(
         f"/topics/{seat.room}/cleanup", headers=session_auth_headers("alice")
     ).json()["data"]
+
+
+def line_of(case, seat, *, title="A line") -> SimpleNamespace:
+    """A task of that room and the session that works in it: the line a delivery
+    is handed over on. A task is a place of its own, so its session asks for its
+    hands on the task's path, and its sandbox is its own too."""
+
+    async def open_line():
+        async with case.client.test_request_factory() as db:
+            room = await db.get(Topic, seat.room)
+            task = Task(project_id=case.project_id, room_id=seat.room, title=title)
+            db.add(task)
+            await db.flush()
+            handle = (
+                await IdentityService(db).ensure_room_agent_user(seat.room)
+            ).username
+            row = await AgentSessionService(db).ensure(
+                task.id, handle, harness="claude-code"
+            )
+            resource = str(room.resource_id or room.id)
+            row.runtime_location = {
+                "device_id": "center",
+                "resource_id": resource,
+                "channel": "device",
+            }
+            token = bind_resource_token(
+                mint_scoped_token(
+                    project_id=str(case.project_id),
+                    topic_id=str(task.id),
+                    agent_handle=handle,
+                ),
+                resource,
+                session_id=str(row.id),
+            )
+            await db.commit()
+            return SimpleNamespace(
+                room=task.id,
+                channel=seat.room,
+                session=row.id,
+                token=token,
+                task=task.id,
+            )
+
+    return run(case, open_line)
+
+
+def mirror(*, running: bool = True, looked: datetime | None = None) -> dict:
+    """A card's merge-state mirror as the poller writes one: every look rewrites
+    the whole thing, ``checked_at`` being when it looked."""
+    when = (looked or datetime.now(UTC)).isoformat()
+    return {
+        "state": "blocked" if running else "clean",
+        "who": "agent",
+        "reasons": (
+            [
+                {
+                    "kind": "ci_running",
+                    "checks": ["test"],
+                    "detail": "CI 正在运行：test",
+                }
+            ]
+            if running
+            else []
+        ),
+        "head_sha": "0" * 40,
+        "checked_at": when,
+        "since": when,
+    }
+
+
+def delivery_is_in(
+    case, line, *, state: dict | None, status=None, merged=False
+) -> None:
+    """The line handed a delivery over: its own card on that PR."""
+    when = datetime.now(UTC) if merged else None
+
+    async def add():
+        async with case.client.test_request_factory() as db:
+            db.add(
+                AcceptCard(
+                    topic_id=line.channel,
+                    task_id=line.task,
+                    reviewer_handle="alice",
+                    status=status or AcceptStatus.pending,
+                    pr_number=7,
+                    pr_url="https://example.invalid/pr/7",
+                    pr_merged_at=when,
+                    merge_state=state,
+                )
+            )
+            await db.commit()
+
+    run(case, add)
+
+
+def the_poller_s_next_look_says(case, line, state: dict) -> None:
+    """What the poller writes on its next look at that card."""
+
+    async def write():
+        async with case.client.test_request_factory() as db:
+            card = await db.scalar(
+                select(AcceptCard).where(AcceptCard.task_id == line.task)
+            )
+            card.merge_state = state
+            await db.commit()
+
+    run(case, write)
 
 
 def host_of_machine(case, device_id) -> int:
@@ -504,6 +619,57 @@ def test_a_destroyed_sandbox_frees_its_slot_for_another_session(cloud):
 
     three = cloud.seats[2]
     assert tool_call(cloud, three)["target"]["device_id"] == "host-a"
+
+
+def test_a_sandbox_its_agent_left_is_destroyed_and_holds_its_slot_until_then(
+    cloud, monkeypatch
+):
+    """An agent that moves to another environment leaves a sandbox still
+    running on its host. That sandbox is destroyed there once idle, as any
+    other is, and the host counts it until then: placing another session in
+    its slot meanwhile packed hosts past what they can run (dev, 2026-10: a
+    host running 16 sandboxes where the pool counted 4, all of them short of
+    memory)."""
+    monkeypatch.setattr(settings, "microcloud_vm_offering_id", 1)
+    one, two, three = cloud.seats
+    home = working_on(cloud, one, "host-a")
+    server = subprocess.Popen(["sleep", "600"], cwd=home / "room")
+    try:
+        moved = cloud.client.put(
+            f"/topics/{one.room}/sessions/{one.session}/environment",
+            headers=session_auth_headers("alice"),
+            json={"environment": {"kind": "sandbox", "spec": "vm"}},
+        )
+        assert moved.status_code == 200, moved.text
+
+        # Host A runs one sandbox at a time, and the one left still runs there.
+        assert tool_call(cloud, two).get("preparing")
+        assert host_of(cloud, two).id != host_of_machine_row(cloud, "host-a")
+        assert home.exists()
+
+        left_idle(cloud, home.name, timedelta(minutes=11))
+        assert sweep(cloud)["destroyed"] == 1
+        assert server.wait(timeout=30) is not None
+    finally:
+        server.kill()
+    assert not home.exists()
+    assert tool_call(cloud, three)["target"]["device_id"] == "host-a"
+
+
+def left_idle(case, resource: str, idle: timedelta):
+    """The sandbox in ``resource``, which its session left, was last used
+    ``idle`` ago."""
+
+    async def age():
+        async with case.client.test_request_factory() as db:
+            await db.execute(
+                update(SandboxHome)
+                .where(SandboxHome.resource_id == resource)
+                .values(active_at=datetime.now(UTC) - idle)
+            )
+            await db.commit()
+
+    run(case, age)
 
 
 def host_of_machine_row(case, device_id):
@@ -633,3 +799,73 @@ def test_a_room_cleanup_does_not_wait_on_the_host_of_a_destroyed_sandbox(
         "pending": 0,
     }
     assert cleanup_of(cloud, seat)["state"] in {"complete", "retained"}
+
+
+def test_a_line_waiting_on_its_checks_keeps_its_sandbox(cloud):
+    """递上去等 CI 的线不是在收工走人：平台还替它看着那几张检查，等它们跑完
+    就会叫它回来。这段等待里把机器收掉，它回来时得重开一台、把文档再读一遍。"""
+    seat = cloud.seats[0]
+    line = line_of(cloud, seat)
+    home = working_on(cloud, line, "host-a")
+    delivery_is_in(cloud, line, state=mirror())
+
+    time_passes(cloud, line, timedelta(minutes=11))
+    assert sweep(cloud)["destroyed"] == 0
+    assert (home / "room" / "notes.md").exists()
+
+    # 轮询下一次看它时检查已经绿了（卡还在等人采纳）：没有人在等 CI，机器照收。
+    the_poller_s_next_look_says(cloud, line, mirror(running=False))
+    assert sweep(cloud)["destroyed"] == 1
+    assert home_of(cloud, line) is None
+
+
+def test_a_line_waiting_on_its_checks_is_held_no_longer_than_the_cap(cloud):
+    """等 CI 也不是无限期：过了后台命令那个上限，机器照样收 —— 一张没人再看
+    第二眼的卡不能占着一台机器。"""
+    seat = cloud.seats[0]
+    line = line_of(cloud, seat)
+    working_on(cloud, line, "host-a")
+    delivery_is_in(cloud, line, state=mirror())
+
+    time_passes(cloud, line, timedelta(minutes=30))
+    assert sweep(cloud)["destroyed"] == 0
+
+    time_passes(cloud, line, timedelta(minutes=61))
+    # 轮询一直在看（镜像一直是新的），但这条线已经安静太久了。
+    the_poller_s_next_look_says(cloud, line, mirror())
+    assert sweep(cloud)["destroyed"] == 1
+
+
+def test_a_checks_mirror_nobody_refreshes_does_not_keep_a_sandbox(cloud):
+    """镜像停在「CI 还在跑」上，但早没人刷新它了 —— 轮询停了、卡撤了：那是
+    上次看的样子，不是此刻在等。"""
+    seat = cloud.seats[0]
+    line = line_of(cloud, seat)
+    working_on(cloud, line, "host-a")
+    delivery_is_in(
+        cloud, line, state=mirror(looked=datetime.now(UTC) - timedelta(minutes=20))
+    )
+
+    time_passes(cloud, line, timedelta(minutes=11))
+    assert sweep(cloud)["destroyed"] == 1
+
+
+def test_a_delivery_that_is_not_waiting_on_checks_does_not_keep_a_sandbox(cloud):
+    """只有「一张没合并、还没作废的卡 + 刚看过 CI 在跑」才算在等。采纳过的卡
+    （线在等人叫它写总结，不是等 CI）、已经合掉的卡、还没递出去的线，都照常收。"""
+    one, two, three = cloud.seats
+    lines = []
+    for seat, device, title, fields in (
+        (one, "host-a", "Landed", {"status": AcceptStatus.accepted}),
+        (two, "host-b", "Merged and still pending", {"merged": True}),
+        (three, "host-c", "Nothing sent", None),
+    ):
+        line = line_of(cloud, seat, title=title)
+        working_on(cloud, line, device)
+        if fields is not None:
+            delivery_is_in(cloud, line, state=mirror(), **fields)
+        lines.append(line)
+
+    for line in lines:
+        time_passes(cloud, line, timedelta(minutes=11))
+    assert sweep(cloud)["destroyed"] == 3

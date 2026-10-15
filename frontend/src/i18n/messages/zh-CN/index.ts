@@ -1,77 +1,51 @@
-import account from './account.json'
-import admin from './admin.json'
-import apiError from './apiError.json'
-import ask from './ask.json'
-import catalog from './catalog.json'
-import compute from './compute.json'
-import credits from './credits.json'
-import design from './design.json'
-import editor from './editor.json'
-import featureStats from './featureStats.json'
-import feedback from './feedback.json'
-import files from './files.json'
-import global from './global.json'
-import home from './home.json'
-import integrations from './integrations.json'
-import market from './market.json'
-import members from './members.json'
-import models from './models.json'
-import navigation from './navigation.json'
-import notifications from './notifications.json'
-import project from './project.json'
-import publicSite from './publicSite.json'
-import questions from './questions.json'
-import ratchet from './ratchet.json'
-import roomNotice from './roomNotice.json'
-import routines from './routines.json'
-import shell from './shell.json'
-import slides from './slides.json'
-import spaces from './spaces.json'
-import tasks from './tasks.json'
-import teams from './teams.json'
-import toolLabels from './toolLabels.json'
-import topic from './topic.json'
-import usage from './usage.json'
-import users from './users.json'
-import welcome from './welcome.json'
-import work from './work.json'
+import { buildCatalog } from '../catalog'
 
-export default {
-  ask,
-  credits,
-  global,
-  home,
-  integrations,
-  market,
-  members,
-  models,
-  navigation,
-  publicSite,
-  ratchet,
-  account,
-  editor,
-  feedback,
-  featureStats,
-  questions,
-  usage,
-  users,
-  welcome,
-  spaces,
-  tasks,
-  teams,
-  notifications,
-  roomNotice,
-  apiError,
-  toolLabels,
-  work,
-  admin,
-  compute,
-  design,
-  files,
-  project,
-  routines,
-  shell,
-  slides,
-  topic,
-  catalog,
-}
+// 这个语言包拆在本目录的一棵目录树里，`import.meta.glob` 自己把它们全找出来：加一份
+// 词表不用在这里补一行 import，也不用在下面那个对象里补一个字段（写法照仓库里已有的
+// `src/views/demo/scenes/index.ts`、`src/commands/palette/sources.ts`）。
+// 路径即键路径，见 `../catalog.ts` 和 `docs/i18n.md` 第 2 节。
+//
+// 首屏用不上的那些命名空间不在这里，见 `./deferred.ts`。
+const modules = import.meta.glob(
+  [
+    // Top-level files and the trees under subdirectories as two patterns: Vite drops
+    // the `!` exclusions below when they sit beside a `./**/*.json` pattern.
+    './*.json',
+    './*/**/*.json',
+    '!./catalog.json',
+    '!./teams.json',
+    '!./featureStats.json',
+    '!./admin.json',
+    '!./models.json',
+    '!./ratchet.json',
+    '!./routines.json',
+    '!./notifications.json',
+    '!./credits.json',
+    '!./toolLabels.json',
+    '!./questions.json',
+    '!./members.json',
+    '!./design.json',
+    '!./editor.json',
+    '!./compute.json',
+    '!./usage.json',
+    '!./users.json',
+    '!./slides.json',
+    '!./market.json',
+    '!./ask.json',
+    '!./integrations.json',
+    '!./topic.json',
+    '!./taskList.json',
+    // 后端说的那两类话，见 `./sentences.ts`。
+    '!./roomNotice/**',
+    '!./apiError/**',
+  ],
+  { eager: true, import: 'default' }
+)
+
+export default buildCatalog(modules)
+
+/** zh-CN 的另一部分：首屏用不上的命名空间，单独一块，用时才取。 */
+export const loadDeferred = () => import('./deferred').then((module) => module.default)
+
+/** zh-CN 的第三部分：后端说的报错和系统消息，挂载之后才取（见 `./sentences.ts`）。 */
+export const loadSentences = () => import('./sentences').then((module) => module.default)

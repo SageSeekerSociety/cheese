@@ -1,18 +1,24 @@
 /**
- * `/admin` 的改道守卫（`adminSectionGuard`）。
+ * `/admin` 路由表上两件容易悄悄失效的事。
  *
- * 这一组钉的是 #3 那条反馈的另一半：进了后台却落在一块**自己进不去**的分区上时，
+ * 一是改道守卫（`adminSectionGuard`）：进了后台却落在一块**自己进不去**的分区上时，
  * 改道这件事原先藏在 `AdminLayout` 的 `watch` 里静悄悄 `router.replace` —— 地址栏
  * 自己变了，看不出是「按权限改道」。现在它是路由表里一条声明式的 `beforeEnter`。
  *
- * 这里直接打**产品用的那个函数**（`router/feedback.ts` 导出、`beforeEnter` 挂的就是
- * 它），不是重写一份判据 —— 抄一份到测试里，测的就是抄本。
+ * 二是队列那条老地址：`/admin/feedback` 今天和 `/admin/queue` 是同一页，靠的是路由表
+ * 里两条记录各自指向同一个组件，不是重定向、也不是别名（理由见 `router/feedback.ts`
+ * 的文件头）。这件事没有别的守卫 —— 谁把其中一条改成重定向、或者合成一条 `alias`，
+ * 页面照样长得出来，只有别人贴的老链接会先跳一下或者换个名字。
+ *
+ * 这里直接打**产品用的那些值**（`router/feedback.ts` 导出的函数和路由表），不是重写
+ * 一份判据 —— 抄一份到测试里，测的就是抄本。
  *
  * 两份名单：`is_admin` 是反馈管理员（只看得见队列），`is_platform_admin` 是平台管理员
  * （看得见其余各块）。清单与顺序在 `@/lib/adminSections`。
  */
 import type { RouteLocationNormalized } from 'vue-router'
 
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -26,7 +32,7 @@ vi.mock('@/api', async () => {
   }
 })
 
-import { adminSectionGuard } from './feedback'
+import routes, { adminSectionGuard } from './feedback'
 
 import { useFeedbackStore } from '@/stores/feedback'
 
@@ -102,4 +108,40 @@ describe('adminSectionGuard', () => {
     const result = await runGuard({ is_admin: true, is_platform_admin: true }, 'FeedbackCenter', '/feedback')
     expect(result).toBe(true)
   })
+})
+
+describe('队列的老地址', () => {
+  const router = createRouter({ history: createMemoryHistory(), routes })
+
+  /** 一条记录最后那层（`/admin` 的子记录）身上挂的组件加载函数。 */
+  function loaderOf(name: string) {
+    const record = router.resolve({ name }).matched.at(-1)!
+    return record.components?.default as unknown as () => Promise<{ default: unknown }>
+  }
+
+  it('`/admin/feedback` 还在，而且和 `/admin/queue` 指到同一页', async () => {
+    const old = router.resolve({ name: 'AdminFeedback' })
+    expect(old.path).toBe('/admin/feedback')
+    // 地址本身还得认路：`/admin/feedback` 一旦落下，看到的人会以为是「后台坏了」。
+    expect(router.resolve('/admin/feedback').name).toBe('AdminFeedback')
+    expect(router.resolve('/admin/feedback').matched.length).toBeGreaterThan(0)
+
+    // **不是别名**：别名不会替这条记录生成 name，而 `AdminFeedback` 这个名字侧栏、守卫
+    // 和别处的测试都在用。所以这里比的是两条记录各自解析出来的那个组件。
+    const queueLoader = loaderOf('AdminQueue')
+    const oldLoader = loaderOf('AdminFeedback')
+    expect(oldLoader, '两条记录共用了一个加载函数，那说明它们被合成一条了').not.toBe(queueLoader)
+    const [queueModule, oldModule] = await Promise.all([queueLoader(), oldLoader()])
+    expect(oldModule.default).toBe(queueModule.default)
+
+    // 顶栏那行字也不该因为人是从哪个链接进来的而变。
+    const titleOf = (name: string) => router.resolve({ name }).meta.titleKey
+    expect(titleOf('AdminFeedback')).toBe(titleOf('AdminQueue'))
+
+    // **不是重定向**：重定向会把地址栏里那个旧地址悄悄换掉，而人正在这一页上分诊时
+    // 地址栏自己变一次是没必要的惊吓。
+    expect(router.resolve({ name: 'AdminFeedback' }).matched.at(-1)!.redirect).toBeUndefined()
+    // 上面那两次 `import()` 会把整棵队列组件树（1300 行的页 + 它那一串子件）拉进来，
+    // 冷启动时比默认那 5 秒长，慢机器上会假红。
+  }, 30_000)
 })

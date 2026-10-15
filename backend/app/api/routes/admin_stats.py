@@ -2,7 +2,7 @@
 
 管理台第三块。和 `admin_members.py` 一样，它管的不是反馈：这里出现的每一个字在反馈
 功能删掉之后仍然成立（用量、账号、设备、交付），所以门是共用的
-`admin_common.PlatformAdminDep`、服务是 `domain/platform_stats/`，两者都不从反馈
+`admin_deps.PlatformAdminDep`、服务是 `domain/platform_stats/`，两者都不从反馈
 那边借。
 
 **一个分类一条路由**，不是一条接口把所有东西一次吐出来：页面上的分类控件切到哪一类
@@ -28,9 +28,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.routing import APIRoute
 
+from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.routes.admin_common import PlatformAdminDep
+from app.domain.agent import preview_hub as preview_hub_module
+from app.domain.agent import turn_counts
 from app.domain.agent.device_hub import device_hub
 from app.domain.machine import admin as machine_admin
 from app.domain.machine.admin_schemas import MachinesOverviewOut
@@ -40,7 +42,16 @@ router = APIRouter(prefix="/admin/stats", tags=["admin"])
 
 
 async def get_platform_stats_service(db: DbSession) -> PlatformStatsService:
-    return PlatformStatsService(db)
+    """建看板服务，顺手把 `agent` 里那两样递进去（`platform_stats/ports.py`）。
+
+    两处都取**模块属性**而不是在 import 那行把对象绑下来：谁要替换进程里那个
+    集线器/那份计数实现，换的就是模块上的这个名字。
+    """
+    return PlatformStatsService(
+        db,
+        previews=preview_hub_module.preview_hub,
+        counts=turn_counts.TurnCounts(db),
+    )
 
 
 StatsServiceDep = Annotated[PlatformStatsService, Depends(get_platform_stats_service)]

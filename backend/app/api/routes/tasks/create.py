@@ -2,9 +2,12 @@
 
 from fastapi import APIRouter, Depends
 
+from app.api.response import ok
 from app.api.routes.tasks._common import (
     CreateTaskRequest,
     _create_task_entity,
+)
+from app.api.task_deps import (
     _task_attachment_service,
 )
 
@@ -69,10 +72,9 @@ async def create_task(
         0
     ]
 
-    return {
-        "code": 200,
-        "message": "Task created successfully.",
-        "data": {
+    return ok(
+        {
             "task": task_model,
         },
-    }
+        "Task created successfully.",
+    )

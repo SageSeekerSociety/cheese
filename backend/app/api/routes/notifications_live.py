@@ -23,6 +23,19 @@ Frames sent: ``{"kind": "notices", "latest": <id> | null, "items": [...],
 Every text in them is in the person's language; ``away`` (present when there
 are items) is the one line the app shows for a backlog too long to show one by
 one.
+
+A browser showing the inbox feed holds a lighter connection of its own:
+
+- ``WS /notifications/inbox``: a browser cannot set a header on a WebSocket, so
+  the same credential comes as the first message (``{"token": ...}``) rather
+  than in the URL, where access logs would keep it. Unanswered for
+  ``SIGN_IN_SECONDS``, or with a credential that does not hold, the connection
+  is closed with 4401, which tells the page to ask for a new one.
+- It is sent ``{"kind": "inbox", "latest": <id> | null}``, the newest row in
+  the person's inbox of any type, on opening and whenever that changes; the page
+  reads the rows itself. Nothing else is computed per wake — not the waiting
+  count the app's badge needs — because a browser has one open on every feed. A
+  beat works as it does for the app.
 """
 
 from __future__ import annotations
@@ -34,9 +47,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from app.api.awaiting_deps import waiting_items
 from app.api.deps import get_chat_service
 from app.api.response import ok
-from app.api.routes.awaiting import waiting_items
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
@@ -46,13 +59,22 @@ from app.common.auth import (
 )
 from app.core.errors import BadRequestError
 from app.domain.agent.chat import ChatService
-from app.domain.notification.live import behind, listening, notices_after
+from app.domain.notification.live import (
+    behind,
+    latest_in_inbox,
+    listening,
+    notices_after,
+)
 from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="", tags=["notifications"])
 
 #: How long a connection may stay quiet before a beat is sent.
 BEAT_SECONDS = 25.0
+#: How long a browser's connection may stay open before saying who it is.
+SIGN_IN_SECONDS = 10.0
+#: Close code: the credential does not hold (any more); ask for a new one.
+SIGNED_OUT = 4401
 
 ChatDep = Annotated[ChatService, Depends(get_chat_service)]
 
@@ -141,7 +163,7 @@ async def live(websocket: WebSocket, chat: ChatDep) -> None:
                     # catch-up below reads by cursor, not by wake.
                     wake.cancel()
                     if await _signed_in(chat, user_id, sid) is None:
-                        await websocket.close(code=4401)
+                        await websocket.close(code=SIGNED_OUT)
                         return
                     # The beat's other errand. A notice committed by the other
                     # backend slot during a deploy wakes nobody in this process:
@@ -161,6 +183,70 @@ async def live(websocket: WebSocket, chat: ChatDep) -> None:
         finally:
             hung_up.cancel()
             beat.cancel()
+
+
+async def _latest(chat: ChatService, user_id: int) -> int | None:
+    async with chat.session_factory() as db:
+        return await latest_in_inbox(db, user_id)
+
+
+async def _sign_in(
+    websocket: WebSocket, chat: ChatService
+) -> tuple[int, uuid.UUID] | None:
+    """Who the first message says this is, if that sign-in still holds."""
+    with contextlib.suppress(TimeoutError, ValueError, KeyError, TypeError):
+        opening = await asyncio.wait_for(websocket.receive_json(), SIGN_IN_SECONDS)
+        claims = verify_notice_token(str(opening["token"]))
+        if claims is not None and await _signed_in(chat, *claims) is not None:
+            return claims
+    return None
+
+
+@router.websocket("/notifications/inbox")
+async def inbox(websocket: WebSocket, chat: ChatDep) -> None:
+    await websocket.accept()
+    with contextlib.suppress(WebSocketDisconnect):
+        claims = await _sign_in(websocket, chat)
+        if claims is None:
+            await websocket.close(code=SIGNED_OUT)
+            return
+        user_id, sid = claims
+        with listening(user_id, inbox=True) as woken:
+            latest = await _latest(chat, user_id)
+            await websocket.send_json({"kind": "inbox", "latest": latest})
+            hung_up = asyncio.create_task(_until_closed(websocket))
+            # A clock of its own, as in `live` above, so a busy connection is
+            # checked as often as a quiet one.
+            beat = asyncio.create_task(asyncio.sleep(BEAT_SECONDS))
+            try:
+                while True:
+                    wake = asyncio.create_task(woken.wait())
+                    done, _ = await asyncio.wait(
+                        {wake, hung_up, beat}, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if hung_up in done:
+                        wake.cancel()
+                        return
+                    beat_round = beat in done
+                    if beat_round:
+                        beat = asyncio.create_task(asyncio.sleep(BEAT_SECONDS))
+                        wake.cancel()
+                        if await _signed_in(chat, user_id, sid) is None:
+                            await websocket.close(code=SIGNED_OUT)
+                            return
+                    else:
+                        woken.clear()
+                    # On a beat this is also the catch-up for a row the other
+                    # backend slot committed during a deploy, which woke nobody here.
+                    now = await _latest(chat, user_id)
+                    if now != latest:
+                        latest = now
+                        await websocket.send_json({"kind": "inbox", "latest": latest})
+                    elif beat_round:
+                        await websocket.send_json({"kind": "beat"})
+            finally:
+                hung_up.cancel()
+                beat.cancel()
 
 
 async def _until_closed(websocket: WebSocket) -> None:

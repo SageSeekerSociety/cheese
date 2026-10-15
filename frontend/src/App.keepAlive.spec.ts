@@ -30,6 +30,10 @@ vi.mock('@/api', async (original) => ({
   listProjects: vi.fn(async () => ({ data: [] })),
 }))
 vi.mock('@/components/common/VersionBadge.vue', () => ({ default: { template: '<span />' } }))
+// App 一挂上就去取这两个（异步组件），这里的用例比它们取完结束得早，环境拆掉后才到
+// 的那次加载会报错。它们和缓存哪一页无关，换成空壳。
+vi.mock('@/commands/palette/CommandPalette.vue', () => ({ __esModule: true, default: { template: '<span />' } }))
+vi.mock('@/views/desktop/DeviceConnect.vue', () => ({ __esModule: true, default: { template: '<span />' } }))
 
 beforeAll(() => {
   vi.stubGlobal(

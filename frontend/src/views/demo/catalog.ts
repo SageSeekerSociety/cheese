@@ -26,11 +26,13 @@ import { ADMIN_ENTRIES } from './catalogAdmin'
 import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
 import { CANVAS_ENTRIES } from './catalogCanvas'
+import { CHANNEL_DIALOG_ENTRIES } from './catalogChannelDialogs'
 import { CHANNEL_FILES_ENTRIES } from './catalogChannelFiles'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import { DOC_BLOCK_ENTRIES } from './catalogDoc'
+import { DOC_LINE_ENTRIES, LIBRARY_DOC_EDITED } from './catalogDocLine'
 import { FEEDBACK_ENTRIES } from './catalogFeedback'
 import {
   ACCEPT_CARD,
@@ -52,6 +54,7 @@ import {
   OPEN_FILES,
   PREVIEW_EMPTY,
   previewPanelProps,
+  ROOM_REFS,
   roomMessageProps,
   roomNoticeProps,
   SHEET_ACTIONS,
@@ -59,6 +62,7 @@ import {
   WANG_CLOSING,
   WANG_LINES,
 } from './catalogFixtures'
+import { HOME_ENTRIES } from './catalogHome'
 import { KNOWLEDGE_ENTRIES } from './catalogKnowledge'
 import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
@@ -73,6 +77,9 @@ import { ROOM_ENTRIES } from './catalogRoom'
 import { SCENES_MISC_ENTRIES } from './catalogScenesMisc'
 import { SCENES_MISC2_ENTRIES } from './catalogScenesMisc2'
 import { SCENES_MISC3_ENTRIES } from './catalogScenesMisc3'
+import { SCENES_PAGES_ENTRIES } from './catalogScenesPages'
+import { SCENES_PAGES2_ENTRIES } from './catalogScenesPages2'
+import { SCENES_PAGES3_ENTRIES } from './catalogScenesPages3'
 import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
@@ -100,6 +107,7 @@ import PanelTabs from '@/components/panels/PanelTabs.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import { platformNotice } from '@/lib/platformNotice'
 import AnalyticsNavigationTabs from '@/views/spaces/detail/analytics/components/AnalyticsNavigationTabs.vue'
 import LearningQuoteItem from '@/views/spaces/detail/analytics/components/LearningQuoteItem.vue'
 
@@ -161,32 +169,33 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'user-ref',
     title: 'UserRef',
-    about: '句子里提到的一个人：@名字。给了去处才可点。',
+    about:
+      '句子里提到的一个人：画成名字引用，浅色 chip、不带 @（带 @ 的实心 chip 只留给真的通知到人的那一处）。给了去处才可点。',
     file: 'src/components/common/UserRef.vue',
     component: UserRef,
     needs: [],
     states: [
       {
         name: '有去处',
-        note: '给了 to 才是一颗「人可以点」的 chip：进 Tab 顺序，按一下 emit navigate。',
+        note: '给了 to 才是人可以点的名字：进 Tab 顺序，悬停加深底色，按一下 emit navigate。',
         props: { handle: 'alice', name: '爱丽丝', to: { path: '/projects/p1/members/alice' } },
-        expect: '@爱丽丝',
+        expect: '爱丽丝',
       },
       {
         name: '只知道名字',
-        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画 @名字，但不可点。',
+        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画名字，但不可点。',
         props: { name: '新来的同学' },
-        expect: '@新来的同学',
+        expect: '新来的同学',
       },
       {
         name: '长名字',
-        note: '名字长到换行也是这一颗，不缩字号、不截断。',
+        note: '名字长到换行也照常折行，不缩字号、不截断。',
         props: {
           handle: 'someone-with-a-long-handle',
           name: '一位名字很长的同学（校外）',
           to: { path: '/projects/p1/members/x' },
         },
-        expect: '@一位名字很长的同学（校外）',
+        expect: '一位名字很长的同学（校外）',
       },
     ],
   },
@@ -346,6 +355,20 @@ export const CATALOG: CatalogEntry[] = [
         note: '有人采纳、PR 合并：同一个组件，换的是事件本身。',
         props: roomNoticeProps(ACCEPT_DONE),
         expect: '采纳了这次改动',
+      },
+      {
+        name: '改了资料库文档（在一轮里）',
+        note: '一行淡字，不再写队友的名字；点这一行打开文档本身，「查看改动」打开时一处处标出改了什么。',
+        props: {
+          block: LIBRARY_DOC_EDITED,
+          notice: platformNotice(LIBRARY_DOC_EDITED),
+          run: [LIBRARY_DOC_EDITED],
+          agent: { name: AGENT_NAME, handle: 'cheese' },
+          time: '14:32',
+          agentName: AGENT_NAME,
+          refs: ROOM_REFS,
+        },
+        expect: '3 处',
       },
     ],
   },
@@ -591,6 +614,7 @@ export const CATALOG: CatalogEntry[] = [
   ...REVIEW_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
+  ...DOC_LINE_ENTRIES,
   // 几个路由页拆出来的画面那一组（设备审批、已归档的项目、打开预览 / 网站，以及项目里的
   // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。
@@ -600,6 +624,15 @@ export const CATALOG: CatalogEntry[] = [
   // `catalogKnowledgeFixtures.ts`）。
   ...SCENES_MISC2_ENTRIES,
   ...SCENES_MISC3_ENTRIES,
+  // 第四批拆出来的画面（空间名录、小队链接落地页、小队项目列表、提问页）在自己的文件里：
+  // `catalogScenesPages.ts`，数据在 `catalogScenesPagesFixtures.ts`。
+  ...SCENES_PAGES_ENTRIES,
+  // 这一批拆出来的画面（功能数据页、我的连接、反馈详情、项目的技能）：`catalogScenesPages2.ts`，
+  // 数据在 `catalogScenesPages2Fixtures.ts`。
+  ...SCENES_PAGES2_ENTRIES,
+  // 这一批拆出来的画面（空间分析那一层、一道题的全部回答）和那张回答卡片：
+  // `catalogScenesPages3.ts`，数据在 `catalogScenesPages3Fixtures.ts`。
+  ...SCENES_PAGES3_ENTRIES,
   ...SCENES_SPACES_ENTRIES,
   ...SCENES_SPACES_DETAIL_ENTRIES,
   ...SCENES_WORKSPACE_ENTRIES,
@@ -893,6 +926,8 @@ export const CATALOG: CatalogEntry[] = [
   ...VIEW_ENTRIES,
   // 一个频道的文件那一页在自己的文件里：`catalogChannelFiles.ts`。
   ...CHANNEL_FILES_ENTRIES,
+  // 频道那两个弹窗（删频道前的确认、新建支线）在自己的文件里：`catalogChannelDialogs.ts`。
+  ...CHANNEL_DIALOG_ENTRIES,
   // 反馈详情那一组（从详情页右栏拆出来的处理人、评论条、评论楼、进展时间线，数据在
   // `catalogFeedbackFixtures.ts`）在自己的文件里：`catalogFeedback.ts`。
   ...FEEDBACK_ENTRIES,
@@ -903,6 +938,9 @@ export const CATALOG: CatalogEntry[] = [
   // 公共站那几页（三个公共页共用的外壳、首页、方案页，和首页里那段房间）在自己的文件
   // 里：`catalogPublic.ts`。
   ...PUBLIC_ENTRIES,
+  // 首页那一格（那份目录、它两端的两个画面、它带的四个弹窗）在自己的文件里：
+  // `catalogHome.ts`。
+  ...HOME_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */

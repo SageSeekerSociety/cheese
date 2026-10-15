@@ -20,6 +20,19 @@
 #                              / high / max), offered on a teammate's settings
 #                              and passed by Claude Code as output_config.effort.
 #                              None when absent: the model's own default.
+#   cheese_free: true          its upstream charges nothing, and both token
+#                              prices are written as 0 on purpose. The one way
+#                              a selectable model may be priced at zero; a
+#                              zero without it is a missing price.
+#
+# Two keys are per deployment, not per model group, for an upstream that wants
+# headers of its own (upstream_headers.py). Other rows of the same group, such
+# as the pay-per-use API behind a subscription, are sent neither:
+#
+#   cheese_upstream_headers: {user-agent: cheese-gateway/1.0}
+#                              sent as written.
+#   cheese_session_header: x-opencode-session
+#                              carries the caller's Claude Code session.
 #
 # A selectable model with no price is not offered — see the pricing note below
 # for why a missing price is worse than a missing model.
@@ -71,6 +84,11 @@ model_list:
       # K3 always reasons: keep native effort, but omit adaptive thinking.
       supports_output_config: true
       supports_max_reasoning_effort: true
+      # Measured 2026-10-14 with gateway_conformance.py on the OpenCode Go row
+      # (anthropic/, order 1, added from the admin side): a mid-conversation
+      # system message is dropped there. The flag tells Claude Code to fold it
+      # into the first user message, which every upstream of the group receives.
+      supports_mid_conversation_system: false
   # 芝士's own turns and the agents' Claude Code both speak the Anthropic
   # protocol, so both arrive on /v1/messages and are metered by the same rows.
   - model_name: glm-4.6
@@ -117,6 +135,11 @@ model_list:
     model_info:
       cheese_selectable: true
       cheese_label: GLM-5.2
+      # Measured 2026-10-14 on the OpenCode Go chat route this group is getting
+      # (hosted_vllm/, added from the admin page): a mid-conversation system
+      # message is dropped there. The flag tells Claude Code to fold it into the
+      # first user message, which every upstream of the group then receives.
+      supports_mid_conversation_system: false
 
   # One model, tried in `order`: RUC's self-hosted copy first, DeepSeek's API
   # when every RUC key fails or is cooling down. RUC admits 3 parallel
@@ -379,6 +402,14 @@ litellm_settings:
   # Upstreams that are not Anthropic get requests without Claude Code's
   # billing line, whose per-request hash otherwise defeats their prefix cache
   # (`system_billing_line.py`).
-  callbacks: ["cheese_chatgpt_session.handler", "cheese_billing_line.handler"]
+  # An image no model can decode is replaced by a line saying so, since one
+  # such image fails every later request of its conversation (`image_guard.py`).
+  # A deployment that declares cheese_upstream_headers or cheese_session_header
+  # is sent them (`upstream_headers.py`).
+  callbacks:
+    - cheese_chatgpt_session.handler
+    - cheese_billing_line.handler
+    - cheese_image_guard.handler
+    - cheese_upstream_headers.handler
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true

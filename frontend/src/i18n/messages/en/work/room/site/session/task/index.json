@@ -1,0 +1,9 @@
+{
+  "completed": "Done",
+  "failed": "Failed",
+  "pending": "Waiting",
+  "queued": "Queued",
+  "running": "Running",
+  "stopped": "Stopped",
+  "unknown": "Status pending"
+}

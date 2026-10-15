@@ -67,6 +67,41 @@ class TopicOut(BaseModel):
     # Derived per query, so only the endpoints that ask for it
     # (list_topics/get_topic) fill it in; elsewhere it stays None.
     last_activity_at: datetime | None = None
+    # 上一次有**输出**是什么时候：在跑的那一轮最后一帧（`agent/turn/intake/
+    # status.live_work_for_topic`）。`last_activity_at` 只说「有人说了话」——一个块
+    # 落了地；这一位说「队友还在输出」。一次长工具调用期间多半没有新块、只有帧，
+    # 所以「显示在跑、但五分钟没动静」（侧栏红灯）只可能看这一位。
+    #
+    # None：此刻没有在跑的轮次，或者记录里没有这个戳（那种「不知道」不当成「很新」
+    # 用，读的人自己决定，前后端都不许自己编一个）。
+    #
+    # 取整到分钟再发。清单的条件请求靠整份 body 的指纹（`conditional_json`），一帧
+    # 一个时间戳会让「有任何一轮在跑」期间每一次轮询都命中不了 304、几百 KB 原样重
+    # 传一遍 —— 和 `activity` 不带 `expires_in` 是同一条理由。取整把它压到一分钟
+    # 最多变一次；灯判的是五分钟，误差最多一分钟，够了。
+    last_output_at: datetime | None = None
+    # 交到这里、且**读的人还没点开看过**的活：这个频道名下有这么一件「卡片被采纳
+    # 过、而他从那以后没在这间房或那件活上点开过」（`room_task/repositories.
+    # unseen_deliveries`）。侧栏的**长绿**问的就是它——「这里做过事、都交付完了、
+    # 你还没点开看过」，点开过就灭（推的是已读位，见那一段）。
+    #
+    # 算在频道这一行上，是因为做完的活已经不占侧栏一行了（活一关就从侧栏消失，只剩
+    # 它那个频道）：不汇总上来的话，这条规矩在侧栏上无处可亮。
+    #
+    # 只对这个人自己参与的活成立（负责人或协作者），和未读对任务的规矩一致；没有
+    # 登录的人一律 False。借了 `Unread` 那份判断的同一个理由：别人的交付不该在我
+    # 的侧栏上喊我。
+    unseen_delivery: bool = False
+    # 这间房里有没有活在往前走：有一轮在跑（这间房自己那条线、它名下的活、它的支线
+    # —— `agent.liveness.moving_topics` 已经把它们折回这间房），或者走在交付链路上
+    # （这间房自己那张卡在 `Delivering` 那一列，或者**它名下的活**在那条链路上：
+    # 等闸门、等 CI、修检查、解冲突、换基）。侧栏的**呼吸绿**问的就是它
+    # （`room_task/presentation.work_moving`，判据只写在那一处）。
+    #
+    # 和 `unseen_delivery` 一样算在频道这一行上：活在侧栏是挂在频道下面的一行，而
+    # 「这间房有没有在往前走」是频道那一行的灯。只对 list/get 话题成立，别处一律
+    # False —— 私聊和项目本体没有「名下的活」这一层。
+    moving: bool = False
     # 成员动态：此刻谁在这个房间里忙——有一轮在跑的 AI 队友。
     # 来源：`agent/realtime/activity.py`。
     # 房间自己没有状态，有的是成员在做什么。只有 list/get 话题时填。
@@ -105,6 +140,17 @@ class TopicOut(BaseModel):
     # is deliberately NOT here: unread already has its own badge.
     joined: bool = False
     awaits_me: bool = False
+    # 有人回复了我、我还没处理：这间房里（它自己那条线，或它名下的支线）有一条别人
+    # 说的消息，答的是我写的某一块、或者点了我的名，而我从那以后没打开过这间房
+    # （`TopicRepository.replied_to_me`）。侧栏的黄灯问的也是它 —— 和 `awaits_me`
+    # 同一盏灯，都是「有事等你」。
+    #
+    # 和 `awaits_me` 那条「未读的 @ 不算」不同，未读的 @ 在这里**算**：这盏灯要的
+    # 正是「有人回了我」这件事本身，未读角标只说有多少条。打开这间房就算处理了。
+    #
+    # 和 `awaits_me` 一样是对**看的人**算的：只有 list_topics/get_topic 会填，别处
+    # 一律 False（「没人算过」，不是「没有」）。名下的活不在里面 —— 活有自己那一行。
+    replied_to_me: bool = False
     # 看板上这一格 —— 同一个 `presentation` 结构，一条活和一个房间用同一套词，因为
     # 侧栏把它们画在一起。和上面几个派生字段同一条规矩：只有 list_topics/get_topic
     # 会填，别处是 None（「没人算过」）。
@@ -120,15 +166,6 @@ class CheckResultIn(BaseModel):
 
     ok: bool
     detail: str = ""
-
-
-class LockIn(BaseModel):
-    """Acquire or release the room's heavy-operation lane."""
-
-    kind: str = Field(pattern="^heavy$")
-    #: The task holding it. Implied when the lock is asked for in a task.
-    task_id: uuid.UUID | None = None
-    resource: str = Field(default="", max_length=0)
 
 
 class ConclusionIn(BaseModel):

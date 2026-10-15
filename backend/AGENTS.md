@@ -5,11 +5,16 @@ Read [`../AGENTS.md`](../AGENTS.md) first; this file only adds what applies here
 ## The import graph is checked, and a wrong import fails CI
 
 `app/` is layered **api -> domain -> core**. Imports that point backwards, a
-route reaching into another domain's models, a cycle between sibling domains
-under `app.domain`, or one route module importing another (directly or through
-a helper) are failures — including when the import sits inside a
-function. The contracts and the frozen `importer -> imported` pairs are in
-`.importlinter`. Shared request dependencies (`DbSession`, `AuthUser`) live in
+route reaching into another domain's models, an import pointing up the seven
+layers of `app.domain` (every child of it belongs to one layer; a new package
+or top-level module is a violation until the layer table names it), a cycle
+between sibling domains under `app.domain`, or one route module importing
+another (directly or through a helper) are failures — including when the
+import sits inside a function. The contracts are declared in `.importlinter`,
+and what the check holds open is measured from the tree at the merge base with
+`origin/main`: a violation that tree already has is not this branch's to fix,
+one only this branch has is. Shared request dependencies (`DbSession`,
+`AuthUser`) live in
 `app/api/request_deps.py`, so a route never needs another route's import;
 `task boundaries` (`Taskfile.yml`) runs them.
 
@@ -33,14 +38,20 @@ is `app`, so a green backend type check cannot clear those outside callers.
 
 ## Generated routes and database predicates
 
-Resolve a conflict in `scripts/route_index.json` by regenerating from the merged
-routes: from `backend/`, run `uv run python -m scripts.route_index --emit > scripts/route_index.json`, then
-`uv run python -m scripts.route_index --sync scripts/route_index.json`. Run
-`uv run python -m scripts.route_index --check` too to validate the frozen
-shadowing pairs. If route ordering changed, verify
-the identities behind `scripts/route_index_frozen.py`'s indexed pairs and update
-their indices and tests together; never freeze a newly introduced shadowing
-relationship just to clear the check (`tests/unit/test_route_index*.py`).
+The route index is not committed. `scripts/route_index.py --emit` prints it to
+stdout, and it is generated where it is judged — the frontend `request-paths`
+job and this suite — so there is no file to regenerate and no conflict to
+resolve in it. After adding, removing or reordering routes, from `backend/` run
+
+- `uv run python -m scripts.route_index --check` — no later route is provably
+  shadowed by an earlier one. The frozen pairs in
+  `scripts/route_index_frozen.py` name their two leaves by path and handler, so a
+  route added elsewhere never moves them. Never freeze a newly introduced
+  shadowing relationship just to clear the check, and never pin a pair by
+  registration position.
+- `uv run python -m scripts.route_index --check-annotations` — every live route
+  has its handwritten authorization and owner note in
+  `tests/contract/route_index.yaml` (`tests/unit/test_route_index*.py`).
 
 Keep a partial index's predicate and its querying expression aligned, including
 literal values and casts; a parameterised or differently spelled expression may

@@ -26,6 +26,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
@@ -354,7 +355,7 @@ async def _name_authors(
     # A teammate's account keeps the nickname it was created with, so its
     # current name comes from the roster, under either of its handles.
     teammates: dict[str, tuple[str, str | None]] = {}
-    for member in await roster(db, project_id):
+    for member in await roster(db, project_id, team=project_team):
         if member.instance_handle is not None:
             named = (member.name, member.name_source)
             teammates[member.handle] = named

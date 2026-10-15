@@ -1,6 +1,7 @@
 """Acquire one session's execution capability when a tool actually needs it."""
 
 import asyncio
+import errno
 import json
 import logging
 import uuid
@@ -17,6 +18,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
 from app.core.sentences import say
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
@@ -31,13 +33,13 @@ from app.domain.agent.machine_address import device_api_base, site_forward, ws_u
 from app.domain.agent.market import cloud_provisionable
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
-from app.domain.agent_instance.own import owned_by_session
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
-from app.domain.delivery.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.device import sandbox as device_sandbox
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -50,6 +52,7 @@ from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
+    DISK_FULL,
     EXECUTOR_SETUP_FAILED,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
@@ -129,7 +132,7 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
 
     teammate = await _session_teammate(db, project, handle)
     agent = (
-        await TopicService(db).resolve_agent(topic)
+        await AgentInstanceService(db).for_topic_by_id(topic.id)
         if teammate is None
         else AgentInstanceService.resolved(teammate)
     )
@@ -211,7 +214,9 @@ async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> No
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
         return
-    if owner.username in await TopicMemberService(db).people_in(topic):
+    if owner.username in await TopicMemberService(db).people_in(
+        topic, team=project_team
+    ):
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)
@@ -453,6 +458,8 @@ class ExecutorSetupFailed(RuntimeError):
     server error, so the reason reaches the room."""
 
     def reason(self) -> str:
+        if f"[Errno {errno.ENOSPC}]" in str(self):
+            return DISK_FULL
         lines = [line.strip() for line in str(self).splitlines() if line.strip()]
         return lines[-1] if lines else "Executor setup failed"
 
@@ -486,11 +493,7 @@ async def restart_executor(db, row, lease):
         if row.conversation_id != topic.id
         else None
     )
-    chosen = (
-        SelfHosted(kind="self_hosted", device_id=own)
-        if (own := _own_host(row)) is not None
-        else await environment_of(db, row, topic, task, project)
-    )
+    chosen = await environment_of(db, row, topic, task, project)
     author = await _session_author(db, project, row.agent_handle)
     resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
     token = bind_resource_token(
@@ -550,8 +553,8 @@ async def switch_environment(
 
     Only this agent moves: every agent in a conversation has its own. The
     checkpoint runs there with no transaction open, and the agent moves whether
-    or not it went through (``checkpoint``). A session leaving a sandbox on the
-    platform's machines gives its place there back. With ``if_idle`` a session
+    or not it went through (``checkpoint``). The sandbox it leaves is the idle
+    sweep's to destroy (``HostPool.leave``). With ``if_idle`` a session
     whose room is mid-turn is left alone (``SessionWorking``). Whether the
     environment may be chosen at all was answered by the caller
     (``environments.check_allowed``)."""
@@ -591,8 +594,8 @@ async def switch_environment(
         if still_preparing(old):
             raise ConflictError(say("machineAllocationInProgress"))
     on_platform = bool((old or {}).get("platform"))
-    # A place on the platform's machines is given back, whether or not the
-    # sandbox there was ever handed to the session.
+    # The sandbox left behind is the idle sweep's, whether or not it was ever
+    # handed to the session.
     await HostPool(db).leave(session_id)
     # A person's machine keeps the session's directories; the room's cleanup
     # finds them there by this lease.
@@ -714,15 +717,6 @@ async def ensure(
             waited = True
 
 
-def _own_host(row) -> str | None:
-    """The owner's machine a member's own agent's session runs on, or None
-    for any other session."""
-    location = row.runtime_location or {}
-    if location.get("channel") != OWNER_CHANNEL:
-        return None
-    return location.get("device_id")
-
-
 async def _attempt(
     db, *, topic_id, session_id, claims, token, env, hub, tells_agent=False
 ):
@@ -747,15 +741,7 @@ async def _attempt(
         if row.conversation_id != topic_id
         else None
     )
-    # A member's own coding agent works on the machine its session runs on,
-    # the owner's (`owner_provider`), whatever was chosen for it: both ends of
-    # it are that one machine, and it is the owner's own.
-    own_host = _own_host(row)
-    environment = (
-        SelfHosted(kind="self_hosted", device_id=own_host)
-        if own_host is not None
-        else await environment_of(db, row, topic, task, project)
-    )
+    environment = await environment_of(db, row, topic, task, project)
     row.execution_request = request
     generation = request["generation"]
     lease = row.work_lease
@@ -768,11 +754,14 @@ async def _attempt(
         if lease["generation"] != generation:
             raise ConflictError("The previous work lease has not been released")
     ready = bool(lease and lease.get("status", "ready") == "ready")
+    location = row.runtime_location or {}
     if (
-        own_host is None
+        # A member's own agent may work on the machine its session runs on,
+        # its owner's, when that is where its environment is: the session then
+        # sees the project where the executor holds it (`owner_provider`).
+        location.get("channel") != OWNER_CHANNEL
         and ready
-        and (lease or {}).get("device_id")
-        == (row.runtime_location or {}).get("device_id")
+        and (lease or {}).get("device_id") == location.get("device_id")
     ):
         raise ForbiddenError("Project tools cannot execute on the session host")
     now = datetime.now(UTC)
@@ -803,13 +792,7 @@ async def _attempt(
             return {"unavailable": str(say("selfHostedOffline", machine=selected.name))}
         if selected.supply != Supply.self_hosted:
             raise ForbiddenError("A self-hosted environment names a platform machine")
-        if own_host is not None:
-            # The owner's machine need not be bound to the project: it works
-            # for its owner's own agent, in any project the owner is in.
-            owned = await owned_by_session(db, topic.project_id, row.agent_handle)
-            if owned is None or owned.owner_user_id != selected.owner_user_id:
-                raise ForbiddenError("Device does not belong to this agent's owner")
-        elif not await devices.serves_project(selected.device_id, topic.project_id):
+        if not await devices.serves_project(selected.device_id, topic.project_id):
             raise ForbiddenError("Device no longer serves this project")
         if await devices.get_hosted_device(selected.device_id) is None:
             raise ForbiddenError("Device is not hosted")
@@ -902,7 +885,7 @@ async def _attempt(
     # Placement records the session host before the screen that asks opens.
     assert row.runtime_location is not None
     host = row.runtime_location["device_id"]
-    if device_id == host and own_host is None:
+    if device_id == host and row.runtime_location.get("channel") != OWNER_CHANNEL:
         raise ForbiddenError("Project tools cannot execute on the session host")
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)

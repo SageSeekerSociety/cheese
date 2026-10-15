@@ -1,0 +1,365 @@
+{
+  "metadata": {
+    "started_at": "2026-10-14T21:25:26.102408+00:00",
+    "run_id": 38582677052,
+    "pr": 3724,
+    "base_ref": "e1dc25047d3597414b301a77b30526f153163eff",
+    "head_ref": "433848defa1c466582ff58473dca45842dac73dc",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "locale": "en-US",
+    "service_workers": "block",
+    "launch_args": [
+      "--no-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu"
+    ],
+    "cold_pairs": 0,
+    "walk_pairs": 2,
+    "order": "base first iff (pair_index + page_index) % 2 == 0",
+    "cold": "fresh context with login storage; cold HTTP cache, not first-ever storage",
+    "walk": "fresh context; warm logged-in home, networkidle + 300 ms, then real router push",
+    "probe_fixes": [
+      "legacy XHR API collection",
+      "disconnect old long-task observer on reset",
+      "separate warm-up failures from measured failures"
+    ],
+    "harness_sha256": {
+      "measure.py": "55597d5c1b7510d259399516ee059de10928890190db23c96adf6c745e6230c0",
+      "pages.py": "e0aeac9157bceddcec30c9ab7ea1179a5af986a1529976f41433ba0acf2b053f"
+    },
+    "params_sha256": "094715756ecb90f96eb24a01b182b81f0ab9e34fc02d2d5cdcffdfd8e6c4764d",
+    "backend": "shared local recovered snapshot; PostgreSQL 17.11.0, fakeredis 2.39.0",
+    "metric_limit": "later API bursts are not proven blocking; long tasks sampled just after ready",
+    "browser_version": "156.0.8078.4",
+    "warm_paths": {
+      "base": "/projects/zxeqxple/overview",
+      "head": "/projects/zxeqxple"
+    },
+    "finished_at": "2026-10-14T21:26:18.418595+00:00"
+  },
+  "samples": [
+    {
+      "page": "inbox",
+      "mode": "walk",
+      "ready_ms": 233.6,
+      "last_response_ms": 204.3,
+      "requests": 16,
+      "api_count": 1,
+      "api_requests": [
+        "awaiting-me"
+      ],
+      "long_task_ms": 79,
+      "long_task_count": 1,
+      "network_ms": 199.2,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "awaiting-me",
+          142.8,
+          204.3
+        ]
+      ],
+      "error": null,
+      "long_task_entries": [
+        {
+          "start": 2928.900001525879,
+          "duration": 79
+        }
+      ],
+      "collected_at_ms": 275.1999988555908,
+      "variant": "base",
+      "pair_index": 0,
+      "position": 0,
+      "started_at": "2026-10-14T21:26:03.481922+00:00",
+      "http_failures": [
+        {
+          "phase": "warmup",
+          "status": 500,
+          "url": "http://127.0.0.1:3000/api/projects/2ccce357-eee5-4274-83b8-172b36dadc7c/site"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3000/api/avatars/5"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3000/api/avatars/2"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3000/api/avatars/4"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3000/api/avatars/3"
+        }
+      ],
+      "page_errors": []
+    },
+    {
+      "page": "inbox",
+      "mode": "walk",
+      "ready_ms": 344.4,
+      "last_response_ms": 307.6,
+      "requests": 19,
+      "api_count": 4,
+      "api_requests": [
+        "awaiting-me",
+        "http://127.0.0.1:3001/notifications",
+        "http://127.0.0.1:3001/notifications/unread-count"
+      ],
+      "long_task_ms": 93,
+      "long_task_count": 1,
+      "network_ms": 275.2,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "awaiting-me",
+          163.6,
+          300.0
+        ],
+        [
+          "http://127.0.0.1:3001/notifications/unread-count",
+          169.8,
+          304.1
+        ],
+        [
+          "http://127.0.0.1:3001/notifications?type=CHEESE_QUESTION,ROOM_NOTICE,DEADLINE_REMIND,PROJECT_INVITE,TEAM_JOIN_REQUEST,TEAM_INVITATION&pageSize=1",
+          178.1,
+          307.6
+        ],
+        [
+          "http://127.0.0.1:3001/notifications?type=MENTION,REPLY,THREAD_REPLY,REACTION,TEAM_REQUEST_APPROVED,TEAM_REQUEST_REJECTED,TEAM_INVITATION_ACCEPTED,TEAM_INVITATION_DECLINED,TEAM_INVITATION_CANCELED,TEAM_REQUEST_CANCELED&pageSize=1",
+          179.0,
+          307.1
+        ]
+      ],
+      "error": null,
+      "long_task_entries": [
+        {
+          "start": 3197.5,
+          "duration": 93
+        }
+      ],
+      "collected_at_ms": 479.5,
+      "variant": "head",
+      "pair_index": 0,
+      "position": 1,
+      "started_at": "2026-10-14T21:26:07.055410+00:00",
+      "http_failures": [
+        {
+          "phase": "warmup",
+          "status": 500,
+          "url": "http://127.0.0.1:3001/api/projects/2ccce357-eee5-4274-83b8-172b36dadc7c/site"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3001/api/avatars/5"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3001/api/avatars/3"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3001/api/avatars/4"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3001/api/avatars/2"
+        }
+      ],
+      "page_errors": []
+    },
+    {
+      "page": "inbox",
+      "mode": "walk",
+      "ready_ms": 388.9,
+      "last_response_ms": 396.0,
+      "requests": 22,
+      "api_count": 7,
+      "api_requests": [
+        "awaiting-me",
+        "http://127.0.0.1:3001/notifications",
+        "http://127.0.0.1:3001/notifications/unread-count",
+        "http://127.0.0.1:3001/spaces",
+        "http://127.0.0.1:3001/teams/my-teams"
+      ],
+      "long_task_ms": 89,
+      "long_task_count": 1,
+      "network_ms": 379.1,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "awaiting-me",
+          152.0,
+          350.6
+        ],
+        [
+          "http://127.0.0.1:3001/notifications/unread-count",
+          157.4,
+          292.4
+        ],
+        [
+          "http://127.0.0.1:3001/teams/my-teams",
+          158.1,
+          373.1
+        ],
+        [
+          "http://127.0.0.1:3001/spaces?pageSize=50&sort_by=created_at&sort_order=desc",
+          159.5,
+          359.2
+        ],
+        [
+          "http://127.0.0.1:3001/notifications?type=CHEESE_QUESTION,ROOM_NOTICE,DEADLINE_REMIND,PROJECT_INVITE,TEAM_JOIN_REQUEST,TEAM_INVITATION&pageSize=1",
+          168.0,
+          327.6
+        ],
+        [
+          "http://127.0.0.1:3001/notifications?type=MENTION,REPLY,THREAD_REPLY,REACTION,TEAM_REQUEST_APPROVED,TEAM_REQUEST_REJECTED,TEAM_INVITATION_ACCEPTED,TEAM_INVITATION_DECLINED,TEAM_INVITATION_CANCELED,TEAM_REQUEST_CANCELED&pageSize=1",
+          168.6,
+          311.6
+        ],
+        [
+          "http://127.0.0.1:3001/notifications?type=DEVICE_IN_USE,SPACE_ANNOUNCEMENT&pageSize=1",
+          169.0,
+          396.0
+        ]
+      ],
+      "error": null,
+      "long_task_entries": [
+        {
+          "start": 2852.6000003814697,
+          "duration": 89
+        }
+      ],
+      "collected_at_ms": 560.5,
+      "variant": "head",
+      "pair_index": 1,
+      "position": 0,
+      "started_at": "2026-10-14T21:26:11.377297+00:00",
+      "http_failures": [
+        {
+          "phase": "warmup",
+          "status": 500,
+          "url": "http://127.0.0.1:3001/api/projects/2ccce357-eee5-4274-83b8-172b36dadc7c/site"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3001/api/avatars/5"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3001/api/avatars/3"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3001/api/avatars/4"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3001/api/avatars/2"
+        }
+      ],
+      "page_errors": []
+    },
+    {
+      "page": "inbox",
+      "mode": "walk",
+      "ready_ms": 314.8,
+      "last_response_ms": 302.6,
+      "requests": 19,
+      "api_count": 4,
+      "api_requests": [
+        "awaiting-me",
+        "http://127.0.0.1:3000/notifications",
+        "http://127.0.0.1:3000/notifications/unread-count"
+      ],
+      "long_task_ms": 63,
+      "long_task_count": 1,
+      "network_ms": 296.9,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "awaiting-me",
+          114.9,
+          274.4
+        ],
+        [
+          "http://127.0.0.1:3000/notifications/unread-count",
+          116.2,
+          272.8
+        ],
+        [
+          "http://127.0.0.1:3000/notifications?type=CHEESE_QUESTION,ROOM_NOTICE,DEADLINE_REMIND,PROJECT_INVITE,TEAM_JOIN_REQUEST,TEAM_INVITATION&pageSize=1",
+          119.6,
+          283.5
+        ],
+        [
+          "http://127.0.0.1:3000/notifications?type=MENTION,REPLY,THREAD_REPLY,REACTION,TEAM_REQUEST_APPROVED,TEAM_REQUEST_REJECTED,TEAM_INVITATION_ACCEPTED,TEAM_INVITATION_DECLINED,TEAM_INVITATION_CANCELED,TEAM_REQUEST_CANCELED&pageSize=1",
+          120.7,
+          302.6
+        ]
+      ],
+      "error": null,
+      "long_task_entries": [
+        {
+          "start": 2714.8999996185303,
+          "duration": 63
+        }
+      ],
+      "collected_at_ms": 407.3999996185303,
+      "variant": "base",
+      "pair_index": 1,
+      "position": 1,
+      "started_at": "2026-10-14T21:26:14.927197+00:00",
+      "http_failures": [
+        {
+          "phase": "warmup",
+          "status": 500,
+          "url": "http://127.0.0.1:3000/api/projects/2ccce357-eee5-4274-83b8-172b36dadc7c/site"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3000/api/avatars/4"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3000/api/avatars/5"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3000/api/avatars/2"
+        },
+        {
+          "phase": "warmup",
+          "status": 404,
+          "url": "http://127.0.0.1:3000/api/avatars/3"
+        }
+      ],
+      "page_errors": []
+    }
+  ]
+}

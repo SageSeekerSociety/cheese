@@ -1,0 +1,5 @@
+# Pillow for image_guard.py, installed by the Dockerfile with --require-hashes.
+# The two CPython 3.13 manylinux wheels from PyPI (x86_64 is what CI builds).
+pillow==12.3.0 \
+    --hash=sha256:0847a763afefb695bc912d7c131e7e0632d4edc1d8698f58ddabec8e46b8b6d3 \
+    --hash=sha256:f7401aebd7f581d7f83a439d87d474999317ee099218e5ad25d125290990ba65

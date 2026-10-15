@@ -64,7 +64,7 @@ def model_pool(monkeypatch):
         SimpleNamespace(AsyncClient=_Upstream, HTTPError=httpx.HTTPError),
     )
 
-    async def project_key(self, project_id):
+    async def project_key(self, project_id, *, dream=False):
         return "sk-project"
 
     monkeypatch.setattr(

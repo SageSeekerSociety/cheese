@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from app.core.config import settings
 from app.domain.agent.harness.channel import mint_session_token
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
@@ -133,6 +134,51 @@ def test_the_agent_cannot_react_in_a_room_it_does_not_sit_in(client, room):
         )
         == 403
     )
+
+
+def test_the_agent_changes_the_new_agents_environment_and_the_project_is_told(
+    client, room, monkeypatch
+):
+    """An agent changes a setting any member may, from the room it works in,
+    and the project's 综合 says it was that agent."""
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    monkeypatch.setattr(settings, "microcloud_vm_offering_id", "vm-offering")
+    pid, _, seat, agent = room
+    vm = {"kind": "sandbox", "spec": "vm"}
+
+    agent.call("PUT", f"/projects/{pid}/compute-configs", {"default": vm})
+
+    alice = session_auth_headers("alice")
+    assert (
+        client.get(f"/projects/{pid}/compute-configs", headers=alice).json()["data"][
+            "default"
+        ]
+        == vm
+    )
+    root = client.get(f"/projects/{pid}", headers=alice).json()["data"]["root_topic_id"]
+    lines = [
+        b
+        for b in client.get(f"/topics/{root}/blocks", headers=alice).json()["data"][
+            "data"
+        ]
+        if (b.get("meta") or {}).get("event_type") == "setting_changed"
+    ]
+    assert [
+        (b["author"], b["meta"]["by"], b["meta"]["from"], b["meta"]["to"])
+        for b in lines
+    ] == [(seat, seat, None, vm)]
+    assert f"<@{seat}>" in lines[0]["content"]
+
+
+def test_the_agent_cannot_change_what_stays_a_managers(room):
+    pid, *_, agent = room
+
+    status = agent.refused(
+        "PUT", f"/projects/{pid}/tier-policy", {"allowed_tiers": ["included"]}
+    )
+
+    assert status == 403
 
 
 def test_a_plain_member_agent_is_refused_the_roster(client, room):

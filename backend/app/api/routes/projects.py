@@ -16,6 +16,7 @@ from app.api.deps import (
     get_chat_service,
     get_profile_registry,
 )
+from app.api.member_settings import change_project_settings, member_setting_actor
 from app.api.place import (
     channels_unseen,
     live_rooms_seen,
@@ -23,6 +24,7 @@ from app.api.place import (
 )
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
+from app.api.room_task_rows import project_task_rows
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -36,22 +38,24 @@ from app.core.errors import (
 )
 from app.core.sentences import exception_text, say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.github_app import (
-    github_app_read_token_for_project,
-)
-from app.domain.agent.liveness import running_tasks
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.own import may_chat_with
-from app.domain.block.queries import (
-    awaiting_an_answer,
-    weeklies_for_project,
+from app.domain.agent_instance.adapters import (
+    default_teammate,
+    named_teammate,
+    project_team,
 )
+from app.domain.agent_instance.own import may_chat_with
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
-from app.domain.delivery.addressing import Event, address, hand_of
+from app.domain.delivery.ledger import deliver, settle, settle_card
 from app.domain.identity.actor import Actor
-from app.domain.membership.services import MemberService
+from app.domain.membership.services import InvitationService, MemberService
 from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
+from app.domain.project.github_app import (
+    github_app_read_token_for_project,
+)
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
     GITHUB_UNBOUND,
@@ -69,10 +73,9 @@ from app.domain.project.schemas import (
 from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.github_pr import parse_github_repo
-from app.domain.review.queries import latest_cards_by_task
-from app.domain.room_task import naming, presentation
-from app.domain.room_task.schemas import TaskOut
+from app.domain.room_task import naming
 from app.domain.room_task.services import TaskService
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
@@ -216,7 +219,7 @@ async def create_project(
     # 领了这道题才能用它新建项目：项目带着题目的访问权和资源包，不能凭一个题号拿到。
     if body.external_task_id is not None:
         await _require_claim(db, who, body.external_task_id, body.team_id)
-    project = await ProjectService(db).create(
+    project = await ProjectService(db, default_teammate=default_teammate).create(
         **body.model_dump(exclude={"id"}),
         project_id=body.id,
         owner_handle=who.handle,
@@ -402,6 +405,7 @@ async def list_project_tasks(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     if_none_match: Annotated[str | None, Header()] = None,
     status: Annotated[Literal["open", "closed"] | None, Query()] = None,
+    accepted: Annotated[bool | None, Query()] = None,
     channel: uuid.UUID | None = None,
     whose: Annotated[Literal["mine", "helping", "others"] | None, Query()] = None,
     limit: Annotated[int | None, Query(ge=1, le=200)] = None,
@@ -411,7 +415,9 @@ async def list_project_tasks(
 
     `status` keeps only threads in that state. The sidebar polls for the open
     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
-    read.
+    read. `accepted` independently keeps tasks with an approved delivery
+    (`true`) or without one (`false`); omitted, it keeps both. This applies to
+    whole lists as well as pages, regardless of whether the task is open.
 
     With `limit` (and a `status`) it is a page instead, of the threads that
     most recently moved: the closed ones only grow, and the all-tasks page
@@ -419,7 +425,8 @@ async def list_project_tasks(
     to one `channel` and to `whose` the threads are to the reader (`mine`: they
     own it; `helping`: they are among its contributors; `others`: neither).
     `next` is the cursor to pass as `before` for the page after; `counts` says
-    how many there are in all and by whose, for the same status and channel.
+    how many there are in all and by whose, for the same status, channel and
+    acceptance filter.
 
     The rail draws rooms and the work inside them, so it needs both halves at
     once. Two round trips, not two per room and one per thread: a project here
@@ -464,6 +471,7 @@ async def list_project_tasks(
             me=actor.handle or "",
             limit=limit,
             before=_task_cursor(before),
+            accepted=accepted,
         )
         tasks = [task for task, _ in page_rows]
         counts = await TaskService(db).counts_in_project(
@@ -472,8 +480,9 @@ async def list_project_tasks(
             status=status,
             channel=channel,
             me=actor.handle or "",
+            accepted=accepted,
         )
-        items = await _project_task_rows(db, chat, actor.handle or "", tasks)
+        items = await project_task_rows(db, chat, actor.handle or "", tasks)
         last = page_rows[-1] if page_rows and has_more else None
         return conditional_json(
             ok(
@@ -488,10 +497,10 @@ async def list_project_tasks(
         )
     tasks = [
         t
-        for t in await TaskService(db).list_in_project(project_id)
+        for t in await TaskService(db).list_in_project(project_id, accepted=accepted)
         if t.room_id in seen and (status is None or t.status == status)
     ]
-    items = await _project_task_rows(db, chat, actor.handle or "", tasks)
+    items = await project_task_rows(db, chat, actor.handle or "", tasks)
     return conditional_json(ok(page(items, len(items))), if_none_match)
 
 
@@ -504,83 +513,6 @@ def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:
         return datetime.fromisoformat(moved), uuid.UUID(task_id)
     except ValueError as exc:
         raise UnprocessableEntityError(say("taskPageCursorInvalid")) from exc
-
-
-async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> list[dict]:
-    """The project rail's rows for ``tasks``: each with its board cell, its
-    card, whether it waits on ``me``, whether it stalled, when it last moved."""
-    task_ids = [t.id for t in tasks]
-    cards = await latest_cards_by_task(db, task_ids)
-    # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
-    # （`ix_blocks_questions`）。这是唯一会中断「运行中」的一格，所以不能留
-    # 给调用方各自去问。
-    asked = await awaiting_an_answer(db, task_ids)
-    # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
-    # 一样的活分到不同格子，而那种差别没人再能复现。
-    now = datetime.now(UTC)
-    # 第四次批查询：哪几条此刻有一轮在跑（`agent.liveness`：不止看内存）。
-    running = await running_tasks(chat, db, tasks)
-    # 第五次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
-    last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
-    items = []
-    for task in tasks:
-        card = cards.get(task.id)
-        said_at = last_said.get(task.id)
-        shown = presentation.task_presentation(
-            presentation.facts_for_task(
-                task,
-                card,
-                running=task.id in running,
-                awaiting_answer=task.id in asked,
-            ),
-            now=now,
-        )
-        last_activity = said_at or task.created_at
-        is_running = task.id in running
-        # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
-        # 点和任务列表的橙字都读它，不各自从列再推一遍。
-        asking = asked.get(task.id)
-        awaits = address(
-            Event(
-                reviewers=(
-                    ()
-                    if card is None or not card.reviewer_handle
-                    else (card.reviewer_handle,)
-                ),
-                reporter=task.reporter_handle,
-                asked=asking,
-                # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知、
-                # 待办同一个名单（`announce.notify_question`）。题根本不在等，就
-                # 没有这一层。
-                asked_also=(task.people if task.id in asked and asking is None else ()),
-                owner=(
-                    task.owner_handle
-                    if presentation.owner_acts_on(shown, running=is_running)
-                    else None
-                ),
-            ),
-            hand_of(shown.column),
-        ).reason_for(me)
-        items.append(
-            {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
-                "presentation": shown.as_dict(),
-                "awaits_me": awaits is not None,
-                "stalled": presentation.is_stalled(
-                    shown, running=is_running, last_activity=last_activity, now=now
-                ),
-                "last_activity_at": last_activity.isoformat(),
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
-            }
-        )
-    return items
 
 
 @router.get("/{project_id}/progress")
@@ -680,6 +612,7 @@ async def get_private_chat(
         user_handle=user_handle,
         peer_handle=peer_handle,
         agent_handle=agent_handle,
+        named_teammate=named_teammate,
     )
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
@@ -733,16 +666,18 @@ async def save_forge_attribution(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    actor = await member_setting_actor(resolver, project_id)
+    project = await ProjectService(db).get_or_404(project_id)
     if body.requester_coauthor is None:
-        await service.merge_settings(project, {}, remove=("forge_requester_coauthor",))
+        await change_project_settings(
+            db, project, {}, remove=("forge_requester_coauthor",), by=actor.handle
+        )
     else:
-        await service.merge_settings(
-            project, {"forge_requester_coauthor": body.requester_coauthor}
+        await change_project_settings(
+            db,
+            project,
+            {"forge_requester_coauthor": body.requester_coauthor},
+            by=actor.handle,
         )
     return await get_forge_attribution(project_id, db, resolver)
 
@@ -757,16 +692,10 @@ async def get_task_naming(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    can_manage = True
-    try:
-        await MemberService(db).require_manager(project_id, actor)
-    except ForbiddenError:
-        can_manage = False
     return ok(
         {
             "mode": naming.naming_mode(project.settings),
             "available": naming.available(),
-            "can_manage": can_manage,
         }
     )
 
@@ -776,16 +705,16 @@ async def set_task_naming(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Switch the project's tasks between automatic and manual naming. Tasks a
-    person named keep their names either way."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    person named keep their names either way. Anyone in the project may
+    (``member_settings``)."""
+    actor = await member_setting_actor(resolver, project_id)
     mode = body.get("mode")
     if mode not in naming.MODES:
         raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
-    service = ProjectService(db)
-    project = await service.get_or_404(project_id)
-    await service.merge_settings(project, {naming.SETTINGS_KEY: mode})
+    project = await ProjectService(db).get_or_404(project_id)
+    await change_project_settings(
+        db, project, {naming.SETTINGS_KEY: mode}, by=actor.handle
+    )
     return await get_task_naming(project_id, db, resolver)
 
 
@@ -842,9 +771,23 @@ async def archive_project(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """归档项目: hide it from everyone's lists and stop everything it runs.
-    Nothing is deleted; ``/unarchive`` puts it back."""
+    Nothing is deleted; ``/unarchive`` puts it back.
+
+    The project's pending invitations are withdrawn here, not inside
+    ``ProjectService.archive``: settling the invitee's notification lands on the
+    delivery ledger, which sits above both ``project`` and ``membership``. An
+    invitation to a project nobody can enter would sit in the invitee's inbox
+    with no answer that means anything.
+    """
     owner = await _project_owner(project_id, db, resolver)
-    project = await ProjectService(db).archive(project_id, by=owner.handle)
+    project = await ProjectService(
+        db,
+        settle_card=settle_card,
+        cards=close_cards_for_archived_topic,
+    ).archive(project_id, by=owner.handle)
+    await InvitationService(
+        db, deliver=deliver, settle=settle, team=project_team
+    ).revoke_all_pending(project_id)
     await db.commit()
     return ok(await _project_payload(db, project))
 
@@ -855,7 +798,9 @@ async def unarchive_project(
 ) -> dict:
     """取消归档: the project and the rooms archived with it come back."""
     owner = await _project_owner(project_id, db, resolver)
-    project = await ProjectService(db).unarchive(project_id, by=owner.handle)
+    project = await ProjectService(db, sessions=AgentSessionService(db)).unarchive(
+        project_id, by=owner.handle
+    )
     await db.commit()
     return ok(await _project_payload(db, project))
 
@@ -997,6 +942,7 @@ def _branch_protection_payload(bp: BranchProtection) -> dict:
         ),
         "approvals_required": bp.approvals_required,
         "default_reviewer": bp.default_reviewer,
+        "dispatch_seat": bp.dispatch_seat,
     }
 
 
@@ -1053,6 +999,7 @@ _BRANCH_PROTECTION_KEYS = (
     "auto_merge_allowed",
     "override_handles",
     "default_reviewer",
+    "dispatch_seat",
 )
 
 
@@ -1137,43 +1084,3 @@ async def set_project_upstream(
     url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
     await service.merge_settings(project, {"github_repository_url": url})
     return ok({"url": url})
-
-
-#: How many of my tasks a channel's row in the sidebar carries under it.
-RAIL_TASKS = 5
-
-
-async def rail_tasks(
-    db: AsyncSession,
-    chat: ChatService,
-    actor: Actor,
-    room_ids: list[uuid.UUID],
-) -> dict[uuid.UUID, dict]:
-    """What the sidebar hangs under each channel, keyed by channel: how many
-    tasks are underway there (`open`, the count after 「全部任务」), and the ones
-    of them the caller owns or helps on (`shown`) — owned first, then helped,
-    each most recently moved first, at most `RAIL_TASKS`, leaving out one that
-    stalled. Every channel in ``room_ids`` gets an entry; the rows are the
-    project rail's (`_project_task_rows`).
-
-    The project's open tasks are not read for this: the count is one grouped
-    query, and only the caller's own tasks are made into rows."""
-    me = actor.handle or ""
-    service = TaskService(db)
-    counts = await service.underway_counts(room_ids)
-    mine = await service.underway_with(room_ids, me) if actor.authenticated else []
-    rows = await _project_task_rows(db, chat, me, mine)
-    shown: dict[str, list[dict]] = {}
-    for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
-        if not row["stalled"]:
-            shown.setdefault(row["room_id"], []).append(row)
-    out: dict[uuid.UUID, dict] = {}
-    for room in room_ids:
-        here = shown.get(str(room), [])
-        owned = [row for row in here if row["owner_handle"] == me]
-        helped = [row for row in here if row["owner_handle"] != me]
-        out[room] = {
-            "shown": (owned + helped)[:RAIL_TASKS],
-            "open": counts.get(room, 0),
-        }
-    return out

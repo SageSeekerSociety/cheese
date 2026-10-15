@@ -25,6 +25,7 @@ from app.domain.room_task.presentation import (
     TaskFacts,
     room_presentation,
     task_presentation,
+    work_moving,
 )
 from app.domain.topic.models import TopicStatus
 
@@ -552,3 +553,126 @@ def test_a_narrow_rail_card_folds_into_the_same_facts_as_the_orm_row():
     assert rail_facts.merge_state_word == "behind"
     assert rail_facts.merge_who == "platform"
     assert rail_facts.decided is True
+
+
+def test_a_narrow_listed_room_folds_into_the_same_facts_as_the_orm_row():
+    """窄读入口交出来的 `ListedRoom` 和 ORM 那一行，读成同一份事实。
+
+    「待我处理」不再为摆上来的那几个频道读整行（`topic.repositories.ListedRoom`），
+    但它要的答案必须一模一样 —— 否则同一个房间在清单和别处会说出两种话。三位都要
+    覆盖到：`status` 挑格子、`id` 说它是不是那个正在跑的房间、`accepted_at` 说这一步
+    已经交出去了。`RoomFacts` 是纯值，所以两边相等就是这一层的契约。
+    """
+    from app.domain.room_task.presentation import facts_for_room
+    from app.domain.topic.models import Topic
+    from app.domain.topic.repositories import ListedRoom
+
+    def both(**spec) -> tuple[RoomFacts, RoomFacts]:
+        shared = {
+            "status": spec.get("status", TopicStatus.active),
+            "accepted_at": spec.get("accepted_at"),
+        }
+        room_id = uuid.uuid4()
+        row = Topic(id=room_id, project_id=uuid.uuid4(), title="频道", **shared)
+        listed = ListedRoom(
+            id=room_id,
+            project_id=row.project_id,
+            title=row.title,
+            status=shared["status"],
+            accepted_at=shared["accepted_at"],
+            updated_at=NOW,
+        )
+        running = {room_id} if spec.get("running") else set()
+        return facts_for_room(row, running), facts_for_room(listed, running)
+
+    specs = [
+        {},
+        {"running": True},
+        {"status": TopicStatus.archived},
+        {"accepted_at": NOW},
+        {"status": TopicStatus.archived, "accepted_at": NOW, "running": True},
+    ]
+    for spec in specs:
+        from_orm, from_listed = both(**spec)
+        assert from_listed == from_orm
+
+    # 不是「两边都算成 None」就等于：拿几位具体的事实对下来。
+    _, listed_facts = both(status=TopicStatus.archived, accepted_at=NOW)
+    assert listed_facts.status == "archived"
+    assert listed_facts.accepted_at == NOW
+
+
+# —— 侧栏那盏呼吸绿问的那件事 ————————————————————————————————————
+
+
+@pytest.mark.parametrize(
+    ("facts", "moving"),
+    [
+        # 有一轮在跑：就是它在往前走。
+        (task(running=True), True),
+        # 房间那一头同理（在跑的是它自己那条线）。
+        (room(running=True), True),
+        # 递出去了、走在交付链路上：等闸门 / 等 CI / 修检查 / 换基，都算 ——
+        # 侧栏上这几格长得一样，都是「有活正在往前走」。
+        (task(card=card(AcceptStatus.pending_gate)), True),
+        (
+            task(
+                card=card(
+                    AcceptStatus.pending, merge_state_word="unstable", merge_who="ci"
+                )
+            ),
+            True,
+        ),
+        (task(card=card(AcceptStatus.pending, note_code=NoteCode.checks_failed)), True),
+        (room(card=card(AcceptStatus.pending_gate)), True),
+        # 还没开工、在等人、做完了：都不算「正在往前走」。
+        (task(started=False), False),
+        (task(), False),
+        (task(card=card(AcceptStatus.pending)), False),
+        (task(card=card(AcceptStatus.rejected)), False),
+        (task(accepted_at=JUST_NOW), False),
+        (room(awaiting_answer=True), False),
+        (room(accepted_at=JUST_NOW), False),
+    ],
+    ids=[
+        "活在跑",
+        "房间在跑",
+        "等待闸门",
+        "等待 CI",
+        "芝士在修检查",
+        "房间在等闸门",
+        "还没开工",
+        "开始了但停着",
+        "等人采纳",
+        "被退回",
+        "交付完了",
+        "在等人回答",
+        "房间交付完了",
+    ],
+)
+def test_moving_means_a_turn_is_running_or_a_delivery_is_on_its_way(facts, moving):
+    """呼吸绿的判据只有这一处（`presentation.work_moving`）。
+
+    前面那些格子测的是「落在哪一列」，这一条单独钉「哪些格子算在往前走」：
+    列相同不等于这件事相同 —— `needs_you` 里「等人采纳」和「被退回」都不动，
+    而 `delivering` 里每一格都在动。
+    """
+    shown = (
+        task_presentation(facts, now=NOW)
+        if isinstance(facts, TaskFacts)
+        else room_presentation(facts, now=NOW)
+    )
+    assert work_moving(shown) is moving
+
+
+def test_a_room_counts_a_delivery_under_it_as_moving_even_when_it_is_idle():
+    """房间自己那条线闲着，名下的活却走在交付链路上 —— 也算这间房在走。
+
+    这一半是 `also` 带来的（`routes/topics._delivering_rooms`）：缺了它，一间
+    自己没在跑、名下的活正在等 CI 的房在侧栏上会一直不亮。
+    """
+    idle = room_presentation(room(), now=NOW)
+    assert work_moving(idle) is False
+    assert work_moving(idle, also=True) is True
+    # 反过来说不出话（None 已经在调用方那层挡掉了，这里只确认它也认得）。
+    assert work_moving(idle, also=False) is False

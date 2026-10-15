@@ -39,7 +39,7 @@ from app.domain.integration.models import (
     Integration,
     MailDraft,
 )
-from app.domain.library import service as library
+from app.domain.integration.ports import RoomFiles
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
@@ -322,8 +322,9 @@ def guard_mail_hosts(config: dict) -> None:
 
 
 class IntegrationService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, room_files: RoomFiles):
         self._session = session
+        self._room_files = room_files
 
     async def owned(self, owner_user_id: int) -> list[Integration]:
         return list(
@@ -504,7 +505,7 @@ class IntegrationService:
         self, project_id: uuid.UUID, room_id: uuid.UUID, path: str
     ) -> bytes:
         try:
-            return library.read_room_file(project_id, room_id, path)
+            return self._room_files.read_room_file(project_id, room_id, path)
         except ValidationError as exc:
             raise ValidationError(say("mailAttachmentNotInRoom", path=path)) from exc
 

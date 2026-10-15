@@ -35,7 +35,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.api.routes.spaces import (
+from app.api.response import ok
+from app.api.space_deps import (
+    _ensure_space_visible,
+    get_space_service,
+    get_space_topics_service,
+    require_reviewed_space,
+)
+from app.api.space_payloads import (
     AddSpaceManagerRequest,
     CreateSpaceCategoryRequest,
     CreateSpaceDomainGroupRequest,
@@ -46,10 +53,6 @@ from app.api.routes.spaces import (
     _build_full_space_payload,
     _category_to_api_model,
     _domain_group_to_api_model,
-    _ensure_space_visible,
-    get_space_service,
-    get_space_topics_service,
-    require_reviewed_space,
 )
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -96,7 +99,7 @@ async def get_space_topics(
     else:
         topics = await service.get_hot_topics(space_id, safe_limit)
 
-    return {"code": 200, "message": "OK", "data": {"topics": topics}}
+    return ok({"topics": topics})
 
 
 @router.get(
@@ -116,7 +119,7 @@ async def list_space_categories(
         space_id=space_id, include_archived=includeArchived
     )
     items = [_category_to_api_model(c) for c in cats]
-    return {"code": 200, "message": "OK", "data": {"categories": items}}
+    return ok({"categories": items})
 
 
 @router.post(
@@ -137,11 +140,7 @@ async def create_space_category(
         display_order=payload.display_order,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"category": _category_to_api_model(category)},
-    }
+    return ok({"category": _category_to_api_model(category)})
 
 
 @router.patch(
@@ -175,11 +174,7 @@ async def patch_space_category(
             payload.teaching.model_dump() if payload.teaching is not None else None
         ),
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category)},
-    }
+    return ok({"category": _category_to_api_model(category)})
 
 
 @router.get(
@@ -198,11 +193,7 @@ async def get_space_category(
     category = await service.get_category_detail(
         space_id=space_id, category_id=category_id
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category)},
-    }
+    return ok({"category": _category_to_api_model(category)})
 
 
 @router.delete(
@@ -238,11 +229,7 @@ async def archive_space_category(
         archived=True,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category)},
-    }
+    return ok({"category": _category_to_api_model(category)})
 
 
 @router.delete(
@@ -261,11 +248,7 @@ async def unarchive_space_category(
         archived=False,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"category": _category_to_api_model(category)},
-    }
+    return ok({"category": _category_to_api_model(category)})
 
 
 @router.get(
@@ -283,11 +266,7 @@ async def list_space_domain_groups(
         space_id=space_id, actor_user_id=auth_user.user_id
     )
     items = [_domain_group_to_api_model(group, domains) for group, domains in groups]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"groups": items},
-    }
+    return ok({"groups": items})
 
 
 @router.post(
@@ -308,11 +287,7 @@ async def create_space_domain_group(
         domains=payload.domains,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"group": _domain_group_to_api_model(group, domains)},
-    }
+    return ok({"group": _domain_group_to_api_model(group, domains)})
 
 
 @router.patch(
@@ -334,11 +309,7 @@ async def patch_space_domain_group(
         domains=payload.domains,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"group": _domain_group_to_api_model(group, domains)},
-    }
+    return ok({"group": _domain_group_to_api_model(group, domains)})
 
 
 @router.delete(
@@ -374,11 +345,7 @@ async def list_space_admins(
     # outsider must not learn who runs a board they were never invited to.
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     admins = await service.list_admins(space_id)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"managers": [_admin_to_api_model(rel) for rel in admins]},
-    }
+    return ok({"managers": [_admin_to_api_model(rel) for rel in admins]})
 
 
 @router.post(
@@ -405,9 +372,9 @@ async def add_space_admin(
     )
     space = await service.get_space(space_id)
     if space is None:
-        return {"code": 201, "message": "Created", "data": None}
+        return ok(None)
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    return {"code": 201, "message": "Created", "data": {"space": space_data}}
+    return ok({"space": space_data})
 
 
 @router.delete(
@@ -452,6 +419,6 @@ async def patch_space_manager(
     )
     space = await service.get_space(space_id)
     if space is None:
-        return {"code": 200, "message": "OK", "data": None}
+        return ok(None)
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    return {"code": 200, "message": "OK", "data": {"space": space_data}}
+    return ok({"space": space_data})

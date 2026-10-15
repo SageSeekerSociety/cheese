@@ -31,19 +31,18 @@ from sqlalchemy.orm import aliased
 from app.core.config import settings
 from app.core.db import release_read_session
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
+from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
+from app.domain.conversation.services import of_room
+from app.domain.delivery_events import DeliveryEvent
+from app.domain.idempotency import store as idem
+from app.domain.idempotency.keys import action_key
+from app.domain.notice_meta import (
     EVENT_DEPENDENCY_CLOSED,
     EVENT_DEPENDENCY_REJECTED,
     SEVERITY_INFO,
     WHO_CHEESE,
     notice,
 )
-from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
-from app.domain.conversation.services import of_room
-from app.domain.delivery.agent import record_task_instruction
-from app.domain.delivery.ledger import DeliveryEvent
-from app.domain.idempotency import store as idem
-from app.domain.idempotency.keys import action_key
 from app.domain.notification.models import NotificationType
 from app.domain.project.forge import (
     ForgeRateLimitedError,
@@ -59,6 +58,7 @@ from app.domain.review import notes, pr_text
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.ports import Announce, RecordInstruction
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
@@ -182,13 +182,15 @@ async def open_pr_for_card(
     title, body = await _pr_text(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
-    opened = await client.open_pr(
-        head=branch,
-        base=base,
-        title=title,
-        body=body,
-    )
-    pr = opened.pr
+    pr = await _open_pr_of_task(client, task)
+    if pr is None:
+        opened = await client.open_pr(
+            head=branch,
+            base=base,
+            title=title,
+            body=body,
+        )
+        pr = opened.pr
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
@@ -205,6 +207,25 @@ async def open_pr_for_card(
     logger.info(
         "PR #%s ready for card %s (%s)", pr.get("number"), card_id, pr.get("html_url")
     )
+    return pr
+
+
+async def _open_pr_of_task(
+    client: GitHubPRClient | ForgejoPRClient, task: Task
+) -> dict | None:
+    """The PR the task already has, while it is still open on the task's branch.
+
+    The card rides this PR rather than whatever `open_pr` returns: `open_pr`
+    adopts only a PR with the same head AND base, and a person may have moved
+    the task's PR onto another base on the forge. Asked with the task's old
+    base, it opened a second PR for the same branch, and the card and the task
+    then named different PRs (FB-96)."""
+    if task.pr_number is None:
+        return None
+    pr = await client.pr_view(task.pr_number)
+    head = pr.get("head") or {}
+    if pr.get("state") != "open" or head.get("ref") != task.branch_name:
+        return None
     return pr
 
 
@@ -227,7 +248,11 @@ async def sync_pr_text(
 
 
 async def sweep_draft_prs(
-    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+    session_factory: async_sessionmaker,
+    project_id: uuid.UUID | None = None,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction,
 ) -> dict[str, int]:
     """Open draft PRs for task branches with commits and no existing PR.
 
@@ -240,7 +265,12 @@ async def sweep_draft_prs(
     from app.domain.room_task.services import TaskService
 
     counts = {"opened": 0, "skipped": 0, "failed": 0}
-    await retarget_completed_dependencies(session_factory, project_id)
+    await retarget_completed_dependencies(
+        session_factory,
+        project_id,
+        announce=announce,
+        record_instruction=record_instruction,
+    )
     if not enabled():
         return counts
     async with session_factory() as session:
@@ -285,12 +315,13 @@ async def sweep_draft_prs(
 
 
 async def retarget_completed_dependencies(
-    session_factory: async_sessionmaker, project_id: uuid.UUID | None = None
+    session_factory: async_sessionmaker,
+    project_id: uuid.UUID | None = None,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction,
 ) -> None:
     """Retarget delivered dependencies and persist instructions for the executor."""
-
-    # deferred-import: tests replace this name on app.domain.agent.announce
-    from app.domain.agent.announce import announce
 
     # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
@@ -550,7 +581,7 @@ async def retarget_completed_dependencies(
                 if block is None:
                     raise ValueError("Task room is missing")
 
-                await record_task_instruction(
+                await record_instruction(
                     session,
                     DeliveryEvent(
                         id=block.id,
@@ -558,7 +589,7 @@ async def retarget_completed_dependencies(
                         payload={"content": instruction},
                         occurred_at=block.created_at,
                     ),
-                    task=task,
+                    task_id=task.id,
                     content=instruction,
                 )
                 await idem.record_result(session, key, {"block_id": str(block.id)})
@@ -805,7 +836,8 @@ async def record_pr(
         if card.task_id is not None:
             tasks = TaskService(session)
             task = await tasks.get(card.task_id)
-            if task is not None and task.pr_number is None:
+            # The task follows the card: it names the PR the card rides.
+            if task is not None and task.pr_number != number:
                 await tasks.record_pr(task, number=number, url=url)
         await session.commit()
 

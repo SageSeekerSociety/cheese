@@ -10,6 +10,7 @@ this file.
 """
 
 import asyncio
+import gc
 import importlib
 import logging
 import pkgutil
@@ -26,7 +27,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
-from app.api.routes.admin_common import PlatformAdminDep
+from app.api.admin_deps import PlatformAdminDep
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
@@ -55,6 +56,14 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    # Move the startup heap (modules, routers, settings, the pool) out of the
+    # collector's scan set once, so every later gen-0/1 pass stops re-walking
+    # it. Nothing reachable at boot can become garbage, so this changes neither
+    # semantics nor peak memory — only how much the collector re-reads.
+    # `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
+    # 20-concurrency burst.
+    gc.freeze()
+
     # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process left behind (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
@@ -304,11 +313,45 @@ async def lifespan(application: FastAPI):
             name="cleanup startup recovery",
         )
         if settings.forge_event_relay_url:
+            # The relay's collaborators: wired here, not at module level, so a
+            # deployment that runs no relay pays nothing for them.
+            from app.domain.agent.announce import (  # deferred-import: startup cost
+                announce,
+            )
+
+            # deferred-import: startup cost
+            from app.domain.agent_instance.adapters import task_teammate
+            from app.domain.delivery.agent import (  # deferred-import: startup cost
+                dispatch_pending,
+                record_agent,
+                record_task_instruction,
+                seat_instance_id,
+            )
+            from app.domain.delivery.ledger import (  # deferred-import: startup cost
+                settle_card,
+            )
             from app.domain.review.events import listen
+
+            chat = get_chat_service()
+
+            async def pump_pending() -> object:
+                return await dispatch_pending(
+                    chat.session_factory, chat=chat, runner=chat.work_runner
+                )
 
             forge_events.append(
                 asyncio.create_task(
-                    listen(get_chat_service(), async_session_factory),
+                    listen(
+                        chat,
+                        async_session_factory,
+                        announce,
+                        settle_card=settle_card,
+                        record_instruction=record_task_instruction,
+                        seat_instance_id=seat_instance_id,
+                        record_agent=record_agent,
+                        dispatch_pending=pump_pending,
+                        task_teammate=task_teammate,
+                    ),
                     name="forge events",
                 )
             )
@@ -832,7 +875,13 @@ from app.domain.site.hosting import SiteHostMiddleware  # noqa: E402
 
 app.add_middleware(SiteHostMiddleware, platform=app)
 
+# Outside the site host, which refuses every label of the domain but a project's.
+from app.api.app_shell_host import AppShellHostMiddleware  # noqa: E402
+
+app.add_middleware(AppShellHostMiddleware, platform=app)
+
 from app.api.preview_host import PreviewHostMiddleware  # noqa: E402
+from app.api.response import ok  # noqa: E402
 
 app.add_middleware(PreviewHostMiddleware, platform=app)
 
@@ -851,7 +900,7 @@ async def debug_turns(_admin: PlatformAdminDep) -> dict:
     admin of its own throwaway backend."""
     from app.api.deps import get_work_runner
 
-    return {"code": 200, "message": "ok", "data": get_work_runner().recent_work()}
+    return ok(get_work_runner().recent_work())
 
 
 @app.get("/health")
@@ -861,15 +910,13 @@ async def health() -> dict:
     # active_turns lets a redeploy drain: wait until no agent turn is in flight
     # before restarting, so a deploy never kills 芝士 mid-work. version rides
     # along so a deploy check can confirm the running build in one call.
-    return {
-        "code": 200,
-        "message": "ok",
-        "data": {
+    return ok(
+        {
             "status": "healthy",
             "active_turns": get_work_runner().active_work_count(),
             "version": settings.app_version,
-        },
-    }
+        }
+    )
 
 
 @app.get("/version")
@@ -881,16 +928,14 @@ async def app_version() -> dict:
     the commit the image was built from, older than `sha` when the release
     reused an unchanged image."""
     sha = settings.released_commit
-    return {
-        "code": 200,
-        "message": "ok",
-        "data": {
+    return ok(
+        {
             "sha": sha,
             "short": sha[:7] if sha and sha != "dev" else sha,
             "build": settings.app_version,
             "badge": settings.show_version_badge,
-        },
-    }
+        }
+    )
 
 
 # Last, once every route is mounted: refuse to start with a write route that

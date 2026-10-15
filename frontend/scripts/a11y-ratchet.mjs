@@ -102,7 +102,7 @@ const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath
 const result = compare(baseline, current)
 
 if (update) {
-  // Shrink-only, like backend/scripts/boundary_baseline.py. `tightenedBaseline`
+  // Shrink-only, like every other ratchet here. `tightenedBaseline`
   // never raises a frozen count, but it does admit a file the baseline has not
   // seen yet — which is exactly where a new violation lands. So an update that
   // would freeze anything new refuses and says what; accepting new debt is a

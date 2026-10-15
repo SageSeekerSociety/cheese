@@ -8,6 +8,8 @@ been answered.
 import pytest
 from fastapi.testclient import TestClient
 
+from app.domain.notification.models import NotificationType
+from app.domain.notification.push import push_text
 from tests.integration.conftest import UserCreator, unique_int
 
 
@@ -93,3 +95,14 @@ def test_a_rejected_request_no_longer_reads_as_waiting(api_client, join_request)
     assert join_request["requester"].user_id not in members(api_client, join_request)
     after = request_card(api_client, join_request["owner"])
     assert after["entities"]["application"]["status"] == "REJECTED"
+
+
+def test_the_push_says_who_asked_to_join_which_team(api_client, join_request):
+    card = request_card(api_client, join_request["owner"])
+
+    title, _ = push_text(
+        NotificationType.TEAM_JOIN_REQUEST, card["contextMetadata"], "zh-CN"
+    )
+
+    assert card["entities"]["team"]["name"] in title
+    assert "申请加入" in title

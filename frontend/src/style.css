@@ -41,7 +41,7 @@
   --ink: #191a1c; /* titles */
   --text: #36383c; /* body */
   --muted: #5a5e66; /* secondary */
-  --faint: #747a82; /* meta */
+  --faint: #747a82; /* decoration — icons, dividers, placeholder shapes */
 
   --line: #ecedef; /* hairlines */
   --line-2: #e2e3e6; /* dividers AND the selected row's fill — see above */
@@ -60,6 +60,10 @@
   --accent-press: #d96e0a;
   --accent-ink: #9a5413; /* amber text on light */
   --accent-wash: #fdf1e2; /* rare tint */
+  /* Text ON a solid --accent fill (the notifying @chip). The same dark ink in both
+     themes on purpose: --accent stays bright in both, so its ink cannot flip with
+     the theme (white on #f57f17 is 2.6:1). */
+  --accent-on: #191a1c;
 
   /* ---- Status (ONLY for real status; dot + neutral text) ----
      Each status has three parts, and they are NOT interchangeable:
@@ -79,6 +83,9 @@
   --danger-wash: #fdecec;
   /* 侧栏红黄绿灯的黄：和琥珀（--accent/--warn）拉开，未读数字是琥珀色。 */
   --signal-yellow: #eab308;
+  /* 侧栏那盏「这条活归我」的蓝：亮到在白、在选中行（--line-2）上都压得住
+     （5.2:1 / 4.0:1，色块够 3:1）。 */
+  --signal-blue: #2563eb;
 
   /* ---- Brand glow (header corner gradient in styles/common.scss) ----
      Only ever composited at 4–8% alpha, so these are deliberately brighter
@@ -380,7 +387,7 @@
   --ink: #f3f4f6;
   --text: #d3d6db;
   --muted: #aeb4bd;
-  --faint: #888ea0;
+  --faint: #888ea0; /* decoration — icons, dividers, placeholder shapes */
 
   --line: #2b2e33;
   --line-2: #3a3e45; /* dividers AND the selected row's fill */
@@ -399,6 +406,7 @@
   --accent-press: #ffbc5e; /* pressing LIGHTENS on dark, unlike light theme */
   --accent-ink: #ffc670;
   --accent-wash: #2e2216;
+  --accent-on: #191a1c; /* same as light, deliberately: see the light set */
 
   /* ---- Status ---- */
   --ok: #3fbf7f;
@@ -411,6 +419,8 @@
   --danger-ink: #f79490;
   --danger-wash: #2e1a1a;
   --signal-yellow: #facc15;
+  /* 同上那盏蓝，深色底上抬亮（--surface 6.6:1、--line-2 4.2:1）。 */
+  --signal-blue: #60a5fa;
 
   /* ---- Syntax highlighting (see the light block for why these exist) ----
      Same hues, lifted into readable range on a dark ground. Measured against
@@ -664,11 +674,9 @@ body {
 
 /* Meta, readable: 12 / 18 / 400 / --muted.
    与 .t-meta 同档、同尺寸，只换了颜色。判据是**文字那条线**（AA 4.5:1），不是图形
-   那条（3:1）：这一档装的是 12px 的时间戳、计数、轴标签。`--faint` 在浅色主题下
-   四种底色上连 3:1 都到不了（`--surface` 2.64 / `--canvas` 2.48 / `--fill` 2.42 /
-   `--line-2` 2.05）—— 所以它不是「差一点」，而写这条规则的人要是照图形那条线算，
-   会得出「把 --faint 抬到 3.1 这个类就能删」的结论，那个结论对 12px 的字是错的。
-   深色那一侧不成立同样的量级（4.25 / 4.60 / 3.92 / 2.70），吃紧的一直是浅色。
+   那条（3:1）：这一档装的是 12px 的时间戳、计数、轴标签。`--faint` 够图形那条线
+   （浅色 3.37–4.33、深色 3.29–5.59），但浅色下五种底色一处也到不了 4.5:1，所以它
+   只作装饰、不承载要读的字（docs/design-system.md §2.6）。
    .t-meta 是既有类，它的 `--faint` 留给存量页面，不在这里改。 */
 .t-meta-read {
   font-size: 12px;
@@ -1337,18 +1345,34 @@ button:not(.v-btn) {
    产出，用它的地方却早就不止一处——对话栏、现场、动作卡、文档。以前它写在组件自己的
    scoped 样式里，于是换一个 panel 渲染同一段字，chip 就退化成一行普通文字：点得到，
    看不出来能点。
-   @人 是浅琥珀底、琥珀墨色字：它会叫到一个人，是这段字里要紧的那一处。话题和文件只是
-   去处，中性底、正文色。悬停只加深底色。 */
-.mention {
+   一个人有两种样子，和飞书一样分「提醒」和「提到」（lib/refChip 的 notified）：
+   - `.mention`（@人）：这一处真的通知到了他。带「@」，实心琥珀底（`--accent`）、
+     深色字（`--accent-on`），是这段字里最要紧的那一处（docs/design-system.md §1.6）。
+   - `.name-ref`：只是提到他，没有通知（平台提示里的操作人、通知卡、周报、文档里
+     芝士写的名字……）。不带「@」，浅琥珀底、琥珀墨色字——原来那颗 chip 的样子。
+   话题和文件只是去处，中性底、正文色。悬停只改底色。 */
+.mention,
+.name-ref {
   padding: 0 4px;
   border-radius: var(--radius-sm);
   font-weight: 500;
-  color: var(--accent-ink);
-  background: var(--accent-wash);
   cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
+/* 实心琥珀底配深色字（--accent-on，两套主题同一个值）：浅色 #f57f17 上 6.6:1（按下 5.1:1），
+   深色 #ffa733 上 9.0:1。白字在 #f57f17 上只有 2.6:1，读不清。 */
+.mention {
+  color: var(--accent-on);
+  background: var(--accent);
+}
 .mention:hover {
+  background: var(--accent-press);
+}
+.name-ref {
+  color: var(--accent-ink);
+  background: var(--accent-wash);
+}
+.name-ref:hover {
   background: color-mix(in srgb, var(--accent) 18%, var(--accent-wash));
 }
 .mention:is(.file-ref, .topic-ref) {
@@ -1366,8 +1390,11 @@ button:not(.v-btn) {
   cursor: default;
 }
 /* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
-.mention--static {
+.name-ref--static {
   cursor: default;
+}
+.name-ref--static:hover {
+  background: var(--accent-wash);
 }
 /* 文件 chip 前那个 mdi 图标。 */
 .file-ref__icon {

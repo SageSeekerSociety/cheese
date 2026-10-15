@@ -1,0 +1,204 @@
+"""一条事件点到了谁 —— 全仓唯一的那一份判据（结论 13、14、15，不变量 I11）。
+
+## 为什么住在第 1 层
+
+这份词汇被每一层用：第 6 层的编排（`task_quiet`）、第 5 层的智能体执行（`agent` 的
+`announce`、`mentions`、`runtime`，以及 `machine`）、第 4 层的协作内容（`block`、
+`review`、`discussion`、`space`）、第 2 层的身份与归属（`membership`、`team`、
+`policy`）都在说同一句话：一条事件点了谁的名，下一步在谁手上。它原来住在第 5 层的
+`delivery` 里，于是每一层都得向上够四层去拿这几个码。
+
+搬下来的理由和 `notice_meta` 一样（`docs/manual/dev/architecture.md`）：被每一层读的
+一份词汇，该住在每一层下面。搬之前先拆掉它唯一那条出边 —— `hand_of(column)` 读的是
+看板那一列，那是第 4 层的 `room_task/presentation.py` 的东西，留在那里和 `Column`
+做邻居；这个模块因此谁都不 import，落在第 1 层不新添一条向上的边。
+
+## 为什么有这个模块
+
+「下一步在谁手上」以前有三个互不引用的答案：
+
+- `room_task/presentation.py` 的列（`needs_you` 就是「下一步在人手上」）；
+- `room_task/awaiting.py` 的两条判据（验收人 / 提需求的人 / 被问的那个人）；
+- `agent/announce.py` 的那道闸门：`meta.who` 不是 `human` 而调用点又点了收件人，
+  就抛 `ValueError`，同时还兼着「agent 不能当收件人」。
+
+三个答案各自都对得起自己那一处，合起来就是看板显示「待处理」而没有人被通知到。
+这个模块把它们收成一个入口：**一条事件说它点了谁的名，`address()` 说谁会收到、
+凭什么收到。**
+
+「下一步在谁手上」本来就在两处被声明过，所以这里不新造第三处，只把那两处翻成
+`Hand`：看板那一列（`room_task/presentation.py` 的 `hand_of`）和通知契约的 `who` 码
+（`agent/announce.py` 的 `_HAND_OF_WHO`，`platform` / `cheese` → 平台手上，`human`
+→ 参与者手上）。两张都是封闭表，多一档而没跟上就当场抛 `KeyError`。
+
+## 唯一的收件人规则（结论 15）
+
+一件事从「下一步在平台手上」转入「下一步在某个参与者手上」的那一刻，通知那个参与
+者，一次。不再「一律告诉人」：Cloud 正在开机是平台自己的事，不惊动任何人；一轮失
+败而下一步回到了点名它的那个参与者，就只通知那一个。
+
+`Hand` 因此只有两档。「已关闭」「已归档」这些没有下一步的情形也落 `platform`：它们
+和「平台正在处理」对投递的意思一模一样（谁都不通知），给它们第三个值只是多一个行为
+完全相同的档。
+
+## 收件人只能从事件**点的名**来，不能从名册推
+
+凭房间名册推一批收件人出来，等于把一条只有一个人该处理的事项摆进一屋子人的清单
+里。所以 `Event` 上的关系是封闭的 —— 一条事件点到一个参与者，只可能是下面几种之
+一，每一种都是那个参与者和这件事之间一个具体的事实：
+
+| 关系 | 凭什么是他 |
+|---|---|
+| 验收人 | 卡是递给他的 |
+| 提需求的人 | 他等的东西有了结果 |
+| 任务负责人 | 下一步只有他能推（`presentation.owner_acts_on`） |
+| 被问的那个人 | 芝士停在一个待确认问题上，只有他能回答 |
+| 设备的主人 | 有 agent 开始在他登记的机器上干活，让不让它继续用只有他能定（#1900） |
+| 公告的读者 | 空间发了一条公告，而公告就是写给这个空间里的每个人的 |
+| 被点名的人 | 频道里一条消息 @ 了他 |
+| 支线里说过话的人 | 他参与过的那条支线里有人回复了 |
+
+前三条是 #1084 定的收件人，第四条补上了任务负责人。「待我处理」那份清单和投递
+读的是同一份判据 —— 通知负责把人叫回来，清单负责他回来之后不用自己翻。
+
+## 纯函数
+
+没有 I/O，不碰 session，不读时钟，也不问「现在是谁在看」：`address()` 的答案只取决
+于这条事件本身，所以同一条事件算两遍得到同一个答案 —— 「恰好一次」因此才是可执行
+的（重算不会变成第二次打扰）。
+
+怎么送到收件人手上是另一个问题：人有浏览器、agent 有一条会话，那一叉在
+`identity/arrival.py`，是全系统唯一合法的人 / agent 分叉。
+"""
+
+from __future__ import annotations
+
+import enum
+from dataclasses import dataclass
+
+#: 为什么是他。前端按它给「待我处理」的每一行配一句话。
+REASON_REVIEWER = "reviewer"
+REASON_REPORTER = "reporter"
+REASON_OWNER = "owner"
+REASON_ASKED = "asked"
+REASON_MACHINE_OWNER = "machine_owner"
+REASON_AUDIENCE = "audience"
+REASON_MENTIONED = "mentioned"
+REASON_IN_THREAD = "in_thread"
+
+
+class Hand(enum.StrEnum):
+    """下一步在谁手上。两档，封闭。"""
+
+    #: 平台或芝士自己在推进，或者这件事已经没有下一步 —— 谁都不该被惊动。
+    platform = "platform"
+    #: 下一步在某个参与者手上。
+    participant = "participant"
+
+
+@dataclass(frozen=True, slots=True)
+class Event:
+    """一条事件，窄到只剩寻址要读的部分：它点了谁的名。
+
+    `reviewers` 和 `asked_also` 是复数，另外几个不是：一张卡有一个验收人，而一条
+    作废了某张批准票的事件还点到投那一票的人 —— 重新投一次这件事只有他能做；一道
+    题问在一条活里、又没落在某个人头上时，等回答的是这条活的几个人。其余几种各只
+    有一个人。
+    """
+
+    reviewers: tuple[str, ...] = ()
+    reporter: str | None = None
+    asked: str | None = None
+    #: 和 `asked` 一起等这个回答的人 —— 同一道题、同一个理由（「待你回答」），分成
+    #: 两个字段只因为 `asked` 装得下一个人。一道题问在一条活里、又没落在某个人头上
+    #: 时，等它的是这条活的人：负责人和协作者（`room_task.models.Task.people`）。
+    asked_also: tuple[str, ...] = ()
+    #: 任务负责人 —— 只在这一格的下一步在他手上时才点（`presentation.owner_acts_on`）；
+    #: 只是任务开着不点。
+    owner: str | None = None
+    #: 登记了那台机器的人：他的机器上有 agent 开工了。
+    machine_owner: str | None = None
+    #: 一条公告写给的那些人：发布那一刻这个空间里除发布人以外的每个人。这是上面
+    #: 「不从名册推」唯一的例外，而它不是推出来的：公告本身就是对全空间说的话，
+    #: 名单由发公告的那个调用点点出来、在这一刻快照下来，之后进出空间的人不改变
+    #: 它发给过谁。
+    audience: tuple[str, ...] = ()
+    #: 频道里一条消息 @ 到的人（`agent.mentions.announce_mentions`）。`<@all>`
+    #: 由那个调用点按房间名册展开好再点进来，和公告一样是那一刻的快照。
+    mentioned: tuple[str, ...] = ()
+    #: 一条支线里回复了，在这条支线里说过话的人（`agent.mentions._tell_thread`）。
+    in_thread: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Recipient:
+    """一个收件人，连同凭什么是他。"""
+
+    handle: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class Addressed:
+    """寻址结果 —— 投递的入参是它，不是一句文案（I11）。
+
+    原因跟着人走，不是整条事件一个：递卡同时点到验收人和提需求的人，两个人收到同
+    一句话的理由并不相同，而「待我处理」要显示的正是**我**这一行的那个理由。
+    """
+
+    recipients: tuple[Recipient, ...] = ()
+
+    def reason_for(self, handle: str) -> str | None:
+        """这条事件凭什么点到 `handle` —— None = 没点到他。"""
+        for r in self.recipients:
+            if r.handle == handle:
+                return r.reason
+        return None
+
+
+#: 谁都不通知。
+NOBODY = Addressed()
+
+#: 这条事件谁的名也没点。投递入口用它当默认值 —— 不说点了谁，就不惊动任何人。
+NAMES_NOBODY = Event()
+
+
+def address(event: Event, next_hand: Hand) -> Addressed:
+    """这条事件点到了谁。
+
+    下一步在平台手上就没有收件人 —— 那一档是结论 15 收紧「一律告诉人」的那一半。
+
+    `next_hand` 不是这里算的，也不由点名的那个调用点填：它从已经声明过这件事的地方
+    翻过来 —— 「待我处理」那份清单从看板那一列（`hand_of`），投递从通知契约的 `who`
+    码（`agent/announce.py`）。所以「平台在处理，另外通知这几个人」这句话**写得出
+    来、发不出去**：调用点照样可以一边报平台在处理一边点几个人的名，那些名字在这里
+    被忽略，一个人也不通知。事件点谁的名是一件事，下一步在谁手上是另一件，后者不归
+    点名的人说。
+
+    同一个人只出现一次，带他最强的那个理由 —— 下面这个顺序就是判据本身：一个待确
+    认问题挡住其余所有事，所以「被问的那个人」压过「验收人」，而卡递给谁又比「他
+    等的东西有结果了」具体。空白和重复在这里消掉，调用点不必各自去重（以前那一步
+    是一路拖到「handle → 用户 id」时被 set 顺手吃掉的）。
+    """
+    if next_hand is Hand.platform:
+        return NOBODY
+
+    pointed: list[Recipient] = []
+    seen: set[str] = set()
+    for handle, reason in (
+        (event.asked, REASON_ASKED),
+        *((h, REASON_ASKED) for h in event.asked_also),
+        *((h, REASON_REVIEWER) for h in event.reviewers),
+        (event.reporter, REASON_REPORTER),
+        (event.owner, REASON_OWNER),
+        (event.machine_owner, REASON_MACHINE_OWNER),
+        *((h, REASON_AUDIENCE) for h in event.audience),
+        *((h, REASON_MENTIONED) for h in event.mentioned),
+        *((h, REASON_IN_THREAD) for h in event.in_thread),
+    ):
+        name = (handle or "").strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        pointed.append(Recipient(handle=name, reason=reason))
+    return Addressed(tuple(pointed))

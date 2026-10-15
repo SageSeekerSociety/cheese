@@ -1,0 +1,8 @@
+{
+  "wakeWatchStalled": "【该发没发】{beat}：{minutes} 分钟没有新的一拍",
+  "wakeWatchCatchUp": "【补跳】平台侧观察者：{beat}停摆 {minutes} 分钟",
+  "wakeWatchCatchUpHow": "按资料库《{title}》那一份做，把定时器和看门狗重新起起来。",
+  "wakeWatchBeatTimer": "总调度定时器",
+  "wakeWatchBeatWatchdog": "看门狗心跳",
+  "labelWakeWatchDetail": "这次判停摆的依据"
+}

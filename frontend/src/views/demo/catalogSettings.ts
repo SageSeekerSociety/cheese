@@ -12,9 +12,9 @@
  * （`frontend_grade.py` 的 A 级，取数全在 `composables/useProjectSettings.ts` 和
  * `composables/useBranchProtection.ts` 里），于是每一件都能单独摆在预览站里。
  *
- * 这里没有登记整页：整页现在只剩接线（取数 + 把六件摆进四组里），而且它在
- * `scene-baseline.json` 的 debt 里 —— 「场景」指的是路由页和 `components/panels/**`，
- * `components/settings/**` 这几件不是场景，也不该往那张表里加。
+ * 这里没有登记整页：整页现在只剩接线（取数 + 把六件摆进四组里），而且它自己不是
+ * A 级，在场景棘轮眼里是那棵树上的欠债 —— 「场景」指的是路由页和
+ * `components/panels/**`，`components/settings/**` 这几件不是场景。
  *
  * 末尾另收「归档项目」那一块（`ArchiveProjectSection`）和它的确认框（`ArchiveProjectDialog`）：
  * 两件都是哑的，请求和状态在 `composables/useProjectArchive.ts`。
@@ -69,13 +69,14 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '读到了，GitHub 没开保护',
-        note: '八条规则按「检查 → 跟上 main → 作废采纳 → 自动合并 → 放行名单 → 批准人数 → 合并方式 → 默认 reviewer」排；填了路径范围的检查只在改到对应文件时要求。',
+        note: '九条规则按「检查 → 跟上 main → 作废采纳 → 自动合并 → 放行名单 → 批准人数 → 合并方式 → 默认 reviewer → 调度座位」排；填了路径范围的检查只在改到对应文件时要求。',
         props: bpProps({
           bp: bpRules({
             required_checks: [{ name: 'ci / tests', paths: ['backend/**', 'frontend/**'] }, { name: 'lint' }],
             approvals_required: 2,
             override_handles: ['alice'],
             default_reviewer: 'wang',
+            dispatch_seat: 'cheese-ab12cd34ef56',
           }),
           checkName: '网页端 e2e',
           checkPaths: 'frontend/**',

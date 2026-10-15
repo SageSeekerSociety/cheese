@@ -15,6 +15,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness.pi.bundle import build
 
 # The pinned agent, served by the platform the way the claude pin is: the
@@ -115,6 +116,17 @@ fi
 """
 
 
+def model_entry(model: str) -> dict:
+    """One model of the provider file: its id, and that it can look at
+    pictures when the gateway says it can (``gateway_catalog.sees_pictures``). pi
+    hands a model that cannot only the text of a tool result that has
+    pictures, such as a mini-app's save."""
+    entry: dict = {"id": model}
+    if gateway_catalog.sees_pictures(model):
+        entry["input"] = ["text", "image"]
+    return entry
+
+
 def provider(api_base: str, model: str) -> str:
     """``models.json``: one provider, pointing at this platform's gateway.
 
@@ -145,7 +157,7 @@ def provider(api_base: str, model: str) -> str:
                         "supportsDeveloperRole": False,
                         "maxTokensField": "max_tokens",
                     },
-                    "models": [{"id": model}],
+                    "models": [model_entry(model)],
                 }
             }
         },

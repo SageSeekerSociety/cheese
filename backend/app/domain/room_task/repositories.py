@@ -3,6 +3,7 @@ those threads work on."""
 
 import uuid
 from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import (
@@ -23,11 +24,53 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.project.address import Numbered, take_number
-from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
+from app.domain.room_task.models import (
+    Task,
+    TaskStatus,
+    TaskTitleSource,
+    people_of,
+)
 
 
 def _uuids(name: str, values: Collection[uuid.UUID] | None):
     return bindparam(name, list(values or ()), type_=ARRAY(Uuid()))
+
+
+@dataclass(frozen=True, slots=True)
+class ListedTask:
+    """一条活摆上清单时要读的那几列，加上它最后一次说话的时刻 —— 一份纯值。
+
+    看板和「待我处理」读一条活读的是状态、人、日期那几位，而 `Task` 那一行还背着
+    交付记录、PR、执行环境、检查输出那一堆正文，装配一行比读这几列贵得多
+    （`tests/integration/test_indexed_rows.py` 量了同一批行的两种读法）。所以这一份
+    是**列投影交出来的值**，没有 session、没有懒加载：读得到什么，这里就列着什么。
+
+    `last_said_at`（看板的心跳）和这几列一起回来，是因为它本来要单独问一趟
+    （`last_block_at_for_tasks`）；两笔一起取，少一次往返，也少一次把活按 id 收窄。
+    `None` 是「这条活还没人说过话」，由调用方决定它意味着什么 —— 这里不替它编一个
+    时间。
+    """
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    room_id: uuid.UUID
+    title: str
+    title_source: TaskTitleSource
+    status: TaskStatus
+    owner_handle: str | None
+    reporter_handle: str | None
+    contributor_handles: tuple[str, ...]
+    accepted_at: datetime | None
+    started_at: datetime | None
+    conclusion: str | None
+    closing_since: datetime | None
+    updated_at: datetime
+    last_said_at: datetime | None
+
+    @property
+    def people(self) -> tuple[str, ...]:
+        """等谁 —— 和 `Task.people` 是同一份名单（`models.people_of`）。"""
+        return people_of(self.owner_handle, self.contributor_handles)
 
 
 class TaskRepository:
@@ -82,17 +125,75 @@ class TaskRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
-        """How many open tasks each of these rooms has, in one read. A room
-        with none is absent."""
-        if not room_ids:
-            return {}
-        stmt = (
-            select(Task.room_id, func.count(Task.id))
-            .where(Task.room_id.in_(room_ids), Task.status == TaskStatus.open)
-            .group_by(Task.room_id)
+    async def listed_by_ids(self, task_ids: Collection[uuid.UUID]) -> list[ListedTask]:
+        """These threads as a listing draws them, each with its last word's time.
+
+        One query for what used to be two: the rows a listing reads
+        (`list_by_ids`) plus the heartbeat (`last_block_at_for_tasks`). The
+        heartbeat rides along as a correlated `max(created_at)` on this task's
+        own conversation — the planner turns that into one backwards step on
+        `ix_blocks_conversation_created_at` per task, so its cost follows the
+        number of tasks, not how much they have said (see
+        `last_block_at_for_tasks` for why not a GROUP BY).
+
+        A column projection rather than the entity: 「待我处理」 takes a few
+        hundred threads at once, and `Task` carries delivery records, the
+        environment, check output — text and JSONB a listing never reads. Ids
+        that name nothing are simply absent, as in `list_by_ids`.
+
+        The ids go in as one array parameter (`_uuids`): a few hundred of them
+        spelled as an `IN` list make the driver re-spell the statement every
+        time it runs.
+        """
+        ids = list(task_ids)
+        if not ids:
+            return []
+        last_said = (
+            select(func.max(Block.created_at))
+            .where(Block.conversation_id == Task.id)
+            .scalar_subquery()
         )
-        return {room: n for room, n in (await self._session.execute(stmt)).all()}
+        stmt = (
+            select(
+                Task.id,
+                Task.project_id,
+                Task.room_id,
+                Task.title,
+                Task.title_source,
+                Task.status,
+                Task.owner_handle,
+                Task.reporter_handle,
+                Task.contributor_handles,
+                Task.accepted_at,
+                Task.started_at,
+                Task.conclusion,
+                Task.closing_since,
+                Task.updated_at,
+                last_said.label("last_said_at"),
+            )
+            .where(Task.id == any_(_uuids("task_ids", ids)))
+            .order_by(Task.created_at, Task.id)
+        )
+        return [
+            ListedTask(
+                id=row.id,
+                project_id=row.project_id,
+                room_id=row.room_id,
+                title=row.title,
+                title_source=row.title_source,
+                status=row.status,
+                owner_handle=row.owner_handle,
+                reporter_handle=row.reporter_handle,
+                contributor_handles=tuple(row.contributor_handles or ()),
+                accepted_at=row.accepted_at,
+                started_at=row.started_at,
+                conclusion=row.conclusion,
+                closing_since=row.closing_since,
+                updated_at=row.updated_at,
+                last_said_at=row.last_said_at,
+            )
+            for row in (await self._session.execute(stmt)).all()
+        ]
 
     async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many tasks each of these rooms has underway: open and not in the
@@ -120,6 +221,30 @@ class TaskRepository:
             Task.status == TaskStatus.open,
             Task.closing_since.is_(None),
             or_(Task.owner_handle == person, self._whose("helping", person)),
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def underway_others(
+        self, room_ids: list[uuid.UUID], person: str
+    ) -> list[Task]:
+        """The tasks underway in these rooms that ``person`` neither owns nor
+        helps on, most recently moved first: the sidebar borrows the first few
+        of them to bring a channel up to its floor of rows (`rail_tasks`).
+
+        Ordered here rather than left to the caller: 一个项目里这样的活能有几百条，
+        调用方按房间各取前几条，排序在库里做才不用把它们都读出来再排。
+        """
+        if not room_ids:
+            return []
+        stmt = (
+            select(Task)
+            .where(
+                Task.room_id.in_(room_ids),
+                Task.status == TaskStatus.open,
+                Task.closing_since.is_(None),
+                TaskRepository.not_taking_part(person),
+            )
+            .order_by(TaskRepository._moved().desc())
         )
         return list((await self._session.execute(stmt)).scalars().all())
 
@@ -191,7 +316,9 @@ class TaskRepository:
             )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_for_project(self, project_id: uuid.UUID) -> list[Task]:
+    async def list_for_project(
+        self, project_id: uuid.UUID, *, accepted: bool | None = None
+    ) -> list[Task]:
         """Every thread in the project, oldest first — the whole tree at once.
 
         The rail draws rooms AND the work in them, and a project here already
@@ -204,7 +331,17 @@ class TaskRepository:
             .where(Task.project_id == project_id)
             .order_by(Task.created_at, Task.id)
         )
+        stmt = self._accepted(stmt, accepted)
         return list((await self._session.scalars(stmt)).all())
+
+    @staticmethod
+    def _accepted(stmt, accepted: bool | None):
+        """Delivery approval is independent of whether a task remains open."""
+        if accepted is None:
+            return stmt
+        return stmt.where(
+            Task.accepted_at.is_not(None) if accepted else Task.accepted_at.is_(None)
+        )
 
     @staticmethod
     def _moved():
@@ -218,13 +355,37 @@ class TaskRepository:
 
     @staticmethod
     def _whose(whose: str, me: str):
-        mine = Task.owner_handle == me
-        helping = cast(Task.contributor_handles, JSONB).contains([me])
         if whose == "mine":
-            return mine
+            return Task.owner_handle == me
         if whose == "helping":
-            return helping
-        return and_(Task.owner_handle.is_distinct_from(me), not_(helping))
+            return cast(Task.contributor_handles, JSONB).contains([me])
+        return TaskRepository.not_taking_part(me)
+
+    @staticmethod
+    def not_taking_part(person: str):
+        """这个人没沾过手的活：`takes_part` 的反面，`whose=others` 问的就是这一批，
+        侧栏给频道补足到 3 条时借的也是这一批。
+
+        `is_distinct_from` 而不是 `!=`：没负责人的活 `owner_handle` 是 NULL，`!=` 在
+        那里给 NULL，取反还是 NULL，那一行会既不算「我的」也不算「别人的」。
+        """
+        return and_(
+            Task.owner_handle.is_distinct_from(person),
+            not_(cast(Task.contributor_handles, JSONB).contains([person])),
+        )
+
+    @staticmethod
+    def takes_part(person: str):
+        """这个人沾过手的活：他负责的，或他在协作者名单里的。
+
+        `_whose` 正面的那两半合起来，单独起个名字是因为服务层也要按它筛 ——
+        `TaskService.unseen_deliveries` 那条跨域的查询读的是另一个域的表，所以它
+        在服务层（那里这个进口已经在契约的名单上），而这条判据只有这一份写法。
+        """
+        return or_(
+            TaskRepository._whose("mine", person),
+            TaskRepository._whose("helping", person),
+        )
 
     def _in_view(
         self,
@@ -234,7 +395,9 @@ class TaskRepository:
         rooms: Collection[uuid.UUID],
         status: str,
         channel: uuid.UUID | None,
+        accepted: bool | None,
     ):
+        stmt = self._accepted(stmt, accepted)
         stmt = stmt.where(
             Task.project_id == project_id,
             Task.room_id.in_(list(rooms)),
@@ -253,6 +416,7 @@ class TaskRepository:
         me: str,
         limit: int,
         before: tuple[datetime, uuid.UUID] | None,
+        accepted: bool | None = None,
     ) -> tuple[list[tuple[Task, datetime]], bool]:
         """One page of the project's tasks in ``status``, the most recently moved
         first, each with when it last moved; and whether more follow.
@@ -265,7 +429,12 @@ class TaskRepository:
         """
         moved = self._moved()
         stmt = self._in_view(
-            select(Task, moved), project_id, rooms=rooms, status=status, channel=channel
+            select(Task, moved),
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            accepted=accepted,
         )
         if whose is not None:
             stmt = stmt.where(self._whose(whose, me))
@@ -283,6 +452,7 @@ class TaskRepository:
         status: str,
         channel: uuid.UUID | None,
         me: str,
+        accepted: bool | None = None,
     ) -> dict[str, int]:
         """How many of the project's tasks in ``status`` there are, in all and
         by whose they are to ``me``, narrowed as `page_for_project` is."""
@@ -294,12 +464,19 @@ class TaskRepository:
             ),
         ]
         stmt = self._in_view(
-            select(*counted), project_id, rooms=rooms, status=status, channel=channel
+            select(*counted),
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            accepted=accepted,
         )
         row = (await self._session.execute(stmt)).one()
         return dict(zip(("all", "mine", "helping", "others"), row, strict=True))
 
-    async def brief_for_projects(self, project_ids: list[uuid.UUID]) -> list[Row]:
+    async def brief_for_projects(
+        self, project_ids: list[uuid.UUID], *, open_only: bool = False
+    ) -> list[Row]:
         """跨若干项目的活，只取判「这件事可能点到谁」要用的那几列。
 
         「待我处理」问的是我能看见的全部项目，但它只显示点到我的那些行 —— 而一条
@@ -308,8 +485,21 @@ class TaskRepository:
         整行实体之前先按它们收一次范围：本机 500 行实测，列投影 3.6ms，整行实体
         11.4ms，而一屏的代价本该跟着「点到我多少」走，不是「我看得见多少」。
 
+        `underway`（还开着）也在其中：关了的活落「已结束」那一列，那一列的下一步在
+        平台手上，它永远点不到任何人（`addressing.address`），而一个项目有
+        史以来派出去的活十之九都关了（dev 2026-10-12：1437 条里 1355 条），不先按它
+        收一次，后面每一步都在为早就结束的事付钱。给的是算好的一个布尔而不是状态
+        列本身：状态的词表是这个领域的，路由那边不认它。
+
         收出来的**只是候选**（题问到谁那一笔要多查一步，见调用点），所以只多不少；
-        真正算数的还是 `delivery.addressing` 那份判据。
+        真正算数的还是 `addressing` 那份判据。
+
+        ``open_only`` 再收一次：判据只对还开着的活跑，关了的活下一步在平台手上，
+        永远点不到任何人（`addressing.address`），所以对它们要的只是「这条
+        对话在哪个频道」那一个映射 —— 那一笔由调用点单独按 id 去认（见
+        `awaiting.waiting_items`），不必把整行的钱先付了。dev 2026-10-12：一个项目
+        有史以来派出去的活十之九都关了（1437 条里 1355 条），开着的一屏只有一百来
+        条；本机 13 个项目实测，这一笔从 10.9ms 降到 1ms 上下。
         """
         if not project_ids:
             return []
@@ -317,6 +507,7 @@ class TaskRepository:
             select(
                 Task.id,
                 Task.room_id,
+                (Task.status == TaskStatus.open).label("underway"),
                 Task.reporter_handle,
                 Task.owner_handle,
                 Task.contributor_handles,
@@ -324,6 +515,8 @@ class TaskRepository:
             .where(Task.project_id.in_(project_ids))
             .order_by(Task.created_at, Task.id)
         )
+        if open_only:
+            stmt = stmt.where(Task.status == TaskStatus.open)
         return list((await self._session.execute(stmt)).all())
 
     async def list_open(self) -> list[Task]:

@@ -37,8 +37,8 @@ from app.domain.agent_instance.own import owned_instance
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.conversation.services import of_room
 from app.domain.delivery.agent import instance_for_seat, now, record_agent
-from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.notification.models import NotificationType
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -157,8 +157,9 @@ async def record_mentions(
         instance = await instance_for_seat(session, project_id, seat)
         if instance is None:
             continue
-        # A member's own agent answers its owner alone (#2991): naming it from
-        # anyone else, an agent included, reaches nobody.
+        # A member's own agent answers only whoever its owner lets call it
+        # (#2991), never another agent: naming it from anyone else reaches
+        # nobody.
         if await owned_instance(session, instance.id) is not None and (
             by_agent or not await _calls_own(session, instance.id, author)
         ):
@@ -198,7 +199,6 @@ async def _calls_own(
     session: AsyncSession, instance_id: uuid.UUID, author: str
 ) -> bool:
     # deferred-import: tests replace this name on app.domain.agent_instance.own
-    from app.domain.agent_instance.own import owner_of
+    from app.domain.agent_instance.own import callable_by
 
-    owner = await owner_of(session, instance_id)
-    return owner is not None and owner[0] == author
+    return await callable_by(session, instance_id, author)

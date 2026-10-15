@@ -1,0 +1,16 @@
+{
+  "accept": "接受",
+  "acceptAll": "全部接受",
+  "anonymous": "未署名",
+  "count": "修订 {count} 处",
+  "decideFailed": "未能处理这处修订",
+  "deleted": "删了「{removed}」",
+  "inserted": "加了「{added}」",
+  "libraryReadOnly": "资料库里的原件不改。要改这份文档，让 AI 队友基于它做一份新的",
+  "loadFailed": "未能读取修订",
+  "readOnlyNote": "这个版本只读，不能处理修订。",
+  "reject": "拒绝",
+  "rejectAll": "全部拒绝",
+  "replaced": "把「{removed}」改成「{added}」",
+  "where": "第 {paragraph} 段 · {author}"
+}

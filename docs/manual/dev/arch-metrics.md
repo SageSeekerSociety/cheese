@@ -1,7 +1,7 @@
 ---
 title: 架构指标
 kind: 参考
-summary: 一张能持续看的架构看板：组件 A/B/C/D 分级、后端八条契约的冻结条目、超标文件和两端热点，每个数怎么算、现在是多少、该往哪边走，以及怎么和另一个版本比。
+summary: 一张能持续看的架构看板：组件 A/B/C/D 分级、后端九条契约的冻结条目、超标文件和两端热点，每个数怎么算、现在是多少、该往哪边走，以及怎么和另一个版本比。
 covers:
   - .claude/scripts/arch-metrics.py
   - .github/workflows/arch-metrics.yml
@@ -13,7 +13,7 @@ covers:
 
 # 架构指标 {#arch-metrics}
 
-三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的八条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道都拿一个冻结的基线做棘轮，所以它们会一直绿——绿到看不出一棵树是不是在变好。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
+三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的九条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道各有一个基准，基准不动就会一直绿——绿到看不出一棵树是不是在变好：后端模块边界现在连基准都没写下来，每次运行从与 `origin/main` 的合并基准那棵树现场推。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
 
 > 讲：有哪些数字、每个数怎么算、现在是多少、要往哪个方向走，以及怎么和另一个版本比。不讲：三道闸各自的规则和为什么那样定（见仓库里的 `.claude/rules/architecture.md`），CI 的整体设计（见 [CI 设计](/dev/ci#required)）。
 
@@ -34,7 +34,7 @@ python3 .claude/scripts/arch-metrics.py --out /tmp/board       # 换输出目录
 python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数都数得对
 ```
 
-全程只用标准库和已有的依赖，在仓库根跑，约 11 秒。`--compare` 会为那个版本开一个临时 worktree，跑同一份代码，再算差值；跑完就把 worktree 删掉（`--self-test` 里有一条断言专门看着它别留下东西）。那个版本没有的输入——比如 `.importlinter` 还没落地的版本——在差值表里是 `n/a`，不是 0。
+全程只用标准库和已有的依赖，在仓库根跑。取回了 `refs/pull/*/head` 的克隆里约 50 秒（一块 4 核机、负载 20 上下量的）：冲突那一节要重放约 900 次 `merge-tree`，几乎全部时间在这里；那些引用取不到时那一节报自己缺输入，跑完约 11 秒。`--compare` 会为那个版本开一个临时 worktree，跑同一份代码，再算差值；跑完就把 worktree 删掉（`--self-test` 里有一条断言专门看着它别留下东西）。那个版本没有的输入——比如 `.importlinter` 还没落地的版本——在差值表里是 `n/a`，不是 0。
 
 `--self-test` 种一个只有十几行的小仓库，逐项核对：四个等级各算对没有、函数内导入数不数嵌套函数、超标行数是不是超出部分的和、同一天两次提交算不算一次并行编辑、差值的符号是不是两边相减。`repo-guards` 那次 `--self-test` 也在 CI 里跑。
 
@@ -46,7 +46,7 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 | `frontend.grade_counts.grades` / `grade_pct` | A/B/C/D 各多少个、占几成 | 见下面的分级方法 | A 升，D 降 |
 | `frontend.grade_counts.grade_lines` | 每一级的行数 | 同级组件的行数之和 | A 升 |
 | `frontend.boundary.violations` | 组件直接取数 / 读路由的处数 | 直接读 `frontend/import-boundary-baseline.json`，不重算 | 只降 |
-| `backend.contracts.per_contract` | 八条契约各自冻结了多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条 | 只降 |
+| `backend.contracts.per_contract` | 九条契约各自**写在文件里**的例外有多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条。2026-10-14 起这个文件不再装基线：基准改成每次检查时从合并基准那棵树量出来，所以这一栏是「有人明确接受的例外」，正常接近 0；九条契约真正压着的债在 ratchet 快照的 `frozen` 里 | 只降 |
 | `backend.deferred_imports` | 函数内导入的条数 | `ast` 遍历 `backend/app`，只数词法上落在函数体里的 `import` / `from ... import`（嵌套函数算一次，模块级的 `if TYPE_CHECKING:` 不算） | 只降 |
 | `backend.files.files_over_1000` | 后端超过 1000 行的文件数 | `backend/app/**/*.py` 的行数分布 | 只降 |
 | `backend.files.files_over_1500` | 超过上限（1500 行）的 | 同上 | 只降 |
@@ -55,6 +55,11 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 | `hotspots.<30d\|90d>.top` | 改动次数 × 行数前 10 的文件 | 近 30 / 90 天的提交按文件计数，乘当前行数；每条带 fix 提交数和占该文件的比 | 热点变轻 |
 | `hotspots.<窗口>.fix_commits` | 窗口里 fix/revert 提交数 | 提交主题按 `fix(` / `fix:` / `revert` 开头判定 | 占比降 |
 | `shared_days.shared_days` | 同一天被两个以上不同提交改过的文件-天 | 90 天窗口内按（文件，日期）分组数不同的提交 | 只降 |
+| `conflicts.weeks_detail` / `conflicts.per_100_merges` / `conflicts.unreadable` | 每周带冲突的合 main 次数、每百个合并 PR 的率、重放不了的那几次 | 从 `refs/pull/*/head` 里找把 main 合进 PR 分支的两 parent 提交，按提交日期落进 7 天桶，用 `git merge-tree --write-tree` 重放两个 parent 判冲突；分母是同周 main 上的非合并提交数（squash 仓库里它就是合并 PR 的代理）。`registry_only` 是只冲突在登记类文件的那些，`code` 是碰到代码的 | 只降，登记类那份应接近 0 |
+
+冲突那一节按运行时刻往前切 4 个 7 天桶，所以它只在同一个 `anchored_at` 上可复现，节里写着这个时刻。`refs/pull/*/head` 普通 checkout 里没有——被 squash 合并的分支提交不会落到 main 上——工作流里先 `git fetch` 一遍；没取到时那一节报自己缺输入，不报 0，因为「没人撞过」和「没法看」是两回事。单次重放读不出来（部分克隆缺 blob）是另一回事：那几次不进冲突那两列，进 `unreadable`，节里写明有它的周是下限而不是测量值。
+
+**取到一半的引用也不算数**：`git fetch` 是逐个写引用的，中途被杀、或者某一个引用撞上锁，都会留下一个**子集**，而子集和完整集合一样能数、能量——只是数出来的合并更少，看起来像更安静的一周。本地没有任何东西分得开这两者，所以由发起取的那一方作证：工作流取完（`--atomic`，失败就一个引用都不写）把取到的条数写进 `ARCH_METRICS_PR_HEADS`，`.claude/scripts/arch-metrics.py` 手里的条数和它一致才出数。没有这个数、或对不上，都报自己缺输入并写明两边各有多少；`--self-test` 盯着这三条。手工跑要么照工作流取一次，要么把它设成 `git for-each-ref 'refs/pull/*/head' | wc -l` 的数，否则那一节是空的。
 
 **分级方法**（从 B 数据那份体检脚本 `analyze.py` 移植并简化）：
 

@@ -125,13 +125,12 @@ _TOOL_ARG = {
     # 改文档时说的是为什么改；那几处原文要读全文才看得懂。
     "cheese_doc_edit": "reason",
     "cheese_doc_new": "title",
+    "cheese_app_save": "note",
     "cheese_task": "title",
     # 任务的 id 是个 UUID，跟在动词后面等于什么都没说 —— 同一条理由让上面那批
     # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
     "cheese_close_task": "conclusion",
     "cheese_fetch": "url",
-    "cheese_lock": "kind",
-    "cheese_unlock": "kind",
     "cheese_decision": "text",
     "cheese_title": "text",
     "cheese_notify": "title",

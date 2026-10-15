@@ -1,18 +1,22 @@
-"""What a memory consolidation (dream) turn spent, landed as the platform's.
+"""What a memory consolidation (dream) turn spent, charged to its project.
 
-Consolidating a project's memory is work the platform does on its own, so no
-team pays for it (#2233). The turn runs on the project's platform gateway key
-(`gateway_usage._model_kwargs(platform=True)`), never the key the project pays
-for, so its spend cannot surface in a room turn's drain and be charged to the
-team. Right after the turn, that key's new spend is drained into platform rows
-under the dream kind, and the turn's own row is written beside them.
+Consolidating a project's memory is work inside the project, so the project's
+team pays for it like any other turn there, and its usage says it was the
+dream. The turn runs as a turn of the project's overview room, and each of its
+model calls is told apart where it is admitted (`routes/llm_proxy.py`, by
+`memory.dream.dreaming`): on the gateway it runs on the project's dream key,
+not the rooms' one, and on the subscription the metering proxy writes the
+dream's kind on its usage line, which `usage/subscription_ingest` keeps.
 
-Both carry the project and the dream kind: the consolidation trigger sums the
-project's usage minus that kind (`memory.dream`), so what consolidating costs
-is never counted as "this project wrote a lot".
+Right after the turn, the dream key's new spend is drained as the dream's
+(`DREAM_KIND`). No room turn reads that key, so none can take the dream's
+spend as its own. The consolidation trigger leaves that kind out of "this
+project wrote a lot" (`memory/dream.py`). What the session reports of itself is not
+charged: the gateway or the proxy already measured the same calls, and
+counting the report too would charge them twice (`turn/intake/completion.py`,
+`reported_usage`).
 """
 
-import asyncio
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -20,34 +24,38 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_spend import Charge, settle
-from app.domain.agent.gateway_usage import TURN_RETRY_AFTER, ProjectGatewayKey
+from app.domain.agent.gateway_usage import (
+    LATE_S,
+    TURN_RETRY_AFTER,
+    ProjectGatewayKey,
+)
 from app.domain.agent.service import AgentUsage
 from app.domain.memory import dream
-from app.domain.usage.ledger import Ledger
+from app.domain.usage.ledger import Ledger, payer_for_project
 
 
 async def drain_dream_spend(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
-    gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
-) -> None:
-    """Land what the project's platform key spent as the platform's."""
-    await settle(
+) -> list[AgentUsage] | None:
+    """Charge what the project's dream key spent to the project, as the
+    dream's. Read once more after `LATE_S` if the gateway has not logged it
+    yet: nobody waits on a dream, and what is still unread is charged by the
+    next dream's drain."""
+    return await settle(
         sessions,
         gateway,
-        ProjectGatewayKey(project_id, platform=True),
+        ProjectGatewayKey(project_id, dream=True),
         Charge(
             model=settings.agent_model,
             kind=dream.DREAM_KIND,
-            project_id=project_id,
             topic_id=topic_id,
             turn_id=turn_id,
         ),
-        retry_after=TURN_RETRY_AFTER,
-        lock=gateway_lock,
+        retry_after=(*TURN_RETRY_AFTER, LATE_S),
     )
 
 
@@ -58,20 +66,27 @@ async def record_dream_usage(
     root_topic_id: uuid.UUID,
     usage: AgentUsage | None,
     turn_id: uuid.UUID,
+    route: str,
+    drained: bool,
 ) -> None:
-    """The dream turn's own row: that a consolidation ran here, and what the
-    runtime reported for it. The hooks runtimes report no token counts, so
-    its tokens are often 0; the row still says the turn happened."""
+    """When nothing was drained for the dream, a row charging nothing that
+    says a consolidation ran here (``<kind>:unmetered``), as a room turn with
+    no measured usage leaves one (`turn_usage.record_turn_usage`). A dream
+    whose spend was drained is already on the ledger, so nothing more is
+    written."""
+    if drained:
+        return
     model = usage.model if usage is not None and usage.model else settings.agent_model
-    await Ledger(session).record_platform(
+    await Ledger(session).record(
+        await payer_for_project(session, project_id),
+        credits=0.0,
         kind=dream.DREAM_KIND,
         model=model,
-        input_tokens=usage.input_tokens if usage is not None else 0,
-        output_tokens=usage.output_tokens if usage is not None else 0,
-        cost_usd=usage.cost_usd if usage is not None else 0.0,
-        project_id=project_id,
+        input_tokens=0,
+        output_tokens=0,
+        cost_usd=0.0,
         topic_id=root_topic_id,
         turn_id=turn_id,
-        metered=usage is not None,
-        route="",
+        metered=False,
+        route=route,
     )

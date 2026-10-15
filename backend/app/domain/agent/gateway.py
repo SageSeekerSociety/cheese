@@ -38,6 +38,8 @@ from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
+from app.domain.usage.pricing import declared_free
+
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 60.0
@@ -64,6 +66,9 @@ class GatewayModel:
     # platform's own words (``EFFORTS``). Empty: it takes none, and a teammate
     # on it runs at the model's own default.
     efforts: tuple[str, ...] = ()
+    # True when the model reads pictures (``supports_vision``), as set on the
+    # gateway's model page. Unmarked: it is shown text only.
+    vision: bool = False
 
 
 #: The thinking efforts a teammate can ask for, lowest first. Claude Code
@@ -82,7 +87,8 @@ def declared_efforts(value: object) -> tuple[str, ...]:
 
 
 def price_is_set(*sources: object) -> bool:
-    """Will the gateway bill this model at a non-zero rate?
+    """Will the gateway bill this model at a non-zero rate, or is it declared
+    free (``declared_free``)?
 
     Both directions must carry a rate. A model priced on one side only bills
     half its traffic at zero, which is the same silent-brake failure as no price
@@ -105,7 +111,14 @@ def price_is_set(*sources: object) -> bool:
                     return float(value)
         return 0.0
 
+    if declared_free(*sources):
+        return True
     return bool(rate("input_cost_per_token") and rate("output_cost_per_token"))
+
+
+def _model_info(row: dict) -> dict:
+    info = row.get("model_info")
+    return info if isinstance(info, dict) else {}
 
 
 @dataclass
@@ -169,11 +182,15 @@ class LlmGateway:
 
         One LiteLLM key is read as well: ``supports_mid_conversation_system``
         set to ``false`` marks a route that loses mid-conversation system
-        messages, and Claude Code is launched without them on it.
+        messages, and Claude Code is launched without them on it; and
+        ``supports_vision`` set to ``true`` says the model reads pictures.
 
-        A model the gateway reports as ``blocked`` is never selectable, however
-        ``cheese_selectable`` is set: the gateway refuses to route it, so
-        offering it would hand someone a route that cannot be called.
+        A model may have several rows (sources, tried in ``order``). The keys
+        above are read from the first; a model is offered while any row is not
+        ``blocked`` (the gateway refuses to route a blocked one), and priced
+        only when every unblocked row is (every row, once all are blocked;
+        ``price_is_set`` counts a ``cheese_free`` row with its rates written
+        as 0).
         """
         try:
             async with self._client() as client:
@@ -187,52 +204,61 @@ class LlmGateway:
             logger.warning("gateway models failed", exc_info=True)
             return None
 
-        out: list[GatewayModel] = []
-        seen: set[str] = set()
+        groups: dict[str, list[dict]] = {}
         for row in rows:
             if not isinstance(row, dict):
                 continue
             name = row.get("model_name")
-            if not isinstance(name, str) or not name or name in seen:
-                continue
-            seen.add(name)
-            info = row.get("model_info")
-            params = row.get("litellm_params")
-            info = info if isinstance(info, dict) else {}
+            if isinstance(name, str) and name:
+                groups.setdefault(name, []).append(row)
+
+        out: list[GatewayModel] = []
+        for name, group in groups.items():
+            # The menu keys are read off the first row: every row of a model
+            # carries the same ones (config.yaml's deepseek-flash, the admin
+            # page's sources). Whether it can be served is the group's answer,
+            # not the first row's: one source paused leaves the others routing,
+            # and one live source billing at zero is a brake that fails for
+            # whatever share of traffic lands there.
+            info = _model_info(group[0])
+            live = [row for row in group if _model_info(row).get("blocked") is not True]
             label = info.get("cheese_label")
             tier = info.get("cheese_tier")
             out.append(
                 GatewayModel(
                     id=name,
                     label=label if isinstance(label, str) and label else name,
-                    selectable=(
-                        info.get("cheese_selectable") is True
-                        and info.get("blocked") is not True
+                    selectable=info.get("cheese_selectable") is True and bool(live),
+                    # Priced and blocked stay independent: a paused model is
+                    # judged on all its rows, a serving one on those serving.
+                    priced=all(
+                        price_is_set(row.get("litellm_params"), _model_info(row))
+                        for row in (live or group)
                     ),
-                    priced=price_is_set(params, info),
                     tier=tier if isinstance(tier, str) and tier else "included",
                     mid_conversation_system=(
                         info.get("supports_mid_conversation_system") is not False
                     ),
                     efforts=declared_efforts(info.get("cheese_efforts")),
+                    vision=info.get("supports_vision") is True,
                 )
             )
         return out
 
     async def mint_project_key(
-        self, project_id: uuid.UUID, *, platform: bool = False
+        self, project_id: uuid.UUID, *, purpose: str | None = None
     ) -> str | None:
         """Create a project-scoped virtual key (no expiry; attributed via
         ``user_id``). The caller persists it in project.settings — minting is
         NOT idempotent on the gateway side, so mint once and store.
 
-        ``platform`` mints the project's second key, the one the platform's own
-        work in it (memory consolidation) runs on: its spend is the
-        platform's, so it must not mix into the key the project pays for."""
-        alias = f"project-{project_id}" + ("-platform" if platform else "")
+        ``purpose`` names a second key of the same project (``dream``, its
+        memory consolidation), whose spend has to be read apart from the
+        rooms'."""
+        alias = f"project-{project_id}" + (f"-{purpose}" if purpose else "")
         metadata = {"cheesex_project": str(project_id)}
-        if platform:
-            metadata["purpose"] = "platform"
+        if purpose:
+            metadata["purpose"] = purpose
         try:
             async with self._client() as client:
                 r = await client.post(

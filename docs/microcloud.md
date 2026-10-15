@@ -33,8 +33,38 @@ user-facing route lists hosts. The admin dashboard counts them.
 Hosts are created at `MICROCLOUD_DEFAULT_CORES` / `_MEMORY_MB` / `_DISK_GB` (4 cores, 16 GiB,
 40 GB; clamped into the offering). A host runs `cores × CLOUD_HOST_SLOTS_PER_CORE` sandboxes at
 once, but no more than fit, each at its full `CLOUD_SANDBOX_MEMORY_MB`, in the memory it gives
-its sandboxes (its memory less a quarter, at least 1 GiB): four on the default host. There is no team or project quota on cloud. A running sandbox is charged in credits by
+its sandboxes (its memory less a quarter, at least 1 GiB), nor more than fit on its disk at
+`CLOUD_SANDBOX_DISK_GB` each after `CLOUD_HOST_DISK_RESERVE_GB` for the host and its package
+stores: four on the default host. There is no team or project quota on cloud. A running sandbox is charged in credits by
 the hour, from the same packs as model calls (`docs/manual/dev/billing.md`, 云端算力).
+
+### A disk that is nearly full is freed
+
+`backend/app/domain/machine/disk_guard.py`; the host side is `sandbox_home.py`'s `disk`.
+Nothing inside a sandbox bounds what it writes: a host is an unprivileged container, with no
+loop device for a filesystem per sandbox and no project quotas. So the disk is held the way
+Kubernetes holds a node's ephemeral storage, by reading it and evicting. Every
+`SANDBOX_DISK_CHECK_S` (60 s), every online machine holding a sandbox — the platform's hosts
+and people's computers alike — reports the free bytes and inodes of the filesystem its homes
+are on, one `statvfs`. What each home holds takes a walk of every file (13 s on a dev host
+holding 880 thousand inodes), so it is read every `SANDBOX_DISK_WALK_S` (300 s), and at once
+on any check that finds the disk below a floor.
+
+- Below `SANDBOX_DISK_FREE_FLOOR` (10%) of its bytes free or `SANDBOX_INODES_FREE_FLOOR` (5%)
+  of its inodes, a host takes no new sandbox (`cloud_hosts.disk_full_since`) until a reading
+  finds room again, and the sandbox holding the most of either is destroyed, one a reading.
+  Its room is told what it held and under which directory. A sandbox holding under 1% of the
+  disk is never evicted for it: on a person's computer the disk may be full of their own files.
+- On a platform host, a sandbox holding more than `CLOUD_SANDBOX_DISK_BUDGET_GB` (12) or
+  `CLOUD_SANDBOX_INODE_BUDGET` (600,000 inodes) is destroyed on the next walk of its homes,
+  whatever room the disk has, so one sandbox cannot fill a host for the others; its room is
+  told the limit. The budgets add up to more than a host's disk on purpose, with the floors
+  above as the backstop. A person's computer has no budget: its disk is theirs to fill.
+- A sandbox's home with no sandbox any more — its row went when its session moved away — is
+  deleted, ten minutes after it was last written. A home without the sandbox marker (a room's
+  own directory on a computer that runs it without a sandbox) is never touched.
+- An executor that cannot be installed because the disk is full says so rather than repeating
+  the path the error named.
 
 ### Idle sandboxes are destroyed
 
@@ -59,8 +89,9 @@ the hour, from the same packs as model calls (`docs/manual/dev/billing.md`, 云�
   turn, and the conversation is told so.
 
 A host is released once it has had no sandbox on it for `CLOUD_HOST_IDLE_HOLD_S`. A session
-that switches away gives its home back after one best-effort checkpoint (`cheese sync --all`),
-whether or not the checkpoint went through. A host the provider fails before it is enrolled
+that switches away leaves its sandbox after one best-effort checkpoint (`cheese sync --all`),
+whether or not the checkpoint went through; the sandbox it left is destroyed by the idle sweep
+like any other, and holds its slot until then. A host the provider fails before it is enrolled
 holds nothing of anyone's: the pool gives it up, deletes it, and places its sessions again;
 after three such failures within an hour it stops creating hosts for the rest of the hour.
 

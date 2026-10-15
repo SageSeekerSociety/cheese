@@ -1,0 +1,8 @@
+{
+  "connected": "Connected",
+  "connectedBy": "Connected (authorized by {name}, {when})",
+  "disconnected": "Not connected",
+  "missingValues": "Needs {names}",
+  "needsReconnect": "Needs reconnecting",
+  "ready": "Ready"
+}

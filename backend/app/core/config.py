@@ -285,7 +285,7 @@ class Settings(BaseSettings):
     # session needs: a turn that would start one waits until the host has that
     # much available.
     agent_session_memory_max_mb: int = 3072
-    private_chat_executor_image: str = "cheese-private-executor:2.1.282"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.299"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也
@@ -314,6 +314,12 @@ class Settings(BaseSettings):
     # browser process tree cleanly. Measured, one shared instance served six
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
+    # Where the frontend serves the mini-app shell it builds (`frontend/miniapp/`),
+    # as reached from here: `<this>/v1/index.html` is shell 1. The content
+    # domain's `apps.` host answers with it, and a new mini-app is run in it
+    # once before it is kept (`app/domain/web_snippet/check.py`). Unset, no
+    # mini-app runs anywhere and new ones are kept unchecked.
+    miniapp_shell_url: str | None = None
     # A DNS-over-HTTPS resolver (JSON API), asked only on a machine whose own DNS
     # answers every name with a fake-IP placeholder (198.18.0.0/15): fetch has
     # to see the real address to know it is public. See domain/fetch/guard.py.
@@ -689,6 +695,39 @@ class Settings(BaseSettings):
     cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
     cloud_sandbox_cpus: int = Field(default=2, ge=1, le=1024)
     cloud_sandbox_pids: int = Field(default=4096, ge=16)
+    # Disk. A sandbox's home — its checkout, its dependencies, its /tmp — is on
+    # the disk of the machine it runs on, shared with every other sandbox there
+    # and, on a person's computer, with everything of theirs. Every machine
+    # holding a sandbox has its free bytes and inodes read this often
+    # (`machine/disk_guard.py`); below these shares free, of either, it takes
+    # no new sandbox and its heaviest sandbox is stopped. The shares are the
+    # defaults of Kubernetes' `nodefs.available` and `nodefs.inodesFree`.
+    # Inodes are their own floor: on 2026-10-14 a dev host ran out of them
+    # with 15 GB still free.
+    sandbox_disk_check_s: int = Field(default=60, ge=10, le=3600)
+    sandbox_disk_free_floor: float = Field(default=0.10, ge=0, le=0.9)
+    sandbox_inodes_free_floor: float = Field(default=0.05, ge=0, le=0.9)
+    # What each home holds is read by walking every file in it: about 13 s on a
+    # dev host holding 880 thousand inodes (2026-10-14), so a walk every check
+    # would keep the disk busy a fifth of the time. It is walked this often, and
+    # at once whenever a check finds the disk below a floor, so an eviction
+    # still picks the sandbox holding the most.
+    sandbox_disk_walk_s: int = Field(default=300, ge=10, le=86400)
+    # What one sandbox is expected to take of a host's disk, for how many a
+    # host runs at once (`models.capacity`), after `cloud_host_disk_reserve_gb`
+    # for the host itself and its projects' package stores. Measured on dev,
+    # 2026-10-14: a sandbox with one task's checkout and its dependencies held
+    # 1.5–2.3 GB and 95–130 thousand inodes; one project's package store held
+    # 6.5 GB.
+    cloud_sandbox_disk_gb: int = Field(default=4, ge=1)
+    cloud_host_disk_reserve_gb: int = Field(default=10, ge=0)
+    # What one sandbox on a platform host may hold, however much room the rest
+    # of the disk has (`disk_guard`): a sandbox over it is stopped before it
+    # can fill the host for the others. About five times the measurement
+    # above. Not on a person's computer, whose disk is theirs to fill; there
+    # only the floors above apply.
+    cloud_sandbox_disk_budget_gb: int = Field(default=12, ge=1)
+    cloud_sandbox_inode_budget: int = Field(default=600_000, ge=1000)
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
     # enrollment succeeds, so without this nobody can read a Cloud machine's
@@ -986,6 +1025,14 @@ class Settings(BaseSettings):
     #: 报警，但同一个问题一小时只报一条。
     delivery_overdue_check_interval_s: int = 600
     task_deadline_sweep_interval_s: int = 900
+    #: 叫醒链的两拍（#1343 的定时器、看门狗的心跳）多久核一遍
+    #: （`domain/wake_watch/`，只跑在平台自己那一侧）。比拍的周期密得多就行 ——
+    #: 判停摆的线是 60 分钟，它只决定「多久发现」。0 关闭。
+    wake_watch_interval_s: int = 300
+    #: 判到停摆之后，要不要真的点 #1343 那条线上的座位补一跳
+    #: （`domain/wake_watch/catchup.py`）。关掉就是影子期：只判、只记，判据一个字
+    #: 不变 —— 判据在真实数据上核过之后才默认打开。
+    wake_watch_catchup: bool = True
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having
@@ -1076,14 +1123,6 @@ class Settings(BaseSettings):
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
     )
-    # The draft models whose deployment accepts image content blocks. A PDF page
-    # with no text layer (a scan) is rendered to a PNG and sent to the model only
-    # when `task_draft_model` is named here. These models are text models by
-    # default, and an image sent to one that cannot read it is a wasted, billed
-    # call — so the fallback is opt-in per model, not inferred. Deployment env
-    # name TASK_DRAFT_VISION_MODELS carries a JSON array (pydantic-settings
-    # parsing for a set/list field).
-    task_draft_vision_models: set[str] = {"deepseek-flash"}
 
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")

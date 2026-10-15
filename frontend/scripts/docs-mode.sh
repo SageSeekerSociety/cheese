@@ -58,3 +58,11 @@ find "$HTML_ROOT/docs" -type f \( -name '*.html' -o -name '*.js' -o -name '*.jso
 find "$DOCS_HOST_ROOT" -type f \( -name '*.html' -o -name '*.js' -o -name '*.json' -o -name '*.md' -o -name '*.txt' -o -name '*.xml' \) |
   while read -r f; do fill "$f" "s|__DOCS_SITE__|$docs|g; s|__DOCS_PLATFORM__|$platform|g"; done
 find "$HTML_ROOT/assets" -name '*.js' | while read -r f; do fill "$f" "s|__VITE_DOCS_ORIGIN__|$docs|g"; done
+# The public pages prerendered at build time (scripts/prerender.mjs) carry the
+# app's docs links already written out: the placeholder was a non-empty origin
+# then, so each is `<origin><path>` (src/lib/docsSite.ts). With no docs host
+# that link is `/docs<path>`, which is what the app computes at run time; the
+# two must agree, since hydration does not correct an attribute.
+if [ -d "$HTML_ROOT/prerender" ]; then
+  find "$HTML_ROOT/prerender" -name '*.html' | while read -r f; do fill "$f" "s|__VITE_DOCS_ORIGIN__|${docs:-/docs}|g"; done
+fi

@@ -6,13 +6,12 @@
     "deleteTitle": "删除这条动态？",
     "deleteHint": "删掉之后它不再出现在这里，也没法恢复。",
     "noNotifications": "暂无通知",
-    "noUnread": "暂无未读通知",
     "loadFailed": "无法读取动态",
     "markAllAsRead": "全部标为已读",
+    "newItems": "有 {count} 条新动态",
     "loadMore": "加载更多",
-    "filterAll": "全部",
-    "filterUnread": "未读",
     "filterLabel": "动态筛选",
+    "untitledDocument": "未命名文档",
     "unknownTeam": "未知团队",
     "unknownDiscussion": "未知讨论",
     "teamAdmin": "团队管理员",
@@ -22,6 +21,11 @@
     "unreachable": "无法访问该页面，你可能没有权限或页面不存在",
     "yesterday": "昨天 {time}"
   },
+  "category": {
+    "mine": "需我处理",
+    "notice": "仅通知",
+    "system": "系统提醒"
+  },
   "default": {
     "title": "未知类型通知: {type}",
     "body": "通知内容无法显示"
@@ -30,7 +34,8 @@
     "title": "{mentioner} 在讨论中提到了你",
     "title_anonymous": "有人在讨论中提到了你",
     "body": "在 \"{discussionTitle}\" 中提到了你",
-    "inChannel": "{who} 在「{topicTitle}」提到了你"
+    "inChannel": "{who} 在「{topicTitle}」提到了你",
+    "inDocument": "{who} 在文档「{document}」提到了你"
   },
   "THREAD_REPLY": {
     "title": "{who} 在「{topicTitle}」的支线里回复了"
@@ -144,7 +149,8 @@
   "CHEESE_QUESTION": {
     "body": "在「{topicTitle}」，已暂停，待你回答",
     "answered": "在「{topicTitle}」，已回答：{answer}",
-    "untitled": "有一个问题待你回答"
+    "untitled": "有一个问题待你回答",
+    "skipped": "在「{topicTitle}」，已跳过"
   },
   "DEVICE_IN_USE": {
     "title": "{agent} 开始在「{device}」上工作",

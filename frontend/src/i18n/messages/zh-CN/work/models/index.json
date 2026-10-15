@@ -1,0 +1,12 @@
+{
+  "chooseAvailable": "选择当前项目可用的模型",
+  "description": "AI 队友默认使用项目主模型，也可以为每位队友单独指定",
+  "inheritMain": "跟随项目主模型",
+  "loadError": "加载模型列表失败",
+  "main": "项目主模型",
+  "notInPlan": "当前方案不含此模型",
+  "requiresPlan": "需要 {plan} 方案",
+  "subagent": "默认分身模型",
+  "subagentHint": "Claude Code 在一轮里派出分身时使用的模型",
+  "unavailable": "已不可用"
+}

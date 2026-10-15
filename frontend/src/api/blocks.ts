@@ -2,6 +2,7 @@ import type { Block, ListPayload, ReactionAgg } from '../cx_types'
 
 import { rememberNumbered } from '../lib/addresses'
 
+import { changesAwaiting } from './awaitingChanged'
 import { request } from './http'
 
 // 机构看板 / Space 看板 (eval F3).
@@ -75,14 +76,30 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
   })
 }
 
-// Take back your own answer to a question asked with quick replies, so the
-// question waits again and its options come back. `blockId` is the QUESTION —
+// Skip a question asked with quick replies: the person it waits on will not
+// answer it. Nothing is said in the room; the question records the skip, stops
+// waiting on him, and the agent that asked is told. Only someone the question
+// waits on can; anyone else is refused. `withdrawAnswer` undoes it. Returns the
+// question as the room now records it, which every client also gets as a
+// `block_updated` frame.
+export function skipQuestion(questionId: string): Promise<Block> {
+  return changesAwaiting(
+    request<Block>(`/blocks/${encodeURIComponent(questionId)}/skip`, {
+      method: 'POST',
+    })
+  )
+}
+
+// Take back your own answer to a question asked with quick replies, or your
+// skip of it, so the question waits again and its options come back. `blockId` is the QUESTION —
 // the answer is an ordinary message, and what comes off is the line it left on
 // the question. Only whoever answered it can; anyone else is refused. Returns
 // the question as the room now records it, which every client also gets as a
 // `block_updated` frame.
 export function withdrawAnswer(questionId: string): Promise<Block> {
-  return request<Block>(`/blocks/${encodeURIComponent(questionId)}/answer`, {
-    method: 'DELETE',
-  })
+  return changesAwaiting(
+    request<Block>(`/blocks/${encodeURIComponent(questionId)}/answer`, {
+      method: 'DELETE',
+    })
+  )
 }

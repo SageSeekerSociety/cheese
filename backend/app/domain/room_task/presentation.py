@@ -15,7 +15,7 @@
 - `building` 进行中 —— 开始了，还没递出交付。
 - `delivering` 检查中 —— 下一步在**平台/芝士**手上。
 - `needs_you` 待处理 —— 下一步在**人**手上。
-- `done` 已完成 —— 已采纳，或已关闭且没交付。
+- `done` 已关闭 —— 任务关了：最后一步已采纳，或没交付就关了。
 - `archived` 已归档 —— 房间才有；活不归档。
 
 同一个客观事实会因为「谁负责下一步」落在不同列。CI 红了，平台已经派芝士去修就是
@@ -44,15 +44,18 @@ from typing import Any, Protocol
 from sqlalchemy.orm import Mapped
 
 from app.core.errors import ValidationError
+from app.domain.addressing import Hand
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
 
-# `Task` 是这一层唯一还拿在手里的 ORM 行 —— **暂留**，不是读模型。方案 v6 的第一期
-# 只给 block / review 开了窄读出口；项目 rail 的 Task 暂交给 task_liveness、
-# facts_for_task 和 TaskOut.model_validate。本模块的 card_model 也读取 Task 的绑定
-# 属性，计算卡面的模型名；facts_for_task 和 card_model 都只读属性、不顺着行查库。
-# 等 room_task 有自己的窄读输出，再替换这份 ORM 边界。房间那一行 (`Topic`) 不按类
-# 标进签名 —— 只看它被读到的几位 (`TopicSignals`)，和卡一样是结构契约。
+# `Task` 是这一层唯一还**按类**标进签名的 ORM 行 —— **暂留**，不是读模型。项目 rail
+# 的 Task 暂交给 task_liveness、card_model 和 TaskOut.model_validate：card_model 读
+# 的是这条活绑了什么模型（`Task.model` / `Task.effort`），标 `Task` 才读得出来。
+# `facts_for_task` 不在此列：`room_task` 已经有了自己的窄读输出
+# （`repositories.ListedTask`），所以那一格走结构契约（`TaskSignals` / `TaskRow`），
+# 和卡那一格（`CardSignals` / `CardRow`）一样。房间那一格也一样：`topic` 窄读出口
+# 交出来的纯值走 `TopicSignals`，`Topic` 那一行走 `TopicRow` —— 各只看它被读到的
+# 那几位。
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import TopicStatus
 
@@ -113,12 +116,87 @@ class CardRow(Protocol):
     auto_merge_armed_by: Mapped[str | None]
 
 
-class TopicSignals(Protocol):
-    """一个房间**行**能被折成 `RoomFacts` 的几位 —— `facts_for_room` 只读这三位。
+class TaskSignals(Protocol):
+    """一条活能被折成 `TaskFacts` 的五位 —— **窄读出口交出来的纯值**那一份契约。
 
-    `facts_for_room` 的两个调用方手上都是 ORM 那一行（`Topic`），所以和 `CardRow`
-    一样按模型的原样声明 `Mapped[...]`，pyright 才比得过。`status` 同样收成
-    `Mapped[Any]`：`TopicStatus` 的名字在 `topic.models` 里，而这一层只读它做词比较
+    和 `CardSignals` 同一条理由、同一份写法：`facts_for_task` 的两个调用方，领域内
+    的人手上是 `Task` 那一行（ORM 行），HTTP 路由手上是 `room_task` 窄读出口交出来
+    的纯值（`room_task.repositories.ListedTask`）——正在跑的进程和外部命令读一屏活
+    读的是状态、人、日期，整行里的交付记录、环境、检查输出那些正文它们一个字不读。
+    ORM 行的属性是 `Mapped` 描述符、纯值的属性是普通标量，所以在 pyright 那里是
+    **两份**契约：这里是纯值那一份，那一行走 `TaskRow`。
+
+    声明成 property 是有意的（同 `CardSignals`）：pyright 对只读属性按协变比对，
+    所以 `ListedTask` 上的普通字段也接得住。
+
+    五位正好是 `facts_for_task` 读的那五位，多一个就多一条「对方必须记得改」的
+    绳子，少一个那一格就折不出来。
+    """
+
+    @property
+    def status(self) -> Any: ...
+
+    @property
+    def accepted_at(self) -> datetime | None: ...
+
+    @property
+    def started_at(self) -> datetime | None: ...
+
+    @property
+    def conclusion(self) -> str | None: ...
+
+    @property
+    def closing_since(self) -> datetime | None: ...
+
+
+class TaskRow(Protocol):
+    """`Task` 那一行的形状 —— **ORM 行**那一份契约，按模型的原样声明 `Mapped`。
+
+    同 `CardRow`：pyright 拿 `Task` 的类成员来比协议的类成员时，属性是 `Mapped`
+    描述符，普通的 `status: str` 接不住它。`status` 同样收成 `Mapped[Any]` ——
+    `TaskStatus` 的名字在 `room_task.models` 里，这一层只把它 `str()` 成词。
+    """
+
+    status: Mapped[Any]
+    accepted_at: Mapped[datetime | None]
+    started_at: Mapped[datetime | None]
+    conclusion: Mapped[str | None]
+    closing_since: Mapped[datetime | None]
+
+
+class TopicSignals(Protocol):
+    """一个房间**摆上清单**能被折成 `RoomFacts` 的三位 —— **纯值**那一份契约。
+
+    和 `CardSignals` / `TaskSignals` 同一条理由、同一份写法：`facts_for_room` 的两个
+    调用方，领域内的人手上是 `Topic` 那一行（ORM 行），HTTP 路由手上是 `topic` 窄读
+    出口交出来的纯值（`topic.repositories.ListedRoom`）——「待我处理」把几百个频道收窄
+    到真正要摆的那几个之后，读的是标题、状态、日期这几位，整行里的环境文档和简介它
+    一个字不读。ORM 行的属性是 `Mapped` 描述符、纯值的属性是普通标量，所以在 pyright
+    那里是**两份**契约：这里是纯值那一份，那一行走 `TopicRow`。
+
+    声明成 property 是有意的（同 `CardSignals`）：pyright 对只读属性按协变比对，
+    所以 `ListedRoom` 上的普通字段也接得住。
+
+    三位正好是 `facts_for_room` 读的那三位，多一个就多一条「对方必须记得改」的绳子，
+    少一个那一格就折不出来。
+    """
+
+    @property
+    def id(self) -> uuid.UUID: ...
+
+    @property
+    def status(self) -> Any: ...
+
+    @property
+    def accepted_at(self) -> datetime | None: ...
+
+
+class TopicRow(Protocol):
+    """`Topic` 那一行的形状 —— **ORM 行**那一份契约，按模型的原样声明 `Mapped`。
+
+    同 `CardRow`：pyright 拿 `Topic` 的类成员来比协议的类成员时，属性是 `Mapped`
+    描述符，普通的 `status: str` 接不住它。`status` 同样收成 `Mapped[Any]`：
+    `TopicStatus` 的名字在 `topic.models` 里，而这一层只读它做词比较
     （`room_presentation` 里 `facts.status == TopicStatus.archived`），不必把那一列
     的枚举类型拖进来。
     """
@@ -137,6 +215,30 @@ class Column(enum.StrEnum):
     needs_you = "needs_you"
     done = "done"
     archived = "archived"
+
+
+#: 看板的列 → 下一步在谁手上。**封闭表**：`Column` 多一档而这里没跟上，查表当场抛
+#: `KeyError`，而不是让新的一列悄悄落进「不通知任何人」那一档。住在这里而不是
+#: `app/domain/addressing.py`：表的主键是看板的列，只有这里知道每一列是什么意思；
+#: `Hand` 是那份判据（第 1 层）的词，从下面拿。
+_HAND_OF_COLUMN: dict[Column, Hand] = {
+    # 还在讨论：下一步是负责人把事情说清楚、点「开始」。
+    Column.not_started: Hand.participant,
+    Column.building: Hand.platform,
+    Column.delivering: Hand.platform,
+    Column.needs_you: Hand.participant,
+    Column.done: Hand.platform,
+    Column.archived: Hand.platform,
+}
+
+
+def hand_of(column: Column) -> Hand:
+    """看板上这一格的下一步在谁手上。
+
+    看板的列回答的本来就是「该谁动」（见模块开头），所以这里不是第二次判断，是把
+    同一个答案翻译成投递那一侧的词（`app/domain/addressing.py`）。
+    """
+    return _HAND_OF_COLUMN[column]
 
 
 class NotStarted(enum.StrEnum):
@@ -313,13 +415,22 @@ def facts_for_card(card: CardSignals | CardRow | None) -> CardFacts | None:
 
 
 def facts_for_task(
-    task: Task,
+    task: TaskSignals | TaskRow,
     card: CardSignals | CardRow | None = None,
     *,
     running: bool = False,
     awaiting_answer: bool = False,
 ) -> TaskFacts:
-    """把一行 `Task`（加上它的卡）折成这层要读的事实。"""
+    """把一行活（加上它的卡）折成这层要读的事实。
+
+    收两种形状是因为活有两处来源：领域内的人手上是 `Task` 那一行，HTTP 路由手上是
+    `room_task` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查
+    一行。这一层只读 `status` / `accepted_at` / `started_at` / `conclusion` /
+    `closing_since` 五个属性 —— `TaskSignals` 和 `TaskRow` 各声明一次这五位，两个调用
+    点上都由 pyright 比对，所以两种形状折出来的 `TaskFacts` 一模一样。卡和房间那两对
+    另有单元测试逐位对过（`tests/unit/test_presentation.py`），这一对没有；窄读那几列
+    真的带得回来，押在 `room_task.repositories.listed_by_ids` 的列清单上。
+    """
     return TaskFacts(
         status=str(task.status),
         accepted_at=task.accepted_at,
@@ -333,12 +444,20 @@ def facts_for_task(
 
 
 def facts_for_room(
-    topic: TopicSignals,
+    topic: TopicSignals | TopicRow,
     running_ids: set[uuid.UUID],
     card: CardSignals | CardRow | None = None,
     *,
     awaiting_answer: bool = False,
 ) -> RoomFacts:
+    """把一个房间折成这层要读的事实。
+
+    收两种形状是因为房间有两处来源：领域内的人手上是 `Topic` 那一行，HTTP 路由手上是
+    `topic` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查一行。这一
+    层只读 `id` / `status` / `accepted_at` 三位（`TopicSignals` / `TopicRow`），两种
+    形状都长得出来，所以折出来的 `RoomFacts` 一模一样（`tests/unit/test_presentation.py`
+    钉住了）。
+    """
     return RoomFacts(
         status=str(topic.status),
         running=topic.id in running_ids,
@@ -469,6 +588,41 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     return None
 
 
+def card_column(card: CardSignals | CardRow) -> Column | None:
+    """这张卡此刻把它所在的地方摆在哪一列；它已经不说话了就是 None。
+
+    和 `task_presentation` 同一个判据（`_card_presentation`），只是形状公开：调用方
+    要问的是「这个地方是不是走在交付链路上」，而那条链路上的每一格都在 `Delivering`
+    里（见 `Column`）。卡说不出话时返回 None，不替调用方猜一列。
+
+    比 `task_presentation` 少几层：只看卡，不看这条活关没关、有没有在跑、在不在等
+    回答。所以「说得出交付中」是充分的，反过来不成立 —— 问「有没有走在交付链路上」
+    只要充分就够了。
+    """
+    facts = facts_for_card(card)
+    if facts is None:
+        return None
+    shown = _card_presentation(facts)
+    return None if shown is None else shown.column
+
+
+def work_moving(shown: Presentation, *, also: bool = False) -> bool:
+    """这个格子里此刻有没有活在往前走 —— 侧栏那盏**呼吸绿**问的就是它。
+
+    两种都算：有一轮在跑（`Building.running`），或者已经递出去、走在交付链路上
+    （`Delivering` 那一列：等闸门、等 CI、修检查、解冲突、换基）。其余都不算 ——
+    还没开工、在等人、做完了，都不是「正在往前走」。
+
+    `also` 是给一个房间用的：它自己那条线可能闲着，名下的活却走在交付链路上
+    （`routes/topics._delivering_rooms`），那也算这间房在往前走。
+    """
+    return (
+        also
+        or shown.column is Column.delivering
+        or shown.phrase == Building.running.value
+    )
+
+
 def card_waits_on_reviewer(card: CardSignals | CardRow) -> bool:
     """这张卡此刻是不是真的在等验收人动手 —— 看板「待审阅」那一格。
 
@@ -527,8 +681,8 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
 
     三条优先级规矩：
 
-    1. **关了就是结束**：最后一次交付被采纳的写「已采纳」，留了结论的写「已完成」，
-       都没有的写「已关闭」。还开着的任务就算采纳过前几步，也还在做；只有最后一步
+    1. **关了就是结束**：最后一次交付被采纳的写「已采纳」，其余写「已关闭」——留了
+       结论的（`completed`）和什么都没留的（`closed`）码不同，字一样：关掉不等于做成。还开着的任务就算采纳过前几步，也还在做；只有最后一步
        合并后 AI 队友写总结的那一会儿例外，它已经是「已采纳」。
     2. **待回答压过「在跑」**：进程可能还在，但它不会自己往下走了，而看板显示
        「运行中」正是让人不来看的那一句。
@@ -593,7 +747,8 @@ def waiting_on(
     asked: str | None,
 ) -> str | None:
     """这一格在等哪一个人：卡面上写「待 某某 审阅」「待 某某 回答」「待 某某 开始」
-    的那个某某。不是在等一个具体的人就是 None。"""
+    的那个某某。不是在等一个具体的人就是 None —— 一道题问了几个人、问了所有人，
+    就不是。"""
     if shown.phrase == NeedsYou.awaiting_review.value:
         return reviewer
     if shown.phrase == NeedsYou.awaiting_answer.value:

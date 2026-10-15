@@ -72,9 +72,18 @@ function task(id: string, roomId: string): RoomTask {
 
 let vuetify: ReturnType<typeof createVuetify>
 
-beforeAll(() => {
-  vuetify = createVuetify({ components, directives })
-})
+beforeAll(
+  async () => {
+    vuetify = createVuetify({ components, directives })
+    // 文档那一格是 `defineAsyncComponent`（`TaskOverview` 里按需取 `PanelDocHost`），
+    // 第一次用到它要现解析 tiptap 那一大坨，比 `waitFor` 默认的 1 秒还长。先在这里取一
+    // 次把模块图热好，下面每一条的等待就只剩「等它挂上」这件事。
+    await import('../../components/work/PanelDocHost.vue')
+  },
+  // 这一下要现编 tiptap 那一整条链，本机冷的时候量到过 4 秒（空工作区里单跑 8 秒），
+  // 而 vitest 的 hook 默认只给 10 秒——CI 更冷更挤，别让这条本该是热身的事变成红。
+  60_000
+)
 
 beforeEach(() => {
   resetRooms()
@@ -112,6 +121,19 @@ function prose(container: Element): string {
 }
 
 describe('任务的概览', () => {
+  // 结论存的是 token；读的人看到的是人名，而且结论没有通知谁，所以不是 @chip。点名字去这个人那里。
+  it('结论里提到的人读成他的名字，点了去他那里', async () => {
+    const done = { ...task('task-1', 't1'), status: 'done', conclusion: '和 <@alice> 对过，按方案二做' } as RoomTask
+    const { getByText, container, emitted } = open(done, { memberNames: { alice: '爱丽丝' } })
+
+    const name = getByText('爱丽丝')
+    expect(container.textContent).toContain('和 爱丽丝 对过，按方案二做')
+    expect(container.textContent).not.toContain('<@alice>')
+    expect(container.textContent).not.toContain('@爱丽丝')
+    name.click()
+    expect(emitted()['mention-click']).toEqual([['alice']])
+  })
+
   it('画的是这个任务的实况文档', async () => {
     seedRoom('doc-1', '任务开工时写的第一段')
     const { container } = open(task('task-1', 't1'))

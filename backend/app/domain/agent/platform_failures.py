@@ -581,6 +581,7 @@ def classify_platform_failure(
 PROVIDER_UNREACHABLE_CODE = "provider_unreachable"
 PROVIDER_OVERLOADED_CODE = "provider_overloaded"
 SUBSCRIPTION_EGRESS_OFFLINE_CODE = "subscription_egress_offline"
+SUBSCRIPTION_ACCOUNTS_COOLING_CODE = "subscription_accounts_cooling"
 MODEL_LIMIT_REACHED_CODE = "model_limit_reached"
 RESPONSE_TRUNCATED_CODE = "response_truncated"
 TOOL_UNAVAILABLE_CODE = "tool_unavailable"
@@ -599,6 +600,14 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"^API Error:.*\bsubscription egress is offline\b", re.I),
         SUBSCRIPTION_EGRESS_OFFLINE_CODE,
     ),
+    # The metering proxy's 429 when every Claude account of the subscription is
+    # cooling down after hitting its own limit (`deploy/metering-proxy`,
+    # `claude_accounts.py`). Not the provider throttling everyone for a moment:
+    # the accounts stay out until their limits reset, minutes to days later.
+    (
+        re.compile(r"^API Error:.*\ball Claude accounts are cooling down\b", re.I),
+        SUBSCRIPTION_ACCOUNTS_COOLING_CODE,
+    ),
     (
         re.compile(
             r"^API Error:.*\b(ConnectionRefused|ECONNRESET|Connection refused)\b",
@@ -612,6 +621,11 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(r"^API Error:.*\b(Overloaded|Bad Gateway)\b", re.I),
+        PROVIDER_OVERLOADED_CODE,
+    ),
+    # Claude Code's wording for a 429 that is not the account's usage limit.
+    (
+        re.compile(r"^API Error:.*\btemporarily limiting requests\b", re.I),
         PROVIDER_OVERLOADED_CODE,
     ),
     (
@@ -641,6 +655,20 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 _HAS_CJK = re.compile(r"[一-鿿]")
+
+#: Claude Code's line for a request the model's API refused as invalid. Read by
+#: its status, 400, which every provider gives an invalid request, and never by
+#: the provider's own words after it, which differ from one provider to the next.
+_REQUEST_REFUSED = re.compile(r"^API Error:\s*400\b")
+
+
+def is_request_refused(text: str) -> bool:
+    """A failure the model's API refused as an invalid request.
+
+    Retrying sends the same conversation again, and it is refused the same way:
+    what it refuses is already in the conversation, an image that does not
+    decode being the case that ended a conversation for good."""
+    return bool(_REQUEST_REFUSED.match(text.strip()))
 
 
 def classify_cli_notice(text: str) -> str | None:

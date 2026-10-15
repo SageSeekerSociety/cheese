@@ -20,7 +20,34 @@
     <!-- Updated at runtime by src/theme.ts when the theme changes; this value
          is the light one, matching META_THEME_COLOR in that file. -->
     <meta name="theme-color" content="#F57F17" />
-    <title>Cheese</title>
+    <!-- What a search engine and a link preview read before any script runs (Baidu's
+         spider runs none). The title is the landing page's own one too
+         (publicSite.documentTitle); the app retitles every other page at runtime. -->
+    <title>知是 Cheese · 和队友、AI 一起做真项目</title>
+    <meta
+      name="description"
+      content="知是（Cheese）：和队友、AI 一起做真项目，学真本事。面向高校、企业与科研团队，科研、课程、竞赛、创业项目都能在这里协作完成。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="知是 Cheese" />
+    <meta property="og:title" content="知是 Cheese · 和队友、AI 一起做真项目" />
+    <meta
+      property="og:description"
+      content="知是（Cheese）：和队友、AI 一起做真项目，学真本事。面向高校、企业与科研团队，科研、课程、竞赛、创业项目都能在这里协作完成。"
+    />
+    <meta property="og:image" content="https://okcheese.com/pwa-512x512.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "知是",
+        "alternateName": ["Cheese", "知是 Cheese", "okcheese", "知是科创"],
+        "legalName": "知是科创（北京）信息技术有限公司",
+        "url": "https://okcheese.com/",
+        "logo": "https://okcheese.com/pwa-512x512.png",
+        "sameAs": ["https://okcheese.cn/", "https://docs.okcheese.com/", "https://github.com/SageSeekerSociety/cheese"]
+      }
+    </script>
     <link rel="stylesheet" href="/src/styles/common.scss" />
 
     <!--
@@ -106,20 +133,199 @@
       }
     </script>
     <!--
-      Cold-start skeleton shell. The served HTML paints this before the bundle
-      arrives, so a slow link shows the app taking shape instead of a ~20s pure
-      white screen (measured 400 kbit/s). Entirely inline — no extra request, no
-      external font, small markup — so it never delays the first paint.
-      `src/main.ts` removes the node the moment Vue mounts.
+      Which first frame this page paints, decided before any of it is parsed and
+      stamped on <html data-boot>:
+
+        page       a prerendered public page (scripts/prerender.mjs) for a visitor
+                   who is not signed in and reads Chinese: the HTML in #app is the
+                   page itself, main.ts hydrates it, no skeleton.
+        landing    a public page the app will draw itself (English, a page that is
+                   not prerendered, or a signed-in reader of /about): its outline.
+        workspace  signed in and going to a project's overview (where / lands when
+        room       there is a last project), or to a channel or task in one;
+        inbox      the to-do page;
+        shell      any other page of the app: the frame without a sidebar;
+        plain      somewhere with no frame at all (sign-in, the first-run welcome).
+
+      Everything it reads is what the app itself reads to decide where a visit
+      lands (router/home.ts landingForMember, i18n resolveInitialLocale, the
+      workspace store), from the same keys: keep the two in step. Signed in means
+      the stored session the app restores (services/account.ts); whether it still
+      holds is only known after a round trip, and the skeleton stays up for it.
+      main.ts removes the attribute once the real page is in place.
+    -->
+    <script>
+      ;(function () {
+        var html = document.documentElement
+        var boot = 'shell'
+        try {
+          var read = function (key) {
+            try {
+              return localStorage.getItem(key)
+            } catch (e) {
+              return null
+            }
+          }
+          var json = function (key) {
+            try {
+              return JSON.parse(read(key) || 'null')
+            } catch (e) {
+              return null
+            }
+          }
+          var path = location.pathname.replace(/\/+$/, '') || '/'
+          var user = json('user')
+          var signedIn = !!(read('accessToken') && user)
+          var app = !!window.__TAURI__
+          var locale = read('cheese:locale')
+          var zh = locale ? locale === 'zh-CN' : (navigator.language || '').toLowerCase().indexOf('zh') === 0
+          var marker = document.querySelector('meta[name="cx-prerendered"]')
+          var publicPage = /^\/(about|solutions|download)?$/.test(path)
+          var layout = json('cheesex.layout') || {}
+          var rail = read('cheesex.railCount')
+          if (app && publicPage && !signedIn) boot = 'plain'
+          else if (publicPage && !signedIn) boot = marker && marker.content === path && zh ? 'page' : 'landing'
+          else if (publicPage && path !== '/' && !app) boot = 'landing'
+          else if (!signedIn) boot = 'plain'
+          else if (path === '/')
+            boot = layout.lastProjectId && rail !== '0' ? 'workspace' : user.onboarded_at ? 'inbox' : 'plain'
+          else if (/^\/projects\/[^/]+\/(channels|tasks|dm)\//.test(path)) boot = 'room'
+          else if (/^\/projects\//.test(path)) boot = 'workspace'
+          else if (path === '/inbox') boot = 'inbox'
+          else if (/^\/(welcome|account)(\/|$)/.test(path)) boot = 'plain'
+          // The frame's own measurements, as the app keeps them.
+          var side = Number(read('cheesex.sidebarWidth'))
+          side = side > 0 ? Math.min(480, Math.max(190, Math.round(side))) : 280
+          html.style.setProperty('--sx-side-w', side + 'px')
+          html.dataset.bootRail = String(Math.min(9, Math.max(0, rail === null ? 3 : Number(rail) || 0)))
+          // The room's side panel: the reader's own choice, else open when the pane
+          // is wide enough (useWorkspaceLayout PANEL_OPEN_MIN).
+          var pane = window.innerWidth - 64 - side
+          var panel = typeof layout.panelOpen === 'boolean' ? layout.panelOpen : pane >= 1000
+          if (panel) html.style.setProperty('--sx-chat-w', (Number(layout.chatPct) || 50) + '%')
+        } catch (e) {
+          // Whatever went wrong, the generic frame is never wrong for long.
+        }
+        html.dataset.boot = boot
+      })()
+    </script>
+    <!--
+      Renew an expired session now, while the bundle is still on its way: the app
+      would otherwise ask only once its scripts have run, and wait a round trip
+      for the answer before it can even ask for the first page's data. This does
+      what lib/session.ts does (same URL, request, lock, storage keys) and only
+      that: it takes the same Web Lock the app takes for a renewal, checks under
+      it that no other tab has already renewed (the cookie rotates, and presenting
+      a spent one ends the session), and stores the new token and user before it
+      lets go. The app's own renewal then waits on the lock, finds the token has
+      changed, and takes it, exactly as when another tab renewed. Anything short
+      of a fresh token is left to the app: it asks again and handles the answer.
+      Without Web Locks it does nothing, rather than race the app.
+
+      Then, with a live token in hand, it asks for the project list on a page
+      whose frame needs it (every signed-in frame: the project rail, and where `/`
+      lands): the app would otherwise ask only after its scripts arrive and the
+      session is restored. The app takes this one answer in place of its own first
+      request (src/lib/earlyProjects.ts) and asks itself when there is none.
+    -->
+    <script>
+      ;(function () {
+        try {
+          var boot = document.documentElement.dataset.boot
+          if (boot === 'page' || boot === 'landing' || !window.fetch) return
+          var token = localStorage.getItem('accessToken')
+          if (!token || !localStorage.getItem('user')) return
+          var framed = boot === 'workspace' || boot === 'room' || boot === 'inbox' || boot === 'shell'
+          // Same request as listProjects() in src/api/projects.ts; the answer
+          // remembers the token it was asked with.
+          var projects = function (jwt) {
+            var controller = new AbortController()
+            var timer = setTimeout(function () {
+              controller.abort()
+            }, 10000)
+            return fetch('/api/projects', {
+              headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + jwt },
+              signal: controller.signal,
+            })
+              .then(function (res) {
+                return res.ok ? res.json() : null
+              })
+              .then(function (body) {
+                return body ? { token: jwt, body: body } : null
+              })
+              .catch(function () {
+                return null
+              })
+              .then(function (answer) {
+                clearTimeout(timer)
+                return answer
+              })
+          }
+          var expired = function (jwt) {
+            try {
+              var exp = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).exp
+              return typeof exp !== 'number' || exp * 1000 - 30000 <= Date.now()
+            } catch (e) {
+              return true
+            }
+          }
+          if (!expired(token)) {
+            if (framed) window.__cxEarlyProjects = projects(token)
+            return
+          }
+          if (!navigator.locks) return
+          var renewed = navigator.locks.request('cheese:session-refresh', function () {
+            if (localStorage.getItem('accessToken') !== token) return
+            var controller = new AbortController()
+            var timer = setTimeout(function () {
+              controller.abort()
+            }, 10000)
+            return fetch('/api/users/auth/refresh-token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              signal: controller.signal,
+            })
+              .then(function (res) {
+                return res.ok ? res.json() : null
+              })
+              .then(function (body) {
+                var data = body && body.data
+                if (!data || typeof data.accessToken !== 'string' || !data.accessToken) return
+                localStorage.setItem('accessToken', data.accessToken)
+                if (data.user) localStorage.setItem('user', JSON.stringify(data.user))
+              })
+              .catch(function () {})
+              .then(function () {
+                clearTimeout(timer)
+              })
+          })
+          // Renewed here or by another tab meanwhile: either way a new token. Still
+          // the expired one means no renewal, and the app's own requests follow it.
+          if (framed) {
+            window.__cxEarlyProjects = renewed.then(function () {
+              var now = localStorage.getItem('accessToken')
+              return now && now !== token ? projects(now) : null
+            })
+          }
+        } catch (e) {
+          // The app renews the session itself in any case.
+        }
+      })()
+    </script>
+    <!--
+      The cold-start skeletons. The served HTML paints one before the bundle
+      arrives, so a slow link shows the page taking shape instead of a pure white
+      screen (~20s measured at 400 kbit/s), and it stays up until the page it
+      stands for is in place (main.ts). Entirely inline, no extra request, no
+      external font. Each one is drawn to the measurements of the real page it
+      stands for, desktop and phone (Vuetify's md breakpoint, 960px), so the
+      switch to the real page moves nothing.
 
       The colours are literals copied from the design tokens in `src/style.css`
-      (--canvas / --surface / --line / --line-2 / --fill-2 / --fill / --accent).
-      They have to be literals: that sheet ships inside the bundle and is not
-      here yet. Dark follows `html[data-theme]`, which the boot script above has
-      already resolved from the stored preference AND prefers-color-scheme before
-      the first paint, so an explicit "light" on a dark machine stays light. The
-      prefers-color-scheme block is the scripting-off fallback and carries the
-      same values; keep the two in step.
+      (--canvas / --surface / --line / --fill-2 / --fill / --accent). They have to
+      be literals: that sheet ships inside the bundle and is not here yet. Dark
+      follows `html[data-theme]`, resolved above before the first paint.
     -->
     <style>
       #sx-boot-skeleton,
@@ -134,10 +340,10 @@
         --sx-bone-rail: #e2e3e6;
         --sx-sheen: #f4f5f7;
         --sx-accent: #f57f17;
+        display: none;
         position: fixed;
         inset: 0;
         z-index: 2147483000; /* one below the desktop boot splash */
-        display: flex;
         overflow: hidden;
         background: var(--sx-canvas);
       }
@@ -150,109 +356,36 @@
         --sx-sheen: #212429;
         --sx-accent: #ffa733;
       }
-      /* No script has run, so <html> carries no data-theme yet: follow the OS. */
-      @media (prefers-color-scheme: dark) {
-        html:not([data-theme]) #sx-boot-skeleton {
-          --sx-canvas: #141517;
-          --sx-surface: #1b1d20;
-          --sx-line: #2b2e33;
-          --sx-bone: #282c31;
-          --sx-bone-rail: #3a3e45;
-          --sx-sheen: #212429;
-          --sx-accent: #ffa733;
-        }
-      }
-      /* Left rail: a 56px column of rounded tile placeholders; the top one is the
-         brand mark, so it carries the amber. */
-      #sx-boot-skeleton .sx-rail {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 10px;
-        flex: none;
-        width: 56px;
-        padding: 12px 0;
-        border-right: 1px solid var(--sx-line);
-      }
-      #sx-boot-skeleton .sx-icon {
+      /* A prerendered page is shown only to the visitor it was rendered for; for
+         anyone else the skeleton covers it until the app has drawn their page. */
+      html[data-boot]:not([data-boot='page']) #sx-boot-skeleton {
         display: block;
-        width: 22px;
-        height: 22px;
-        border-radius: 6px;
-        background: var(--sx-bone-rail);
       }
-      #sx-boot-skeleton .sx-icon--brand {
-        background: var(--sx-accent);
-        opacity: 0.85;
+      /* Not laid out at all, not just unseen: a laid-out prerendered page still
+         fetches its fonts and pictures, on the bandwidth this visit needs. */
+      html[data-boot]:not([data-boot='page']) #app {
+        display: none;
       }
-      /* Secondary sidebar: the app's default width, rows of running text. */
-      #sx-boot-skeleton .sx-side {
-        flex: none;
-        width: 210px;
-        padding: 14px 12px;
-        border-right: 1px solid var(--sx-line);
+      #sx-boot-skeleton > div,
+      #sx-boot-skeleton .sx-app > div,
+      #sx-boot-skeleton .sx-main > div,
+      #sx-boot-skeleton .sx-side > div {
+        display: none;
       }
-      #sx-boot-skeleton .sx-side .sx-bone {
-        height: 12px;
-        margin-bottom: 12px;
-        background: var(--sx-bone-rail);
-      }
-      /* Content pane: a title bar and two card blocks, on --surface. */
-      #sx-boot-skeleton .sx-main {
-        flex: 1 1 auto;
-        min-width: 0;
-        padding: 16px 20px;
-        background: var(--sx-surface);
-      }
-      #sx-boot-skeleton .sx-title {
-        height: 18px;
-        width: 40%;
-        margin-bottom: 8px;
-      }
-      #sx-boot-skeleton .sx-sub {
-        height: 12px;
-        width: 24%;
-        margin-bottom: 18px;
-      }
-      #sx-boot-skeleton .sx-card {
-        border: 1px solid var(--sx-line);
-        border-radius: 8px;
-        padding: 14px;
-        margin-bottom: 12px;
-      }
-      #sx-boot-skeleton .sx-card .sx-bone {
-        height: 11px;
-        margin-bottom: 10px;
-      }
-      #sx-boot-skeleton .sx-card .sx-bone:last-child {
-        margin-bottom: 0;
-      }
-      #sx-boot-skeleton .sx-w50 {
-        width: 50%;
-      }
-      #sx-boot-skeleton .sx-w60 {
-        width: 60%;
-      }
-      #sx-boot-skeleton .sx-w70 {
-        width: 70%;
-      }
-      #sx-boot-skeleton .sx-w75 {
-        width: 75%;
-      }
-      #sx-boot-skeleton .sx-w85 {
-        width: 85%;
-      }
-      #sx-boot-skeleton .sx-w90 {
-        width: 90%;
-      }
+
       /* The bones, and the "still coming" sign: a light sweep across each one,
          1.4s a cycle, the same motion the in-app LoadingSkeleton uses. */
       #sx-boot-skeleton .sx-bone {
         position: relative;
         overflow: hidden;
         display: block;
+        flex: none;
+        height: 12px;
         border-radius: 6px;
         background: var(--sx-bone);
+      }
+      #sx-boot-skeleton .sx-on-canvas .sx-bone {
+        background: var(--sx-bone-rail);
       }
       #sx-boot-skeleton .sx-bone::after {
         content: '';
@@ -273,6 +406,575 @@
           background: none;
         }
       }
+      #sx-boot-skeleton .sx-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 36px;
+        margin: 0 8px 4px;
+        padding: 0 8px;
+        border-radius: 8px;
+      }
+      #sx-boot-skeleton .sx-row--on {
+        background: var(--sx-bone-rail);
+      }
+      #sx-boot-skeleton .sx-row--on .sx-bone {
+        background: var(--sx-bone);
+      }
+      #sx-boot-skeleton .sx-ico {
+        width: 16px;
+        height: 14px;
+        border-radius: 4px;
+      }
+      #sx-boot-skeleton .sx-sub {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 36px;
+        padding: 6px 16px 0;
+      }
+      #sx-boot-skeleton .sx-sub .sx-bone {
+        width: 28px;
+        height: 10px;
+      }
+      #sx-boot-skeleton .sx-sub .sx-bone + .sx-bone {
+        width: 12px;
+        height: 12px;
+      }
+
+      /* ---- Public pages: LandingShell's bar and the hero under it. ---- */
+      html[data-boot='landing'] #sx-boot-skeleton .sx-landing {
+        display: block;
+      }
+      #sx-boot-skeleton .sx-lbar {
+        display: flex;
+        align-items: center;
+        height: 64px;
+        padding: 0 48px;
+        gap: 32px;
+      }
+      #sx-boot-skeleton .sx-lbar-brand {
+        width: 68px;
+        height: 24px;
+      }
+      #sx-boot-skeleton .sx-lbar-nav {
+        display: flex;
+        flex: 1 1 auto;
+        justify-content: center;
+        gap: 32px;
+      }
+      #sx-boot-skeleton .sx-lbar-nav .sx-bone {
+        width: 28px;
+      }
+      #sx-boot-skeleton .sx-lbar-cta {
+        width: 112px;
+        height: 36px;
+        border-radius: 8px;
+      }
+      #sx-boot-skeleton .sx-lhero {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 28px;
+        height: calc(100dvh - 64px);
+        padding: 0 48px 64px;
+      }
+      #sx-boot-skeleton .sx-lhero-title {
+        width: min(752px, 100%);
+        height: clamp(64px, 12vw, 172px);
+        border-radius: 12px;
+      }
+      #sx-boot-skeleton .sx-lhero-sub {
+        width: min(648px, 90%);
+        height: 32px;
+      }
+      #sx-boot-skeleton .sx-lhero-actions {
+        display: flex;
+        align-items: center;
+        gap: 32px;
+        margin-top: 12px;
+      }
+      #sx-boot-skeleton .sx-lhero-btn {
+        width: 120px;
+        height: 44px;
+        border-radius: 8px;
+      }
+      #sx-boot-skeleton .sx-lhero-link {
+        width: 84px;
+      }
+
+      /* ---- The app's frame (App.vue): title bar, rail, sidebar, content pane. ---- */
+      html[data-boot='shell'] #sx-boot-skeleton .sx-app,
+      html[data-boot='workspace'] #sx-boot-skeleton .sx-app,
+      html[data-boot='room'] #sx-boot-skeleton .sx-app,
+      html[data-boot='inbox'] #sx-boot-skeleton .sx-app {
+        display: block;
+      }
+      #sx-boot-skeleton .sx-top {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        height: 32px;
+      }
+      #sx-boot-skeleton .sx-top-title {
+        width: 96px;
+      }
+      #sx-boot-skeleton .sx-top-help {
+        position: absolute;
+        right: 16px;
+        width: 72px;
+      }
+      #sx-boot-skeleton .sx-rail {
+        position: absolute;
+        top: 32px;
+        left: 0;
+        bottom: 0;
+        display: flex !important;
+        flex-direction: column;
+        align-items: center;
+        width: 64px;
+        padding-top: 4px;
+      }
+      #sx-boot-skeleton .sx-tile {
+        display: block;
+        flex: none;
+        width: 48px;
+        height: 48px;
+        margin-bottom: 8px;
+        border-radius: 8px;
+        background: var(--sx-bone-rail);
+      }
+      html[data-boot='inbox'] #sx-boot-skeleton .sx-tile--home {
+        background: var(--sx-accent);
+        opacity: 0.85;
+      }
+      #sx-boot-skeleton .sx-rail-rule {
+        display: block;
+        width: 24px;
+        height: 2px;
+        margin: 6px 0 14px;
+        border-radius: 1px;
+        background: var(--sx-bone-rail);
+      }
+      #sx-boot-skeleton .sx-tile--add {
+        border: 1px dashed var(--sx-bone-rail);
+        background: none;
+      }
+      #sx-boot-skeleton .sx-rail-me {
+        position: absolute;
+        bottom: 24px;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--sx-bone-rail);
+      }
+      #sx-boot-skeleton .sx-body {
+        position: absolute;
+        top: 32px;
+        left: 64px;
+        right: 0;
+        bottom: 0;
+        display: flex !important;
+        overflow: hidden;
+        border-top: 1px solid var(--sx-line);
+        border-left: 1px solid var(--sx-line);
+        border-top-left-radius: 12px;
+      }
+      #sx-boot-skeleton .sx-side {
+        flex: none;
+        width: calc(var(--sx-side-w, 280px) - 1px);
+      }
+      html[data-boot='shell'] #sx-boot-skeleton .sx-side {
+        display: none;
+      }
+      html[data-boot='workspace'] #sx-boot-skeleton .sx-side-ws,
+      html[data-boot='room'] #sx-boot-skeleton .sx-side-ws,
+      html[data-boot='inbox'] #sx-boot-skeleton .sx-side-home {
+        display: block;
+      }
+      html[data-boot='room'] #sx-boot-skeleton .sx-side-ws .sx-row--on {
+        background: none;
+      }
+      html[data-boot='room'] #sx-boot-skeleton .sx-side-ws .sx-row--on .sx-bone {
+        background: var(--sx-bone-rail);
+      }
+      html[data-boot='room'] #sx-boot-skeleton .sx-side-ws .sx-row--room {
+        background: var(--sx-bone-rail);
+      }
+      html[data-boot='room'] #sx-boot-skeleton .sx-side-ws .sx-row--room .sx-bone {
+        background: var(--sx-bone);
+      }
+      #sx-boot-skeleton .sx-side-head {
+        position: relative;
+        height: 48px;
+        padding: 6px 12px 0;
+      }
+      #sx-boot-skeleton .sx-side-head .sx-bone + .sx-bone {
+        width: 120px;
+        height: 16px;
+        margin-top: 8px;
+      }
+      #sx-boot-skeleton .sx-side-head .sx-bone.sx-search {
+        position: absolute;
+        top: 10px;
+        right: 16px;
+        width: 16px;
+        height: 16px;
+        margin: 0;
+      }
+      #sx-boot-skeleton .sx-side-home .sx-side-head {
+        padding-top: 16px;
+      }
+      #sx-boot-skeleton .sx-side-home .sx-list {
+        padding-top: 8px;
+      }
+      #sx-boot-skeleton .sx-side-home .sx-sub {
+        height: 32px;
+        padding: 0 16px;
+      }
+      #sx-boot-skeleton .sx-main {
+        position: relative;
+        flex: 1 1 auto;
+        min-width: 0;
+        display: flex !important;
+        flex-direction: column;
+        border-left: 1px solid var(--sx-line);
+        background: var(--sx-surface);
+      }
+      html[data-boot='shell'] #sx-boot-skeleton .sx-main {
+        border-left: 0;
+      }
+      #sx-boot-skeleton .sx-head {
+        display: flex !important;
+        flex: none;
+        align-items: center;
+        height: 48px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--sx-line);
+      }
+      #sx-boot-skeleton .sx-head .sx-bone {
+        width: 120px;
+        height: 16px;
+      }
+      html[data-boot='inbox'] #sx-boot-skeleton .sx-head {
+        padding: 0;
+        border-bottom: 0;
+      }
+      html[data-boot='inbox'] #sx-boot-skeleton .sx-head .sx-bone {
+        width: 32px;
+      }
+      #sx-boot-skeleton .sx-col {
+        width: 100%;
+        max-width: 952px;
+        margin: 0 auto;
+        padding: 0 16px;
+      }
+      #sx-boot-skeleton .sx-head .sx-col {
+        max-width: none;
+        margin: 0;
+        padding: 0;
+      }
+      html[data-boot='inbox'] #sx-boot-skeleton .sx-head .sx-col {
+        max-width: 952px;
+        margin: 0 auto;
+        padding: 0 16px;
+      }
+      /* The overview: what it is for and recent progress on the left, who is
+         doing what on the right. */
+      html[data-boot='workspace'] #sx-boot-skeleton .sx-ov,
+      html[data-boot='shell'] #sx-boot-skeleton .sx-ov {
+        display: flex;
+        gap: 48px;
+        padding: 30px 26px 0 16px;
+      }
+      #sx-boot-skeleton .sx-ov > div {
+        flex: 2 1 0;
+      }
+      #sx-boot-skeleton .sx-ov > div + div {
+        flex: 1 1 0;
+      }
+      html[data-boot='shell'] #sx-boot-skeleton .sx-ov > div + div {
+        display: none;
+      }
+      #sx-boot-skeleton .sx-sect {
+        margin-bottom: 58px;
+        padding-bottom: 0;
+      }
+      #sx-boot-skeleton .sx-sect .sx-bone:first-child {
+        width: 64px;
+        height: 14px;
+        margin-bottom: 14px;
+      }
+      #sx-boot-skeleton .sx-sect hr {
+        margin: 0 0 18px;
+        border: 0;
+        border-top: 1px solid var(--sx-line);
+      }
+      #sx-boot-skeleton .sx-sect .sx-bone + hr + .sx-bone {
+        width: 70%;
+      }
+      /* A room: the conversation with its composer, and the side panel. */
+      html[data-boot='room'] #sx-boot-skeleton .sx-room {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+      }
+      #sx-boot-skeleton .sx-chat {
+        display: flex;
+        flex-direction: column;
+        width: var(--sx-chat-w, 100%);
+        padding: 24px 12px 8px;
+      }
+      #sx-boot-skeleton .sx-msgs {
+        flex: 1 1 auto;
+      }
+      #sx-boot-skeleton .sx-msg {
+        display: flex;
+        gap: 12px;
+        margin-bottom: 24px;
+        padding: 0 8px;
+      }
+      #sx-boot-skeleton .sx-msg > .sx-bone {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+      }
+      #sx-boot-skeleton .sx-msg > div {
+        flex: 1 1 auto;
+      }
+      #sx-boot-skeleton .sx-msg > div .sx-bone {
+        margin-bottom: 10px;
+      }
+      #sx-boot-skeleton .sx-msg > div .sx-bone:first-child {
+        width: 72px;
+        height: 10px;
+      }
+      #sx-boot-skeleton .sx-composer {
+        flex: none;
+        height: 80px;
+        border: 1px solid var(--sx-line);
+        border-radius: 12px;
+      }
+      #sx-boot-skeleton .sx-panel {
+        flex: 1 1 0;
+        border-left: 1px solid var(--sx-line);
+      }
+      html:not([style*='--sx-chat-w']) #sx-boot-skeleton .sx-panel {
+        display: none;
+      }
+      #sx-boot-skeleton .sx-panel-tabs {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        height: 40px;
+        padding: 0 16px;
+        border-bottom: 1px solid var(--sx-line);
+      }
+      #sx-boot-skeleton .sx-panel-tabs .sx-bone {
+        width: 48px;
+      }
+      #sx-boot-skeleton .sx-panel-body {
+        padding: 24px 16px;
+      }
+      #sx-boot-skeleton .sx-panel-body .sx-bone {
+        margin-bottom: 12px;
+      }
+      /* The to-do page: one reading column. */
+      html[data-boot='inbox'] #sx-boot-skeleton .sx-inbox {
+        display: block;
+        padding-top: 48px;
+      }
+      #sx-boot-skeleton .sx-inbox .sx-bone {
+        width: 64px;
+        height: 14px;
+        margin-bottom: 15px;
+      }
+      #sx-boot-skeleton .sx-inbox .sx-box {
+        height: 44px;
+        margin-bottom: 40px;
+        border: 1px solid var(--sx-line);
+        border-radius: 12px;
+      }
+      #sx-boot-skeleton .sx-w40 {
+        width: 40%;
+      }
+      #sx-boot-skeleton .sx-w60 {
+        width: 60%;
+      }
+      #sx-boot-skeleton .sx-w80 {
+        width: 80%;
+      }
+      #sx-boot-skeleton .sx-ptop,
+      #sx-boot-skeleton .sx-ptabs,
+      #sx-boot-skeleton .sx-ptabbar {
+        display: none !important;
+      }
+
+      /* ---- Phones and narrow windows: one top bar, bottom tabs, no rail. ---- */
+      @media (max-width: 959.98px) {
+        #sx-boot-skeleton .sx-top,
+        #sx-boot-skeleton .sx-rail,
+        #sx-boot-skeleton .sx-side,
+        #sx-boot-skeleton .sx-head,
+        #sx-boot-skeleton .sx-panel {
+          display: none !important;
+        }
+        #sx-boot-skeleton .sx-ptop {
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          display: flex !important;
+          align-items: center;
+          gap: 26px;
+          height: 57px;
+          padding: 0 16px 0 22px;
+          border-bottom: 1px solid var(--sx-line);
+        }
+        #sx-boot-skeleton .sx-ptop .sx-back {
+          width: 20px;
+          height: 20px;
+          border-radius: 4px;
+        }
+        html[data-boot='inbox'] #sx-boot-skeleton .sx-ptop .sx-back,
+        html[data-boot='shell'] #sx-boot-skeleton .sx-ptop .sx-back {
+          display: none;
+        }
+        #sx-boot-skeleton .sx-ptop .sx-ptitle {
+          width: 120px;
+          height: 18px;
+        }
+        html[data-boot='inbox'] #sx-boot-skeleton .sx-ptop .sx-ptitle {
+          width: 36px;
+        }
+        #sx-boot-skeleton .sx-ptop .sx-pend {
+          margin-left: auto;
+          width: 24px;
+          height: 20px;
+        }
+        #sx-boot-skeleton .sx-ptop .sx-pme {
+          width: 28px;
+          height: 28px;
+          border-radius: 50%;
+        }
+        #sx-boot-skeleton .sx-body {
+          top: 57px;
+          left: 0;
+          bottom: 56px;
+          border: 0;
+          border-radius: 0;
+        }
+        html[data-boot='room'] #sx-boot-skeleton .sx-body {
+          bottom: 0;
+        }
+        #sx-boot-skeleton .sx-main {
+          border-left: 0;
+        }
+        #sx-boot-skeleton .sx-ptabbar {
+          position: absolute;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          display: flex !important;
+          height: 56px;
+          border-top: 1px solid var(--sx-line);
+        }
+        html[data-boot='room'] #sx-boot-skeleton .sx-ptabbar {
+          display: none !important;
+        }
+        #sx-boot-skeleton .sx-ptab {
+          display: flex;
+          flex: 1 1 0;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+          padding-top: 10px;
+        }
+        #sx-boot-skeleton .sx-ptab .sx-bone {
+          width: 21px;
+          height: 21px;
+          border-radius: 6px;
+        }
+        #sx-boot-skeleton .sx-ptab .sx-bone + .sx-bone {
+          width: 27px;
+          height: 10px;
+        }
+        html[data-boot='workspace'] #sx-boot-skeleton .sx-ptab--work .sx-bone:first-child,
+        html[data-boot='inbox'] #sx-boot-skeleton .sx-ptab--inbox .sx-bone:first-child {
+          background: var(--sx-accent);
+          opacity: 0.6;
+        }
+        /* A project on a phone opens on its list: overview, then the channels. */
+        html[data-boot='workspace'] #sx-boot-skeleton .sx-ov {
+          display: none;
+        }
+        html[data-boot='workspace'] #sx-boot-skeleton .sx-plist {
+          display: block;
+        }
+        #sx-boot-skeleton .sx-plist .sx-prow {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          height: 44px;
+          padding: 0 16px;
+        }
+        #sx-boot-skeleton .sx-plist .sx-ico {
+          width: 20px;
+          height: 18px;
+        }
+        #sx-boot-skeleton .sx-plist .sx-psub {
+          height: 42px;
+          padding: 18px 16px 0;
+        }
+        #sx-boot-skeleton .sx-plist .sx-psub .sx-bone {
+          width: 28px;
+          height: 10px;
+        }
+        /* A room on a phone: its tab strip, the conversation, the composer. */
+        #sx-boot-skeleton .sx-ptabs {
+          display: flex !important;
+          flex: none;
+          align-items: center;
+          gap: 32px;
+          height: 44px;
+          padding: 0 16px;
+          border-bottom: 1px solid var(--sx-line);
+        }
+        #sx-boot-skeleton .sx-ptabs .sx-bone {
+          width: 48px;
+        }
+        html[data-boot='room'] #sx-boot-skeleton .sx-room {
+          flex-direction: column;
+        }
+        #sx-boot-skeleton .sx-chat {
+          width: 100% !important;
+          flex: 1 1 auto;
+          padding: 24px 12px 12px;
+        }
+        #sx-boot-skeleton .sx-composer {
+          height: 104px;
+        }
+        html[data-boot='inbox'] #sx-boot-skeleton .sx-inbox {
+          padding-top: 48px;
+        }
+        /* LandingShell on a phone: the brand, then the menu button. */
+        #sx-boot-skeleton .sx-lbar {
+          padding: 0 20px;
+        }
+        #sx-boot-skeleton .sx-lbar-nav {
+          visibility: hidden;
+        }
+        #sx-boot-skeleton .sx-lbar-cta {
+          width: 36px;
+        }
+        #sx-boot-skeleton .sx-lhero {
+          padding: 0 20px 64px;
+        }
+      }
     </style>
   </head>
 
@@ -283,7 +985,9 @@
           <mask id="boot-holes" maskUnits="userSpaceOnUse" x="0" y="0" width="1000" height="1000">
             <rect width="1000" height="1000" fill="#fff" />
             <g fill="#000">
-              <path d="M156.6 810.9Q167.7 793.7 186.8 775.5Q193.7 768.8 210.1 757.9Q210.2 757.8 210.3 757.8L212.2 756.5L212.2 756.5Q212.3 756.5 212.3 756.5Q213.4 755.7 216.4 754Q216.5 753.9 216.6 753.9Q229.2 746.5 233.3 741Q233.3 741 233.4 741Q233.4 741 233.4 741Q240.4 731.5 239.7 715.8Q221.6 715.8 208.2 712.2Q208.1 712.2 208.1 712.2Q193.6 708.3 178.7 698.8Q178.7 698.7 178.6 698.7C169.1 692.6 160 684.6 152.5 675Q152.4 675 152.4 674.9C144.9 665.4 138.9 654.5 135.6 642.5Q135.5 642.4 135.5 642.3C126.7 610.1 130.8 577.2 154.2 554.4Q154.4 554.2 154.6 554Q171.6 537.7 193.4 533.8Q212.5 530.4 239.7 536.2Q238.4 533.4 237.7 530.6Q236.3 524.6 238.2 518.7Q238.7 517.3 239.3 516C241.3 511.8 244.6 508.1 248.9 504.9Q249 504.8 249.1 504.8Q249.1 504.8 249.2 504.7C262.7 494.9 297.9 504.6 312.3 513.1Q330.6 524.1 340.3 534.8Q346.1 541.2 352.6 552.9C355.7 558.4 358.8 564 364.1 570.2Q398.7 568.2 416.9 568.7L416.9 568.7Q417.2 568.7 417.3 568.7Q425.4 568.9 431.6 568.9Q461.7 568.9 490.5 570.6Q496.1 570.9 498.1 575.6C499.7 580.2 500.3 585.6 500.3 591.3Q500.3 603.6 496.7 621.9C494.9 630.9 492.6 639.6 490.2 646.9Q490.2 647 490.1 647.1Q490.1 647.2 490.1 647.3C487.7 654.6 485.4 660.5 483.5 663.8Q471.4 685.9 432.6 732.7Q409.2 760.8 401.6 808.4Q397.2 836.2 398.8 861.3Q402.2 913.6 408.4 935C409.6 939.3 411.1 943.8 412.7 948.5Q413.7 951.9 412.1 955.1Q410.5 958.4 407 959.6Q405.3 960.2 403.5 960.1C370.3 953.1 338.3 942.7 308 929.1Q307.6 928.9 307.2 928.7Q306.7 928.6 306.4 928.4C249.9 902.8 199.4 866.4 157.5 821.8Q155.5 819.6 155.2 816.6Q154.9 813.5 156.6 810.9Z" />
+              <path
+                d="M156.6 810.9Q167.7 793.7 186.8 775.5Q193.7 768.8 210.1 757.9Q210.2 757.8 210.3 757.8L212.2 756.5L212.2 756.5Q212.3 756.5 212.3 756.5Q213.4 755.7 216.4 754Q216.5 753.9 216.6 753.9Q229.2 746.5 233.3 741Q233.3 741 233.4 741Q233.4 741 233.4 741Q240.4 731.5 239.7 715.8Q221.6 715.8 208.2 712.2Q208.1 712.2 208.1 712.2Q193.6 708.3 178.7 698.8Q178.7 698.7 178.6 698.7C169.1 692.6 160 684.6 152.5 675Q152.4 675 152.4 674.9C144.9 665.4 138.9 654.5 135.6 642.5Q135.5 642.4 135.5 642.3C126.7 610.1 130.8 577.2 154.2 554.4Q154.4 554.2 154.6 554Q171.6 537.7 193.4 533.8Q212.5 530.4 239.7 536.2Q238.4 533.4 237.7 530.6Q236.3 524.6 238.2 518.7Q238.7 517.3 239.3 516C241.3 511.8 244.6 508.1 248.9 504.9Q249 504.8 249.1 504.8Q249.1 504.8 249.2 504.7C262.7 494.9 297.9 504.6 312.3 513.1Q330.6 524.1 340.3 534.8Q346.1 541.2 352.6 552.9C355.7 558.4 358.8 564 364.1 570.2Q398.7 568.2 416.9 568.7L416.9 568.7Q417.2 568.7 417.3 568.7Q425.4 568.9 431.6 568.9Q461.7 568.9 490.5 570.6Q496.1 570.9 498.1 575.6C499.7 580.2 500.3 585.6 500.3 591.3Q500.3 603.6 496.7 621.9C494.9 630.9 492.6 639.6 490.2 646.9Q490.2 647 490.1 647.1Q490.1 647.2 490.1 647.3C487.7 654.6 485.4 660.5 483.5 663.8Q471.4 685.9 432.6 732.7Q409.2 760.8 401.6 808.4Q397.2 836.2 398.8 861.3Q402.2 913.6 408.4 935C409.6 939.3 411.1 943.8 412.7 948.5Q413.7 951.9 412.1 955.1Q410.5 958.4 407 959.6Q405.3 960.2 403.5 960.1C370.3 953.1 338.3 942.7 308 929.1Q307.6 928.9 307.2 928.7Q306.7 928.6 306.4 928.4C249.9 902.8 199.4 866.4 157.5 821.8Q155.5 819.6 155.2 816.6Q154.9 813.5 156.6 810.9Z"
+              />
               <circle cx="641.3" cy="602.7" r="34" />
               <circle cx="743" cy="500.7" r="56" />
               <circle cx="712.7" cy="290.9" r="92" />
@@ -296,40 +1000,210 @@
         </svg>
       </div>
     </div>
-    <!-- The skeleton shell itself: left rail, sidebar column, content column.
-         Decorative only (aria-hidden) — it is replaced by the real app on mount,
-         and a screen reader that arrives that early is told nothing rather than
-         a shape it cannot use. Removed in src/main.ts. -->
+    <!-- The skeletons, one block per kind of first page (see data-boot above).
+         Decorative only (aria-hidden): a screen reader that arrives this early is
+         told nothing rather than a shape it cannot use. Removed in src/main.ts. -->
     <div id="sx-boot-skeleton" aria-hidden="true">
-      <div class="sx-rail">
-        <span class="sx-icon sx-icon--brand"></span>
-        <span class="sx-icon"></span>
-        <span class="sx-icon"></span>
-        <span class="sx-icon"></span>
-        <span class="sx-icon"></span>
-      </div>
-      <div class="sx-side">
-        <span class="sx-bone sx-w70"></span>
-        <span class="sx-bone sx-w85"></span>
-        <span class="sx-bone sx-w50"></span>
-        <span class="sx-bone sx-w85"></span>
-        <span class="sx-bone sx-w70"></span>
-        <span class="sx-bone sx-w85"></span>
-      </div>
-      <div class="sx-main">
-        <span class="sx-bone sx-title"></span>
-        <span class="sx-bone sx-sub"></span>
-        <div class="sx-card">
-          <span class="sx-bone sx-w60"></span>
-          <span class="sx-bone sx-w90"></span>
-          <span class="sx-bone sx-w75"></span>
+      <div class="sx-landing">
+        <div class="sx-lbar">
+          <span class="sx-bone sx-lbar-brand"></span>
+          <span class="sx-lbar-nav">
+            <span class="sx-bone"></span><span class="sx-bone"></span><span class="sx-bone"></span
+            ><span class="sx-bone"></span><span class="sx-bone"></span>
+          </span>
+          <span class="sx-bone sx-lbar-cta"></span>
         </div>
-        <div class="sx-card">
-          <span class="sx-bone sx-w60"></span>
-          <span class="sx-bone sx-w90"></span>
+        <div class="sx-lhero">
+          <span class="sx-bone sx-lhero-title"></span>
+          <span class="sx-bone sx-lhero-sub"></span>
+          <span class="sx-lhero-actions">
+            <span class="sx-bone sx-lhero-btn"></span><span class="sx-bone sx-lhero-link"></span>
+          </span>
+        </div>
+      </div>
+      <div class="sx-app">
+        <div class="sx-top sx-on-canvas">
+          <span class="sx-bone sx-top-title"></span><span class="sx-bone sx-top-help"></span>
+        </div>
+        <div class="sx-rail">
+          <span class="sx-tile sx-tile--home"></span>
+          <span class="sx-rail-rule"></span>
+          <span id="sx-rail-projects"></span>
+          <span class="sx-tile sx-tile--add"></span>
+          <span class="sx-rail-me"></span>
+        </div>
+        <div class="sx-ptop sx-on-canvas">
+          <span class="sx-bone sx-back"></span>
+          <span class="sx-bone sx-ptitle"></span>
+          <span class="sx-bone sx-pend"></span>
+          <span class="sx-bone sx-pme"></span>
+        </div>
+        <div class="sx-body">
+          <div class="sx-side sx-on-canvas">
+            <div class="sx-side-ws">
+              <div class="sx-side-head">
+                <span class="sx-bone" style="width: 88px; height: 10px"></span><span class="sx-bone"></span
+                ><span class="sx-bone sx-search"></span>
+              </div>
+              <div class="sx-row sx-row--on">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 28px"></span>
+              </div>
+              <div class="sx-row">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 42px"></span>
+              </div>
+              <div class="sx-sub"><span class="sx-bone"></span><span class="sx-bone"></span></div>
+              <div class="sx-row sx-row--room">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 28px"></span>
+              </div>
+              <div class="sx-row">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 98px"></span>
+              </div>
+              <div class="sx-row">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 56px"></span>
+              </div>
+            </div>
+            <div class="sx-side-home">
+              <div class="sx-side-head"><span class="sx-bone" style="width: 30px; height: 16px"></span></div>
+              <div class="sx-list">
+                <div class="sx-row sx-row--on">
+                  <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 28px"></span>
+                </div>
+                <div class="sx-row">
+                  <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 40px"></span>
+                </div>
+                <div class="sx-sub"><span class="sx-bone" style="width: 24px"></span></div>
+                <div class="sx-row">
+                  <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 84px"></span>
+                </div>
+                <div class="sx-row">
+                  <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 98px"></span>
+                </div>
+                <div class="sx-row">
+                  <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 90px"></span>
+                </div>
+                <div class="sx-sub"><span class="sx-bone" style="width: 24px"></span></div>
+                <div class="sx-row">
+                  <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 112px"></span>
+                </div>
+                <div class="sx-row">
+                  <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 70px"></span>
+                </div>
+                <div class="sx-row">
+                  <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 56px"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="sx-main">
+            <div class="sx-head">
+              <div class="sx-col"><span class="sx-bone"></span></div>
+            </div>
+            <div class="sx-ov">
+              <div>
+                <div class="sx-sect">
+                  <span class="sx-bone"></span>
+                  <hr />
+                  <span class="sx-bone"></span>
+                </div>
+                <div class="sx-sect">
+                  <span class="sx-bone"></span>
+                  <hr />
+                  <span class="sx-bone"></span>
+                </div>
+              </div>
+              <div>
+                <div class="sx-sect">
+                  <span class="sx-bone"></span>
+                  <hr />
+                  <span class="sx-bone"></span>
+                </div>
+                <div class="sx-sect">
+                  <span class="sx-bone"></span>
+                  <hr />
+                  <span class="sx-bone"></span>
+                </div>
+              </div>
+            </div>
+            <div class="sx-plist">
+              <div class="sx-prow">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 40px"></span>
+              </div>
+              <div class="sx-psub"><span class="sx-bone"></span></div>
+              <div class="sx-prow">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 40px"></span>
+              </div>
+              <div class="sx-prow">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 130px"></span>
+              </div>
+              <div class="sx-prow">
+                <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 76px"></span>
+              </div>
+            </div>
+            <div class="sx-room">
+              <div class="sx-ptabs">
+                <span class="sx-bone"></span><span class="sx-bone"></span><span class="sx-bone"></span
+                ><span class="sx-bone"></span>
+              </div>
+              <div class="sx-chat">
+                <div class="sx-msgs">
+                  <div class="sx-msg">
+                    <span class="sx-bone"></span>
+                    <div>
+                      <span class="sx-bone"></span><span class="sx-bone sx-w80"></span
+                      ><span class="sx-bone sx-w40"></span>
+                    </div>
+                  </div>
+                  <div class="sx-msg">
+                    <span class="sx-bone"></span>
+                    <div><span class="sx-bone"></span><span class="sx-bone sx-w60"></span></div>
+                  </div>
+                  <div class="sx-msg">
+                    <span class="sx-bone"></span>
+                    <div>
+                      <span class="sx-bone"></span><span class="sx-bone sx-w80"></span
+                      ><span class="sx-bone sx-w60"></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="sx-composer"></div>
+              </div>
+              <div class="sx-panel">
+                <div class="sx-panel-tabs">
+                  <span class="sx-bone"></span><span class="sx-bone"></span><span class="sx-bone"></span>
+                </div>
+                <div class="sx-panel-body">
+                  <span class="sx-bone" style="width: 64px; height: 14px"></span><span class="sx-bone sx-w80"></span>
+                </div>
+              </div>
+            </div>
+            <div class="sx-inbox sx-col">
+              <span class="sx-bone"></span>
+              <div class="sx-box"></div>
+              <span class="sx-bone" style="width: 32px"></span>
+              <div class="sx-box"></div>
+            </div>
+          </div>
+        </div>
+        <div class="sx-ptabbar">
+          <div class="sx-ptab"><span class="sx-bone"></span><span class="sx-bone"></span></div>
+          <div class="sx-ptab sx-ptab--work"><span class="sx-bone"></span><span class="sx-bone"></span></div>
+          <div class="sx-ptab sx-ptab--inbox"><span class="sx-bone"></span><span class="sx-bone"></span></div>
         </div>
       </div>
     </div>
+    <script>
+      // As many project tiles in the rail as the app last drew (App.vue keeps the count).
+      ;(function () {
+        var slot = document.getElementById('sx-rail-projects')
+        var n = Number(document.documentElement.dataset.bootRail) || 0
+        for (var i = 0; i < n; i++) {
+          var tile = document.createElement('span')
+          tile.className = 'sx-tile'
+          slot.parentNode.insertBefore(tile, slot)
+        }
+        slot.remove()
+      })()
+    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

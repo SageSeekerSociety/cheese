@@ -1,0 +1,10 @@
+{
+  "allRestored": "{requester}让{agent}改的几处都已还原",
+  "allRestoredOwn": "{agent}改的几处都已还原",
+  "close": "收起改动",
+  "label": "改动",
+  "position": "第 {i}/{n} 处",
+  "restore": "还原这处",
+  "title": "{requester}让{agent}改的 {n} 处",
+  "titleOwn": "{agent}改的 {n} 处"
+}

@@ -1,0 +1,10 @@
+{
+  "adminAddWhom": "要加的人不能是空的",
+  "adminAgentCannotAdmin": "{handle} 是 agent，而管理动作 agent 不能做",
+  "adminAlreadyRootAdmin": "{handle} 是部署配置里的根管理员，不用在页面上加",
+  "adminNoSuchAccount": "平台里没有 handle 是 {handle} 的账号",
+  "adminRootAdminCannotRemove": "{handle} 是部署配置里的根管理员，页面上删不掉 —— 改配置要有服务器权限",
+  "featureStatsNotFound": "没有这个功能的数据页：{feature}",
+  "platformAdminRequired": "需要平台管理员",
+  "runRecordsPlatformRoomsOnly": "运行记录只在知是代码仓库所在的项目里读得到；这个频道所在的项目不是它"
+}

@@ -17,6 +17,7 @@ from app.domain.agent.executor_transport import (
     MachineOutOfReach,
     PlatformHost,
     RemoteClient,
+    failure_text,
     session_path,
 )
 from app.domain.agent.harness.driven.runner import reply_owed
@@ -452,12 +453,21 @@ class RemoteTools:
         except MachineOutOfReach:
             text, success = MACHINE_OUT_OF_REACH, False
         except Exception as exc:  # noqa: BLE001 — the agent reads the reason
-            text, success = str(exc), False
+            text, success = failure_text(exc), False
         else:
             success = True
+        # Pictures a tool hands back (a mini-app's, as the platform ran it)
+        # follow its text.
+        images = [
+            {
+                "type": "inputImage",
+                "imageUrl": f"data:{i['mimeType']};base64,{i['data']}",
+            }
+            for i in getattr(text, "images", ())
+        ]
         return {
             "success": success,
-            "contentItems": [{"type": "inputText", "text": text}],
+            "contentItems": [{"type": "inputText", "text": str(text)}, *images],
         }
 
     async def __call__(self, method: str, params: dict) -> dict:

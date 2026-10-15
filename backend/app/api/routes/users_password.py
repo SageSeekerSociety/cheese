@@ -12,7 +12,7 @@ or a two-factor disable asks for — so it lives in
 `app/domain/user/passwords.py` with the bcrypt length limit it applies, the
 one home every password rule has. `get_user_auth_service` is a FastAPI
 dependency in `app/api/deps.py`.
-`_spend_sudo_ticket` is imported from `users_common.py` rather than from
+`_spend_sudo_ticket` is imported from `users_deps.py` rather than from
 `users.py`: the fourth slice of this split moved the passkey, two-factor and
 identity routes out, and a helper that many groups redeem a ticket through now
 lives with the reservation scope it claims in.
@@ -45,7 +45,8 @@ from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
-from app.api.routes.users_common import _spend_sudo_ticket
+from app.api.response import ok
+from app.api.users_deps import _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose, get_current_session_id
@@ -88,10 +89,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 # Every exit of the recovery request answers with this one body: unknown
 # address, rate-limited address and mailed address alike. Anything that differed
 # between them would tell the caller whether an account uses that address.
-_RECOVERY_REQUESTED = {
-    "code": 200,
-    "message": "If the email exists, a reset link has been sent.",
-}
+_RECOVERY_REQUESTED = ok(None, "If the email exists, a reset link has been sent.")
 
 
 async def _send_recovery_mail(user_id: int, email: str, username: str) -> None:
@@ -204,10 +202,7 @@ async def recover_password_verify(
         await SessionService(session).revoke_all(user_id, RevokeReason.PASSWORD_RESET)
         await TrustedDeviceService(session).revoke_all(user_id)
 
-        return {
-            "code": 200,
-            "message": "Password reset successfully.",
-        }
+        return ok(None, "Password reset successfully.")
     finally:
         await redis.aclose()
 
@@ -247,4 +242,4 @@ async def change_password(
     )
     await TrustedDeviceService(session).revoke_all(user_id)
 
-    return {"code": 200, "message": "Password changed successfully"}
+    return ok(None, "Password changed successfully")

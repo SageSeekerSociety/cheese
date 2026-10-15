@@ -117,7 +117,6 @@
     "src/components/room/MessageEditor.vue",
     "src/components/room/PanelToggle.vue",
     "src/components/room/RollingNumber.vue",
-    "src/components/room/ThreadLine.vue",
     "src/components/routine/RoutineBoard.vue",
     "src/components/routine/RoutineFormDialog.vue",
     "src/components/routine/RoutineRow.vue",

@@ -31,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_agent
 from app.api.response import ok
-from app.api.routes.llm_tunnel import _pump_tcp_to_ws, _pump_ws_to_tcp
+from app.api.ws_pipe import _pump_tcp_to_ws, _pump_ws_to_tcp
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -40,8 +40,8 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
-from app.domain.agent.forgejo_tokens import ForgejoTokenError, open_forge_token
-from app.domain.agent.github_app import GitHubAppError
+from app.domain.project.forgejo_tokens import ForgejoTokenError, open_forge_token
+from app.domain.project.github_app import GitHubAppError
 from app.domain.project.models import ForgeToken
 from app.domain.room_task.place import session_keeps_work
 

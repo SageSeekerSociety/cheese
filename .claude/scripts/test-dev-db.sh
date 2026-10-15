@@ -155,13 +155,13 @@ cat >"$stub/uv" <<SH
 #!/usr/bin/env bash
 case "\$*" in
     *pi-dist*) echo "$pi_archive" ;;
-    *) echo 2.1.282 0.154.0 ;;
+    *) echo 2.1.299 0.154.0 ;;
 esac
 SH
-harness="$tools/harness/claude-code-2.1.282-codex-0.154.0/node_modules/.bin"
+harness="$tools/harness/claude-code-2.1.299-codex-0.154.0/node_modules/.bin"
 pi_dir="${pi_archive%.tar.gz}/pi"
 mkdir -p "$harness" "$pi_dir"
-printf '#!/usr/bin/env bash\necho "2.1.282 (Claude Code)"\n' >"$harness/claude"
+printf '#!/usr/bin/env bash\necho "2.1.299 (Claude Code)"\n' >"$harness/claude"
 printf '#!/usr/bin/env bash\necho 0.154.0\n' >"$harness/codex"
 printf '#!/usr/bin/env bash\necho 0.85.1\n' >"$pi_dir/pi"
 chmod +x "$stub"/* "$harness"/* "$pi_dir/pi"

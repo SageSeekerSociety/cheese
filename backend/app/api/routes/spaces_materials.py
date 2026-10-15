@@ -31,7 +31,8 @@ from fastapi import APIRouter, Depends, File, Form, Path, Response, UploadFile, 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.spaces import require_reviewed_space
+from app.api.response import ok
+from app.api.space_deps import require_reviewed_space
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -75,7 +76,7 @@ async def list_space_materials(
         counts = await count_material_references(db, space_id=space_id)
         for item in data["materials"]:
             item["usedByCount"] = counts.get(item["id"], 0)
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.post(
@@ -107,7 +108,7 @@ async def upload_space_material(
         content_type=file.content_type or "application/octet-stream",
         visibility=visibility,
     )
-    return {"code": 201, "message": "Created", "data": {"material": item}}
+    return ok({"material": item})
 
 
 @router.patch(
@@ -127,7 +128,7 @@ async def patch_space_material(
         material_id=material_id,
         visibility=payload.visibility,
     )
-    return {"code": 200, "message": "OK", "data": {"material": item}}
+    return ok({"material": item})
 
 
 @router.delete(

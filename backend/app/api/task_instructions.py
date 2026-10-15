@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 from app.api.deps import get_work_runner
-from app.api.routes.topics import BlockRepository
+from app.api.topics_deps import BlockRepository
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
@@ -77,7 +77,7 @@ async def tell_task(db, task, content: str, *, opening: bool = False) -> None:
     document from where it came from (`agent/opening.py`)."""
     from app.domain.agent.opening import OPENING, PURPOSE
     from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
+    from app.domain.delivery_events import DeliveryEvent
     from app.domain.notification.models import NotificationType
 
     payload = {"projectId": str(task.project_id), "topicId": str(task.room_id)}
@@ -91,7 +91,7 @@ async def tell_task(db, task, content: str, *, opening: bool = False) -> None:
             payload=payload,
             occurred_at=datetime.now(UTC),
         ),
-        task=task,
+        task_id=task.id,
         content=content,
     )
 

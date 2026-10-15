@@ -1,0 +1,11 @@
+{
+  "labelSkillToConfirm": "待确认的技能",
+  "skillEditNotSavedBy": "{who} 对技能「{title}」的修改没有保存",
+  "skillEditProposedBy": "{who} 提议修改技能「{title}」",
+  "skillEditProposedDetail": "修改原因：{reason}\n\n{body}",
+  "skillEditSavedBy": "{who} 对技能「{title}」的修改已保存",
+  "skillProposalNotSavedBy": "{who} 提议的技能「{title}」没有保存",
+  "skillProposalSavedBy": "{who} 提议的技能「{title}」已保存",
+  "skillProposedBy": "{who} 提议新增技能「{title}」",
+  "skillProposedDetail": "用途：{description}\n\n{body}"
+}

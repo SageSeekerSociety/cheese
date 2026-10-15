@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Release path for the stable device WebSocket owner. Replacing this service
-# disconnects links, so an app deploy calls it only when its migrations would
-# drop schema the owner's image still maps (deploy-docker.sh,
-# `hold_owners_behind_schema`); otherwise it is dispatched on its own.
+# disconnects links, so an app deploy calls it only when its migrations drop,
+# rename or alter schema the owner's image maps (deploy-docker.sh,
+# `hold_owners_behind_schema`); otherwise it is dispatched on its own. A
+# dispatched release of the image a healthy owner already runs leaves it alone.
 #
 # The optional step splits the release around that deploy's migrations:
 #   all       drain, then recreate (the default)
@@ -63,6 +64,19 @@ owner_status() {
   printf 'silent\nshow-error\nmax-time = 3\nrequest = POST\noutput = /dev/null\nwrite-out = %%{http_code}\nheader = "X-Device-Connection-Secret: %s"\nurl = "%s%s"\n' \
     "$owner_secret" "$owner_url" "$path" | curl --config -
 }
+# same_config <service> <container> <image variable>: would compose create the
+# service from the same configuration it runs, image aside? Compose labels each
+# container with the hash of the configuration it was created from; a rotated
+# secret, a changed env file or a compose change moves it.
+same_config() {
+  local reference recorded wanted
+  reference="$(docker inspect --format '{{.Config.Image}}' "$2" 2>/dev/null || true)"
+  recorded="$(docker inspect --format '{{index .Config.Labels "com.docker.compose.config-hash"}}' "$2" 2>/dev/null || true)"
+  wanted="$(env "$3=$reference" docker compose "${compose_args[@]}" -p "$PROJECT" config --hash "$1" 2>/dev/null \
+    | awk -v service="$1" '$1 == service { print $2 }')"
+  [ -n "$recorded" ] && [ "$recorded" = "$wanted" ]
+}
+
 drained=false
 resume_owner() {
   [ "$drained" = true ] || return 0
@@ -80,6 +94,21 @@ if [ "$STEP" != recreate ]; then
     docker compose "${compose_args[@]}" -p "$PROJECT" pull device-connection
   else
     docker image inspect "$DEVICE_CONNECTION_IMAGE" >/dev/null
+  fi
+  # Replacing an owner with the image and configuration it already runs
+  # changes nothing it serves and still closes every link it holds. Only a
+  # healthy one is kept: recreating is also how a wedged owner on the same
+  # image is restarted, and a draining owner does not answer healthy.
+  if [ "$STEP" = all ]; then
+    running="$(docker compose "${compose_args[@]}" -p "$PROJECT" ps -q device-connection 2>/dev/null | head -n 1 || true)"
+    running_image="$([ -z "$running" ] || docker inspect --format '{{.Image}}' "$running" 2>/dev/null || true)"
+    release_image="$(docker image inspect --format '{{.Id}}' "$DEVICE_CONNECTION_IMAGE" 2>/dev/null || true)"
+    if [ -n "$running_image" ] && [ "$running_image" = "$release_image" ] \
+      && same_config device-connection "$running" DEVICE_CONNECTION_IMAGE \
+      && curl -fsS -m 3 "$owner_url/healthz" >/dev/null 2>&1; then
+      echo "device connection owner already runs $DEVICE_CONNECTION_IMAGE ($release_image) with this configuration and is healthy; nothing to release"
+      exit 0
+    fi
   fi
   drain_attempts=180
   drain_interval=0.25

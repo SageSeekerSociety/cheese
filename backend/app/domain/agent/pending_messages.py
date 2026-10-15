@@ -5,19 +5,18 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.platform_notices import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
-from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS
 from app.domain.block.models import Block, consumed_turn
-from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.block.queries import DEFERRED_INPUT, queued_messages
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
+from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
 from app.domain.run_record.models import RunRecord
 from app.domain.thread.services import answered_in
 
-DEFERRED_INPUT = "deferred_native_input"
 _runner = None
 logger = logging.getLogger(__name__)
 
@@ -113,23 +112,6 @@ def nudge_messages(chat, topic_id, runner=None):
     task = asyncio.create_task(scan(), name=f"pending-messages:{topic_id}")
     runner._tasks.add(task)
     task.add_done_callback(runner._tasks.discard)
-
-
-def queued_messages(since, topic_id=None):
-    """Messages that named an agent and have not had their turn: recent, or
-    held back on purpose (`defer_message`). Filtered by the literal predicate of
-    `ix_blocks_queued_messages`, so a scan on a clock reads that index and not
-    the whole table (`indexed_rows`)."""
-    query = select(Block).where(
-        QUEUED_MESSAGE_ROWS,
-        or_(
-            Block.created_at >= since,
-            Block.meta[DEFERRED_INPUT].as_boolean().is_(True),
-        ),
-    )
-    if topic_id is not None:
-        query = query.where(Block.conversation_id == topic_id)
-    return query.order_by(Block.created_at, Block.id)
 
 
 async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):

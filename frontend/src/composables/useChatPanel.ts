@@ -88,12 +88,10 @@ export function useChatPanel(opts: ChatPanelOptions) {
     return room && id && id !== room.id ? { ...room, id } : room
   }
 
-  // Message rendering (markdown / plain / reference chips) lives in
-  // ../lib/renderMessage and happens in the row components; here we only fill the
-  // handle→name and id→title maps they render with, from the roster / topics props.
+  // Chips are drawn in the row components (../lib/renderMessage); here we only fill the
+  // maps they draw with (`refMaps`, below the roster, which decides `reachable`).
   const mentionNames = reactive<Record<string, string>>({})
   const topicTitles = reactive<Record<string, string>>({})
-  const refMaps = { mentionNames, topicTitles }
 
   const AUTHOR = myHandle()
 
@@ -103,6 +101,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
   // 房间名册和项目名册是两份，因为 AI 队友的座位只在前者上。
   const {
+    reachable,
     agentSeat: rosterSeat,
     mentionPool,
     memberByHandle,
@@ -121,6 +120,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
       errorMsg.value = message
     },
   })
+  const refMaps = reactive({ mentionNames, topicTitles, reachable })
 
   // 谁在这间房说话、界面上怎么称呼它、@ 渲染成谁的名字 —— 见 useAgentNaming。
   const { agentSeat, agentName, composerHint } = useAgentNaming({
@@ -128,7 +128,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pool: mentionPool,
     nameOf: agentNameOf,
     names: mentionNames,
-    taskAgentHandle: opts.taskAgentHandle,
+    agentHandle: opts.agentHandle,
     alwaysSummon,
   })
 
@@ -192,7 +192,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rememberScroll,
     restoreScroll,
     restoresToBottom,
-  } = useChatScroll({ showingNewest: () => !hasNewer.value })
+    forgetScroll,
+  } = useChatScroll({ showingNewest: () => !hasNewer.value, topicId: () => place()?.id })
 
   // 打开话题时分批挂行 —— 见 room/composables/useRowBatch（`rows`、`paging` 在下面，晚读）。
   const rowBatch = useRowBatch({
@@ -610,6 +611,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     onDelivered: (block) => {
       // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
       if (block.conversation_id !== place()?.id) return
+      opts.onPosted?.(block)
       delivered.add(block.id)
       pushBlock(block)
       autoScroll()
@@ -686,7 +688,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     settle: (b: Block) => settleOutbox(b),
     noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b)),
     readEnded: () => tail.check(),
-    scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
+    scroll: { atBottom, follow: autoScroll, scrollToBottom, forgetScroll, fill: () => paging.fillViewportIfNeeded() },
     socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
     failed: historyReadFailed,
   })
@@ -773,12 +775,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的
   // chip 只会写「#话题」。
+  // 只改变了的那几个：每条消息正文都盯着这张表，整张重填会让整条时间线重画（见 useChatScroll）。
   watch(
     [() => topicList(), roomTasks.known],
     ([ts, tasks]) => {
-      for (const k of Object.keys(topicTitles)) delete topicTitles[k]
-      for (const t of ts) topicTitles[t.id] = topicTitle(t)
-      for (const t of tasks.values()) topicTitles[t.id] = taskTitle(t)
+      const next = new Map<string, string>()
+      for (const t of ts) next.set(t.id, topicTitle(t))
+      for (const t of tasks.values()) next.set(t.id, taskTitle(t))
+      for (const k of Object.keys(topicTitles)) if (!next.has(k)) delete topicTitles[k]
+      for (const [k, title] of next) if (topicTitles[k] !== title) topicTitles[k] = title
     },
     { immediate: true, deep: true }
   )

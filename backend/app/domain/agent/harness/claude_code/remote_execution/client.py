@@ -45,21 +45,27 @@ if __package__:
         PlatformHost,
         RemoteClient,
         dial_runner,
+        failure_text,
         read_file_on_the_machine,
         session_path,
         session_servers,
         stat_file_on_the_machine,
+        to_machine,
+        tool_answer,
     )
     from app.domain.agent.harness.claude_code.remote_execution.context_service import (
         serve,
     )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
+        EXECUTION_CONFIG,
         allow_native_tools,
         carry_conversation,
+        copy_context,
         forget_touched_skills,
         hook_module,
         link_forwarded_user_context,
         platform_tool_names,
+        take_view,
         touch_skills,
     )
     from app.domain.agent.harness.claude_code.remote_execution.shell_stop import (
@@ -81,10 +87,13 @@ else:
         PlatformHost,
         RemoteClient,
         dial_runner,
+        failure_text,
         read_file_on_the_machine,
         session_path,
         session_servers,
         stat_file_on_the_machine,
+        to_machine,
+        tool_answer,
     )
 
     # Its siblings sit beside it, which a script run has first on sys.path and
@@ -93,21 +102,20 @@ else:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     from context_service import serve
     from release import (
+        EXECUTION_CONFIG,
         allow_native_tools,
         carry_conversation,
+        copy_context,
         forget_touched_skills,
         hook_module,
         link_forwarded_user_context,
         platform_tool_names,
+        take_view,
         touch_skills,
     )
     from shell_stop import CAUGHT, KILL, current_target, deliver_stop, start_watcher
 
-PINNED_VERSION = "2.1.282"
-# Where a session's execution target is written. The launcher names it, so the
-# runner that holds the session and `bootstrap` preparing it agree on the file
-# without either spelling the other's layout.
-EXECUTION_CONFIG = "CHEESE_EXECUTION_CONFIG"
+PINNED_VERSION = "2.1.299"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.
@@ -159,30 +167,6 @@ PRIVATE_INSTRUCTIONS = (
     "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
-
-
-def _ensure_sync_agents_hook(hooks: dict) -> None:
-    """发现层（session_launch.session_settings 的同款）：模型分身定义随会话启动
-    和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
-    这里确定性地补一份（幂等），不指望 seed 够新。
-    """
-    command = "cheese sync-agents || true"
-    for event in ("SessionStart", "UserPromptSubmit"):
-        groups = hooks.setdefault(event, [])
-        existing = [
-            hook
-            for group in groups
-            for hook in group.get("hooks", [])
-            if hook.get("command") in ("cheese sync-agents", command)
-        ]
-        if existing:
-            # Older seed settings can still contain the prompt-blocking form.
-            for hook in existing:
-                hook["command"] = command
-            continue
-        groups.append(
-            {"hooks": [{"type": "command", "command": command, "timeout": 15}]}
-        )
 
 
 def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) -> Path:
@@ -271,12 +255,12 @@ def prepare(
     unavailable = target.get("kind") in {"unavailable", "deferred"}
     forwarded = target.get("kind") not in {"private", "unavailable"}
     device_forwarded = target.get("kind") in {"device", "deferred"}
-    # The executor is on this machine (a member's own Claude Code on their own
-    # computer, `owner_provider`): the session sees the project where the
-    # executor holds it, with no forwarded view and no namespace of its own.
-    # Before its lease it starts in an empty directory of its own, which is
-    # its placeholder here.
+    # A member's own Claude Code on their own computer (`owner_provider`): no
+    # view, no namespace. It sees the project where an executor on this machine
+    # holds it; before its lease, and with the executor elsewhere (`apart`), in
+    # a directory of its own (`context_copy`), its placeholder here.
     local = bool(target.get("local"))
+    apart = local and bool(target.get("apart"))
     placeholder = str(directory / "workspace") if local else DEFERRED_WORKSPACE
     workspace = (
         directory / "workspace"
@@ -314,9 +298,10 @@ def prepare(
     # every path the build prints is the one it prints running there (`enter`).
     # `central_workspace` is where this host holds the view of it.
     seen = session_path(info["workspace"])
+    at_placeholder = local and (unavailable or apart)
     if local:
-        seen = placeholder if unavailable else info["workspace"]
-        if not unavailable:
+        seen = placeholder if at_placeholder else info["workspace"]
+        if not at_placeholder:
             workspace = Path(info["workspace"])
     carry_conversation(config, extra_args, seen)
     target = dict(
@@ -326,7 +311,7 @@ def prepare(
         # Where its paths are rewritten from once it takes its machine
         # (`RemoteClient.call`): the directory it started in, not the
         # placeholder a session in its own namespace sees.
-        **({"virtual_workspace": placeholder} if local and unavailable else {}),
+        **({"virtual_workspace": placeholder} if at_placeholder else {}),
         # The session reads every skill from its config dir. The project's
         # are links into the view, and are the project's on the executor; the
         # rest the platform wrote there itself, and the executor holds its own
@@ -369,40 +354,10 @@ def prepare(
         token_path.chmod(0o600)
     if forwarded:
         context_tree = sync_context(target_path, context_tree)
-    # Deferred, not lifted with its siblings above: a test replaces `mount_state`
-    # on the `release` module, so this reads it through the import each time.
-    if __package__:
-        # deferred-import: tests replace mount_state on the release module
-        from .release import MOUNT_LIVE, mount_state, release_mount
-    else:
-        # deferred-import: tests replace mount_state on the release module
-        from release import MOUNT_LIVE, mount_state, release_mount
-
-    mount_log = directory / "forwarded-project.log"
-    if forwarded and not local and mount_state(workspace) != MOUNT_LIVE:
-        # A previous mount whose server died still occupies this directory and
-        # cannot be mounted over, so without this the spawn below fails and the
-        # room is stuck reporting a mount failure on every turn from then on.
-        release_mount(workspace)
-        with mount_log.open("a") as output:
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    str(Path(__file__).with_name("forwarded_fs.py")),
-                    str(target_path),
-                    str(workspace),
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=output,
-                start_new_session=True,
-            )
-        deadline = time.monotonic() + 10
-        while mount_state(workspace) != MOUNT_LIVE and time.monotonic() < deadline:
-            time.sleep(0.05)
-        if mount_state(workspace) != MOUNT_LIVE:
-            detail = mount_log.read_text()[-1000:] if mount_log.exists() else ""
-            raise RuntimeError("Forwarded project mount failed: " + detail)
+    if forwarded and not local:
+        failure = take_view(directory, target_path, workspace)
+        if failure is not None:
+            raise RuntimeError("Forwarded project mount failed: " + failure)
     if forwarded or unavailable:
         link_forwarded_user_context(
             directory,
@@ -476,11 +431,10 @@ def prepare(
                 ]
             },
         )
-    _ensure_sync_agents_hook(hooks)
     settings.update(
         skipDangerousModePermissionPrompt=True,
         enableArtifact=False,
-        attribution={"sessionUrl": False},
+        attribution={**settings.get("attribution", {}), "sessionUrl": False},
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
@@ -636,6 +590,8 @@ def sync_context(target_path, supplied_tree=None):
                 "Project context leaves the forwarded project boundary: "
                 + ", ".join(unsupported)
             )
+        if target.get("apart") and "central_workspace" in target:
+            copy_context(target, tree, RemoteClient(target))
         generation_path = Path(target_path).parent / "context-generation"
         tree_path = Path(target_path).parent / "context-tree.json"
         previous = generation_path.read_text() if generation_path.exists() else None
@@ -661,23 +617,14 @@ def sync_context(target_path, supplied_tree=None):
     workspace = Path(target["central_workspace"])
     manifest = Path(target_path).parent / "context-manifest.json"
     old = json.loads(manifest.read_text()) if manifest.exists() else []
-    known_files = {}
-    for name in old:
-        path = workspace / name
-        if path.is_file():
-            known_files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     # The shell can replace even the executor's own files and responses. Keep
     # executable central configuration independent of anything it returns.
-    snapshot = (
-        {
-            "files": {},
-            "instructions": MACHINE_OUT_OF_REACH
-            if target.get("kind") in {"unavailable", "deferred"}
-            else PRIVATE_INSTRUCTIONS,
-        }
-        if target.get("kind") in {"private", "unavailable", "deferred"}
-        else RemoteClient(target).call("context", {"known_files": known_files})
-    )
+    snapshot = {
+        "files": {},
+        "instructions": MACHINE_OUT_OF_REACH
+        if target.get("kind") == "unavailable"
+        else PRIVATE_INSTRUCTIONS,
+    }
     files = snapshot["files"]
     file_names = snapshot.get("file_names", list(files))
     for name in old:
@@ -845,8 +792,10 @@ def run_on_the_machine(target, command):
     # its directory need no respelling. Its skills are the one thing the build
     # reads from this host's config directory (`link_forwarded_user_context`),
     # where the executor has none: a command naming a skill's file names it in
-    # the project.
+    # the project. A session in a directory of its own names the executor's.
     def outward(text):
+        seen = target.get("virtual_workspace")
+        text = to_machine(text, seen, target["workspace"]) if seen else text
         return skill_paths(target, text)
 
     cwd = os.getcwd()
@@ -872,7 +821,7 @@ def run_on_the_machine(target, command):
         ).decode()
     env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
     if "CLAUDE_PROJECT_DIR" in os.environ:
-        env["CLAUDE_PROJECT_DIR"] = os.environ["CLAUDE_PROJECT_DIR"]
+        env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)
@@ -1020,8 +969,8 @@ def _report_directory(target, client, final, spelled):
     final = final[:4096]
     if _under(final, machine):
         spelled_here = seen + final[len(machine) :]
-        if target.get("kind") == "private":
-            # The private scratch view is a plain directory here.
+        if target.get("kind") == "private" or (target.get("local") and seen != machine):
+            # A plain directory here: the private scratch view, an own session's.
             Path(spelled_here).mkdir(parents=True, exist_ok=True)
     else:
         spelled_here = "/"
@@ -1484,11 +1433,14 @@ def transport(config, target_path):
         host = PlatformHost(client, invoke, call_id, doc_versions)
         try:
             text = cheese.run_platform_tool(tool, args, host)
-        except MachineOutOfReach:
-            return {"error": MACHINE_OUT_OF_REACH}
         except Exception as exc:  # noqa: BLE001 — the agent reads the reason
-            return {"error": str(exc)}
-        return {"value": {"stdout": text, "stderr": ""}}
+            return {"error": failure_text(exc)}
+        # Pictures the tool hands back (a mini-app's, as the platform ran it)
+        # travel as image blocks after the text, for `proxy.js` to pass on.
+        return {
+            "value": {"stdout": str(text), "stderr": ""},
+            "images": list(getattr(text, "images", ())),
+        }
 
     def handle(request):
         try:
@@ -1668,35 +1620,11 @@ def transport(config, target_path):
                         reached_skills(target_path, config, args)
                 if notice.getvalue():
                     outcome["context"] = [notice.getvalue().strip()]
-                image = outcome.get("result", {})
-                if isinstance(image, dict) and image.get("type") == "image":
-                    # Base64 in text hits Claude Code's MCP text-output limit.
-                    # Keep native Read metadata in text and pixels in an image block.
-                    image_file = image["file"]
-                    metadata = {k: v for k, v in image_file.items() if k != "base64"}
-                    outcome = {"result": {**image, "file": metadata}}
-                    value = {
-                        "content": [
-                            {"type": "text", "text": json.dumps(outcome)},
-                            {
-                                "type": "image",
-                                "data": image_file["base64"],
-                                "mimeType": image_file["type"],
-                            },
-                        ]
-                    }
-                else:
-                    encoded = json.dumps(outcome)
-                    if len(encoded) > 32_000:
-                        # MCP replaces large text with prose; the plugin needs
-                        # the original receipt, including API JSON and Edit state.
-                        receipts = Path(target_path).parent / "tool-results"
-                        receipts.mkdir(exist_ok=True, mode=0o700)
-                        receipt_path = receipts / f"{uuid.uuid4().hex}.json"
-                        receipt_path.write_text(encoded)
-                        receipt_path.chmod(0o600)
-                        encoded = json.dumps({"receipt_path": str(receipt_path)})
-                    value = {"content": [{"type": "text", "text": encoded}]}
+                value = tool_answer(
+                    outcome,
+                    Path(target_path).parent / "tool-results",
+                    receipt.get("images", ()),
+                )
             elif method == "ping":
                 value = {}
             else:
@@ -1706,7 +1634,7 @@ def transport(config, target_path):
             response = {
                 "jsonrpc": "2.0",
                 "id": request["id"],
-                "error": {"code": -32000, "message": str(exc)},
+                "error": {"code": -32000, "message": failure_text(exc)},
             }
         with output_lock:
             print(json.dumps(response), flush=True)

@@ -12,10 +12,11 @@ import type { TaskLine } from '../lib/channelTasks'
 
 import { computed, ref, watch } from 'vue'
 
-import { useAskWithdraw } from '../composables/useAskWithdraw'
+import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { vGuideAnchor } from '../composables/useGuideAnchors'
+import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
 import { summonPrefill, useThreadLines } from '../composables/useThreadLines'
@@ -27,6 +28,7 @@ import ChatNewMessagesPill from './chat/ChatNewMessagesPill.vue'
 import ChatPanelHeader from './chat/ChatPanelHeader.vue'
 import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
+import MentionOutsidePrompt from './chat/MentionOutsidePrompt.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
@@ -75,9 +77,10 @@ const props = withDefaults(
     focusBlock?: string | null
     // 读的是房间里的一个任务的对话，而不是房间自己的（见 useChatPanel 的 `place`）。
     conversationId?: string | null
-    // 这件事单独指定了队友时，那位的 handle（任务信息卡那行「AI 队友」挑的）。
-    // 发送框那个 @ 写它，而不是房间名册上那位。空＝这件事没单独指定，跟着房间。
-    taskAgentHandle?: string | null
+    // 这段对话说给谁听，当它不是房间名册上那位时的 handle：任务单独指定的队友（任务
+    // 信息卡那行「AI 队友」挑的），或支线正在和它说话的那位队友。发送框那个 @ 写它。
+    // 空＝跟着房间。
+    agentHandle?: string | null
     // 这里此刻不能说话，以及为什么（任务只有负责人能说话、任务已关闭）。输入框的
     // 位置换成这一句，`composer-closed` 插槽接在它后面。
     composerClosed?: string | null
@@ -100,7 +103,7 @@ const props = withDefaults(
     backLabel: null,
     unreadOnOpen: 0,
     conversationId: null,
-    taskAgentHandle: null,
+    agentHandle: null,
     composerClosed: null,
     askClosed: false,
     inThread: false,
@@ -140,10 +143,17 @@ const panelEmit = ((event: string, ...args: unknown[]) => {
 
 // A composable is not re-run when a prop changes: it reads the current value
 // when it needs it. That is why every prop is handed over as an accessor.
+// 我 @ 了不在这个频道里的人：问要不要加进来（Slack 那样），见 useMentionOutside。
+const mentionOutside = useMentionOutside({
+  place: () => props.conversationId ?? props.topic?.id ?? null,
+  nameOf: (handle) => props.members.find((m) => m.user_handle === handle)?.name || handle,
+})
+const { prompt: outsidePrompt, adding: outsideAdding } = mentionOutside
+
 const panel = useChatPanel({
   topic: () => props.topic,
   conversationId: () => props.conversationId,
-  taskAgentHandle: () => props.taskAgentHandle,
+  agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
   answersInThread: () => threadable.value,
   showComposer: () => props.showComposer,
@@ -151,6 +161,7 @@ const panel = useChatPanel({
   topicList: () => props.topicList,
   unreadOnOpen: () => props.unreadOnOpen,
   focusBlock: () => props.focusBlock ?? null,
+  onPosted: mentionOutside.offer,
   emit: panelEmit,
 })
 
@@ -292,7 +303,7 @@ const {
 
 // 撤回一道题上的回答。它要的两样（时间线、错误横幅）都在 `panel` 上，但它自己不在
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
-const { withdrawQuestionAnswer } = useAskWithdraw({ timeline: panel.timeline, errorMsg })
+const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
 
 // 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
 // 的那一刻做一次，删掉了不会再长回来。
@@ -376,7 +387,9 @@ useComposerShortcut({
           :no-upgrade="noUpgrade"
           :threadable="threadable"
           :processable="inThread"
+          :fold-plain="!!conversationId"
           :replying-for="threadLines.replyingFor"
+          :replying-seats-for="threadLines.replyingSeats"
           :thread-status-for="threadLines.statusFor"
           :pinnable="pinnable"
           :pinned-ids="pins.pinnedIds.value"
@@ -449,6 +462,7 @@ useComposerShortcut({
           "
           @ask-reply="replyToQuestion"
           @ask-withdraw="withdrawQuestionAnswer"
+          @ask-skip="skipQuestion"
           @checklist="changeChecklist"
           @download="downloadAttachment"
           @jump="openAt"
@@ -502,6 +516,15 @@ useComposerShortcut({
             {{ t('slides.removeQuote') }}
           </button>
         </div>
+        <MentionOutsidePrompt
+          v-if="showComposer && outsidePrompt"
+          :names="mentionOutside.names(outsidePrompt.handles)"
+          :members-only="outsidePrompt.members_only"
+          :may-add="outsidePrompt.may_add"
+          :adding="outsideAdding"
+          @add="mentionOutside.add"
+          @dismiss="mentionOutside.dismiss"
+        />
         <div v-if="showComposer && composerClosed" class="composer-closed">
           <div class="composer-closed__box t-body">
             <span class="composer-closed__text">{{ composerClosed }}</span>

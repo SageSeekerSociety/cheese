@@ -10,7 +10,7 @@ never words put in 芝士's mouth (CLAUDE.md 硬性禁止 #4).
 """
 
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     SEVERITY_ERROR,
     WHO_HUMAN,

@@ -132,21 +132,11 @@
       ]
     },
     {
-      "label": "几位队友在同一台机器上时怎么不打架",
+      "label": "几位队友同时干活时怎么不打架",
       "focus": "seats",
-      "tag": "各推各的分支；跑大测试先占锁",
+      "tag": "各推各的分支",
       "events": [
-        {
-          "at": 200,
-          "do": "act",
-          "who": "cheese-k",
-          "turn": "t2",
-          "tool": "cheese_lock",
-          "arg": "heavy",
-          "platform": true
-        },
-        { "at": 200, "do": "lock", "who": "cheese-k" },
-        { "at": 300, "do": "seat", "who": "cheese-k", "state": "占着重资源锁" },
+        { "at": 300, "do": "seat", "who": "cheese-k", "state": "在跑一轮" },
         {
           "at": 800,
           "do": "act",
@@ -156,17 +146,6 @@
           "arg": "uv run pytest tests/api -x -q"
         },
         { "at": 1400, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "git push origin task/a17c" },
-        {
-          "at": 2400,
-          "do": "act",
-          "who": "cheese-k",
-          "turn": "t2",
-          "tool": "cheese_unlock",
-          "arg": "heavy",
-          "platform": true
-        },
-        { "at": 2400, "do": "lock", "who": null },
-        { "at": 2500, "do": "seat", "who": "cheese-k", "state": "在跑一轮" },
         { "at": 3000, "do": "act", "who": "cheese-k", "turn": "t2", "tool": "Bash", "arg": "git push origin task/b42e" }
       ]
     },

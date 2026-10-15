@@ -71,8 +71,9 @@ CONTAINERS = (
 
 HOW_TO_FIX = (
     "A refusal sentence is written where it is raised. Add it to both "
-    "frontend/src/i18n/messages/zh-CN/apiError.json and "
-    "frontend/src/i18n/messages/en/apiError.json under one key, and raise "
+    "frontend/src/i18n/messages/zh-CN/apiError/ and "
+    "frontend/src/i18n/messages/en/apiError/ under one key, in the shard "
+    "named after the backend module that says it, and raise "
     "say('<key>', **params) instead (app/core/sentences.py; "
     "docs/i18n.md). If this text truly is not shown to a person, put "
     "'# i18n-exempt: <reason>' on its line."
@@ -288,12 +289,14 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/sandbox.py": 1,
     "app/api/routes/skill_bundles.py": 3,
     "app/api/routes/space_announcements.py": 1,
-    "app/api/routes/spaces.py": 13,
+    "app/api/routes/spaces.py": 10,
+    "app/api/space_deps.py": 3,
+    "app/api/task_deps.py": 1,
     "app/api/routes/spaces_analytics.py": 2,
     "app/api/routes/spaces_organization.py": 2,
     "app/api/routes/tags.py": 1,
     "app/api/routes/task_inheritance.py": 1,
-    "app/api/routes/tasks/_common.py": 11,
+    "app/api/routes/tasks/_common.py": 10,
     "app/api/routes/tasks/lifecycle.py": 29,
     "app/api/routes/tasks/participation.py": 25,
     "app/api/routes/tasks/publish_pdf.py": 8,
@@ -311,14 +314,16 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/topics_threads.py": 2,
     "app/api/routes/users/_common.py": 8,
     "app/api/routes/users/account.py": 11,
-    "app/api/routes/users/auth.py": 31,
+    "app/api/routes/users/auth.py": 29,
     "app/api/routes/users/connections.py": 3,
     "app/api/routes/users/directory.py": 5,
     "app/api/routes/users/oauth.py": 4,
     "app/api/routes/users/preferences.py": 2,
     "app/api/routes/users/registration.py": 8,
     "app/api/routes/users_2fa.py": 9,
-    "app/api/routes/users_common.py": 3,
+    # 2026-10: the origin gate (`_origin_of`, `_require_same_origin`) left
+    # `routes/users/auth.py` for here, carrying its two English refusals.
+    "app/api/users_deps.py": 5,
     "app/api/routes/users_identity.py": 5,
     "app/api/routes/users_language.py": 2,
     "app/api/routes/users_passkey.py": 10,
@@ -341,6 +346,9 @@ _BASELINE: dict[str, int] = {
     "app/device_connection_app.py": 8,
     "app/domain/agent/announce.py": 1,
     "app/domain/agent/chat.py": 2,
+    # 2026-10: the checkout sweep left `room_task/checkouts.py` for
+    # `agent/checkout_sweep.py`, carrying its one English sentence.
+    "app/domain/agent/checkout_sweep.py": 1,
     "app/domain/agent/cli_worker.py": 6,
     "app/domain/agent/clone.py": 1,
     "app/domain/agent/compute.py": 1,
@@ -353,10 +361,8 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/environment_runner.py": 9,
     "app/domain/agent/executor_transport.py": 22,
     "app/domain/agent/forge_cli.py": 10,
-    "app/domain/agent/forgejo_tokens.py": 7,
     "app/domain/agent/gateway.py": 2,
     "app/domain/agent/gateway_usage.py": 2,
-    "app/domain/agent/github_app.py": 5,
     "app/domain/agent/harness/claude_code/legacy.py": 6,
     "app/domain/agent/harness/claude_code/remote_execution/bootstrap.py": 12,
     "app/domain/agent/harness/claude_code/remote_execution/client.py": 17,
@@ -406,7 +412,6 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/session_host/driver.py": 1,
     "app/domain/agent/session_host/host.py": 11,
     "app/domain/agent_credential/services.py": 1,
-    "app/domain/agent_instance/services.py": 1,
     "app/domain/agent_type/library.py": 11,
     "app/domain/answers/services.py": 10,
     "app/domain/attachment/services.py": 5,
@@ -425,7 +430,6 @@ _BASELINE: dict[str, int] = {
     "app/domain/feedback/repositories.py": 1,
     "app/domain/fetch/addresses.py": 2,
     "app/domain/fetch/guard.py": 6,
-    "app/domain/frontend_log.py": 1,
     "app/domain/groups/services.py": 26,
     "app/domain/knowledge/repositories.py": 1,
     "app/domain/knowledge/services.py": 8,
@@ -440,7 +444,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/machine/microcloud.py": 3,
     "app/domain/machine/pi_dist.py": 6,
     "app/domain/machine/services.py": 7,
-    "app/domain/machine/session_work.py": 14,
+    "app/domain/machine/session_work.py": 13,
     "app/domain/machine/supply.py": 2,
     "app/domain/machine/toolchain_dist.py": 4,
     "app/domain/machine/warm.py": 1,
@@ -456,6 +460,8 @@ _BASELINE: dict[str, int] = {
     "app/domain/project/environment.py": 2,
     "app/domain/project/export.py": 11,
     "app/domain/project/forge_migration.py": 20,
+    "app/domain/project/forgejo_tokens.py": 7,
+    "app/domain/project/github_app.py": 5,
     "app/domain/project/room_files.py": 1,
     "app/domain/project/services.py": 1,
     "app/domain/project_skill/blobs.py": 1,
@@ -465,7 +471,6 @@ _BASELINE: dict[str, int] = {
     "app/domain/review/github_pr.py": 11,
     "app/domain/review/pr_publish.py": 5,
     "app/domain/review/services/cards.py": 2,
-    "app/domain/room_task/checkouts.py": 1,
     "app/domain/room_task/services.py": 1,
     "app/domain/site/services.py": 2,
     "app/domain/space/analytics_service.py": 1,
@@ -490,7 +495,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/thread/services.py": 1,
     "app/domain/topic/cleanup_trigger.py": 1,
     "app/domain/room_cleanup/retire.py": 8,
-    "app/domain/topic/services.py": 15,
+    "app/domain/topic/services.py": 14,
     "app/domain/topic_membership/services.py": 10,
     "app/domain/usage/ledger.py": 1,
     "app/domain/user/mail_quota.py": 1,

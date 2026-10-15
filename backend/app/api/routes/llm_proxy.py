@@ -24,6 +24,7 @@ as-is, so a client-side protocol change needs no change here.
 
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Annotated
 
 import httpx
@@ -43,6 +44,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.model_streams import model_streams
 from app.core.sandbox_auth import (
     PersonalClaims,
     is_global_sandbox_token,
@@ -57,6 +59,7 @@ from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.memory import dream
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -71,6 +74,17 @@ logger = logging.getLogger("cheesex.llm_proxy")
 # prefix sets the base to `https://host/api`. Living under `/api` here would
 # make this the one route that needs the prefix twice.
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+# What a rollout asks the backend it is about to stop (`deploy/deploy-docker.sh`).
+# The ingress never forwards `/_internal/`, so only the box itself reaches it.
+internal_router = APIRouter(prefix="/_internal/llm", include_in_schema=False)
+
+
+@internal_router.get("/streams")
+async def open_streams() -> dict:
+    """How many model streams this process is still relaying."""
+    return {"open": model_streams.open}
+
 
 # Long: a streamed model turn holds the connection open for minutes. The read
 # timeout is what a slow first token hits, so it has to exceed the model's own
@@ -103,6 +117,17 @@ def _caller_token(request: Request) -> str:
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return request.headers.get("x-api-key", "").strip()
+
+
+async def _dreams(db: AsyncSession, project, claims: dict) -> bool:
+    """Whether this call is the project's memory consolidation: made in the
+    overview room (the place its scoped token names) while a dream runs.
+    The dream holds the overview's turn lock for as long as it runs, so no
+    room turn there makes calls meanwhile (`memory.dream.dreaming`)."""
+    place = claims.get("t")
+    if project is None or not place or place != str(project.root_topic_id):
+        return False
+    return await dream.dreaming(db, project.id)
 
 
 def _upstream_url(path: str) -> str:
@@ -297,7 +322,7 @@ async def admission(
         agent = await agents.for_seat_handle(project, claims.get("a"))
         if agent is None:
             agent = await agents.for_project(project)
-    choices = binding.catalog(project.settings if project else None)
+    choices = configuration.catalog(project.settings if project else None)
     try:
         if project is not None and is_subagent and requested:
             bound = await _bind_requested_subagent_model(
@@ -362,6 +387,11 @@ async def admission(
             }
         )
     pool = bound.supply
+    # A call made in the overview room while the project's memory is being
+    # consolidated is the dream's: it runs on the project's dream key, and the
+    # metering proxy writes the dream's kind on its usage line. Read before the
+    # read session is handed back below.
+    dreaming = await _dreams(db, project, claims)
     # The name that goes into the REQUEST BODY. The proxy writes it there on the
     # way out, which is the only place either pool reads a model from, and the
     # only reason the launch environment can now name none. A subscription model
@@ -369,6 +399,8 @@ async def admission(
     # the catalogue is the only thing that knows, so the translation lives on
     # the binding (`WorkBinding.wire_model`) rather than here.
     supply: dict = {"pool": pool, "model": bound.wire_model}
+    if dreaming:
+        supply["kind"] = dream.DREAM_KIND
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -399,7 +431,7 @@ async def admission(
     ):
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
-        supply["key"] = await chat.project_gateway_key(project_uuid)
+        supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
 
     return ok(
         {
@@ -417,6 +449,21 @@ async def admission(
             "supply": supply,
         }
     )
+
+
+class _CountedStreamingResponse(StreamingResponse):
+    """Ends the stream's count when the response is over, however it ends: a
+    caller that goes away before the first byte never runs the body at all."""
+
+    def __init__(self, content, end_stream: Callable[[], None], **kwargs) -> None:
+        super().__init__(content, **kwargs)
+        self._end_stream = end_stream
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._end_stream()
 
 
 async def _person_key(claims: PersonalClaims) -> str | None:
@@ -454,9 +501,12 @@ async def proxy(
         except ValueError as exc:
             raise NotFoundError("Unknown project") from exc
         await _require_model_caller(db, token, project_uuid)
+        dreaming = await _dreams(
+            db, await ProjectRepository(db).get(project_uuid), claims
+        )
         # The stream below can hold this request for minutes.
         await release_read_session(db)
-        key = await chat.project_gateway_key(project_uuid)
+        key = await chat.project_gateway_key(project_uuid, dream=dreaming)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
         # own credential, which would bill every project to one bucket.
@@ -482,23 +532,34 @@ async def proxy(
         content=body,
         params=dict(request.query_params),
     )
+    # Counted from before the model is asked: a reasoning model can take more
+    # than a minute to send its first byte, and a rollout that read no stream
+    # in that time would stop this process under it (`app.core.model_streams`).
+    end_stream = model_streams.opened()
     try:
         upstream = await client.send(req, stream=True)
     except httpx.HTTPError as exc:
+        end_stream()
         await client.aclose()
         logger.warning("llm proxy upstream failed for project %s: %s", project_id, exc)
         raise GatewayUnavailableError("The model pool did not answer") from exc
+    except BaseException:
+        end_stream()
+        await client.aclose()
+        raise
 
     async def stream():
         try:
             async for chunk in upstream.aiter_raw():
                 yield chunk
         finally:
+            end_stream()
             await upstream.aclose()
             await client.aclose()
 
-    return StreamingResponse(
+    return _CountedStreamingResponse(
         stream(),
+        end_stream,
         status_code=upstream.status_code,
         headers={
             k: v

@@ -1,0 +1,9 @@
+{
+  "drafting": "{name} is drafting…",
+  "draftingWhat": "Turning the discussion into this task's doc",
+  "failed": "{name} could not draft the doc",
+  "failedWhy": "This turn did not finish",
+  "retry": "Retry",
+  "waiting": "Not started yet; continues once the environment is connected",
+  "writeMyself": "Write it myself"
+}

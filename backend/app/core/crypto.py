@@ -50,6 +50,7 @@ class Purpose(StrEnum):
     MCP_OAUTH_TOKEN = "mcp-oauth-token"
     MCP_OAUTH_STATE = "mcp-oauth-state"
     MCP_SECRET = "mcp-secret"
+    MODEL_CONNECTION_KEY = "model-connection-key"
 
 
 class DecryptionError(InternalServerError):

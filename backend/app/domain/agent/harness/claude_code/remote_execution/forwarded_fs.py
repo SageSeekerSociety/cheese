@@ -12,6 +12,8 @@ import json
 import os
 import stat
 import sys
+import threading
+import time
 from pathlib import Path
 
 
@@ -235,6 +237,44 @@ class ForwardedProject:
         return self.call("context_fs", {"operation": "statfs"})
 
 
+# How often a view's server looks for the session it serves, once it is up.
+ABANDONED_CHECK_S = 60
+
+
+def watch(directory, *, every=ABANDONED_CHECK_S):
+    """End this server once the session it serves has ended.
+
+    Nothing else does: the session's build, its runner and its launcher all
+    exit at the end of a session and none of them owns this mount, so without
+    this a server outlives its session for as long as the host runs — one per
+    seat that ever ran, each holding tens of MB. Unmounting is not enough
+    either: every session's namespace holds a copy of the view
+    (`release.release_abandoned`), so the server ends itself once its view is
+    released. Its first look also ends every other server on the host left by a
+    session that has ended, the ones from before this watch. Runs unattended
+    for the life of the mount, so a failed look is logged and the next one tried.
+    """
+    # deferred-import: deferred: bare name, shipped beside this file
+    from release import release_abandoned, release_abandoned_views
+
+    first = True
+    while True:
+        time.sleep(every)
+        try:
+            if first:
+                first = False
+                ended = release_abandoned_views()
+                if ended:
+                    print(f"ended {ended} abandoned views", flush=True)
+            if release_abandoned(directory):
+                print("session ended; view released", flush=True)
+                # From this thread, past the FUSE loop in the main one, which
+                # serves the copies other sessions hold for as long as they live.
+                os._exit(0)
+        except Exception as error:  # noqa: BLE001 — see the docstring
+            print(f"abandoned-view check failed: {error!r}", flush=True)
+
+
 def mount(target_path, mountpoint):
 
     # deferred-import: deferred: bare name
@@ -266,6 +306,7 @@ def mount(target_path, mountpoint):
 
     view = FuseProject(call)
     view.refresh()
+    threading.Thread(target=watch, args=(target_path.parent,), daemon=True).start()
     FUSE(
         view,
         mountpoint,

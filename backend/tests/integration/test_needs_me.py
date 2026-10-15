@@ -214,6 +214,44 @@ def test_a_decision_asked_on_a_card_comes_back_to_the_card(client):
     assert _mine(client, "alice") == []
 
 
+def test_an_alert_about_a_closed_task_still_names_the_task(client):
+    """关了的活自己不再等任何人（它落「已结束」那一列，下一步在平台手上），但写给
+    我的、关于它的提醒照样要读 —— 清单上那一行仍旧认得出它的标题和频道。
+
+    「待我处理」为了不替早就结束的活付钱，判据只对还开着的活跑；通知指到的活另取。
+    这里钉的是「另取」没漏：关了的活仍能被认回来。"""
+    project = _project(client)
+    channel = _channel(client, project)
+    card = _task(client, channel, started=True)
+    r = client.post(
+        f"/topics/{card}/close",
+        json={"conclusion": "做完了"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    # 关了的活自己不在清单上。
+    assert _mine(client, "alice") == []
+
+    r = client.post(
+        f"/projects/{project}/alerts",
+        json={
+            "level": "light",
+            "kind": "change_alert",
+            "title": "收尾时改了 README",
+            "body": "补了一节安装说明",
+            "target_handle": "alice",
+            "topic_id": str(card),
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    (item,) = _mine(client, "alice")
+    assert item["reason"] == "read"
+    assert item["taskId"] == str(card)
+    assert item["taskTitle"]
+    assert item["topicId"] == channel
+
+
 def test_a_change_alert_waits_until_i_read_it(client):
     project = _project(client)
     channel = _channel(client, project)

@@ -97,8 +97,6 @@
     "close": "Close",
     "loadFailed": "Could not load the details. Try again.",
     "empty": "No such model",
-    "upstream": "Upstream",
-    "upstreamModel": "Upstream model",
     "upstreamHost": "Upstream host",
     "trend": "Daily usage",
     "platformUsage": "Platform-side usage",
@@ -216,7 +214,12 @@
       "subscriptionRefresh": "Refreshed a subscription token",
       "subscriptionRevoke": "Revoked a subscription",
       "other": "Other action",
-      "subscriptionUpdateUpstream": "Changed a subscription's upstream model"
+      "subscriptionUpdateUpstream": "Changed a subscription's upstream model",
+      "sourceAdd": "Add source",
+      "sourceUpdate": "Edit source",
+      "sourceDelete": "Delete source",
+      "sourceBlocked": "Pause/resume source",
+      "sourceOrder": "Reorder sources"
     },
     "diff": {
       "show": "Show changes",
@@ -241,5 +244,86 @@
       }
     },
     "loadFailed": "Recent actions failed to load"
+  },
+  "source": {
+    "section": "Sources",
+    "add": "Add source",
+    "firstSource": "First source",
+    "count": "{n} sources",
+    "order": "Priority {n}",
+    "orderNone": "No priority (tried last)",
+    "free": "Free",
+    "headers": "Headers",
+    "session": "Session header",
+    "readonly": "Declared in config, read-only",
+    "testSoon": "Testing a source needs the conformance suite, which hasn't shipped yet",
+    "failed": "The source change failed",
+    "protocol": {
+      "anthropic": "Anthropic Messages",
+      "openaiChat": "OpenAI-compatible Chat",
+      "openaiResponses": "OpenAI Responses",
+      "other": "Other (full model string)"
+    },
+    "action": {
+      "up": "Move up",
+      "down": "Move down",
+      "edit": "Edit source",
+      "block": "Pause source",
+      "unblock": "Resume source",
+      "delete": "Delete source",
+      "test": "Test source"
+    },
+    "dialog": {
+      "addTitle": "Add a source to {name}",
+      "editTitle": "Edit a source of {name}"
+    },
+    "field": {
+      "protocol": "Protocol",
+      "order": "Priority",
+      "orderHint": "1–100. Lower is tried first; equal priorities share the traffic.",
+      "upstreamHint": "The upstream's own model name, such as kimi-k3; the gateway adds the protocol prefix.",
+      "apiBaseKeep": "Leave empty to keep the saved upstream address.",
+      "free": "Free source",
+      "freeHint": "The upstream doesn't charge per token (a free model, a flat subscription): input and output are priced at 0, which is not the same as unpriced.",
+      "zeroNeedsFree": "An input or output price of 0 is only allowed on a free source, and a free source's input and output prices can only be 0.",
+      "headers": "Static headers",
+      "existingHeaders": "Current: {names} (values aren't shown; setting them again replaces the whole set)",
+      "noHeaders": "No headers.",
+      "editHeaders": "Set headers again",
+      "headerName": "Name",
+      "headerValue": "Value",
+      "addHeader": "Add header",
+      "removeHeader": "Remove this header",
+      "headerInvalid": "A header name or value isn't valid: authentication and transport headers can't be set per source, and values can't contain line breaks.",
+      "session": "Session header name",
+      "sessionHint": "For upstreams that route or cache by session (such as x-opencode-session): the gateway puts Claude Code's session id in this header. Leave empty to send none.",
+      "leadsWarning": "This priority puts the new source ahead of every source in use, taking their traffic (a source with no priority is only used when every source with one is unavailable).",
+      "makePrimary": "Make it the primary source",
+      "fallback": "It goes after the existing sources as a fallback: it is used only when the ones ahead are unavailable.",
+      "mixedFree": "This model will have both free and paid sources: it is billed at the paid price, traffic on the free source included.",
+      "headersPublic": "Header values aren't secret: unless the name contains key, token, secret, auth, password, credential or cookie, any caller holding a project key can read them from the gateway. Put the upstream credential in the API key."
+    },
+    "confirm": {
+      "delete": {
+        "title": "Delete source",
+        "body": "The {source} source of {name} will be removed from the gateway, and no more requests go there. If it's the last one, the model goes too."
+      },
+      "block": {
+        "title": "Pause source",
+        "body": "Once paused, the gateway stops sending requests to the {source} source of {name}; the model's other sources keep working."
+      },
+      "unblock": {
+        "title": "Resume source",
+        "body": "Once resumed, the gateway sends requests to the {source} source of {name} again, by priority."
+      }
+    },
+    "notice": {
+      "added": "Added a source to {name}",
+      "updated": "Updated a source of {name}",
+      "deleted": "Deleted a source of {name}",
+      "blocked": "Paused a source of {name}",
+      "unblocked": "Resumed a source of {name}",
+      "reordered": "Changed the source priorities of {name}"
+    }
   }
 }

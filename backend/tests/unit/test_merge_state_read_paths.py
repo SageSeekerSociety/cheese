@@ -12,7 +12,7 @@ from typing import cast
 import httpx
 import pytest
 
-from app.domain.agent.github_app import GitHubAppTokens
+from app.domain.project.github_app import GitHubAppTokens
 from app.domain.review.github_pr import GitHubPRClient, HttpxGitHubPrClient
 from app.domain.review.github_pr_status import parse_pull_request_status
 

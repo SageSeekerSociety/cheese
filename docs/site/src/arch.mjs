@@ -191,13 +191,13 @@ const llmWalks = {
       { ...vendorStop(f), note: '兜底的是订阅路的滚动 token 上限。' },
     ],
     subagent: (f) => [
-      { ...sessionStop(f, 'cloud'), head: '会话主机上的分身进程：请求头带着它要的模型', act: '发起请求', see: [['authorization', `Bearer ${f.placeholder_token}`], ['body.model', f.sub_model.id], ['x-cheese-child-model', f.sub_model.id]] },
+      { ...sessionStop(f, 'cloud'), head: '会话主机上的分身进程：请求体带着它要的模型', act: '发起请求', see: [['authorization', `Bearer ${f.placeholder_token}`], ['body.model', f.sub_model.id]] },
       cloudHelperStop(f),
       cloudArriveStop(f),
       meterStop(f, {
-        see: [['body.model', f.sub_model.id], ['x-cheese-child-model', f.sub_model.id], ['父会话跑的模型', '不是这一个']],
+        see: [['body.model', f.sub_model.id], ['父会话跑的模型', '不是这一个']],
         say: [['它做的事', '把请求体里的模型名拿出来，放在请求头上交给准入']],
-        note: '头里的模型名和父会话一样时是「继承」，不是指定——那种情况计量代理会把头删掉，按项目默认的分身模型走。',
+        note: '体里的模型名和父会话一样时是「继承」，不是指定——那种情况按项目默认的分身模型走。',
       }),
       admissionStop(f, { allow: true, reason: f.budget.allow_reason, reason_kind: 'budget', pool: ASK.pool, model: f.sub_model.wire, key: true, note: `指定的模型在项目目录里、也在允许范围内，就用它：目录里的名字是 ${f.sub_model.id}，写进请求体的是 ${f.sub_model.wire}。翻译只发生在准入这一处。` }),
       gatewayStop(),

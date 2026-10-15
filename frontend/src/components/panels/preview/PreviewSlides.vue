@@ -408,14 +408,29 @@ onBeforeUnmount(() => {
 .slides__sheet :deep(canvas) {
   display: block;
 }
+/* 这一份和 PreviewPages 里 `.pv-text` 那一段是同一套写法：改一处时两处一起改。
+ *
+ * pdf.js 6 只把几何写成变量，字号和 transform 得由样式从这里乘出来。少了这一段，
+ * 字还是透明的、位置也对，坏在看不见的地方——每个 span 按继承来的字号排版，盒子
+ * 大小和纸上那些字对不上，选中落在隔壁，高亮盖不住。 */
 .slides__sheet :deep(.slide-text-layer) {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
   position: absolute;
+  text-align: initial;
   inset: 0;
-  overflow: hidden;
+  /* `clip` 不是 `hidden`：hidden 是一个能滚的框，一路拖下去选的时候浏览器会把它自己
+     滚走，高亮跟着离开纸面，再被页框裁掉。 */
+  overflow: clip;
   line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
   text-size-adjust: none;
   forced-color-adjust: none;
   transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
 }
 .slides__sheet :deep(.slide-text-layer span),
 .slides__sheet :deep(.slide-text-layer br) {
@@ -424,15 +439,11 @@ onBeforeUnmount(() => {
   color: transparent;
   cursor: text;
   transform-origin: 0 0;
-}
-/* PDF.js 6 TextLayer publishes geometry variables; CSS owns their application. */
-.slides__sheet :deep(.slide-text-layer) {
-  --min-font-size: 1;
-  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
-  --min-font-size-inv: calc(1 / var(--min-font-size));
+  user-select: text;
 }
 .slides__sheet :deep(.slide-text-layer > :not(.markedContent)),
 .slides__sheet :deep(.slide-text-layer .markedContent span:not(.markedContent)) {
+  z-index: 1;
   --font-height: 0;
   --scale-x: 1;
   --rotate: 0deg;
@@ -442,8 +453,15 @@ onBeforeUnmount(() => {
 .slides__sheet :deep(.slide-text-layer .markedContent) {
   display: contents;
 }
+/* 选中只剩底色：正文本来是透明的，这里不点明 color 的话，浏览器会按「被选中的文字」
+   给它上色，选中的那几个字上又叠出一层同形状的字。 */
 .slides__sheet :deep(.slide-text-layer ::selection) {
   background: var(--accent-wash);
+  color: transparent;
+}
+/* 换行本身不该画成一块高亮。 */
+.slides__sheet :deep(.slide-text-layer br::selection) {
+  background: transparent;
 }
 .slides__sheet :deep(.slide-paint-error) {
   padding: 32px 16px;

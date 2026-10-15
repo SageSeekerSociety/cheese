@@ -2,7 +2,7 @@ name: Architecture metrics
 
 # The board, not a gate: `.claude/scripts/arch-metrics.py` prints where the
 # architecture stands — the frontend's A/B/C/D component grades, the frozen
-# entries behind the eight backend contracts, files over their size cap, and the
+# entries behind the nine backend contracts, files over their size cap, and the
 # hotspots of the last 30 and 90 days — and how each number moved against the
 # revision 30 days back. Runs on main and weekly, never in a pull request: the
 # boundary checks (`backend/.importlinter`,
@@ -94,6 +94,35 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
 
+      # The contrast check is the one check that walks pages in a browser, and
+      # it runs out of `e2e/` — a package of its own with a lockfile of its own.
+      #
+      # `--dir` rather than `working-directory: e2e` on purpose. `corepack
+      # enable` above resolves the pnpm version from the nearest
+      # `package.json`, and the repo's pin lives in `frontend/package.json`;
+      # started in `e2e/` — which has no such field, and no `package.json`
+      # above it either — corepack falls back to the version it ships as its
+      # own default, which on this image is a different major from the pin.
+      # Started in `frontend/`, the same pinned pnpm that just installed
+      # frontend's own dependencies reads `e2e/pnpm-lock.yaml`, and the store
+      # below stays the one key this job restores.
+      - name: Install e2e dependencies
+        continue-on-error: true
+        working-directory: frontend
+        run: pnpm --dir ../e2e install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
+
+      # Headless shell only, which is the same choice `e2e/browser/Dockerfile`
+      # makes for the PR job: Playwright's headless default has been the shell
+      # build since 1.49, and nothing here ever opens a headed browser.
+      #
+      # Taking the CLI through the same pinned pnpm as the step above, rather
+      # than off `PATH`: `e2e/node_modules/.bin` is pnpm's to assemble, so it
+      # finds it where pnpm put it.
+      - name: Install the browser
+        continue-on-error: true
+        working-directory: frontend
+        run: pnpm --dir ../e2e exec playwright install --with-deps --only-shell chromium
+
       - name: Install uv
         continue-on-error: true
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -128,6 +157,30 @@ jobs:
       - name: Self-test the collector
         continue-on-error: true
         run: python3 .claude/scripts/ratchet-snapshot.py --self-test
+
+      # The conflict count replays the commits that brought `main` into a PR
+      # branch, and those commits only exist on `refs/pull/*/head` — a ref
+      # `actions/checkout` does not bring, because a squash-merged branch's
+      # commits never land on `main`. Fetching them here is what lets the board
+      # count anything; when this step fails the section reports itself missing
+      # rather than reporting no conflicts, which is the difference between
+      # "nobody collided" and "we could not look".
+      #
+      # A failed fetch has to leave nothing behind, and `--atomic` is what does
+      # that. Without it `git fetch` writes refs one at a time, so a step killed
+      # during the update — or one ref lost to a lock — leaves a *subset*, and a
+      # subset counts and measures exactly like a complete set: fewer merges,
+      # reported as a quieter week. The count therefore goes into
+      # `ARCH_METRICS_PR_HEADS` after the fetch succeeds, and
+      # `.claude/scripts/arch-metrics.py` measures the section only when what
+      # the checkout holds is what this said it delivered. A fetch that failed
+      # writes nothing, so the section reports itself missing — and that is
+      # also what happens if `--atomic` is not a flag this git knows.
+      - name: Fetch the pull-request branch heads
+        continue-on-error: true
+        run: |
+          git fetch --no-tags --quiet --atomic origin '+refs/pull/*/head:refs/pull/*/head'
+          echo "ARCH_METRICS_PR_HEADS=$(git for-each-ref 'refs/pull/*/head' | wc -l)" >> "$GITHUB_ENV"
 
       # The comparison target is the last commit before the 30-day window, so
       # the delta always reads "this month". A checkout too young to have one

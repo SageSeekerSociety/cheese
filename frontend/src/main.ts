@@ -30,7 +30,7 @@ dayjs.extend(relativeTime)
 // identity so our views have a handle (= username) when embedded here.
 import './style.css'
 
-import { createApp, watch } from 'vue'
+import { createApp, createSSRApp, watch } from 'vue'
 
 import App from './App.vue'
 import { installErrorReporter } from './errorReporter'
@@ -38,8 +38,12 @@ import { registerPwa } from './pwa'
 import router from './router'
 
 import { resolveRefs } from '@/api/addresses'
-import i18n from '@/i18n'
+import { docAppShotUrl, getDocApp, getDocAppVersion } from '@/api/docApps'
+import i18n, { loadPlatformSentences, localeReady } from '@/i18n'
+import { armAfterFirstPaint } from '@/lib/afterFirstPaint'
+import { firstPageReady, stylesheetsLoaded } from '@/lib/bootReady'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
+import { answerDocAppsWith } from '@/lib/docApps'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
 import { installRefChipKeys } from '@/lib/refChip'
 import { answerRefsWith } from '@/lib/refDirectory'
@@ -58,7 +62,11 @@ persistProjectList()
 // In the desktop app the frame is not selectable text and has no browser menu.
 behaveAsDesktopApp()
 
-const app = createApp(App)
+// 公开页的 HTML 是构建时预渲染的（scripts/prerender.mjs）。启动脚本认定来的正是它渲染
+// 给的那位访客（index.html 的 data-boot="page"）时，应用在这份 HTML 上接管（hydrate），
+// 页面一帧也不重画；别的情况它被骨架盖着，照常从头挂载，挂载时清掉。
+const hydrating = document.documentElement.dataset.boot === 'page'
+const app = hydrating ? createSSRApp(App) : createApp(App)
 
 // A tab open across a deploy asks for chunks the new build does not
 // serve; recover it before the failure reaches the user as a dead click.
@@ -71,6 +79,8 @@ installErrorReporter(app)
 // 消息和文档里的 @人、#话题、文件 chip：Enter / 空格按下去和点一下一样（lib/refChip.ts）。
 installRefChipKeys()
 answerRefsWith(resolveRefs)
+// 文档里的小程序：代码、版本和截图从哪里取（lib/docApps.ts）。
+answerDocAppsWith({ app: getDocApp, version: getDocAppVersion, shot: docAppShotUrl })
 
 watch(
   i18n.global.locale,
@@ -81,14 +91,37 @@ watch(
   { immediate: true }
 )
 
-registerPlugins(app)
-app.mount('#app')
+// 首帧之后才发的那一批（角标、装饰类）跟着这台 router 排。装插件会把 router 装上并
+// 开始第一次跳转，所以在这一行之前装（见 lib/afterFirstPaint.ts）。
+armAfterFirstPaint(router)
 
-// The cold-start skeleton shell lives in index.html and is only there to cover
-// the gap before this line. Mounting has just painted the real shell, so drop
-// it now — a fresh node with fresh token values arriving in the same frame
-// means no flash even on a fast connection. See index.html for the markup.
-document.getElementById('sx-boot-skeleton')?.remove()
+registerPlugins(app)
+
+// 挂载等三件事：
+// - 当前语言那份语言包。它和入口分开取（见 i18n/index.ts），没到就挂载会先画出一片裸键。
+//   取不到（离线、构建对不上）也照常挂载，i18n 那边退回入口自带的 zh-CN，界面是齐的。
+// - 第一页：会话恢复完、第一次导航走完。以前挂载在它前面，先画出一副空外壳（没登录的人
+//   在首页上先看到工作台的左栏和「登录」），续签那一下还要弹「正在恢复登录状态」。现在
+//   这段时间里一直是按落点画的启动骨架（index.html），挂上去的就是那一页。
+// - 样式表。首屏不再等它们（见 lib/bootReady.ts），挂载要等。
+// 哪一样都不会让挂载失败，都有自己的期限：挂载不能卡在网络上。
+void Promise.all([
+  localeReady,
+  firstPageReady(AccountService.sessionRestored, router.isReady()),
+  stylesheetsLoaded(),
+]).then(() => {
+  app.mount('#app')
+
+  // The cold-start skeleton lives in index.html and only covers the gap before
+  // this line. Mounting has just drawn the page it stood for, so drop it now, in
+  // the same frame, along with the boot mode that kept #app hidden under it.
+  delete document.documentElement.dataset.boot
+  document.getElementById('sx-boot-skeleton')?.remove()
+
+  // 后端说的报错和系统消息不挡第一页，页面画出来再取（见 i18n/index.ts）。
+  void loadPlatformSentences()
+})
+
 registerPwa(router)
 // 安装机会（beforeinstallprompt）来得比任何页面都早——早到用户还没来得及打开
 // 下载页。所以在启动时就把它接住，下载页上的「添加到主屏幕」才有得用。

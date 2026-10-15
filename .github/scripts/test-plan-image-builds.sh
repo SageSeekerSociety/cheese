@@ -97,10 +97,16 @@ assert_plan 'backend=true,frontend=false,office_render=false,browser_render=fals
 
 # The backend renders notices from the frontend's sentence catalogs, and only
 # those: another namespace is the frontend's alone.
-for catalog in roomNotice apiError global; do
+git -C "$test_repo" switch -q --detach "$base_sha"
+mkdir -p "$test_repo/frontend/src/i18n/messages/en"
+commit_path frontend/src/i18n/messages/en/global.json
+assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+# roomNotice and apiError are directories of shards now; any shard is still the
+# backend's.
+for catalog in roomNotice apiError; do
   git -C "$test_repo" switch -q --detach "$base_sha"
-  mkdir -p "$test_repo/frontend/src/i18n/messages/en"
-  commit_path "frontend/src/i18n/messages/en/$catalog.json"
+  mkdir -p "$test_repo/frontend/src/i18n/messages/en/$catalog"
+  commit_path "frontend/src/i18n/messages/en/$catalog/review.json"
   assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
 done
 git -C "$test_repo" switch -q --detach "$base_sha"

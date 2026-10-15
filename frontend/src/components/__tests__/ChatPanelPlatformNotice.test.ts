@@ -205,7 +205,8 @@ describe('agent status messages', () => {
     expect(visibleText(frame)).toContain('完整的处理说明')
   })
 
-  it("opens the library document a line is about, not the room's, with the changes to mark", async () => {
+  // 卡片本身打开文档；只有「查看改动」打开时把这一轮改的几处标出来。
+  it("opens the library document a line is about, not the room's; only 「查看改动」 marks the changes", async () => {
     listTopicMembers.mockResolvedValue({ data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }] })
     const made = {
       ...event('', '测试助手 新建了文档《竞品定价对比》', {
@@ -233,7 +234,11 @@ describe('agent status messages', () => {
     expect(cards).toHaveLength(2)
     cards[0].click()
     cards[1].click()
+    const review = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.trim() === '查看改动')
+    expect(review).toHaveLength(1)
+    review[0].click()
     expect(emitted()['open-resource']).toEqual([
+      ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
       ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
       [
         'doc',
@@ -244,7 +249,7 @@ describe('agent status messages', () => {
     ])
   })
 
-  it('says a rewritten library document was updated, and how many changes were only suggested', async () => {
+  it('does not count the changes of a rewritten library document, and says how many were only suggested', async () => {
     listTopicMembers.mockResolvedValue({ data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }] })
     const card = (meta: Record<string, unknown>) => ({
       ...event('', '测试助手 改了文档《方案》', {
@@ -261,10 +266,98 @@ describe('agent status messages', () => {
       card({ doc_edits: [{ old: 'a', new: 'b' }], doc_suggested: true, doc_suggestions: ['s1'] }),
     ])
     await flush()
-    const cards = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.includes('方案'))
-    expect(cards[0].textContent).toContain('已更新')
-    expect(cards[0].textContent).not.toContain('改了')
-    expect(cards[1].textContent).toContain('提了 1 处建议')
+    const lines = Array.from(container.querySelectorAll('[data-testid="doc-edit-line"]')).map((l) => l.textContent)
+    // 整篇重写的没有逐处改动可数，也没有「查看改动」可看。
+    expect(lines[0]).toContain('改了《方案》')
+    expect(lines[0]).not.toContain('处')
+    expect(lines[0]).not.toContain('查看改动')
+    expect(lines[1]).toContain('提了 1 处修改建议')
+  })
+
+  // 队友在一轮里调工具改了文档：那一行是这一轮的一步，不是另一个人说的一条——它不另起
+  // 头像和名字，这一轮接下来的话也照样接在同一段里。不在哪一轮里的那一行，谁做的写成
+  // 普通的名字。两种都不把名字画成 @，这一行谁也不通知。
+  it('draws an edit made in an agent turn inside that turn, and one outside any turn as a line of its own', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'cheese-a1', name: '芝士S', agent: true },
+        { member_handle: 'li', name: '李老师', agent: false },
+      ],
+    })
+    const said = (id: string, content: string, minute: string) => ({
+      ...event('', content, null),
+      id,
+      kind: 'message' as const,
+      author_type: 'participant' as const,
+      author: 'cheese-a1',
+      turn_id: 'turn-1',
+      created_at: `2026-08-15T11:${minute}:00Z`,
+    })
+    const edit = {
+      ...event('', '<@cheese-a1> 改了文档《频道体验改进》', {
+        action: 'doc',
+        document: { id: 'lib-doc', title: '频道体验改进' },
+        doc_created: false,
+        doc_edits: [
+          { old: 'a', new: 'b' },
+          { old: 'c', new: 'd' },
+          { old: 'e', new: 'f' },
+        ],
+      }),
+      id: 'edit-in-turn',
+      author: 'cheese-a1',
+      turn_id: 'turn-1',
+      created_at: '2026-08-15T11:02:00Z',
+    }
+    const ask = {
+      ...event('', '把文档也改一下', null),
+      id: 'ask',
+      kind: 'message' as const,
+      author_type: 'participant' as const,
+      author: 'li',
+      created_at: '2026-08-15T11:05:00Z',
+    }
+    const standalone = {
+      ...event('', '<@li> 让<@cheese-a1>改了文档', {
+        action: 'doc',
+        doc_actors: ['cheese-a1'],
+        doc_requested_by: 'li',
+        doc_edits: [{ old: 'x', new: 'y' }],
+      }),
+      id: 'edit-alone',
+      author: 'cheese-a1',
+      created_at: '2026-08-15T11:06:00Z',
+    }
+    const { container } = mountRoom([
+      said('m1', '我先看一下文档。', '01'),
+      edit,
+      said('m2', '改好了。', '03'),
+      ask,
+      standalone,
+    ])
+    await flush()
+
+    // 这一轮只有开头那一处写着队友的名字：改文档那一行和它后面那句话都接在里面。
+    const names = Array.from(container.querySelectorAll('.im-name, .notice-row__name')).map((n) =>
+      n.textContent?.trim()
+    )
+    expect(names[0]).toBe('芝士S')
+    expect(names.filter((n) => n === '芝士S')).toHaveLength(1)
+    const inTurn = container.querySelector('[data-row-id="edit-in-turn"]')!
+    expect(inTurn.textContent).toContain('频道体验改进')
+    expect(inTurn.textContent).not.toContain('芝士S')
+
+    // 不在哪一轮里的：两个名字都写出来，写成普通的字。
+    const alone = container.querySelector('[data-row-id="edit-alone"]')!
+    const aloneText = alone.querySelector('[data-testid="doc-edit-line"]')!.textContent ?? ''
+    expect(aloneText).toMatch(/李老师.*芝士S/)
+    expect(alone.querySelector('[role="img"]')).toBeNull()
+
+    for (const id of ['edit-in-turn', 'edit-alone']) {
+      const row = container.querySelector(`[data-row-id="${id}"]`)!
+      expect(row.querySelector('.mention')).toBeNull()
+      expect(row.textContent).not.toContain('@')
+    }
   })
 
   it('keeps a human document edit separate from an agent edit and preserves the document action', async () => {
@@ -650,5 +743,96 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
 
     expect(container.querySelector('.im-event')!.textContent).toContain('机器「dev-box」连续失败，已暂停派活')
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
+  })
+})
+
+// 一条可展开的提示（提议技能、起草例行、人工放行合并……）这一行里提到的人，读的人看到的是名字，
+// 不是存储用的 `<@handle>` 原文。
+describe('a foldable notice that names someone', () => {
+  it('reads the name, never the raw token', async () => {
+    listTopicMembers.mockResolvedValue({ data: [{ member_handle: 'cheese-s', name: '芝士S', agent: true }] })
+    const { container } = mountRoom([
+      event('', '<@cheese-s> 提议新增技能「周报格式」', {
+        event_type: 'skill_proposed',
+        detail: '每周五汇总本周合并的改动',
+      }),
+    ])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('芝士S 提议新增技能「周报格式」')
+    expect(text).not.toContain('<@cheese-s>')
+  })
+})
+
+// 「@」的样子只说一件事：这一处通知到了那个人。消息里的点名通知了，画 @chip；平台的一行
+// 提示只是提到谁做了什么，没有通知谁，画成他的名字。
+describe('a person named in the room', () => {
+  it('is the @chip where a message told them, and only their name where a notice mentions them', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'bob', name: '鲍勃', agent: false },
+      ],
+    })
+    const said: Block = {
+      ...event('', '<@bob> 帮忙看下', null),
+      kind: 'message',
+      author_type: 'participant',
+      author: 'alice',
+    }
+    const { container } = mountRoom([event('', '<@alice> 置顶了一条消息', { event_type: 'pin' }), said])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('@鲍勃')
+    expect(text).toContain('爱丽丝')
+    expect(text).not.toContain('@爱丽丝')
+  })
+
+  it('is the @chip in a notice only for the AI teammate that same event woke', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'cheese-s', name: '芝士S', agent: true },
+      ],
+    })
+    const handed = event('', '<@alice> 把之前的消息交给了 <@cheese-s>', {
+      i18n: { content: { key: 'pendingHandedTo', params: { actor: '<@alice>', seat: '<@cheese-s>' } } },
+    })
+    const { container } = mountRoom([handed])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('爱丽丝 把之前的消息交给了 @芝士S')
+    expect(text).not.toContain('@爱丽丝')
+  })
+
+  it('in a members-only channel, is the @chip only for the members its message could notify', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'bob', name: '鲍勃', agent: false },
+      ],
+    })
+    listBlocks.mockImplementation(async () => ({ data: [], has_more: false }))
+    const id = freshRoom()
+    const said: Block = {
+      ...event(id, '<@bob> <@carol> 一起看下', null),
+      kind: 'message',
+      author_type: 'participant',
+      author: 'alice',
+    }
+    listBlocks.mockResolvedValue({ data: [said], has_more: false })
+    const { container } = render(ChatPanel, {
+      props: { topic: { ...room(id), members_only: true }, topicList: [room(id)] },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('@鲍勃')
+    expect(text).toContain('carol')
+    expect(text).not.toContain('@carol')
   })
 })

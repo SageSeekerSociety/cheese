@@ -39,11 +39,17 @@ import { useDesktopApp } from '@/composables/useDesktopApp'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import AccountService from '@/services/account'
+import { useFeedbackStore } from '@/stores/feedback'
+import { closeFirstPaint, holdFirstPaint, openFirstPaint, releaseFirstPaint } from '@/test/firstPaint'
 
-/** 挂一次，`meta` 与 `counts` 由调用方给的桩决定。 */
+/** 挂一次，`meta` 与 `counts` 由调用方给的桩决定。
+ *
+ *  `hold` 是「挂上去的那一刻，这一次跳转还在路上」：门装上了、但没推。给「门开之前
+ *  一次都不该问」那类用例；不写就是「首帧早画完了」，绝大多数用例要的是这一种。 */
 async function mount(
   props: { compact?: boolean } = {},
-  opts: { admin?: boolean; platformAdmin?: boolean; unread?: number } = {}
+  opts: { admin?: boolean; platformAdmin?: boolean; unread?: number; hold?: boolean } = {}
 ) {
   getFeedbackMeta.mockResolvedValue({
     is_admin: !!opts.admin,
@@ -65,6 +71,9 @@ async function mount(
   })
   await router.push('/')
   await router.isReady()
+  // 未读数和「管理后台」那一项都在首帧这道门后面（`@/test/firstPaint`），测试里没人推门。
+  if (opts.hold) holdFirstPaint()
+  else await openFirstPaint()
   const vuetify = createVuetify({ components, directives })
   return render(HelpAndFeedbackMenu, { props, global: { plugins: [vuetify, router, createPinia(), i18n] } })
 }
@@ -91,6 +100,9 @@ beforeEach(() => {
   setLocale('zh-CN')
   getFeedbackMeta.mockReset()
   getFeedbackCounts.mockReset()
+  // 这一份只在登录之后的顶栏上出现，那两个接口也都要登录：登录态置真，否则它们
+  // 一次都不发（组件里那个 watch 要看登录态）。
+  AccountService._loggedIn.value = true
 })
 
 describe('帮助与反馈入口', () => {
@@ -224,5 +236,47 @@ describe('帮助与反馈，在桌面 app 里', () => {
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+
+  it('登出要重问一趟：上一个人的「管理后台」和未读点不能留在顶栏上', async () => {
+    // 会话过期、或者另一个标签页登出时会落在这个状态：壳还在，人已经不是那个人了。
+    // 这两个接口对匿名请求照样答 200，所以重问这一趟本身就能把两项清掉。
+    const { container } = await mount({}, { admin: true, unread: 4 })
+    const store = useFeedbackStore()
+    await waitFor(() => expect(store.isAdmin).toBe(true))
+    expect(store.counts.unread).toBe(4)
+
+    getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })
+    getFeedbackMeta.mockResolvedValue({
+      is_admin: false,
+      is_platform_admin: false,
+      tabs: ['all'],
+      kinds: ['bug'],
+      hot_supports: 5,
+    })
+    AccountService._loggedIn.value = false
+
+    await waitFor(() => expect(store.isAdmin).toBe(false))
+    await waitFor(() => expect(store.counts.unread).toBe(0))
+    expect(container.querySelector('.help-entry .v-badge')).toBeNull()
+  })
+})
+
+// 上面那条只管「登录之后又登出」。还有一头是**冷开就落在未登录上**（登录页挂的也是
+// 这个组件）：那时挂载那一刻 `loggedIn` 就是假，重问那一支如果不等门，这里问一趟、
+// 门开了 `painted` 再变一次又问一趟 —— 同一个回答问两遍，而第一遍还在首帧之前。
+describe('帮助与反馈：未登录那两趟也在门后面', () => {
+  it('冷开就是未登录：门开之前一次都不问，门开了只问一趟', async () => {
+    AccountService._loggedIn.value = false
+    closeFirstPaint()
+    const { container } = await mount({}, { hold: true })
+    expect(container.querySelector('.help-entry')).not.toBeNull()
+    expect(getFeedbackMeta).not.toHaveBeenCalled()
+    expect(getFeedbackCounts).not.toHaveBeenCalled()
+
+    await releaseFirstPaint()
+    await waitFor(() => expect(getFeedbackMeta).toHaveBeenCalledTimes(1))
+    expect(getFeedbackCounts).toHaveBeenCalledTimes(1)
+    closeFirstPaint()
   })
 })

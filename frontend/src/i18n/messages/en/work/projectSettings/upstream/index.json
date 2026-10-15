@@ -1,0 +1,6 @@
+{
+  "hint": "Save the URL, then choose Connect GitHub repository below. Once connected, code and PRs stay in that repository",
+  "placeholder": "https://github.com/owner/repository",
+  "save": "Save",
+  "title": "GitHub repository URL"
+}

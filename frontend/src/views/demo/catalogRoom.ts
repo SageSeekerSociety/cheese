@@ -113,7 +113,13 @@ const ACTIONS_BASE = {
 }
 
 /** 芝士问的一道题，`answer_log` 由各格给。 */
-function askBlock(answerLog: Record<string, unknown>[]) {
+function askBlock(
+  answerLog: Record<string, unknown>[],
+  options: { text: string; explain?: string }[] = [
+    { text: '按部门 (Recommended)', explain: '和去年的报表对得上' },
+    { text: '按项目', explain: '每个项目一张表' },
+  ]
+) {
   return {
     id: 'demo-question',
     topic_id: 'demo-room',
@@ -123,11 +129,8 @@ function askBlock(answerLog: Record<string, unknown>[]) {
     content: '预算按哪个口径统计？',
     created_at: '2026-10-05T09:00:00Z',
     meta: {
-      options: [
-        { text: '按部门 (Recommended)', explain: '和去年的报表对得上' },
-        { text: '按项目', explain: '每个项目一张表' },
-      ],
-      asked: 'alice',
+      options,
+      asked: ['alice'],
       answer_log: answerLog,
     },
   }
@@ -476,23 +479,46 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',
     about:
-      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。选项之外永远多一颗「其他」：点开就地长出输入框，发的是他自己打的字，不是「其他」这两个字。',
+      '芝士问的一道题，画成一张卡：页头一句谁问谁（平文，不是 @ 的 chip），题目是卡的标题；选项是卡里带编号的几行，点一个（或卡有焦点时按它的数字键）就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。卡里最后一行一直是个输入框（「其他回答」）：不用先点开，打字回车就是他对这道题的答案，发的是他自己打的字。',
     file: 'src/components/ask/AskQuickReplies.vue',
     component: AskQuickReplies,
     needs: UI_T,
     states: [
       {
         name: '刚问出来',
-        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。末尾那颗「其他」点开就地长出输入框——模型没给的答案从这儿写，发出去的仍然是他自己那句话。',
+        note: '选项各自带一句说明；模型标了推荐的那一项在选项后面跟一个「推荐」小标签。最后一行是一直摆着的输入框，和选项同一种行——模型没给的答案直接在这儿打，回车或右边的箭头发出去，发的是他自己那句话；Shift+回车换行。跳过的 ✕ 在页头右上角。',
         props: {
+          asker: AGENT_NAME,
           block: askBlock([]),
           names: {},
+          viewer: 'alice',
+        },
+      },
+      {
+        name: '选项只是几个词',
+        note: '没有说明的短选项也是一项一行，只是每行矮一些；末行的输入框照样在。',
+        props: {
+          asker: AGENT_NAME,
+          block: askBlock([], [{ text: '按部门' }, { text: '按项目' }, { text: '按季度' }]),
+          names: {},
+          viewer: 'alice',
+        },
+      },
+      {
+        name: '问的是别人',
+        note: '题问的是 alice，看的人不在被问的人里：选项和末行的输入框都灰着、点不动，也没有跳过的 ✕；页头那句「芝士 问 Alice」说明在等谁。',
+        props: {
+          asker: AGENT_NAME,
+          block: askBlock([]),
+          names: { alice: 'Alice' },
+          viewer: 'bob',
         },
       },
       {
         name: '有人答过了',
         note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。答的人不是看着这一页的人，所以没有撤回的入口。',
         props: {
+          asker: AGENT_NAME,
           block: askBlock([
             { kind: 'option', option: '按部门', note: null, by: 'alice', at: null },
             { kind: 'note', option: null, note: '外包单列一栏', by: 'bob', at: null },
@@ -505,6 +531,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         name: '自己答的，可以撤回',
         note: '答过的那一条旁边多一个「撤回」；点它先弹确认框，题回到重新等回答。',
         props: {
+          asker: AGENT_NAME,
           block: askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }]),
           names: { alice: 'Alice' },
           viewer: 'alice',

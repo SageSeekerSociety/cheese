@@ -461,7 +461,7 @@ describe('绿了自动合', () => {
     setAutoMerge.mockResolvedValue(armed)
     const { container } = await mountWith([armed])
 
-    expect(container.textContent).toContain('@bob 已开启检查通过后自动合并')
+    expect(container.textContent).toContain('bob 已开启检查通过后自动合并')
 
     await chooseMore(container, '关闭自动合并')
     // 布防等于提前采纳，所以这个开关也声明「我看的是哪一版」（见「合的是人看到

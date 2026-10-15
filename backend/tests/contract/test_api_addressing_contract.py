@@ -27,6 +27,7 @@ hand-written example URLs. Three layers:
    registered first).
 """
 
+import json
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -35,7 +36,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from scripts.route_index import parse_snapshot
 from scripts.route_index_profile import run_profiled
 
 # nginx's `location /api/ { proxy_pass …:8081/; }`, as far as a caller is concerned:
@@ -198,8 +198,15 @@ def profiled_route_rows() -> list[dict]:
     """
     result = run_profiled(["--emit"])
     assert result.returncode == 0, result.stdout + result.stderr
-    _, rows = parse_snapshot(result.stdout)
-    return rows
+    return _emitted_rows(result.stdout)
+
+
+def _emitted_rows(text: str) -> list[dict]:
+    """The emitted index: a profile header, then one effective leaf per line."""
+    lines = [line for line in text.splitlines() if line.strip()]
+    header = json.loads(lines[0])
+    assert "settings_profile" in header, header
+    return [json.loads(line) for line in lines[1:]]
 
 
 def _module_routers(rows: list[dict]) -> dict[str, list[tuple[str, frozenset[str]]]]:
@@ -225,8 +232,8 @@ def test_the_profiled_app_expands_exactly_the_effective_routes(profiled_route_ro
     assert [row["index"] for row in rows] == list(range(len(rows))), (
         "global leaf registration order is preserved"
     )
-    assert sum(row["protocol"] == "ws" for row in rows) == 7, (
-        "the seven WebSocket routes are collected despite having no methods"
+    assert sum(row["protocol"] == "ws" for row in rows) == 8, (
+        "the eight WebSocket routes are collected despite having no methods"
     )
     assert (
         "/topics/{topic_id}/accept-card",
@@ -244,9 +251,17 @@ def test_the_profiled_first_match_guard_uses_exact_frozen_registrations():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_the_committed_index_uses_the_same_profile_and_ordered_inventory():
-    snapshot = Path(__file__).resolve().parents[2] / "scripts" / "route_index.json"
-    result = run_profiled(["--sync", str(snapshot)])
+def test_every_live_route_has_its_handwritten_annotation():
+    """The routing inventory is complete in the one half a machine cannot derive.
+
+    `tests/contract/route_index.yaml` gives each live address its authorization
+    entry and its owner; that is handwritten and per-route, so it is the half
+    that can silently fall behind. This replaces asserting that a committed copy
+    of the index matched the app: with the index generated where it is judged and
+    never stored, the drift that matters is a route with no note, and the check
+    runs against the routes the app actually mounts.
+    """
+    result = run_profiled(["--check-annotations"])
     assert result.returncode == 0, result.stdout + result.stderr
 
 

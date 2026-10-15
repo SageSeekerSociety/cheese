@@ -32,6 +32,11 @@ const refreshProjects = vi.fn()
 const store = { projectsSettled: true, projects: [] as { id: string }[], refreshProjects }
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
+const spaceJoin = vi.fn()
+vi.mock('@/api/spaces', () => ({
+  SpacesApi: { join: (...a: unknown[]) => spaceJoin(...a), list: async () => ({ spaces: [] }) },
+}))
+
 const showNewProject = vi.fn()
 vi.mock('@/composables/useNewProjectDialog', () => ({
   useNewProjectDialog: () => ({ show: showNewProject, open: { value: false } }),
@@ -56,6 +61,16 @@ beforeAll(() => {
       disconnect() {}
     }
   }
+  // 加入空间那个弹窗是 Vuetify 的浮层：它要量视口，happy-dom 里没有。
+  vi.stubGlobal('visualViewport', {
+    width: 1024,
+    height: 768,
+    offsetLeft: 0,
+    offsetTop: 0,
+    scale: 1,
+    addEventListener() {},
+    removeEventListener() {},
+  })
 })
 
 beforeEach(async () => {
@@ -65,11 +80,13 @@ beforeEach(async () => {
   listAwaitingMe.mockReset().mockResolvedValue({ data: [], total: 0 })
   refreshProjects.mockReset().mockResolvedValue(undefined)
   showNewProject.mockReset()
+  spaceJoin.mockReset()
   router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/', name: 'home', component: { template: '<div />' } },
       { path: '/teams', name: 'HomeTeamsExplore', component: { template: '<div />' } },
+      { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId', name: 'workspace-topic', component: { template: '<div />' } },
       { path: '/p/:projectId/t/:topicId/tasks/:taskId', name: 'workspace-task', component: { template: '<div />' } },
       { path: '/p/:projectId/overview', name: 'workspace-overview', component: { template: '<div />' } },
@@ -106,6 +123,19 @@ describe('待办页零项目时的第一屏', () => {
     await utils.findByText(t('work.startPaths.project.title', termParams(DEFAULT_SHELL)))
     await utils.getByRole('button', { name: t('navigation.newProject', termParams(DEFAULT_SHELL)) }).click()
     expect(showNewProject).toHaveBeenCalled()
+  })
+
+  // 这一页上的「用邀请码加入」和首页目录里那一行是同一件事（同一个 `useJoinSpace`）：
+  // 加进去了就直接进那个空间，留在原地等于什么都没发生。
+  it('用邀请码加入：加进去了就进那个空间', async () => {
+    spaceJoin.mockResolvedValue({ space: { id: 9 } })
+    await render(View, { global: { plugins: [vuetify, router], stubs: { NotificationFeed: true } } })
+    await fireEvent.click(await screen.findByRole('button', { name: t('work.startPaths.invite.action') }))
+    await fireEvent.update(await screen.findByLabelText(t('work.joinLabel')), 'abc123')
+    await fireEvent.click(screen.getByRole('button', { name: t('work.joinSubmit') }))
+
+    await waitFor(() => expect(spaceJoin).toHaveBeenCalledWith({ code: 'abc123' }))
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/spaces/9/tasks'))
   })
 
   it('手上有项目的人看到的还是平常那一页，不摆起步路', async () => {
@@ -253,5 +283,45 @@ describe('待办上的一件事', () => {
     await fireEvent.click(await screen.findByRole('button', { name: '先灰度' }))
     expect(await screen.findByRole('alert')).toBeTruthy()
     expect(screen.getByText('要不要灰度')).toBeTruthy()
+  })
+})
+
+/** 没带选项的决策请求：库里还留着以前写进来的。它得能就地答复掉，不然永远挂在清单和角标上。 */
+describe('没带选项的决策请求', () => {
+  const decision = {
+    projectId: 'p1',
+    projectName: '课程项目',
+    topicId: 'c1',
+    topicTitle: '前端',
+    taskId: null,
+    taskTitle: null,
+    taskTitleSource: null,
+    phrase: 'decision',
+    reason: 'decide',
+    at: '2026-10-07T10:00:00Z',
+    alertId: 11,
+    headline: '报名表单要不要加验证码',
+    options: [],
+  }
+
+  it('写一句答复交上去，这一件随之离开清单', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [decision], total: 1 })
+    resolveAlert.mockResolvedValue({})
+    await mount()
+    const reply = await screen.findByRole('button', { name: t('home.inbox.answer') })
+    await fireEvent.update(screen.getByRole('textbox', { name: t('home.inbox.answerLabel') }), '先不强制')
+    await fireEvent.click(reply)
+    expect(resolveAlert).toHaveBeenCalledWith(11, '先不强制')
+    await waitFor(() => expect(screen.queryByText('报名表单要不要加验证码')).toBeNull())
+  })
+
+  it('什么都没写时不交空答复', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [decision], total: 1 })
+    resolveAlert.mockReset()
+    await mount()
+    await fireEvent.click(await screen.findByRole('button', { name: t('home.inbox.answer') }))
+    expect(resolveAlert).not.toHaveBeenCalled()
   })
 })

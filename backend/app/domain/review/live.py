@@ -8,6 +8,13 @@
 所以这件事不放在调用点上，放在卡这一行被写下去的那一刻：这个会话 flush 过一张卡，
 提交之后就对卡所在的那段对话（有任务就是任务，没有就是房间）和它的房间各发
 `state: accept` 和 `state: tasks`（卡决定任务走到哪一档）。回滚了就不发。
+
+**排进 `SHOW_ONCE_COMMITTED`，不自己发**：提交之后真发出去的监听器在
+`agent/live_notices`，broker 也在 `agent` 里，而本包在它下面一层
+（`docs/manual/dev/architecture.md`）。`core/live_frames` 就是为这件事准备的 —— 它
+自己的 docstring 写着「任何改了页面所见之物的领域都排到这里，谁都不需要拿到那个
+broker」，隔壁 `room_task/live.py` 正是这么发的。积压按 savepoint 分桶也是那里的
+规矩：释放一个 savepoint 不当作提交，别的 savepoint 排的帧留到会话真正提交时才发。
 """
 
 from __future__ import annotations
@@ -17,11 +24,12 @@ import uuid
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
-from app.core import background
-from app.domain.agent.realtime.broker import get_broker
+from app.core.live_frames import SHOW_ONCE_COMMITTED, stage
 from app.domain.review.models import AcceptCard
 
-_PENDING = "accept_cards_changed"
+#: 一条卡变了，页面要重读的两样：卡自己，和它决定的任务档位（待审阅 / 已退回 /
+#: 已采纳）—— 任务页的页头和房间的任务列表都读它。
+_RESOURCES = ("accept", "tasks")
 
 
 def _channels(card: AcceptCard) -> set[str]:
@@ -63,32 +71,22 @@ def _changed_on_screen(card: AcceptCard) -> bool:
     return False
 
 
+def _tell(session: Session, card: AcceptCard) -> None:
+    for channel in _channels(card):
+        for resource in _RESOURCES:
+            stage(
+                session,
+                SHOW_ONCE_COMMITTED,
+                (channel, {"type": "state", "resource": resource}),
+            )
+
+
 @event.listens_for(Session, "after_flush")
 def _note_cards(session: Session, _context) -> None:
     # `new` / `dirty` still describe what this flush wrote while it runs.
     for row in session.new:
         if isinstance(row, AcceptCard):
-            session.info.setdefault(_PENDING, set()).update(_channels(row))
+            _tell(session, row)
     for row in session.dirty:
         if isinstance(row, AcceptCard) and _changed_on_screen(row):
-            session.info.setdefault(_PENDING, set()).update(_channels(row))
-
-
-@event.listens_for(Session, "after_commit")
-def _tell_pages(session: Session) -> None:
-    channels = session.info.pop(_PENDING, None)
-    if not channels:
-        return
-    # The card itself, and the task's progress (待审阅 / 已退回 / 已采纳), which the
-    # card decides: the task page's header and the room's task list read it.
-    for channel in channels:
-        for resource in ("accept", "tasks"):
-            background.spawn(
-                get_broker().publish(channel, {"type": "state", "resource": resource}),
-                name="accept card changed",
-            )
-
-
-@event.listens_for(Session, "after_rollback")
-def _forget(session: Session) -> None:
-    session.info.pop(_PENDING, None)
+            _tell(session, row)

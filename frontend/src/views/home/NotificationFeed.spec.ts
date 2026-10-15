@@ -2,6 +2,8 @@
  *  通知」分不出来。这里锁住它的四种状态各自说自己的话——行还在路上时先画骨架、
  *  读失败时**就地**换成错误 + 重试、本来就没有时说「暂无通知」、重试真的再问一遍。
  */
+import type { NotificationType } from '@/types/apiNotifications'
+
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -9,10 +11,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const list = vi.fn()
+const countByTypes = vi.fn<(groups: NotificationType[][]) => Promise<number[]>>(async () => [0, 0, 0])
 const refresh = vi.fn()
 vi.mock('@/api/notifications', () => ({
   NotificationsApi: {
     list: (...args: unknown[]) => list(...args),
+    countByTypes: (groups: NotificationType[][]) => countByTypes(groups),
     getUnreadCount: async () => ({ count: 0 }),
     updateStatus: vi.fn(),
     markAllAsRead: vi.fn(),
@@ -22,6 +26,18 @@ vi.mock('@/api/notifications', () => ({
 vi.mock('@/composables/useUnreadNotifications', () => ({
   useUnreadNotifications: () => ({ count: { value: 0 }, refresh, set: vi.fn() }),
 }))
+
+// 服务端那条连接换成一个能在测试里拨动的开关：拨一下就是「收件箱多了一行」。
+const inboxListeners = new Set<() => void>()
+vi.mock('@/lib/inboxLive', () => ({
+  onInboxChange: (listener: () => void) => {
+    inboxListeners.add(listener)
+    return () => inboxListeners.delete(listener)
+  },
+}))
+function somethingNewArrives() {
+  for (const listener of inboxListeners) listener()
+}
 
 import NotificationFeed from './NotificationFeed.vue'
 
@@ -37,6 +53,8 @@ beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
   list.mockReset()
+  countByTypes.mockReset()
+  countByTypes.mockResolvedValue([0, 0, 0])
   refresh.mockReset()
   vi.spyOn(console, 'error').mockImplementation(() => {})
 })
@@ -146,5 +164,86 @@ describe('待办页「动态」这一块', () => {
 
     await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(3))
     await waitFor(() => expect(screen.queryByText('翻页失败')).toBeNull())
+  })
+
+  // 「动态」按事由分档：默认停在「需我处理」，一格上的数字是那一档的总条数。筛选交给
+  // 服务端做（分页和 total 都是它算的），所以这里要确认问出去的正是这一档的几种事由。
+  it('默认停在「需我处理」，三档各带着自己的条数，问服务端要的就是这一档的事由', async () => {
+    countByTypes.mockResolvedValue([3, 7, 2])
+    list.mockResolvedValueOnce(emptyPage())
+
+    await mount()
+
+    expect(await screen.findByRole('radio', { name: `${t('notifications.category.mine')} · 3` })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: `${t('notifications.category.notice')} · 7` })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: `${t('notifications.category.system')} · 2` })).toBeTruthy()
+
+    const asked = list.mock.calls[0][0] as { type: string[] }
+    expect(asked.type).toContain('CHEESE_QUESTION')
+    expect(asked.type).not.toContain('MENTION')
+  })
+
+  it('换一档就从第一页重问，而且要的是那一档的事由', async () => {
+    countByTypes.mockResolvedValue([3, 7, 2])
+    list.mockResolvedValue(emptyPage())
+
+    await mount()
+    await fireEvent.click(await screen.findByRole('radio', { name: `${t('notifications.category.notice')} · 7` }))
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    const asked = list.mock.calls[1][0] as { type: string[]; pageStart?: string }
+    expect(asked.type).toContain('MENTION')
+    expect(asked.type).not.toContain('CHEESE_QUESTION')
+    // 换了档就从第一页来：游标是跟着上一档走到底的，接着往下翻会漏。
+    expect(asked.pageStart).toBeUndefined()
+  })
+
+  // 看着列表时来了新的：不把正在读的那几行往下挤，顶上说一声「有 N 条新动态」，点了
+  // 才换成最新的。
+  it('来了新的先在顶上说一声，点了才换成最新的', async () => {
+    list.mockResolvedValueOnce({ notifications: [{ id: 5, read: true }], page: { hasMore: false } })
+    const { container } = await mount()
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(1))
+
+    list.mockResolvedValue({
+      notifications: [
+        { id: 7, read: false },
+        { id: 6, read: false },
+        { id: 5, read: true },
+      ],
+      page: { hasMore: false },
+    })
+    somethingNewArrives()
+
+    const fresh = await screen.findByRole('button', { name: t('notifications.common.newItems', { count: 2 }) })
+    // 正在读的那一行没被挤走，新的也还没塞进来。
+    expect(container.querySelectorAll('notification-item-stub').length).toBe(1)
+
+    await fireEvent.click(fresh)
+
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(3))
+    expect(screen.queryByRole('button', { name: t('notifications.common.newItems', { count: 2 }) })).toBeNull()
+  })
+
+  it('说有变化、这一档里却没有新的时，什么也不提示', async () => {
+    list.mockResolvedValue({ notifications: [{ id: 5, read: true }], page: { hasMore: false } })
+    const { container } = await mount()
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(1))
+
+    somethingNewArrives()
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('button', { name: /动态/ })).toBeNull()
+  })
+
+  it('列表本来是空的，来了新的就直接摆上来', async () => {
+    list.mockResolvedValueOnce(emptyPage())
+    const { container } = await mount()
+    await screen.findByText(t('notifications.common.noNotifications'))
+
+    list.mockResolvedValue({ notifications: [{ id: 9, read: false }], page: { hasMore: false } })
+    somethingNewArrives()
+
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(1))
   })
 })

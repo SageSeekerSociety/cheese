@@ -38,7 +38,12 @@ for (const f of fs.readdirSync(SCENES).filter((f) => f.endsWith('.json'))) {
 // The product's own interface strings, which a `demo-panel` must quote exactly.
 const UI_STRINGS = path.join(REPO, 'frontend/src/i18n/messages/zh-CN')
 const leaves = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
-registerUiStrings(fs.readdirSync(UI_STRINGS).filter((f) => f.endsWith('.json')).flatMap((f) => leaves(JSON.parse(fs.readFileSync(path.join(UI_STRINGS, f), 'utf8')))))
+// The catalog is a tree of files — `work/`, `apiError/` and `roomNotice/` are
+// directories since the split (docs/i18n.md §2) — so every `.json` under it is
+// read, at any depth.
+const catalogFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+  e.isDirectory() ? catalogFiles(path.join(dir, e.name)) : e.name.endsWith('.json') ? [path.join(dir, e.name)] : [])
+registerUiStrings(catalogFiles(UI_STRINGS).flatMap((f) => leaves(JSON.parse(fs.readFileSync(f, 'utf8')))))
 
 const git = (...args) => execFileSync('git', ['-C', REPO, ...args], { encoding: 'utf8', maxBuffer: 64 << 20, env: { ...process.env, TZ: 'Asia/Shanghai' } })
 const fail = (msg) => { console.error(`FAIL: ${msg}`); process.exit(1) }
@@ -691,7 +696,7 @@ ${workflows.map((w) => `| \`${w.f}\` | ${mdCell(w.name)} | ${w.triggers.map((t) 
   const components = gen('components.py')
   out['ref-components'] = {
     title: '组件总览', kind: '参考',
-    covers: ['.claude/scripts/frontend_grade.py', '.claude/scripts/catalog-ratchet.py', '.claude/scripts/scene-ratchet.py', 'frontend/catalog-baseline.json', 'frontend/scene-baseline.json'],
+    covers: ['.claude/scripts/frontend_grade.py', '.claude/scripts/catalog-ratchet.py', '.claude/scripts/scene-ratchet.py', 'frontend/catalog-baseline.json'],
     summary: `frontend/src 下全部 ${components.totals.components} 个 .vue 组件：每个的档位（A 能单独渲染）、有没有进预览站 /demo/catalog、属于哪个场景。`,
     body: componentsReference(components),
   }
@@ -870,6 +875,17 @@ write('changelog.xml', changelogFeed(RELEASES))
 write('download.html', downloadPage(ctx, { base: 'https://github.com/SageSeekerSociety/cheese/releases/download/desktop-latest' }))
 write('dev-gate.html', devGatePage(ctx))
 write('404.html', notFoundPage(ctx))
+// Search engines read these only at a host's root, so only the docs host's own build has them;
+// under /docs/ the platform's root answers. The developer pages stay out: they are sign-in only.
+if (!BASE) {
+  const userUrls = ['/', '/changelog', '/download', ...SECTIONS.flatMap(([key]) => flatNav(userNav[key]).map((p) => `/${p.slug}`))]
+  write('sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${userUrls.map((u) => `<url><loc>${SITE}${u}</loc></url>`).join('\n')}
+</urlset>
+`)
+  write('robots.txt', `User-agent: *\nDisallow: /dev/\nDisallow: /api/\n\nSitemap: ${SITE}/sitemap.xml\n`)
+}
 for (const [from, to] of Object.entries(REDIRECTS)) {
   if (!from.includes('#')) write(`${from}.html`, redirectPage(target(from, to)))
 }

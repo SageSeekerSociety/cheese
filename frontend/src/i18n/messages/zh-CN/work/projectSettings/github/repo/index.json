@@ -1,0 +1,13 @@
+{
+  "access_denied": "连接人的项目权限或 GitHub 账号连接已失效。由项目所有者或负责人重新连接 GitHub 账号后重试",
+  "forge_conflict": "这个项目的代码由平台托管，不能改连 GitHub 仓库",
+  "github_error": "无法验证你的 GitHub 仓库权限。重新连接 GitHub 账号，确认它能访问安装和仓库后重试",
+  "internal_error": "平台内部出错，这次连接没有生效。重试一次，仍然失败就提交反馈",
+  "invalid_state": "安装链接已失效或已使用。回到本页重新点「连接 GitHub 仓库」",
+  "missing_installation_id": "GitHub 未返回安装 ID，这次安装没有生效，重试一次",
+  "no_accessible_repos": "这次安装没有授权任何仓库。在 GitHub 的安装页里至少勾选一个仓库",
+  "project_not_found": "找不到这个项目，它可能刚被删除",
+  "repository_selection_required": "这次安装可以访问多个仓库。先在本页「GitHub 仓库地址」保存目标仓库，再连接",
+  "repository_write_required": "你的 GitHub 账号没有这个仓库的写入权限。由有写入权限的项目所有者或负责人来连接",
+  "upstream_not_accessible": "这次安装没有授权项目的上游仓库，或你的 GitHub 账号无权访问。检查仓库地址和安装授权后重试"
+}

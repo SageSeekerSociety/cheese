@@ -37,10 +37,11 @@ describe('stallReasonText', () => {
   const now = Date.parse('2026-09-28T16:00:00Z')
   const hoursAgo = (h: number) => new Date(now - h * 3_600_000).toISOString()
 
-  it('写出是哪个 PR、已经等了多久', () => {
-    const text = stallReasonText({ reason: 'check', since: hoursAgo(4), pr: 1950 }, '芝士', now)
-    expect(text).toContain('PR #1950')
+  it('写出是哪件事、已经等了多久，但不写 PR 号', () => {
+    const text = stallReasonText({ reason: 'check', since: hoursAgo(4) }, '芝士', now)
+    expect(text).toContain('检查没通过')
     expect(text).toContain('4 小时')
+    expect(text).not.toContain('PR #')
   })
 
   it('不同原因给不同的说法', () => {

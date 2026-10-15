@@ -31,7 +31,11 @@ import time
 import uuid
 from pathlib import Path
 
-from app.domain.agent.executor_transport import PlatformHost, RemoteClient
+from app.domain.agent.executor_transport import (
+    PlatformHost,
+    RemoteClient,
+    failure_text,
+)
 from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import SessionStart, socket_path
@@ -57,6 +61,14 @@ SETTLES = frozenset({"message_end", "turn_end", "agent_end", "agent_settled"})
 #: The tools that only read, which a session reading the room's machine has
 #: (`_start_without_hands`): pi's own, and the checkout's history (`git`).
 READING_TOOLS = ("read", "ls", "find", "grep", "git")
+
+
+def _said(text: str) -> dict:
+    """A platform tool's answer for the extension: its text, and the pictures
+    it hands back (a mini-app's, as the platform ran it), which go to the
+    model beside the text (`platform.ts`)."""
+    images = list(getattr(text, "images", ()))
+    return {"status": 0, "stdout": str(text), "stderr": "", "images": images}
 
 
 class Runner(runner.Runner[Journal]):
@@ -527,8 +539,8 @@ class Runner(runner.Runner[Journal]):
                     catalog.run_platform_tool, tool, arguments, host
                 )
             except Exception as error:  # noqa: BLE001 — the agent reads the reason
-                return {"status": 1, "stdout": "", "stderr": str(error)}
-            return {"status": 0, "stdout": text, "stderr": ""}
+                return {"status": 1, "stdout": "", "stderr": failure_text(error)}
+            return _said(text)
         command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
         code, output = await asyncio.to_thread(
             self.machine.run, f"exec {command} </dev/null", cwd=cwd
@@ -559,8 +571,8 @@ class Runner(runner.Runner[Journal]):
         try:
             text = catalog.run_platform_tool(tool, arguments, host)
         except Exception as error:  # noqa: BLE001 — the agent reads the reason
-            return {"status": 1, "stdout": "", "stderr": str(error)}
-        return {"status": 0, "stdout": text, "stderr": ""}
+            return {"status": 1, "stdout": "", "stderr": failure_text(error)}
+        return _said(text)
 
     async def tool_hooks(self, params: dict) -> dict:
         """The project's hooks for one event of one of pi's own tool calls,

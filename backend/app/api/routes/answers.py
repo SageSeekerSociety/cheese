@@ -2,12 +2,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Request
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.answers.services import AnswersService
+from app.domain.delivery.ledger import deliver
 from app.domain.discussion.models import DiscussableModelType
 from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.repositories import (
@@ -44,6 +46,7 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
         repo=discussion_repo,
         reaction_service=reaction_service,
         session=db,
+        deliver=deliver,
     )
 
 
@@ -64,7 +67,7 @@ async def list_answers(
         page_size=page_size,
         viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
-    return {"code": 200, "message": "OK", "data": {"answers": answers, "page": page}}
+    return ok({"answers": answers, "page": page})
 
 
 @router.post(
@@ -86,11 +89,7 @@ async def create_answer(
         user_id=auth_user.user_id,
         content=content,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"id": answer["id"], "answer": answer},
-    }
+    return ok({"id": answer["id"], "answer": answer})
 
 
 @router.post(
@@ -111,7 +110,7 @@ async def vote_answer(
     result = await service.vote_answer(
         answer_id=answer_id, user_id=auth_user.user_id, vote_type=vote_type
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 @router.delete(
@@ -130,7 +129,7 @@ async def remove_answer_vote(
     result = await service.remove_answer_vote(
         answer_id=answer_id, user_id=auth_user.user_id
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 @router.get(
@@ -148,7 +147,7 @@ async def get_answer_votes(
     )
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
     result = await service.get_answer_votes(answer_id=answer_id, user_id=user_id)
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 @router.get(
@@ -182,7 +181,7 @@ async def list_answer_comments(
         include_subs=True,
         with_reactions=True,
     )
-    return {"code": 200, "message": "OK", "data": {"comments": items, "page": page}}
+    return ok({"comments": items, "page": page})
 
 
 @router.post(
@@ -212,7 +211,7 @@ async def create_answer_comment(
         parent_id=parent_id,
         mentioned_user_ids=mentioned_user_ids,
     )
-    return {"code": 201, "message": "Created", "data": {"comment": comment}}
+    return ok({"comment": comment})
 
 
 @router.delete(
@@ -244,7 +243,7 @@ async def delete_answer_comment(
     if discussion["sender"]["id"] != auth_user.user_id:
         raise ForbiddenError("Only the author can delete this comment")
     await discussion_service.delete_discussion(comment_id)
-    return {"code": 200, "message": "OK", "data": {"deleted": True}}
+    return ok({"deleted": True})
 
 
 @router.get(
@@ -271,11 +270,7 @@ async def get_answer(
         user_agent=request.headers.get("user-agent"),
     )
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"answer": answer, "question": question},
-    }
+    return ok({"answer": answer, "question": question})
 
 
 @router.put(
@@ -303,7 +298,7 @@ async def update_answer(
         user_id=auth_user.user_id,
         content=content,
     )
-    return {"code": 200, "message": "OK", "data": {"answer": answer}}
+    return ok({"answer": answer})
 
 
 @router.delete(
@@ -323,7 +318,7 @@ async def delete_answer(
     if answer_data["question_id"] != question_id:
         raise NotFoundError("Answer not found for this question")
     await service.delete_answer(answer_id=answer_id, user_id=auth_user.user_id)
-    return {"code": 200, "message": "OK", "data": {"deleted": True}}
+    return ok({"deleted": True})
 
 
 @router.put(
@@ -340,7 +335,7 @@ async def favorite_answer(
         answer_id=answer_id, question_id=question_id
     )
     result = await service.add_favorite(answer_id=answer_id, user_id=auth_user.user_id)
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 @router.delete(
@@ -359,7 +354,7 @@ async def unfavorite_answer(
     result = await service.remove_favorite(
         answer_id=answer_id, user_id=auth_user.user_id
     )
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 @router.post(
@@ -392,4 +387,4 @@ async def attitude_answer(
         "difference": result.get("upvotes", 0) - result.get("downvotes", 0),
         "user_attitude": attitude_type,
     }
-    return {"code": 200, "message": "OK", "data": {"attitudes": attitudes}}
+    return ok({"attitudes": attitudes})

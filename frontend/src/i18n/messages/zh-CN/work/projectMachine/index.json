@@ -1,0 +1,13 @@
+{
+  "agents": "{count} 个 AI 队友",
+  "change": "更换",
+  "collapse": "收起",
+  "defaultLabel": "新 AI 队友默认使用",
+  "distribution": "当前分布",
+  "hint": "只影响尚未开始运行的 AI 队友，已在运行的继续用原来的环境",
+  "loadFailed": "加载环境设置失败",
+  "noneStarted": "暂无运行中的 AI 队友",
+  "onDevice": "{name} · {agents}",
+  "onPlatform": "{env} · {agents}",
+  "saveFailed": "保存环境设置失败"
+}

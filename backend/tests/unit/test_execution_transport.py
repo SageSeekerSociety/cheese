@@ -332,6 +332,12 @@ def central_transport(executor, tmp_path):
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 publications.append(payload)
                 result = {"data": {"content": payload["content"]}}
+            elif self.path.startswith("/documents/fixture-doc/apps"):
+                # The save route as the backend answers it: the pictures only
+                # to a save that asked for them.
+                result = {"data": {"key": "k1", "version": 1, "checked": True}}
+                if "pictures=true" in self.path:
+                    result["data"]["pictures"] = {"720": "d2lkZQ=="}
             elif self.path == "/topics/fixture/shown":
                 assert self.headers["X-Cheese-Turn"] == "fixture-turn"
                 platform_calls.append(payload)
@@ -372,6 +378,8 @@ def central_transport(executor, tmp_path):
             "CHEESE_API": f"http://127.0.0.1:{server.server_port}",
             "CHEESE_TOPIC": "fixture",
             "CHEESE_TURN": "fixture-turn",
+            # The session's model reads pictures (`session_host.with_pictures`).
+            "CHEESE_PICTURES": "1",
         },
         log,
     )
@@ -385,6 +393,25 @@ def central_transport(executor, tmp_path):
         server.shutdown()
         server.server_close()
         log.close()
+
+
+def test_a_platform_tool_call_that_breaks_is_not_answered_with_a_bare_key(
+    central_transport,
+):
+    """A checklist call that reached the transport without the build's call id
+    (FB-91) came back as the single word ``'id'``: the agent read it as the
+    tool's answer, not as the transport failing."""
+    process, _, _, _ = central_transport
+    with pytest.raises(RuntimeError) as failure:
+        process.call(
+            "tools/call",
+            {
+                "name": "todo_write",
+                "arguments": {"todos": [{"content": "补测试", "status": "pending"}]},
+            },
+        )
+    assert str(failure.value) != "'id'"
+    assert "KeyError" in str(failure.value)
 
 
 def test_platform_mcp_posts_literal_json_without_executor_invocation(central_transport):
@@ -417,6 +444,29 @@ def test_platform_mcp_posts_literal_json_without_executor_invocation(central_tra
     assert len(clients) == discovery_clients + 2
     assert clients[-2] == clients[-1]
     assert not (work / "escaped").exists()
+
+
+def test_a_saved_apps_pictures_reach_claude_code_as_image_blocks(central_transport):
+    """The writer looks at what the platform ran: the pictures follow the
+    save's text as MCP image blocks, which `proxy.js` hands to the model."""
+    process, _, _, _ = central_transport
+    response = process.call(
+        "tools/call",
+        {
+            "name": "cheese_app_save",
+            "arguments": {
+                "id": "save",
+                "session_id": "fixture",
+                "code": "<p>x</p>",
+                "title": "试算",
+                "document": "fixture-doc",
+            },
+        },
+    )
+    text, *pictures = response["content"]
+    outcome = json.loads(text["text"])
+    assert ":::app k1@1 试算" in outcome["result"]["stdout"]
+    assert pictures == [{"type": "image", "data": "d2lkZQ==", "mimeType": "image/png"}]
 
 
 def test_large_platform_response_keeps_its_json_receipt(central_transport):
@@ -841,6 +891,36 @@ async def test_codex_tool_retry_uses_the_executor_mutation_receipt(
     assert (workspace / "once.txt").read_text() == "x"
 
 
+def test_a_session_prepared_here_does_not_credit_claude_code(
+    central_transport, tmp_path, monkeypatch
+):
+    """A teammate's commits and PRs carry the platform's identities, never the
+    CLI's own "Co-Authored-By: Claude" trailer or "Generated with Claude Code"
+    footer, whichever machine the session runs from."""
+    from app.domain.agent.harness.claude_code.session_launch import session_settings
+
+    monkeypatch.setenv("CHEESE_TOKEN", "fixture")
+    monkeypatch.setattr(central.os.path, "ismount", lambda _path: True)
+    helpers = tmp_path / "helpers"
+    helpers.mkdir()
+    for name, source in release.sources().items():
+        (helpers / name).write_text(source)
+    monkeypatch.setattr(central, "__file__", str(helpers / "client.py"))
+    target = json.loads((tmp_path / "central.json").read_text())
+    version_probe = tmp_path / "claude-version"
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.299\\n'\n")
+    version_probe.chmod(0o700)
+    directory = tmp_path / "prepared"
+
+    central.prepare(
+        directory, target, claude=str(version_probe), base_settings=session_settings()
+    )
+
+    attribution = json.loads((directory / "settings.json").read_text())["attribution"]
+    assert attribution["commit"] == ""
+    assert attribution["pr"] == ""
+
+
 def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     central_transport, tmp_path, monkeypatch
 ):
@@ -860,7 +940,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     command = "cat > 'hook receipt.txt'; printf '%s' 'quoted * ? [value]'"
     directory = tmp_path / "prepared with spaces"
     version_probe = tmp_path / "claude-version"
-    version_probe.write_text("#!/bin/sh\nprintf '2.1.282\\n'\n")
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.299\\n'\n")
     version_probe.chmod(0o700)
     launch = central.prepare(
         directory,

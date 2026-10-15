@@ -46,6 +46,7 @@ def served():
             routes=[
                 WebSocketRoute("/rooms/live", echo),
                 WebSocketRoute("/notifications/live", echo),
+                WebSocketRoute("/notifications/inbox", echo),
                 WebSocketRoute("/llm/tunnel", echo),
             ]
         ),
@@ -84,7 +85,7 @@ def served():
 
 def test_browser_sockets_end_with_1012_and_their_handlers_leave(served):
     base, hand_over, handlers_left = served
-    paths = ["/rooms/live", "/notifications/live"]
+    paths = ["/rooms/live", "/notifications/live", "/notifications/inbox"]
     browsers = [connect(base + path) for path in paths]
     for browser in browsers:
         browser.send("hello")

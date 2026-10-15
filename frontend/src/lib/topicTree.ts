@@ -11,11 +11,18 @@
 //      被导航偷偷改写。
 //   2. 被收起来的后代的未读，冒到**离它最近的那个「看得见且收起来」的祖先**行
 //      上（`unreadTotal`）。每个隐藏行只算一次，不会被两层祖先重复计。
-//   3. 同样地，被收起来的后代里**成员的动静**（有队友在干活 / 有事等人处理）也要冒上来
-//      （`hiddenWorking` / `hiddenAwaits`）。未读是数字要相加，状态是"有没有"
-//      所以取或——父行的折叠开关凭它上色，"这里面有动静"才不会被折叠吞掉。
+//   3. 同样地，被收起来的后代里**那一盏灯**（`hiddenLight`）也要冒上来。未读是数字
+//      要相加，灯是"哪一盏最亮"所以取最亮的那个——父行的折叠开关凭它上色，"这里面
+//      有动静"才不会被折叠吞掉。
+//   4. 成员那一层的「卡住了」（`hiddenStalled`）单算：它问的是「谁卡住了」，和灯
+//      不是同一件事（`lib/replyWait.ts` 的说明）。
+
+import type { RowLight } from './roomLight'
+
+import { brightest } from './roomLight'
 
 import { t } from '@/i18n'
+import { storageGetStrings, storageRemove, storageSetJson } from '@/lib/browserStorage'
 
 export interface TopicNodeLike {
   id: string
@@ -69,10 +76,8 @@ export interface VisibleRow<T extends TopicNodeLike = TopicNodeLike> extends Fla
   hiddenUnread: number
   /** 本行角标该显示的数字：自己的未读 + `hiddenUnread`。 */
   unreadTotal: number
-  /** 隐藏后代里有没有成员正在干活的（一位 AI 队友有一轮在跑）。 */
-  hiddenWorking: boolean
-  /** 隐藏后代里有没有在等人处理的。 */
-  hiddenAwaits: boolean
+  /** 隐藏后代里最亮的那一盏灯（`lib/roomLight.ts`）；一盏都不亮就是 null。 */
+  hiddenLight: RowLight | null
   /** 隐藏后代里有没有在等某位成员、而且等太久了的。 */
   hiddenStalled: boolean
 }
@@ -137,10 +142,8 @@ export interface VisibleRowsOptions {
   reveal?: ReadonlySet<string>
   /** 话题级未读；缺省当 0。 */
   unreadOf?: (id: string) => number
-  /** 这个话题里有没有成员正在干活；缺省当否。 */
-  workingOf?: (id: string) => boolean
-  /** 这个话题是不是在等人处理；缺省当否。 */
-  awaitsOf?: (id: string) => boolean
+  /** 这一行此刻画哪盏灯；缺省当不亮（`lib/roomLight.ts`）。 */
+  lightOf?: (id: string) => RowLight | null
   /** 这个话题是不是在等某位成员、而且等太久了；缺省当否。 */
   stalledOf?: (id: string) => boolean
 }
@@ -159,8 +162,7 @@ export function visibleRows<T extends TopicNodeLike>(
   const collapsedIds = options.collapsed ?? new Set<string>()
   const reveal = options.reveal ?? new Set<string>()
   const unreadOf = options.unreadOf ?? (() => 0)
-  const workingOf = options.workingOf ?? (() => false)
-  const awaitsOf = options.awaitsOf ?? (() => false)
+  const lightOf = options.lightOf ?? (() => null)
   const stalledOf = options.stalledOf ?? (() => false)
 
   const roots = buildNodes(rows)
@@ -183,25 +185,16 @@ export function visibleRows<T extends TopicNodeLike>(
 
   // 每个隐藏行只记在「离它最近的、自己也看得见的、收起来的祖先」名下，
   // 这样嵌套折叠时同一条未读不会在两层父行上各显示一次。
-  const owned = new Map<
-    Node<T>,
-    { count: number; unread: number; working: boolean; awaits: boolean; stalled: boolean }
-  >()
+  const owned = new Map<Node<T>, { count: number; unread: number; lights: RowLight[]; stalled: boolean }>()
   for (const node of hidden) {
     let owner: Node<T> | null = node.parent
     while (owner && !(renderedSet.has(owner) && collapsedIds.has(owner.row.topic.id))) owner = owner.parent
     if (!owner) continue
-    const acc = owned.get(owner) ?? {
-      count: 0,
-      unread: 0,
-      working: false,
-      awaits: false,
-      stalled: false,
-    }
+    const acc = owned.get(owner) ?? { count: 0, unread: 0, lights: [], stalled: false }
     acc.count += 1
     acc.unread += unreadOf(node.row.topic.id)
-    acc.working = acc.working || workingOf(node.row.topic.id)
-    acc.awaits = acc.awaits || awaitsOf(node.row.topic.id)
+    const light = lightOf(node.row.topic.id)
+    if (light) acc.lights.push(light)
     acc.stalled = acc.stalled || stalledOf(node.row.topic.id)
     owned.set(owner, acc)
   }
@@ -219,8 +212,7 @@ export function visibleRows<T extends TopicNodeLike>(
       hiddenCount: acc?.count ?? 0,
       hiddenUnread,
       unreadTotal: unreadOf(id) + hiddenUnread,
-      hiddenWorking: acc?.working ?? false,
-      hiddenAwaits: acc?.awaits ?? false,
+      hiddenLight: brightest(acc?.lights ?? []),
       hiddenStalled: acc?.stalled ?? false,
     }
   })
@@ -248,29 +240,17 @@ function storageKey(projectId: string | null | undefined): string | null {
 
 export function loadExpandedTopics(projectId: string | null | undefined): Set<string> {
   const key = storageKey(projectId)
-  if (!key || typeof localStorage === 'undefined') return new Set()
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) return new Set()
-    const parsed: unknown = JSON.parse(raw)
-    if (!Array.isArray(parsed)) {
-      localStorage.removeItem(key)
-      return new Set()
-    }
-    return new Set(parsed.filter((v): v is string => typeof v === 'string'))
-  } catch {
-    // 读坏了就回到默认的收起态。一条脏数据不该把两百行活摊到主导航上。
-    return new Set()
-  }
+  if (!key) return new Set()
+  // 不是数组、解析不出来，都是默认的收起态：一条脏数据不该把两百行活摊到主导航上。
+  // 解析不出来的那条存储层会删掉，解不成数组的（上一版换过形状）下次存的时候被盖掉。
+  return new Set(storageGetStrings(key))
 }
 
 export function saveExpandedTopics(projectId: string | null | undefined, expanded: ReadonlySet<string>): void {
   const key = storageKey(projectId)
-  if (!key || typeof localStorage === 'undefined') return
-  try {
-    if (expanded.size === 0) localStorage.removeItem(key)
-    else localStorage.setItem(key, JSON.stringify([...expanded]))
-  } catch {
-    // 隐私模式/配额满：展开仍然在内存里生效，只是这次刷新后不保留。
-  }
+  if (!key) return
+  // 一个都没展开就把这条记录删掉（「全都收起来」是默认态）；删不动也只是留着上一次的。
+  // 隐私模式/配额满：展开仍然在内存里生效，只是这次刷新后不保留。
+  if (expanded.size === 0) storageRemove(key)
+  else storageSetJson(key, [...expanded])
 }

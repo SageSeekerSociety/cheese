@@ -16,11 +16,11 @@ as seven routes:
 and the one shape only they use, `PasskeyPromptDismissal`.
 
 Shared contracts. `challenge_from_credential` reads WebAuthn clientDataJSON
-for both these verification routes and sudo, so it lives in users_common
+for both these verification routes and sudo, so it lives in users_deps
 beside SudoTicketRequest. `_passkey_enrollment` (what a finished sign-in
 hands back when the account is due the offer) stays in users.py:
 every sign-in route calls it. `_spend_sudo_ticket` is the shared helper and
-lives in `users_common.py`, and `issue_session` joined it there: every way
+lives in `users_deps.py`, and `issue_session` joined it there: every way
 of signing in ends in it, so the mint sits beside the ticket these modules
 already share, imported here the way `app_sign_in.py` imports it.
 `get_passkey_service` and `get_user_auth_service` are FastAPI dependencies
@@ -53,7 +53,8 @@ from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_passkey_service, get_user_auth_service
-from app.api.routes.users_common import (
+from app.api.response import ok
+from app.api.users_deps import (
     SudoTicketRequest,
     _spend_sudo_ticket,
     challenge_from_credential,
@@ -116,11 +117,7 @@ async def passkey_register_challenge(
     finally:
         await redis.aclose()
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"options": options},
-    }
+    return ok({"options": options})
 
 
 @router.post(
@@ -160,11 +157,7 @@ async def passkey_register_verify(
     )
     await PasskeyPromptService(session).end(auth_user.user_id)
 
-    return {
-        "code": 201,
-        "message": "Passkey registered successfully.",
-        "data": {"passkey": result},
-    }
+    return ok({"passkey": result}, "Passkey registered successfully.")
 
 
 class PasskeyPromptDismissal(BaseModel):
@@ -186,7 +179,7 @@ async def dismiss_passkey_prompt(
         raise ForbiddenError("Only the user themselves can answer this offer.")
 
     await PasskeyPromptService(session).dismiss(user_id, forever=payload.forever)
-    return {"code": 200, "message": "OK", "data": {}}
+    return ok({})
 
 
 @router.post(
@@ -212,11 +205,7 @@ async def passkey_authenticate_challenge(
     finally:
         await redis.aclose()
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"options": options},
-    }
+    return ok({"options": options})
 
 
 @router.post(
@@ -268,14 +257,13 @@ async def passkey_authenticate_verify(
         profile=profile,
         viewer_id=user_id,
     )
-    return {
-        "code": 201,
-        "message": "Login successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
             "accessToken": access_token,
         },
-    }
+        "Login successfully.",
+    )
 
 
 @router.get(
@@ -292,11 +280,7 @@ async def list_passkeys(
 
     passkeys = await passkey_service.list_passkeys(user_id)
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"passkeys": passkeys},
-    }
+    return ok({"passkeys": passkeys})
 
 
 @router.delete(
@@ -324,7 +308,4 @@ async def delete_passkey(
     if not deleted:
         raise NotFoundError("Passkey not found")
 
-    return {
-        "code": 200,
-        "message": "Passkey deleted successfully.",
-    }
+    return ok(None, "Passkey deleted successfully.")

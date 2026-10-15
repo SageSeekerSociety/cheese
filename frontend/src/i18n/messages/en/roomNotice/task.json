@@ -1,0 +1,8 @@
+{
+  "taskUntitled": "New task",
+  "taskStarted": "{actor} started the task “{title}”",
+  "taskCompleted": "The task “{title}” was closed: {conclusion}",
+  "taskClosed": "The task “{title}” was closed",
+  "taskReopened": "{actor} reopened the task “{title}”",
+  "taskQuiet": "No progress on the task \"{title}\" for {days} days"
+}

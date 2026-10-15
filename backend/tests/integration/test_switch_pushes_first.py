@@ -5,7 +5,7 @@ switch happens whether or not it went through: a machine that is away, a push
 that fails or outlasts its wait, an executor that cannot start — none of them
 holds the room, for a person or for its agent. What such a lost checkpoint
 loses is held by the snapshot of the session's last turn. A cloud sandbox left
-behind gives its home back to the pool either way.
+behind is left to the idle sweep either way.
 """
 
 import ast
@@ -30,12 +30,14 @@ from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.remote_execution import launch
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -277,7 +279,7 @@ async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
 
 
 @pytest.mark.parametrize("reachable", [True, False])
-async def test_a_cloud_sandbox_left_gives_its_home_back_either_way(
+async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
     client, monkeypatch, reachable
 ):
     room = await _room(client, on_cloud=True)
@@ -321,9 +323,10 @@ async def test_a_cloud_sandbox_left_gives_its_home_back_either_way(
         )
         host = await db.get(CloudHost, host_id)
         session = await AgentSessionService(db).by_id(room.session_id)
-    # The host is the pool's: a switch never deletes it, and frees its slot.
+    # The host is the pool's: a switch never deletes it. The sandbox left there
+    # is no session's, and the idle sweep destroys it (``lifecycle``).
     assert host.released_at is None
-    assert homes == []
+    assert [home.session_id for home in homes] == [None]
     assert session.execution_request["retained_leases"] == []
 
 
@@ -550,7 +553,12 @@ async def test_an_archived_rooms_cleanup_checkpoints_once_and_goes_on(
     remote = _machines(monkeypatch, push=push)
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as db:
-        await TopicService(db).archive(room.topic_id, by="alice")
+        await TopicService(db).archive(
+            room.topic_id,
+            by="alice",
+            settle_card=settle_card,
+            cards=close_cards_for_archived_topic,
+        )
         await db.commit()
     entry = {
         "kind": "device",

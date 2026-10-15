@@ -26,7 +26,6 @@ cheese checkout                准备项目默认分支的代码并输出路径�
 cheese sync                    同步任务提交并备份未提交的文件
 cheese recover <任务 id>       把最近一次备份恢复到一个独立目录
 cheese push-fix                把任务的新提交同步到它的 PR
-cheese sync-agents             发现并登记分身定义（钩子自动运行）
 cheese serve <端口> "说明"      把跑在本机端口上的应用设为当前预览
 cheese show <路径>              把一份东西摆到房间里给人看
 cheese pull <路径>              把房间里一份文件的最新保存取到这台机器上

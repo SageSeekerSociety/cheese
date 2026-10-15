@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 项目设置「任务命名」：两档，选中即保存；不能管理的人只看得见。
+// 项目设置「任务命名」：两档，选中即保存。
 //
 // 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：取数与发请求在
 // `composables/useProjectTaskNamingSettings.ts` 里，由设置页接线。这里只画收到的状态，
@@ -52,7 +52,7 @@ const OPTIONS: { value: TaskNamingMode; title: string; detail: string }[] = [
           class="naming-option"
           :class="{ 'naming-option--on': state.mode === o.value }"
           :aria-checked="state.mode === o.value"
-          :disabled="busy || !state.can_manage"
+          :disabled="busy"
           @click="emit('choose', o.value)"
         >
           <span class="naming-option__dot" aria-hidden="true" />
@@ -64,9 +64,6 @@ const OPTIONS: { value: TaskNamingMode; title: string; detail: string }[] = [
       </div>
       <p v-if="!state.available && state.mode === 'auto'" class="t-caption c-muted mt-2">
         {{ t('work.projectSettings.taskNaming.fallback') }}
-      </p>
-      <p v-if="!state.can_manage" class="t-caption c-muted mt-2">
-        {{ t('work.projectSettings.taskNaming.readOnly') }}
       </p>
     </template>
   </div>

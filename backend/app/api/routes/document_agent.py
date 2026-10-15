@@ -20,11 +20,10 @@ from fastapi.responses import StreamingResponse
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_consumptions, get_session_host
-from app.api.doc_access import frozen, reach
+from app.api.doc_access import asked_of, frozen, reach
 from app.api.doc_identity import human_operation_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.document_comments import asked_of
 from app.core.background import spawn
 from app.core.errors import (
     ForbiddenError,

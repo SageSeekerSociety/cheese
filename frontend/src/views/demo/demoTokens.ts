@@ -242,7 +242,7 @@ const COLOR_SECTIONS: ReadonlyArray<{ name: string; note: string; prefixes: stri
   {
     name: '主色与状态',
     note: '琥珀只用在关键处。状态色分三件：点是点、字是字、底是底，互不换用。',
-    prefixes: ['--accent', '--ok', '--warn', '--danger', '--signal-yellow'],
+    prefixes: ['--accent', '--ok', '--warn', '--danger', '--signal-yellow', '--signal-blue'],
   },
   {
     name: '代码色',

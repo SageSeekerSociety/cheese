@@ -17,6 +17,7 @@ import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -24,6 +25,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
+import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
 import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
@@ -51,10 +53,14 @@ const props = defineProps<{
   threadable?: boolean
   /** 这条消息的支线里谁正在回复（还没有回复时）；没有人时为 null。 */
   replyingFor?: (m: Block) => string | null
+  /** 那几位队友的 handle：支线那一行的头像里要有它们。 */
+  replyingSeatsFor?: (m: Block) => string[]
   /** 那位队友此刻在等什么（排队、重试……）；没有就是 null。 */
   threadStatusFor?: (m: Block) => string | null
   /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
   processable?: boolean
+  /** 支线和任务里的对话：人发的长消息也收起（RoomMessage 的 `foldPlain`）。 */
+  foldPlain?: boolean
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
@@ -89,7 +95,7 @@ const props = defineProps<{
   showStarters: boolean
   starterPrompts: { label: string; hint: string; text: string }[]
   agentName: string
-  refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  refs: RefNames
   outbox: Outgoing[]
   /** 队友正在写、还没发出的那几条（useTypingPreview），接在发件箱后面。 */
   typing: { block: Block; edge: RunEdge }[]
@@ -149,6 +155,7 @@ const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
+  (e: 'ask-skip', block: Block): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -180,11 +187,14 @@ const liveChecklists = computed(() => {
   return ids
 })
 
-// 合成一行的那一串署谁的名，看它最后那一条。
+// 合成一行的那一串署谁的名，看它最后那一条。改文档的那一行不在哪一轮里时不署名
+// （lib/docEditLine）：它是一行记录，不是哪位队友说的话，后面接着的事件行也不能当它
+// 是那位队友的续行。
 function agentOf(block: Block, notice: PlatformNotice): NoticeAgent | null {
-  if (notice.mode !== 'repeats') return props.noticeAgent(block, notice)
-  const last = notice.rows[notice.rows.length - 1]
-  return last.notice ? props.noticeAgent(last.block, last.notice) : null
+  const own = notice.mode === 'repeats' ? notice.rows[notice.rows.length - 1] : { block, notice }
+  if (!own.notice) return null
+  if (isDocLine(own.block) && !docLineInTurn(own.block)) return null
+  return props.noticeAgent(own.block, own.notice)
 }
 
 // 「新建了任务」那一行：认得出那件任务时，画成新建它的人发出的一张任务卡。
@@ -220,6 +230,8 @@ function under(blockId: string): TaskLine[] {
 const noticeCont = computed(() =>
   props.rows.map((row, i) => {
     const prev = props.rows[i - 1]
+    // 一轮里改文档的那一行接在这一轮的话后面（chatGrouping 的 runEdgeBetween）。
+    if (row.notice && props.runEdges[i] === 'cont') return true
     if (!row.notice || !prev?.notice) return false
     const agent = agentOf(row.block, row.notice)
     const before = agentOf(prev.block, prev.notice)
@@ -539,6 +551,7 @@ const rowLabels = computed(() =>
               :topic-list="topicList"
               :pinnable="pinnable"
               :pinned="!!pinnedIds?.has(m.id)"
+              :fold-plain="foldPlain"
               :data-row-id="m.id"
               :data-feed-item="m.id"
               @animationend="settleRow"
@@ -547,6 +560,7 @@ const rowLabels = computed(() =>
               @react="emitReact"
               @ask-reply="emitAskReply"
               @ask-withdraw="emitAskWithdraw"
+              @ask-skip="emit('ask-skip', $event)"
               @checklist="emitChecklist"
               @download="emit('download', $event)"
               @jump="emit('jump', $event)"
@@ -580,6 +594,7 @@ const rowLabels = computed(() =>
                 v-guide-anchor="replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'"
                 :summary="m.thread ?? null"
                 :replying="replyingFor?.(m) ?? null"
+                :replying-seats="replyingSeatsFor?.(m) ?? []"
                 :status="threadStatusFor?.(m) ?? null"
                 :refs="refs"
                 :name-of="nameOf ?? String"

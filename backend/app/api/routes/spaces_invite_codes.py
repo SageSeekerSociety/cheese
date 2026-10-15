@@ -29,24 +29,14 @@ into one named after something else.
 The helpers the moved routes share with the routes that stay --
 `_invite_codes_to_api_models`, which ``create_space`` reads a new board's first
 code back through -- and the two request bodies ``CreateSpaceInviteCodeRequest``
-/ ``PatchSpaceInviteCodeRequest`` (defined in `spaces.py`'s shared Request
-Models block and named nowhere else) stay in `spaces.py` and are imported here,
-the shape `spaces_organization.py` already uses. `spaces.py` imports nothing
-from this module, so there is no cycle.
+/ ``PatchSpaceInviteCodeRequest`` (defined in `space_payloads.py`'s shared Request
+Models block and named nowhere else) are imported here from `space_payloads.py`,
+the shape `spaces_organization.py` also uses.
 
 Nothing here reads an `app.domain.*.models` module: the rows arrive only through
 `_invite_codes_to_api_models`, whose ``SpaceInviteCode`` annotation lives in
-`spaces.py`, so `.importlinter`'s C2 (`routes-touch-no-models`) is untouched and
+`space_payloads.py`, so `.importlinter`'s C2 (`routes-touch-no-models`) is untouched and
 the frozen baseline does not move.
-
-`UserRepository` / `UserProfileRepository` -- what `_invite_codes_to_api_models`
-hydrates a code's maker with -- are imported **from `spaces.py`** rather than
-from `app.domain.user.repositories`, the shape `topics_side_routes.py` uses for
-`BlockRepository`. The guard in `tests/unit/test_domain_import_guard.py`
-ratchets (route module, repository module) pairs, and since a route module
-belongs to no domain, a direct import would add a line to that ratchet for a
-read `spaces.py` already carries -- splitting the file would have booked a new
-debt for an edge that did not change.
 """
 
 from datetime import UTC, datetime
@@ -54,14 +44,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Response, status
 
-from app.api.routes.spaces import (
+from app.api.response import ok
+from app.api.space_deps import get_space_service, require_reviewed_space
+from app.api.space_payloads import (
     CreateSpaceInviteCodeRequest,
     PatchSpaceInviteCodeRequest,
-    UserProfileRepository,
-    UserRepository,
     _invite_codes_to_api_models,
-    get_space_service,
-    require_reviewed_space,
 )
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -91,12 +79,8 @@ async def list_space_invite_codes(
     codes = await service.list_invite_codes(
         space_id=space_id, actor_user_id=auth_user.user_id
     )
-    items = await _invite_codes_to_api_models(
-        codes,
-        user_repo=UserRepository(session=db),
-        profile_repo=UserProfileRepository(session=db),
-    )
-    return {"code": 200, "message": "OK", "data": {"inviteCodes": items}}
+    items = await _invite_codes_to_api_models(codes, db=db)
+    return ok({"inviteCodes": items})
 
 
 @router.post(
@@ -121,12 +105,8 @@ async def create_space_invite_code(
         expires_at=expires_at,
         note=payload.note,
     )
-    items = await _invite_codes_to_api_models(
-        [invite],
-        user_repo=UserRepository(session=db),
-        profile_repo=UserProfileRepository(session=db),
-    )
-    return {"code": 201, "message": "Created", "data": {"inviteCode": items[0]}}
+    items = await _invite_codes_to_api_models([invite], db=db)
+    return ok({"inviteCode": items[0]})
 
 
 @router.patch(
@@ -155,12 +135,8 @@ async def patch_space_invite_code(
         note=payload.note,
         note_set="note" in payload.model_fields_set,
     )
-    items = await _invite_codes_to_api_models(
-        [invite],
-        user_repo=UserRepository(session=db),
-        profile_repo=UserProfileRepository(session=db),
-    )
-    return {"code": 200, "message": "OK", "data": {"inviteCode": items[0]}}
+    items = await _invite_codes_to_api_models([invite], db=db)
+    return ok({"inviteCode": items[0]})
 
 
 @router.delete(

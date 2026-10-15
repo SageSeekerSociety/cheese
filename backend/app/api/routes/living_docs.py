@@ -21,10 +21,11 @@ from app.api.deps import get_chat_service
 from app.api.doc_access import authorize_in_project, frozen, reach, require_writable
 from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
+from app.api.doc_mentions import notified_handles
 from app.api.doc_store import announce, store, tell_origin_room
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import _actor_in_place
+from app.api.topics_deps import _actor_in_place
 from app.core import rank
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -36,6 +37,7 @@ from app.core.errors import (
 from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.documents import whose_document
 from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
@@ -221,7 +223,9 @@ async def create_document(
         try:
             await collab.replace(
                 doc.id,
-                content=await canonicalize_refs(db, project_id, content)
+                content=await canonicalize_refs(
+                    db, project_id, content, team=project_team
+                )
                 if body.copy_of is None
                 else content,
                 base=None,
@@ -307,6 +311,9 @@ async def get_document(
         return ok(None)
     snapshot = document_snapshot(doc)
     snapshot["pending_suggestions"] = await DocumentJournal(db).suggestions(doc.id)
+    # Whose ``<@handle>`` in the text reached them: drawn as a mention, every
+    # other one as a reference to the person.
+    snapshot["notified_mentions"] = await notified_handles(db, doc.id)
     return await _with_ref_warnings(db, doc, ok(snapshot))
 
 
@@ -365,6 +372,17 @@ async def _base(db, doc, expected_version: int) -> str | None:
     )
 
 
+async def _agent_authors(db, document_id: uuid.UUID) -> list[str]:
+    """The handles among the document's pending suggestions that are agent
+    seats. A suggestion's author is the part of its id before the colon; the
+    service cannot tell a seat's suggestion from a person's on its own, so the
+    judgment is made here and handed to it. A pending suggestion the backend
+    has not stored yet reads as a person's, which refuses rather than drops."""
+    pending = await DocumentJournal(db).suggestions(document_id)
+    handles = [str(item.get("author") or "") for item in pending]
+    return sorted(await IdentityService(db).agents_among([h for h in handles if h]))
+
+
 @router.put("/{document_id}")
 async def replace_document(
     document_id: uuid.UUID,
@@ -393,7 +411,9 @@ async def replace_document(
         }
         if receipt := await _replayed(db, doc, operation):
             return receipt
-    content = await canonicalize_refs(db, doc.project_id, body.content)
+    content = await canonicalize_refs(
+        db, doc.project_id, body.content, team=project_team
+    )
     base = await _base(db, doc, body.expected_version)
     settled = await _settled(
         db,
@@ -404,6 +424,7 @@ async def replace_document(
         keep=Counter(canvas_ids(doc.content or "")),
     )
     content = settled.text
+    agent_authors = await _agent_authors(db, doc.id)
     # Nothing of this request may stay open across the call: the service's
     # store takes the document's lock in a transaction of its own.
     await db.commit()
@@ -416,6 +437,7 @@ async def replace_document(
         actor=actor.handle,
         operation=operation,
         check=True,
+        agent_authors=agent_authors,
     )
     await db.refresh(doc)
     await tell_origin_room(db, _origin(resolver, actor), doc, actor.handle)
@@ -445,11 +467,17 @@ async def edit_doc_passages(
     edits = [edit.model_dump() for edit in body.edits]
     settled: list[Settled] = []
     for edit in edits:
+        # The same friendly @名字 / @话题名 → token rewrite a whole-document
+        # write gets (``replace_document``): a passage is stored as the
+        # document stores everything else.
+        new = await canonicalize_refs(
+            db, doc.project_id, edit["new"], team=project_team
+        )
         one = await _settled(
             db,
             resolver,
             doc,
-            edit["new"],
+            new,
             actor=actor.handle,
             keep=Counter(canvas_ids(edit["old"])),
         )
@@ -474,6 +502,8 @@ async def edit_doc_passages(
             asked=body.mode,
         )
     # The service's store takes the document's lock in a transaction of its own.
+    editor_is_agent = await IdentityService(db).is_agent(author)
+    agent_authors = await _agent_authors(db, doc.id)
     await db.commit()
     result = await collab.edit(
         doc.id,
@@ -482,6 +512,8 @@ async def edit_doc_passages(
         requested_by=decision.requested_by,
         mode=decision.mode,
         reason=body.reason,
+        editor_is_agent=editor_is_agent,
+        agent_authors=agent_authors,
     )
     if delegation is not None:
         await work_edits.record(get_redis_client(), delegation.work, edits)
@@ -628,6 +660,7 @@ async def restore_document(
     if content is None:
         raise NotFoundError(say("docVersionNotFound"))
     base = await _base(db, doc, body.expected_version)
+    agent_authors = await _agent_authors(db, doc.id)
     await db.commit()
     return await collab.replace(
         doc.id,
@@ -635,6 +668,7 @@ async def restore_document(
         base=base,
         actor=actor.handle,
         operation=operation,
+        agent_authors=agent_authors,
     )
 
 

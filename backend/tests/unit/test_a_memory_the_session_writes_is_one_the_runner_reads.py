@@ -24,6 +24,7 @@ from pathlib import Path
 from app.domain.agent.harness.claude_code.remote_execution import client, release
 from app.domain.agent.harness.claude_code.runner import Runner
 from tests.pinned_claude import claude_binary
+from tests.support.processes import end_processes_under
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -142,6 +143,8 @@ def _session_writes(tmp_path, monkeypatch, actions) -> Path:
         server.shutdown()
         server.server_close()
         worker.join()
+        # The build's session hook outlives it (`end_processes_under`).
+        end_processes_under(tmp_path)
     assert result.returncode == 0, result.stderr
     assert "ACCEPTANCE_DONE" in result.stdout, result.stdout
     return home

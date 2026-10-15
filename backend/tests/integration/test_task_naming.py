@@ -13,7 +13,9 @@ project on manual naming is left alone; the model is asked not to think before
 it answers, which is what used to eat the answer; a trigger that asks nothing
 says which task and why; an answer cut off before the model wrote anything
 leaves the task as it was without counting as a failed call, while one that
-never arrives at all still backs the task off. The gateway is a MockTransport
+never arrives at all still backs the task off; a title too wide for the
+sidebar is sent back with its width a bounded number of times, inside the one
+naming timeout, and cut to fit when that does not help. The gateway is a MockTransport
 that answers from a script and records what it was asked.
 """
 
@@ -33,6 +35,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.room_task import naming
 from app.domain.room_task.models import Task, TaskTitle
+from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_message,
@@ -359,11 +362,10 @@ def test_the_task_document_is_what_the_model_reads_as_its_goal(client, alice, ga
     assert "给 gateway 加限流" in gateway["asked"][0]
 
 
-def test_naming_is_recorded_as_the_platforms_spend_and_charges_no_team(
-    client, alice, gateway
-):
-    """Naming a task is work the platform does unasked (#2233): what it spent
-    is on the platform's books, and no team's credits or usage move."""
+def test_naming_is_charged_to_the_tasks_project(client, alice, gateway):
+    """Naming a task is a model call made for its project: the project's team
+    pays for it, and its usage says what it was for."""
+    from app.domain.usage.credits import CREDIT_USD
     from app.domain.usage.ledger import Ledger, payer_for_project
     from app.domain.usage.models import ResourceUsage
 
@@ -382,24 +384,16 @@ def test_naming_is_recorded_as_the_platforms_spend_and_charges_no_team(
                 )
             )
             payer = await payer_for_project(s, uuid.UUID(pid))
-            balance = await Ledger(s).balance(payer)
-            team_rows = list(
-                await s.scalars(
-                    select(ResourceUsage).where(
-                        (ResourceUsage.team_id == payer.team_id)
-                        | (ResourceUsage.project_id == uuid.UUID(pid))
-                    )
-                )
-            )
-            return rows, balance, team_rows
+            return rows, payer.team_id, await Ledger(s).balance(payer)
 
-    rows, balance, team_rows = client.portal.call(read)
-    assert [(r.input_tokens, r.output_tokens, r.cost_usd) for r in rows] == [
-        (300, 12, 0.0004)
-    ]
-    assert rows[0].team_id is None and rows[0].credits == 0
-    assert balance.credits_used == 0
-    assert team_rows == []
+    rows, team_id, balance = client.portal.call(read)
+    assert [
+        (r.input_tokens, r.output_tokens, r.cost_usd, r.project_id, r.team_id)
+        for r in rows
+    ] == [(300, 12, 0.0004, uuid.UUID(pid), team_id)]
+    assert rows[0].credits == pytest.approx(0.0004 / CREDIT_USD)
+    assert rows[0].conversation_id == uuid.UUID(rid)
+    assert balance.credits_used == pytest.approx(0.0004 / CREDIT_USD)
 
 
 def test_an_at_sign_in_the_middle_of_a_sentence_is_not_a_mention(
@@ -484,6 +478,110 @@ def test_the_naming_call_still_carries_a_ceiling(client, alice, gateway):
     runaway answer from becoming a runaway call."""
     _named(client, alice, gateway)
     assert gateway["bodies"][-1]["max_tokens"] >= 700
+
+
+# ---------- a title that fits the sidebar ----------
+
+
+def test_a_title_too_wide_goes_back_to_the_model_with_its_width(client, alice, gateway):
+    """The sidebar draws a title on one line; one wider than that is not
+    written. The model is told how wide it was, and its shorter title is the
+    one the task gets."""
+    rid = _unnamed(client, alice)
+    _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
+    gateway["answers"] += [
+        {"keep": False, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        {"keep": False, "title": "巡检报表与周报模板"},
+    ]
+
+    renamed = _run(client, rid, "message")
+
+    assert renamed is not None and renamed.title == "巡检报表与周报模板"
+    assert _shown(client, rid) == ("巡检报表与周报模板", "auto")
+    assert _history(client, rid) == [("巡检报表与周报模板", "auto", "name")]
+    assert len(gateway["asked"]) == 2
+    told = gateway["asked"][1]
+    assert str(title_width("仓库巡检报表自动导出与周报邮件模板")) in told
+    assert str(TITLE_WIDTH) in told
+
+
+def test_a_title_that_never_fits_is_cut_to_fit(client, alice, gateway):
+    """However often the model answers too wide, it is asked a bounded number
+    of times and what is stored still fits — at the calibration that wrote the
+    over-wide titles seen on dev as much as at the first name."""
+    rid = _named(client, alice, gateway)
+    asked = len(gateway["asked"])
+    gateway["answers"] += [
+        {"keep": False, "title": "季度预算编制流程说明 Word 文档"}
+    ] * 10
+
+    renamed = _run(client, rid, "turn")
+
+    assert renamed is not None
+    assert title_fits(renamed.title)
+    assert "季度预算编制流程说明 Word 文档".startswith(renamed.title)
+    assert title_fits(_row(client, rid).title)
+    assert 1 < len(gateway["asked"]) - asked <= 3
+
+
+def test_keep_on_a_retry_cuts_the_title_it_was_asked_about(client, alice, gateway):
+    """Answering `keep` when asked for something shorter means nothing better
+    came back: the task is still named, with the too-wide title cut to fit."""
+    rid = _unnamed(client, alice)
+    _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
+    gateway["answers"] += [
+        {"keep": False, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        {"keep": True, "title": "仓库巡检报表自动导出与周报邮件模板"},
+    ]
+
+    renamed = _run(client, rid, "message")
+
+    assert renamed is not None and renamed.title == "仓库巡检报表自动导出与周"
+    assert _shown(client, rid) == ("仓库巡检报表自动导出与周", "auto")
+    assert len(gateway["asked"]) == 2
+
+
+def test_keeping_a_stored_title_too_wide_does_not_leave_it_too_wide(
+    client, alice, gateway
+):
+    """A title stored before the width was checked is not kept as it is: the
+    model is asked for a shorter one, and when it keeps answering `keep` the
+    stored title is cut to fit."""
+    rid = _named(client, alice, gateway)
+    _set(client, rid, title="季度预算编制流程说明 Word 文档")
+    asked = len(gateway["asked"])
+    gateway["answers"] += [
+        {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
+        {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
+    ]
+
+    renamed = _run(client, rid, "turn")
+
+    assert renamed is not None
+    assert renamed.previous == "季度预算编制流程说明 Word 文档"
+    assert renamed.title == "季度预算编制流程说明 Wor"
+    assert _row(client, rid).title == "季度预算编制流程说明 Wor"
+    assert len(gateway["asked"]) - asked == 2
+    assert str(title_width("季度预算编制流程说明 Word 文档")) in gateway["asked"][-1]
+
+
+def test_asking_again_stays_inside_the_naming_timeout(
+    client, alice, gateway, monkeypatch
+):
+    """A retry gets only what is left of the one budget naming has; with too
+    little left it is not started, and the title is cut instead."""
+    monkeypatch.setattr(settings, "topic_naming_timeout_seconds", 1.0)
+    rid = _unnamed(client, alice)
+    _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
+    gateway["answers"] += [
+        {"keep": False, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        {"keep": False, "title": "巡检报表与周报模板"},
+    ]
+
+    renamed = _run(client, rid, "message")
+
+    assert renamed is not None and title_fits(renamed.title)
+    assert len(gateway["asked"]) == 1
 
 
 def test_the_first_turn_checks_the_name_once(client, alice, gateway):
@@ -720,22 +818,29 @@ def test_a_rename_is_heard_on_the_tasks_own_page_and_in_its_channel(
 ):
     """The task's page listens on the task's conversation and the channel's
     pages on the channel's: a new title reaches both without a reload."""
-    import app.domain.agent.staleness as staleness
+    from app.domain.agent import live_notices
 
     heard: list[tuple[str, str, str | None]] = []
 
-    async def announce(conversation_id, resource, *, id=None):
-        heard.append(
-            (str(conversation_id), resource, str(id) if id is not None else None)
-        )
+    class _Broker:
+        """发布出去的那几帧，代替 broker（`agent/live_notices` 在提交后发的）。"""
 
-    monkeypatch.setattr(staleness, "announce_stale", announce)
+        async def publish(self, channel, frame):
+            heard.append((str(channel), frame.get("resource"), frame.get("id")))
+
+    async def _told(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(live_notices, "get_broker", lambda: _Broker())
+    monkeypatch.setattr(live_notices, "tell_project", _told)
     project = _project(client, alice)
     room = project["root_topic_id"]
     tid = _task(client, alice, room)
     _say(client, tid, "帮我排查一下 dev 机器从外网访问很慢的问题")
     gateway["answers"].append({"keep": False, "title": "dev 外网访问慢排查"})
     assert _run(client, tid, "message") is not None
+    # 帧是提交之后后台发的，再走一趟 portal 让那个循环把它发出去。
+    _shown(client, tid)
     assert (tid, "topics") in [(c, r) for c, r, _ in heard]
     assert (room, "topics") in [(c, r) for c, r, _ in heard]
     # Both frames name the ROOM's row: the sidebar holds rooms, and a task id is

@@ -4,7 +4,7 @@
 门票：`/users/auth/email-code`、`/users/oauth/create` 都要拿它换一个账号
 （`test_oauth_invite_code.py` 钉的就是那两条路）。所以「谁能建码」等于「谁能发
 账号」，「谁能停用」等于「谁能在注册窗口上挂锁」—— 判据是**平台管理员**
-（`admin_common.PlatformAdminDep`：部署配置里的根名单 ∪ `platform_admins` 表），
+（`admin_deps.PlatformAdminDep`：部署配置里的根名单 ∪ `platform_admins` 表），
 不是「有一个登录会话」。
 
 三条路由的 summary 都写着 `(admin)`，函数体里却只有 `require_auth_user`。这个文件
@@ -162,15 +162,15 @@ def test_the_platform_admin_can_mint_an_invite_code(
 ):
     """对照组：管理员建得出来，回的是那个码本身。
 
-    断言的是**信封里的 `code`**（201）而不是 HTTP 状态码：这条路由历来就是
-    「HTTP 200 + `{"code":201}`」（审计的原始输出也是这个形状），前端 `request()`
+    断言的是**信封里的 `code`**（200）而不是 HTTP 状态码：这条路由历来就是
+    「HTTP 200 + 信封」（审计的原始输出也是这个形状），前端 `request()`
     解包靠的就是信封 —— 顺手把 HTTP 码改成 201 会是一次没人要的契约改动。
     """
     response = _mint(api_client, _headers(as_admin))
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["code"] == 201
+    assert body["code"] == 200
     assert body["data"]["code"]
     assert body["data"]["maxUses"] == 3
 

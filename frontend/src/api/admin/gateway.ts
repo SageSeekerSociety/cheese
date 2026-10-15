@@ -2,7 +2,7 @@ import { request } from '../http'
 
 /* ---- 管理端（网关模型）----
  *
- * 后台「模型管理」那一页的九条接口（`backend/app/api/routes/admin_models.py`）。全是平台
+ * 后台「模型管理」那一页的接口（`backend/app/api/routes/admin_models.py`）。全是平台
  * 管理员的接口，网关侧的失败在服务端已经折成 503（不可达）/ 502（被拒），原因放在
  * `detail` 里 —— `request` 会把 `error.message` 原样带出来，页面要显示的正是服务端那句
  * 中文原因，所以这里不改写、不吞异常。
@@ -57,6 +57,49 @@ export interface GatewayUpstream {
   provider: string
 }
 
+/** 线路说的上游协议。`null` 是三种之外的提供方：`upstream_raw` 就是完整的 LiteLLM 模型串。 */
+export type GatewayProtocol = 'anthropic' | 'openai-chat' | 'openai-responses'
+
+/** 一个模型下的一条线路（网关里同名的一条部署）。
+ *
+ *  `order` 是网关试它的先后：小的先试，相同的一起分流，`null` 垫底。请求头只给名字：
+ *  值可能是哪家中转站认人的东西，服务端不下发。上游凭据同理，从来不在这里。 */
+export interface GatewaySource {
+  source_id: string
+  origin: 'config' | 'runtime'
+  blocked: boolean
+  order: number | null
+  protocol: GatewayProtocol | null
+  /** 去掉协议前缀的上游模型名（协议认不出时是整串）。 */
+  upstream_model: string
+  upstream_raw: string
+  host: string | null
+  prices: GatewayPrices
+  free: boolean
+  priced: boolean
+  header_names: string[]
+  session_header: string | null
+}
+
+/** 一条线路自己的字段：新建模型时的第一条、加线路、改线路三处共用。
+ *
+ *  `upstream_headers` 整份替换（`{}` 清空，不传不动）；`session_header` 传空串是
+ *  「不再转会话」，不传是「别碰」。 */
+export interface GatewaySourceFields {
+  protocol?: GatewayProtocol | null
+  upstream_model?: string
+  api_base?: string | null
+  api_key?: string | null
+  api_key_unchanged?: boolean
+  prices?: GatewayPrices
+  order?: number
+  free?: boolean
+  upstream_headers?: Record<string, string>
+  session_header?: string
+  /** 只在加线路时：这个优先级会接走在用线路的流量，人已经明确同意。 */
+  make_primary?: boolean
+}
+
 /** 清单里的一个模型（契约 §3.1）。
  *
  *  `origin` 决定它是只读还是可改：`config` 来自 config.yaml、页面上只读；`runtime` 是
@@ -81,6 +124,8 @@ export interface GatewayModelInfo {
   config_yaml?: string
   /** 行内 sparkline 的逐日 token（与详情折线同源同账）；窗口内没用过是逐日 0。 */
   series?: number[]
+  /** 全部线路，按网关试它们的先后排好；config 的也在，只是只读。 */
+  sources?: GatewaySource[]
 }
 
 export interface GatewayModelsPayload {
@@ -105,14 +150,11 @@ export interface GatewayModelDetail {
 }
 
 /** 新增一个运行时模型（契约 §3.3）。`api_key` 只在请求体里出现，**绝不回显**。 */
-export interface GatewayModelCreateInput {
+export interface GatewayModelCreateInput extends GatewaySourceFields {
   name: string
   upstream_model: string
-  api_base?: string | null
-  api_key?: string | null
   label?: string
   selectable?: boolean
-  prices?: GatewayPrices
   capabilities?: GatewayCapabilities
 }
 
@@ -218,6 +260,58 @@ export function setGatewayModelBlocked(name: string, blocked: boolean): Promise<
   return request<{ blocked: boolean }>(`/admin/gateway/models/${encodeURIComponent(name)}/blocked`, {
     method: 'POST',
     body: JSON.stringify({ blocked }),
+  })
+}
+
+/** 给一个已有模型加一条线路（config 声明的模型也行）。模型的展示元数据由服务端从
+ *  已有那条线路抄过来，这里不带。回来的是这个模型更新后的那一项。 */
+export function addGatewaySource(
+  name: string,
+  body: GatewaySourceFields & { upstream_model: string; order: number }
+): Promise<{ model: GatewayModelInfo }> {
+  return request<{ model: GatewayModelInfo }>(`/admin/gateway/models/${encodeURIComponent(name)}/sources`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function updateGatewaySource(
+  name: string,
+  sourceId: string,
+  body: GatewaySourceFields
+): Promise<{ model: GatewayModelInfo }> {
+  return request<{ model: GatewayModelInfo }>(
+    `/admin/gateway/models/${encodeURIComponent(name)}/sources/${encodeURIComponent(sourceId)}`,
+    { method: 'PATCH', body: JSON.stringify(body) }
+  )
+}
+
+export function deleteGatewaySource(name: string, sourceId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/admin/gateway/models/${encodeURIComponent(name)}/sources/${encodeURIComponent(sourceId)}`,
+    { method: 'DELETE' }
+  )
+}
+
+export function setGatewaySourceBlocked(
+  name: string,
+  sourceId: string,
+  blocked: boolean
+): Promise<{ blocked: boolean }> {
+  return request<{ blocked: boolean }>(
+    `/admin/gateway/models/${encodeURIComponent(name)}/sources/${encodeURIComponent(sourceId)}/blocked`,
+    { method: 'POST', body: JSON.stringify({ blocked }) }
+  )
+}
+
+/** 一次改几条线路的优先级（`{source_id: order}`）。 */
+export function reorderGatewaySources(
+  name: string,
+  orders: Record<string, number>
+): Promise<{ model: GatewayModelInfo }> {
+  return request<{ model: GatewayModelInfo }>(`/admin/gateway/models/${encodeURIComponent(name)}/sources/order`, {
+    method: 'PUT',
+    body: JSON.stringify({ orders }),
   })
 }
 

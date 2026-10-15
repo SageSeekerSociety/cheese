@@ -11,6 +11,7 @@
  * silent — whatever the composer produces, the backend accepts as already
  * canonical. So the three guards below are the backend's, one for one.
  */
+import { refTokens } from './refChip'
 
 export interface MentionMember {
   handle: string
@@ -34,7 +35,11 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-export function expandMentions(text: string, members: MentionMember[], topics: MentionTopic[] = []): string {
+/** Every "@name" the composer recognises, longest first, each with the token it
+ * stands for and the boundary that keeps it from eating the front of a longer
+ * word. `expandMentions` rewrites with these and `mentionSpans` finds them, so
+ * "is this a mention" has one answer in the input box. */
+function mentionPatterns(members: MentionMember[], topics: MentionTopic[]): { re: string; tok: string }[] {
   // 群播 (fusion-design §3): @all/@here are fixed-literal tokens, not roster rows.
   const subs: [string, string][] = [
     ['@all', '<@all>'],
@@ -51,19 +56,50 @@ export function expandMentions(text: string, members: MentionMember[], topics: M
   }
   subs.sort((a, b) => b[0].length - a[0].length) // longest first
   const seen = new Set<string>()
-  let out = text
+  const out: { re: string; tok: string }[] = []
   for (const [pat, tok] of subs) {
     if (seen.has(pat)) continue // name === handle yields the same pattern twice,
     seen.add(pat) // and the second pass would re-wrap the token the first produced
     const boundary = ASCII_WORD_END.test(pat) ? ASCII_BOUNDARY : ''
     // (?<!<) keeps already-encoded tokens intact: the "@handle" inside a
     // produced "<@handle>" must not be re-wrapped by a shorter later pattern.
+    out.push({ re: '(?<!<)' + escapeRe(pat) + boundary, tok })
+  }
+  return out
+}
+
+export function expandMentions(text: string, members: MentionMember[], topics: MentionTopic[] = []): string {
+  let out = text
+  for (const { re, tok } of mentionPatterns(members, topics)) {
     // The replacement is a function so a "$" in a name can't act as $1.
     // Case-insensitive: "@Alice" and a mis-cased handle both map to the
     // canonical lowercase token, matching the backend.
-    out = out.replace(new RegExp('(?<!<)' + escapeRe(pat) + boundary, 'gi'), () => tok)
+    out = out.replace(new RegExp(re, 'gi'), () => tok)
   }
   return out
+}
+
+/**
+ * Where the mentions sit in a draft: each "@name" `expandMentions` would turn
+ * into a token, and each token already in canonical form (`<@handle>`,
+ * `<#id>`, `<&path>` — an edited message keeps its channel references that
+ * way). The input box moves and deletes word by word over these as one unit.
+ */
+export function mentionSpans(
+  text: string,
+  members: MentionMember[],
+  topics: MentionTopic[] = []
+): { start: number; end: number }[] {
+  const spans = refTokens(text).map((r) => ({ start: r.index, end: r.index + r.length }))
+  const patterns = mentionPatterns(members, topics)
+  if (patterns.length) {
+    // One alternation, longest first: at any position the longest name wins, the
+    // same answer the longest-first rewrite above gives.
+    for (const m of text.matchAll(new RegExp(patterns.map((p) => p.re).join('|'), 'gi'))) {
+      spans.push({ start: m.index, end: m.index + m[0].length })
+    }
+  }
+  return spans.sort((a, b) => a.start - b.start)
 }
 
 /**

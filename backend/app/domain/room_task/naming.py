@@ -48,6 +48,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.live_frames import show_once_committed
 from app.core.redis import get_redis_client
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.gateway_chat import Usage, response_cost
@@ -61,7 +62,13 @@ from app.domain.room_task.models import (
     TaskTitle,
     TaskTitleSource,
 )
-from app.domain.room_task.title_width import TITLE_CHARS
+from app.domain.room_task.title_width import (
+    TITLE_CHARS,
+    TITLE_WIDTH,
+    fit_title,
+    title_fits,
+    title_width,
+)
 from app.domain.service_keys import KeySpec, gateway_base, service_key
 from app.domain.thread.models import Thread
 from app.domain.usage.ledger import Ledger
@@ -82,8 +89,14 @@ _MESSAGES = 12
 _MESSAGE_CHARS = 400
 _CONVERSATION_CHARS = 2400
 _GOAL_CHARS = 600
-# A title longer than this is not a title; it is cut, never wrapped.
-TITLE_MAX_CHARS = 24
+# A title too wide for the sidebar (`title_width`) goes back to the model with
+# its width, at most this many times, before it is cut to fit. Each try is a
+# short call (the answer is a dozen tokens), and all of them share one
+# `topic_naming_timeout_seconds`, so asking again never makes naming slower
+# than one call was allowed to be; a try is only started with at least
+# `_RETRY_FLOOR_S` of that left.
+_RETRIES = 2
+_RETRY_FLOOR_S = 2.0
 # The opening line has to say something before it is worth naming a task by:
 # 「在吗」「@芝士」 wait for the next message or the end of the first turn.
 # What counts is what `_said` has left, so an `@` inside a sentence is not
@@ -193,7 +206,7 @@ def normalize_title(raw: object) -> str | None:
             title = title[1:-1]
     if not title or title == PLACEHOLDER_TITLE:
         return None
-    return title[:TITLE_MAX_CHARS].rstrip()
+    return title
 
 
 def same_title(a: str, b: str) -> bool:
@@ -384,23 +397,42 @@ class Answer:
     cost_usd: float = 0.0
 
 
+def _conversation_with_model(material: str) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": material},
+    ]
+
+
+def _too_wide(title: str) -> str:
+    """What the model is told when its title does not fit."""
+    return (
+        f"「{title}」的宽度是 {title_width(title)}（一个汉字算 2，英文、数字、"
+        f"空格各算 1），超过了上限 {TITLE_WIDTH}，也就是 {TITLE_CHARS} 个汉字。"
+        "换一个更短的名字，说的还是这件事；keep 填 false，只输出 JSON 对象。"
+    )
+
+
 async def _ask(
-    key: str, material: str, transport: httpx.AsyncBaseTransport | None
+    key: str,
+    messages: list[dict[str, str]],
+    transport: httpx.AsyncBaseTransport | None,
+    *,
+    timeout: float,
 ) -> Answer:
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(settings.topic_naming_timeout_seconds),
-            transport=transport,
-        ) as client:
+        async with (
+            asyncio.timeout(timeout),
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout), transport=transport
+            ) as client,
+        ):
             r = await client.post(
                 f"{gateway_base()}/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
                 json={
                     "model": settings.topic_naming_model,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": material},
-                    ],
+                    "messages": messages,
                     "max_tokens": _ANSWER_TOKENS,
                     "temperature": 0.2,
                     "response_format": {"type": "json_object"},
@@ -434,24 +466,82 @@ async def _ask(
     )
 
 
-async def _record_usage(factory: "SessionFactory", answer: Answer) -> None:
-    """Write what the call spent as the platform's own usage: naming is work
-    the platform does unasked, so no team pays for it (#2233). Its own session,
-    so the task the call is about stays as ``_write`` reads it."""
+async def _record_usage(factory: "SessionFactory", answer: Answer, task: Task) -> None:
+    """Charge what the call spent to the task's project: naming one of its
+    tasks is a model call made for the project, paid like the project's other
+    calls. Its own session, so the task the call is about stays as ``_write``
+    reads it."""
     if answer.usage is None or not (answer.usage.total_tokens or answer.cost_usd):
         return
     try:
         async with factory() as session:
-            await Ledger(session).record_platform(
+            await Ledger(session).record_project_call(
+                task.project_id,
                 kind=USAGE_KIND,
                 model=settings.topic_naming_model,
                 input_tokens=answer.usage.prompt_tokens,
                 output_tokens=answer.usage.completion_tokens,
                 cost_usd=answer.cost_usd,
+                topic_id=task.id,
             )
             await session.commit()
     except Exception:  # noqa: BLE001 — see the module docstring
         logger.warning("topic naming usage was not recorded", exc_info=True)
+
+
+async def _fitted(
+    key: str,
+    material: str,
+    verdict: Verdict,
+    *,
+    current: str | None,
+    transport: httpx.AsyncBaseTransport | None,
+    factory: "SessionFactory",
+    deadline: float,
+    task: Task,
+) -> Verdict:
+    """`verdict`, with a title that fits the sidebar.
+
+    A title too wide goes back to the model with its measured width, up to
+    `_RETRIES` times while the naming budget lasts; what still does not fit
+    after that is cut to the width (`fit_title`). Keeping `current`, the title
+    the task already has, counts as choosing it, so a stored title too wide
+    for the sidebar is asked about and cut the same way. On a retry, `keep`
+    means nothing better came back, and the candidate before it is cut."""
+    if verdict.keep and current is not None and not title_fits(current):
+        verdict = Verdict(keep=False, title=current)
+    loop = asyncio.get_running_loop()
+    messages = _conversation_with_model(material)
+    for _ in range(_RETRIES):
+        if verdict.keep or verdict.title is None or title_fits(verdict.title):
+            return verdict
+        left = deadline - loop.time()
+        if left < _RETRY_FLOOR_S:
+            break
+        messages += [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {"keep": False, "title": verdict.title}, ensure_ascii=False
+                ),
+            },
+            {"role": "user", "content": _too_wide(verdict.title)},
+        ]
+        answer = await _ask(key, messages, transport, timeout=left)
+        await _record_usage(factory, answer, task)
+        if (
+            answer.verdict is None
+            or answer.verdict.keep
+            or answer.verdict.title is None
+        ):
+            break  # nothing better came back; cut what we have
+        verdict = answer.verdict
+    if verdict.keep or verdict.title is None or title_fits(verdict.title):
+        return verdict
+    logger.info(
+        "task naming: cut a title still %d wide to fit", title_width(verdict.title)
+    )
+    return Verdict(keep=False, title=fit_title(verdict.title) or None)
 
 
 # ---------- deciding when ----------
@@ -617,6 +707,7 @@ async def _write(
             by=None,
         )
     )
+    _tell_pages(session, task.id, task.room_id)
     await session.commit()
     return Renamed(
         task_id=task.id,
@@ -627,16 +718,18 @@ async def _write(
     )
 
 
-async def _publish(renamed: Renamed) -> None:
-    """The channel's pages and the task's own page each listen on their own
-    conversation, so both are told."""
-    # deferred-import: tests replace this name on app.domain.agent.staleness
-    from app.domain.agent.staleness import announce_stale
+def _tell_pages(session: AsyncSession, task_id: uuid.UUID, room_id: uuid.UUID) -> None:
+    """Queue a frame for the channel's pages and for the task's own, which each
+    listen on their own conversation, so both are told once this commits.
 
-    await announce_stale(renamed.room_id, "topics", id=renamed.room_id)
-    # The task's page listens on the task's conversation; the row that changed
-    # is the room's in the sidebar, so both frames name the ROOM.
-    await announce_stale(renamed.task_id, "topics", id=renamed.room_id)
+    Renaming writes the row with a bulk `update(Task)`, which the flush hook
+    cannot see, so it is on this side to tell the pages (`room_task/live.py`).
+    Nothing here needs the broker: whichever module stages it, `core/live_frames`
+    hands the frame to the listener that does have one — telling the project's
+    channel list along the way, since the frame names a ROOM."""
+    frame = {"type": "state", "resource": "topics", "id": str(room_id)}
+    for channel in (room_id, task_id):
+        show_once_committed(session, channel, frame)
 
 
 # ---------- entry points ----------
@@ -725,8 +818,18 @@ async def run(
             if key is None:
                 _unasked(task_id, reason, "no_gateway_key")
                 return None
-            answer = await _ask(key, material, transport)
-            await _record_usage(factory, answer)
+            # One budget for the whole judgement, asking again included.
+            deadline = (
+                asyncio.get_running_loop().time()
+                + settings.topic_naming_timeout_seconds
+            )
+            answer = await _ask(
+                key,
+                _conversation_with_model(material),
+                transport,
+                timeout=settings.topic_naming_timeout_seconds,
+            )
+            await _record_usage(factory, answer, task)
             if answer.verdict is None:
                 # An answer cut off before it said anything is not the gateway
                 # failing, so the task is not made to wait out the backoff for
@@ -742,14 +845,23 @@ async def run(
                     "the_answer_was_cut_off" if answer.truncated else "the_call_failed",
                 )
                 return None
-            renamed = await _write(session, task, stage=stage, verdict=answer.verdict)
+            verdict = await _fitted(
+                key,
+                material,
+                answer.verdict,
+                # At the first name the task has nothing of its own to keep.
+                current=task.title if stage != "name" else None,
+                transport=transport,
+                factory=factory,
+                deadline=deadline,
+                task=task,
+            )
+            renamed = await _write(session, task, stage=stage, verdict=verdict)
             if stage == "follow" and redis is not None:
                 await _redis_call(redis.delete, _redis_key("pending", task_id))
     finally:
         if redis is not None:
             await _redis_call(redis.delete, lock)
-    if renamed is not None:
-        await _publish(renamed)
     return renamed
 
 

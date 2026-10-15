@@ -6,10 +6,16 @@
 
 ## 管辖范围
 
-两棵树：``app/domain`` 与 ``app/api/routes``。路由不属于任何一个领域，所以它 import
-的每一条 repository 都是跨域的，98 条全在下面的白名单里。守卫只看 ``app/domain`` 的
-时候这 98 条 CI 一条也看不见，而它们恰恰是这层约束最容易被绕过去的地方——HTTP 处理
-函数手上就有 session，拿对方的 repository 直接查一行比找对方的 service 省事。
+三处：``app/domain``、``app/api/routes``，以及点名的几个路由共享依赖模块
+（``_SCANNED_MODULES``）。后两处都不属于任何一个领域，所以它们 import 的每一条
+repository 都是跨域的，存量全在下面的白名单里。守卫只看 ``app/domain`` 的时候这些边
+CI 一条也看不见，而它们恰恰是这层约束最容易被绕过去的地方——HTTP 处理函数手上就有
+session，拿对方的 repository 直接查一行比找对方的 service 省事。
+
+共享依赖模块本来也在这道守卫的账上，只是 2026-10 那轮重构把路由里共用的依赖从
+``routes/`` 搬进 ``app/api/*_deps.py`` 时，新家不在任何一棵被扫的树里，账上删掉的
+豁免就没有人再看着了：往那个文件里新加一条跨域 repository import，全绿。所以这里
+把它们点名扫上——**搬出路由不等于掉出管辖**。
 
 **这道守卫治的是分层纪律，不是依赖环——别指望它把环拆没。** 按正路改完，包和包之间
 那条边还在，只是从 repository 层挪到了 services 层；包级依赖图一条边都不会少。真要解
@@ -40,12 +46,62 @@ import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
+#: C2 那一段所在的配置文件。下面两条自检拿它和 `_SCANNED_MODULES` 对账。
+_IMPORTLINTER = BACKEND_ROOT / ".importlinter"
+
 #: 扫哪几棵树，相对 backend 根。见上面「管辖范围」。
 _SCANNED = ("app/domain", "app/api/routes")
+
+#: 另外点名扫描的文件：路由的共享依赖模块。它们和路由一样不属于任何领域，摸谁的
+#: repository 都算跨域。**点名而不是扫整个 ``app/api``**：那棵树里还有别的模块，
+#: 历史导入与本类纪律无关，一起扫进来只会多出一批要单独解释的行。往里面新增共享
+#: 依赖模块时，把路径写在这里——同时要在 ``.importlinter`` 的 C2 ``source_modules``
+#: 里加同一项。两处由 ``test_c2_sources_and_the_guard_scan_the_same_modules`` 逐条
+#: 对账，也由 ``test_every_named_source_has_a_file`` 确认文件都在。
+_SCANNED_MODULES = (
+    "app/api/admin_deps.py",
+    "app/api/users_deps.py",
+    "app/api/space_deps.py",
+    "app/api/space_payloads.py",
+    "app/api/task_deps.py",
+    "app/api/topics_deps.py",
+    # 2026-10 的第二轮：拆路由之间的边。前三个是新的共享依赖模块（`awaiting_deps`
+    # 装 `waiting_items`，`teams_deps` 装 teams 的四个共享名，`legal_deps` 装
+    # `client_context`），`topics_file_sources` 是从 `routes/` 挪到 `app/api/` 的
+    # 整个文件，`ws_pipe` 是新的（隧道的两个泵）。判据就一条：这个模块是不是
+    # 2026-10 这轮从 `routes/` 里出来的——是就得点名，否则搬家的那几条账没人看着。
+    # `app/api/doc_access.py` 和 `app/api/room_task_rows.py` 不在这里：它们在这轮之前
+    # 就生在 `app/api/` 下，是那棵树的普通成员，不是从路由里搬出来的。
+    "app/api/awaiting_deps.py",
+    "app/api/legal_deps.py",
+    "app/api/teams_deps.py",
+    "app/api/topics_file_sources.py",
+    "app/api/ws_pipe.py",
+    # 2026-10 的第三轮（最后一轮）：把经过 `app.api` 助手绕出来的名字也挪走。
+    # 前四个是新的行构造模块——`topic_member_rows`、`topic_pin_rows`、
+    # `review_comment_rows`、`project_skill_rows`，`room_snapshot` 原先是回它们各自
+    # 的路由里去拿的；`preview_relay` 装预览隧道浏览端的那半边和两端共用的 hub。
+    # 判据不变：从 `routes/` 里出来的就点名。`preview_host`、`preview_runtime`、
+    # `room_snapshot` 这些不点，因为它们在这轮之前就生在 `app/api/` 下。
+    "app/api/preview_relay.py",
+    "app/api/project_skill_rows.py",
+    "app/api/review_comment_rows.py",
+    "app/api/topic_member_rows.py",
+    "app/api/topic_pin_rows.py",
+)
 
 #: 路由那棵树的「领域」。它不是领域包，这个值只用来让路由发出的每一条 repository
 #: import 都算跨域——它不等于任何一个领域包的名字。
 _ROUTES = "<api.routes>"
+
+#: 共享依赖模块的「领域」，同理。两者分开取值，是为了让这两处各自的账在
+#: ``_EXEMPT`` 里一眼分得清。
+_SHARED_API = "<api.shared>"
+
+#: ``app/api/admin_deps`` 这样的模块名集合，供 ``_domain_of`` 查。
+_SHARED_API_MODULES = frozenset(
+    path[: -len(".py")].replace("/", ".") for path in _SCANNED_MODULES
+)
 
 # ---------------------------------------------------------------------------
 # 存量豁免。格式：(发起方模块, 被 import 的 repository 模块)
@@ -65,7 +121,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
-        ("app.domain.agent.github_app", "app.domain.project.repositories"),
         # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
         # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
         # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`
@@ -209,18 +264,22 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
         # --- app/api/routes ---
         # 路由一个领域都不属于，所以它碰的每一个 repository 都是别人家的。下面
-        # 98 条是守卫扩到这棵树那一刻就在的存量，和上面的领域内债一样入账：还法
-        # 是路由改调对方的 service，然后把这里对应的行删掉。
+        # 这些是守卫扩到这棵树那一刻就在的存量（当时 98 条，其余都已还），和上面的
+        # 领域内债一样入账：还法是路由改调对方的 service，然后把这里对应的行删掉。
         ("app.api.routes.agent_credential", "app.domain.project.repositories"),
         ("app.api.routes.answers", "app.domain.answers.repositories"),
         ("app.api.routes.answers", "app.domain.discussion.repositories"),
         ("app.api.routes.answers", "app.domain.questions.repositories"),
         ("app.api.routes.answers", "app.domain.user.repositories"),
         ("app.api.routes.avatars", "app.domain.avatars.repositories"),
-        ("app.api.routes.awaiting", "app.domain.block.repositories"),
-        ("app.api.routes.awaiting", "app.domain.project.repositories"),
-        ("app.api.routes.awaiting", "app.domain.room_task.repositories"),
-        ("app.api.routes.awaiting", "app.domain.topic.repositories"),
+        # `waiting_items` 的发起方换了名字：那个函数连同它的四个码搬去了
+        # `app/api/awaiting_deps.py`（推送也读它，而路由模块之间不互相 import）。
+        # 被摸的 repository 一个没多，所以按同一笔债入账，只是换个发起方——记法同下面的
+        # users_team / topics_compute。
+        ("app.api.awaiting_deps", "app.domain.block.repositories"),
+        ("app.api.awaiting_deps", "app.domain.project.repositories"),
+        ("app.api.awaiting_deps", "app.domain.room_task.repositories"),
+        ("app.api.awaiting_deps", "app.domain.topic.repositories"),
         ("app.api.routes.blocks", "app.domain.block.repositories"),
         ("app.api.routes.comments", "app.domain.comments.repositories"),
         ("app.api.routes.comments", "app.domain.questions.repositories"),
@@ -251,12 +310,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.questions", "app.domain.questions.repositories"),
         ("app.api.routes.questions", "app.domain.user.repositories"),
         ("app.api.routes.recruitment", "app.domain.user.repositories"),
-        ("app.api.routes.spaces", "app.domain.task.repositories"),
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
         ("app.api.routes.tasks._common", "app.domain.space.repositories"),
-        ("app.api.routes.tasks._common", "app.domain.team.repositories"),
-        ("app.api.routes.tasks._common", "app.domain.user.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.space.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.team.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.user.repositories"),
@@ -268,17 +324,21 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.tasks.roster", "app.domain.task.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.team.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.user.repositories"),
+        # teams 的两个共享名（`application_to_api_model` / `load_application_maps`）
+        # 连同 `get_team_service` / `_user_payload` 搬进了 `app/api/teams_deps.py`
+        # （team 那一路路由和个人的 `/users/me/team*` 都在用，而路由模块之间不互相
+        # import）。同一笔债换发起方：teams_deps 接走 user.repositories 的一条，
+        # `routes/teams.py` 自己留着 `UserRealNameRepository` 那条（它没搬）。
         ("app.api.routes.teams", "app.domain.user.repositories"),
-        ("app.api.routes.topic_members", "app.domain.identity.repositories"),
-        ("app.api.routes.topic_members", "app.domain.user.repositories"),
+        ("app.api.teams_deps", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
         # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读
         # 和写那一条选择，外加一条会话对那台机器的租约）。它摸的 repository 只有
         # machine 一个，正是原先 topics.py 里跟着它走的那条边：`ProjectRepository`
-        # 它从 topics.py 拿（那是另一笔债，仍在 topics.py 名下），名字也跟着从
-        # topics.py 的 import 里读；`ProjectMachineRepository` 只在
+        # 它从 `app/api/topics_deps.py` 拿（那是另一笔债，记在 topics_deps 名下），
+        # 名字也跟着从那里的 import 里读；`ProjectMachineRepository` 只在
         # `set_topic_compute_profile` 里读一次，随它搬走。拆模块没有新增跨包的边，
         # 只是发起方从 topics.py 换成了 topics_compute.py，所以按同一笔债入账。
         # --- users 包 --- users.py 拆成 routes/users/ 之后（第 4 步重构），原先记在
@@ -299,6 +359,44 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # lines above, re-attributed to the module the code now lives in.
         ("app.api.routes.users_team", "app.domain.team.repositories"),
         ("app.api.routes.webhooks", "app.domain.topic.repositories"),
+        # --- app/api 共享依赖模块 ---
+        # 2026-10 那轮重构把路由里共用的依赖从 routes/ 搬进 app/api/*_deps.py。
+        # 下面六条是随之搬家的存量债：被摸的 repository 一个没多，只是发起方从某个
+        # 路由模块换成了共享依赖模块——`space_deps` / `space_payloads` 接走的是
+        # routes/spaces.py 的那一对（spaces.py 自己留着 user.repositories 那条，所以
+        # user 这条按两个发起方各记一行），`task_deps` 接走的是
+        # routes/tasks/_common.py 的 team 与 user 两条，外加 space.repositories 里
+        # 跟着 `get_task_submission_service` 走的那两个名字（`_common.py` 自己留着
+        # 同模块的另外三个名字，故 space 这条同样按两个发起方各记一行）。守卫的扫描
+        # 面同时补上了这几个模块（`_SCANNED_MODULES`）：搬出路由不等于掉出管辖，
+        # 否则账上删掉的三条就再没有人看着了。还法与路由那批相同——改成调对方的
+        # service，然后删行。
+        ("app.api.space_deps", "app.domain.task.repositories"),
+        ("app.api.space_deps", "app.domain.user.repositories"),
+        ("app.api.space_payloads", "app.domain.user.repositories"),
+        ("app.api.task_deps", "app.domain.space.repositories"),
+        ("app.api.task_deps", "app.domain.team.repositories"),
+        ("app.api.task_deps", "app.domain.user.repositories"),
+        # --- topics_deps --- 同一轮重构的下一片：routes/topics.py 曾把
+        # `Block` / `BlockKind` / `BlockOut` / `BlockRepository` /
+        # `ProjectRepository` / `UsageRepository` 转发给各 `topics_*`，转发本身正是
+        # C4 不许的形状（一个路由成了另一个路由的依赖）。转发点挪到
+        # `app/api/topics_deps.py` 之后，三个领域 repository 的发起方从
+        # `app.api.routes.topics` 换成了 `app.api.topics_deps`——被摸的 repository
+        # 一个没多，所以按同一笔债入账，只是换了个名字。`routes/topics.py` 自己
+        # 仍在摸这三个（上面那三行），因为它的处理函数直接读它们。还法同上一批：
+        # 改成调对方的 service，然后删行。
+        ("app.api.topics_deps", "app.domain.block.repositories"),
+        ("app.api.topics_deps", "app.domain.project.repositories"),
+        ("app.api.topics_deps", "app.domain.usage.repositories"),
+        # --- topic_member_rows --- 2026-10 的第三轮：`room_snapshot` 要的房间成员
+        # 那一段原先住在 `routes/topic_members.py` 里，而 `room_snapshot` 不是路由、
+        # 却要 import 它，正是 C4 不许的形状。`roster_rows` 连同它那两个 repository
+        # （identity 的 `AgentBindingRepository`、user 的 `UserRepository`）搬到
+        # `app/api/topic_member_rows.py`，发起方从 `routes/topic_members` 换成新模块。
+        # 被摸的 repository 一个没多，所以按同一笔债入账，只是换了个名字。
+        ("app.api.topic_member_rows", "app.domain.identity.repositories"),
+        ("app.api.topic_member_rows", "app.domain.user.repositories"),
     }
 )
 
@@ -316,10 +414,13 @@ def _is_repository_module(name: str) -> bool:
 
 
 def _domain_of(module: str) -> str | None:
-    """``app.domain.<pkg>.<...>`` → ``<pkg>``；路由 → ``_ROUTES``；其余 None。"""
+    """``app.domain.<pkg>.<...>`` → ``<pkg>``；路由 → ``_ROUTES``；共享依赖
+    模块 → ``_SHARED_API``；其余 None。"""
     parts = module.split(".")
     if len(parts) >= 4 and parts[:3] == ["app", "api", "routes"]:
         return _ROUTES
+    if module in _SHARED_API_MODULES:
+        return _SHARED_API
     if len(parts) < 4 or parts[0] != "app" or parts[1] != "domain":
         return None
     return parts[2]
@@ -344,35 +445,41 @@ def _scan(tree: Path = BACKEND_ROOT) -> list[tuple[str, str, int]]:
     tmp 里的假树。
     """
     found: list[tuple[str, str, int]] = []
+    paths: list[Path] = []
     for scanned in _SCANNED:
         root = tree / scanned
         if not root.is_dir():
             continue  # 假树只搭用得上的那半棵
-        for py in sorted(root.rglob("*.py")):
-            src_mod = _module_name(py, tree)
-            src_dom = _domain_of(src_mod)
-            if src_dom is None:
-                continue  # domain/common.py 这类顶层文件，不属于任何领域包
-            parsed = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-            for node in ast.walk(parsed):
-                targets: list[str] = []
-                if isinstance(node, ast.Import):
-                    targets = [a.name for a in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    mod = _resolve(node, src_mod)
-                    if not mod:
-                        continue
-                    # 两种写法都要抓：
-                    #   from app.domain.x.repositories import Foo
-                    #   from app.domain.x import repositories
-                    targets = [mod] + [f"{mod}.{a.name}" for a in node.names]
-                for t in targets:
-                    if not _is_repository_module(t):
-                        continue
-                    dst_dom = _domain_of(t)
-                    if dst_dom is None or dst_dom == src_dom:
-                        continue
-                    found.append((src_mod, t, node.lineno))
+        paths.extend(root.rglob("*.py"))
+    for rel in _SCANNED_MODULES:
+        named = tree / rel
+        if named.is_file():  # 假树只搭用得上的那半棵
+            paths.append(named)
+    for py in sorted(paths):
+        src_mod = _module_name(py, tree)
+        src_dom = _domain_of(src_mod)
+        if src_dom is None:
+            continue  # domain/common.py 这类顶层文件，不属于任何领域包
+        parsed = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+        for node in ast.walk(parsed):
+            targets: list[str] = []
+            if isinstance(node, ast.Import):
+                targets = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                mod = _resolve(node, src_mod)
+                if not mod:
+                    continue
+                # 两种写法都要抓：
+                #   from app.domain.x.repositories import Foo
+                #   from app.domain.x import repositories
+                targets = [mod] + [f"{mod}.{a.name}" for a in node.names]
+            for t in targets:
+                if not _is_repository_module(t):
+                    continue
+                dst_dom = _domain_of(t)
+                if dst_dom is None or dst_dom == src_dom:
+                    continue
+                found.append((src_mod, t, node.lineno))
     return found
 
 
@@ -434,6 +541,67 @@ def test_exemptions_are_all_still_needed() -> None:
             f"{lines}\n\n"
             "（债还完了忘删白名单，下一个人就会以为这条依赖还在。）"
         )
+
+
+#: C2 的 `source_modules` 里不属于 `_SCANNED_MODULES` 的那两项。它们管的是同一批
+#: 模块，只是由两处分别扫：`app.api.routes` 是守卫扫的那棵树；
+#: `app.api.deps` 不在那棵树里，只有它的 models 一半归 C2 管（见 test 顶部说明）。
+_ROUTE_LAYER_SOURCES = ("app.api.routes", "app.api.deps")
+
+
+def _c2_source_modules(config: Path = _IMPORTLINTER) -> list[str]:
+    """`.importlinter` 里 C2 那一段的 `source_modules`，按声明顺序。
+
+    逐行读，不引 yaml 解析器：这份配置存在的意思就是让「谁管谁」一眼看得见，
+    多一个解析器就多一处会和它分叉的地方。
+    """
+    sources: list[str] = []
+    collecting = False
+    for line in config.read_text(encoding="utf-8").splitlines():
+        if line.startswith("name = C2 "):
+            collecting = True
+        elif collecting and line.startswith("source_modules"):
+            continue
+        elif collecting and line.startswith("    ") and line.strip():
+            sources.append(line.strip())
+        elif collecting and line.strip() and sources:
+            break  # 下一个键（`forbidden_modules =`）开始，本段结束
+    return sources
+
+
+def test_c2_sources_and_the_guard_scan_the_same_modules() -> None:
+    """两本名单逐条对齐：C2 的 `source_modules` 去掉路由那两项，即
+    `_SCANNED_MODULES`。
+
+    「搬出路由不等于掉出管辖」这句话落在两处手写的名单上，而两处都只写一遍、漏了
+    都不出声：C2 少一个源，那个模块的 models import 就没人管了；守卫少扫一个文件，
+    它的 repository import 就没人管了——而两边都还是绿的。逐条比一次，任何一边删掉
+    任何一条都会红。
+    """
+    declared = set(_c2_source_modules())
+    scanned = set(_SHARED_API_MODULES)
+    only_declared = sorted(declared - scanned - set(_ROUTE_LAYER_SOURCES))
+    only_scanned = sorted(scanned - declared)
+    assert not only_declared and not only_scanned, (
+        "C2 的 source_modules 与 _SCANNED_MODULES 指的是同一批路由共享依赖模块，"
+        "改一边就要改另一边：\n"
+        f"  只在 .importlinter 里：{only_declared}\n"
+        f"  只在守卫的 _SCANNED_MODULES 里：{only_scanned}"
+    )
+
+
+def test_every_named_source_has_a_file() -> None:
+    """两本名单点名的每个模块都得有对应文件——删了文件却留着名单不会自己变红。
+
+    `_scan` 对不存在的文件是跳过的（假树只搭用得上的那半棵，靠的就是这个），所以
+    真树里少一个文件会被静默少扫一片。这里逐条查一遍。
+    """
+    missing = [
+        module
+        for module in sorted(set(_c2_source_modules()) | _SHARED_API_MODULES)
+        if not _module_exists(BACKEND_ROOT, module)
+    ]
+    assert missing == [], f"名单上点名、树里却没有的模块：{missing}"
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +679,31 @@ def test_self_test_a_route_touching_a_repository_is_caught(tmp_path: Path) -> No
     assert _violations(root, frozenset()) == [
         ("app.api.routes.tasks", "app.domain.beta.repositories")
     ]
+
+
+def test_self_test_a_shared_dependency_module_is_caught(tmp_path: Path) -> None:
+    """共享依赖模块和路由同管——搬出 routes/ 不是为了掉出管辖范围。
+
+    这条自检是补面那一刻的回归：把这两处的 ``_SCANNED_MODULES`` 去掉，它会红。
+    """
+    root = _fake_tree(
+        tmp_path,
+        {"api/task_deps.py": "from app.domain.beta.repositories import BetaRepo\n"},
+    )
+    assert _violations(root, frozenset()) == [
+        ("app.api.task_deps", "app.domain.beta.repositories")
+    ]
+
+
+def test_self_test_a_shared_dependency_module_calling_a_service_stays_green(
+    tmp_path: Path,
+) -> None:
+    """共享依赖模块调对方的 service 就是正路，不许误判成违规。"""
+    root = _fake_tree(
+        tmp_path,
+        {"api/task_deps.py": "from app.domain.beta.services import BetaService\n"},
+    )
+    assert _violations(root, frozenset()) == []
 
 
 def test_self_test_a_route_calling_a_service_stays_green(tmp_path: Path) -> None:

@@ -1,4 +1,9 @@
 # Generated, committed so review sees API contract changes; GitHub folds their diffs.
-backend/openapi.json linguist-generated=true
+# backend/openapi.json was the third entry here and is no longer committed — it
+# collided in every pair of route-changing branches, and the frontend asks the
+# backend for it instead. Two one-line files stay in its place and take over what
+# it was committed for: the digest is the path the frontend suite is selected by
+# (the document's 44 commits in the sixty days to 2026-10-14 were all one line
+# here), and the ratchet is the decision file (4 commits over the same window).
+backend/openapi.sha256 linguist-generated=true
 backend/openapi-untyped.json linguist-generated=true
-frontend/src/api/openapi.d.ts linguist-generated=true

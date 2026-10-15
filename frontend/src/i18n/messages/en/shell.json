@@ -54,7 +54,6 @@
   },
   "agentDefaultName": "Cheese",
   "restore": {
-    "restoring": "Restoring your session…",
     "unreachable": "Can’t reach the server to confirm your sign-in",
     "unreachableHint": "It retries automatically when the network is back; you can also retry now.",
     "retry": "Retry",
@@ -66,6 +65,7 @@
     "rename": "Couldn’t rename",
     "archive": "Couldn’t archive",
     "unarchive": "Couldn’t unarchive",
+    "deleteChannel": "Couldn’t delete the channel",
     "createTopic": "Couldn’t create the channel",
     "convertMessage": "Couldn’t convert this message"
   }

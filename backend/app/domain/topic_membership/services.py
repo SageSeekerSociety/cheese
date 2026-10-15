@@ -20,12 +20,11 @@ channel private; only someone who manages the project turns one back.
 
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.conversation.services import room_of
+from app.domain.conversation.services import room_of, room_of_thread
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -34,7 +33,6 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
-from app.domain.thread.models import Thread
 from app.domain.topic.models import (
     Topic,
     TopicKind,
@@ -43,6 +41,7 @@ from app.domain.topic.models import (
     TopicStatus,
 )
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership.ports import ProjectTeam, SeatProject
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.schemas import TopicMemberOut
 
@@ -184,7 +183,9 @@ class TopicMemberService:
             [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
         )
 
-    async def seat_counts(self, topics: list[Topic]) -> dict[uuid.UUID, int]:
+    async def seat_counts(
+        self, topics: list[Topic], *, team: ProjectTeam
+    ) -> dict[uuid.UUID, int]:
         """How many people and AI teammates are in each of these channels:
         their seats, and for 综合 everyone in the project."""
         counts = await self._repo.counts_for_topics([t.id for t in topics])
@@ -193,19 +194,19 @@ class TopicMemberService:
             # deferred-import: cycle membership.roster -> topic_membership.services
             from app.domain.membership.roster import roster
 
-            everyone = len(await roster(self._session, roots[0].project_id))
+            everyone = len(await roster(self._session, roots[0].project_id, team=team))
             counts.update({t.id: everyone for t in roots})
         return counts
 
-    async def people_in(self, topic: Topic) -> list[str]:
+    async def people_in(self, topic: Topic, *, team: ProjectTeam) -> list[str]:
         """The people in this channel, in the order they came in. 综合's are
         everyone in the project; any other channel's are the people seated on
         it."""
         if topic.kind == TopicKind.root:
-            return await self.project_people(topic.project_id)
+            return await self.project_people(topic.project_id, team=team)
         return await self.people_handles(topic.id)
 
-    async def seats(self, topic: Topic) -> list[TopicMemberOut]:
+    async def seats(self, topic: Topic, *, team: ProjectTeam) -> list[TopicMemberOut]:
         """Everyone in this channel, the way its member list shows them: its
         seated rows, and for 综合 everyone in the project besides."""
         seats = [
@@ -218,7 +219,7 @@ class TopicMemberService:
                 TopicMemberOut(
                     topic_id=topic.id, member_handle=h, role=TopicRole.member
                 )
-                for h in await self.people_in(topic)
+                for h in await self.people_in(topic, team=team)
                 if h not in seated
             ]
         return seats
@@ -232,23 +233,27 @@ class TopicMemberService:
         seated = {m.member_handle for m in await self._repo.list_for_topic(topic.id)}
         return [h for h in handles if h in seated]
 
-    async def people_of(self, topic_id: uuid.UUID) -> list[str]:
+    async def people_of(self, topic_id: uuid.UUID, *, team: ProjectTeam) -> list[str]:
         """:meth:`people_in` for a caller holding the channel's id."""
         topic = await self._topics.get(topic_id)
-        return await self.people_in(topic) if topic is not None else []
+        return await self.people_in(topic, team=team) if topic is not None else []
 
-    async def project_people(self, project_id: uuid.UUID) -> list[str]:
+    async def project_people(
+        self, project_id: uuid.UUID, *, team: ProjectTeam
+    ) -> list[str]:
         """Everyone in the project who is a person: whom a channel's work may be
         handed to."""
         # deferred-import: cycle membership.roster -> topic_membership.services
         from app.domain.membership.roster import roster
 
         return [
-            m.handle for m in await roster(self._session, project_id) if not m.agent
+            m.handle
+            for m in await roster(self._session, project_id, team=team)
+            if not m.agent
         ]
 
     async def joined_topic_ids(
-        self, topics: list[Topic], handle: str
+        self, topics: list[Topic], handle: str, *, team: ProjectTeam
     ) -> set[uuid.UUID]:
         """Which of these channels ``handle`` is in, in one read: 综合 always, as
         long as they are in its project, and every other channel they joined."""
@@ -256,27 +261,35 @@ class TopicMemberService:
         joined = await self._repo.topic_ids_for_member(
             [t.id for t in topics if t.kind != TopicKind.root], handle
         )
-        if roots and await self._on_project(roots[0].project_id, handle):
+        if roots and await self._on_project(roots[0].project_id, handle, team=team):
             joined |= {t.id for t in roots}
         return joined
 
-    async def seen(self, topics: list[Topic], handle: str) -> list[Topic]:
+    async def seen(
+        self, topics: list[Topic], handle: str, *, team: ProjectTeam
+    ) -> list[Topic]:
         """The ones of these channels ``handle`` sees: the public ones, and the
         private channels they sit in."""
         private = [t for t in topics if t.members_only]
-        seated = await self.joined_topic_ids(private, handle) if private else set()
+        seated = (
+            await self.joined_topic_ids(private, handle, team=team)
+            if private
+            else set()
+        )
         return [t for t in topics if not t.members_only or t.id in seated]
 
     async def joined_ids(
-        self, topic_ids: list[uuid.UUID], handle: str
+        self, topic_ids: list[uuid.UUID], handle: str, *, team: ProjectTeam
     ) -> set[uuid.UUID]:
         """:meth:`joined_topic_ids` for callers holding ids rather than rows."""
         topics = [t for t in [await self._topics.get(i) for i in topic_ids] if t]
-        return await self.joined_topic_ids(topics, handle)
+        return await self.joined_topic_ids(topics, handle, team=team)
 
-    async def on_project(self, project_id: uuid.UUID, handle: str) -> bool:
+    async def on_project(
+        self, project_id: uuid.UUID, handle: str, *, team: ProjectTeam
+    ) -> bool:
         """Is ``handle`` a person or AI teammate of this project?"""
-        return await self._on_project(project_id, handle)
+        return await self._on_project(project_id, handle, team=team)
 
     async def _channel(self, topic_id: uuid.UUID) -> Topic:
         """A channel people join and leave; a private room is not one."""
@@ -285,14 +298,14 @@ class TopicMemberService:
             raise NotFoundError("Topic not found")
         return topic
 
-    async def may_speak(self, room: Topic, handle: str) -> bool:
+    async def may_speak(self, room: Topic, handle: str, *, team: ProjectTeam) -> bool:
         """May this person speak in the room's main line: a member of a
         channel, or one of the two in a private room (who are seated)."""
         if not _public(room):
             return True
-        return room.id in await self.joined_topic_ids([room], handle)
+        return room.id in await self.joined_topic_ids([room], handle, team=team)
 
-    async def join(self, topic_id: uuid.UUID, actor: str) -> None:
+    async def join(self, topic_id: uuid.UUID, actor: str, *, team: ProjectTeam) -> None:
         """``actor`` joins a public channel of a project they are in. 综合 needs
         no joining, and an archived channel takes no one new."""
         topic = await self._channel(topic_id)
@@ -300,7 +313,7 @@ class TopicMemberService:
             return
         if topic.status == TopicStatus.archived:
             raise ValidationError(say("channelArchivedNoJoin"))
-        if not await self._on_project(topic.project_id, actor):
+        if not await self._on_project(topic.project_id, actor, team=team):
             raise ForbiddenError(say("topicAddProjectMembersOnly"))
         await self._ensure_member(topic_id, actor, role=TopicRole.member)
 
@@ -533,15 +546,19 @@ class TopicMemberService:
         """
         if room_id is None:
             # A 支线 seats nobody of its own: its channel's roster answers.
-            room_id = await self._session.scalar(
-                select(Thread.room_id).where(Thread.id == topic_id)
-            )
+            room_id = await room_of_thread(self._session, topic_id)
         if not await self.agent_handles(room_id or topic_id):
             return None
         return await self.resolve_agent_handle(topic_id, room_id=room_id)
 
     async def add(
-        self, *, topic_id: uuid.UUID, handle: str, actor: str
+        self,
+        *,
+        topic_id: uuid.UUID,
+        handle: str,
+        actor: str,
+        seat_project: SeatProject,
+        team: ProjectTeam,
     ) -> TopicMembership:
         topic = await self._brought_in_by(topic_id, actor)
         # Who is an agent is the binding's answer, not the handle's shape (I9):
@@ -554,13 +571,11 @@ class TopicMemberService:
             # keys a memory pool inside ITS project — so another project's
             # teammate must not be seated here: nothing in this project would
             # address it, and its token would write as this room's default.
-            # deferred-import: cycle agent_instance -> topic_membership
-            from app.domain.agent_instance.services import AgentInstanceService
-
-            owner = await AgentInstanceService(self._session).project_of_seat(handle)
+            # 哪一席落在哪个项目上，本包在第 2 层读不出来（`SeatProject`）。
+            owner = await seat_project(self._session, handle)
             if owner is not None and owner != topic.project_id:
                 raise NotFoundError(say("projectAiTeammateNotFound"))
-        elif not await self._on_project(topic.project_id, handle):
+        elif not await self._on_project(topic.project_id, handle, team=team):
             # A room seat admits on its own, so seating someone the project does
             # not have would let them in without an invitation they accepted.
             # People come into the project first — from its team, or as an
@@ -576,20 +591,42 @@ class TopicMemberService:
             topic_id=topic_id, member_handle=handle, role=TopicRole.member
         )
 
+    async def may_bring_in(self, topic: Topic, actor: str) -> bool:
+        """May ``actor`` add someone to this channel: a person in it, or someone
+        who manages it. An AI teammate's seat lets it act in the channel, not
+        invite."""
+        if await self._repo.get(
+            topic_id=topic.id, member_handle=actor
+        ) is not None and not await IdentityService(self._session).is_agent(actor):
+            return True
+        return await self.manages(topic, actor)
+
     async def _brought_in_by(self, topic_id: uuid.UUID, actor: str) -> Topic:
-        """The channel ``actor`` may add someone to: one they are in, or one they
-        manage. Someone outside a private channel is told it does not exist."""
+        """The channel ``actor`` may add someone to (:meth:`may_bring_in`).
+        Someone outside a private channel is told it does not exist."""
         topic = await self._topics.get(topic_id)
         if topic is None:
             raise NotFoundError("Topic not found")
-        if await self._repo.get(topic_id=topic_id, member_handle=actor) is None:
-            if topic.members_only:
-                raise NotFoundError("Topic not found")
-            return await self.require_manager(topic_id, actor)
-        if await IdentityService(self._session).is_agent(actor):
-            # An AI teammate's seat lets it act in the channel, not invite.
-            return await self.require_manager(topic_id, actor)
-        return topic
+        if await self.may_bring_in(topic, actor):
+            return topic
+        if (
+            topic.members_only
+            and await self._repo.get(topic_id=topic_id, member_handle=actor) is None
+        ):
+            raise NotFoundError("Topic not found")
+        raise ForbiddenError(say("channelManagerOnly"))
+
+    async def outside(
+        self, room: Topic, handles: list[str], *, team: ProjectTeam
+    ) -> list[str]:
+        """The people of the project among ``handles`` who are not in this
+        channel, in the order given. 综合 has everyone in the project and a
+        private room of two its own two, so neither has anyone outside it."""
+        if room.kind == TopicKind.root or not _public(room):
+            return []
+        people = set(await self.project_people(room.project_id, team=team))
+        seated = {m.member_handle for m in await self._repo.list_for_topic(room.id)}
+        return [h for h in dict.fromkeys(handles) if h in people and h not in seated]
 
     async def administers(self, topic: Topic, actor: str) -> bool:
         """May ``actor`` archive this channel or name who manages it without
@@ -623,7 +660,9 @@ class TopicMemberService:
             raise NotFoundError("Topic not found")
         raise ForbiddenError(say("channelManagerOnly"))
 
-    async def hand_over(self, topic_id: uuid.UUID, handle: str, *, actor: str) -> Topic:
+    async def hand_over(
+        self, topic_id: uuid.UUID, handle: str, *, actor: str, team: ProjectTeam
+    ) -> Topic:
         """Name ``handle`` the channel's manager in place of whoever was. They
         are seated if they were not; the one they replace stays a member.
         综合 is managed by whoever manages the project and names nobody."""
@@ -634,7 +673,7 @@ class TopicMemberService:
             self._session
         ).is_agent(handle):
             raise ValidationError(say("channelManagerPersonOnly"))
-        if not await self._on_project(topic.project_id, handle):
+        if not await self._on_project(topic.project_id, handle, team=team):
             raise ValidationError(say("topicAddProjectMembersOnly"))
         for member in await self._repo.list_for_topic(topic_id):
             if member.role == TopicRole.owner and member.member_handle != handle:
@@ -700,7 +739,9 @@ class TopicMemberService:
         await self._session.flush()
         return topic
 
-    async def may_open_channels(self, project_id: uuid.UUID, handle: str) -> bool:
+    async def may_open_channels(
+        self, project_id: uuid.UUID, handle: str, *, team: ProjectTeam
+    ) -> bool:
         """Whether ``handle`` may open a new channel here: anyone in the
         project but an external member, who was invited in to take part, not
         to arrange it."""
@@ -709,14 +750,19 @@ class TopicMemberService:
 
         return not any(
             m.handle == handle and m.source == "external"
-            for m in await roster(self._session, project_id)
+            for m in await roster(self._session, project_id, team=team)
         )
 
-    async def _on_project(self, project_id: uuid.UUID, handle: str) -> bool:
+    async def _on_project(
+        self, project_id: uuid.UUID, handle: str, *, team: ProjectTeam
+    ) -> bool:
         # deferred-import: cycle membership.roster -> topic_membership.services
         from app.domain.membership.roster import roster
 
-        return any(m.handle == handle for m in await roster(self._session, project_id))
+        return any(
+            m.handle == handle
+            for m in await roster(self._session, project_id, team=team)
+        )
 
     async def remove(self, *, topic_id: uuid.UUID, handle: str, actor: str) -> None:
         await self.require_manager(topic_id, actor)

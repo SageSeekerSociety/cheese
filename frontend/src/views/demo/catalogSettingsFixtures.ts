@@ -17,9 +17,10 @@
  * （`frontend_grade.py` 的 A 级），取数全在 `composables/useProjectSettings.ts` 和
  * `composables/useBranchProtection.ts` 里。
  */
+import type { BranchProtection } from '@/branchProtection'
 import type { BranchProtectionLoadState } from '@/composables/useBranchProtection'
 import type { CallbackNotice, GithubAccountLoadState } from '@/composables/useProjectSettings'
-import type { BranchProtection, ForgeConnection, OAuthConnectionInfo } from '@/cx_types'
+import type { ForgeConnection, OAuthConnectionInfo } from '@/cx_types'
 
 /** 一条规则本体。`github_protection` 默认是「没绑 GitHub / 查得到、没开保护」。 */
 export function bpRules(over: Partial<BranchProtection> = {}): BranchProtection {
@@ -31,6 +32,7 @@ export function bpRules(over: Partial<BranchProtection> = {}): BranchProtection 
     override_handles: null,
     approvals_required: 1,
     default_reviewer: '',
+    dispatch_seat: '',
     merge_method: 'squash',
     github_protection: { enforced: false, status: 'none' },
     ...over,
@@ -46,7 +48,14 @@ export const BP_MEMBERS = [
 /** 任务默认 reviewer 的可选项：多一档「未指定」。 */
 export const BP_REVIEWERS = [{ title: '未指定', value: '' }, ...BP_MEMBERS]
 
-/** 分支保护那一块吃的十样。 */
+/** 调度座位的可选项：AI 队友的席位，value 是 `seat_handle`，同样多一档「未指定」。 */
+export const BP_DISPATCH_SEATS = [
+  { title: '未指定', value: '' },
+  { title: '芝士（cheese-ab12cd34ef56）', value: 'cheese-ab12cd34ef56' },
+  { title: '小助（cheese-9f8e7d6c5b4a）', value: 'cheese-9f8e7d6c5b4a' },
+]
+
+/** 分支保护那一块吃的十一样。 */
 export function bpProps(
   over: {
     state?: BranchProtectionLoadState
@@ -67,6 +76,7 @@ export function bpProps(
     error: null as string | null,
     memberItems: BP_MEMBERS,
     reviewerItems: BP_REVIEWERS,
+    dispatchSeatItems: BP_DISPATCH_SEATS,
     checkName: '',
     checkPaths: '',
     approvalsDraft: '1',
@@ -131,5 +141,5 @@ export function accountProps(
 /** 「归档项目」那一块和它的弹窗：项目名取自模型管理那一组的夹具里的一个真项目。 */
 export const ARCHIVE_PROJECT = '课程资料整理'
 
-/** 被拒时弹窗里那句：后端 `archiveOwnerOnly` 的原话（`apiError.json`），composable 原样递下来。 */
+/** 被拒时弹窗里那句：后端 `archiveOwnerOnly` 的原话（`apiError/`），composable 原样递下来。 */
 export const ARCHIVE_REFUSED = '只有项目所有者能归档或取消归档项目'

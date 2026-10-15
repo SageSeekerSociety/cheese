@@ -49,7 +49,9 @@ function team(overrides: Partial<Team> = {}): Team {
 }
 
 function mount() {
+  // 令牌来自路由记录的 `props: true`，不再是页面自己读 `route.params.token`。
   return render(TeamInviteView as unknown as Component, {
+    props: { token: 'team-link' },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }
@@ -69,7 +71,7 @@ describe('opening a team link', () => {
     await screen.findByText('Cheese 核心组')
     screen.getByText('做 Cheese 的人')
     // 所有者是一颗 @chip，和对话里 @ 到他的那颗一样。
-    expect(document.body.textContent).toMatch(/所有者：\s*@芝士/)
+    expect(document.body.textContent).toMatch(/所有者：\s*芝士/)
     screen.getByText(/5 名成员/)
     expect(detail).toHaveBeenCalledWith('team-link')
     expect(join).not.toHaveBeenCalled()

@@ -41,6 +41,7 @@ import DocSurface from './doc/DocSurface.vue'
 import DocTopBar from './doc/DocTopBar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -60,6 +61,10 @@ const props = withDefaults(
     mentionNames?: Record<string, string>
     /** 正文里打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
+    /** 这份文档 @ 到并通知过的人（只有他们的 `<@handle>` 画成 @chip）。 */
+    notifiedMentions?: string[]
+    /** 正文里（或某个旧版本里）有了 `<@handle>` 时调一下：读这份文档通知过谁。 */
+    fetchNotifiedMentions?: () => void
     /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
     /** 画在一整页里（项目文档的项目目标）：页头已经说了这是什么，不再画大标题和总览自动区。 */
@@ -124,6 +129,9 @@ const props = withDefaults(
     avatarOf?: (handle: string) => string
     loadVersions?: (before?: number) => Promise<DocVersionPage>
     restoreVersion?: (version: number, expected: number) => Promise<unknown>
+    // ---- 我在文档里 @ 了打不开它的人 ----
+    /** 要不要把他们加进频道：名字已经连成一串；没有就是 null。 */
+    mentionOutside?: { names: string; membersOnly: boolean; mayAdd: boolean; adding: boolean } | null
   }>(),
   {
     document: null,
@@ -132,6 +140,8 @@ const props = withDefaults(
     agentHandle: null,
     mentionNames: undefined,
     mentionPeople: () => [],
+    notifiedMentions: () => [],
+    fetchNotifiedMentions: undefined,
     topicList: () => [],
     bare: false,
     untitled: false,
@@ -152,6 +162,7 @@ const props = withDefaults(
     avatarOf: () => '',
     loadVersions: undefined,
     restoreVersion: undefined,
+    mentionOutside: null,
     canvas: null,
   }
 )
@@ -163,6 +174,8 @@ const emit = defineEmits<{
   /** 资料库文档的标题改成了这样。 */
   (e: 'rename', title: string): void
   (e: 'delete'): void
+  (e: 'mention-outside-add'): void
+  (e: 'mention-outside-dismiss'): void
 }>()
 
 /** 大标题：对话的名字，或者资料库文档自己的名字（没起名时是「未命名文档」）。 */
@@ -336,6 +349,31 @@ watch(
     if (ids && ids.split(' ').some((id) => !before?.split(' ').includes(id))) props.fetchSuggestionReasons?.()
   }
 )
+// 正文里第一次出现 `<@handle>`（打开时就有，或后来有人写进来），或者翻开修改记录：
+// 读一次这份文档通知过谁，之后由取数那一层跟着存回重读。没有 @ 的文档不去问。
+let mentionsAsked = false
+watch(
+  () => props.session,
+  () => (mentionsAsked = false)
+)
+function askMentions() {
+  if (mentionsAsked) return
+  mentionsAsked = true
+  props.fetchNotifiedMentions?.()
+}
+watch(
+  () => surfaceRef.value?.editor,
+  (editor, _old, onCleanup) => {
+    if (!editor) return
+    const look = () => {
+      if (!mentionsAsked && editor.state.doc.textContent.includes('<@')) askMentions()
+    }
+    look()
+    editor.on('update', look)
+    onCleanup(() => editor.off('update', look))
+  }
+)
+watch(historyOpen, (open) => open && askMentions())
 const review = useDocReview({
   editor: () => surfaceRef.value?.editor ?? null,
   applyEdits: () => props.applyDocEdits,
@@ -459,6 +497,17 @@ defineExpose({
             @dismiss="dismissSuggestions"
           />
         </Transition>
+        <MentionOutsidePrompt
+          v-if="mentionOutside"
+          class="doc-mention-outside"
+          in-document
+          :names="mentionOutside.names"
+          :members-only="mentionOutside.membersOnly"
+          :may-add="mentionOutside.mayAdd"
+          :adding="mentionOutside.adding"
+          @add="emit('mention-outside-add')"
+          @dismiss="emit('mention-outside-dismiss')"
+        />
         <!-- Editor surface — a Feishu Docs page: white, padded, centered column. -->
         <!-- 顶栏下面、正文上面的那一格：任务把芝士这一轮的清单放在这里。 -->
         <slot name="lead" />
@@ -512,6 +561,7 @@ defineExpose({
                 :topic-list="topicList"
                 :mention-names="mentionNames"
                 :mention-people="mentionPeople"
+                :notified-mentions="notifiedMentions"
                 :can-comment="!readOnly"
                 :open-threads="openThreads"
                 :active-thread="openId"
@@ -526,7 +576,7 @@ defineExpose({
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @agent="rewrite.open($event)"
+                @agent="(spot: CommentSpot, request?: string) => rewrite.open(spot, request)"
                 @locate-comment="locateComment"
                 @error="setError"
               />
@@ -556,6 +606,7 @@ defineExpose({
         :editable="editable"
         :name-of="nameOf"
         :mention-names="mentionNames"
+        :notified-mentions="notifiedMentions"
       />
 
       <!-- Floating, never clipped: the old flow-layout alert sat below the
@@ -726,6 +777,10 @@ defineExpose({
   overflow-x: auto;
 }
 
+/* 贴在正文上方，和横条之间留一行的空。 */
+.doc-mention-outside {
+  margin-top: 8px;
+}
 .doc-error-toast {
   position: absolute;
   left: 50%;

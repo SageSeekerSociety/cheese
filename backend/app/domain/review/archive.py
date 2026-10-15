@@ -35,15 +35,16 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
+from app.domain.block.about import EventAbout, landing
+from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.delivery_events import SettleCard
+from app.domain.notice_meta import (
     EVENT_ACCEPT_STOPPED,
     SEVERITY_WARN,
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.review import notes, room_notices
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
@@ -81,12 +82,17 @@ async def close_cards_for_archived_topic(
     topic_title: str,
     overview_room_id: uuid.UUID,
     by: str,
+    settle_card: SettleCard | None,
 ) -> list[AcceptCard]:
     """终结这个房间里所有非终态的验收卡（房间自己的，和它的卡上挂着的）。返回被
     改动的卡。
 
     幂等：终态的卡不会被再动一次，所以重复归档（或先归档再取消归档再归档）
     不会重复写 note、重复发通知。调用方负责 flush/commit。
+
+    ``settle_card`` 是 `topic.archive` 一路递下来的那一个
+    （`app.domain.review.ports.SettleCard`）；``None`` 是门漏了一处，由
+    `room_notices._settle_the_card` 当场说清，不在这里静默跳过。
     """
     del topic_title  # 通知落在事件里，标题由房间自己带
     cards = await AcceptCardRepository(session).list_everywhere_in_room(topic_id)
@@ -101,7 +107,9 @@ async def close_cards_for_archived_topic(
         card.status = AcceptStatus.revoked
         # 房间关掉，卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱
         # 里说着「等你」。
-        await room_notices._settle_the_card(session, card, "archived")
+        await room_notices._settle_the_card(
+            session, card, "archived", settle_card=settle_card
+        )
         if pr_left_open(card):
             # 骑着未合并的 PR：停止跟进，但不替任何人去关它。
             notes.record(

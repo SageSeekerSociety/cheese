@@ -1,0 +1,11 @@
+{
+  "allSpaces": "全部空间",
+  "emptyTitle": "暂无{project}",
+  "joinAction": "用邀请码加入",
+  "joinBody": "邀请码由空间的创建者提供",
+  "joinCancel": "取消",
+  "joinFailed": "邀请码无效、已过期或已达使用上限",
+  "joinLabel": "邀请码",
+  "joinSubmit": "加入",
+  "joinTitle": "加入空间"
+}

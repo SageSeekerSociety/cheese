@@ -8,14 +8,15 @@ block that moves is the one concept "a file attached to a message": the upload
 download for a Word or PowerPoint deliverable (`GET
 /topics/{topic_id}/attachments/pdf`), and the web page the same container
 renders for a Word file, a workbook or a deck (`GET
-/topics/{topic_id}/attachments/html`), with the two image-mime tables and the
-size ceiling nothing else in the tree names.
+/topics/{topic_id}/attachments/html`), with the media-mime tables nothing else
+in the tree names. The size ceilings are the landing layer's
+(`library.max_bytes_for`).
 
 Where the shared names went. The three names this module used to read from
 topics.py now have their own homes: `clean_artifact_path` and
 `MAX_ARTIFACT_BYTES` are the room-file rules in `app.domain.project.room_files`,
 `source_bytes` is the API read-orchestration helper in
-`app.api.routes.topics_file_sources`, and the binding check became
+`app.api.topics_file_sources`, and the binding check became
 `TaskService.require_source_in_room`. `DbSession` is still imported from
 topics.py, the shape `admin_models.py` uses for it. A helper two groups share
 does not belong to either, so it moves out of topics.py rather than staying
@@ -34,21 +35,27 @@ module-level APIRouter under `app.api.routes`, so the same
 `APIRouter(prefix="/topics", tags=["topics"])` is all it takes.
 """
 
+import asyncio
 import uuid
 from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 
-from app.api.auth import ActorResolverDep
+from app.api.auth import (
+    ActorResolverDep,
+    MediaActorResolverDep,
+    remember_for_media,
+)
 from app.api.byte_response import media_bytes_response
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics_file_sources import source_bytes
+from app.api.topics_file_sources import source_bytes
 from app.core import raster_images, video_files
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
+from app.core.model_images import model_media_type
 from app.core.sentences import exception_text, say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
@@ -85,8 +92,6 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 # Only inert raster images and video containers may render inline.
 _IMAGE_MIME_EXT = raster_images.MEDIA_TYPE_SUFFIX
 _EXT_MEDIA_MIME = {**raster_images.SUFFIX_MEDIA_TYPE, **video_files.SUFFIX_MEDIA_TYPE}
-#: 贴进对话的一份附件多大为止；数与落地那一层同一个（`library.MAX_FILE_BYTES`）。
-MAX_ATTACHMENT_BYTES = library.MAX_FILE_BYTES
 
 #: What a rendered page may do. It is a document, not an app, and it arrives
 #: carrying inline styles and a little inline script of officecli's own: without
@@ -178,11 +183,14 @@ async def upload_attachment(
         raise ValidationError(say("attachmentOneSource"))
     if library_path is not None:
         name = clean_artifact_path(library_path)
-        # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
-        data = await library_records.read(db, topic.project_id, name)
+        # 找一次它的字节：既确认它真的在，也把大小告诉输入栏。一个字节都不读、不写。
+        ref = library.library_ref(name)
+        stored = await library_records.attachment_file(
+            db, topic.project_id, topic_id, ref
+        )
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         mime = _EXT_MEDIA_MIME.get(suffix, "application/octet-stream")
-        return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
+        return ok({"path": ref, "mime": mime, "bytes": stored.stat().st_size})
     else:
         assert file is not None
         mime = (
@@ -194,11 +202,15 @@ async def upload_attachment(
         ext = _IMAGE_MIME_EXT.get(mime)
         if mime.startswith("image/") and ext is None:
             mime = "application/octet-stream"
-        data = await file.read(MAX_ATTACHMENT_BYTES + 1)
-        if not data:
-            raise ValidationError(say("emptyFile"))
-        if len(data) > MAX_ATTACHMENT_BYTES:
-            raise ValidationError(say("attachmentTooLarge"))
+        if ext is not None:
+            # The browser's word for it is a claim; the bytes decide. One that
+            # does not decode is kept as a plain file, and never handed to a
+            # model as a picture.
+            mime = (
+                await asyncio.to_thread(model_media_type, file.file)
+                or "application/octet-stream"
+            )
+            ext = _IMAGE_MIME_EXT.get(mime)
         name = library.clean_upload_name(file.filename)
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         video_mime = video_files.SUFFIX_MEDIA_TYPE.get(suffix)
@@ -210,14 +222,26 @@ async def upload_attachment(
             mime = video_files.SUFFIX_MEDIA_TYPE[ext]
         if ext and not name.lower().endswith(ext):
             name += ext
+        # The multipart parser has already spooled the body to a temporary
+        # file; the bytes are measured there and copied from there, never read
+        # into memory whole — a phone recording runs to a couple of hundred MB.
+        # The ceiling follows the final name, so a video is held to the video
+        # ceiling and everything else to the general one.
+        data = file.file
+        size = library.size_of(data)
+        if not size:
+            raise ValidationError(say("emptyFile"))
+        library.refuse_oversize(size, name)
         if origin == "clipboard":
             path = f"uploads/{uuid.uuid4().hex}/{name}"
-            library.write_room_file(topic.project_id, topic_id, path, data)
-            return ok({"path": path, "mime": mime, "bytes": len(data)})
+            await asyncio.to_thread(
+                library.write_room_file, topic.project_id, topic_id, path, data
+            )
+            return ok({"path": path, "mime": mime, "bytes": size})
         name = await library_records.add(
             db, topic.project_id, name, data, actor.handle, topic_id
         )
-    return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
+    return ok({"path": library.library_ref(name), "mime": mime, "bytes": size})
 
 
 def _cache_control_of(path: str) -> str:
@@ -243,13 +267,20 @@ async def attachment_raw(
     topic_id: uuid.UUID,
     path: str,
     db: DbSession,
-    resolver: ActorResolverDep,
+    resolver: MediaActorResolverDep,
     request: Request,
     download: bool = False,
     task: uuid.UUID | None = None,
     source: Literal["live", "committed"] = "live",
 ) -> Response:
-    """Authorized raster images and video bytes, never executable HTML/SVG."""
+    """Authorized raster images and video bytes, never executable HTML/SVG.
+
+    A room's own file is served from disk with byte ranges, so a player seeking
+    through a long recording reads only the part it shows. A video read with the
+    ``Authorization`` header leaves a cookie for this path behind
+    (``remember_for_media``): the ``<video>`` element's own range requests
+    cannot carry the header, and the cookie is how they prove the same viewer.
+    """
     # A task's id reaches its room's roster, files and documents.
     topic = (await TopicService(db).place_or_404(topic_id)).room
     if download:
@@ -260,36 +291,47 @@ async def attachment_raw(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    topic_id = topic.id
+    room_id = topic.id
     clean = clean_artifact_path(path)
     suffix = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
     mime = _EXT_MEDIA_MIME.get(suffix)
     if mime is None and not download:
         raise ValidationError(say("attachmentMediaOnly"))
     if task is not None:
-        await TaskService(db).require_source_in_room(topic_id, task)
-    data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
+        await TaskService(db).require_source_in_room(room_id, task)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
-    return media_bytes_response(
-        data,
-        "application/octet-stream"
-        if download
-        else (mime or "application/octet-stream"),
-        {
-            "Content-Disposition": (
-                f"attachment; filename*=UTF-8''{filename}" if download else "inline"
-            ),
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; sandbox",
-            "Cache-Control": (
-                "no-store"
-                if task or source == "committed"
-                else _cache_control_of(clean)
-            ),
-        },
-        request.headers.get("range"),
-        request.headers.get("if-range"),
+    media_type = (
+        "application/octet-stream" if download else (mime or "application/octet-stream")
     )
+    headers = {
+        "Content-Disposition": (
+            f"attachment; filename*=UTF-8''{filename}" if download else "inline"
+        ),
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Cache-Control": (
+            "no-store" if task or source == "committed" else _cache_control_of(clean)
+        ),
+    }
+    if task is None and source == "live":
+        stored = await library_records.attachment_file(
+            db, topic.project_id, room_id, clean
+        )
+        response: Response = FileResponse(
+            stored, media_type=media_type, headers=headers
+        )
+    else:
+        data = await source_bytes(db, topic.project_id, room_id, clean, task, source)
+        response = media_bytes_response(
+            data,
+            media_type,
+            headers,
+            request.headers.get("range"),
+            request.headers.get("if-range"),
+        )
+    if media_type.startswith("video/"):
+        remember_for_media(response, request)
+    return response
 
 
 @router.get("/{topic_id}/attachments/pdf")

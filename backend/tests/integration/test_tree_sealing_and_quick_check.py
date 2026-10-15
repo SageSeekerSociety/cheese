@@ -5,6 +5,9 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import project_team
+from app.domain.delivery.agent import record_task_instruction
 from app.domain.project import forge
 from app.domain.project.models import Project
 from app.domain.repository.forge_files import ProjectFiles
@@ -17,6 +20,12 @@ from tests.integration.conftest import a_team
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.machine_work import machine_commits
 from tests.support import git_store
+from tests.support.review_ports import (
+    record_agent,
+    seat_instance_id,
+    settle_card,
+    task_teammate,
+)
 
 
 def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
@@ -111,7 +120,16 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
             first = await _task(session, project, room, "first")
             second = await _task(session, project, room, "second")
             delivered_head = machine_commits(project, first.id, {"a.txt": "first"})
-            service = AcceptService(session)
+            service = AcceptService(
+                session,
+                announce=announce,
+                settle_card=settle_card,
+                record_instruction=record_task_instruction,
+                seat_instance_id=seat_instance_id,
+                record_agent=record_agent,
+                task_teammate=task_teammate,
+                roster_team=project_team,
+            )
             card = await service.create_card(
                 topic_id=room,
                 task_id=first.id,
@@ -125,7 +143,10 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
                 admits_reviewer=_admits_anyone,
             )
             fake = app_world["fake"]
-            fake.seed_pr(11, head=first.branch_name)
+            # 假 PR 的标题就是卡片 subject：平台递卡时按它写 PR 标题，而两条
+            # 合并路径都比对这两行，不一致就停下（`pr_text.pr_title_matches_
+            # subject`）—— 少了它，这里会以「标题不一致」被拒。
+            fake.seed_pr(11, head=first.branch_name, title="feat: add first result")
             fake.prs[11]["head_sha"] = delivered_head
             fake.check_state_by_sha[delivered_head] = ("success", "")
             card.pr_number, card.pr_head_sha = 11, delivered_head
@@ -214,7 +235,13 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
 
     parent, child = client.portal.call(seed)
     original = git_store.head(project, child.branch_name)
-    client.portal.call(retarget_completed_dependencies, client.test_request_factory)
+    client.portal.call(
+        lambda: retarget_completed_dependencies(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
     github.update_pr.assert_awaited_once_with(123, base=parent.base_branch)
 
     async def check():
@@ -228,7 +255,13 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
 
     client.portal.call(check)
     assert git_store.head(project, child.branch_name) == original
-    client.portal.call(retarget_completed_dependencies, client.test_request_factory)
+    client.portal.call(
+        lambda: retarget_completed_dependencies(
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
+        )
+    )
     assert github.update_pr.await_count == 1
 
 
@@ -265,7 +298,11 @@ def test_retargeting_holds_no_task_lock_while_github_is_called(client, monkeypat
 
     async def race():
         sweep = asyncio.create_task(
-            retarget_completed_dependencies(client.test_request_factory)
+            retarget_completed_dependencies(
+                client.test_request_factory,
+                announce=announce,
+                record_instruction=record_task_instruction,
+            )
         )
         await asyncio.wait_for(in_flight.wait(), timeout=5)
         async with client.test_factory() as session:
@@ -297,7 +334,7 @@ def test_ready_only_changes_existing_pr_review_state(client, monkeypatch):
     async def run():
         async with client.test_factory() as session:
             task = await _task(session, project, room, "ready")
-            service = AcceptService(session)
+            service = AcceptService(session, roster_team=project_team)
             assert (await service.mark_ready(room, task.id))["ready"] is False
             github.open_pr.assert_not_awaited()
             task.pr_number, task.pr_url = 123, "https://example/pull/123"

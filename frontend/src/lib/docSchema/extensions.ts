@@ -4,7 +4,7 @@
 // Part of the document schema module (see ./index.ts): nothing here imports
 // the app.
 
-import type { AnyExtension } from '@tiptap/core'
+import type { AnyExtension, JSONContent } from '@tiptap/core'
 import type { ImageOptions } from '@tiptap/extension-image'
 import type { marked } from 'marked'
 
@@ -12,11 +12,12 @@ import { Extension, InputRule, Mark, mergeAttributes, Node } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Image from '@tiptap/extension-image'
 import { ListItem, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
-import { TableKit } from '@tiptap/extension-table'
+import { Table, TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 
+import { App } from './app'
 import { docBlocks } from './blocks'
 import { Canvas } from './canvas'
 import { CommentAnchor } from './commentAnchors'
@@ -274,16 +275,49 @@ const DocComment = Node.create({
   },
 })
 
-const DocListItem = ListItem.extend({
+// GFM splits a table row on every `|` not escaped as `\|` — inside a code
+// span too, and it takes the backslash back off before the cell is read. The
+// upstream renderer writes a cell's text as is, so a cell saying `a|b` (in
+// code or not) came back as two cells. Every `|` a cell renders is written
+// `\|`; text backslashes are already escaped by then, so nothing else reads
+// as an escape.
+const DocTable = Table.extend({
   renderMarkdown(node, helpers, context) {
-    if (context.parentType !== 'orderedList' || context.meta?.parentAttrs?.type) {
-      return ListItem.config.renderMarkdown!(node, helpers, context)
+    const renderChildren: typeof helpers.renderChildren = (nodes, separator) =>
+      helpers.renderChildren(nodes, separator).replace(/\|/g, '\\|')
+    return Table.config.renderMarkdown!(node, { ...helpers, renderChildren }, context)
+  },
+})
+
+// An item can open with an empty line and hold only a nested list (an editor
+// makes one by indenting the item below an empty bullet). Written as "- "
+// with its trailing space, marked reads that line as a paragraph saying "- "
+// and the nested list as a list of its own; written as a bare "-", it reads
+// the nested list as the item's, and an item read without its leading
+// paragraph gets the empty one back. Otherwise the Markdown of such a list
+// does not read back as the list, and no edit near it can be placed.
+const DocListItem = ListItem.extend({
+  parseMarkdown(token, helpers) {
+    const item = ListItem.config.parseMarkdown!(token, helpers) as JSONContent
+    if (item?.type === 'listItem' && item.content?.[0]?.type !== 'paragraph') {
+      return { ...item, content: [{ type: 'paragraph', content: [] }, ...(item.content ?? [])] }
     }
-    // CommonMark nests beneath the content column: "1. " needs three spaces,
-    // "10. " needs four. The upstream helper always uses two and flattens it.
-    const start = Number(context.meta?.parentAttrs?.start ?? 1)
-    const width = `${start + (context.index ?? 0)}. `.length
-    return ListItem.config.renderMarkdown!(node, { ...helpers, indent: (text) => ' '.repeat(width) + text }, context)
+    return item
+  },
+  renderMarkdown(node, helpers, context) {
+    let out: string
+    if (context.parentType !== 'orderedList' || context.meta?.parentAttrs?.type) {
+      out = ListItem.config.renderMarkdown!(node, helpers, context)
+    } else {
+      // CommonMark nests beneath the content column: "1. " needs three spaces,
+      // "10. " needs four. The upstream helper always uses two and flattens it.
+      const start = Number(context.meta?.parentAttrs?.start ?? 1)
+      const width = `${start + (context.index ?? 0)}. `.length
+      out = ListItem.config.renderMarkdown!(node, { ...helpers, indent: (text) => ' '.repeat(width) + text }, context)
+    }
+    const [first, ...rest] = node.content ?? []
+    const opensEmpty = first?.type === 'paragraph' && !first.content?.length && rest.length > 0
+    return opensEmpty ? out.replace(/^([^\n]*?)[ \t]+\n/, '$1\n') : out
   },
 })
 
@@ -344,7 +378,8 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     // module-only member, and nothing in the package calls it.
     Markdown.configure({ marked: docMarked as unknown as typeof marked }),
     DocComment,
-    TableKit.configure({ table: { resizable: false } }),
+    TableKit.configure({ table: false }),
+    DocTable.configure({ resizable: false }),
     DocListItem,
     DocOrderedList,
     TaskList,
@@ -354,6 +389,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     MarkdownLinkInput,
     DocHighlight,
     ...docBlocks,
+    App,
     // A form field holds text alone: a board belongs to a document.
     ...(opts.standalone ? [] : [Canvas]),
     // Suggested changes belong to the shared document; a form field is written

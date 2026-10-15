@@ -19,16 +19,9 @@ the block stood (`spaces.py` < `spaces_analytics.py` < `spaces_member.py` <
 `operationId` and their order exactly where they were, and the module mounts
 itself through `app.main._discover_routers` like every other route module.
 
-The helpers it shares with the routes that stay -- `_ensure_space_admin`,
-`_ensure_space_visible`, `get_space_analytics_view_service`,
-`get_space_user_realname_service`, `require_reviewed_space` and the file's
-`_logger` -- stay in `spaces.py` and are imported here, the shape
-`spaces_member.py` and `spaces_organization.py` already use. `_logger` comes
-along so the one audit warning the participant export writes keeps its channel
-(`app.api.routes.spaces`); `get_space_user_realname_service` stays behind even
-though nothing else in `spaces.py` now calls it, next to the other
-`get_space_*_service` factories. `spaces.py` imports nothing from this module,
-so there is no cycle.
+The helpers it shares with the routes that stay now live in `app/api/space_deps.py`.
+`_logger` is defined here on the `app.api.routes.spaces` channel so the one audit
+warning the participant export writes keeps its name.
 
 Nothing here reads an `app.domain.*.models` module -- the five services are
 reached through `app.domain.space.analytics_view_service`,
@@ -40,6 +33,7 @@ and the one request body `LearningOutlineRequest` are named nowhere else, so
 they move with the routes that use them.
 """
 
+import logging
 import uuid
 from typing import Annotated
 
@@ -47,15 +41,15 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.routes.spaces import (
+from app.api.response import ok
+from app.api.space_deps import (
     _ensure_space_admin,
     _ensure_space_visible,
-    _logger,
     get_space_analytics_view_service,
     get_space_user_realname_service,
     require_reviewed_space,
 )
-from app.api.routes.tasks._common import get_task_submission_service
+from app.api.task_deps import get_task_submission_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.client_address import resolved_client_address
@@ -65,6 +59,9 @@ from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
 from app.domain.task.services import TaskSubmissionService
 from app.domain.user.realname_services import UserRealNameService
+
+# Kept on the channel the participant-export audit warning always used.
+_logger = logging.getLogger("app.api.routes.spaces")
 
 router = APIRouter(
     prefix="/spaces", tags=["Spaces"], dependencies=[Depends(require_reviewed_space)]
@@ -104,7 +101,7 @@ async def get_space_analytics_overview(
         task_approved=taskApproved,
         group_by=groupBy,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -121,7 +118,7 @@ async def get_space_analytics_alerts(
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_alerts(space_id=space_id)
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -152,7 +149,7 @@ async def get_space_analytics_publishers(
         sort_by=sortBy,
         sort_order=sortOrder,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -192,7 +189,7 @@ async def get_space_analytics_participants(
         real_name=realName,
         group_by=groupBy,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -209,7 +206,7 @@ async def get_space_analytics_people(
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_people(space_id=space_id)
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -321,7 +318,7 @@ class LearningOutlineRequest(BaseModel):
 async def get_space_submission_service(
     db=Depends(get_db),
 ) -> TaskSubmissionService:
-    """空间提交队列要的提交服务: 走 `routes.tasks` 那个现成的装配点。"""
+    """空间提交队列要的提交服务: 走 `app.api.task_deps` 那个现成的装配点。"""
 
     return await get_task_submission_service(db=db)
 
@@ -373,10 +370,8 @@ async def get_space_submissions(
         space_id=space_id,
         task_id=taskId,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "submissions": items,
             "summary": summary,
             "page": {
@@ -386,8 +381,8 @@ async def get_space_submissions(
                 "nextStart": offset + returned if has_more and returned > 0 else None,
                 "total": total,
             },
-        },
-    }
+        }
+    )
 
 
 async def get_space_learning_service(db=Depends(get_db)) -> SpaceLearningService:
@@ -427,7 +422,7 @@ async def get_space_learning_filters(
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
     actor = await resolver.resolve()
     data = await service.filters(space_id=space_id, handle=_learning_handle(actor))
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -455,7 +450,7 @@ async def get_space_learning_questions(
         to_ts=to_ts,
         knowledge_point=knowledgePoint,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -481,7 +476,7 @@ async def get_space_learning_queues(
         from_ts=from_ts,
         to_ts=to_ts,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.post(
@@ -507,7 +502,7 @@ async def build_space_learning_outline(
         handle=_learning_handle(actor),
         block_ids=body.block_ids,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(

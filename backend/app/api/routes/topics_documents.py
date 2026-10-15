@@ -15,7 +15,7 @@ decided (`POST .../documents/revisions`) without Word.
 Where the shared names went. The names these four routes read from topics.py now
 have homes of their own: `clean_artifact_path` and `MAX_ARTIFACT_BYTES` are the
 room-file rules in `app.domain.project.room_files`, `source_bytes` is the API
-read-orchestration helper in `app.api.routes.topics_file_sources`, and the binding
+read-orchestration helper in `app.api.topics_file_sources`, and the binding
 check became `TaskService.require_source_in_room`. `_actor_in_place`
 is still imported from topics.py; `DbSession` comes from `app.api.request_deps`.
 `_row_numbers` and `_document_bytes` are the opposite case: nothing outside these
@@ -51,11 +51,12 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import _actor_in_place
-from app.api.routes.topics_file_sources import source_bytes
+from app.api.topics_deps import _actor_in_place
+from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
 from app.core.sentences import exception_text, say
+from app.domain.agent import execution
 from app.domain.documents.convert import (
     ConvertFailed,
     ConvertUnavailable,
@@ -251,9 +252,9 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(exception_text(exc)) from exc
     if task is not None:
-        await ProjectFiles(db, topic.project_id, task).write_bytes(
-            clean, made, expected
-        )
+        await ProjectFiles(
+            db, topic.project_id, task, executor=execution.call
+        ).write_bytes(clean, made, expected)
     else:
         await room_files.save_room_file(
             db,

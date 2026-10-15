@@ -1,0 +1,10 @@
+{
+  "accepted": "Accepted",
+  "closed": "Closed",
+  "completed": "Closed",
+  "created": "New",
+  "returned": "Returned",
+  "stalled": "Stalled",
+  "started": "Started",
+  "version": "New version"
+}

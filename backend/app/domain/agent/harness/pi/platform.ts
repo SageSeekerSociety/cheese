@@ -137,7 +137,13 @@ function registerPlatformTools(pi: any, spec: Manifest) {
             isError: true,
           };
         }
-        return text(body || "done");
+        // Pictures the tool hands back go to the model after its text.
+        const images = (result.images ?? []).map((image: { data: string; mimeType: string }) => ({
+          type: "image" as const,
+          data: image.data,
+          mimeType: image.mimeType,
+        }));
+        return { content: [...text(body || "done").content, ...images] };
       },
     });
   }

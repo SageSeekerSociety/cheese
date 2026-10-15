@@ -37,8 +37,11 @@ parts no gate can see.
     avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
     OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
     its `#fff` text is correct and "fixing" it to a token breaks it.
-- The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary)
-  > `--faint` (meta). Pick by how important the information is, not by how it looks.
+- The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary).
+  Pick by how important the information is, not by how it looks. `--faint` is not a
+  text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
+  3:1 graphics floor but never reaches 4.5:1, so text a reader reads goes to `--muted`
+  (§2.6 对比度).
 - The frame (rail, sidebars, top bar) is `--canvas`; the content pane is one
   `--surface`, so content groups by spacing and `--line`, not by white cards on
   grey. Cards get a `--line` border and **no shadow** — `--shadow-1` and
@@ -48,7 +51,8 @@ parts no gate can see.
   the BACKGROUND. Same shape for `--ok` and `--accent`. Using the mark colour for
   text is the single most common defect and fails contrast in light theme (§1.5).
 - Amber (`--accent`) is reserved for the main action of an area, unread markers,
-  the current nav position, and the brand mark (§1.6). A page may have several
+  the current nav position, the brand mark, and an @ that notified someone
+  (§1.6). A page may have several
   areas, but a group of sibling buttons has only one amber button. Not avatars,
   not status chips, not ordinary icons — ~95% of any screen is neutral.
 
@@ -153,7 +157,16 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
 
 - **Never hardcode a user-visible string** — not in a template, not in a script,
   not as a `title` / `label` / `placeholder`. Put it in
-  `frontend/src/i18n/messages/<locale>/<namespace>.json` and call `t()`.
+  `frontend/src/i18n/messages/<locale>/<namespace>.json` and call `t()`. A big
+  namespace is split into files whose path is the key path, `index.json` holding
+  the keys of that level itself: `work.room.doc.x` lives in
+  `frontend/src/i18n/messages/zh-CN/work/room/doc/index.json`. Two are flat —
+  `apiError` and `roomNotice`, whose keys the backend writes out itself — so their
+  directory is split by the backend module that says the sentence and the shard's
+  name is not part of the key:
+  `frontend/src/i18n/messages/zh-CN/apiError/usage.json` is the key `creditsMonthFull`,
+  and `frontend/src/i18n/messages/zh-CN/roomNotice/usage.json` is the key
+  `creditsRefused`.
 - **Key names are `namespace.component.role`** (`account.signIn.submit`), never an
   English sentence or a fragment of one: a sentence-shaped key means rewording
   the Chinese forces renaming the key, and the translation goes with it.

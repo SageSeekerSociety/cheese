@@ -25,6 +25,7 @@
 import hashlib
 import re
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from app.core import raster_images
@@ -334,9 +335,9 @@ PLATFORM_RULES = (
 #: 加载。文档芝士不拼这一段：它的指南是整份内联的（`document/question.py`）。
 DOC_SKILL = (
     "## 写给人读的文档\n"
-    "写方案、对比选型、周报、纪要、操作说明、分析报告这类给人读的文档之前，先加载 "
-    "`cheese-docs` 技能。要做的是给人看的页面、看板、报告页、方案对比或图表这类能看的"
-    "成品，先加载 `showcase` 技能。"
+    "写芝士文档之前，先加载 `cheese-docs` 技能：项目资料库里给人读、可以多人一起改的"
+    "文档，例如方案、对比选型、周报、纪要、操作说明、分析报告、讲义，以及任务的实况文档。"
+    "要做单独成页的网页、看板、报告页或幻灯片，先加载 `showcase` 技能。"
 )
 
 
@@ -697,59 +698,6 @@ def task_started_prompt(*, title: str, actor: str) -> str:
     )
 
 
-def task_next_step_prompt(*, title: str, task_id) -> str:
-    """What a task's agent is told when one of its deliveries lands and the
-    task goes on."""
-    return (
-        f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
-        f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
-        "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
-        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
-        "这一步做完任务目标就全部达成时 completes_task 填 true，"
-        "还有没做完的就填 false，并在交付说明里写下一步做什么。"
-    )
-
-
-def task_summary_prompt(*, title: str) -> str:
-    """What a task's agent is told when its last delivery lands: one turn to
-    write the task up, after which the task closes."""
-    return (
-        f"任务「{title}」的最后一次交付已经采纳并合并，这一轮结束后任务关闭。"
-        "这一轮只做两件事：\n"
-        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
-        "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
-        "没有就不写；过程中被推翻的计划删掉。\n"
-        "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
-        "没有处理的发现逐条列出。"
-        "没什么可补的，只写一句结果。\n"
-        "不要改动文件，不要提交审阅，不要关闭任务。"
-    )
-
-
-def main_checks_failed_prompt(
-    *, title: str, task_id, sha: str, failed: list[tuple[str, str]], reopened: bool
-) -> str:
-    """What a task's agent is told when a check its merge broke fails on the
-    default branch."""
-    checks = "\n".join(f"- {name} {url}".rstrip() for name, url in failed)
-    told = (
-        f"任务「{title}」合并到默认分支的提交 {sha[:12]} 上，下面的检查未通过，"
-        f"而它们在合并前的那个提交上是通过的：\n{checks}\n"
-    )
-    if not reopened:
-        return told + (
-            "看失败日志找到原因，把修复放进这一步一起交付。"
-            "确认是偶发失败、和这次改动无关的，在任务里说明理由。"
-        )
-    return told + (
-        "任务已重新打开。从项目最新的代码修复："
-        f'先执行 cd "$(cheese worktree {task_id})"，'
-        "看失败日志找到原因再改，修好后用 cheese_accept_request 递交付，"
-        "completes_task 填 true。确认是偶发失败、和这次改动无关的，"
-        "在任务里说明理由，然后用 cheese_close_task 关闭任务，不提交改动。"
-    )
-
-
 PLATFORM_NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话："
 
 
@@ -858,6 +806,7 @@ def attachment_prompt_line(
     embeds_images: bool,
     mime: str = "",
     gone: bool = False,
+    undecodable: bool = False,
 ) -> str:
     if gone:
         # The file was deleted after the message (see `offered_attachments`).
@@ -865,6 +814,14 @@ def attachment_prompt_line(
             f"[{author}] 发过一个文件 {path}，但这份文件已经不在了"
             f"（多半是从资料库里删掉了），这一轮读不到它的内容。"
             f"需要它的话，请对方重新发一份。"
+        )
+    if undecodable:
+        # Named or sent as a picture, but its bytes do not decode (`model_images`).
+        # Read would hand it to the model as a picture all the same, and the
+        # model's API refuses every later request of the conversation over it.
+        return (
+            f"[{author}] 发来一个文件：{path}。它看起来是图片，但内容解不开，"
+            f"不能当图片看。不要用 Read 打开它；要查看，用命令行工具检查它的字节。"
         )
     if not is_inline_image(mime):
         return f"[{author}] 发来一个文件：{path}。请用适合该格式的工具读取文件内容。"
@@ -923,6 +880,7 @@ def prompt_line(
     replied=None,
     recipient: str | None = None,
     gone: bool = False,
+    undecodable: bool = False,
 ) -> str:
     """One speaker-labelled prompt line per pending human block.
 
@@ -944,7 +902,7 @@ def prompt_line(
 
     ``replied`` is the block this one answers, when it is a reply: its quote
     follows the line (`reply_quote`). ``gone`` says the attachment's file no
-    longer exists."""
+    longer exists; ``undecodable`` that it looks like a picture and is not one."""
     if b.kind == BlockKind.attachment:
         line = attachment_prompt_line(
             b.author,
@@ -952,6 +910,7 @@ def prompt_line(
             embeds_images=embeds_images,
             mime=b.mime_type or "",
             gone=gone,
+            undecodable=undecodable,
         )
     else:
         line = message_prompt_line(
@@ -963,9 +922,19 @@ def prompt_line(
 
 
 def live_input_lines(
-    author, content, attachments, *, stored=None, replied=None, recipient=None
+    author,
+    content,
+    attachments,
+    *,
+    stored=None,
+    replied=None,
+    recipient=None,
+    undecodable: Collection[str] = frozenset(),
 ):
-    """Live input reads the same saved quote and formatting as initial input."""
+    """Live input reads the same saved quote and formatting as initial input.
+
+    ``undecodable`` holds the paths among ``attachments`` that look like
+    pictures and do not decode (`model_images`)."""
     lines = []
     if content:
         lines.append(
@@ -980,10 +949,14 @@ def live_input_lines(
     ]
     lines.extend(
         attachment_prompt_line(
-            author, f["path"], embeds_images=True, mime=f["media_type"]
+            author,
+            f["path"],
+            embeds_images=True,
+            mime=f["media_type"],
+            undecodable=f["path"] in undecodable,
         )
         for f in files
     )
     if replied is not None:
         lines.append(reply_quote(replied, recipient=recipient))
-    return lines, [f for f in files if is_inline_image(f["media_type"])]
+    return lines

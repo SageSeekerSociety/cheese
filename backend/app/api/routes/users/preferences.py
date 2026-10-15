@@ -10,6 +10,7 @@ from fastapi import (
     Query,
 )
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import (
@@ -17,6 +18,7 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
+from app.domain.dashboard.user_statistics import UserStatisticsRepository
 from app.domain.questions.repositories import (
     QuestionRepository,
     QuestionTopicRepository,
@@ -24,7 +26,6 @@ from app.domain.questions.repositories import (
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRepository,
-    UserStatisticsRepository,
 )
 from app.domain.user.services import (
     UserAuthService,
@@ -85,14 +86,12 @@ async def get_user_favorite_questions(
         "nextStart": next_start,
         "total": total,
     }
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "questions": questions,
             "page": page,
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -156,14 +155,12 @@ async def get_user_favorite_answers(
         "nextStart": next_start,
         "total": total,
     }
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "answers": answers,
             "page": page,
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -181,7 +178,7 @@ async def get_user_settings(
         "pushNotification": True,
         "theme": "light",
     }
-    return {"code": 200, "message": "OK", "data": {"settings": settings}}
+    return ok({"settings": settings})
 
 
 @router.patch(
@@ -200,7 +197,7 @@ async def update_user_settings(
         "pushNotification": payload.get("pushNotification", True),
         "theme": payload.get("theme", "light"),
     }
-    return {"code": 200, "message": "OK", "data": {"settings": settings}}
+    return ok({"settings": settings})
 
 
 @router.get(
@@ -263,11 +260,9 @@ async def list_users(
         "hasMore": returned == page_size,
         "nextStart": offset + returned if returned == page_size else None,
     }
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "users": users,
             "page": page,
-        },
-    }
+        }
+    )

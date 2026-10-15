@@ -252,7 +252,7 @@ class _Machines(Protocol):
         self, project_settings: Mapping[str, Any] | None
     ) -> tuple[str, RoomSessions | None]: ...
 
-    def owned(self, harness: str) -> RoomSessions | None: ...
+    def owned(self, harness: str, *, on_account: bool) -> RoomSessions | None: ...
 
     async def activate(self, session: SessionRef, runtime: RoomSessions) -> None: ...
 
@@ -279,7 +279,6 @@ class ModelOptions(Protocol):
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
-        platform: bool = False,
     ) -> tuple[dict, str]: ...
 
 
@@ -321,12 +320,14 @@ class TurnPreparation:
     ) -> tuple[str, RoomSessions | None]:
         """The harness this agent's turn runs and the backend it runs on.
 
-        A member's own coding agent runs its own harness on its owner's machine
-        (`owner_provider`), whatever the room chose; every other agent runs the
-        project's harness on the room's machine."""
+        A member's own coding agent runs its own harness where its model
+        connection is (`owner_provider`), whatever the room chose; every other
+        agent runs the project's harness on the room's machine."""
         owned = await owned_instance(session, agent.instance_id)
         if owned is not None:
-            return owned.harness, self.compute.owned(owned.harness)
+            return owned.harness, self.compute.owned(
+                owned.harness, on_account=owned.on_account
+            )
         return self.compute.choose(project.settings if project else None)
 
     async def launch_inputs(
@@ -441,8 +442,9 @@ class TurnPreparation:
             pinned_seat = None
             if recipient_instance_id is not None:
                 recipient = {"instance_id": str(recipient_instance_id)}
-                # A seat on the room's roster: a task's agent works the task and
-                # sits on no roster.
+                # A seat on the room's roster. A task's agent is seated when the
+                # task is given to it, and `_acting_handle` below refuses one
+                # that is not.
                 if task is None:
                     pinned_seat = await require_pinned_seat(
                         session, place.room_id, recipient_instance_id
@@ -494,8 +496,9 @@ class TurnPreparation:
             # 图片输入: every pending image is offered to the provider; whether it
             # reaches the model as a native block depends on `embeds_images`, so
             # the prompt is built below, after the provider is picked. A file
-            # that is gone is not offered (`offered_attachments`).
-            turn_images, gone_files = await offered_attachments(
+            # that is gone, or that looks like a picture and does not decode,
+            # is not offered (`offered_attachments`).
+            turn_images, gone_files, undecodable_files = await offered_attachments(
                 session, pending, topic.project_id, place.room_id
             )
 
@@ -738,6 +741,7 @@ class TurnPreparation:
                     replied=replied.get(b.id),
                     recipient=agent.handle,
                     gone=b.id in gone_files,
+                    undecodable=b.id in undecodable_files,
                 )
                 for b in pending
             )

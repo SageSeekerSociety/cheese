@@ -143,8 +143,8 @@ export const ACCEPT_CHECKS = frame(4).checks
  * 画它的是 `RoomMessage.vue` 本身：`meta.options` 躺在那儿，消息下面是一排快捷回复；
  * 有人答过之后 `meta.answer_log` 记下答过的每一句，房间画成「谁说了什么」。
  *
- * 字段形状照后端写（`block/questions.py`）：`meta.asked` 是**在等谁答**那个 handle
- * 或 null，不是布尔。
+ * 字段形状照后端写（`block/questions.py`）：`meta.asked` 是**问了谁**的 handle
+ * 列表（空的是没点名），不是布尔。
  */
 const ASK_TEXT = '这次的作业按哪种方式收？'
 const ASK_OPTIONS = [{ text: '课程平台收文件' }, { text: '发到课程邮箱' }, { text: '课上交纸质' }]
@@ -152,7 +152,7 @@ const ASK_OPTIONS = [{ text: '课程平台收文件' }, { text: '发到课程邮
 const ASK_WAITING_FOR = 'wang'
 
 function askRow(answered: { option: string; by: string } | null): RoomRow {
-  const meta: Block['meta'] = { asked: ASK_WAITING_FOR, options: ASK_OPTIONS }
+  const meta: Block['meta'] = { asked: [ASK_WAITING_FOR], options: ASK_OPTIONS }
   if (answered) {
     meta.answer_log = [
       {
@@ -583,8 +583,7 @@ function railRow(
     hiddenCount: 0,
     hiddenUnread: 0,
     unreadTotal: 0,
-    hiddenWorking: false,
-    hiddenAwaits: false,
+    hiddenLight: null,
     hiddenStalled: false,
     ...visible,
   }
@@ -597,12 +596,19 @@ export const RAIL_ROWS = {
     title: '写第 4 章的教案',
     activity: [{ member: 'cheese-a1', kind: 'working', since: 1790845200 }],
   }),
-  /** 有事等你拍板：琥珀点（未读的 @ 不点这颗灯，所以未读和它是两回事）。 */
+  /** 有事等你拍板：行尾一盏黄灯（未读的 @ 不点这盏灯，所以未读和它是两回事）。 */
   awaits: railRow({ id: 't-2', title: '决定这学期用哪本教材', awaits_me: true, joined: true }),
-  /** 收起来的父话题：开关自己带聚合色（里面有话题在等人），右边是聚上来的未读。 */
+  /** 收起来的父话题：开关自己带聚合色（里面收着的那几行里有事等你），右边是聚上来的未读。 */
   collapsed: railRow(
     { id: 't-3', title: '期末复习' },
-    { hasChildren: true, collapsed: true, hiddenCount: 12, hiddenUnread: 4, unreadTotal: 4, hiddenAwaits: true }
+    {
+      hasChildren: true,
+      collapsed: true,
+      hiddenCount: 12,
+      hiddenUnread: 4,
+      unreadTotal: 4,
+      hiddenLight: { kind: 'yellow', breathe: false },
+    }
   ),
   /** 子话题：缩进一级，左边一条竖向引导线。 */
   sub: railRow({ id: 't-4', title: '第 3 题：为什么天空是蓝的', parent_id: 't-3' }, { depth: 1, unreadTotal: 2 }),
@@ -657,7 +663,7 @@ export const RAIL_ROOT_TOPIC: Topic = {
   created_at: '2026-09-20T08:00:00Z',
 }
 
-/** 项目名下那两行（总览、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
+/** 项目名下那一行（总览、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
 export const RAIL_PAGES = [
   { key: 'workspace-overview', label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
   { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },

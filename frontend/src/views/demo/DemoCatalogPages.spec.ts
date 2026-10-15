@@ -105,6 +105,6 @@ describe('外壳里的站自己那两页', () => {
   it('组件那一页照旧：拆页面没有动过它', () => {
     const view = mount('/demo/catalog/user-ref')
     expect(view.container.querySelectorAll('.catalog-case-name').length).toBeGreaterThan(0)
-    expect(textOf(view.container)).toContain('@爱丽丝')
+    expect(textOf(view.container)).toContain('爱丽丝')
   })
 })

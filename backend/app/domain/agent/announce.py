@@ -1,7 +1,7 @@
 """平台在房间里说一句话 —— 落成系统事件，需要人动手时同时通知到人。
 
-`platform_notices` 定的是**说什么**：一行 `content` 加一份结构化 `meta`。这里定
-的是**怎么说出去**，两件事在一次调用里完成：
+`notice_meta` 定的是**说什么**：一行 `content` 加一份结构化 `meta`；要说的那几句
+人话在 `platform_notices`。这里定的是**怎么说出去**，两件事在一次调用里完成：
 
 1. 这句话落进房间的时间线（`kind=event, author_type=platform`）；
 2. 这条事件点到的那些人各收到同一句话 —— 前提是下一步确实在参与者手上。
@@ -14,7 +14,7 @@
 **调用点说的是这条事件点了谁的名，不是收件人名单，也不是要不要发（I11）。**「下一
 步在谁手上」由这一层从 `meta.who` 读出来 —— 那个码本来就是这句话：`platform`（平
 台自己在重试/自愈）、`cheese`（芝士接着处理）、`human`（等人）。三个码翻成
-`delivery/addressing.py` 的两档 `Hand`，`address()` 再答谁会收到、凭什么收到。
+`addressing.py` 的两档 `Hand`，`address()` 再答谁会收到、凭什么收到。
 
 所以一条平台正在处理的提示**发不出收件人**。它**写得出来**：`points_at` 和 `meta` 是
 两个独立参数，两个都填上不报错：`who` 说了下一步不在参与者手上，点的那些名就只是
@@ -39,39 +39,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ValidationError
 from app.core.live_frames import show_once_committed
 from app.core.sentences import notice_message, with_keys
-from app.domain.agent.mentions import _MENTION_RE
-from app.domain.agent.platform_notices import (
-    SEVERITY_INFO,
-    WHO_CHEESE,
-    WHO_HUMAN,
-    WHO_PLATFORM,
-)
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
-from app.domain.conversation.services import room_of
-from app.domain.delivery.addressing import (
+from app.domain.addressing import (
     NAMES_NOBODY,
     Event,
     Hand,
     address,
 )
-from app.domain.delivery.ledger import DeliveryEvent, deliver, settle
+from app.domain.agent.mentions import _MENTION_RE
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.about import EventAbout, landing
+from app.domain.block.asked import asked_of, settled, skipped_by
+from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import room_of
+from app.domain.delivery.ledger import deliver, settle
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import (
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.topic_membership.services import TopicMemberService
 
 #: `who` 码 → 下一步在谁手上。`who` 回答的是「谁在管这件事」，那正是投递要问的那一
 #: 句，只是用的是通知契约的词，所以这里不做第二次判断，只把同一个答案翻成投递这一
-#: 侧的词 —— 和 `addressing.hand_of(column)` 对看板那一列做的是同一件事。
+#: 侧的词 —— 和 `room_task/presentation.py` 的 `hand_of(column)` 对看板那一列做的是
+#: 同一件事。
 #:
 #: `None` 是「这条提示没说谁在管」（`meta` 不是 `notice()` 拼的）：没人声明下一步到
 #: 了参与者手上，就谁都不通知 —— 和看板上一格没挪是同一个意思。
 #:
-#: **封闭表**：`platform_notices` 多一个码而这里没跟上，查表当场抛 `KeyError`，而不
+#: **封闭表**：`notice_meta` 多一个码而这里没跟上，查表当场抛 `KeyError`，而不
 #: 是让新的码悄悄落进某一档。
 _HAND_OF_WHO: dict[str | None, Hand] = {
     WHO_PLATFORM: Hand.platform,
@@ -254,7 +257,7 @@ async def notify_question(
     block: Block,
     question: str,
     asker: str,
-    asked: str | None,
+    asked: tuple[str, ...],
 ) -> None:
     """芝士问了一个问题、这一轮就此结束 —— 通知等这个回答的人。
 
@@ -266,11 +269,11 @@ async def notify_question(
     共用一个码，前端就无法区分该按哪一种渲染。
 
     这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：这件事**停在这个问题
-    上了**，在他回答之前没有任何一方能往下走。`asked` 是那个人；None 是「这道题没
-    落在某一个人头上」（平台发起的轮次），这时它落在**整条活**上 —— 等回答的是这条
-    活的人：负责人和协作者（`_people_of_the_task`），一道题问给几个人，就是这几个人
-    各自的待办。频道和支线没有「这条活的人」，那里仍旧谁也不通知：一条多数人不需要
-    处理的通知发给整个名册，代价是他们此后关闭这个渠道。
+    上了**，在有人回答之前没有任何一方能往下走。`asked` 是芝士点名问的人（问所有
+    人时就是频道里的每个人），每人一条；空的是「这道题没落在某一个人头上」（平台
+    发起的轮次），这时它落在**整条活**上 —— 等回答的是这条活的人：负责人和协作者
+    （`_people_of_the_task`）。频道和支线没有「这条活的人」，那里仍旧谁也不通知：
+    一条多数人不需要处理的通知发给整个名册，代价是他们此后关闭这个渠道。
     """
     await deliver(
         session,
@@ -298,11 +301,8 @@ async def notify_question(
             occurred_at=block.created_at,
         ),
         address(
-            # 题落在某一个人头上时就只有他：`asked` 有值，别人不等它。
-            Event(
-                asked=asked,
-                asked_also=() if asked else _people_of_the_task(place),
-            ),
+            # 题点了名就只有被点名的人：别人不等它。
+            Event(asked_also=tuple(asked) or _people_of_the_task(place)),
             Hand.participant,
         ),
     )
@@ -355,7 +355,7 @@ async def answer_questions(
     excerpt = said[:ANSWER_EXCERPT_CHARS] + (
         "…" if len(said) > ANSWER_EXCERPT_CHARS else ""
     )
-    for notice in await _notices_now_answered(session, questions):
+    for notice in await notices_now_answered(session, questions):
         await settle(session, notice, {"answered": excerpt})
     seat = questions[-1].author
     if not recipient.get("mentioned") and seat in await TopicMemberService(
@@ -375,16 +375,19 @@ async def answer_questions(
 def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
     """Which open questions a message that replies to nothing answers.
 
+    ``questions`` are those its author may answer (`block.asked.may_answer`).
     It is said to one asker: the one it @-mentions, or else whoever asked most
-    recently. A question that waits on nobody in particular (asked in a turn the
-    platform started) is answered only by a message that names its asker:
-    people talking to each other in the room is not an answer to it.
+    recently among the questions that name someone (its author alone, among
+    others, or everyone in the channel). A question that waits on nobody in
+    particular (asked in a turn the platform started) is answered only by a
+    message that names its asker: people talking to each other in the room is
+    not an answer to it.
     """
     named = set(_MENTION_RE.findall(reply.content or ""))
     if named:
         # Addressed to the one who asked, it answers whatever is open of his.
         return [q for q in questions if named == {q.author}]
-    questions = [q for q in questions if (q.meta or {}).get("asked") == reply.author]
+    questions = [q for q in questions if asked_of(q.meta)]
     if not questions:
         return []
     seat = questions[-1].author
@@ -404,11 +407,16 @@ def _offered(meta: dict) -> dict[str, str]:
     return offered
 
 
-async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
-    """The question notices every question of which now has an answer.
+async def notices_now_answered(
+    session: AsyncSession, questions: list[Block], *, of: str | None = None
+):
+    """The question notices every question of which is now settled
+    (`block.asked.settled`), ``questions`` among them.
 
     One `cheese_ask` call sends one notice for all its questions (keyed by the
     first, `meta.notice_id`); it is settled only once none of them is open.
+    ``of`` asks the same for one person: a question he skipped is no longer
+    open for him, though it still is for the others it asks.
     """
 
     done = []
@@ -424,7 +432,9 @@ async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
         pending = [
             q
             for q in siblings
-            if q not in questions and not (q.meta or {}).get("answer_log")
+            if q not in questions
+            and not settled(q.meta)
+            and (of is None or of not in skipped_by(q.meta))
         ]
         if not pending:
             done.append(uuid.UUID(notice))

@@ -19,8 +19,9 @@ from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
-from app.domain.delivery.ledger import DeliveryEvent, dedup_key
+from app.domain.delivery.ledger import dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
@@ -84,6 +85,27 @@ async def instance_for_seat(session, project_id, seat):
     )
 
 
+async def seat_instance_id(session, project_id, seat) -> uuid.UUID | None:
+    """这个项目里 ``seat`` 那个席位的实例 id；这个项目里没有它就返回 ``None``。
+
+    要这一行的调用点都在第 4 层以上（`review.room_notices`），认不出
+    ``AgentInstance`` 这个第 5 层的模型，所以要递出去的是 id —— 那一行其余字段没有
+    一处用得上。席位还在不在是另一回事（`active_seat_instance_id`）。"""
+    instance = await instance_for_seat(session, project_id, seat)
+    return None if instance is None else instance.id
+
+
+async def active_seat_instance_id(session, project_id, seat) -> uuid.UUID | None:
+    """同上，但席位不在了也当没有。
+
+    调用它的那一处（`routine.service`）分不出这两件事：都不该开工，说给主人的那句
+    话也一样。"""
+    instance = await instance_for_seat(session, project_id, seat)
+    if instance is None or not instance.is_active:
+        return None
+    return instance.id
+
+
 async def record_agent(
     session, event: DeliveryEvent, *, conversation_id, instance_id, content
 ):
@@ -111,21 +133,34 @@ async def record_agent(
 
 
 async def record_task_instruction(
-    session, event: DeliveryEvent, *, task: Task, content: str
-):
+    session, event: DeliveryEvent, *, task_id: uuid.UUID, content: str
+) -> uuid.UUID | None:
     """Keep an instruction for a task's own session until it is delivered.
 
     Addressed to the conversation, not the room: ``conversation_id`` is the task's
     id, which is what the runner runs a turn in, and the agent is the one working
     the task (its own pick, else its room's) — the one that answers there.
+
+    收的是 id 不是那一行：递进来的那几处（`block.editing`、`review` 的三处）
+    手里都有行，可它们的 `ports.py` 一旦写下 `Task` 就从自己那一层往
+    `room_task` 伸一条边 —— `block` 那条正好把 C3 的环封上。行归本包读，
+    它本来就在读这张表。
+
+    Returns the instance it addressed, or ``None`` when the task's project or
+    room is gone and nothing was recorded. A caller that also addresses a
+    configured seat compares against it: one event must not start two turns of
+    the same agent (``review.room_notices._tell_the_dispatch_seat``).
     """
     # deferred-import: Topic is bound at the top of this module already
     from app.domain.topic.models import Topic
 
+    task = await session.get(Task, task_id)
+    if task is None:
+        return None
     project = await session.get(Project, task.project_id)
     room = await session.get(Topic, task.room_id)
     if project is None or room is None:
-        return
+        return None
     agent = await AgentInstanceService(session).for_task(
         project, room, task.agent_handle
     )
@@ -147,6 +182,7 @@ async def record_task_instruction(
         )
         .on_conflict_do_nothing(index_elements=["dedup_key"])
     )
+    return agent.instance_id
 
 
 async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
@@ -198,6 +234,12 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 ):
                     row.state = "failed"
                     row.last_error = "The task is no longer open"
+                    continue
+                if (row.payload or {}).get(CLOSES_TASK) and task.closing_since is None:
+                    # The write-up of a task that went on instead of closing
+                    # (`review.task_landing`): it has nothing to write up.
+                    row.state = "failed"
+                    row.last_error = "The task went on instead of closing"
                     continue
             else:
                 # A room's own line, or one of its 支线: the roster is the room's.
@@ -310,8 +352,12 @@ async def redispatch_undelivered(
     return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat):
-    """Renew admission ownership while queued; settle only this claimed attempt."""
+async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat, machines=None):
+    """Renew admission ownership while queued; settle only this claimed attempt.
+
+    ``machines`` closes a finished task's room checkouts with it
+    (`room_task.ports.SweepCheckouts`), handed in by whoever runs the turn.
+    """
 
     async def renew():
         while True:
@@ -359,10 +405,14 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat):
                         "automatic replay is withheld"
                     )
                 row.lease_until = None
-                # The turn that writes a finished task up is over, however it
-                # went: the task closes now (`room_task.closing`).
+                # The instruction to write a finished task up is over, however
+                # it went. A turn it started that the session still runs closes
+                # the task when it ends (`room_task.closing.turns_ended`); with
+                # none running, the task closes now.
                 if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
-                    await close_after_summary(session, row.conversation_id, chat)
+                    await close_after_summary(
+                        session, row.conversation_id, chat, machines=machines
+                    )
             await session.commit()
 
 

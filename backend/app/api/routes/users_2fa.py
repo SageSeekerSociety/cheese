@@ -18,7 +18,7 @@ is named anywhere else in the tree.
 
 What stays behind, and why. `_spend_sudo_ticket` is not this group's: it is
 what every sudo-gated route in the tree redeems a ticket through, so it lives
-in `users_common.py` with the reservation scope it claims in, and this module
+in `users_deps.py` with the reservation scope it claims in, and this module
 imports it together with the shared SudoTicketRequest. `GET /users/{userId}/2fa/status`
 reads whether the account has a passkey through `PasskeyService`, using the same
 request session as the second-factor status query.
@@ -52,7 +52,8 @@ from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
-from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
+from app.api.response import ok
+from app.api.users_deps import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
@@ -118,23 +119,22 @@ async def enable_user_2fa(
     if code:
         if not secret:
             raise BadRequestError("secret is required for confirmation")
-        ok = await totp_service.enable_2fa(auth_user.user_id, secret, code)
-        if not ok:
+        enabled = await totp_service.enable_2fa(auth_user.user_id, secret, code)
+        if not enabled:
             raise UnprocessableEntityError("Invalid or expired verification code")
         backup_codes = await totp_service.generate_backup_codes(auth_user.user_id)
         # A browser trusted for an earlier factor has not proved this one.
         await TrustedDeviceService(session).revoke_all(auth_user.user_id)
         otpauth_url = totp_service.get_provisioning_uri(secret, account_name)
-        return {
-            "code": 201,
-            "message": "2FA enabled successfully",
-            "data": {
+        return ok(
+            {
                 "secret": secret,
                 "otpauth_url": otpauth_url,
                 "qrcode": _qr_data_uri(otpauth_url),
                 "backup_codes": backup_codes,
             },
-        }
+            "2FA enabled successfully",
+        )
 
     await _spend_sudo_ticket(
         payload.get("sudoTicket"),
@@ -143,16 +143,15 @@ async def enable_user_2fa(
     )
     new_secret = await totp_service.offer_secret(auth_user.user_id)
     otpauth_url = totp_service.get_provisioning_uri(new_secret, account_name)
-    return {
-        "code": 200,
-        "message": "TOTP secret generated successfully",
-        "data": {
+    return ok(
+        {
             "secret": new_secret,
             "otpauth_url": otpauth_url,
             "qrcode": _qr_data_uri(otpauth_url),
             "backup_codes": [],
         },
-    }
+        "TOTP secret generated successfully",
+    )
 
 
 async def _notify_2fa_disabled(email: str | None, username: str) -> None:
@@ -248,11 +247,7 @@ async def disable_user_2fa(
     user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
     await _notify_2fa_disabled(user.email, user.username)
 
-    return {
-        "code": 200,
-        "message": "2FA disabled successfully",
-        "data": {"success": True},
-    }
+    return ok({"success": True}, "2FA disabled successfully")
 
 
 @router.get(
@@ -272,14 +267,13 @@ async def get_user_2fa_status(
     enabled = await totp_service.is_2fa_enabled(user_id)
     has_passkey = await PasskeyService.for_session(session).has_passkey(user_id)
 
-    return {
-        "code": 200,
-        "message": "Get 2FA status successfully",
-        "data": {
+    return ok(
+        {
             "enabled": enabled,
             "has_passkey": has_passkey,
         },
-    }
+        "Get 2FA status successfully",
+    )
 
 
 @router.post(
@@ -307,8 +301,7 @@ async def regenerate_backup_codes(
         purpose=SudoPurpose.TWO_FA_BACKUP_CODES,
     )
     backup_codes = await totp_service.generate_backup_codes(user_id)
-    return {
-        "code": 201,
-        "message": "New backup codes generated successfully",
-        "data": {"backup_codes": backup_codes},
-    }
+    return ok(
+        {"backup_codes": backup_codes},
+        "New backup codes generated successfully",
+    )

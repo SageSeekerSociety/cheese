@@ -22,9 +22,8 @@ from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import private_owners
 from app.domain.memory.models import MemoryDreamRunStatus
-from app.domain.project.services import ProjectService
 from app.domain.usage.repositories import UsageRepository
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio
 
@@ -33,7 +32,9 @@ _NOW = datetime(2026, 9, 27, 12, 0, tzinfo=UTC)
 
 async def _project(session, handle: str = "alice"):
     await registered(session, handle)
-    project = await ProjectService(session).create(name="记忆整理", owner_handle=handle)
+    project = await project_service(session).create(
+        name="记忆整理", owner_handle=handle
+    )
     await session.flush()
     return project
 

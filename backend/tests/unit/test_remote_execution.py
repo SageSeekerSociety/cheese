@@ -301,6 +301,38 @@ def test_a_platform_receipt_never_becomes_an_empty_text_block():
     """)
 
 
+def test_a_platform_tools_pictures_reach_the_model_in_the_messages_api_shape():
+    """A mini-app's save hands back pictures after its text. The build gives
+    the plugin an MCP image block already in the Messages API's shape (seen on
+    2.1.299), and passes on what the plugin returns as it is."""
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const receipt = {result: {stdout: '已保存小程序 k1 的第 1 版。', stderr: ''}};
+        const api = {
+          session: {id: async () => 'session'},
+          env: {get: async () => undefined},
+          mcp: {call: async () => ({content: [
+            {type: 'text', text: JSON.stringify(receipt)},
+            {type: 'image', source: {type: 'base64', media_type: 'image/png',
+                                     data: 'd2lkZQ=='}},
+          ]})},
+        };
+        const call = {tool: 'mcp__native__cheese_app_save', tool_use_id: 'save',
+                      code: '<p>x</p>'};
+        assert.deepEqual(await handlers['tool.call'](api, call), {
+          result: [
+            {type: 'text', text: '已保存小程序 k1 的第 1 版。'},
+            {type: 'image', source: {type: 'base64', media_type: 'image/png',
+                                     data: 'd2lkZQ=='}},
+          ],
+        });
+    """)
+
+
 def test_large_platform_receipt_reaches_the_caller_as_json():
     _run_proxy("""
         import assert from 'node:assert/strict';
@@ -2064,31 +2096,6 @@ class RemoteExecutionTests(unittest.TestCase):
             {"command": "rg REMOTE_SEARCH_MARKER ."},
         )
         self.assertIn("REMOTE_SEARCH_MARKER", json.dumps(grep))
-
-
-def test_prepare_adds_the_teammate_sync_hook_exactly_once():
-    """seed 的 settings.json 可能来自任一架构、任何年代：中央会话这条路的
-    发现层在这里确定性地补一份，而且重开多少次都只有一份。"""
-    from app.domain.agent.harness.claude_code.remote_execution import client
-
-    hooks = {
-        "SessionStart": [
-            {
-                "hooks": [
-                    {"type": "command", "command": "cheese-hook"},
-                    {"type": "command", "command": "cheese sync-agents"},
-                ]
-            }
-        ]
-    }
-    client._ensure_sync_agents_hook(hooks)
-    client._ensure_sync_agents_hook(hooks)
-    for event in ("SessionStart", "UserPromptSubmit"):
-        commands = [
-            hook["command"] for group in hooks[event] for hook in group["hooks"]
-        ]
-        assert commands.count("cheese sync-agents || true") == 1
-    assert hooks["SessionStart"][0]["hooks"][0]["command"] == "cheese-hook"
 
 
 if __name__ == "__main__":

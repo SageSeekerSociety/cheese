@@ -388,7 +388,7 @@ async def test_reuse_checks_and_launcher_transfer_do_not_wait_for_each_other(
         assert method == "ping"
         return await operation("ping", {"alive": True})
 
-    async def tunnel(_screen, _home):
+    async def tunnel(_screen, _home, _seat):
         return await operation("tunnel", False)
 
     async def refresh(*_arguments, **_keywords):
@@ -652,6 +652,37 @@ async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(
             room.arguments["agent_handle"],
         )
     ]
+
+
+async def test_a_task_s_screen_is_judged_by_its_own_tunnel_helper():
+    """A task's session and its room's session of the same agent each start a
+    helper of their own. The room's session ending stops its helper; the task's
+    `claude` keeps running on the task's helper, and its next turn must not be
+    thrown away because the room's helper is gone."""
+    project, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    home = device_home_dir(project, room_id)
+    room_seat = seat_dir(home, "cheese")
+
+    class Hub(FakeHub):
+        async def exec(self, device_id, argv, *, env=None, **kwargs):
+            if env and "CHEESE_TUNNEL_PROBE_DIR" in env:
+                # The room's helper ended with the room's session; every other
+                # helper on the machine is listening.
+                self.probed_dirs.append(env["CHEESE_TUNNEL_PROBE_DIR"])
+                verdict = (
+                    "down" if env["CHEESE_TUNNEL_PROBE_DIR"] == room_seat else "up"
+                )
+                return {"stdout": verdict, "stderr": "", "exit": 0}
+            return await super().exec(device_id, argv, env=env, **kwargs)
+
+    hub = Hub()
+    room = _room(hub, project_id=project, env={"CHEESE_RESOURCE_ID": str(room_id)})
+    task = dict(topic_id=task_id, seat=seat_key("cheese", task_id))
+    first = await room.ensure(**task)
+
+    assert await room.ensure(**task) is first
+    assert hub.closed == []
+    assert hub.reasserted == [first.sid]
 
 
 @pytest.mark.parametrize(
@@ -1841,6 +1872,52 @@ async def test_a_deferred_relaunch_does_not_release_helpers_into_the_old_session
         argv == ["python3", "-"] and _release_step(stdin or "") == "stage"
         for argv, stdin in hub.execs
     )
+
+
+async def test_a_screen_started_for_another_session_is_not_borrowed_while_busy(
+    caplog,
+):
+    """反馈 FB-99：一个任务从芝士派换回芝士，两条会话落在同一个座位上。
+
+    The process kept calling for the session it was started for while each turn
+    rewrote its credential with the other's, and every command and file call it
+    made was refused with 「Execution credential does not own this session」
+    (2026-10-13 00:42). A busy process is still not borrowed: its own work is
+    for a session this turn is not.
+    """
+    hub = FakeHub()
+    room = _executor_room(hub, target={"kind": "deferred", "session_id": "pi"})
+    first = await room.ensure()
+    hub.ping = {"alive": True, "working": True, "tasks": {"bash-1": "local_bash"}}
+
+    with caplog.at_level("INFO"):
+        taken = await room.ensure(
+            env={
+                "CHEESE_EXECUTION_TARGET": json.dumps(
+                    {"kind": "deferred", "session_id": "cheese"}
+                )
+            }
+        )
+
+    assert taken.sid != first.sid
+    assert hub.closed == [first.sid]
+    (line,) = _retired(caplog)
+    assert "reason=another_session" in line
+
+
+async def test_the_same_sessions_busy_screen_is_still_reused(caplog):
+    """The session the process was started for keeps it while it works."""
+    hub = FakeHub()
+    target = {"kind": "deferred", "session_id": "cheese"}
+    room = _executor_room(hub, target=target)
+    first = await room.ensure()
+    hub.ping = {"alive": True, "working": True, "tasks": {}}
+
+    again = await room.ensure(
+        env={"CHEESE_EXECUTION_TARGET": json.dumps({**target, "workspace": "/w"})}
+    )
+
+    assert again is first and hub.closed == []
 
 
 # --- seats: a room's teammates have one session each -------------------------

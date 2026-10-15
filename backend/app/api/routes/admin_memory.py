@@ -4,7 +4,7 @@
 看的**，不是给房间里的 agent 用的：迁移是一次性的（旧表搬进文件树，搬完就完），
 读数是试点的（「一周里几乎没人读记忆正文」这件事要有个数，不能靠感觉）。`main.py`
 的自动发现是「一个模块一个 router」，所以两件都不大、都要一个门的东西合成一个模块
-——门是共用的 `admin_common.PlatformAdminDep`。
+——门是共用的 `admin_deps.PlatformAdminDep`。
 
 迁移那半边的规矩在 `domain/memory/migration.py`，这里只把它的四个动作露出来：
 
@@ -27,10 +27,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Query
 
+from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import PlatformAdminDep
 from app.core.config import settings
+from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import project_team
 from app.domain.memory.migration_service import MemoryMigrationService
 from app.domain.memory.models import MemoryMigrationPlan
 from app.domain.memory.reads import body_reads
@@ -85,7 +87,7 @@ async def dry_run_migration(
     db: DbSession,
 ):
     """读旧表、问模型、出一份报告。**这一步一个字都不写进新树。**"""
-    service = MemoryMigrationService(db)
+    service = MemoryMigrationService(db, announce=announce, team=project_team)
     row = await service.dry_run(project_id, by=admin)
     await db.commit()
     return ok(_plan_out(row, with_report=True), "报告好了，等复核")
@@ -97,7 +99,7 @@ async def list_migration_plans(
     admin: PlatformAdminDep,
     db: DbSession,
 ):
-    plans = await MemoryMigrationService(db).plans_of(project_id)
+    plans = await MemoryMigrationService(db, announce=announce).plans_of(project_id)
     return ok([_plan_out(row) for row in plans])
 
 
@@ -107,7 +109,7 @@ async def get_migration_plan(
     admin: PlatformAdminDep,
     db: DbSession,
 ):
-    row = await MemoryMigrationService(db).get_or_404(plan_id)
+    row = await MemoryMigrationService(db, announce=announce).get_or_404(plan_id)
     return ok(_plan_out(row, with_report=True))
 
 
@@ -118,7 +120,7 @@ async def approve_migration(
     db: DbSession,
 ):
     """复核人点头。**别人点不动**（见 `settings.memory_migration_reviewer`）。"""
-    row = await MemoryMigrationService(db).approve(plan_id, by=admin)
+    row = await MemoryMigrationService(db, announce=announce).approve(plan_id, by=admin)
     await db.commit()
     return ok(_plan_out(row, with_report=True), "复核过了，可以落笔")
 
@@ -130,7 +132,9 @@ async def apply_migration(
     db: DbSession,
 ):
     """按复核过的那份计划写进记忆树。一条冲突就整次不写。"""
-    row = await MemoryMigrationService(db).apply(plan_id, by=admin)
+    row = await MemoryMigrationService(db, announce=announce, team=project_team).apply(
+        plan_id, by=admin
+    )
     await db.commit()
     return ok(_plan_out(row), "搬完了")
 

@@ -46,7 +46,6 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import BlockRepository
 from app.api.task_instructions import (
     dispatch,
     source_text,
@@ -54,14 +53,17 @@ from app.api.task_instructions import (
     tell_task,
 )
 from app.api.task_origin import discussion, materials, materials_text
+from app.api.topics_deps import BlockRepository
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.project_feed import UNREAD, tell_project_once_committed
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import project_team, seat_handles, seat_project
 from app.domain.conversation.services import room_of
 from app.domain.room_task.schemas import TaskOut
+from app.domain.thread.adapters import root_block_of
 from app.domain.topic.services import TopicService
 
 # Per-project unread map lives under /api/projects (a "/unread" path under
@@ -176,7 +178,9 @@ async def project_private_unread(
     recipient = await resolver.resolve_recipient(
         requested=handle, project_id=project_id, allow_anonymous=False
     )
-    counts = await TopicService(db).private_unread_counts(project_id, recipient)
+    counts = await TopicService(db).private_unread_counts(
+        project_id, recipient, seat_handles=seat_handles
+    )
     return ok(counts)
 
 
@@ -213,6 +217,9 @@ async def upgrade_block(
     room, task = await TopicService(db).upgrade_block_to_place(
         block_id=block_id,
         created_by=actor.handle,
+        seat_project=seat_project,
+        team=project_team,
+        main_line=root_block_of,
     )
     # 转出来即已开始：审阅人默认就是转它的人，不用再挑一次。
     await start_task_at_once(db, task, by=actor.handle)

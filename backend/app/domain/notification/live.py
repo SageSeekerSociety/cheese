@@ -1,11 +1,13 @@
 """Who, in this process, is listening for their notices right now.
 
-The desktop app holds one connection per signed-in person
-(`app/api/routes/notifications_live.py`). When a notice that browser push would
-carry (`PUSHABLE`) is committed for someone, their connections are told to look
-again; they read what is new themselves, from the same query a reconnecting app
-catches up with. So nothing is sent that a rolled-back transaction never wrote,
-and the live path and the catch-up can never disagree about what a notice says.
+Two kinds of connection listen (`app/api/routes/notifications_live.py`). The
+desktop app holds one per signed-in person and is told about a notice browser
+push would carry (`PUSHABLE`); a browser holds one per person and is told about
+any new row in the inbox, so the feed it shows can say there is something new.
+Either way the connection is only told to look again; it reads what is new
+itself, from the same query a reconnecting one catches up with. So nothing is
+sent that a rolled-back transaction never wrote, and the live path and the
+catch-up can never disagree about what a notice says.
 
 The backend is one process (the chat broker, `agent/runtime.py`, is in-process
 too), so an in-process registry reaches every connection. During a deploy two
@@ -20,9 +22,9 @@ import asyncio
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import after_own_commit
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push import PUSHABLE, away_text, push_link, push_text
 from app.domain.notification.repositories import NotificationRepository
@@ -32,37 +34,53 @@ from app.domain.user.services import languages_by_ids
 #: system's notification list should not fill up.
 NOTICES_AT_ONCE = 10
 
-_listeners: dict[int, set[asyncio.Event]] = {}
+#: Connections waiting for a pushable notice (the desktop app).
+_pushable: dict[int, set[asyncio.Event]] = {}
+#: Connections waiting for any new row in the inbox (a browser's feed).
+_inbox: dict[int, set[asyncio.Event]] = {}
 
 
 @contextmanager
-def listening(user_id: int) -> Iterator[asyncio.Event]:
-    """An event that is set whenever `user_id` may have something new."""
+def listening(user_id: int, *, inbox: bool = False) -> Iterator[asyncio.Event]:
+    """An event that is set whenever `user_id` may have a new pushable notice,
+    or, with `inbox`, any new row in their inbox."""
+    registry = _inbox if inbox else _pushable
     woken = asyncio.Event()
-    _listeners.setdefault(user_id, set()).add(woken)
+    registry.setdefault(user_id, set()).add(woken)
     try:
         yield woken
     finally:
-        mine = _listeners.get(user_id)
+        mine = registry.get(user_id)
         if mine is not None:
             mine.discard(woken)
             if not mine:
-                del _listeners[user_id]
+                del registry[user_id]
 
 
-def wake(user_ids: Iterable[int]) -> None:
+def wake(registry: dict[int, set[asyncio.Event]], user_ids: Iterable[int]) -> None:
     for user_id in user_ids:
-        for woken in _listeners.get(user_id, ()):
+        for woken in registry.get(user_id, ()):
             woken.set()
 
 
-def wake_after_commit(session: AsyncSession, user_ids: set[int]) -> None:
-    """Wake these people's connections once `session` commits, not before."""
-    if not user_ids:
+def wake_after_commit(
+    session: AsyncSession, *, inbox: set[int], pushable: set[int]
+) -> None:
+    """Wake these people's connections once `session` commits, not before:
+    `inbox` got a new row, `pushable` got one browser push would carry."""
+    if not inbox and not pushable:
         return
-    event.listen(
-        session.sync_session, "after_commit", lambda _s: wake(user_ids), once=True
-    )
+
+    def woken() -> None:
+        wake(_inbox, inbox)
+        wake(_pushable, pushable)
+
+    after_own_commit(session, woken)
+
+
+async def latest_in_inbox(db: AsyncSession, user_id: int) -> int | None:
+    """The newest row in `user_id`'s inbox, of any type."""
+    return await NotificationRepository(db).latest_id_for_user(user_id)
 
 
 async def behind(db: AsyncSession, user_id: int, cursor: int) -> bool:

@@ -23,55 +23,55 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.core.sentences import NoticeText, say
-from app.domain.agent.platform_notices import (
+from app.domain.block.repositories import BlockRepository as BlockRepository
+from app.domain.notice_meta import (
     EVENT_ACCEPT_DISMISSED as EVENT_ACCEPT_DISMISSED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE as EVENT_ACCEPT_DONE,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_ACCEPT_STOPPED as EVENT_ACCEPT_STOPPED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_CARD_REDESCRIBED as EVENT_CARD_REDESCRIBED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_CARD_VOIDED as EVENT_CARD_VOIDED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_FORCE_MERGED as EVENT_FORCE_MERGED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_MERGE_REFUSED as EVENT_MERGE_REFUSED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_MIGRATION_COLLISION as EVENT_MIGRATION_COLLISION,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_PR_CLOSED as EVENT_PR_CLOSED,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     SEVERITY_ERROR as SEVERITY_ERROR,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     SEVERITY_INFO as SEVERITY_INFO,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     SEVERITY_WARN as SEVERITY_WARN,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     WHO_CHEESE as WHO_CHEESE,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     WHO_HUMAN as WHO_HUMAN,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     WHO_PLATFORM as WHO_PLATFORM,
 )
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     notice as notice,
 )
-from app.domain.block.repositories import BlockRepository as BlockRepository
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository as ProjectRepository
 from app.domain.review.models import (
@@ -81,7 +81,7 @@ from app.domain.topic.models import Topic
 from app.domain.topic.repositories import TopicRepository as TopicRepository
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
-    pass
+    from app.domain.repository.ports import ExecutorCall
 
 from app.domain.project.protection import branch_protection_of, github_repo_snapshot
 from app.domain.review import services as pkg
@@ -367,16 +367,26 @@ def _one_deliverable(deliver: str | None, deliver_url: str | None) -> None:
 
 
 async def _read_deliverable(
-    session: AsyncSession, project_id: uuid.UUID, task_id: uuid.UUID, path: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    path: str,
+    *,
+    executor: ExecutorCall | None = None,
 ) -> tuple[str, bytes]:
     """把交付物从这一轮的工作目录里读出来，连同它的文件名。
 
     读的是任务那棵树 —— 交付物是这条活做出来的，主干上还没有它。
+
+    ``executor`` 是那台机器上的文件操作（`repository.ports.ExecutorCall`），谁叫醒
+    这条就谁给（`AcceptService`，路由构造时递进来）。递卡不带交付物时不接线。
     """
     # deferred-import: tests replace this name on app.domain.repository.forge_files
     from app.domain.repository.forge_files import ProjectFiles
 
-    data, _ = await ProjectFiles(session, project_id, task_id).raw(path, "live")
+    data, _ = await ProjectFiles(session, project_id, task_id, executor=executor).raw(
+        path, "live"
+    )
     if len(data) > pkg._DELIVERABLE_MAX_BYTES:
         raise ValidationError(
             say(

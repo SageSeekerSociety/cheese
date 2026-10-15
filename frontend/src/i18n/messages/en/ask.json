@@ -4,14 +4,32 @@
     "recommended": "Recommended",
     "answered": "{name}: {text}",
     "noneOfThese": "None of these",
-    "other": "Other",
-    "otherPlaceholder": "Write your own answer",
+    "otherPlaceholder": "Other answer",
     "otherSend": "Send",
     "closed": "Closed — no longer waiting for an answer",
     "withdraw": "Withdraw",
     "withdrawAria": "Withdraw your answer “{text}”",
     "withdrawTitle": "Withdraw this answer?",
     "withdrawBody": "The question goes back to waiting for a reply, and anyone can pick again. The message you sent stays in the room.",
-    "withdrawFailed": "Could not withdraw it — try again"
+    "withdrawFailed": "Could not withdraw it — try again",
+    "skip": "Skip this question",
+    "skipped": "{name}: skipped",
+    "undoSkip": "Undo",
+    "undoSkipAria": "Undo the skip and answer this question",
+    "skipFailed": "Couldn't skip the question",
+    "who": {
+      "you": "{asker} asks you",
+      "youAnd": "{asker} asks you and {people}",
+      "people": "{asker} asks {people}",
+      "all": "{asker} asks everyone",
+      "anyone": "{asker} asks"
+    },
+    "whoBare": {
+      "you": "Asks you",
+      "youAnd": "Asks you and {people}",
+      "people": "Asks {people}",
+      "all": "Asks everyone",
+      "anyone": "Question"
+    }
   }
 }

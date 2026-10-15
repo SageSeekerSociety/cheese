@@ -16,7 +16,6 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
-from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from app.domain.usage import pricing
@@ -26,13 +25,13 @@ from app.domain.usage.models import IngestCheckpoint, ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
 from app.domain.usage.subscription_ingest import ingest_once
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 
 async def _seed(factory, credits: float | None = 100.0):
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
@@ -373,7 +372,7 @@ async def test_a_row_for_a_missing_project_holds_the_log_until_it_appears(
 
     # The project lands → the next pass picks both rows up, once each.
     async with business_db_factory() as session:
-        await ProjectService(session).create(
+        await project_service(session).create(
             name="late", owner_handle="u", project_id=late
         )
         await Ledger(session).grant_earmark(
@@ -492,3 +491,36 @@ async def test_a_call_made_during_a_tasks_turn_records_that_turn(
         (r.conversation_id, r.turn_id, r.total_tokens)
         for r in await _rows(business_db_factory, pid)
     ] == [(task_id, first, 15), (task_id, second, 25)]
+
+
+@pytest.mark.anyio
+async def test_a_line_admission_named_as_the_dream_lands_as_the_dream(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """The proxy writes the kind admission named for a call on its line; the
+    dream's lands under the dream's kind, still charged to the project. Any
+    other kind a line carries is not a kind the books know, and lands as a
+    room turn's."""
+    from app.domain.memory import dream
+    from app.domain.usage.subscription_ingest import LINE_KINDS
+
+    assert LINE_KINDS == {dream.DREAM_KIND}
+    _price(monkeypatch, {"claude-opus-5": OPUS})
+    pid, tid = await _seed(business_db_factory)
+
+    def line(kind, out):
+        return json.dumps(json.loads(_row(pid, tid, out=out)) | {"kind": kind}) + "\n"
+
+    log = tmp_path / "usage.jsonl"
+    log.write_text(
+        line(dream.DREAM_KIND, 50) + line("free", 60) + _row(pid, tid, out=70)
+    )
+
+    assert await ingest_once(business_db_factory, log) == {"landed": 3, "skipped": 0}
+    rows = await _rows(business_db_factory, pid)
+    assert [(r.kind, r.output_tokens) for r in rows] == [
+        (dream.DREAM_KIND, 50),
+        ("chat", 60),
+        ("chat", 70),
+    ]
+    assert all(r.credits > 0 and r.team_id is not None for r in rows)

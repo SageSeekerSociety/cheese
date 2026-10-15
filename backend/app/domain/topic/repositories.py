@@ -1,8 +1,10 @@
 """Topic data access."""
 
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Literal
 
 from sqlalchemy import (
@@ -11,6 +13,8 @@ from sqlalchemy import (
     String,
     Uuid,
     and_,
+    any_,
+    bindparam,
     case,
     cast,
     column,
@@ -20,7 +24,7 @@ from sqlalchemy import (
     select,
     table,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -30,7 +34,6 @@ from sqlalchemy.sql.elements import (
     UnaryExpression,
 )
 
-from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.conversation.models import Conversation
 from app.domain.identity.handles import (
@@ -50,6 +53,7 @@ from app.domain.topic.models import (
     TopicMembership,
     TopicProgress,
     TopicReadState,
+    TopicStatus,
 )
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
@@ -197,6 +201,104 @@ def _readable_by(user_handle: str):
     )
 
 
+#: 「有人回复了我、我还没处理」（侧栏那盏黄灯）那条查询的房间参数。房间按百计，所以
+#: 走数组参数；`expanding` 让它在 SQL 里照样摊成 `IN ($1, $2, …)` —— 和原先直接
+#: `in_(room_ids)` 生成的文本逐字节相同，执行计划不变。
+_replied_rooms = bindparam("replied_rooms", type_=Uuid, expanding=True)
+_replied_inner = bindparam("replied_inner", type_=Uuid, expanding=True)
+
+
+@lru_cache(maxsize=64)
+def _replied_to_me_statement(user_handle: str) -> Select:
+    """`TopicRepository.replied_to_me` 的那条查询，按看的人建一次留着。
+
+    每个请求都来拼一遍这个多连接、带 `exists()` 的语句，量出来光构造本身就约
+    4.6ms（2026-10-14，48 万区块的库，一次频道详情）。房间里**谁在看**烧进了
+    「提到我」那条 JSONB 判据（`_mentions`），所以缓存的键是人；房间本身只以参数
+    进来。语句是只读的，一份拿给并发用安全（`block/repositories.py` 的
+    `_awaiting_statements` 是同一个写法）。
+    """
+    # 「回复我发的消息」：另说的一条块指着我写的某一块。别名和 `unread_counts`
+    # 里 `took_part` 那一处同一个写法 —— exists() 要关联到外层的 Block，就不能
+    # 用同一个 Block。
+    mine = aliased(Block)
+    answers_mine = (
+        select(mine.id)
+        .where(mine.id == Block.reply_to, mine.author == user_handle)
+        .exists()
+    )
+    # 同一个人在两处已读：这间房自己那一位（主线取它），和这条块所在那条线的
+    # 那一位（支线里的块取它，主线上的块两处是同一位）。
+    room_state = aliased(TopicReadState)
+    line_state = aliased(TopicReadState)
+
+    def read_state_of(state, conversation):
+        return and_(
+            state.topic_id == conversation,
+            state.user_handle == user_handle,
+        )
+
+    def past(state):
+        """这条块在那一位后面吗。没有那一行 = 那一条线从没打开过，全都还没读。"""
+        return or_(state.last_read_seq.is_(None), Block.seq > state.last_read_seq)
+
+    def opened_before(state):
+        """这个人上次打开这个频道，是在这条块落地之前吗（从没打开过 = 是）。
+
+        已读位那行的时间戳就是「上次打开」：`mark_read` 每回把它推到现在
+        （`TopicReadRepository.mark_read_many` 的 upsert）。
+        """
+        return or_(state.updated_at.is_(None), state.updated_at < Block.created_at)
+
+    return (
+        select(Block.conversation_id, _threads.c.room_id)
+        .outerjoin(_threads, _threads.c.id == Block.conversation_id)
+        .outerjoin(
+            room_state,
+            read_state_of(
+                room_state, func.coalesce(_threads.c.room_id, Block.conversation_id)
+            ),
+        )
+        .outerjoin(line_state, read_state_of(line_state, Block.conversation_id))
+        .where(
+            or_(
+                Block.conversation_id.in_(_replied_rooms),
+                _threads.c.room_id.in_(_replied_inner),
+            ),
+            Block.kind == BlockKind.message,
+            Block.author_type == AuthorType.participant,
+            Block.author != user_handle,
+            # 两处都还没读过才算「我还没处理」（见上）：这条块所在的那条线
+            # 没读过，这个频道也没在它落地之后打开过。
+            past(line_state),
+            opened_before(room_state),
+            or_(_mentions(user_handle), answers_mine),
+        )
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ListedRoom:
+    """一个频道摆上清单时要读的那几列 —— 一份纯值。
+
+    「待我处理」把几百个频道收窄到真正要摆的那几个之后，读它们读的是标题、状态、日期
+    这几位，而 `Topic` 那一行还背着环境文档（`environment` / `default_environment` 两
+    列 JSON）和简介。整行装配一行比读这几列贵得多（同 `room_task.ListedTask`），所以
+    这一份是**列投影交出来的值**，没有 session、没有懒加载：读得到什么，这里就列着
+    什么。
+
+    `status` 走 `TopicStatus` 而不是 `str`：这一列在模型上就是那个枚举，调用方拿它做
+    词比较（`room_presentation` 里 `facts.status == TopicStatus.archived`）。
+    """
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    title: str
+    status: TopicStatus
+    accepted_at: datetime | None
+    updated_at: datetime
+
+
 class TopicRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -290,23 +392,76 @@ class TopicRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_for_projects(
+    async def visible_unarchived_ids_for_projects(
         self, project_ids: list[uuid.UUID], *, viewer: str
-    ) -> list[Topic]:
+    ) -> list[uuid.UUID]:
         """同一棵树，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目，和
-        其中 ``viewer`` 看得见的频道（私密频道只有在里面的人看得见）。
+        其中 ``viewer`` 看得见、**没归档**的频道（私密频道只有在里面的人看得见）。
+        只回主键。
+
+        「待我处理」拿它要的是「哪些频道算数」—— 归档的频道是只读的，里面没有人
+        还能推进的事，所以它的活和提问都不进清单。这一笔因此直接问「算数的频道有
+        哪几个」，调用方不必再把状态拿回去自己按词比一遍（那条词表是 `topic` 领域
+        的，路由不该认它）。一整屏只点到一两个人，却要为全部频道付整行装配的钱
+        （量出来 240 行 5 毫秒，而摆上去的常常只有一两行），所以整行留给真正要摆的
+        那几个，见 `list_by_ids`。
 
         私聊照样不在里面（见 `_project_topics_stmt`）：它不是话题树的一部分，也从
         来不会有验收卡或者待确认问题挂在上面。
         """
         if not project_ids:
             return []
-        stmt = select(Topic).where(
+        stmt = select(Topic.id).where(
             Topic.project_id.in_(project_ids),
             Topic.is_private.is_(False),
+            Topic.deleted_at.is_(None),
+            Topic.status != TopicStatus.archived,
             seen_by(viewer),
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def list_by_ids(self, topic_ids: Collection[uuid.UUID]) -> list[Topic]:
+        """这些频道的整行。点不到的 id 就是没有这一行，不是错误。"""
+        ids = list(topic_ids)
+        if not ids:
+            return []
+        stmt = select(Topic).where(
+            Topic.id == any_(bindparam(None, ids, type_=ARRAY(Uuid)))
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def listed_by_ids(self, topic_ids: Collection[uuid.UUID]) -> list[ListedRoom]:
+        """这些频道摆上清单时要读的那几列。
+
+        一列投影而不是整行：`Topic` 背着环境文档（`environment` /
+        `default_environment` 两列 JSON）和简介，摆一屏清单一个字都不读。整行留给真要
+        那份正文的地方，见 `list_by_ids`。点不到的 id 就是没有这一行，不是错误。
+
+        id 以同一个数组参数进去（同 `list_by_ids`）：几百个 id 拼成 `IN` 列表会让驱动
+        每次重拼一遍语句。
+        """
+        ids = list(topic_ids)
+        if not ids:
+            return []
+        stmt = select(
+            Topic.id,
+            Topic.project_id,
+            Topic.title,
+            Topic.status,
+            Topic.accepted_at,
+            Topic.updated_at,
+        ).where(Topic.id == any_(bindparam(None, ids, type_=ARRAY(Uuid))))
+        return [
+            ListedRoom(
+                id=row.id,
+                project_id=row.project_id,
+                title=row.title,
+                status=row.status,
+                accepted_at=row.accepted_at,
+                updated_at=row.updated_at,
+            )
+            for row in (await self._session.execute(stmt)).all()
+        ]
 
     def _project_topics_stmt(
         self,
@@ -325,9 +480,13 @@ class TopicRepository:
         (``seen_by``); without it every channel is listed, for the platform's
         own use.
         """
-        # Private chats are not part of the topic tree.
+        # Private chats are not part of the topic tree. A deleted channel is in
+        # none of them: it is on its way out (`deleted_at`), and it disappears
+        # from every list the moment it is deleted.
         stmt = select(Topic).where(
-            Topic.project_id.in_(project_ids), Topic.is_private.is_(False)
+            Topic.project_id.in_(project_ids),
+            Topic.is_private.is_(False),
+            Topic.deleted_at.is_(None),
         )
         if seen is not None:
             stmt = stmt.where(seen)
@@ -490,10 +649,54 @@ class TopicRepository:
             .where(
                 Topic.project_id == project_id,
                 Topic.is_private.is_(False),
+                Topic.deleted_at.is_(None),
                 seen_by(viewer),
             )
         )
         return int((await self._session.scalar(stmt)) or 0)
+
+    # ---- 有人回复了我、我还没处理（侧栏那盏黄灯） -----------------------
+
+    async def replied_to_me(
+        self, room_ids: Collection[uuid.UUID], user_handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these channels hold an answer to this person that they have
+        not opened the channel since.
+
+        An answer TO them is a message from somebody else that either replies to
+        a block they wrote (`reply_to`) or names them (`refs`) — the two cases
+        the person named. AI teammates count, the platform's own events do not
+        (`author_type`).
+
+        HANDLED is having read the answer, and reading it is opening the line it
+        landed on. Opening the CHANNEL counts even when the answer landed in a
+        支线 under it ("打开这个频道就算处理了" — what the person said
+        counts): the read-state row remembers when the channel was last opened,
+        and that moment being after the answer landed is enough. Reading that
+        支线 in its own pane counts too, and is what its own cursor moves.
+        Either one is enough, so "not handled" is neither — and the two are read
+        differently because they are different kinds of number: a cursor counts
+        one conversation's blocks, and 支线 number theirs separately, so the
+        channel's cursor says nothing about a 支线's block. Only the moment can
+        be compared across the two.
+
+        The channel's own line and its 支线 count. The work dispatched under it
+        does not: a task has a row of its own, and whether it waits on somebody
+        is that row's own fact.
+        """
+        if not room_ids:
+            return set()
+        # 语句按看的人建一次留着，房间每次当参数给（`_replied_to_me_statement`）。
+        rooms = list(room_ids)
+        return {
+            room or conversation
+            for conversation, room in (
+                await self._session.execute(
+                    _replied_to_me_statement(user_handle),
+                    {"replied_rooms": rooms, "replied_inner": rooms},
+                )
+            ).all()
+        }
 
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 
@@ -695,7 +898,7 @@ class TopicRepository:
         )
 
     async def private_unread_counts(
-        self, project_id: uuid.UUID, user_handle: str
+        self, project_id: uuid.UUID, user_handle: str, *, seats: dict[str, str]
     ) -> dict[str, int]:
         """Unread count per 私聊, keyed by the OTHER party.
 
@@ -722,23 +925,19 @@ class TopicRepository:
         「不是我」的席位不止一个，这间房就答不出对面是谁：没有这道闸，三席的房
         间每一个「不是我」的席位各算一遍，同样的未读数翻一倍，还凭空多出一行归给
         别人的角标。答不出就一条不报，与那个读点在同一间房上答案一致。
+
+        ``seats`` 是「席位 handle → 队友的名字」，从外面喂进来：答得出这份对应的
+        是 `agent_instance`（第 5 层），本包在第 2 层，够不着它的表
+        （``app.domain.topic.ports.SeatHandles``）。
         """
-        seats = {
-            agent_instance_handle(row.id): row.handle
-            for row in (
-                await self._session.scalars(
-                    select(AgentInstance).where(AgentInstance.project_id == project_id)
-                )
-            ).all()
-        }
         project = await self._session.get(Project, project_id)
         default_handle = CHEESE_HANDLE
         if project is not None and project.default_agent_instance_id is not None:
-            default = await self._session.get(
-                AgentInstance, project.default_agent_instance_id
+            # 项目自己的芝士也在 `seats` 里（它是这个项目的一个实例），所以这一问
+            # 是一次查表，不是第二次读库。
+            default_handle = seats.get(
+                agent_instance_handle(project.default_agent_instance_id), CHEESE_HANDLE
             )
-            if default is not None:
-                default_handle = default.handle
         mine = aliased(TopicMembership)
         theirs = aliased(TopicMembership)
         stmt = (

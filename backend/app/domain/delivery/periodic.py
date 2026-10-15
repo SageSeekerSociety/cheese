@@ -15,6 +15,7 @@ def register_periodic_jobs(
     sessions: SessionFactory,
     chat: Any,
     get_runner: Callable[[], Any],
+    machines: Any = None,
 ) -> None:
     jobs.register(
         "delivery resend",
@@ -24,7 +25,9 @@ def register_periodic_jobs(
     jobs.register(
         "timed deliveries",
         30,
-        lambda: timer.deliver_due(sessions, chat=chat, runner=get_runner()),
+        lambda: timer.deliver_due(
+            sessions, chat=chat, runner=get_runner(), machines=machines
+        ),
     )
     jobs.register(
         "overdue deliveries",

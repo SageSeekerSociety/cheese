@@ -1,0 +1,12 @@
+{
+  "by": "{actor} {action}",
+  "count": "{n} 处",
+  "created": "新建了《{title}》",
+  "edited": "改了《{title}》",
+  "editedDoc": "改了文档",
+  "forBy": "{requester} 让 {agent} {action}",
+  "forInTurn": "应 {requester} 要求{action}",
+  "sep": "、",
+  "suggested": "对《{title}》提了 {n} 处修改建议",
+  "suggestedDoc": "对文档提了 {n} 处修改建议"
+}

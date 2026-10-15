@@ -120,10 +120,25 @@ jobs:
       - name: Component boundaries (eslint ratchet)
         run: pnpm run lint:boundary
 
+      # Web Storage: nothing under src/ may reference localStorage or
+      # sessionStorage directly. They throw in Safari private mode and when the
+      # quota is full, and they are absent outside a browser — one throw in a
+      # setup() or a watcher takes the render or the interaction with it.
+      # src/lib/browserStorage.ts is the one place that accepts those failure
+      # modes, and it never throws. Ratcheted like the steps above: the
+      # references already in the tree are frozen in
+      # browser-storage-baseline.json and only new ones fail, so the migration
+      # can be paid down file by file. Read-only; the writer is `pnpm run
+      # lint:storage:update`, which only lowers counts. Its own tests are
+      # scripts/browser-storage-ratchet.test.mjs (run by the Ratchet unit tests
+      # step below), including the plant that requires this command to fail.
+      - name: Direct Web Storage (eslint ratchet)
+        run: pnpm run lint:storage
+
       # Accessibility: eslint-plugin-vuejs-accessibility's recommended rules over
       # src/**/*.vue (a clickable <div> with no keyboard path, a control with no
       # label, an image with no alt). Ratcheted like the boundary step above:
-      # 165 violations in 82 files are frozen in a11y-baseline.json, and only new
+      # 159 violations in 79 files are frozen in a11y-baseline.json, and only new
       # ones fail. Read-only; the writer is `pnpm run lint:a11y:update`, which
       # only lowers counts. Its tests are scripts/a11y-ratchet.test.mjs, run by
       # the Ratchet unit tests step below.
@@ -131,11 +146,15 @@ jobs:
         run: pnpm run lint:a11y
 
       # The scene ratchet: a page or a workbench panel that renders standalone
-      # today may not stop being able to, and every scene added from now on has
-      # to be able to from its first commit. 20 are frozen in
-      # frontend/scene-baseline.json and 137 are pre-existing debt that may only
-      # shrink — what a scene is, and how to pull a fetch out of one:
+      # in the tree this branch started from may not stop being able to, and
+      # every scene added from now on has to be able to from its first commit.
+      # What a scene is, and how to pull a fetch out of one:
       # docs/manual/dev/scenes.md.
+      #
+      # The freeze is that tree — the merge base with origin/main — graded by
+      # this same rule, which is why the checkout above needs the full history.
+      # Nothing is written down, so there is no writer and no baseline to edit:
+      # the fix is always in the scene.
       #
       # Not the same question as the boundary rule above: that one is about what
       # a file under src/components/ imports, this one about whether a whole
@@ -145,10 +164,9 @@ jobs:
       # grades with the same module arch-metrics.py reports from, so the gate
       # and the board cannot disagree about a scene.
       #
-      # Read-only like every other step here; the writer is
-      # `pnpm run lint:scenes:update`, which only ever ADDS a scene to the
-      # baseline. Its own tests are `python3 .claude/scripts/scene-ratchet.py
-      # --self-test`, which repo-guards.yml runs in its Guards self-test step.
+      # Read-only like every other step here. Its own tests are `python3
+      # .claude/scripts/scene-ratchet.py --self-test`, which repo-guards.yml
+      # runs in its Guards self-test step.
       - name: Scenes (standalone-ratchet)
         run: pnpm run lint:scenes
 
@@ -212,22 +230,23 @@ jobs:
       - name: Hardcoded Chinese (i18n)
         run: pnpm run lint:i18n
 
-      # src/api/openapi.d.ts is generated from backend/openapi.json, which the
-      # backend lint job keeps equal to what the app serves
-      # (`export_openapi --check`). This is the other half: the committed types
-      # are exactly what that document says. Pure node, ~4s.
-      - name: API types match backend/openapi.json
-        run: pnpm run check:api-types
+      # src/api/openapi.d.ts is generated, not committed — and neither is the
+      # document it is generated from, only that document's digest. The type
+      # check below asks the backend to build the document and then generates
+      # the types from it (scripts/typecheck.mjs, scripts/gen-api-types.mjs), so
+      # there is no separate "types match the document" step to run and no way
+      # for the two to disagree. The digest is what the path map watches to bring
+      # the suite here when the API surface moves, and the backend job is what
+      # holds it to the document. Both halves left the repository because a route
+      # change rewrote 1.4 MB of one and 1.8 MB of the other in every PR that
+      # touched a route, which is what two parallel route changes collided in.
+      #
+      # Which is why this job now installs a second toolchain — the backend's
+      # Python environment, in the steps just above the type check: generating
+      # the types means building the document and that means importing the app.
 
-      # The other half of the same drift: the *paths* this frontend calls. They
-      # are string literals in src/api/*.ts and nothing connected them to the
-      # backend, so a renamed route type-checked and failed in the browser.
-      # Judged against backend/scripts/route_index.json, the artifact the
-      # addressing contract test holds the app to. Reports how many call sites
-      # it judged and how many it could not read, so "clean" never means "the
-      # gate understood nothing".
-      - name: Request paths match the backend's routes
-        run: pnpm run check:request-paths
+      # The *paths* this frontend calls are judged in the `request-paths` job
+      # below: it needs the backend installed to read the routes off the app.
 
       # Via the package script, not a bare `node --test scripts/`: passing a
       # DIRECTORY resolves as a module entry point on node 22 while node 20
@@ -241,8 +260,40 @@ jobs:
       - name: Ratchet unit tests
         run: pnpm run test:ratchet
 
-      # Not a plain `vue-tsc --noEmit`: 31 pre-existing errors are frozen in
-      # tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
+      # The backend's Python environment, for the type check below alone: the
+      # types it judges are generated from a document the backend builds out of
+      # its own app, and building it needs uv, the interpreter and the app's
+      # dependencies. It costs about two minutes cold (~25 s to build the
+      # document once installed), against this job's 15-minute timeout. Copied
+      # from the `request-paths` job below, which has carried these four steps
+      # since it started reading routes off the app.
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install backend dependencies
+        run: uv sync --frozen --no-dev
+        working-directory: backend
+
+      # Not a plain `vue-tsc --noEmit`: the errors the tree already has are frozen
+      # in tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
+      # Runs through scripts/typecheck.mjs, which generates src/api/openapi.d.ts
+      # first: the judging project imports it — src/cx_types.ts, and
+      # src/types/{canvas,ownAgents,modelConnections}.ts directly.
       - name: Type check (ratchet)
         env:
           # Node's default heap lands around 2GB and vue-tsc on this tree peaks
@@ -272,6 +323,96 @@ jobs:
       #     writing this file (the sandbox it was authored in caps memory at
       #     2GB and vite OOMs well below the finish line — a limitation of the
       #     sandbox, not evidence that the build is broken).
+
+    # The other half of the api-types drift: the *paths* this frontend calls. They
+  # are string literals in src/api/*.ts and nothing connected them to the
+  # backend, so a renamed route type-checked and failed in the browser. Judged
+  # against the routes as the app mounts them, read off the app by
+  # `backend/scripts/route_index.py --emit` — the same inventory the addressing
+  # contract suite holds the app to. That index used to be a committed file; it
+  # changed with every route (84 commits from 83 PRs in its twelve days) and every
+  # PR that added one
+  # had to carry a regeneration of a 149 KB generated file through review. It is
+  # generated here instead, and git-ignored so nobody re-adds it by habit.
+  #
+  # Its own job, not a step in `check`. It used to be the install that separated
+  # them — reading the routes means installing the backend (uv, Python 3.13,
+  # ~250 MB of wheels) and importing the app, which `check` had no other reason
+  # to do. `check` now carries the same toolchain for the type check, so what
+  # separates them is where a failure lands: its own line, instead of
+  # lengthening the job that runs on every frontend change. A cold install
+  # measured ~2m plus ~25s to emit, comfortably inside the timeout.
+  request-paths:
+    name: request-paths
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Nothing here pushes, so the token has no reason to sit in
+          # .git/config while dependency install scripts run.
+          persist-credentials: false
+
+      # Its own environment and its own uv, rather than the backend jobs': a job
+      # is its own process, and `UV_PROJECT_ENVIRONMENT` is how the backend
+      # workflows keep a fresh venv per run.
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install backend dependencies
+        run: uv sync --frozen --no-dev
+        working-directory: backend
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # The checker parses the api modules with the TypeScript compiler, which
+      # is a frontend dependency: on the runner `frontend/node_modules` does
+      # not exist until something installs it, so `import 'typescript'` there
+      # dies with ERR_MODULE_NOT_FOUND and the job judges no path at all. So
+      # this job carries the same install `check` does — the pnpm pinned in
+      # frontend/package.json's `packageManager`, the same restored store, the
+      # same `--frozen-lockfile`.
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}/.pnpm-store
+          key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
+
+      # A parser that never installed must not read as a passing check.
+      - name: Verify the parser is actually installed
+        run: test -d node_modules/typescript || { echo "::error::typescript not installed"; exit 1; }
+
+      - name: Read the routes off the app
+        run: |
+          uv run python -m scripts.route_index --emit > "$RUNNER_TEMP/route_index.jsonl"
+        working-directory: backend
+
+      - name: Request paths match the backend's routes
+        run: node scripts/check-request-paths.mjs --routes "$RUNNER_TEMP/route_index.jsonl"
+        working-directory: frontend
 
   # The application's own vitest suite, the gap the header describes. It is
   # its own job, split by file across runners, because the suite takes about

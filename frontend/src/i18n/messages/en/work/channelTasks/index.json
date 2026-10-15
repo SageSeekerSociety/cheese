@@ -1,0 +1,10 @@
+{
+  "all": "All",
+  "closed": "Closed",
+  "empty": "No tasks here",
+  "helping": "Helping",
+  "loadFailed": "Could not load the tasks",
+  "mine": "Mine",
+  "others": "Others'",
+  "whose": "Filter by owner"
+}

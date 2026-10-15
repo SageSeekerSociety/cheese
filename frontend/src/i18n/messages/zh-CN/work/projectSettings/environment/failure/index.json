@@ -1,0 +1,14 @@
+{
+  "adopt": "采用并重试",
+  "change": "改法：",
+  "diagnose": "让{name}看看",
+  "diagnoseFailed": "这次没能看出原因，稍后重试",
+  "dismiss": "不用",
+  "exitCode": "退出码 {code}",
+  "readOnly": "只看了日志和脚本，没有在工作电脑上试跑。采用后会重试验证",
+  "reason": "原因：",
+  "retry": "重试",
+  "title": "准备失败 · {when}",
+  "unsure": "只看了日志和脚本，不确定原因是不是这个。采用前先核对一下",
+  "waiting": "有 {count} 段对话在等"
+}

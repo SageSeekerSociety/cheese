@@ -53,7 +53,14 @@ beforeEach(() => {
   setActivePinia(createPinia())
   me.id = null
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
-  vi.mocked(ownAgents.getOwnAgents).mockResolvedValue({ allowed: true, can_manage: false, agents: [] })
+  vi.mocked(ownAgents.getOwnAgents).mockResolvedValue({
+    allowed: true,
+    kinds: ['subscription', 'api_key', 'model_service'],
+    service_hosts: [],
+    can_manage: false,
+    agents: [],
+    my_connections: [],
+  })
   vi.mocked(api.getProject).mockResolvedValue({ id: 'p1', name: 'P', can_manage_members: false } as Project)
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
@@ -127,10 +134,12 @@ describe('project settings', () => {
       override_handles: null,
       approvals_required: 1,
       default_reviewer: '',
+      dispatch_seat: '',
       merge_method: 'squash',
       github_protection: { enforced, status: enforced ? 'enforced' : 'none' },
     })
     vi.mocked(api.listProjectMembers).mockResolvedValue({ data: [], total: 0 })
+    vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
     const wrapper = await openSettings('merge')
     try {
       await vi.waitFor(() => expect(wrapper.element.textContent).toContain('暂无必须通过的检查'))

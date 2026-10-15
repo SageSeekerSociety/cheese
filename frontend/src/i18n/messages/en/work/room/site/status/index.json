@@ -1,0 +1,11 @@
+{
+  "acting": "{verb}",
+  "compacting": "Compacting context",
+  "elapsed": "{span} so far",
+  "queued": "Queued",
+  "queuedBehind": "Queued, {ahead} ahead",
+  "retrying": "Retrying",
+  "retryingCount": "Retrying (attempt {attempt})",
+  "thinking": "Thinking",
+  "waiting": "Waiting for the environment"
+}

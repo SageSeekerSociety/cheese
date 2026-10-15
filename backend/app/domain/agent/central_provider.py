@@ -21,7 +21,7 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent_instance.services import agent_stdio_servers
+from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
@@ -126,9 +126,9 @@ class CentralChannel(DeviceChannel):
         else the deployment's session host."""
         return place.machine if place else settings.agent_session_device_id
 
-    def _deferred_target(self, target: dict) -> dict:
-        """The execution target a session starts with before its lease, as
-        this channel hands it on."""
+    def _deferred_target(self, target: dict, *, apart: bool) -> dict:
+        """The execution target a session starts with, as this channel hands
+        it on. ``apart``: it starts on a machine other than its session host."""
         return target
 
     async def placed(self, harness: str, device_id: str | None = None) -> list[Placed]:
@@ -310,7 +310,12 @@ class CentralChannel(DeviceChannel):
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
-            target = self._deferred_target(target)
+            target = self._deferred_target(
+                target,
+                apart=target["workspace"] != DEFERRED_WORKSPACE
+                and leased is not None
+                and leased["device_id"] != center,
+            )
         else:
             target = private_chat.scratch_target(project_id, resource, device_id=center)
         # The project's remote MCP servers need no machine: the platform holds
@@ -321,7 +326,11 @@ class CentralChannel(DeviceChannel):
         # relaunches an idle session with it (`screen_identity.launch_identity`).
         async with factory() as db:
             remote = await remote_mcp.session_target(
-                db, project_id, topic_id, agent_handle
+                db,
+                project_id,
+                topic_id,
+                agent_handle,
+                type_of_seat=type_of_seat,
             )
             own = await agent_stdio_servers(db, project_id, agent_handle)
         if remote is not None:

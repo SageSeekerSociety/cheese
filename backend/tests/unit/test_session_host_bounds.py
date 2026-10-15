@@ -161,12 +161,36 @@ class _Hub:
         return {"exit": 0, "stdout": self.meminfo}
 
 
+class _SharedReadings:
+    """A Valkey stand-in holding the shared readings, one key per host."""
+
+    def __init__(self):
+        self.kv: dict[str, bytes] = {}
+
+    async def get(self, key):
+        return self.kv.get(key)
+
+    async def set(self, key, value, px=None):
+        self.kv[key] = value
+
+
 def _meminfo(available_mb: int) -> str:
     return (
         "MemTotal:       65000000 kB\n"
         "MemFree:          100000 kB\n"
         f"MemAvailable:   {available_mb * 1024} kB\n"
     )
+
+
+@pytest.fixture(autouse=True)
+def _reading_stays_in_this_process(monkeypatch):
+    """These cases pin the gate, not where a reading is kept.
+
+    Each probe stands alone, so one case's reading never answers the next one's
+    — which is what the shared reading does on a real box. The sharing itself
+    is pinned by the cases that ask for `_SharedReadings` by name.
+    """
+    monkeypatch.setattr(admission, "get_redis_client", lambda: None)
 
 
 @pytest.fixture
@@ -194,6 +218,65 @@ async def test_a_room_whose_session_is_running_is_never_held(capped_host):
 @pytest.mark.anyio
 async def test_a_host_that_cannot_be_read_holds_nobody(capped_host):
     assert await admission.HostMemory(_Hub(None)).has_room(uuid.uuid4())
+
+
+@pytest.mark.anyio
+async def test_two_backends_decide_from_one_reading_of_the_host(
+    capped_host, monkeypatch
+):
+    """Two processes, one reading: the second never asks the machine.
+
+    The gate is for the host, so N backends must not each decide from a reading
+    of their own — they would hold back different turns for the same machine.
+    """
+    shared = _SharedReadings()
+    monkeypatch.setattr(admission, "get_redis_client", lambda: shared)
+    room = uuid.uuid4()
+    first_hub, second_hub = _Hub(_meminfo(2000)), _Hub(_meminfo(2000))
+
+    assert not await admission.HostMemory(first_hub).has_room(room)
+    assert not await admission.HostMemory(second_hub).has_room(room)
+
+    assert first_hub.reads == 1
+    assert second_hub.reads == 0
+
+
+@pytest.mark.anyio
+async def test_the_shared_reading_expires_and_the_host_is_asked_again(
+    capped_host, monkeypatch
+):
+    """A reading answers for `READING_TTL_S` and not longer: the machine moves
+    on, and a gate that kept the old number would hold nobody back."""
+    shared = _SharedReadings()
+    monkeypatch.setattr(admission, "get_redis_client", lambda: shared)
+    room = uuid.uuid4()
+    hub = _Hub(_meminfo(2000))
+    memory = admission.HostMemory(hub)
+
+    assert not await memory.has_room(room)
+    assert hub.reads == 1
+
+    # 过期之后这台机器已经腾出地方了。
+    shared.kv.clear()
+    hub.meminfo = _meminfo(8000)
+    assert await memory.has_room(room)
+    assert hub.reads == 2
+
+
+@pytest.mark.anyio
+async def test_an_unreadable_host_is_asked_once_for_everybody(capped_host, monkeypatch):
+    """ "Could not read" is a reading too. An unread host holds nobody, and
+    nobody's ask should turn into a second round of asking."""
+    shared = _SharedReadings()
+    monkeypatch.setattr(admission, "get_redis_client", lambda: shared)
+    room = uuid.uuid4()
+    first_hub, second_hub = _Hub(None), _Hub(None)
+
+    assert await admission.HostMemory(first_hub).has_room(room)
+    assert await admission.HostMemory(second_hub).has_room(room)
+
+    assert first_hub.reads == 1
+    assert second_hub.reads == 0
 
 
 async def _room_on(db_factory, harness: str) -> uuid.UUID:

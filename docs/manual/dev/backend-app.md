@@ -33,7 +33,7 @@ covers:
 | 主 API | `app.main:app` | 8081 | 全部业务接口、投递与调度、Agent 轮、迁移 | 替换（滚动交接见[部署拓扑](/dev/topology#handover)） |
 | 机器连接服务 | `app.device_connection_app:app` | 8082 | 设备与终端 WebSocket，以及进出设备的 RPC | 不重启（`release-device-connection.yml`） |
 | 模型隧道 | `app.llm_tunnel_app:app` | 8091 | 远端机器把模型流量送进来的 WebSocket | 不重启（`deploy/llm-tunnel/up.sh`） |
-| 代码托管事件中继 | `app.forge_events_app:app` | 8093 | 接 GitHub App 的 webhook，再经 WebSocket 推给各部署 | 单独部署 |
+| 代码托管事件中继 | `app.forge_events_app:app` | 8093 | 接 GitHub App 的 webhook，再经 WebSocket 推给各部署 | 它跑的代码变了才替换（`deploy/code-digest.py`） |
 
 分开的原因写在各自模块的 docstring 里：机器连接服务要活过主 API 的替换，否则每次发版都会掐断设备链接；模型隧道单独成进程，是因为隧道 WebSocket 原来终结在后端进程里，换容器就切断了那个窗口内所有机器的模型流量（`llm_tunnel_app.py` 引 #551）。
 
@@ -137,7 +137,7 @@ covers:
 
 ## 周期任务清单 {#periodic}
 
-`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 32 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
+`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 34 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
 
 登记名称重复、清单缺项或出现未列出的任务都会报错，防止巡检漏接后静默缺席。
 
@@ -152,6 +152,7 @@ covers:
 | chat progress reminder | `chat_progress_check_interval_s` | 提醒沉默的轮 |
 | gate sweep | `gate_sweep_interval_s` | 收超龄的闸门孤儿卡 |
 | cloud host pool sweep / cloud warm pool | `machine_enroll_interval_seconds` | 云主机池：同步宿主机状态、入网、按需扩容和释放空闲宿主机；维护预热池 |
+| sandbox disk guard | `sandbox_disk_check_s` | 读每台跑着沙箱的机器（平台云机和用户电脑）的磁盘余量，每个 home 占多少要走一遍文件，只在 `sandbox_disk_walk_s` 到了或余量低于下限时读：可用空间或 inode 低于下限时，云机不再接新沙箱、停掉占用最多的那个沙箱并告诉它的房间；删掉沙箱已经不在的残留 home |
 | subscription usage ingest | `subscription_ingest_interval_s`，未设 `SUBSCRIPTION_USAGE_LOG` 时为 0 | 把计量代理的账本吃进 `resource_usage` |
 | backend error flush | `backend_error_flush_interval_s` | 把后端报错按窗口收口后记成运行记录 |
 | run record expiry | `run_record_expiry_interval_s` | 删掉超过 30 天的运行记录 |
@@ -163,6 +164,7 @@ covers:
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |
 | task deadline sweep | `task_deadline_sweep_interval_s` | 任务截止 |
 | memory dream | `memory_dream_sweep_interval_s` | 记忆整理 |
+| wake watch | `wake_watch_interval_s` | 盯叫醒链上那两拍（定时器每拍一条消息、看门狗原地改一条心跳），静满 60 分钟记一条运行记录，并点 #1343 那条线上的座位补一跳（`wake_watch_catchup` 关掉就只记不补） |
 
 `spawn()` 是不留句柄的那一类：任务可能被 GC 掉，所以平台持一个强引用集合 `_INFLIGHT`；`hold()` 给需要留句柄以便关停时取消的工作。两者的崩溃都记 ERROR 而不是 WARNING（告警只捡 ERROR）。
 

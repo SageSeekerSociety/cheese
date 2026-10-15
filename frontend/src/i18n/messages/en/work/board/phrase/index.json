@@ -1,0 +1,20 @@
+{
+  "accepted": "Accepted",
+  "archived": "Archived",
+  "awaiting_answer": "Waiting for an answer",
+  "awaiting_checks": "Waiting for the platform's checks",
+  "awaiting_review": "Waiting for someone to review",
+  "bounced": "Sent back; Cheese needs to revise",
+  "checks_failed": "Checks failed; it's yours to decide",
+  "closed": "Closed",
+  "completed": "Closed",
+  "discussing": "Discussing",
+  "draft": "Draft",
+  "fixing_checks": "Checks failed; Cheese is fixing them",
+  "gate_running": "The platform is running checks",
+  "idle": "Idle",
+  "resolving_conflict": "Conflicts with the main branch; Cheese is resolving them",
+  "running": "Cheese is on it",
+  "started": "Started",
+  "updating_branch": "The platform is updating the branch"
+}

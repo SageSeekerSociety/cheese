@@ -1,0 +1,16 @@
+{
+  "accountConnected": "GitHub account connected",
+  "authUrlFailed": "Couldn't get the authorization link",
+  "connectRepoFailed": "Couldn't connect the GitHub repository",
+  "disconnectFailed": "Couldn't disconnect the GitHub account",
+  "followDefault": "Follow the default ({state})",
+  "installPending": "Install request sent, awaiting approval from an organization admin",
+  "loadFailed": "Couldn't load settings",
+  "noInstallUrl": "Couldn't connect: no install link was returned",
+  "notSignedIn": "Not signed in",
+  "off": "Off",
+  "on": "On",
+  "repoConnected": "Connected repository {repo}",
+  "saveFailed": "Couldn't save. Try again later",
+  "upstreamSaveFailed": "Couldn't save the repository URL"
+}

@@ -16,15 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
-    EVENT_TIMED_DELIVERY,
-    EVENT_TURN_FAILED,
-    SEVERITY_ERROR,
-    SEVERITY_INFO,
-    WHO_CHEESE,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import (
     GAVE_UP,
@@ -33,9 +24,19 @@ from app.domain.delivery.agent import (
     instance_for_seat,
     record_agent,
 )
-from app.domain.delivery.ledger import DeliveryEvent, Ledger
+from app.domain.delivery.ledger import Ledger
 from app.domain.delivery.models import Delivery, TimedDelivery
+from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.arrival import Arrival, how_it_arrives
+from app.domain.notice_meta import (
+    EVENT_TIMED_DELIVERY,
+    EVENT_TURN_FAILED,
+    SEVERITY_ERROR,
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
@@ -169,8 +170,10 @@ def _event(
 
 
 async def deliver_due(
-    sessions: SessionFactory, *, chat, runner, limit: int = 100
+    sessions: SessionFactory, *, chat, runner, limit: int = 100, machines=None
 ) -> dict[str, int]:
+    """``machines`` goes to `give_up_stale`: the call that reaches a machine to
+    remove a closed room's checkouts, handed in by the composition root."""
     stamp = _utcnow()
     materialized = 0
     async with sessions() as session:
@@ -211,14 +214,14 @@ async def deliver_due(
                 await _hand_to_person(session, row)
             materialized += 1
         await session.commit()
-    await give_up_stale(sessions, chat=chat)
+    await give_up_stale(sessions, chat=chat, machines=machines)
     # Post-commit dispatch is optional for recovery: every scan also claims older
     # committed intent, including events created by a process that then stopped.
     dispatched = await dispatch_pending(sessions, chat=chat, runner=runner, limit=limit)
     return {"materialized": materialized, "dispatched": dispatched}
 
 
-async def give_up_stale(sessions: SessionFactory, *, chat) -> int:
+async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int:
     """Fail every instruction to an AI teammate that has not started half an
     hour after it was given (`agent.GIVE_UP_AFTER`), and say so once in each
     conversation where a person's message went unanswered: whoever waits there
@@ -246,7 +249,9 @@ async def give_up_stale(sessions: SessionFactory, *, chat) -> int:
             # A finished task waiting on this turn to be written up closes
             # without it.
             if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
-                await close_after_summary(session, row.conversation_id, chat)
+                await close_after_summary(
+                    session, row.conversation_id, chat, machines=machines
+                )
             # Only a person's message is told: 「重试」 starts a turn from the
             # messages still waiting, and a platform instruction is not one. A
             # task's opening says it failed on the task page; a routine's run
