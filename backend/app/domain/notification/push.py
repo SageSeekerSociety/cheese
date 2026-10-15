@@ -145,6 +145,13 @@ def push_text(
     下的中文，正文也跟着它，免得一条通知半句中文半句英文。
     """
     room = str(payload.get("topicTitle") or "").strip()
+    if type_ is NotificationType.MENTION and payload.get("documentId"):
+        # Mentioned in a document's text (`api.doc_mentions`): the document is
+        # where, whichever channel it belongs to.
+        who = str(payload.get("authorName") or payload.get("author") or "").strip()
+        doc = str(payload.get("documentTitle") or "").strip()
+        title = in_language(say("pushMentionedInDoc", who=who, doc=doc), locale)
+        return (title, str(payload.get("content") or "").strip())
     if type_ in _SAID_IN_ROOM and room:
         who = str(payload.get("authorName") or payload.get("author") or "").strip()
         title = in_language(say(_SAID_IN_ROOM[type_], who=who, room=room), locale)
@@ -192,4 +199,7 @@ def push_link(payload: dict[str, Any]) -> str:
         if thread_id:
             return f"/projects/{project_id}/topics/{topic_id}/threads/{thread_id}"
         return f"/projects/{project_id}/topics/{topic_id}"
+    # A document of the project's own, in no channel: the document itself.
+    if project_id and (document_id := payload.get("documentId")):
+        return f"/projects/{project_id}/docs/{document_id}"
     return "/inbox"

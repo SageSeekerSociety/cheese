@@ -30,6 +30,7 @@ function readPayload(event) {
     // 是同一条规则）。
     const taskId = data.taskId
     const threadId = data.threadId
+    // 项目自己的一份文档（不在哪个频道里）：落到那份文档。
     return {
       title: data.title || fallback.title,
       body: data.body || '',
@@ -42,7 +43,9 @@ function readPayload(event) {
             ? `/projects/${projectId}/topics/${topicId}/threads/${threadId}`
             : projectId && topicId
               ? `/projects/${projectId}/topics/${topicId}`
-              : '/inbox',
+              : projectId && data.documentId
+                ? `/projects/${projectId}/docs/${data.documentId}`
+                : '/inbox',
     }
   } catch {
     return fallback

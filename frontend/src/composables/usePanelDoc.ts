@@ -20,7 +20,7 @@ import { addComment, getDocNodes } from '../api'
 import { changeCanvas, copyCanvas, createCanvas, getCanvas, setCanvasHeight } from '../api/canvases'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
-import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
+import { applyDocEdits, getNotifiedMentions, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
 import { documentImageUrl, getDocumentAbout, renameDocument } from '../api/projectDocuments'
@@ -31,6 +31,7 @@ import { refusalText } from '../lib/noticeText'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
+import { useMentionOutside } from './useMentionOutside'
 
 import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
@@ -68,6 +69,12 @@ export function usePanelDoc(props: PanelDocProps) {
   const documentId = ref<string | null>(null)
   const resolveError = ref<string | null>(null)
   const collab = useDocCollab(() => documentId.value)
+  // 我存回的一版 @ 了打不开这份文档的人：问我要不要把他们加进频道（和发消息一样）。名字
+  // 由画的那一层按名册读，这里只记 handle。
+  const mentionOutside = useMentionOutside({ place: () => documentId.value, nameOf: (handle) => handle })
+  watch(collab.mentionedOutside, (outside) => {
+    if (outside) mentionOutside.offer({ mentioned_outside: outside })
+  })
 
   let disposed = false
   let documentSequence = 0
@@ -97,6 +104,25 @@ export function usePanelDoc(props: PanelDocProps) {
   // 最近一次编辑（谁、什么时候）：顶栏左边那一句，跟着每一次存回重读。
   const lastEdit = ref<{ actor: string; at: string } | null>(null)
   let lastEditSequence = 0
+  // 正文 @ 到并通知过谁：只有他们的名字画成 @chip。刚存的那一版可能刚通知了一个人，
+  // 所以跟着每一次存回重读。
+  // 正文里有了 @ 才去读（画的那一半说一声），之后每次存回跟着重读。
+  const notifiedMentions = ref<string[]>([])
+  let notifiedSequence = 0
+  let notifiedWanted = false
+  async function loadNotifiedMentions(did: string) {
+    const sequence = ++notifiedSequence
+    const told = await getNotifiedMentions(did)
+    if (disposed || documentId.value !== did || sequence !== notifiedSequence) return
+    notifiedMentions.value = told
+  }
+
+  /** 正文里出现了 @：读这份文档通知过谁。 */
+  function fetchNotifiedMentions() {
+    const did = documentId.value
+    notifiedWanted = true
+    if (did) void loadNotifiedMentions(did).catch(() => {})
+  }
 
   // ---- 读 ----
   async function loadSuggestionReasons(did: string) {
@@ -239,6 +265,9 @@ export function usePanelDoc(props: PanelDocProps) {
     reasonsWanted = false
     lastEdit.value = null
     lastEditSequence++
+    notifiedMentions.value = []
+    notifiedSequence++
+    notifiedWanted = false
     if (id) void loadLastEdit(id).catch(() => {})
   })
 
@@ -285,6 +314,7 @@ export function usePanelDoc(props: PanelDocProps) {
   watch([() => props.activityTick, collab.stores], () => {
     const id = documentId.value
     if (id) void loadLastEdit(id).catch(() => {})
+    if (id && notifiedWanted) void loadNotifiedMentions(id).catch(() => {})
     if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
   })
 
@@ -307,8 +337,12 @@ export function usePanelDoc(props: PanelDocProps) {
     errorMsg,
     // 这份文档
     documentId,
+    /** 我 @ 了打不开这份文档的人：要不要加进频道。 */
+    mentionOutside,
     suggestionReasons,
     fetchSuggestionReasons,
+    notifiedMentions,
+    fetchNotifiedMentions,
     // 动作
     commentAuthor: AUTHOR,
     sendComment: (content: string, quote: string) => {

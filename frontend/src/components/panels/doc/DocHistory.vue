@@ -29,6 +29,8 @@ const props = defineProps<{
   /** handle → 读得懂的名字。 */
   nameOf: (handle: string) => string
   mentionNames: Record<string, string>
+  /** 这份文档 @ 到并通知过的人：旧版本里也画成 @chip。 */
+  notifiedMentions?: string[]
 }>()
 const emit = defineEmits<{
   (e: 'update:open', open: boolean): void
@@ -123,7 +125,10 @@ const diff = computed(() =>
     : null
 )
 const latest = computed(() => versions.value[0] ?? null)
-const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
+const names = computed(() => {
+  const told = props.notifiedMentions ?? []
+  return { mentionNames: props.mentionNames, topicTitles: {}, notified: (handle: string) => told.includes(handle) }
+})
 
 function who(version: DocVersion): string {
   const name = props.nameOf(version.actor)

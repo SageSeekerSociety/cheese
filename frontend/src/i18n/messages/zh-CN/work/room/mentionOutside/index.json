@@ -6,5 +6,6 @@
   "close": "关闭",
   "dismiss": "不添加",
   "notInPrivate": "{names} 不在这个频道，看不到这条消息",
+  "notInPrivateDoc": "{names} 不在这个频道，打不开这份文档",
   "notInPublic": "{names} 未加入这个频道"
 }

@@ -21,6 +21,7 @@ from app.api.deps import get_chat_service
 from app.api.doc_access import authorize_in_project, frozen, reach, require_writable
 from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
+from app.api.doc_mentions import notified_handles
 from app.api.doc_store import announce, store, tell_origin_room
 from app.api.request_deps import DbSession
 from app.api.response import ok
@@ -310,6 +311,9 @@ async def get_document(
         return ok(None)
     snapshot = document_snapshot(doc)
     snapshot["pending_suggestions"] = await DocumentJournal(db).suggestions(doc.id)
+    # Whose ``<@handle>`` in the text reached them: drawn as a mention, every
+    # other one as a reference to the person.
+    snapshot["notified_mentions"] = await notified_handles(db, doc.id)
     return await _with_ref_warnings(db, doc, ok(snapshot))
 
 

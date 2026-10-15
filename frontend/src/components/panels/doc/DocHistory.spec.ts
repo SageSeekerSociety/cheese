@@ -38,7 +38,7 @@ const version = (n: number, actor: string, minutesAgo: number, content = `第 ${
   created_at: at(minutesAgo),
 })
 
-function mount(versions: DocVersion[], { editable = true } = {}) {
+function mount(versions: DocVersion[], { editable = true, notifiedMentions = [] as string[] } = {}) {
   const restore = vi.fn(async () => ({}))
   const view = render(DocHistory, {
     props: {
@@ -47,7 +47,8 @@ function mount(versions: DocVersion[], { editable = true } = {}) {
       restore,
       editable,
       nameOf: (handle: string) => handle,
-      mentionNames: {},
+      mentionNames: { bob: 'Bob', carol: 'Carol' },
+      notifiedMentions,
     },
     global: { plugins: [createVuetify({ components, directives })] },
   })
@@ -117,5 +118,22 @@ describe('修改记录', () => {
     })
     await waitFor(() => expect(load).toHaveBeenCalledWith(29))
     await waitFor(() => expect(container.ownerDocument.querySelector('.vdiff')).not.toBeNull())
+  })
+})
+
+describe('文档里点到的人', () => {
+  it('这份文档通知过的人画成 @，只是提到的人画成名字', async () => {
+    const { container } = mount([version(2, 'dave', 1, '<@bob> 跟进接口，<@carol> 看样式'), version(1, 'erin', 60)], {
+      notifiedMentions: ['bob'],
+    })
+    await fireEvent.click((await screen.findAllByText('dave'))[0])
+    await fireEvent.click(screen.getByRole('button', { name: t('work.room.doc.historyFull') }))
+    await waitFor(() =>
+      expect(container.ownerDocument.querySelector('.md-content [data-handle="carol"]')).not.toBeNull()
+    )
+    const shown = (handle: string) =>
+      container.ownerDocument.querySelector(`.md-content [data-handle="${handle}"]`)?.textContent
+    expect(shown('bob')).toBe('@Bob')
+    expect(shown('carol')).toBe('Carol')
   })
 })

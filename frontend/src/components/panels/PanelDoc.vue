@@ -22,7 +22,7 @@ import type { PanelDocBundle, PanelDocument } from '../../composables/usePanelDo
 import type { Topic } from '../../cx_types'
 import type { DocReviewRequest } from '../../lib/docReview'
 
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import PanelDocView from './PanelDocView.vue'
 
@@ -91,6 +91,18 @@ const people = props.docPeople
 // 评论里真人作者的头像：名册那一包给的 handle → 头像地址，只列了挑过头像的人。没挑过、
 // 或不在名册上的人给空串，由 UserAvatar 画他自己的首字母 —— 不再退回全站那张默认脸。
 const avatarOf = (handle: string) => people.avatars.value[handle] ?? ''
+
+// 我在文档里 @ 了打不开它的人：那一条提示要写成名字。
+const outsidePrompt = computed(() => {
+  const asked = doc.mentionOutside.prompt.value
+  if (!asked) return null
+  return {
+    names: asked.handles.map((h) => people.names.value[h] ?? h).join(t('work.room.roster.listSeparator')),
+    membersOnly: asked.members_only,
+    mayAdd: asked.may_add,
+    adding: doc.mentionOutside.adding.value,
+  }
+})
 
 // 回复里 @ 的 AI 队友，和发评论一样写成点名。
 const threads = {
@@ -173,6 +185,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :agent-handle="props.agentHandle"
     :mention-names="people.names.value"
     :mention-people="people.people.value"
+    :notified-mentions="doc.notifiedMentions.value"
+    :fetch-notified-mentions="doc.fetchNotifiedMentions"
     :bare="props.bare"
     :untitled="!!props.taskId"
     :bar-to="props.barTo"
@@ -206,6 +220,9 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :avatar-of="avatarOf"
     :load-versions="doc.loadVersions"
     :restore-version="doc.restoreVersion"
+    :mention-outside="outsidePrompt"
+    @mention-outside-add="doc.mentionOutside.add"
+    @mention-outside-dismiss="doc.mentionOutside.dismiss"
     @open-topic="emit('open-topic', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
