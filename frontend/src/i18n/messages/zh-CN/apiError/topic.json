@@ -24,6 +24,8 @@
   "pastTaskNoBranch": "历史任务没有可依赖的工作分支",
   "privateChatHasNoTasks": "私聊里不能创建任务，请到频道里创建",
   "privateChatHasNoThreads": "私聊里没有支线，在频道里开",
+  "privateChatProjectMembersOnly": "无法与项目外的人私聊",
+  "privateChatTwoPeopleOnly": "无法向私聊添加成员",
   "projectAiTeammateNotFound": "这个项目里没有这个 AI 队友",
   "projectHasNoCheese": "这个项目还没有芝士，答不出这间房里「我是谁」",
   "projectRootCannotArchive": "项目本体不能归档",

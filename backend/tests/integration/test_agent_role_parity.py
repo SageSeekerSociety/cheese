@@ -286,6 +286,7 @@ def test_project_membership_never_opens_someone_elses_private_chat(
 ):
     project, origin, _ = _rooms(client)
     owner = session_auth_headers("alice")
+    join_project_team(client, project["id"], "bob")
     # 两个人之间的私聊：这个项目的芝士不是其中任何一方，所以「它是不是这间房的
     # 参与者」是真的在问，而不是在问一间它本来就坐在里面的房。
     private = client.get(
@@ -319,8 +320,14 @@ def test_project_membership_never_opens_someone_elses_private_chat(
         ).status_code
         == 403
     )
-    _join(client, private, handle)
-    assert client.get(f"/topics/{private}/blocks", headers=auth).status_code == 200
+    # Nor can anyone seat it there: a DM keeps its two.
+    assert (
+        client.post(
+            f"/topics/{private}/members", json={"handle": handle}, headers=owner
+        ).status_code
+        == 422
+    )
+    assert client.get(f"/topics/{private}/blocks", headers=auth).status_code == 403
 
 
 def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):

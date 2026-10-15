@@ -607,6 +607,13 @@ async def get_private_chat(
         participants = {user_handle, peer_handle} - {None}
         if actor.handle not in participants:
             raise ForbiddenError(say("directMessageOwnOnly"))
+    if peer_handle is not None:
+        # Each of the two takes a seat, and a seat is a door into the project:
+        # only people the project already has may sit in its DMs.
+        seats = TopicMemberService(db)
+        for handle in (user_handle, peer_handle):
+            if not await seats.on_project(project_id, handle, team=project_team):
+                raise ForbiddenError(say("privateChatProjectMembersOnly"))
     if peer_handle is None:
         project = await ProjectService(db).get_or_404(project_id)
         if not await may_chat_with(
