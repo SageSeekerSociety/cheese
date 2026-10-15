@@ -26,7 +26,7 @@
       "request": "{person} 申请加入团队",
       "asRole": "以{role}身份加入",
       "accept": "接受",
-      "approve": "同意",
+      "approve": "批准",
       "decline": "拒绝"
     },
     "role": {

@@ -24,7 +24,7 @@
     <template v-else>
       <p v-if="actionError" role="alert" class="waiting__error t-meta">{{ actionError }}</p>
       <div class="waiting__card">
-        <template v-for="group in groups" :key="group.key">
+        <section v-for="group in groups" :key="group.key" class="waiting__section">
           <div class="waiting__group">
             <h3 class="waiting__group-name">
               <span data-user-content>{{ group.name }}</span>
@@ -138,7 +138,7 @@
               </template>
             </InboxRow>
           </template>
-        </template>
+        </section>
       </div>
     </template>
   </section>

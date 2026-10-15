@@ -48,7 +48,7 @@ test.describe('变更提醒', () => {
     });
 
     await page.goto('/inbox');
-    const row = page.locator('.inbox-item', { hasText: title });
+    const row = page.locator('.inbox-row', { hasText: title });
     await expect(row).toContainText('变更提醒');
     await expect(row).toContainText(body);
 
@@ -68,7 +68,7 @@ test.describe('变更提醒', () => {
     });
 
     await page.goto('/inbox');
-    const row = page.locator('.inbox-item', { hasText: title });
+    const row = page.locator('.inbox-row', { hasText: title });
     await row.getByRole('button', { name: '标为已读' }).click();
     await expect(page.getByText(title)).toHaveCount(0);
 
@@ -94,7 +94,7 @@ test.describe('变更提醒', () => {
 
     await page.goto('/inbox');
     await expect(page.getByText(second)).toBeVisible();
-    const group = page.locator('.inbox__project', { hasText: second });
+    const group = page.locator('.waiting__section', { hasText: second });
     await group.getByRole('button', { name: '全部标为已读' }).click();
 
     // 一百条不该要一百下：这一下把两条一起收掉。
