@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Required CI job-duration, timeout-headroom and tree-identity measurement.
 
-Read-only: it calls `gh api` and `git merge-tree` and writes nothing but its
-report. The runs it measures are pinned in a file rather than selected as "the
+Read-only for the repository: it calls `gh api` and `git merge-tree` and changes
+nothing in it. (`jobs --cache` does keep one raw payload per run under the cache
+directory it is given, so a re-run needs no API call for the runs it has already
+seen.) The runs it measures are pinned in a file rather than selected as "the
 last N", because a sliding window is a different measurement every time the
 merge queue moves — re-pin deliberately when you want a new snapshot.
 
@@ -24,7 +26,10 @@ Two questions, and why each needs the pin to be exact:
          `git merge-tree` and comparing it against the tree of the queue's own
          commit answers it from the two objects, without trusting either CI log.
          A pair that does not reconstruct cleanly is reported as excluded rather
-         than counted as a different tree.
+         than counted as a different tree, and the two ways that happens are
+         reported apart: the pair conflicts when replayed, or this clone cannot
+         rebuild it at all (a pinned commit it does not have). The first is a
+         property of the pair, the second of the clone.
 
 Usage:
     python3 scripts/ci/ci-duration-report.py jobs \\
@@ -85,6 +90,12 @@ def _jobs(run_id: int, cache: str | None) -> dict:
     if cached is not None and cached.exists():
         return json.loads(cached.read_text(encoding="utf-8"))
     data = _gh(f"repos/{REPO}/actions/runs/{run_id}/jobs?per_page=100")
+    if data.get("total_count", len(data.get("jobs", []))) > len(data.get("jobs", [])):
+        sys.exit(
+            f"run {run_id} reports {data['total_count']} jobs, more than the one page "
+            f"of {len(data.get('jobs', []))} fetched — the missing jobs would quietly "
+            "shorten this run's evidence"
+        )
     if cached is not None:
         cached.parent.mkdir(parents=True, exist_ok=True)
         cached.write_text(json.dumps(data), encoding="utf-8")
@@ -144,6 +155,7 @@ def mode_trees(args) -> int:
     same = 0
     compared = 0
     conflicted: list[int] = []
+    unbuildable: list[int] = []
     for row in rows:
         reconstruction = subprocess.run(
             ["git", "merge-tree", "--write-tree", row["base"], row["head"]],
@@ -151,10 +163,18 @@ def mode_trees(args) -> int:
         )
         tree = reconstruction.stdout.split("\n", 1)[0].strip()
         if reconstruction.returncode != 0:
-            # The reconstruction itself conflicts, so there is no merged tree to
-            # compare; counting it as "different" would invent a finding.
-            conflicted.append(row["pr"])
-            print(f"  pr {row['pr']:>5}: the pinned pair does not reconstruct cleanly — excluded")
+            # Neither case can be counted as "different" — that would invent a
+            # finding — but which one it is decides whether the reader goes after
+            # the pinned pair or after the clone. A tree oid on stdout means git
+            # did merge and conflicted; nothing on stdout means it never got that
+            # far, which is a commit this clone does not hold.
+            if tree:
+                conflicted.append(row["pr"])
+                print(f"  pr {row['pr']:>5}: the pinned pair does not reconstruct cleanly — excluded")
+            else:
+                unbuildable.append(row["pr"])
+                detail = reconstruction.stderr.strip() or "no output"
+                print(f"  pr {row['pr']:>5}: this clone cannot build the pair ({detail}) — excluded")
             continue
         compared += 1
         queue_tree = _gh(f"repos/{REPO}/commits/{row['mg_head']}")["commit"]["tree"]["sha"]
@@ -165,8 +185,12 @@ def mode_trees(args) -> int:
         print(f"  pr {row['pr']:>5}: tree_same={is_same!s:5} base_same={base_same!s:5}{flag}")
 
     if conflicted:
-        print(f"\nExcluded {len(conflicted)} of {len(rows)} row(s) (conflicting reconstruction): "
-              f"pr {', '.join(str(pr) for pr in conflicted)}.")
+        print(f"\nExcluded {len(conflicted)} of {len(rows)} row(s) (the pair conflicts when "
+              f"replayed): pr {', '.join(str(pr) for pr in conflicted)}.")
+    if unbuildable:
+        print(f"\nExcluded {len(unbuildable)} of {len(rows)} row(s) (this clone cannot rebuild "
+              f"the pair — fetch the pinned commits or use a fuller clone): "
+              f"pr {', '.join(str(pr) for pr in unbuildable)}.")
     if compared == 0:
         print("No row could be compared — nothing was measured.")
         return 1

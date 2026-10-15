@@ -111,6 +111,21 @@ class JobModeTests(unittest.TestCase):
         self.assertIn("frontend / unit=-10s", err)
         self.assertNotIn("backend / pure", out)
 
+    def test_a_run_of_more_than_one_page_is_refused_not_truncated(self):
+        # A per_page=100 page that is not the whole run would measure a subset
+        # that looks exactly like the whole thing. GitHub tells us the total.
+        fetched = {"total_count": 101, "jobs": [job("frontend / unit", "2026-10-01T00:00:00Z", "2026-10-01T00:10:00Z")] * 100}
+        with mock.patch.object(report, "_gh", lambda path: fetched):
+            with self.assertRaises(SystemExit) as caught:
+                report._jobs(1, None)
+        self.assertIn("more than the one page", str(caught.exception))
+        self.assertIn("101", str(caught.exception))
+
+    def test_a_run_that_fits_in_one_page_is_returned(self):
+        fetched = {"total_count": 1, "jobs": [job("frontend / unit", "2026-10-01T00:00:00Z", "2026-10-01T00:10:00Z")]}
+        with mock.patch.object(report, "_gh", lambda path: fetched):
+            self.assertEqual(report._jobs(1, None), fetched)
+
     def test_headroom_is_measured_against_the_jobs_own_timeout(self):
         code, out, err = self.run_jobs(
             [job("e2e / e2e", "2026-10-15T00:00:00Z", "2026-10-15T00:10:00Z")]
@@ -219,6 +234,20 @@ class TreeModeTests(unittest.TestCase):
         self.assertNotIn("/1 merge_group runs tested the SAME tree", out)
         # The tree is never fetched for a pair that has none to compare.
         self.assertNotIn("SAME tree as the PR run", out)
+
+    def test_a_pinned_commit_the_clone_lacks_is_excluded_as_unbuildable(self):
+        # merge-tree fails two different ways: the pair conflicts (a tree oid is
+        # printed), or it never got that far (nothing is printed). Only the first
+        # is about the pinned pair; the second means the clone is incomplete, and
+        # blaming it on a conflict sends the reader after the wrong thing.
+        code, out, err = self.run_trees(
+            [self.row(5, self.base, self.base) | {"head": "1" * 40}], "0" * 40
+        )
+        self.assertEqual(code, 1, out + err)
+        self.assertIn("this clone cannot build the pair", out)
+        self.assertIn("Excluded 1 of 1 row(s) (this clone cannot rebuild", out)
+        self.assertNotIn("conflicts when replayed", out)
+        self.assertNotIn("does not reconstruct cleanly", out)
 
 
 if __name__ == "__main__":
