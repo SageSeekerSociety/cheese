@@ -35,11 +35,8 @@ vi.mock('@/api/projectSkills', () => ({
 
 vi.mock('@/api/machineSkills', () => ({
   listMachineSkills: (...a: unknown[]) => listMachineSkills(...a),
-  scanMachineSkills: vi.fn(),
   fetchSkillMarket: (...a: unknown[]) => fetchSkillMarket(...a),
   fetchMachineSkill: (...a: unknown[]) => fetchMachineSkill(...a),
-  setMachineSkillAdoption: vi.fn(),
-  setMachineSkillRoots: vi.fn(),
 }))
 
 vi.mock('@/api', async (importOriginal) => {

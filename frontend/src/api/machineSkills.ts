@@ -1,7 +1,7 @@
 // 一台机器上扫到的技能（`~/.claude/skills/<name>/SKILL.md` 这类 agentskills.io 目录）。
 //
 // 正文留在机器原位，平台只记 `source_root` + `digest` 和机器索引（后端 `machine_skill`
-// 表）。所以这里只有几件事：读索引、让机器重新扫一遍、登记工作区根和从网上取一份。
+// 表）。所以这里只有几件事：读索引、读市场、从网上取一份。
 //
 // 走 `connectorRequest`：这几条挂在 `/connector/*` 下（和 `/connector/my/devices` 同一
 // 片区），不带 `/api` 前缀、也不拆 envelope。
@@ -34,31 +34,6 @@ export interface MachineScan {
 /** 索引，照上一次扫描留下的样子。不碰机器 —— 开个列表不该等一台笔记本。 */
 export function listMachineSkills(deviceId: string): Promise<{ skills: MachineSkill[] }> {
   return connectorRequest(`/my/devices/${encodeURIComponent(deviceId)}/skills`)
-}
-
-/** `?project_id=` 带上去时，扫描会连**这个项目**的会话 home（`~/.cheese/home/<项目>/
- *  <代号>/.claude/skills`）一起读——队友在会话里写出来的技能就在那儿。 */
-function withProject(path: string, projectId?: string | null): string {
-  return projectId ? `${path}?project_id=${encodeURIComponent(projectId)}` : path
-}
-
-/** 现在就去读那台机器（人点「扫描」）。只入库，不替人采纳。 */
-export function scanMachineSkills(deviceId: string, projectId?: string | null): Promise<MachineScan> {
-  return connectorRequest(withProject(`/my/devices/${encodeURIComponent(deviceId)}/skills/scan`, projectId), {
-    method: 'POST',
-  })
-}
-
-/** 登记整份工作区根名单（写在那台机器上），写完顺手重扫一遍。 */
-export function setMachineSkillRoots(
-  deviceId: string,
-  roots: string[],
-  projectId?: string | null
-): Promise<MachineScan> {
-  return connectorRequest(withProject(`/my/devices/${encodeURIComponent(deviceId)}/skills/roots`, projectId), {
-    method: 'POST',
-    body: JSON.stringify({ roots }),
-  })
 }
 
 /** 落盘前给人看的清单：每颗技能，以及会跟着写进去的文件名（含 SKILL.md）。 */
@@ -112,12 +87,4 @@ export interface SkillMarket {
 /** 市场：Anthropic 与 OpenAI 公开的技能 / 插件 / MCP。公开目录，登录就读。 */
 export function fetchSkillMarket(): Promise<SkillMarket> {
   return connectorRequest('/skills/market')
-}
-
-/** 采纳一项：从此它可以被某个队友勾上；`adopted: false` 是退订，它不再进池子。 */
-export function setMachineSkillAdoption(deviceId: string, name: string, adopted: boolean): Promise<MachineSkill> {
-  return connectorRequest(`/my/devices/${encodeURIComponent(deviceId)}/skills/${encodeURIComponent(name)}/adopt`, {
-    method: 'POST',
-    body: JSON.stringify({ adopted }),
-  })
 }
