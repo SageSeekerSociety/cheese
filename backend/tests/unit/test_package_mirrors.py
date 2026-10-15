@@ -10,11 +10,14 @@ machine (`bootstrap.prepared`), and the launcher script a device runs
 the two renderings to each other rather than to a second copy of the table.
 """
 
+import contextlib
 import os
 import re
 import shutil
 import subprocess
+import sys
 import types
+import urllib.request
 import uuid
 
 import pytest
@@ -65,6 +68,39 @@ def _mirror_environment(monkeypatch, config, dead=_DEAD, **kwargs):
     """`environment()` with the network replaced by the answer under test."""
     monkeypatch.setattr(mirrors, "_answers", _answers_except(dead))
     return mirrors.environment(config, **kwargs)
+
+
+def _the_machine_answers(monkeypatch, dead=""):
+    """This machine's network, replaced by the answer under test.
+
+    A prepare reads the mirror table through `runpy`, which runs the file
+    again: patching `mirrors._answers` leaves that copy probing for real, on
+    whatever network the machine running the tests happens to be on. What both
+    copies share is the module the probe is made with, so that is what is
+    replaced. The URLs asked are returned, because a prepare that asked nothing
+    and one that asked and got no answer look the same from the outside.
+    """
+    asked = []
+
+    def urlopen(request, timeout=None):
+        asked.append(request.full_url)
+        if dead and dead in request.full_url:
+            raise OSError("no answer")
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return asked
+
+
+def _room_payload():
+    """The payload the backend sends a room, as `launch.payload_for` builds it."""
+    return payload_for(
+        uuid.uuid4(),
+        uuid.uuid4(),
+        {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
+        sandbox=False,
+        platform_machine=False,
+    )
 
 
 def _stub_curl(tmp_path, codes):
@@ -188,15 +224,53 @@ def test_a_mirror_nobody_named_exports_nothing(monkeypatch):
     seen = _mirror_environment(monkeypatch, config)
 
     assert "UV_PYTHON_INSTALL_MIRROR" not in seen
+    assert "UV_PYTHON_INSTALL_MIRROR" not in mirrors.governed(config)
 
 
-def test_the_feature_can_be_turned_off():
-    """A deployment that wants the old behaviour gets precisely it: no
-    addresses, so no probe, so not one variable."""
-    off = types.SimpleNamespace(package_mirror_enabled=False)
+def test_the_feature_can_be_turned_off(monkeypatch):
+    """A deployment that wants the old behaviour gets precisely it: no probe,
+    and not one variable.
 
-    assert mirrors.configuration(off) == {}
-    assert mirrors.shell(mirrors.configuration(off)) == ""
+    The addresses are still named, and that is the half that reaches a room
+    that is already running: a room carrying a mirror from before the switch
+    can only be told to drop it by name.
+    """
+    probes = []
+
+    def probe(url):
+        probes.append(url)
+        return True
+
+    monkeypatch.setattr(mirrors, "_answers", probe)
+    off = types.SimpleNamespace(
+        package_mirror_enabled=False,
+        package_mirror_pypi_index=_CONFIG["pypi"],
+        package_mirror_pypi_fallback=_CONFIG["pypi_official"],
+        package_mirror_npm_registry=_CONFIG["npm"],
+        package_mirror_playwright_host=_CONFIG["playwright"],
+        package_mirror_uv_python=_CONFIG["uv_python"],
+    )
+    config = mirrors.configuration(off)
+
+    assert mirrors.environment(config) == {}
+    assert mirrors.shell(config) == ""
+    assert probes == []
+    assert set(mirrors.governed(config)) == set(_ALL_NAMES)
+
+
+def test_a_name_is_governed_whether_or_not_its_mirror_answers(monkeypatch):
+    """What a room must stop using is not a question about the probe: a mirror
+    that stopped answering is exactly the case the names exist for, and the
+    room still carrying its address is the one that has to be told."""
+    monkeypatch.setattr(mirrors, "_answers", _answers_except("."))
+
+    assert mirrors.environment(_CONFIG) == {}
+    assert set(mirrors.governed(_CONFIG)) == set(_ALL_NAMES)
+
+    # An address nobody set is not governed: there is nothing to take away.
+    unnamed = {**_CONFIG, "uv_python": ""}
+
+    assert "UV_PYTHON_INSTALL_MIRROR" not in mirrors.governed(unnamed)
 
 
 def test_a_probe_is_paid_for_once_and_not_once_per_tool_call(monkeypatch, tmp_path):
@@ -359,23 +433,48 @@ def test_a_prepared_room_hands_its_agent_the_mirrors(tmp_path, monkeypatch):
     is that environment, built from the payload the backend sends, out of the
     probes this machine's own network answers.
     """
-    project, resource = uuid.uuid4(), uuid.uuid4()
-    payload = payload_for(
-        project,
-        resource,
-        {"CHEESE_API": "http://127.0.0.1:1", "CHEESE_TOKEN": "test"},
-        sandbox=False,
-        platform_machine=False,
-    )
+    payload = _room_payload()
     assert payload["package_mirrors"] == mirrors.configuration(settings)
-    monkeypatch.setattr(bootstrap, "binary", lambda *_: __import__("sys").executable)
-    monkeypatch.setattr(mirrors, "_answers", _answers_except(_DEAD))
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    asked = _the_machine_answers(monkeypatch)
 
-    with bootstrap.prepared(payload, tmp_path) as (_home, config, _state, _env):
+    with bootstrap.prepared(payload, tmp_path, fetch_toolchain=False) as (
+        _home,
+        config,
+        _state,
+        _env,
+    ):
         seen = config["env"]
+        assert asked, "the prepare asks this machine which mirrors answer"
         assert seen["UV_INDEX"] == settings.package_mirror_pypi_index
         assert seen["PIP_EXTRA_INDEX_URL"] == settings.package_mirror_pypi_fallback
         assert seen["npm_config_registry"] == settings.package_mirror_npm_registry
         # The payload key is the platform's own, not a variable: it carries the
         # addresses to the executor and stops there.
         assert not [name for name in seen if "package_mirrors" in name]
+        assert "npm_config_registry" in config["env_reset"]
+
+
+def test_a_mirror_that_stopped_answering_is_named_for_removal(tmp_path, monkeypatch):
+    """The half a variable cannot state on its own.
+
+    A room prepares on every tool call it serves, and a prepare adds to what
+    the room already has, so a mirror that stopped answering cannot be taken
+    away by leaving its variable out: the room is carrying it. The name is
+    stated instead, and the executor drops it (`runtime`, `configure`).
+    """
+    payload = _room_payload()
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    dead = settings.package_mirror_npm_registry
+    asked = _the_machine_answers(monkeypatch, dead=dead)
+
+    with bootstrap.prepared(payload, tmp_path, fetch_toolchain=False) as (
+        _home,
+        config,
+        _state,
+        _env,
+    ):
+        assert dead.rstrip("/") + "/" in asked
+        assert "npm_config_registry" not in config["env"]
+        assert "npm_config_registry" in config["env_reset"]
+        assert config["env"]["UV_INDEX"] == settings.package_mirror_pypi_index

@@ -1106,11 +1106,13 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         # names an index of its own keeps it, which is why the value is only
         # defaulted. This is the environment an agent's tools inherit, so a
         # mirror listed here is what an agent's `pip install` goes through.
+        # `governed` is the other half: names the policy may set at all, so a room
+        # already carrying one this prepare does not set can be told to drop it.
         mirrors = payload.get("package_mirrors") or {}
-        if mirrors:
-            for name, value in package_mirrors(release)["environment"](
-                mirrors, store
-            ).items():
+        policy = package_mirrors(release) if mirrors else None
+        governed = policy["governed"](mirrors) if policy is not None else ()
+        if policy is not None:
+            for name, value in policy["environment"](mirrors, store).items():
                 package_env.setdefault(name, variables.get(name, value))
         env = dict(os.environ)
         for name in list(env):
@@ -1173,6 +1175,9 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
             "workspace": str(work),
             "claude": binary(owner, env["CHEESE_API"]),
             "env": scoped_env,
+            # The names the environment above is allowed to have taken away, so
+            # the executor drops them from a room it configures again (`runtime`).
+            "env_reset": list(governed),
             "mcp_servers": {},
             "release": str(release),
             "sandbox": payload.get("sandbox") or False,
@@ -1199,7 +1204,7 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
             except (ConnectionError, FileNotFoundError):
                 info = None
             if info:
-                unchanged = {"env", "claude", "release", "sandbox"}
+                unchanged = {"env", "env_reset", "claude", "release", "sandbox"}
                 if {k: v for k, v in previous.items() if k not in unchanged} != {
                     k: v for k, v in config.items() if k not in unchanged
                 }:
@@ -1248,7 +1253,11 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
                                 "Executor protocol upgrade is waiting for running work"
                             )
                         refreshed = {**previous.get("env", {}), **payload["env"]}
-                        runtime["request"](state, "configure", {"env": refreshed})
+                        runtime["request"](
+                            state,
+                            "configure",
+                            {"env": refreshed, "env_reset": config["env_reset"]},
+                        )
                         info.update(
                             state=str(recorded),
                             mcp_servers=process_servers(
@@ -1341,7 +1350,11 @@ def configure_idle(payload):
                 # Held: a predecessor is coming up, and one started over it dies.
                 info = predecessor(release)["await_predecessor"](state, runtime)
             if info:
-                runtime["request"](state, "configure", {"env": scoped_env})
+                runtime["request"](
+                    state,
+                    "configure",
+                    {"env": scoped_env, "env_reset": config["env_reset"]},
+                )
                 if payload.get("environment"):
                     runner = runpy.run_path(str(release / "cheese-environment.py"))
                     info["environment_status"] = runner["read_status"](

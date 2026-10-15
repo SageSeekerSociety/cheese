@@ -24,6 +24,17 @@ is worse than the traffic it saves. So a mirror is used only once a probe says
 it answers; one that does not stays unset, and that tool is on the official
 source, exactly where it was before this existed.
 
+THE NAMES AS WELL AS THE VALUES. A room prepares on every tool call it serves,
+and the prepare hands its environment to the executor as something to add to
+what the room already has (`runtime`, the `configure` request). So a mirror that
+stops answering cannot be expressed by leaving a variable out: the room is
+already carrying it. `governed` is the other half — every name the deployment
+has given an address for — and it travels beside the environment so the
+executor can take away the ones this prepare did not set. That is also how a
+deployment that turns the feature off gets the old behaviour back in rooms that
+are already running, and it is why the names are computed from the addresses
+whether or not the feature is on.
+
 WHAT ANSWERS MEANS. A reply, not a 200. `cdn.npmmirror.com` answers 404 for the
 directory above the browsers and 200 for a browser; a mirror behind a private
 index answers 403 to a HEAD it does not serve. All of those are the mirror
@@ -121,19 +132,38 @@ MIRRORS = (
 
 
 def configuration(settings) -> dict:
-    """The mirror addresses one room is given, out of the platform's settings.
+    """The mirror addresses one room is given, out of the platform's settings,
+    and whether they are to be used at all.
 
-    Empty when the feature is off, and empty means every mirror is left alone.
+    The addresses are named whether or not the feature is on, because
+    `governed` is asked of this and a deployment that turns the feature off
+    still has to take the variables back out of the rooms that are running.
     """
-    if not settings.package_mirror_enabled:
-        return {}
     return {
+        "enabled": bool(settings.package_mirror_enabled),
         "pypi": settings.package_mirror_pypi_index,
         "pypi_official": settings.package_mirror_pypi_fallback,
         "npm": settings.package_mirror_npm_registry,
         "playwright": settings.package_mirror_playwright_host,
         "uv_python": settings.package_mirror_uv_python,
     }
+
+
+def governed(config) -> tuple[str, ...]:
+    """Every variable this policy governs for one room.
+
+    The names of every mirror the deployment has given an address to, whether
+    or not that mirror answers and whether or not the feature is on. An
+    environment prepared without one of them is a room that has to stop using
+    it, and this is the only thing that says so: a variable that is merely left
+    out of an environment is one the room keeps (`runtime`, `configure`).
+    """
+    return tuple(
+        name
+        for mirror in MIRRORS
+        if config.get(mirror.key)
+        for name, _ in mirror.exports
+    )
 
 
 def environment(config, store=None, *, now=None) -> dict:
@@ -144,6 +174,8 @@ def environment(config, store=None, *, now=None) -> dict:
     the machine for every tool call (`bootstrap.prepared`). A store that cannot
     be written costs the next call a probe, not the room its installs.
     """
+    if not config.get("enabled", True):
+        return {}
     live = _live(config, store, now=now)
     exports = {}
     for mirror in MIRRORS:
@@ -161,6 +193,8 @@ def shell(config) -> str:
     answers is a property of the machine the room runs on, and the backend that
     builds this script is not on the network of every machine it launches on.
     """
+    if not config.get("enabled", True):
+        return ""
     live = [
         (_probe_url(config[mirror.key]), _exports(mirror, config))
         for mirror in MIRRORS
