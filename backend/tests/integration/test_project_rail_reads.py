@@ -163,14 +163,12 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
             room_id=uuid.UUID(room),
             title="第一件",
             created_at=OLDER,
-            started_at=OLDER,
         )
         second = Task(
             project_id=uuid.UUID(project),
             room_id=uuid.UUID(room),
             title="第二件",
             created_at=NEWER,
-            started_at=NEWER,
         )
         s.add_all([first, second])
         await s.flush()
@@ -237,7 +235,6 @@ def _carded_tasks(client, project: str, room: str, cards: list[dict]) -> dict[st
                 room_id=uuid.UUID(room),
                 title=f"活 {i}",
                 created_at=OLDER,
-                started_at=OLDER,
             )
             s.add(task)
             await s.flush()

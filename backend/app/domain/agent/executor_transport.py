@@ -67,14 +67,14 @@ READ_ONLY_REFUSED = (
     "这不是故障，重试结果一样。"
 )
 
-# 这次会话的改动留不下（支线、还没开始的任务，`sandbox_auth` 的 ``scratch``），
+# 这次会话的改动留不下（支线，`sandbox_auth` 的 ``scratch``），
 # 而这一次要把改动带出机器（同步、项目的 MCP 服务），或者机器不归它独占、它只能读
 # （`routes/execution.py`）。两种都不是故障。
 SCRATCH_REFUSED = (
-    "这个会话在支线或还没开始的任务里，改动留不下：不能同步改动，也不能用项目的 MCP "
-    "服务；工作机器不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。"
-    "这由会话所在的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；要改项目，"
-    "创建一个任务。"
+    "这个会话在支线里，改动留不下：不能同步改动，也不能用项目的 MCP 服务；工作机器"
+    "不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。这由会话所在"
+    "的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；有人要做这件事时，"
+    "用 cheese_task 把支线转为任务。"
 )
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
@@ -118,8 +118,8 @@ def _claimed(token: str, claim: str) -> bool:
 
 
 def keeps_nothing(token: str) -> bool:
-    """Whether this execution credential's work stays on its machine: a 支线's,
-    or a task's its owner has not started."""
+    """Whether this execution credential's work stays on its machine: a
+    支线's."""
     return _claimed(token, "scratch")
 
 
@@ -1176,7 +1176,7 @@ class RemoteClient:
 
     def checkpoint(self, request_id):
         """A turn's Stop checkpoint: its work synced into the project. A
-        session whose work is not kept (a 支线, a task not yet started) has none
+        session whose work is not kept (a 支线) has none
         to sync, and the executor route would refuse it. Nor does a session
         that never held a sandbox: its turn did nothing on a machine. (One
         whose sandbox was destroyed while idle is the route's to answer.)"""

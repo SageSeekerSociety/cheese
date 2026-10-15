@@ -79,7 +79,6 @@
   "labelWhyVoided": "Why they were dismissed",
   "lines": "{items}",
   "mergeQueueLeft": "PR #{pr} left the merge queue without merging",
-  "dispatchSeatWoken": "You hold this project's dispatch seat. The platform also sends the dispatch seat two kinds of event — a PR becoming ready to merge, and a PR leaving the merge queue:\n\n{headline}\n{detail}",
   "mergeRefused": "GitHub refused to merge PR #{pr}",
   "mergeRefusedDetail": "{reason}\n{url}",
   "mergeRefusedOnAccept": "Accept not completed: GitHub refused to merge PR #{pr}",

@@ -13,8 +13,6 @@ from app.core.errors import BaseError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
-    TASK_MACHINE_NOT_STARTED,
-    TASK_MACHINE_STARTED,
     TOPIC_DOC_CHAR_BUDGET,
     UNTITLED_TASK,
     build_session_opening,
@@ -22,6 +20,7 @@ from app.domain.agent.harness.prompt import (
     platform_prompt,
     prompt_line,
     publication_prompt,
+    task_section,
 )
 from app.domain.agent.mcp_notice import unconnected_mcp
 from app.domain.agent.prompt import (
@@ -227,14 +226,14 @@ class TurnContext:
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
-    # A 支线's work, and a task's until its owner starts it, is not kept: it
-    # may read, run and try things on its own machine, and nothing it does
-    # there reaches the project. What changes the project is done in a task
-    # its owner started.
+    # A 支线's work is not kept: it may read, run and try things on its own
+    # machine, and nothing it does there reaches the project. What changes the
+    # project is done in a task.
     keeps_nothing: bool
-    # What a task's session is told it may do on the machine; None outside a
-    # task. It changes when the task starts, and is told again then.
-    task_machine: str | None
+    # Whose word a task's session acts on and where it changes the project
+    # (`task_section`); None outside a task. It changes when a 支线 becomes
+    # the task or the task changes hands, and is told again then.
+    task_rules: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -408,8 +407,6 @@ class TurnPreparation:
             topic, task = place.room, place.task
             if topic.status == TopicStatus.archived:
                 raise self.refuse(say("roomArchivedUnarchiveFirst"))
-            if task is not None and task.status == TaskStatus.closed:
-                raise self.refuse(say("taskClosedNoTurn"))
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on
@@ -807,11 +804,13 @@ class TurnPreparation:
             # owner confirmed, which keeps what it produces.
             keeps_nothing=not place.keeps_work
             and not (place.thread is not None and routine_run),
-            task_machine=None
-            if task is None or place.thread is not None
-            else TASK_MACHINE_NOT_STARTED
-            if task.started_at is None
-            else TASK_MACHINE_STARTED,
+            task_rules=None
+            if task is None
+            else task_section(
+                owner=task.owner_handle,
+                contributors=task.contributor_handles or (),
+                closed=task.status == TaskStatus.closed,
+            ),
             acting_agent=acting_agent,
             agent=agent,
             agent_pool=agent_pool,
@@ -919,7 +918,7 @@ class TurnPreparation:
         opening = build_session_opening(
             thread=prepared.thread_context,
             tasks=prepared.thread_tasks,
-            machine=prepared.task_machine,
+            task=prepared.task_rules,
             doc=doc_text,
             memory=memory,
             # 已停用的队友不进这份名单：这一段教的是「要让某人去做事，在他名字前

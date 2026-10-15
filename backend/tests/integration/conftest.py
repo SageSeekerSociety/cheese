@@ -397,12 +397,10 @@ def open_task(
     owner: str = "alice",
     contributors: list[str] | None = None,
 ) -> dict:
-    """A task in ``room_id``, made by ``owner``: whoever makes one owns it, and
-    making it starts it — its agent may work the project from now on, and
-    ``owner`` reviews what it delivers. The one kind of task nobody has started
-    yet is an idea an AI teammate raised on its own: :func:`teammate_task`.
-    ``contributors`` are brought in to work it beside the owner (they write its
-    document too)."""
+    """A task in ``room_id``, made by ``owner``: whoever makes one owns it, its
+    agent may work the project from the start, and ``owner`` reviews what it
+    delivers. ``contributors`` are brought in to work it beside the owner (what
+    they say is the agent's to act on too, and they write its document)."""
     r = client.post(
         f"/topics/{room_id}/tasks",
         json={"title": title},
@@ -435,15 +433,10 @@ def teammate_task(
     *,
     owner: str = "alice",
     summary: str = "把它记下来，回头做",
-    start: bool = False,
     said_by: str = "alice",
 ) -> dict:
-    """A task the room's AI teammate opened from a 支线 (``cheese_task``).
-
-    With ``start=False`` this is the one task that waits for its owner: made on
-    the teammate's own idea, nobody asked for it, so it stays in 讨论中 until
-    ``owner`` starts it. ``start=True`` is someone having asked for it — that
-    one starts where it stands, like a task a person makes."""
+    """A task the room's AI teammate made from a 支线 on someone's word
+    (``cheese_task``): a new task under the message the 支线 hangs under."""
     project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     thread = in_thread(client, room_id, said_by)
     token = mint_scoped_token(
@@ -461,7 +454,6 @@ def teammate_task(
                 "title": title,
                 "summary": summary,
                 "owner_handle": owner,
-                "start": start,
             },
             headers={"X-Cheese-Token": token},
         )

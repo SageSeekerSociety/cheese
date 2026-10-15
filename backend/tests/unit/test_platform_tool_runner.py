@@ -375,9 +375,9 @@ def test_a_clean_write_back_carries_no_warning():
 
 
 def test_a_document_is_written_with_the_machine_out_of_reach():
-    """A task before its owner starts it reads its machine and writes nothing
-    there, yet drafting its document is what it is there to do. A document is
-    the platform's, so writing one asks nothing of the machine."""
+    """A session whose machine is out of reach still writes its task's
+    document: a document is the platform's, so writing one asks nothing of
+    the machine."""
     host = _doc_host()
     host.sync = RuntimeError(cheese_out_of_reach)
 
@@ -391,50 +391,47 @@ def test_a_document_is_written_with_the_machine_out_of_reach():
 # --- tasks and acceptance --------------------------------------------------
 
 
-def test_a_task_someone_asked_for_is_created_started_and_touches_nothing_else():
-    """Asked to do something, an AI teammate creates the task and starts it for
-    the person who asked. Creating one reads no file and pushes no branch."""
+def test_a_task_someone_asked_for_is_created_and_touches_nothing_else():
+    """Asked to do something, an AI teammate creates the task for the person
+    who asked. Creating one reads no file and pushes no branch."""
     host = Host(
         {
             ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
                 "id": "task-1",
                 "title": "查一下分页",
                 "owner_handle": "lisi",
-                "started": True,
+                "here": False,
             }
         }
     )
     out = run(
         "cheese_task",
-        {"title": "查一下分页", "summary": "干这个", "owner": "lisi", "start": True},
+        {"title": "查一下分页", "summary": "干这个", "owner": "lisi"},
         host,
     )
     [plan] = host.requests
     assert plan["path"] == f"/topics/{_ROOM}/teammate-tasks"
-    assert plan["body"]["start"] is True
+    assert plan["body"]["here"] is False
     assert plan["body"]["owner_handle"] == "lisi"
     assert host.synced == []
     assert "查一下分页" in out
 
 
-def test_a_task_that_could_not_start_tells_the_teammate_to_ask():
+def test_a_thread_turned_into_the_task_tells_the_teammate_it_may_change_the_project():
     host = Host(
         {
             ("POST", f"/topics/{_ROOM}/teammate-tasks"): {
-                "id": "task-1",
-                "title": "查一下分页",
+                "id": _ROOM,
+                "title": "登录验证码",
                 "owner_handle": "lisi",
-                "started": False,
-                "not_started_because": "没有审阅人",
+                "here": True,
             }
         }
     )
-    out = run(
-        "cheese_task",
-        {"title": "查一下分页", "summary": "干这个", "start": True},
-        host,
-    )
-    assert "没有审阅人" in out
+    out = run("cheese_task", {"title": "登录验证码", "here": True}, host)
+    [plan] = host.requests
+    assert plan["body"]["here"] is True
+    assert "cheese worktree" in out
 
 
 # --- memory, roster, status and the rest -----------------------------------

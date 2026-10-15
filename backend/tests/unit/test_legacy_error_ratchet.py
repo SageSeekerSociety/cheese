@@ -110,7 +110,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/document_agent.py", "ValidationError"): 3,
     ("app/api/routes/document_comments.py", "ValidationError"): 1,
     ("app/api/routes/forge_token.py", "GatewayUnavailableError"): 5,
-    ("app/api/routes/git_http.py", "ValidationError"): 3,
+    ("app/api/routes/git_http.py", "ValidationError"): 2,
     ("app/api/routes/github_install.py", "GatewayUnavailableError"): 1,
     ("app/api/routes/integrations.py", "ValidationError"): 2,
     ("app/api/routes/library.py", "ValidationError"): 3,

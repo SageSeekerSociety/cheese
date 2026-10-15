@@ -48,8 +48,17 @@ hook runs on every push (`cheese worktree` writes that hook; the mechanism is
 described in `docs/workflows.md`). It calls this script as
 `--tier static --pre-push`.
 
-`--pre-push` is a modifier, not a tier, and it changes two things:
+`--pre-push` is a modifier, not a tier, and it changes three things:
 
+- It adds the checks in `PRE_PUSH_HOOKS`, which the other tiers do not select:
+  today `openapi-document` for a backend-scoped push. Those are steps of a
+  Required CI job that a first push can be the first to break, and that a work
+  machine can still run — no service, no pinned harness, no node toolchain.
+  They are added here rather than to `FAST_HOOKS` because that table is what
+  `task ci:fast` and Required CI's draft job read, and neither should spend
+  time on a check this entry point is the one trying to close a gap for.
+  Measured on a work machine 2026-10-15: 23.3s, 497 MiB peak, against the
+  180s static tier budget; the whole entry point run took 46.3s.
 - The three hooks that spawn the node toolchain (`eslint`, `stylelint`,
   `boundary-check-frontend`) leave the selection and are recorded in `not_run`,
   never silently dropped: a report from this entry point says it could not

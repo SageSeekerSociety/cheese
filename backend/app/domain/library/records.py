@@ -175,6 +175,16 @@ async def stored(
     return [(row.name, row.location, row.blob_key) for row in rows]
 
 
+def read_blob(location: str, key: str) -> bytes:
+    """``stored`` 交回的那一双 ``(存储, 键)`` 底下的字节。
+
+    和 ``stored`` 是一对：行和字节分开给，是因为搬字节的时机在事务结束之后（见它
+    的说明）。「存储 + 键」这双地址怎么读回字节是本包自己的事，不该让搬的人去认
+    字节存放在哪儿。
+    """
+    return blobs.store(location).get(key)
+
+
 async def add(
     session: AsyncSession,
     project_id: uuid.UUID,

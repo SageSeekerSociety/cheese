@@ -66,9 +66,6 @@
     "compareTo": "比较对象",
     "view": "查看方式",
     "changes": "改动",
-    "paragraphsChanged": "修改 {n} 段",
-    "paragraphsAdded": "新增 {n} 段",
-    "paragraphsRemoved": "删除 {n} 段",
     "noLineChanges": "内容相同，仅文件权限不同",
     "status": {
       "added": "新增",

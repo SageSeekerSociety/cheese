@@ -323,9 +323,7 @@ async def lifespan(application: FastAPI):
             from app.domain.agent_instance.adapters import task_teammate
             from app.domain.delivery.agent import (  # deferred-import: startup cost
                 dispatch_pending,
-                record_agent,
                 record_task_instruction,
-                seat_instance_id,
             )
             from app.domain.delivery.ledger import (  # deferred-import: startup cost
                 settle_card,
@@ -347,8 +345,6 @@ async def lifespan(application: FastAPI):
                         announce,
                         settle_card=settle_card,
                         record_instruction=record_task_instruction,
-                        seat_instance_id=seat_instance_id,
-                        record_agent=record_agent,
                         dispatch_pending=pump_pending,
                         task_teammate=task_teammate,
                     ),

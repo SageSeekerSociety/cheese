@@ -29,9 +29,9 @@ covers:
 | 实例 | `agent_instances` | 它在这个项目里是谁、在这里学到了什么 |
 | 会话 | `agent_sessions` | 一段对话（话题或任务）里的会话，可以随时丢掉 |
 
-`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room` 或 `task`，id 就是话题或任务自己的 id，由数据库触发器在话题、任务插入和删除时维护，应用不写它。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<话题十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把话题交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
+`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room`、`task` 或 `thread`，id 就是话题、任务或支线自己的 id，由数据库触发器在它们插入和删除时维护，应用不写它。支线原地转成任务时任务沿用支线的 id，这一行只把 `kind` 改成 `task`，会话照旧挂在它上面（见[任务与工作目录](/dev/tasks)）。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<话题十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把话题交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
 
-任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions.py`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；任务还没「开始」时凭证带 `scratch`：改动留不下（见[支线与未开始的任务](#scratch)），启动环境里是 `CHEESE_TASK` 和 `CHEESE_KEEPS_NOTHING`，开始之后空闲的会话带着改动留得下的凭证重开。broker 上任务的频道就是任务 id。
+任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions.py`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；支线的会话凭证带 `scratch`：改动留不下（见[支线的会话](#scratch)），启动环境里是 `CHEESE_KEEPS_NOTHING`；支线转成任务后，空闲的会话带着改动留得下的凭证重开，接着同一段对话。broker 上任务的频道就是任务 id。
 
 ## 一轮是一个区间 {#turn}
 
@@ -50,9 +50,9 @@ covers:
 
 `work_lease` 是另一回事，它是这位队友的执行环境落到一台机器上的那一份。执行环境是每位队友在每个对话里自己的（`agent_environments`，见[同一话题里的几个 AI 队友](/dev/turn#seats-machine)）：沙箱放在规格给得出的哪台机器上由平台定，不进沙箱时就是那一台电脑。
 
-### 支线与未开始的任务 {#scratch}
+### 支线的会话 {#scratch}
 
-支线的会话，和负责人还没「开始」的任务的会话，改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），支线里例行任务执行的那一轮除外。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
+支线的会话改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），支线里例行任务执行的那一轮除外。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
 
 - 机器是这条会话独占的（它自己的沙箱，租约上 `own` 为真）：读、跑命令、改文件都照常，只拒绝把改动带出机器的调用——同步检查点和项目的 MCP 服务。
 - 不在自己的沙箱里（直接跑在一台人自己的电脑上）：只能读，和文档芝士借房间机器时一样，外加 Claude Code 自己的 `Read`。

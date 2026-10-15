@@ -1,6 +1,6 @@
 {
   "why": "Operations whose success response has no schema. The list only shrinks: declare a route's response with typed_response(...) and rerun `uv run python -m scripts.export_openapi`.",
-  "count": 672,
+  "count": 670,
   "operations": [
     "DELETE /admin/admins/{target}",
     "DELETE /admin/gateway/models/{name}",
@@ -113,7 +113,6 @@
     "GET /documents/{document_id}/agent/{conversation}/answers/{work}",
     "GET /documents/{document_id}/comments/threads",
     "GET /documents/{document_id}/comments/{comment_id}/thread",
-    "GET /documents/{document_id}/compare",
     "GET /documents/{document_id}/history",
     "GET /documents/{document_id}/nodes",
     "GET /documents/{document_id}/operations/{operation_id}",
@@ -586,7 +585,6 @@
     "POST /topics/{topic_id}/shown",
     "POST /topics/{topic_id}/shown/save",
     "POST /topics/{topic_id}/skills",
-    "POST /topics/{topic_id}/start",
     "POST /topics/{topic_id}/summon",
     "POST /topics/{topic_id}/tasks",
     "POST /topics/{topic_id}/teammate-tasks",

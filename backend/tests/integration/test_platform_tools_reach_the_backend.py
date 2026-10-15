@@ -208,7 +208,7 @@ def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
 
     said = cheese.run_platform_tool(
         "cheese_task",
-        {"title": "数据清洗", "summary": "按新口径", "owner": "alice", "start": False},
+        {"title": "数据清洗", "summary": "按新口径", "owner": "alice"},
         host,
     )
 
@@ -217,7 +217,6 @@ def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
     [task] = client.get(f"/topics/{topic}/tasks").json()["data"]["data"]
     assert task["title"] == "数据清洗"
     assert task["owner_handle"] == "alice"
-    assert task["started_at"] is None
 
 
 def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, room):
@@ -233,7 +232,6 @@ def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, ro
                 "title": "把这一条过于冗长的任务标题改短到侧栏一行里放得下",
                 "summary": "按新口径",
                 "owner": "alice",
-                "start": False,
             },
             host,
         )

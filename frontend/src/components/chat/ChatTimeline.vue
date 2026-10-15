@@ -223,6 +223,15 @@ function ownerName(task: TaskLine): string | null {
 function under(blockId: string): TaskLine[] {
   return props.tasksUnder?.(blockId) ?? []
 }
+/** 这条消息的支线自己转成的那件任务：画在支线那一块的顶上，不另起一行。 */
+function became(m: Block): TaskLine | undefined {
+  return m.thread ? under(m.id).find((task) => task.id === m.thread?.id) : undefined
+}
+/** 从这条消息（或支线里的这句话）拆出去的任务，一件一行。 */
+function madeFrom(m: Block): TaskLine[] {
+  const own = props.threadable ? became(m) : undefined
+  return under(m.id).filter((task) => task !== own)
+}
 
 // 同一位队友连着的几条事件行合成一段，和它连着说的几句话一样：只有第一条带头像、
 // 名字和时间。断开的条件和消息一样（chatGrouping.ts）：中间插了别的行、换了一天、
@@ -582,37 +591,49 @@ const rowLabels = computed(() =>
             />
             <!-- 主线上这条消息的支线：和正文同一栏，挂在消息下面。不用 RoomMessage 的插槽：
                带插槽的行每次重画都会跟着重画。 -->
-            <!-- 这条消息下面：上面是支线里的讨论，下面是从它出来的任务。两样都有时合成一块。 -->
+            <!-- 这条消息下面合成一块：上面是它的支线（转成了任务就多一行任务名），下面一件
+                 一行是从这里拆出去的任务。支线里的回复下面，是从那句话拆出去的任务。 -->
             <div
-              v-if="!notice && threadable && (m.thread || under(m.id).length)"
+              v-if="!notice && ((threadable && m.thread) || under(m.id).length)"
               class="tl-thread msg-work"
+              :class="{ 'msg-work--mine': became(m)?.tone === 'mine' }"
               :data-feed-of="m.id"
-              :class="{ 'msg-work--joined': !!m.thread && under(m.id).length > 0 }"
             >
-              <ThreadLine
-                v-if="m.thread"
-                v-guide-anchor="replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'"
-                :summary="m.thread ?? null"
-                :replying="replyingFor?.(m) ?? null"
-                :replying-seats="replyingSeatsFor?.(m) ?? []"
-                :status="threadStatusFor?.(m) ?? null"
-                :refs="refs"
-                :name-of="nameOf ?? String"
-                :avatar-of="avatarOf"
-                :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
-                @open="emit('open-thread', m)"
-              />
-              <div v-if="under(m.id).length" class="msg-work__tasks">
+              <div v-if="threadable && m.thread" class="msg-work__talk">
                 <TaskCard
-                  v-for="task in under(m.id)"
-                  :key="task.id"
+                  v-if="became(m)"
                   v-guide-anchor="'task-card'"
-                  :task="task"
-                  :owner-name="ownerName(task)"
-                  :in-list="!!m.thread"
+                  :task="became(m)!"
+                  :owner-name="ownerName(became(m)!)"
+                  head
                   @open="emit('open-card', $event)"
                 />
+                <ThreadLine
+                  v-guide-anchor="
+                    replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'
+                  "
+                  :summary="m.thread ?? null"
+                  :replying="replyingFor?.(m) ?? null"
+                  :replying-seats="replyingSeatsFor?.(m) ?? []"
+                  :status="threadStatusFor?.(m) ?? null"
+                  :refs="refs"
+                  :name-of="nameOf ?? String"
+                  :avatar-of="avatarOf"
+                  :time="m.thread?.last_reply_at ? fmtTime(m.thread.last_reply_at) : null"
+                  @open="emit('open-thread', m)"
+                />
               </div>
+              <TaskCard
+                v-for="task in madeFrom(m)"
+                :key="task.id"
+                v-guide-anchor="'task-card'"
+                :task="task"
+                :owner-name="ownerName(task)"
+                :owner-avatar="task.owner ? avatarOf(task.owner) : undefined"
+                in-list
+                :lone="!(threadable && m.thread) && madeFrom(m).length === 1"
+                @open="emit('open-card', $event)"
+              />
             </div>
           </template>
         </template>
@@ -731,41 +752,41 @@ const rowLabels = computed(() =>
   margin-left: 54px;
   width: calc(100% - 70px);
 }
-/* 消息下面那一块：只有任务时，一件一张卡；支线和任务都有时，支线那一行在上，任务列在
-   下面一块白底里，合成一块。 */
+/* 消息下面那一块：支线和任务长在一起，同一个底色。支线那几行在上，转成任务时顶上多
+   一行任务名；拆出去的任务一件一行，排在下面。 */
 .msg-work {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 6px;
-}
-.msg-work :deep(.thread-line) {
-  margin-top: 0;
-}
-.msg-work__tasks {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.msg-work--joined {
   max-width: 620px;
-  gap: 0;
+  margin-top: 6px;
+  border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: var(--fill);
   overflow: hidden;
 }
-.msg-work--joined :deep(.thread-line) {
+.msg-work--mine {
+  border-color: var(--warn);
+}
+.msg-work > * + * {
+  border-top: 1px solid var(--line);
+}
+/* 任务名那一行和下面的回复是同一段对话：一起变色，点哪儿都打开它。 */
+.msg-work__talk {
+  display: flex;
+  flex-direction: column;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.msg-work__talk:hover {
+  background: var(--line-2);
+}
+.msg-work__talk > :deep(.task-card--head + .thread-line) {
+  padding-top: 2px;
+}
+.msg-work :deep(.thread-line),
+.msg-work :deep(.thread-line:hover) {
   max-width: none;
   margin-top: 0;
   background: transparent;
-}
-.msg-work--joined .msg-work__tasks {
-  gap: 0;
-  margin: 0 6px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  overflow: hidden;
 }
 .tl-content {
   position: relative;

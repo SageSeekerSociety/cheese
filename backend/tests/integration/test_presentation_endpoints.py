@@ -13,14 +13,14 @@ from app.domain.agent.models import AgentTurn
 from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.presentation import Building, Done, NeedsYou, NotStarted
+from app.domain.room_task.presentation import Building, Done, NeedsYou
 from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import a_team
 
 
 def _seeded(client) -> dict[str, str]:
-    """一个房间，五条活：还在讨论的、开始了正在跑一轮的、开始了此刻没在跑的、
-    等人验收的、关掉时留下了结论的。"""
+    """一个房间，四条活：正在跑一轮的、此刻没在跑的、等人验收的、关掉时留下了
+    结论的。"""
     ids: dict[str, str] = {}
 
     async def _seed() -> None:
@@ -34,28 +34,25 @@ def _seeded(client) -> dict[str, str]:
 
             now = datetime.now(UTC)
 
-            def _task(title: str, **started) -> Task:
+            def _task(title: str, **closed) -> Task:
                 return Task(
                     project_id=project.id,
                     room_id=room.id,
                     title=title,
                     owner_handle="alice",
-                    **started,
+                    **closed,
                 )
 
-            begun = {"started_at": now, "started_by": "alice"}
-            discussing = _task("还在讨论的活")
-            running = _task("在跑的活", **begun)
-            started = _task("开始了的活", **begun)
-            waiting = _task("等人验收的活", **begun)
+            running = _task("在跑的活")
+            started = _task("停着的活")
+            waiting = _task("等人验收的活")
             concluded = _task(
                 "有结论的活",
-                **begun,
                 status=TaskStatus.closed,
                 conclusion="结论是不做迁移",
                 closed_at=now,
             )
-            s.add_all([discussing, running, started, waiting, concluded])
+            s.add_all([running, started, waiting, concluded])
             await s.flush()
 
             # 任务自己的会话里有一轮送达了、还没停 —— 这就是「在跑」。
@@ -83,7 +80,6 @@ def _seeded(client) -> dict[str, str]:
             ids.update(
                 project=str(project.id),
                 room=str(room.id),
-                discussing=str(discussing.id),
                 running=str(running.id),
                 started=str(started.id),
                 waiting=str(waiting.id),
@@ -100,21 +96,16 @@ def test_the_project_task_list_carries_the_board_cell(client):
     rows = client.get(f"/projects/{ids['project']}/tasks").json()["data"]["data"]
     by_id = {r["id"]: r for r in rows}
 
-    # 负责人还没点「开始」—— 它还在讨论，不在施工。
-    assert by_id[ids["discussing"]]["presentation"] == {
-        "column": "not_started",
-        "phrase": NotStarted.discussing,
-    }
     assert by_id[ids["running"]]["presentation"] == {
         "column": "building",
         "phrase": Building.running,
     }
-    # 开始了，此刻没有一轮在跑，也还没递出交付：「做了一半停着」，不是「还没开始」。
+    # 此刻没有一轮在跑，也还没递出交付：「做了一半停着」。
     assert by_id[ids["started"]]["presentation"] == {
         "column": "building",
         "phrase": Building.started,
     }
-    # 安静，但等的是人 —— 和「开始了没在跑」意味着相反的下一步（去验收 vs 去催）。
+    # 安静，但等的是人 —— 和「停着」意味着相反的下一步（去验收 vs 去催）。
     assert by_id[ids["waiting"]]["presentation"] == {
         "column": "needs_you",
         "phrase": NeedsYou.awaiting_review,
@@ -140,7 +131,6 @@ def test_a_room_and_its_tasks_agree_with_the_project_list(client):
     from_card = {
         task_id: client.get(f"/topics/{task_id}/task").json()["data"]["presentation"]
         for task_id in (
-            ids["discussing"],
             ids["running"],
             ids["started"],
             ids["waiting"],

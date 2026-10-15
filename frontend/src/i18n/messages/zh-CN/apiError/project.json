@@ -37,7 +37,6 @@
   "defaultReviewerNul": "default_reviewer 不能包含 NUL 字节",
   "deliveryVersionsMissing": "这一项没有所选的交付版本",
   "directMessageOwnOnly": "只能打开自己参与的私聊",
-  "dispatchSeatNul": "调度座位不能包含 NUL 字节",
   "environmentScriptNul": "脚本里不能有 NUL 字符",
   "environmentVariableNameInvalid": "环境变量 {name} 是保留名，或者不是合法的变量名",
   "environmentVariableValueInvalid": "环境变量 {name} 的值不合法：不能含 NUL 字符，最长 16384 个字符",

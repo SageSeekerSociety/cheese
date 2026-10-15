@@ -107,7 +107,7 @@ const shown = computed(() => [...shownOpen.value, ...shownClosed.value])
 // 已关闭的滚到最底下那一行露出来时要下一页。
 const sentinel = useLoadMoreSentinel(() => emit('more'))
 
-const ORDER: BoardColumn[] = ['needs_you', 'delivering', 'building', 'not_started']
+const ORDER: BoardColumn[] = ['needs_you', 'delivering', 'building']
 const groups = computed(() => {
   const openGroups = ORDER.map((column) => ({
     column,

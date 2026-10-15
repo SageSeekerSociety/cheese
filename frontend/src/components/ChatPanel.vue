@@ -81,15 +81,16 @@ const props = withDefaults(
     // 信息卡那行「AI 队友」挑的），或支线正在和它说话的那位队友。发送框那个 @ 写它。
     // 空＝跟着房间。
     agentHandle?: string | null
-    // 这里此刻不能说话，以及为什么（任务只有负责人能说话、任务已关闭）。输入框的
-    // 位置换成这一句，`composer-closed` 插槽接在它后面。
+    // 这里此刻不能说话，以及为什么（任务已关闭、频道已归档）。输入框的位置换成这一句，
+    // `composer-closed` 插槽接在它后面。
     composerClosed?: string | null
-    // 这里的提问已经不再等回答（任务关了、频道归档了）：选项不再给点。和
-    // `composerClosed` 分开，因为「我不能说话」（任务只有负责人能说）不等于「题结束了」。
+    // 这里的提问已经不再等回答（任务关了、频道归档了）：选项不再给点。
     askClosed?: boolean
     // 这一栏是一条支线：输入框写「在支线中回复」；我上一句叫过 AI 队友的话，打开时
     // 先带上「@芝士 」。
     inThread?: boolean
+    // 输入框里那句提示，当它不是这一栏默认的那句时：支线转成任务后写「在任务中回复」。
+    hint?: string | null
   }>(),
   {
     alwaysSummon: false,
@@ -107,6 +108,7 @@ const props = withDefaults(
     composerClosed: null,
     askClosed: false,
     inThread: false,
+    hint: null,
   }
 )
 
@@ -184,13 +186,13 @@ function keepFile(block: Block) {
 function nameOf(handle: string): string {
   return panel.refMaps.mentionNames[handle] || handle
 }
-// 频道里每件任务的那张卡：挂在它出自的那条消息下面，或者是「新建了任务」那一条。认得
-// 的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
+// 频道里每件任务的那张卡：挂在它出自的那条消息下面，或者是「新建了任务」那一条；支线里
+// 挂在拆出它的那句回复下面。认得的是跟着窗口里各块一起来的那几件（useTimelineTasks）。
 const knownTasks = computed(() => [...panel.roomTasks.known.value.values()])
 const taskLines = computed(
   () => new Map(knownTasks.value.map((task) => [task.id, taskLine(task, panel.viewer.value, nameOf)]))
 )
-const taskOrigins = computed(() => tasksByOrigin(knownTasks.value))
+const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
 function taskOf(taskId: string): TaskLine | null {
   return taskLines.value.get(taskId) ?? null
 }
@@ -308,7 +310,7 @@ const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: pane
 // 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
 // 的那一刻做一次，删掉了不会再长回来。
 watch(loadingHistory, (loading, was) => {
-  if (!props.inThread || loading || !was || draft.value) return
+  if (!props.inThread || props.alwaysSummon || loading || !was || draft.value) return
   draft.value = summonPrefill(panel.timeline.messages.value, isMine, agentName.value)
 })
 
@@ -546,7 +548,7 @@ useComposerShortcut({
           :agent-name="agentName"
           :always-summon="alwaysSummon"
           :hand-off="handOff"
-          :hint="inThread ? t('work.room.thread.placeholder') : composerHint"
+          :hint="hint ?? (inThread ? t('work.room.thread.placeholder') : composerHint)"
           :atts="pendingAtts"
           :atts-uploading="attsUploading"
           :reply-label="replyLabel"

@@ -26,6 +26,7 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Literal
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.addressing import Event, address
@@ -48,7 +49,17 @@ from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import hand_of
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
+from app.domain.thread.models import Thread
 from app.domain.usage.repositories import UsageRepository
+
+
+async def from_threads(db: AsyncSession, task_ids: Sequence[uuid.UUID]) -> set:
+    """Which of these tasks are a 支线 turned into the task in place: their
+    conversation hangs under a message in the main line, and the page opens it
+    beside the channel, as it opens a 支线."""
+    if not task_ids:
+        return set()
+    return set(await db.scalars(select(Thread.id).where(Thread.id.in_(list(task_ids)))))
 
 
 async def task_out(db, chat: ChatService, task, card=None) -> dict:
@@ -70,14 +81,13 @@ async def task_out(db, chat: ChatService, task, card=None) -> dict:
         now=datetime.now(UTC),
     )
     out["presentation"] = shown.as_dict()
-    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你开始」。
+    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你审阅」。
     out["waiting_on"] = presentation.waiting_on(
         shown,
-        running=task.id in running,
-        owner=task.owner_handle,
         reviewer=card.reviewer_handle if card is not None else None,
         asked=asked[task.id].only() if task.id in asked else None,
     )
+    out["from_thread"] = task.id in await from_threads(db, [task.id])
     return out
 
 
@@ -111,6 +121,7 @@ async def task_rows(
     running = await running_tasks(chat, db, [t.id for t, _ in threads])
     # 每件任务最后说的一句：频道概览上的「最新进展」。
     said = await BlockRepository(db).last_messages(thread_ids)
+    in_place = await from_threads(db, thread_ids)
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
@@ -126,8 +137,6 @@ async def task_rows(
         )
         waiting = presentation.waiting_on(
             shown,
-            running=task.id in running,
-            owner=task.owner_handle,
             reviewer=card.reviewer_handle if card is not None else None,
             asked=asked[task.id].only() if task.id in asked else None,
         )
@@ -144,6 +153,7 @@ async def task_rows(
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
                 "awaits_me": waiting is not None and waiting == actor.handle,
+                "from_thread": task.id in in_place,
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
                 "blocks": [
@@ -193,8 +203,10 @@ async def tasks_under_blocks(
     blocks: Sequence[Block],
 ) -> dict[uuid.UUID, list[dict]]:
     """The tasks each of ``blocks`` carries, as rows: the tasks made from a
-    message, under that message, and the task a room-line row says began, on
-    that row. Blocks that carry none are left out."""
+    message, under that message — in the main line the message a task hangs
+    under, in a 支线 the reply it was made from, except the task the 支线
+    itself became — and the task a room-line row says began, on that row.
+    Blocks that carry none are left out."""
     named = {block.id: task_id for block in blocks if (task_id := named_task(block))}
     if not blocks:
         return {}
@@ -211,10 +223,14 @@ async def tasks_under_blocks(
             strict=True,
         )
     )
+    said_in = {block.id: block.conversation_id for block in blocks}
     carried: dict[uuid.UUID, list[dict]] = {}
     for task, _ in threads:
-        if task.upgraded_from_block_id is not None:
-            carried.setdefault(task.upgraded_from_block_id, []).append(rows[task.id])
+        hung, said = task.upgraded_from_block_id, task.source_block_id
+        if hung is not None and hung in said_in:
+            carried.setdefault(hung, []).append(rows[task.id])
+        elif said is not None and said in said_in and said_in[said] != task.id:
+            carried.setdefault(said, []).append(rows[task.id])
     for block_id, task_id in named.items():
         if task_id in rows:
             carried.setdefault(block_id, []).append(rows[task_id])

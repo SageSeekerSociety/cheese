@@ -13,12 +13,13 @@ is one nobody has touched. Only reports the teammate could read are handed out
 non-admin. The private and security queues stay with the people on the triage
 roster.
 
-The agent does not change a status here. It claims what it works on, proposes
-a task for what it can fix, which the routine's owner starts and whose commit
-carries the `Fixes-feedback:` line (the deploy then moves the report), and what
-should be declined or decided by someone else goes into its run report as a
-proposal for the routine's owner — the status itself stays a triage admin's
-call. A run changes no code: that is done in a task its owner started.
+The agent does not change a status here. It claims what it works on, asks the
+routine's owner whether to make a task of what it can fix — a task made on the
+owner's word, whose commit carries the `Fixes-feedback:` line (the deploy then
+moves the report) — and what should be declined or decided by someone else
+goes into its run report as a proposal for the routine's owner; the status
+itself stays a triage admin's call. A run changes no code: that is done in a
+task.
 """
 
 from __future__ import annotations
@@ -38,8 +39,9 @@ STEPS = "\n".join(
         "1. 用 cheese_feedback_get 读全文和评论。",
         "2. 用 cheese_feedback_claim 领下来；领不到（已经有人在修）就跳过这一条。",
         "3. 调查：复现、读代码、查日志，判断是不是真问题、根因在哪。",
-        "4. 能修的创建成任务（cheese_task，start 填 false，owner 填规则的主人）："
-        "写清根因、修法和反馈编号，由规则的主人开始任务；任务里修好的提交单独一行写 "
+        "4. 能修的先用 cheese_ask 问规则的主人要不要建任务修，一条反馈一道题，选项"
+        "「建任务」「不修」；他选了「建任务」，再用 cheese_task 另开一件任务（owner 填"
+        "他），写清根因、修法和反馈编号。任务里修好的提交单独一行写 "
         "`Fixes-feedback: FB-<编号>`，合并上线后平台会自动记「已修复」「已上线」。"
         "这一轮里不改代码。",
         "5. 修不了或不该修（设计如此、复现不了、要别人拍板）：不要改它的状态。"

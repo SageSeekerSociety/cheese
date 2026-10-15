@@ -66,9 +66,6 @@
     "compareTo": "Compare with",
     "view": "View",
     "changes": "Changes",
-    "paragraphsChanged": "{n} paragraphs changed",
-    "paragraphsAdded": "{n} added",
-    "paragraphsRemoved": "{n} removed",
     "noLineChanges": "Same content; only the file permissions differ",
     "status": {
       "added": "Added",

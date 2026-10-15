@@ -134,10 +134,10 @@ def bind_resource_token(
     ``reading`` makes it a credential that only reads the machine's files
     (``routes/execution.py``): a document's 芝士 looking at the room's work.
 
-    ``scratch`` makes it one whose work is not kept: a 支线, or a task its
-    owner has not started. On a machine that is its session's own it does
-    anything there but carry the work into the project; on one shared with
-    others it only reads (``routes/execution.py``). It carries ``ro`` as well:
+    ``scratch`` makes it one whose work is not kept: a 支线's. On a machine
+    that is its session's own it does anything there but carry the work into
+    the project; on one shared with others it only reads
+    (``routes/execution.py``). It carries ``ro`` as well:
     the executor route is served by the device connection's owner, which an
     app release leaves on its image, and an owner that predates ``scratch``
     reads only ``ro`` and keeps the session to reading until it is released."""

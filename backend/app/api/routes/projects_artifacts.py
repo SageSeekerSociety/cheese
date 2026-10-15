@@ -142,7 +142,8 @@ async def read_artifact(
                 else None
             ),
             "versions": [
-                artifacts.version_payload(project_id, v, rooms) for v in history
+                artifacts.version_payload(project_id, v, rooms, file_store=library)
+                for v in history
             ],
         }
     )

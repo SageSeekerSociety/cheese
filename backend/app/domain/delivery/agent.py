@@ -85,18 +85,9 @@ async def instance_for_seat(session, project_id, seat):
     )
 
 
-async def seat_instance_id(session, project_id, seat) -> uuid.UUID | None:
-    """这个项目里 ``seat`` 那个席位的实例 id；这个项目里没有它就返回 ``None``。
-
-    要这一行的调用点都在第 4 层以上（`review.room_notices`），认不出
-    ``AgentInstance`` 这个第 5 层的模型，所以要递出去的是 id —— 那一行其余字段没有
-    一处用得上。席位还在不在是另一回事（`active_seat_instance_id`）。"""
-    instance = await instance_for_seat(session, project_id, seat)
-    return None if instance is None else instance.id
-
-
 async def active_seat_instance_id(session, project_id, seat) -> uuid.UUID | None:
-    """同上，但席位不在了也当没有。
+    """这个项目里 ``seat`` 那个席位的实例 id；这个项目里没有它、或者它不在了，
+    就返回 ``None``。
 
     调用它的那一处（`routine.service`）分不出这两件事：都不该开工，说给主人的那句
     话也一样。"""
@@ -134,7 +125,7 @@ async def record_agent(
 
 async def record_task_instruction(
     session, event: DeliveryEvent, *, task_id: uuid.UUID, content: str
-) -> uuid.UUID | None:
+):
     """Keep an instruction for a task's own session until it is delivered.
 
     Addressed to the conversation, not the room: ``conversation_id`` is the task's
@@ -145,22 +136,17 @@ async def record_task_instruction(
     手里都有行，可它们的 `ports.py` 一旦写下 `Task` 就从自己那一层往
     `room_task` 伸一条边 —— `block` 那条正好把 C3 的环封上。行归本包读，
     它本来就在读这张表。
-
-    Returns the instance it addressed, or ``None`` when the task's project or
-    room is gone and nothing was recorded. A caller that also addresses a
-    configured seat compares against it: one event must not start two turns of
-    the same agent (``review.room_notices._tell_the_dispatch_seat``).
     """
     # deferred-import: Topic is bound at the top of this module already
     from app.domain.topic.models import Topic
 
     task = await session.get(Task, task_id)
     if task is None:
-        return None
+        return
     project = await session.get(Project, task.project_id)
     room = await session.get(Topic, task.room_id)
     if project is None or room is None:
-        return None
+        return
     agent = await AgentInstanceService(session).for_task(
         project, room, task.agent_handle
     )
@@ -182,7 +168,6 @@ async def record_task_instruction(
         )
         .on_conflict_do_nothing(index_elements=["dedup_key"])
     )
-    return agent.instance_id
 
 
 async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):

@@ -201,7 +201,6 @@ from app.domain.policy import gate
 from app.domain.project.reads import load_project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
-from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import TopicStatus
@@ -771,11 +770,7 @@ class ChatService(SessionRecovery):
             # path takes the same non-conflicting KEY SHARE lock.
             async with self._sessions() as session:
                 place = await PlaceResolver(session).conversation(topic_id)
-                archived = (
-                    place is None
-                    or place.room.status == TopicStatus.archived
-                    or (place.task is not None and place.task.status != TaskStatus.open)
-                )
+                archived = place is None or place.room.status == TopicStatus.archived
                 # The pictures are read here, and the lines written after: a line
                 # says whether its file arrives as a picture, and only reading
                 # the bytes can tell (`model_images`).

@@ -340,7 +340,6 @@ UNDECLARED: frozenset[tuple[str, str]] = frozenset(
         ("POST", "/topics/{topic_id}/shown"),
         ("POST", "/topics/{topic_id}/shown/save"),
         ("POST", "/topics/{topic_id}/skills"),
-        ("POST", "/topics/{topic_id}/start"),
         ("POST", "/topics/{topic_id}/summon"),
         ("POST", "/topics/{topic_id}/tasks"),
         ("POST", "/topics/{topic_id}/title"),

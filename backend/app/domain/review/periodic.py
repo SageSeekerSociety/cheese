@@ -12,9 +12,7 @@ from app.domain.review.ports import (
     Announce,
     Chat,
     DispatchPending,
-    RecordAgent,
     RecordInstruction,
-    SeatInstanceId,
     SweepCheckouts,
     TaskTeammate,
 )
@@ -44,8 +42,6 @@ def register_periodic_jobs(
     gate_nudge_factory: GateNudgeFactory,
     settle_card: SettleCard,
     record_instruction: RecordInstruction,
-    seat_instance_id: SeatInstanceId,
-    record_agent: RecordAgent,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
@@ -58,8 +54,6 @@ def register_periodic_jobs(
             announce,
             settle_card=settle_card,
             record_instruction=record_instruction,
-            seat_instance_id=seat_instance_id,
-            record_agent=record_agent,
             task_teammate=task_teammate,
         ),
     )

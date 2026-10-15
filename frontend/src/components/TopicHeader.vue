@@ -19,6 +19,7 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useQuery } from '@tanstack/vue-query'
 
+import { claimAppBar } from '@/composables/useAppBarSlot'
 import { useNavigation } from '@/composables/useNavigation'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
@@ -59,6 +60,8 @@ const emit = defineEmits<{
 }>()
 
 const { mdAndUp } = useDisplay()
+// 手机上这一行就是顶栏那一格的内容（下面的 Teleport），顶栏于是不写路由的标题。
+claimAppBar(() => !mdAndUp.value)
 
 // 房间自己的生命周期只在不寻常时说一句（已归档 / 草稿），和侧栏那一行同一个规矩。
 // 房间没有「在干活 / 待审阅」这种状态：干活的是成员（输入框下面那一行），待审阅

@@ -11,8 +11,7 @@
 
 这是整件事的核心，不是给现有状态换个分组：
 
-- `not_started` 未开始 —— 任务还在讨论，负责人还没点「开始」。
-- `building` 进行中 —— 开始了，还没递出交付。
+- `building` 进行中 —— 在做，还没递出交付。
 - `delivering` 检查中 —— 下一步在**平台/芝士**手上。
 - `needs_you` 待处理 —— 下一步在**人**手上。
 - `done` 已关闭 —— 任务关了：最后一步已采纳，或没交付就关了。
@@ -117,7 +116,7 @@ class CardRow(Protocol):
 
 
 class TaskSignals(Protocol):
-    """一条活能被折成 `TaskFacts` 的五位 —— **窄读出口交出来的纯值**那一份契约。
+    """一条活能被折成 `TaskFacts` 的四位 —— **窄读出口交出来的纯值**那一份契约。
 
     和 `CardSignals` 同一条理由、同一份写法：`facts_for_task` 的两个调用方，领域内
     的人手上是 `Task` 那一行（ORM 行），HTTP 路由手上是 `room_task` 窄读出口交出来
@@ -129,7 +128,7 @@ class TaskSignals(Protocol):
     声明成 property 是有意的（同 `CardSignals`）：pyright 对只读属性按协变比对，
     所以 `ListedTask` 上的普通字段也接得住。
 
-    五位正好是 `facts_for_task` 读的那五位，多一个就多一条「对方必须记得改」的
+    四位正好是 `facts_for_task` 读的那四位，多一个就多一条「对方必须记得改」的
     绳子，少一个那一格就折不出来。
     """
 
@@ -138,9 +137,6 @@ class TaskSignals(Protocol):
 
     @property
     def accepted_at(self) -> datetime | None: ...
-
-    @property
-    def started_at(self) -> datetime | None: ...
 
     @property
     def conclusion(self) -> str | None: ...
@@ -159,7 +155,6 @@ class TaskRow(Protocol):
 
     status: Mapped[Any]
     accepted_at: Mapped[datetime | None]
-    started_at: Mapped[datetime | None]
     conclusion: Mapped[str | None]
     closing_since: Mapped[datetime | None]
 
@@ -209,7 +204,6 @@ class TopicRow(Protocol):
 class Column(enum.StrEnum):
     """看板的列。判据是「该谁动」，见模块开头。"""
 
-    not_started = "not_started"
     building = "building"
     delivering = "delivering"
     needs_you = "needs_you"
@@ -222,8 +216,6 @@ class Column(enum.StrEnum):
 #: `app/domain/addressing.py`：表的主键是看板的列，只有这里知道每一列是什么意思；
 #: `Hand` 是那份判据（第 1 层）的词，从下面拿。
 _HAND_OF_COLUMN: dict[Column, Hand] = {
-    # 还在讨论：下一步是负责人把事情说清楚、点「开始」。
-    Column.not_started: Hand.participant,
     Column.building: Hand.platform,
     Column.delivering: Hand.platform,
     Column.needs_you: Hand.participant,
@@ -241,17 +233,11 @@ def hand_of(column: Column) -> Hand:
     return _HAND_OF_COLUMN[column]
 
 
-class NotStarted(enum.StrEnum):
-    """任务才有：还在讨论，负责人还没点「开始」。"""
-
-    discussing = "discussing"
-
-
 class Building(enum.StrEnum):
-    """开始了，还没递出交付。"""
+    """在做，还没递出交付。"""
 
     running = "running"
-    #: 任务才有：开始了，此刻没有在跑的一轮，也还没递出交付。
+    #: 任务才有：此刻没有在跑的一轮，也还没递出交付。
     started = "started"
     #: 房间才有：这一轮说完了，在等下一句话。
     idle = "idle"
@@ -298,11 +284,10 @@ class Archived(enum.StrEnum):
 #: 短语的值是码，不是字：卡面上那句话由读者的屏幕按他选的语言画
 #: （前端词条 `work.board.phrase.<码>`）。一个看板同时被说不同语言的人看，所以
 #: 后端说「是哪一句」，不替任何人挑语言。
-Phrase = NotStarted | Building | Delivering | NeedsYou | Done | Archived
+Phrase = Building | Delivering | NeedsYou | Done | Archived
 
 #: 短语 → 它属于哪一列。**唯一**一处把两者关联起来的地方。
 _COLUMN_OF: dict[type[enum.StrEnum], Column] = {
-    NotStarted: Column.not_started,
     Building: Column.building,
     Delivering: Column.delivering,
     NeedsYou: Column.needs_you,
@@ -363,8 +348,6 @@ class TaskFacts:
     status: str
     accepted_at: datetime | None
     card: CardFacts | None
-    #: 负责人点过「开始」（`Task.started_at`）。
-    started: bool = False
     #: 任务自己的会话此刻有一轮在跑 —— 跑轮次的进程当下的事实，从外面喂进来。
     running: bool = False
     #: 关闭时留下过结论（`Task.conclusion`）。
@@ -425,8 +408,8 @@ def facts_for_task(
 
     收两种形状是因为活有两处来源：领域内的人手上是 `Task` 那一行，HTTP 路由手上是
     `room_task` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查
-    一行。这一层只读 `status` / `accepted_at` / `started_at` / `conclusion` /
-    `closing_since` 五个属性 —— `TaskSignals` 和 `TaskRow` 各声明一次这五位，两个调用
+    一行。这一层只读 `status` / `accepted_at` / `conclusion` / `closing_since`
+    四个属性 —— `TaskSignals` 和 `TaskRow` 各声明一次这四位，两个调用
     点上都由 pyright 比对，所以两种形状折出来的 `TaskFacts` 一模一样。卡和房间那两对
     另有单元测试逐位对过（`tests/unit/test_presentation.py`），这一对没有；窄读那几列
     真的带得回来，押在 `room_task.repositories.listed_by_ids` 的列清单上。
@@ -435,7 +418,6 @@ def facts_for_task(
         status=str(task.status),
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
-        started=task.started_at is not None,
         running=running,
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
@@ -700,8 +682,6 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         return _show(Done.completed if facts.has_conclusion else Done.closed)
     if facts.awaiting_answer:
         return _show(NeedsYou.awaiting_answer)
-    if not facts.started:
-        return _show(NotStarted.discussing)
     if facts.running:
         return _show(Building.running)
     if facts.card is not None:
@@ -710,18 +690,17 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
             return shown
         # 退回、闸门判红：卡结算了，球交回给芝士去改。此刻没有一轮在改（`running`
         # 在上面已经答过），也没有新卡递上来，这件事就停在了负责人手上 —— 侧栏把它
-        # 标成没人处理，这里不能还说「已开始」。
+        # 标成没人处理，这里不能还说「进行中」。
         if facts.card.status in _BOUNCED_TO_AGENT:
             return _show(NeedsYou.bounced)
     return _show(Building.started)
 
 
-#: 负责人自己要动手的那几格（「需要我处理」的负责人那一条）：芝士把任务文档写好了
-#: 等他点「开始」，检查红了芝士清不掉，被退回之后没人接着改。只是任务开着、在等别人
-#: 审阅或回答，都不算 —— 那是别人手上的事。
+#: 负责人自己要动手的那几格（「需要我处理」的负责人那一条）：检查红了芝士清不掉，
+#: 被退回之后没人接着改。只是任务开着、在等别人审阅或回答，都不算 —— 那是别人手上
+#: 的事。
 _OWNER_ACTS_ON = frozenset(
     {
-        NotStarted.discussing.value,
         NeedsYou.checks_failed.value,
         NeedsYou.bounced.value,
     }
@@ -729,10 +708,7 @@ _OWNER_ACTS_ON = frozenset(
 
 
 def owner_acts_on(shown: Presentation, *, running: bool) -> bool:
-    """这一格的下一步是不是在负责人手上。
-
-    「讨论中」还在跑的那一段是芝士在写任务文档初稿，写完之前没有东西可以开始。
-    """
+    """这一格的下一步是不是在负责人手上。还有一轮在跑时不是：芝士还在动。"""
     if running:
         return False
     return shown.phrase in _OWNER_ACTS_ON
@@ -741,20 +717,15 @@ def owner_acts_on(shown: Presentation, *, running: bool) -> bool:
 def waiting_on(
     shown: Presentation,
     *,
-    running: bool,
-    owner: str | None,
     reviewer: str | None,
     asked: str | None,
 ) -> str | None:
-    """这一格在等哪一个人：卡面上写「待 某某 审阅」「待 某某 回答」「待 某某 开始」
-    的那个某某。不是在等一个具体的人就是 None —— 一道题问了几个人、问了所有人，
-    就不是。"""
+    """这一格在等哪一个人：卡面上写「待 某某 审阅」「待 某某 回答」的那个某某。
+    不是在等一个具体的人就是 None —— 一道题问了几个人、问了所有人，就不是。"""
     if shown.phrase == NeedsYou.awaiting_review.value:
         return reviewer
     if shown.phrase == NeedsYou.awaiting_answer.value:
         return asked
-    if shown.phrase == NotStarted.discussing.value and not running:
-        return owner
     return None
 
 

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.topics_deps import _actor_in_place
+from app.api.topics_deps import BlockKind, BlockRepository, _actor_in_place
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
@@ -30,7 +30,7 @@ from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
 from app.domain.thread import reads
 from app.domain.thread.schemas import ThreadOut
-from app.domain.thread.services import open_thread, thread_teammate
+from app.domain.thread.services import open_thread, thread_of, thread_teammate
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -142,19 +142,50 @@ async def get_thread(
 ) -> dict:
     """One 支线, the message it hangs under, and the seat of the AI teammate
     it is talking with (`thread_teammate`; null before anyone called one): the
-    one its composer offers to hand a message to."""
+    one its composer offers to hand a message to. A 支线 that became a task
+    is still one, and says so (``task``): the pane showing it shows the task's
+    title, state and owner.
+
+    Any other task reads the same way, opened beside the channel as a 支线 is:
+    the message it hangs under is the one it was made from (a reply in a
+    支线, or a main-line message), or none for a task created on its own."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
-    if place.thread is None:
+    thread = await thread_of(db, topic_id)
+    if thread is None and place.task is not None:
+        return ok(await _task_as_thread(db, place.task))
+    if thread is None:
         raise NotFoundError("Thread not found")
-    root = await reads.root_of(db, place.thread)
+    root = await reads.root_of(db, thread)
     return ok(
         {
             # `_thread_out` 定型之后是模型，不是 dict：展开之前先 dump，别直接 `**`。
-            **_thread_out(place.thread).model_dump(mode="json"),
+            **_thread_out(thread).model_dump(mode="json"),
             "root": BlockOut.model_validate(root).model_dump(mode="json")
             if root is not None
             else None,
-            "teammate": await thread_teammate(db, place.thread),
+            "teammate": await thread_teammate(db, thread),
+            "task": str(place.task.id) if place.task is not None else None,
         }
     )
+
+
+async def _task_as_thread(db, task) -> dict:
+    """A task that never was a 支线, in the shape `get_thread` reads one."""
+    origin = task.source_block_id or task.upgraded_from_block_id
+    root = await BlockRepository(db).get(origin) if origin is not None else None
+    said = await BlockRepository(db).count_for_topic(task.id, kinds=[BlockKind.message])
+    return {
+        "id": str(task.id),
+        "room_id": str(task.room_id),
+        "root_block_id": str(root.id) if root is not None else None,
+        "reply_count": said,
+        "last_reply_at": None,
+        "created_by": task.created_by,
+        "created_at": task.created_at.isoformat(),
+        "root": BlockOut.model_validate(root).model_dump(mode="json")
+        if root is not None
+        else None,
+        "teammate": task.agent_handle,
+        "task": str(task.id),
+    }

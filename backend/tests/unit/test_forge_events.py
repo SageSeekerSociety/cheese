@@ -21,21 +21,17 @@ from app.core.forge_events import subscription_assertion
 from app.domain.agent.announce import announce
 from tests.integration.conftest import a_team
 from tests.support.review_ports import (
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
     settle_card,
     task_teammate,
 )
 
-# `listen` 和 `forge_repository_changed` 够不着第 3 层的几个包，这五个口子由
+# `listen` 和 `forge_repository_changed` 够不着第 3 层的几个包，这三个口子由
 # `app/main.py` 在接线时递进来。下面这几条盯的是 socket 断开重连、事件去重和
 # 「按仓库刷新」—— 口子只要形状对、能被递下去就够，不需要换成假的。
 _PORTS = {
     "settle_card": settle_card,
     "record_instruction": record_task_instruction,
-    "seat_instance_id": seat_instance_id,
-    "record_agent": record_agent,
     "task_teammate": task_teammate,
 }
 
@@ -562,8 +558,6 @@ async def test_events_arriving_during_a_refresh_cost_one_more_refresh(monkeypatc
         announce,
         settle_card,
         record_instruction,
-        seat_instance_id,
-        record_agent,
         dispatch_pending,
         task_teammate,
     ):

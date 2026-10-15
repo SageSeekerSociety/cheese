@@ -93,9 +93,8 @@ class Announce(Protocol):
 class RecordInstruction(Protocol):
     """给任务自己的席位留一句话，等它下一轮读到。
 
-    形状是 `app.domain.delivery.agent.record_task_instruction` 的形状；返回的是
-    记下的那一行投递的 id（一个任务同时只有一个席位，所以这一行也认得出是谁），
-    没记下就是 ``None`` —— 同一次事件里要投给别的席位时按它去重。
+    形状是 `app.domain.delivery.agent.record_task_instruction` 的形状。返回值不透明：
+    那个实现记完就完，本包不看。
 
     收任务的 id 而不是那一行：那一行是第 4 层 `room_task` 的模型，被递进来的
     那几个函数要的是它里面的四个字段，读表的事留在投递包自己做。"""
@@ -107,35 +106,7 @@ class RecordInstruction(Protocol):
         *,
         task_id: uuid.UUID,
         content: str,
-    ) -> uuid.UUID | None: ...
-
-
-class RecordAgent(Protocol):
-    """把一条事件记进某个 agent 席位那本报账，不开工，只投递。
-
-    形状是 `app.domain.delivery.agent.record_agent` 的形状。返回值不透明：那个实现
-    落下的行本包不看，记完就完。"""
-
-    async def __call__(
-        self,
-        session: AsyncSession,
-        event: DeliveryEvent,
-        *,
-        conversation_id: uuid.UUID,
-        instance_id: uuid.UUID,
-        content: str,
-    ) -> object: ...
-
-
-class SeatInstanceId(Protocol):
-    """这个项目里某个席位的实例 id；没有这个席位就是 ``None``。
-
-    形状是 `app.domain.delivery.agent.seat_instance_id` 的形状。递回来的是 id 而
-    不是席位那一行：`AgentInstance` 是第 5 层的模型，本包认不出它。"""
-
-    async def __call__(
-        self, session: AsyncSession, project_id: uuid.UUID, seat: str
-    ) -> uuid.UUID | None: ...
+    ) -> None: ...
 
 
 class TaskTeammate(Protocol):

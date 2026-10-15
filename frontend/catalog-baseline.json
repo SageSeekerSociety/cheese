@@ -133,7 +133,6 @@
     "src/components/spaces/SettingsToolbar.vue",
     "src/components/spaces/SplitBar.vue",
     "src/components/spaces/TrendChart.vue",
-    "src/components/task/TaskDocCompare.vue",
     "src/components/task/TaskRelatedList.vue",
     "src/components/tasks/SubmissionContentCard.vue",
     "src/components/tasks/SubmissionReviewStatus.vue",

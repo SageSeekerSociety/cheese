@@ -73,15 +73,15 @@ def test_what_happened_to_a_task_is_in_the_project_progress(client):
     channel = _channel(client, project)
     task = _task(client, channel, "报名表单字段精简")
     r = client.post(
-        f"/topics/{task}/start",
-        json={"reviewer_handle": "alice"},
+        f"/topics/{task}/close",
+        json={"conclusion": "字段删掉了"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
 
     kinds = {(h["kind"], h["taskId"]) for h in _progress(client, project, "alice")}
     assert ("created", task) in kinds
-    assert ("started", task) in kinds
+    assert ("completed", task) in kinds
 
 
 def test_a_private_channels_tasks_stay_out_of_an_outsiders_progress(client):
@@ -96,17 +96,11 @@ def test_a_private_channels_tasks_stay_out_of_an_outsiders_progress(client):
     assert hidden in {h["taskId"] for h in _progress(client, project, "alice")}
 
 
-def test_starting_and_closing_a_task_are_said_in_the_task_not_the_channel(client):
+def test_closing_a_task_is_said_in_the_task_not_the_channel(client):
     project = _project(client)
     channel = _channel(client, project)
     task = _task(client, channel, "首页加载慢")
 
-    r = client.post(
-        f"/topics/{task}/start",
-        json={"reviewer_handle": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
     r = client.post(
         f"/topics/{task}/close",
         json={"conclusion": "已经改好"},
@@ -114,7 +108,5 @@ def test_starting_and_closing_a_task_are_said_in_the_task_not_the_channel(client
     )
     assert r.status_code == 200, r.text
 
-    assert "task_started" not in _said(client, channel)
     assert "task_closed" not in _said(client, channel)
-    assert "task_started" in _said(client, task)
     assert "task_closed" in _said(client, task)

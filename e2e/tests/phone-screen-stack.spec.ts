@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 
 import { apiLogin } from './helpers';
 
-// 手机上的页面栈：每一屏一个头部，标题只在顶栏出现一次；底栏三格的落点是根，根上没有
+// 手机上的页面栈：每一屏一个头部；底栏三格的落点是根，根上没有
 // ←；栈里的一层有 ←，退回去落在来处。头部是这一屏声明给顶栏的（useScreenHeader），
 // 所以进、退、换屏幕宽度之后，顶栏写的永远是屏幕上这一屏。
 
@@ -27,14 +27,14 @@ test('手机上走一遍页面栈：根上没有 ←，每一层的顶栏写的�
   await expect(bar(page)).toContainText(channel);
   await expect(backArrow(page)).toHaveCount(1);
 
-  // 再进它的一条支线（通知点进来也是这条路）：顶栏写「支线」和它在哪个频道。
+  // 再进它的一条支线（通知点进来也是这条路）：顶栏写「支线」，不再是频道。
   const thread = `${new URL(page.url()).pathname}/threads/1`;
   await page.evaluate((to) => {
     const app = (document.querySelector('#app') as unknown as { __vue_app__: { config: { globalProperties: { $router: { push: (to: string) => Promise<unknown> } } } } }).__vue_app__;
     return app.config.globalProperties.$router.push(to);
   }, thread);
   await expect(bar(page)).toContainText('支线');
-  await expect(bar(page)).toContainText(`#${channel}`);
+  await expect(bar(page)).not.toContainText(channel);
   await expect(backArrow(page)).toHaveCount(1);
 
   // ← 一层一层退回来：先是频道，再是频道列表（根，没有 ←）。
