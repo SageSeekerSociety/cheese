@@ -369,7 +369,8 @@ const ACTION_META: Record<string, { btn: string }> = {
       data-testid="platform-notice"
     >
       <summary class="sys-line">
-        <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }">{{ notice.line }}</span>
+        <!-- 这一行里提到的人是 `<@handle>` token，和别的提示行一样画成名字，不露出原文。 -->
+        <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }" v-html="renderPlain(notice.line)" />
         <span v-if="notice.quote" class="sys-quote" data-user-content>{{
           t('work.room.notice.quote', { text: notice.quote })
         }}</span>

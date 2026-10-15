@@ -745,3 +745,22 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
   })
 })
+
+// 一条可展开的提示（提议技能、起草例行、人工放行合并……）这一行里提到的人，读的人看到的是名字，
+// 不是存储用的 `<@handle>` 原文。
+describe('a foldable notice that names someone', () => {
+  it('reads the name, never the raw token', async () => {
+    listTopicMembers.mockResolvedValue({ data: [{ member_handle: 'cheese-s', name: '芝士S', agent: true }] })
+    const { container } = mountRoom([
+      event('', '<@cheese-s> 提议新增技能「周报格式」', {
+        event_type: 'skill_proposed',
+        detail: '每周五汇总本周合并的改动',
+      }),
+    ])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('芝士S 提议新增技能「周报格式」')
+    expect(text).not.toContain('<@cheese-s>')
+  })
+})
