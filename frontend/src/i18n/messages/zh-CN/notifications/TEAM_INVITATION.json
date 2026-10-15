@@ -1,0 +1,15 @@
+{
+  "action": {
+    "accept": "接受",
+    "decline": "拒绝"
+  },
+  "body": "以 {role} 身份邀请你加入团队 \"{team}\"",
+  "title": "{inviter} 邀请你加入团队",
+  "title_anonymous": "你收到了团队邀请",
+  "toast": {
+    "acceptFailed": "接受邀请失败，请稍后再试",
+    "accepted": "已接受邀请",
+    "declineFailed": "拒绝邀请失败，请稍后再试",
+    "declined": "已拒绝邀请"
+  }
+}

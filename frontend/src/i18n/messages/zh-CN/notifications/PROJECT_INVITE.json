@@ -1,0 +1,20 @@
+{
+  "action": {
+    "accept": "接受",
+    "decline": "拒绝"
+  },
+  "body": "邀请你加入项目 \"{projectName}\"",
+  "ended": {
+    "accepted": "你已加入项目 \"{projectName}\"",
+    "declined": "你已拒绝加入项目 \"{projectName}\"",
+    "revoked": "项目 \"{projectName}\" 的邀请已撤回"
+  },
+  "title": "{inviter} 邀请你加入项目",
+  "title_anonymous": "你收到了项目邀请",
+  "toast": {
+    "acceptFailed": "接受邀请失败，请稍后再试",
+    "accepted": "已接受邀请",
+    "declineFailed": "拒绝邀请失败，请稍后再试",
+    "declined": "已拒绝邀请"
+  }
+}

@@ -1832,9 +1832,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         # reads the stylesheet off disk. The suite is what answers for the
         # edit. A deletion with no surviving root is the same case.
         from ci_fast_checks import test_plan
-        self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
+        self.put("frontend/src/i18n/messages/en/tasks/artifactComparison.json", "{}\n")
         self.put("frontend/catalog-baseline.json", "{}\n")
-        for changed in (["frontend/src/i18n/messages/en/tasks.json"],
+        for changed in (["frontend/src/i18n/messages/en/tasks/artifactComparison.json"],
                         ["frontend/catalog-baseline.json"],
                         ["frontend/src/styles/docBlocks.css"],
                         ["frontend/src/gone.ts"]):
@@ -1860,9 +1860,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         # specs' subject, and they run beside it in the same tier.
         from ci_fast_checks import test_plan
         self.put("frontend/src/views/Index.vue", "<template><p>x</p></template>")
-        self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
+        self.put("frontend/src/i18n/messages/en/tasks/artifactComparison.json", "{}\n")
         plan, omissions = test_plan(
-            self.root, ["frontend/src/views/Index.vue", "frontend/src/i18n/messages/en/tasks.json"],
+            self.root, ["frontend/src/views/Index.vue", "frontend/src/i18n/messages/en/tasks/artifactComparison.json"],
             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")

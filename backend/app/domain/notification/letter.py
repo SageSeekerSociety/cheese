@@ -5,7 +5,7 @@
 收件人是在自己的邮箱里读到它的，那里没有平台的任何上下文。所以这封信要单独站得
 住：发生了什么（标题）、原话是什么（引文）、在哪儿（项目、房间、设备）、点哪里回去
 处理（按钮直达那个房间）。措辞跟站内通知同一套 ——
-`frontend/src/i18n/messages/zh-CN/notifications.json` 和各个 `Render*Notification`
+`frontend/src/i18n/messages/zh-CN/notifications/` 和各个 `Render*Notification`
 组件说的那句话，人在邮件里读到的、在收件箱里读到的是同一句。
 
 `payload` 的形状按类型各不相同，下面按类型取字；认不出来的类型退回到一句类型的人

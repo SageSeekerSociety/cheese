@@ -1,0 +1,7 @@
+{
+  "body": "项目 \"{projectName}\" 将在 {daysLeft} 天后截止",
+  "closed": "已截止",
+  "daysLeft": "剩余 {n} 天",
+  "dueToday": "今天截止",
+  "title": "截止日期提醒"
+}
