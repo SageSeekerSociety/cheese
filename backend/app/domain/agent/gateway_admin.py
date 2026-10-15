@@ -26,7 +26,7 @@ from app.core.sentences import say
 # 直线：types <- parsers <- 本文件，没有回头路，
 # `scripts/check_boundaries.py` 的 C3 才过得了。
 #
-# **本模块按原路径把它们全部重导出** —— 单测和别处按
+# **本模块按原路径重导出上面这些名字** —— 单测和别处按
 # `app.domain.agent.gateway_admin._xxx`、`.ModelUsage` 取名字，或者把这些名字当字符串
 # 目标打补丁，都照旧；拆三个文件是为了让每一个都在行数上限内，
 # 不是要把引用方赶上一次改名。
@@ -34,8 +34,12 @@ from app.core.sentences import say
 # 拆的边界是「谁需要谁」，不是「哪段看起来像另一件事」：解析函数要造的形状与要读的线路键
 # 若是留在这里，就轮到解析层反过来导入本模块，同层成环——所以那批名字下沉到了 types。
 #
-# `noqa: F401` 的那些本模块不再引用：留着是为了让本模块的名字集合一个不少 —— 少了它们，
-# 按字符串打在这些名字上的补丁要到导入期才炸。
+# `noqa: F401` 的那些本模块不再引用：留着是为了本模块的名字集合不缩水 —— 少一个，
+# `from app.domain.agent.gateway_admin import <它>` 就从导入期起炸。
+#
+# 没有跟着回来的是搬走的函数顺手用的那几个 `quote`、`dataclass`、`price_is_set`、
+# `split_upstream`、`declared_free`：它们不是本模块的词汇，跟着回来只会让打在它们
+# 身上的补丁看着还在、其实谁也不读了。要打在它们的调用处，就打到 parsers 上。
 from app.domain.agent.gateway_admin_parsers import (
     _accumulate,
     _admin_key,
