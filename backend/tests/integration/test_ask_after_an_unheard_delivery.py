@@ -151,7 +151,7 @@ def test_a_question_after_an_unheard_delivery_is_not_refused(client):
         lambda: _turns(client, room)[0].stopped_at is not None,
         "the sweep never closed the unheard turn",
     )
-    assert not service.has_running_turn(uuid.UUID(room))
+    assert not client.portal.call(service.has_running_turn, uuid.UUID(room))
 
     with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": "@芝士 好了吗"})

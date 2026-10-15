@@ -160,7 +160,9 @@ class SessionRecovery:
         ambiguous and keeps reminding a turn nobody runs to speak."""
         for key in [key for key in self.live.hook_work if key[1] in turn_ids]:
             del self.live.hook_work[key]
-            self.live.mark_turn_inactive(*key)
+            # The sweep already closed these rows durably; this only drops the
+            # cache mark, and this method cannot await the write-through anyway.
+            self.live.forget_active(*key)
 
     def _replayed(self, replay: asyncio.Task) -> None:
         for topic_id, current in list(self.live.replays.items()):
