@@ -7,11 +7,13 @@ Direct Python invocation defaults to the legacy static tier (no tests/types).
 --tier extended gives the quick selection 900s without expanding its coverage.
 --types additionally runs the full Pyright/frontend-typecheck manual hooks.
 --pre-push is the entry point the platform's task-worktree pre-push hook calls
-(one report per push, for a reader who did not choose to run this): it leaves
-out the hooks that spawn the node toolchain — those get killed on a small box,
-and a report that calls a killed check red is worse than no report — reports
-what it left out as not run, and closes with the command that reproduces each
-item that did not pass. It never blocks the push: the hook that calls it
+(one report per push, for a reader who did not choose to run this): it adds the
+PRE_PUSH_HOOKS checks, which are Required CI steps whose failure a push can be
+the first to find and that a work machine can still run; leaves out the hooks
+that spawn the node toolchain — those get killed on a small box, and a report
+that calls a killed check red is worse than no report — reports what it left out
+as not run, and closes with the command that reproduces each item that did not
+pass. It never blocks the push: the hook that calls it
 swallows the exit code (a push refused here is a commit the platform has not
 delivered, and the checkout it lives in does not survive long).
 Use --title for a proposed PR title; otherwise read the actual PR title from
@@ -67,6 +69,17 @@ FAST_HOOKS = {
     "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"],
 }
 TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
+# Checks the pre-push entry point adds to the ones above: steps of a Required CI
+# job that (a) a push can be the first to find — they red `CI required` when they
+# fail on a first head — and (b) a work machine can actually run, meaning no
+# service, no pinned harness, and no node toolchain. Measured from the 7 days to
+# 2026-10-15: of the backend suite's locally reachable steps, `openapi-document`
+# is the one left that no earlier check covers.
+#
+# Deliberately NOT in FAST_HOOKS: that table is the selection `task ci:fast` and
+# the CI draft tier both read, so an id added there would change what CI runs and
+# spend its 1200s budget on a check this tier is already short of time for.
+PRE_PUSH_HOOKS = {"backend": ["openapi-document"]}
 # pre-commit hooks that spawn the JS toolchain (node/eslint/stylelint) rather
 # than python, and are run after tests/types. On a small machine one started
 # with too little budget left can be killed by the kernel before the sampled
@@ -497,6 +510,11 @@ def run(args, report, finish, started):
     hooks = [h for suite, ids in FAST_HOOKS.items() if scope.get(suite) for h in ids]
     if args.types:
         hooks += [h for suite, ids in TYPES_HOOKS.items() if scope.get(suite) for h in ids]
+    if args.pre_push:
+        # Added before the drift check below, not after it: an id this tool would
+        # spend the tier's time on has to be in the config, and the same rule the
+        # rest of the selection lives under applies to it.
+        hooks += [h for suite, ids in PRE_PUSH_HOOKS.items() if scope.get(suite) for h in ids]
     hook_ids = read_hook_ids()
     if hook_ids is None:
         reason = "cannot read .pre-commit-config.yaml"
