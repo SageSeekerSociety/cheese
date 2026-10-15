@@ -147,6 +147,18 @@ describe('a document edit that belongs to no turn', () => {
     expect(view.emitted('open-resource')).toBeUndefined()
   })
 
+  it('names the document it changed, like the line inside a turn', () => {
+    const { container } = mount(living({ doc_title: '频道体验改进', doc_edits: EDITS }, { turn: null }), null)
+
+    expect(lineText(container)).toContain('芝士S ' + t('work.room.notice.docLine.edited', { title: '频道体验改进' }))
+  })
+
+  it("says 「文档」 for a line stored before it carried the document's name", () => {
+    const { container } = mount(living({ doc_edits: EDITS }, { turn: null }), null)
+
+    expect(lineText(container)).toContain('芝士S ' + t('work.room.notice.docLine.editedDoc'))
+  })
+
   it('still opens the document and its changes', async () => {
     const view = mount(library({ doc_edits: EDITS }, { turn: null }), null)
 

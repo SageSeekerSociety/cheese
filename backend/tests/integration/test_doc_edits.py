@@ -416,3 +416,15 @@ def test_an_edit_outside_a_turn_of_its_editor_belongs_to_no_turn(client):
     line = _doc_lines(client, task)[-1]
     assert line["author"] == "bob"
     assert line["turn_id"] is None
+
+
+def test_an_edits_line_names_the_document_by_its_task(client):
+    """A task's document has no title of its own; it goes by its task's, and
+    the line about a change to it says which document that was."""
+    task, _, agent = _document(client)
+
+    _edit(client, task, agent, ("讲目标。", "讲目标和进度。"))
+    assert _doc_lines(client, task)[-1]["meta"]["doc_title"] == "一个任务"
+
+    _edit(client, task, agent, ("讲范围", "讲边界"), mode="suggest")
+    assert _doc_lines(client, task)[-1]["meta"]["doc_title"] == "一个任务"

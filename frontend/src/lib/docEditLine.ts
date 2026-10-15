@@ -104,10 +104,17 @@ export function docLineOf(
   }
   const suggestions = notice.docSuggestions ?? 0
   const edits = suggestions ? [] : notice.docEdits ?? []
+  // The name the conversation's own document goes by; lines stored before it
+  // was written say 「文档」.
+  const title = typeof meta(block).doc_title === 'string' ? (meta(block).doc_title as string) : ''
   return {
     action: suggestions
-      ? t('work.room.notice.docLine.suggestedDoc', { n: suggestions })
-      : t('work.room.notice.docLine.editedDoc'),
+      ? title
+        ? t('work.room.notice.docLine.suggested', { title, n: suggestions })
+        : t('work.room.notice.docLine.suggestedDoc', { n: suggestions })
+      : title
+        ? t('work.room.notice.docLine.edited', { title })
+        : t('work.room.notice.docLine.editedDoc'),
     actors,
     actorHandles,
     count: edits.length || null,

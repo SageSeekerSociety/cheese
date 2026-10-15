@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import String, Uuid, column, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -29,7 +29,12 @@ from app.domain.living_doc.services import DocumentJournal, Documents
 # The task a document is the living document of. A bare table: ``room_task``
 # depends on this domain.
 _tasks = table(
-    "tasks", column("id", Uuid), column("room_id", Uuid), column("document_id", Uuid)
+    "tasks",
+    column("id", Uuid),
+    column("room_id", Uuid),
+    column("document_id", Uuid),
+    column("title", String),
+    column("title_source", String),
 )
 
 
@@ -62,6 +67,9 @@ DOC_EDITS_KEY = "doc_edits"
 #: Changes proposed, not made: the suggestion ids the line covers.
 DOC_SUGGESTED_KEY = "doc_suggested"
 DOC_SUGGESTIONS_KEY = "doc_suggestions"
+#: The name a conversation's own document goes by (its title, or its task's),
+#: so its line can say which document it was.
+DOC_TITLE_KEY = "doc_title"
 
 
 def _actor_label(handles: list[str]) -> NoticeList:
@@ -99,6 +107,24 @@ async def whose_document(
     if owner is None:
         return None, None
     return owner[1], owner[0]
+
+
+async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
+    """The name ``doc`` is shown under: its own title, else the title of the
+    task whose document it is. None when it has neither (a task still
+    unnamed)."""
+    if doc.title:
+        return doc.title
+    row = (
+        await session.execute(
+            select(_tasks.c.title, _tasks.c.title_source).where(
+                _tasks.c.document_id == doc.id
+            )
+        )
+    ).first()
+    if row is None or row.title_source == "placeholder" or not row.title:
+        return None
+    return row.title
 
 
 class DocumentWriter:
@@ -246,6 +272,7 @@ class DocumentWriter:
             "doc_version": doc.version,
             _DOC_FROM_VERSION_KEY: from_version,
             _DOC_ACTORS_KEY: everyone,
+            DOC_TITLE_KEY: await _shown_title(self._session, doc),
             AGENT_NOTICE_META_KEY: for_agent,
             "detail_label": say("labelDocEditDiff"),
             "detail": "\n".join(
@@ -332,6 +359,7 @@ class DocumentWriter:
             "doc_version": doc.version,
             _DOC_FROM_VERSION_KEY: doc.version,
             _DOC_ACTORS_KEY: [actor],
+            DOC_TITLE_KEY: await _shown_title(self._session, doc),
             DOC_SUGGESTED_KEY: True,
             DOC_SUGGESTIONS_KEY: ids,
             "doc_reason": reason,
