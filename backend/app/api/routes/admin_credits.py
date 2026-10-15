@@ -13,7 +13,7 @@ from pydantic import AwareDatetime, BaseModel, Field
 
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.domain.agent_instance.configuration import model_choices
 from app.domain.project.services import ProjectService
@@ -64,6 +64,11 @@ class TeamPlanUpdate(BaseModel):
 
 class OverseasAccessUpdate(BaseModel):
     approved: bool
+
+
+class OverseasAccessOut(BaseModel):
+    team_id: int
+    overseas_approved: bool
 
 
 class GrantCreate(BaseModel):
@@ -193,7 +198,11 @@ async def set_team_plan(
     return ok(out)
 
 
-@router.put("/teams/{teamId}/overseas-access", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/teams/{teamId}/overseas-access",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(OverseasAccessOut),
+)
 async def set_team_overseas_access(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     body: OverseasAccessUpdate,

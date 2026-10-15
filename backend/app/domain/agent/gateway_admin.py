@@ -63,12 +63,14 @@ EXTRA_HEADERS = "extra_headers"
 UPSTREAM_HEADERS = "cheese_upstream_headers"
 SESSION_HEADER = "cheese_session_header"
 FREE = "cheese_free"
-# A row's own: they describe its upstream or its key (config.yaml's
-# no_explicit_cache.py / spend_cap.py notes), not the model.
+# What one upstream model needs (no_explicit_cache.py, spend_cap.py), not
+# the model as people pick it: a new source on the same upstream model takes
+# them from a row that has them, one on another upstream does not.
 NO_EXPLICIT_CACHE = "cheese_no_explicit_cache"
 SPEND_CAP = "cheese_spend_cap_usd"
-_SOURCE_INFO_KEYS = frozenset(
-    {UPSTREAM_HEADERS, SESSION_HEADER, FREE, NO_EXPLICIT_CACHE, SPEND_CAP}
+_UPSTREAM_INFO_KEYS = frozenset({NO_EXPLICIT_CACHE, SPEND_CAP})
+_SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE}) | (
+    _UPSTREAM_INFO_KEYS
 )
 
 
@@ -132,6 +134,8 @@ class AdminSource:
     header_names: tuple[str, ...]
     session_header: str | None
     catalogue: dict[str, object]
+    # This row's keys for its upstream model (``_UPSTREAM_INFO_KEYS``).
+    upstream_info: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -869,6 +873,7 @@ def _admin_source(row: dict) -> AdminSource:
         header_names=tuple(sorted(header_names)),
         session_header=session if isinstance(session, str) and session else None,
         catalogue=catalogue_info(info),
+        upstream_info={k: v for k, v in info.items() if k in _UPSTREAM_INFO_KEYS},
     )
 
 

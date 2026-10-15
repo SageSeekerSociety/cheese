@@ -758,6 +758,19 @@ class GatewayModelsService:
             _require_price_when_selectable(model.selectable, prices, free)
             # 模型那一层的元数据从已有那一行抄：同组每一行必须一字不差。
             catalogue = dict(model.sources[0].catalogue if model.sources else {})
+            # A cap and a cache rule belong to the upstream model: another row
+            # on it (another key) keeps them, so it neither 400s nor escapes
+            # the cap.
+            catalogue.update(
+                next(
+                    (
+                        s.upstream_info
+                        for s in model.sources
+                        if s.upstream_model == upstream_model and s.upstream_info
+                    ),
+                    {},
+                )
+            )
             if _would_lead(model, data["order"]) and not data.get("make_primary"):
                 raise BadRequestError(
                     say("sourceWouldBePrimary", name=name, order=data["order"])

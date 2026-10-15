@@ -12,7 +12,7 @@ import math
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -290,21 +290,25 @@ class PlanService:
 
         if await team_service(self._session).get_team(team_id) is None:
             raise NotFoundError(say("teamNotFoundById", team_id=team_id))
-        row = await self._session.get(OverseasModelApproval, team_id)
-        before = {"approved": row is not None}
-        if approved and row is None:
-            # Two administrators approving at once: the second is a no-op,
-            # not a primary-key 500.
+        # One statement each way, so two administrators acting at once both
+        # succeed and each audit line says what that write found.
+        if approved:
             now = datetime.now(UTC)
-            await self._session.execute(
+            changed = await self._session.scalar(
                 pg_insert(OverseasModelApproval)
                 .values(
                     team_id=team_id, approved_by=handle, created_at=now, updated_at=now
                 )
                 .on_conflict_do_nothing(index_elements=["team_id"])
+                .returning(OverseasModelApproval.team_id)
             )
-        elif not approved and row is not None:
-            await self._session.delete(row)
+        else:
+            changed = await self._session.scalar(
+                delete(OverseasModelApproval)
+                .where(OverseasModelApproval.team_id == team_id)
+                .returning(OverseasModelApproval.team_id)
+            )
+        before = {"approved": approved if changed is None else not approved}
         await self._session.flush()
         await self._audit(
             handle, "team.overseas", str(team_id), before, {"approved": approved}

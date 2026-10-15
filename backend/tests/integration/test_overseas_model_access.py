@@ -188,3 +188,23 @@ def test_only_a_platform_administrator_approves_a_team(client, admin):
         r = _approve(client, headers, project["team_id"], True)
         assert r.status_code in (401, 403), r.text
     assert "sonnet" not in _choices(client, project["id"], owner)
+
+
+def test_approving_or_withdrawing_twice_succeeds_and_the_record_says_what_each_found(
+    client, admin
+):
+    owner = _auth(client, "oa-twice")
+    team = _project_on_reserve(client, owner, "oatwice")["team_id"]
+
+    for approved in (True, True, False, False):
+        r = _approve(client, admin, team, approved)
+        assert r.status_code == 200, r.text
+    history = client.get(f"/admin/teams/{team}/history", headers=admin).json()["data"][
+        "items"
+    ]
+    changes = [
+        (h["before"]["approved"], h["after"]["approved"])
+        for h in reversed(history)
+        if h["action"] == "team.overseas"
+    ]
+    assert changes == [(False, True), (True, True), (True, False), (False, False)]

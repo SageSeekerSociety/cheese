@@ -36,6 +36,11 @@
 #                              sent as written.
 #   cheese_session_header: x-opencode-session
 #                              carries the caller's Claude Code session.
+#
+# Two more belong to the upstream model a deployment calls. A source added
+# from the admin page on the same upstream model takes them from a row that
+# has them; one on another upstream does not:
+#
 #   cheese_no_explicit_cache: true
 #                              strips Claude Code's cache_control marks, for an
 #                              upstream that refuses explicit caching

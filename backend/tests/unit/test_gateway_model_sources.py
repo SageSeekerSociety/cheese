@@ -858,15 +858,19 @@ async def test_marking_a_model_as_needing_approval_marks_every_source():
     assert [i.get("cheese_overseas") for i in infos] == [True, True]
 
 
-@pytest.mark.anyio
-async def test_a_new_source_needs_approval_like_its_model_but_has_no_cap_of_its_own():
-    """Approval is the model's; a spend cap and the cache-mark strip describe one
-    row's upstream and key, so a new source does not inherit them."""
+def _argon_like_kimi() -> dict:
     config = json.loads(json.dumps(_KIMI_CONFIG))
     config["model_info"].update(
         cheese_overseas=True, cheese_spend_cap_usd=1000, cheese_no_explicit_cache=True
     )
-    gw = _Gateway([config])
+    return config
+
+
+@pytest.mark.anyio
+async def test_a_source_on_another_upstream_needs_approval_but_no_cap_or_cache_rule():
+    """Approval is the model's; a spend cap and the cache-mark strip are what one
+    upstream model needs, so a source on another upstream does not take them."""
+    gw = _Gateway([_argon_like_kimi()])
     service = _service(gw)
 
     await service.add_source(
@@ -877,3 +881,29 @@ async def test_a_new_source_needs_approval_like_its_model_but_has_no_cap_of_its_
     assert new_row["model_info"]["cheese_overseas"] is True
     assert "cheese_spend_cap_usd" not in new_row["model_info"]
     assert "cheese_no_explicit_cache" not in new_row["model_info"]
+
+
+@pytest.mark.anyio
+async def test_a_source_on_the_same_upstream_keeps_its_cap_and_cache_rule():
+    """Another key for the same upstream model must not escape the cap, nor send
+    the cache marks that upstream refuses."""
+    gw = _Gateway([_argon_like_kimi()])
+    service = _service(gw)
+    same = {
+        "protocol": "anthropic",
+        "upstream_model": "kimi-k3",
+        "api_base": "https://api.moonshot.cn/anthropic",
+        "api_key": "sk-second-key",
+        "order": 2,
+        "prices": {"input": 2.8e-6, "output": 1.4e-5},
+        "make_primary": True,
+    }
+
+    await service.add_source(
+        handle="admin", name="kimi-k3", payload=SourceCreate(**same)
+    )
+
+    config_row, new_row = gw.group("kimi-k3")
+    assert new_row["litellm_params"]["model"] == config_row["litellm_params"]["model"]
+    assert new_row["model_info"]["cheese_spend_cap_usd"] == 1000
+    assert new_row["model_info"]["cheese_no_explicit_cache"] is True
