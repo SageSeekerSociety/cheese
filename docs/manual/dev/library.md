@@ -6,7 +6,7 @@ covers:
   - backend/app/domain/library/
   - frontend/src/lib/libraryFolders.ts
   - backend/app/domain/materials/
-  - backend/app/domain/project/artifacts.py
+  - backend/app/domain/deliverables/artifacts.py
   - backend/app/domain/project/room_files.py
   - backend/app/api/routes/projects.py
   - backend/app/api/routes/library.py
@@ -77,7 +77,7 @@ covers:
 
 `artifact_snapshot_path(project_id, card_id, name)` 是「这一版交出去的那一份」的位置。一版是一次交付，一次交付就是一张采纳了的卡，所以快照**按卡分目录**：同一项产物的七版互不覆盖，而撤回采纳只改卡的状态、不动字节。字节不在库里也不在表上——成品是从源构建出来的，等半年后有人要下载时再重建一次，依赖已经变了，重建出来的和当时交出去的不是一份东西。名字只取最后一段：交付物的身份是「哪一版的那一份」，它在工作目录的哪个子目录不是它的身份。`read_artifact_snapshot` 对「交付物落地之前递的那几张卡」单独说一句话，别让它读起来像文件丢了。
 
-`domain/project/artifacts.py` 是产物清单本身（结论二、三）。一项的**生**只有一种方式：交付。没有「先登记一项」这回事——一样东西是在第一次交付它的那一下才存在的。
+`domain/deliverables/artifacts.py` 是产物清单本身（结论二、三）。一项的**生**只有一种方式：交付。没有「先登记一项」这回事——一样东西是在第一次交付它的那一下才存在的。
 
 | 交付形态 | 清单上怎么处理 |
 |---|---|

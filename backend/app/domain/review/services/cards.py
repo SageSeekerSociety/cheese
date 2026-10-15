@@ -12,8 +12,8 @@ from urllib.parse import urlsplit
 
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, listing, say
+from app.domain.deliverables import artifacts
 from app.domain.library import service as library
-from app.domain.project import artifacts
 from app.domain.review import (
     archive,
     commit_message,

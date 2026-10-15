@@ -64,7 +64,18 @@ from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import Boolean, Uuid, column, func, select, table, true, update
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    String,
+    Uuid,
+    column,
+    func,
+    select,
+    table,
+    true,
+    update,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,7 +83,6 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.project.models import ProjectArtifact
 from app.domain.project.ports import FileStore
-from app.domain.review.models import AcceptCard, AcceptStatus
 
 #: 频道表里这里要的三列，按列名读：清单只问一个房间是不是私密频道，为这一句去依
 #: 赖 topic 这个领域会让 project 和 topic 互相依赖（`.importlinter` C3）。
@@ -81,6 +91,29 @@ _rooms = table(
     column("id", Uuid),
     column("project_id", Uuid),
     column("members_only", Boolean),
+)
+
+#: 采纳卡的表，同样按列名读。清单问一张卡的只有这几列：它声明了哪一项、什么状态、
+#: 递在哪个频道、什么时候定的、这一版交出去的是什么。不 import `review.models`：
+#: 本包和 `review` 同层，而 `review` 反向读这个模块（清单进它每一轮的开场），同层
+#: 互相依赖就是一条 C3 环 —— C5 允许同层，C3 不允许。
+#:
+#: `status` 和 `deliverable_kind` 在这张表上是短字符串（`native_enum=False`），
+#: 存的就是枚举成员的名字，所以下面比的是那些字面量。
+_cards = table(
+    "accept_cards",
+    column("id", Uuid),
+    column("artifact_id", Uuid),
+    column("topic_id", Uuid),
+    column("status", String),
+    column("change_subject", String),
+    column("decided_by", String),
+    column("decided_at", DateTime(timezone=True)),
+    column("created_at", DateTime(timezone=True)),
+    column("deliverable_kind", String),
+    column("deliverable_name", String),
+    column("deliverable_url", String),
+    column("pr_head_sha", String),
 )
 
 #: 名字的长度上限，与 `ProjectArtifact.name` 这一列一致。
@@ -93,11 +126,10 @@ ABOUT_MAX = 80
 #: 还在飞的卡：等人验收、等闸门、卡在冲突上。它声明的那一项已经算在清单上 ——
 #: 有人正在交付它。与 `review/services.py` 的 `_BLOCKED_BY_CARD_MESSAGES` 同一批
 #: 状态，那边问的是「还能不能再递一张」，这边问的是「这一项算不算在清单上」。
-_LIVE_CARD_STATUSES = (
-    AcceptStatus.pending,
-    AcceptStatus.pending_gate,
-    AcceptStatus.conflict,
-)
+_LIVE_CARD_STATUSES = ("pending", "pending_gate", "conflict")
+
+#: 采纳了的那一档，一版就是一张采纳了的卡。
+_ACCEPTED = "accepted"
 
 #: 整对出现在名字两头时会被摘掉的括号与引号。系统提示里的清单排成《结题报告》，
 #: 房间里的话也是这么写的，所以照抄一行时括号跟着进来是常事 —— 而 `《结题报告》`
@@ -367,8 +399,8 @@ async def merge(
     if source.project_id != target.project_id:
         raise ValidationError(say("artifactMergeSameProject"))
     await session.execute(
-        update(AcceptCard)
-        .where(AcceptCard.artifact_id == source.id)
+        update(_cards)
+        .where(_cards.c.artifact_id == source.id)
         .values(artifact_id=target.id)
     )
     await session.delete(source)
@@ -516,28 +548,28 @@ async def versions(
 ) -> list[ArtifactVersion]:
     """这一项交付过的每一版，第一版在前 —— 读的人看得见的那几版，按他看得见的数。"""
     found = await session.execute(
-        select(AcceptCard)
+        select(_cards)
         .where(
-            AcceptCard.artifact_id == artifact_id,
-            AcceptCard.status == AcceptStatus.accepted,
+            _cards.c.artifact_id == artifact_id,
+            _cards.c.status == _ACCEPTED,
             _outside(hidden),
         )
-        .order_by(AcceptCard.decided_at, AcceptCard.created_at)
+        .order_by(_cards.c.decided_at, _cards.c.created_at)
     )
     return [
         ArtifactVersion(
             number=number,
-            card_id=card.id,
-            subject=card.change_subject,
-            delivered_at=card.decided_at,
-            decided_by=card.decided_by,
-            kind=card.deliverable_kind.value if card.deliverable_kind else None,
-            filename=card.deliverable_name,
-            url=card.deliverable_url,
-            revision=card.pr_head_sha,
-            room_id=card.topic_id,
+            card_id=row.id,
+            subject=row.change_subject,
+            delivered_at=row.decided_at,
+            decided_by=row.decided_by,
+            kind=row.deliverable_kind,
+            filename=row.deliverable_name,
+            url=row.deliverable_url,
+            revision=row.pr_head_sha,
+            room_id=row.topic_id,
         )
-        for number, card in enumerate(found.scalars().all(), start=1)
+        for number, row in enumerate(found.all(), start=1)
     ]
 
 
@@ -571,8 +603,8 @@ async def kept_from(
         return False
     rooms = set(
         await session.scalars(
-            select(AcceptCard.topic_id)
-            .where(AcceptCard.artifact_id == artifact_id)
+            select(_cards.c.topic_id)
+            .where(_cards.c.artifact_id == artifact_id)
             .distinct()
         )
     )
@@ -581,7 +613,7 @@ async def kept_from(
 
 def _outside(hidden: Collection[uuid.UUID]):
     """一张卡不在 `hidden` 那几个房间里递。"""
-    return AcceptCard.topic_id.not_in(list(hidden)) if hidden else true()
+    return _cards.c.topic_id.not_in(list(hidden)) if hidden else true()
 
 
 def _claims(hidden: Collection[uuid.UUID] = ()):
@@ -591,19 +623,19 @@ def _claims(hidden: Collection[uuid.UUID] = ()):
     记得加一、在撤回采纳的路上都记得减一，漏掉任何一条都不报错，只会让清单上的版
     本号和真交出去过的东西悄悄对不上。数出来的那个数没有这种失效方式。
     """
-    landed = func.count(1).filter(AcceptCard.status == AcceptStatus.accepted)
-    live = func.count(1).filter(AcceptCard.status.in_(_LIVE_CARD_STATUSES))
+    landed = func.count(1).filter(_cards.c.status == _ACCEPTED)
+    live = func.count(1).filter(_cards.c.status.in_(_LIVE_CARD_STATUSES))
     return (
         select(
-            AcceptCard.artifact_id.label("artifact_id"),
+            _cards.c.artifact_id.label("artifact_id"),
             landed.label("landed"),
             live.label("live"),
-            func.max(AcceptCard.decided_at)
-            .filter(AcceptCard.status == AcceptStatus.accepted)
+            func.max(_cards.c.decided_at)
+            .filter(_cards.c.status == _ACCEPTED)
             .label("delivered_at"),
         )
-        .where(AcceptCard.artifact_id.is_not(None), _outside(hidden))
-        .group_by(AcceptCard.artifact_id)
+        .where(_cards.c.artifact_id.is_not(None), _outside(hidden))
+        .group_by(_cards.c.artifact_id)
         .subquery()
     )
 

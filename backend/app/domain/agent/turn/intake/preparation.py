@@ -68,12 +68,12 @@ from app.domain.block.queries import (
     message_reply_target,
     turn_history,
 )
+from app.domain.deliverables import artifacts as project_artifacts
 from app.domain.delivery.receipts import held_blocks
 from app.domain.living_doc.overview import overview_document
 from app.domain.memory.files_store import MemoryIndex, memory_index
 from app.domain.memory.scopes import MemoryScope
 from app.domain.policy import gate
-from app.domain.project import artifacts as project_artifacts
 from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming

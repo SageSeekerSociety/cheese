@@ -45,6 +45,7 @@ import app.models  # noqa: F401 — register every table so FKs resolve
 from app.core.db import async_session_factory
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.deliverables import artifacts as project_artifacts
 from app.domain.device.service import device_service_for_session
 from app.domain.device.supply import Supply
 from app.domain.integration.models import Integration
@@ -53,7 +54,6 @@ from app.domain.library import records as library_records
 from app.domain.living_doc.services import Documents
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.project import artifacts as project_artifacts
 from app.domain.project import forge as project_forge
 from app.domain.project.models import Project, ProjectArtifact, ProjectForge
 from app.domain.project.services import ProjectService
