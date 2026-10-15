@@ -48,6 +48,9 @@ const catalogTargets = [
   // 首页那份目录（`catalogHome.ts`）：一个团队摊开来是四样，摊开那一行才画得出这四条；
   // 名字不在表里的话，带 `to` 的行会当场抛，目录在预览站上整段渲染不出来。
   { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
+  // 小队那一页的三条页签（`teams/IndexView.vue`）：三个名字都在，缺一个整页就画不出来。
+  { path: '/teams/mine', name: 'HomeTeamsMine', component: blank },
+  { path: '/teams/pending', name: 'HomeTeamsPending', component: blank },
   { path: '/teams/:handle', name: 'TeamsDetailDefault', component: blank },
   { path: '/teams/:handle/members', name: 'TeamsDetailMembers', component: blank },
   { path: '/teams/:handle/knowledge', name: 'TeamsDetailKnowledge', component: blank },
