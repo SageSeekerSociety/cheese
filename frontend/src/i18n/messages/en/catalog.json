@@ -1534,5 +1534,59 @@
       "name": "The address is taken",
       "note": "Same for a taken address: the error sits under the address field, and the person just edits the address."
     }
+  },
+  "teamMembersView": {
+    "about": "The team members screen: members / join requests / sent invitations tabs plus an invite dialog; from here you promote an admin, remove a member, approve or reject a request. Reading the lists, writing, and which tab is open all live in the container `teams/detail/Members.vue`; this half does no fetching at all. The join-link card is a separate piece the page hands in through a named slot, and it has an entry of its own in the catalog.",
+    "s1": {
+      "name": "The members tab",
+      "note": "Default state: three people, one per row, owner and admin each carrying a role chip, and a plain member's row spelling out in one line what that role can do. Whoever the server says cannot be removed (an admin cannot remove another admin) has no \"Remove member\"."
+    },
+    "s2": {
+      "name": "The join requests tab",
+      "note": "The one waiting for a decision: who asked, their one-line reason, when they asked, with approve and reject on the right; both go dead while an answer is in flight."
+    },
+    "s3": {
+      "name": "The sent invitations tab",
+      "note": "Sent, no answer yet: who was invited and when, with only a withdraw button on the right."
+    },
+    "s4": {
+      "name": "The members tab could not load",
+      "note": "The list did not come back: this tab turns into the failure state, states the reason and offers a retry, rather than drawing \"No members\"."
+    },
+    "s5": {
+      "name": "The requests are still loading",
+      "note": "The requests are not back yet: one centred spinner. It cannot say \"No join requests\" here - that sentence is only sayable after a read."
+    },
+    "s6": {
+      "name": "The invite dialog found someone",
+      "note": "Whoever the username or email lookup found is laid out first: avatar, name, username. That is who gets invited, visible before the button is pressed."
+    },
+    "s7": {
+      "name": "That person is already in the team",
+      "note": "The same person is already a member: the dialog says so, and \"Invite\" is greyed out."
+    }
+  },
+  "teamJoinLinkCard": {
+    "about": "The team address and joining card: the address (`/teams/` plus the handle), a long-lived team link (copy it, reset it), whether joining needs approval, and whether the team shows up in search. Fetching, writing, and where the browser goes after an address change all live in the container `teams/detail/Members.vue`; this card only takes data and reports actions, and only the address field keeps its own draft - a half-typed address must not follow the next team.",
+    "s1": {
+      "name": "The link is back",
+      "note": "Default state: the address field carries the host prefix, the link field is read-only, copy and reset sit beside it, and below are the approval switch and the two \"who can find this team\" options."
+    },
+    "s2": {
+      "name": "Just copied",
+      "note": "After pressing copy: the button's label becomes \"Copied\", so nobody presses it again thinking it did not register."
+    },
+    "s3": {
+      "name": "The link is not back yet",
+      "note": "The link has not arrived: that section is a spinning progress bar, not an empty text field - it says it is loading, not that there is nothing."
+    },
+    "s4": {
+      "name": "It did not go through",
+      "note": "A read or write failed: a red bar states the reason, the rest of the card stays as it was, and the person can try again."
+    },
+    "s5": {
+      "name": "The address is taken",
+      "note": "The new address collides with someone else: that error sits under the address field, whatever was half-typed stays, and the person just edits it."
+    }
   }
 }

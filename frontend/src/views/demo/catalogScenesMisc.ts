@@ -1,12 +1,12 @@
 /**
  * 预览站里「小队与后台那几屏拆出来的半张画面」：我的团队、发现小队、团队算力、小队详情、
- * 小队那一页的页头与建队弹窗、飞书应用、空间申请。
+ * 小队那一页的页头与建队弹窗、成员页与「团队地址与加入」那张卡、飞书应用、空间申请。
  *
  * 这几屏在应用里由各自的路由页取数（`Mine.vue`、`Explore.vue`、`detail/Compute.vue`、
- * `Detail.vue`、`Index.vue`、`AdminIntegrationsPage.vue`、`AdminSpacesPage.vue`），路由页碰
- * 接口层，预览站碰不得。好在它们都已经拆成「路由页 → 只吃 props 的画面」：这里展示的正是
- * 产品里真会走到的那几格 —— 数据到货 / 首次加载 / 读失败 / 空 / 没权限 / 表单与驳回框。
- * 各屏公用的一份数据见 `catalogScenesMiscFixtures.ts`。
+ * `Detail.vue`、`Index.vue`、`detail/Members.vue`、`AdminIntegrationsPage.vue`、
+ * `AdminSpacesPage.vue`），路由页碰接口层，预览站碰不得。好在它们都已经拆成「路由页 → 只
+ * 吃 props 的画面」：这里展示的正是产品里真会走到的那几格 —— 数据到货 / 首次加载 / 读失败 /
+ * 空 / 没权限 / 表单与驳回框。各屏公用的一份数据见 `catalogScenesMiscFixtures.ts`。
  *
  * 条目和别的分册没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
  * `catalog.ts`），单放一份是因为 `catalog.ts` 已经顶到一千行的上限。这里的
@@ -20,11 +20,15 @@ import {
   DEVICES,
   FEISHU_CONFIGURED,
   FEISHU_UNCONFIGURED,
+  FOUND_USER,
   MY_DEVICES,
   MY_TEAMS,
   SEARCH_TEAMS,
   team,
   TEAM_DEVICE_ID,
+  TEAM_INVITATIONS,
+  TEAM_JOIN_REQUESTS,
+  TEAM_MEMBERS,
 } from './catalogScenesMiscFixtures'
 
 import { t } from '@/i18n'
@@ -34,10 +38,15 @@ import ComputeView from '@/views/teams/detail/ComputeView.vue'
 import DetailView from '@/views/teams/DetailView.vue'
 import ExploreView from '@/views/teams/ExploreView.vue'
 import IndexView from '@/views/teams/IndexView.vue'
+import MembersView from '@/views/teams/detail/MembersView.vue'
 import MineView from '@/views/teams/MineView.vue'
+import TeamJoinLinkCard from '@/views/teams/detail/TeamJoinLinkCard.vue'
 
 /** 画法要 Vuetify、文案要语言包；那几条按 name 指路的去处（团队详情、我的设备）要一条 route。 */
 const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
+
+/** 成员那一屏和团队链接那张卡都只吃 props：名单里的人名是一条静态的字，不指路。 */
+const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
 export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
   {
@@ -560,6 +569,183 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
         },
         props: { offset: 50, hasMore: true },
         expect: '上一页',
+      },
+    ],
+  },
+  {
+    id: 'team-members-view',
+    title: 'MembersView',
+    get about() {
+      return t('catalog.teamMembersView.about')
+    },
+    file: 'src/views/teams/detail/MembersView.vue',
+    component: MembersView,
+    needs: UI_T,
+    teleport: true,
+    args: {
+      isSelfOwner: true,
+      canBringPeopleIn: true,
+      members: TEAM_MEMBERS,
+      failedMembers: false,
+      membersError: null,
+      joinRequests: TEAM_JOIN_REQUESTS,
+      loadingRequests: false,
+      failedRequests: false,
+      requestsError: null,
+      invitations: TEAM_INVITATIONS,
+      loadingInvitations: false,
+      failedInvitations: false,
+      invitationsError: null,
+      found: null,
+      lookingUp: false,
+      lookupError: null,
+      alreadyIn: false,
+      activeTab: 'members',
+      isInviteDialogActive: false,
+      inviteQuery: '',
+      inviteRoleInput: 'MEMBER',
+      inviteMessageInput: '',
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.teamMembersView.s1.name')
+        },
+        get note() {
+          return t('catalog.teamMembersView.s1.note')
+        },
+        props: {},
+        expect: '参与团队的项目',
+      },
+      {
+        get name() {
+          return t('catalog.teamMembersView.s2.name')
+        },
+        get note() {
+          return t('catalog.teamMembersView.s2.note')
+        },
+        props: { activeTab: 'requests' },
+        expect: '想跟着做城市数据的题',
+      },
+      {
+        get name() {
+          return t('catalog.teamMembersView.s3.name')
+        },
+        get note() {
+          return t('catalog.teamMembersView.s3.note')
+        },
+        props: { activeTab: 'invitations' },
+        expect: '艾琳',
+      },
+      {
+        get name() {
+          return t('catalog.teamMembersView.s4.name')
+        },
+        get note() {
+          return t('catalog.teamMembersView.s4.note')
+        },
+        props: { members: [], failedMembers: true, membersError: '连接被拒绝' },
+        expect: '无法加载成员',
+      },
+      {
+        get name() {
+          return t('catalog.teamMembersView.s5.name')
+        },
+        get note() {
+          return t('catalog.teamMembersView.s5.note')
+        },
+        props: { activeTab: 'requests', joinRequests: [], loadingRequests: true },
+        expectSelector: '.v-progress-circular',
+      },
+      {
+        get name() {
+          return t('catalog.teamMembersView.s6.name')
+        },
+        get note() {
+          return t('catalog.teamMembersView.s6.note')
+        },
+        props: { isInviteDialogActive: true, inviteQuery: 'erin', found: FOUND_USER },
+        expect: 'erin',
+      },
+      {
+        get name() {
+          return t('catalog.teamMembersView.s7.name')
+        },
+        get note() {
+          return t('catalog.teamMembersView.s7.note')
+        },
+        props: { isInviteDialogActive: true, inviteQuery: 'erin', found: FOUND_USER, alreadyIn: true },
+        expect: '已经在团队里',
+      },
+    ],
+  },
+  {
+    id: 'team-join-link-card',
+    title: 'TeamJoinLinkCard',
+    get about() {
+      return t('catalog.teamJoinLinkCard.about')
+    },
+    file: 'src/views/teams/detail/TeamJoinLinkCard.vue',
+    component: TeamJoinLinkCard,
+    needs: UI_T,
+    args: {
+      team: team({ visibility: 'public' }),
+      link: { token: 'kJ3f9a21Xw', approval: true },
+      busy: false,
+      error: '',
+      handleError: '',
+      copied: false,
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.teamJoinLinkCard.s1.name')
+        },
+        get note() {
+          return t('catalog.teamJoinLinkCard.s1.note')
+        },
+        props: {},
+        expect: '复制链接',
+      },
+      {
+        get name() {
+          return t('catalog.teamJoinLinkCard.s2.name')
+        },
+        get note() {
+          return t('catalog.teamJoinLinkCard.s2.note')
+        },
+        props: { copied: true },
+        expect: '已复制',
+      },
+      {
+        get name() {
+          return t('catalog.teamJoinLinkCard.s3.name')
+        },
+        get note() {
+          return t('catalog.teamJoinLinkCard.s3.note')
+        },
+        props: { link: null, busy: true },
+        expectSelector: '.v-progress-linear',
+      },
+      {
+        get name() {
+          return t('catalog.teamJoinLinkCard.s4.name')
+        },
+        get note() {
+          return t('catalog.teamJoinLinkCard.s4.note')
+        },
+        props: { link: null, error: '操作失败，请重试' },
+        expect: '操作失败，请重试',
+      },
+      {
+        get name() {
+          return t('catalog.teamJoinLinkCard.s5.name')
+        },
+        get note() {
+          return t('catalog.teamJoinLinkCard.s5.note')
+        },
+        props: { handleError: '这个地址已被占用' },
+        expect: '这个地址已被占用',
       },
     ],
   },

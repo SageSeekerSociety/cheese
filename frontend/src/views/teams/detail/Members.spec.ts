@@ -6,10 +6,11 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const replace = vi.fn()
-const route = { params: { handle: 'crew' }, query: {} as Record<string, string> }
+const copy = vi.fn()
+const route = { name: 'TeamsDetailMembers', params: { handle: 'crew' }, query: {} as Record<string, string> }
 vi.mock('vue-router', async () => ({
   ...(await vi.importActual<typeof import('vue-router')>('vue-router')),
   useRoute: () => route,
@@ -23,6 +24,10 @@ vi.mock('@/api/teams', () => ({
     approveJoinRequest: vi.fn(),
     removeMember: vi.fn(),
     createInvitation: vi.fn(),
+    getJoinLink: vi.fn(async () => ({ token: 'first', approval: true })),
+    resetJoinLink: vi.fn(async () => ({ token: 'second', approval: true })),
+    updateJoinLink: vi.fn(async () => ({ token: 'first', approval: false })),
+    update: vi.fn(),
   },
 }))
 const lookupUser = vi.fn()
@@ -47,6 +52,7 @@ import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 
 beforeAll(() => {
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } })
   vi.stubGlobal('devicePixelRatio', 1)
   // The invite dialog is an overlay, and Vuetify positions overlays against it.
   vi.stubGlobal('visualViewport', new EventTarget())
@@ -71,6 +77,7 @@ function mount(overrides: Partial<Team>) {
   setLocale('zh-CN')
   const team = ref({
     id: 7,
+    handle: 'crew',
     name: 'Cheese 核心组',
     intro: '',
     avatarId: 1,
@@ -81,25 +88,116 @@ function mount(overrides: Partial<Team>) {
     visibility: 'public',
     ...overrides,
   } as unknown as Team)
-  return render(Members as unknown as Component, {
+  const view = render(Members as unknown as Component, {
     global: {
       plugins: [createVuetify({ components, directives })],
       provide: { [teamDataInjectionKey as symbol]: team },
-      stubs: { TeamJoinLinkCard: { template: '<section>小队链接管理</section>' } },
     },
   })
+  // 注入的那一份就是页头读的那一份：团队被改过没有，看它。
+  return { ...view, team }
 }
 
 describe('who manages the team link', () => {
   it('an admin who is not among the listed examples', async () => {
     mount({ role: 'ADMIN' })
-    await screen.findByText('小队链接管理')
+    await screen.findByText('团队地址与加入')
   })
 
   it('not an ordinary member', async () => {
     mount({ role: 'MEMBER' })
     await waitFor(() => screen.getByText('成员列表'))
-    expect(screen.queryByText('小队链接管理')).toBeNull()
+    expect(screen.queryByText('团队地址与加入')).toBeNull()
+  })
+})
+
+// 加入链接那张卡的取数在这层：卡片自己一件都不做，所以行为要在这里断。
+describe('running the team link', () => {
+  const linkField = () => (screen.getByLabelText('团队链接') as HTMLInputElement).value
+
+  it('hands out a link the reader can copy', async () => {
+    mount({ role: 'OWNER' })
+
+    await waitFor(() => expect(linkField()).toBe(`${location.origin}/team-invites/first`))
+    await fireEvent.click(screen.getByRole('button', { name: '复制链接' }))
+
+    expect(copy).toHaveBeenCalledWith(`${location.origin}/team-invites/first`)
+    await screen.findByRole('button', { name: '已复制' })
+  })
+
+  it('hands out a new link when the old one is reset', async () => {
+    mount({ role: 'OWNER' })
+
+    await waitFor(() => expect(linkField()).toContain('/team-invites/first'))
+    await fireEvent.click(screen.getByRole('button', { name: '重置链接' }))
+
+    await waitFor(() => expect(linkField()).toContain('/team-invites/second'))
+    expect(TeamsApi.resetJoinLink).toHaveBeenCalledWith(7)
+  })
+
+  it('turns approval off', async () => {
+    mount({ role: 'OWNER' })
+    const approval = await screen.findByLabelText('加入需要审批')
+    await waitFor(() => expect((approval as HTMLInputElement).checked).toBe(true))
+
+    ;(approval as HTMLInputElement).click()
+
+    await waitFor(() => expect(TeamsApi.updateJoinLink).toHaveBeenCalledWith(7, { approval: false }))
+    await waitFor(() => expect((screen.getByLabelText('加入需要审批') as HTMLInputElement).checked).toBe(false))
+  })
+
+  it('hides the team from search, and the team the page holds follows', async () => {
+    const { team } = mount({ role: 'OWNER' })
+    vi.mocked(TeamsApi.update).mockResolvedValue({ team: { ...team.value, visibility: 'stealth' } } as never)
+    const stealth = (await screen.findByLabelText(/^隐身/)) as HTMLInputElement
+    // 读链接那一下期间它按不动：等这一手过去再点。
+    await waitFor(() => expect(stealth.disabled).toBe(false))
+
+    stealth.click()
+
+    await waitFor(() => expect(TeamsApi.update).toHaveBeenCalledWith(7, { visibility: 'stealth' }))
+    await waitFor(() => expect(team.value.visibility).toBe('stealth'))
+  })
+
+  it('says so when the link cannot be read', async () => {
+    vi.mocked(TeamsApi.getJoinLink).mockRejectedValue(new Error('boom'))
+    mount({ role: 'OWNER' })
+
+    await screen.findByText('操作失败，请重试')
+    expect(screen.queryByRole('button', { name: '复制链接' })).toBeNull()
+  })
+})
+
+describe('the team address', () => {
+  it('moves the page to the new address once the team is renamed', async () => {
+    const { team } = mount({ role: 'OWNER' })
+    vi.mocked(TeamsApi.update).mockResolvedValue({ team: { ...team.value, handle: 'zhishi' } } as never)
+
+    await fireEvent.update(await screen.findByLabelText('团队地址'), ' zhishi ')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith({
+        name: 'TeamsDetailMembers',
+        params: { handle: 'zhishi' },
+        query: {},
+      })
+    )
+    expect(TeamsApi.update).toHaveBeenCalledWith(7, { handle: 'zhishi' })
+    expect(team.value.handle).toBe('zhishi')
+  })
+
+  it('says so when another team or a person already holds the address', async () => {
+    vi.mocked(TeamsApi.update).mockRejectedValue(
+      new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'handle' })
+    )
+    mount({ role: 'OWNER' })
+
+    await fireEvent.update(await screen.findByLabelText('团队地址'), 'taken-name')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await screen.findByText('这个地址已被占用')
+    expect(replace).not.toHaveBeenCalled()
   })
 })
 

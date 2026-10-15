@@ -10,7 +10,8 @@
  * 哪个组件、每一格看什么，在 `catalogScenesMisc.ts`。
  */
 import type { DeviceUser, MyDevice } from '@/cx_types'
-import type { SpaceApplication, Team } from '@/types'
+import type { LookedUpUser } from '@/api'
+import type { SpaceApplication, Team, TeamMember, TeamMembershipApplication } from '@/types'
 import type { User } from '@/types/users'
 
 /** 一个人：`types/users.ts` 的 `User`。只填画得到的那几格。 */
@@ -62,6 +63,59 @@ export const MY_TEAMS: Team[] = [
 export const SEARCH_TEAMS: Team[] = [
   team({ id: 7, handle: 'open-source', name: '开源小伙伴', intro: '把一个开源项目维护下去', avatarId: 8 }),
 ]
+
+// ---- 成员这一屏（MembersView / TeamJoinLinkCard）----------------------------
+
+/** 成员表里的一行：`types/teams.ts` 的 `TeamMember`。 */
+export const TEAM_MEMBERS: TeamMember[] = [
+  { role: 'OWNER', user: user({ id: 1, username: 'alice', nickname: '爱丽丝' }) },
+  // 管理员读到的另一位管理员：服务端说移不了（`canRemove`），那一行就没有「移除成员」。
+  { role: 'ADMIN', user: user({ id: 2, username: 'bob', nickname: '鲍勃' }), canRemove: false },
+  { role: 'MEMBER', user: user({ id: 3, username: 'carol', nickname: '卡罗尔' }), canRemove: true },
+]
+
+/** 「加入申请」和「已发送邀请」两格共用这一种：`TeamMembershipApplication`。 */
+export function application(over: Partial<TeamMembershipApplication> = {}): TeamMembershipApplication {
+  return {
+    id: 31,
+    user: user({ id: 9, username: 'dora', nickname: '多拉' }),
+    team: {
+      id: 1,
+      handle: 'city-lab',
+      name: '城市数据实验室',
+      intro: '一起把城市数据用起来',
+      avatarId: 3,
+      updatedAt: 1767225600000,
+      createdAt: 1767225600000,
+    },
+    initiator: user({ id: 9, username: 'dora', nickname: '多拉' }),
+    type: 'REQUEST',
+    status: 'PENDING',
+    role: 'MEMBER',
+    message: '想跟着做城市数据的题',
+    createdAt: 1767225600000,
+    updatedAt: 1767225600000,
+    ...over,
+  }
+}
+
+/** 等着批的加入申请一格。 */
+export const TEAM_JOIN_REQUESTS: TeamMembershipApplication[] = [application()]
+
+/** 已经发出去、还没回音的邀请一格。 */
+export const TEAM_INVITATIONS: TeamMembershipApplication[] = [
+  application({
+    id: 41,
+    type: 'INVITATION',
+    // 邀请是团队这边发出去的：发起人是所有者，收件人是被请的那位。
+    initiator: user({ id: 1, username: 'alice', nickname: '爱丽丝' }),
+    user: user({ id: 12, username: 'erin', nickname: '艾琳' }),
+    message: null,
+  }),
+]
+
+/** 邀请框里按用户名查到的那一位：`api/members.ts` 的 `LookedUpUser`。 */
+export const FOUND_USER: LookedUpUser = { id: 12, handle: 'erin', name: '艾琳', avatar_id: null }
 
 // ---- 设备（ComputeView）----------------------------------------------------
 
