@@ -267,10 +267,28 @@ def test_a_name_is_governed_whether_or_not_its_mirror_answers(monkeypatch):
     assert mirrors.environment(_CONFIG) == {}
     assert set(mirrors.governed(_CONFIG)) == set(_ALL_NAMES)
 
-    # An address nobody set is not governed: there is nothing to take away.
+    # And it is the same mapping the prepare would have handed the room: what a
+    # room is told to drop is the value this policy would have put there, which
+    # is what leaves a room's own index alone (`runtime`, `configure`).
+    monkeypatch.setattr(mirrors, "_answers", lambda url: True)
+
+    assert mirrors.governed(_CONFIG) == mirrors.environment(_CONFIG)
+
+    # An address nobody set is not governed: there is nothing to take away. It
+    # is the export's own address that decides, not its mirror's: `uv_python`
+    # is the only one no deployment names by default, and a deployment that
+    # names no official fallback has only ever set `UV_INDEX`.
     unnamed = {**_CONFIG, "uv_python": ""}
 
-    assert "UV_PYTHON_INSTALL_MIRROR" not in mirrors.governed(unnamed)
+    assert set(mirrors.governed(unnamed)) == set(_ALL_NAMES) - {
+        "UV_PYTHON_INSTALL_MIRROR"
+    }
+    no_fallback = {**_CONFIG, "pypi_official": ""}
+
+    assert set(mirrors.governed(no_fallback)) == set(_ALL_NAMES) - {
+        "UV_DEFAULT_INDEX",
+        "PIP_EXTRA_INDEX_URL",
+    }
 
 
 def test_a_probe_is_paid_for_once_and_not_once_per_tool_call(monkeypatch, tmp_path):
@@ -452,7 +470,7 @@ def test_a_prepared_room_hands_its_agent_the_mirrors(tmp_path, monkeypatch):
         # The payload key is the platform's own, not a variable: it carries the
         # addresses to the executor and stops there.
         assert not [name for name in seen if "package_mirrors" in name]
-        assert "npm_config_registry" in config["env_reset"]
+        assert config["env_reset"]["npm_config_registry"] == seen["npm_config_registry"]
 
 
 def test_a_mirror_that_stopped_answering_is_named_for_removal(tmp_path, monkeypatch):
@@ -461,7 +479,8 @@ def test_a_mirror_that_stopped_answering_is_named_for_removal(tmp_path, monkeypa
     A room prepares on every tool call it serves, and a prepare adds to what
     the room already has, so a mirror that stopped answering cannot be taken
     away by leaving its variable out: the room is carrying it. The name is
-    stated instead, and the executor drops it (`runtime`, `configure`).
+    stated instead, with the address it would have set, and the executor drops
+    the room's value only where that is the value it holds (`runtime`).
     """
     payload = _room_payload()
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
@@ -476,5 +495,36 @@ def test_a_mirror_that_stopped_answering_is_named_for_removal(tmp_path, monkeypa
     ):
         assert dead.rstrip("/") + "/" in asked
         assert "npm_config_registry" not in config["env"]
-        assert "npm_config_registry" in config["env_reset"]
+        assert config["env_reset"]["npm_config_registry"] == dead
         assert config["env"]["UV_INDEX"] == settings.package_mirror_pypi_index
+
+
+def test_a_room_that_named_an_index_of_its_own_keeps_it(tmp_path, monkeypatch):
+    """Why the reset list carries a value and not just a name.
+
+    A project's own index reaches the room through the environment its process
+    starts with (`environment_runner` folds the project's variables in), so it
+    is under a governed name without ever having been prepared. A name alone
+    cannot tell it from the platform's, and the executor would drop it along
+    with the mirror that stopped answering — an install that had its own index
+    would go to the public one instead.
+    """
+    own = "https://internal.test/simple"
+    dead = settings.package_mirror_pypi_index
+    payload = _room_payload()
+    payload["environment"] = {"variables": {"PIP_INDEX_URL": own}}
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    asked = _the_machine_answers(monkeypatch, dead=dead)
+
+    with bootstrap.prepared(payload, tmp_path, fetch_toolchain=False) as (
+        _home,
+        config,
+        _state,
+        _env,
+    ):
+        assert dead.rstrip("/") + "/" in asked
+        assert "PIP_INDEX_URL" not in config["env"]
+        # The address this policy would have held, not the room's own: the two
+        # are what the executor tells apart (`runtime`, `configure`).
+        assert config["env_reset"]["PIP_INDEX_URL"] == dead
+        assert config["env_reset"]["PIP_INDEX_URL"] != own

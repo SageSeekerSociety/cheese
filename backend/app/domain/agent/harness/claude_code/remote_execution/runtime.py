@@ -1757,7 +1757,7 @@ class Executor:
         ):
             # The two keys a configure replaces, and so the two the running
             # room is allowed to differ in: everything else has to match.
-            configure = {"env": config["env"], "env_reset": config.get("env_reset", ())}
+            configure = {"env": config["env"], "env_reset": config.get("env_reset", {})}
             if {k: v for k, v in self.config.items() if k not in configure} != {
                 k: v for k, v in config.items() if k not in configure
             }:
@@ -1818,10 +1818,10 @@ class Executor:
         if method == "configure" or (
             method == "configure_private" and self.config.get("private")
         ):
-            # A name the prepare governs but does not state is one to stop using:
-            # this only adds, so a mirror that stopped answering would stay.
-            for name in params.get("env_reset", ()):
-                if name not in params["env"]:
+            # A governed name the prepare does not state, and the room holds the
+            # value of, is one to stop using: this only adds, so it would stay.
+            for name, value in params.get("env_reset", {}).items():
+                if name not in params["env"] and self.env.get(name) == value:
                     self.env.pop(name, None)
             self.env.update(params["env"])
             self.config["env"] = params["env"]

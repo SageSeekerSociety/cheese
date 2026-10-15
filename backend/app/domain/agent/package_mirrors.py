@@ -149,21 +149,28 @@ def configuration(settings) -> dict:
     }
 
 
-def governed(config) -> tuple[str, ...]:
-    """Every variable this policy governs for one room.
+def governed(config) -> dict:
+    """Every variable this policy governs for one room, and what it puts there.
 
-    The names of every mirror the deployment has given an address to, whether
-    or not that mirror answers and whether or not the feature is on. An
-    environment prepared without one of them is a room that has to stop using
-    it, and this is the only thing that says so: a variable that is merely left
-    out of an environment is one the room keeps (`runtime`, `configure`).
+    Every mirror the deployment has given an address to, whether or not that
+    mirror answers and whether or not the feature is on. An environment
+    prepared without one of them is a room that has to stop using it, and this
+    is the only thing that says so: a variable that is merely left out of an
+    environment is one the room keeps (`runtime`, `configure`).
+
+    The value travels with the name because a name does not say who filled it
+    in: a project or a machine that named an index of its own holds another
+    value under the same name, and that one is not this policy's to take away.
+    Both come from `_exports`, so an export the deployment has no address for —
+    the default `uv_python` among them — is not governed at all: it is a name
+    this policy could never have set.
     """
-    return tuple(
-        name
+    return {
+        name: value
         for mirror in MIRRORS
         if config.get(mirror.key)
-        for name, _ in mirror.exports
-    )
+        for name, value in _exports(mirror, config)
+    }
 
 
 def environment(config, store=None, *, now=None) -> dict:

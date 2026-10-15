@@ -1106,11 +1106,11 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
         # names an index of its own keeps it, which is why the value is only
         # defaulted. This is the environment an agent's tools inherit, so a
         # mirror listed here is what an agent's `pip install` goes through.
-        # `governed` is the other half: names the policy may set at all, so a room
-        # already carrying one this prepare does not set can be told to drop it.
+        # `governed` is the other half: each name with the value the policy puts
+        # there, so only a room holding that value can be told to drop it.
         mirrors = payload.get("package_mirrors") or {}
         policy = package_mirrors(release) if mirrors else None
-        governed = policy["governed"](mirrors) if policy is not None else ()
+        governed = policy["governed"](mirrors) if policy is not None else {}
         if policy is not None:
             for name, value in policy["environment"](mirrors, store).items():
                 package_env.setdefault(name, variables.get(name, value))
@@ -1175,9 +1175,9 @@ def prepared(payload, owner, *, refresh_runtime=False, fetch_toolchain=True):
             "workspace": str(work),
             "claude": binary(owner, env["CHEESE_API"]),
             "env": scoped_env,
-            # The names the environment above is allowed to have taken away, so
-            # the executor drops them from a room it configures again (`runtime`).
-            "env_reset": list(governed),
+            # What the environment above may have taken away, and what it would
+            # have put there: a room holding anything else keeps it (`runtime`).
+            "env_reset": governed,
             "mcp_servers": {},
             "release": str(release),
             "sandbox": payload.get("sandbox") or False,

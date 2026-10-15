@@ -1723,7 +1723,7 @@ class RemoteExecutionTests(unittest.TestCase):
             "configure",
             {
                 "env": {"EXECUTOR_MARKER": "remote-environment", "UV_INDEX": "dead"},
-                "env_reset": ["UV_INDEX"],
+                "env_reset": {"UV_INDEX": "dead"},
             },
         )
         self.assertEqual(
@@ -1737,7 +1737,7 @@ class RemoteExecutionTests(unittest.TestCase):
             "configure",
             {
                 "env": {"EXECUTOR_MARKER": "remote-environment"},
-                "env_reset": ["UV_INDEX"],
+                "env_reset": {"UV_INDEX": "dead"},
             },
         )
         self.assertEqual(
@@ -1753,7 +1753,7 @@ class RemoteExecutionTests(unittest.TestCase):
             "configure",
             {
                 "env": {"EXECUTOR_MARKER": "remote-environment", "UV_INDEX": "again"},
-                "env_reset": ["UV_INDEX"],
+                "env_reset": {"UV_INDEX": "dead"},
             },
         )
         self.assertEqual(
@@ -1784,6 +1784,28 @@ class RemoteExecutionTests(unittest.TestCase):
                 "Bash", {"command": 'printf "%s" "${PLAYWRIGHT_DOWNLOAD_HOST-unset}"'}
             )["stdout"],
             "kept",
+        )
+
+    def test_a_configure_leaves_a_value_the_room_filled_in_itself(self):
+        # These names reach a room two ways and only one of them is the
+        # platform's. A project's own index, or a machine's own registry, is in
+        # the environment the room's process starts with (`environment_runner`),
+        # which no prepare ever stated; the reset list names the address the
+        # policy would have put there, and this room's value is not that one.
+        self.stop()
+        with patch.dict(os.environ, {"UV_INDEX": "https://internal.test/simple"}):
+            self.start()
+        runtime.request(
+            self.state,
+            "configure",
+            {
+                "env": {"EXECUTOR_MARKER": "remote-environment"},
+                "env_reset": {"UV_INDEX": "https://mirror.test/simple"},
+            },
+        )
+        self.assertEqual(
+            self.invoke("Bash", {"command": 'printf "%s" "$UV_INDEX"'})["stdout"],
+            "https://internal.test/simple",
         )
 
     def test_request_replay_does_not_repeat_write(self):
