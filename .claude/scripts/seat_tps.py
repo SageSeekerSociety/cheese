@@ -5,11 +5,12 @@
       [--window 24h|7d|30d] [--seats] [--json]
   python3 .claude/scripts/seat_tps.py --self-test      (offline: no token, no network)
 
-它以开发号登录，调 `GET /throughput/seats`，把每个席位 × 模型 × 供给一行的速率打
+它以开发号登录，调 `GET /throughput/seats`，把每个席位 × 模型 × 供给一行的产出打
 成一张表。口径写在 `backend/app/domain/platform_stats/throughput.py` 的模块
-docstring 上：主口径是**按轮速率**（`output_tokens ÷ 这一轮起止的秒数`）的
-p50 / p90，分母是整轮墙钟不是吐字时长；`window_tps` 是窗口吞吐（把空档算进分母），
-随行带上，两者一起读才分得出「慢」和「闲着」。
+docstring 上：**窗口吞吐**（`output_tokens ÷ 窗口秒数`）是唯一的速率。按轮速率
+（一轮的 token ÷ 这一轮的秒数）2026-10-15 拆掉了 —— 那个配对在平台上不成立（网关
+那半边分子是整把 key 的增量，见 `docs/evidence/seat-tps-2026-10-15.md`）。「慢」和
+「闲着」配着 `turns` / `calls` 读：那两个正常而吞吐低，是这一组在跑但慢了。
 
 `--seats` 只打席位汇总那一段，问「谁快谁慢」时用它；`--json` 打原始 payload，给要
 自己再算一遍的调用方。`--topic` 是调用方自己所在的房间 —— 接口的门就在这个参数上，
@@ -43,8 +44,6 @@ COLUMNS = (
     ("output_tokens", 13),
     ("calls", 8),
     ("turn_seconds", 13),
-    ("p50_tps", 13),
-    ("p90_tps", 13),
     ("window_tps", 13),
 )
 
@@ -124,16 +123,16 @@ def self_test():
     sample = [
         {"seat": "cheese", "model": "claude-sonnet-5", "supply": "subscription",
          "turns": 12, "output_tokens": 48000, "calls": 14, "turn_seconds": 612.5,
-         "p50_tps": 78.4, "p90_tps": 120.0, "window_tps": 0.5556},
+         "window_tps": 0.5556},
         {"seat": "cheese-mimo", "model": "mimo-v2.6-pro", "supply": "gateway",
-         "turns": 3, "output_tokens": 900, "calls": 3, "turn_seconds": 0.0,
-         "p50_tps": None, "p90_tps": None, "window_tps": 0.0104},
+         "turns": 3, "output_tokens": 900, "calls": 3, "turn_seconds": None,
+         "window_tps": 0.0104},
     ]
     out = table(sample)
     assert "cheese" in out and "claude-sonnet-5" in out, out
     assert "78.4" in out and "0.5556" in out, out
     assert "48000" in out and "612.5" in out, out
-    # 没有速率的一组写成 `-`，不是 0 —— 0 是一个算出来的速率。
+    # 没有值的列写成 `-`，不是 0 —— 0 是一个算出来的数。
     assert "   -  " in out, out
     try:
         table([{"seat": "cheese"}])
