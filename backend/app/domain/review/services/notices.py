@@ -156,8 +156,6 @@ async def _tell_the_reviewer(
         meta=meta,
         also=also,
         announce=_announce_of(self),
-        seat_instance_id=self._seat_instance_id,
-        record_agent=self._record_agent,
     )
 
 
@@ -177,8 +175,6 @@ async def _notify_ready(
         card,
         topic,
         announce=_announce_of(self),
-        seat_instance_id=self._seat_instance_id,
-        record_agent=self._record_agent,
     )
 
 
@@ -194,8 +190,6 @@ async def _note_needs_human(
         self._session,
         card=card,
         topic=topic,
-        seat_instance_id=self._seat_instance_id,
-        record_agent=self._record_agent,
         reason=reason,
         explain=explain,
         announce=_announce_of(self),
@@ -203,7 +197,7 @@ async def _note_needs_human(
 
 
 async def _record_task_nudge(
-    self: pkg.AcceptService, *, topic, task, content, headline, meta, dispatch=None
+    self: pkg.AcceptService, *, topic, task, content, headline, meta
 ):
     return await _record_task_nudge_from_room(
         self._session,
@@ -212,11 +206,8 @@ async def _record_task_nudge(
         content=content,
         headline=headline,
         meta=meta,
-        dispatch=dispatch,
         announce=_announce_of(self),
         record_instruction=self._record_instruction,
-        seat_instance_id=self._seat_instance_id,
-        record_agent=self._record_agent,
     )
 
 
@@ -304,7 +295,6 @@ async def _note_merge_stop_and_wake(
     action: str,
     headline,
     meta,
-    dispatch=None,
 ) -> None:
     """Put `note` on the card and, when it is new, wake the task's 芝士.
 
@@ -330,9 +320,6 @@ async def _note_merge_stop_and_wake(
         content=f"{lead}{action if actionable else _CLOSED_TASK_ACTION}",
         headline=headline,
         meta=meta,
-        # 任务已关闭时只留这条给房间看，不叫座位：那条指令它照做不了
-        # （`delivery.agent.dispatch_pending` 只会把它标成失败并留下一行误导的账）。
-        dispatch=dispatch if actionable else None,
     )
 
 
@@ -380,7 +367,6 @@ async def _note_left_merge_queue(
             severity=SEVERITY_ERROR,
             who=WHO_CHEESE,
         ),
-        dispatch=lead + action,
     )
 
 

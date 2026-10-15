@@ -936,7 +936,6 @@ def _branch_protection_payload(bp: BranchProtection) -> dict:
         ),
         "approvals_required": bp.approvals_required,
         "default_reviewer": bp.default_reviewer,
-        "dispatch_seat": bp.dispatch_seat,
     }
 
 
@@ -993,7 +992,6 @@ _BRANCH_PROTECTION_KEYS = (
     "auto_merge_allowed",
     "override_handles",
     "default_reviewer",
-    "dispatch_seat",
 )
 
 

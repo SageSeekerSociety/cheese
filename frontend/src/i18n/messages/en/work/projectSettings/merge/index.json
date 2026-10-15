@@ -15,8 +15,6 @@
   "defaultReviewerHint": "Reviews tasks that don't say who should review them",
   "dismissStale": "New commits void earlier acceptances",
   "dismissStaleHint": "Code is usually pushed by AI teammates, so new commits need accepting again; on by default",
-  "dispatchSeat": "Dispatch seat",
-  "dispatchSeatHint": "Also told to this agent when a PR becomes ready to merge or leaves the merge queue",
   "githubEnforced": "GitHub is already enforcing these rules",
   "githubUnknown": "Couldn't read GitHub's protection status, so these rules follow this platform's settings",
   "loadFailed": "Couldn't load branch protection",

@@ -12,9 +12,7 @@ from app.core.config import settings
 from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
 from app.domain.delivery.agent import (
-    record_agent,
     record_task_instruction,
-    seat_instance_id,
 )
 from app.domain.delivery.ledger import settle_card
 from app.periodic_jobs import periodic_jobs
@@ -32,8 +30,6 @@ pytestmark = pytest.mark.anyio
 _EXPECTED_PORTS = {
     "settle_card": settle_card,
     "record_instruction": record_task_instruction,
-    "seat_instance_id": seat_instance_id,
-    "record_agent": record_agent,
     "dispatch_pending": ANY,
     "task_teammate": task_teammate,
     "machines": checkout_sweep.sweep,
@@ -42,8 +38,6 @@ _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
         "record_instruction",
-        "seat_instance_id",
-        "record_agent",
         "task_teammate",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),

@@ -22,9 +22,6 @@ export interface BranchProtectionRules {
   approvals_required: number
   // '' = 未指定。
   default_reviewer: string
-  // 调度座位：平台把「可以合并」和「离开合并队列」也叫它一遍。填一个 AI 队友
-  // 的席位 handle（`cheese-...`）。'' = 没设，只叫当事的那条线。
-  dispatch_seat: string
 }
 export type BranchProtectionPatch = Partial<BranchProtectionRules>
 // GET 额外带两块只读附注，说明 GitHub 那一侧的现实。
