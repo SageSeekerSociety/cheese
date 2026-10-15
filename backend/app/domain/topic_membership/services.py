@@ -566,7 +566,7 @@ class TopicMemberService:
         team: ProjectTeam,
     ) -> TopicMembership:
         topic = await self._brought_in_by(topic_id, actor)
-        if topic.is_private:
+        if not _public(topic):
             # Whoever joins reads everything said before: a DM keeps its two.
             raise UnprocessableEntityError(say("privateChatTwoPeopleOnly"))
         # Who is an agent is the binding's answer, not the handle's shape (I9):

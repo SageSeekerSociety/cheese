@@ -28,7 +28,6 @@ from app.domain.team.protocol import (
     TeamView,
     TeamVisibility,
 )
-from app.domain.team.repositories import TeamRepository, refuse_admin_grant_by_non_owner
 from app.domain.team.services import TeamService, may_remove_member
 from app.domain.user.repositories import (
     UserProfileRepository,
@@ -815,9 +814,7 @@ async def add_team_member_entry(
     if team is None:
         raise NotFoundError("Team not found")
     if role_val == TeamMemberRole.ADMIN:
-        await refuse_admin_grant_by_non_owner(
-            TeamRepository(db), team_id, auth_user.user_id
-        )
+        await service.refuse_admin_grant(team_id, auth_user.user_id)
 
     # deferred-import: tests patch this name on app.domain.team.services
     from app.domain.team.services import check_team_locking_status
