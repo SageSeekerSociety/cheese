@@ -39,9 +39,15 @@ import { useAppTheme } from '@/theme'
 // this composable — and the only other caller, ThemeToggle, sits inside the
 // logged-in user menu. Without this line a signed-out visitor sitting on the
 // login page would not follow their machine switching to dark at sunset.
-const appTheme = useAppTheme()
-// The desktop app paints its first page and its title bar in the same theme.
-watch(appTheme.preference, tellDesktopTheme, { immediate: true })
+//
+// Not while prerendering a public page at build time (scripts/prerender.mjs): there
+// is no document to stamp and no OS to follow, and the page is rendered in both
+// themes' variables already.
+if (!import.meta.env.SSR) {
+  const appTheme = useAppTheme()
+  // The desktop app paints its first page and its title bar in the same theme.
+  watch(appTheme.preference, tellDesktopTheme, { immediate: true })
+}
 
 const currentRoute = useRoute()
 

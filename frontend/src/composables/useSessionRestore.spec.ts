@@ -18,7 +18,6 @@ vi.mock('@/services/account', async () => {
     },
   }
 })
-vi.mock('@/router', () => ({ default: { replace: vi.fn() } }))
 vi.mock('@/router/home', () => ({ landingForMember: vi.fn(async () => ({ name: 'inbox' })) }))
 
 import { useSessionRestore } from './useSessionRestore'

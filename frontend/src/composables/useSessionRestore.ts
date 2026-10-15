@@ -10,12 +10,13 @@
 // scripts/import-boundary-ratchet-core.mjs）；以及这段「等多久才露面、网络回来怎么
 // 重试」的决定本来就不该和一段模板绑死。
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
-import router from '@/router'
 import { landingForMember } from '@/router/home'
 import AccountService from '@/services/account'
 
 export function useSessionRestore() {
+  const router = useRouter()
   const phase = computed(() => AccountService.restorePhase)
   const retrying = ref(false)
   const navigationFailed = ref(false)

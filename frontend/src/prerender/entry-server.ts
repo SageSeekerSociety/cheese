@@ -1,22 +1,19 @@
-// 构建时渲染公开页（scripts/prerender.mjs 调它，不进浏览器）。
-//
-// 渲染的是浏览器上 App.vue 在公开页上画的那一棵：`SessionRestoreGate`（这时不可见，
-// 只留一个注释节点）加 `<router-view>`。顶层两个节点的形状要和 App.vue 模板开头那两个
-// 一一对上，客户端才能在这份 HTML 上直接 hydrate；对不上时 Vue 会把对不上的那一截重画，
-// 页面照样对，只是白做了一遍。改 App.vue 顶层时连这里一起改。
+// 构建时渲染公开页（scripts/prerender.mjs 调它，不进浏览器）。渲染的就是浏览器上那个
+// App.vue：公开页上它画的是登录恢复那一层（这时不可见）加 `<router-view>`，客户端在这份
+// HTML 上直接 hydrate。App.vue 里只在浏览器里成立的那几件（主题跟随）在这里不跑。
 //
 // 只装公开页要的路由：首页那一组。别的地址（登录、协议页）只需要算得出链接，由最后那条
 // 兜底路由接住，不渲染。路由守卫不跑——守卫看的是登录态和桌面 app，构建时两样都没有，
 // 预渲染的就是一位没登录的浏览器访客看到的样子。
 import type { RouteRecordRaw } from 'vue-router'
 
-import { createSSRApp, h } from 'vue'
+import { createSSRApp } from 'vue'
 import { renderToString } from 'vue/server-renderer'
-import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import { createPinia } from 'pinia'
 
-import SessionRestoreGate from '@/components/common/SessionRestoreGate.vue'
+import App from '@/App.vue'
 import i18n, { loadLocale, t } from '@/i18n'
 import { vuetifyOptions } from '@/plugins/vuetify'
 import home from '@/router/home'
@@ -43,9 +40,7 @@ export async function render(url: string) {
   await loadLocale('zh-CN')
   i18n.global.locale.value = 'zh-CN'
   const router = createRouter({ history: createMemoryHistory(), routes })
-  const app = createSSRApp({
-    render: () => [h(SessionRestoreGate, { visible: false, retrying: false, navigationFailed: false }), h(RouterView)],
-  })
+  const app = createSSRApp(App)
   app
     .use(i18n)
     .use(createVuetify({ ...vuetifyOptions, ssr: true }))
