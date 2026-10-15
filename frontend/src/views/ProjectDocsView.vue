@@ -47,6 +47,11 @@ const AUTHOR = myHandle()
 const router = useRouter()
 // 单测里这一页是孤立渲染的，没有 store：队友名字就用默认的。
 const workspace = getCurrentInstance()?.appContext.config.globalProperties.$pinia ? useWorkspaceStore() : null
+// 周报里写到的人读成他的名字。周报不通知任何人，所以是名字引用，不是 @chip。
+const weeklyNames = computed(() => ({
+  mentionNames: Object.fromEntries((workspace?.members ?? []).map((m) => [m.user_handle, m.name || m.user_handle])),
+  topicTitles: {},
+}))
 const agentName = useProjectAgentName()
 
 const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
@@ -332,7 +337,7 @@ useCommands(() => {
                   {{ t('project.docs.fromTopic') }}
                 </BaseButton>
               </div>
-              <MarkdownView class="md-content text-body-2" :source="w.content" />
+              <MarkdownView class="md-content text-body-2" :source="w.content" :names="weeklyNames" />
             </div>
           </v-card>
         </div>

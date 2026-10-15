@@ -169,32 +169,33 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'user-ref',
     title: 'UserRef',
-    about: '句子里提到的一个人：@名字。给了去处才可点。',
+    about:
+      '句子里提到的一个人：画成名字引用，浅色 chip、不带 @（带 @ 的实心 chip 只留给真的通知到人的那一处）。给了去处才可点。',
     file: 'src/components/common/UserRef.vue',
     component: UserRef,
     needs: [],
     states: [
       {
         name: '有去处',
-        note: '给了 to 才是一颗「人可以点」的 chip：进 Tab 顺序，按一下 emit navigate。',
+        note: '给了 to 才是人可以点的名字：进 Tab 顺序，悬停加深底色，按一下 emit navigate。',
         props: { handle: 'alice', name: '爱丽丝', to: { path: '/projects/p1/members/alice' } },
-        expect: '@爱丽丝',
+        expect: '爱丽丝',
       },
       {
         name: '只知道名字',
-        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画 @名字，但不可点。',
+        note: '没有 handle 就没有去处（找不到那个人的主页）：照样画名字，但不可点。',
         props: { name: '新来的同学' },
-        expect: '@新来的同学',
+        expect: '新来的同学',
       },
       {
         name: '长名字',
-        note: '名字长到换行也是这一颗，不缩字号、不截断。',
+        note: '名字长到换行也照常折行，不缩字号、不截断。',
         props: {
           handle: 'someone-with-a-long-handle',
           name: '一位名字很长的同学（校外）',
           to: { path: '/projects/p1/members/x' },
         },
-        expect: '@一位名字很长的同学（校外）',
+        expect: '一位名字很长的同学（校外）',
       },
     ],
   },

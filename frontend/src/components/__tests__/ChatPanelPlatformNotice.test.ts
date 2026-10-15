@@ -764,3 +764,75 @@ describe('a foldable notice that names someone', () => {
     expect(text).not.toContain('<@cheese-s>')
   })
 })
+
+// 「@」的样子只说一件事：这一处通知到了那个人。消息里的点名通知了，画 @chip；平台的一行
+// 提示只是提到谁做了什么，没有通知谁，画成他的名字。
+describe('a person named in the room', () => {
+  it('is the @chip where a message told them, and only their name where a notice mentions them', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'bob', name: '鲍勃', agent: false },
+      ],
+    })
+    const said: Block = {
+      ...event('', '<@bob> 帮忙看下', null),
+      kind: 'message',
+      author_type: 'participant',
+      author: 'alice',
+    }
+    const { container } = mountRoom([event('', '<@alice> 置顶了一条消息', { event_type: 'pin' }), said])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('@鲍勃')
+    expect(text).toContain('爱丽丝')
+    expect(text).not.toContain('@爱丽丝')
+  })
+
+  it('is the @chip in a notice only for the AI teammate that same event woke', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'cheese-s', name: '芝士S', agent: true },
+      ],
+    })
+    const handed = event('', '<@alice> 把之前的消息交给了 <@cheese-s>', {
+      i18n: { content: { key: 'pendingHandedTo', params: { actor: '<@alice>', seat: '<@cheese-s>' } } },
+    })
+    const { container } = mountRoom([handed])
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('爱丽丝 把之前的消息交给了 @芝士S')
+    expect(text).not.toContain('@爱丽丝')
+  })
+
+  it('in a members-only channel, is the @chip only for the members its message could notify', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'alice', name: '爱丽丝', agent: false },
+        { member_handle: 'bob', name: '鲍勃', agent: false },
+      ],
+    })
+    listBlocks.mockImplementation(async () => ({ data: [], has_more: false }))
+    const id = freshRoom()
+    const said: Block = {
+      ...event(id, '<@bob> <@carol> 一起看下', null),
+      kind: 'message',
+      author_type: 'participant',
+      author: 'alice',
+    }
+    listBlocks.mockResolvedValue({ data: [said], has_more: false })
+    const { container } = render(ChatPanel, {
+      props: { topic: { ...room(id), members_only: true }, topicList: [room(id)] },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await flush()
+
+    const text = visibleText(container)
+    expect(text).toContain('@鲍勃')
+    expect(text).toContain('carol')
+    expect(text).not.toContain('@carol')
+  })
+})

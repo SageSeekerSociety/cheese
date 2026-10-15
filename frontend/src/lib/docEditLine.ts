@@ -6,8 +6,9 @@
 // compact line under the turn's messages, without a name of its own — the
 // turn already says whose it is. Outside a turn (a person's edit, a run that
 // mixes several editors, a line written before lines carried their turn) it is
-// one muted line that names who did it in plain text. Neither form draws a name
-// as an @ chip: the line notifies nobody, it only says who.
+// one muted line that names who did it. Neither form draws a name as the @
+// chip: the line notifies nobody, it only says who, so a name is the light
+// reference chip without "@" (lib/refChip).
 //
 // Only lines the backend writes with structure today take this form: a
 // library document's (`meta.document`) or a living document's that lists its
@@ -56,6 +57,8 @@ export interface DocLine {
   requester: string | null
   /** Who did it, by name, for a line outside a turn. */
   actors: string[]
+  /** The same people as `actors`, by handle. */
+  actorHandles: string[]
   /** How many passages were changed; null when the line does not count them. */
   count: number | null
   /** The library document the line is about; null for the conversation's own document. */
@@ -84,7 +87,8 @@ export function docLineOf(
 ): DocLine | null {
   if (!notice || notice.mode !== 'action' || notice.resource !== 'doc' || !isDocLine(block)) return null
   const library = notice.libraryDoc ?? null
-  const actors = (editors(block) ?? [block.author]).filter((h) => h !== 'system').map(nameOf)
+  const actorHandles = (editors(block) ?? [block.author]).filter((h) => h !== 'system')
+  const actors = actorHandles.map(nameOf)
   if (library) {
     const title = library.title || t('work.room.doc.untitled')
     const edits = library.created || library.suggestions ? [] : library.edits
@@ -96,6 +100,7 @@ export function docLineOf(
           : t('work.room.notice.docLine.edited', { title }),
       requester: null,
       actors,
+      actorHandles,
       count: edits.length || null,
       library,
       edits,
@@ -111,6 +116,7 @@ export function docLineOf(
       : t('work.room.notice.docLine.editedDoc'),
     requester: request ? nameOf(request.requestedBy) : null,
     actors,
+    actorHandles,
     count: request?.edits.length || null,
     library: null,
     edits: request?.edits ?? [],
@@ -136,6 +142,23 @@ export function docLineSentence(line: DocLine, inTurn: boolean): string {
   return line.actors.length
     ? t('work.room.notice.docLine.by', { actor: joined(line.actors), action: line.action })
     : line.action
+}
+
+/**
+ * The same sentence with each person as their `<@handle>` token, for drawing
+ * them as references (lib/refChip): the line notifies nobody, so none of them
+ * is the @chip.
+ */
+export function docLineSentenceWithRefs(line: DocLine, inTurn: boolean): string {
+  const token = (handle: string) => `<@${handle}>`
+  return docLineSentence(
+    {
+      ...line,
+      requester: line.requestedBy ? token(line.requestedBy) : line.requester,
+      actors: line.actorHandles.map(token),
+    },
+    inTurn
+  )
 }
 
 /** 「3 处」, or '' when the line does not count its changes. */

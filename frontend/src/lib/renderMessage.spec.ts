@@ -34,6 +34,8 @@ const MAPS = {
     here: '在线成员',
   },
   topicTitles: { 'abc12345-0000-0000-0000-000000000000': '搭建推荐算法原型' },
+  // A message's mentions went through the mention path: each one told its person.
+  notified: true,
 }
 
 describe('芝士 replies', () => {

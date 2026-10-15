@@ -61,6 +61,9 @@ const shown = computed(() =>
 const resolved = computed(() => props.thread.state === 'resolved')
 
 const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
+// A person's comment that @s the AI teammate wakes it, so that one reads as the
+// @chip; the teammate's own replies told nobody and name people plainly (`names`).
+const asked = computed(() => ({ ...names.value, notified: (handle: string) => isAgentHandle(handle) }))
 
 // 芝士正在用的工具，说成它在做的事；没列出的就说在回答
 const TOOL_STEPS: Record<string, string> = {
@@ -179,7 +182,7 @@ function onCard(e: MouseEvent) {
             :names="names"
           />
           <div v-else class="doc-thread-card__text doc-thread-card__text--plain" dir="auto">
-            {{ plainRefs(message.content, names) }}
+            {{ plainRefs(message.content, asked) }}
           </div>
         </div>
       </div>

@@ -54,6 +54,13 @@ export function useRoomRoster(options: {
   )
   const rosterLoaded = computed(() => !!options.topic() && roster.data.value !== undefined)
   const roomMembers = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
+  // 私密频道里 @ 一个不在频道里的人，他收不到通知（后端 TopicMemberService.reached），
+  // 那一处画成提到而不是 @chip（lib/refChip 的 reachable）。名册没到之前不下结论。
+  const reachable = computed(() =>
+    options.topic()?.members_only && rosterLoaded.value
+      ? new Set(roomMembers.value.map((row) => row.member_handle))
+      : undefined
+  )
   // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出芝士」，
   // 而屏幕上没有任何东西说明为什么。
   watch(
@@ -222,6 +229,7 @@ export function useRoomRoster(options: {
   return {
     roomMembers,
     rosterLoaded,
+    reachable,
     agentSeat,
     agentName,
     mentionPool,

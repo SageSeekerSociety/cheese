@@ -230,7 +230,7 @@ function onDocClick(e: MouseEvent) {
     }
     return
   }
-  const el = target?.closest('.mention') as HTMLElement | null
+  const el = target?.closest('.mention, .name-ref') as HTMLElement | null
   if (!el) return
   if (el.dataset.topic) emit('open-topic', el.dataset.topic)
   else if (el.dataset.handle) emit('mention-click', el.dataset.handle)
