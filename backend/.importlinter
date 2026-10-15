@@ -419,6 +419,16 @@ unmatched_ignore_imports_alerting = warn
 # instead: layer 2 sits below layer 3, so `topic` cannot reach the session row —
 # it takes the store. (The join is what binds the row to layer 3 either way:
 # `agent_session` still reads `topic.models` at layer 2.)
+#
+# `shell_catalog` joined at layer 1 (2026-10-14), the same move as `notice_meta`
+# and `delivery_events`: what a 壳 DECLARES (`Nav`, `Shell`, `CATALOG`, `lookup`)
+# and the shape it resolves to (`ShellOut`) is vocabulary, and `ShellOut` is a
+# field of `ProjectOut` — so `project.schemas` at layer 2 read it at layer 2's
+# neighbour `shell`, upward. The declarations and the wire shape moved down;
+# resolving a project's 壳 stays in `app.domain.shell.service`, which reads
+# `space.models`, `task.models` and `task.protocol` and so cannot follow. That
+# split is what takes `project -> shell` off the graph, which is the one edge
+# under `project` that was holding `shell` inside the largest cycle.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
@@ -428,7 +438,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog
 containers =
     app.domain
 exhaustive = true

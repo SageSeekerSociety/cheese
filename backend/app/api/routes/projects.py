@@ -77,9 +77,8 @@ from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.github_pr import parse_github_repo
 from app.domain.room_task import naming
 from app.domain.room_task.services import TaskService
-from app.domain.shell.catalog import Shell
-from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
+from app.domain.shell_catalog import Shell, ShellOut
 from app.domain.task.claims import deadline_for_project
 from app.domain.task.services import claim_backs_project
 from app.domain.team.services import TeamLabel, team_service
