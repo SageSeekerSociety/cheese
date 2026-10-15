@@ -35,8 +35,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'retry'): void
-  (e: 'download', file: RoomFile): void
+  retry: []
+  download: [file: RoomFile]
 }>()
 
 const { mdAndUp } = useDisplay()

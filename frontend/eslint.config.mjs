@@ -103,6 +103,33 @@ export default [
     },
   },
   {
+    // A view that declares its events as overloads
+    // (`defineEmits<{ (e: 'retry'): void }>()`) loses the event names to Volar
+    // once it carries twenty-odd of them: the view's props type degrades to an
+    // `on*` index signature, and a forwarding shell that spreads
+    // `{ ...$props, ...$attrs }` onto it then reports
+    // `TS2345 … onVnodeBeforeMount is incompatible with index signature` on the
+    // SHELL — a file the author of the view never touched, so the error points
+    // nowhere near its cause.
+    //
+    // The name → parameters form (`retry: []`, `'update:open': [v: boolean]`)
+    // declares the same events without the degradation, and it is what every
+    // other view already uses. Scoped to views because the shell is what makes
+    // it fatal: components/ has short call-signature declarations that are never
+    // forwarded this way and does not need an exemption to stay put.
+    files: ['src/**/*View.vue'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'CallExpression[callee.name="defineEmits"] TSCallSignatureDeclaration',
+          message:
+            "Declare emits as name → parameters — `retry: []`, `'update:open': [v: boolean]`. The call-signature form drops the event names, and any forwarding shell around this view then fails to type-check.",
+        },
+      ],
+    },
+  },
+  {
     // `src/network/` was the second request stack: axios underneath, its own
     // envelope stripping and its own error type. Every caller moved to `@/api`
     // and the directory was deleted; this rule is what keeps it deleted. A
