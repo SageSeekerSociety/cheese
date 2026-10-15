@@ -38,7 +38,7 @@ contains "$d/etc/docs/platform.conf" "location /docs/ {"
 [ ! -s "$d/etc/docs/host.conf" ] || fail "a docs server was written with no docs host"
 contains "$d/html/docs/index.html" 'href="https://okcheese.com/docs/llms.txt"'
 contains "$d/html/assets/main.js" 'const d=""'
-contains "$d/html/prerender/index.html" 'href="/spaces"'
+contains "$d/html/prerender/index.html" 'href="/docs/spaces"'
 echo "PASS: blank DOCS_ORIGIN is unset"
 
 # ---------- a docs host ----------
