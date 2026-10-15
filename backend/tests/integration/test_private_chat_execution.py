@@ -15,13 +15,13 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_instance.adapters import named_teammate
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, settle_turn
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio
 
@@ -79,10 +79,12 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         )
         async with factory() as session:
             await registered(session, "u")
-            project = await ProjectService(session).create(name="P", owner_handle="u")
+            project = await project_service(session).create(name="P", owner_handle="u")
             if private:
                 topic = await TopicService(session).get_or_create_private(
-                    project_id=project.id, user_handle="u"
+                    project_id=project.id,
+                    user_handle="u",
+                    named_teammate=named_teammate,
                 )
             else:
                 topic = await TopicService(session).create(

@@ -103,14 +103,30 @@ jobs:
       # config moved or stopped naming a contract it would find nothing wrong
       # with anything. So it is asked to prove itself — this builds a throwaway
       # package tree, plants a violation in it, and requires a non-zero exit.
+      # Since it also grades the tree at the merge base, the throwaway trees
+      # include that half: a base tree of its own, a violation it already has,
+      # one this tree adds on top, and a base that does not resolve.
       - name: Module boundary check proves it still fires
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: uv run python scripts/check_boundaries.py --self-test
 
+      # Two checks below grade this tree against the tree at the merge base with
+      # origin/main — the boundary check for the violations it tolerates, the
+      # migration check for the release's models — and neither baseline is
+      # stored anywhere. A depth-1 checkout has no such commit, and the boundary
+      # check would answer "could not judge" — exit 2, a red step that says
+      # nothing about the tree. One fetch, here, before both: a second
+      # `--unshallow` in the same job fails on a now complete repository.
+      # Rules: .claude/rules/architecture.md, .claude/rules/migrations.md.
+      - name: Fetch main for comparison
+        id: main_history
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: git fetch --no-tags --unshallow origin
+
       # The same hook a developer's commit runs, from the same file, and over
       # all files rather than this diff: the import graph is a property of the
       # tree, not of the commit that touched it.
-      - name: Module boundaries (import-linter + frozen baseline)
+      - name: Module boundaries (import-linter, baseline from the merge base)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files boundary-check
@@ -185,15 +201,10 @@ jobs:
 
       # Judges only the migrations this PR adds, against origin/main's models
       # (is a dropped column still mapped by the release that keeps serving
-      # while migrations run?). Needs main's history for the merge base; a
-      # depth-1 checkout has none. Rules: .claude/rules/migrations.md.
-      - name: Fetch main for comparison
-        id: migration_history
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: git fetch --no-tags --unshallow origin
-
+      # while migrations run?). The merge base it needs came from the fetch
+      # above. Rules: .claude/rules/migrations.md.
       - name: Added migrations are safe under the running release
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.migration_history.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && steps.main_history.outcome == 'success' }}
         # The job's default working directory is backend/; the script takes
         # repository paths.
         working-directory: ${{ github.workspace }}

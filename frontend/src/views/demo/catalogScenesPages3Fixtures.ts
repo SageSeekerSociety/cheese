@@ -73,6 +73,23 @@ export function answer(over: Partial<Answer> = {}): Answer {
   }
 }
 
+/** 「邀请谁来回答」那份名单里的人：一个是提问的人自己，一个是别人。 */
+export const INVITE_PEOPLE: User[] = [
+  ASKER,
+  {
+    id: 12,
+    username: 'zhishi',
+    nickname: '芝士',
+    avatarId: 0,
+    intro: '在攒题',
+    question_count: 2,
+    answer_count: 1,
+  },
+]
+
+/** 题干正文：容器把服务端存的那份 Editor.js JSON 解析成 HTML，画面只收这一串。 */
+export const QUESTION_CONTENT_HTML = '<p>因为瑞利散射：短波被大气散射得更厉害。</p>'
+
 /** 列表那一件用的两条：第二条是已经收藏过的。 */
 export const ANSWERS: Answer[] = [
   answer(),

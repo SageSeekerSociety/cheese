@@ -1,0 +1,9 @@
+{
+  "labelMailDraft": "Draft",
+  "mailDiscarded": "{actor} discarded the email draft “{subject}”",
+  "mailDraftSummary": "To: {to}\nSubject: {subject}",
+  "mailDraftSummaryWithFiles": "To: {to}\nSubject: {subject}\nAttachments: {files}",
+  "mailDraftedBy": "{who} wrote a draft in {account}; it is sent only once {owner} confirms",
+  "mailFailed": "The email “{subject}” was not sent",
+  "mailSent": "{actor} sent the email “{subject}”"
+}

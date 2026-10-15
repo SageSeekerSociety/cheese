@@ -4,6 +4,11 @@ Everything credential-shaped stays in this module and the tables it writes. A
 session reaches a server only through `call`, which attaches the credential
 here, in the backend; the session host, the room's machine and the agent see
 the server's answers and never the token or the secret values.
+
+Declaring them means adding the servers the teammates' types declare, and which
+types this project's seats are is read from the agent-instance tables — above
+this package in the layer table. So the caller hands those two lookups in
+(`remote_mcp/ports.py`), the same rule as the session factory in `webhook`.
 """
 
 from __future__ import annotations
@@ -24,10 +29,10 @@ from app.core import single_use_state
 from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent_instance.services import project_types, type_of_seat
 from app.domain.remote_mcp import declared, oauth, upstream
 from app.domain.remote_mcp.declared import Declared, RemoteServer
 from app.domain.remote_mcp.models import ProjectMcpConnection, ProjectMcpSecret
+from app.domain.remote_mcp.ports import ProjectTypes, TypeOfSeat
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +134,11 @@ def _status(
 
 
 async def _project_declared(
-    db: AsyncSession, project_id: uuid.UUID, *, fresh: bool = False
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    project_types: ProjectTypes,
+    *,
+    fresh: bool = False,
 ) -> Declared:
     """Every remote server anyone in the project may need connected: its
     `.mcp.json`'s and those of its teammates' types."""
@@ -141,7 +150,10 @@ async def _project_declared(
 
 
 async def _seat_declared(
-    db: AsyncSession, project_id: uuid.UUID, agent_handle: str | None
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    agent_handle: str | None,
+    type_of_seat: TypeOfSeat,
 ) -> Declared:
     """The remote servers one teammate's sessions reach: the project's, and its
     own type's. A teammate of another type never reaches this type's."""
@@ -162,9 +174,13 @@ class SessionServers:
 
 
 async def session_servers(
-    db: AsyncSession, project_id: uuid.UUID, agent_handle: str | None
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    agent_handle: str | None,
+    *,
+    type_of_seat: TypeOfSeat,
 ) -> SessionServers:
-    found = await _seat_declared(db, project_id, agent_handle)
+    found = await _seat_declared(db, project_id, agent_handle, type_of_seat)
     if not found.servers:
         return SessionServers()
     connections = await _connections(db, project_id)
@@ -181,11 +197,15 @@ async def session_target(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     agent_handle: str | None,
+    *,
+    type_of_seat: TypeOfSeat,
 ) -> dict | None:
     """What the execution target of ``agent_handle``'s session carries about
     remote servers: where it posts their calls, and which it may call. None
     when there are none."""
-    usable = (await session_servers(db, project_id, agent_handle)).usable
+    usable = (
+        await session_servers(db, project_id, agent_handle, type_of_seat=type_of_seat)
+    ).usable
     if not usable:
         return None
     return {"path": f"/topics/{topic_id}/mcp", "servers": list(usable)}
@@ -195,14 +215,16 @@ def _when(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-async def settings_view(db: AsyncSession, project_id: uuid.UUID) -> dict:
+async def settings_view(
+    db: AsyncSession, project_id: uuid.UUID, *, project_types: ProjectTypes
+) -> dict:
     """The settings page's list: one row per remote server, never a credential.
 
     Each row says where the server comes from: ``declared_by`` is None for the
     project's `.mcp.json`, or the teammates' types that define it.
     """
 
-    found: Declared = await _project_declared(db, project_id, fresh=True)
+    found: Declared = await _project_declared(db, project_id, project_types, fresh=True)
     types = await project_types(db, project_id)
     connections = await _connections(db, project_id)
     secret_rows = await _secret_rows(db, project_id)
@@ -252,9 +274,11 @@ async def settings_view(db: AsyncSession, project_id: uuid.UUID) -> dict:
     return {"servers": servers, "problem": found.problem}
 
 
-async def room_view(db: AsyncSession, project_id: uuid.UUID) -> list[dict]:
+async def room_view(
+    db: AsyncSession, project_id: uuid.UUID, *, project_types: ProjectTypes
+) -> list[dict]:
     """What a room's members see: each server, its state and who authorized it."""
-    view = await settings_view(db, project_id)
+    view = await settings_view(db, project_id, project_types=project_types)
     return [
         {
             key: server[key]
@@ -279,9 +303,16 @@ def _host(url: str) -> str:
 
 
 async def _declared_server(
-    db: AsyncSession, project_id: uuid.UUID, name: str, *, fresh: bool = False
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    name: str,
+    project_types: ProjectTypes,
+    *,
+    fresh: bool = False,
 ) -> RemoteServer:
-    server = (await _project_declared(db, project_id, fresh=fresh)).get(name)
+    server = (await _project_declared(db, project_id, project_types, fresh=fresh)).get(
+        name
+    )
     if server is None:
         raise NotFoundError(say("mcpServerNotDeclared"))
     return server
@@ -297,9 +328,10 @@ async def begin_connect(
     handle: str,
     *,
     in_app: bool = False,
+    project_types: ProjectTypes,
 ) -> str:
     """Start the authorization; returns the URL the browser goes to."""
-    server = await _declared_server(db, project_id, name, fresh=True)
+    server = await _declared_server(db, project_id, name, project_types, fresh=True)
     if not server.uses_oauth:
         raise ValidationError(say("mcpServerUsesHeaderKey"))
     values = _secret_values(project_id, await _secret_rows(db, project_id))
@@ -480,9 +512,15 @@ async def disconnect(db: AsyncSession, project_id: uuid.UUID, name: str) -> None
 
 
 async def set_secret(
-    db: AsyncSession, project_id: uuid.UUID, name: str, value: str, handle: str
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    name: str,
+    value: str,
+    handle: str,
+    *,
+    project_types: ProjectTypes,
 ) -> None:
-    found = await _project_declared(db, project_id, fresh=True)
+    found = await _project_declared(db, project_id, project_types, fresh=True)
     if not any(name in server.all_variables() for server in found.servers):
         raise NotFoundError(say("mcpVariableNotUsed"))
     if not value:
@@ -592,10 +630,13 @@ async def call(
     name: str,
     method: str,
     params: dict,
+    type_of_seat: TypeOfSeat,
 ) -> dict:
     """One MCP request from ``agent_handle``'s session in `topic_id` to a server
     that session has: the project's, or its own type's."""
-    server = (await _seat_declared(db, project_id, agent_handle)).get(name)
+    server = (await _seat_declared(db, project_id, agent_handle, type_of_seat)).get(
+        name
+    )
     if server is None:
         raise NotFoundError(say("mcpServerNotOnTeammate"))
     values = _secret_values(project_id, await _secret_rows(db, project_id))

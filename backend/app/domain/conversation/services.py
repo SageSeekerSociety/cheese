@@ -33,6 +33,19 @@ _inside = union_all(
     select(_tasks.c.id, _tasks.c.room_id), select(_threads.c.id, _threads.c.room_id)
 ).subquery("inside")
 
+#: 一间房的支线，房间以**一个数组参数**进来。一次频道详情要问三趟同一批房间的支线
+#: （`topics_signals.working_in_threads`、`topics._awaiting_an_answer`、
+#: `waits.MemberWaits.for_rooms`），三趟问的是同一件事。语句的形状与调用无关，于是
+#: 建一次、处处复用；语句是只读的（执行不往它上面挂编译期状态），一份拿给并发用安全
+#: —— `block/repositories.py` 的 `_awaiting_statements` 是同一个写法。
+#:
+#: 数组参数而不是 `IN` 列表：房间按百计，列表每个值绑一个参数，SQL 文本随长度变，
+#: 每次调用都要重新编译一遍。
+_threads_param = bindparam("threads_rooms", type_=ARRAY(Uuid))
+_room_threads = select(_threads.c.id, _threads.c.room_id).where(
+    _threads.c.room_id == any_(_threads_param)
+)
+
 
 async def project_of(
     session: AsyncSession, conversation_id: uuid.UUID
@@ -102,15 +115,7 @@ async def threads_of_rooms(
     room's own doings (`waits._last_said`)."""
     if not rooms:
         return {}
-    # One array parameter rather than an `IN` list: rooms are counted in
-    # hundreds, and a list binds one value each, so the SQL text changes with
-    # its length and is compiled again at every call (`waits._among`).
-    bound = bindparam(None, list(rooms), type_=ARRAY(Uuid))
-    rows = await session.execute(
-        select(_threads.c.id, _threads.c.room_id).where(
-            _threads.c.room_id == any_(bound)
-        )
-    )
+    rows = await session.execute(_room_threads, {"threads_rooms": list(rooms)})
     return {thread_id: room_id for thread_id, room_id in rows}
 
 

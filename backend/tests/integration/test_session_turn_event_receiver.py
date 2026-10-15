@@ -22,12 +22,11 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputReceipt
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import held_blocks, record_receipt, register_input
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from tests.conftest import stub_compute
 from tests.integration import test_own_claude_code_turns as own_turns
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.integration.test_native_batch_ownership import _blocks, _identity
 from tests.support.hang import HANG_S
 from tests.support.threads import thread_in
@@ -36,7 +35,9 @@ from tests.support.threads import thread_in
 async def _room(factory, title):
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name=title, owner_handle="alice")
+        project = await project_service(session).create(
+            name=title, owner_handle="alice"
+        )
         room = await TopicService(session).create(
             project_id=project.id, title=title, created_by="alice"
         )

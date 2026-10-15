@@ -62,14 +62,17 @@ repos:
       # The import graph, not the diff: this walks every module under app/ and
       # reports the ones that broke a declared boundary (api -> domain -> core,
       # no route reaching another domain's models, no cycle between sibling
-      # domains). 373 pre-existing violations are frozen inside
-      # backend/.importlinter as exact `importer -> imported` pairs, so this
-      # blocks new ones and stays quiet about the old ones.
+      # domains). The baseline it measures against is the tree at the merge base
+      # with origin/main: the violations that tree already has are held open,
+      # and a violation only this tree has is the verdict. Nothing is stored, so
+      # no pull request has to carry a list of exemptions and no writer has to
+      # keep one in step.
       #
-      # `files:` includes .importlinter because editing the freeze is how
-      # somebody would make a violation go away without fixing it.
+      # `files:` includes .importlinter because it is the declaration the check
+      # reads, and because writing an exception in it is how somebody could make
+      # a violation go away without fixing it.
       - id: boundary-check
-        name: module boundaries (import-linter + frozen baseline)
+        name: module boundaries (import-linter, baseline from the merge base)
         entry: bash -c 'cd backend && uv run python scripts/check_boundaries.py'
         language: system
         pass_filenames: false

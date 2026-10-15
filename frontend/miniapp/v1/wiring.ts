@@ -40,14 +40,26 @@ const CONTROLS = new Set(['c-slider', 'c-select', 'c-segmented', 'c-number', 'c-
 /** Declared so that a `v-model` cannot write it. */
 const FIXED = new Set(['literal-const', 'setup-const', 'setup-reactive-const'])
 const IDENT = /^[A-Za-z_$][\w$]*$/
-/** The element each of these only works inside, at any depth. */
-const OWNER: Record<string, string> = {
-  'c-point': 'c-plane',
-  'c-curve': 'c-plane',
-  'c-line': 'c-plane',
-  'c-area': 'c-plane',
-  'c-zone': 'c-board',
-  'c-piece': 'c-zone',
+/** The elements each of these only works inside, at any depth. */
+const FIGURE = ['c-plane', 'c-space']
+const SPACE = ['c-space']
+const OWNER: Record<string, string[]> = {
+  'c-point': FIGURE,
+  'c-curve': FIGURE,
+  'c-line': FIGURE,
+  'c-area': FIGURE,
+  'c-surface': SPACE,
+  'c-box': SPACE,
+  'c-sphere': SPACE,
+  'c-cylinder': SPACE,
+  'c-cone': SPACE,
+  'c-mesh': SPACE,
+  'c-points': SPACE,
+  'c-field': SPACE,
+  'c-text': SPACE,
+  'c-group': SPACE,
+  'c-zone': ['c-board'],
+  'c-piece': ['c-zone'],
 }
 
 /** Names declared as `const x = computed(() => …)`: computed with no setter. */
@@ -94,9 +106,9 @@ export function miswired(template: Node | undefined, script: Script | null): str
   const walk = (node: Node, heard: boolean, inside: Set<string>): string | null => {
     if (node.type !== ELEMENT) return null
     const tag = node.tag ?? ''
-    const owner = OWNER[tag]
-    if (owner && !inside.has(owner))
-      return `第 ${node.loc.start.line} 行：<${tag}> 要放在 <${owner}> 内，否则不会显示，读者也无法操作。`
+    const owners = OWNER[tag]
+    if (owners && !owners.some((o) => inside.has(o)))
+      return `第 ${node.loc.start.line} 行：<${tag}> 要放在 ${owners.map((o) => `<${o}>`).join(' 或 ')} 内，否则不会显示，读者也无法操作。`
     const control = CONTROLS.has(tag) || (tag === 'c-point' && (has(node, 'drag') || has(node, 'on')))
     // A point nobody can drag never writes its v-model back; a page's own
     // <input> does.

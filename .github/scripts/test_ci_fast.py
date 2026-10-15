@@ -39,7 +39,9 @@ FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratch
 GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
 # Hooks that judge against the merge base, so they are the ones that must report
 # not-run — never a pass — when there is no base or the caller names another one.
-BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet"}
+# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py, minus `file-size`, which
+# is one of the guard hooks this file tracks separately.
+BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 
 
 def git(repo, *args):
@@ -1101,10 +1103,10 @@ sys.exit(0)
         self.assertTrue(any(r["id"] == "backend-pure" for r in report["ran"]))
 
     def test_shared_i18n_catalog_needs_no_local_widening(self):
-        # roomNotice.json already sets backend scope in the shared map, so the
-        # local guard must not claim it did anything.
+        # a roomNotice shard already sets backend scope in the shared map, so
+        # the local guard must not claim it did anything.
         self.write_hooks()
-        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice.json")
+        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice/agent.json")
         env = self.quick_tools()
         proc = self.run_ci_fast("--tier", "quick", "--title", "feat: shared catalog", env_extra=env)
         report = self.report()

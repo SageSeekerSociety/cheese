@@ -61,7 +61,7 @@ async def lifespan(application: FastAPI):
     # it. Nothing reachable at boot can become garbage, so this changes neither
     # semantics nor peak memory — only how much the collector re-reads.
     # `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
-    # 20-concurrency burst; gunicorn's arbiter does the same after preloading.
+    # 20-concurrency burst.
     gc.freeze()
 
     # Schema is managed by Alembic migrations.
@@ -313,11 +313,45 @@ async def lifespan(application: FastAPI):
             name="cleanup startup recovery",
         )
         if settings.forge_event_relay_url:
+            # The relay's collaborators: wired here, not at module level, so a
+            # deployment that runs no relay pays nothing for them.
+            from app.domain.agent.announce import (  # deferred-import: startup cost
+                announce,
+            )
+
+            # deferred-import: startup cost
+            from app.domain.agent_instance.adapters import task_teammate
+            from app.domain.delivery.agent import (  # deferred-import: startup cost
+                dispatch_pending,
+                record_agent,
+                record_task_instruction,
+                seat_instance_id,
+            )
+            from app.domain.delivery.ledger import (  # deferred-import: startup cost
+                settle_card,
+            )
             from app.domain.review.events import listen
+
+            chat = get_chat_service()
+
+            async def pump_pending() -> object:
+                return await dispatch_pending(
+                    chat.session_factory, chat=chat, runner=chat.work_runner
+                )
 
             forge_events.append(
                 asyncio.create_task(
-                    listen(get_chat_service(), async_session_factory),
+                    listen(
+                        chat,
+                        async_session_factory,
+                        announce,
+                        settle_card=settle_card,
+                        record_instruction=record_task_instruction,
+                        seat_instance_id=seat_instance_id,
+                        record_agent=record_agent,
+                        dispatch_pending=pump_pending,
+                        task_teammate=task_teammate,
+                    ),
                     name="forge events",
                 )
             )

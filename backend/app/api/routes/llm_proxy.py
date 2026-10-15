@@ -24,6 +24,7 @@ as-is, so a client-side protocol change needs no change here.
 
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Annotated
 
 import httpx
@@ -43,6 +44,7 @@ from app.core.errors import (
     NotFoundError,
     ValidationError,
 )
+from app.core.model_streams import model_streams
 from app.core.sandbox_auth import (
     PersonalClaims,
     is_global_sandbox_token,
@@ -72,6 +74,17 @@ logger = logging.getLogger("cheesex.llm_proxy")
 # prefix sets the base to `https://host/api`. Living under `/api` here would
 # make this the one route that needs the prefix twice.
 router = APIRouter(prefix="/llm", tags=["llm"])
+
+# What a rollout asks the backend it is about to stop (`deploy/deploy-docker.sh`).
+# The ingress never forwards `/_internal/`, so only the box itself reaches it.
+internal_router = APIRouter(prefix="/_internal/llm", include_in_schema=False)
+
+
+@internal_router.get("/streams")
+async def open_streams() -> dict:
+    """How many model streams this process is still relaying."""
+    return {"open": model_streams.open}
+
 
 # Long: a streamed model turn holds the connection open for minutes. The read
 # timeout is what a slow first token hits, so it has to exceed the model's own
@@ -309,7 +322,7 @@ async def admission(
         agent = await agents.for_seat_handle(project, claims.get("a"))
         if agent is None:
             agent = await agents.for_project(project)
-    choices = binding.catalog(project.settings if project else None)
+    choices = configuration.catalog(project.settings if project else None)
     try:
         if project is not None and is_subagent and requested:
             bound = await _bind_requested_subagent_model(
@@ -438,6 +451,21 @@ async def admission(
     )
 
 
+class _CountedStreamingResponse(StreamingResponse):
+    """Ends the stream's count when the response is over, however it ends: a
+    caller that goes away before the first byte never runs the body at all."""
+
+    def __init__(self, content, end_stream: Callable[[], None], **kwargs) -> None:
+        super().__init__(content, **kwargs)
+        self._end_stream = end_stream
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._end_stream()
+
+
 async def _person_key(claims: PersonalClaims) -> str | None:
     """The key a person's 芝士 calls the model on: their own, never the pool's
     credential or a project's. A call made with a person's credential is that
@@ -504,23 +532,34 @@ async def proxy(
         content=body,
         params=dict(request.query_params),
     )
+    # Counted from before the model is asked: a reasoning model can take more
+    # than a minute to send its first byte, and a rollout that read no stream
+    # in that time would stop this process under it (`app.core.model_streams`).
+    end_stream = model_streams.opened()
     try:
         upstream = await client.send(req, stream=True)
     except httpx.HTTPError as exc:
+        end_stream()
         await client.aclose()
         logger.warning("llm proxy upstream failed for project %s: %s", project_id, exc)
         raise GatewayUnavailableError("The model pool did not answer") from exc
+    except BaseException:
+        end_stream()
+        await client.aclose()
+        raise
 
     async def stream():
         try:
             async for chunk in upstream.aiter_raw():
                 yield chunk
         finally:
+            end_stream()
             await upstream.aclose()
             await client.aclose()
 
-    return StreamingResponse(
+    return _CountedStreamingResponse(
         stream(),
+        end_stream,
         status_code=upstream.status_code,
         headers={
             k: v

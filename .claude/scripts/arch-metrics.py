@@ -7,9 +7,10 @@
 
 WHY A BOARD AND NOT A GATE. The boundary checks
 (`backend/.importlinter`, `frontend/import-boundary-baseline.json`) block a new
-violation. None of them can say whether the tree is getting better,
-because each is a ratchet against a frozen baseline and a ratchet that holds
-still reports success forever. This script is the other half: it reads the same
+violation. None of them can say whether the tree is getting better, because
+each measures against a baseline — a stored file of pairs, or the tree at the
+merge base — and a baseline that holds still reports success forever. This
+script is the other half: it reads the same
 declarations the checks read and prints where they stand, so "did the last month
 help" is a diff of two runs instead of an argument. It deliberately exits 0 on a
 bad number — a board that goes red is a gate, and every gate here is one
@@ -25,9 +26,14 @@ WHAT IT MEASURES, and how each number is obtained:
   frontend.boundary        Violations frozen in `frontend/import-boundary-baseline.json`
                            — read, not re-derived: the ESLint rule that produces
                            them needs node_modules, and this has to run anywhere.
-  backend.contracts        Frozen `importer -> imported` pairs per contract in
-                           `backend/.importlinter` (the board's own numbers, and
-                           what they were a month ago: `docs/manual/dev/arch-metrics.md`).
+  backend.contracts        `importer -> imported` exceptions written per
+                           contract in `backend/.importlinter`. The debt those
+                           contracts hold open is measured by the gate against
+                           the tree at the merge base, not stored in the file, so
+                           this board reports the written exceptions and points
+                           at the ratchet snapshot for the debt (the board's own
+                           numbers, and what they were a month ago:
+                           `docs/manual/dev/arch-metrics.md`).
   backend.deferred_imports `Import`/`ImportFrom` statements lexically inside a
                            function body under `backend/app`, via `ast`. This is
                            the shape a cycle is dodged with, which is why the
@@ -234,9 +240,15 @@ def frontend_boundary(root: Path) -> dict[str, Any]:
 
 
 def parse_importlinter(path: Path) -> dict[str, Any] | None:
-    """Frozen pair counts per contract in `.importlinter`.
+    """Exception counts per contract in `.importlinter`.
 
-    Not configparser: the baseline is a multi-line value whose entries look like
+    Exceptions, not the debt: the file used to carry the frozen baseline (297
+    pairs) and now carries only the pairs somebody decided to accept on top of
+    the tree at the merge base, so the number here is meant to stay near zero.
+    The debt itself is measured by the gate on every run and recorded per commit
+    in the ratchet snapshot (`docs/topics/棘轮页方案`).
+
+    Not configparser: the list is a multi-line value whose entries look like
     `importer -> imported`, and INI's continuation rules would fold the comments
     between contracts into whichever value they follow. One pass, by section.
     """
@@ -889,11 +901,15 @@ def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None
     out.append("| metric | value |")
     out.append("|---|---|")
     if contracts is None:
-        out.append("| frozen contract entries | n/a — no `backend/.importlinter` |")
+        out.append("| exceptions written in `.importlinter` | n/a — no file |")
     else:
-        for name, count in contracts["per_contract"].items():
-            out.append(f"| frozen: {name} | {count} |")
-        out.append(f"| frozen contract entries, total | {contracts['total']} |")
+        out.append(f"| exceptions written in `.importlinter` | {contracts['total']} |")
+    # The debt those contracts hold open is not in that file: the gate measures
+    # it from the tree at the merge base on every run, so the per-commit number
+    # is `frozen` in the ratchet snapshot rather than a count of what somebody
+    # wrote down. It used to be read from here, which is why the two disagreed
+    # the moment a pull request stopped carrying the list.
+    out.append("| debt behind the nine contracts | per commit, in the ratchet snapshot |")
     files = backend["files"]
     out.append(f"| imports inside a function | {backend['deferred_imports']} |")
     out.append(f"| files over 1000 lines (`backend/app`) | {files['files_over_1000']} |")
@@ -1266,13 +1282,13 @@ def self_test() -> int:
         importlinter = root / "probe.importlinter"
         importlinter.write_text(_FIXTURE["backend/.importlinter"], encoding="utf-8")
         parsed = parse_importlinter(importlinter)
-        check("frozen entries in the first contract", parsed["per_contract"]["api-domain-core"], 2)
+        check("exceptions in the first contract", parsed["per_contract"]["api-domain-core"], 2)
         check(
-            "frozen entries in the second contract",
+            "exceptions in the second contract",
             parsed["per_contract"]["routes-touch-no-models"],
             1,
         )
-        check("frozen entries in total", parsed["total"], 3)
+        check("exceptions in total", parsed["total"], 3)
         check("no config is None, not zero", parse_importlinter(root / "absent"), None)
         check("an empty file counts nothing", parse_importlinter(root / "empty") is None, True)
 
@@ -1302,7 +1318,7 @@ def self_test() -> int:
         )
 
         # -- backend ---------------------------------------------------------
-        check("frozen contract entries", board["backend"]["contracts"]["total"], 3)
+        check("exceptions written in the declaration", board["backend"]["contracts"]["total"], 3)
         # small.py has one inside a function; two.py has one inside a nested
         # function and one at module level, which does not count.
         check("imports inside a function", board["backend"]["deferred_imports"], 3)
@@ -1627,7 +1643,7 @@ def self_test() -> int:
         return 1
     print(
         "PASS: arch-metrics self-test (grades A/B/C/D incl. a transitive api reach, "
-        "frozen contract entries, imports inside a function, cap offenders and "
+        "exceptions written beside the nine contracts, imports inside a function, cap offenders and "
         "excess lines, hotspot churn and fix share, same-day parallel edits, "
         "conflicting merges of main split registry-only vs code, a missing or "
         "unvouched PR ref set reported as missing rather than zero, and a compare "

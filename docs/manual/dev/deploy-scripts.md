@@ -58,15 +58,15 @@ covers:
 | 阶段 | 依据 | 做什么 |
 |---|---|---|
 | 记下现状 | `service_container`/`service_image`（`:529-542`） | 存 `PREV_BACKEND_IMAGE`、`PREV_FRONTEND_IMAGE`、`PREV_SHA`；回滚只靠这三样 |
-| 拉镜像 | `retry_pull`（`:496`）、`pull_backoff_delay`（`:478`） | 带退避重试；可选服务（浏览器渲染、office 渲染等）拉不到只警告 |
-| 准备常驻件 | `ensure_forgejo`、`ensure_forge_events`、`ensure_application_router`（`:124-209`） | Forgejo、事件中继、app-router 不在就先起 |
+| 拉镜像 | `retry_pull`（`:496`）、`pull_backoff_delay`（`:478`） | 带退避重试；可选服务（浏览器渲染、office 渲染等）拉不到只警告。collab 和两个渲染服务拉下来后由 `pin_by_content` 按摘要引用：内容和正在跑的一样就沿用正在跑的摘要，容器不重建 |
+| 准备常驻件 | `ensure_forgejo`、`ensure_forge_events`、`ensure_application_router`（`:124-209`） | Forgejo、事件中继、app-router 不在就先起；事件中继只在它跑的代码变了时才换镜像（`pin_relay_by_code`） |
 | 迁移 | `:649-651` | `dc run --rm backend sh -c "alembic upgrade head"`，失败直接停 |
 | 归属 | `OWNERSHIP_MIGRATED`（`:685`） | 跑 `fix-workspace-ownership.sh`，报告留给回滚用 |
 | 起新槽位 | `rollout_app`、`read_slots` | 主 API 和前端各有两个槽位（`backend`/`backend-b`、`frontend`/`frontend-b`，前端在回环端口 18088/18084 上）。按 app-router 的 `backend.conf`/`frontend.conf` 认出正在服务的那个，把另一个用新镜像 `up -d --no-deps --force-recreate` 起来，等它应答健康检查；起不来就删掉新起的，**正在跑的那个一直没被动过** |
 | 切流量 | `switch_app_router` | 两个上游文件一起写（先写临时文件再 `mv`，半写的文件会带塌整个 nginx 配置），**只 reload 一次**；`nginx -t` 或 reload 失败就把两个文件改回去 |
 | 交接、排空 | `hand_over_running_work`、`DRAIN_SECONDS=${DEPLOY_DRAIN_SECONDS:-31}` | 切完马上换 collab；5 秒后给旧主 API 发 SIGUSR1 交出正在跑的工作；旧槽位继续答完手上的请求 31 秒 |
 | 收尾 | `take_frontend_ports` | 旧前端（最多 120 秒）和旧主 API（`docker stop --time 60`）同时优雅停下再删掉；盒子的 :8080、:80 写在 app-router 的 `frontend.conf` 里，转给正在服务的前端（每个版本的 `app-router.conf` 都 include 这个文件，旧提交的发版也留得住）。最后一个自己占着这两个端口的 compose 前端只给 5 秒停下，之后才把端口加进去，那一次发版多 reload 一次；加不进去就把那个前端重新拉起来服务端口，下一次发版在切流量时接过去；下次发版回到这次空出来的槽位 |
-| 判定 | `check-app-tier.sh`（`:955`） | 把 `docker ps` 的输出喂给它，断言 app 层的镜像 tag 就是本次 sha |
+| 判定 | `check-app-tier.sh`（`:955`） | 把 `docker ps` 的输出喂给它，断言 app 层的镜像 tag 就是本次 sha；collab 和事件中继按摘要引用时，断言的是本次发版选定的那个摘要；发版之外的检查（`deploy-drift.yml`、`scripts/whats-live.sh`）读上一次健康发版记在 `~/ops/app-tier-pins` 里的选择。`docker ps` 要带 `--no-trunc`，否则按摘要引用的镜像只打出短 ID |
 | 回收 | `reclaim_docker_disk`（`:434`）、`retain_ci_service_images`（`:409`）、`promote_image_retainer`（`:1016`） | 每次发版拉 6-7GB 新镜像，成功后立刻回收被顶掉的；`on_exit`（`:460`）保证失败、`set -e` 中止、runner 取消也回收 |
 | 定时器 | `:1009-1013` | 装 `cheese-room-cleanup.timer`；主机没有 systemd 时只在日志里提示安排外部触发 |
 
@@ -120,7 +120,7 @@ covers:
 | `check-app-tier.sh` | 读 `docker ps` 的输出，断言 app 层跑着的镜像 tag 等于给定值；发版和 drift 巡检都用它 |
 | `check-auto-deploy.py` | 只允许不把线上往回退的自动发版；同一版本已在跑、后端只因数据库或 Redis 连不上而不健康时，不再重发同一版本 |
 | `release-device-connection.sh` | 单独替换常驻的设备 WebSocket owner（普通发版永不调它，因为替换会断连接） |
-| `release-gateway.sh` | 网关平面单独发版；只在 GitHub Actions 里跑，且要 `GATEWAY_ALLOW_INTERRUPT=1` 明确承认会断流 |
+| `release-gateway.sh` | 网关平面单独发版，颜色和代理都蓝绿切换、不断流；只在 GitHub Actions 里跑，只有要换地址本身（`gateway-netns`）时才要 `GATEWAY_ALLOW_INTERRUPT=1` |
 | `release-metering-proxy.sh` | 计量代理平面单独发版；同样要求 `METERING_ALLOW_INTERRUPT=1` |
 | `release-cloud-control.sh` | 云机器加密隧道单独发版 |
 
@@ -173,7 +173,7 @@ covers:
 | 计量代理 | `release-metering-proxy.sh` | `.github/workflows/release-metering-proxy.yml` |
 | 云隧道 | `release-cloud-control.sh` | `.github/workflows/release-cloud-control.yml` |
 
-共同点：都要求完整的 40 位 main sha（`^[0-9a-f]{40}$`），都必须显式承认会打断在跑的流；网关和计量那两个脚本干脆只认 GitHub Actions 环境加 `*_ALLOW_INTERRUPT=1`，手动在盒子上跑会被拒。dev 的发版流程在完成 app 层替换后会顺带发一次计量代理（`.github/workflows/deploy-dev.yml` 的 "Release the verified metering image" 一步；它先过 `check-auto-deploy.py --require-ci` 再发）。
+共同点：都要求完整的 40 位 main sha（`^[0-9a-f]{40}$`）。会打断在跑的流的，都必须显式承认；网关和计量那两个脚本只认 GitHub Actions 环境，手动在盒子上跑会被拒。计量代理每次都要 `METERING_ALLOW_INTERRUPT=1`；网关平时发版不断流，只有要换地址本身（`gateway-netns`）时才要 `GATEWAY_ALLOW_INTERRUPT=1`（见[模型网关](/dev/gateway#release)）。dev 的发版流程在完成 app 层替换后会顺带发一次计量代理（`.github/workflows/deploy-dev.yml` 的 "Release the verified metering image" 一步；它先过 `check-auto-deploy.py --require-ci` 再发）。
 
 ## 这些脚本的测试 {#tests}
 

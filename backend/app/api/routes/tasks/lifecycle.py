@@ -41,6 +41,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.agent_instance.adapters import default_teammate
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -844,7 +845,9 @@ async def patch_task_membership_by_member(
         phone=payload.phone,
     )
 
-    await ProjectService(db).activate_participation(task=task, membership=membership)
+    await ProjectService(db, default_teammate=default_teammate).activate_participation(
+        task=task, membership=membership
+    )
 
     # 按 Kotlin PatchTaskMembershipByMember 语义，返回当前任务下所有参与者。
     all_memberships = await membership_service.list_memberships_for_task(

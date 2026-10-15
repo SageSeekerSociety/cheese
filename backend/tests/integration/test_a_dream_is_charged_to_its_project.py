@@ -22,12 +22,11 @@ from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.project.repositories import ProjectRepository
-from app.domain.project.services import ProjectService
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.integration.test_gateway_usage import FakeGateway
 
 pytestmark = pytest.mark.anyio
@@ -73,7 +72,7 @@ async def _dreaming_project(factory, tmp_path, fake):
     )
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         project.settings = {
             **(project.settings or {}),
             "memory_dream": {"threshold_output_tokens": 1},

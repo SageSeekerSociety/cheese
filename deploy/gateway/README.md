@@ -37,18 +37,81 @@ changes. Otherwise, it reuses the previous gateway image and publishes it under
 the current commit tag. The Docker build runs
 the adapter and timing tests without provider requests.
 
-For the existing dev gateway, use the **Release gateway** workflow on `main`.
-Supply the full SHA of a commit on `main` whose Build and Required CI succeeded and explicitly
-acknowledge stream interruption. Replacing the gateway can interrupt active model streams; it does
-not restart the application or gateway database. This workflow does not target
-production.
+For the existing dev gateway, use the Release gateway workflow on `main`.
+Supply the full SHA of a commit on `main` whose Build and Required CI succeeded.
+A release does not interrupt model streams and does not restart the application
+or gateway database. This workflow does not target production.
 
-The release reads credentials from `$HOME/gateway/compose/.env`, pulls the
-CI-built image, saves the running image ID and configuration under
-`$HOME/gateway/releases/`, and tests image preservation before changing the service.
-It uses the configuration bundled in the image. If the new container fails its
-health check, the release restores the saved image and configuration and reports
-failure. Both the old and new configurations remain in the release directory.
+Callers reach `172.17.0.1:4000` and, on the app network, `http://litellm:4000`,
+an address `gateway-netns` owns and nothing else does: it holds the network
+namespace in which HAProxy (`gateway-proxy-a` or `-b`,
+`deploy/compose/gateway-proxy.cfg`) runs. Behind the proxy run two LiteLLM
+instances, `litellm-blue` and `litellm-green`, sharing the gateway database and
+Redis. Outside a release one proxy and one color run.
+
+Only one color runs at a time on purpose. LiteLLM keeps router cooldowns and
+the `deepseek-flash` session affinity in process memory (`router_settings` has
+no Redis), so two colors taking traffic would each keep their own, and a
+conversation would bounce between RUC nodes and keep missing its prefix cache.
+A second standing color would only help if the gateway crashed on its own;
+that case would also need the router state moved to Redis first.
+
+A release (`deploy/release-gateway.sh`) reads credentials from
+`$HOME/gateway/compose/.env`, pulls the CI-built image, tests image
+preservation, and starts the idle color with the configuration bundled in the
+image. The new color takes traffic only after four checks: its Docker health
+check, `/health/readiness`, and the proxy's own check, plus a `GET /v1/models`
+sent to it with the master key. That listing must include every model the
+serving color lists, apart from any this release removes from `config.yaml`,
+so a model added on the admin page has loaded from the database. `/health` is
+not used: it calls every model. Then one runtime-API
+command makes the new color serve and sets the old one to drain. The proxy is
+not restarted, so no caller connection closes, and the next request on any of
+them goes to the new color. The old color finishes the streams it has; the
+release stops it when the proxy counts no open request on it, or after 30
+minutes, in which case it says in a workflow warning how many requests that
+cut. A new color that fails any check is removed and traffic never leaves the
+old one. To roll back, release the previous SHA the same way.
+
+The proxy retries a request on the other color only when the connection itself
+failed (`retry-on conn-failure`, the HAProxy 3.2 default, written out). It
+never retries a request a color may have started, because LiteLLM may already
+have called the provider and a second attempt would be billed twice. Its
+health check is `/health/liveliness`; readiness fails while the database is out
+of reach, which would take both colors out at once.
+
+The colors have fixed addresses on an internal network rather than being found
+by name. Docker's DNS passes names it does not know to the host's resolver, and
+the dev box's resolver answers every name with an address (`198.18.x`), so a
+stopped color's name would still resolve and requests would go to that address.
+
+A change to the proxy (its configuration, image or service definition) does not
+interrupt anything either. The release starts the other proxy in the same
+network namespace with the colors' current states (`server-state-file`, drain
+flags included), and deletes the file once that proxy is up: colors switch
+through the runtime API afterwards, so a later cold start (a reboot, a crash
+restart) reading it would bring the serving color back drained. Both proxies
+listen on `:4000` (SO_REUSEPORT). Once the new one sees
+the serving color, the old one is soft-stopped: it stops accepting at once,
+connections already queued on its listener move to the new one
+(`net.ipv4.tcp_migrate_req`), it serves the connections it has, answers the next
+request on each idle one with `Connection: close`
+(`option idle-close-on-response`), and exits when they end or after 35 minutes
+(`hard-stop-after`). The old color is stopped only after that proxy has
+exited, because its streams are on no count the new proxy keeps.
+
+Two cases interrupt streams, and the workflow refuses them unless its
+`interrupt` box is ticked: replacing `gateway-netns` itself, when its port,
+networks or image change, and the one release that moves a host from the single
+`cheese-gateway-litellm-1` container to this layout. That container holds the
+port and the `litellm` alias, and Docker cannot move them off a running
+container. The move starts blue, waits up to 10 minutes for a moment when no
+connection to the old container has carried data for 30 seconds, read with
+`ss` in its network namespace through sudo, stops it with 30 seconds for
+in-flight requests, during which new requests are refused, and starts
+`gateway-netns` and the proxy in its place; if the proxy does not come up, the old container
+is started again, and so it is if the release is cancelled in between. The metering proxy's idle connections to the old container
+die with it, so the next request on each fails once.
 
 Kimi K3 uses the native Messages endpoint at
 `https://api.moonshot.cn/anthropic`. Set `MOONSHOT_API_KEY` in the gateway's
@@ -95,6 +158,13 @@ The replacement depends only on the image's bytes, so it is the same on every
 turn and the prompt cache keeps hitting. Images that open pass unchanged, and
 an image given by URL is not fetched.
 
+A deployment that declares `cheese_upstream_headers` or `cheese_session_header`
+under its `model_info` is sent those headers, and no other row of its model group
+is (`upstream_headers.py`, registered the same way). OpenCode Go needs both: its
+own User-Agent, and a session per conversation without which it refuses the
+request. How to put a subscription or relay row in front of a pay-per-use one:
+`docs/manual/dev/gateway.md`, "订阅与中转".
+
 The box's `backend/.env` must contain:
 
 ```
@@ -135,7 +205,8 @@ there read-only, because the gateway refuses to write them.
 
 Both routes owe one invariant, and the service behind the admin page enforces it
 as surely as `check_config.py` enforces it for the file: a selectable model with
-no price is not offered at all. Its tokens would meter at zero, the project's
+no price is not offered at all, unless its upstream is free and it says so with
+`cheese_free: true` and both prices written as 0. Its tokens would meter at zero, the project's
 `max_budget` would never trip, and the first sign of trouble would be the
 invoice; a model missing from the picker gets noticed, a brake that quietly
 stopped working does not. `check_config.py` asserts this for every selectable
@@ -165,8 +236,23 @@ the upstream drops the connection or reports `response.failed`. The router holds
 `message_start` back until content arrives, so the caller got a 200 stream with
 no content and no stop, which Claude Code reports as "Stream ended without
 receiving any events" and does not retry. `patch_responses_stream_errors.py`
-ends such a stream with an Anthropic `error` event instead.
-`test_responses_stream_errors.py` checks this against a local fake upstream.
+ends such a stream with an Anthropic `error` event instead. A clean HTTP EOF
+without a terminal Responses event also emits a retryable `overloaded_error`:
+HTTP framing alone cannot prove the answer completed.
+
+Only a text block the failure left open can be recovered: it is closed with a
+`content_block_stop` before the error, so a client reading that block retries
+the model request. A tool block is deliberately left open, and this applies to both a
+complete and a partial `function_call` — emitting a `content_block_stop` for it
+would make the caller run the tool instead of retrying. So a failure is not
+made recoverable in general: a stream whose only open block is a `tool_use`
+still fails. If a text block is also open, closing it lets the client retry the
+model request; that unfinished tool is discarded without execution.
+Neither content is replayed, nor a successful `message_stop` manufactured, and
+a declared token limit keeps its normal `max_tokens` ending.
+`test_responses_stream_errors.py` checks these boundaries against a local fake
+upstream, including one that fails while a text block is open and asserts the
+adapter ends with a single error rather than two.
 
 With no fallback configured, the router then re-raises that failure to the
 proxy, which as pinned ends the stream with an unnamed OpenAI-shaped
@@ -195,7 +281,7 @@ body delivery, close propagation, cancellation, failures, and log redaction.
 Check the loaded configuration's request transformation and nonzero token prices:
 
 ```sh
-docker exec -i cheese-gateway-litellm-1 python - /app/config.yaml < deploy/gateway/check_config.py
+docker exec -i cheese-gateway-litellm-blue-1 python - /app/config.yaml < deploy/gateway/check_config.py  # or -green-1, whichever serves
 ```
 
 ## Prices for subscription models
@@ -213,7 +299,7 @@ cache writes.
 
 ## Health checks
 
-The gateway keeps up to five 20 MB log files; recreating its container does not preserve its stdout history.
+The gateway keeps up to five 20 MB log files; recreating a color does not preserve its stdout history.
 
 The scheduled check calls `/health/readiness` and the authenticated model catalog.
 It checks the gateway database and admin authentication without generating tokens;
@@ -221,7 +307,7 @@ provider quota and inference remain untested. For a bounded inference check, run
 the existing supply probe with `--generate --model kimi-k3`:
 
 ```sh
-docker exec -i cheese-gateway-litellm-1 python - --generate --model kimi-k3 < backend/scripts/gateway_supply_probe.py
+docker exec -i -e GATEWAY_BASE=http://gateway-netns:4000 cheese-gateway-litellm-blue-1 python - --generate --model kimi-k3 < backend/scripts/gateway_supply_probe.py
 ```
 
 It makes one native Messages request with a 512-token output limit and a 60-second
@@ -237,10 +323,10 @@ checks the Messages terminal event.
 
 ## Two things that will bite
 
-**No published port.** The gateway joins the app's docker network instead. A
-host binding is either loopback, which containers cannot reach (the app sits on
-its own bridge), or a bridge address, which puts the upstream keys and the admin
-API on the box's LAN. Joining the network removes the choice.
+**The port is on the docker0 bridge address.** `gateway-netns` publishes
+`172.17.0.1:4000`: sandbox containers sit on the default bridge and cannot use
+the app network's alias, loopback is unreachable from any container, and
+`0.0.0.0` would put the admin API on the box's LAN.
 
 **Image versions.** CI builds from an upstream digest and publishes a commit tag.
 The release workflow verifies main ancestry and a successful build before pulling

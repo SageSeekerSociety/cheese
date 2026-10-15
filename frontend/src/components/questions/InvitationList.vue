@@ -6,7 +6,11 @@
         <user-avatar :avatar="getAvatarUrl(user.avatarId)" :name="user.nickname" :seed="user.username" />
       </template>
       <template #append>
-        <BaseButton :kind="isInvited(user) ? 'ghost' : 'secondary'" :disabled="isInvited(user)" @click="invite(user)">
+        <BaseButton
+          :kind="isInvited(user) ? 'ghost' : 'secondary'"
+          :disabled="isInvited(user)"
+          @click="emit('invite', user)"
+        >
           <v-icon class="me-2">mdi-account-multiple-plus</v-icon>
           {{
             isInvited(user)
@@ -20,12 +24,14 @@
 </template>
 
 <script setup lang="ts">
-import { toRefs } from 'vue'
+// 「邀请谁来回答」弹窗里那份名单的画面：一行一个人，右边一颗邀请按钮；已经邀请过的人
+// 那颗按钮写「已邀请」并且按不动。名单、已经邀请过谁、点下按钮发哪趟请求都在页面
+// （`views/question/Detail.vue`）那边，这里只收结果、把点的那个人交上去。
+import type { User } from '@/types'
+
 import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
-
-import { useQuestionInvitations } from '@/composables/useQuestionInvitations'
 
 import UserAvatar from '../common/UserAvatar.vue'
 
@@ -34,11 +40,15 @@ import BaseButton from '@/components/base/BaseButton.vue'
 const { t } = useI18n()
 
 const props = defineProps<{
-  questionId: number
+  /** 可以邀请谁。 */
+  people: User[]
+  /** 已经邀请过的人的 id：推荐名单不过滤他们，所以得靠这一份比对出「这颗按钮是不是已经点过」。 */
+  invitedIds: number[]
 }>()
 
-// 名单、已邀请的人和发邀请都在 `useQuestionInvitations` 里（组件不吃 API 层）：
-// 这里只画它交回来的那几个状态。
-const { questionId } = toRefs(props)
-const { people, isInvited, invite } = useQuestionInvitations(questionId)
+const emit = defineEmits<{
+  invite: [user: User]
+}>()
+
+const isInvited = (user: User): boolean => props.invitedIds.includes(user.id)
 </script>

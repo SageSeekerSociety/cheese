@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from redis.asyncio import Redis
 
 from app.core.config import settings
+from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.notice_meta import (
     EVENT_TURN_QUEUED,
@@ -37,6 +38,67 @@ SESSION_MEMORY_ENV = "CHEESE_SESSION_MEMORY_MAX"
 READING_TTL_S = 2.0
 #: How often a turn held for the host's memory looks again.
 RECHECK_S = 5.0
+
+#: Where one reading of a session host's free memory is kept for the whole box.
+_SHARED_KEY = "session-host-memory:{host}"
+#: The value standing for "the host could not be read": cached like a number,
+#: because an unread host holds nobody and must not be re-probed any faster.
+_UNREAD = b""
+
+
+class _NoReading:
+    """Why `_shared_reading` has no number to answer from."""
+
+    def __init__(self, local_cache: bool) -> None:
+        #: Whether this process's own reading may stand in. It may when there is
+        #: no shared reading to keep in step with; it may not when the shared one
+        #: merely expired, or the box would stop re-probing.
+        self.local_cache = local_cache
+
+
+#: Valkey answered, nobody has published one inside the TTL: read the host.
+_EMPTY = _NoReading(local_cache=False)
+#: No Valkey, or it did not answer: this process's own reading is all there is.
+_UNUSABLE = _NoReading(local_cache=True)
+
+
+async def _shared_reading(host: str) -> int | None | _NoReading:
+    """What this box last found free on ``host``, or why there is nothing to
+    answer from. Every backend process reads the same one, so they all hold the
+    same turns back — the gate is for the host, not for a process."""
+    redis = get_redis_client()
+    if redis is None:
+        return _UNUSABLE
+    try:
+        raw = await redis.get(_SHARED_KEY.format(host=host))
+    except Exception:  # noqa: BLE001 — Valkey down: the local reading stands
+        logger.warning("shared host memory reading unavailable", exc_info=True)
+        return _UNUSABLE
+    if raw is None:
+        return _EMPTY
+    if raw == _UNREAD:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return _EMPTY
+
+
+async def _publish_reading(host: str, value: int | None) -> None:
+    """Put one reading where every process will answer from it, for one TTL.
+    Failing to is not an error: the next read simply asks the host again."""
+    redis = get_redis_client()
+    if redis is None:
+        return
+    try:
+        await redis.set(
+            _SHARED_KEY.format(host=host),
+            _UNREAD if value is None else str(value).encode(),
+            px=int(READING_TTL_S * 1000),
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("shared host memory reading not published", exc_info=True)
+
 
 #: 排队不是故障：平台自己会往前推，没人需要动手。
 QUEUED_META = notice(
@@ -90,6 +152,11 @@ class HostMemory:
     from finishing with it. A host that cannot be read (not Linux, unreachable)
     holds nobody either — the gate exists to keep the host up, and a turn that
     cannot reach the host fails on its own with the reason.
+
+    The reading is kept once for the whole box (`_shared_reading`), not once
+    per process: the gate is for the host, so N backends must not each decide
+    from a reading of their own. Without Valkey each process keeps its own, as
+    before.
     """
 
     def __init__(self, hub=None):
@@ -126,21 +193,36 @@ class HostMemory:
         return available is None or available >= mb * 1024 * 1024
 
     async def _read(self, hub, host: str) -> int | None:
+        shared = await _shared_reading(host)
+        if not isinstance(shared, _NoReading):
+            return shared
         async with self._lock:
-            if time.monotonic() - self._read_at < READING_TTL_S:
+            # One probe at a time within this process, and one answer to hand
+            # back either way.
+            shared = await _shared_reading(host)
+            if not isinstance(shared, _NoReading):
+                return shared
+            if shared.local_cache and (
+                time.monotonic() - self._read_at < READING_TTL_S
+            ):
                 return self._available
-            try:
-                result = await hub.exec(host, ["cat", "/proc/meminfo"], timeout=5)
-                self._available = (
-                    available_bytes(result.get("stdout") or "")
-                    if result.get("exit") == 0
-                    else None
-                )
-            except Exception:  # noqa: BLE001 — an unread host holds nobody
-                logger.warning("session host memory unreadable", exc_info=True)
-                self._available = None
-            self._read_at = time.monotonic()
-            return self._available
+            value = await self._probe(hub, host)
+            self._available, self._read_at = value, time.monotonic()
+            await _publish_reading(host, value)
+            return value
+
+    async def _probe(self, hub, host: str) -> int | None:
+        """What the host says it has free right now; None when it will not say."""
+        try:
+            result = await hub.exec(host, ["cat", "/proc/meminfo"], timeout=5)
+            return (
+                available_bytes(result.get("stdout") or "")
+                if result.get("exit") == 0
+                else None
+            )
+        except Exception:  # noqa: BLE001 — an unread host holds nobody
+            logger.warning("session host memory unreadable", exc_info=True)
+            return None
 
 
 async def wait_for_host(

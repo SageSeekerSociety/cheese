@@ -1,4 +1,5 @@
-"""后台的网关模型管理页 —— 九条路由，服务是 `GatewayModelsService`。
+"""后台的网关模型管理页 —— 模型、线路、项目额度与审计的路由，服务是
+`GatewayModelsService`。
 
 管理后台的第五块（前四块在 `admin_members.py` / `admin_feedback.py` / `admin_stats.py` /
 `admin_spaces.py`），管的还是平台自己的东西：哪些模型在上架、各自烧了多少、项目的刹车值
@@ -19,7 +20,10 @@ config.yaml 里的模型，都得在页面上有一句能读的原因。分两�
 `days` 的上下界照 `admin_stats.py` 的纪律写死在签名上（`ge=1` / `le=90`）：读用量接口
 有成本，且 0 天的窗口画不出一条折线。`limit` 同理（`ge=1` / `le=200`）。
 
-一个模块一个 router（`main.py` 的自动发现），所以九个端点都在这一个文件里。
+一个模型可以有好几条线路（网关里同名的几条部署），线路挂在模型下面：
+`/models/{name}/sources/...`。`{source_id}` 是网关给那条部署的 id。
+
+一个模块一个 router（`main.py` 的自动发现），所以这一页的端点都在这一个文件里。
 """
 
 import uuid
@@ -31,7 +35,8 @@ from starlette.status import HTTP_502_BAD_GATEWAY
 
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import BaseError, GatewayUnavailableError
 from app.core.sentences import exception_text
@@ -44,8 +49,14 @@ from app.domain.agent.gateway_models import GatewayModelsService
 from app.domain.agent.schemas import (
     BlockedUpdate,
     BudgetUpdate,
+    GatewayBlockedOut,
+    GatewayDeletedOut,
+    GatewayModelWriteOut,
     ModelCreate,
     ModelUpdate,
+    SourceCreate,
+    SourceOrder,
+    SourceUpdate,
 )
 
 router = APIRouter(prefix="/admin/gateway", tags=["admin"])
@@ -185,6 +196,115 @@ async def set_model_blocked(
     return ok(
         await _answered(
             service.set_blocked(handle=handle, name=name, blocked=payload.blocked)
+        )
+    )
+
+
+# ---- 线路 ----
+
+
+@router.post(
+    "/models/{name}/sources",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(GatewayModelWriteOut),
+)
+async def add_source(
+    name: str,
+    payload: SourceCreate,
+    service: ModelsServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """给一个已有模型加一条线路，回这个模型更新后的那一项（同新建模型的形状）。
+
+    模型可以是 config.yaml 声明的：它那几行只读，但新加的这一行是运行时的。模型的
+    展示元数据由服务层从已有那一行抄过来，请求体里没有它们。
+    """
+    return ok(
+        await _answered(service.add_source(handle=handle, name=name, payload=payload))
+    )
+
+
+@router.put(
+    "/models/{name}/sources/order",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(GatewayModelWriteOut),
+)
+async def reorder_sources(
+    name: str,
+    payload: SourceOrder,
+    service: ModelsServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """一次改几条线路的优先级（`{source_id: order}`），回这个模型更新后的那一项。
+
+    config 线路的优先级改不了：请求里出现一条，整次都被服务层以 400 拒掉，一条也不写。
+    """
+    return ok(
+        await _answered(
+            service.reorder_sources(handle=handle, name=name, orders=payload.orders)
+        )
+    )
+
+
+@router.patch(
+    "/models/{name}/sources/{source_id}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(GatewayModelWriteOut),
+)
+async def update_source(
+    name: str,
+    source_id: str,
+    payload: SourceUpdate,
+    service: ModelsServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """改一条运行时线路，回这个模型更新后的那一项。缺的字段都不动。"""
+    return ok(
+        await _answered(
+            service.update_source(
+                handle=handle, name=name, source_id=source_id, payload=payload
+            )
+        )
+    )
+
+
+@router.delete(
+    "/models/{name}/sources/{source_id}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(GatewayDeletedOut),
+)
+async def delete_source(
+    name: str,
+    source_id: str,
+    service: ModelsServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """删一条运行时线路，回 `{"deleted": true}`。删掉最后一条，模型也就没了。"""
+    return ok(
+        await _answered(
+            service.delete_source(handle=handle, name=name, source_id=source_id)
+        )
+    )
+
+
+@router.post(
+    "/models/{name}/sources/{source_id}/blocked",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(GatewayBlockedOut),
+)
+async def set_source_blocked(
+    name: str,
+    source_id: str,
+    payload: BlockedUpdate,
+    service: ModelsServiceDep,
+    handle: PlatformAdminDep,
+) -> dict:
+    """停用或启用一条运行时线路，回 `{"blocked": bool}`。同组别的线路照常路由。"""
+    return ok(
+        await _answered(
+            service.set_source_blocked(
+                handle=handle, name=name, source_id=source_id, blocked=payload.blocked
+            )
         )
     )
 

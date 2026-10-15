@@ -9,8 +9,7 @@ import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 
-from app.domain.project.services import ProjectService
-from tests.integration.conftest import a_team
+from tests.integration.conftest import a_team, project_service
 
 
 def test_existing_configuration_is_snapshotted_and_originals_are_archived(
@@ -25,7 +24,7 @@ def test_existing_configuration_is_snapshotted_and_originals_are_archived(
     spec.loader.exec_module(migration)
 
     async def run():
-        projects = ProjectService(db_session)
+        projects = project_service(db_session)
         team_id = await a_team(db_session)
         custom = await projects.create(
             name="Custom", forge_kind="github_app", team_id=team_id

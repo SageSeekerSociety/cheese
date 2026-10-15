@@ -19,6 +19,7 @@ from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.membership.ports import ProjectTeam
 from app.domain.pin.models import Pin
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -31,8 +32,9 @@ PINNED_KEY = "pinned_block_id"
 
 
 class Pins:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, team: ProjectTeam):
         self._session = session
+        self._team = team
 
     async def of_room(self, room_id: uuid.UUID) -> list[tuple[Pin, Block]]:
         """The channel's pins with what they pin, the latest pinned first."""
@@ -71,7 +73,9 @@ class Pins:
             raise ValidationError(say("pinChannelsOnly"))
         if room.status == TopicStatus.archived:
             raise ForbiddenError(say("roomArchivedUnarchiveFirst"))
-        if not await TopicMemberService(self._session).may_speak(room, by):
+        if not await TopicMemberService(self._session).may_speak(
+            room, by, team=self._team
+        ):
             raise ForbiddenError(say("channelJoinToPin"))
 
     async def _pinnable(self, room: Topic, block_id: uuid.UUID, *, by: str) -> Block:

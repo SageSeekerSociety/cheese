@@ -10,7 +10,7 @@ covers:
   - backend/app/api/routes/awaiting.py
   - backend/app/api/awaiting_deps.py
   - backend/app/api/routes/git_http.py
-  - backend/app/domain/delivery/addressing.py
+  - backend/app/domain/addressing.py
   - backend/app/domain/task/attachment_service.py
   - backend/app/domain/task/visibility_service.py
   - backend/app/api/routes/tasks/
@@ -187,7 +187,7 @@ covers:
 
 「待我处理」那份清单（`api/awaiting_deps.py` 的 `waiting_items` + `room_task/awaiting.py`）读的是**同一个** `task_presentation` / `room_presentation`，差别只有范围：「全部任务」是一个项目内全部，清单是跨项目、且点到我的那些。它不能从通知表拼出来——通知是一条条事件记录，卡被驳回、作废或别人先处理掉了，那条记录还躺着，而从它身上读不出已经不作数了；一份「现在还没处理完的有哪些」必须从当下的事实重算。
 
-收件人判据也只有一份（`delivery/addressing.py` 的 `address()`，通知投递读的也是它），六种关系：验收人（卡是递给他的）、提需求的人（他等的东西有了结果）、被问的那个人（芝士停在待确认问题上，只有他能回答）、任务负责人（下一步只有他能推：任务文档写好了等他开始、检查红了芝士清不掉、被退回之后没人在改，见 `presentation.owner_acts_on`；只是任务开着不算）、设备的主人（有 agent 开始在他登记的机器上干活）、公告的读者（空间发了一条公告，发布那一刻空间里除作者以外的每个人）。一件事从「平台手上」转入「参与者手上」的那一刻通知那一个人，一次；平台手上的事（含「已关闭」「已归档」）谁都不通知。
+收件人判据也只有一份（`addressing.py` 的 `address()`，通知投递读的也是它），六种关系：验收人（卡是递给他的）、提需求的人（他等的东西有了结果）、被问的那个人（芝士停在待确认问题上，只有他能回答）、任务负责人（下一步只有他能推：任务文档写好了等他开始、检查红了芝士清不掉、被退回之后没人在改，见 `presentation.owner_acts_on`；只是任务开着不算）、设备的主人（有 agent 开始在他登记的机器上干活）、公告的读者（空间发了一条公告，发布那一刻空间里除作者以外的每个人）。一件事从「平台手上」转入「参与者手上」的那一刻通知那一个人，一次；平台手上的事（含「已关闭」「已归档」）谁都不通知。
 
 ## 题目附件 {#task-attachments}
 

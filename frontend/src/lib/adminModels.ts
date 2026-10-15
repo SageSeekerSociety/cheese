@@ -11,6 +11,8 @@
 // （一格该画成什么），不是某一段的画法：模型表里那条 diff 也会用到同一个口径，所以它
 // 跟着形状走。真正只属于某一屏的东西（窗口文案、KPI 的拼装）留在 composable 里。
 
+import type { GatewaySource } from '@/api/admin/gateway'
+
 import { fmtPercent } from './usageFormat'
 
 import { t } from '@/i18n'
@@ -22,6 +24,9 @@ export interface ModelUsage {
   failed_requests: number
   total_tokens: number
 }
+
+/** 模型下的一条线路：服务端的 `GatewaySource`，形状照搬、不另起一份。 */
+export type SourceRow = GatewaySource
 
 /** §3.1 的模型项。 */
 export interface ModelRow {
@@ -43,6 +48,8 @@ export interface ModelRow {
   series?: number[]
   /** 档位：方案按它限定可用的模型。缺省是 included。 */
   tier?: 'included' | 'premium' | 'frontier'
+  /** 全部线路，按网关试它们的先后排好。 */
+  sources?: SourceRow[]
 }
 
 /** 网关这一侧的状态（契约 §2 的 `gateway` 那一块）。 */

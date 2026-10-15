@@ -56,6 +56,7 @@ from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
 from app.core.sentences import exception_text, say
+from app.domain.agent import execution
 from app.domain.documents.convert import (
     ConvertFailed,
     ConvertUnavailable,
@@ -251,9 +252,9 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(exception_text(exc)) from exc
     if task is not None:
-        await ProjectFiles(db, topic.project_id, task).write_bytes(
-            clean, made, expected
-        )
+        await ProjectFiles(
+            db, topic.project_id, task, executor=execution.call
+        ).write_bytes(clean, made, expected)
     else:
         await room_files.save_room_file(
             db,

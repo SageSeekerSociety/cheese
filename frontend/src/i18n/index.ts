@@ -9,6 +9,8 @@ import { createI18n } from 'vue-i18n'
 // zh-CN 跟着入口一起下（理由见下面 `catalogs`）。
 import zhCN, { loadDeferred as loadZhDeferred, loadSentences as loadZhSentences } from './messages/zh-CN'
 
+import { storageGet, storageSet } from '@/lib/browserStorage'
+
 export type Locale = 'zh-CN' | 'en'
 // 跟着入口走的那一份语言包（见下面 `catalogs`）。它是英文界面缺键时的兜底，也是语言
 // 包取不回来时整个实例退回的那一门。
@@ -25,13 +27,8 @@ export function isLocale(value: unknown): value is Locale {
 /** The language this browser keeps, or null when it was never picked here and
  *  the page only follows the browser's own language. */
 export function storedLocale(): Locale | null {
-  try {
-    const saved = localStorage.getItem(preferenceKey)
-    if (isLocale(saved)) return saved
-  } catch {
-    // Browser storage can be unavailable in private or restricted contexts.
-  }
-  return null
+  const saved = storageGet(preferenceKey)
+  return isLocale(saved) ? saved : null
 }
 
 export function resolveInitialLocale(): Locale {
@@ -225,11 +222,8 @@ let localePicks = 0
  *  goes through `chooseLocale`；`locale` 那份语言包得先在（见 `loadLocale`）。 */
 export function setLocale(locale: Locale) {
   i18n.global.locale.value = locale
-  try {
-    localStorage.setItem(preferenceKey, locale)
-  } catch {
-    // Switching still works for the current visit without browser storage.
-  }
+  // A write that fails still switches for this visit; only the memory is lost.
+  storageSet(preferenceKey, locale)
 }
 
 const chosen = new Set<(locale: Locale) => void>()

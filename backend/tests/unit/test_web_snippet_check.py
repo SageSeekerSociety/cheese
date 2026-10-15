@@ -102,3 +102,37 @@ async def test_a_browser_that_learns_nothing_keeps_the_app_unchecked(renderer, a
 async def test_with_no_browser_configured_the_app_is_kept_unchecked(monkeypatch):
     monkeypatch.setattr(settings, "fetch_browser_endpoint", None)
     assert await check.run("<p>试算</p>", 1) is None
+
+
+async def test_an_app_that_breaks_once_used_is_refused_with_what_was_done(renderer):
+    answers, seen = renderer
+    answers.append(
+        {
+            "ok": True,
+            "views": [
+                _view(
+                    400,
+                    # The browser's own complaint arrives first; what the shell
+                    # says names the action that brought it out.
+                    exercise_errors=[
+                        'Error: <circle> attribute cx: Expected length, "NaN".',
+                        "读者把「速度」设为 10 后，画面上出现了 NaN：<circle> 的 cx",
+                    ],
+                ),
+                _view(720),
+            ],
+        }
+    )
+    with pytest.raises(check.Refused, match="读者把「速度」设为 10 后"):
+        await check.run("<p>试算</p>", 1)
+    # It is asked to use the app once, not in both themes.
+    assert seen[0]["exercise"] is True
+
+
+async def test_a_renderer_that_cannot_use_the_app_still_keeps_it(renderer):
+    """One from before it could exercise a page says nothing of it: the app is
+    kept on what it did say."""
+    ran = await check.run("<p>试算</p>", 1)
+    assert ran is not None
+    _, seen = renderer
+    assert [body["exercise"] for body in seen] == [True, False]

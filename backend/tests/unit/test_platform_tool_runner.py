@@ -720,3 +720,62 @@ def test_a_time_with_an_offset_is_shown_in_utc():
     out = run("cheese_chat_get", {"message_id": block["id"]}, host)
 
     assert "2026-10-07 00:17:43 UTC" in out
+
+
+# --- mini-apps: what the writer sees of what it saved ------------------------
+
+_WIDE = base64.b64encode(b"wide png").decode()
+_NARROW = base64.b64encode(b"narrow png").decode()
+
+
+def _app_host(saved, document_text=""):
+    return Host(
+        {
+            ("POST", f"/documents/{_DOC}/apps"): saved,
+            ("POST", "/apps/k1/versions"): saved,
+            ("GET", "/apps/k1"): {"document_id": _DOC},
+            ("GET", f"/documents/{_DOC}"): {"content": document_text, "version": 1},
+        },
+        environ={"CHEESE_DOCUMENT": _DOC},
+    )
+
+
+def test_a_saved_app_comes_back_with_its_pictures_and_the_block_still_to_place():
+    """The writer looks at what the platform ran before it moves on; looking
+    must not make it forget that a new app is not in the document yet."""
+    host = _app_host(
+        {
+            "key": "k1",
+            "version": 1,
+            "checked": True,
+            "pictures": {"400": _NARROW, "720": _WIDE},
+        }
+    )
+    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+
+    assert [i["data"] for i in said.images] == [_WIDE, _NARROW]
+    assert all(i["mimeType"] == "image/png" for i in said.images)
+    assert ":::app k1@1 试算" in said
+    assert "截图" in said and said.rstrip().endswith("最后都要把块放进文档。")
+    # The pictures are asked for: the backend answers them only then.
+    assert "pictures=true" in host.requests[0]["path"]
+
+
+def test_an_app_kept_unchecked_comes_back_without_pictures():
+    host = _app_host({"key": "k1", "version": 1, "checked": False})
+    said = run("cheese_app_save", {"code": "<p>x</p>", "title": "试算"}, host)
+
+    assert said.images == ()
+    assert "截图" not in said.replace("也没有截图", "")
+    assert ":::app k1@1 试算" in said
+
+
+def test_a_new_version_of_an_app_not_yet_in_the_document_says_which_version_to_place():
+    """Fixed after looking, before the block went in: the block it was handed
+    names version 1, and placing that would show the version it just fixed."""
+    host = _app_host(
+        {"key": "k1", "version": 2, "checked": True}, document_text="正文\n"
+    )
+    said = run("cheese_app_save", {"code": "<p>y</p>", "app": "k1"}, host)
+
+    assert ":::app k1@2" in said

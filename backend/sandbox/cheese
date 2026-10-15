@@ -1752,6 +1752,20 @@ class PlatformToolError(Exception):
     """A refusal the agent reads as written: what happened and what to do next."""
 
 
+class Said(str):
+    """What a tool says, with pictures for an agent that can look at them:
+    `images` holds {"data": base64, "mimeType": ...}. Every caller takes it as
+    the text it is; a session runner that can hand pictures to its model (pi,
+    Codex) hands these over as well."""
+
+    images: tuple = ()
+
+    def __new__(cls, text: str, images=()):
+        said = super().__new__(cls, text)
+        said.images = tuple(images)
+        return said
+
+
 class PlatformHTTPError(RuntimeError):
     """The backend answered, and not with success. `status` is what callers branch
     on; the message keeps the backend's own words for the agent."""
@@ -2185,11 +2199,14 @@ def _app_save(args: dict, host) -> str:
     just made and the document's history keeps which code it showed."""
     body = {"code": str(args["code"]), "note": str(args.get("note") or "")}
     key = str(args.get("app") or "").strip()
+    # The pictures the platform took come back with the answer, for the writer
+    # to look at what it made (`_LOOK`).
     if key:
-        plan = {"method": "POST", "path": _app_path(key) + "/versions", "body": body}
+        path = _app_path(key) + "/versions?pictures=true"
     else:
         document = _document(host, args)["CHEESE_DOCUMENT"]
-        plan = {"method": "POST", "path": f"/documents/{document}/apps", "body": body}
+        path = f"/documents/{document}/apps?pictures=true"
+    plan = {"method": "POST", "path": path, "body": body}
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -2205,18 +2222,36 @@ def _app_save(args: dict, host) -> str:
         if saved.get("checked")
         else "平台的浏览器暂时不可用，这一版未经试运行，也没有截图。"
     )
+    images = [
+        {"data": data, "mimeType": "image/png"}
+        for _, data in sorted((saved.get("pictures") or {}).items(), key=lambda kv: -int(kv[0]))
+    ]
     if not key:
         title = str(args.get("title") or "").strip() or "小程序"
         made = saved.get("key") or "?"
-        return (
+        said = (
             f"已保存小程序 {made} 的第 1 版。{unchecked}它还不在文档中：用 "
             "cheese_doc_edit 把下面的块放到文档中合适的位置，并把第二行改写为一句说明，"
             "写明它展示什么、最重要的结论是什么。读者和你以后读文档时，都只读这一句。\n\n"
             f":::app {made}@1 {title}\n一句话说明\n:::"
         )
+        if images:
+            said += _LOOK.format(app=made) + "无论是否修改，最后都要把块放进文档。"
+        return Said(said, images)
     version = saved.get("version") or 1
-    done = f"已保存小程序 {key} 的第 {version} 版。{unchecked}"
-    return done + _point_at(host, key, version)
+    said = f"已保存小程序 {key} 的第 {version} 版。{unchecked}" + _point_at(host, key, version)
+    if images:
+        said += _LOOK.format(app=key)
+    return Said(said, images)
+
+
+#: What the writer is asked to do with the pictures of what it just saved.
+_LOOK = (
+    "\n\n附上平台试运行这一版时拍下的截图，依次是桌面宽度和手机宽度（浅色），读者"
+    "打开时看到的就是这样。看一眼：画面是否讲清楚了要讲的东西，数字和标注是否正确，"
+    "手机宽度上是否挤在一起、重叠或被截断。有问题就改好后带上 app（{app}）再保存一版，"
+    "文档中的块会改用新的一版。"
+)
 
 
 def _point_at(host, key: str, version: int) -> str:
@@ -2232,7 +2267,10 @@ def _point_at(host, key: str, version: int) -> str:
         if (m := head.match(line)) and int(m.group(1)) != version
     ]
     if not any(head.match(line) for line in content.splitlines()):
-        return "文档中没有这个小程序的块，读者还看不到这一版。"
+        return (
+            "文档中还没有这个小程序的块，读者还看不到它。放进文档时写这一版："
+            f":::app {key}@{version}。"
+        )
     if not edits:
         return "文档中的块已经是这一版。"
     try:

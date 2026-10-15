@@ -21,7 +21,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.project.services import ProjectService
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import team_service
@@ -30,6 +29,7 @@ from tests.integration.conftest import (
     add_external_member,
     join_project_team,
     post_project,
+    project_service,
     session_auth_headers,
 )
 
@@ -207,7 +207,7 @@ def test_a_teammate_cannot_be_removed_from_the_project(client):
             team = await team_service(session).create_team(
                 name="小队", intro="", description="", avatar_id=1, owner_id=captain
             )
-            project = await ProjectService(session).create(
+            project = await project_service(session).create(
                 name="P", owner_handle="captain", team_id=team.id
             )
             await TeamRepository(session).add_member(
@@ -394,10 +394,10 @@ def test_a_teammate_leaves_the_project_without_leaving_the_team(client):
             await TeamRepository(session).add_member(
                 team.id, mate, TeamMemberRole.MEMBER
             )
-            project = await ProjectService(session).create(
+            project = await project_service(session).create(
                 name="P", owner_handle="captain", team_id=team.id
             )
-            other = await ProjectService(session).create(
+            other = await project_service(session).create(
                 name="Q", owner_handle="captain", team_id=team.id
             )
             await session.commit()

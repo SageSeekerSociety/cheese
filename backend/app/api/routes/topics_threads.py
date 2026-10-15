@@ -26,6 +26,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
 from app.domain.thread import reads
 from app.domain.thread.schemas import ThreadOut
@@ -100,7 +101,9 @@ async def create_thread(
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("threadOpenedByPerson"))
-    if not await TopicMemberService(db).may_speak(place.room, actor.handle):
+    if not await TopicMemberService(db).may_speak(
+        place.room, actor.handle, team=project_team
+    ):
         raise ForbiddenError(say("channelJoinToPost"))
     # 频道域把标题说在主线里，支线由这里开：`open_thread` 属于 `thread`，而
     # `thread` 在 `topic` 之上（C5 层表），频道域不能反向 import 它。

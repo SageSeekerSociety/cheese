@@ -21,7 +21,6 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.skill_library import RESERVED_SKILL_NAMES
 
 logger = logging.getLogger("cheesex.repository")
@@ -123,6 +122,15 @@ def _git(
             raise WorkspacePermissionError(_permission_hint(f"git {args[0]}: {detail}"))
         raise ValidationError(f"git {args[0]} failed: {detail}")
     return result.stdout
+
+
+#: 工作区仓库权限失败的分类码。和 `agent.platform_failures.WORKSPACE_VCS_PERMS_CODE`
+#: 是同一个字符串 —— 认这个异常的是那里的分类器，它读异常链上的 `failure_code`，
+#: 不猜文案。那个模块在第 5 层，本包在第 3 层够不着
+#: （`docs/manual/dev/architecture.md`），
+#: 所以这里带一份副本而不是去 import；两份由 `tests/unit/test_platform_failures.py`
+#: 绑在一起，漂移了那里的分类测试就红（`agent/place.py` 里那几份副本同一条规矩）。
+WORKSPACE_VCS_PERMS_CODE = "workspace_vcs_perms"
 
 
 class WorkspacePermissionError(ValidationError):

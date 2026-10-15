@@ -6,6 +6,7 @@
 import type { ApiEnvelope } from '../cx_types'
 
 import { t } from '../i18n'
+import { storageGet } from '../lib/browserStorage'
 import { desktopAppHeaders } from '../lib/desktopApp'
 import { refusalText, refusalWords } from '../lib/noticeText'
 import { rateLimitedText, rateLimitRetryMs } from '../lib/rateLimit'
@@ -25,11 +26,7 @@ export const BASE = '/api'
 
 // Chat requests use the same access token as AccountService.
 export function authToken(): string {
-  try {
-    return localStorage.getItem('accessToken') ?? ''
-  } catch {
-    return ''
-  }
+  return storageGet('accessToken') ?? ''
 }
 
 export function authHeaders(): Record<string, string> {

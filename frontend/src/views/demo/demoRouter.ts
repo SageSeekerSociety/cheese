@@ -45,8 +45,15 @@ const catalogTargets = [
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
+  // 首页那份目录（`catalogHome.ts`）：一个团队摊开来是四样，摊开那一行才画得出这四条；
+  // 名字不在表里的话，带 `to` 的行会当场抛，目录在预览站上整段渲染不出来。
+  { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
   { path: '/teams/:handle', name: 'TeamsDetailDefault', component: blank },
+  { path: '/teams/:handle/members', name: 'TeamsDetailMembers', component: blank },
+  { path: '/teams/:handle/knowledge', name: 'TeamsDetailKnowledge', component: blank },
+  { path: '/teams/:handle/compute', name: 'TeamsDetailCompute', component: blank },
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
+  { path: '/inbox', name: 'inbox', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
   { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
@@ -55,6 +62,11 @@ const catalogTargets = [
   { path: '/spaces/:spaceId/announcements', name: 'SpacesAnnouncements', component: blank },
   { path: '/projects/:projectId/artifacts/:artifactId', name: 'project-artifact', component: blank },
   { path: '/spaces', name: 'HomeSpaces', component: blank },
+  // 题目那一层（`catalogScenesPages3.ts` 里题卡、单份回答、回答列表三件）互相指路：题卡上
+  // 「查看该回答」、回答卡片上面那颗「查看全部 N 条回答」都按名字指。名字与路径照
+  // `router/question.ts` 那棵子树；名字缺了按名字解析的那一条会当场抛，整段渲染不出来。
+  { path: '/questions/:questionId(\\d+)', name: 'QuestionAnswerList', component: blank },
+  { path: '/questions/:questionId(\\d+)/answers/:answerId(\\d+)', name: 'QuestionAnswer', component: blank },
 ]
 
 export function demoRouter() {
