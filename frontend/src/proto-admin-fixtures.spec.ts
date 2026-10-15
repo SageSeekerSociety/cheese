@@ -20,20 +20,30 @@ it('出口上只有 adminRoutes 一个值', () => {
 
 it('出口那个 adminRoutes 背后仍是整张后台路由表', () => {
   // 最可能的坏法是「名字重发了、背后没接上」：入口上写着 adminRoutes，点开什么也不认。
-  // 三页各取一条：模型管理的读路由、棘轮那块看板、空间申请的写路由 —— 分片之间接上了
-  // 才认得全。认不出来的路由仍然交回给反馈那份假数据。
+  // 三页各取一条读路由：模型管理、棘轮那块看板、空间申请的列表 —— 分片之间接上了才认得
+  // 全。每条都钉一个具体的值，不钉「有个数组」：夹具整个空掉也是数组，那样钉不住。
   expect(fixtures.adminRoutes('/admin/gateway/models', 'GET', api('/admin/gateway/models'))).toMatchObject({
-    data: { models: expect.any(Array), totals: expect.any(Object) },
+    data: {
+      models: expect.arrayContaining([expect.objectContaining({ name: 'claude-opus-5-5' })]),
+      totals: expect.any(Object),
+    },
   })
   expect(fixtures.adminRoutes('/admin/ratchet', 'GET', api('/admin/ratchet'))).toMatchObject({
     data: { repo: 'SageSeekerSociety/cheese', areas: expect.any(Array), points: 12 },
   })
+  expect(fixtures.adminRoutes('/admin/spaces', 'GET', api('/admin/spaces?status=APPROVED'))).toMatchObject({
+    data: { items: [expect.objectContaining({ id: 38, owner: 'pengwenbo', reviewStatus: 'APPROVED' })] },
+  })
 })
 
 it('认不出来的路由交回给反馈那份假数据', () => {
-  // `featureReport` 认得的路径回一块数据，两处都不认得的回 undefined。
-  expect(fixtures.adminRoutes('/admin/feature-stats', 'GET', api('/admin/feature-stats'))).toMatchObject({
-    data: { features: expect.any(Array) },
-  })
+  // 走到 `featureReport` 的必须是这里不认的那几条：它认得
+  // `/admin/feature-stats/task-naming` 和 `.../docs-assistant`（见
+  // `proto-feature-fixtures.ts`），而这个路由表自己那条只认不带尾巴的
+  // `/admin/feature-stats`。所以取一条带尾巴的：这一条回来有内容，就说明交回去了；
+  // 两处都不认得的回 undefined。
+  expect(
+    fixtures.adminRoutes('/admin/feature-stats/task-naming', 'GET', api('/admin/feature-stats/task-naming'))
+  ).toMatchObject({ data: { id: 'task-naming', numbers: expect.any(Object) } })
   expect(fixtures.adminRoutes('/no-such-route', 'GET', api('/no-such-route'))).toBeUndefined()
 })
