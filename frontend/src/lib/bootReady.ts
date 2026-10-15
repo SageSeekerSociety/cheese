@@ -7,18 +7,13 @@
 export const FIRST_PAGE_WAIT_MS = 15_000
 
 /**
- * `<head>` 里的样式表都到了、用上了。首屏不再等它们：scripts/prerender.mjs 把它们改成
- * `<link rel="preload" as="style">`，下完由它自己的 onload 换回样式表，首屏用到的那部分
- * 内联在页面里。但应用挂上去时得有完整的样式，不然先画出一帧没样式的界面。加载失败的
- * 也算到了：它不会再来。等过 `ms` 也放行：挂载不能卡在它上面。
+ * `<head>` 里的样式表都到了、用上了。首屏不再等它们：scripts/prerender.mjs 把它们先按
+ * 打印样式挂上（`media="print"`），下完由它自己的 onload 换成 all，首屏用到的那部分内联
+ * 在页面里。但应用挂载时得有完整的样式，不然先画出一帧没样式的界面。加载失败的也算到了：
+ * 它不会再来。等过 `ms` 也放行：挂载不能卡在它上面。
  */
 export function stylesheetsLoaded(doc: Document = document, ms: number = FIRST_PAGE_WAIT_MS): Promise<void> {
-  const links = [
-    ...doc.querySelectorAll<HTMLLinkElement>(
-      // 按落点提前下的那几张（`data-boot-preload`，index.html）是第一页自己的样式，由路由挂上，不在这里等。
-      'link[rel="stylesheet"], link[rel="preload"][as="style"]:not([data-boot-preload])'
-    ),
-  ]
+  const links = [...doc.querySelectorAll<HTMLLinkElement>('link[rel="stylesheet"]')]
   let timer: ReturnType<typeof setTimeout> | undefined
   const late = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, ms)
@@ -27,17 +22,14 @@ export function stylesheetsLoaded(doc: Document = document, ms: number = FIRST_P
   return Promise.race([all, late]).finally(() => clearTimeout(timer))
 }
 
-// 预加载的那一种要过两道：先下完（load），onload 把它换成样式表，换过之后浏览器从缓存里
-// 再解析一遍，用上了才有 `sheet`（又一次 load）。
+// 下完就有 `sheet`；它自己的 onload 先于这里的监听跑（写在标签上的先登记），所以 load
+// 之后 media 已经换过了。
 async function applied(link: HTMLLinkElement): Promise<void> {
-  for (let step = 0; step < 2; step++) {
-    if (link.rel === 'stylesheet' && link.sheet) return
-    const failed = await new Promise<boolean>((resolve) => {
-      link.addEventListener('load', () => resolve(false), { once: true })
-      link.addEventListener('error', () => resolve(true), { once: true })
-    })
-    if (failed) return
-  }
+  if (link.sheet && link.media !== 'print') return
+  await new Promise<void>((resolve) => {
+    link.addEventListener('load', () => resolve(), { once: true })
+    link.addEventListener('error', () => resolve(), { once: true })
+  })
 }
 
 /**

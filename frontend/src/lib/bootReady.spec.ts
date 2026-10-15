@@ -11,17 +11,32 @@ describe('the app mounts only once its stylesheets are in', () => {
     document.head.innerHTML = ''
   })
 
-  it('waits for a stylesheet still on its way', async () => {
-    const link = document.createElement('link')
-    link.rel = 'preload'
-    link.setAttribute('as', 'style')
-    document.head.appendChild(link)
+  it('waits for a stylesheet still on its way, and for one that failed only until it failed', async () => {
+    const coming = document.createElement('link')
+    coming.rel = 'stylesheet'
+    coming.media = 'print'
+    const failing = document.createElement('link')
+    failing.rel = 'stylesheet'
+    failing.media = 'print'
+    document.head.append(coming, failing)
 
     const ready = stylesheetsLoaded(document, 60_000)
     expect(await settledWithin(ready, 20)).toBe(false)
 
-    link.dispatchEvent(new Event('error'))
+    coming.media = 'all'
+    coming.dispatchEvent(new Event('load'))
+    expect(await settledWithin(ready, 20)).toBe(false)
+    failing.dispatchEvent(new Event('error'))
     expect(await settledWithin(ready, 20)).toBe(true)
+  })
+
+  it('does not wait on a preload hint, which never becomes a stylesheet', async () => {
+    const hint = document.createElement('link')
+    hint.rel = 'preload'
+    hint.setAttribute('as', 'style')
+    document.head.appendChild(hint)
+
+    expect(await settledWithin(stylesheetsLoaded(document, 60_000), 50)).toBe(true)
   })
 
   it('does not wait for ever on a stylesheet that never arrives', async () => {
