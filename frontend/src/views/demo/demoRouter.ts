@@ -54,6 +54,9 @@ const catalogTargets = [
   { path: '/teams/:handle/compute', name: 'TeamsDetailCompute', component: blank },
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/inbox', name: 'inbox', component: blank },
+  // 首页那份目录里「市场」多出来的一行（`HomeNav.vue` 的 `:to="{ name: 'market' }"`）：
+  // 名字不在表里，带 `to` 的行会当场抛，目录在预览站上整段渲染不出来。
+  { path: '/market', name: 'market', component: blank },
   { path: '/projects/:projectId', name: 'workspace-project', component: blank },
   { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: blank },
   { path: '/users/settings/devices', name: 'UserSettingsDevices', component: blank },
