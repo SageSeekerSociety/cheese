@@ -3,9 +3,9 @@
 // 以前自带头的页面（话题列表、话题页）是让整条顶栏不渲染，于是在两类页面之间
 // 切换时 v-main 的 padding 从 57 滑到 0（Vuetify 给 .v-main 定的 transition
 // 是 .2s），整页跟着抖一下，看起来像两条头在打架。现在那些页面改成把自己的
-// 东西填进顶栏那一格，所以这里测的是：有组件在填，顶栏就只给落点、不写标题；
-// 那个组件走了，标题回来。那一格本身一直在：哪一页的头部 Teleport 过来都找得到它。
-import { defineComponent, h, nextTick, ref, Teleport } from 'vue'
+// 东西交给顶栏画（useScreenHeader），所以这里测的是：一屏声明了自己的标题行，顶栏就画
+// 它、不写路由的标题；只声明标题和小字，就画那两行；那一屏走了，路由的标题回来。
+import { defineComponent, h, nextTick, ref } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -14,7 +14,7 @@ import { render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
-import { claimAppBar } from '@/composables/useAppBarSlot'
+import { type ScreenHeader, useScreenHeader } from '@/composables/useScreenHeader'
 
 import MobileAppBar from './MobileAppBar.vue'
 
@@ -52,12 +52,14 @@ beforeAll(() => {
   }
 })
 
-// 一页自己的头部：把一行字填进顶栏那一格，并登记它在填（TopicHeader 那样）。
+// 这一屏声明的头部（TopicView 那样）。`filling`：这一屏在不在屏幕上。
 const filling = ref(false)
+const declared = ref<ScreenHeader | null>(null)
+const OwnRow = defineComponent({ setup: () => () => h('span', '页面自己的头') })
 const PageHeader = defineComponent({
   setup() {
-    claimAppBar(() => true)
-    return () => h(Teleport, { to: '#app-bar-slot', defer: true }, [h('span', '页面自己的头')])
+    useScreenHeader(() => declared.value)
+    return () => null
   },
 })
 
@@ -76,16 +78,28 @@ async function mountAt(path: string) {
 }
 
 describe('手机顶栏', () => {
-  it('有页面在填，就只给落点、不写标题', async () => {
+  it('一屏声明了自己的标题行，就画它、不写路由的标题', async () => {
     filling.value = true
+    declared.value = { content: { component: OwnRow } }
     const { container } = await mountAt('/projects/p1')
     await nextTick()
-    expect(container.querySelector('#app-bar-slot')?.textContent).toContain('页面自己的头')
+    expect(container.textContent).toContain('页面自己的头')
     expect(container.textContent).not.toContain('项目工作台')
   })
 
-  it('没人填的页面照常写路由的标题；填的那一页走了，标题回来', async () => {
+  it('只声明标题和小字，就画那两行', async () => {
+    filling.value = true
+    declared.value = { title: '支线', subtitle: '#综合' }
+    const { container } = await mountAt('/projects/p1')
+    await nextTick()
+    expect(container.textContent).toContain('支线')
+    expect(container.textContent).toContain('#综合')
+    expect(container.textContent).not.toContain('项目工作台')
+  })
+
+  it('没声明的一屏写路由的标题；声明的那一屏走了，路由的标题回来', async () => {
     filling.value = false
+    declared.value = { content: { component: OwnRow } }
     const { container } = await mountAt('/projects/p1')
     expect(container.textContent).toContain('项目工作台')
 

@@ -19,7 +19,6 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useQuery } from '@tanstack/vue-query'
 
-import { claimAppBar } from '@/composables/useAppBarSlot'
 import { useNavigation } from '@/composables/useNavigation'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
@@ -60,8 +59,6 @@ const emit = defineEmits<{
 }>()
 
 const { mdAndUp } = useDisplay()
-// 手机上这一行就是顶栏那一格的内容（下面的 Teleport），顶栏于是不写路由的标题。
-claimAppBar(() => !mdAndUp.value)
 
 // 房间自己的生命周期只在不寻常时说一句（已归档 / 草稿），和侧栏那一行同一个规矩。
 // 房间没有「在干活 / 待审阅」这种状态：干活的是成员（输入框下面那一行），待审阅
@@ -201,149 +198,141 @@ useCommands(roomCommands)
 </script>
 
 <template>
-  <!-- 手机上这一行不长在页面上，它**就是**顶栏那一格的内容（Teleport 进去）。
-       手机上只有一条顶栏，从不卸载：话题页自己再画一条，两条横条交替出现的时候
-       v-main 的 padding 会滑一下，整页跟着抖。← 由顶栏按路由的 backTo 出，
-       所以这里不再自己画一个。 -->
-  <!-- The mobile target is absent on desktop. Remount at the breakpoint so
-       Teleport resolves it after App has rendered the new mobile bar. -->
-  <Teleport :key="String(mdAndUp)" to="#app-bar-slot" :disabled="mdAndUp" defer>
-    <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
-      <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
-      <div class="topic-header__text">
-        <button
-          type="button"
-          class="topic-header__title topic-header__title--button t-title"
-          :title="title"
-          :aria-label="t('work.channelDetails.open', { name: title })"
-          @click="detailsOpen = true"
-        >
-          <v-icon
-            v-if="topic.members_only"
-            size="14"
-            class="topic-header__lock"
-            icon="mdi-lock-outline"
-            :title="t('work.channel.privateTip')"
-            :aria-label="t('work.channel.privateTip')"
-          />{{ title }}
-        </button>
-        <span v-if="mdAndUp && topic.description" class="topic-header__description" :title="topic.description">{{
-          topic.description
+  <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
+    <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
+    <div class="topic-header__text">
+      <button
+        type="button"
+        class="topic-header__title topic-header__title--button t-title"
+        :title="title"
+        :aria-label="t('work.channelDetails.open', { name: title })"
+        @click="detailsOpen = true"
+      >
+        <v-icon
+          v-if="topic.members_only"
+          size="14"
+          class="topic-header__lock"
+          icon="mdi-lock-outline"
+          :title="t('work.channel.privateTip')"
+          :aria-label="t('work.channel.privateTip')"
+        />{{ title }}
+      </button>
+      <span v-if="mdAndUp && topic.description" class="topic-header__description" :title="topic.description">{{
+        topic.description
+      }}</span>
+      <span class="topic-header__meta">
+        <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
+        <span v-if="isWorkTopic && state" class="pr-state" :class="state.cls">{{ state.label }}</span>
+        <span v-if="!connected" class="topic-header__disconnected" role="status">{{
+          t('work.room.header.disconnected')
         }}</span>
-        <span class="topic-header__meta">
-          <!-- 全局那个房间没有「进行中 / 待验收」可言：它是项目本身，不是一件事。 -->
-          <span v-if="isWorkTopic && state" class="pr-state" :class="state.cls">{{ state.label }}</span>
-          <span v-if="!connected" class="topic-header__disconnected" role="status">{{
-            t('work.room.header.disconnected')
-          }}</span>
-        </span>
-      </div>
+      </span>
+    </div>
 
-      <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
-           芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
-      <TopicMembers
-        v-model:open="membersOpen"
-        :topic-id="topic.id"
-        :can-manage="topic.can_manage === true"
-        :can-invite="topic.joined === true"
-        :general="!isWorkTopic"
-        :project-id="topic.project_id"
-        :project-members="members"
-        :me="me"
-        @manager="managerName = $event"
-      />
+    <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
+         芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
+    <TopicMembers
+      v-model:open="membersOpen"
+      :topic-id="topic.id"
+      :can-manage="topic.can_manage === true"
+      :can-invite="topic.joined === true"
+      :general="!isWorkTopic"
+      :project-id="topic.project_id"
+      :project-members="members"
+      :me="me"
+      @manager="managerName = $event"
+    />
 
-      <ChannelDetailsDialog
-        v-if="detailsOpen"
-        v-model="detailsOpen"
-        :topic="topic"
-        :can-manage="topic.can_manage === true"
-        :manages-project="managesProject"
-        :manager-name="managerName"
-        :level="store.levelOf(topic.id)"
-        :muted-until="store.mutedUntil(topic.id)"
-        @rename="(next) => emit('rename', next)"
-        @describe="(text) => store.describe(topic.id, text)"
-        @set-private="(membersOnly) => store.setMembersOnly(topic.id, membersOnly)"
-        @archive="archiveFromDetails"
-        @unarchive="store.unarchive(topic.id)"
-        @leave="leaveFromDetails"
-        @delete="removeChannel"
-        @open-members="openMembersFromDetails"
-        @notify="(level, until) => store.setNotifyLevel(topic.id, level, until)"
-      />
+    <ChannelDetailsDialog
+      v-if="detailsOpen"
+      v-model="detailsOpen"
+      :topic="topic"
+      :can-manage="topic.can_manage === true"
+      :manages-project="managesProject"
+      :manager-name="managerName"
+      :level="store.levelOf(topic.id)"
+      :muted-until="store.mutedUntil(topic.id)"
+      @rename="(next) => emit('rename', next)"
+      @describe="(text) => store.describe(topic.id, text)"
+      @set-private="(membersOnly) => store.setMembersOnly(topic.id, membersOnly)"
+      @archive="archiveFromDetails"
+      @unarchive="store.unarchive(topic.id)"
+      @leave="leaveFromDetails"
+      @delete="removeChannel"
+      @open-members="openMembersFromDetails"
+      @notify="(level, until) => store.setNotifyLevel(topic.id, level, until)"
+    />
 
-      <ChannelNotifyMenu
-        v-if="topic.joined && topic.status !== 'archived'"
-        :level="store.levelOf(topic.id)"
-        :muted-until="store.mutedUntil(topic.id)"
-        @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"
-      />
+    <ChannelNotifyMenu
+      v-if="topic.joined && topic.status !== 'archived'"
+      :level="store.levelOf(topic.id)"
+      :muted-until="store.mutedUntil(topic.id)"
+      @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"
+    />
 
-      <!-- 右侧面板的开关。手机上面板是页签里的一格，没有这颗。 -->
-      <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
+    <!-- 右侧面板的开关。手机上面板是页签里的一格，没有这颗。 -->
+    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
 
-      <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
-           看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
-           连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
-      <AdaptiveMenu v-model="menuOpen" :actions="roomActions" :title="t('work.room.menu.more')">
-        <template #activator="{ props: menuProps }">
-          <BaseButton
-            v-bind="menuProps"
-            icon="mdi-dots-horizontal"
-            size="sm"
-            class="tap-target"
-            :title="t('work.room.menu.more')"
-            :aria-label="t('work.room.menu.more')"
-            @mouseenter="loadUsage"
-          />
-        </template>
-        <!-- 用量排在操作前面：它是这一段的口径，不是一件能做的事。桌面那颗 ⋯ 本来就
-             只开它，现在它退成菜单顶上的一段；手机上这一块从底部升起（设计系统 §10.4）。 -->
-        <template #desktopHeader>
-          <v-card min-width="300" class="room-menu">
-            <TopicUsageSummary
-              class="room-menu__usage"
-              :loading="usageLoading"
-              :topic-usage="topicUsage"
-              :project-usage="projectUsage"
-              :short-id="isWorkTopic ? shortId : null"
-              :topic-id="topic.id"
-            />
-          </v-card>
-        </template>
-        <template #header>
+    <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
+         看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
+         连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
+    <AdaptiveMenu v-model="menuOpen" :actions="roomActions" :title="t('work.room.menu.more')">
+      <template #activator="{ props: menuProps }">
+        <BaseButton
+          v-bind="menuProps"
+          icon="mdi-dots-horizontal"
+          size="sm"
+          class="tap-target"
+          :title="t('work.room.menu.more')"
+          :aria-label="t('work.room.menu.more')"
+          @mouseenter="loadUsage"
+        />
+      </template>
+      <!-- 用量排在操作前面：它是这一段的口径，不是一件能做的事。桌面那颗 ⋯ 本来就
+           只开它，现在它退成菜单顶上的一段；手机上这一块从底部升起（设计系统 §10.4）。 -->
+      <template #desktopHeader>
+        <v-card min-width="300" class="room-menu">
           <TopicUsageSummary
+            class="room-menu__usage"
             :loading="usageLoading"
             :topic-usage="topicUsage"
             :project-usage="projectUsage"
             :short-id="isWorkTopic ? shortId : null"
             :topic-id="topic.id"
           />
-        </template>
-      </AdaptiveMenu>
-      <!-- 改名、删除两张表单两端共用一份，不能待在手机那一支里：桌面版也得够得着。 -->
-      <AdaptiveDialog
-        v-model="renaming"
-        :title="t('work.room.menu.renameTitle')"
-        :primary-label="t('global.save')"
-        :primary-disabled="!draftTitle.trim()"
-        @primary="saveRename"
-      >
-        <v-text-field
-          v-model="draftTitle"
-          :label="t('work.room.menu.topicName')"
-          :maxlength="TOPIC_TITLE_MAX_LENGTH"
-          :counter="TOPIC_TITLE_MAX_LENGTH"
-          persistent-counter
-          autocomplete="off"
-          autofocus
-          @keyup.enter="saveRename"
+        </v-card>
+      </template>
+      <template #header>
+        <TopicUsageSummary
+          :loading="usageLoading"
+          :topic-usage="topicUsage"
+          :project-usage="projectUsage"
+          :short-id="isWorkTopic ? shortId : null"
+          :topic-id="topic.id"
         />
-      </AdaptiveDialog>
-      <DeleteChannelDialog v-model="deleteOpen" :name="title" :busy="deleting" @confirm="confirmRemove" />
-    </div>
-  </Teleport>
+      </template>
+    </AdaptiveMenu>
+    <!-- 改名、删除两张表单两端共用一份，不能待在手机那一支里：桌面版也得够得着。 -->
+    <AdaptiveDialog
+      v-model="renaming"
+      :title="t('work.room.menu.renameTitle')"
+      :primary-label="t('global.save')"
+      :primary-disabled="!draftTitle.trim()"
+      @primary="saveRename"
+    >
+      <v-text-field
+        v-model="draftTitle"
+        :label="t('work.room.menu.topicName')"
+        :maxlength="TOPIC_TITLE_MAX_LENGTH"
+        :counter="TOPIC_TITLE_MAX_LENGTH"
+        persistent-counter
+        autocomplete="off"
+        autofocus
+        @keyup.enter="saveRename"
+      />
+    </AdaptiveDialog>
+    <DeleteChannelDialog v-model="deleteOpen" :name="title" :busy="deleting" @confirm="confirmRemove" />
+  </div>
 </template>
 
 <style scoped>

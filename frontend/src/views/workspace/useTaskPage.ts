@@ -215,7 +215,30 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     }
   }
 
+  // 任务页头部（TaskHeader）要的那一半：这件任务和能对它做的事。另一半（在哪个房间、
+  // 谁在场、面板开没开）是页面的，由页面补上。
+  const headerProps = computed(() => ({
+    task: task.value,
+    people: people.value,
+    machine: machine.value,
+    machineError: machineError.value,
+    starting: starting.value,
+    startError: startError.value,
+    actionError: actionError.value,
+    start,
+    close,
+    reopen,
+    handOver,
+    rename,
+    setCollaborators,
+    setAgent,
+    loadMachine,
+    setMachine,
+    setMachineDefault,
+  }))
+
   return {
+    headerProps,
     task,
     loading,
     loadError,

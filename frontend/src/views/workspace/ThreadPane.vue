@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 一条支线：页头写「支线」和它在哪个频道、挂着哪条消息，右边是「转为任务」（一条支线
-// 可以转出几件任务）；下面先是它挂着的那条消息和从这里出来的任务，再是支线自己的对话
+// 可以转出几件任务）。手机上它是一整页，这一行交给顶栏：标题和那行小字由这一屏声明，
+// 「转为任务」进顶栏的 ⋯。下面先是它挂着的那条消息和从这里出来的任务，再是支线自己的对话
 // 和输入框。
 //
 // 对话就是频道那一栏，换了一段对话来读（`conversationId` 是支线的 id）：消息、连接、
@@ -20,8 +21,10 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useMessageFold } from '@/composables/useMessageFold'
+import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { ApiError } from '@/api'
+import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
@@ -172,6 +175,24 @@ function toTask() {
   // 转出去以后这一页跟着去任务页；没去成（失败了）就让按钮回来。
   setTimeout(() => (busy.value = false), 1500)
 }
+
+// 整页形态（手机）：页头那一行是顶栏的内容。
+useScreenHeader(() => (props.page ? { title: t('work.room.thread.title'), subtitle: subtitle.value } : null))
+useCommands(() =>
+  props.page && root.value
+    ? [
+        {
+          id: 'thread.toTask',
+          title: t('work.room.thread.toTask'),
+          icon: 'mdi-checkbox-marked-circle-plus-outline',
+          header: {},
+          loading: busy.value,
+          palette: false as const,
+          run: toTask,
+        },
+      ]
+    : []
+)
 </script>
 
 <template>
@@ -181,7 +202,7 @@ function toTask() {
     :aria-label="t('work.room.thread.title')"
     data-testid="thread-pane"
   >
-    <header class="thread-pane__head">
+    <header v-if="!page" class="thread-pane__head">
       <div class="thread-pane__titles">
         <h2 class="thread-pane__title t-title">{{ t('work.room.thread.title') }}</h2>
         <div class="thread-pane__sub t-meta">{{ subtitle }}</div>
@@ -190,7 +211,6 @@ function toTask() {
         t('work.room.thread.toTask')
       }}</BaseButton>
       <BaseButton
-        v-if="!page"
         icon="mdi-close"
         size="sm"
         :title="t('work.room.thread.close')"

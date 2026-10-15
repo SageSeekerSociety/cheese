@@ -11,7 +11,6 @@ import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { claimAppBar } from '@/composables/useAppBarSlot'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -61,8 +60,6 @@ const emit = defineEmits<{
 }>()
 
 const { mdAndUp } = useDisplay()
-// 手机上这一行就是顶栏那一格的内容（下面的 Teleport），顶栏于是不写路由的标题。
-claimAppBar(() => !mdAndUp.value)
 const ME = myHandle()
 const isOwner = computed(() => !!props.task && props.task.owner_handle === ME)
 const isOpen = computed(() => props.task?.status === 'open')
@@ -187,238 +184,236 @@ async function confirmHandOver() {
 </script>
 
 <template>
-  <Teleport :key="String(mdAndUp)" to="#app-bar-slot" :disabled="mdAndUp" defer>
-    <div v-guide-anchor="'task-page'" class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
-      <div class="task-header__text">
-        <button v-if="mdAndUp" type="button" class="task-header__room t-title" @click="emit('open-room')">
-          # {{ topicTitle(room) }}
-        </button>
-        <span v-if="mdAndUp" class="task-header__sep t-title" aria-hidden="true">/</span>
-        <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
-          task ? taskTitle(task) : ''
-        }}</span>
-        <span v-if="task" class="task-header__state" data-testid="task-phrase">{{ taskPhraseLabel(task, ME) }}</span>
-        <span v-if="connected === false" class="task-header__disconnected" role="status">{{
-          t('work.room.header.disconnected')
-        }}</span>
-      </div>
-
-      <v-menu v-if="task?.owner_handle" v-model="detailsOpen" location="bottom end" :close-on-content-click="false">
-        <template #activator="{ props: menuProps }">
-          <button
-            type="button"
-            class="task-header__owner"
-            v-bind="menuProps"
-            :title="t('work.task.details')"
-            data-testid="task-details"
-          >
-            <UserAvatar :size="20" :name="ownerName" :avatar="avatarOf(task?.owner_handle)" />
-            <span class="task-header__owner-name">{{ t('work.task.ownerChip', { name: ownerName }) }}</span>
-            <span v-if="collaborators.length" class="task-header__helpers" aria-hidden="true">
-              <UserAvatar
-                v-for="handle in collaborators.slice(0, 3)"
-                :key="handle"
-                :size="18"
-                :name="nameOf(handle)"
-                :avatar="avatarOf(handle)"
-                class="task-header__helper"
-              />
-            </span>
-          </button>
-        </template>
-        <v-card class="task-details">
-          <dl class="task-details__list t-meta">
-            <div class="task-details__row">
-              <dt>{{ t('work.task.owner') }}</dt>
-              <dd><UserRef :handle="task.owner_handle" /></dd>
-            </div>
-            <div
-              v-if="collaborators.length || (isOwner && isOpen)"
-              class="task-details__row"
-              data-testid="task-collaborators"
-            >
-              <dt :title="t('work.task.collaboratorsHint')">{{ t('work.task.collaborators') }}</dt>
-              <dd class="task-details__people">
-                <span v-for="handle in collaborators" :key="handle" class="task-details__person">
-                  <UserRef :handle="handle" />
-                  <button
-                    v-if="isOpen && (isOwner || handle === ME)"
-                    type="button"
-                    class="task-details__retry"
-                    @click="removeCollaborator(handle)"
-                  >
-                    {{ handle === ME ? t('work.task.leaveCollaboration') : t('work.task.removeCollaborator') }}
-                  </button>
-                </span>
-                <span v-if="isOwner && isOpen && addable.length" class="task-details__person">
-                  <select
-                    v-model="adding"
-                    class="task-notice__select t-meta"
-                    :aria-label="t('work.task.addCollaborator')"
-                  >
-                    <option value="">{{ t('work.task.addCollaborator') }}</option>
-                    <option v-for="m in addable" :key="m.member_handle" :value="m.member_handle">
-                      {{ nameOf(m.member_handle) }}
-                    </option>
-                  </select>
-                  <button v-if="adding" type="button" class="task-details__retry" @click="addCollaborator">
-                    {{ t('work.task.addCollaborator') }}
-                  </button>
-                </span>
-              </dd>
-            </div>
-            <div class="task-details__row" data-testid="task-agent">
-              <dt>{{ t('work.task.agent') }}</dt>
-              <dd class="task-details__pair">
-                <span>{{ taskAgentName }}</span>
-                <span v-if="!task.agent_handle" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
-                <v-menu v-if="canPickAgent" v-model="agentOpen" location="bottom end" :close-on-content-click="false">
-                  <template #activator="{ props: menuProps }">
-                    <button
-                      type="button"
-                      class="task-details__edit"
-                      v-bind="menuProps"
-                      :title="t('work.task.agentEdit')"
-                      data-testid="task-agent-edit"
-                    >
-                      {{ t('work.task.agentEdit') }}
-                    </button>
-                  </template>
-                  <v-card class="task-agent-menu" data-testid="task-agent-menu">
-                    <div class="task-agent-menu__heading">{{ t('work.task.agentHeading') }}</div>
-                    <p class="task-agent-menu__hint">{{ t('work.task.agentHint') }}</p>
-                    <button
-                      v-for="option in agentOptions"
-                      :key="option.handle ?? 'room'"
-                      type="button"
-                      class="task-agent-menu__row"
-                      :disabled="swappingAgent"
-                      @click="pickAgent(option.handle)"
-                    >
-                      <v-icon size="18">{{
-                        (task.agent_handle ?? null) === option.handle ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'
-                      }}</v-icon>
-                      <span>{{ option.name }}</span>
-                    </button>
-                  </v-card>
-                </v-menu>
-              </dd>
-            </div>
-            <div class="task-details__row" data-testid="task-machine">
-              <dt>{{ t('work.task.machine') }}</dt>
-              <dd v-if="machine" class="task-details__envs">
-                <div
-                  v-for="session in machine.sessions"
-                  :key="session.session_id"
-                  class="task-details__pair"
-                  :data-testid="`session-env-${session.session_id}`"
-                >
-                  <span>{{
-                    t('compute.env.sessionLine', {
-                      name: sessionName(session),
-                      env: session.environment
-                        ? environmentName(session.environment, machine.devices, machine.specs)
-                        : t('compute.env.notStarted'),
-                    })
-                  }}</span>
-                  <EnvironmentMenu
-                    v-if="isOwner && isOpen"
-                    :heading="t('compute.env.sessionHeading', { name: sessionName(session) })"
-                    :hint="t('compute.env.sessionHint')"
-                    :current="session.environment ?? machine.default"
-                    :devices="machine.devices"
-                    :specs="machine.specs"
-                    :save="saveSession(session)"
-                    @changed="loadMachine"
-                  />
-                </div>
-                <div class="task-details__pair" data-testid="task-env-default">
-                  <span>{{
-                    t('compute.env.defaultHere', {
-                      name: environmentName(
-                        machine.default ?? { kind: 'sandbox', spec: 'standard' },
-                        machine.devices,
-                        machine.specs
-                      ),
-                    })
-                  }}</span>
-                  <span v-if="machine.default_from === 'room'" class="task-details__tag">{{
-                    t('work.task.followsRoom')
-                  }}</span>
-                  <EnvironmentMenu
-                    v-if="isOwner && isOpen"
-                    :heading="t('compute.env.defaultHeading')"
-                    :hint="t('compute.env.defaultHint')"
-                    :current="machine.default"
-                    :devices="machine.devices"
-                    :specs="machine.specs"
-                    :save="saveDefault"
-                    @changed="loadMachine"
-                  />
-                </div>
-              </dd>
-              <dd v-else-if="machineError">
-                {{ t('compute.env.loadFailed') }}
-                <button type="button" class="task-details__retry" @click="loadMachine">
-                  {{ t('global.loadError.retry') }}
-                </button>
-              </dd>
-              <dd v-else><v-progress-circular indeterminate size="14" width="2" /></dd>
-            </div>
-          </dl>
-        </v-card>
-      </v-menu>
-
-      <BaseButton
-        v-if="task && isOwner && isOpen && !task.started_at"
-        v-guide-anchor="'task-start'"
-        kind="primary"
-        size="sm"
-        :loading="starting"
-        data-testid="task-start"
-        @click="start()"
-        >{{ t('work.task.start') }}</BaseButton
-      >
-      <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
-      <v-menu v-if="task && takesPart" location="bottom end">
-        <template #activator="{ props: menuProps }">
-          <BaseButton
-            v-bind="menuProps"
-            icon="mdi-dots-horizontal"
-            size="sm"
-            class="tap-target"
-            :title="t('work.task.more')"
-            :aria-label="t('work.task.more')"
-            data-testid="task-more"
-          />
-        </template>
-        <v-list density="compact" role="menu" :aria-label="t('work.task.more')">
-          <v-list-item
-            role="menuitem"
-            :title="t('work.task.rename')"
-            data-testid="task-rename"
-            @click="renameOpen = true"
-          />
-          <template v-if="isOwner && isOpen">
-            <v-list-item
-              v-if="otherPeople.length"
-              role="menuitem"
-              :title="t('work.task.handOver')"
-              @click="handOverOpen = true"
-            />
-            <v-list-item role="menuitem" :title="t('work.task.close')" @click="closeOpen = true" />
-          </template>
-          <v-list-item
-            v-else-if="isOwner"
-            role="menuitem"
-            :title="t('work.task.reopen')"
-            data-testid="task-reopen"
-            @click="reopen()"
-          />
-        </v-list>
-      </v-menu>
+  <div v-guide-anchor="'task-page'" class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
+    <div class="task-header__text">
+      <button v-if="mdAndUp" type="button" class="task-header__room t-title" @click="emit('open-room')">
+        # {{ topicTitle(room) }}
+      </button>
+      <span v-if="mdAndUp" class="task-header__sep t-title" aria-hidden="true">/</span>
+      <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
+        task ? taskTitle(task) : ''
+      }}</span>
+      <span v-if="task" class="task-header__state" data-testid="task-phrase">{{ taskPhraseLabel(task, ME) }}</span>
+      <span v-if="connected === false" class="task-header__disconnected" role="status">{{
+        t('work.room.header.disconnected')
+      }}</span>
     </div>
-  </Teleport>
+
+    <v-menu v-if="task?.owner_handle" v-model="detailsOpen" location="bottom end" :close-on-content-click="false">
+      <template #activator="{ props: menuProps }">
+        <button
+          type="button"
+          class="task-header__owner"
+          v-bind="menuProps"
+          :title="t('work.task.details')"
+          data-testid="task-details"
+        >
+          <UserAvatar :size="20" :name="ownerName" :avatar="avatarOf(task?.owner_handle)" />
+          <span class="task-header__owner-name">{{ t('work.task.ownerChip', { name: ownerName }) }}</span>
+          <span v-if="collaborators.length" class="task-header__helpers" aria-hidden="true">
+            <UserAvatar
+              v-for="handle in collaborators.slice(0, 3)"
+              :key="handle"
+              :size="18"
+              :name="nameOf(handle)"
+              :avatar="avatarOf(handle)"
+              class="task-header__helper"
+            />
+          </span>
+        </button>
+      </template>
+      <v-card class="task-details">
+        <dl class="task-details__list t-meta">
+          <div class="task-details__row">
+            <dt>{{ t('work.task.owner') }}</dt>
+            <dd><UserRef :handle="task.owner_handle" /></dd>
+          </div>
+          <div
+            v-if="collaborators.length || (isOwner && isOpen)"
+            class="task-details__row"
+            data-testid="task-collaborators"
+          >
+            <dt :title="t('work.task.collaboratorsHint')">{{ t('work.task.collaborators') }}</dt>
+            <dd class="task-details__people">
+              <span v-for="handle in collaborators" :key="handle" class="task-details__person">
+                <UserRef :handle="handle" />
+                <button
+                  v-if="isOpen && (isOwner || handle === ME)"
+                  type="button"
+                  class="task-details__retry"
+                  @click="removeCollaborator(handle)"
+                >
+                  {{ handle === ME ? t('work.task.leaveCollaboration') : t('work.task.removeCollaborator') }}
+                </button>
+              </span>
+              <span v-if="isOwner && isOpen && addable.length" class="task-details__person">
+                <select
+                  v-model="adding"
+                  class="task-notice__select t-meta"
+                  :aria-label="t('work.task.addCollaborator')"
+                >
+                  <option value="">{{ t('work.task.addCollaborator') }}</option>
+                  <option v-for="m in addable" :key="m.member_handle" :value="m.member_handle">
+                    {{ nameOf(m.member_handle) }}
+                  </option>
+                </select>
+                <button v-if="adding" type="button" class="task-details__retry" @click="addCollaborator">
+                  {{ t('work.task.addCollaborator') }}
+                </button>
+              </span>
+            </dd>
+          </div>
+          <div class="task-details__row" data-testid="task-agent">
+            <dt>{{ t('work.task.agent') }}</dt>
+            <dd class="task-details__pair">
+              <span>{{ taskAgentName }}</span>
+              <span v-if="!task.agent_handle" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
+              <v-menu v-if="canPickAgent" v-model="agentOpen" location="bottom end" :close-on-content-click="false">
+                <template #activator="{ props: menuProps }">
+                  <button
+                    type="button"
+                    class="task-details__edit"
+                    v-bind="menuProps"
+                    :title="t('work.task.agentEdit')"
+                    data-testid="task-agent-edit"
+                  >
+                    {{ t('work.task.agentEdit') }}
+                  </button>
+                </template>
+                <v-card class="task-agent-menu" data-testid="task-agent-menu">
+                  <div class="task-agent-menu__heading">{{ t('work.task.agentHeading') }}</div>
+                  <p class="task-agent-menu__hint">{{ t('work.task.agentHint') }}</p>
+                  <button
+                    v-for="option in agentOptions"
+                    :key="option.handle ?? 'room'"
+                    type="button"
+                    class="task-agent-menu__row"
+                    :disabled="swappingAgent"
+                    @click="pickAgent(option.handle)"
+                  >
+                    <v-icon size="18">{{
+                      (task.agent_handle ?? null) === option.handle ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'
+                    }}</v-icon>
+                    <span>{{ option.name }}</span>
+                  </button>
+                </v-card>
+              </v-menu>
+            </dd>
+          </div>
+          <div class="task-details__row" data-testid="task-machine">
+            <dt>{{ t('work.task.machine') }}</dt>
+            <dd v-if="machine" class="task-details__envs">
+              <div
+                v-for="session in machine.sessions"
+                :key="session.session_id"
+                class="task-details__pair"
+                :data-testid="`session-env-${session.session_id}`"
+              >
+                <span>{{
+                  t('compute.env.sessionLine', {
+                    name: sessionName(session),
+                    env: session.environment
+                      ? environmentName(session.environment, machine.devices, machine.specs)
+                      : t('compute.env.notStarted'),
+                  })
+                }}</span>
+                <EnvironmentMenu
+                  v-if="isOwner && isOpen"
+                  :heading="t('compute.env.sessionHeading', { name: sessionName(session) })"
+                  :hint="t('compute.env.sessionHint')"
+                  :current="session.environment ?? machine.default"
+                  :devices="machine.devices"
+                  :specs="machine.specs"
+                  :save="saveSession(session)"
+                  @changed="loadMachine"
+                />
+              </div>
+              <div class="task-details__pair" data-testid="task-env-default">
+                <span>{{
+                  t('compute.env.defaultHere', {
+                    name: environmentName(
+                      machine.default ?? { kind: 'sandbox', spec: 'standard' },
+                      machine.devices,
+                      machine.specs
+                    ),
+                  })
+                }}</span>
+                <span v-if="machine.default_from === 'room'" class="task-details__tag">{{
+                  t('work.task.followsRoom')
+                }}</span>
+                <EnvironmentMenu
+                  v-if="isOwner && isOpen"
+                  :heading="t('compute.env.defaultHeading')"
+                  :hint="t('compute.env.defaultHint')"
+                  :current="machine.default"
+                  :devices="machine.devices"
+                  :specs="machine.specs"
+                  :save="saveDefault"
+                  @changed="loadMachine"
+                />
+              </div>
+            </dd>
+            <dd v-else-if="machineError">
+              {{ t('compute.env.loadFailed') }}
+              <button type="button" class="task-details__retry" @click="loadMachine">
+                {{ t('global.loadError.retry') }}
+              </button>
+            </dd>
+            <dd v-else><v-progress-circular indeterminate size="14" width="2" /></dd>
+          </div>
+        </dl>
+      </v-card>
+    </v-menu>
+
+    <BaseButton
+      v-if="task && isOwner && isOpen && !task.started_at"
+      v-guide-anchor="'task-start'"
+      kind="primary"
+      size="sm"
+      :loading="starting"
+      data-testid="task-start"
+      @click="start()"
+      >{{ t('work.task.start') }}</BaseButton
+    >
+    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
+    <v-menu v-if="task && takesPart" location="bottom end">
+      <template #activator="{ props: menuProps }">
+        <BaseButton
+          v-bind="menuProps"
+          icon="mdi-dots-horizontal"
+          size="sm"
+          class="tap-target"
+          :title="t('work.task.more')"
+          :aria-label="t('work.task.more')"
+          data-testid="task-more"
+        />
+      </template>
+      <v-list density="compact" role="menu" :aria-label="t('work.task.more')">
+        <v-list-item
+          role="menuitem"
+          :title="t('work.task.rename')"
+          data-testid="task-rename"
+          @click="renameOpen = true"
+        />
+        <template v-if="isOwner && isOpen">
+          <v-list-item
+            v-if="otherPeople.length"
+            role="menuitem"
+            :title="t('work.task.handOver')"
+            @click="handOverOpen = true"
+          />
+          <v-list-item role="menuitem" :title="t('work.task.close')" @click="closeOpen = true" />
+        </template>
+        <v-list-item
+          v-else-if="isOwner"
+          role="menuitem"
+          :title="t('work.task.reopen')"
+          data-testid="task-reopen"
+          @click="reopen()"
+        />
+      </v-list>
+    </v-menu>
+  </div>
 
   <p v-if="actionError" class="task-notice t-meta" role="alert">{{ actionError }}</p>
   <p v-if="startError" class="task-notice t-meta" role="alert">{{ startError }}</p>

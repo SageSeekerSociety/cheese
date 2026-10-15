@@ -14,10 +14,11 @@ import type { MenuAction } from './common/menuAction'
 import type { VirtualListHandle } from './common/VirtualList.vue'
 import type { MoreTasks, RailTask } from './topic-sidebar/moreTasks'
 
-import { computed, ref, watch } from 'vue'
+import { computed, ref, unref, watch } from 'vue'
 
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useLongPress } from '@/composables/useLongPress'
+import { useScreenHeader } from '@/composables/useScreenHeader'
 import { useTopicRail } from '@/composables/useTopicRail'
 import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 
@@ -426,6 +427,34 @@ const noOtherChannels = computed(
 // 这一行在任何一种文档打开时都是选中态。
 const onDocs = computed(() => !!props.activeDocs)
 
+// 项目名那一行：标识、搜索、项目菜单。手机上整页形态的频道列表把它交给顶栏。
+const railHeaderInBar = computed(() => props.page === true && props.column !== true)
+const railHeaderBinding = computed(() => ({
+  page: props.page === true,
+  column: props.column === true,
+  projectName: currentProjectName.value,
+  team: owningTeam.value,
+  privateUnreadTotal: unref(privateUnreadTotal),
+  searchTitle: searchTitle.value,
+  menuOpen: projectSheetOpen.value,
+  menuPages: menuPages.value,
+  docsActive: onDocs.value,
+  routeName: unref(routeName),
+  terms: terms.value,
+  projectSelected: !!props.selectedProjectId,
+  canTransfer: canTransfer.value,
+  canLeave: canLeave.value,
+  'onOpen-page': openProjectPage,
+  'onOpen-palette': () => openPalette(),
+  'onOpen-sheet': () => (projectSheetOpen.value = true),
+  'onSelect-docs': () => emit('select-docs', 'charter'),
+  'onOpen-transfer': () => (transferOpen.value = true),
+  'onOpen-leave': () => (leaveOpen.value = true),
+}))
+useScreenHeader(() =>
+  railHeaderInBar.value ? { content: { component: TopicRailHeader, props: railHeaderBinding.value } } : null
+)
+
 // ---- 交给虚拟列表的那两组要的两件小事 ----
 // 行的身份（和 v-for 的 key 同义）。写成具名函数而不是模板里的箭头：模板里那个箭头
 // 参数没有类型来源，strict 下会报隐式 any。
@@ -459,28 +488,8 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
          撤掉了：私聊的未读改挂在「成员」那一行上，而那一行在头下面的置顶组里，
          本来就不随话题列表滚。 -->
     <div class="d-flex flex-column fill-height">
-      <TopicRailHeader
-        :page="page === true"
-        :column="column === true"
-        :project-name="currentProjectName"
-        :team="owningTeam"
-        :private-unread-total="privateUnreadTotal"
-        :search-title="searchTitle"
-        :menu-open="projectSheetOpen"
-        :menu-pages="menuPages"
-        :docs-active="onDocs"
-        :route-name="routeName"
-        :terms="terms"
-        :project-selected="!!selectedProjectId"
-        :can-transfer="canTransfer"
-        :can-leave="canLeave"
-        @open-page="openProjectPage"
-        @open-palette="openPalette()"
-        @open-sheet="projectSheetOpen = true"
-        @select-docs="emit('select-docs', 'charter')"
-        @open-transfer="transferOpen = true"
-        @open-leave="leaveOpen = true"
-      />
+      <!-- 整页形态（手机的频道列表）下这一行是顶栏的内容，由这一屏声明；别处画在这里。 -->
+      <TopicRailHeader v-if="!railHeaderInBar" v-bind="railHeaderBinding" />
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />

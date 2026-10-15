@@ -202,13 +202,22 @@ const behindPointsHere = computed(() => {
  */
 const historyBack = computed(() => cameFrom.value && !behindPointsHere.value && !atHomeRoot.value)
 
+/**
+ * 手机底栏那三格的落点（首页、频道列表、待办）。它们是根：底栏就是在根之间切换的
+ * 地方，根上的 ← 不管退到哪，都是在用一颗箭头做底栏的事，还退到人没想去的那一格。
+ * 系统的标签页也是这样，根上没有返回。桌面没有底栏，不在这条里。
+ */
+const PHONE_ROOTS: ReadonlySet<string> = new Set(['HomeHub', 'workspace-project', 'inbox'])
+const atPhoneRoot = computed(() => !mdAndUp.value && PHONE_ROOTS.has(String(nav?.route?.name ?? '')))
+
 // 页面接管了这一下（topBarBack.ts）：手机上话题里的非对话页签，← 先回到对话。
 const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
 </script>
 
 <template>
+  <template v-if="atPhoneRoot" />
   <BaseButton
-    v-if="override"
+    v-else-if="override"
     icon="mdi-arrow-left"
     kind="ghost"
     size="lg"

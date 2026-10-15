@@ -16,6 +16,9 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { screenHeader } from '@/composables/useScreenHeader'
+
+import ScreenHeaderTitle from './common/Navigation/ScreenHeaderTitle.vue'
 import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale, t } from '@/i18n'
@@ -62,20 +65,24 @@ function makeRouter() {
   })
 }
 
+// Reads the declared header in its own render, after the sidebar beside it has set up.
+const BarTitle = defineComponent({
+  setup: () => () => h(ScreenHeaderTitle, { header: screenHeader.value, fallback: '' }),
+})
+
 const Host = defineComponent({
   props: { inner: { type: Object, required: true } },
   setup(props) {
-    return () => h(VLayout, null, { default: () => [h(Sidebar, props.inner as Record<string, unknown>)] })
+    // ScreenHeaderTitle stands in for the phone top bar: in page form the project row
+    // is the bar's content, declared by the sidebar (useScreenHeader).
+    return () =>
+      h(VLayout, null, {
+        default: () => [h(Sidebar, props.inner as Record<string, unknown>), h(BarTitle)],
+      })
   },
 })
 
 function mount(inner: Record<string, unknown> = {}) {
-  // 整页形态下项目头 Teleport 进顶栏那一格（真实环境里由 MobileAppBar 画）。
-  if (!document.getElementById('app-bar-slot')) {
-    const slot = document.createElement('div')
-    slot.id = 'app-bar-slot'
-    document.body.appendChild(slot)
-  }
   const vuetify = createVuetify({ components, directives })
   const router = makeRouter()
   const utils = render(Host, {

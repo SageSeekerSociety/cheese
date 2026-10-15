@@ -19,6 +19,8 @@
  */
 import type { Component } from 'vue'
 
+import { defineComponent, h, markRaw } from 'vue'
+
 import { avatarColor } from '@/utils/avatar'
 
 import { ACCEPT_ENTRIES } from './catalogAccept'
@@ -96,6 +98,7 @@ import LegalLinks from '@/components/account/LegalLinks.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
 import BottomAppBar from '@/components/common/Navigation/BottomAppBar.vue'
+import ScreenHeaderTitle from '@/components/common/Navigation/ScreenHeaderTitle.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import FeedbackCard from '@/components/feedback/FeedbackCard.vue'
@@ -538,6 +541,39 @@ export const CATALOG: CatalogEntry[] = [
           ],
         },
         expect: '新建项目',
+      },
+    ],
+  },
+  {
+    id: 'screen-header-title',
+    title: 'ScreenHeaderTitle',
+    about: '手机顶栏中间那一格：这一屏声明的头部，没声明就写路由的标题。',
+    file: 'src/components/common/Navigation/ScreenHeaderTitle.vue',
+    component: ScreenHeaderTitle,
+    needs: ['vuetify'],
+    states: [
+      {
+        name: '没声明',
+        note: '这一屏什么也没说（待办、资料库这类）：写路由上的标题。',
+        props: { header: null, fallback: '资料库' },
+        expect: '资料库',
+      },
+      {
+        name: '标题和一行小字',
+        note: '手机上的支线页：标题写「支线」，底下那行是它在哪个频道、最后一条回复。',
+        props: { header: { title: '支线', subtitle: '#综合 · 林夏：图表改好了' }, fallback: '综合' },
+        expect: '#综合',
+      },
+      {
+        name: '整行换成这一屏自己的',
+        note: '频道页、任务页、频道列表：这一屏把它自己的标题行连同参数交给顶栏画（这里用一行字代替）。',
+        props: {
+          header: {
+            content: { component: markRaw(defineComponent({ setup: () => () => h('span', '频道自己的标题行') })) },
+          },
+          fallback: '项目工作台',
+        },
+        expect: '频道自己的标题行',
       },
     ],
   },

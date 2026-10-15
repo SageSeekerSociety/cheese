@@ -16,6 +16,7 @@ import { useChannelThreads } from '@/composables/useChannelThreads'
 import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useRoomTabHistory } from '@/composables/useRoomTabHistory'
+import { useScreenHeader } from '@/composables/useScreenHeader'
 import { useTopicPanel } from '@/composables/useTopicPanel'
 
 import { getTask } from '@/api/tasks'
@@ -260,12 +261,6 @@ const {
   loadError: taskLoadError,
   isOwner: taskOwner,
   isOpen: taskOpen,
-  people: taskPeople,
-  machine: taskMachine,
-  machineError: taskMachineError,
-  starting: taskStarting,
-  startError: taskStartError,
-  actionError: taskActionError,
   comparing: taskComparing,
   comparison: taskComparison,
   compareError: taskCompareError,
@@ -294,9 +289,11 @@ const askClosed = computed(() =>
 // 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
 const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
 watch(
-  () => [selectedTopic.value, taskPage.task.value] as const,
-  ([topic, task]) => {
-    if (props.threadId) setDynamicTitle(t('work.room.thread.title'), 'workspace-thread')
+  () => [selectedTopic.value, taskPage.task.value, props.threadId] as const,
+  ([topic, task, threadId]) => {
+    // 频道和它的支线是同一个组件：从频道进支线时它不重挂，所以支线这一条要跟着地址走。
+    if (threadId) setDynamicTitle(t('work.room.thread.title'), 'workspace-thread')
+    else clearDynamicTitle('workspace-thread')
     if (props.taskId && task) setDynamicTitle(taskTitle(task), 'workspace-topic')
     else if (topic) setDynamicTitle(topicTitle(topic), 'workspace-topic')
     else clearDynamicTitle('workspace-topic')
@@ -305,6 +302,44 @@ watch(
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
 onUnmounted(() => clearDynamicTitle('workspace-thread'))
+
+// 话题头部（任务页上是任务那一条），横跨对话和工作面板：桌面画在页面里，手机是顶栏那一行。
+const taskHeaderBinding = computed(() => {
+  const room = selectedTopic.value
+  if (!room) return null
+  return {
+    ...taskPage.headerProps.value,
+    room,
+    memberNames: memberNames.value,
+    agentName: store.agentName,
+    agents: roomAgents.value,
+    connected: roomConnected.value,
+    panelOpen: panelOpen.value,
+    'onOpen-room': backToRoom,
+    'onToggle-panel': togglePanel,
+  }
+})
+const topicHeaderBinding = computed(() => {
+  const topic = selectedTopic.value
+  if (!topic) return null
+  return {
+    topic,
+    members: store.members,
+    me: AUTHOR,
+    connected: roomConnected.value,
+    panelOpen: panelOpen.value,
+    'onToggle-panel': togglePanel,
+    'onOpen-topic': openTopic,
+    onRename: (title: string) => store.renameTopic(props.topicId, title),
+  }
+})
+useScreenHeader(() => {
+  if (mdAndUp.value || props.threadId) return null
+  const [component, binding] = props.taskId
+    ? [TaskHeader, taskHeaderBinding.value]
+    : [TopicHeader, topicHeaderBinding.value]
+  return binding ? { content: { component, props: binding } } : null
+})
 /** 支线清单里最后一条回复的时间：今天的写钟点，更早的写日期。 */
 function threadTime(iso: string): string {
   return dayStamp(new Date(iso).getTime())
@@ -615,47 +650,13 @@ void openPlace()
       </h1>
       <!-- 一条话题头部，横跨对话和工作面板。任务页上是任务的那一条：同一个高度，
            写着它在哪个房间、谁负责。 -->
-      <TaskHeader
-        v-if="taskId"
-        :room="selectedTopic"
-        :task="currentTask"
-        :member-names="memberNames"
-        :agent-name="store.agentName"
-        :people="taskPeople"
-        :agents="roomAgents"
-        :machine="taskMachine"
-        :machine-error="taskMachineError"
-        :starting="taskStarting"
-        :start-error="taskStartError"
-        :action-error="taskActionError"
-        :connected="roomConnected"
-        :start="taskPage.start"
-        :close="taskPage.close"
-        :reopen="taskPage.reopen"
-        :hand-over="taskPage.handOver"
-        :rename="taskPage.rename"
-        :set-collaborators="taskPage.setCollaborators"
-        :set-agent="taskPage.setAgent"
-        :load-machine="taskPage.loadMachine"
-        :set-machine="taskPage.setMachine"
-        :set-machine-default="taskPage.setMachineDefault"
-        :panel-open="panelOpen"
-        @open-room="backToRoom"
-        @toggle-panel="togglePanel"
-      />
-      <!-- Not on a phone's thread page: there the thread is a page of its own, the
-           top bar reads 支线 and ThreadPane draws which channel it is in. -->
-      <TopicHeader
-        v-else-if="!(threadId && !mdAndUp)"
-        :topic="selectedTopic"
-        :members="store.members"
-        :me="AUTHOR"
-        :connected="roomConnected"
-        :panel-open="panelOpen"
-        @toggle-panel="togglePanel"
-        @open-topic="openTopic"
-        @rename="(title) => store.renameTopic(topicId, title)"
-      />
+      <!-- 手机上这一行是顶栏的内容（script 里的 useScreenHeader；支线页见 ThreadPane）。 -->
+      <template v-if="mdAndUp">
+        <template v-if="taskId">
+          <TaskHeader v-if="taskHeaderBinding" v-bind="taskHeaderBinding" />
+        </template>
+        <TopicHeader v-else-if="topicHeaderBinding" v-bind="topicHeaderBinding" />
+      </template>
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
          什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
