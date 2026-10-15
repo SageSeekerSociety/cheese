@@ -23,12 +23,27 @@ from litellm.integrations.custom_logger import CustomLogger
 FLAG = "cheese_no_explicit_cache"
 
 
-def without_cache_control(value):
-    if isinstance(value, dict):
-        return {k: without_cache_control(v) for k, v in value.items() if k != "cache_control"}
-    if isinstance(value, list):
-        return [without_cache_control(v) for v in value]
-    return value
+def _unmarked(item):
+    if isinstance(item, dict) and "cache_control" in item:
+        return {k: v for k, v in item.items() if k != "cache_control"}
+    return item
+
+
+def _block(block):
+    """A content block, and the blocks a tool result nests, without marks.
+    Nothing deeper: a tool's arguments and schemas are the caller's data, and
+    a property may well be called cache_control."""
+    block = _unmarked(block)
+    if isinstance(block, dict) and isinstance(block.get("content"), list):
+        block = {**block, "content": [_unmarked(b) for b in block["content"]]}
+    return block
+
+
+def _message(message):
+    message = _unmarked(message)
+    if isinstance(message, dict) and isinstance(message.get("content"), list):
+        message = {**message, "content": [_block(b) for b in message["content"]]}
+    return message
 
 
 class NoExplicitCache(CustomLogger):
@@ -36,9 +51,14 @@ class NoExplicitCache(CustomLogger):
         info = kwargs.get("model_info")
         if not isinstance(info, dict) or info.get(FLAG) is not True:
             return None
-        for key in ("messages", "system", "tools"):
-            if key in kwargs:
-                kwargs[key] = without_cache_control(kwargs[key])
+        # Where the Messages and chat formats put the marks: on a message, a
+        # content block, a system block, a tool.
+        if isinstance(kwargs.get("messages"), list):
+            kwargs["messages"] = [_message(m) for m in kwargs["messages"]]
+        if isinstance(kwargs.get("system"), list):
+            kwargs["system"] = [_unmarked(b) for b in kwargs["system"]]
+        if isinstance(kwargs.get("tools"), list):
+            kwargs["tools"] = [_unmarked(t) for t in kwargs["tools"]]
         return kwargs
 
 

@@ -843,3 +843,37 @@ async def test_a_source_added_to_a_paused_model_stays_paused():
     ]
     picker = {m.id: m for m in await gw.catalogue().models()}
     assert picker["glm"].selectable is False
+
+
+@pytest.mark.anyio
+async def test_marking_a_model_as_needing_approval_marks_every_source():
+    """The catalogue reads the first row; every row must say the same."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _two_runtime_sources(gw, service)
+
+    await service.update(handle="admin", name="glm", payload=ModelUpdate(overseas=True))
+
+    infos = [r["model_info"] for r in gw.group("glm")]
+    assert [i.get("cheese_overseas") for i in infos] == [True, True]
+
+
+@pytest.mark.anyio
+async def test_a_new_source_needs_approval_like_its_model_but_has_no_cap_of_its_own():
+    """Approval is the model's; a spend cap and the cache-mark strip describe one
+    row's upstream and key, so a new source does not inherit them."""
+    config = json.loads(json.dumps(_KIMI_CONFIG))
+    config["model_info"].update(
+        cheese_overseas=True, cheese_spend_cap_usd=1000, cheese_no_explicit_cache=True
+    )
+    gw = _Gateway([config])
+    service = _service(gw)
+
+    await service.add_source(
+        handle="admin", name="kimi-k3", payload=SourceCreate(**_GO)
+    )
+
+    _, new_row = gw.group("kimi-k3")
+    assert new_row["model_info"]["cheese_overseas"] is True
+    assert "cheese_spend_cap_usd" not in new_row["model_info"]
+    assert "cheese_no_explicit_cache" not in new_row["model_info"]

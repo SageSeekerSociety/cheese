@@ -342,6 +342,23 @@ describe('plans and credits', () => {
     expect(await within(teams).findByText('credits.teams.overseas')).toBeTruthy()
   })
 
+  it('an approval the server rejects shows its reason and leaves the team unapproved', async () => {
+    setCreditTeamOverseas.mockRejectedValue(new Error('团队不存在'))
+    const page = mountPage()
+    await openTeam(page)
+    const body = within(document.body)
+    const toggle = body.getByRole('checkbox', { name: 'credits.panel.overseas' }) as HTMLInputElement
+
+    toggle.checked = true
+    await fireEvent.input(toggle)
+
+    await waitFor(() => expect(setCreditTeamOverseas).toHaveBeenCalledWith(7, true))
+    expect(await body.findByText('团队不存在')).toBeTruthy()
+    await waitFor(() =>
+      expect((body.getByRole('checkbox', { name: 'credits.panel.overseas' }) as HTMLInputElement).checked).toBe(false)
+    )
+  })
+
   it('searching asks the server for the first page of matching teams', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {

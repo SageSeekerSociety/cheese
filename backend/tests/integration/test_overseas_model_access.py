@@ -10,6 +10,7 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent import gateway_catalog
+from app.domain.agent.gateway import GatewayModel
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, put_on_plan
 
@@ -79,16 +80,51 @@ def test_a_team_nobody_approved_does_not_see_claude_even_on_an_unlimited_plan(cl
     assert "sonnet" not in choices and "fable" not in choices
     assert choices["deepseek-flash"]["allowed"] is True
 
+    # Refused as a model the team does not have, not as one a plan would give.
     r = client.put(
         f"/projects/{pid}/default-model", json={"model": "sonnet"}, headers=owner
     )
     assert r.status_code == 422, r.text
+    assert r.json()["error"]["i18n"]["key"] == "modelUnavailableNamed"
     r = client.put(
         f"/projects/{pid}/agents/{_teammate(client, pid, owner)}",
         json={"configuration": {"model": "sonnet"}},
         headers=owner,
     )
     assert r.status_code == 422, r.text
+    assert r.json()["error"]["i18n"]["key"] == "modelUnavailable"
+
+
+def test_a_gateway_model_marked_as_needing_approval_is_hidden_until_approved(
+    client, admin
+):
+    """Gemini and GPT come from the gateway, marked cheese_overseas there."""
+
+    class Gateway:
+        async def models(self):
+            return [
+                GatewayModel("deepseek-flash", "DeepSeek", True, True),
+                GatewayModel("gem-test", "Gem Test", True, True, overseas=True),
+            ]
+
+    client.portal.call(gateway_catalog.refresh, Gateway())
+    owner = _auth(client, "oa-gw")
+    project = _project_on_reserve(client, owner, "oagw")
+    pid = project["id"]
+
+    choices = _choices(client, pid, owner)
+    assert "gem-test" not in choices and "deepseek-flash" in choices
+    r = client.put(
+        f"/projects/{pid}/default-model", json={"model": "gem-test"}, headers=owner
+    )
+    assert r.status_code == 422, r.text
+
+    assert _approve(client, admin, project["team_id"], True).status_code == 200
+    assert _choices(client, pid, owner)["gem-test"]["allowed"] is True
+    r = client.put(
+        f"/projects/{pid}/default-model", json={"model": "gem-test"}, headers=owner
+    )
+    assert r.status_code == 200, r.text
 
 
 def test_an_administrator_approves_a_team_and_withdraws_it_on_the_record(client, admin):

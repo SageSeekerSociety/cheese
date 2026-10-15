@@ -13,6 +13,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, NotFoundError
@@ -292,8 +293,15 @@ class PlanService:
         row = await self._session.get(OverseasModelApproval, team_id)
         before = {"approved": row is not None}
         if approved and row is None:
-            self._session.add(
-                OverseasModelApproval(team_id=team_id, approved_by=handle)
+            # Two administrators approving at once: the second is a no-op,
+            # not a primary-key 500.
+            now = datetime.now(UTC)
+            await self._session.execute(
+                pg_insert(OverseasModelApproval)
+                .values(
+                    team_id=team_id, approved_by=handle, created_at=now, updated_at=now
+                )
+                .on_conflict_do_nothing(index_elements=["team_id"])
             )
         elif not approved and row is not None:
             await self._session.delete(row)

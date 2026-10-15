@@ -63,7 +63,13 @@ EXTRA_HEADERS = "extra_headers"
 UPSTREAM_HEADERS = "cheese_upstream_headers"
 SESSION_HEADER = "cheese_session_header"
 FREE = "cheese_free"
-_SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE})
+# A row's own: they describe its upstream or its key (config.yaml's
+# no_explicit_cache.py / spend_cap.py notes), not the model.
+NO_EXPLICIT_CACHE = "cheese_no_explicit_cache"
+SPEND_CAP = "cheese_spend_cap_usd"
+_SOURCE_INFO_KEYS = frozenset(
+    {UPSTREAM_HEADERS, SESSION_HEADER, FREE, NO_EXPLICIT_CACHE, SPEND_CAP}
+)
 
 
 def catalogue_info(info: Mapping[str, object]) -> dict[str, object]:

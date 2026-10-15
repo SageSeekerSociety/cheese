@@ -98,9 +98,22 @@ async def main():
     assert refused is not None and "spend cap" in str(refused), refused
     assert CALLS == [], CALLS
 
-    # The next read of the ledger decides again.
+    # A call just before a read still counts after it, since the ledger may
+    # not hold it yet. Read $3 at t=61; calls at 61 and 116 ($4 each); the
+    # read at 121 still says $3, but the 116 call is within the flush lag:
+    # $3 + $4 = $7 lets one more call through, and the next ($11) is refused.
+    LEDGER["gemini/gemini-4-argon"] = 3.0
+    for t in (61, 116, 121):
+        clock[0] = t
+        assert await call(router, "capped") is None and CALLS, t
+        await asyncio.sleep(0.2)
+    clock[0] = 122
+    refused = await call(router, "capped")
+    assert refused is not None and CALLS == [], refused
+
+    # Once those calls are older than the flush lag, the ledger alone decides.
     LEDGER["gemini/gemini-4-argon"] = 2.0
-    clock[0] += 61
+    clock[0] = 200
     assert await call(router, "capped") is None and CALLS
 
     LEDGER["gemini/gemini-4-argon"] = 10_000.0

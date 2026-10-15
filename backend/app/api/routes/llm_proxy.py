@@ -344,7 +344,7 @@ async def admission(
                 )
                 or ((project.settings or {}).get("default_model") if project else None),
             )
-        if is_subagent and requested and project:
+        if is_subagent and project:
             choice = choices[bound.model]
             place = claims.get("t")
             try:

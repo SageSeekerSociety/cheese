@@ -179,7 +179,10 @@ function historyLine(entry: CreditAudit): string {
               :dismiss-aria="t('credits.panel.close')"
               @dismiss="emit('dismiss-plan-error')"
             />
+            <!-- Remounted when a save starts and ends, so after a refused save it
+                 reads the server's answer again, not the click it was given. -->
             <v-switch
+              :key="String(overseasSaving)"
               :model-value="team.overseas_approved"
               :label="t('credits.panel.overseas')"
               :disabled="overseasSaving"

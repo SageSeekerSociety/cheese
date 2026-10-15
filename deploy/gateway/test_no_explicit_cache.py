@@ -1,6 +1,6 @@
 """A deployment marked cheese_no_explicit_cache never asks Gemini for a
-cachedContents object, however Claude Code marks its prompt; an unmarked one
-still does.
+cachedContents object, however Claude Code marks its prompt, and a tool's own
+data named cache_control reaches Gemini untouched; an unmarked one still asks.
 
 Two rows of the same Gemini model against a local upstream, called through the
 router the way the proxy calls a Messages request, with a prompt above
@@ -26,8 +26,10 @@ class Upstream(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("content-length") or 0))
+        body = self.rfile.read(int(self.headers.get("content-length") or 0))
         SEEN.append(self.path)
+        if "generateContent" in self.path:
+            BODIES.append(json.loads(body))
         if "cachedContents" in self.path:
             return self.reply({"name": "cachedContents/abc", "model": "models/gemini-4-argon"})
         return self.reply(
@@ -55,18 +57,49 @@ class Upstream(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+BODIES: list[dict] = []
+
+# A tool whose own data says cache_control: the strip must leave it alone.
+TOOL = {
+    "name": "set_header",
+    "description": "Set a header.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"cache_control": {"type": "string"}},
+        "required": ["cache_control"],
+    },
+    "cache_control": {"type": "ephemeral"},
+}
+
+
 async def call(router, model):
     SEEN.clear()
+    BODIES.clear()
     long_text = "The quick brown fox jumps over the lazy dog. " * 400
     await router.aanthropic_messages(
         model=model,
         max_tokens=8,
         system=[{"type": "text", "text": long_text, "cache_control": {"type": "ephemeral"}}],
+        tools=[TOOL],
         messages=[
+            {"role": "user", "content": "set it"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "set_header", "input": {"cache_control": "no-store"}}
+                ],
+            },
             {
                 "role": "user",
-                "content": [{"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}],
-            }
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": [{"type": "text", "text": "done", "cache_control": {"type": "ephemeral"}}],
+                    },
+                    {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}},
+                ],
+            },
         ],
     )
     return list(SEEN)
@@ -93,6 +126,10 @@ async def main():
     )
     marked = await call(router, "marked")
     assert marked and not any("cachedContents" in p for p in marked), marked
+    sent = json.dumps(BODIES[-1])
+    # The tool's schema and its earlier call keep their own cache_control.
+    assert sent.count("cache_control") >= 3, sent
+    assert "no-store" in sent, sent
     unmarked = await call(router, "unmarked")
     assert any("cachedContents" in p for p in unmarked), unmarked
     server.shutdown()
