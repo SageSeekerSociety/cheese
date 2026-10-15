@@ -10,7 +10,8 @@
 | `sql-census.txt` | 单请求串行读一遍，每接口的 DB 时间、SQL 条数、语句排行 | `sql_census.py` |
 | `sql-rowcounts.txt` | 同上那一遍里每条语句取回几行（`cursor.rowcount`） | `sql_census.py` 的 rowcount 模式 |
 | `profile-burst.txt` | 20 并发下循环 CPU 的去向，`cProfile` + `pstats` | `profile_burst.py`，`PERF_ONLY="channel detail,project task list"` |
-| `explain-channel-detail.txt` | 频道详情那条 OR 语句的六个执行计划（A、B、C、D1–D3、E） | `explain_channel_detail.py` |
+| `explain-channel-detail.txt` | 频道详情那条 OR 语句七个执行计划（A、B、C、D1–D3、E） | `explain_channel_detail.py` |
+| `explain-channel-detail-rerun.txt` | 同一脚本再跑一遍，用来看毫秒数的抖动 | 同上 |
 
 ## 读的时候要知道的两处口径
 

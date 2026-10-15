@@ -106,10 +106,10 @@ C 只读本频道自己的块：Index Only Scan on ix_blocks_conversation_kind_s
 **差约 1000 倍，代价是多一次索引查询**（`threads.room_id` 上有索引，
 `EXPLAIN` 里那次 Bitmap Heap Scan 是 0.018 ms）。
 
-这几个毫秒数每次跑会动几个百分点（复核时重跑一遍：A 120.6、B 0.116、
-D 117–119、E 0.133 ms），要认的是**计划的形状**——A 和 D1–D3 都是
-`Seq Scan on blocks` 加 `Rows Removed by Filter: 479832`，B、C、E 都是索引扫——
-不是末位那一两个百分点。
+这几个毫秒数每次跑会动几个百分点（复跑一遍在
+`explain-channel-detail-rerun.txt`：A 120.6、B 0.116、D 117–119、E 0.133 ms），
+要认的是**计划的形状**——A 和 D1–D3 都是 `Seq Scan on blocks` 加
+`Rows Removed by Filter: 479832`，B、C、E 都是索引扫——不是末位那一两个百分点。
 
 这条种子库里 `threads` 表是空的，所以 E 那一格传进去的两个 id 是假的
 （`00000000-…-0001/0002`），用的是「有支线的房间」会走的计划；本房间里真实
@@ -186,7 +186,8 @@ uv run --project backend python .claude/scripts/explain_channel_detail.py
 
 原始输出都在本目录同名子目录下：`leg1-asgi.json`、`leg2-http.json`、
 `sql-census.txt`、`sql-rowcounts.txt`、`profile-burst.txt`（完整未剪，pstats
-表头那行总时间就是正文百分比的被除数）、`explain-channel-detail.txt`。
+表头那行总时间就是正文百分比的被除数）、`explain-channel-detail.txt`、
+`explain-channel-detail-rerun.txt`（同一脚本再跑一遍，用来看毫秒数的抖动）。
 逐份说明和两处读法上的口径在那个目录的 `README.md` 里。
 
 ## 这一轮踩过的坑（会影响别人复现）
