@@ -9,7 +9,10 @@ own machines, the shape ``local_dirs.py`` set for ``/connector/my/devices``:
 * ``POST /connector/my/devices/{device_id}/skills/scan`` — go read the machine
   now and record what it has. This is 刷新; it brings skills into the index and
   changes nobody's ``state`` beyond what a scan reads
-  (``machine_skill/service.py``), so scanning never adopts anything.
+  (``machine_skill/service.py``), so scanning never adopts anything. A machine
+  the person enrolled themselves (``self_hosted``) has its own agent homes
+  (``~/.claude`` and the like) left out of the read — those skills are the
+  person's own, not this platform's to index.
 * ``POST /connector/my/devices/{device_id}/skills/{name}/adopt`` — a person says
   a skill may be offered when a teammate's skills are picked, or takes that back
   (``{"adopted": false}``). The path names the action's home and the body says
@@ -58,6 +61,7 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain import skill_market
 from app.domain.agent.device_hub import DeviceCallError, device_hub
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine_skill import scan, spec
@@ -206,13 +210,33 @@ async def _require_project(
         await resolver.authorize_project(actor, project_id=project_id)
 
 
-async def _require_owned_device(db: AsyncSession, user_id: int, device_id: str) -> None:
+async def _require_owned_device(db: AsyncSession, user_id: int, device_id: str) -> Any:
     """Refuse unless the caller owns this machine — a stranger's is 「not yours」,
     reported as missing so the endpoint cannot enumerate other people's
-    machines (``local_dirs.py`` takes the same stand)."""
+    machines (``local_dirs.py`` takes the same stand). The device is returned so
+    a caller can read the ``supply`` it decides the scan's scope by."""
     device = await sql_device_service(db).get_hosted_device(device_id)
     if device is None or device.owner_user_id != user_id:
         raise NotFoundError(say("deviceNotYours"))
+    return device
+
+
+def _scan_argv(device: Any, project_id: uuid.UUID | None) -> list[str]:
+    """The scan program's argv: the project whose sessions to read, and whether
+    the machine's own agent homes stay out.
+
+    ``self_hosted`` is a machine the person enrolled themselves, so the
+    ``~/.claude`` skills they wrote for their own agents are theirs — the scan
+    reads none of the homes (``scan.py``), leaving only the roots the platform
+    manages. A ``cloud`` machine was provisioned by the platform and has no such
+    private homes to protect.
+    """
+    return [
+        "python3",
+        "-",
+        str(project_id) if project_id else "",
+        "1" if device.supply is Supply.self_hosted else "",
+    ]
 
 
 def _skill_view(row: Any) -> dict[str, Any]:
@@ -264,9 +288,9 @@ async def scan_machine_skills(
     none of the roots at all — rather than leaving an empty list unexplained.
     """
     actor, user_id = await _require_actor(resolver)
-    await _require_owned_device(db, user_id, device_id)
+    device = await _require_owned_device(db, user_id, device_id)
     await _require_project(resolver, actor, project_id)
-    return await _scan_now(db, device_id, project_id)
+    return await _scan_now(db, device_id, device, project_id)
 
 
 @router.post("/my/devices/{device_id}/skills/roots", **typed_response(SkillScanOut))
@@ -286,7 +310,7 @@ async def set_machine_skill_roots(
     than written to mean something else than it looked like.
     """
     actor, user_id = await _require_actor(resolver)
-    await _require_owned_device(db, user_id, device_id)
+    device = await _require_owned_device(db, user_id, device_id)
     await _require_project(resolver, actor, project_id)
     roots: list[str] = []
     for value in body.roots:
@@ -307,22 +331,23 @@ async def set_machine_skill_roots(
         raise DeviceCallError(
             str(written.get("stderr") or "writing skill roots failed")[-1500:]
         )
-    return await _scan_now(db, device_id, project_id)
+    return await _scan_now(db, device_id, device, project_id)
 
 
 async def _scan_now(
-    db: AsyncSession, device_id: str, project_id: uuid.UUID | None = None
+    db: AsyncSession, device_id: str, device: Any, project_id: uuid.UUID | None = None
 ) -> dict[str, Any]:
     """Read the machine and index what it has — the body ``scan``, ``roots`` and
     ``web`` all end with.
 
     ``project_id`` rides along as argv[1]: the machine is told which project's
     session homes to look in, because it cannot guess and must not list another
-    project's.
+    project's. argv[2] tells it whether to read its own agent homes at all —
+    ``_scan_argv`` decides that from the machine's ``supply``.
     """
     result = await device_hub.exec(
         device_id,
-        ["python3", "-", str(project_id) if project_id else ""],
+        _scan_argv(device, project_id),
         stdin=scan.program(),
         timeout=SCAN_TIMEOUT_S,
     )
@@ -369,7 +394,7 @@ async def fetch_machine_skill(
     twice per install. Ceiling: a slow confirmed install re-fetches.
     """
     actor, user_id = await _require_actor(resolver)
-    await _require_owned_device(db, user_id, device_id)
+    device = await _require_owned_device(db, user_id, device_id)
     await _require_project(resolver, actor, body.project_id)
     address = normalize_skill_url(body.url)
     reads = (
@@ -396,7 +421,7 @@ async def fetch_machine_skill(
             raise DeviceCallError(
                 str(written.get("stderr") or "landing the skill failed")[-1500:]
             )
-    landed = await _scan_now(db, device_id, body.project_id)
+    landed = await _scan_now(db, device_id, device, body.project_id)
     return {"landed": True, "plan": plan, **landed}
 
 

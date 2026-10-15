@@ -13,6 +13,7 @@ import pytest
 from app.api.routes import machine_skills
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.domain.agent.device_hub import DeviceCallError
+from app.domain.device.supply import Supply
 from app.domain.project_skill.importer import ReadSkill, normalize_skill_url
 
 PROJECT = uuid.UUID("9fe447b6-6143-4467-8ab4-e9c663cd4505")
@@ -45,16 +46,18 @@ class _Resolver:
 
 
 class _Device:
-    def __init__(self, owner: int = 7):
+    def __init__(self, owner: int = 7, supply: Supply = Supply.cloud):
         self.owner_user_id = owner
+        self.supply = supply
 
 
 class _Devices:
-    def __init__(self, owner: int = 7):
+    def __init__(self, owner: int = 7, supply: Supply = Supply.cloud):
         self._owner = owner
+        self._supply = supply
 
     async def get_hosted_device(self, device_id):
-        return _Device(self._owner)
+        return _Device(self._owner, self._supply)
 
 
 class _Service:
@@ -96,11 +99,20 @@ def _scanned() -> dict:
     return {"stdout": said + "\n", "stderr": "", "exit": 0, "truncated": False}
 
 
-def _wire(monkeypatch, *, replies, read, owner=7, existing=None, multi=None):
+def _wire(
+    monkeypatch,
+    *,
+    replies,
+    read,
+    owner=7,
+    supply=Supply.cloud,
+    existing=None,
+    multi=None,
+):
     hub = _Hub(replies)
 
     def _devices(db):
-        return _Devices(owner)
+        return _Devices(owner, supply)
 
     def _service(db):
         return _Service(db, existing=existing)
@@ -167,8 +179,9 @@ async def test_it_fetches_checks_lands_and_rescans(monkeypatch):
     assert "SKILL.md" in hub.calls[0]["stdin"]
     assert "Read PDFs." in hub.calls[0]["stdin"]
     assert "scripts/run.py" in hub.calls[0]["stdin"]
-    # 第二次 exec 是重扫，project_id 作为 argv[1] 搭上去。
-    assert hub.calls[1]["argv"] == ["python3", "-", str(PROJECT)]
+    # 第二次 exec 是重扫，project_id 作为 argv[1] 搭上去，argv[2] 说明这台机器
+    # 是不是用户自己的（cloud 空着 —— 它是在平台供的机器上跑）。
+    assert hub.calls[1]["argv"] == ["python3", "-", str(PROJECT), ""]
     assert result["landed"] is True
     assert result["skills"] == [] and result["problems"] == []
     # 落盘的清单：一颗技能，和跟着进去的文件名 —— 确认框就是拿这个画的。
@@ -179,6 +192,23 @@ async def test_it_fetches_checks_lands_and_rescans(monkeypatch):
             "files": ["SKILL.md", "scripts/run.py"],
         }
     ]
+
+
+async def test_a_self_hosted_machine_is_told_to_skip_its_own_homes(monkeypatch):
+    """用户自己 enroll 的机器：重扫命令多带一个 "1"，机器上 ~/.claude 那些个人
+    目录一概不读 —— 那台机器是人的，不是平台的。"""
+
+    async def read(url, *, keep_name=False):
+        return _reading()
+
+    hub = _wire(
+        monkeypatch,
+        replies=[_landed(), _scanned()],
+        read=read,
+        supply=Supply.self_hosted,
+    )
+    await _call()
+    assert hub.calls[1]["argv"] == ["python3", "-", str(PROJECT), "1"]
 
 
 async def test_a_skill_that_breaks_the_spec_is_refused_before_writing(monkeypatch):
@@ -285,7 +315,7 @@ async def test_a_plugin_lands_every_skill_it_bundles(monkeypatch):
     assert hub.calls[0]["argv"] == ["python3", "-"]
     assert "alpha" in hub.calls[0]["stdin"]
     assert "beta" in hub.calls[1]["stdin"]
-    assert hub.calls[2]["argv"] == ["python3", "-", str(PROJECT)]
+    assert hub.calls[2]["argv"] == ["python3", "-", str(PROJECT), ""]
     assert result["landed"] is True
     assert [item["name"] for item in result["plan"]] == ["alpha", "beta"]
 

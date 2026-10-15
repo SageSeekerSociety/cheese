@@ -28,9 +28,9 @@ def _skill(root: Path, name: str, *, description: str = "A skill.") -> Path:
     return folder
 
 
-def _run(home: Path, project: str | None = None) -> dict:
+def _run(home: Path, project: str | None = None, *, skip_homes: bool = False) -> dict:
     result = subprocess.run(
-        [sys.executable, "-", *([project] if project else [])],
+        [sys.executable, "-", project or "", "1" if skip_homes else ""],
         input=scan.program(),
         capture_output=True,
         text=True,
@@ -135,6 +135,38 @@ def test_what_trae_ships_is_found_under_its_capitalised_name(tmp_path):
     said = _run(tmp_path)
     assert [row["name"] for row in said["skills"]] == ["TRAE-code-review"]
     assert said["problems"] == []
+
+
+def test_a_self_hosted_machine_leaves_its_personal_homes_out(tmp_path):
+    # A machine the person enrolled themselves: the ~/.claude / ~/.trae skills
+    # they wrote for their own agents are theirs, so the scan does not read the
+    # homes at all — nothing of their private setup reaches the platform.
+    _skill(tmp_path / ".claude" / "skills", "mine")
+    _skill(tmp_path / ".trae-cn" / "builtin_skills", "TRAE-code-review")
+    said = _run(tmp_path, skip_homes=True)
+    assert said["skills"] == []
+    assert said["roots"] == []
+
+
+def test_a_self_hosted_machine_still_reads_what_the_platform_manages(tmp_path):
+    # Only the homes go. The workspaces a person listed, a session's project
+    # skills and what was landed from the internet stay readable.
+    _skill(tmp_path / ".cheese" / "web-skills", "fetched")
+    _skill(
+        tmp_path / ".cheese" / "home" / "proj-a" / "gen1" / ".claude" / "skills",
+        "from-my-session",
+    )
+    workspace = tmp_path / "repo"
+    _skill(workspace / ".trae" / "skills", "zhihu")
+    registry = tmp_path / ".cheese" / "skill-workspaces"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(f"{workspace}\n", encoding="utf-8")
+    said = _run(tmp_path, project="proj-a", skip_homes=True)
+    assert sorted(row["name"] for row in said["skills"]) == [
+        "fetched",
+        "from-my-session",
+        "zhihu",
+    ]
 
 
 def test_a_listed_workspace_is_scanned_and_the_list_is_lived_in(tmp_path):

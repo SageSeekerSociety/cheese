@@ -20,6 +20,15 @@ brought). Depth is 3 so ``~/.codex/skills/.system/<name>/SKILL.md`` is found. A
 directory holding a ``SKILL.md`` is one skill and is not descended into: a
 skill's own ``scripts/`` and ``references/`` are its business, not more skills.
 
+Those homes are read only on a machine the platform provisioned (``cloud``,
+argv[2] empty). On a machine the person enrolled themselves (``self_hosted``,
+argv[2] ``"1"``) they are left out entirely: the ``~/.claude`` skills someone
+wrote for their own agents are theirs, not this platform's to index, and
+listing them would put a person's private setup on a shared screen. What
+remains on such a machine is only what the platform manages — the workspaces
+the person listed, a session's project skills, and the skills landed from the
+internet.
+
 A skill can also be scoped to a workspace, and then it is nowhere else: no home
 holds a copy. A person lists those workspaces (``~/.cheese/skill-workspaces``,
 one absolute path per line) and each one's ``.trae/skills`` is scanned beside
@@ -97,6 +106,10 @@ SESSION_HOMES = "~/.cheese/home"
 #: it), read like any other root so a fetched skill behaves as a found one.
 WEB_SKILLS = "~/.cheese/web-skills"
 PROJECT = sys.argv[1] if len(sys.argv) > 1 else ""
+#: "1" when the machine is the person's own (``self_hosted``): then the agent
+#: homes above are not read at all. The ``~/.claude`` skills someone wrote for
+#: their own agents are theirs, not this platform's to index.
+SKIP_HOMES = len(sys.argv) > 2 and sys.argv[2] == "1"
 MAX_DEPTH = 3
 NAME_RE = re.compile(r"^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$")
 
@@ -130,10 +143,11 @@ def roots():
             seen.add(real)
             out.append(path)
 
-    for home in AGENT_HOMES:
-        for shape in SKILL_DIRS:
-            for path in sorted(glob.glob(os.path.expanduser(home + "/" + shape))):
-                add(path)
+    if not SKIP_HOMES:
+        for home in AGENT_HOMES:
+            for shape in SKILL_DIRS:
+                for path in sorted(glob.glob(os.path.expanduser(home + "/" + shape))):
+                    add(path)
     for workspace in listed():
         add(os.path.join(workspace, ".trae", "skills"))
     if PROJECT:
