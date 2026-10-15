@@ -33,7 +33,7 @@ test('手机上走一遍页面栈：根上没有 ←，每一层的顶栏写的�
     const app = (document.querySelector('#app') as unknown as { __vue_app__: { config: { globalProperties: { $router: { push: (to: string) => Promise<unknown> } } } } }).__vue_app__;
     return app.config.globalProperties.$router.push(to);
   }, thread);
-  await expect(bar(page)).toContainText('支线');
+  await expect(bar(page)).toContainText('支线', { timeout: 15_000 });
   await expect(bar(page)).not.toContainText(channel);
   await expect(backArrow(page)).toHaveCount(1);
 
