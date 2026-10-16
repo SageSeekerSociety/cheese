@@ -19,6 +19,9 @@ from app.domain.oauth.services import (
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
 
+#: provider 的实现住在 `oauth/services/providers.py`，所以 patch 点也在这个子模块上。
+HTTPX_CLIENT = "app.domain.oauth.services.providers.httpx.AsyncClient"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -199,9 +202,7 @@ class TestGitHubProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("my-code")
 
         assert result == {"access_token": "tok123"}
@@ -233,9 +234,7 @@ class TestGitHubProviderRefreshAccessToken:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.refresh_access_token("old-refresh")
 
         assert result["access_token"] == "new-tok"
@@ -287,7 +286,7 @@ async def _github_info(profile_email, emails_status, emails) -> OAuthUserInfo:
             _GH_EMAILS: (emails_status, emails),
         }
     )
-    with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=client):
+    with patch(HTTPX_CLIENT, return_value=client):
         return await GitHubProvider(_github_config()).get_user_info("token123")
 
 
@@ -361,9 +360,7 @@ class TestGoogleProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("goog-code")
 
         assert result == {"access_token": "goog-tok"}
@@ -381,7 +378,7 @@ async def _google_info(profile: dict) -> OAuthUserInfo:
     client = _routed_client(
         {"https://www.googleapis.com/oauth2/v2/userinfo": (200, profile)}
     )
-    with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=client):
+    with patch(HTTPX_CLIENT, return_value=client):
         return await GoogleProvider(_google_config()).get_user_info("goog-token")
 
 
@@ -460,9 +457,7 @@ class TestRUCProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("ruc-code")
 
         assert result == {"access_token": "ruc-tok"}
@@ -494,9 +489,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             info = await provider.get_user_info("ruc-token")
 
         # uid coerced to str; primary identity's stno used as username
@@ -519,9 +512,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             info = await provider.get_user_info("ruc-token")
 
         assert info.id == "u-9"
@@ -542,9 +533,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(
-                "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-            ),
+            patch(HTTPX_CLIENT, return_value=mock_client),
             pytest.raises(BadRequestError),
         ):
             await provider.get_user_info("ruc-token")
@@ -1144,7 +1133,7 @@ class TestGetGithubUserToken:
             refresh_token=None,
         )
 
-        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services"):
+        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services.tokens"):
             assert await svc.get_github_user_token(42) is None
 
         assert "could not be" in caplog.text
