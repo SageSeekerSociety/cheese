@@ -42,6 +42,8 @@ function router() {
       { path: '/account/signin', name: 'SignIn', component: blank },
       { path: '/welcome', name: 'welcome', component: blank },
       { path: '/projects/:projectId', name: 'workspace-project', component: blank },
+      { path: '/projects/:projectId/tasks/:taskId', name: 'workspace-task', component: blank },
+      { path: '/projects/:projectId/channels/:topicId', name: 'workspace-topic', component: blank },
       { path: '/:pathMatch(.*)*', name: 'catch-all', component: blank },
     ],
   })
@@ -78,6 +80,72 @@ describe('首页那一层', () => {
     await r.push('/')
     expect(r.currentRoute.value.name).toBe('workspace-project')
     expect(r.currentRoute.value.params.projectId).toBe('p2')
+  })
+
+  // 手机把后台那一页从内存里收走之后，再打开不是回到原来那一页，而是从根地址重新落
+  // 一次：落到上次待的那件任务，而不是项目首页——「回到刚才那件事」不该多一跳。
+  it('登录后根地址落回上次待的那件任务', async () => {
+    localStorage.setItem(
+      'cheesex.layout',
+      JSON.stringify({
+        lastProjectId: 'p2',
+        lastPlaceByProject: { p2: { kind: 'task', id: '318', room: 't9' } },
+      })
+    )
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('workspace-task')
+    expect(r.currentRoute.value.params.projectId).toBe('p2')
+    expect(r.currentRoute.value.params.taskId).toBe('318')
+  })
+
+  // 待在频道里也一样：落回那个频道，不是项目首页。
+  it('登录后根地址落回上次待的那个频道', async () => {
+    localStorage.setItem(
+      'cheesex.layout',
+      JSON.stringify({
+        lastProjectId: 'p2',
+        lastPlaceByProject: { p2: { kind: 'channel', id: 't9', room: 't9' } },
+      })
+    )
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('workspace-topic')
+    expect(r.currentRoute.value.params.topicId).toBe('t9')
+  })
+
+  // 记的是别的项目里的地方：眼下要落的是这个人的第一个项目，那一份跟它没关系。
+  it('上次那个项目没记过地方时，照旧落在项目首页', async () => {
+    localStorage.setItem(
+      'cheesex.layout',
+      JSON.stringify({
+        lastProjectId: 'p2',
+        lastPlaceByProject: { p1: { kind: 'task', id: '318', room: 't9' } },
+      })
+    )
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('workspace-project')
+    expect(r.currentRoute.value.params.projectId).toBe('p2')
+  })
+
+  // 存的那一份可能是老版本写的、也可能被人手改过：三项不齐的当没记过，不去拼一个
+  // 打不开的地址。
+  it('记着的地方不成立时落到项目首页', async () => {
+    localStorage.setItem(
+      'cheesex.layout',
+      JSON.stringify({
+        lastProjectId: 'p2',
+        lastPlaceByProject: { p2: { kind: 'task', id: '318' } },
+      })
+    )
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('workspace-project')
   })
 
   // 上次那个项目这个人已经不在里面了（或者存的是上一个登录者的）：不把他送去 403。
@@ -166,5 +234,22 @@ describe('首页那一层', () => {
     const r = router()
     await r.push('/')
     expect(r.currentRoute.value.name).toBe('workspace-project')
+  })
+
+  // 落哪一处两端走的是同一份判断，桌面 app 不另立一条：`__TAURI__` 只决定没登录时去
+  // 登录页还是看推广页，和登录后落哪儿无关。
+  it('桌面 app 里登录后也落回上次待的地方', async () => {
+    ;(window as { __TAURI__?: unknown }).__TAURI__ = { core: { invoke: vi.fn() } }
+    localStorage.setItem(
+      'cheesex.layout',
+      JSON.stringify({
+        lastProjectId: 'p2',
+        lastPlaceByProject: { p2: { kind: 'task', id: '318', room: 't9' } },
+      })
+    )
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('workspace-task')
   })
 })
