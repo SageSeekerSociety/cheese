@@ -31,7 +31,6 @@ from app.domain.delivery.models import Delivery
 from app.domain.project import forge
 from app.domain.room_task.closing import CLOSES_TASK
 from tests.delivery import delivery_headers, delivery_task_id
-from tests.integration.conftest import session_auth_headers
 from tests.integration.test_accept_pr import (
     _accept,
     _give_card_a_pr,
@@ -295,56 +294,66 @@ def test_a_turn_the_platform_started_is_not_more_work(client, app_world, seat, w
 
 def _owner_asks(client, task: dict, *, taken: bool) -> None:
     """Its owner asks the teammate for more in the task. ``taken``: the
-    message has been taken on as a turn, which waits for the session; else
-    nothing has taken it yet, and it waits in the queue."""
-    if taken:
-        asked = client.post(
-            f"/topics/{task['id']}/messages",
-            json={"request_id": str(uuid.uuid4()), "content": "顺便把首页也测一下"},
-            headers=session_auth_headers("alice"),
-        )
-        assert asked.status_code == 200, asked.text
-        return
+    message has been taken on as a turn — the turn carries the message's own
+    id — and that turn is still going; else nothing has taken it yet, and it
+    waits in the queue.
 
-    async def queue():
+    Both go straight into the task. A message sent for real is taken on by the
+    scan behind it, which runs a turn of its own and finishes at a moment of
+    its choosing; with no runtime here that is a race between the write-up
+    ending and the message's turn ending, and the task closes when the second
+    wins. Written here it is going, and it stays going for the whole test.
+    """
+    topic = uuid.UUID(str(task["id"]))
+    asked = uuid.uuid4()
+    started = datetime.now(UTC)
+
+    async def write():
         async with client.test_factory() as session:
             session.add(
                 Block(
+                    id=asked,
                     project_id=uuid.UUID(task["project_id"]),
-                    conversation_id=uuid.UUID(task["id"]),
+                    conversation_id=topic,
                     author="alice",
                     author_type=AuthorType.participant,
                     kind=BlockKind.message,
                     content="顺便把首页也测一下",
                     meta={
-                        "consumed_turn": None,
+                        "consumed_turn": str(asked) if taken else None,
                         "agent_recipient": {"handle": TEAMMATE, "mentioned": True},
                     },
                 )
             )
+            if taken:
+                session.add(
+                    AgentTurn(
+                        id=asked,
+                        conversation_id=topic,
+                        continuation_id=asked,
+                        author="alice",
+                        agent_handle=TEAMMATE,
+                        content="",
+                        started_at=started,
+                        delivered_at=started,
+                    )
+                )
             await session.commit()
 
-    client.portal.call(queue)
+    client.portal.call(write)
 
 
 @pytest.mark.parametrize("taken", [True, False], ids=["turn-waiting", "queued"])
 def test_a_message_sent_while_the_task_is_written_up_is_not_dropped(
     client, app_world, taken
 ):
-    """Its owner asks for more while the write-up turn runs; the message waits
-    for that turn to end. The write-up ending must not close the task before
-    the message gets its turn: the task goes on instead."""
+    """Its owner asks for more while the last step is being written up; the
+    message waits for its turn either way. The write-up ending must not close
+    the task before the message gets its turn: the task goes on instead."""
     task_id, card, before = _last_step_up(client, app_world)
     r = _accept(client, card)
     assert r.status_code == 200, r.text
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
-
-    # The write-up turn holds the seat while the owner asks; the runtime is not
-    # here, so an interval of the teammate's that says nothing stands in for it.
-    # The seat is taken — the platform admits no turn into it, which is what
-    # makes the message wait — and a turn quiet past the closing rules' own
-    # limit is no work of theirs, so only the message can hold the task open.
-    _turn_starts(client, task_id, at=datetime.now(UTC) - timedelta(hours=36))
 
     _owner_asks(client, _task(client, task_id), taken=taken)
 

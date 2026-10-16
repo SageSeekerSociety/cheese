@@ -15,7 +15,7 @@ CI 上都只是「一个红的作业」。混在一张榜里，真故障会被�
     python3 .claude/scripts/merge_queue_flakes.py [--repo R] [--runs N] [--top K]
         [--conflict-min-tests M]
     python3 .claude/scripts/merge_queue_flakes.py --json-dir DIR ...   # 离线样本
-    python3 .claude/scripts/merge_queue_flakes.py --self-test          # 离线自测
+    python3 .claude/scripts/merge_queue_flakes.py --self-test     # 自测：内嵌样本 + 读盘
 
 取数走 `gh api`（凭据由平台注入，本脚本不读也不打印 token）：先按 `event=merge_group`
 分页拿运行列表，只要 `conclusion == failure` 的运行，再逐个拿作业，再逐个拿失败作业
@@ -41,12 +41,15 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter, defaultdict
+import contextlib
 from dataclasses import dataclass, field
+import io
 import json
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 
 # 运行的红：只有 conclusion == failure 才算这条 merge_group 运行失败。
 FAILED_RUN = frozenset({"failure"})
@@ -221,17 +224,35 @@ def render(report: dict) -> str:
 
 def _gh(args: list[str]) -> str:
     """跑一次 `gh`，把 stdout 原样返回。凭据在环境里，脚本不碰 token。"""
-    proc = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
+    # 按字节抓再替换着解：一份作业日志里有一个坏字节，不该让整张榜读不出来，
+    # 而文件那条路本来就是这么读的，两条路得一样能扛。
+    proc = subprocess.run(["gh", *args], capture_output=True, check=False)
     if proc.returncode != 0:
         raise RuntimeError(
             f"gh {' '.join(args)} failed ({proc.returncode}): "
-            f"{proc.stderr.strip()[:300]}"
+            f"{proc.stderr.decode('utf-8', errors='replace').strip()[:300]}"
         )
-    return proc.stdout
+    return proc.stdout.decode("utf-8", errors="replace")
 
 
 def _gh_json(endpoint: str) -> object:
     return json.loads(_gh(["api", endpoint]))
+
+
+def _unique(payloads: list[dict]) -> list[dict]:
+    """按 id 去重，保留第一次出现的那条（gh 最新的运行在前）。
+
+    分页之间新运行会挤动位置，同一条运行可能在两页里各出现一次。不去重就会把
+    一次运行算两遍：真运行少拿一条，签名的命中数翻倍而它的运行数不动。
+    """
+    seen: set[int] = set()
+    unique: list[dict] = []
+    for raw in payloads:
+        if raw["id"] in seen:
+            continue
+        seen.add(raw["id"])
+        unique.append(raw)
+    return unique
 
 
 def fetch_jobs(repo: str, run_id: int) -> list[dict]:
@@ -257,7 +278,7 @@ def fetch_online(repo: str, limit: int) -> list[Run]:
             break
 
     runs: list[Run] = []
-    for raw in payloads:
+    for raw in _unique(payloads):
         if len(runs) >= limit:
             break
         run_id = raw["id"]
@@ -281,15 +302,17 @@ def fetch_online(repo: str, limit: int) -> list[Run]:
 
 def load_offline(root: Path, limit: int) -> list[Run]:
     """从 `--json-dir` 读样本；布局见模块 docstring。取最近 limit 条运行。"""
+    paths = sorted(root.glob("runs*.json"))
+    if not paths:
+        # 目录写错、或样本还没抓下来，读出来同样是「一条都没失败」；那和队列
+        # 真干净分不出来，所以在这里就报错，不往下渲染一张空榜。
+        raise ValueError(f"no runs*.json under {root}")
     payloads: list[dict] = []
-    for path in sorted(root.glob("runs*.json")):
+    for path in paths:
         payloads.extend(json.loads(path.read_text())["workflow_runs"])
 
-    by_id: dict[int, dict] = {}
-    for raw in payloads:
-        by_id.setdefault(raw["id"], raw)
     ordered = sorted(
-        by_id.values(), key=lambda r: (r.get("created_at") or "", r["id"]), reverse=True
+        _unique(payloads), key=lambda r: (r.get("created_at") or "", r["id"]), reverse=True
     )
 
     runs: list[Run] = []
@@ -306,12 +329,80 @@ def load_offline(root: Path, limit: int) -> list[Run]:
     return runs
 
 
+def _self_test_offline() -> None:
+    """`--json-dir` 那条路也真跑一遍：把样本写进临时目录，再读回来。
+
+    造四样东西：翻页边界上重复出现的一条运行（不能算两遍）、一份带非 UTF-8
+    字节的日志（一个坏字节不该让整张榜读不出来）、一个空目录、一份文件在但
+    没有运行的样本（后两者都要报错，不能渲染成「队列很干净」）。
+    """
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+
+        def page(name: str, workflow_runs: list[dict]) -> None:
+            (root / name).write_text(json.dumps({"workflow_runs": workflow_runs}))
+
+        def raw_run(run_id: int, conclusion: str, created_at: str) -> dict:
+            return {"id": run_id, "conclusion": conclusion, "created_at": created_at}
+
+        # 第二页把第一页的最后一条又带了一次：gh 分页之间位置会被新运行挤动。
+        repeated = raw_run(3, "success", "2026-10-16T09:00:00Z")
+        page(
+            "runs-page1.json",
+            [
+                raw_run(1, "failure", "2026-10-15T05:00:00Z"),
+                raw_run(2, "failure", "2026-10-16T08:00:00Z"),
+                repeated,
+            ],
+        )
+        page("runs-page2.json", [repeated])
+
+        (root / "jobs").mkdir()
+        for run_id, job_id in ((1, 11), (2, 21)):
+            (root / "jobs" / f"{run_id}.json").write_text(
+                json.dumps({"jobs": [{"id": job_id, "conclusion": "failure"}]})
+            )
+        (root / "logs").mkdir()
+        # 一个坏字节混在同一行日志里：整行还有效，榜不该整张读不出来。
+        (root / "logs" / "job-11.log").write_bytes(
+            b"2026-10-15T05:48:30.3537274Z FAILED tests/b.py::test_flaky - "
+            b"AssertionError: x \xff\xfe\n"
+        )
+        (root / "logs" / "job-21.log").write_text(
+            "2026-10-16T08:12:41.1140393Z FAILED tests/b.py::test_flaky - "
+            "AssertionError: x\n"
+        )
+
+        runs = load_offline(root, limit=300)
+        # 3 条而不是 4 条：重复的那条被去掉了；最近的在最前。
+        assert [run.id for run in runs] == [3, 2, 1], [run.id for run in runs]
+        report = analyze(runs, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS)
+        assert report["runs_total"] == 3 and report["runs_failed"] == 2, report
+        top_test = report["tests"][0]
+        assert top_test["test"] == "tests/b.py::test_flaky" and top_test["runs"] == 2, (
+            top_test
+        )
+        # 分母是 3（含那条绿运行），不是 2 —— 和内存里那条路同一套算法。
+        assert abs(top_test["share"] - 2 / 3) < 1e-9, top_test
+
+        # 目录写错和目录里没有数据：都要退 2，并把原因说出来。
+        (root / "blank").mkdir()
+        page("blank/runs-page1.json", [])
+        for missing in (root / "empty", root / "nope", root / "blank"):
+            missing.mkdir(exist_ok=True)
+            said = io.StringIO()
+            with contextlib.redirect_stderr(said):
+                code = main(["--json-dir", str(missing)])
+            assert code == 2, (missing, code)
+            assert "merge_group runs" in said.getvalue(), (missing, said.getvalue())
+
+
 def self_test() -> int:
-    """离线核对整条链路：抽取 → 聚合 → 渲染，全用内嵌假样本，不读文件不走网络。
+    """离线核对整条链路：抽取 → 聚合 → 渲染，外加两个 loader 走一遍读盘。
 
     假样本刻意造出两类红：一个签名跨 5 条用例（组合出来的真故障，要标出来），
     一条用例在两个运行里各红一次（偶发，不标）。抽取那步再混进 `[gw2]` 前缀，
-    确认锚在 `FAILED` 上、不靠时间戳位置。
+    确认锚在 `FAILED` 上、不靠时间戳位置。只读自己写进临时目录的样本，不碰网络。
     """
     common = (
         "2026-10-15T05:48:30.3537274Z [gw2] FAILED tests/a.py::test_one - "
@@ -361,10 +452,13 @@ def self_test() -> int:
     text = render(report)
     assert "[疑似合并冲突]" in text, text
     assert "tests/b.py::test_flaky" in text, text
+
+    _self_test_offline()
+
     print(
         "self-test ok: "
         f"{report['runs_total']} runs, {report['runs_failed']} failed, "
-        f"flagged={report['flagged_signatures']}"
+        f"flagged={report['flagged_signatures']}; offline loader ok"
     )
     return 0
 
@@ -414,6 +508,13 @@ def main(argv: list[str]) -> int:
             runs = fetch_online(args.repo, args.runs)
     except (OSError, KeyError, ValueError, RuntimeError) as exc:
         print(f"could not gather merge_group runs: {exc}", file=sys.stderr)
+        return 2
+
+    if not runs:
+        # 一条运行也没读到（目录写错、样本是空的）。这和「队列真干净」读起来一样，
+        # 所以报错退出，不渲染一张「没什么可排的」的榜。
+        where = args.json_dir if args.json_dir is not None else args.repo
+        print(f"no merge_group runs to rank in {where}", file=sys.stderr)
         return 2
 
     print(render(analyze(runs, args.top, args.conflict_min_tests)))
