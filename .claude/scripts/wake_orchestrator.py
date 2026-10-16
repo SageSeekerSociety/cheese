@@ -29,7 +29,14 @@ The tag is one of the four labels 《总调度工作流 v2》§8 gives a line �
 `#任务 PR #号 head <8位>：CI 绿｜review <8位> 结论 …｜档位 A–G｜碰了：…`. A tag outside
 the four is passed through with a warning rather than refused: the labels are the
 workflow's convention, and a line that needs a fifth one should not be blocked by this
-script.
+script. `【递卡】` and `递卡` are the same tag, so a copied label is not a second label.
+
+Whatever the caller passes, the line goes out with one prefix, never two: a body that
+carries the whole line — `我是芝士。<@座位> 【递卡】…`, the shape a line is copied in —
+has that prefix stripped before the wake composes its own, however many layers of it
+were pasted. A `我是X。` that came in with the body stands in for `--as` when none was
+given, so a pasted line still says who is speaking. Composing is idempotent: feeding
+the composed message back in reproduces it, which is what `--self-test` asserts.
 
 A run that failed after posting is retried with `--request-id <uuid>`, the same id the
 first run used: the platform returns the message it already stored for that id instead of
@@ -50,6 +57,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -61,6 +69,26 @@ USER = os.environ.get("OKCHEESE_USER", "wangchangxin")
 TARGET = os.environ.get("OKCHEESE_DISPATCHER", "998a4d26-a7d7-4313-b3f5-b22304182d5d")
 #: 《总调度工作流 v2》§8: the four labels a line points at the dispatcher with.
 LABELS = ("递卡", "交付", "待决", "队列")
+#: Printed wherever the command line is wrong. One example, in the 递卡 format, because
+#: the tag alone does not show what a body looks like.
+USAGE = ("""usage: wake_orchestrator.py <标签> <正文> [--as <名字>] [--request-id <id>]"""
+         """  (or --seat / --self-test)
+  e.g. wake_orchestrator.py 递卡 "#1512 PR #3675 head 672653c5：CI 绿｜review 672653c5"""
+         """ 结论 无 blocker/major｜档位 B｜碰了：无"
+  the body may carry the whole line you copied — `我是芝士。<@座位> 【递卡】…` — and that
+  prefix is stripped, so what goes out has one layer of it, not two.""")
+
+#: The three pieces the wake puts in front of a body, in the shapes a pasted line has
+#: them. `我是X。` is the self-identification `--as` writes, and the name is capped and
+#: barred from punctuation so that a body opening with a sentence like
+#: `我是说，这样不行` is not mistaken for one.
+SELF_ID = re.compile(
+    r"^我是([^\s。，,、！!？?：:；;【】<>@]{1,20})(?:。|(?=\s*(?:<@|@\w|【|$)))")
+#: A mention, platform form first: `<@handle>` is what the compose writes and what the
+#: platform renders, and the bare `@handle` is the same thing typed by hand.
+MENTION = re.compile(r"^<@([^>\s]{1,60})>|^@([^\s，,。、！!？?：:；;【】<>@]{1,40})")
+#: A bracketed tag word, in the shape the compose writes it.
+TAG_WORD = re.compile(r"^【([^】\n]{1,24})】")
 #: How many of the topic's newest messages to read back. The dispatcher's topic is busy
 #: enough that another line's message can land between the post and the read; 20 leaves
 #: room for that without paging.
@@ -131,6 +159,60 @@ def confirmed(blocks, message_id):
     return any((b or {}).get("id") == message_id for b in blocks or [])
 
 
+def strip_prefix(text, tags):
+    """(name, tag, rest): the wake's own prefix taken off the head of `text`.
+
+    The pieces are consumed left to right and around again, so a line pasted with two
+    layers of prefix comes out with none. What counts as a mention is narrower than the
+    syntax allows: a mention belongs to the prefix when a `我是X。` opened the run or
+    when a tag the caller could mean follows it, so a body that opens by mentioning a
+    person (`@李老师 【重要】…`) is left whole. A `【…】` counts as the tag only when its
+    word is in `tags` — the four labels, plus whatever the caller wrote in the tag slot
+    — so a body that opens with a bracketed word of its own keeps it."""
+    name, tag, opened, rest = "", "", False, text
+    while True:
+        m = SELF_ID.match(rest)
+        if m:
+            name, opened, rest = name or m.group(1), True, rest[m.end():].lstrip()
+            continue
+        m = MENTION.match(rest)
+        if m:
+            after = rest[m.end():].lstrip()
+            word = TAG_WORD.match(after)
+            if not (opened or (word and word.group(1) in tags)):
+                break
+            rest = after
+            continue
+        m = TAG_WORD.match(rest)
+        if m and m.group(1) in tags:
+            tag, rest = tag or m.group(1), rest[m.end():].lstrip()
+            continue
+        break
+    return name, tag, rest
+
+
+def normalize(tag, body, as_name):
+    """(tag, body, as_name) with any wake prefix the caller pasted on the input taken off.
+
+    Idempotent in the sense that matters: the message composed from this, fed back in,
+    composes to itself, because the prefix the compose adds is exactly what
+    `strip_prefix` removes. A `我是X。` pasted in stands in for `--as` when none was
+    given, so a line copied whole still names whoever wrote it."""
+    tag = tag.strip().strip("【】").strip()
+    name, body_tag, rest = strip_prefix(body, set(LABELS) | {tag})
+    if body_tag and body_tag != tag:
+        print(f"note: the body says 【{body_tag}】 and the tag argument says {tag}; "
+              f"sending 【{tag}】", file=sys.stderr)
+    if tag not in LABELS:
+        # The tag slot got the line instead of the line's first word: take the label
+        # out of it and keep what followed as the head of the body.
+        t_name, t_tag, t_rest = strip_prefix(tag, set(LABELS))
+        if t_tag:
+            name, tag = name or t_name, t_tag
+            rest = f"{t_rest}\n{rest}" if t_rest and rest else (t_rest or rest)
+    return tag, rest, as_name or name
+
+
 def parse_args(argv):
     """(tag, body, as_name, request_id, flags). tag/body are None when the line is wrong."""
     flags, rest, as_name, request_id, i = set(), [], "", "", 0
@@ -173,10 +255,22 @@ def parse_args(argv):
             print(f"--request-id must be a uuid; {request_id!r} is not one", file=sys.stderr)
             return None, None, as_name, request_id, flags
     if len(rest) != 2:
-        print("usage: wake_orchestrator.py <标签> <正文> [--as <名字>] [--request-id <id>]"
-              "  (or --seat / --self-test)", file=sys.stderr)
+        # Which argument is missing, not just that the line is wrong: a pasted line has
+        # the tag inside it, so "one argument" is the common shape of this mistake.
+        if len(rest) < 2:
+            print(f"a wake needs <标签> and <正文> as two arguments; got {len(rest)}",
+                  file=sys.stderr)
+        else:
+            print(f"a wake takes <标签> and <正文> and nothing else; extra: "
+                  f"{' '.join(repr(a) for a in rest[2:])}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
         return None, None, as_name, request_id, flags
-    return rest[0], rest[1], as_name, request_id, flags
+    tag, body, as_name = normalize(rest[0], rest[1], as_name)
+    if not tag or any(c.isspace() for c in tag):
+        print(f"标签 has to be one word: {rest[0]!r} leaves {tag!r}", file=sys.stderr)
+        print(USAGE, file=sys.stderr)
+        return None, None, as_name, request_id, flags
+    return tag, body, as_name, request_id, flags
 
 
 def self_test():
@@ -319,6 +413,45 @@ def self_test():
         rc, err, seen = drive(["甩锅", "正文"])
         return rc, "warning" in err, "body" in seen
 
+    def missing_body():
+        """One positional argument is a pasted line missing its 正文: name the argument
+        that is missing, not just that the line is wrong."""
+        rc, err, seen = drive(["递卡"])
+        return rc, "got 1" in err, "usage:" in err, seen["calls"] == []
+
+    def too_many_args():
+        rc, err, _ = drive(["递卡", "正文", "又一段"])
+        return rc, "nothing else" in err, "usage:" in err
+
+    def tag_not_a_word():
+        """A tag with a blank in it is neither a label nor a fifth label — it would
+        break the one-line prefix — so it is refused while parsing."""
+        rc, err, seen = drive(["递 卡", "正文"])
+        return rc, "one word" in err, seen["calls"] == []
+
+    def pasted_line_once():
+        """The reported shape: the caller pastes the whole line into the body. What is
+        posted carries the prefix once, and the pasted 我是芝士。 is who spoke."""
+        rc, err, seen = drive(["递卡", "我是芝士。<@cheese-abc> 【递卡】#1512 PR #3675"])
+        return rc, seen.get("body", {}).get("content", "")
+
+    def tag_mismatch():
+        """A pasted body whose 【标签】 disagrees with the argument: the argument wins,
+        the body loses its bracketed word, and the disagreement is said out loud."""
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            got = parse_args(["递卡", "【交付】结论"])[:2]
+        return got, "交付" in err.getvalue()
+
+    def roundtrip(tag, body, as_name=""):
+        """(the composed message, the message composed from its own output).
+
+        These are the same string unless the prefix the compose adds is left on the
+        body instead of stripped — the duplicate this script removes — so this is the
+        case that has to go red if the stripping stops working."""
+        first = wake_line("cheese-seat", tag, body, as_name=as_name)
+        return first, wake_line("cheese-seat", *parse_args([tag, first])[:3])
+
     runtime_cases = [
         ("退出码：发出去并回读到这条 → 0，没有别的报错", happy(), (0, True, "")),
         ("退出码：平台拒绝 POST → 3，并带上 request_id（它可能已经存下了）",
@@ -345,6 +478,14 @@ def self_test():
         ("行程：--seat 只打座位，不发消息", seat_only(), (0, "", False)),
         ("行程：--dry-run 只组消息，不发消息", dry_run(), (0, False)),
         ("行程：标签不在四个里也照发，只在 stderr 说一句", unknown_tag(), (0, True, True)),
+        ("退出码：只给一个位置参数 → 2，说清缺的是正文并给出用法",
+         missing_body(), (2, True, True, True)),
+        ("退出码：多给位置参数 → 2，说清多的那一段是什么",
+         too_many_args(), (2, True, True)),
+        ("退出码：标签里带空格 → 2，不该拿它去拼前缀",
+         tag_not_a_word(), (2, True, True)),
+        ("行程：正文粘着整句前缀 → 发出去的只有一层，名字取自粘进来的那句",
+         pasted_line_once(), (0, "我是芝士。<@cheese-seat> 【递卡】#1512 PR #3675")),
     ]
 
     with contextlib.redirect_stderr(io.StringIO()):
@@ -391,6 +532,46 @@ def self_test():
         ("命令行：--seat 单独用才取座位，带着位置参数就是错的",
          [parse_args(["--seat"])[:2], parse_args(["递卡", "正文", "--seat"])[:2]],
          [("", ""), (None, None)]),
+        ("前缀：纯正文原样，一点都不去动",
+         strip_prefix("正文", LABELS), ("", "", "正文")),
+        ("前缀：粘进来的整句剥成（名字、标签、正文）",
+         strip_prefix("我是芝士。<@cheese-abc> 【递卡】正文", LABELS),
+         ("芝士", "递卡", "正文")),
+        ("前缀：两层前缀一次剥干净（点名和标签各重复一次也一样）",
+         strip_prefix("我是芝士。<@a> 【递卡】我是芝士。<@b> 【递卡】正文", LABELS),
+         ("芝士", "递卡", "正文")),
+        ("前缀：没带 我是X。、点名后面跟标签的也剥",
+         strip_prefix("@cheese-abc 【递卡】正文", LABELS), ("", "递卡", "正文")),
+        ("前缀：单带一个【标签】的也剥（标签写成 递卡 或【递卡】都是它）",
+         [strip_prefix("【交付】结论", LABELS),
+          parse_args(["【递卡】", "正文"])[:2]],
+         [("", "交付", "结论"), ("递卡", "正文")]),
+        ("前缀：正文开头 @ 一个人时不当点名吃掉（后面不是标签）",
+         strip_prefix("@李老师 【重要】这份方案请过一眼", LABELS),
+         ("", "", "@李老师 【重要】这份方案请过一眼")),
+        ("前缀：正文开头自带的【…】不是四个标签之一就留着",
+         strip_prefix("【重要】结论", LABELS), ("", "", "【重要】结论")),
+        ("前缀：剥过一遍的东西再剥一遍不变（幂等）",
+         [strip_prefix(strip_prefix(t, LABELS)[2], LABELS)[2] for t in
+          ["我是芝士。<@a> 【递卡】正文", "@cheese-abc 【递卡】正文", "正文",
+           "@李老师 【重要】这份方案请过一眼"]],
+         ["正文", "正文", "正文", "@李老师 【重要】这份方案请过一眼"]),
+        ("前缀：正文粘着整句 → 标签用参数里的，正文只剩正文，名字顶上 --as",
+         parse_args(["递卡", "我是芝士。<@cheese-abc> 【递卡】#1512 PR #3675"])[:3],
+         ("递卡", "#1512 PR #3675", "芝士")),
+        ("前缀：给了 --as 就不再用粘进来的名字，也不重复它",
+         parse_args(["--as", "芝士", "交付", "我是芝士。<@a> 【交付】结论"])[:3],
+         ("交付", "结论", "芝士")),
+        ("前缀：标签位置收到整句时，标签从里面取，剩下的是正文",
+         parse_args(["我是芝士。<@a> 【递卡】#1512 PR #3675", ""])[:3],
+         ("递卡", "#1512 PR #3675", "芝士")),
+        ("前缀：粘进来的【标签】和参数不一致时按参数发，并在 stderr 说一句",
+         tag_mismatch(), (("递卡", "结论"), True)),
+        ("前缀：发出去的消息喂回来再组一次是同一个（去重坏掉时这条会红）",
+         [a == b for a, b in [roundtrip("递卡", "#1512 PR #3675 head 672653c5"),
+                              roundtrip("交付", "结论", as_name="芝士"),
+                              roundtrip("待决", "要定什么｜我倾向 A\n第二行", as_name="芝士")]],
+         [True, True, True]),
     ]
     bad = 0
     for name, got, want in cases:
