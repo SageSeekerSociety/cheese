@@ -8,6 +8,7 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
+  demoProseEditor,
   DOC_AGENT,
   DOC_AGENT_HANDLE,
   DOC_MARKDOWN,
@@ -17,7 +18,6 @@ import {
   DOC_PRESET_DOC,
   DOC_PRESET_EDIT,
   DOC_THREAD_ACTIONS,
-  demoProseEditor,
   docNameOf,
   docPlaceOf,
   docSurfaceSession,
