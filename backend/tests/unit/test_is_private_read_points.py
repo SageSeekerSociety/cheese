@@ -60,8 +60,9 @@ BASELINE = {
     "app/domain/topic/repositories/unread.py": 2,
     "app/domain/topic/repositories/writes.py": 2,
     # 频道能加入、退出、要加入才能在主线说话，私聊是两席、不走这些：`_public`
-    # 是这个文件唯一读那个布尔的地方。
-    "app/domain/topic_membership/services.py": 1,
+    # 是唯一读那个布尔的地方。2026-10-16 `topic_membership/services.py` 拆成包时
+    # `_public` 跟着搬进了 `housekeeping.py`，位置变了、数没变。
+    "app/domain/topic_membership/services/housekeeping.py": 1,
 }
 
 _APP = pathlib.Path(__file__).resolve().parents[2] / "app"

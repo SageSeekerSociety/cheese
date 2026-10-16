@@ -7,7 +7,6 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -29,7 +28,7 @@ from app.domain.agent.device_hub import (
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.room_task.place import session_keeps_work
-from app.domain.topic.models import Topic
+from app.domain.topic.reads import execution_room
 
 router = APIRouter(tags=["execution"])
 logger = logging.getLogger(__name__)
@@ -125,15 +124,10 @@ async def execute(
     # `topic_id` is the conversation the credential works — a room or a task;
     # the machine, roster and dispatch log are its room's.
     room_id = await owner_reads.room_of(db, topic_id)
-    # The connection owner survives app releases. Loading the full Topic model
-    # makes an unrelated column removal break every tool call on the old owner.
-    room = (
-        await db.execute(
-            select(Topic.id, Topic.project_id, Topic.resource_id).where(
-                Topic.id == room_id
-            )
-        )
-    ).one_or_none()
+    # The room facts are read through its own domain, which names the columns it
+    # answers with: the connection owner survives app releases, and a full Topic
+    # row would make an unrelated column removal break every tool call on it.
+    room = await execution_room(db, room_id)
     if room is None:
         raise NotFoundError("Topic not found")
     if claims.get("p") != str(room.project_id):

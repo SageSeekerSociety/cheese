@@ -11,25 +11,31 @@
 const ERROR_LINE = /^(\S[^(]*)\((\d+),(\d+)\): error (TS\d+):/
 
 /**
- * The anchor line of every diagnostic, kept whole (`{ file, line, column, code,
- * message }`), so a failure can print the `file(line,col): error TSxxxx:` line
- * vue-tsc printed instead of a bare count. The message is whatever follows the
- * prefix `ERROR_LINE` already matches — the counting regex is unchanged.
+ * Every diagnostic, including its indented explanation, so a failure prints
+ * the full message without a second type-check run. The counting regex is
+ * unchanged; continuation lines belong to the preceding diagnostic.
  * @param {string} text
  * @returns {{file: string, line: number, column: number, code: string, message: string}[]}
  */
 export function parseTscDiagnostics(text) {
   const diagnostics = []
+  let previous
   for (const raw of String(text).split(/\r?\n/)) {
     const m = raw.match(ERROR_LINE)
-    if (!m) continue
-    diagnostics.push({
-      file: m[1].replaceAll('\\', '/').trim(),
-      line: Number(m[2]),
-      column: Number(m[3]),
-      code: m[4],
-      message: raw.slice(m[0].length).trim(),
-    })
+    if (m) {
+      previous = {
+        file: m[1].replaceAll('\\', '/').trim(),
+        line: Number(m[2]),
+        column: Number(m[3]),
+        code: m[4],
+        message: raw.slice(m[0].length).trim(),
+      }
+      diagnostics.push(previous)
+    } else if (previous && /^[ \t]+\S/.test(raw)) {
+      previous.message += `\n${raw}`
+    } else {
+      previous = undefined
+    }
   }
   return diagnostics
 }
@@ -127,8 +133,7 @@ export function formatReport(result, diagnostics = []) {
       }
     }
     lines.push('')
-    lines.push('Fix each one at that file(line,col). `pnpm run typecheck:raw` (vue-tsc')
-    lines.push('--noEmit) reprints the same diagnostic with its full explanation. The')
+    lines.push('Fix each one at that file(line,col); its full explanation is above. The')
     lines.push('ratchet blocks only NEW errors and the baseline never rises: if you')
     lines.push('genuinely reduced errors elsewhere and this file is unrelated, check')
     lines.push('whether you edited a file that was already failing.')
