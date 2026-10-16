@@ -65,6 +65,17 @@
      the theme (white on #f57f17 is 2.6:1). */
   --accent-on: #191a1c;
 
+  /* ---- Brand mark ----
+     The logo has one colour (docs/brand.md §2/§5): the home tile goes flat brand
+     paint on hover and while current, with the mark on it in #23242a. Both values
+     are the same in the two themes on purpose — that tile is the logo, and a logo
+     does not shift with the theme any more than a printed one would. It also has
+     to stay pixel-identical to the boot splash in index.html, which paints
+     #ffa20f. So this is not --accent: --accent is the UI amber and it *does*
+     follow the theme (#f57f17 / #ffa733). Do not unify the two. */
+  --brand-fill: #ffa20f;
+  --brand-ink: #23242a;
+
   /* ---- Status (ONLY for real status; dot + neutral text) ----
      Each status has three parts, and they are NOT interchangeable:
        --x       the mark  — 6px dot, 1px border, icon fill. Never body text.
@@ -414,6 +425,10 @@
   --accent-ink: #ffc670;
   --accent-wash: #2e2216;
   --accent-on: #191a1c; /* same as light, deliberately: see the light set */
+
+  /* ---- Brand mark ---- */
+  --brand-fill: #ffa20f; /* same as light, deliberately: the logo does not flip */
+  --brand-ink: #23242a;
 
   /* ---- Status ---- */
   --ok: #3fbf7f;

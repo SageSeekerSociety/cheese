@@ -91,6 +91,8 @@ const ROLE: Record<string, string> = {
   '--danger-ink': '出错的文字',
   '--danger-wash': '出错的淡底',
   '--signal-yellow': '侧栏红黄绿灯的黄',
+  '--brand-fill': '品牌漆：首页方块的底',
+  '--brand-ink': '品牌漆上的图形',
   '--code-bg': '反色代码块的底',
   '--code-ink': '反色代码块的字',
   '--code-comment': '注释',

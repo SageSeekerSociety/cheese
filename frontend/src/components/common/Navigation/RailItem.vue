@@ -272,18 +272,19 @@ button.app-rail-item {
         opacity var(--dur-quick) var(--ease-standard);
     }
 
-    // Brand paint: the tile under the 知是 mark goes solid amber on hover and
-    // while current — docs/design-system.md §1.6 gives the current navigation
-    // position (and the brand mark itself) the accent, so the fill is --accent
-    // and the glyph on it is --accent-on. That ink is the one dark value both
-    // themes share (§2.6: never white on amber — 2.65:1 in light), which is
-    // what keeps the glyph readable instead of the `on-primary` this used to be.
+    // Brand paint: the tile under the 知是 mark goes flat brand paint on hover
+    // and while current, with the mark on it in brand ink. Both are theme-
+    // invariant on purpose — this tile is the logo, not a UI surface (docs/
+    // brand.md §5: the home tile and the two boot splashes must be pixel-
+    // identical), so it does NOT take --accent, which follows the theme. The
+    // glyph is brand ink rather than `on-primary` so the mark stays the same
+    // dark shape in both themes (7.7:1 on the fill).
     &:hover,
     &[aria-current] {
-      background: var(--accent);
+      background: var(--brand-fill);
 
       .cheese-icon {
-        fill: var(--accent-on);
+        fill: var(--brand-ink);
         opacity: var(--v-high-emphasis-opacity);
       }
     }
