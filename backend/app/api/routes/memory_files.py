@@ -76,13 +76,7 @@ async def _readable(
     秘密，里面的内容才是，而 404 会让本人也以为自己的记忆不见了。
     """
     actor = await resolver.resolve(project_id=project_id)
-    # Writing the project's shared memory is configuring its AI teammates
-    # (#3830); one's own private memory is one's own.
-    await resolver.authorize_project(
-        actor,
-        project_id=project_id,
-        permission=Permission.configure_agents if owner is None else None,
-    )
+    await resolver.authorize_project(actor, project_id=project_id)
     if owner is not None and owner != actor.handle:
         raise ForbiddenError(say("privateMemoryOwnerSees"))
     return actor.handle
@@ -96,12 +90,18 @@ async def _writable(
 ) -> str:
     """谁在写/删，写不写得动，一起答完；返回动手的人自己的 handle。
 
-    private 只认本人，和读的那一道同一条规则、同一个码。
-
-    team 没有这一道：项目集体的一份状态，读得到的人就写得动，改动在总览房间留
-    一条带 diff 的记录（回写那条路发），所以「谁删的」追得回来。
+    private 只认本人，和读的那一道同一条规则、同一个码。team 是项目的 AI 队友
+    共用的那一份，改它就是配置 AI 队友（#3830）：读得到的人不一定改得动。
     """
-    return await _readable(db, resolver, project_id, owner)
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(
+        actor,
+        project_id=project_id,
+        permission=Permission.configure_agents if owner is None else None,
+    )
+    if owner is not None and owner != actor.handle:
+        raise ForbiddenError(say("privateMemoryOwnerSees"))
+    return actor.handle
 
 
 def _checked_path(raw: str) -> str:
@@ -157,7 +157,7 @@ async def write_memory_file(
     frontmatter、索引行和路径——三样里错一样就一个字都存不下。**超了单条上限拒绝**
     （422，`MemoryFileStore.write`）：写的人手上就有这一条，当场就改得短。
 
-    谁写得动由 `_writable` 答：team 读得到就写得动，private 只认本人。
+    谁写得动由 `_writable` 答：team 要配置 AI 队友的权限，private 只认本人。
     """
     try:
         project_id = uuid.UUID(str(body.get("project_id") or ""))

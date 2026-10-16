@@ -9,6 +9,7 @@ team 是项目里所有人共看的一份；private 是「这个人 × 这个项
 
 from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
+    _register,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -437,3 +438,31 @@ def test_a_session_that_skips_the_check_is_still_refused_by_the_platform(client)
         for row in _get(client, project_id, "alice").json()["data"]["data"]
     }
     assert files["answer-first.md"]["content"] == _TEAM_FILE
+
+
+def test_a_mentor_reads_the_shared_memory_but_does_not_change_it(client):
+    """Everyone in the project reads what its AI teammates remember; changing
+    it is configuring them, which a mentor does not do (#3830)."""
+    project_id = _project(client)
+    assert (
+        _put(client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE)
+    ).status_code == 200
+    _register(client, "teacher")
+    invited = client.post(
+        f"/projects/{project_id}/invitations",
+        json={"user_handle": "teacher", "role": "mentor"},
+        headers=session_auth_headers("alice"),
+    )
+    assert invited.status_code == 200, invited.text
+    accepted = client.post(
+        f"/invitations/{invited.json()['data']['id']}/respond",
+        json={"accept": True},
+        headers=session_auth_headers("teacher"),
+    )
+    assert accepted.status_code == 200, accepted.text
+
+    seen = _get(client, project_id, "teacher")
+    assert seen.status_code == 200, seen.text
+    assert "answer-first.md" in {row["path"] for row in seen.json()["data"]["data"]}
+    refused = _put(client, project_id, "teacher", path="mentor.md", content=_TEAM_FILE)
+    assert refused.status_code == 403, refused.text
