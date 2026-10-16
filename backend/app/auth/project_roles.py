@@ -30,16 +30,25 @@ What only the owner does is not a permission; :func:`is_owner` answers it.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository, RoleRepository
-from app.domain.project.models import Project
+from app.domain.project.models import (
+    Project,
+    ProjectMember,
+    ProjectMemberExclusion,
+    ProjectRole,
+    ProjectRoleGrant,
+)
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import (
     DEFAULT_GRANTS,
@@ -112,7 +121,9 @@ async def is_personal(session: AsyncSession, project: Project) -> bool:
 
 async def owner_of(session: AsyncSession, project: Project) -> str | None:
     """Who holds the project: its owner while they are still on its team, else
-    the team's owner. A personal project's owner is its team's one person."""
+    the team's owner. A personal project's owner is its team's one person. A
+    team that was disbanded has no owner left, and its archived projects stay
+    their own owner's."""
     owner = project.owner_handle
     if project.team_id is None:
         return owner
@@ -129,13 +140,16 @@ async def owner_of(session: AsyncSession, project: Project) -> str | None:
             project_id=project.id, user_handle=owner
         ):
             return owner
-    return await team_owner_handle(session, project.team_id)
+    return await team_owner_handle(session, project.team_id) or owner
 
 
 async def _grants(
     session: AsyncSession, project_id: uuid.UUID
 ) -> dict[Role, frozenset[Permission]]:
-    changed = await RoleRepository(session).grants(project_id)
+    return _grants_from(await RoleRepository(session).grants(project_id))
+
+
+def _grants_from(changed: dict[str, list[str]]) -> dict[Role, frozenset[Permission]]:
     out: dict[Role, frozenset[Permission]] = {}
     for role in Role:
         if role.value in changed:
@@ -197,6 +211,174 @@ async def standing(
     )
     role = Role(recorded) if recorded in Role._value2member_map_ else Role.member
     return Standing(seat=Seat(role.value), permissions=grants[role])
+
+
+async def seats(
+    session: AsyncSession, project_id: uuid.UUID, handles: list[str]
+) -> dict[str, Standing]:
+    """Where each of ``handles``, all people already in the project, sits: the
+    answer :func:`standing` gives one by one, read in a fixed number of queries
+    however long the roster is."""
+    project = await ProjectRepository(session).get(project_id)
+    if project is None or not handles:
+        return {}
+    owner = await owner_of(session, project)
+    grants = await _grants(session, project_id)
+    recorded = await RoleRepository(session).roles(project_id)
+    excluded = await MemberRepository(session).excluded_handles(project_id)
+    team_roles: dict[str, int] = {}
+    if project.team_id is not None:
+        rows = await session.execute(
+            select(User.username, TeamUserRelation.role)
+            .join(TeamUserRelation, TeamUserRelation.user_id == User.id)
+            .where(
+                TeamUserRelation.team_id == project.team_id,
+                TeamUserRelation.deleted_at.is_(None),
+                User.username.in_(handles),
+            )
+        )
+        team_roles = {name: role for name, role in rows.all()}
+    everything = frozenset(Permission)
+    out: dict[str, Standing] = {}
+    for handle in handles:
+        team_role = team_roles.get(handle)
+        if handle == owner:
+            out[handle] = Standing(seat=Seat.owner, permissions=everything)
+        elif team_role == TeamMemberRole.OWNER:
+            out[handle] = Standing(
+                seat=Seat.owner, permissions=everything, from_team=True
+            )
+        elif team_role == TeamMemberRole.ADMIN and handle not in excluded:
+            out[handle] = Standing(
+                seat=Seat.admin, permissions=grants[Role.admin], from_team=True
+            )
+        else:
+            mark = recorded.get(handle)
+            role = Role(mark) if mark in Role._value2member_map_ else Role.member
+            out[handle] = Standing(seat=Seat(role.value), permissions=grants[role])
+    return out
+
+
+class ProjectSeats(Protocol):
+    """What :func:`standings_in` reads off a project row."""
+
+    id: Mapped[uuid.UUID]
+    owner_handle: Mapped[str | None]
+    team_id: Mapped[int]
+
+
+async def standings_in(
+    session: AsyncSession, projects: Sequence[ProjectSeats], handle: str | None
+) -> dict[uuid.UUID, Standing | None]:
+    """Where ``handle`` sits in each of ``projects``: :func:`standing` for a
+    list of projects, read in a fixed number of queries however many there are."""
+    if not handle or not projects:
+        return {p.id: None for p in projects}
+    ids = [p.id for p in projects]
+    if await IdentityService(session).is_agent(handle):
+        seated = set(
+            (
+                await session.scalars(
+                    select(ProjectMember.project_id).where(
+                        ProjectMember.user_handle == handle,
+                        ProjectMember.project_id.in_(ids),
+                    )
+                )
+            ).all()
+        )
+        return {
+            p.id: Standing(seat=Seat.member, permissions=AGENT_PERMISSIONS)
+            if p.id in seated
+            else None
+            for p in projects
+        }
+    user = await UserRepository(session).get_by_username(handle)
+    team_roles: dict[int, int] = {}
+    if user is not None:
+        team_ids = {p.team_id for p in projects if p.team_id is not None}
+        rows = await session.execute(
+            select(TeamUserRelation.team_id, TeamUserRelation.role).where(
+                TeamUserRelation.user_id == user.id,
+                TeamUserRelation.team_id.in_(team_ids),
+                TeamUserRelation.deleted_at.is_(None),
+            )
+        )
+        team_roles = dict(rows.tuples().all())
+    on_roster = set(
+        (
+            await session.scalars(
+                select(ProjectMember.project_id).where(
+                    ProjectMember.user_handle == handle,
+                    ProjectMember.project_id.in_(ids),
+                )
+            )
+        ).all()
+    )
+    excluded = set(
+        (
+            await session.scalars(
+                select(ProjectMemberExclusion.project_id).where(
+                    ProjectMemberExclusion.user_handle == handle,
+                    ProjectMemberExclusion.project_id.in_(ids),
+                )
+            )
+        ).all()
+    )
+    recorded = dict(
+        (
+            await session.execute(
+                select(ProjectRole.project_id, ProjectRole.role).where(
+                    ProjectRole.user_handle == handle,
+                    ProjectRole.project_id.in_(ids),
+                )
+            )
+        )
+        .tuples()
+        .all()
+    )
+    changed: dict[uuid.UUID, dict[str, list[str]]] = {}
+    for project_id, role, permissions in (
+        await session.execute(
+            select(
+                ProjectRoleGrant.project_id,
+                ProjectRoleGrant.role,
+                ProjectRoleGrant.permissions,
+            ).where(ProjectRoleGrant.project_id.in_(ids))
+        )
+    ).tuples():
+        changed.setdefault(project_id, {})[role] = list(permissions or [])
+    everything = frozenset(Permission)
+    out: dict[uuid.UUID, Standing | None] = {}
+    for p in projects:
+        team_role = team_roles.get(p.team_id) if p.team_id is not None else None
+        if p.owner_handle == handle and not (
+            p.team_id is None or team_role is not None or p.id in on_roster
+        ):
+            # An owner who has left: whether they still hold it depends on
+            # whether the team has an owner left (:func:`owner_of`).
+            out[p.id] = await standing(session, p.id, handle)
+            continue
+        if p.owner_handle == handle:
+            out[p.id] = Standing(seat=Seat.owner, permissions=everything)
+            continue
+        if team_role == TeamMemberRole.OWNER:
+            out[p.id] = Standing(
+                seat=Seat.owner, permissions=everything, from_team=True
+            )
+            continue
+        grants = _grants_from(changed.get(p.id, {}))
+        if team_role == TeamMemberRole.ADMIN and p.id not in excluded:
+            out[p.id] = Standing(
+                seat=Seat.admin, permissions=grants[Role.admin], from_team=True
+            )
+            continue
+        if p.id not in on_roster and (team_role is None or p.id in excluded):
+            out[p.id] = None
+            continue
+        mark = recorded.get(p.id)
+        role = Role(mark) if mark in Role._value2member_map_ else Role.member
+        out[p.id] = Standing(seat=Seat(role.value), permissions=grants[role])
+    return out
 
 
 async def may(

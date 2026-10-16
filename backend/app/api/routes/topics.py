@@ -106,10 +106,7 @@ async def create_topic(
 ) -> dict:
     actor = await resolver.resolve(project_id=body.project_id)
     await resolver.authorize_project(actor, project_id=body.project_id)
-    if not await TopicMemberService(db).may_open_channels(
-        body.project_id, actor.handle
-    ):
-        raise ForbiddenError(say("projectPermissionDenied"))
+    await require_role(db, actor, body.project_id, Permission.create_channels)
     # The creator becomes the topic's roster owner (fusion-design §3), and the
     # creator is whoever the credential names — nobody when there is none.
     topic = await TopicService(db).create(

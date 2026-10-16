@@ -19,7 +19,7 @@ from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.auth.project_roles import standing
+from app.auth.project_roles import seats, standing
 from app.core.errors import NotFoundError
 from app.domain.agent_instance.adapters import project_team
 from app.domain.delivery.ledger import deliver, settle
@@ -91,8 +91,10 @@ async def list_members(
     # The roster is the answer; a stored row adds only its id and when it was
     # written (an external member's acceptance, a teammate's seat).
     row_of = {m.user_handle: m for m in members}
+    people = await roster(db, project_id, team=project_team)
+    seated = await seats(db, project_id, [m.handle for m in people if not m.agent])
     items = []
-    for member in await roster(db, project_id, team=project_team):
+    for member in people:
         row = row_of.get(member.handle)
         d = {
             **member.as_dict(),
@@ -101,7 +103,7 @@ async def list_members(
             "user_handle": member.handle,
         }
         if not member.agent:
-            held = await standing(db, project_id, member.handle)
+            held = seated.get(member.handle)
             if held is not None:
                 # Where they sit, and whether that rank is the team's to change.
                 d["role"] = held.seat.value

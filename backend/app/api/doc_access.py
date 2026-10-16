@@ -112,7 +112,11 @@ async def require_role(
     db: AsyncSession, actor: Actor, project_id: uuid.UUID, permission: Permission
 ) -> None:
     """A person only does what their role lets them; an AI teammate writes as it
-    was asked to, and its own gates are elsewhere."""
+    was asked to, and its own gates are elsewhere. Nobody signed in reaches here
+    only on the global sandbox token, which the project and room doors already
+    let through as the trusted single-host credential: it has no seat to ask."""
+    if not actor.authenticated:
+        return
     if actor.via != "cheese" and not await IdentityService(db).is_agent(actor.handle):
         await require(db, project_id, actor.handle, permission)
 

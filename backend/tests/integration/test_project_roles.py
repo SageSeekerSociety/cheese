@@ -137,3 +137,21 @@ def test_an_ai_teammate_does_not_change_roles(client):
         f"/projects/{p['id']}/members", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
     assert next(r for r in roster if r["user_handle"] == "bob")["role"] == "member"
+
+
+def test_the_project_list_says_where_i_sit(client):
+    """The sidebar decides between 转让项目 and 退出项目 from the list it
+    already has, so each listed project says where the caller sits."""
+    p = new_project(client, owner="alice")
+    _invite(client, p["id"], "teacher", role="mentor")
+
+    def listed(handle: str) -> dict:
+        rows = client.get("/projects", headers=session_auth_headers(handle)).json()[
+            "data"
+        ]["data"]
+        return next(r for r in rows if r["id"] == p["id"])
+
+    assert listed("alice")["my_role"] == "owner"
+    mine = listed("teacher")
+    assert mine["my_role"] == "mentor"
+    assert "edit_content" not in mine["my_permissions"]

@@ -26,7 +26,7 @@ from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import project_task_rows
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
-from app.auth.project_roles import is_owner, may, standing
+from app.auth.project_roles import Standing, is_owner, may, standing, standings_in
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -142,17 +142,34 @@ def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
 
 
 async def _project_payloads(
-    db: DbSession, projects: Sequence[ProjectRow]
+    db: DbSession, projects: Sequence[ProjectRow], *, viewer: str | None = None
 ) -> list[dict]:
-    """Every project's payload, without a query per project."""
+    """Every project's payload, without a query per project. With ``viewer``,
+    each also says where they sit in it and what that lets them do (#3830)."""
     shells = await effective_shells(db, projects)
     teams = await team_service(db).labels_of(
         {p.team_id for p in projects if p.team_id is not None}
     )
-    return [
+    payloads = [
         _shelled(p, shells[p.id], teams.get(p.team_id) if p.team_id else None)
         for p in projects
     ]
+    if viewer is not None:
+        held = await standings_in(db, projects, viewer)
+        for p, payload in zip(projects, payloads, strict=True):
+            _with_standing(payload, held[p.id])
+    return payloads
+
+
+def _with_standing(payload: dict, held: Standing | None) -> None:
+    """Where the caller sits and what that lets them do: every screen shows or
+    hides its controls by these, never by working the rules out."""
+    payload["my_role"] = held.seat.value if held is not None else None
+    payload["my_permissions"] = (
+        [p.value for p in PERMISSION_ORDER if p in held.permissions]
+        if held is not None
+        else []
+    )
 
 
 async def _project_payload(db: DbSession, project: ProjectRow) -> dict:
@@ -263,7 +280,12 @@ async def list_projects(
     if archived:
         who = await resolver.require_verified_caller()
         projects = await service.list_archived_owned_by(who.handle)
-        return ok(page(await _project_payloads(db, projects), len(projects)))
+        return ok(
+            page(
+                await _project_payloads(db, projects, viewer=who.handle),
+                len(projects),
+            )
+        )
     if team_id is not None:
         # A team's project list is not a directory: every row carries the
         # project's `id`, and that id opens its roster, documents and usage. So
@@ -312,7 +334,10 @@ async def list_projects(
             # route happened to 401 and trip the refresh. Say it here instead.
             resolver.reject_failed_credential(who)
             projects, total = [], 0
-    items = await _project_payloads(db, projects)
+        viewer = who
+    items = await _project_payloads(
+        db, projects, viewer=viewer.handle if viewer.authenticated else None
+    )
     return ok(page(items, total))
 
 
@@ -379,14 +404,9 @@ async def get_project(
     payload["challenge_deadline"] = (
         {"at": deadline.at.isoformat(), "mine": deadline.mine} if deadline else None
     )
-    # Where this caller sits and what that lets them do (#3830): every screen
-    # shows or hides its controls by these, never by working the rules out.
-    held = await standing(db, project_id, actor.handle) if actor.authenticated else None
-    payload["my_role"] = held.seat.value if held is not None else None
-    payload["my_permissions"] = (
-        [p.value for p in PERMISSION_ORDER if p in held.permissions]
-        if held is not None
-        else []
+    _with_standing(
+        payload,
+        await standing(db, project_id, actor.handle) if actor.authenticated else None,
     )
     pending = await OwnershipService(db, deliver=deliver, settle=settle).pending_for(
         project_id
