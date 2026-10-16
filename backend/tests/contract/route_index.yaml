@@ -276,7 +276,7 @@ owners:
   admin: "Platform admin membership and allow-list; domain/admin/AdminService, not every /admin route business domain."
   usage.report: "What a team or a person used of their credits this month, as ratios for members; domain/usage/report.py."
   usage.plans: "Credit plans, which plan each team is on, credits administrators issue, and their audit; domain/usage/plans.py and ledger.py."
-  agent.models: "AI model catalogue, gateway project budgets and audit; domain/agent/gateway_admin.py and gateway_models.py."
+  agent.models: "AI model catalogue, gateway project budgets and audit; domain/agent/gateway_admin.py and gateway_models/."
   agent.execution: "Agent session execution/control/diagnostics; domain/agent runtime and domain/agent_session. HTTP diagnostics are assembled in app/main.py."
   agent.types: "Agent type catalogue; domain/agent_type/library.py."
   agent.instances: "Project agent identities/configuration; domain/agent_instance/services.py and configuration.py."
