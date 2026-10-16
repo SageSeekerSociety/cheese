@@ -412,7 +412,10 @@ def test_ready_leaves_the_placeholder_alone_when_the_commit_is_one_too(
 
 
 def test_ready_leaves_a_title_that_is_not_the_placeholder(client, monkeypatch):
-    """Only the platform's own placeholder is the platform's to replace."""
+    """Only the platform's own placeholder is the platform's to replace: a
+    title the card or a person already wrote stays, and this asserts it with a
+    commit subject standing by — without one the test would pass whether the
+    placeholder was recognised or not."""
     project, room = _room(client)
     github = AsyncMock()
     github.pr_view.return_value = {
@@ -421,6 +424,7 @@ def test_ready_leaves_a_title_that_is_not_the_placeholder(client, monkeypatch):
         "title": "fix(usage): a claim is answered once",
         "head": {"sha": "abc123"},
     }
+    github.commit_subject.return_value = "fix(usage): some other title entirely"
     monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
 
     async def run():

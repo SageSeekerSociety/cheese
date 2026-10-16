@@ -192,3 +192,29 @@ async def test_commit_subject_is_the_messages_first_line():
     [request] = seen
     assert request.url.path.endswith("/repos/acme/docs/git/commits/reviewed")
     assert request.url.path == "/api/v1/repos/acme/docs/git/commits/reviewed"
+
+
+@pytest.mark.anyio
+async def test_commit_subject_with_no_message_is_no_title():
+    """A 200 with an empty body and a commit with no message are both "there
+    is no title here", which `mark_ready` treats as "leave the PR's alone".
+    Reading either as a crash would fail the ready action instead."""
+    empty_body = ForgejoPRClient(
+        "acme",
+        "docs",
+        Tokens(),
+        api_base="https://forge.example/api/v1",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=b"")),
+    )
+    no_message = ForgejoPRClient(
+        "acme",
+        "docs",
+        Tokens(),
+        api_base="https://forge.example/api/v1",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"commit": {"message": ""}})
+        ),
+    )
+
+    assert await empty_body.commit_subject("reviewed") is None
+    assert await no_message.commit_subject("reviewed") is None

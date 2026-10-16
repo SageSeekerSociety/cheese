@@ -399,7 +399,10 @@ class ForgejoPRClient:
         Forgejo), which is the path `landing_forge.py` and `forge_files.py`
         already read a commit at."""
         data = await self._request("GET", f"/git/commits/{quote(sha, safe='')}")
-        message = ((data.get("commit") or {}).get("message") or "").strip()
+        # `_data` hands back None for a 200 with an empty body (the sibling
+        # reader in `landing_forge.parent` guards the same way): no message is
+        # the same answer as an empty one, and neither is a crash.
+        message = (((data or {}).get("commit") or {}).get("message") or "").strip()
         return message.splitlines()[0] if message else None
 
     async def mark_ready_for_review(self, node_id):
