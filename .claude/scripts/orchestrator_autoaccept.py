@@ -16,7 +16,10 @@ from REASONS and the sentence to send back to the line.
             and only when the body has none, from the PR's last `<!-- pr-review sha=` comment.
             The reviewed head must be the card's head or an ancestor of it; a newest review
             with findings means the fix still needs its incremental review.
-  版本      the card shows the PR's current head, and GitHub calls the PR MERGEABLE
+  版本      the card shows the PR's current head, and GitHub calls the PR MERGEABLE. GitHub
+            answers UNKNOWN for every in-flight PR the moment main moves, until a lookup
+            triggers its background check, so the PR is read up to MERGEABLE_RETRIES more
+            times, MERGEABLE_DELAY apart, and only a still-UNKNOWN answer is reported
   部署      the PR touches no production deploy file (prod_deploy) and nothing in HIGH_RISK
             (high_risk); a rename counts on both its old and new path
   采纳人    the card's reviewer is OKCHEESE_USER: the platform takes an accept only from them
@@ -33,7 +36,7 @@ read by other scripts: change them only together with their readers.
 When the platform refuses because the card has never shown a version (it refreshes the card as it
 refuses), the card is read and judged again and accepted once more if it still passes.
 """
-import json, os, re, subprocess, sys, urllib.error, urllib.request
+import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 
 from orchestrator_sweep import API, REPO, get, login
 
@@ -82,6 +85,8 @@ HIGH_RISK = (
     ("文案", "backend/app/core/sentences.py"),
 )
 CI_CHECK = "CI required"
+#: How many times more to read a PR GitHub has not yet decided mergeability for, and the gap between reads.
+MERGEABLE_RETRIES, MERGEABLE_DELAY = 3, 2.0
 #: The line pr-review.sh renders first, which the delivering seat pastes into the card body.
 REVIEW_LINE = re.compile(r"独立 review：\s*head ([0-9a-f]{7,40})\s*(?:（增量自 ([0-9a-f]{7,40})）)?\s*"
                          r"结论 (无 blocker/major|有 (\d+) 条)")
@@ -205,18 +210,41 @@ def gh(args, paginate=False):
     return None
 
 
+def pr_facts(body):
+    """What judge() reads about a PR, out of one GraphQL pullRequest body."""
+    return {"merged": body["merged"], "head": body["headRefOid"], "mergeable": body["mergeable"],
+            "comments": [c["body"] for c in body["comments"]["nodes"]]}
+
+
+def settle_mergeable(read, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sleep=time.sleep):
+    """Read a PR until GitHub has decided whether it can merge, waiting `delay` between reads.
+
+    GitHub resets every in-flight PR to UNKNOWN the moment main moves and only recomputes when
+    something looks; a single read right after a merge would call a perfectly good card unknown.
+    `read` returns one pullRequest body or None; the retries stop at the first decided answer
+    (MERGEABLE or CONFLICTING), at an already merged PR, and at a read that failed."""
+    body = read()
+    for _ in range(retries):
+        if body is None or body["merged"] or body["mergeable"] != "UNKNOWN":
+            break
+        sleep(delay)
+        body = read()
+    return body
+
+
 def gh_facts(n):
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){'
          'merged headRefOid mergeable comments(last:100){nodes{body}}}}}' % tuple(REPO))
-    out = gh(["graphql", "-f", "query=" + q, "-F", f"n={n}"])
-    try:
-        body = json.loads(out)["data"]["repository"]["pullRequest"]
-    except (TypeError, ValueError, KeyError):
-        return None
-    if body is None:
-        return None
-    return {"merged": body["merged"], "head": body["headRefOid"], "mergeable": body["mergeable"],
-            "comments": [c["body"] for c in body["comments"]["nodes"]]}
+
+    def read():
+        out = gh(["graphql", "-f", "query=" + q, "-F", f"n={n}"])
+        try:
+            return json.loads(out)["data"]["repository"]["pullRequest"]
+        except (TypeError, ValueError, KeyError):
+            return None
+
+    body = settle_mergeable(read)
+    return None if body is None else pr_facts(body)
 
 
 def ci_on(sha):
@@ -422,6 +450,35 @@ def self_test():
     check("卡上没有版本", facts(card=card(pr_head_sha=None)), "交总调度", "head_mismatch", "还没有显示过版本")
     check("有冲突", facts(pr=pr(mergeable="CONFLICTING")), "交总调度", "conflicting")
     check("GitHub 还在算", facts(pr=pr(mergeable="UNKNOWN")), "交总调度", "mergeable_unknown", "UNKNOWN")
+
+    def raw(mergeable, merged=False):
+        return {"merged": merged, "headRefOid": H, "mergeable": mergeable, "comments": {"nodes": []}}
+
+    def settle(*answers, retries=MERGEABLE_RETRIES):
+        """(the PR facts, how many reads, how long it waited) for a GitHub answering `answers` in order."""
+        calls, waits = [], []
+
+        def read():
+            calls.append(1)
+            return answers[min(len(calls) - 1, len(answers) - 1)]
+
+        return pr_facts(settle_mergeable(read, retries=retries, sleep=waits.append)), calls, waits
+
+    # GitHub resets mergeable to UNKNOWN whenever main moves; a single read there would hand a good card off.
+    p, calls, waits = settle(raw("UNKNOWN"), raw("MERGEABLE"))
+    check("UNKNOWN 后算出能合就按会采判", facts(pr=p), "会采", has="审查来自卡")
+    if calls != [1, 1] or waits != [MERGEABLE_DELAY]:
+        failures.append(f"UNKNOWN 后等到算出能合，只查两次: got {len(calls)} reads, waits {waits!r}")
+    check("UNKNOWN 后算出有冲突就按冲突判", facts(pr=settle(raw("UNKNOWN"), raw("CONFLICTING"))[0]),
+          "交总调度", "conflicting")
+    check("一直 UNKNOWN 仍按原契约报", facts(pr=settle(raw("UNKNOWN"))[0]),
+          "交总调度", "mergeable_unknown", "UNKNOWN")
+    if len(settle(raw("UNKNOWN"))[1]) != MERGEABLE_RETRIES + 1:
+        failures.append("一直 UNKNOWN 时按 MERGEABLE_RETRIES 重查后放弃")
+    if len(settle(raw("MERGEABLE"))[1]) != 1 or len(settle(raw("UNKNOWN", merged=True))[1]) != 1:
+        failures.append("已经有明确答案、或 PR 已合并时都不重查")
+    if settle(raw("UNKNOWN"), retries=0)[1] != [1]:
+        failures.append("retries 与 sleep 可注入，方便离线自测不等待")
     check("PR 已合并", facts(pr=pr(merged=True)), "交总调度", "pr_merged")
     # 部署
     check("碰正式部署脚本", facts(files=["backend/a.py", "deploy/deploy-docker.sh"]), "交总调度",
