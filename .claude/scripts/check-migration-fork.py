@@ -23,6 +23,9 @@ Usage:
     check-migration-fork.py [--base origin/main] [--versions-dir DIR]
     check-migration-fork.py --rechain [--base origin/main]
     check-migration-fork.py --self-test
+
+Exit 0 the chain is intact, 1 it would fork (or a re-chain was refused), 2 the
+base could not be read, so nothing was judged.
 """
 
 import argparse
@@ -49,6 +52,29 @@ MERGE_ADVICE = (
     "  * split this branch's migrations so one continues from the other.\n"
     "See .claude/rules/migrations.md."
 )
+
+# Exit 2 is this directory's "could not judge" (check-file-sizes.py, test-changed.py
+# and the ratchets all use it). A guard that could not read its comparison base has
+# judged no tree at all, so exiting 0 there is indistinguishable from a tree it read
+# and cleared — and it is the one failure this file exists to prevent. Distinct from
+# 1, which means the tree was read and refused, so a caller can tell "could not
+# answer" from "answered no".
+EXIT_CANNOT_JUDGE = 2
+
+
+def cannot_judge(base: str) -> int:
+    """Refuse to answer when ``base`` cannot be read, instead of passing by default.
+
+    The explanation goes to stderr, the way check-file-sizes.py reports its own 2,
+    so that stdout carries a verdict or nothing.
+    """
+    print(
+        f"cannot judge: {base} is not a ref this checkout has, so there is nothing to "
+        "compare this branch against.",
+        file=sys.stderr,
+    )
+    print("Fetch it first (`git fetch`), or name another --base.", file=sys.stderr)
+    return EXIT_CANNOT_JUDGE
 
 
 def parse_revision(source: str) -> tuple[str | None, list[str]]:
@@ -275,9 +301,7 @@ def rechain(args) -> int:
     try:
         base_graph = collect(args.base, args.versions_dir)
     except subprocess.CalledProcessError:
-        print(f"FAIL: {args.base} is not available, so there is no head to re-chain onto.")
-        print("Fetch it first (`git fetch`), or name another --base.")
-        return 1
+        return cannot_judge(args.base)
 
     sentinel_path = Path(args.versions_dir).parent / "HEAD"
 
@@ -373,8 +397,7 @@ def main() -> int:
     try:
         base_graph = collect(args.base, args.versions_dir)
     except subprocess.CalledProcessError:
-        print(f"note: {args.base} not available — nothing to compare against, skipping")
-        return 0
+        return cannot_judge(args.base)
 
     branch_graph = collect(None, args.versions_dir)
 
@@ -690,6 +713,26 @@ def self_test() -> int:
             env=lab_env,
         )
         check("... leaving a chain the plain check accepts", settled.returncode, 0)
+
+        # An unavailable --base is not a clean tree. `collect()` cannot read the
+        # ref at all, and exiting 0 there prints the same PASS as a tree that was
+        # read and cleared — which is how a checkout with no origin/main used to
+        # look green. Both commands that read the base have to refuse it, with
+        # the code that says "not judged" rather than the one that says "fork".
+        for label, argv in (("the check", []), ("the re-chain", ["--rechain"])):
+            unavailable = subprocess.run(
+                [sys.executable, str(script), *argv, "--base", "no-such-base-ref"],
+                cwd=lab,
+                capture_output=True,
+                text=True,
+                env=lab_env,
+            )
+            check(
+                f"{label} refuses a --base it cannot read",
+                unavailable.returncode,
+                EXIT_CANNOT_JUDGE,
+            )
+            check(f"... and {label} prints no verdict", "PASS" in unavailable.stdout, False)
     finally:
         shutil.rmtree(lab, ignore_errors=True)
 
@@ -699,7 +742,8 @@ def self_test() -> int:
         return 1
     print(
         "PASS: check-migration-fork self-test (parser variants, merge parents, head "
-        "detection, re-chain splice, re-chain decisions and the re-chain itself)"
+        "detection, re-chain splice, re-chain decisions, the re-chain itself, and the "
+        "refusal of a --base it cannot read)"
     )
     return 0
 
