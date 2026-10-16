@@ -118,8 +118,8 @@ def _is_mid_turn_block(block: LastWord) -> bool:
     停在「摆出来」上，和停在一个工具动作上是同一种断法。
 
     两个 `kind` 的码是 `blocks` 列里存的短字符串（`KIND_ARTIFACT`、`KIND_EVENT`，
-    在 `repositories/statements.py` 里逐字写着）—— 本包在第 2 层，看不见
-    `block.models` 那两个枚举。
+    在 `repositories/statements.py` 里逐字写着）—— 它对应的 `BlockKind` 在
+    `block.models`（第 4 层），本包看不见。
     """
     if not looks_like_agent_handle(block.author):
         return False

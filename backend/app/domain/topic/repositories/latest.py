@@ -31,9 +31,9 @@ from app.domain.topic.repositories.statements import _blocks
 class LastWord:
     """最后一条块的几列，只取判读用得着的那几列。
 
-    `kind` 和 `author_type` 是 `blocks` 列里存的那两个短字符串，不是
-    `block.models` 的枚举成员 —— 本包看不见那个模块。要拿它们和码比，码在
-    `statements.py` 里逐字写着（`KIND_ARTIFACT`、`KIND_EVENT`）。
+    `kind` 和 `author_type` 都取原样的字符串。要比 `kind`，码在 `statements.py`
+    里逐字写着（`KIND_ARTIFACT`、`KIND_EVENT`）—— 它对应的 `BlockKind` 在
+    `block.models`（第 4 层），本包看不见。`author_type` 只是带出去给人看，不比。
     """
 
     id: uuid.UUID

@@ -26,7 +26,6 @@ from app.core.sentences import say
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
     consumed_turn,
@@ -37,6 +36,7 @@ from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import is_task
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.services import TaskService
 

@@ -456,8 +456,9 @@ unmatched_ignore_imports_alerting = warn
 # the project and the conversation) lived in `block/about.py` at layer 4, and
 # they are pure vocabulary — the module imports `enum`, `uuid` and `dataclasses`
 # and nothing else. Six packages read them — `topic` at layer 2, `review`,
-# `room_task`, `pin` and `block` itself at layer 4, `agent` at layer 5 — so all
-# of them climbed to layer 4 for a closed four-row table. The table
+# `room_task`, `pin` and `block` itself at layer 4, `agent` at layer 5 — and the
+# table lived in `block` at layer 4, so the layer-2 reader climbed two layers
+# for a closed four-row table. The table
 # and `landing()` moved down. Writing the event row stays in `block`:
 # whoever says something into a room now hands the call in (the `PlatformLine` port
 # in `topic/ports.py`), and stepping through `landing()` is what that

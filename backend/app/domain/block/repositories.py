@@ -53,7 +53,6 @@ from app.domain.block.models import (
     EDITED_AT_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
     PROMPTED_TURN_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
     prompt_attempts,
@@ -64,6 +63,7 @@ from app.domain.block.models import (
 # import BlockPage` 取它。所以 F401 在这里是故意的。
 from app.domain.block.paging import BlockPage, PagingQueries  # noqa: F401
 from app.domain.block.reactions import Reactions
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
 
