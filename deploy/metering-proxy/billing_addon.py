@@ -52,7 +52,6 @@ sent to ChatGPT is not env: it is a file beside the ChatGPT accounts
 """
 
 import asyncio
-import fcntl
 import hmac
 import json
 import logging
@@ -132,52 +131,14 @@ ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 # silently served from the subscription it did not ask for.
 GATEWAY_BASE = os.environ.get("CHEESE_GATEWAY_BASE", "")  # "http://host:port"
 
-# fds of the single-writer lock, held open for the process's life so the flock
-# survives until the process exits (the OS then releases it).
-_LOCKS: list[int] = []
+# Created in this container by a release once new connections go to the proxy
+# that replaces this one (deploy/release-metering-proxy.sh). See
+# `_close_when_draining`.
+DRAIN_FLAG = Path("/tmp/cheese-metering-draining")
 
-
-def _take_single_writer_lock(log: Path) -> None:
-    """Make the one-writer-per-usage-log invariant explicit (README).
-
-    Two proxies sharing a USAGE_LOG_DIR window their totals separately and can
-    reach about N×cap, and neither notices. Compose's fixed container_name
-    pins this in practice; this turns a hand-started second instance from a
-    silent doubling into a logged error. It does not exit: a stale or
-    misread lock must not leave the platform metering nothing."""
-    lock = log.with_name(log.name + ".lock")
-    try:
-        lock.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
-    except OSError as exc:
-        logger.warning("cannot open the usage-log lock %s: %s", lock, exc)
-        return
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        try:
-            held = lock.read_text().strip()
-        except OSError:
-            held = ""
-        logger.error(
-            "another metering proxy already writes %s (pid %s); this instance "
-            "shares its log and the two rolling windows will diverge — one "
-            "writer per usage log, see deploy/metering-proxy/README.md",
-            log,
-            held or "unknown",
-        )
-        os.close(fd)
-        return
-    try:
-        os.truncate(fd, 0)
-        os.write(fd, str(os.getpid()).encode())
-    except OSError:
-        pass
-    _LOCKS.append(fd)
-
-
-METER = Meter(USAGE_LOG, CAP_WINDOW_S)
-_take_single_writer_lock(USAGE_LOG)
+# Following the ledger only matters to the cap: with it off nothing reads the
+# window, and the meter only appends.
+METER = Meter(USAGE_LOG, CAP_WINDOW_S, follow=TOKEN_CAP > 0)
 # The platform's Claude credential: the one thing that authenticates a
 # subscription request. Sessions never hold it. See PlatformCredential.
 CREDENTIAL = PlatformCredential(
@@ -1731,6 +1692,28 @@ def _meter_subscription_stream(
         )
 
 
+def _close_when_draining(flow: http.HTTPFlow) -> None:
+    """While a release drains this proxy, end each client connection after the
+    response it carries. The front already sends new connections to the proxy
+    that replaces this one; a client's next request then opens a new connection
+    and lands there, instead of riding its old keep-alive connection back here.
+
+    HTTP/1 only: HTTP/2 forbids the header. A CONNECT's own answer and an
+    upgrade are left alone, since closing after either would end the tunnel
+    they open."""
+    if not DRAIN_FLAG.exists():
+        return
+    resp = flow.response
+    if (
+        resp is None
+        or resp.status_code == 101
+        or flow.request.method == "CONNECT"
+        or not flow.request.http_version.startswith("HTTP/1")
+    ):
+        return
+    resp.headers["connection"] = "close"
+
+
 def responseheaders(flow: http.HTTPFlow) -> None:
     """Stream the response body through instead of buffering it whole. A turn's
     SSE response is otherwise held in RAM for the ENTIRE turn while it buffers,
@@ -1749,6 +1732,7 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     resp = flow.response
     if resp is None:
         return
+    _close_when_draining(flow)
     attempt = ATTEMPTS.get(flow.id)
     if attempt:
         if resp.status_code == 429:
@@ -2282,6 +2266,15 @@ def error(flow: http.HTTPFlow) -> None:
 
 
 def response(flow: http.HTTPFlow) -> None:
+    try:
+        _response(flow)
+    finally:
+        # Again here, after whatever replaced the response: one this proxy
+        # answers itself never passes responseheaders.
+        _close_when_draining(flow)
+
+
+def _response(flow: http.HTTPFlow) -> None:
     attempt = ATTEMPTS.pop(flow.id, None)
     if attempt:
         CLAUDE_ACCOUNTS.release(attempt.account, flow.id)

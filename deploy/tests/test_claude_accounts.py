@@ -43,6 +43,21 @@ class AccountsTest(unittest.TestCase):
         )
         self.assertEqual(restarted.select("one")[0], "second")
 
+    def test_two_proxies_side_by_side_keep_each_others_cooldowns(self):
+        # A release runs the old proxy beside the new one; each cools the
+        # account its own request was refused on.
+        other = ClaudeAccounts(
+            PlatformCredential(self.root / "credential"), now=lambda: self.clock
+        )
+        self.pool.select("one")
+        other.select("two")
+        self.pool.reject("primary", {"retry-after": "100"}, b"rate limit")
+        other.reject("second", {"retry-after": "100"}, b"rate limit")
+        restarted = ClaudeAccounts(
+            PlatformCredential(self.root / "credential"), now=lambda: self.clock
+        )
+        self.assertIsNone(restarted.select("three"))
+
     def test_only_one_recovery_request_and_failed_probe_backs_off(self):
         self.pool.accounts()
         self.pool.reject("primary", {"retry-after": "10"}, b"rate limit")

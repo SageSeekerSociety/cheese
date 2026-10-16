@@ -664,7 +664,7 @@ gone:
 # by container name; on a box with an app-router the backend is one of two
 sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "2 hours ago"
 sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
-sudo journalctl -t cheese-metering-proxy -t cheese-gateway-litellm-blue-1 -t cheese-gateway-litellm-green-1 -t cheese-gateway-gateway-proxy-a-1 -t cheese-gateway-gateway-proxy-b-1 --since today # model traffic
+sudo journalctl -t metering-proxy-slot-blue-1 -t metering-proxy-slot-green-1 -t cheese-gateway-litellm-blue-1 -t cheese-gateway-litellm-green-1 -t cheese-gateway-gateway-proxy-a-1 -t cheese-gateway-gateway-proxy-b-1 --since today # model traffic
 sudo journalctl -t cheese-backend-1 -t cheese-backend-b-1 --since "09:00" --until "09:30"
 ```
 
