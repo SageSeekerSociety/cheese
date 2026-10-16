@@ -44,6 +44,9 @@ BASELINE = {
     "app/domain/thread/services.py": 1,
     # 置顶只在频道里有：私聊是两个人的，没有概览，也就没有置顶。
     "app/domain/pin/services.py": 1,
+    # 任务和支线都不是两个人之间的事：这一处原来在 `topic/services.py`，2026-10-16
+    # 跟着任务的动词一起搬到 `room_task/dispatch.py`。总数没变，只是换了文件。
+    "app/domain/room_task/dispatch.py": 1,
     "app/domain/topic/models.py": 1,
     # 画布格子关联的任务，在谁都能读的频道里才写给 AI 队友看：`open_rooms` 是
     # `WHERE is_private IS FALSE` 一类的过滤，和轮次组装不是一回事。
@@ -59,7 +62,6 @@ BASELINE = {
     # 频道能加入、退出、要加入才能在主线说话，私聊是两席、不走这些：`_public`
     # 是这个文件唯一读那个布尔的地方。
     "app/domain/topic_membership/services.py": 1,
-    "app/domain/topic/services.py": 1,
 }
 
 _APP = pathlib.Path(__file__).resolve().parents[2] / "app"

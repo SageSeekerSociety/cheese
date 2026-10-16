@@ -243,6 +243,13 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.services._shared", "app.domain.block.repositories"),
         ("app.domain.review.services._shared", "app.domain.project.repositories"),
         ("app.domain.review.services._shared", "app.domain.topic.repositories"),
+        # --- room_task ---
+        # 任务是一条从房间里长出来的活，它落户时房间里要说的那两句（开一条支线的
+        # 标题、这里开了一条活）由本包写。`block` 没有 service 层，只有 repository，
+        # 和上面 thread、topic 那两条同形。2026-10-16 这批函数从 `topic.services`
+        # 搬来时发起方换了名字，被摸的 module 一个没多 —— 同一笔债挪了发起方
+        # （`topic.services` 那条仍在，它自己还写别的话）。
+        ("app.domain.room_task.dispatch", "app.domain.block.repositories"),
         # --- space ---
         ("app.domain.space.analytics_service", "app.domain.task.repositories"),
         ("app.domain.space.analytics_service", "app.domain.user.repositories"),
@@ -260,8 +267,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.task.services", "app.domain.user.repositories"),
         ("app.domain.task.visibility_service", "app.domain.space.repositories"),
         ("app.domain.task.visibility_service", "app.domain.user.repositories"),
-        # --- team ---
-        ("app.domain.team.services", "app.domain.task.repositories"),
         # --- thread --- 支线摘要要每条支线最后说的那一句：一次查询读一批块，
         # block 领域没有 service 层。
         ("app.domain.thread.reads", "app.domain.block.repositories"),

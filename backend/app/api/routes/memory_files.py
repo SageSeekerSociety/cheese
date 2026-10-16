@@ -34,6 +34,7 @@ from app.domain.memory.files import (
 )
 from app.domain.memory.files_store import MemoryFileMissing, MemoryFileStore
 from app.domain.memory.models import MemoryFileRecord
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/memory/files", tags=["memory"])
 
@@ -75,7 +76,13 @@ async def _readable(
     秘密，里面的内容才是，而 404 会让本人也以为自己的记忆不见了。
     """
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    # Writing the project's shared memory is configuring its AI teammates
+    # (#3830); one's own private memory is one's own.
+    await resolver.authorize_project(
+        actor,
+        project_id=project_id,
+        permission=Permission.configure_agents if owner is None else None,
+    )
     if owner is not None and owner != actor.handle:
         raise ForbiddenError(say("privateMemoryOwnerSees"))
     return actor.handle

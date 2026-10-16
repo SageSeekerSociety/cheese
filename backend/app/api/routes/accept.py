@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
+from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -35,6 +36,7 @@ from app.domain.notice_meta import (
     WHO_CHEESE,
     notice,
 )
+from app.domain.project_permissions import Permission
 from app.domain.review import comment_publish, pr_publish
 from app.domain.review.comments import ReviewCommentService
 from app.domain.review.comments import instruction as comment_instruction
@@ -55,10 +57,9 @@ from app.domain.review.schemas import (
 from app.domain.review.services import AcceptService, ReviewerAdmission
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
-from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.accept")
 
@@ -105,6 +106,8 @@ async def _card_actor(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic.id
     )
+    # Deciding a review is the task side of the project (#3830).
+    await require_role(db, actor, topic.project_id, Permission.tasks)
     return actor
 
 
@@ -296,7 +299,7 @@ async def list_accept_cards(
     resolver: ActorResolverDep,
 ) -> dict:
     """A task's review cards, or for a room every card of its tasks."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _reader(place, db, resolver)
     svc = _accept_service(db)
     cards, total = await svc.list_for_topic(place.room_id)
@@ -327,7 +330,7 @@ async def topic_pr_checks(
     posting a traceback into the room (`report_unhandled_to_room`). That is
     how a GitHub TLS blip turned into a wall of stack traces on 2026-08-17.
     The failure is still logged, and its reason is handed to the caller."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _reader(place, db, resolver)
     try:
         return ok(await _pr_checks_payload(place.room_id, db, task_id=place.task_id))

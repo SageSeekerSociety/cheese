@@ -12,6 +12,7 @@ from app.core.sentences import exception_text, say
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.membership.services import MemberService
+from app.domain.project_permissions import Permission
 from app.domain.repository import identity
 from app.domain.review import (
     archive,
@@ -365,11 +366,11 @@ async def revoke(
     if card.status != AcceptStatus.accepted:
         raise ValidationError(say("revokeAcceptedOnly"))
 
-    # Only the person who accepted it, or someone who manages the project,
+    # Only the person who accepted it, or someone who manages every channel,
     # may revoke — not any arbitrary handle.
     topic = await self._topic_or_404(card.topic_id)
     if decided_by != card.decided_by and not await MemberService(self._session).manages(
-        topic.project_id, decided_by
+        topic.project_id, decided_by, Permission.manage_channels
     ):
         raise ValidationError(say("revokeAcceptForbidden"))
 
@@ -445,7 +446,9 @@ async def merge_despite_checks(
     else:
         allowed = (
             {decided_by}
-            if await MemberService(self._session).manages(topic.project_id, decided_by)
+            if await MemberService(self._session).manages(
+                topic.project_id, decided_by, Permission.edit_settings
+            )
             else set()
         )
     if decided_by not in allowed:
@@ -605,7 +608,7 @@ async def void(
     从没被检查过的代码背书；作废 + 重递效果一样而且安全，这条区别是本功能的
     设计前提，不要"优化"掉。
 
-    授权：卡上的验收人、项目所有者、团队的所有者和管理员。它是授权类动作，所以芝士在
+    授权：卡上的验收人，或能管理所有频道的人（默认是管理员和所有者）。它是授权类动作，所以芝士在
     collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
     —— 路由也**故意不**声明成芝士专用（`app/api/write_access.py`）。
     """
@@ -619,7 +622,7 @@ async def void(
 
     if decided_by != card.reviewer_handle and not await MemberService(
         self._session
-    ).manages(topic.project_id, decided_by):
+    ).manages(topic.project_id, decided_by, Permission.manage_channels):
         raise ForbiddenError(say("voidForbidden"))
 
     await self._cancel_queued_accept(card)

@@ -20,8 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker, get_chat_service
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
+from app.auth.project_roles import may
 from app.core.config import settings
 from app.core.errors import (
     ConflictError,
@@ -44,9 +46,9 @@ from app.domain.project.room_files import (
     artifact_kind_for,
     clean_artifact_path,
 )
-from app.domain.room_task.place import Place
+from app.domain.project_permissions import Permission
+from app.domain.room_task.place import Place, place_or_404
 from app.domain.textfile import content_version
-from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.room_files")
 
@@ -54,15 +56,23 @@ router = APIRouter(tags=["room-files"])
 
 
 async def _in_room(
-    db: AsyncSession, resolver: ActorResolver, topic_id: uuid.UUID
+    db: AsyncSession,
+    resolver: ActorResolver,
+    topic_id: uuid.UUID,
+    *,
+    writes: bool = False,
 ) -> tuple[Place, Actor]:
-    place = await TopicService(db).place_or_404(topic_id)
+    """The room and who is in it; ``writes`` also asks that their role lets them
+    change files (#3830)."""
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
+    if writes:
+        await require_role(db, actor, place.project_id, Permission.edit_content)
     return place, actor
 
 
@@ -221,7 +231,7 @@ async def restore_file_revision(
 ) -> dict:
     """Put an earlier save back. The current state becomes one more revision
     back, so a restore is itself undoable."""
-    place, actor = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id, writes=True)
     row = await room_files.revision_or_404(db, place.room_id, revision_id)
     made = await room_files.restore_revision(
         db,
@@ -245,7 +255,7 @@ async def copy_into_room(
     was given, and the room works on its own copy — which is also how a user's
     file becomes the template for a new one without being overwritten.
     """
-    place, actor = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id, writes=True)
     source = clean_artifact_path(str(body.get("source") or ""))
     target = _room_path(str(body.get("path") or ""))
     if artifact_kind_for(target) not in ARTIFACT_MIME:
@@ -311,7 +321,7 @@ async def new_from_template(
     The name must keep the template's format: a 「报告」 saved as .xlsx would be a
     file that no program opens as what its name says.
     """
-    place, actor = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id, writes=True)
     template = catalogue.find(str(body.get("template") or ""))
     if template is None:
         raise ValidationError(say("templateNotFound"))
@@ -394,7 +404,8 @@ async def open_in_editor(
         version=version,
         handle=actor.handle,
         display_name=actor.handle,
-        can_edit=actor.authenticated,
+        can_edit=actor.authenticated
+        and await may(db, place.project_id, actor.handle, Permission.edit_content),
     )
     return ok(
         {
@@ -517,7 +528,7 @@ async def editor_saves_file(
             logger.warning("office editor save refused: %s", exc)
             await db.rollback()
             return JSONResponse({"error": 1, "message": str(exc)}, status_code=403)
-        place = await TopicService(db).place_or_404(target.room_id)
+        place = await place_or_404(db, target.room_id)
         shown = await add_shown_block(
             db,
             project_id=place.project_id,

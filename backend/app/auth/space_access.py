@@ -28,7 +28,6 @@ from app.domain.space.repositories import (
     SpaceRepository,
 )
 from app.domain.task.models import Task
-from app.domain.task.repositories import TaskRepository
 
 
 async def is_space_admin(
@@ -88,20 +87,3 @@ async def may_publish_in_space(
     if space_id is None or user_id is None:
         return False
     return await SpaceRepository(session).is_member(space_id=space_id, user_id=user_id)
-
-
-async def is_admin_of_projects_task(
-    session: AsyncSession, *, external_task_id: int | None, user_id: int | None
-) -> bool:
-    """这个项目的赛题所挂题目板的管理员 —— ``may_read_project`` 用的第五条主张。
-
-    ``project.external_task_id`` → ``Task.space_id`` → 管理员关系。题不存在、没挂
-    板、或人不是管理员都是 False。取的就是「管理员版面」，比出题者那条宽一格：一块
-    板的管理员读得到这块板产出的每一个项目，正如出题者读得到自己这道题产出的项目。
-    """
-    if external_task_id is None:
-        return False
-    task = await TaskRepository(session).get_by_id(external_task_id)
-    if task is None or task.space_id is None:
-        return False
-    return await is_space_admin(session, space_id=task.space_id, user_id=user_id)

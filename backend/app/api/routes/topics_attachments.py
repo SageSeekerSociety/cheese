@@ -72,9 +72,9 @@ from app.domain.preview.office import (
     render_to_pdf,
 )
 from app.domain.project.room_files import clean_artifact_path
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
-from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -168,7 +168,7 @@ async def list_attachments(
     """The files sent in this channel or private chat, its tasks and 支线
     included, the newest first, each once — and whether it is in the library
     yet. Saving one there is `POST /topics/{topic_id}/shown/save`."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     rows = await in_room.attachments(db, place.room_id)
     return ok(page(rows, len(rows)))
@@ -188,7 +188,7 @@ async def upload_attachment(
     资料库 already holds (`library_path`). Both answer the {path, mime} the
     client references when it sends the message."""
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     await resolver.require_verified_caller(
         project_id=topic.project_id, topic_id=topic_id
     )
@@ -261,9 +261,9 @@ def _uploaded(path: str) -> bool:
     """这个地址是不是一次上传落下的那一份（`uploads/<随机串>/<名字>`）。
 
     造这种地址的有两处，两处都是现取一个 `uuid4().hex` 当一层目录：发进对话里的
-    文件（这个模块的上传分支），和芝士送一份工作区外的文件
-    （`claude_code/remote_execution/client.py` 的 `send_user_file_paths`）。随机串把
-    这一份钉死在一次上传上，同一地址下的字节写下之后不会再变。
+    文件（这个模块的上传分支），和芝士送一份工作区外的文件（
+    `claude_code/remote_execution/send_user_file.py` 的 `send_user_file_paths`）。
+    随机串把这一份钉死在一次上传上，同一地址下的字节写下之后不会再变。
     """
     parts = path.split("/")
     return (
@@ -313,7 +313,7 @@ async def attachment_raw(
     cannot carry the header, and the cookie is how they prove the same viewer.
     """
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     if download:
         await resolver.require_verified_caller(
             project_id=topic.project_id, topic_id=topic_id
@@ -384,7 +384,7 @@ async def attachment_as_pdf(
     point at afterwards. Those are drawn from the original bytes instead.
     """
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
@@ -445,7 +445,7 @@ async def attachment_as_html(
     this is the shape a sheet can be shown in without losing its cell addresses.
     """
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id

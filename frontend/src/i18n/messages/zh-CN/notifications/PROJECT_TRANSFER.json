@@ -1,0 +1,8 @@
+{
+  "toast": {
+    "acceptFailed": "接受转让失败",
+    "accepted": "已接受转让，项目归你所有",
+    "declineFailed": "拒绝转让失败",
+    "declined": "已拒绝转让"
+  }
+}

@@ -7,18 +7,30 @@ pass one fails to compile rather than silently writing unauthorized.
 """
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_roles import (
+    is_owner,
+    is_personal,
+    may,
+    owner_of,
+    require,
+    require_above,
+    require_owner,
+    role_grants,
+    standing,
+)
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableEntityError,
     ValidationError,
 )
 from app.core.sentences import say
 from app.domain.addressing import Event, Hand, address
-from app.domain.authz.policy import can_manage_project_members
 from app.domain.delivery_events import (
     Deliver,
     DeliveryEvent,
@@ -29,7 +41,12 @@ from app.domain.delivery_events import (
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.membership.ports import ProjectTeam
-from app.domain.membership.repositories import InvitationRepository, MemberRepository
+from app.domain.membership.repositories import (
+    InvitationRepository,
+    MemberRepository,
+    RoleRepository,
+    TransferRepository,
+)
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import InvitationOut
 from app.domain.project.models import (
@@ -37,8 +54,17 @@ from app.domain.project.models import (
     Project,
     ProjectInvitation,
     ProjectMember,
+    ProjectTransfer,
 )
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project_permissions import (
+    DEFAULT_GRANTS,
+    MANAGING,
+    Permission,
+    Role,
+    Seat,
+    with_locks,
+)
 from app.domain.team.services import team_service
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import user_by_handle
@@ -82,53 +108,31 @@ class MemberService:
         get what this already fetched is a second round trip for nothing."""
         project = await self._projects.get(project_id)
         if project is None:
-            raise NotFoundError("Project not found")
+            raise NotFoundError(say("projectNotFound"))
         return project
 
-    async def manages(self, project_id: uuid.UUID, handle: str) -> bool:
-        """Is ``handle`` someone who manages this project — its owner, or an owner
-        or admin of the project's team? For callers that hold a handle, not an
-        authenticated actor; :meth:`require_manager` is the gate for a request."""
-        project = await self._projects.get(project_id)
-        if project is None:
-            return False
-        if project.owner_handle == handle:
-            return True
-        return await self._team_admin(project, handle)
+    async def manages(
+        self, project_id: uuid.UUID, handle: str, permission: Permission
+    ) -> bool:
+        """May ``handle`` do ``permission`` in this project? For callers that hold
+        a handle, not an authenticated actor; :meth:`require` is the gate for a
+        request."""
+        return await may(self._session, project_id, handle, permission)
 
-    async def _team_admin(self, project: Project, handle: str) -> bool:
-        # A team admin who left this project no longer manages it: managing
-        # includes handing the project to yourself, which would undo leaving.
-        if await self._repo.is_excluded(project_id=project.id, user_handle=handle):
-            return False
-        user = await user_by_handle(self._session, handle)
-        if user is None:
-            return False
-        return await team_service(self._session).is_team_at_least_admin(
-            project.team_id, user.id
-        )
+    async def require(
+        self, project_id: uuid.UUID, actor: Actor, permission: Permission
+    ) -> None:
+        """Refuse unless the caller, verified by token, may do ``permission`` here.
 
-    async def require_manager(self, project_id: uuid.UUID, actor: Actor) -> None:
-        """Only the project's owner or an owner/admin of its team (verified by
-        token) may manage it. Called AFTER ``_ensure_project`` so a missing
-        project still reads as 404 rather than 403 for everyone."""
-
-        async def owner_of(pid: uuid.UUID) -> str | None:
-            project = await self._projects.get(pid)
-            return project.owner_handle if project is not None else None
-
-        async def team_manager(pid: uuid.UUID, handle: str) -> bool:
-            project = await self._projects.get(pid)
-            return project is not None and await self._team_admin(project, handle)
-
-        allowed = await can_manage_project_members(
-            actor,
-            project_id=project_id,
-            project_owner=owner_of,
-            team_manager=team_manager,
-        )
-        if not allowed:
-            raise ForbiddenError(say("projectManageForbidden"))
+        A scoped credential (``via="cheese"``) is something running unattended on
+        a person's behalf, not the person in their own session: it never manages
+        the project, whatever the person may do. Called AFTER ``_ensure_project``
+        so a missing project still reads as 404 rather than 403 for everyone."""
+        if not actor.authenticated:
+            raise ForbiddenError(say("projectPermissionDenied"))
+        if actor.via == "cheese" and permission in MANAGING:
+            raise ForbiddenError(say("projectPermissionDenied"))
+        await require(self._session, project_id, actor.handle, permission)
 
     async def seat_agent(
         self, *, project_id: uuid.UUID, user_handle: str, actor: Actor
@@ -141,7 +145,7 @@ class MemberService:
         ones they left, which is what an invitation gets them back into.
         """
         await self._ensure_project(project_id)
-        await self.require_manager(project_id, actor)
+        await self.require(project_id, actor, Permission.configure_agents)
 
         if not await IdentityService(self._session).is_agent(user_handle):
             raise ValidationError(say("peopleJoinByInvite"))
@@ -162,26 +166,37 @@ class MemberService:
     async def remove(
         self, *, project_id: uuid.UUID, user_handle: str, actor: Actor
     ) -> None:
-        """Take an external member (or an AI teammate's seat) out of the project.
+        """Take someone out of the project: a person below the caller, or an AI
+        teammate's seat.
 
-        A team member is NOT removable this way and that has not changed: there
-        is no row here to delete, so a manager's request is a 404 and the person
-        stays in the project through the team. Making it work is one line —
-        recording the same ``ProjectMemberExclusion`` :meth:`leave` records — and
-        deliberately not done here.
+        A person on the team is taken out the way they would leave: the project
+        records that they are not in it (``ProjectMemberExclusion``) and the team
+        is untouched. Their recorded role goes with them, so coming back by an
+        invitation starts over from the role the invitation names.
         """
-        await self._ensure_project(project_id)
-        await self.require_manager(project_id, actor)
+        project = await self._ensure_project(project_id)
+        await self.require(project_id, actor, Permission.manage_members)
+        if user_handle == actor.handle:
+            raise UnprocessableEntityError(say("removeSelfByLeaving"))
         member = await self._repo.get(project_id=project_id, user_handle=user_handle)
-        if member is None:
-            raise NotFoundError("Member not found")
+        if not await IdentityService(self._session).is_agent(user_handle):
+            await require_above(self._session, project_id, actor.handle, user_handle)
+        on_team = await self._on_team(project, user_handle)
+        if member is None and not on_team:
+            raise NotFoundError()
         # Their seats in this project's rooms go too: a room seat admits on its
         # own (``authorize_topic_access`` reads the topic role), so leaving them
         # behind would leave the person in every room they had joined.
         await TopicMemberService(self._session).revoke_project_seats(
             project_id=project_id, member_handle=user_handle
         )
-        await self._repo.delete(member)
+        if member is not None:
+            await self._repo.delete(member)
+        if on_team:
+            await self._repo.exclude(project_id=project_id, user_handle=user_handle)
+        await RoleRepository(self._session).clear_role(
+            project_id=project_id, user_handle=user_handle
+        )
 
     async def leave(self, *, project_id: uuid.UUID, actor: Actor) -> None:
         """Anyone in this project leaves it on their own — the project, not the team.
@@ -201,10 +216,10 @@ class MemberService:
         project = await self._ensure_project(project_id)
         if not actor.authenticated:
             raise ForbiddenError(say("leaveProjectSignIn"))
-        if project.owner_handle and project.owner_handle == actor.handle:
+        if await is_owner(self._session, project_id, actor.handle):
             raise ForbiddenError(say("ownerCannotLeave"))
         member = await self._repo.get(project_id=project_id, user_handle=actor.handle)
-        on_team = await self._on_team(project, actor)
+        on_team = await self._on_team(project, actor.handle)
         if member is None and not on_team:
             # 只在小队/名册之外的人：他在这份名册上只剩房间席位（建房间时给的），
             # 撤掉就是退出；一个席位也没有，说明他和这个项目本来就没关系。
@@ -227,19 +242,12 @@ class MemberService:
             # （那是团队的事），记下的是这个项目这边的那句话。
             await self._repo.exclude(project_id=project_id, user_handle=actor.handle)
 
-    async def _on_team(self, project: Project, actor: Actor) -> bool:
-
-        user_id = actor.user_id
-        if user_id is None:
-            # 小队成员按 int id 记，而一条会话 token 不一定带着它（``app.auth
-            # .caller``）—— ``_team_admin`` 走的是同一条解析。判错这一条会把「队友
-            # 退出项目」读成「他和这个项目没关系」。
-            user = await user_by_handle(self._session, actor.handle)
-            user_id = user.id if user is not None else None
-        if user_id is None:
+    async def _on_team(self, project: Project, handle: str | None) -> bool:
+        user = await user_by_handle(self._session, handle) if handle else None
+        if user is None:
             return False
         return await team_service(self._session).is_team_member(
-            project.team_id, user_id
+            project.team_id, user.id
         )
 
 
@@ -284,7 +292,7 @@ class InvitationService:
     async def _project_or_404(self, project_id: uuid.UUID):
         project = await self._projects.get(project_id)
         if project is None:
-            raise NotFoundError("Project not found")
+            raise NotFoundError(say("projectNotFound"))
         return project
 
     async def _is_on_project_roster(self, project_id: uuid.UUID, handle: str) -> bool:
@@ -312,10 +320,16 @@ class InvitationService:
         project_id: uuid.UUID,
         invitee_handle: str,
         actor: Actor,
+        role: Role = Role.member,
     ) -> ProjectInvitation:
         project = await self._project_or_404(project_id)
+        if role not in (Role.member, Role.mentor):
+            # An admin is made from someone already in the project.
+            raise UnprocessableEntityError(say("inviteRole"))
         # 同一条授权，和改名册用的是同一个判断：能管名册的人才能发邀请。
-        await MemberService(self._session).require_manager(project_id, actor)
+        await MemberService(self._session).require(
+            project_id, actor, Permission.manage_members
+        )
         if not invitee_handle:
             raise ValidationError(say("inviteWhom"))
         if actor.handle == invitee_handle:
@@ -336,6 +350,7 @@ class InvitationService:
             project_id=project_id,
             invitee_handle=invitee_handle,
             inviter_handle=actor.handle or "",
+            role=role.value,
         )
         await self._notify_invitee(invitation, project)
         return invitation
@@ -426,6 +441,18 @@ class InvitationService:
                     project_id=invitation.project_id,
                     user_handle=invitation.invitee_handle,
                 )
+            roles = RoleRepository(self._session)
+            if invitation.role == Role.mentor.value:
+                await roles.set_role(
+                    project_id=invitation.project_id,
+                    user_handle=invitation.invitee_handle,
+                    role=Role.mentor.value,
+                )
+            else:
+                await roles.clear_role(
+                    project_id=invitation.project_id,
+                    user_handle=invitation.invitee_handle,
+                )
         settled = await self._repo.settle(
             invitation,
             InvitationStatus.accepted if accept else InvitationStatus.declined,
@@ -437,7 +464,9 @@ class InvitationService:
         self, *, invitation_id: uuid.UUID, actor: Actor
     ) -> ProjectInvitation:
         invitation = await self._pending_or_404(invitation_id)
-        await MemberService(self._session).require_manager(invitation.project_id, actor)
+        await MemberService(self._session).require(
+            invitation.project_id, actor, Permission.manage_members
+        )
         settled = await self._repo.settle(invitation, InvitationStatus.revoked)
         await self._settle_notification(settled)
         return settled
@@ -459,4 +488,266 @@ class InvitationService:
             self._session,
             event_id_for(NotificationType.PROJECT_INVITE, str(invitation.id)),
             {"status": invitation.status.value},
+        )
+
+
+class RoleService:
+    """Roles in a project and what each role may do there (#3830)."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+        self._roles = RoleRepository(session)
+        self._members = MemberService(session)
+
+    async def set_role(
+        self, *, project_id: uuid.UUID, handle: str, role: Role, actor: Actor
+    ) -> None:
+        """Make ``handle`` an admin, a member or a mentor.
+
+        Only someone above them may, and the owner is above everyone. Making
+        someone an admin is the owner's alone, like the team's own admins are
+        its owner's: an admin manages members and mentors. The role is recorded
+        only when it differs from the one they would hold anyway, so a member
+        made admin and back holds no row.
+        """
+        await self._members._ensure_project(project_id)
+        await self._members.require(project_id, actor, Permission.change_roles)
+        if handle == actor.handle:
+            raise UnprocessableEntityError(say("roleNotYourOwn"))
+        current = await standing(self._session, project_id, handle)
+        if current is None:
+            raise NotFoundError()
+        if await IdentityService(self._session).is_agent(handle):
+            raise UnprocessableEntityError(say("roleNotForAgents"))
+        await require_above(self._session, project_id, actor.handle, handle)
+        if role is Role.admin and not await is_owner(
+            self._session, project_id, actor.handle
+        ):
+            raise ForbiddenError(say("adminByOwnerOnly"))
+        await self._roles.clear_role(project_id=project_id, user_handle=handle)
+        held = await standing(self._session, project_id, handle)
+        if held is not None and held.seat.value != role.value:
+            await self._roles.set_role(
+                project_id=project_id, user_handle=handle, role=role.value
+            )
+
+    async def grants(self, project_id: uuid.UUID) -> dict[Role, frozenset[Permission]]:
+        return await role_grants(self._session, project_id)
+
+    async def changed(self, project_id: uuid.UUID) -> bool:
+        """Whether any role differs from its defaults here."""
+        return bool(await self._roles.grants(project_id))
+
+    async def set_grants(
+        self,
+        *,
+        project_id: uuid.UUID,
+        changed: dict[Role, list[str]],
+        actor: Actor,
+    ) -> None:
+        """Change what roles may do. A permission name nobody knows is refused;
+        a locked permission keeps its place whatever was sent."""
+        await self._members._ensure_project(project_id)
+        await self._members.require(project_id, actor, Permission.change_roles)
+        for role, names in changed.items():
+            unknown = [n for n in names if n not in Permission._value2member_map_]
+            if unknown:
+                raise UnprocessableEntityError(
+                    say("permissionUnknown", name=unknown[0])
+                )
+            granted = with_locks(role, frozenset(Permission(n) for n in names))
+            if granted == with_locks(role, DEFAULT_GRANTS[role]):
+                await self._roles.clear_grants(project_id, role=role.value)
+                continue
+            await self._roles.set_grants(
+                project_id=project_id,
+                role=role.value,
+                permissions=sorted(p.value for p in granted),
+            )
+
+    async def reset_grants(self, *, project_id: uuid.UUID, actor: Actor) -> None:
+        await self._members._ensure_project(project_id)
+        await self._members.require(project_id, actor, Permission.change_roles)
+        await self._roles.clear_grants(project_id)
+
+
+class OwnershipService:
+    """The owner handing the project over, or moving their own project into a
+    team (#3830).
+
+    Handing over is an offer the recipient answers: nobody becomes a project's
+    owner without saying yes. The recipient is someone already in the project
+    and not a mentor. Once they accept, the former owner stays as an admin; a
+    personal project moves into the recipient's own space, since it cannot stay
+    in a space that is one other person's.
+    """
+
+    def __init__(self, session: AsyncSession, *, deliver: Deliver, settle: Settle):
+        self._session = session
+        self._offers = TransferRepository(session)
+        self._roles = RoleRepository(session)
+        self._members = MemberRepository(session)
+        self._projects = ProjectRepository(session)
+        self._deliver = deliver
+        self._settle = settle
+
+    async def _project(self, project_id: uuid.UUID) -> Project:
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError(say("projectNotFound"))
+        return project
+
+    async def offer(
+        self, *, project_id: uuid.UUID, to_handle: str, actor: Actor
+    ) -> ProjectTransfer:
+        project = await self._project(project_id)
+        await self._require_owner_in_session(project_id, actor)
+        if to_handle == actor.handle:
+            raise UnprocessableEntityError(say("transferToSelf"))
+        recipient = await standing(self._session, project_id, to_handle)
+        if (
+            recipient is None
+            or recipient.seat is Seat.mentor
+            or await IdentityService(self._session).is_agent(to_handle)
+        ):
+            raise UnprocessableEntityError(say("transferToMember"))
+        pending = await self._offers.pending_for_project(project_id)
+        if pending is not None:
+            await self._close(pending, InvitationStatus.revoked)
+        offer = await self._offers.add(
+            project_id=project_id, from_handle=actor.handle, to_handle=to_handle
+        )
+        await self._deliver(
+            self._session,
+            DeliveryEvent(
+                id=event_id_for(NotificationType.PROJECT_TRANSFER, str(offer.id)),
+                type=NotificationType.PROJECT_TRANSFER,
+                payload={
+                    "project": {"type": "project", "id": str(project.id)},
+                    "projectName": project.name,
+                    "transferId": str(offer.id),
+                    "from": actor.handle,
+                },
+                occurred_at=offer.created_at,
+            ),
+            address(Event(reviewers=(to_handle,)), Hand.participant),
+        )
+        return offer
+
+    async def cancel(self, *, transfer_id: uuid.UUID, actor: Actor) -> ProjectTransfer:
+        offer = await self._pending(transfer_id)
+        await self._require_owner_in_session(offer.project_id, actor)
+        return await self._close(offer, InvitationStatus.revoked)
+
+    async def respond(
+        self, *, transfer_id: uuid.UUID, accept: bool, actor: Actor
+    ) -> ProjectTransfer:
+        offer = await self._pending(transfer_id)
+        if actor.handle != offer.to_handle:
+            raise ForbiddenError(say("transferNotYours"))
+        if not accept:
+            return await self._close(offer, InvitationStatus.declined)
+        project = await self._project(offer.project_id)
+        recipient = await standing(self._session, project.id, offer.to_handle)
+        if recipient is None or recipient.seat is Seat.mentor:
+            # They left, or became a mentor, after the offer was made.
+            await self._close(offer, InvitationStatus.revoked)
+            raise UnprocessableEntityError(say("transferToMember"))
+        previous = await owner_of(self._session, project)
+        if await is_personal(self._session, project):
+            user = await user_by_handle(self._session, offer.to_handle)
+            if user is None:
+                raise NotFoundError()
+            team = await team_service(self._session).ensure_personal_team(user.id)
+            project.team_id = team.id
+            if (
+                previous
+                and await self._members.get(project_id=project.id, user_handle=previous)
+                is None
+            ):
+                await self._members.add(project_id=project.id, user_handle=previous)
+        project.owner_handle = offer.to_handle
+        await self._session.flush()
+        await self._roles.clear_role(project_id=project.id, user_handle=offer.to_handle)
+        if previous and previous != offer.to_handle:
+            await self._roles.set_role(
+                project_id=project.id, user_handle=previous, role=Role.admin.value
+            )
+        return await self._close(offer, InvitationStatus.accepted)
+
+    async def move_to_team(
+        self, *, project_id: uuid.UUID, team_id: int, actor: Actor
+    ) -> Project:
+        """Move the owner's own project into a team they manage. Everyone in it
+        stays: the team's people join as members, the others keep their seat."""
+        project = await self._project(project_id)
+        await self._require_owner_in_session(project_id, actor)
+        if not await is_personal(self._session, project):
+            raise UnprocessableEntityError(say("moveOnlyPersonal"))
+        user = await user_by_handle(self._session, actor.handle)
+        if user is None or not await team_service(self._session).is_team_at_least_admin(
+            team_id, user.id
+        ):
+            raise ForbiddenError(say("moveNeedsTeamAdmin"))
+        project.team_id = team_id
+        await self._session.flush()
+        return project
+
+    async def pending_for(self, project_id: uuid.UUID) -> ProjectTransfer | None:
+        return await self._offers.pending_for_project(project_id)
+
+    async def _require_owner_in_session(
+        self, project_id: uuid.UUID, actor: Actor
+    ) -> None:
+        """The owner in their own session. Someone not in the project learns
+        nothing about it, not even that it is there."""
+        if (
+            not actor.authenticated
+            or await standing(self._session, project_id, actor.handle) is None
+        ):
+            raise NotFoundError(say("projectNotFound"))
+        if actor.via == "cheese":
+            raise ForbiddenError(say("projectOwnerOnly"))
+        await require_owner(self._session, project_id, actor.handle)
+
+    async def _pending(self, transfer_id: uuid.UUID) -> ProjectTransfer:
+        offer = await self._offers.get(transfer_id)
+        if offer is None:
+            raise NotFoundError()
+        if offer.status != InvitationStatus.pending:
+            raise UnprocessableEntityError(say("transferAnswered"))
+        return offer
+
+    async def _close(
+        self, offer: ProjectTransfer, status: InvitationStatus
+    ) -> ProjectTransfer:
+        settled = await self._offers.settle(offer, status)
+        await self._settle(
+            self._session,
+            event_id_for(NotificationType.PROJECT_TRANSFER, str(offer.id)),
+            {"status": settled.status.value},
+        )
+        return settled
+
+
+async def pending_transfers_for(
+    session: AsyncSession, handle: str
+) -> list[ProjectTransfer]:
+    """Offers waiting on ``handle`` to take a project over, newest first."""
+    return await TransferRepository(session).pending_for_person(handle)
+
+
+async def seat_mentors(
+    session: AsyncSession, project_id: uuid.UUID, handles: Sequence[str]
+) -> None:
+    """Put a task's mentors in the project made for a claim: on its roster, as
+    mentors. Someone already in the project keeps where they sit."""
+    members = MemberRepository(session)
+    roles = RoleRepository(session)
+    for handle in handles:
+        if await standing(session, project_id, handle) is not None:
+            continue
+        await members.add(project_id=project_id, user_handle=handle)
+        await roles.set_role(
+            project_id=project_id, user_handle=handle, role=Role.mentor.value
         )

@@ -24,6 +24,7 @@ from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories.statements import (
     _last_activity,
     _order_by,
+    _tasks,
     seen_by,
 )
 from app.domain.topic.repositories.vocabulary import (
@@ -299,6 +300,26 @@ async def archival_for_project(
     What the storage sweep reconciles the disk against."""
     stmt = select(Topic.id, Topic.archived_at).where(Topic.project_id == project_id)
     return dict((await repo._session.execute(stmt)).tuples().all())
+
+
+async def has_open_tasks(repo: pkg.TopicRepository, room_id: uuid.UUID) -> bool:
+    """这间房里还有没有没结束的活。
+
+    归档和删除都要在这上面挡一下：房间关掉会把它里面的活一起结束，而那是活主
+    人的东西，平台不替他们关。`status` 就 `open` 和 `closed` 两个值
+    （`room_task.models.TaskStatus`），所以「有没有 `open`」和「有没有没结束的」
+    是同一句话。
+
+    走裸表 `_tasks`：`tasks` 是 `room_task` 的行，本包是向下的那一边读不到它的
+    模型（见 `statements.py`）。这里只看 `room_id` 和 `status` 两列，一行也不装
+    配 —— 调用方问的是「有没有」，不是「哪几条」。
+    """
+    stmt = (
+        select(func.count())
+        .select_from(_tasks)
+        .where(_tasks.c.room_id == room_id, _tasks.c.status == "open")
+    )
+    return bool((await repo._session.scalar(stmt)) or 0)
 
 
 async def count_for_project(

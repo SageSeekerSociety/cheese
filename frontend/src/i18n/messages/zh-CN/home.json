@@ -27,12 +27,14 @@
       "asRole": "以{role}身份加入",
       "accept": "接受",
       "approve": "批准",
-      "decline": "拒绝"
+      "decline": "拒绝",
+      "transfer": "{person} 把项目转让给你"
     },
     "role": {
       "MEMBER": "成员",
       "ADMIN": "管理员",
-      "OWNER": "所有者"
+      "OWNER": "所有者",
+      "mentor": "导师"
     }
   },
   "nav": {

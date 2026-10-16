@@ -7,7 +7,7 @@
 这一层只回答「旧的一边长什么样」：`Source` 说的是它从哪儿来（它决定了几条硬规矩，
 比如「关于某个人的」不许进 team），`sources_digest` 是这一份旧记忆的指纹（`apply`
 之前对一次，判报告还是不是当下的那一份）。去处合不合法、新树写成什么样，在
-`migration_plan.py`。
+`migration_plan/`。
 """
 
 import hashlib

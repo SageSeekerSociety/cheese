@@ -19,6 +19,7 @@ from app.api.deps import (
     get_chat_service,
     get_work_runner,
 )
+from app.api.doc_access import require_role
 from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -69,9 +70,11 @@ from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project_permissions import Permission
 from app.domain.repository import service as workspace_paths
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
@@ -103,10 +106,7 @@ async def create_topic(
 ) -> dict:
     actor = await resolver.resolve(project_id=body.project_id)
     await resolver.authorize_project(actor, project_id=body.project_id)
-    if not await TopicMemberService(db).may_open_channels(
-        body.project_id, actor.handle, team=project_team
-    ):
-        raise ForbiddenError(say("channelCreateExternal"))
+    await require_role(db, actor, body.project_id, Permission.create_channels)
     # The creator becomes the topic's roster owner (fusion-design §3), and the
     # creator is whoever the credential names — nobody when there is none.
     topic = await TopicService(db).create(
@@ -482,7 +482,7 @@ async def get_topic(
     Every OTHER endpoint returning a TopicOut leaves them at their default.
     """
     service = TopicService(db)
-    place = await service.place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     if place.task is not None:
         # A task is read as `GET /topics/{task}/task`.
         raise NotFoundError("Topic not found")
@@ -630,7 +630,7 @@ async def list_topic_blocks(
         after is not None or around is not None or stored_after is not None
     ):
         raise ValidationError(say("cursorNeedsLimit"))
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
 
@@ -801,7 +801,7 @@ async def read_chat_history(
     IDs for nested replies. Search is literal, case-insensitive substring
     matching over content, metadata and quoted document text.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     if before is not None and after is not None:
         raise ValidationError("Use before or after, not both")
@@ -859,7 +859,7 @@ async def read_chat_message(
     resolver: ActorResolverDep,
 ) -> dict:
     """Read one block of any kind, including a task-card comment or doc node."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
     also = await _opening_ids(db, place.conversation_id)
@@ -880,7 +880,7 @@ async def topic_usage(
     The room's whole bill, its tasks included: a task's sessions spend under
     the room as well as under the task.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     return ok(await UsageRepository(db).for_topic(place.room_id))
 
@@ -942,7 +942,7 @@ async def topic_status(
     so it is empty after a restart and says `running` about a turn killed with
     the process. See ``TopicService.stall_signal``."""
     topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     filed, _ = await AcceptService(db).list_for_topic(place.room_id)
     cards = [
@@ -951,7 +951,7 @@ async def topic_status(
     credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
-        topic_id,
+        place.room_id,
         live_turn=runner.live_work_for_topic(topic_id),
     )
     return ok(
@@ -1013,7 +1013,7 @@ async def get_topic_progress(
     task's, written by its own session — as of the last turn to touch it. Read
     on open: between turns there is no WS stream to carry it, and "做到哪了" has
     to be visible without summoning anyone."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     items, updated_at = await TopicService(db).get_progress(place.conversation_id)
     return ok(
@@ -1074,7 +1074,7 @@ async def write_topic_progress(
     is writing its task's list: stored under the task, pushed on the task's
     channel, and nothing posted in the room.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -1187,13 +1187,14 @@ async def summon_agent(
     会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
+    await require_role(db, actor, place.project_id, Permission.ask_agent)
     # The conversation the button is in: a 支线's or a task's retry runs there.
     if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
@@ -1253,7 +1254,7 @@ async def mint_webhook_token(
     into the room's timeline as any source, and rotating it locks out every
     token minted before. So minting takes the same door as writing to the room
     — project membership — rather than being handed to whoever knows the id."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         project_id=place.project_id, topic_id=place.conversation_id
     )
@@ -1293,7 +1294,7 @@ async def record_weekly(
 
     `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     report = (body.get("body") or "").strip()
     if not report:
@@ -1357,7 +1358,7 @@ async def record_check_result(
     because its value IS the speed; one that quietly grew past the budget and
     got reported as "inconclusive" would rot into a second full CI.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     if place.task is None:
         raise NotFoundError(say("taskNotFound"))

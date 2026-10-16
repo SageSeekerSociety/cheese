@@ -21,17 +21,19 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
+from app.auth.project_roles import require
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.document.question import Asked
 from app.domain.identity.actor import Actor
+from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
+from app.domain.project_permissions import Permission
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, place_or_404, require_doc_writable
 from app.domain.room_task.services import TaskService
-from app.domain.topic.services import TopicService
 
 
 @dataclass(frozen=True)
@@ -64,7 +66,7 @@ async def reach(
         raise NotFoundError(say("docNotFound"))
     task = await TaskService(db).of_document(doc.id)
     if task is not None:
-        place = await TopicService(db).place_or_404(task.id)
+        place = await place_or_404(db, task.id)
         actor = await resolver.resolve(
             topic_id=place.conversation_id, project_id=place.project_id
         )
@@ -73,7 +75,7 @@ async def reach(
         )
         return Reached(doc, actor, place, task, resolver.credential_conversation())
     if doc.room_id is not None and doc.kept_at is None:
-        place = await TopicService(db).place_or_404(doc.room_id)
+        place = await place_or_404(db, doc.room_id)
         # Not resolved against the room's own conversation: 芝士 working in one
         # of the room's tasks or 支线 holds that conversation's credential, and
         # the room is what decides who reads the document.
@@ -99,14 +101,39 @@ async def authorize_in_project(
     if actor.via == "cheese" and resolver.credential_conversation() is not None:
         await resolver.refuse_unseated_agent(actor, project_id=project_id)
         return
-    await resolver.authorize_project(actor, project_id=project_id)
+    # The least a write to a document needs; ``require_writable`` asks for what
+    # the write itself needs.
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.comment
+    )
 
 
-async def require_writable(db: AsyncSession, reached: Reached) -> None:
+async def require_role(
+    db: AsyncSession, actor: Actor, project_id: uuid.UUID, permission: Permission
+) -> None:
+    """A person only does what their role lets them; an AI teammate writes as it
+    was asked to, and its own gates are elsewhere. Nobody signed in reaches here
+    only on the global sandbox token, which the project and room doors already
+    let through as the trusted single-host credential: it has no seat to ask."""
+    if not actor.authenticated:
+        return
+    if actor.via != "cheese" and not await IdentityService(db).is_agent(actor.handle):
+        await require(db, project_id, actor.handle, permission)
+
+
+async def require_writable(
+    db: AsyncSession,
+    reached: Reached,
+    permission: Permission = Permission.edit_content,
+) -> None:
     """An archived room's document, and every document of an archived project,
-    takes no more writes."""
+    takes no more writes; and a person writes only what their role lets them
+    (#3830): changing a document is ``edit_content``, commenting on it or
+    suggesting a change is ``comment``. An AI teammate writes as it was asked
+    to."""
+    await require_role(db, reached.actor, reached.doc.project_id, permission)
     if reached.place is not None:
-        TopicService(db).require_doc_writable(reached.place)
+        require_doc_writable(reached.place)
     if reached.task is not None:
         if reached.task.status != TaskStatus.open:
             raise ValidationError(say("taskClosedNoTurn"))

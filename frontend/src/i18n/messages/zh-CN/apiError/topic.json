@@ -4,7 +4,6 @@
   "bodyRequired": "body 不能为空",
   "channelArchiveOpenTasks": "频道里还有进行中的任务，先关闭这些任务再归档",
   "channelArchivedNoJoin": "这个频道已归档，不能加入",
-  "channelCreateExternal": "外部成员不能新建频道",
   "channelDeletedCannotUnarchive": "这个频道已经删除了，恢复不了",
   "channelGeneralNoLeave": "「综合」包括项目里的所有人，不能退出",
   "channelGeneralNoManager": "「综合」由项目管理员管理，不能另设管理者",

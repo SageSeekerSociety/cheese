@@ -16,6 +16,7 @@ from typing import cast
 
 import pytest
 
+from app.domain.agent_session.models import LEFT_HOST_KEY
 from app.domain.identity.actor import Actor
 from app.domain.machine import services as machine_services
 from app.domain.machine.models import AiStatus, MachineStatus
@@ -363,3 +364,46 @@ async def test_a_session_home_not_on_that_host_is_not_moved_by_it():
 
     assert moved is False
     assert case.home.session_id == session_id
+
+
+async def test_a_sandbox_asked_for_again_is_not_placed_back_on_the_host_it_left():
+    """A room that asks for the sandbox it already has asks for another one
+    (``session_work.switch_environment``), and the host it leaves is the one
+    placement prefers: it has the fewest free slots left, so the other hosts can
+    empty and be released (``rank``). Without avoiding the host it left, that
+    preference answers the request with the machine it was asking to get away
+    from — the cloud host whose disk is full, which is where FB-101 left sandbox
+    switches."""
+    session_id = uuid.uuid4()
+    left = _host("dev-left")
+    other = _host("dev-other")
+    case = _Case(left, session_id, others=[other])
+    case.repo.home = None  # the session left it; nothing of it is there now
+    case.repo.load = {left.id: 1, other.id: 0}
+    case.row.execution_request = {LEFT_HOST_KEY: str(left.id)}
+
+    host = await case.place(session_id, _Hub({"dev-left", "dev-other"}))
+
+    assert host.id == other.id, "the session was placed back on the host it left"
+    assert case.repo.placed and case.repo.placed[0][0] == other.id
+    assert LEFT_HOST_KEY not in case.row.execution_request, (
+        "the host it left is still remembered after it has a sandbox"
+    )
+
+
+async def test_a_session_goes_back_to_the_host_it_left_when_no_other_has_room():
+    """Avoiding the host it left is a preference, not a refusal: a session with
+    no sandbox is worse off than one on the machine it asked to get away from,
+    and the pool is not grown for a request that is already answered."""
+    session_id = uuid.uuid4()
+    left = _host("dev-left")
+    full = _host("dev-full")
+    case = _Case(left, session_id, others=[full])
+    case.repo.home = None
+    case.repo.load = {left.id: 1, full.id: 2}  # `full` has none to give
+    case.row.execution_request = {LEFT_HOST_KEY: str(left.id)}
+
+    host = await case.place(session_id, _Hub({"dev-left", "dev-full"}))
+
+    assert host.id == left.id, "the session was left with no sandbox at all"
+    assert LEFT_HOST_KEY not in case.row.execution_request

@@ -8,6 +8,7 @@ import type { WaitingAsk, WaitingItem, WaitingWork } from '@/cx_types'
 import { onScopeDispose, ref } from 'vue'
 
 import { useProjectInvitationAnswer } from '@/composables/useProjectInvitationAnswer'
+import { useProjectTransferAnswer } from '@/composables/useProjectTransferAnswer'
 import { useTeamInvitationAnswer } from '@/composables/useTeamInvitationAnswer'
 import { useTeamJoinRequestAnswer } from '@/composables/useTeamJoinRequestAnswer'
 
@@ -88,6 +89,7 @@ export function useWaitingList() {
   // 回答一条邀请或申请：成了就从清单上拿掉；没成，提示由各自的 composable 弹，行留着。
   const store = useWorkspaceStore()
   const projectInvitation = useProjectInvitationAnswer()
+  const projectTransfer = useProjectTransferAnswer()
   const teamInvitation = useTeamInvitationAnswer()
   const joinRequest = useTeamJoinRequestAnswer()
   const replying = ref<string | null>(null)
@@ -98,13 +100,15 @@ export function useWaitingList() {
       const done =
         item.kind === 'project_invite'
           ? await projectInvitation.answer(item.id, yes)
-          : item.kind === 'team_invite'
-            ? await teamInvitation.answer(item.id, yes)
-            : await joinRequest.answer(item.id, Number(item.placeId), yes)
+          : item.kind === 'project_transfer'
+            ? await projectTransfer.answer(item.id, yes)
+            : item.kind === 'team_invite'
+              ? await teamInvitation.answer(item.id, yes)
+              : await joinRequest.answer(item.id, Number(item.placeId), yes)
       if (!done) return
       items.value = items.value.filter((other) => waitingKey(other) !== key)
       // 进了一个项目，左边那一列要多出它来。
-      if (yes && item.kind === 'project_invite') void store.refreshProjects()
+      if (yes && (item.kind === 'project_invite' || item.kind === 'project_transfer')) void store.refreshProjects()
     } finally {
       replying.value = null
     }

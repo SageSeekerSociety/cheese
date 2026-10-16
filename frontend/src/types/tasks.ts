@@ -63,6 +63,8 @@ export interface TaskSubmissionSchemaEntry {
 export type TaskClaimStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED'
 
 export interface Task {
+  /** 加入每个领取者项目的导师（#3830）；没有就是空。 */
+  mentors?: { handle: string; nickname: string }[]
   id: number
   name: string
   intro: string
@@ -219,4 +221,6 @@ export type TaskFormSubmitData = {
    * （`PublishTask.vue` 那一栏据此决定要不要带上它）。
    */
   teaching?: SpaceTeaching
+  /** 加入每个领取者项目的导师（#3830）；空 = 没有导师。 */
+  mentors?: string[]
 }

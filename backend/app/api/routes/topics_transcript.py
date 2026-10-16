@@ -65,7 +65,7 @@ from app.core.sentences import say
 from app.domain.agent.run_records import for_site
 from app.domain.agent.step_output import without_output
 from app.domain.agent.turn_times import turn_starts
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -97,7 +97,7 @@ async def topic_transcript(
     One conversation's record — a room's own line, or a task's: each
     conversation's session has its own, and interleaving every task's actions
     into the room's would bury what the room did."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
     # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
@@ -172,7 +172,7 @@ async def step_output(
     resolver: ActorResolverDep,
 ) -> dict:
     """The tail of what one 现场 step printed, as kept (``step_output``)."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     block = await BlockRepository(db).get(block_id)
     # Same door as the transcript: the one conversation it was asked about.

@@ -187,8 +187,14 @@ def read_beneath(root, relative):
 def write_beneath(root, relative, text):
     """Write `root / relative` as `beneath` reaches it, through a temporary
     beside it: a half-written `office.py` is a script the agent is told to
-    run. Readable by the owner alone."""
+    run. Readable by the owner alone, and written only where the text is not
+    already there: this runs before every tool call of a room, and on a machine
+    whose disk or inode supply is used up, the rename is what turns `echo ok`
+    into `ENOSPC`."""
     relative = Path(relative)
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        if read_beneath(root, relative) == text:
+            return
     directory = beneath(root, relative.parent, create=True)
     temporary = relative.name + ".next"
     if directory is None:
@@ -297,21 +303,12 @@ def plant_native_skills(home, skills):
     installed them and `$CLAUDE_CONFIG_DIR/skills/documents/scripts/office.py`
     named a file that was not on the machine. The room's own answer to that was
     to scavenge a copy out of another room's cache, which is not a mechanism.
-
-    Only rewritten when the bytes differ: this runs on every prepare,
-    including the ones that change nothing.
     """
     for name, content in sorted(skills.items()):
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError("Native skill file must be inside the config directory")
-        relative = Path(CONFIG_DIR) / relative
-        try:
-            if read_beneath(home, relative) == content:
-                continue
-        except (OSError, UnicodeDecodeError):
-            pass
-        write_beneath(home, relative, content)
+        write_beneath(home, Path(CONFIG_DIR) / relative, content)
 
 
 def release_store(owner):

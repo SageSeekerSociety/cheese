@@ -37,6 +37,7 @@ from app.auth.project_access import (
     may_write_project,
     outsiders_reading,
 )
+from app.auth.project_roles import may
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -65,6 +66,7 @@ from app.domain.identity.actor import Actor, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import refuse_writes_if_archived
+from app.domain.project_permissions import Permission
 from app.domain.task.repositories import TaskRepository
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
@@ -758,18 +760,20 @@ class ActorResolver:
         )
 
     async def authorize_project(
-        self, actor: Actor, *, project_id: uuid.UUID, member_setting: bool = False
+        self,
+        actor: Actor,
+        *,
+        project_id: uuid.UUID,
+        permission: Permission | None = None,
     ) -> None:
         """Require a verified participant with project membership.
 
         An agent's per-turn credential reads the project from the conversation
         it was minted in instead (``authorize_reading_from``); what it writes
-        still needs the membership it does not have. ``member_setting`` is the
-        one exception: a setting any member may change
-        (``app/api/member_settings.py``) an agent changes from that
-        conversation too, on the same two conditions as its reads. Nobody it
-        answers to there is outside the project, so the change is one any of
-        them could have made themselves.
+        still needs the membership it does not have.
+
+        ``permission`` is what a write needs (``project_roles.may``); without one,
+        a write needs someone who works in the project rather than looking on.
 
         A project that is not there is 404, not 403: the id is a UUID and
         answering "you are not a member of it" about a project that does not
@@ -787,21 +791,23 @@ class ActorResolver:
                 return  # Trusted development credential; anonymous access stays denied.
             raise AuthenticationRequiredError(say("signInForProject"))
         conversation = self.turn_conversation(actor)
-        if conversation is not None and (not self._writes or member_setting):
+        if conversation is not None and not self._writes:
             await self.authorize_reading_from(
-                actor,
-                project_id=project_id,
-                conversation_id=conversation,
-                writes=self._writes,
+                actor, project_id=project_id, conversation_id=conversation
             )
             return
         if await self._is_project_member(project_id, actor.handle):
-            if self._writes and not await may_write_project(
-                self._session, project_id=project_id, handle=actor.handle
+            if self._writes and not await (
+                may(self._session, project_id, actor.handle, permission)
+                if permission is not None
+                else may_write_project(
+                    self._session, project_id=project_id, handle=actor.handle
+                )
             ):
-                # The 赛题's asker and its board's teacher read the project;
-                # changing it is its own people's.
-                raise ForbiddenError(say("projectObserverReadOnly"))
+                # A write is its own people's, each by what their role lets them
+                # do (#3830): a mentor looks on, and a role may have lost the
+                # permission a route asks for.
+                raise ForbiddenError(say("projectPermissionDenied"))
             return
         if await ProjectRepository(self._session).get(project_id) is None:
             raise NotFoundError(say("projectNotFound"))
@@ -832,7 +838,6 @@ class ActorResolver:
         *,
         project_id: uuid.UUID,
         conversation_id: uuid.UUID,
-        writes: bool = False,
     ) -> None:
         """Let an agent read the project from the conversation it works in.
 
@@ -841,8 +846,6 @@ class ActorResolver:
         room shows its answer to may read the project themselves: what the
         agent reads ends up in the room, so a room with somebody from outside
         the project would hand that person what the project keeps from them.
-        ``writes`` is a member setting being changed from there, which the
-        refusal names instead.
         """
         if await conversations.project_of(self._session, conversation_id) != project_id:
             raise ForbiddenError(say("projectMemberOnly"))
@@ -853,13 +856,7 @@ class ActorResolver:
         if await outsiders_reading(
             self._session, project_id=project_id, room_id=room_id
         ):
-            raise ForbiddenError(
-                say(
-                    "projectSettingWithOutsiders"
-                    if writes
-                    else "projectReadsWithOutsiders"
-                )
-            )
+            raise ForbiddenError(say("projectReadsWithOutsiders"))
 
     async def authorize_task(self, actor: Actor, *, task_id: int) -> None:
         """Require a verified caller who may see this 赛题.
