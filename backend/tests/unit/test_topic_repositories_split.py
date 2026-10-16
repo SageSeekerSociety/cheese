@@ -135,6 +135,15 @@ def test_the_repository_keeps_all_28_methods() -> None:
     assert [n for n in TOPIC_REPOSITORY_METHODS if n not in own] == []
     assert "__getattr__" not in own
 
+    # 反着也要钉住：类自己的函数恰好就是这 28 个，一个不多。少了这条，往门面上
+    # 新加一个带真身的方法谁都不会发现——「实现只有一份」就被绕过去了。
+    own_functions = {
+        n
+        for n, value in vars(topic_repositories.TopicRepository).items()
+        if inspect.isfunction(value)
+    }
+    assert own_functions == set(TOPIC_REPOSITORY_METHODS)
+
 
 def test_init_still_builds_the_session() -> None:
     """拆分没动 __init__：属性仍**在这里赋值**，赋的什么也没换。
@@ -196,6 +205,11 @@ def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
     assert call.args[1:] == [], f"{name} 除了仓库还多传了位置参数"
     forwarded = getattr(SIBLINGS[target_module.id], name)
     assert callable(forwarded)
+    # `await` 也是行为：子模块那份是 async 的，这里就得 await；少一个 await，
+    # 交出去的是协程而不是结果。不加这条，把 await 删掉的转发照样全绿。
+    assert isinstance(statement.value, ast.Await) == inspect.iscoroutinefunction(
+        forwarded
+    ), f"{name} 的 await 和 {target_module.id}.{name} 的同步性对不上"
     parameters = inspect.signature(forwarded).parameters
     assert next(iter(parameters)) == "repo"
 
