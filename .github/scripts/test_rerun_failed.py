@@ -180,6 +180,7 @@ class KnownPatternTest(unittest.TestCase):
             {"match": {"jobs": ["integration"]}},
             {"match": {}},
             {"match": {"event": []}},
+            {"match": {"event": [""]}},
             {"match": {"event": [" "]}},
             {"match": {"workflow": [" .github/workflows/backup-freshness.yml "]}},
             {"rerun": "yes"},
