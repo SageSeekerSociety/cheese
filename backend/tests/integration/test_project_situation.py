@@ -1,6 +1,7 @@
 """项目总览上的「现状」，和让芝士起草项目目标。
 
 现状：
+- 用项目自己的模型（分身默认模型）写，走项目在网关上的钥匙，花费照项目的结算。
 - 有人打开、上次之后有新进展才重写；大的进展（任务做完了）几分钟后就重写，只有人
   说话的隔满一小时；近两周什么都没发生的项目不问模型。
 - 现状人人看得到，所以私密频道里说的话不进它的材料。
@@ -11,13 +12,19 @@
 - 资料库里的 PDF，芝士读得到文字，不必在哪个频道里。
 """
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import fitz
+import httpx
 
+from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent.supply import GATEWAY
+from app.domain.agent_instance.configuration import catalog
+from app.domain.project.models import Project
 from app.domain.project_situation import service as situation_service
 from app.domain.project_situation import writer
 from app.domain.room_task.services import TaskService
@@ -72,9 +79,22 @@ class _Model:
     def __init__(self) -> None:
         self.materials: list[str] = []
 
-    async def write(self, session, *, project_id, material, transport=None):
+    async def write(self, session, *, project_id, material, models, transport=None):
         self.materials.append(material)
-        return writer.Written(content="报名 {✓ 可用}", model="m", cost_usd=0.0)
+        return writer.Written(content="报名 {✓ 可用}", model="m")
+
+
+class _Gateway:
+    """项目在网关上的钥匙，和它花掉的钱记了几次。"""
+
+    def __init__(self) -> None:
+        self.charged = 0
+
+    async def project_gateway_key(self, project_id):
+        return "sk-project"
+
+    async def charge_turn_spend(self, project_id, topic_id, turn_id):
+        self.charged += 1
 
 
 def _quiet_rewrites(monkeypatch) -> list:
@@ -92,7 +112,9 @@ def _quiet_rewrites(monkeypatch) -> list:
 def _read(client, project: str, *, at: datetime):
     async def go():
         async with client.test_factory() as session:
-            return await situation_service.read(session, uuid.UUID(project), now=at)
+            return await situation_service.read(
+                session, uuid.UUID(project), models=_Gateway(), now=at
+            )
 
     return client.portal.call(go)
 
@@ -187,6 +209,51 @@ def test_a_project_where_nothing_happened_asks_no_model(client, monkeypatch):
 
     assert model.materials == []
     assert found["content"] == ""
+
+
+def test_the_situation_is_written_by_the_projects_own_model_on_its_key(
+    client, monkeypatch
+):
+    project = _project(client)
+
+    async def choose() -> str:
+        async with client.test_factory() as session:
+            row = await session.get(Project, uuid.UUID(project))
+            ids = [
+                i for i, c in catalog(row.settings).items() if c["supply"] == GATEWAY
+            ]
+            row.settings = {**(row.settings or {}), "default_subagent_model": ids[-1]}
+            await session.commit()
+            return ids[-1]
+
+    chosen = client.portal.call(choose)
+    sent: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "报名 {✓ 可用}"}}]}
+        )
+
+    monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway.test")
+    gateway = _Gateway()
+
+    async def go():
+        async with client.test_factory() as session:
+            return await writer.write(
+                session,
+                project_id=uuid.UUID(project),
+                material="材料",
+                models=gateway,
+                transport=httpx.MockTransport(answer),
+            )
+
+    written = client.portal.call(go)
+
+    assert written is not None and written.model == chosen
+    assert json.loads(sent[0].content)["model"] == chosen
+    assert sent[0].headers["authorization"] == "Bearer sk-project"
+    assert gateway.charged == 1
 
 
 def _overview(client, project: str) -> str:

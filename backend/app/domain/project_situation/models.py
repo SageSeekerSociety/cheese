@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -42,5 +42,5 @@ class ProjectSituation(Base):
     tried_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: 写的那个模型（项目目录里的 id）。
     model: Mapped[str] = mapped_column(String(128), default="", server_default="")
-    cost_usd: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")

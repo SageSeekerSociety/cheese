@@ -4,26 +4,36 @@
 下面按项目要做出来的东西分三到五块，各带「可用 / 进行中 / 未开始」标签。只写项目
 本身，不写人和平台；语气照界面文案规范的 8.0 和 8.6。思考强度不调低：调低以后模型会
 把思考过程漏进正文。
+
+用的是项目自己的模型（分身默认模型，没设就是项目默认模型），和文档里的芝士一样走
+项目在网关上的那把钥匙，所以花费和项目里每一轮一样记在项目上，额度和模型档位的
+限制也一样。项目的模型不走网关（成员自己的订阅）时不写：不拿别的模型替它。
 """
 
 import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.errors import ValidationError
+from app.domain.agent.document import question
 from app.domain.agent.harness.prompt import WRITING
-from app.domain.gateway_chat import Usage, response_cost
-from app.domain.service_keys import KeySpec, gateway_base, service_key
+from app.domain.agent.supply import GATEWAY
+from app.domain.agent_instance.configuration import catalog
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.project.services import ProjectService
+from app.domain.room_task import binding
+from app.domain.service_keys import gateway_base
 from app.domain.skill_library import SKILL_DIR, parse_frontmatter
-from app.domain.usage.ledger import Ledger
 
 logger = logging.getLogger(__name__)
 
-USAGE_KIND = "project_situation"
 #: 大项目的思考会吃掉八千以上，给少了正文是空的。
 _ANSWER_TOKENS = 24000
 
@@ -37,21 +47,44 @@ def system_prompt() -> str:
     return f"{_RULES}\n\n{WRITING}\n\n# 文档指南\n{guide}\n\n# 块的写法\n{blocks}"
 
 
-def _key_spec() -> KeySpec:
-    return KeySpec(
-        name="project-situation-gateway-key",
-        alias="project-situation",
-        model=settings.project_situation_model,
-        budget_usd=settings.project_situation_budget_usd,
-        rpm=60,
+class ProjectModels(Protocol):
+    """项目在网关上的那把钥匙，和它花掉的钱怎么记（`ChatService` 就是一个）。"""
+
+    async def project_gateway_key(self, project_id: uuid.UUID) -> str | None: ...
+
+    async def charge_turn_spend(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID | None, turn_id: uuid.UUID
+    ) -> object: ...
+
+
+async def _bind(session: AsyncSession, project_id: uuid.UUID) -> question.Bound | None:
+    """这个项目写现状用哪个模型；不走网关、或者被额度和档位挡下，是 None。"""
+    project = await ProjectService(session).get_or_404(project_id)
+    configured = project.settings or {}
+    chosen = binding.resolve(
+        None,
+        catalog(configured),
+        default_model=configured.get("default_subagent_model")
+        or configured.get("default_model"),
     )
+    if chosen.supply != GATEWAY:
+        return None
+    agent = await AgentInstanceService(session).for_project(project)
+    bound = question.Bound(
+        agent_handle=agent_instance_handle(agent.instance_id),
+        agent_name=agent.display_name or "",
+        model=chosen.model,
+        wire_model=chosen.wire_model,
+        supply=chosen.supply,
+    )
+    await question.admit(session, project_id, bound)
+    return bound
 
 
 @dataclass(frozen=True)
 class Written:
     content: str
     model: str
-    cost_usd: float
 
 
 async def write(
@@ -59,16 +92,22 @@ async def write(
     *,
     project_id: uuid.UUID,
     material: str,
+    models: ProjectModels,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> Written | None:
-    """模型写的现状；问不了、或者回来的是空的，是 None。花费记在项目所在的团队上。"""
-    key = await service_key(session, _key_spec(), transport)
-    if key is None:
+    """模型写的现状；问不了、或者回来的是空的，是 None。"""
+    try:
+        bound = await _bind(session, project_id)
+    except ValidationError as refused:
+        logger.info("project situation not written project=%s: %s", project_id, refused)
         return None
-    model = settings.project_situation_model
-    total = Usage()
-    cost = 0.0
+    if bound is None:
+        return None
+    key = await models.project_gateway_key(project_id)
+    if not key:
+        return None
     content = ""
+    asked = False
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(settings.project_situation_timeout_seconds),
@@ -76,11 +115,12 @@ async def write(
         ) as client:
             # 回来是空的再问一次：思考吃满了预算时正文就是空的，第二次通常写得出来。
             for _ in range(2):
+                asked = True
                 r = await client.post(
                     f"{gateway_base()}/v1/chat/completions",
                     headers={"Authorization": f"Bearer {key}"},
                     json={
-                        "model": model,
+                        "model": bound.wire_model,
                         "messages": [
                             {"role": "system", "content": system_prompt()},
                             {"role": "user", "content": material},
@@ -89,12 +129,8 @@ async def write(
                     },
                 )
                 r.raise_for_status()
-                payload = r.json()
-                total = total + Usage.of(payload.get("usage"))
-                cost += response_cost(r)
-                content = (
-                    payload["choices"][0]["message"].get("content") or ""
-                ).strip()
+                message = r.json()["choices"][0]["message"]
+                content = (message.get("content") or "").strip()
                 if content:
                     break
     except Exception:  # noqa: BLE001 — a failed call keeps the last one written
@@ -102,15 +138,9 @@ async def write(
             "project situation call failed project=%s", project_id, exc_info=True
         )
         content = ""
-    if total.total_tokens or cost:
-        await Ledger(session).record_project_call(
-            project_id,
-            kind=USAGE_KIND,
-            model=model,
-            input_tokens=total.prompt_tokens,
-            output_tokens=total.completion_tokens,
-            cost_usd=cost,
-        )
+    if asked:
+        # 花在项目钥匙上的，和项目里的一轮一样从网关的记录里结算。
+        await models.charge_turn_spend(project_id, None, uuid.uuid4())
     if not content:
         return None
-    return Written(content=content, model=model, cost_usd=cost)
+    return Written(content=content, model=bound.model)

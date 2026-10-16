@@ -34,7 +34,6 @@ def upgrade() -> None:
         sa.Column("writing_since", sa.DateTime(timezone=True), nullable=True),
         sa.Column("tried_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("model", sa.String(128), server_default="", nullable=False),
-        sa.Column("cost_usd", sa.Float(), server_default="0", nullable=False),
         sa.ForeignKeyConstraint(
             ["project_id"],
             ["projects.id"],

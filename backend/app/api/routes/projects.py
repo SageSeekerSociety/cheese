@@ -593,17 +593,18 @@ async def project_situation(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """项目总览最上面的「现状」：芝士上一次写下的那几句。
 
-    从不等模型：上次之后有了新进展，就在后台重写（`project_situation.service`
-    说什么时候算），写完推一帧 ``situation``。整个项目一份，读的只有公开频道里
-    的事，所以项目成员看到的都一样。
+    从不等模型：上次之后有了新进展，就在后台用项目自己的模型重写
+    （`project_situation.service` 说什么时候算），写完推一帧 ``situation``。
+    整个项目一份，读的只有公开频道里的事，所以项目成员看到的都一样。
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await ProjectService(db).get_or_404(project_id)
-    found = await situation_service.read(db, project_id)
+    found = await situation_service.read(db, project_id, models=chat)
     return ok(
         SituationOut(
             content=found.content, written_at=found.written_at, writing=found.writing

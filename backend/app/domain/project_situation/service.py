@@ -65,7 +65,11 @@ def _writing(row: ProjectSituation | None, now: datetime) -> bool:
 
 
 async def read(
-    session: AsyncSession, project_id: uuid.UUID, *, now: datetime | None = None
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    models: writer.ProjectModels,
+    now: datetime | None = None,
 ) -> Situation:
     now = now or datetime.now(UTC)
     row = await session.get(ProjectSituation, project_id)
@@ -76,7 +80,9 @@ async def read(
         engine = _engine_of(session)
         if await _claim(engine, project_id, now=now, gap=gap):
             writing = True
-            background.spawn(_rewrite(engine, project_id), name="project situation")
+            background.spawn(
+                _rewrite(engine, project_id, models), name="project situation"
+            )
     if row is None:
         return Situation(content="", written_at=None, writing=writing)
     return Situation(content=row.content, written_at=row.written_at, writing=writing)
@@ -120,7 +126,9 @@ async def _claim(
     return claimed is not None
 
 
-async def _rewrite(engine: AsyncEngine, project_id: uuid.UUID) -> None:
+async def _rewrite(
+    engine: AsyncEngine, project_id: uuid.UUID, models: writer.ProjectModels
+) -> None:
     written: writer.Written | None = None
     async with AsyncSession(engine, expire_on_commit=False) as session:
         try:
@@ -129,10 +137,13 @@ async def _rewrite(engine: AsyncEngine, project_id: uuid.UUID) -> None:
             material = await project_material.gather(session, project_id)
             if material.quiet:
                 # 近两周什么都没发生：没东西可写，不问模型，也不留上一次的旧话。
-                written = writer.Written(content="", model="", cost_usd=0.0)
+                written = writer.Written(content="", model="")
             else:
                 written = await writer.write(
-                    session, project_id=project_id, material=material.text
+                    session,
+                    project_id=project_id,
+                    material=material.text,
+                    models=models,
                 )
         except Exception:  # noqa: BLE001 — the last one written stands
             logger.warning(
@@ -147,7 +158,6 @@ async def _rewrite(engine: AsyncEngine, project_id: uuid.UUID) -> None:
                 "major": marks.major,
                 "minor": marks.minor,
                 "model": written.model,
-                "cost_usd": written.cost_usd,
             }
         await session.execute(
             update(ProjectSituation)
