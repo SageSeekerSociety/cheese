@@ -47,9 +47,14 @@ BASELINE = {
     # 画布格子关联的任务，在谁都能读的频道里才写给 AI 队友看：`open_rooms` 是
     # `WHERE is_private IS FALSE` 一类的过滤，和轮次组装不是一回事。
     "app/domain/topic/reads.py": 1,
-    # 8：未读数里私聊默认每条都算（`unread_counts`），和「私聊不进这张列表」一类
-    # 过滤同属登记。
-    "app/domain/topic/repositories.py": 8,
+    # 8，拆包之前是同一行的一条：这些读点现在散在四个子模块里（未读数 2、私聊
+    # 房间的取得 2、读点与列表过滤 4）。未读数里私聊默认每条都算
+    # （`unread_counts`），和「私聊不进这张列表」一类过滤同属登记。总数没变，
+    # 只是不再挤在一个路径上。
+    "app/domain/topic/repositories/reads.py": 3,
+    "app/domain/topic/repositories/statements.py": 1,
+    "app/domain/topic/repositories/unread.py": 2,
+    "app/domain/topic/repositories/writes.py": 2,
     # 频道能加入、退出、要加入才能在主线说话，私聊是两席、不走这些：`_public`
     # 是这个文件唯一读那个布尔的地方。
     "app/domain/topic_membership/services.py": 1,
