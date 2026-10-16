@@ -250,6 +250,254 @@ class Fixture:
         return self.run_tool(*extra)
 
 
+class CallerContractTests(unittest.TestCase):
+    """Each broken consumer must fail even when the facade-only checks pass."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="split-callers-")
+        self.addCleanup(tmp.cleanup)
+        self.fixture = Fixture(Path(tmp.name) / "repo", "from json import loads\n")
+        # Exercise the actual app import root, not a backend.app lookalike.
+        root = self.fixture.root
+        (root / "backend").mkdir()
+        (root / "pkgroot").rename(root / "backend/app")
+        _git(root, "add", "pkgroot", "backend/app")
+        _git(root, "commit", "-qm", "put the fixture under the app import root")
+        self.fixture.base = _git(root, "rev-parse", "HEAD").strip()
+        self.fixture.package_dir = root / "backend/app/impl/foo"
+        (root / "backend/app/impl/foo.py").unlink()
+        self.write_package({"__init__.py": "", "worker.py": "from json import loads\n"})
+
+    def write_package(self, files: dict[str, str]) -> None:
+        for path, source in files.items():
+            self.fixture._write("backend/app/impl/foo/" + path, source)
+
+    def assert_result(self, code: int, *messages: str) -> None:
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+        for message in messages:
+            self.assertIn(message, result.stdout + result.stderr)
+
+    def test_cross_package_imports_fail_and_retargeting_repairs_them(self) -> None:
+        for directory in ("cli", "backend/scripts", ".claude/scripts", "scripts"):
+            with self.subTest(directory=directory):
+                path = directory + "/consumer.py"
+                self.fixture._write(path, "from app.impl.foo import loads as decode\n")
+                self.assert_result(1, "调用方导入断裂", path, "loads")
+                self.fixture._write(
+                    path, "from app.impl.foo.worker import loads as decode\n"
+                )
+                self.assert_result(0)
+
+    def test_reexport_of_an_imported_name_still_serves_callers(self) -> None:
+        self.fixture._write("cli/consumer.py", "from app.impl.foo import loads\n")
+        self.write_package({"__init__.py": "from .worker import loads\n"})
+        self.assert_result(0)
+        self.write_package(
+            {"__init__.py": "from .worker import nonexistent as loads\n"}
+        )
+        self.assert_result(1, "调用方导入断裂", "loads")
+
+    def test_private_imports_and_relative_imports_are_checked(self) -> None:
+        self.fixture._write(
+            "backend/app/impl/consumer.py", "from .foo import _decode\n"
+        )
+        self.assert_result(1, "调用方导入断裂", "_decode")
+        self.write_package({"__init__.py": "from .worker import loads as _decode\n"})
+        self.assert_result(0)
+
+    def test_old_reason_on_a_retargeted_import_fails_then_passes(self) -> None:
+        path = "backend/tests/test_decode.py"
+        source = (
+            "def decode():\n"
+            "    # deferred-import: tests replace this name on app.impl.foo\n"
+            "    from app.impl.foo.worker import loads\n"
+            "    return loads('{}')\n"
+        )
+        self.fixture._write(path, source)
+        self.assert_result(1, "理由句失指", path)
+        self.fixture._write(
+            path,
+            source.replace("name on app.impl.foo\n", "name on app.impl.foo.worker\n"),
+        )
+        self.assert_result(0)
+
+    def test_reason_strings_and_comments_name_a_removed_patch_target(self) -> None:
+        path = "backend/tests/test_decode.py"
+        for source in (
+            'reason = "tests patch app.impl.foo.loads"\n',
+            "# tests replace app.impl.foo.loads\n",
+        ):
+            self.fixture._write(path, source)
+            self.assert_result(1, "理由句失指", path)
+            self.fixture._write(path, source.replace("foo.loads", "foo.worker.loads"))
+            self.assert_result(0)
+
+    def test_missing_patch_paths_fail_and_new_paths_pass(self) -> None:
+        path = "backend/tests/test_decode.py"
+        for source in (
+            'monkeypatch.setattr("app.impl.foo.loads", fake)\n',
+            'from app.impl import foo\nsetattr(foo, "loads", fake)\n',
+            'import app.impl.foo as old\nmonkeypatch.setattr(old, "loads", fake)\n',
+            'from unittest.mock import patch\npatch("app.impl.foo.loads", fake)\n',
+        ):
+            with self.subTest(source=source):
+                self.fixture._write(path, source)
+                self.assert_result(1, "补丁目标断裂", path, "loads")
+                self.fixture._write(
+                    path,
+                    source.replace("app.impl.foo", "app.impl.foo.worker").replace(
+                        "import foo\n",
+                        "import foo\nfrom app.impl.foo import worker as foo\n",
+                    ),
+                )
+                self.assert_result(0)
+
+    def test_reexported_globals_do_not_keep_patches_effective(self) -> None:
+        self.write_package(
+            {
+                "__init__.py": "from .worker import loads, decode\n",
+                "worker.py": "from json import loads\ndef decode():\n    return loads('{}')\n",
+            }
+        )
+        # The old callable looked up loads in the old module's globals.
+        old = self.fixture.root / "backend/app/impl/foo.py"
+        old.write_text(
+            "from json import loads\ndef decode():\n    return loads('{}')\n"
+        )
+        _git(self.fixture.root, "add", "backend/app/impl/foo.py")
+        _git(self.fixture.root, "commit", "-qm", "record the old callable")
+        self.fixture.base = _git(self.fixture.root, "rev-parse", "HEAD").strip()
+        old.unlink()
+        path = "backend/tests/test_decode.py"
+        self.fixture._write(path, 'monkeypatch.setattr("app.impl.foo.loads", fake)\n')
+        self.assert_result(1, "补丁不再作用于搬走的定义", "decode", "loads")
+        self.fixture._write(
+            path, 'monkeypatch.setattr("app.impl.foo.worker.loads", fake)\n'
+        )
+        self.assert_result(0)
+
+    def test_logger_selection_fails_when_the_emitter_name_moves(self) -> None:
+        path = "backend/tests/test_logging.py"
+        self.write_package(
+            {"worker.py": "import logging\nLOG = logging.getLogger(__name__)\n"}
+        )
+        self.fixture._write(
+            path,
+            'import logging\nmonkeypatch.setattr(logging.getLogger("app.impl.foo"), "warning", fake)\n',
+        )
+        self.assert_result(1, "日志名称已迁移", path)
+        self.fixture._write(
+            path,
+            'import logging\nmonkeypatch.setattr(logging.getLogger("app.impl.foo.worker"), "warning", fake)\n',
+        )
+        self.assert_result(0)
+        self.write_package(
+            {"worker.py": 'import logging\nLOG = logging.getLogger("app.impl.foo")\n'}
+        )
+        self.fixture._write(
+            path,
+            'import logging\nmonkeypatch.setattr(logging.getLogger("app.impl.foo"), "warning", fake)\n',
+        )
+        self.assert_result(0)
+
+    def test_unrelated_strings_and_logger_hierarchies_are_not_patches(self) -> None:
+        self.fixture._write("cli/consumer.py", 'text = "app.impl.foo.loads"\n')
+        self.write_package(
+            {"worker.py": "import logging\nLOG = logging.getLogger(__name__)\n"}
+        )
+        self.fixture._write(
+            "backend/tests/test_logging.py",
+            'import logging\nlogging.getLogger("app.impl")\n',
+        )
+        self.assert_result(0)
+
+    def test_nested_reexports_resolve_relative_to_their_own_package(self) -> None:
+        self.write_package(
+            {
+                "__init__.py": "from .nested import loads\n",
+                "nested/__init__.py": "from ..worker import loads\n",
+            }
+        )
+        self.fixture._write("cli/consumer.py", "from app.impl.foo import loads\n")
+        self.assert_result(0)
+        self.write_package(
+            {"nested/__init__.py": "from ..worker import missing as loads\n"}
+        )
+        self.assert_result(1, "调用方导入断裂", "cli/consumer.py")
+
+    def test_parameter_and_reassignment_shadow_a_module_alias(self) -> None:
+        self.fixture._write(
+            "backend/tests/test_decode.py",
+            (
+                "from app.impl import foo\n"
+                "def first(foo, monkeypatch):\n"
+                "    monkeypatch.setattr(foo, 'loads', fake)\n"
+                "def second(monkeypatch):\n"
+                "    foo = object()\n"
+                "    monkeypatch.setattr(foo, 'loads', fake)\n"
+            ),
+        )
+        self.assert_result(0)
+        self.fixture._write(
+            "backend/tests/test_decode.py",
+            (
+                "from app.impl import foo\n"
+                "def first(foo, monkeypatch):\n"
+                "    monkeypatch.setattr(foo, 'loads', fake)\n"
+                "def second(monkeypatch):\n"
+                "    monkeypatch.setattr(foo, 'loads', fake)\n"
+            ),
+        )
+        self.assert_result(1, "补丁目标断裂")
+
+    def test_local_names_do_not_turn_reexports_into_broken_patches(self) -> None:
+        old = self.fixture.root / "backend/app/impl/foo.py"
+        source = "from json import loads\ndef decode(loads):\n    return loads('{}')\n"
+        old.write_text(source)
+        _git(self.fixture.root, "add", "backend/app/impl/foo.py")
+        _git(
+            self.fixture.root, "commit", "-qm", "record a parameter with the same name"
+        )
+        self.fixture.base = _git(self.fixture.root, "rev-parse", "HEAD").strip()
+        old.unlink()
+        self.write_package(
+            {"__init__.py": "from .worker import loads, decode\n", "worker.py": source}
+        )
+        self.fixture._write(
+            "backend/tests/test_decode.py",
+            'monkeypatch.setattr("app.impl.foo.loads", fake)\n',
+        )
+        self.assert_result(0)
+
+    def test_logger_aliases_are_checked_but_parent_handlers_remain_valid(self) -> None:
+        self.write_package(
+            {"worker.py": "import logging\nLOG = logging.getLogger(__name__)\n"}
+        )
+        path = "backend/tests/test_logging.py"
+        self.fixture._write(
+            path,
+            (
+                "from logging import getLogger as logger_for\n"
+                'logger = logger_for("app.impl.foo")\n'
+                'monkeypatch.setattr(logger, "warning", fake)\n'
+            ),
+        )
+        self.assert_result(1, "日志名称已迁移")
+        self.fixture._write(
+            path,
+            ('import logging\nlogging.getLogger("app.impl.foo").addHandler(handler)\n'),
+        )
+        self.assert_result(0)
+
+    def test_an_unreadable_relevant_caller_is_not_a_pass(self) -> None:
+        self.fixture._write(
+            "cli/consumer.py",
+            "from app.impl.foo import loads\nthis is invalid python\n",
+        )
+        self.assert_result(2, "cannot judge", "cli/consumer.py")
+
+
 class SplitVerificationTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory(prefix="verify-module-split-")
@@ -1187,6 +1435,7 @@ def main(argv: list[str] | None = None) -> int:
     args, extra = parser.parse_known_args(argv)
     suite = unittest.TestLoader().loadTestsFromTestCase(SplitVerificationTests)
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(RuntimeShapeTests))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(CallerContractTests))
     suite.addTests(
         unittest.TestLoader().loadTestsFromTestCase(DeferredRuleAgreementTests)
     )

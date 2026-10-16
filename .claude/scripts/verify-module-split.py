@@ -12,8 +12,7 @@
         file that does not parse) — never a pass
 
 WHY. Turning `a/foo.py` into `a/foo/__init__.py` plus submodules is mechanical
-until it isn't, and the three ways it goes wrong are all invisible to every
-check the repo already runs:
+until it isn't. The facade checks cover these three ways it goes wrong:
 
 - **A public name stops being exported.** `from a.foo import Widget` worked
   before; after the split `Widget` lives in `a/foo/models.py` and `__init__.py`
@@ -44,10 +43,9 @@ A name the old module only *imported* is not required of the package. Every
 module imports a few dozen names for its own use, and demanding they survive
 would turn every run red. What the old module binds itself — `def`, `class`,
 assignment, and anything named in `__all__` — is required; the rest is listed
-in the note line so a reader can see what was set aside. That is the boundary
-to know: a caller doing `from <old module> import X` where the old module had
-merely imported `X` is not caught here. Two more names are set aside, each for
-a reason that would otherwise red-light every split in this repository:
+in the note line so a reader can see what was set aside. The consumer check
+separately requires those names (including private ones) when a repository
+caller imports them. Two more names are set aside by the facade check:
 `LOG = logging.getLogger(__name__)`, which each new module writes its own copy
 of, and a private class member that became a module-level function taking the
 instance — both reported as notes, not as lost names. A *public* constant is
@@ -67,6 +65,22 @@ once per statement. That file stays the authority on the rule; the self-test
 compares this script's count against its `deferred_imports_in` on the same
 source so the two cannot drift apart silently.
 
+CONSUMERS. Git-tracked and unignored new Python files across the repository
+(including cli/, scripts/, backend/scripts/ and .claude/scripts/) are scanned
+for imports from the package and literal setattr / monkeypatch.setattr /
+unittest.mock.patch targets. A facade alias does not preserve a moved function's
+global lookups. Patches on a named logging.getLogger object are checked against
+the new modules' logger names; selecting a parent logger for handlers is valid.
+Comments and single-line strings that say patch/replace/mock (or 替换/补丁) are
+checked for package-qualified targets. The convention `tests replace this name
+on <module>` is compared with the adjacent import's source, not interpreted as
+an arbitrary natural-language claim about what tests actually do.
+
+This is an explicit CLI check of a single file becoming a package, not an
+automatic CI gate or a checker for moves between sibling files. Dynamic patch
+targets, external object attributes and arbitrary prose are outside its static
+coverage. No application module is imported by the consumer check.
+
 Only the standard library is used: no network, no third-party import, no write.
 """
 
@@ -75,9 +89,13 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib.util
+import io
 import json
 import os
+import re
+import tokenize
 import subprocess
+import symtable
 import sys
 import textwrap
 from collections import Counter
@@ -127,6 +145,7 @@ class ModuleFacts:
     """What one `.py` file declares at its top level."""
 
     path: str
+    module_name: str = ""
     #: public name -> the node that binds it
     defined: dict[str, ast.AST] = field(default_factory=dict)
     #: names a top-level `import` / `from ... import` brought in
@@ -255,15 +274,20 @@ def _collect_import_from(
         return
     relative = bool(node.level) and bool(node.module)
     internal = _internal_submodule(node, package_name)
+    submodule = node.module
+    if node.level and package_name and facts.module_name:
+        absolute = _absolute_module(facts.module_name, node.level, node.module)
+        relative = absolute == package_name or absolute.startswith(package_name + ".")
+        submodule = absolute[len(package_name) :].lstrip(".") if relative else absolute
     for alias in node.names:
         if alias.name == "*":
-            if node.module:
-                facts.star_imports.append(internal or node.module)
+            if submodule is not None:
+                facts.star_imports.append(internal or submodule)
             continue
         name = alias.asname or alias.name
         facts.imported.add(name)
         if relative:
-            facts.relative_imports[name] = (node.module, alias.name)
+            facts.relative_imports[name] = (submodule, alias.name)
         elif internal:
             facts.relative_imports[name] = (internal, alias.name)
 
@@ -443,7 +467,7 @@ def _deferred_keys(
 def read_source(
     source: str, path: str, module_name: str = "", package_name: str = ""
 ) -> ModuleFacts:
-    facts = ModuleFacts(path=path)
+    facts = ModuleFacts(path=path, module_name=module_name)
     tree = ast.parse(source, filename=path)
     _collect_statements(tree.body, facts, package_name)
     facts.all_list, facts.all_unreadable = _read_all(tree)
@@ -480,6 +504,8 @@ def read_package(package_dir: Path, module_name: str = "") -> Package:
         else:
             key = ".".join(relative.parts[:-1] + (relative.stem,))
         inside = f"{module_name}.{key}" if key else module_name
+        if relative.name == "__init__.py" and inside:
+            inside += ".__init__"
         modules[key] = read_source(
             path.read_text(encoding="utf-8"), str(path), inside, module_name
         )
@@ -531,7 +557,7 @@ def _reachable_through_star(star_facts: ModuleFacts, name: str) -> bool:
     """What `from <star_facts> import *` actually binds."""
     if star_facts.all_list is not None:
         return name in star_facts.all_list
-    return name in star_facts.defined or name in star_facts.imported
+    return _public(name) and (name in star_facts.defined or name in star_facts.imported)
 
 
 def facade_exports(package: Package) -> set[str]:
@@ -801,7 +827,7 @@ def check_exports(old: ModuleFacts, package: Package, findings: Findings) -> Non
             "旧模块顶层还 import 了 "
             + ", ".join(incidental[:8])
             + ("" if len(incidental) <= 8 else f" 等 {len(incidental)} 个")
-            + " — 不是它导出的东西, 未参与比对"
+            + " — 门面比对不要求保留；仓内调用方另查"
         )
 
 
@@ -886,6 +912,299 @@ def _deferred_sites(new_entries, dependency: str) -> str:
             if dependency in item.keys
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Consumers: imports, patch lookups and the reasons that name those lookups
+# ---------------------------------------------------------------------------
+
+
+def _has_binding(package: Package, key: str, name: str, seen=frozenset()) -> bool:
+    """Include private/incidental imports, but follow internal re-exports to a binding."""
+    if (key, name) in seen or key not in package.modules:
+        return False
+    facts = package.modules[key]
+    seen = seen | {(key, name)}
+    if ".".join(filter(None, (key, name))) in package.modules:
+        return True  # from a package import an actual submodule
+    if name in facts.relative_imports:
+        sub, original = facts.relative_imports[name]
+        return _has_binding(package, sub, original, seen)
+    if name in facts.defined or name in facts.imported:
+        return True
+    return any(
+        _reachable_through_star(package.modules[sub], name)
+        and _has_binding(package, sub, name, seen)
+        for sub in facts.star_imports
+        if sub in package.modules
+    )
+
+
+def _target_exists(package: Package, dotted: str, target: str) -> bool:
+    if not target.startswith(dotted + "."):
+        return True
+    parts = target[len(dotted) + 1 :].split(".")
+    key = ""
+    while parts and ".".join(filter(None, (key, parts[0]))) in package.modules:
+        key = ".".join(filter(None, (key, parts.pop(0))))
+    if not parts:
+        return True
+    if not _has_binding(package, key, parts[0]):
+        return False
+    hit = _resolve(package, key, parts[0])
+    if len(parts) > 1 and hit:
+        node = package.modules[hit[0]].defined.get(hit[1])
+        if isinstance(node, ast.ClassDef) and not node.bases:
+            members = ModuleFacts(path="<class>")
+            _collect_statements(node.body, members)
+            if "__getattr__" not in members.defined:
+                return parts[1] in members.defined or parts[1] in members.imported
+    return True  # external objects cannot be enumerated without importing them
+
+
+def _global_reads(node: ast.AST) -> set[str]:
+    tables = list(
+        symtable.symtable(ast.unparse(node), "<definition>", "exec").get_children()
+    )
+    names: set[str] = set()
+    while tables:
+        table = tables.pop()
+        names.update(
+            s.get_name()
+            for s in table.get_symbols()
+            if s.is_global() and s.is_referenced()
+        )
+        tables.extend(table.get_children())
+    return names
+
+
+def _moved_lookup(old: ModuleFacts, package: Package, name: str) -> str | None:
+    """A re-export preserves object identity, not the function's globals dictionary."""
+    for public, before in old.defined.items():
+        if not isinstance(
+            before, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ):
+            continue
+        hit = _resolve(package, "", public)
+        if not hit or not hit[0]:
+            continue
+        after = package.modules[hit[0]].defined.get(hit[1])
+        if after and name in _global_reads(before) & _global_reads(after):
+            return public
+    return None
+
+
+class ConsumerChecks(ast.NodeVisitor):
+    def __init__(self, old, package, dotted, module, path, findings, logger_names):
+        self.old, self.package, self.dotted = old, package, dotted
+        self.module, self.path, self.findings = module, path, findings
+        self.aliases: dict[str, str] = {}
+        self.logger_names = logger_names
+
+    def name(self, node: ast.AST) -> str:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name):
+            return self.aliases.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            parent = self.name(node.value)
+            return parent + "." + node.attr if parent else ""
+        if (
+            isinstance(node, ast.Call)
+            and self.name(node.func) == "logging.getLogger"
+            and node.args
+        ):
+            if isinstance(node.args[0], ast.Constant) and isinstance(
+                node.args[0].value, str
+            ):
+                return "@logger:" + node.args[0].value
+        return ""
+
+    def visit_Assign(self, node: ast.Assign | ast.AnnAssign) -> None:
+        self.generic_visit(node)
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        value = (
+            self.name(node.value)
+            if node.value and not isinstance(node.value, ast.Constant)
+            else ""
+        )
+        for target in targets:
+            for name in _target_names(target):
+                self.aliases[name] = value if isinstance(target, ast.Name) else ""
+
+    visit_AnnAssign = visit_Assign
+
+    def block(self, node: ast.AST, message: str) -> None:
+        self.findings.block(f"{self.path}:{node.lineno}: {message}")
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.aliases[alias.asname or alias.name.split(".")[0]] = (
+                alias.name if alias.asname else alias.name.split(".")[0]
+            )
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module = _absolute_module(self.module, node.level, node.module)
+        for alias in node.names:
+            target = module + "." + alias.name
+            if alias.name != "*" and not _target_exists(
+                self.package, self.dotted, target
+            ):
+                self.block(node, f"调用方导入断裂: {target}")
+            self.aliases[alias.asname or alias.name] = target
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        previous, self.aliases = self.aliases, self.aliases.copy()
+        for arg in (
+            *node.args.posonlyargs,
+            *node.args.args,
+            *node.args.kwonlyargs,
+            *([node.args.vararg] if node.args.vararg else []),
+            *([node.args.kwarg] if node.args.kwarg else []),
+        ):
+            self.aliases[arg.arg] = "monkeypatch" if arg.arg == "monkeypatch" else ""
+        self.generic_visit(node)
+        self.aliases = previous
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        previous, self.aliases = self.aliases, self.aliases.copy()
+        self.generic_visit(node)
+        self.aliases = previous
+
+    def check_patch(self, node: ast.AST, target: str, reason: bool = False) -> None:
+        label = "理由句失指" if reason else "补丁目标断裂"
+        if not _target_exists(self.package, self.dotted, target):
+            self.block(node, f"{label}: {target}")
+        elif target.startswith(self.dotted + "."):
+            name = target[len(self.dotted) + 1 :]
+            if "." not in name and (
+                moved := _moved_lookup(self.old, self.package, name)
+            ):
+                self.block(
+                    node,
+                    f"{label if reason else '补丁不再作用于搬走的定义'}: {target} → {moved}",
+                )
+
+    def visit_Call(self, node: ast.Call) -> None:
+        function = self.name(node.func)
+        target = ""
+        if (
+            function in {"setattr", "monkeypatch.setattr", "unittest.mock.patch.object"}
+            and len(node.args) >= 2
+        ):
+            obj, attribute = node.args[:2]
+            if self.name(obj).startswith("@logger:"):
+                logger = self.name(obj)[len("@logger:") :]
+                if (
+                    logger == self.dotted
+                    and logger not in self.logger_names
+                    and self.logger_names
+                ):
+                    self.block(
+                        node,
+                        f"日志名称已迁移: {logger} → {', '.join(sorted(self.logger_names))}",
+                    )
+            elif (
+                isinstance(attribute, ast.Constant)
+                and isinstance(attribute.value, str)
+                and len(node.args) >= 3
+            ):
+                target = self.name(obj) + "." + attribute.value
+            elif isinstance(obj, ast.Constant) and isinstance(obj.value, str):
+                target = obj.value
+        elif function == "unittest.mock.patch" and node.args:
+            target = self.name(node.args[0])
+        if target:
+            self.check_patch(node, target)
+        self.generic_visit(node)
+
+
+def check_consumers(
+    repo: Path, old: ModuleFacts, package: Package, dotted: str, findings: Findings
+) -> None:
+    """Read tracked and new Python callers across the repo; never import their code."""
+    proc = subprocess.run(
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "*.py",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    logger_names: set[str] = set()
+    for key, facts in package.modules.items():
+        for node in facts.defined.values():
+            if _scaffolding(node) and node.value.args:
+                arg = node.value.args[0]
+                if isinstance(arg, ast.Name) and arg.id == "__name__":
+                    logger_names.add(dotted + ("." + key if key else ""))
+                elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    logger_names.add(arg.value)
+    scanned = 0
+    for relative in sorted(set(proc.stdout.split("\0")) - {""}):
+        path = repo / relative
+        if not path.is_file():
+            continue  # a tracked pre-split file was removed in the working tree
+        source = path.read_text(encoding="utf-8")
+        if dotted.split(".")[-1] not in source:
+            continue
+        try:
+            tree = ast.parse(source, filename=relative)
+        except SyntaxError as exc:
+            raise ValueError(f"{relative}:{exc.lineno}: {exc.msg}") from exc
+        root = repo / "backend" if relative.startswith("backend/") else repo
+        module = _dotted_name(path, root)
+        if path.name == "__init__.py":
+            module += ".__init__"  # _absolute_module expects a file, not a package
+        checker = ConsumerChecks(
+            old, package, dotted, module, relative, findings, logger_names
+        )
+        checker.visit(tree)
+        comments = [
+            (tok.start[0], tok.string)
+            for tok in tokenize.generate_tokens(io.StringIO(source).readline)
+            if tok.type == tokenize.COMMENT
+        ]
+        strings = [
+            (node.lineno, node.value)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "\n" not in node.value
+        ]
+        imports = [node for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
+        for line, text in comments + strings:
+            if not re.search(
+                r"\b(?:patch|patches|replace|replaces|mock)\b|替换|补丁", text
+            ):
+                continue
+            for target in re.findall(
+                r"(?<![\w.])" + re.escape(dotted) + r"(?:\.[A-Za-z_]\w*)*", text
+            ):
+                anchor = ast.Constant(value=text, lineno=line)
+                if target != dotted:
+                    checker.check_patch(anchor, target, reason=True)
+                elif "this name on" in text:
+                    for node in imports:
+                        if node.lineno in (line, line + 1):
+                            actual = _absolute_module(module, node.level, node.module)
+                            if actual != target:
+                                checker.block(
+                                    anchor,
+                                    f"理由句失指: {target}，导入实际来自 {actual}",
+                                )
+        scanned += 1
+    findings.summary.append(f"仓内 Python 调用方: 检查 {scanned} 个文件（含包外脚本）")
 
 
 # ---------------------------------------------------------------------------
@@ -1182,6 +1501,11 @@ def run_check(args: argparse.Namespace) -> int:
     check_exports(old, package, findings)
     check_signatures(old, package, findings)
     check_deferred(old, package, findings)
+    try:
+        check_consumers(repo_root, old, package, package_dir_name, findings)
+    except (OSError, ValueError, SyntaxError, subprocess.CalledProcessError) as exc:
+        print(f"cannot judge: {exc}", file=sys.stderr)
+        return EXIT_CANNOT_JUDGE
     if args.runtime_identity:
         check_runtime_identity(package, findings)
 
