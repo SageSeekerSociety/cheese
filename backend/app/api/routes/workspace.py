@@ -25,10 +25,8 @@ from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review import forge_clients
-from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.place import place_or_404
+from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
 from app.domain.room_task.services import TaskService
-from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["workspace"])
