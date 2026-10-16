@@ -412,7 +412,6 @@ const ACTION_META: Record<string, { btn: string }> = {
         >
           {{ t('work.room.notice.openRoutine') }}
         </button>
-        <!-- 第二颗：不经过那一串，直接看这一条跑出来什么。 -->
         <button
           v-if="routineId"
           type="button"

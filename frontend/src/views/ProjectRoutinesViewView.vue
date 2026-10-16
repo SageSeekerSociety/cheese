@@ -2,7 +2,8 @@
 // 例行事务的画面：一条规则一行（`RoutineBoard`），改一条已有的那一页
 // （`RoutineCompose`）。两样都是 `components/routine/` 里的共用件 —— 房间右侧那一格
 // 画的是同一份；取数、读地址留在容器 `ProjectRoutinesView.vue` 里，这一半只收 props、
-// 只把动作抛上去。
+// 只把动作抛上去。改一条已有的、或者看记录的时候，整页只剩那一件：工具条上那串
+// （新建、刷新）此刻没有别的意思，收起来（那两页各自带着「取消」或返回箭头）。
 import type { Routine, RoutineInput, RoutineRecordsView, RoutineRun } from '@/lib/routine'
 import type { RoutineTemplate, RoutineTemplateInput } from '@/lib/routineTemplates'
 
@@ -54,8 +55,6 @@ defineEmits<{
 
 <template>
   <AppPage :title="t('navigation.project.routines')">
-    <!-- 改一条已有的占满这一页：工具条上那串此刻没有别的意思，那一串也收起来
-         （这一页自己带着「取消」）。 -->
     <RoutineCompose
       v-if="formOpen"
       :model-value="formOpen"
@@ -70,7 +69,6 @@ defineEmits<{
       @delete-template="(tpl) => $emit('delete-template', tpl)"
     />
 
-    <!-- 看记录的时候整页只剩记录：抬头写着是哪一条的，返回箭头带回这一串。 -->
     <RoutineRecords
       v-else-if="records"
       :title="records.title"

@@ -1,4 +1,8 @@
 <script setup lang="ts">
+// The right-hand 「例行事务」 cell: presentation only — data in through props,
+// actions out through events. While a compose or a records page fills the cell
+// the toolbar above it hides (each page carries its own 「取消」 / back).
+//
 // 话题页右侧「例行事务」那一格 —— 纯展示：数据从 props 进，动作从事件出。
 //
 // 取数在 `components/routine/RoutinePanelHost.vue`（`useRoutineList` + 名册 + 路由都接在
@@ -106,8 +110,6 @@ const emit = defineEmits<{
     </div>
 
     <div class="routine-panel__body">
-      <!-- 建一条规则的那两页占满这一格：工具条上的「新建」此刻没有别的意思，那一串也
-           收起来（这一页自己带着「取消」）。 -->
       <RoutineCompose
         v-if="formOpen"
         :model-value="formOpen"
@@ -122,8 +124,6 @@ const emit = defineEmits<{
         @update-template="(p) => emit('update-template', p)"
         @delete-template="(tpl) => emit('delete-template', tpl)"
       />
-      <!-- 看记录的时候这一格就只剩记录：返回箭头自己带着回列表那条路，上面那串工具
-           （新建、刷新）此刻没有别的意思。 -->
       <RoutineRecords
         v-else-if="records"
         :title="records.title"

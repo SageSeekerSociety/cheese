@@ -79,7 +79,14 @@ const form = reactive({
 })
 
 const editing = ref<Routine | null>(null)
-/** 正在改的那一条模板；`null` 是没在改模板。改模板时那张表填的是它。 */
+/**
+ * 正在改的那一条模板；`null` 是没在改模板。改模板时那张表填的是它。
+ *
+ * 改模板沿用建的这两页（改完多半想直接照它建一条），多一行抬头说清改的是谁。
+ * 那一页上不画「存成模板」—— 改的就是模板本身，没有第二份要存；「频道」那一格也
+ * 不让挑：模板不落在哪个房间里，从它建出来的规则才落（房间里那一格仍写出房间名，
+ * 它说的是「你在哪儿」，不是给模板定的）。那一格在改模板时叫「模板名字」。
+ */
 const editingTemplate = ref<RoutineTemplate | null>(null)
 /** 「条件」那一颗勾上时用哪一种：勾上「时间」不会忘掉它上一次选的是哪一样。 */
 const eventTrigger = ref<RoutineTrigger>('library_file_added')
@@ -207,6 +214,8 @@ function applyTemplate(tpl: RoutineTemplate) {
  * 和「挑一条来填表」走的是同一张表、同一份铺法，差的是存的时候往哪去：这一个不再是
  * 一条新规则的底稿，所以那一页上不画「存成模板」。
  */
+// 自己存的这几条行尾直接摆「修改」「删除」，不用点开 ⋯；预置那几条没有 —— 平台跟着
+// 版本发，要用就照着它建一条，改那条。
 function editTemplate(tpl: RoutineTemplate) {
   applyTemplate(tpl)
   editingTemplate.value = tpl
@@ -279,7 +288,6 @@ function submit() {
 <template>
   <div v-if="modelValue" class="compose">
     <p v-if="editing" class="compose__edit">{{ t('routines.editTitle', { title: editing.title }) }}</p>
-    <!-- 改一条模板：还是那两页页签（改完可能想直接照它建一条），只多一行说清改的是谁。 -->
     <p v-else-if="editingTemplate" class="compose__edit">
       {{ t('routines.template.editTitle', { title: editingTemplate.title }) }}
     </p>
@@ -328,8 +336,6 @@ function submit() {
               <span class="tpl__title">{{ tpl.title }}</span>
               <span class="tpl__meta">{{ whenText(tpl) }} · {{ tpl.goal }}</span>
             </button>
-            <!-- 自己存的这几条行尾直接摆「修改」「删除」，不用点开 ⋯；预置那几条没有
-                 —— 平台跟着版本发，要用就照着它建一条，改那条。 -->
             <button type="button" class="tpl__act" @click="editTemplate(tpl)">
               {{ t('routines.action.edit') }}
             </button>
@@ -342,8 +348,6 @@ function submit() {
     </div>
 
     <div v-else class="compose__body">
-      <!-- 改模板那张表上没有「频道」可挑：模板不落在哪个房间里，从它建出来的规则才落。
-           房间里那一格照样写出这个房间的名字 —— 它说的是「你在哪儿」，不是给模板定的。 -->
       <v-select
         v-if="rooms.length && !editingTemplate"
         v-model="form.room"
@@ -354,7 +358,6 @@ function submit() {
         :label="t('routines.form.room')"
         class="mb-3"
       />
-      <!-- 房间里那一格：频道是定死的，写出来给人看一眼就够，不让挑。 -->
       <div v-else-if="roomName" class="compose__room">
         <span class="compose__room-label">{{ t('routines.form.room') }}</span>
         <span class="compose__room-name">{{ roomName }}</span>
@@ -362,7 +365,6 @@ function submit() {
 
       <p class="t-meta c-faint compose__hint">{{ t('routines.form.autoHint') }}</p>
 
-      <!-- 改模板时那一格叫「模板名字」：这时候写的是这条模板的名字，不是一条规则的名字。 -->
       <v-text-field
         v-model="form.title"
         autocomplete="off"
@@ -456,7 +458,6 @@ function submit() {
     </div>
 
     <div class="compose__foot">
-      <!-- 改模板时不画这一颗：改的就是模板本身，没有第二份要存。 -->
       <v-checkbox
         v-if="!editing && !editingTemplate"
         v-model="asTemplate"
