@@ -2,9 +2,10 @@
   这个控件整体是「一张照片 + 一层暗色蒙版 + 浅色提示文字」，和相机 App 的取景蒙版一样，
   两套主题下都长这样：底下的照片是什么颜色都可能，蒙版和压在上面的字都不能跟着主题翻。
 
-  它走的是 §1.2 的例外 + §2.5 的反色块，而不是 --surface 那一套语义色 —— 浅色下
-  white-on-#EEEFF1 只有约 1.9:1，当场就坏。底用 --inverse-surface，字用 --inverse-ink，
-  这一对在两套主题下都是「一块比页面暗的底 + 浅色字」。
+  它走的是 §1.2 的例外 + §2.5 的反色块，而不是 --surface 那一套语义色 —— 白字压在
+  --fill-2（浅色下 #EEEFF1）上只有约 1.2:1，当场就坏。底用 --inverse-surface，字用
+  --inverse-ink：浅色下是一块比页面暗的底，深色下是一块比页面亮的灰（§2.5），字在两套
+  主题下都是浅色的。
 -->
 <template>
   <div class="avatar-upload" :class="{ 'avatar-upload--empty': !avatarFile }">
