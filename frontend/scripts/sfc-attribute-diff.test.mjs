@@ -46,6 +46,38 @@ function fixture(t, template = '<button :aria-expanded="panel.isOpen?.() ?? fals
 const before = 'panel.isOpen?.() ?? false'
 const bad = 'panel.isOpen ? panel.isOpen() : undefined'
 
+// test:ratchet discovers this test in CI. Check the real commit as well as fixtures:
+// synthetic tests alone would prove the checker works without guarding any PR.
+test('repository split contract on the committed tree (CI)', () => {
+  const repo = path.resolve(path.dirname(cli), '../..')
+  const result = spawnSync(process.execPath, [cli, '--repo', repo, '--head', 'HEAD'], { env, encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stdout + result.stderr)
+})
+
+test('the discovered CI test fails on a real violating commit and passes after repair', (t) => {
+  const f = fixture(t)
+  f.git('update-ref', 'refs/remotes/origin/main', f.base)
+  f.split(`<button :aria-expanded="${bad}" />`)
+  f.write('frontend/scripts/sfc-attribute-diff.mjs', fs.readFileSync(cli, 'utf8'))
+  f.write('frontend/scripts/sfc-attribute-diff.test.mjs', fs.readFileSync(fileURLToPath(import.meta.url), 'utf8'))
+  fs.symlinkSync(path.resolve(path.dirname(cli), '../node_modules'), path.join(f.repo, 'frontend/node_modules'), 'dir')
+  f.git('add', parent, child, 'frontend/scripts/sfc-attribute-diff.mjs', 'frontend/scripts/sfc-attribute-diff.test.mjs')
+  f.git('commit', '--quiet', '-m', 'violating split')
+  // This is a separate runner, not a recursive node:test child of this file.
+  const runnerEnv = { ...env }
+  delete runnerEnv.NODE_TEST_CONTEXT
+  const run = () => spawnSync(process.execPath, ['--test', '--test-name-pattern=^repository split contract',
+    path.join(f.repo, 'frontend/scripts/sfc-attribute-diff.test.mjs')], { env: runnerEnv, encoding: 'utf8', cwd: f.repo })
+  const broken = run()
+  assert.equal(broken.status, 1, broken.stdout + broken.stderr)
+  assert.match(broken.stdout + broken.stderr, /lost \?\? false/)
+  f.split(`<button :aria-expanded="${before}" />`)
+  f.git('add', parent, child)
+  f.git('commit', '--quiet', '-m', 'preserve fallback')
+  const fixed = run()
+  assert.equal(fixed.status, 0, fixed.stdout + fixed.stderr)
+})
+
 test('intentional violation fails with both source locations and the repair; preserving fallback passes', (t) => {
   const f = fixture(t)
   f.split(`<button :aria-expanded="${bad}" />`)

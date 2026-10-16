@@ -185,6 +185,22 @@ repos:
         pass_filenames: false
         files: ^frontend/(src/.*\.vue|eslint\.(a11y\.)?config\.mjs|a11y-baseline\.json|package\.json|pnpm-lock\.yaml|scripts/(a11y-ratchet|tsc-ratchet-core|ratchet-report))
 
+      # Check the index against the branch baseline, not unstaged repairs.
+      # CI's test:ratchet also checks the committed tree via the discovered test.
+      - id: sfc-attribute-diff
+        name: Vue splits preserve explicit attribute fallbacks (staged)
+        entry: node frontend/scripts/sfc-attribute-diff.mjs --staged
+        language: system
+        pass_filenames: false
+        files: ^(.*\.vue|frontend/scripts/sfc-attribute-diff(\.test)?\.mjs|\.pre-commit-config\.yaml)$
+
+      - id: sfc-attribute-diff-self-test
+        name: Vue split attribute guard self-test
+        entry: node frontend/scripts/sfc-attribute-diff.mjs --self-test
+        language: system
+        pass_filenames: false
+        files: ^(frontend/scripts/sfc-attribute-diff(\.test)?\.mjs|\.pre-commit-config\.yaml)$
+
       # Every page the router reaches and every SFC under
       # src/components/panels/ has to render with no backend, no route and no
       # business store. The freeze is the tree at the merge base with

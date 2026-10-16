@@ -205,7 +205,7 @@ function compare({ repo, base, head, staged }) {
 
 function main(argv) {
   if (argv.length === 1 && argv[0] === '--self-test') {
-    return spawnSync(process.execPath, ['--test', fileURLToPath(new URL('./test-sfc-attribute-diff.mjs', import.meta.url))], { stdio: 'inherit' }).status ?? 2
+    return spawnSync(process.execPath, ['--test', fileURLToPath(new URL('./sfc-attribute-diff.test.mjs', import.meta.url))], { stdio: 'inherit' }).status ?? 2
   }
   if (argv.includes('--help')) {
     console.log('sfc-attribute-diff.mjs [--repo DIR] [--base REF] [--head REF | --staged] | --self-test\n0 = no matched fallback regression; 1 = regression; 2 = cannot judge. Not a general equivalence proof.')
