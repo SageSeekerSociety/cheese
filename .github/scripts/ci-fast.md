@@ -47,6 +47,12 @@ machine ten minutes without changing repository config. Required CI's draft job
 already passes `--budget 1200`, so its bound is unchanged. `--memory-mib` remains
 independent (default 3072 MiB, the work machine's session cap).
 
+The `.cheese/pre-push` wrapper retains a separate 240s wall-clock limit,
+configurable with `CI_FAST_PRE_PUSH_TIMEOUT`. It can terminate a larger automatic
+or environment budget before ci-fast writes its report. That interrupted run is
+unverified; raise the wrapper limit as well when using a longer push-time budget.
+Direct `task ci:fast` runs do not have this wrapper limit.
+
 ## The pre-push entry point
 
 `.cheese/pre-push` in the tree is what the platform's task-worktree `pre-push`
