@@ -667,38 +667,12 @@ class TaskMembershipRepository:
         await self._session.flush()
         return membership
 
-    async def find_active_locked_memberships(
-        self,
-        team_id: int,
-        locking_policies: list[str],
-    ) -> Sequence[TaskMembership]:
-        """Find team task memberships that impose a lock on team changes.
-
-        Mirrors NT TaskMembershipRepository.findActiveMembershipsWithOngoingLock:
-        returns TaskMembership rows where the team is APPROVED, the task has a
-        matching locking policy, and the completion status is still ongoing.
-        """
-        ongoing_statuses = ["NOT_SUBMITTED", "PENDING_REVIEW", "REJECTED_RESUBMITTABLE"]
-        now = datetime.now(UTC)
-        stmt: Select[tuple[TaskMembership]] = (
-            select(TaskMembership)
-            .join(Task, Task.id == TaskMembership.task_id)
-            .where(
-                TaskMembership.member_id == team_id,
-                TaskMembership.is_team.is_(True),
-                TaskMembership.approved == 0,  # APPROVED
-                TaskMembership.deleted_at.is_(None),
-                Task.deleted_at.is_(None),
-                Task.team_locking_policy.in_(locking_policies),
-                TaskMembership.completion_status.in_(ongoing_statuses),
-                or_(
-                    TaskMembership.deadline.is_(None),
-                    TaskMembership.deadline > now,
-                ),
-            )
-        )
-        result = await self._session.execute(stmt)
-        return list(result.scalars().all())
+    # `find_active_locked_memberships` 曾经在这儿：`team` 决定一次成员变更能不能做
+    # 的时候问它。这一包在第 4 层、`team` 在第 5 层（团队读任务判权限，任务读团队判
+    # 权限，方向是反的），所以那句话现在由 `team/services.py` 的
+    # `check_team_locking_status` 自己读 `task` / `task_membership` 两张表来答
+    # （同 `topic/repositories/statements.py` 的裸表规矩）。这一份留着只会是同一句
+    # `WHERE` 的第二个副本。行为由 `tests/integration/test_bug5_team_locking.py` 看着。
 
 
 class TopicRepository:

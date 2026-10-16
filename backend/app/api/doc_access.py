@@ -29,9 +29,8 @@ from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, place_or_404, require_doc_writable
 from app.domain.room_task.services import TaskService
-from app.domain.topic.services import TopicService
 
 
 @dataclass(frozen=True)
@@ -64,7 +63,7 @@ async def reach(
         raise NotFoundError(say("docNotFound"))
     task = await TaskService(db).of_document(doc.id)
     if task is not None:
-        place = await TopicService(db).place_or_404(task.id)
+        place = await place_or_404(db, task.id)
         actor = await resolver.resolve(
             topic_id=place.conversation_id, project_id=place.project_id
         )
@@ -73,7 +72,7 @@ async def reach(
         )
         return Reached(doc, actor, place, task, resolver.credential_conversation())
     if doc.room_id is not None and doc.kept_at is None:
-        place = await TopicService(db).place_or_404(doc.room_id)
+        place = await place_or_404(db, doc.room_id)
         # Not resolved against the room's own conversation: 芝士 working in one
         # of the room's tasks or 支线 holds that conversation's credential, and
         # the room is what decides who reads the document.
@@ -106,7 +105,7 @@ async def require_writable(db: AsyncSession, reached: Reached) -> None:
     """An archived room's document, and every document of an archived project,
     takes no more writes."""
     if reached.place is not None:
-        TopicService(db).require_doc_writable(reached.place)
+        require_doc_writable(reached.place)
     if reached.task is not None:
         if reached.task.status != TaskStatus.open:
             raise ValidationError(say("taskClosedNoTurn"))

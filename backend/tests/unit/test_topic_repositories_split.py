@@ -14,7 +14,7 @@
 
 1. 旧路径仍然答得出原来那一组名字，而且是同一个对象——包括唯一一个下划线名字
    ``_replied_to_me_statement``，它原来就住在这个模块里，外面按老路径取它。
-2. ``TopicRepository`` 的 28 个方法（含 ``__init__``）一个不少，而且是**真方法**
+2. ``TopicRepository`` 的 29 个方法（含 ``__init__``）一个不少，而且是**真方法**
    （类自己的 ``__dict__`` 里就有），不是 ``__getattr__`` 之类动态转发的。
 3. ``__init__`` 没动：``_session`` 仍从这里赋值。
 4. **拆的是文件，不是行为**：每个方法体恰好是一句转发，转给四个子模块里同名、
@@ -41,7 +41,9 @@ from app.domain.topic.repositories import (
     writes,
 )
 
-# 28 个方法，照搬运之前那份 repositories.py 里 TopicRepository 的类体抄的。
+# 29 个方法：拆分时搬运的那 28 个，加上 2026-10-16 归档前那道「这间房里还有没有
+# 没结束的活」的判读（`has_open_tasks`，它走裸表 `_tasks`，是 `topic -> room_task`
+# 这一笔债在门面上的那一读）。
 # 顺序按定义先后；__init__ 也在内。
 TOPIC_REPOSITORY_METHODS = [
     "__init__",
@@ -63,6 +65,7 @@ TOPIC_REPOSITORY_METHODS = [
     "list_children",
     "archival_for_project",
     "count_for_project",
+    "has_open_tasks",
     "replied_to_me",
     "unread_counts",
     "_levels",
@@ -124,9 +127,9 @@ def test_progress_repository_is_not_split() -> None:
     )
 
 
-def test_the_repository_keeps_all_28_methods() -> None:
-    """28 个方法一个不少，而且都是类自己定义的。"""
-    assert len(TOPIC_REPOSITORY_METHODS) == 28
+def test_the_repository_keeps_all_29_methods() -> None:
+    """29 个方法一个不少，而且都是类自己定义的。"""
+    assert len(TOPIC_REPOSITORY_METHODS) == 29
     found = {name for name, _ in inspect.getmembers(topic_repositories.TopicRepository)}
     assert [n for n in TOPIC_REPOSITORY_METHODS if n not in found] == []
 
@@ -135,7 +138,7 @@ def test_the_repository_keeps_all_28_methods() -> None:
     assert [n for n in TOPIC_REPOSITORY_METHODS if n not in own] == []
     assert "__getattr__" not in own
 
-    # 反着也要钉住：类自己的函数恰好就是这 28 个，一个不多。少了这条，往门面上
+    # 反着也要钉住：类自己的函数恰好就是这 29 个，一个不多。少了这条，往门面上
     # 新加一个带真身的方法谁都不会发现——「实现只有一份」就被绕过去了。
     own_functions = {
         n

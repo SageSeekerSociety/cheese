@@ -52,7 +52,7 @@ from app.domain.notice_meta import (
 from app.domain.project_skill import importer
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 from app.domain.project_skill.service import ProjectSkillService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["project-skills"])
@@ -161,7 +161,7 @@ async def _in_project(
 ) -> Actor:
     """A person in the project, or a teammate naming the room it speaks from."""
     if topic is not None:
-        place = await TopicService(db).place_or_404(topic)
+        place = await place_or_404(db, topic)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
         actor = await resolver.resolve(project_id=project_id, topic_id=topic)
@@ -177,7 +177,7 @@ async def _in_project(
 async def _speaker(db: AsyncSession, actor: Actor, topic: uuid.UUID | None) -> str:
     if actor.authenticated or topic is None:
         return actor.handle
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     return await TopicMemberService(db).resolve_agent_handle(place.room_id)
 
 
@@ -253,7 +253,7 @@ async def _has_open_line(
 async def create_skill(
     topic_id: uuid.UUID, body: SkillIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _in_project(db, resolver, place.project_id, topic_id)
     by_agent = not _is_person(actor)
     by = await _speaker(db, actor, topic_id)
@@ -451,7 +451,7 @@ async def update_skill(
     if by_agent and topic is not None:
         # The card goes where the teammate was corrected: the person who just
         # corrected it decides there, as with a new skill.
-        room_id = (await TopicService(db).place_or_404(topic)).room_id
+        room_id = (await place_or_404(db, topic)).room_id
         row.source_topic_id = room_id
         if not await _has_open_line(db, room_id, row.id):
             edit = row.shipped_revision > 0

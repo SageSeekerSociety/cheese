@@ -15,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.block.documents import DocumentWriter
 from app.domain.living_doc.overview import overview_document
 from app.domain.living_doc.services import Documents
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
-from app.domain.topic.services import TopicService
 
 
 async def write_doc(
@@ -30,7 +30,7 @@ async def write_doc(
 ):
     """Record ``content`` as the task's next document version, by ``actor``.
     ``quiet``: the task is not told (no "编辑了文档" line)."""
-    place = await TopicService(session).place_or_404(task_id)
+    place = await place_or_404(session, task_id)
     assert place.task is not None, "only a task has a living document"
     document_id = await TaskService(session).ensure_document(place.task)
     doc = await Documents(session).get(document_id)

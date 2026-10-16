@@ -38,7 +38,7 @@ from app.domain.notification.schemas import (
     ResolveIn,
 )
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="", tags=["alerts"])
 
@@ -105,7 +105,7 @@ async def create_notification(
     conversation_id = None
     room_id = None
     if body.topic_id is not None:
-        place = await TopicService(db).place_or_404(body.topic_id)
+        place = await place_or_404(db, body.topic_id)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
         conversation_id = place.conversation_id

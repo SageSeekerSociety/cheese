@@ -97,8 +97,8 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.room_task.place import place_or_404
 from app.domain.thread.services import answered_in
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -135,7 +135,7 @@ async def send_chat_message(
     changes nothing (`Place.keeps_work`). Of the agents, only the task's own
     session publishes there, in its turn.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Sign in to send a message")
@@ -314,7 +314,7 @@ async def leave_a_note(
     房间里的一条消息。那边这一刻没有在跑的轮次就没人接住，如实回 `delivered: false`。
     """
 
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     sender = actor.handle
     if not actor.authenticated:

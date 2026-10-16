@@ -27,10 +27,10 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.staleness import announce_stale
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import TopicOut
-from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -56,7 +56,7 @@ async def set_title(
     title is final; its own session's title the platform may still change
     (`room_task/naming.py`).
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

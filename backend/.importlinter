@@ -438,6 +438,13 @@ unmatched_ignore_imports_alerting = warn
 # split is what takes `project -> shell` off the graph, which is the one edge
 # under `project` that was holding `shell` inside the largest cycle.
 #
+# `presentation_meta` joined at layer 1 (2026-10-16), the same move a fourth
+# time: `PresentationOut` — the two codes of one 看板 cell — was a field of two
+# response shapes at once, `room_task.schemas.TaskOut` (layer 4) and
+# `topic.schemas.TopicOut` (layer 2), so `topic.schemas` climbed to layer 4 for
+# a two-field wire shape. The shape moved down; computing it stays in
+# `room_task/presentation.py`, which reads room and task rows.
+#
 # `environment_diagnosis` joined at layer 3 (2026-10-14), out of the `project`
 # package it was written in. It takes no project row — the route hands it two
 # ids, the settings and the failure — and what it reads is `gateway_chat` and
@@ -493,7 +500,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta
 containers =
     app.domain
 exhaustive = true

@@ -22,9 +22,9 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.notification.letter import letter_for
 from app.domain.notification.models import ChannelDelivery
 from app.domain.notification.push import push_link
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.topic.models import Topic
-from app.domain.topic.services import TopicService
 from tests.ask_fixtures import active_ask, question_row, wait_turn_idle
 from tests.conftest import seed_user
 from tests.integration.conftest import (
@@ -392,7 +392,7 @@ def _ask_an_old_question(
             assert row is not None
             await notify_question(
                 session,
-                place=await TopicService(session).place_or_404(row.conversation_id),
+                place=await place_or_404(session, row.conversation_id),
                 block=row,
                 question=row.content,
                 asker=row.author,

@@ -77,6 +77,7 @@ from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_task import naming
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.room_task.services import TaskService
 from app.domain.shell.service import effective_shells
 from app.domain.shell_catalog import Shell, ShellOut
@@ -800,6 +801,7 @@ async def archive_project(
         db,
         settle_card=settle_card,
         cards=close_cards_for_archived_topic,
+        close_tasks=close_room_tasks,
     ).archive(project_id, by=owner.handle)
     await InvitationService(
         db, deliver=deliver, settle=settle, team=project_team
