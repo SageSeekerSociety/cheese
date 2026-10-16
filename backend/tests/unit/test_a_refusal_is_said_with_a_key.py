@@ -410,7 +410,10 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/session_host/claude_code.py": 3,
     "app/domain/agent/session_host/consumptions.py": 4,
     "app/domain/agent/session_host/driver.py": 1,
-    "app/domain/agent/session_host/host.py": 11,
+    "app/domain/agent/session_host/host.py": 4,
+    # 2026-10: starting a session left `host.py` for `starting.py`, carrying
+    # these sentences with it — the same count, in the file that now holds it.
+    "app/domain/agent/session_host/starting.py": 7,
     "app/domain/agent_credential/services.py": 1,
     "app/domain/agent_type/library.py": 11,
     "app/domain/answers/services.py": 10,
