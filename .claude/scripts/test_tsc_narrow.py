@@ -14,15 +14,22 @@ a narrow check that quietly leaves a tsconfig in the tree, or reports a git
 that could not compute the diff as "nothing changed", would mislead exactly the
 person reading it to find out why the type gate is red.
 
-Argument handling and file selection are tested here without vue-tsc, against a
-throwaway repository whose `frontend/node_modules` holds a stub binary that
-prints the project it was handed and succeeds. That stub replaces only the
-compilation, which is not what those tests are about; selection, the exit code
-and the temp-project lifetime are really executed. The class below it runs the
-real compiler and needs the frontend toolchain, so it skips where that is not
-installed — but it no longer takes the selection tests down with it.
+Argument handling, file selection and the exit-code map are tested here without
+vue-tsc, against a throwaway repository whose `frontend/node_modules` holds a
+stub binary. The stub records the project it was handed and exits with the
+status the test names, so the config the script builds and every branch of the
+status map run for real; only the compilation itself is replaced. The class
+below it runs the real compiler and needs the frontend toolchain, so it skips
+where that is not installed — but it no longer takes these tests down with it.
+
+Not collected by repo-guards.yml: that job names each `.claude/scripts`
+self-test individually rather than globbing them, so this file runs nowhere in
+CI today. Wiring it in is one line there — the `guards` scope already covers
+`.claude/scripts/**` — and the selection tests need no frontend toolchain, so
+they run on any runner. Until then, run it by hand.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -55,7 +62,19 @@ class SelectionTest(unittest.TestCase):
         self.script = self.root / ".claude" / "scripts" / "tsc-narrow.sh"
         self.script.write_bytes(SCRIPT.read_bytes())
         stub = self.root / "frontend" / "node_modules" / ".bin" / "vue-tsc"
-        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.write_text(
+            "#!/bin/sh\n"
+            "# Stand-in for vue-tsc: hand the test the project it was given, then\n"
+            "# exit with the status the test asked for.\n"
+            'if [ -n "${TSC_NARROW_STUB_CAPTURE:-}" ]; then\n'
+            '  prev=""\n'
+            '  for arg in "$@"; do\n'
+            '    if [ "$prev" = "-p" ]; then cp "$arg" "$TSC_NARROW_STUB_CAPTURE"; fi\n'
+            '    prev="$arg"\n'
+            "  done\n"
+            "fi\n"
+            'exit "${TSC_NARROW_STUB_EXIT:-0}"\n'
+        )
         stub.chmod(0o755)
         self.tmpdir = Path(self.scratch.name) / "tmp"
         self.tmpdir.mkdir()
@@ -91,14 +110,24 @@ class SelectionTest(unittest.TestCase):
         """Move origin/main, the base the default file set is read from."""
         self.git("update-ref", "refs/remotes/origin/main", revision)
 
-    def run_script(self, *args: str, generate: bool = False):
+    def run_script(
+        self,
+        *args: str,
+        generate: bool = False,
+        env: dict | None = None,
+        tmpdir: Path | None = None,
+    ):
         argv = ["bash", str(self.script)]
         if not generate:
             argv.append("--no-generate")
         return subprocess.run(
             [*argv, *args],
             cwd=self.root,
-            env={**CLEAN_GIT_ENV, "TMPDIR": str(self.tmpdir)},
+            env={
+                **CLEAN_GIT_ENV,
+                "TMPDIR": str(self.tmpdir if tmpdir is None else tmpdir),
+                **(env or {}),
+            },
             capture_output=True,
             text=True,
         )
@@ -230,6 +259,113 @@ class SelectionTest(unittest.TestCase):
         result = self.run_script("frontend/src/a.ts")
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("not installed", result.stderr)
+
+    def test_the_project_compiles_the_named_files_and_their_ambient_types(self):
+        # What the throwaway project has to say: exactly the targets as `files`,
+        # the ambient declarations as `include`, and the real `baseUrl`/`paths`
+        # so `@/*` resolves. Miss any and the run reports errors the tree does
+        # not have.
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        captured = Path(self.scratch.name) / "captured-tsconfig.json"
+        result = self.run_script(
+            "frontend/src/a.ts", env={"TSC_NARROW_STUB_CAPTURE": str(captured)}
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        config = json.loads(captured.read_text())
+        frontend = self.root.resolve() / "frontend"
+        self.assertEqual([Path(p).name for p in config["files"]], ["a.ts"])
+        self.assertTrue(all(Path(p).is_absolute() for p in config["files"]))
+        self.assertEqual(config["extends"], f"{frontend}/tsconfig.json")
+        self.assertEqual(config["compilerOptions"]["baseUrl"], str(frontend))
+        self.assertEqual(config["compilerOptions"]["paths"], {"@/*": ["src/*"]})
+        self.assertIn(f"{frontend}/env.d.ts", config["include"])
+
+    def test_compiler_diagnostics_are_a_failure(self):
+        # The one compiler status that is a verdict on the targets. vue-tsc
+        # answers 2 for a run that produced diagnostics.
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        result = self.run_script("frontend/src/a.ts", env={"TSC_NARROW_STUB_EXIT": "2"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assert_temp_clean()
+
+    def test_a_compiler_that_cannot_read_the_project_is_cannot_judge(self):
+        # vue-tsc answers 1 for a config or options it could not read: no
+        # diagnostics, no verdict.
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        result = self.run_script("frontend/src/a.ts", env={"TSC_NARROW_STUB_EXIT": "1"})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("not be read", result.stderr)
+        self.assert_temp_clean()
+
+    def test_a_killed_compiler_is_cannot_judge_not_a_failure(self):
+        # The machine ran out of memory and the process died on a signal
+        # (status >= 128). Blaming the targets for the machine's limit is the
+        # failure this mapping exists to prevent.
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        result = self.run_script("frontend/src/a.ts", env={"TSC_NARROW_STUB_EXIT": "134"})
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("killed", result.stderr)
+        self.assert_temp_clean()
+
+    def test_a_generation_failure_is_cannot_judge_not_a_type_error(self):
+        # A checkout without the backend toolchain: the generator fails, and a
+        # run that compiled on would report TS2307 for types that were never
+        # generated — a verdict on code that was never read.
+        (self.root / "frontend" / "scripts").mkdir()
+        (self.root / "frontend" / "scripts" / "gen-api-types.mjs").write_text(
+            "process.exit(3)\n"
+        )
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        result = self.run_script("frontend/src/a.ts", generate=True)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not be generated", result.stderr)
+        self.assert_temp_clean()
+
+    def test_no_origin_main_is_cannot_judge(self):
+        # The default file set is read from origin/main...HEAD. Without the ref
+        # there is nothing to compare against, and an empty selection would read
+        # as a branch that changed nothing.
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        self.git("update-ref", "-d", "refs/remotes/origin/main")
+        result = self.run_script()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("origin/main is not present", result.stderr)
+
+    def test_an_unwritable_tmpdir_is_cannot_judge_not_a_failure(self):
+        # mktemp's own failure status is 1, which this script reserves for "the
+        # targets have type errors": a run that never started must not borrow it.
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        missing = Path(self.scratch.name) / "no-such-tmpdir"
+        named = self.run_script("frontend/src/a.ts", tmpdir=missing)
+        self.assertEqual(named.returncode, 2, named.stdout + named.stderr)
+        self.assertIn("mktemp", named.stderr)
+        discovered = self.run_script(tmpdir=missing)
+        self.assertEqual(discovered.returncode, 2, discovered.stdout + discovered.stderr)
+        self.assertIn("mktemp", discovered.stderr)
+
+    def test_a_python_that_fails_to_resolve_targets_is_cannot_judge(self):
+        # `set -e` does not reach a command inside a process substitution, so a
+        # python3 that died leaves the target array empty. Left unguarded, the
+        # run compiles nothing and reports nothing found — a pass for a check
+        # that never resolved its own arguments.
+        (self.root / "frontend" / "src" / "a.ts").write_text("export const x = 1\n")
+        bindir = Path(self.scratch.name) / "bin"
+        bindir.mkdir()
+        broken = bindir / "python3"
+        broken.write_text("#!/bin/sh\nexit 3\n")
+        broken.chmod(0o755)
+        result = self.run_script(
+            "frontend/src/a.ts",
+            env={"PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}"},
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("could not resolve the target paths", result.stderr)
+
+    def test_help_prints_the_script_header(self):
+        result = self.run_script("--help")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Usage: tsc-narrow.sh", result.stdout)
+        self.assertIn("Exit codes", result.stdout)
 
 
 @unittest.skipUnless(VUE_TSC.exists(), f"frontend toolchain missing: {VUE_TSC}")

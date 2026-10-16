@@ -28,14 +28,20 @@
 # Exit codes, the repository's cannot-judge convention (see
 # `.claude/scripts/check-file-sizes.py`): 0 nothing to report, 1 the targets
 # have type errors, 2 this run could not judge — a misuse, a target that does
-# not exist, a missing toolchain, a git failure, or a target too big for this
-# machine to compile. The diagnostic text is printed either way.
+# not exist, a missing toolchain, a git failure, a target too big for this
+# machine to compile, or API types that could not be generated. The diagnostic
+# text is printed either way. Exit 1 is a verdict on the targets and nothing
+# else; anything that stops the run before the compiler has an opinion is a 2.
 #
 # frontend/src/api/openapi.d.ts is generated, not committed, and a checkout
 # that has never run a type check does not have it — without it every file that
 # imports the API layer reports a spurious TS2307. So it is generated here the
 # same way `scripts/typecheck.mjs` does it, through the repo's one generator; the
-# file is gitignored, and --no-generate skips it.
+# file is gitignored, and --no-generate skips it. When generation fails — the
+# backend's uv and Python environment are not there — this stops with 2 rather
+# than compile: every TS2307 below would be about types that were never
+# generated, which is not a type error in anyone's code. `scripts/typecheck.mjs`
+# stops at the same point for the same reason.
 #
 # The project lives in a temp directory (mktemp -d, honours TMPDIR) and is
 # removed on every exit, success or failure: it is never written into the
@@ -84,7 +90,15 @@ if [ "${#files[@]}" -eq 0 ]; then
   # compute the diff must not read as "this branch changed nothing". The shape
   # is a shallow or unrelated-history checkout, and a guard that never ran is
   # not a guard that passed — the same condition check-file-sizes.py exits 2 on.
-  diffout="$(mktemp)"
+  # `if ! x="$(cmd)"` rather than a bare assignment: a bare one that fails takes
+  # the script out under `set -e` with mktemp's own status, which is 1 — the
+  # "targets have type errors" this script reserves for a real verdict. A
+  # TMPDIR that cannot be written is a run that judged nothing, so it exits 2.
+  if ! diffout="$(mktemp)"; then
+    echo "tsc-narrow.sh: mktemp failed (TMPDIR=${TMPDIR:-/tmp} not writable?);" >&2
+    echo "              nothing was judged." >&2
+    exit 2
+  fi
   if ! git -C "$REPO_ROOT" diff --name-only --no-renames origin/main...HEAD >"$diffout"; then
     rm -f "$diffout"
     echo "tsc-narrow.sh: \`git diff origin/main...HEAD\` failed; nothing was judged." >&2
@@ -129,8 +143,17 @@ if [ "${#kept[@]}" -eq 0 ]; then
 fi
 
 # Absolute paths, so the config and the report do not depend on this shell's
-# working directory.
-mapfile -t targets < <(python3 -c 'import os,sys; print("\n".join(os.path.abspath(p) for p in sys.argv[1:] if p))' "${kept[@]}")
+# working directory. NUL-separated: a source file whose name contains a newline
+# would otherwise arrive as two targets, and both would be compiled as paths
+# that do not exist.
+mapfile -t -d '' targets < <(python3 -c 'import os,sys; sys.stdout.write("\0".join(os.path.abspath(p) for p in sys.argv[1:] if p))' "${kept[@]}")
+# `set -e` does not reach a command inside a process substitution, so a python3
+# that failed leaves this empty and the run would compile nothing at all — a
+# pass for a run that never resolved its own arguments.
+if [ "${#targets[@]}" -eq 0 ]; then
+  echo "tsc-narrow.sh: could not resolve the target paths; nothing was judged." >&2
+  exit 2
+fi
 
 if [ ! -x "$VUE_TSC" ]; then
   echo "tsc-narrow.sh: vue-tsc is not installed at $VUE_TSC" >&2
@@ -141,7 +164,11 @@ fi
 echo "tsc-narrow.sh: checking ${#targets[@]} file(s):" >&2
 printf '  %s\n' "${targets[@]#"$REPO_ROOT"/}" >&2
 
-tmp="$(mktemp -d)"
+if ! tmp="$(mktemp -d)"; then
+  echo "tsc-narrow.sh: mktemp -d failed (TMPDIR=${TMPDIR:-/tmp} not writable?);" >&2
+  echo "              nothing was judged." >&2
+  exit 2
+fi
 trap 'rm -rf "$tmp"' EXIT
 
 # The symlink is what lets `types: ["vitest/globals", "vue/jsx", "vuetify"]` and
@@ -178,8 +205,18 @@ PY
 if [ "$GENERATE" = 1 ] && [ ! -f "$FRONTEND/src/api/openapi.d.ts" ]; then
   echo "tsc-narrow.sh: generating frontend/src/api/openapi.d.ts (gitignored)…" >&2
   if ! (cd "$FRONTEND" && node scripts/gen-api-types.mjs >&2); then
-    echo "tsc-narrow.sh: could not generate the API types; errors naming" >&2
-    echo "              api/openapi below are artifacts of that, not real." >&2
+    # Not a warning to compile past: without the file every target that imports
+    # src/api reports TS2307 about types that were never generated, and those
+    # would arrive as exit 1 — a verdict on code that was never read. This is
+    # the missing-toolchain cannot-judge, the same stop scripts/typecheck.mjs
+    # makes.
+    echo "tsc-narrow.sh: the API types could not be generated — the backend" >&2
+    echo "              toolchain (uv and the app's Python environment) is not" >&2
+    echo "              available, so src/api has no types to check against." >&2
+    echo "              Nothing was judged; run \`pnpm install --frozen-lockfile\`" >&2
+    echo "              in frontend/ and make the backend toolchain available," >&2
+    echo "              or pass --no-generate and judge non-API targets only." >&2
+    exit 2
   fi
 fi
 
