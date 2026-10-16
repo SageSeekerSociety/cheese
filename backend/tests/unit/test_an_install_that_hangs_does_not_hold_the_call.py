@@ -12,7 +12,7 @@ the executor up is one the session is placed away from.
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -256,11 +256,15 @@ def _install_case(
         sandbox=False,
         platform_machine=True,
         # What the lease carries while the install runs, handed over without
-        # them: the claim the installation took, and when it stands until.
+        # them: the claim the installation took, and when it stands until —
+        # one TTL past now, the way `_attempt` writes it, so a case that ever
+        # runs against the real `kept` still reads as one somebody is running.
         reservation={
             "device_id": "dev-1",
             "claim": "claim-1",
-            "claim_until": datetime.now(UTC).isoformat(),
+            "claim_until": (
+                datetime.now(UTC) + timedelta(seconds=lease_claim.CLAIM_TTL_S)
+            ).isoformat(),
         },
         holding={"device_id": "dev-1"},
         claim="claim-1",
@@ -405,6 +409,21 @@ async def test_a_whole_vm_is_not_left_when_its_install_fails(monkeypatch):
         host_id=uuid.uuid4(),
         whole=True,
         exc=TimeoutError("no answer"),
+    )
+
+    assert _Pool.asked == [], "the session's own VM was given up"
+    assert outcome is session_work._CLOUD_PREPARING
+
+
+async def test_a_whole_vm_whose_install_was_killed_is_waited_for(monkeypatch):
+    """The session's own VM is the one machine that is not given up, whatever
+    the install did: there is no other host to place it on, so a killed install
+    is answered by waiting where it is, exactly as one that timed out."""
+    outcome = await _install_case(
+        monkeypatch,
+        host_id=uuid.uuid4(),
+        whole=True,
+        result={"exit": -1, "stdout": "", "stderr": ""},
     )
 
     assert _Pool.asked == [], "the session's own VM was given up"
