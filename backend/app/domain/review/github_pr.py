@@ -1255,6 +1255,26 @@ class GitHubPRClient:
             )
         return resp.json()
 
+    @_as_pr_error
+    async def commit_subject(self, sha: str) -> str | None:
+        """The first line of commit `sha`'s message, or None when GitHub
+        answers without one.
+
+        Read by `AcceptService.mark_ready`: a draft PR still titled with the
+        platform's placeholder is marked ready under the commit's own title,
+        because the full `CI required` that the ready flag starts reads the
+        PR's title, and a repository checking its own titles reads nothing
+        but `WIP:` there."""
+        token, _ = await self._tokens.write_token()
+        async with forge_client(transport=self._transport, timeout=20.0) as client:
+            resp = await client.get(
+                self._url(f"/commits/{sha}"), headers=self._headers(token)
+            )
+        if resp.status_code != 200:
+            raise _refused("githubRefusedCommitRead", resp)
+        message = ((resp.json().get("commit") or {}).get("message") or "").strip()
+        return message.splitlines()[0] if message else None
+
     async def pr_status(self, number: int) -> PullRequestStatus:
         """`pr_view`, parsed — the structured twin of the raw dict.
 

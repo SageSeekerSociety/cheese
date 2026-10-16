@@ -384,6 +384,19 @@ class ForgejoPRClient:
             await self._request("PATCH", f"/pulls/{number}", json=payload)
         )
 
+    async def commit_subject(self, sha):
+        """The first line of commit `sha`'s message, or None when Forgejo
+        answers without one — `GitHubPRClient.commit_subject` on this forge.
+
+        Forgejo has no draft flag: a proposal is a draft exactly when its
+        title starts with `WIP:`, so `mark_ready_for_review` below "un-drafts"
+        it by rewriting that title. What it rewrites it TO is the placeholder
+        minus the prefix — the task's own (Chinese) title — which is why the
+        reader of this method puts a real title on first."""
+        data = await self._request("GET", f"/commits/{quote(sha, safe='')}")
+        message = ((data.get("commit") or {}).get("message") or "").strip()
+        return message.splitlines()[0] if message else None
+
     async def mark_ready_for_review(self, node_id):
         pr = await self.pr_view(int(node_id))
         title = pr["title"]

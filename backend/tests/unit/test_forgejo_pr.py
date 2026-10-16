@@ -150,3 +150,37 @@ async def test_merge_refusal_does_not_echo_secret_or_claim_success():
 def test_unmerged_test_commit_is_never_reported_as_a_delivery():
     status = ForgejoClient.status(proposal(merge_commit_sha="temporary"))
     assert status.merge_commit_sha is None
+
+
+@pytest.mark.anyio
+async def test_commit_subject_is_the_messages_first_line():
+    """`GitHubPRClient.commit_subject` on this forge, and the read that keeps a
+    proposal from being marked ready under the wrong title: Forgejo has no
+    draft flag, so `mark_ready_for_review` un-drafts one by rewriting its
+    `WIP:` title, and the title left to rewrite is the placeholder minus the
+    prefix — the task's own title, not the change's."""
+    seen: list[httpx.Request] = []
+
+    def server(request):
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "commit": {"message": "fix(docs): the page says what it means\n\nBody."}
+            },
+        )
+
+    publisher = ForgejoPRClient(
+        "acme",
+        "docs",
+        Tokens(),
+        api_base="https://forge.example/api/v1",
+        transport=httpx.MockTransport(server),
+    )
+
+    assert (
+        await publisher.commit_subject("reviewed")
+        == "fix(docs): the page says what it means"
+    )
+    [request] = seen
+    assert request.url.path.endswith("/repos/acme/docs/commits/reviewed")

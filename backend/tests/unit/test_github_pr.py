@@ -244,6 +244,33 @@ async def test_open_pr_uses_the_app_identity():
     assert seen == [("POST", "ghs_write")]
 
 
+# ---- commit_subject ----------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_commit_subject_is_the_messages_first_line():
+    """What goes on a draft PR before it is marked ready: a commit's message is
+    its subject and then its body, and only the subject belongs in a title."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "commit": {
+                    "message": "fix(usage): a claim is answered once\n\nWhy it was not."
+                }
+            },
+        )
+
+    subject = await _client(handler).commit_subject("abc123")
+
+    assert subject == "fix(usage): a claim is answered once"
+    [request] = seen
+    assert request.url.path == "/repos/acme/widgets/commits/abc123"
+
+
 # ---- unreachable GitHub ------------------------------------------------------
 
 
@@ -279,6 +306,7 @@ def _unreachable(request: httpx.Request) -> httpx.Response:
     "call",
     [
         lambda c: c.pr_view(7),
+        lambda c: c.commit_subject("abc123"),
         lambda c: c.check_runs("abc123"),
         lambda c: c.merge_pr(7, title="t", message="m"),
         lambda c: c.open_pr(head="topic/1", base="main", title="t", body=""),

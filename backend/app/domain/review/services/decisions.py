@@ -34,7 +34,8 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
 from app.domain.project.protection import branch_protection_of
 from app.domain.review import github_pr
 from app.domain.review import services as pkg
-from app.domain.review.github_pr import GitHubPRRateLimited
+from app.domain.review.forgejo_pr import ForgejoPRClient
+from app.domain.review.github_pr import GitHubPRClient, GitHubPRRateLimited
 from app.domain.review.services._shared import (
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
@@ -102,6 +103,9 @@ async def mark_ready(
         node_id = str(view.get("node_id") or "")
         if not node_id:
             raise ValidationError(say("githubNoPrNodeId"))
+        title = await _ready_title(client, view)
+        if title is not None:
+            await client.update_pr(task.pr_number, title=title)
         await client.mark_ready_for_review(node_id)
     return {
         "ready": True,
@@ -109,6 +113,31 @@ async def mark_ready(
         "pr_number": task.pr_number,
         "pr_url": task.pr_url,
     }
+
+
+async def _ready_title(
+    client: GitHubPRClient | ForgejoPRClient, view: dict
+) -> str | None:
+    """The title a draft PR has to go on before it is marked ready, or None
+    to leave the one it already has.
+
+    A draft PR carries the platform's placeholder (`pr_publish.draft_title`),
+    because the line this change will land under is not written until somebody
+    files a card. Marking it ready is the other moment that stops being true:
+    the full `CI required` the ready flag starts reads the PR's title, and a
+    repository that checks its own titles reads `WIP: <任务标题>` there and
+    fails a change every other check passed. The head commit's subject is the
+    title this work already has.
+
+    Only the placeholder is replaced. A subject 递卡 wrote, or one somebody
+    typed on GitHub, is not the platform's to overwrite — and a draft whose
+    title was already corrected is the case this leaves alone.
+    """
+    if not pr_publish.is_draft_title(view.get("title")):
+        return None
+    sha = str((view.get("head") or {}).get("sha") or "")
+    subject = await client.commit_subject(sha) if sha else None
+    return subject[:255] if subject else None
 
 
 async def redescribe(
