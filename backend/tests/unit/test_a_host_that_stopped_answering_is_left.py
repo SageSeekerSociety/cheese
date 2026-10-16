@@ -275,6 +275,36 @@ async def test_a_host_that_is_already_reconnecting_keeps_the_session():
     assert case.repo.placed == []
 
 
+@pytest.mark.parametrize(
+    "lease",
+    [
+        # A ready lease naming another machine: whatever this host holds is not
+        # the sandbox the session is running in.
+        {"status": "ready", "device_id": "dev-somewhere-else"},
+        # Not ready: there is no working sandbox of this session anywhere for
+        # the move to have taken away.
+        {"status": "preparing", "device_id": "dev-quiet"},
+    ],
+    ids=["lease-on-another-machine", "lease-not-ready"],
+)
+async def test_only_a_sandbox_that_was_here_is_declared_lost(lease):
+    """``LOST_KEY`` is what tells the session that what it had on this host is
+    gone, and its next call then says so to the room. A move is still a move —
+    but a session whose live sandbox was never on this host is not told it lost
+    one."""
+    session_id = uuid.uuid4()
+    quiet = _host("dev-quiet")
+    other = _host("dev-other")
+    case = _Case(quiet, session_id, others=[other])
+    case.row.work_lease = lease
+
+    moved = await case.leave_unusable(session_id, quiet.id, _Hub({"dev-other"}))
+
+    assert moved is True
+    assert case.home.session_id is None
+    assert case.row.execution_request is None
+
+
 async def test_a_session_home_not_on_that_host_is_not_moved_by_it():
     """``leave_unusable`` names a host; a home that is not on it is somebody
     else's business — the session may have moved already between the two

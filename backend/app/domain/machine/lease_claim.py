@@ -39,11 +39,20 @@ CLAIM_RENEW_S = 10.0
 # has time. Minutes, not seconds: a first install on a Cloud host may add
 # packages with apt-get (`bootstrap.sandbox_tools`).
 INSTALL_MOST_S = 120.0
-# The longest one installation holds the claim, renewed or not. One TTL past
-# the install command's own deadline, so the claim cannot lapse while the
-# installation that took it is still running: an installation ending at its
-# deadline, or a renewal beat arriving late, both leave it standing.
-CLAIM_MOST_S = INSTALL_MOST_S + CLAIM_TTL_S
+# The calls into the machine one installation makes one after another: the ping
+# and the prepare that decide how to start the executor, the install itself, and
+# the ping that asks the executor it installed to answer (`session_work._install`).
+# Each is bounded by INSTALL_MOST_S, and they run in sequence under one claim.
+CALLS_IN_AN_INSTALL = 3
+# The longest one installation holds the claim, renewed or not: every call it
+# makes in sequence, and one TTL past the last of them, so the claim cannot
+# lapse while the installation that took it is still running. One TTL past the
+# install command alone was shorter than an installation that spends its whole
+# deadline on the install and then waits on the executor: the claim lapsed with
+# the installation still going, a second request read the lease as free and
+# started a second installation beside it on the same machine — the one thing
+# this claim exists to prevent.
+CLAIM_MOST_S = CALLS_IN_AN_INSTALL * INSTALL_MOST_S + CLAIM_TTL_S
 
 
 def still_preparing(lease: dict | None) -> bool:
