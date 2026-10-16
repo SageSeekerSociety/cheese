@@ -1879,12 +1879,14 @@ def _self_test_sweep():
          # 判据是两条读起来分得清，不是哪一个词 —— 换成「审核」「答复」照样算数。
          [[r["detail"] for r in waiting_on_a_review] != [r["detail"] for r in waiting_on_an_answer]],
          [True]),
-        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，写「有人」、不拿这条线的座位顶",
+        # 这一条问不出具体是谁：写出来的那句得是句人话 —— 不拿这条线的座位顶（它在等
+        # 的是被问的人），也不能把「没有名字」漏成 None。具体用哪个词是文案，换词不该红。
+        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，写成人话、不拿这条线的座位顶",
          [(r["waiting_on"], "cheese" in r["detail"], at(2)[11:16] in r["detail"],
-           "有人" in r["detail"])
+           "None" in r["detail"])
           for r in rows_of(msg_min=2, row={"presentation": {"phrase": "awaiting_answer"},
                                            "waiting_on": None})],
-         [(None, False, True, True)]),
+         [(None, False, True, False)]),
         ("sweep：行上说在等看的这个人（awaits_me）照样算待回答（这条端点上它蕴含 waiting_on，"
          "钉的是规范里那一条判据）",
          kinds(msg_min=2, row={"awaits_me": True}), ["待回答"]),
