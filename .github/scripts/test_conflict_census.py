@@ -304,6 +304,19 @@ class ConflictCensusTest(unittest.TestCase):
         self.assertNotIn("legacy", counted)
         self.assertIn("legacy/main", counted)
 
+    def test_a_plain_alias_of_a_slash_named_remote_is_not_a_branch(self):
+        # Both shapes of the marker have to survive the same remote name: a
+        # plain ref for `a/b`'s marker sits at `refs/remotes/a/b/HEAD`, and a
+        # rule that fixes the depth at `<remote>/HEAD` censuses it as a branch
+        # called `a/b` while dropping the symbolic shape of the same remote.
+        self.git("update-ref", "refs/remotes/a/b/main", self.main_sha)
+        self.git("update-ref", "refs/remotes/a/b/HEAD", self.main_sha)
+
+        out = self.census_json("--remotes")
+        counted = sorted(list(out["conflicted"]) + out["clean"])
+        self.assertNotIn("a/b", counted)
+        self.assertIn("a/b/main", counted)
+
     def test_a_symbolic_branch_under_refs_heads_is_still_a_branch(self):
         # Only `refs/remotes/` holds aliases. A branch someone pointed at
         # another branch with `git symbolic-ref` is still a branch, and
