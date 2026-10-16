@@ -9,10 +9,27 @@
 //                                            also freeze the new ones, listing each
 //   node scripts/a11y-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
+//   node scripts/a11y-ratchet.mjs --move-from <file> --move-to <file> --move-count <n>
+//                                            read the tree as if those n violations
+//                                            had moved from the first file to the
+//                                            second, then report as usual; writes
+//                                            nothing
+//   ... --update                             write that re-keyed baseline; refuses and
+//                                            writes nothing unless the tree shows
+//                                            exactly that split (see movedBaseline)
+//
 // `--files <path>` (repeatable) and `--baseline <file>` judge other files
 // against another baseline; they exist so a11y-ratchet.test.mjs can judge a
 // planted file without linting the whole tree or touching the committed
 // baseline.
+//
+// Splitting one component into two moves violations between two files without
+// changing how many there are, but a baseline keyed by file reads the new key as
+// new debt. `--move-*` re-keys those counts between exactly two keys, and refuses
+// unless the total held, the source can cover what it gives up, and the target's
+// new allowance is what the tree measures there. `--freeze-new` also unblocks a
+// split, but it freezes the whole tree at once, and a split is where an unrelated
+// new violation is most easily mistaken for one that moved.
 //
 // The rules are applied by eslint.a11y.config.mjs; the counting and the
 // ratchet arithmetic are pure functions in a11y-ratchet-core.mjs. This file is
@@ -27,6 +44,8 @@ import {
   compare,
   countsByRule,
   formatA11yReport,
+  formatMove,
+  movedBaseline,
   parseEslintJson,
   tightenedBaseline,
 } from './a11y-ratchet-core.mjs'
@@ -47,7 +66,8 @@ function option(name, fallback) {
 const update = process.argv.includes('--update')
 const freezeNew = process.argv.includes('--freeze-new')
 const ID = 'fe-a11y'
-const baselinePath = resolve(ROOT, option('--baseline', 'a11y-baseline.json'))
+const baselineLabel = option('--baseline', 'a11y-baseline.json')
+const baselinePath = resolve(ROOT, baselineLabel)
 
 // Resolve the binary explicitly rather than trusting PATH: `pnpm run` puts
 // node_modules/.bin there but `node scripts/...` does not, and an eslint that
@@ -57,6 +77,37 @@ const BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : 'eslint'
 
 const scan = options('--files')
 const targets = scan.length ? scan : A11Y_TARGETS
+
+/**
+ * The split to re-key, or null. Read before eslint runs: a missing or mistyped
+ * flag is the caller's mistake and should not cost a lint of the whole tree to
+ * hear about. What the flags cannot settle — whether the tree actually shows
+ * that split — is settled after the run, in movedBaseline.
+ */
+function readMove() {
+  const from = options('--move-from')
+  const to = options('--move-to')
+  const counts = options('--move-count')
+  if (!from.length && !to.length && !counts.length) return null
+  if (from.length !== 1 || to.length !== 1 || counts.length !== 1) {
+    console.error('--move-from, --move-to and --move-count go together, once each')
+    console.error('usage: a11y-ratchet.mjs --move-from <file> --move-to <file> --move-count <n> [--update]')
+    process.exit(1)
+  }
+  if (!/^[1-9]\d*$/.test(counts[0])) {
+    console.error(`--move-count has to be a positive whole number, not ${counts[0]}`)
+    process.exit(1)
+  }
+  if (freezeNew) {
+    console.error('--freeze-new freezes every file at what it measures now, --move-* re-keys one pair')
+    console.error('between two files. Run one or the other: the move is for a split, and anything else')
+    console.error('that is new still has to be frozen on purpose.')
+    process.exit(1)
+  }
+  return { from: from[0], to: to[0], count: Number(counts[0]) }
+}
+
+const move = readMove()
 
 const run = spawnSync(BIN, ['--config', CONFIG, '--format', 'json', '--no-color', ...targets], {
   cwd: ROOT,
@@ -97,7 +148,23 @@ if (run.status === 2) {
 }
 
 const current = parsed.counts
-const baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')).files ?? {} : {}
+let baseline = existsSync(baselinePath) ? JSON.parse(readFileSync(baselinePath, 'utf8')).files ?? {} : {}
+
+// The re-key happens first, and only against the run that just finished: after
+// this the rest of the check is the ordinary one, judged against the baseline
+// the split leaves behind. A refusal here writes nothing, whatever --update said.
+if (move) {
+  try {
+    const plan = movedBaseline(baseline, current, move)
+    if (!asJson) console.log(`${formatMove(plan, parsed.violations)}\n`)
+    baseline = plan.next
+  } catch (error) {
+    console.error(`refusing to re-key the baseline: ${error.message}`)
+    console.error('')
+    console.error(`wrote nothing; ${baselineLabel} is unchanged.`)
+    process.exit(1)
+  }
+}
 
 const result = compare(baseline, current)
 
