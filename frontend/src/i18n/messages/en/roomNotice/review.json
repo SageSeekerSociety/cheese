@@ -9,7 +9,6 @@
   "acceptDoneNoActor": "PR #{pr} {how}",
   "acceptReady": "PR #{pr} is ready to merge, waiting for {reviewer} to accept",
   "acceptReadyDetail": "This PR meets the project's merge rules; accepting it merges it right away.\n{url}",
-  "acceptStoppedMergeCallFailed": "The merge request for PR #{pr} did not succeed: {error}",
   "acceptStoppedMergeStateUnread": "Could not read the merge state of PR #{pr}: {error}",
   "acceptStoppedMergeUnconfirmed": "The merge result of PR #{pr} cannot be confirmed yet; retry to check the repository's state",
   "acceptStoppedNoCommits": "Accept not completed: the branch has no commits",

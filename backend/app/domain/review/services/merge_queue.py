@@ -11,7 +11,6 @@ from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.repository import identity
 from app.domain.review import (
-    github_pr,
     merge_state,
     notes,
     pr_text,
@@ -275,20 +274,13 @@ async def _merge_pr_for_accept(
             ),
             sha=seen,
         )
-    except github_pr.GitHubPrError as exc:
-        # GitHub 答复了：这次没合上，理由在它自己的话里（合并队列的入队在
-        # `_enqueue_if_required` 被拒就走这一支）。笼统的那个 `except` 只适合
-        # 「对面可能已经合了、而我们没收到答复」，一个答复不是那种情况 ——
-        # 说成「暂时无法确认」会让人去重试一件不会因为重试而改变的事。
-        logger.warning(
-            "merge request refused for card %s: %s", card.id, exc, exc_info=True
-        )
-        await self._stop_accept_pr_unavailable(
-            card,
-            topic,
-            _capped("acceptStoppedMergeCallFailed", pr=number, error=str(exc)),
-        )
     except Exception:  # noqa: BLE001 — the remote may have merged before disconnecting
+        # 这个 `except` 故意不按异常类型分家（2026-10-16 试过把
+        # `GitHubPrError` 单独接出来，又撤回）：`client` 可能是 GitHub 也可能是
+        # Forgejo 的实现，而 `GitHubPrError` 在两边都不只表示「对面明确说这次没
+        # 合上」。Forgejo 的 `forgejoMergeUnconfirmed` 是 POST 之后回读没读到合并
+        # 结果，合并队列那两处「没确认入队」同理 —— 都是「可能已经合上了」，说成
+        # 「这次没合上」等于把不确定讲成确定，正是这次修复要消掉的那种错。
         logger.exception("merge request failed for card %s", card.id)
         await self._stop_accept_pr_unavailable(
             card,

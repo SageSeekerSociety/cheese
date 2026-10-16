@@ -1609,7 +1609,10 @@ def test_a_conflicting_pr_stops_the_accept_in_a_github_enforced_project(
     `dirty` 去调合并 API；合并队列不收一个合不进去的 PR，入队那一步抛出的
     `GitHubPrError` 落进调用点笼统的 `except Exception`，成了「PR 的合并结果暂时
     无法确认，请重试以核对仓库状态」——把「先解冲突」读成了「重试一次」，而重试
-    不会让冲突消失（2026-10-16 采纳 PR #3927 时的样子）。"""
+    不会让冲突消失（2026-10-16 采纳 PR #3927 时的样子）。
+
+    钉 `enforces=True` 是为了让这真的走强制那条路：不钉的话，`if not enforces`
+    那道守卫会替这道闸挡住合并调用，测的就不是强制项目了。"""
     fake = app_world["fake"]
     _github_enforces(monkeypatch)
     _, tid, cid, number, head_sha = _ready_card(client, app_world)
@@ -1665,39 +1668,6 @@ def test_a_conflicting_pr_stops_the_accept_when_the_platform_enforces(
     assert "冲突" in card["note"]
     assert card["note_level"] == "error"
     assert _room_event_settled(client, tid, "accept_conflict") == 1
-
-
-def test_a_github_refusal_at_the_merge_call_says_githubs_own_words(
-    client, app_world, monkeypatch
-):
-    """GitHub 回了话「这次不合」：那句话带给点击的人，不说成「暂时无法确认」。
-
-    冲突判定拦不住的情况：GitHub 还没算完合并态（`unknown`，不是 `dirty`）时这道
-    闸不响，合并 API 仍会被调用，而 GitHub 会用异常回一句自己的理由（入队被拒、
-    405、403……）。一个答复不是「对面可能已经合了、而我们没收到答复」，说成「暂时
-    无法确认」会让人去重试一件不会因为重试而改变的事。"""
-    fake = app_world["fake"]
-    _github_enforces(monkeypatch)
-    _, tid, cid, number, head_sha = _ready_card(client, app_world)
-    fake.check_state_by_sha[head_sha] = ("success", "全绿")
-    fake.mergeable_by_number[number] = None
-    fake.mergeable_state_by_number[number] = "unknown"
-
-    async def refused(**kw):
-        fake.merge_calls.append({"number": kw["number"]})
-        raise github_pr.GitHubPrError(
-            "GitHub 拒绝合并 PR（HTTP 403）：Merge queue is not enabled"
-        )
-
-    monkeypatch.setattr(fake, "merge_pull_request", refused)
-
-    r = _accept(client, cid)
-    assert r.status_code == 422, r.text
-    message = r.json()["message"]
-    assert "Merge queue is not enabled" in message
-    assert "无法确认" not in message
-    assert len(fake.merge_calls) == 1
-    assert _cards(client, tid)[0]["status"] == "pending"
 
 
 def _strip_delivery_claim(client, card_id: str) -> None:

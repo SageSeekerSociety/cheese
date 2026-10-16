@@ -9,7 +9,6 @@
   "acceptDoneNoActor": "PR #{pr} {how}",
   "acceptReady": "PR #{pr} 可以合并了，等 {reviewer} 采纳",
   "acceptReadyDetail": "这个 PR 满足项目的合并规则，采纳即当场合并。\n{url}",
-  "acceptStoppedMergeCallFailed": "PR #{pr} 的合并请求没有成功：{error}",
   "acceptStoppedMergeStateUnread": "PR #{pr} 合并态读取失败：{error}",
   "acceptStoppedMergeUnconfirmed": "PR #{pr} 的合并结果暂时无法确认，请重试以核对仓库状态",
   "acceptStoppedNoCommits": "采纳未完成：分支上没有提交",
