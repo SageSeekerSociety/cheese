@@ -13,7 +13,6 @@ tests/contract/test_api_addressing_contract.py::test_the_profiled_first_match_gu
 tests/unit/test_suite_run_inside_a_room.py::test_a_launcher_test_run_inside_a_room_fetches_nothing_from_its_platform  # pure, 10.0s
 tests/unit/test_personal_sessions.py::test_a_third_session_lets_the_least_recently_used_one_go[asyncio]  # pure, 9.8s
 tests/unit/test_personal_sessions.py::test_an_answer_starts_as_soon_as_the_model_does[asyncio]  # pure, 9.1s
-tests/unit/test_read_script.py::test_every_piece_carries_its_position  # pure, 8.1s
 tests/unit/test_a_projects_deny_rules_hold.py::test_a_claude_code_session_refuses_a_denied_command  # pure, 7.6s
 tests/unit/test_remote_execution.py::test_start_waits_for_a_service_that_is_slow_to_come_up  # pure, 7.5s
 tests/unit/test_codex_repository_skills.py::test_a_repositorys_skills_work_in_a_codex_room[asyncio]  # pure, 6.9s
