@@ -891,10 +891,9 @@ class Settings(BaseSettings, SandboxSettings):
     # one room working. At 2, a single busy room queued three of its own threads
     # behind itself while the rest of the project waited on top of that. At 16,
     # a project running sixteen or more task lines at once queued work of its
-    # own behind the ceiling. 20 lifts that, stopping short of 32: the ceiling
-    # is also what one machine is exposed to through a single project, and it is
-    # the only gate there is, so the default moves in steps and the projects
-    # that need more say so themselves.
+    # own behind the ceiling. 20 lifts that, stopping short of 32: one jump was
+    # thought to fall hard on the small machines, so the default moves in steps
+    # and the projects that need more say so themselves.
     #
     # This is the ONLY concurrency gate in the system: nothing limits how many
     # turns land on ONE machine. So this number also decides what a single
