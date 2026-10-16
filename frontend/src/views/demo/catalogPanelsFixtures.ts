@@ -79,6 +79,66 @@ const TREE_FILES = CHANGES.treeFiles as WorkspaceFile[]
 /** 这一支活本身（「不在当前版本里」那一格列的就是它）。 */
 export const CHANGES_TASK = CHANGES.currentTask as RoomTask
 
+/** 改动那一格拆出来的三个面，各自吃的那一串 props：从同一支活（`CHANGES`）里挑它要
+ *  的键，值不另写一遍 —— 树、差异、打开着的那一份本来就是同一份数据切出来的。 */
+export const CHANGES_BAR_PROPS = {
+  openPath: CHANGES.openPath,
+  sourceStatus: CHANGES.sourceStatus,
+  fileDirty: CHANGES.fileDirty,
+  openDiff: CHANGES.openDiff,
+  openIsDocument: CHANGES.openIsDocument,
+  effectiveView: CHANGES.effectiveView,
+  fileReadOnly: CHANGES.fileReadOnly,
+  fileSaving: CHANGES.fileSaving,
+  currentTask: CHANGES.currentTask,
+  fileSource: CHANGES.fileSource,
+  fileToolReady: CHANGES.fileToolReady,
+  refreshing: CHANGES.refreshing,
+}
+
+/** 打开着的那一份的正文（`ChangesFileContent`）。 */
+export const CHANGES_CONTENT_PROPS = {
+  openPath: CHANGES.openPath,
+  openIsDocument: CHANGES.openIsDocument,
+  docLoading: CHANGES.docLoading,
+  docBytes: CHANGES.docBytes,
+  docError: CHANGES.docError,
+  docRendererMissing: CHANGES.docRendererMissing,
+  openDocumentType: CHANGES.openDocumentType,
+  revs: CHANGES.revs,
+  revisionPath: CHANGES.revisionPath,
+  review: CHANGES.review,
+  canCompare: CHANGES.canCompare,
+  comparing: CHANGES.comparing,
+  comparison: CHANGES.comparison,
+  comparisonLoading: CHANGES.comparisonLoading,
+  comparisonError: CHANGES.comparisonError,
+  effectiveView: CHANGES.effectiveView,
+  openDiffLines: CHANGES.openDiffLines,
+  openIsImage: CHANGES.openIsImage,
+  openRawUrl: CHANGES.openRawUrl,
+  fileBinary: CHANGES.fileBinary,
+  fileTooLarge: CHANGES.fileTooLarge,
+  fileBytes: CHANGES.fileBytes,
+  fileDraft: CHANGES.fileDraft,
+  fileReadOnly: CHANGES.fileReadOnly,
+}
+
+/** 全部改动那一面（`ChangesAllView`）。树常驻那一档在这里是关的：树常驻 / 只在顶部
+ *  那块下面列几行，两种排法在目录里各有一格。 */
+export const CHANGES_ALL_PROPS = {
+  treeFiles: CHANGES.treeFiles,
+  diffByPath: CHANGES.diffByPath,
+  fileDiffs: CHANGES.fileDiffs,
+  treeShown: false,
+  currentTask: CHANGES.currentTask,
+  sourceStatus: CHANGES.sourceStatus,
+  fileSource: CHANGES.fileSource,
+  fileToolReady: CHANGES.fileToolReady,
+  refreshing: CHANGES.refreshing,
+  review: CHANGES.review,
+}
+
 /** 这一支活里某一份文件自己的那一段，切成行（`ChangesDiff` 吃的就是这个）。 */
 export function diffLinesOf(path: string): DiffLine[] {
   const diff = FILE_DIFFS.find((d) => d.path === path)
