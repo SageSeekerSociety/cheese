@@ -36,7 +36,9 @@ parts no gate can see.
     BACKGROUND is itself theme-invariant, the ink on it must be too. The default
     avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
     OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
-    its `#fff` text is correct and "fixing" it to a token breaks it.
+    its ink is a token that is the same in both themes too: `--avatar-ink`
+    (the value lives in style.css; the ratchets ban the hex). A theme-following
+    token there — `--ink`, `on-surface` — is what breaks it.
 - The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary).
   Pick by how important the information is, not by how it looks. `--faint` is not a
   text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
