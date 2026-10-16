@@ -60,10 +60,11 @@ def test_a_run_reads_back_by_module_and_by_test(tmp_path: Path) -> None:
     }
 
 
-def test_a_rerun_counts_once_for_the_test_and_twice_for_the_module(
+def test_a_nodeid_reported_twice_is_summed_in_both_tables(
     tmp_path: Path,
 ) -> None:
-    """The slow list asks how long a test takes, not how many attempts it took."""
+    """Every execution took time, so both tables add it up; pytest sends a rerun
+    as one testcase that already holds its attempts, which this leaves alone."""
     run = test_durations.read_run(
         _artifacts(
             tmp_path,

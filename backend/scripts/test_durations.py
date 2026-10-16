@@ -79,10 +79,10 @@ class Run(NamedTuple):
 def read_run(directory: Path) -> Run:
     """Both tables for one run.
 
-    A test reported twice in one run — a rerun — counts once in ``tests``: the
-    slow list asks how long a test takes, and a rerun is a second attempt at
-    it, not more work. ``modules`` counts every report, so a flaky module's
-    reruns stay visible in the estimate.
+    Both count every report. A rerun is not a second report: pytest writes one
+    ``<testcase>`` whose time already holds every attempt, so the sum below is
+    what that run measured and nothing is halved. A nodeid that really does
+    appear twice is summed too, on purpose: the second execution took time.
     """
     by_module: dict[str, dict[str, list[float]]] = defaultdict(
         lambda: defaultdict(list)
