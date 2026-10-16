@@ -847,9 +847,11 @@ def self_test() -> int:
                 "frontend/src/views/demo/catalog/navigation.ts": volume,
                 catalog_ts: _spread_into_catalog("NEW_ENTRIES", "./catalog/navigation"),
             }, 0),
-            # Reached from another volume rather than from catalog.ts, so this
-            # case goes red if volume_target() ever stops accepting the shard
-            # shape: the flat-only rule refuses `./catalog/navigation` outright.
+            # Reached from another volume rather than from catalog.ts. That is
+            # what only this case pins: the shard case above already covers
+            # "the shape is accepted at all", so making volume_target() accept
+            # shards only straight from catalog.ts leaves that one green and
+            # turns this one red.
             ("control: a shard under catalog/ reached through another volume catalogues it", {
                 "frontend/src/views/demo/catalog/navigation.ts": volume,
                 "frontend/src/views/demo/catalogMore.ts": FIXTURE[
