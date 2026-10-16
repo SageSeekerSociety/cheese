@@ -11,11 +11,12 @@ services、路由和单测一直是拿一个 `QuestionRepository(session)` 调�
 
 两处和拆分前**不一样**，都不是 bug，但说出来比让人自己撞上强：
 
-- 顺带 import 进来、只有一处用到的名字（`re`、`or_`、`text`、`timedelta`、
-  `VoteType`、`Discussion`、`DiscussableModelType`）跟着那一处搬去了 `queries.py`；
+- 顺带 import 进来、只被搬走的那一半用到的名字（`re`、`or_`、`text`、`timedelta`、
+  `VoteType`、`Discussion`、`DiscussableModelType`）跟着它们搬去了 `queries.py`；
   这份模块不再顺带回答它们。仓库里没有调用点从这条路径取这些名字。
-  （`tests/unit/test_feedback_query_module_split.py` 记着同样的取舍。）
-- `_use_fts` 在这里只是再导出：补丁要打在读它的那份模块上。见上面的注释。
+  （`app/domain/feedback/repositories.py` 的 docstring 记着同一条取舍的另一面：
+  那边 `_IN_BATCH` 有测试打补丁，所以连读它的 `batched` 一起留在了原地。）
+- `_use_fts` 在这里只是再导出：补丁要打在读它的那份模块上。见下面的注释。
 """
 
 from collections.abc import Sequence
