@@ -138,3 +138,54 @@ def test_a_new_error_reaches_a_person_and_a_repeat_does_not(client, monkeypatch)
     # Same fingerprint again: the intake drops it, so nobody is told twice.
     assert client.post("/frontend-errors", json=body).status_code == 200
     assert sent == ["前端报错：boom"]
+
+
+@pytest.fixture
+def alerted(monkeypatch) -> list[str]:
+    from app.core import alerting
+
+    sent: list[str] = []
+    monkeypatch.setattr(
+        alerting.settings, "feishu_alert_webhook", "https://example/hook"
+    )
+    monkeypatch.setattr(alerting, "send", lambda title, lines: sent.append(title))
+    return sent
+
+
+def test_a_stale_build_chunk_is_kept_but_not_alerted(client, alerted):
+    """A tab on the previous build asks for a chunk the deploy removed, and the
+    page reloads itself. Nobody can act on that, so nobody is told; the record
+    still says it happened."""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    message = (
+        "Unhandled rejection: Failed to fetch dynamically imported module: "
+        "https://example.test/assets/ProjectSidebar-DKA_rx1A.js"
+    )
+    body = {"project_id": pid, "topic_id": tid, "errors": [{"message": message}]}
+
+    assert client.post("/frontend-errors", json=body).status_code == 200
+
+    assert alerted == []
+    assert len(_topic_events(client, tid)) == 1
+
+
+def test_a_dev_servers_errors_are_kept_but_not_alerted(client, alerted):
+    """A developer's local server proxying to this backend reports the errors of
+    code that may never ship. A user's desktop app is not that, and still
+    alerts."""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+
+    def report(message: str, origin: str) -> None:
+        body = {"project_id": pid, "topic_id": tid, "errors": [{"message": message}]}
+        r = client.post("/frontend-errors", json=body, headers={"Origin": origin})
+        assert r.status_code == 200
+
+    report("from vite", "http://127.0.0.1:3000")
+    report("from localhost", "http://localhost:5317")
+    report("from the desktop app", "http://tauri.localhost")
+    report("from the site", "https://okcheese.example")
+
+    assert alerted == ["前端报错：from the desktop app", "前端报错：from the site"]
+    assert len(_topic_events(client, tid)) == 4
