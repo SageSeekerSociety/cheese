@@ -32,8 +32,22 @@ DEFERRED_RULE_SOURCE = Path("backend/scripts/check_deferred_imports.py")
 #: the test that checks that flag does not start a run of its own.
 INNER_MARK = "VERIFY_MODULE_SPLIT_SELF_TEST_INNER"
 
+#: The variables that tell git it is working somewhere else. They are dropped
+#: rather than inherited: under a pre-commit hook or a CI step they point at the
+#: checkout being tested, and `git -C <fixture>` would then operate on that
+#: checkout instead of on the throwaway repository.
+GIT_LOCATION_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+)
+
 ENV = {
-    **os.environ,
+    **{k: v for k, v in os.environ.items() if k not in GIT_LOCATION_VARS},
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_TERMINAL_PROMPT": "0",
@@ -69,8 +83,9 @@ class Widget:
 
 def build(name, *, strict=False):
     import json
+    import urllib.parse
 
-    return json.dumps({"name": name, "strict": strict})
+    return json.dumps({"name": urllib.parse.quote(name), "strict": strict})
 
 
 def parse(payload: str) -> str:
@@ -124,16 +139,26 @@ def parse(payload: str) -> str:
 
 
 def build(name, *, strict=False):
-    import json
+    import json, urllib.parse
 
-    return json.dumps({"name": name, "strict": strict})
+    return json.dumps({"name": urllib.parse.quote(name), "strict": strict})
 ''',
 }
 
 #: `from .constants import *` reaches the same two names as naming them, so it
-#: is a legal facade too — the tool has to follow the star.
+#: is a legal facade too — the tool has to follow the star. The facade's own
+#: `__all__` deliberately omits those two: naming them there would make the
+#: star unnecessary and the test would pass with the star ignored.
 SPLIT_WITH_STAR = {
     **SPLIT,
+    "constants.py": '''\
+"""Constants."""
+
+DEFAULT_NAME = "widget"
+LIMIT = 10
+
+__all__ = ["DEFAULT_NAME", "LIMIT"]
+''',
     "__init__.py": '''\
 """The split package, star-flavoured."""
 
@@ -142,7 +167,7 @@ from .models import Widget
 from .parsing import parse
 from .rendering import build
 
-__all__ = ["DEFAULT_NAME", "LIMIT", "Widget", "build", "parse"]
+__all__ = ["Widget", "build", "parse"]
 ''',
 }
 
@@ -162,20 +187,20 @@ def _git(repo: Path, *args: str) -> str:
 class Fixture:
     """A throwaway repository holding the pre-split module and the package."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, old_source: str = OLD_SOURCE) -> None:
         self.root = root
         self.package_dir = root / "pkgroot" / "impl" / "foo"
-        self._write_base_and_commit()
+        self._write_base_and_commit(old_source)
 
     def _write(self, relative: str, text: str) -> None:
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
-    def _write_base_and_commit(self) -> None:
+    def _write_base_and_commit(self, old_source: str) -> None:
         self._write("pkgroot/__init__.py", "")
         self._write("pkgroot/impl/__init__.py", "")
-        self._write("pkgroot/impl/foo.py", OLD_SOURCE)
+        self._write("pkgroot/impl/foo.py", old_source)
         _git(self.root, "init", "-q", "-b", "main")
         for key, value in (
             ("user.email", "self-test@example.invalid"),
@@ -230,8 +255,8 @@ class SplitVerificationTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="verify-module-split-")
         self.addCleanup(self._tmp.cleanup)
 
-    def fixture(self) -> Fixture:
-        return Fixture(Path(self._tmp.name) / "repo")
+    def fixture(self, old_source: str = OLD_SOURCE) -> Fixture:
+        return Fixture(Path(self._tmp.name) / "repo", old_source)
 
     def test_a_legal_split_passes(self) -> None:
         result = self.fixture().split_and_run(SPLIT)
@@ -265,8 +290,8 @@ __all__ = ["DEFAULT_NAME", "LIMIT", "build", "parse"]
         result = self.fixture().split_and_run(files)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("形参变了: Widget.render", result.stdout)
-        self.assertIn("(self, width, height)", result.stdout)
-        self.assertIn("(self, w, height)", result.stdout)
+        self.assertIn("旧 (self, width, height=)", result.stdout)
+        self.assertIn("包 (self, w, height=)", result.stdout)
 
     def test_a_new_deferred_import_is_reported_by_name(self) -> None:
         files = dict(SPLIT)
@@ -275,14 +300,97 @@ __all__ = ["DEFAULT_NAME", "LIMIT", "build", "parse"]
 
 
 def build(name, *, strict=False):
-    import json
-    import urllib.parse
+    import json, urllib.parse
+    import mimetypes
 
-    return json.dumps({"name": urllib.parse.quote(name), "strict": strict})
+    return json.dumps({"name": urllib.parse.quote(mimetypes.guess_type(name))})
 '''
         result = self.fixture().split_and_run(files)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("多出函数内延迟 import: import urllib.parse", result.stdout)
+        self.assertIn("多出函数内延迟 import: mimetypes", result.stdout)
+        # The two that were carried over are not reported.
+        self.assertNotIn("多出函数内延迟 import: json", result.stdout)
+        self.assertNotIn("多出函数内延迟 import: urllib.parse", result.stdout)
+
+    def test_a_deferred_import_that_only_moved_still_passes(self) -> None:
+        """Order and grouping are not part of what a split changes."""
+        files = dict(SPLIT)
+        files["rendering.py"] = SPLIT["rendering.py"].replace(
+            "    import json, urllib.parse\n",
+            "    import urllib.parse\n    import json\n",
+        )
+        result = self.fixture().split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_second_deferred_import_of_one_module_is_reported(self) -> None:
+        files = dict(SPLIT)
+        files["rendering.py"] = '''\
+"""Rendering helpers."""
+
+
+def build(name, *, strict=False):
+    import json, urllib.parse
+
+    return json.dumps({"name": urllib.parse.quote(name), "strict": strict})
+
+
+def quote(name):
+    import json
+
+    return json.dumps(name)
+'''
+        result = self.fixture().split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("函数内延迟 import 变多了: json", result.stdout)
+        self.assertIn("旧 1 处 → 包 2 处", result.stdout)
+
+    def test_a_positional_only_marker_is_drift(self) -> None:
+        """`def f(a, b)` and `def f(a, /, b)` take different calls."""
+        files = dict(SPLIT)
+        files["models.py"] = SPLIT["models.py"].replace(
+            "def render(self, width, height=0):",
+            "def render(self, width, /, height=0):",
+        )
+        result = self.fixture().split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "旧 (self, width, height=) → 包 (self, width, /, height=)", result.stdout
+        )
+
+    def test_a_dropped_default_is_drift(self) -> None:
+        files = dict(SPLIT)
+        files["models.py"] = SPLIT["models.py"].replace(
+            "def render(self, width, height=0):", "def render(self, width, height):"
+        )
+        result = self.fixture().split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn(
+            "旧 (self, width, height=) → 包 (self, width, height)", result.stdout
+        )
+
+    def test_turning_a_function_async_is_drift(self) -> None:
+        files = dict(SPLIT)
+        files["rendering.py"] = SPLIT["rendering.py"].replace(
+            "def build(", "async def build("
+        )
+        result = self.fixture().split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("变了同步/异步: build", result.stdout)
+
+    def test_runtime_identity_confirms_the_reexports(self) -> None:
+        result = self.fixture().split_and_run(SPLIT, "--runtime-identity")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("运行时同一性: 校验", result.stdout)
+
+    def test_runtime_identity_degrades_when_the_package_will_not_import(self) -> None:
+        files = dict(SPLIT)
+        files["models.py"] = (
+            "import definitely_not_an_installed_module\n\n" + SPLIT["models.py"]
+        )
+        result = self.fixture().split_and_run(files, "--runtime-identity")
+        # The static checks still stand on their own; the runtime one says so.
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("运行时同一性: 包不能导入, 跳过", result.stdout)
 
     def test_a_new_public_name_is_reported(self) -> None:
         files = dict(SPLIT)
@@ -322,20 +430,267 @@ def build(name, *, strict=False):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("cannot judge", result.stderr)
 
-    def test_runtime_identity_confirms_the_reexports(self) -> None:
-        result = self.fixture().split_and_run(SPLIT, "--runtime-identity")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("运行时同一性: 校验", result.stdout)
-
-    def test_runtime_identity_degrades_when_the_package_will_not_import(self) -> None:
-        files = dict(SPLIT)
-        files["models.py"] = (
-            "import definitely_not_an_installed_module\n\n" + SPLIT["models.py"]
+    def test_a_dotted_target_that_is_not_importable_cannot_be_judged(self) -> None:
+        fixture = self.fixture()
+        fixture.apply_split(SPLIT)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOL),
+                "--check-facade",
+                "pkgroot.impl.foo",
+                "--base-ref",
+                fixture.base,
+                "--repo-root",
+                str(fixture.root),
+            ],
+            capture_output=True,
+            text=True,
+            env=ENV,
+            cwd=str(fixture.root),
         )
-        result = self.fixture().split_and_run(files, "--runtime-identity")
-        # The static checks still stand on their own; the runtime one says so.
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("cannot judge", result.stderr)
+        self.assertIn("cannot be imported as a module", result.stderr)
+
+    def test_a_file_that_is_not_utf8_cannot_be_judged(self) -> None:
+        fixture = self.fixture()
+        fixture.apply_split(SPLIT)
+        # A latin-1 source file with no encoding declaration: readable by the
+        # interpreter, not by a UTF-8 read. Saying nothing would read as a pass.
+        (fixture.package_dir / "models.py").write_bytes(
+            b'"""Mod\xe8le."""\n\n\nclass Widget:\n    pass\n'
+        )
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("cannot judge", result.stderr)
+
+
+class RuntimeShapeTests(unittest.TestCase):
+    """Cases where the old module's source over- or under-states its surface."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="verify-module-split-")
+        self.addCleanup(self._tmp.cleanup)
+
+    def fixture(self, old_source: str = OLD_SOURCE) -> Fixture:
+        return Fixture(Path(self._tmp.name) / "repo", old_source)
+
+    def test_a_computed_all_is_said_out_loud(self) -> None:
+        """The names it declares cannot be read, so the run must not imply it did."""
+        old = '''\
+"""A module that computes its __all__."""
+
+
+def run():
+    return 1
+
+
+__all__ = sorted(["run"])
+'''
+        files = {
+            "__init__.py": 'from .impl import run\n\n__all__ = ["run"]\n',
+            "impl.py": "def run():\n    return 1\n",
+        }
+        result = self.fixture(old).split_and_run(files)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("运行时同一性: 包不能导入, 跳过", result.stdout)
+        self.assertIn("__all__ 不是字面量", result.stdout)
+
+    def test_a_deleted_name_is_not_required_of_the_package(self) -> None:
+        old = '''\
+"""A module that drops a name before it finishes loading."""
+
+GONE = 1
+del GONE
+
+
+def run():
+    return 1
+'''
+        files = {
+            "__init__.py": 'from .impl import run\n\n__all__ = ["run"]\n',
+            "impl.py": "def run():\n    return 1\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_name_bound_only_under_type_checking_is_not_required(self) -> None:
+        old = '''\
+"""A module that binds a name the type checker alone sees."""
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    TYPING_ONLY = 1
+
+
+def run():
+    return 1
+'''
+        files = {
+            "__init__.py": 'from .impl import run\n\n__all__ = ["run"]\n',
+            "impl.py": "def run():\n    return 1\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_relative_import_one_level_deeper_still_matches(self) -> None:
+        """The file moved down a level, so `from .x` became `from ..x`."""
+        old = '''\
+"""A module whose function bodies reach a sibling relatively."""
+
+from .sibling import helper
+
+
+def run():
+    from .sibling import helper as h
+
+    return h()
+'''
+        files = {
+            "__init__.py": 'from .runner import run\n\n__all__ = ["run"]\n',
+            "runner.py": """\
+def run():
+    from ..sibling import helper as h
+
+    return h()
+""",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_relative_import_that_keeps_its_level_is_reported(self) -> None:
+        """Same file as above, dots not rewritten: now a different module."""
+        old = '''\
+"""A module whose function bodies reach a sibling relatively."""
+
+from .sibling import helper
+
+
+def run():
+    from .sibling import helper as h
+
+    return h()
+'''
+        files = {
+            "__init__.py": 'from .runner import run\n\n__all__ = ["run"]\n',
+            "runner.py": """\
+def run():
+    from .sibling import helper as h
+
+    return h()
+""",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("多出函数内延迟 import: pkgroot.impl.foo.sibling", result.stdout)
+
+    def test_a_facade_that_re_exports_absolutely_still_passes(self) -> None:
+        """How every split in this repository writes its facade."""
+        files = dict(SPLIT)
+        files["__init__.py"] = '''\
+"""The split package, re-exporting by absolute path."""
+
+from pkgroot.impl.foo.constants import DEFAULT_NAME as DEFAULT_NAME
+from pkgroot.impl.foo.constants import LIMIT as LIMIT
+from pkgroot.impl.foo.models import Widget as Widget
+from pkgroot.impl.foo.parsing import parse as parse
+from pkgroot.impl.foo.rendering import build as build
+
+__all__ = ["DEFAULT_NAME", "LIMIT", "Widget", "build", "parse"]
+'''
+        result = self.fixture().split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_method_lifted_to_a_module_function_is_a_note(self) -> None:
+        old = '''\
+"""A class whose private helper is about to become a function."""
+
+
+class Widget:
+    def render(self, width):
+        return self._paint(width)
+
+    def _paint(self, width):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self, width):
+        return _paint(width)
+
+
+from .painting import _paint  # noqa: E402
+""",
+            "painting.py": "def _paint(width):\n    return str(width)\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
+
+    def test_a_logger_is_not_required_of_the_package(self) -> None:
+        old = '''\
+"""A module with the logger every module in this repository has."""
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def run():
+    logger.info("x")
+'''
+        files = {
+            "__init__.py": 'from .impl import run\n\n__all__ = ["run"]\n',
+            "impl.py": """\
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def run():
+    logger.info("x")
+""",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_constant_built_by_a_call_is_still_required(self) -> None:
+        """Only the logger factory is set aside; a value built by a call is not."""
+        old = '''\
+"""A module with a constant that happens to be built by a call."""
+
+import logging
+
+LINK_ONLY_PROVIDERS = frozenset({"github_app"})
+logger = logging.getLogger(__name__)
+
+
+def run():
+    return LINK_ONLY_PROVIDERS
+'''
+        files = {
+            "__init__.py": 'from .impl import run\n\n__all__ = ["run"]\n',
+            "impl.py": """\
+def run():
+    return frozenset({"github_app"})
+""",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("顶层符号不再导出: LINK_ONLY_PROVIDERS", result.stdout)
+
+    def test_a_star_import_that_does_not_cover_the_name_is_reported(self) -> None:
+        """`from .constants import *` binds `constants.__all__`, nothing else."""
+        files = dict(SPLIT_WITH_STAR)
+        files["constants.py"] = SPLIT_WITH_STAR["constants.py"].replace(
+            '__all__ = ["DEFAULT_NAME", "LIMIT"]', '__all__ = ["LIMIT"]'
+        )
+        result = self.fixture(OLD_SOURCE).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("顶层符号不再导出: DEFAULT_NAME", result.stdout)
 
 
 class DeferredRuleAgreementTests(unittest.TestCase):
@@ -415,6 +770,17 @@ class UsageTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
 
+    def test_the_self_test_flag_refuses_to_also_check_a_package(self) -> None:
+        """Running the tests while the caller asked for a check is not an answer."""
+        result = subprocess.run(
+            [sys.executable, str(TOOL), "--self-test", "--check-facade", "whatever"],
+            capture_output=True,
+            text=True,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("cannot judge", result.stderr)
+
     def test_the_dash_dash_self_test_flag_runs_this_file(self) -> None:
         if os.environ.get(INNER_MARK):
             # Already inside the run that this test would start.
@@ -437,6 +803,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-v", "--verbose", action="store_true")
     args, extra = parser.parse_known_args(argv)
     suite = unittest.TestLoader().loadTestsFromTestCase(SplitVerificationTests)
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(RuntimeShapeTests))
     suite.addTests(
         unittest.TestLoader().loadTestsFromTestCase(DeferredRuleAgreementTests)
     )
