@@ -78,6 +78,7 @@ def _documents_find_their_conversations() -> None:
               FROM made
               JOIN topics t ON t.id = made.room_id
              WHERE d.id = made.document_id
+               AND d.room_id IS NULL
         """)
     )
 
@@ -147,29 +148,39 @@ def _workspace_root() -> str:
 
 
 def upgrade() -> None:
+    # One transaction, and every schema step safe to repeat. The first version
+    # of this migration built the index CONCURRENTLY in an autocommit block,
+    # which commits what came before it; on dev that index then timed out on a
+    # lock, leaving the columns and the foreign key committed and the revision
+    # unstamped. Repeating it must not trip over them, and a failure now rolls
+    # the whole migration back.
+    #
     # The new foreign key locks `topics` as well as `documents`.
     with_lock_retries("documents, topics, library_files")
-    op.add_column("documents", sa.Column("room_id", sa.Uuid(), nullable=True))
-    op.add_column(
-        "documents", sa.Column("kept_at", sa.DateTime(timezone=True), nullable=True)
+    op.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS room_id uuid")
+    op.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS kept_at timestamptz")
+    op.execute(
+        "ALTER TABLE library_files ADD COLUMN IF NOT EXISTS source_path varchar(1024)"
     )
-    op.create_foreign_key(
-        _CONSTRAINT,
-        "documents",
-        "topics",
-        ["room_id"],
-        ["id"],
-        ondelete="CASCADE",
-        postgresql_not_valid=True,
+    present = op.get_bind().scalar(
+        sa.text("SELECT 1 FROM pg_constraint WHERE conname = :name"),
+        {"name": _CONSTRAINT},
     )
-    op.add_column(
-        "library_files",
-        sa.Column("source_path", sa.String(length=1024), nullable=True),
-    )
-    with op.get_context().autocommit_block():
-        op.execute(f"ALTER TABLE documents VALIDATE CONSTRAINT {_CONSTRAINT}")
-        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {_INDEX}")
-        op.create_index(_INDEX, "documents", ["room_id"], postgresql_concurrently=True)
+    if not present:
+        op.create_foreign_key(
+            _CONSTRAINT,
+            "documents",
+            "topics",
+            ["room_id"],
+            ["id"],
+            ondelete="CASCADE",
+            postgresql_not_valid=True,
+        )
+    # migration-safety: allow validate-outside-autocommit — documents holds a few hundred rows, so validating holds its lock for milliseconds; an autocommit block is what left dev half-migrated
+    op.execute(f"ALTER TABLE documents VALIDATE CONSTRAINT {_CONSTRAINT}")
+    op.execute(f"DROP INDEX IF EXISTS {_INDEX}")
+    # migration-safety: allow index-not-concurrent — documents holds a few hundred rows, so a plain build inside this transaction is instant
+    op.create_index(_INDEX, "documents", ["room_id"])
     _documents_find_their_conversations()
     _private_files_go_back(Path(_workspace_root()))
 
