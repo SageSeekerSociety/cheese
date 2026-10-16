@@ -1,9 +1,10 @@
 """How many of one project's turns may run at once.
 
-`config.py` is at the size cap every module is held to
-(`.claude/scripts/check-file-sizes.py`, `.claude/rules/architecture.md`), and
-this rule stands alone: it reads one project setting and falls back to the
-deployment's own number, `settings.max_concurrent_turns`.
+Putting this in `config.py` would carry it past the size cap every module is
+held to (`.claude/scripts/check-file-sizes.py`,
+`.claude/rules/architecture.md`), and the rule stands alone anyway: it reads one
+project setting and falls back to the deployment's own number,
+`settings.max_concurrent_turns`.
 
 The same answer has three readers, so it is written once. `work_policy` admits a
 turn against it; `GET /projects/{project_id}/compute-configs` reports it along
