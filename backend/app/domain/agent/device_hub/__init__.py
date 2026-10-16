@@ -28,8 +28,9 @@ imports by *this* module:
   * the public surface of ``DeviceHub`` — the remote hub must have every public
     method this class has (``test_remote_hub_answers_every_hub_call.py``), so
     each one stays in the class body as a one-line delegation;
-  * the other half of the same rule, reading ``vars(DeviceHub)`` in
-    ``tests/support/fast_timings.py`` and the test-double subclasses: ``_device``,
+  * the other half of the same rule, reading ``vars(DeviceHub)``
+    (``test_remote_hub_answers_every_hub_call.py``) and overriding it in the
+    test-double subclasses (``test_device_hub.py``): ``_device``,
     ``attach_device``/``detach_device`` and the device-connection reads;
   * the singleton at the bottom, and the failures/screen shape re-exported from
     ``device_contract``.
