@@ -380,7 +380,13 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/harness/claude_code/remote_execution/private.py": 12,
     "app/domain/agent/harness/claude_code/remote_execution/private_egress.py": 4,
     "app/domain/agent/harness/claude_code/remote_execution/release.py": 3,
-    "app/domain/agent/harness/claude_code/remote_execution/runtime.py": 40,
+    # 2026-10-16，`runtime.py` 拆成同级模块那一笔把 34 句英文拒绝搬了家：
+    # 项目上下文 13、工具调用 10、命令 8、原语 3，runtime.py 40 → 6。总数没变。
+    "app/domain/agent/harness/claude_code/remote_execution/runtime.py": 6,
+    "app/domain/agent/harness/claude_code/remote_execution/runtime_calls.py": 10,
+    "app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py": 8,
+    "app/domain/agent/harness/claude_code/remote_execution/runtime_context.py": 13,
+    "app/domain/agent/harness/claude_code/remote_execution/runtime_core.py": 3,
     "app/domain/agent/harness/claude_code/remote_execution/sandbox_host.py": 14,
     "app/domain/agent/harness/claude_code/remote_execution/send_user_file.py": 2,
     "app/domain/agent/harness/claude_code/remote_execution/session_transfer.py": 9,

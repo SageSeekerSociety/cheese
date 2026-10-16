@@ -29,7 +29,7 @@ from app.api.routes.users._common import (
     _email_code_unavailable,
     _issue_2fa_pending_token,
     _too_many_from_client,
-    _trusted_device,
+    _trusted_device_id,
     logger,
 )
 from app.api.users_deps import (
@@ -369,11 +369,13 @@ async def user_login(
 
         totp_service = TOTPService(session)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
-        trust = (
-            await _trusted_device(request, session, user.id) if requires_2fa else None
+        trust_id = (
+            await _trusted_device_id(request, session, user.id)
+            if requires_2fa
+            else None
         )
 
-        if requires_2fa and trust is None:
+        if requires_2fa and trust_id is None:
             if not totp_code:
                 # tempToken lets the client finish via POST /auth/verify-2fa.
                 return ok(
@@ -400,8 +402,8 @@ async def user_login(
             session,
             user_id=user.id,
             handle=user.username,
-            login_method="totp" if requires_2fa and trust is None else "password",
-            trust_device_id=trust.id if trust else None,
+            login_method="totp" if requires_2fa and trust_id is None else "password",
+            trust_device_id=trust_id,
         )
 
         user_dto = await auth_service.build_user_dto(
@@ -637,10 +639,10 @@ async def verify_sign_in_code(
     if user is None or is_placeholder_email(user.email):
         raise _invalid_email_code()
 
-    trust = None
+    trust_id = None
     if await TOTPService(session).is_2fa_enabled(user.id):
-        trust = await _trusted_device(request, session, user.id)
-        if trust is None:
+        trust_id = await _trusted_device_id(request, session, user.id)
+        if trust_id is None:
             return ok(
                 {
                     "requires2FA": True,
@@ -662,7 +664,7 @@ async def verify_sign_in_code(
         user_id=user.id,
         handle=user.username,
         login_method="email_code",
-        trust_device_id=trust.id if trust else None,
+        trust_device_id=trust_id,
     )
     user_dto = await auth_service.build_user_dto(
         user=user,

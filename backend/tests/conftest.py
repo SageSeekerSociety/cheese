@@ -138,7 +138,15 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 )
 from app.domain.agent.harness.claude_code.protocol import INPUT_PROTOCOL  # noqa: E402
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
-from app.main import app  # noqa: E402
+
+# NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
+# assembles the whole FastAPI app (`_discover_routers()` imports every module
+# under `app/api/routes/`, which costs ~20s), and a conftest import is paid by
+# every pytest process that collects anything under `tests/` — the pure layer
+# included, where 445 of the 572 files under `tests/unit/` never mention
+# `client` or `TestClient` at all. The two fixtures that drive the app
+# (`client`, `python_client`) import it inside their own bodies, so only a run
+# that actually asks for one of them pays for it.
 from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.seat_channel import SeatChannel  # noqa: E402
 
@@ -1377,6 +1385,11 @@ def stub_project_forge(monkeypatch, tmp_path):
 def client(
     _pg_schema, stub_hooks: StubChannel, tmp_path, stub_project_forge, monkeypatch
 ) -> Iterator[TestClient]:
+    # Assembling the app is the expensive part of starting a pytest process, so
+    # it happens here rather than at conftest import: only tests that actually
+    # ask for `client` pay for it.
+    from app.main import app
+
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
@@ -2468,6 +2481,8 @@ async def python_client(
     it. Same postgres test DB + truncate isolation + agent seed as `client`, but
     awaitable inside anyio tests."""
     from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
 
     engine = _production_test_engine(TEST_DATABASE_URL)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)

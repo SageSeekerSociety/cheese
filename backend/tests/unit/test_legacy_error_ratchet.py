@@ -180,7 +180,11 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/integration/mail.py", "ValidationError"): 2,
     ("app/domain/integration/service.py", "ValidationError"): 18,
     ("app/domain/library/service.py", "ValidationError"): 9,
-    ("app/domain/machine/services.py", "ValidationError"): 4,
+    # `machine/services.py` 拆出了这一处引用（2026-10-16）：池子的后台巡检整段
+    # 搬去 `reaper.py`，`_fail` 里那个 `except` 跟着它走。总数没变，只是发起方
+    # 换了文件。
+    ("app/domain/machine/reaper.py", "ValidationError"): 1,
+    ("app/domain/machine/services.py", "ValidationError"): 3,
     ("app/domain/machine/supply.py", "ValidationError"): 2,
     ("app/domain/machine/warm.py", "ValidationError"): 2,
     ("app/domain/membership/services.py", "ValidationError"): 8,

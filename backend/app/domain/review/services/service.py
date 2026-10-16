@@ -817,6 +817,9 @@ class AcceptService:
             self, card=card, topic=topic, reason=reason
         )
 
+    async def _stop_accept_conflict(self, card: AcceptCard, topic: Topic) -> NoReturn:
+        return await _accept._stop_accept_conflict(self, card=card, topic=topic)
+
     async def _stop_accept_title_disagrees(
         self, card: AcceptCard, topic: Topic, pr_title: str
     ) -> NoReturn:

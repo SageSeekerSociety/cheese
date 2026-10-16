@@ -1,4 +1,6 @@
 {
+  "acceptConflict": "采纳停下：PR #{pr} 和目标分支冲突了",
+  "acceptConflictDetail": "{url}\n冲突不能在采纳时解掉：GitHub 现在合不了这个 PR。轮询会把这条冲突交给芝士，它要在任务目录里合入目标分支、解决后重新推送；解完检查绿了再重新采纳。",
   "acceptDismissed": "PR #{pr} 有新提交，已有的采纳批准被作废",
   "acceptDismissedDetail": "被作废的批准：{voided}。\n新提交作废已有的采纳（项目分支保护，默认开）。请重新查看这个 PR 后再采纳。\n{url}",
   "acceptDone": "{actor} 采纳了这次改动，PR #{pr} {how}",

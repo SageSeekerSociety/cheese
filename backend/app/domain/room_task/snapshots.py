@@ -89,6 +89,22 @@ async def latest(session: AsyncSession, task_id: uuid.UUID) -> TaskSnapshot:
     return row
 
 
+async def get(
+    session: AsyncSession, *, task_id: uuid.UUID, snapshot_id: uuid.UUID
+) -> TaskSnapshot | None:
+    """One task's snapshot by id; None when it has no such row.
+
+    Scoped by the task on purpose: a snapshot belongs to exactly one, and its
+    id alone does not say which. A snapshot of another task answers here the
+    same way an id that exists nowhere does, so the caller has one 404 for both
+    and cannot learn that the other task's snapshot exists.
+    """
+    row = await session.get(TaskSnapshot, snapshot_id)
+    if row is None or row.task_id != task_id:
+        return None
+    return row
+
+
 async def download(
     row: TaskSnapshot, *, storage: StorageBackend | None = None
 ) -> bytes:

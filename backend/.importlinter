@@ -479,7 +479,8 @@ unmatched_ignore_imports_alerting = warn
 # exact thing that guard exists to catch. Importers were followed one by one and
 # now take it from `app.domain.event_author`; `block/models.py` still imports it
 # for its own mapped column, so the name is reachable as an attribute of that
-# module — nobody imports it from there, and nothing re-exports it on purpose.
+# module — nobody imports it from there. `block.schemas` re-exports it on purpose
+# for routes, and takes it from layer 1 the way every other importer does.
 #
 # `environment_diagnosis` joined at layer 3 (2026-10-14), out of the `project`
 # package it was written in. It takes no project row — the route hands it two

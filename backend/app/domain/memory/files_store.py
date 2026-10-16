@@ -151,6 +151,16 @@ class MemoryFileStore:
             stmt = stmt.with_for_update()
         return await self._session.scalar(stmt)
 
+    async def get_by_id(self, file_id: uuid.UUID) -> MemoryFileRecord | None:
+        """按主键取一行；没有这一行就是 None。
+
+        修剪那条路（`routes/memory.py`）手上只有一个 id：这条记忆属于哪个项目、
+        哪个作用域、谁的那一份，全都要从这一行上读出来，才判得了「问的人删不删
+        得动它」。所以它是按主键读，不是按 `(项目, 作用域, 路径)`——那个三元组
+        正是这里要问出来的答案。
+        """
+        return await self._session.get(MemoryFileRecord, file_id)
+
     async def write(
         self,
         *,
