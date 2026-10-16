@@ -51,6 +51,8 @@ export function projectChanged(projectId: string, me: string | null, frame: Feed
       return me ? refreshQueries({ queryKey: keys.projectPrivateUnread(projectId, me) }) : null
     case 'notify_levels':
       return refreshQueries({ queryKey: keys.projectNotifyLevels(projectId) })
+    case 'situation':
+      return refreshQueries({ queryKey: keys.projectSituation(projectId) })
     default:
       return null
   }

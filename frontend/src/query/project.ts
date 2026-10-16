@@ -3,6 +3,7 @@
 // 每一份的读法只写在这里。别处变了由项目推送叫它们重读（`query/projectFeed`），写操作
 // 和推送通过下面这几个函数改缓存，不各存副本。
 import type { TopicNotifySetting, TopicUnread } from '@/api'
+import type { ProjectSituation } from '@/api/projectProgress'
 import type { ListPayload, Project, ProjectAgent, ProjectMemberRow, Topic } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
 
@@ -20,7 +21,7 @@ import {
   listTopics,
 } from '@/api'
 import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
-import { listProjectProgress } from '@/api/projectProgress'
+import { getProjectSituation, listProjectProgress } from '@/api/projectProgress'
 import { projectRefusal, rememberNumbered, rememberProjects } from '@/lib/addresses'
 import { cachedWindow, prefetchNewestBlocks } from '@/query/blocks'
 import { patchQuery, queryClient, settled } from '@/query/client'
@@ -159,6 +160,17 @@ export function progressQuery(projectId: string) {
     queryFn: async (): Promise<ProgressItem[]> => (await listProjectProgress(projectId)).data,
   })
 }
+
+/** 项目总览最上面的「现状」。后台在重写时隔一会儿再读一次：写完本来会推一帧过来
+ *  （`projectFeed` 的 `situation`），这一条是推送没到时的兜底。 */
+export function situationQuery(projectId: string) {
+  return queryOptions({
+    queryKey: keys.projectSituation(projectId),
+    queryFn: (): Promise<ProjectSituation> => getProjectSituation(projectId),
+    refetchInterval: (query) => (query.state.data?.writing ? SITUATION_POLL_MS : false),
+  })
+}
+const SITUATION_POLL_MS = 20_000
 
 /** 一个房间这一行：清单里还没有它（深链接进来、刚变得可见的私有频道）时单独取。 */
 export function roomRowQuery(roomId: string) {
