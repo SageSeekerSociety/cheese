@@ -38,8 +38,6 @@ export interface PendingAttachment extends ChatAttachment {
   name?: string
   /** The picked File, kept on a failed slot so 重试 uploads the same bytes. */
   file?: File
-  /** Where it came from, so a retried clipboard paste stays a clipboard paste. */
-  origin?: 'file' | 'clipboard'
 }
 
 /** What `File.type` alone cannot give back: the extension to write on a name we
@@ -124,7 +122,7 @@ export function usePendingAttachments(
 
   /** Put this file where the slot is, or mark that slot failed and keep it.
    *  Used both on the first try and on 重试: one upload, one place it lands. */
-  async function uploadInto(slot: PendingAttachment, file: File, origin: 'file' | 'clipboard') {
+  async function uploadInto(slot: PendingAttachment, file: File) {
     const topicId = getTopicId()
     if (!topicId) {
       drop(slot)
@@ -135,7 +133,7 @@ export function usePendingAttachments(
     slot.progress = 0
     let attachment: ChatAttachment
     try {
-      attachment = await uploadAttachment(topicId, file, origin, (fraction) => {
+      attachment = await uploadAttachment(topicId, file, (fraction) => {
         // Only while the slot is still on its way: once it lands it is replaced
         // by the finished attachment, and a late event must not resurrect it.
         if (slot.uploading) slot.progress = fraction
@@ -159,7 +157,7 @@ export function usePendingAttachments(
     if (at >= 0) pending.value.splice(at, 1, attachment)
   }
 
-  async function addFiles(files: Iterable<File>, origin: 'file' | 'clipboard' = 'file') {
+  async function addFiles(files: Iterable<File>) {
     const topicId = getTopicId()
     if (!topicId) return
     const all = [...files]
@@ -184,10 +182,9 @@ export function usePendingAttachments(
           uploading: true,
           name: f.name,
           file: f,
-          origin,
         }
         pending.value.push(slot)
-        await uploadInto(slot, f, origin)
+        await uploadInto(slot, f)
       }
     } finally {
       uploading.value = false
@@ -200,7 +197,7 @@ export function usePendingAttachments(
     if (!slot || slot.uploading || !slot.error || !slot.file) return
     uploading.value = true
     try {
-      await uploadInto(slot, slot.file, slot.origin ?? 'file')
+      await uploadInto(slot, slot.file)
     } finally {
       uploading.value = false
     }
@@ -259,7 +256,7 @@ export function usePendingAttachments(
     }
     if (files.length) {
       e.preventDefault()
-      void addFiles(files, 'clipboard')
+      void addFiles(files)
     }
   }
 

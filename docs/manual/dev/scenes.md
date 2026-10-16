@@ -269,7 +269,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/user/settings/Usage.vue` | 容器 | 画面在 `UsageView.vue`（A 级）；本页留着：经 `composables/useCreditUsage.ts` 取数；经 `api/creditUsage.ts` 取数 |
 | `views/welcome/Welcome.vue` | 容器 | 画面在 `WelcomeView.vue`（A 级）；本页留着：直接取数（`api.ts`）；经 `lib/desktop.ts` 取数；经 `query/projects.ts` 取数；直接取数（`services/account.ts`）；读路由 |
 | `views/workspace/ChannelBrowse.vue` | 容器 | 画面在 `ChannelBrowseView.vue`（A 级）；本页留着：经 `api/channels.ts` 取数；读路由；读 store（workspace） |
-| `views/workspace/ChannelFiles.vue` | 容器 | 画面在 `ChannelFilesView.vue`（A 级）；本页留着：经 `api/roomFiles.ts` 取数；经 `query/room.ts` 取数；读 store（workspace） |
 | `views/workspace/DmView.vue` | D | 直接取数（`api.ts`）；经 `components/ChatPanel.vue` 取数；经 `query/project.ts` 取数；读路由；读 store（workspace） |
 | `views/workspace/ProjectMembersView.vue` | D | 经 `composables/useAccountLookup.ts` 取数；直接取数（`api.ts`）；经 `components/LeaveProjectDialog.vue` 取数；经 `components/TransferProjectDialog.vue` 取数；经 `query/project.ts` 取数；读路由；模板里画 `<router-link>`；读 store（workspace） |
 | `views/workspace/ProjectOverview.vue` | 容器 | 画面在 `ProjectOverviewView.vue`（A 级）；本页留着：直接取数（`api.ts`）；经 `lib/routePrefetch.ts` 取数；经 `query/project.ts` 取数；经 `query/tasks.ts` 取数；读路由；读 store（workspace） |

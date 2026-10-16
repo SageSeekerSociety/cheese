@@ -110,6 +110,8 @@ class RoomFileOut(BaseModel):
     author_kind: str | None
     #: 最后那次保存从哪个门进来的：取值见 ``room_files.SOURCES``。空 = 同上。
     source: str | None
+    #: 有人从这里把它保存到了资料库（#3828）。
+    in_library: bool
 
 
 class RoomFileListOut(Page[RoomFileOut]):
@@ -131,13 +133,15 @@ async def list_files(
     作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存
     补齐，没保存过的那几份照列。
 
-    `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
+    `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。`in_library` 说
+    这一份有没有人保存到资料库（`POST /topics/{topic_id}/shown/save`）。
     """
     place, _ = await _in_room(db, resolver, topic_id)
     items, total = await asyncio.to_thread(
         library.list_room_files, place.project_id, place.room_id
     )
     saved = await room_files.latest_by_path(db, place.room_id)
+    kept = await library_records.saved_from(db, place.room_id)
     rows: list[dict] = []
     for item in items:
         last = saved.get(item["path"])
@@ -149,6 +153,7 @@ async def list_files(
                 "author": (last.author_handle or None) if last is not None else None,
                 "author_kind": last.author_kind if last is not None else None,
                 "source": last.source if last is not None else None,
+                "in_library": item["path"] in kept,
             }
         )
     return ok({**page(rows, total), "truncated": total > len(items)})

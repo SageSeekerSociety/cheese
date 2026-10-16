@@ -2,10 +2,12 @@
 
 A task's living document is read by whoever may enter the task's channel, and
 written by the people working the task and the task's own session: what others
-have to say about a task they say in the channel. A document of the project's
-own — the project's goals among them — is the project's members', and 芝士's
-wherever in the project it works. Every document route asks here, so they never
-disagree.
+have to say about a task they say in the channel. A document 芝士 wrote in a
+channel or a private chat is that conversation's until someone saves it to the
+library: whoever may enter the conversation reads and writes it (#3828). A
+document of the project's own — the project's goals and every saved one among
+them — is the project's members', and 芝士's wherever in the project it works.
+Every document route asks here, so they never disagree.
 
 `asked_of` is the one derivation the comment routes and the agent routes share:
 from the caller's reach, the question an agent asks about this document. It
@@ -37,7 +39,8 @@ class Reached:
     doc: Document
     actor: Actor
     #: The room the document is the living document of — or the room of the task
-    #: it is the living document of; None for a project's own.
+    #: it is the living document of, or the conversation that keeps it; None for
+    #: a project's own.
     place: Place | None
     #: The task whose living document this is.
     task: Task | None = None
@@ -69,6 +72,15 @@ async def reach(
             actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
         )
         return Reached(doc, actor, place, task, resolver.credential_conversation())
+    if doc.room_id is not None and doc.kept_at is None:
+        place = await TopicService(db).place_or_404(doc.room_id)
+        actor = await resolver.resolve(
+            topic_id=place.conversation_id, project_id=place.project_id
+        )
+        await resolver.authorize_topic(
+            actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        )
+        return Reached(doc, actor, place, None, resolver.credential_conversation())
     actor = await resolver.resolve(project_id=doc.project_id)
     await authorize_in_project(resolver, actor, doc.project_id)
     return Reached(doc, actor, None)
