@@ -30,6 +30,7 @@ from fastapi import APIRouter, Query
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.domain.agent.announce import announce
 from app.domain.agent_instance.adapters import project_team
@@ -37,7 +38,7 @@ from app.domain.memory.migration_service import MemoryMigrationService
 from app.domain.memory.models import MemoryMigrationPlan
 from app.domain.memory.reads import body_reads
 
-router = APIRouter(prefix="/admin/memory", tags=["admin"])
+router = APIRouter(prefix="/admin/memory", tags=["admin"], dependencies=[ROUTE_DECIDES])
 
 
 def _file_path(item: dict) -> str:
