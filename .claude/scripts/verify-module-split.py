@@ -89,7 +89,10 @@ under the same name: `--runtime-identity` imports whichever one it reaches
 first, and the checks around this tool — eslint, a ratchet, test collection —
 read the tree as it stands. Neither is a difference the change introduced, so
 the run says which copy to delete and exits 2 instead of reporting on two
-modules at once. The move check reads no such copy and does not look.
+modules at once. Beside the package the name decides, since one directory
+cannot hold both; under a temp directory the text does, because a file named
+like the module but holding something else is somebody else's work, not a copy
+of this one. The move check reads no such copy and does not look.
 
 CONSUMERS. Git-tracked and unignored new Python files across the repository
 (including cli/, scripts/, backend/scripts/ and .claude/scripts/) are scanned
@@ -1301,6 +1304,50 @@ def changed_module_paths(repo_root: Path, base_ref: str, directory: str) -> list
     return sorted({path for path in found if path and path.endswith(".py")})
 
 
+def _containing_package(path: Path, root: Path) -> Path | None:
+    """The outermost package directory `path` sits in, or None if it sits in none."""
+    top: Path | None = None
+    here = path.parent
+    while here != root and (here / "__init__.py").is_file():
+        top = here
+        here = here.parent
+    return top
+
+
+def module_package(
+    module_path: Path,
+    root: Path,
+    dotted: str,
+    facts: ModuleFacts | None,
+    cache: dict[Path, Package],
+) -> Package:
+    """`_target_exists`'s view of one module: itself, plus how it resolves names.
+
+    A caller's `from app.foo import x` asks about `app.foo` alone, but the
+    answer can be a relative re-export (`from .base import x`) or a submodule
+    the module hands out, and those are written against the package the module
+    sits in. So that package is read from disk and keyed again from this
+    module: the module itself lands on `""`, a sibling or an ancestor keeps the
+    path a relative import inside the module spells, and a name the module
+    still forwards resolves instead of reading as a break.
+    """
+    modules: dict[str, ModuleFacts] = {} if facts is None else {"": facts}
+    package_dir = _containing_package(module_path, root)
+    if package_dir is None:
+        return Package(root=module_path.parent, modules=modules)
+    package_name = _dotted_name(package_dir, root)
+    if package_dir not in cache:
+        cache[package_dir] = read_package(package_dir, package_name)
+    inside = dotted[len(package_name) + 1 :]
+    for key, sibling in cache[package_dir].modules.items():
+        if key in ("", inside):
+            continue
+        modules[key[len(inside) + 1 :] if key.startswith(inside + ".") else key] = (
+            sibling
+        )
+    return Package(root=module_path.parent, modules=modules)
+
+
 def check_moves(
     repo_root: Path, directory: Path, base_ref: str, findings: Findings
 ) -> None:
@@ -1313,10 +1360,11 @@ def check_moves(
     are all reported the same way, with the destination named where one file
     under `directory` took it.
     """
-    root = _import_root(directory)
     before: dict[str, ModuleFacts | None] = {}
     after: dict[str, ModuleFacts | None] = {}
     where: dict[str, Path] = {}
+    roots: dict[str, Path] = {}
+    packages: dict[Path, Package] = {}
     for relative in changed_module_paths(repo_root, base_ref, str(directory)):
         on_disk = repo_root / relative
         if not on_disk.is_file() and (
@@ -1325,10 +1373,15 @@ def check_moves(
             # A package stands where the file did: that is the facade check's
             # question, and a second answer here would read as a second break.
             continue
+        # Per file, not per directory: `--check-moves backend` has to name the
+        # same modules `app.foo` that `--check-moves backend/app` does, or a
+        # caller's import matches nothing and the run passes over the break.
+        root = _import_root(on_disk.parent)
         try:
             dotted = _dotted_name(on_disk, root)
         except ValueError:
             continue  # outside the import root: no caller can spell its name
+        roots[dotted] = root
         old_source = show_in_ref(base_ref, relative, repo_root)
         new_source = (
             on_disk.read_text(encoding="utf-8") if on_disk.is_file() else None
@@ -1370,9 +1423,8 @@ def check_moves(
         check_consumers(
             repo_root,
             before[dotted],
-            Package(
-                root=where[dotted].parent,
-                modules={} if facts is None else {"": facts},
+            module_package(
+                where[dotted], roots[dotted], dotted, facts, packages
             ),
             dotted,
             findings,
@@ -1420,24 +1472,64 @@ def _shadow_in(directory: Path, name: str, depth: int) -> list[Path]:
     return found
 
 
-def shadow_copies(package_dir: Path) -> list[Path]:
-    """Other importable copies of this module, in the tree and under a scratch root.
+def shadow_beside(package_dir: Path) -> list[Path]:
+    """The pre-split file someone put back where the package now stands.
 
-    Two shapes, one meaning — a second module under the name this run is about.
-    `<package>.py` beside the package is the pre-split file someone put back:
-    every check that walks the tree then reads it as part of the change, which
-    is exactly how it reddened eslint on 2026-10-16. A `<name>.py` under a
-    scratch root is the copy a comparison harness imports; Python resolves a
-    module by name, so the copy can answer in place of the package.
+    `<package>.py` beside `<package>/` is this module and no other — one
+    directory cannot hold two — so the name is the whole question, and the
+    check can run before anything is read.
     """
-    name = package_dir.name
-    found: list[Path] = []
     beside = package_dir.with_suffix(".py")
-    if beside.is_file():
-        found.append(beside)
+    return [beside] if beside.is_file() else []
+
+
+def _text_of(entry: Path) -> str | None:
+    """The source of a `__init__.py`-bearing directory or of a file, if readable."""
+    path = entry / "__init__.py" if entry.is_dir() else entry
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def package_texts(package_dir: Path) -> set[str]:
+    """Every text the package holds, so a copy of any of them is recognisable."""
+    texts: set[str] = set()
+    for path in sorted(package_dir.rglob("*.py")):
+        text = _text_of(path)
+        if text is not None:
+            texts.add(text)
+    return texts
+
+
+def shadow_copies(package_dir: Path, texts: set[str]) -> list[Path]:
+    """Copies of this module parked under a scratch root, recognised by content.
+
+    The name alone is not the question here: `/tmp/foo.py` is an ordinary name
+    for an ordinary file, and a run that refused on it would refuse whenever
+    anybody else had one — the self-test of this tool lost 62 of 68 cases to a
+    single unrelated `/tmp/foo.py` left by another agent on 2026-10-16. What
+    the check is about is the copy the change was worked against, so a
+    candidate counts when its text is one of this module's own: the package's
+    files, or the pre-split file it was split from.
+    """
+    found: list[Path] = []
     for root in SCRATCH_ROOTS:
-        found.extend(_shadow_in(root, name, SCRATCH_DEPTH))
+        for candidate in _shadow_in(root, package_dir.name, SCRATCH_DEPTH):
+            if _text_of(candidate) in texts:
+                found.append(candidate)
     return found
+
+
+def refuse_shadow(shadows: list[Path]) -> int:
+    """Say which copy is in the way and refuse to compare two modules at once."""
+    print(
+        "cannot judge: duplicate module shadow in sys.path: "
+        + ", ".join(str(path) for path in shadows)
+        + " — the package is the copy that counts; delete the other and run again",
+        file=sys.stderr,
+    )
+    return EXIT_CANNOT_JUDGE
 
 
 # ---------------------------------------------------------------------------
@@ -1713,15 +1805,8 @@ def run_check(args: argparse.Namespace) -> int:
         print(f"cannot judge: {exc}", file=sys.stderr)
         return EXIT_CANNOT_JUDGE
 
-    shadows = shadow_copies(package_dir)
-    if shadows:
-        print(
-            "cannot judge: duplicate module shadow in sys.path: "
-            + ", ".join(str(path) for path in shadows)
-            + " — the package is the copy that counts; delete the other and run again",
-            file=sys.stderr,
-        )
-        return EXIT_CANNOT_JUDGE
+    if shadows := shadow_beside(package_dir):
+        return refuse_shadow(shadows)
 
     old_path = args.old_file or derived_old
     if old_path is None:
@@ -1743,6 +1828,10 @@ def run_check(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_CANNOT_JUDGE
+    if shadows := shadow_copies(
+        package_dir, package_texts(package_dir) | {old_source}
+    ):
+        return refuse_shadow(shadows)
 
     try:
         root = _import_root(package_dir)

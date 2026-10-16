@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 
@@ -53,6 +54,32 @@ ENV = {
     "GIT_CONFIG_GLOBAL": os.devnull,
     "GIT_TERMINAL_PROMPT": "0",
 }
+
+#: Scratch directories this suite parks copies of its fixtures in. A run that
+#: dies before its cleanup leaves one behind, and that copy holds a fixture's
+#: text under the package name the tool refuses to compare past — so it would
+#: block every later run of this suite, and a `TMPDIR` of the suite's own does
+#: not help, because the tool looks in `/tmp` as well. Anything older than a
+#: run is cleared first; a copy young enough to belong to a concurrent run is
+#: left alone.
+SCRATCH_PREFIXES = ("shadow-copy-", "shadow-other-")
+SCRATCH_STALE_SECONDS = 900
+
+
+def _clear_stale_scratch() -> None:
+    now = time.time()
+    for prefix in SCRATCH_PREFIXES:
+        for directory in Path(tempfile.gettempdir()).glob(prefix + "*"):
+            try:
+                age = now - directory.stat().st_mtime
+            except OSError:
+                continue
+            if age > SCRATCH_STALE_SECONDS:
+                shutil.rmtree(directory, ignore_errors=True)
+
+
+def setUpModule() -> None:
+    _clear_stale_scratch()
 
 #: The module as it stood before the split. `json` and `Any` are imported at
 #: the top level: a real module brings things in for its own use, and the tool
@@ -1493,17 +1520,58 @@ def _helper(value):
 STALE_CALLER = "from app.foo import _helper\n"
 MOVED_CALLER = "from app.bar import _helper\n"
 
+#: A module that forwards a sibling's name and also loses one of its own. The
+#: caller reads `shared` through `app.foo` and keeps working after the change,
+#: so a check that resolves only what the file itself types into a break about
+#: an import that never stopped being valid.
+EXPORT_BEFORE_FOO = '''\
+from .base import shared
+
+
+def keep(value):
+    return value
+
+
+def removed(value):
+    return value
+'''
+
+EXPORT_AFTER_FOO = '''\
+from .base import shared
+
+
+def keep(value):
+    return value
+'''
+
+EXPORT_BASE = '''\
+def shared(value):
+    return value
+'''
+
+SHARED_CALLER = "from app.foo import shared\n"
+
 
 class MoveFixture:
     """A throwaway repository whose two modules are siblings under `app`."""
 
-    def __init__(self, root: Path, commit_bar: bool = True) -> None:
+    def __init__(
+        self, root: Path, commit_bar: bool = True, relative_export: bool = False
+    ) -> None:
         self.root = root
         self._write("backend/app/__init__.py", "")
-        self._write("backend/app/foo.py", MOVE_BEFORE_FOO)
-        self._write("backend/scripts/tool.py", STALE_CALLER)
+        self._write(
+            "backend/app/foo.py",
+            EXPORT_BEFORE_FOO if relative_export else MOVE_BEFORE_FOO,
+        )
+        self._write(
+            "backend/scripts/tool.py", SHARED_CALLER if relative_export else STALE_CALLER
+        )
         tracked = ["backend/app/__init__.py", "backend/app/foo.py",
                    "backend/scripts/tool.py"]
+        if relative_export:
+            self._write("backend/app/base.py", EXPORT_BASE)
+            tracked.append("backend/app/base.py")
         if commit_bar:
             self._write("backend/app/bar.py", MOVE_BEFORE_BAR)
             tracked.append("backend/app/bar.py")
@@ -1532,13 +1600,19 @@ class MoveFixture:
         self._write("backend/app/foo.py", MOVE_AFTER_FOO)
         self._write("backend/app/bar.py", MOVE_AFTER_BAR)
 
-    def run_tool(self) -> subprocess.CompletedProcess[str]:
+    def drop(self) -> None:
+        """A name deleted outright: no sibling takes it, so only the loss shows."""
+        self._write("backend/app/foo.py", EXPORT_AFTER_FOO)
+
+    def run_tool(
+        self, directory: str = "backend/app"
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable,
                 str(TOOL),
                 "--check-moves",
-                "backend/app",
+                directory,
                 "--base-ref",
                 self.base,
                 "--repo-root",
@@ -1613,6 +1687,33 @@ class MovedNameTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("cannot judge", result.stderr)
 
+    def test_a_relative_re_export_is_not_a_break(self) -> None:
+        """`from .base import shared` still resolves after a sibling name is
+        deleted, and the caller reading `shared` through this module keeps
+        working: the package the module sits in is what answers for it."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-export-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo", commit_bar=False, relative_export=True
+        )
+        fixture.drop()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("调用方导入断裂", result.stdout)
+
+    def test_a_wider_directory_finds_the_same_break(self) -> None:
+        """`--check-moves backend` has to name the same modules `app.foo` that
+        `--check-moves backend/app` does: given one level too wide, the run must
+        not pass over the break in silence."""
+        self.fixture.move()
+        for directory in ("backend", "."):
+            with self.subTest(directory=directory):
+                result = self.fixture.run_tool(directory)
+                self.assertEqual(
+                    result.returncode, 1, result.stdout + result.stderr
+                )
+                self.assertIn("调用方导入断裂: app.foo._helper", result.stdout)
+
 
 class ShadowCopyTests(unittest.TestCase):
     """A second module under the name this run is about: Python resolves a
@@ -1631,6 +1732,25 @@ class ShadowCopyTests(unittest.TestCase):
         copy = directory / "foo.py"
         copy.write_text(OLD_SOURCE, encoding="utf-8")
         return copy
+
+    def stranger(self) -> Path:
+        """Somebody else's file under the same name: not a copy of this module."""
+        directory = Path(tempfile.mkdtemp(prefix="shadow-other-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        path = directory / "foo.py"
+        path.write_text("# somebody else's scratch file\nX = 1\n", encoding="utf-8")
+        return path
+
+    def test_a_same_named_file_that_is_not_a_copy_is_left_alone(self) -> None:
+        """A name is not a module: `/tmp/foo.py` is an ordinary name for an
+        ordinary file, and a run that refused on it refused whenever anybody
+        else on the machine had one — 62 of the 68 cases in this file went red
+        on exactly that, from one unrelated `/tmp/foo.py` on 2026-10-16."""
+        self.fixture.apply_split(SPLIT)
+        stranger = self.stranger()
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn(str(stranger), result.stderr)
 
     def test_a_copy_in_the_temp_directory_blocks_the_run(self) -> None:
         self.fixture.apply_split(SPLIT)
@@ -1679,7 +1799,12 @@ class UsageTests(unittest.TestCase):
         self.assertIn("cannot judge", result.stderr)
 
     def test_two_modes_at_once_cannot_be_judged(self) -> None:
-        """Two answers in one exit code: the reader cannot tell which one it is."""
+        """Two answers in one exit code: the reader cannot tell which one it is.
+
+        The assertion is on the refusal's own words, not on the exit code: a
+        directory that does not exist exits 2 as well, and a test that accepted
+        either would pass with the refusal taken out.
+        """
         result = subprocess.run(
             [
                 sys.executable,
@@ -1694,7 +1819,7 @@ class UsageTests(unittest.TestCase):
             env=ENV,
         )
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
-        self.assertIn("cannot judge", result.stderr)
+        self.assertIn("pass exactly one of", result.stderr)
 
     def test_the_dash_dash_self_test_flag_runs_this_file(self) -> None:
         if os.environ.get(INNER_MARK):
