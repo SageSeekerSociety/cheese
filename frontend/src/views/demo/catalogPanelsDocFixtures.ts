@@ -68,6 +68,25 @@ export function demoEditorStandalone(markdown = ''): Editor {
   return editor
 }
 
+/**
+ * 一把正文列认得出来的编辑器 —— `panel-doc-prose` 那一格要它。
+ *
+ * `doc-prose` 这个类名不是编辑器自己起的：真的那一把由 `DocSurface` 建编辑器时写在
+ * `editorProps` 上，正文列的排版有一半按它挂（`.doc-editor :deep(.doc-prose ...)`）。
+ * 预览站里没有 DocSurface 那一层，只能建的时候自己加上 —— 不加，那一格画出来就是一段
+ * 没排过版的裸正文，而排版正是这一格要看的东西。
+ */
+export function demoProseEditor(markdown = ''): Editor {
+  const editor = new TiptapEditor({
+    element: document.createElement('div'),
+    extensions: docExtensions(),
+    content: '',
+    editorProps: { attributes: { class: 'doc-prose' } },
+  })
+  if (markdown) editor.commands.setContent(markdown, { contentType: 'markdown' })
+  return editor
+}
+
 /** 这篇标签页里的那一份协同文档？不用 —— 只给 DocSurface 一格就够了。 */
 export function docSurfaceSession() {
   return docSession(DOC_MARKDOWN)
