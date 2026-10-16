@@ -60,9 +60,10 @@ def _room(client, pid) -> uuid.UUID:
     return uuid.UUID(response.json()["data"]["id"])
 
 
-def _seat(client, task, *, device: str | None, lost=False, generation=None):
+def _seat(client, task, *, device: str | None, lost=False, generation=None, lease=None):
     """The task's own session takes a machine (`device`), or is placed with
-    none yet (None), as a cloud session is before its first tool call."""
+    none yet (None), as a cloud session is before its first tool call.
+    ``lease`` records that lease as it is instead."""
 
     async def place():
         async with client.test_factory() as session:
@@ -71,7 +72,8 @@ def _seat(client, task, *, device: str | None, lost=False, generation=None):
             await AgentSessionService(session).remember_place(
                 conversation_id=task.id,
                 agent_handle="cheese",
-                work_lease=(
+                work_lease=lease
+                or (
                     {"kind": "device", "device_id": device}
                     if device is not None
                     else None
@@ -207,6 +209,71 @@ def test_pushed_work_shows_while_its_machine_has_no_copy_of_it(client, machines)
     assert _diffed(diff.json()["data"]["diff"]) == badge
     assert set(badge) <= {f["path"] for f in listing.json()["data"]["data"]}
     assert asked == ["working", "working"]
+
+
+def test_pushed_work_shows_while_its_machine_is_still_being_set_up(client):
+    # The session reserved a machine, but its executor never came up there
+    # (setup is still running, or it failed and the next tool call retries).
+    # Nothing on that machine holds the task yet, so the panel shows the
+    # branch, as it does before any machine is taken.
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(
+        client,
+        task,
+        device="working",
+        lease={
+            "kind": "device",
+            "device_id": "working",
+            "resource_id": str(uuid.uuid4()),
+            "status": "preparing",
+        },
+    )
+
+    listing = _live(client, pid, room, task, "files")
+    diff = _live(client, pid, room, task, "diff")
+    read = _read(client, pid, room, task, "backend/usage/models.py")
+
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["data"]["source"] == "committed"
+    assert "backend/usage/models.py" in {
+        f["path"] for f in listing.json()["data"]["data"]
+    }
+    assert diff.status_code == 200, diff.text
+    assert "backend/usage/models.py" in _diffed(diff.json()["data"]["diff"])
+    assert read.status_code == 200, read.text
+    assert read.json()["data"]["content"] == "POOL = 1\n"
+
+
+def test_a_machine_still_finishing_setup_with_a_copy_is_read(client, machines):
+    # Setup got far enough to record where the executor is, and the task's
+    # copy on that machine has work nobody pushed. That work is what the
+    # panel shows, not the branch.
+    home, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    _seat(
+        client,
+        task,
+        device="working",
+        lease={
+            "kind": "device",
+            "device_id": "working",
+            "resource_id": str(uuid.uuid4()),
+            "status": "preparing",
+            "home": str(home),
+            "state": str(home / ".cheese/executor"),
+        },
+    )
+    worktree = home / ".cheese/tasks" / str(task.id)
+    worktree.mkdir(parents=True)
+    subprocess.run(["git", "init", str(worktree)], check=True, capture_output=True)
+    (worktree / "draft.md").write_text("draft\n")
+
+    listing = _live(client, pid, room, task, "files")
+
+    assert listing.status_code == 200, listing.text
+    assert [f["path"] for f in listing.json()["data"]["data"]] == ["draft.md"]
 
 
 def _read(client, pid, room, task, path):
