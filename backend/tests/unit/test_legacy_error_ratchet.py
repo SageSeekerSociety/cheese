@@ -202,7 +202,12 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/review/services/merge_queue.py", "ValidationError"): 10,
     ("app/domain/review/services/polling.py", "ValidationError"): 3,
     ("app/domain/review/services/reviewers.py", "ValidationError"): 4,
+    # `topic/services.py` 拆出了这两处发起方（2026-10-16，`topic -> room_task`
+    # 那一笔）：任务的动词搬去 `dispatch.py`，地点的那几句搬去 `place.py`。
+    # 总数没变，只是发起方换了文件。
     ("app/domain/room_task/binding.py", "ValidationError"): 2,
+    ("app/domain/room_task/dispatch.py", "ValidationError"): 4,
+    ("app/domain/room_task/place.py", "ValidationError"): 1,
     ("app/domain/room_task/presentation.py", "ValidationError"): 1,
     ("app/domain/room_task/snapshots.py", "ValidationError"): 4,
     ("app/domain/routine/schedule.py", "ValidationError"): 8,
@@ -216,7 +221,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/site/services.py", "ValidationError"): 12,
     ("app/domain/textfile.py", "ValidationError"): 1,
     ("app/domain/thread/services.py", "ValidationError"): 2,
-    ("app/domain/topic/services.py", "ValidationError"): 15,
+    ("app/domain/topic/services.py", "ValidationError"): 10,
     ("app/domain/topic_membership/services.py", "ValidationError"): 10,
     ("tests/integration/test_accept_pr.py", "ValidationError"): 2,
     ("tests/integration/test_accept_pr_publish.py", "GatewayUnavailableError"): 1,
