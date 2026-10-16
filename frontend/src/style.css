@@ -69,10 +69,10 @@
      The logo has one colour (docs/brand.md §2/§5): the home tile goes flat brand
      paint on hover and while current, with the mark on it in #23242a. Both values
      are the same in the two themes on purpose — that tile is the logo, and a logo
-     does not shift with the theme any more than a printed one would. It also has
-     to stay pixel-identical to the boot splash in index.html, which paints
-     #ffa20f. So this is not --accent: --accent is the UI amber and it *does*
-     follow the theme (#f57f17 / #ffa733). Do not unify the two. */
+     does not shift with the theme any more than a printed one would. The boot
+     splash in index.html paints the same #ffa20f. So this is not --accent:
+     --accent is the UI amber and it *does* follow the theme
+     (#f57f17 / #ffa733). Do not unify the two. */
   --brand-fill: #ffa20f;
   --brand-ink: #23242a;
 

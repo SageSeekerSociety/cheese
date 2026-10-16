@@ -275,10 +275,11 @@ button.app-rail-item {
     // Brand paint: the tile under the 知是 mark goes flat brand paint on hover
     // and while current, with the mark on it in brand ink. Both are theme-
     // invariant on purpose — this tile is the logo, not a UI surface (docs/
-    // brand.md §5: the home tile and the two boot splashes must be pixel-
-    // identical), so it does NOT take --accent, which follows the theme. The
-    // glyph is brand ink rather than `on-primary` so the mark stays the same
-    // dark shape in both themes (7.7:1 on the fill).
+    // brand.md §5: flat #FFA20F with a #23242a mark, the same in both themes) —
+    // so it does NOT take --accent, which follows the theme. The glyph is brand
+    // ink rather than `on-primary` so the mark stays the same dark shape in both
+    // themes: opaque it is 7.7:1 on the fill, and about 6.6:1 once the emphasis
+    // opacity below is composited, which is what actually renders.
     &:hover,
     &[aria-current] {
       background: var(--brand-fill);
