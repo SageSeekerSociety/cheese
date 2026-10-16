@@ -1,4 +1,4 @@
-"""把一条提议交出去 —— 闸门那一半是纯的，这一半是 I/O。
+"""把一条提议交出去 —— 闸门那一半是纯的（`policy/gate.py`），这一半是 I/O。
 
 提议不是一种新东西，所以这里没有新的表、新的收件箱、新的通道：它就是房间里一条
 「下一步在人手上」的事件，走 `addressing.py` 的寻址和 `delivery/ledger.py`
@@ -10,6 +10,16 @@
   一方能往下走。这正是「被问的那个人」那一档的定义（`addressing.REASON_ASKED`）。
 
 `severity=warn` 而不是 `error`：调用没发生，但也没有出错。
+
+## 这一半为什么住在 `agent`
+
+闸门（`policy/gate.py`）是纯的：一次调用、一份策略、一个发起人，答该拦还是该放，只读
+`core`，所以它留在第 2 层的 `policy`。而把这条提议落成房间里的一条事件还要三样别的东西
+—— 解析这个 id 指的是哪间房（第 4 层的 `room_task.place`）、查房间里是不是已经有这条
+提议（第 4 层的 `block` 表）、把这句话真的说出去（第 5 层的 `agent.announce`）—— 三样
+都在 `policy` 上面。所以这一半搬到它唯一的调用方这一层来住：`agent` 读得到下面每一层，
+而那个调用点（`queries.py` 的 `_pass_policy_gate`，本包里那几个同名委托都转调它）本来
+就在这里。
 
 ## 一条提议的身份是它提的那件事，不是它那一行
 
@@ -34,6 +44,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.addressing import Event
+from app.domain.agent.announce import announce
 from app.domain.block.models import Block
 from app.domain.notice_meta import (
     EVENT_POLICY_PROPOSAL,
@@ -42,7 +53,6 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.policy.gate import Call, Proposal
-from app.domain.policy.ports import Announce
 from app.domain.room_task.place import PlaceResolver
 
 #: 提议 id 的命名空间。固定值，因为身份要跨进程、跨重启算得出同一个。
@@ -66,7 +76,6 @@ async def propose(
     *,
     place_id: uuid.UUID,
     proposal_id: uuid.UUID | None = None,
-    announce: Announce,
 ) -> Block | None:
     """把这条提议落进房间并投给要点头的那个人；已经提过就什么也不做。
 
@@ -75,13 +84,12 @@ async def propose(
     次；调用发生了却还留着一条「等谁点头」，那就是先斩后奏。所以要求的是后者不能
     发生，而不是两者非得在同一个事务里。
 
-    两个调用点都用手里那条事务：`PUT /topics/{id}/compute-profile` 是请求自己的
-    session，提议和「绑定没写」一起提交；轮次组装（`agent/chat.py` 的
-    `_pass_policy_gate`）写在组装那条事务上，提交完这一轮就以这条提议收场——机器
-    没绑、请求没发，往下那些占用一样也没发生。
+    两个调用点都用手里那条事务：网关代填（`api/routes/llm_proxy.py` 那条子代理的
+    路）是请求自己的 session；轮次组装写在组装那条事务上，提交完这一轮就以这条提
+    议收场——机器没绑、请求没发，往下那些占用一样也没发生。
 
-    说进房间那一步是 `announce` 递进来的：本包在第 2 层，`agent.announce` 在第 5
-    层，本包够不着它（`ports.py`）。
+    说进房间那一步是 `agent.announce`，同包的邻居，直接调。这一半搬到这里来住，
+    为的就是能够到它和它下面那两层（`policy` 在第 2 层，够不着）。
     """
     place = await PlaceResolver(session).resolve(place_id)
     if place is None:
@@ -118,6 +126,4 @@ async def propose(
         points_at=Event(asked=proposal.approver),
         event_id=proposal_id,
     )
-    # 口子只承诺「可能什么都没落」，写下的是哪种行它不说（见 `ports.py`）。本包要
-    # 把这条提议交回调用方，所以在这里认一次。
-    return landed if isinstance(landed, Block) else None
+    return landed
