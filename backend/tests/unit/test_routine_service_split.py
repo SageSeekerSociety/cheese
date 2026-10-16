@@ -12,6 +12,14 @@
 那个 patch 点就压在这上面），路由读 ``routines.publish_run_messages``，集成测试
 读 ``from app.domain.routine.service import REPORT_TIMEOUT, sweep``。
 
+有一处老写法**不再成立**，下一个压这两个名字的测试要知道：`_fire` 和
+`publish_run_messages` 被子模块**在 import 时按值绑走**了（`rules` / `scheduling`
+从 `firing` 直接 import，`sweep` 调自己那一个），所以在包上
+``monkeypatch.setattr("app.domain.routine.service._fire", fake)`` 改不到包内的调用点
+—— 压上去不报错，只是压了个空。仓库里现在没有测试这么压；要压就压调用点所在的
+子模块（`periodic.py` 读的 `service.sweep`、`test_periodic_registration.py` 压的
+``"app.domain.routine.service.sweep"`` 都仍挂在包上，不受这条影响）。
+
 这道测试不连数据库，钉住四件事：
 
 1. 旧路径仍然答得出拆之前那一组名字（23 个），而且**都是同一个对象**（不是抄了
