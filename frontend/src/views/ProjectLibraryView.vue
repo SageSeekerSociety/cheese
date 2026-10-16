@@ -14,57 +14,45 @@
 //
 // 看哪一份记在地址上（`?file=`）：刷新、把链接发给别人都回到这一份。手机上它是整一
 // 页，← 回到列表。
+//
+// 页面本身只做三件事：把条目取回来（`useLibraryPages`／`useLibraryDocuments`）、把看
+// 哪一份和写操作接到地址与状态上（`useLibrarySelection`／`useLibraryTransfers`）、摆出
+// 这一列和右栏。每一行长什么样在 `library/LibraryRows.vue`。
 import type { LocationQueryRaw } from 'vue-router'
-import type { MenuAction } from '@/components/common/menuAction'
-import type { LibraryFile } from '../api'
 import type { ListedDocument } from '../api/projectDocuments'
+import type { LibraryFile, LibraryFolder } from '../lib/libraryApi'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
-import { useRowMenu } from '@/composables/useRowMenu'
-
-import { deleteLibraryFile, downloadFile, libraryFileRawUrl } from '../api'
 import LibraryDocumentHits from '../components/library/LibraryDocumentHits.vue'
 import LibraryDocumentPage from '../components/library/LibraryDocumentPage.vue'
 import { useLibraryDocuments } from '../composables/useLibraryDocuments'
 import { useLibraryNaming } from '../composables/useLibraryNaming'
-import { type LibraryRow, useLibraryPages } from '../composables/useLibraryPages'
+import { useLibraryPages } from '../composables/useLibraryPages'
+import { useLibrarySelection } from '../composables/useLibrarySelection'
+import { useLibraryTransfers } from '../composables/useLibraryTransfers'
 import { useOpenLibraryDocument } from '../composables/useOpenLibraryDocument'
-import { isAgentHandle } from '../lib/authorship'
-import {
-  getLibraryFile,
-  libraryFileBytes,
-  type LibraryFolder,
-  replaceLibraryFile,
-  uploadLibraryFile,
-} from '../lib/libraryApi'
+import { libraryFileBytes } from '../lib/libraryApi'
 import { leafOf } from '../lib/libraryFolders'
-import { type Kind, KIND_ICONS, kindLabel, kindOf, KINDS } from '../lib/libraryKinds'
-import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
+import { type Kind, kindLabel, KINDS } from '../lib/libraryKinds'
 
 import { useCommands } from '@/commands'
-import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
-import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
-import VirtualList from '@/components/common/VirtualList.vue'
 import { t } from '@/i18n'
-import { memberName } from '@/lib/agentNames'
-import { closeOverlay } from '@/lib/backOut'
 import { fmtBytes } from '@/lib/changesTree'
 import { refRoute } from '@/lib/refDirectory'
-import { relTime } from '@/lib/relTime'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import LibraryCrumbs from '@/views/library/LibraryCrumbs.vue'
 import LibraryFileDetail from '@/views/library/LibraryFileDetail.vue'
 import LibraryNameDialog from '@/views/library/LibraryNameDialog.vue'
+import LibraryRows from '@/views/library/LibraryRows.vue'
 import LibraryVersionsDialog from '@/views/library/LibraryVersionsDialog.vue'
 
 // `docId`：从 `/docs/<编号>` 进来时，整页打开的那一份文档。
@@ -73,14 +61,8 @@ const props = defineProps<{ projectId: string; docId?: string }>()
 const route = useRoute()
 const router = useRouter()
 const { mdAndUp } = useDisplay()
-const rowMenu = useRowMenu<string>()
 
 const actionError = ref('')
-const busy = ref('')
-const uploading = ref(false)
-// 要删的那一份或那个文件夹（文件夹连同里面的一切）。
-const confirming = ref<LibraryFile | LibraryFolder | null>(null)
-const replacing = ref<{ target: LibraryFile; file: File } | null>(null)
 // 同一个名字被替换以后，预览要重新读：换一次，这个数加一。
 const revision = ref(0)
 
@@ -113,13 +95,6 @@ const pages = useLibraryPages(
   listEl
 )
 const { rows: entries, loading, loadFailed, loadReason } = pages
-watch(
-  () => props.projectId,
-  () => {
-    confirming.value = null
-    actionError.value = ''
-  }
-)
 const inFolder = computed(() => browsing.value && !!dir.value)
 
 function goTo(path: string) {
@@ -128,21 +103,12 @@ function goTo(path: string) {
   void router.push({ query: next })
 }
 
-// 这一行写什么名字：一层一层看时写最后一层，搜出来的写完整路径。
-function fileName(file: LibraryFile): string {
-  return browsing.value ? leafOf(file.path) : file.path
-}
 // 搜索框和筛选摆不摆：最上层取完了也什么都没有、又没在找的时候不摆。取的过程中照
 // 摆，换一次条件不该让搜索框闪一下。
 const anything = computed(() => !(browsing.value && !dir.value && pages.exhausted.value && !entries.value.length))
 
 function docName(doc: { title: string | null }): string {
   return doc.title || t('work.room.doc.untitled')
-}
-function docMeta(doc: ListedDocument): string {
-  const row = workspace.members.find((m) => m.user_handle === doc.author)
-  const who = isAgentHandle(doc.author) ? workspace.agentName : memberName(row) || doc.author
-  return t('work.library.docMeta', { who, when: relTime(doc.updated_at) })
 }
 
 const { selectedDocId, openDocument, documentReview, fromThread, openRoom, openDoc, closeDoc, titled } =
@@ -153,82 +119,43 @@ const { selectedDocId, openDocument, documentReview, fromThread, openRoom, openD
     (message) => (actionError.value = message)
   )
 
-// 新建一份空的（`copyOf` 不给），或者另存对话里那一份；建好就打开。
-async function make(copyOf?: string) {
-  actionError.value = ''
-  try {
-    openDoc(await docs.make(copyOf))
-    pages.reset()
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('work.library.newDocFailed')
-  }
-}
+const { selectedPath, selected, open, close } = useLibrarySelection({
+  projectId: () => props.projectId,
+  entries,
+  revision,
+  mdAndUp,
+  router,
+  route,
+})
 
-const confirmingDoc = ref<{ id: string; title: string | null } | null>(null)
-async function removeDoc() {
-  const doc = confirmingDoc.value
-  confirmingDoc.value = null
-  if (!doc) return
-  actionError.value = ''
-  try {
-    await docs.remove(doc.id)
-    pages.drop((row) => row.doc?.id === doc.id)
-    if (selectedDocId.value === doc.id)
-      void router.replace({ name: 'project-library', params: { projectId: props.projectId } })
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('work.library.deleteFailed')
-  }
-}
-function docActions(doc: ListedDocument): MenuAction[] {
-  return [
-    {
-      key: 'delete',
-      label: t('work.library.delete'),
-      icon: 'mdi-delete-outline',
-      danger: true,
-      onSelect: () => (confirmingDoc.value = doc),
-    },
-  ]
-}
-
-// ---- 看哪一份 ----------------------------------------------------------------
-
-const selectedPath = computed(() => (typeof route.query.file === 'string' ? route.query.file : ''))
-// 地址上点名的那一份：已经取回来的那几页里有就用它，没有就单独问一次。
-const fetched = ref<LibraryFile | null>(null)
-const selected = computed(
-  () =>
-    entries.value.find((row) => row.file?.path === selectedPath.value)?.file ??
-    (fetched.value?.path === selectedPath.value ? fetched.value : null)
-)
-watch(
-  [selectedPath, () => props.projectId, revision],
-  async ([path, projectId]) => {
-    if (!path || entries.value.some((row) => row.file?.path === path)) return
-    try {
-      const found = await getLibraryFile(projectId, path)
-      if (selectedPath.value === path) fetched.value = found
-    } catch {
-      // 地址上那一份已经不在了：右边那一栏不摆，列表照常。
-    }
-  },
-  { immediate: true }
-)
-
-function open(file: LibraryFile) {
-  const next = { query: { ...route.query, file: file.path } }
-  // 手机上是进了一页，返回键要能回到列表；桌面上只是换了右边那一栏。
-  if (mdAndUp.value) void router.replace(next)
-  else void router.push(next)
-}
-
-function close() {
-  const rest = { ...route.query }
-  delete rest.file
-  // 手机上开一份文件是 push 进一页，所以这里退一格能真的把它弹掉；桌面上开一份是
-  // replace（只换右边那一栏），退一格会退到资料库外面去 —— closeOverlay 认来路。
-  closeOverlay(router, { query: rest })
-}
+const transfers = useLibraryTransfers({
+  projectId: () => props.projectId,
+  dir: () => dir.value,
+  reset: pages.reset,
+  drop: pages.drop,
+  opened: () => selectedPath.value,
+  close,
+  changed: () => (revision.value += 1),
+  error: actionError,
+})
+const {
+  busy,
+  uploading,
+  confirming,
+  replacing,
+  dragging,
+  versionsOf,
+  picker,
+  replacePicker,
+  onPicked,
+  onDrop,
+  onReplacementPicked,
+  download,
+  pickReplacement,
+  replace,
+  onRestored,
+  confirmRemove,
+} = transfers
 
 useTopBarBack(() =>
   !mdAndUp.value && selectedDocId.value
@@ -251,112 +178,6 @@ watch(
   { immediate: true }
 )
 
-// ---- 放进来、换新、拿走、扔掉 ---------------------------------------------------
-
-const picker = ref<HTMLInputElement | null>(null)
-const replacePicker = ref<HTMLInputElement | null>(null)
-let replaceTarget: LibraryFile | null = null
-
-async function upload(list: File[]) {
-  if (!list.length) return
-  uploading.value = true
-  actionError.value = ''
-  let done = 0
-  try {
-    for (const file of list) {
-      await uploadLibraryFile(props.projectId, file, dir.value)
-      done++
-    }
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('work.library.uploadFailed')
-  } finally {
-    uploading.value = false
-    if (done) toast(t('work.library.uploaded', { n: done }))
-    pages.reset()
-  }
-}
-
-function onPicked(event: Event) {
-  const input = event.target as HTMLInputElement
-  void upload(Array.from(input.files ?? []))
-  input.value = ''
-}
-
-const dragging = ref(false)
-function onDrop(event: DragEvent) {
-  dragging.value = false
-  void upload(Array.from(event.dataTransfer?.files ?? []))
-}
-
-function pickReplacement(file: LibraryFile) {
-  replaceTarget = file
-  replacePicker.value?.click()
-}
-
-function onReplacementPicked(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  input.value = ''
-  if (file && replaceTarget) replacing.value = { target: replaceTarget, file }
-}
-
-async function replace() {
-  const pending = replacing.value
-  if (!pending) return
-  replacing.value = null
-  busy.value = pending.target.path
-  actionError.value = ''
-  try {
-    await replaceLibraryFile(props.projectId, pending.target.path, pending.file)
-    revision.value++
-    toast(t('work.library.replacedDone'))
-    pages.reset()
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('work.library.replaceFailed')
-  } finally {
-    busy.value = ''
-  }
-}
-
-// 「版本…」开着的是哪一份（null = 关着）。恢复了一版：预览换新、清单重读。
-const versionsOf = ref<string | null>(null)
-function onRestored(_path: string, version: number) {
-  revision.value++
-  toast(t('work.library.restoredDone', { n: version }))
-  pages.reset()
-}
-
-async function download(file: LibraryFile) {
-  actionError.value = ''
-  try {
-    await downloadFile(libraryFileRawUrl(props.projectId, file.path), file.path.split('/').pop() || file.path)
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
-  }
-}
-
-/** 确认框点「删除」：这时 `confirming` 一定是有值的，取出来交给 `remove`。 */
-function confirmRemove() {
-  const file = confirming.value
-  if (file) void remove(file)
-}
-
-async function remove(target: LibraryFile | LibraryFolder) {
-  confirming.value = null
-  busy.value = target.path
-  actionError.value = ''
-  const gone = (path: string) => path === target.path || path.startsWith(`${target.path}/`)
-  try {
-    await deleteLibraryFile(props.projectId, target.path)
-    pages.drop((row) => gone(row.file?.path ?? row.folder?.path ?? ''))
-    if (gone(selectedPath.value)) close()
-  } catch (e) {
-    actionError.value = e instanceof Error ? e.message : t('work.library.deleteFailed')
-  } finally {
-    busy.value = ''
-  }
-}
-
 // ---- 文件夹：挪动、改名、新建 ---------------------------------------------------
 
 const naming = useLibraryNaming({
@@ -368,61 +189,52 @@ const naming = useLibraryNaming({
   reload: async () => pages.reset(),
 })
 
-function folderActions(folder: LibraryFolder): MenuAction[] {
-  return [
-    {
-      key: 'move',
-      label: t('work.library.move'),
-      icon: 'mdi-folder-move-outline',
-      onSelect: () => naming.start({ path: folder.path }),
-    },
-    {
-      key: 'delete',
-      label: t('work.library.delete'),
-      icon: 'mdi-delete-outline',
-      danger: true,
-      loading: busy.value === folder.path,
-      onSelect: () => (confirming.value = folder),
-    },
-  ]
+// ---- 行上那几件事落到这一页 -----------------------------------------------------
+
+/** 改名走名字框；版本和删除都只是先摆出一个对话框，答应之后才动。 */
+function startRename(path: string) {
+  naming.start({ path })
+}
+function showVersions(file: LibraryFile) {
+  versionsOf.value = file.path
+}
+function askRemove(target: LibraryFile | LibraryFolder) {
+  confirming.value = target
 }
 
-function fileActions(file: LibraryFile): MenuAction[] {
-  return [
-    {
-      key: 'download',
-      label: t('work.library.download'),
-      icon: 'mdi-download-outline',
-      onSelect: () => void download(file),
-    },
-    {
-      key: 'replace',
-      label: t('work.library.replace'),
-      icon: 'mdi-file-replace-outline',
-      onSelect: () => pickReplacement(file),
-    },
-    {
-      key: 'move',
-      label: t('work.library.move'),
-      icon: 'mdi-folder-move-outline',
-      onSelect: () => naming.start({ path: file.path }),
-    },
-    {
-      key: 'versions',
-      label: t('work.library.versions'),
-      icon: 'mdi-history',
-      onSelect: () => (versionsOf.value = file.path),
-    },
-    {
-      key: 'delete',
-      label: t('work.library.delete'),
-      icon: 'mdi-delete-outline',
-      danger: true,
-      loading: busy.value === file.path,
-      onSelect: () => (confirming.value = file),
-    },
-  ]
+// ---- 文档：新建、另存、删掉 -----------------------------------------------------
+
+// 新建一份空的（`copyOf` 不给），或者另存对话里那一份；建好就打开。
+async function make(copyOf?: string) {
+  actionError.value = ''
+  try {
+    openDoc(await docs.make(copyOf))
+    pages.reset()
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : t('work.library.newDocFailed')
+  }
 }
+
+const confirmingDoc = ref<{ id: string; title: string | null } | null>(null)
+function askRemoveDoc(doc: ListedDocument) {
+  confirmingDoc.value = doc
+}
+async function removeDoc() {
+  const doc = confirmingDoc.value
+  confirmingDoc.value = null
+  if (!doc) return
+  actionError.value = ''
+  try {
+    await docs.remove(doc.id)
+    pages.drop((row) => row.doc?.id === doc.id)
+    if (selectedDocId.value === doc.id)
+      void router.replace({ name: 'project-library', params: { projectId: props.projectId } })
+  } catch (e) {
+    actionError.value = e instanceof Error ? e.message : t('work.library.deleteFailed')
+  }
+}
+
+// ---- 顶栏上的操作 --------------------------------------------------------------
 
 useCommands(() => {
   const open = selected.value
@@ -487,25 +299,6 @@ useCommands(() => {
     },
   ]
 })
-
-// ---- 摆出来 ------------------------------------------------------------------
-
-function rowMeta(file: LibraryFile): string {
-  return [file.added_by ?? t('work.library.unknownSource'), relTime(file.added_at), fmtBytes(file.bytes)].join(' · ')
-}
-
-function folderMeta(folder: LibraryFolder): string {
-  return t('work.library.folderMeta', {
-    n: folder.count,
-    when: relTime(new Date(folder.modified * 1000).toISOString()),
-  })
-}
-
-// 行的身份（和 v-for 的 key 同义）：路径。同名不覆盖，所以路径唯一。写成具名函数而
-// 不是模板里的箭头：模板里那个箭头参数没有类型来源，strict 下会报隐式 any。
-function entryKey(row: unknown): string {
-  return (row as LibraryRow).key
-}
 
 function read(file: LibraryFile) {
   return (asPdf: boolean) => libraryFileBytes(props.projectId, file.path, asPdf)
@@ -600,106 +393,25 @@ function read(file: LibraryFile) {
           @keep="make"
         />
 
-        <ul v-if="entries.length" class="library__rows">
-          <!-- Long libraries go through VirtualList: past VIRTUAL_LIST_CONTENT_THRESHOLD
-               (lib/virtualList.ts) only the rows in view stay mounted, below it this is
-               the plain list it always was. `item-as="li"` keeps the ul > li structure
-               in both paths — virtua only wraps each row; the row itself carries the
-               flex layout, the buttons and the actions menu, so keyboard focus and the
-               ⋯ menu work exactly as before. virtua owns the li, so the right-click
-               handler sits on the row div it wraps. -->
-          <VirtualList
-            :items="entries"
-            :item-key="entryKey"
-            :scroll-parent="listEl"
-            :threshold="VIRTUAL_LIST_CONTENT_THRESHOLD"
-            :estimated-size="58"
-            item-as="li"
-            item-role="listitem"
-          >
-            <template #item="{ item }">
-              <div v-if="item.folder" class="library-row" @contextmenu="rowMenu.open(item.key, $event)">
-                <button type="button" class="library-row__open" @click="goTo(item.folder.path)">
-                  <v-icon icon="mdi-folder-outline" size="20" class="library-row__icon" />
-                  <span class="library-row__id">
-                    <span class="library-row__name t-body">{{ item.folder.name }}</span>
-                    <span class="t-meta c-faint">{{ folderMeta(item.folder) }}</span>
-                  </span>
-                </button>
-                <AdaptiveMenu
-                  v-bind="rowMenu.bind(item.key)"
-                  :actions="folderActions(item.folder)"
-                  :title="item.folder.name"
-                >
-                  <template #activator="{ props: menuProps }">
-                    <BaseButton
-                      v-bind="menuProps"
-                      icon="mdi-dots-horizontal"
-                      size="sm"
-                      class="tap-target"
-                      :loading="busy === item.folder.path"
-                      :aria-label="t('work.library.actionsOf', { name: item.folder.name })"
-                    />
-                  </template>
-                </AdaptiveMenu>
-              </div>
-              <div v-else-if="item.doc" class="library-row" @contextmenu="rowMenu.open(item.key, $event)">
-                <button type="button" class="library-row__open" @click="openDoc(item.doc.id)">
-                  <v-icon icon="mdi-file-document-edit-outline" size="20" class="library-row__icon" />
-                  <span class="library-row__id">
-                    <span class="library-row__name t-body">{{ docName(item.doc) }}</span>
-                    <span class="t-meta c-faint">{{ docMeta(item.doc) }}</span>
-                  </span>
-                </button>
-                <AdaptiveMenu
-                  v-bind="rowMenu.bind(item.key)"
-                  :actions="docActions(item.doc)"
-                  :title="docName(item.doc)"
-                >
-                  <template #activator="{ props: menuProps }">
-                    <BaseButton
-                      v-bind="menuProps"
-                      icon="mdi-dots-horizontal"
-                      size="sm"
-                      class="tap-target"
-                      :aria-label="t('work.library.actionsOf', { name: docName(item.doc) })"
-                    />
-                  </template>
-                </AdaptiveMenu>
-              </div>
-              <div
-                v-else-if="item.file"
-                class="library-row"
-                :class="{ 'library-row--on': item.file.path === selectedPath }"
-                @contextmenu="rowMenu.open(item.key, $event)"
-              >
-                <button type="button" class="library-row__open" @click="open(item.file)">
-                  <v-icon :icon="KIND_ICONS[kindOf(item.file.path)]" size="20" class="library-row__icon" />
-                  <span class="library-row__id">
-                    <span class="library-row__name t-body">{{ fileName(item.file) }}</span>
-                    <span class="t-meta c-faint">{{ rowMeta(item.file) }}</span>
-                  </span>
-                </button>
-                <AdaptiveMenu
-                  v-bind="rowMenu.bind(item.key)"
-                  :actions="fileActions(item.file)"
-                  :title="fileName(item.file)"
-                >
-                  <template #activator="{ props: menuProps }">
-                    <BaseButton
-                      v-bind="menuProps"
-                      icon="mdi-dots-horizontal"
-                      size="sm"
-                      class="tap-target"
-                      :loading="busy === item.file.path"
-                      :aria-label="t('work.library.actionsOf', { name: fileName(item.file) })"
-                    />
-                  </template>
-                </AdaptiveMenu>
-              </div>
-            </template>
-          </VirtualList>
-        </ul>
+        <LibraryRows
+          v-if="entries.length"
+          :rows="entries"
+          :scroller="listEl"
+          :selected-path="selectedPath"
+          :busy="busy"
+          :browsing="browsing"
+          :members="workspace.members"
+          :agent-name="workspace.agentName"
+          @open-file="open"
+          @open-folder="goTo"
+          @open-doc="openDoc"
+          @download="download"
+          @replace="pickReplacement"
+          @rename="startRename"
+          @versions="showVersions"
+          @delete="askRemove"
+          @delete-doc="askRemoveDoc"
+        />
 
         <BaseEmptyState
           v-else-if="inFolder && !loading"
@@ -859,7 +571,7 @@ function read(file: LibraryFile) {
 }
 
 /* 一行排不下就换行，不横着滑：手机上六个筛选横滑时右边那几个被切在屏幕外，又没
-   有滚动条告诉你还有，看上去像少了两个筛选。折成两行多占一行列表的高度，但六个
+   有滚动条告诉你还有，看上去像少了两个。折成两行多占一行列表的高度，但六个
    都在。 */
 .library__kinds {
   display: flex;
@@ -890,64 +602,6 @@ function read(file: LibraryFile) {
   color: var(--surface);
   background: var(--ink);
   border-color: var(--ink);
-}
-
-.library__rows {
-  display: flex;
-  padding: 0;
-  margin: 0;
-  list-style: none;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.library-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding-right: 4px;
-  border-radius: var(--radius-md);
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-
-.library-row:hover {
-  background: var(--fill);
-}
-
-.library-row--on {
-  background: var(--line-2);
-}
-
-.library-row__open {
-  display: flex;
-  min-width: 0;
-  min-height: 56px;
-  padding: 8px 12px;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-  background: none;
-  border: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 12px;
-}
-
-.library-row__icon {
-  flex: none;
-  color: var(--muted);
-}
-
-.library-row__id {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.library-row__name {
-  color: var(--ink);
-  overflow-wrap: anywhere;
 }
 
 .library__empty {
