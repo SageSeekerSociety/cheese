@@ -261,9 +261,9 @@ def _uploaded(path: str) -> bool:
     """这个地址是不是一次上传落下的那一份（`uploads/<随机串>/<名字>`）。
 
     造这种地址的有两处，两处都是现取一个 `uuid4().hex` 当一层目录：发进对话里的
-    文件（这个模块的上传分支），和芝士送一份工作区外的文件
-    （`claude_code/remote_execution/client.py` 的 `send_user_file_paths`）。随机串把
-    这一份钉死在一次上传上，同一地址下的字节写下之后不会再变。
+    文件（这个模块的上传分支），和芝士送一份工作区外的文件（
+    `claude_code/remote_execution/send_user_file.py` 的 `send_user_file_paths`）。
+    随机串把这一份钉死在一次上传上，同一地址下的字节写下之后不会再变。
     """
     parts = path.split("/")
     return (
