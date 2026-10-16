@@ -104,7 +104,10 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/agent_control.py", "ValidationError"): 1,
     ("app/api/routes/alerts.py", "ValidationError"): 2,
     ("app/api/routes/backend_log.py", "UnauthorizedError"): 1,
-    ("app/api/routes/connector.py", "UnauthorizedError"): 3,
+    # 同一个文件拆成了包，两处 UnauthorizedError 各归各的新文件（第三处在
+    # connections.py 里）。债务没变，只是发起方换了名字。
+    ("app/api/routes/connector/connections.py", "UnauthorizedError"): 1,
+    ("app/api/routes/connector/devices.py", "UnauthorizedError"): 2,
     ("app/api/routes/dashboard.py", "ValidationError"): 1,
     ("app/api/routes/docs_site.py", "ValidationError"): 3,
     ("app/api/routes/document_agent.py", "ValidationError"): 3,

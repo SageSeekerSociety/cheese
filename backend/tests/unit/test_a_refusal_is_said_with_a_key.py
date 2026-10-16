@@ -255,7 +255,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/backend_log.py": 2,
     "app/api/routes/blocks.py": 3,
     "app/api/routes/comments.py": 3,
-    "app/api/routes/connector.py": 1,
+    "app/api/routes/connector/devices.py": 1,
     "app/api/routes/dashboard.py": 5,
     "app/api/routes/docs_site.py": 4,
     "app/api/routes/document_agent.py": 1,
