@@ -738,15 +738,22 @@ class SessionHost:
                         pump.result()
                     return
                 read, taken = getting.result()
+                # The pump waits on ``taken`` while the caller holds the item.
+                # A stop that outwaited the pass (``stop_listening``) cancels
+                # the pump, and with it ``taken``: nobody is left to tell, and
+                # the next turn of the loop finds the pump done and ends.
                 try:
                     yield read
                 except GeneratorExit:
-                    taken.set_result(None)
+                    if not taken.done():
+                        taken.set_result(None)
                     raise
                 except BaseException as exc:
-                    taken.set_exception(exc)
+                    if not taken.done():
+                        taken.set_exception(exc)
                 else:
-                    taken.set_result(None)
+                    if not taken.done():
+                        taken.set_result(None)
         finally:
             # A reader that stopped while waiting leaves the wait pending.
             if getting is not None and not getting.done():
