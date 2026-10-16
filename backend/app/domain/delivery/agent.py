@@ -287,7 +287,12 @@ _NEVER_SENT = ("pending", "claimed")
 
 
 async def redispatch_undelivered(
-    sessions, *, conversation_id: uuid.UUID, chat, runner
+    sessions,
+    *,
+    conversation_id: uuid.UUID,
+    chat,
+    runner,
+    recipient_handle: str | None = None,
 ) -> int:
     """Send this conversation, now, the inputs the platform still owes it.
 
@@ -306,6 +311,10 @@ async def redispatch_undelivered(
     (module docstring). How long an instruction given up on waits before its
     own sweep fails it is untouched (`GIVE_UP_AFTER`) — this moves the wait
     that a person asked to skip, not that one.
+
+    The other caller is a seat whose work just ended (``recipient_handle``
+    names it): an attempt refused because that seat was still holding the
+    earlier work was waiting for exactly this, not for its backoff.
     """
     stamp = now()
     async with sessions() as session:
@@ -314,6 +323,9 @@ async def redispatch_undelivered(
                 await session.scalars(
                     select(Delivery.id).where(
                         Delivery.conversation_id == conversation_id,
+                        Delivery.recipient_handle == recipient_handle
+                        if recipient_handle is not None
+                        else true(),
                         Delivery.agent_instance_id.is_not(None),
                         Delivery.state.in_(_NEVER_SENT),
                         Delivery.sent_at.is_(None),

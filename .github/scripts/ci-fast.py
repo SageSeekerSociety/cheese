@@ -1,8 +1,8 @@
 """Scoped, bounded local evidence before push; never a substitute for full CI.
 
-task ci:fast: quick tier, 180s, and a sampled 3072 MiB group RSS ceiling — both
-are this machine's own limits; --budget/--memory-mib override them for a bigger
-one, which is what Required CI's draft job does (see ci-fast.md).
+task ci:fast: quick tier, an affinity-aware 180–720s default budget, and a
+sampled 3072 MiB group RSS ceiling. --budget wins over CI_FAST_BUDGET_SECONDS,
+which wins over the CPU default; --memory-mib overrides RSS (see ci-fast.md).
 Direct Python invocation defaults to the legacy static tier (no tests/types).
 --tier extended gives the quick selection 900s without expanding its coverage.
 --types additionally runs the full Pyright/frontend-typecheck manual hooks.
@@ -45,6 +45,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -54,7 +55,7 @@ import sys
 import tempfile
 import time
 
-from ci_fast_checks import resolve, test_plan
+from ci_fast_checks import _cores, resolve, test_plan
 from ci_fast_process import dependencies, execute
 
 REPO_ROOT = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
@@ -245,6 +246,30 @@ def dirty_fingerprint(staged, unstaged, untracked):
     return hashlib.sha256("\n".join(entries).encode()).hexdigest()[:12]
 
 
+def budget_for(tier, explicit):
+    """Keep caller bounds exact; give a smaller CPU allocation more wall time."""
+    if explicit is not None:
+        return explicit, "--budget"
+    override = os.environ.get("CI_FAST_BUDGET_SECONDS")
+    if override is not None:
+        try:
+            seconds = float(override)
+        except ValueError as exc:
+            raise ValueError("CI_FAST_BUDGET_SECONDS must be finite and positive") from exc
+        if not math.isfinite(seconds) or seconds <= 0:
+            raise ValueError("CI_FAST_BUDGET_SECONDS must be finite and positive")
+        return max(180, seconds), "CI_FAST_BUDGET_SECONDS"
+    if tier == "extended":
+        return 900, "extended default"
+    try:
+        cores = max(1, _cores())
+    except OSError:
+        cores = 1
+    # Four available CPUs retain the old bound; fewer get proportional time.
+    # This is a bounded heuristic, not a benchmark or a promise of completion.
+    return math.ceil(180 * max(1, 4 / cores)), f"cpu default ({cores} available)"
+
+
 def main(argv):
     import argparse
 
@@ -262,19 +287,24 @@ def main(argv):
                              " reproduce each item that did not pass")
     parser.add_argument("--report", default=str(Path(GIT_DIR, "ci-fast-report.json")))
     parser.add_argument("--timeout", type=float, default=900, help="per-check seconds")
-    parser.add_argument("--budget", type=float, help="whole tier seconds (quick/static 180; extended 900)")
+    parser.add_argument("--budget", type=float,
+                        help="whole tier seconds; overrides CI_FAST_BUDGET_SECONDS and CPU defaults")
     parser.add_argument("--memory-mib", type=int, default=3072,
                         help=f"sampled process-group RSS ceiling, 1..{MAX_MEMORY_MIB}")
     args = parser.parse_args(argv)
-    if args.budget is None:
-        args.budget = 900 if args.tier == "extended" else 180
-    if args.timeout <= 0 or args.budget <= 0 or not 0 < args.memory_mib <= MAX_MEMORY_MIB:
-        parser.error(f"positive time limits and 1..{MAX_MEMORY_MIB} MiB are required")
+    try:
+        args.budget, budget_source = budget_for(args.tier, args.budget)
+    except ValueError as exc:
+        parser.error(str(exc))
+    if (not math.isfinite(args.timeout) or not math.isfinite(args.budget)
+            or args.timeout <= 0 or args.budget <= 0 or not 0 < args.memory_mib <= MAX_MEMORY_MIB):
+        parser.error(f"finite positive time limits and 1..{MAX_MEMORY_MIB} MiB are required")
     started = time.monotonic()
     report_path = Path(args.report)
     report = {"version": 2, "status": "unknown", "exit": UNKNOWN, "tier": args.tier,
               "pre_push": args.pre_push,
-              "budget_seconds": args.budget, "memory_limit_mib": args.memory_mib,
+              "budget_seconds": args.budget, "budget_source": budget_source,
+              "memory_limit_mib": args.memory_mib,
               "memory_measurement": "sampled process-group RSS, not address-space enforcement",
               "reasons": [], "fallback": False, "unknown_paths": [], "ran": [], "not_run": []}
 

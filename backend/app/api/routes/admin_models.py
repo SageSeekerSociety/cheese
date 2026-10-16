@@ -140,7 +140,7 @@ async def model_detail(
     return ok(await _answered(service.detail(name=name, days=days)))
 
 
-@router.post("/models")
+@router.post("/models", dependencies=[ROUTE_DECIDES])
 async def create_model(
     payload: ModelCreate,
     service: ModelsServiceDep,
@@ -154,7 +154,7 @@ async def create_model(
     return ok(await _answered(service.add(handle=handle, payload=payload)))
 
 
-@router.patch("/models/{name}")
+@router.patch("/models/{name}", dependencies=[ROUTE_DECIDES])
 async def update_model(
     name: str,
     payload: ModelUpdate,
@@ -171,7 +171,7 @@ async def update_model(
     )
 
 
-@router.delete("/models/{name}")
+@router.delete("/models/{name}", dependencies=[ROUTE_DECIDES])
 async def delete_model(
     name: str,
     service: ModelsServiceDep,
@@ -181,7 +181,7 @@ async def delete_model(
     return ok(await _answered(service.delete(handle=handle, name=name)))
 
 
-@router.post("/models/{name}/blocked")
+@router.post("/models/{name}/blocked", dependencies=[ROUTE_DECIDES])
 async def set_model_blocked(
     name: str,
     payload: BlockedUpdate,
@@ -326,7 +326,7 @@ async def list_projects(
     return ok(await _answered(service.projects(days=days)))
 
 
-@router.put("/projects/{project_id}/budget")
+@router.put("/projects/{project_id}/budget", dependencies=[ROUTE_DECIDES])
 async def set_project_budget(
     project_id: uuid.UUID,
     payload: BudgetUpdate,

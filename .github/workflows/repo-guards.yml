@@ -208,6 +208,11 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           node-version: 22
+          # No cache here, deliberately. docs/site is three packages and the
+          # install is about two seconds on a hosted runner (2s in runs
+          # 38926053508 and 38927604231); and these guards never run on main,
+          # so a cache saved here would be visible to this ref alone — the
+          # converse of the `Restore only` note on setup-uv above.
 
       - name: Build the docs site
         if: ${{ !cancelled() && steps.docs_node.outcome == 'success' && steps.docs_tags.outcome == 'success' }}
@@ -217,5 +222,25 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
-          # The docs host's copy, at the root (docs/site/src/where.mjs).
-          DOCS_BASE= OUT="$OUT-host" npm run build
+          # The docs host's copy, at the root (docs/site/src/where.mjs): the
+          # same sources through the same build, with BASE empty. The same
+          # generators and the same per-page checks run either way; what BASE
+          # changes is where a link points, and this is the stricter of the two
+          # link checks — build.mjs anchors its href regex on BASE, so an
+          # absolute path with more than one segment, written by hand into
+          # docs content, is checked against the host's pages here and by the
+          # first build not at all. It is also the only run that reaches the
+          # `if (!BASE)` block, which is sitemap.xml and robots.txt — only a
+          # host's own root can serve those; manual.zip is built either way.
+          # So a PR that leaves docs/site alone gives up the earlier signal,
+          # not the check: the merge queue is a merge_group event and runs both
+          # builds whatever the PR changed, as does any pull_request that
+          # touches docs/site. `git diff --quiet` exits non-zero when it cannot
+          # answer (no origin/main, say), which runs the build rather than skip
+          # it.
+          if [ "${{ github.event_name }}" != "pull_request" ] \
+             || ! git -C "$GITHUB_WORKSPACE" diff --quiet origin/main...HEAD -- docs/site; then
+            DOCS_BASE= OUT="$OUT-host" npm run build
+          else
+            echo "docs/site is untouched by this PR; the docs-host build waits for the merge queue"
+          fi

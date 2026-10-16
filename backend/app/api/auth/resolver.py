@@ -1,20 +1,35 @@
-"""Trust-boundary wiring: resolve the actor + authorize topic access.
+"""``ActorResolver`` — the trust boundary, out of the ``app/api/auth`` facade.
 
-This is where the pure seams (``app.domain.identity.actor``,
-``app.domain.authz.policy``) meet the real request — headers, DB, WebSocket. It
-composes the injected adapters once; routes depend on ``ActorResolver`` and call
-``resolve(...)`` (replacing every ``body.get("author")`` trust-read) and, on
-authenticated writes, ``authorize_topic(...)``.
+Resolve the actor (a person's bearer token, an agent's scoped credential, the
+global sandbox token) and authorize the rooms, projects, tasks and teams a
+request names. This is where the pure seams
+(``app.domain.identity.actor``, ``app.domain.authz.policy``) meet the real
+request — headers, DB, WebSocket. Routes call ``resolve(...)`` (replacing every
+``body.get("author")`` trust-read) and, on authenticated writes,
+``authorize_topic(...)``.
+
+The wiring routes import — ``ActorResolverDep``, ``MediaActorResolverDep``,
+``DELEGATED_ROUTES``, the media cookie, ``require_seated_agent`` — is in the
+kernel of the same package, ``app/api/auth/__init__.py``. Import that.
+
+**Read through ``pkg``, never imported here.** ``pkg`` is the facade, and the
+names below come off it at CALL time on purpose: the two repositories the tests
+replace to watch this class (``UserRepository`` in
+``tests/unit/test_actor_numeric_handle.py`` and
+``tests/unit/test_token_scope_violation.py``, plus ``TopicMemberService`` in
+those same two), the delegated-route table, the token verifier, and
+``require_seated_in_its_room``. A module-local import would step past every one
+of those replacements in silence; the facade is the only place a replacement is
+seen (``app/domain/review/services`` reads its own patch points the same way).
 """
 
 import uuid
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Annotated
 
-from fastapi import Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api import auth as pkg
 from app.auth.audience import rooms_its_audience_may_read
 from app.auth.audience import seats_only as _private
 from app.auth.project_access import (
@@ -23,9 +38,7 @@ from app.auth.project_access import (
     outsiders_reading,
 )
 from app.auth.project_roles import may
-from app.common.auth import verify_access_token
-from app.core.config import GATEWAY_MOUNT, settings
-from app.core.db import get_db
+from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -49,7 +62,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.conversation import services as conversations
-from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
+from app.domain.identity.actor import Actor, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import refuse_writes_if_archived
@@ -60,48 +73,8 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicRole
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
-from app.domain.topic_membership.services import TopicMemberService
-from app.domain.user.repositories import UserRepository
 
 _log = get_logger("cheesex.auth")
-
-#: The routes a delegated credential opens (`sandbox_auth.DelegatedClaims`), by
-#: endpoint, and whether each changes something. Every other route refuses it:
-#: a 芝士 answering for someone acts through these and nothing else, so a new
-#: tool for it is a new line here, read by whoever reviews it.
-DELEGATED_ROUTES: dict[str, bool] = {
-    "app.api.routes.living_docs.get_document": False,
-    "app.api.routes.living_docs.edit_doc_passages": True,
-    "app.api.routes.doc_apps.get_app": False,
-    "app.api.routes.doc_apps.get_app_version": False,
-    "app.api.routes.doc_apps.create_app": True,
-    "app.api.routes.doc_apps.add_app_version": True,
-    "app.api.routes.project_context.search_project_context": False,
-    "app.api.routes.topics_preview.preview_file": False,
-    "app.api.routes.memory_files.list_memory_files": False,
-    "app.api.routes.docs_site.agent_search_docs": False,
-    "app.api.routes.docs_site.agent_read_docs": False,
-    "app.api.routes.tasks.participation.list_joined_tasks": False,
-}
-
-
-def _bearer(header: str | None) -> str | None:
-    """Extract the token from an ``Authorization: Bearer <token>`` header."""
-    if not header:
-        return None
-    parts = header.split(" ", 1)
-    if len(parts) == 2 and parts[0].lower() == "bearer":
-        return parts[1].strip()
-    return None
-
-
-def _token_verifier(token: str) -> TokenIdentity | None:
-    claims = verify_access_token(token)
-    if claims is None:
-        return None
-    # The user id is kept alongside the handle: device binding
-    # (device.owner_user_id, an int column) needs it.
-    return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
 
 
 class ActorResolver:
@@ -184,7 +157,7 @@ class ActorResolver:
             raise AuthenticationRequiredError(
                 "Delegated credential is invalid or expired"
             )
-        writes = DELEGATED_ROUTES.get(self._endpoint or "")
+        writes = pkg.DELEGATED_ROUTES.get(self._endpoint or "")
         if writes is None:
             raise ForbiddenError("This credential does not open this route")
         if writes and claims.read_only:
@@ -344,7 +317,7 @@ class ActorResolver:
             agent_handle = await self.acting_agent(topic_id, agent_handle)
         actor = await resolve_actor(
             bearer_token=self._bearer,
-            verify_token=_token_verifier,
+            verify_token=pkg._token_verifier,
             cheese_valid=cheese_valid,
             cheese_handle=agent_handle or UNRESOLVED_AGENT_HANDLE,
         )
@@ -377,7 +350,7 @@ class ActorResolver:
         # legacy cheesex token puts the handle in ``sub`` and carries no id
         # either), so branching on it just left those callers unbound.
         if actor.authenticated and actor.user_id is None:
-            user = await UserRepository(self._session).get_by_username(actor.handle)
+            user = await pkg.UserRepository(self._session).get_by_username(actor.handle)
             if user is not None:
                 actor = replace(actor, user_id=user.id)
         # Device-screen attribution (P3): a cheese call from inside an enrolled device's
@@ -423,7 +396,7 @@ class ActorResolver:
         """
         if handle:
             return handle
-        return await TopicMemberService(self._session).resolve_agent_handle(
+        return await pkg.TopicMemberService(self._session).resolve_agent_handle(
             await conversations.room_of(self._session, topic_id)
         )
 
@@ -537,7 +510,7 @@ class ActorResolver:
             or scoped_token_claims(self._cheese_token) is None
         ):
             return
-        await require_seated_in_its_room(
+        await pkg.require_seated_in_its_room(
             self._session, self._cheese_token, project_id=project_id
         )
 
@@ -636,7 +609,7 @@ class ActorResolver:
             return actor
         if not actor.handle.isdigit():
             return actor
-        user = await UserRepository(self._session).get_by_id(actor.user_id)
+        user = await pkg.UserRepository(self._session).get_by_id(actor.user_id)
         if user is None:
             _log.warning("token_handle_unresolved", user_id=actor.user_id)
             return actor
@@ -915,7 +888,7 @@ class ActorResolver:
             # A handle-only session token carries no int user id, and task
             # visibility is keyed by one - see ``_is_team_member`` above for the
             # same resolution.
-            user = await UserRepository(self._session).get_by_username(actor.handle)
+            user = await pkg.UserRepository(self._session).get_by_username(actor.handle)
             user_id = user.id if user is not None else None
         if user_id is not None and await TaskVisibilityService(
             self._session
@@ -949,7 +922,7 @@ class ActorResolver:
         """Team membership is keyed by user id while every other authorization
         key is the handle string, so the handle is resolved to its user here —
         see the same note in ``_is_project_member``."""
-        user = await UserRepository(self._session).get_by_username(handle)
+        user = await pkg.UserRepository(self._session).get_by_username(handle)
         if user is None:
             return False
         return await TeamRepository(self._session).is_team_member(team_id, user.id)
@@ -982,134 +955,3 @@ class ActorResolver:
     async def project_of_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
         """The project of a conversation: a room's, or a task's."""
         return await conversations.project_of(self._session, topic_id)
-
-
-def _resolver_for(
-    request: Request, db: AsyncSession, bearer: str | None
-) -> ActorResolver:
-    return ActorResolver(
-        session=db,
-        bearer=bearer,
-        cheese_token=request.headers.get("x-cheese-token") or "",
-        screen_token=request.headers.get("x-cheese-screen") or "",
-        writes=request.method not in ("GET", "HEAD", "OPTIONS"),
-        endpoint=_endpoint_name(request),
-    )
-
-
-def get_actor_resolver(
-    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
-) -> ActorResolver:
-    return _resolver_for(request, db, _bearer(request.headers.get("authorization")))
-
-
-#: The cookie a ``<video>`` element's own requests prove the viewer with. The
-#: element streams a recording by asking for one byte range after another and
-#: cannot add an ``Authorization`` header to any of them, so the one fetch the
-#: page makes with the header leaves this cookie behind, scoped to that room's
-#: raw-attachment path (``topics_attachments.attachment_raw``). It carries the
-#: same access token the page already holds — it grants nothing new and dies
-#: with that token — and it is read on that one read-only route alone.
-MEDIA_COOKIE = "cheese_media"
-
-
-def remember_for_media(response: Response, request: Request) -> None:
-    """Leave :data:`MEDIA_COOKIE` behind for the ``<video>`` element's own
-    requests to this same path, carrying the token this request was made with.
-
-    Only a token sent as ``Authorization`` is mirrored: a cookie is never
-    turned into a fresh cookie, so it cannot outlive the page's own token.
-    """
-    token = _bearer(request.headers.get("authorization"))
-    if token:
-        response.set_cookie(
-            MEDIA_COOKIE,
-            token,
-            path=f"{GATEWAY_MOUNT}{request.url.path}",
-            max_age=settings.access_token_expires_seconds,
-            httponly=True,
-            secure=settings.environment not in ("development", "test"),
-            samesite="lax",
-        )
-
-
-def get_media_actor_resolver(
-    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
-) -> ActorResolver:
-    """``get_actor_resolver`` that also takes the :data:`MEDIA_COOKIE` when the
-    request carries no ``Authorization`` header."""
-    bearer = _bearer(request.headers.get("authorization"))
-    return _resolver_for(request, db, bearer or request.cookies.get(MEDIA_COOKIE))
-
-
-def _endpoint_name(request: Request) -> str | None:
-    endpoint = request.scope.get("endpoint")
-    if endpoint is None:
-        return None
-    return f"{endpoint.__module__}.{endpoint.__qualname__}"
-
-
-# Browsers cannot set an Authorization header on a WebSocket, so the chat route
-# builds the resolver from the ?token= query param itself (照 reference
-# viewer_authz.py) — see app/api/routes/chat.py.
-ActorResolverDep = Annotated[ActorResolver, Depends(get_actor_resolver)]
-MediaActorResolverDep = Annotated[ActorResolver, Depends(get_media_actor_resolver)]
-
-
-async def require_seated_agent(
-    session: AsyncSession,
-    token: str,
-    *,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID | None,
-) -> None:
-    """Refuse a scoped credential whose agent no longer sits where it acts.
-
-    For routes that read the credential themselves instead of resolving an
-    actor. A signature proves which agent a credential was minted for and that
-    it has not expired; it says nothing about whether that agent was since
-    taken out of the room or the project, and a credential outlives the turn
-    that minted it. So the roster is asked here, the same question
-    ``authorize_topic`` asks for every other room route.
-
-    A credential naming neither an agent nor a room is the platform's own
-    project capability (see ``mint_scoped_token``): no participant, no seat to
-    check, so it passes unchanged.
-    """
-    claims = scoped_token_claims(token)
-    if claims is None:
-        raise AuthenticationRequiredError("Agent credential is invalid or expired")
-    if not claims.get("a") and not claims.get("t"):
-        return
-    # The room this request acts in; without one (a project-wide route), the
-    # room the credential was minted in. An agent holds no project-roster
-    # grant, so its seat in that room is the only standing it has.
-    room = topic_id
-    if room is None and claims.get("t"):
-        room = uuid.UUID(claims["t"])
-    resolver = ActorResolver(session=session, bearer=None, cheese_token=token)
-    actor = await resolver.resolve(topic_id=room, project_id=project_id, read_only=True)
-    if room is not None:
-        await resolver.authorize_topic(
-            actor, project_id=project_id, topic_id=room, enforce=True
-        )
-    elif not await resolver._is_project_member(project_id, actor.handle):
-        raise ForbiddenError(say("projectMemberOnly"))
-
-
-async def require_seated_in_its_room(
-    session: AsyncSession, token: str, *, project_id: uuid.UUID
-) -> None:
-    """``require_seated_agent`` for the routes that name no room, asked of the
-    room the credential was minted in.
-
-    A credential that names no room has no roster to be taken off: the
-    platform's own project capability, or the credential of a document that
-    sits in no room, which its project's agent answers. Those pass, where
-    ``require_seated_agent`` would ask the project roster, which seats no agent.
-    """
-    claims = scoped_token_claims(token)
-    if claims is None:
-        raise AuthenticationRequiredError("Agent credential is invalid or expired")
-    if claims.get("t"):
-        await require_seated_agent(session, token, project_id=project_id, topic_id=None)

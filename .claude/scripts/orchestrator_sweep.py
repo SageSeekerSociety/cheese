@@ -6,7 +6,8 @@ appends the rendered board to one document and never restates anything above it.
 
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
-      [--silent-min 40] [--skip 1443,1405] [--json | --render | --sync-doc <document id>]
+      [--silent-min 40] [--skip 1443,1405] [--json | --render | --sync-doc <document id>] \
+      [--auto-accept-check | --auto-accept]
   python3 .claude/scripts/orchestrator_sweep.py --self-test   (offline: no token, no network, no gh)
 
 For every open, started task in the channel it reads platform facts and the PR's GitHub queue state:
@@ -51,8 +52,20 @@ The default output is that text list, unchanged. The same sweep in other shapes:
                section by naming a trailing passage and putting the board after it, and
                refuse when no such passage can be named. One of these three, not two at
                once.
+
+--auto-accept-check and --auto-accept add the dispatcher's own adopt decision to the run.
+Every 可采纳未采纳 card is handed to orchestrator_autoaccept.py, which reads the card, the
+PR and the checks and answers 会采 or 交总调度 with the codes it failed on; the answer
+prints under the rows and rides in --json's row as `auto_accept`. That script owns the five
+conditions — CI required green on the card's head, an independent review of that head with
+no blocker/major, the card's head equal to the PR's and MERGEABLE, no PROD_DEPLOY or
+HIGH_RISK path, and the acceptor being the dev account — so the sweep reports them rather
+than stating them again, and a card touching a high-risk path is 交总调度 there, not a
+second gate here. --auto-accept also approves and accepts each 会采 card; --auto-accept-check
+stops at the answer. Neither flag runs on an invocation that leaves both out, which keeps
+the calls a plain sweep makes unchanged.
 """
-import json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
+import contextlib, io, json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
 
 API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
@@ -94,7 +107,7 @@ ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
               "review_head", "review_since", "review_verdict", "review_tier", "waited_min", "waiting_on",
               "stage", "detail", "changed", "verified", "checks", "cases",
               "last_event_at", "last_message_at", "last_message", "last_output_at",
-              "running", "heartbeat_min")
+              "running", "heartbeat_min", "auto_accept")
 #: How much of a line's last message the row carries: enough to tell "审查在跑" from
 #: "等总调度", not the whole message.
 _MESSAGE_BRIEF = 80
@@ -841,6 +854,12 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "running": pulse.get("running"),
         "heartbeat_min": pulse.get("heartbeat_min"),
         "read": good,
+        # 采纳判据那一层填，没跑判据的就是 None。判据本身是 orchestrator_autoaccept 的，
+        # 行只把它带出去（text 的尾部一块、--json 的一项）。
+        "auto_accept": None,
+        # 平台那条任务对象，跟着行走：采纳那一步要把它原样交回 orchestrator_autoaccept，
+        # 不必为它再读一次平台。不在 ROW_FIELDS 里，--json 不会带出去。
+        "platform": t,
     }
 
 
@@ -943,11 +962,18 @@ def pulse_detail(waited, last_event, last_msg_at, last_msg_brief, last_output=No
             + f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
 
 
-def sweep(tok, room, silent, skip, want_facts):
+def sweep(tok, room, silent, skip, want_facts, adopt=None):
     """The rows the text list prints, each also carrying the board's fields. GitHub
     facts are read only for tasks that have a PR: for the pending ones always, and for
     the rest only when `want_facts`, which is set by the flags that show the board — so
-    an invocation with no flag makes exactly the calls it always made."""
+    an invocation with no flag makes exactly the calls it always made.
+
+    `adopt` is the handle a card would be accepted as. When it is set, every 可采纳未采纳
+    row also carries orchestrator_autoaccept's own verdict on that card in `auto_accept`
+    (会采, or 交总调度 with the codes and notes it failed on) — the five conditions live
+    there, so this reports the decision the dispatcher would act on rather than a second
+    opinion of its own. Still read-only: accepting is the caller's, and only under
+    --auto-accept."""
     now = datetime.now(timezone.utc)
     age = lambda s: (now - ts(s)).total_seconds() / 60
     d = get(tok, f"/topics/{room}/tasks?status=open&limit=200")
@@ -1026,7 +1052,9 @@ def sweep(tok, room, silent, skip, want_facts):
 
         def add(kind, text, waited=None, waiting=None):
             reported.add(kind)
-            rows.append(row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg, pulse))
+            r = row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg, pulse)
+            rows.append(r)
+            return r
 
         if card.get("status") == "pending" and n:
             if "error" in pr:
@@ -1038,7 +1066,9 @@ def sweep(tok, room, silent, skip, want_facts):
                     add("出队", f"PR #{n} {tl[-1]['createdAt'][11:16]} UTC 出队（{tl[-1]['reason']}），{w:.0f} 分钟没回队列", w)
                 elif ready_at and age(ready_at) >= 5:
                     w = age(ready_at)
-                    add("可采纳未采纳", f"PR #{n} 可以合并 {w:.0f} 分钟", w)
+                    r = add("可采纳未采纳", f"PR #{n} 可以合并 {w:.0f} 分钟", w)
+                    if adopt:
+                        r["auto_accept"] = _autoaccept().decide(tok, t, adopt)
 
         if red_recent:
             w = age(red[-1]["created_at"])
@@ -1085,12 +1115,54 @@ def sweep(tok, room, silent, skip, want_facts):
     return rows, idmap
 
 
+def _autoaccept():
+    """orchestrator_autoaccept, imported when a run actually judges a card.
+
+    Module scope would be circular: that script imports this one. And when this file is
+    run as `__main__`, the import machinery would otherwise execute a second copy of it
+    under its own name, so alias the instance we are already running as before importing —
+    both entry points then share one set of helpers."""
+    if __name__ == "__main__":
+        sys.modules.setdefault("orchestrator_sweep", sys.modules["__main__"])
+    import orchestrator_autoaccept
+    return orchestrator_autoaccept
+
+
+def apply_auto_accept(tok, rows, me):
+    """Approve and accept every 可采纳的卡 orchestrator_autoaccept judged 会采.
+
+    Nothing here re-checks the five conditions: 会采 comes back only with all of them
+    green, and a card touching PROD_DEPLOY or a HIGH_RISK path is 交总调度 by that same
+    judge. accept() reads the card again and judges it again, so a card that moved since
+    the sweep read it is not accepted on a verdict that no longer holds."""
+    aa = _autoaccept()
+    for r in rows:
+        v = r.get("auto_accept")
+        if v and v["verdict"] == "accept":
+            v["applied"] = aa.accept(tok, r["platform"], me)
+    return rows
+
+
+def auto_accept_text(rows):
+    """The 自动采纳 block the text list prints under its rows: one line per judged card,
+    in the shape orchestrator_autoaccept itself prints, so the answer reads the same
+    whichever entry point a patrol called."""
+    judged = [r for r in rows if r.get("auto_accept")]
+    if not judged:
+        return []
+    aa = _autoaccept()
+    return ["", f"自动采纳（{len(judged)} 张可采纳的卡，判据由 orchestrator_autoaccept 给定）："] \
+        + [aa.line(r["auto_accept"]) for r in judged]
+
+
 def text(rows):
     if not rows:
         print("各线无待处理信号")
         return
     for r in rows:
         print(f"[{r['kind']}] {r['name']}｜{r['detail']}")
+    for ln in auto_accept_text(rows):
+        print(ln)
 
 
 def review_cell(r):
@@ -1156,6 +1228,15 @@ def details(rows):
         if r["cases"]:
             out += ["失败用例："] + ["> " + ln for ln in r["cases"]]
         if r["checks"] or r["cases"]:
+            out.append("")
+        if r.get("auto_accept"):
+            # 采纳判据只在 --auto-accept-check / --auto-accept 那一轮在；会采的说它会不会
+            # 被采纳，交总调度的说它卡在哪个 code 上。
+            v = r["auto_accept"]
+            if v["verdict"] == "accept":
+                out.append("自动采纳：会采" + (f"｜{v['applied']}" if "applied" in v else ""))
+            else:
+                out.append("自动采纳：交总调度（" + "、".join(v["codes"]) + "）")
             out.append("")
     return out
 
@@ -1918,6 +1999,113 @@ def _self_test_sweep():
     ]
 
 
+def _self_test_adopt():
+    """(name, got, want) for 自动采纳那一步：可采纳的卡交回 orchestrator_autoaccept 自己判
+    ——判据只有那一份，这里不另判一次；--auto-accept 对会采的卡 approve 再 accept，对碰了
+    高风险路径的卡一个写都不发；--auto-accept-check 判完就停；不给开关时行上根本没有判据。
+    平台读数、GitHub 读数、判据的输入和平台的写全在这一段里换掉，仍然离线。"""
+    H = "a" * 40
+    now = datetime.now(timezone.utc)
+    at = lambda mins: (now - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    task = {"number": 42, "title": "甲", "id": "t1", "agent_handle": "cheese", "started_at": at(300),
+            "card": {"id": "c1", "status": "pending", "pr_number": 7}}
+    # 没进过合并队列的 PR（时间线里一个队列事件都没有），卡上写着「可以合并」10 分钟 ——
+    # 这就是每一张可采纳未采纳的卡的样子。
+    pr = {"merged": False, "mergeQueueEntry": None, "timelineItems": {"nodes": []}}
+    answers = {"kind=message": [{"created_at": at(10), "author": "a", "content": "等"}],
+               "author=accept": [{"created_at": at(10), "meta": {"event_type": "accept_ready"},
+                                  "content": "可以合并"}]}
+
+    def facts(files):
+        """判据要的那些事实，摆成 gather() 会摆的样子：审查结论在卡正文里，行上写着谁验收。"""
+        body = f"改了什么：A。\n\n独立 review：head {H[:8]} 结论 无 blocker/major\n"
+        f = {"task": 42, "card": {"id": "c1", "pr_number": 7, "pr_head_sha": H,
+                                  "reviewer_handle": "me", "change_body": body},
+             "pr": {"head": H, "mergeable": "MERGEABLE", "merged": False, "in_queue": False,
+                    "comments": []},
+             "ci": "success", "files": list(files)}
+        f["review"] = _autoaccept().latest_review(body, [])
+        return f
+
+    def run(argv, files=("backend/app/x.py",)):
+        """跑一次 main()，返回（它印出来的、它写出去的）。平台和 GitHub 的读、判据自己的
+        读、平台的写都换掉了，所以四次调用一次网都不连。"""
+        aa = _autoaccept()
+        kept = {n: globals()[n] for n in ("get", "gh_pr", "login")}
+        kept_gather, kept_post, kept_env = aa.gather, aa.post, os.environ.get("OKCHEESE_USER")
+        kept_argv, writes = sys.argv, []
+
+        def fake_get(tok, path):
+            for key, value in answers.items():
+                if key in path:
+                    return {"data": list(value)}
+            return {"data": [task]} if "tasks?" in path else {"data": []}
+
+        def fake_post(tok, path, body):
+            writes.append((path, body))
+            return True, ""
+
+        globals().update(get=fake_get, gh_pr=lambda n, board=False: pr, login=lambda: "tok")
+        os.environ["OKCHEESE_USER"] = "me"
+        aa.gather, aa.post = lambda tok, t, me: facts(files), fake_post
+        sys.argv, buf = argv, io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                main()
+        finally:
+            sys.argv = kept_argv
+            globals().update(kept)
+            aa.gather, aa.post = kept_gather, kept_post
+            if kept_env is None:
+                os.environ.pop("OKCHEESE_USER", None)
+            else:
+                os.environ["OKCHEESE_USER"] = kept_env
+        return buf.getvalue(), writes
+
+    accepted, accepted_writes = run(["sweep", "room", "--auto-accept"])
+    risky, risky_writes = run(["sweep", "room", "--auto-accept"], files=("backend/alembic/7_x.py",))
+    checked, checked_writes = run(["sweep", "room", "--auto-accept-check"])
+    plain, plain_writes = run(["sweep", "room"])
+    verdict = f"[会采] #42 PR #7 head {H[:8]}"
+    judged = {"task": 42, "pr": 7, "head": H, "verdict": "accept", "codes": [],
+              "reasons": [], "notes": ["审查来自卡"]}
+    as_json = lambda r: board_json([r], _SELF_TEST_METRICS, "room", 60, set(),
+                                   datetime(2026, 10, 13, 5, 0))["classes"]["可采纳未采纳"][0]
+    return [
+        # 写只落在判据说会采的那张卡上，而且 approve 在前、accept 在后 —— 反过来平台会拒。
+        ("自动采纳：会采的卡 approve 再 accept",
+         [p for p, _ in accepted_writes], ["/accept-cards/c1/approve", "/accept-cards/c1/accept"]),
+        ("自动采纳：accept 带上验收人和判据判的那个 head",
+         [b for _, b in accepted_writes],
+         [{"approver_handle": "me"}, {"decided_by": "me", "head_sha": H}]),
+        ("自动采纳：采纳了就说采纳，清单里带着 orchestrator_autoaccept 那一行结论",
+         ("已采纳 head " + H[:8]) in accepted and verdict in accepted, True),
+        # 高风险路径是判据自己在判的（deploy_reasons → high_risk），不是这里另加的一道闸：
+        # 撞上它的卡在判据那一步就交总调度了，所以这一轮一个写都不发。
+        ("自动采纳：碰了高风险路径的卡一个写都不发", risky_writes, []),
+        ("自动采纳：碰了高风险路径的卡判成交总调度，并说出是哪个 code",
+         ("交总调度" in risky, "high_risk" in risky), (True, True)),
+        ("自动采纳：--auto-accept-check 判完就停，一个写都不发",
+         (checked_writes, verdict in checked), ([], True)),
+        ("自动采纳：不给开关时判据根本不跑，清单上没有这一块",
+         (plain_writes, "自动采纳" in plain), ([], False)),
+        # 结论还得进另外两种输出：--json 每一行带 auto_accept（没判过是 null），
+        # 看板每个待判 PR 那一段也写一句。
+        # 判的是 --json 交出去的那一行（ROW_FIELDS 挑出来的），不是 rows 里的行 ——
+        # 行上一直带着这一项，看起来怎么都对，漏掉的正是「它没被带出去」。
+        ("自动采纳：--json 的每一行都带 auto_accept，没判过是 null",
+         [("auto_accept" in b, b.get("auto_accept")) for b in [as_json(_self_row())]], [(True, None)]),
+        ("自动采纳：判过的行 --json 里带得出去",
+         as_json({**_self_row(), "auto_accept": judged}).get("auto_accept"), judged),
+        ("自动采纳：看板每个待判 PR 那一段也写一句",
+         "自动采纳：会采" in "\n".join(details([{**_self_row(), "auto_accept": judged}])), True),
+        ("自动采纳：交总调度的卡在看板上写出它卡在哪个 code",
+         "自动采纳：交总调度（high_risk）" in "\n".join(
+             details([{**_self_row(), "auto_accept": {**judged, "verdict": "handoff",
+                                                      "codes": ["high_risk"]}}])), True),
+    ]
+
+
 def _self_test_review():
     """(name, got, want) for 审查结论从卡片正文来：render.py 写的第一行 `review_of` 读得回，
     GitHub 的查询里不再要评论，`card_review` 只认自己这张卡，文本清单不去读卡片。`get`
@@ -2082,7 +2270,8 @@ def self_test():
         got = next((g for g in found.groups() if g), "").strip() if found else ""
         check("读用例：" + line, got, want)
     for name, got, want in (_self_test_board() + _self_test_review() + _self_test_patterns()
-                            + _self_test_jobs() + _self_test_pulse() + _self_test_sweep()):
+                            + _self_test_jobs() + _self_test_pulse() + _self_test_sweep()
+                            + _self_test_adopt()):
         check("看板：" + name, got, want)
     for line in bad:
         print("FAIL " + line)
@@ -2110,9 +2299,15 @@ def main():
     # itself (not as absent) is what makes it say so, instead of quietly never syncing.
     if document is not None and not document.strip():
         raise SystemExit("--sync-doc 后面要给一个文档号")
+    # 判据只在要它的那一轮跑：不给这两个开关的调用，做的还是它一直做的那几次调用。
+    auto_accept = "--auto-accept" in argv
+    judge = auto_accept or "--auto-accept-check" in argv
     tok = login()
+    me = os.environ["OKCHEESE_USER"] if judge else None
     now = datetime.now(timezone.utc)
-    rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document))
+    rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document), adopt=me)
+    if auto_accept:
+        apply_auto_accept(tok, rows, me)
     if as_json:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
         print(json.dumps(board_json(rows, metrics, room, silent, skip, now), ensure_ascii=False, indent=2))

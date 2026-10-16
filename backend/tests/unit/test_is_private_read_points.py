@@ -24,8 +24,9 @@ import pathlib
 #: 其余文件是登记，不是认可：它们多半是 ``WHERE is_private IS FALSE`` 这类「私聊
 #: 不进这张列表」的过滤，和轮次组装不是一回事，各自有各自的去向。
 BASELINE = {
-    # 0: the access rules ask it once, in `app/auth/audience.py`.
-    "app/api/auth.py": 0,
+    # 0: the access rules ask it once, in `app/auth/audience.py`. auth 拆成包后
+    # 这条换个路径接着钉：`ActorResolver` 和它的授权方法都在 `resolver.py`。
+    "app/api/auth/resolver.py": 0,
     # 1: `seats_only`. The policy's parameter is named for what it decides
     # (a private chat or a private channel), not for this flag.
     "app/auth/audience.py": 1,

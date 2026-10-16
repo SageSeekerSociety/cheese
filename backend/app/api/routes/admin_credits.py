@@ -98,7 +98,7 @@ async def plan_models(handle: PlatformAdminDep) -> dict:
     )
 
 
-@router.post("/plans", status_code=201)
+@router.post("/plans", status_code=201, dependencies=[ROUTE_DECIDES])
 async def create_plan(
     body: PlanCreate, db: DbSession, handle: PlatformAdminDep
 ) -> dict:
@@ -107,7 +107,7 @@ async def create_plan(
     return ok(plan)
 
 
-@router.put("/plans/{key}")
+@router.put("/plans/{key}", dependencies=[ROUTE_DECIDES])
 async def update_plan(
     key: Annotated[str, Path(max_length=32)],
     body: PlanUpdate,
@@ -121,7 +121,7 @@ async def update_plan(
     return ok(plan)
 
 
-@router.delete("/plans/{key}")
+@router.delete("/plans/{key}", dependencies=[ROUTE_DECIDES])
 async def delete_plan(
     key: Annotated[str, Path(max_length=32)],
     db: DbSession,
@@ -184,7 +184,7 @@ async def team_history(
     return ok({"items": await PlanService(db).team_history(team_id, limit=limit)})
 
 
-@router.put("/teams/{teamId}/plan")
+@router.put("/teams/{teamId}/plan", dependencies=[ROUTE_DECIDES])
 async def set_team_plan(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     body: TeamPlanUpdate,
@@ -218,7 +218,7 @@ async def set_team_overseas_access(
     return ok(out)
 
 
-@router.post("/teams/{teamId}/grants", status_code=201)
+@router.post("/teams/{teamId}/grants", status_code=201, dependencies=[ROUTE_DECIDES])
 async def grant_team_credits(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     body: GrantCreate,

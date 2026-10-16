@@ -36,6 +36,7 @@ def alerts(monkeypatch) -> _Alerts:
     monkeypatch.setattr(
         alerting, "REPEAT_KEY_PREFIX", f"cheese:alert:test:{uuid.uuid4().hex}:"
     )
+    monkeypatch.setattr(alerting, "_asked", {})
     monkeypatch.setattr(alerting, "budget", alerting._Budget())
     return box
 
