@@ -352,8 +352,11 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/cli_worker.py": 6,
     "app/domain/agent/clone.py": 1,
     "app/domain/agent/compute.py": 1,
-    "app/domain/agent/device_hub.py": 5,
+    # 2026-10: device_hub.py 按职责拆分，五句话跟着抛它的函数走——四句到 sessions、
+    # 一句到 calls，总数不变。
+    "app/domain/agent/device_hub/calls.py": 1,
     "app/domain/agent/device_hub_rpc.py": 2,
+    "app/domain/agent/device_hub/sessions.py": 4,
     "app/domain/agent/device_provider.py": 4,
     "app/domain/agent/device_storage.py": 4,
     "app/domain/agent/document/box.py": 1,
