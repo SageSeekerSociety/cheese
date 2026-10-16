@@ -37,10 +37,16 @@ const BUDGET = 650
 
 const PAGE = 'TopicView.vue'
 
-/** `topicView/` 下现在有哪些模块文件，按文件名排。行数预算按这个数，不按名单数。 */
-const onDisk = readdirSync(join(HERE, 'topicView'))
-  .filter((name) => name.endsWith('.ts'))
-  .sort()
+/** `topicView/` 下现在有哪些文件，按路径排。契约允许拆成子组件或逻辑模块，所以 `.vue`
+ *  也算，子目录里的也算——只数平铺的 `.ts`，换一种拆法整块就没人看着了。 */
+function walk(rel: string): string[] {
+  return readdirSync(join(HERE, rel), { withFileTypes: true }).flatMap((entry) => {
+    const path = `${rel}/${entry.name}`
+    if (entry.isDirectory()) return walk(path)
+    return /\.(ts|vue)$/.test(entry.name) ? [path] : []
+  })
+}
+const onDisk = walk('topicView').sort()
 
 /** 拆出去的那几块，和它们各自管的事。 */
 const MODULES: readonly [string, string][] = [
@@ -110,6 +116,10 @@ const wired = (text: string, module: string, fn: string) =>
  *  里面还嵌着尖括号，硬配会把它整条漏掉。 */
 const assigned = (text: string, fn: string) => new RegExp(`=\\s*${esc(fn)}\\s*(?:<[^;()]*>)?\\s*\\(`).test(text)
 
+/** 主文件自己又声明了一遍这个名字。上面那几处全是按名字查的，同名的局部函数能顶替
+ *  掉搬走的那一块：import 留着、名字也叫着，跑的却是主文件里那一份。 */
+const shadowed = (text: string, fn: string) => new RegExp(`\\b(?:function|const|let|var)\\s+${esc(fn)}\\b`).test(text)
+
 /** 页面 `import type { … } from './topicView/<module>'` 里有没有这个名字。 */
 const wiredType = (text: string, module: string, name: string) => {
   const re = new RegExp(
@@ -128,22 +138,24 @@ const page = code(raw(PAGE))
 describe('话题视图的拆分边界', () => {
   it('主文件和 topicView 下的每一块都在 650 行以内', () => {
     // 按目录数，不按上面那份名单数：单是名单的话，新搬出去的一块就没预算管着了。
-    const files = [PAGE, ...onDisk.map((name) => `topicView/${name}`)]
+    const files = [PAGE, ...onDisk]
     const sizes = files.map((file) => [file, lines(raw(file))] as const)
     expect(sizes.filter(([, n]) => n > BUDGET)).toEqual([])
   })
 
   it('名单就是目录：搬出去的那几块一个不少', () => {
-    expect(MODULES.map(([file]) => file).sort()).toEqual(onDisk.map((name) => `topicView/${name}`).sort())
+    expect(MODULES.map(([file]) => file).sort()).toEqual([...onDisk].sort())
   })
 
   it('主文件从同目录那几块取值，并且真的调了它们', () => {
     for (const [file, fn] of FACTORIES) {
-      // 四件事一起查：那一块交出了这个工厂、页面按名字从它那里取值、页面调了它、
-      // 而且接住了返回值。少哪一件都可能是线断了，而剩下三件还照样成立。
+      // 五件事一起查：那一块交出了这个工厂、页面按名字从它那里取值、页面调了它、
+      // 接住了返回值、而且主文件没有自己再声明一个同名的顶替它。少哪一件都可能是
+      // 线断了，而剩下几件还照样成立。
       expect([`${file} 交出了 ${fn}`, exportsFactory(file, fn)]).toEqual([`${file} 交出了 ${fn}`, true])
       expect([fn, wired(page, file, fn)]).toEqual([fn, true])
       expect([`${fn} 的返回值被接住`, assigned(page, fn)]).toEqual([`${fn} 的返回值被接住`, true])
+      expect([`主文件自己又声明了一遍 ${fn}`, shadowed(page, fn)]).toEqual([`主文件自己又声明了一遍 ${fn}`, false])
     }
   })
 
@@ -175,8 +187,11 @@ describe('话题视图的拆分边界', () => {
     ]
     expect(contract.filter(([, re]) => !re.test(props)).map(([name]) => name)).toEqual([])
     // 一个不多：多一个 prop，路由那边没有第五个键给它，收到的永远是 undefined。
-    // 上面那张表只管「这四个还在不在」，多出来的它看不见。
-    const declared = [...props.matchAll(/(?:^|[\s;{])([A-Za-z_$][\w$]*)\s*\??\s*:/g)].map((m) => m[1]!)
+    // 上面那张表只管「这四个还在不在」，多出来的它看不见。带引号的键（`'data-x': string`）
+    // 也是 prop，所以引号的两种写法都算进名单里。
+    const declared = [...props.matchAll(/(?:^|[\s;{])(?:([A-Za-z_$][\w$]*)|'([^']+)'|"([^"]+)")\s*\??\s*:/g)].map(
+      (m) => m[1] ?? m[2] ?? m[3]!
+    )
     expect(declared).toEqual(['projectId', 'topicId', 'taskId', 'threadId'])
     expect(page).toMatch(/defineOptions\(\{\s*name:\s*'TopicView'\s*\}\)/)
     expect(page).toContain('<template>')
