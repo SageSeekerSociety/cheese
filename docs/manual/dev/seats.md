@@ -25,7 +25,7 @@ covers:
 
 ## 管理项目 {#manage}
 
-管理一个项目，包括外部成员和项目设置，要求是项目的所有者，或者项目所属团队的所有者或管理员。
+一个人在项目里能做什么由 `backend/app/auth/project_roles.py` 回答：所有者（项目的 `owner_handle`，或所属团队的所有者）、管理员（所属团队的管理员，或项目设为管理员的人）、成员、导师，每个角色的权限默认值在 `backend/app/domain/project_permissions.py`，项目可以在「角色和权限」里改。路由只问 `project_roles.may(…, Permission.x)`。
 
 ## 空间 {#spaces}
 

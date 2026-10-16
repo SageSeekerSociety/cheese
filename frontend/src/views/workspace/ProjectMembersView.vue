@@ -1,24 +1,16 @@
 <script setup lang="ts">
-// 「成员」—— 这个项目里有谁、他们是怎么在这里的，以及对他们能做什么。
+// 「成员」—— 这个项目里有谁、各自是什么角色，以及对他们能做什么（#3830）。
 //
-// 一个项目的人只有三种来路，这一页就按来路分段：
-//   - 所有者：建这个项目的人；
-//   - 团队成员：项目所属团队里的每一个人，自动就在——这一页对他们不给任何**管理**
-//     动作（移出是给不到他们的，后端那边没有一条可删的名册行），但他们自己能退出这
-//     个项目（退的是这个项目，不是小队）；
-//   - 外部成员：团队以外、被点名邀请进这一个项目的人，名字旁边挂「外部」。只有他们
-//     能从这里被移出。
-// 没有项目自己的角色：管理外部成员的是项目所有者和团队的所有者、管理员，由后端在
-// 项目上给出的 `can_manage_members` 说了算（后端动手时按同一条规则再判一次）。它只在
-// `GET /projects/{id}` 上有，项目列表不带，所以这一页自己问一次。
+// 按角色分段：所有者、管理员、成员、导师，AI 队友在最后。团队所有者和团队管理员带标签：
+// 他们的身份是团队给的，只能在团队那边改。外部成员（团队以外、被邀请进来的人）带「外部」。
+// 我能做什么由项目上的 `my_role` / `my_permissions` 说了算，后端动手时按同一条规则再判
+// 一次；它们只在 `GET /projects/{id}` 上有，所以这一页自己问一次。
 //
-// 一行 = 一个人 = 两件事：找到他（点开是他的主页，右边是私聊），和——如果他是外部成员
-// 而你管得了——把他移出。
+// 一行 = 一个人：点开是他的主页，右边是私聊；比我低的人还有一个「⋯」——改角色、移出。
+// 只往下管：管理员管成员和导师，设管理员、撤管理员只有所有者能做。
 //
-// 右上角是「自己和这个项目的关系怎么结束」：谁都能「退出项目」（后端
-// `DELETE /projects/{id}/membership` 认的恒是当前身份那个人），只有所有者不行——他
-// 换一颗「转让项目」（他一走项目就没人管，得先把手交出去）。团队成员退的也是**这个
-// 项目**：他还在小队里，小队别的项目照常，回来要人再请一次。
+// 右上角：邀请（选成员还是导师）、角色和权限、所有者的「转让项目」（个人项目还有「移到
+// 团队」）、其余人的「退出项目」。团队成员退的也是**这个项目**：他还在团队里。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectAgent, ProjectInvitation, ProjectMemberRow } from '@/cx_types'
 
@@ -29,26 +21,39 @@ import { useQuery } from '@tanstack/vue-query'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { useAccountLookup } from '@/composables/useAccountLookup'
+import { useMoveProject } from '@/composables/useMoveProject'
 import { provideRevealGate } from '@/composables/useRevealGate'
 import { useRowMenu } from '@/composables/useRowMenu'
 
-import { ApiError, inviteExternalMember, listProjectInvitations, removeProjectMember, revokeInvitation } from '@/api'
+import {
+  ApiError,
+  cancelTransfer,
+  inviteExternalMember,
+  listProjectInvitations,
+  removeProjectMember,
+  revokeInvitation,
+  setMemberRole,
+} from '@/api'
 import { useCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseField from '@/components/base/BaseField.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import ExternalTag from '@/components/common/ExternalTag.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
+import MoveProjectDialog from '@/components/MoveProjectDialog.vue'
 import TransferProjectDialog from '@/components/TransferProjectDialog.vue'
 import { t } from '@/i18n'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { isExternalMember } from '@/lib/externalMembers'
+import { mayIn } from '@/lib/projectPermissions'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { agentsQuery, projectQuery } from '@/query/project'
@@ -80,7 +85,9 @@ const projectRead = useQuery(
   computed(() => projectQuery(props.projectId)),
   queryClient
 )
-const canManage = computed(() => projectRead.data.value?.can_manage_members === true)
+const myRole = computed(() => projectRead.data.value?.my_role ?? null)
+const canManage = computed(() => mayIn(projectRead.data.value, 'manage_members'))
+const changesRoles = computed(() => mayIn(projectRead.data.value, 'change_roles'))
 
 function unreadWith(handle: string): number {
   return store.privateUnreadMap?.[handle] ?? 0
@@ -150,22 +157,41 @@ const agents = computed(() =>
   })
 )
 
-// 按来路分段。所有者那一行后端补在名册上（source=owner）；名册还没带 source 的那一刻
-// 按 owner_handle 认，别让所有者掉进「团队成员」里。
-const sections = computed(() => {
-  const owner = people.value.filter((m) => m.source === 'owner' || m.user_handle === ownerHandle.value)
-  const external = people.value.filter((m) => isExternalMember(m) && m.user_handle !== ownerHandle.value)
-  const team = people.value.filter((m) => !owner.includes(m) && !external.includes(m))
-  return [
-    { key: 'owner', title: t('work.members.sectionOwner'), rows: owner },
-    { key: 'team', title: t('work.members.sectionTeam'), rows: team },
-    { key: 'external', title: t('work.members.sectionExternal'), rows: external },
-  ].filter((s) => s.rows.length > 0)
-})
+// 名册行上的角色（#3830）：后端说这个人坐在哪（`role`），以及这个身份是不是团队给的
+// （`role_from_team`，团队所有者和团队管理员，只能在团队那边改）。
+// Declared here, not on `ProjectMemberRow`: cx_types.ts is over its size cap and may only shrink.
+type Seat = 'owner' | 'admin' | 'member' | 'mentor'
+type RoleRow = ProjectMemberRow & { role?: Seat; role_from_team?: boolean }
+const RANK: Record<Seat, number> = { owner: 3, admin: 2, member: 1, mentor: 1 }
+function roleOf(m: ProjectMemberRow): Seat {
+  return (m as RoleRow).role ?? 'member'
+}
+function teamChip(m: ProjectMemberRow): string | null {
+  const row = m as RoleRow
+  if (!row.role_from_team) return null
+  return t(row.role === 'owner' ? 'work.members.teamOwner' : 'work.members.teamAdmin')
+}
 
-// 能移出的只有外部成员，而且不是自己（自己走用右上角那颗「退出项目」）。
+// 按角色分段。
+const sections = computed(() =>
+  (['owner', 'admin', 'member', 'mentor'] as const)
+    .map((role) => ({
+      key: role,
+      title: t(`work.members.section${role[0].toUpperCase()}${role.slice(1)}`),
+      rows: people.value.filter((m) => roleOf(m) === role),
+    }))
+    .filter((s) => s.rows.length > 0)
+)
+
+// 只往下管（#3830）：比自己低的人才有这一行的菜单。团队给的身份（团队所有者、团队管理员）
+// 在团队那边改，这里不给菜单（后端按同一条规则再判一次）。自己走右上角那颗「退出项目」。
+function below(m: ProjectMemberRow): boolean {
+  const mine = myRole.value
+  if (!mine || m.user_handle === me.value || (m as RoleRow).role_from_team) return false
+  return RANK[mine] > RANK[roleOf(m)]
+}
 function removable(m: ProjectMemberRow): boolean {
-  return canManage.value && isExternalMember(m) && m.user_handle !== me.value
+  return below(m) && (canManage.value || changesRoles.value)
 }
 
 function faceUrl(m: ProjectMemberRow): string {
@@ -188,18 +214,49 @@ function messageOf(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback
 }
 
-// ---- 移出外部成员 ----
+// ---- 改角色、移出 ----
 const removeTarget = ref<ProjectMemberRow | null>(null)
 function memberActions(m: ProjectMemberRow): MenuAction[] {
+  const role = roleOf(m)
+  const make = (key: 'admin' | 'member' | 'mentor', icon: string): MenuAction => ({
+    key,
+    label: t(`work.members.make${key[0].toUpperCase()}${key.slice(1)}`),
+    icon,
+    onSelect: () => void changeRole(m, key),
+  })
+  const roles: MenuAction[] = []
+  if (changesRoles.value) {
+    // 设管理员、撤管理员都只有所有者能做。
+    if (role === 'member' && myRole.value === 'owner') roles.push(make('admin', 'mdi-shield-account-outline'))
+    if (role === 'member') roles.push(make('mentor', 'mdi-school-outline'))
+    if (role === 'mentor' || role === 'admin') roles.push(make('member', 'mdi-account-outline'))
+  }
   return [
-    {
-      key: 'remove',
-      label: t('work.members.remove'),
-      icon: 'mdi-account-remove-outline',
-      danger: true,
-      onSelect: () => (removeTarget.value = m),
-    },
+    ...roles,
+    ...(canManage.value
+      ? [
+          {
+            key: 'remove',
+            label: t('work.members.remove'),
+            icon: 'mdi-account-remove-outline',
+            danger: true,
+            onSelect: () => (removeTarget.value = m),
+          },
+        ]
+      : []),
   ]
+}
+async function changeRole(m: ProjectMemberRow, role: 'admin' | 'member' | 'mentor') {
+  busyHandle.value = m.user_handle
+  error.value = null
+  try {
+    await setMemberRole(props.projectId, m.user_handle, role)
+    await store.refreshMembers()
+  } catch (e) {
+    error.value = messageOf(e, t('work.members.roleFailed'))
+  } finally {
+    busyHandle.value = null
+  }
 }
 async function confirmRemove() {
   const m = removeTarget.value
@@ -237,12 +294,43 @@ async function takeBack(inv: ProjectInvitation) {
 // 递一颗可能必然失败的按钮（他刚在这里退过一次也是这种情况：名册上已经没有他了）。
 const leaveOpen = ref(false)
 const transferOpen = ref(false)
-const isOwner = computed(() => !!me.value && !!ownerHandle.value && me.value === ownerHandle.value)
+const isOwner = computed(() => myRole.value === 'owner')
 const canLeave = computed(() => {
   const row = store.members.find((m) => m.user_handle === me.value)
   return !!row && !isOwner.value
 })
-const canTransfer = computed(() => project.value !== null && (isOwner.value || canManage.value))
+
+// 发出去还没被接受的转让：所有者看得到在等谁，可以撤回。
+const pendingTransfer = computed(() => projectRead.data.value?.pending_transfer ?? null)
+const pendingName = computed(() => {
+  const handle = pendingTransfer.value?.to_handle
+  const row = store.members.find((m) => m.user_handle === handle)
+  return row ? memberName(row) || row.user_handle : handle ?? ''
+})
+const withdrawing = ref(false)
+async function withdrawTransfer() {
+  withdrawing.value = true
+  error.value = null
+  try {
+    await cancelTransfer(props.projectId)
+    await queryClient.invalidateQueries({ queryKey: projectQuery(props.projectId).queryKey })
+  } catch (e) {
+    error.value = messageOf(e, t('work.members.failed'))
+  } finally {
+    withdrawing.value = false
+  }
+}
+
+// ---- 移到团队：所有者把自己的个人项目移到自己管理的团队 ----
+const personal = computed(() => !!project.value?.team_handle && project.value.team_handle === ownerHandle.value)
+const moveOpen = ref(false)
+const moving = useMoveProject(() => props.projectId)
+watch(moveOpen, (open) => {
+  if (open) void moving.load()
+})
+async function moveTo(teamId: number) {
+  if (await moving.move(teamId)) moveOpen.value = false
+}
 
 // ---- 邀请外部成员 ----
 // 像飞书加外部联系人：填完整的用户名或邮箱，先把查到的人摆出来确认，再发邀请。只认
@@ -250,6 +338,11 @@ const canTransfer = computed(() => project.value !== null && (isOwner.value || c
 // 前就露出来。
 const inviteOpen = ref(false)
 const inviting = ref(false)
+const inviteRole = ref<'member' | 'mentor'>('member')
+const inviteRoleOptions = computed(() => [
+  { value: 'member', label: t('work.projectSettings.roles.role.member') },
+  { value: 'mentor', label: t('work.projectSettings.roles.role.mentor') },
+])
 const {
   query: inviteQuery,
   found,
@@ -276,7 +369,7 @@ async function submitInvite() {
   inviting.value = true
   error.value = null
   try {
-    await inviteExternalMember(props.projectId, user.handle)
+    await inviteExternalMember(props.projectId, user.handle, inviteRole.value)
     await refreshInvitations()
     resetInvite()
   } catch (e) {
@@ -298,7 +391,7 @@ useCommands(() => [
         },
       ]
     : []),
-  ...(canTransfer.value
+  ...(isOwner.value
     ? [
         {
           id: 'members.transfer',
@@ -309,6 +402,24 @@ useCommands(() => [
         },
       ]
     : []),
+  ...(isOwner.value && personal.value
+    ? [
+        {
+          id: 'members.move',
+          title: t('work.members.moveToTeam'),
+          icon: 'mdi-account-group-outline',
+          header: {},
+          run: () => (moveOpen.value = true),
+        },
+      ]
+    : []),
+  {
+    id: 'members.roles',
+    title: t('work.members.roles'),
+    icon: 'mdi-shield-account-outline',
+    header: {},
+    run: () => void router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'roles' } }),
+  },
   ...(canManage.value
     ? [
         {
@@ -346,8 +457,17 @@ useCommands(() => [
       </v-alert>
 
       <div v-for="s in sections" :key="s.key" class="mb-6" :data-section="s.key">
-        <div class="t-eyebrow mb-2">{{ s.title }} · {{ s.rows.length }}</div>
-        <p v-if="s.key === 'team'" class="t-meta-read mb-2">{{ t('work.members.teamHint') }}</p>
+        <div class="t-eyebrow mb-2 section-head">
+          <span>{{ s.title }}</span
+          ><span class="c-muted">{{ s.rows.length }}</span>
+        </div>
+        <p v-if="s.key === 'admin'" class="t-meta-read mb-2">{{ t('work.members.adminHint') }}</p>
+        <div v-if="s.key === 'owner' && pendingTransfer" class="pending-transfer mb-2" data-testid="pending-transfer">
+          <span class="t-meta c-muted">{{ t('work.members.pendingTransfer', { name: pendingName }) }}</span>
+          <BaseButton kind="ghost" size="sm" :loading="withdrawing" @click="withdrawTransfer">
+            {{ t('work.members.cancelTransfer') }}
+          </BaseButton>
+        </div>
         <v-card
           v-for="m in s.rows"
           :key="m.user_handle"
@@ -360,12 +480,13 @@ useCommands(() => [
             <div class="min-w-0">
               <div class="d-flex align-center ga-2">
                 <span class="t-title text-truncate">{{ memberName(m) || m.user_handle }}</span>
-                <ExternalTag v-if="s.key === 'external'" />
+                <ExternalTag v-if="isExternalMember(m)" />
+                <span v-if="teamChip(m)" class="chip-neutral">{{ teamChip(m) }}</span>
                 <span v-if="m.user_handle === me" class="chip-neutral">{{ t('work.members.me') }}</span>
               </div>
               <div class="t-meta c-muted">{{ m.user_handle }}</div>
               <router-link
-                v-if="s.key === 'team' && m.team_handle"
+                v-if="!isExternalMember(m) && m.team_handle"
                 :to="{ name: 'TeamsDetailDefault', params: { handle: m.team_handle } }"
                 class="t-meta-read member-team-link"
                 :data-user-content="m.team_name || undefined"
@@ -410,7 +531,10 @@ useCommands(() => [
       </div>
 
       <div v-if="invitations.length" class="mb-6" data-section="pending">
-        <div class="t-eyebrow mb-2">{{ t('work.members.sectionPending') }} · {{ invitations.length }}</div>
+        <div class="t-eyebrow mb-2 section-head">
+          <span>{{ t('work.members.sectionPending') }}</span
+          ><span class="c-muted">{{ invitations.length }}</span>
+        </div>
         <v-card v-for="inv in invitations" :key="inv.id" class="mb-2" variant="outlined">
           <div class="d-flex align-center pa-3">
             <UserAvatar
@@ -438,7 +562,10 @@ useCommands(() => [
       </div>
 
       <div v-if="agents.length" class="mb-6">
-        <div class="t-eyebrow mb-2">{{ t('work.members.sectionAgents') }} · {{ agents.length }}</div>
+        <div class="t-eyebrow mb-2 section-head">
+          <span>{{ t('work.members.sectionAgents') }}</span
+          ><span class="c-muted">{{ agents.length }}</span>
+        </div>
         <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
           <div class="d-flex align-center pa-3">
             <CheeseAvatar
@@ -501,6 +628,18 @@ useCommands(() => [
       @primary="submitInvite"
     >
       <p class="t-body c-muted mb-5">{{ t('work.members.inviteHint') }}</p>
+      <BaseField
+        :label="t('work.members.inviteRole')"
+        :hint="t(`work.members.inviteRoleHint.${inviteRole}`)"
+        class="mb-5"
+      >
+        <SegmentedControl
+          v-model="inviteRole"
+          :options="inviteRoleOptions"
+          :label="t('work.members.inviteRole')"
+          size="md"
+        />
+      </BaseField>
       <v-text-field
         v-model="inviteQuery"
         autocomplete="off"
@@ -532,6 +671,14 @@ useCommands(() => [
 
     <LeaveProjectDialog v-model="leaveOpen" :project-id="props.projectId" />
     <TransferProjectDialog v-model="transferOpen" :project-id="props.projectId" />
+    <MoveProjectDialog
+      v-model="moveOpen"
+      :teams="moving.teams.value"
+      :loading="moving.loading.value"
+      :moving="moving.moving.value"
+      :error="moving.error.value"
+      @move="moveTo"
+    />
 
     <ConfirmDialog
       :model-value="removeTarget !== null"
@@ -557,6 +704,18 @@ useCommands(() => [
 
 .min-w-0 {
   min-width: 0;
+}
+
+.pending-transfer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-head {
+  display: flex;
+  gap: 8px;
 }
 
 /* 查到的那个人：一行头像 + 名字，压在输入框下面，两边都留了呼吸。 */

@@ -23,5 +23,11 @@
   "rosterTitle": "About team membership",
   "title": "Confirm participation",
   "titleRealName": "Confirm real-name participation",
-  "understood": "Got it"
+  "understood": "Got it",
+  "mentor": {
+    "title": "After you claim it, {names} joins your project as a mentor",
+    "sees": "Mentors see the project's public channels, documents and files and can speak and comment, but cannot edit directly.",
+    "notSees": "Mentors do not see private chats or private channels they are not in.",
+    "remove": "You can remove a mentor from the project's members; the task's publisher will see that."
+  }
 }

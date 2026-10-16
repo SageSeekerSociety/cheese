@@ -76,7 +76,7 @@
   "ownAgentServiceHostRefused": "这个项目不允许 {host} 的模型服务",
   "ownAgentsClosedHere": "这个项目不允许成员接入自己的 Claude Code",
   "ownerMachineOffline": "无法启动：这份模型连接所在的电脑不在线",
-  "projectCredentialManagerOnly": "只有项目所有者或团队管理员能管理项目凭证",
+  "projectCredentialManagerOnly": "只有能修改项目设置的人能管理项目凭证",
   "projectNoGatewayKey": "项目「{name}」还没有网关密钥，无法设置预算",
   "projectNotFound": "项目不存在",
   "projectNotFoundById": "项目 {project_id} 不存在",

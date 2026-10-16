@@ -13,6 +13,7 @@ import { useProjectDefaultModelSettings } from '@/composables/useProjectDefaultM
 import { useProjectEnvironmentSettings } from '@/composables/useProjectEnvironmentSettings'
 import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectMcpSettings } from '@/composables/useProjectMcpSettings'
+import { useProjectRoles } from '@/composables/useProjectRoles'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { useProjectTaskNamingSettings } from '@/composables/useProjectTaskNamingSettings'
 import { provideRevealGate } from '@/composables/useRevealGate'
@@ -40,11 +41,12 @@ import OwnAgentsSettings from '@/components/settings/OwnAgentsSettings.vue'
 import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
+import ProjectRolesSettings from '@/components/settings/ProjectRolesSettings.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
+import { mayIn } from '@/lib/projectPermissions'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
-import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { projectQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -69,13 +71,15 @@ const props = defineProps<{ projectId: string; section?: string }>()
 const workspace = useWorkspaceStore()
 const project = computed(() => workspace.projects.find((p) => p.id === props.projectId) ?? null)
 const projectName = computed(() => project.value?.name ?? '')
-const ownsProject = computed(() => !!project.value?.owner_handle && project.value.owner_handle === myHandle())
-// 我管不管这个项目：「频道」一栏只给管项目的人（后端动手时按同一条规则再判一次）。
+// 我在这个项目里能做什么（#3830）：每一栏按它给不给，后端动手时按同一条规则再判一次。
 const projectRead = useQuery(
   computed(() => projectQuery(props.projectId)),
   queryClient
 )
-const managesProject = computed(() => projectRead.data.value?.can_manage_members === true)
+const ownsProject = computed(() => projectRead.data.value?.my_role === 'owner')
+const managesChannels = computed(() => mayIn(projectRead.data.value, 'manage_channels'))
+const editsSettings = computed(() => mayIn(projectRead.data.value, 'edit_settings'))
+const changesRoles = computed(() => mayIn(projectRead.data.value, 'change_roles'))
 
 const {
   loading,
@@ -161,15 +165,14 @@ const { archiving, archiveError, archiveProject } = useProjectArchive(
 )
 
 const address = useProjectAddress(() => props.projectId)
+const roles = useProjectRoles(() => props.projectId)
+const agentName = computed(() => workspace.agentName || t('work.room.defaultAgentName'))
 
 /** 九栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
-  ...(managesProject.value
-    ? [
-        { group: 'collab', key: 'channels', icon: 'mdi-pound' },
-        { group: 'collab', key: 'address', icon: 'mdi-link-variant' },
-      ]
-    : []),
+  { group: 'collab', key: 'roles', icon: 'mdi-shield-account-outline' },
+  ...(managesChannels.value ? [{ group: 'collab', key: 'channels', icon: 'mdi-pound' }] : []),
+  ...(editsSettings.value ? [{ group: 'collab', key: 'address', icon: 'mdi-link-variant' }] : []),
   { group: 'ai', key: 'agents', icon: 'mdi-robot-outline' },
   { group: 'ai', key: 'task-naming', icon: 'mdi-format-title' },
   { group: 'run', key: 'environment', icon: 'mdi-console' },
@@ -331,6 +334,16 @@ function close() {
           </section>
         </template>
 
+        <ProjectRolesSettings
+          v-else-if="section === 'roles'"
+          :grants="roles.grants.value"
+          :editable="changesRoles"
+          :agent-name="agentName"
+          :is-default="roles.isDefault.value"
+          :error="roles.error.value"
+          @toggle="roles.toggle"
+          @reset="roles.reset"
+        />
         <ProjectChannelSettings
           v-else-if="section === 'channels'"
           :project-id="projectId"

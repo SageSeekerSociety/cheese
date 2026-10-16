@@ -27,12 +27,14 @@
       "asRole": "Joins as {role}",
       "accept": "Accept",
       "approve": "Approve",
-      "decline": "Decline"
+      "decline": "Decline",
+      "transfer": "{person} is transferring a project to you"
     },
     "role": {
       "MEMBER": "member",
       "ADMIN": "admin",
-      "OWNER": "owner"
+      "OWNER": "owner",
+      "mentor": "mentor"
     }
   },
   "nav": {
