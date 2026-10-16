@@ -35,8 +35,9 @@ import type PanelDocHostComponent from './work/PanelDocHost.vue'
 import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
-import { getTopicWorkSummary, readPreviewFile } from '../api'
+import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTopicMemory } from '../composables/useTopicMemory'
+import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
 import { withViewTransition } from '../lib/viewTransition'
@@ -347,41 +348,25 @@ const {
 // 四格永远都在、位置不变：人记得住「改动在第三格」，一格时有时无的 tab 栏两次打开
 // 可能不一样长。没东西的那一格字变浅，点进去是它自己的「暂无」。这里只回答有没有，
 // 给字的深浅用，也给「开在哪一格」用——那一刻不该挑一格空的。
-const summary = ref<{ changedFiles: string[]; hasRun: boolean }>({ changedFiles: [], hasRun: false })
-// 这个房间的 summary 回来过没有。没回来之前「没有改动」还不是事实。
-const summaryLoaded = ref(false)
+//
+// 这份摘要（取数、「有没有新改动」、换话题清不清空）在
+// `composables/useTopicWorkSummary.ts` 那一层：组件不直接碰 API 层。
+const {
+  summary,
+  loaded: summaryLoaded,
+  hasNew: changesHasNew,
+  markSeen: markChangesSeen,
+  poll: readWorkSummary,
+} = useTopicWorkSummary({ topicId: conversationId, projectId })
 
 async function pollWorkSummary(opts: { seen?: boolean } = {}) {
-  const tid = conversationId.value
-  const pid = props.topic?.project_id
-  if (!tid || !pid) return
-  let next: { changed_files: string[]; has_run: boolean }
-  try {
-    next = await getTopicWorkSummary(pid, tid)
-  } catch {
-    // A failed poll is not a state: what the tabs show stays as it was. It still
-    // counts as an answer for 「开在哪一格」, which then stays on the default tab
-    // rather than waiting on a summary that may never come.
-    summaryLoaded.value = true
-    return
-  }
-  summary.value = { changedFiles: next.changed_files, hasRun: next.has_run }
-  summaryLoaded.value = true
+  // A failed poll is not a state: what the tabs show stays as it was. It still
+  // counts as an answer for 「开在哪一格」, which then stays on the default tab
+  // rather than waiting on a summary that may never come.
+  if (!(await readWorkSummary())) return
   // Arriving at a topic that already had changes is not news, exactly as it is
   // not news for the preview — the hint means 「这一轮干出来的」.
   if (opts.seen || active.value === 'changes') markChangesSeen()
-}
-
-// ---- 「改动变了」 on the 改动 tab, same shape as the preview's dot ----
-// The count is the size of the review surface and is always worth showing; what
-// needs a colour is 「这些改动是你上次看过之后才有的」. 芝士 works for minutes at a
-// time and the reader is usually on 文档 while it does, so without this the only
-// way to learn a turn produced anything was to click and compare.
-const changesKey = computed(() => summary.value.changedFiles.join('\n'))
-const changesSeen = ref<string>('')
-const changesHasNew = computed(() => !!changesKey.value && changesKey.value !== changesSeen.value)
-function markChangesSeen() {
-  changesSeen.value = changesKey.value
 }
 
 // ---- 这个房间派出去了几件活 ----
@@ -595,17 +580,8 @@ async function openFile(path: string) {
   await openFileTab(want, { lines: at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null })
 }
 
-/** 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。 */
-async function inRoomFiles(path: string): Promise<boolean> {
-  const tid = props.topic?.id
-  if (!tid) return false
-  try {
-    await readPreviewFile(tid, path)
-    return true
-  } catch {
-    return false
-  }
-}
+// 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。
+const { exists: inRoomFiles } = useRoomFileProbe(topicId)
 
 // 放进自由区，不切过去：开着的就不动，否则占临时位——有一格临时的就在原位换掉它，
 // 没有就排到最后。
