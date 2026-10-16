@@ -67,6 +67,28 @@ class _Repo:
         self.deleted.append(home)
 
 
+class _NoHomeAtFirstRead(_Repo):
+    """The session has no sandbox when placement looks, and is on ``home`` by
+    the time it has taken the pool lock — another request of the same session
+    placed it in between. Placement decides twice, and both readings find the
+    host by different routes.
+    """
+
+    def __init__(self, home, hosts, *, load=None):
+        super().__init__(None, hosts, load=load)
+        self.later = home
+        self.reads = 0
+
+    async def current_home(self, session_id):
+        self.reads += 1
+        if self.reads == 1:
+            return None
+        return self.later if self.later.session_id == session_id else None
+
+    async def lock_home(self, home_id):
+        return self.later
+
+
 class _Session:
     """The session row, plus the flush/commit calls placement makes."""
 
@@ -128,7 +150,9 @@ def _host(device_id, *, cores=4, memory_mb=8192, disk_gb=100, whole=False, **kw)
 class _Case:
     """One session whose sandbox is on ``host``, and the pool around it."""
 
-    def __init__(self, host, session_id, *, others=(), load=None):
+    def __init__(
+        self, host, session_id, *, others=(), load=None, first_read_empty=False
+    ):
         self.home = SimpleNamespace(
             id=uuid.uuid4(),
             host_id=host.id,
@@ -142,7 +166,9 @@ class _Case:
             work_lease={"status": "ready", "device_id": host.device_id},
             execution_request=None,
         )
-        self.repo = _Repo(self.home, [host, *others], load=load)
+        self.repo = (_NoHomeAtFirstRead if first_read_empty else _Repo)(
+            self.home, [host, *others], load=load
+        )
         self.session = _Session(self.row)
         self.service = HostPool.__new__(HostPool)
         self.service._repo = self.repo  # type: ignore[attr-defined]
@@ -303,6 +329,25 @@ async def test_only_a_sandbox_that_was_here_is_declared_lost(lease):
     assert moved is True
     assert case.home.session_id is None
     assert case.row.execution_request is None
+
+
+async def test_a_host_that_stopped_answering_is_left_the_second_time_too():
+    """Placement looks at the session's host twice, the second time under the
+    pool lock, and it is the second look that finds one on a host that stopped
+    answering: the first found none — another request of the same session placed
+    it in between. Only the first look answered the session its host without
+    looking at the pool, so only fixing that one would leave this route pinned
+    exactly the same way."""
+    session_id = uuid.uuid4()
+    quiet = _host("dev-quiet")
+    answering = _host("dev-answering")
+    case = _Case(quiet, session_id, others=[answering], first_read_empty=True)
+
+    host = await case.place(session_id, _Hub({"dev-answering"}))
+
+    assert host.id == answering.id, "the session was left on a host that is not there"
+    assert case.home.session_id is None, "the session still holds the old home"
+    assert case.row.execution_request["sandbox_lost"] is True
 
 
 async def test_a_session_home_not_on_that_host_is_not_moved_by_it():
