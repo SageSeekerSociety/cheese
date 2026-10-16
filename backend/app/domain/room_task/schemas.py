@@ -5,21 +5,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.presentation_meta import PresentationOut
 from app.domain.room_task.models import TaskStatus
 
-
-class PresentationOut(BaseModel):
-    """看板上这一格：哪一列，卡面写什么。
-
-    两个字段一起出，因为它们是一个答案的两半 —— 列说「该谁动」，短语说「在等什
-    么」，而每一列只能说属于自己的话（`room_task/presentation.py`）。客户端拿到
-    的是结论，不是原料：状态从来不存库，是读的时候从事实算出来的，算的地方只有
-    后端这一处，所以网页、CLI 和以后任何一个客户端不可能给出不同答案。
-    """
-
-    column: str
-    #: 短语的码（`presentation.Phrase`），字由读者的屏幕按语言画。
-    phrase: str
+#: `PresentationOut` 住在本层（`app.domain.presentation_meta`），因为
+#: `topic.schemas.TopicOut` 也要交同一个形状；在这里留一个名字，是从前读
+#: `room_task.schemas.PresentationOut` 的地方不用改。
+__all__ = ["PresentationOut", "TaskOut"]
 
 
 class TaskOut(BaseModel):
