@@ -1,166 +1,82 @@
-"""Routine run settlement, owner notifications, and archived-room reconciliation."""
+"""一次执行是怎么结束的：队友自己交回的结果，和它没交回时的判据。
+
+`report` 是队友那一路，也是唯一能改终态的那一路；`_settle_open_runs` 是平台这一
+路 —— 投递失败、这一轮压根没开始、开始了却没有回音，都由投递台账和轮次记录判
+出来。`_announce_finished` 再把结论说出去：改那条消息，并通知规则的主人。
+
+`RoutineService` 上的同名方法是转发。
+"""
 
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
+from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import listing, say
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_instance.adapters import project_team
-from app.domain.block.authorship import AuthorType
-from app.domain.block.models import Block, BlockKind
+from app.domain.block.models import Block
 from app.domain.delivery.models import Delivery
 from app.domain.notice_meta import (
-    EVENT_ROUTINE_STOPPED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
-    SEVERITY_INFO,
-    WHO_PLATFORM,
-    notice,
 )
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.routine.firing import now
 from app.domain.routine.models import (
+    TERMINAL_RUN_STATUSES,
     Routine,
     RoutineRun,
-    RoutineState,
     RunStatus,
+)
+from app.domain.routine.service._shared import (
+    NO_REPORT,
+    REPORT_TIMEOUT,
+    START_TIMEOUT,
+    now,
 )
 from app.domain.topic.models import Topic, TopicStatus
 
-#: A queued run whose turn never began is reported as not started after this.
-START_TIMEOUT = timedelta(hours=2)
-#: How long a delivered run may go without a report before it counts as failed.
-#: A turn row cannot say when the work ended: in a live session every input's
-#: row is delivered and stopped within milliseconds, and the business backend
-#: does not see whether the device's session is still busy. So the only clock
-#: is the longest a turn may run at all, plus a little for the report to land;
-#: a real failure is caught sooner by the room's own turn-failed notice.
-REPORT_TIMEOUT = timedelta(seconds=settings.agent_turn_hard_ceiling_s) + timedelta(
-    minutes=5
-)
-NO_REPORT = "AI 队友一直没有交回结果"
+if TYPE_CHECKING:
+    from app.domain.routine import service as pkg
 
 
-async def announce_archived_rooms(session: AsyncSession) -> int:
-    """归档是别处做的动作：每次对账扫一遍，哪个房间的话还没说就补上。
-
-    认房间的状态，不认是谁归档的 —— 手工归档、整个项目一起归档、脚本归档
-    走的是同一个答案，话题那一域也就不用认识周期任务。
-
-    规则自己那一行**不动**（结论：取消归档后从下一个时刻继续，
-    ``_fire_schedules`` 一直是按房间状态挑的）。要说的是每个归档了、又还有
-    在跑的规则的房间：房间里落一行「N 条规则已随归档停止」，加上给每条规则
-    主人的一条通知。
-
-    Idempotent per archive episode：房间自己的 ``archived_at`` 印在那行上，
-    已经带着本轮印子的房间跳过 —— 所以取消归档后再归档会再说一次，而手工
-    归档过的房间被项目归档又捎带一遍时不会再被说一次。
-
-    Returns how many rules were announced as stopped.
-    """
-    rooms = list(
-        await session.scalars(
-            select(Topic)
-            .where(Topic.status == TopicStatus.archived)
-            .where(
-                Topic.id.in_(
-                    select(Routine.topic_id).where(
-                        Routine.state == RoutineState.active.value
-                    )
-                )
-            )
-            # 和这一串里别的几步一样：两个后端进程同时扫，锁住的那间这次跳过，
-            # 下一轮（30 秒后）再补 —— 不然同一段归档会被说两遍。
-            .with_for_update(skip_locked=True)
-        )
-    )
-
-    stopped = 0
-    for room in rooms:
-        rules = list(
-            await session.scalars(
-                select(Routine).where(
-                    Routine.topic_id == room.id,
-                    Routine.state == RoutineState.active.value,
-                )
-            )
-        )
-        if not rules:
-            continue
-        stamp = (room.archived_at or now()).isoformat()
-        already = await session.scalar(
-            select(Block.id)
-            .where(
-                Block.conversation_id == room.id,
-                Block.meta["event_type"].as_string() == EVENT_ROUTINE_STOPPED,
-                Block.meta["archived_at"].as_string() == stamp,
-            )
-            .limit(1)
-        )
-        if already is not None:
-            continue
-        session.add(
-            Block(
-                id=uuid.uuid4(),
-                project_id=room.project_id,
-                conversation_id=room.id,
-                author="system",
-                author_type=AuthorType.platform,
-                kind=BlockKind.event,
-                content=f"{len(rules)} 条规则已随归档停止",
-                meta={
-                    **notice(
-                        EVENT_ROUTINE_STOPPED,
-                        severity=SEVERITY_INFO,
-                        who=WHO_PLATFORM,
-                        detail="\n".join(f"「{r.title}」" for r in rules),
-                        detail_label="规则",
-                    ),
-                    "routine_ids": [str(r.id) for r in rules],
-                    "archived_at": stamp,
-                },
-            )
-        )
-        for rule in rules:
-            await ProjectNotificationService(session, team=project_team).create(
-                project_id=rule.project_id,
-                level=NotificationLevel.light,
-                kind=NotificationType.CHANGE_ALERT,
-                title=f"周期任务「{rule.title}」已随话题归档停止",
-                body=(
-                    f"房间「{room.title}」归档了，这条规则随之停下。"
-                    "取消归档后它会从下一个时刻继续，不用重新设置。"
-                ),
-                target_handle=rule.owner_handle,
-                conversation_id=room.id,
-                payload={"routine_id": str(rule.id)},
-            )
-        stopped += len(rules)
-    await session.flush()
-    return stopped
-
-
-async def archived_room_ids(
-    session: AsyncSession, topic_ids: list[uuid.UUID]
-) -> set[uuid.UUID]:
-    """这些房间里哪些归档了，一次查询问完。
-
-    规则的自己那一行不记「房间没了」（归档不写规则），所以列表上的
-    「已随话题归档停止」只能问房间 —— 一条一条问就是每行一次往返。
-    """
-    if not topic_ids:
-        return set()
-    stmt = select(Topic.id).where(
-        Topic.id.in_(topic_ids), Topic.status == TopicStatus.archived
-    )
-    return set((await session.scalars(stmt)).all())
+async def report(
+    svc: pkg.RoutineService,
+    run: RoutineRun,
+    *,
+    by: str,
+    status: str,
+    summary: str,
+    outputs: list[str],
+) -> RoutineRun:
+    routine = await svc.get(run.routine_id)
+    if by != routine.agent_handle:
+        raise ForbiddenError(say("routineOnlyRunnerReports"))
+    if status not in (RunStatus.succeeded, RunStatus.failed):
+        raise ValidationError(say("routineStatusInvalid"))
+    late = run.status == RunStatus.failed and run.error == NO_REPORT
+    if run.status in TERMINAL_RUN_STATUSES and not late:
+        raise ValidationError(say("routineRunEnded"))
+    if status == RunStatus.failed and not summary.strip():
+        raise ValidationError(say("routineFailureNeedsReason"))
+    run.status = status
+    run.summary = summary.strip()
+    run.outputs = [str(p) for p in outputs][:50]
+    if status == RunStatus.failed:
+        run.error = run.summary
+    run.finished_at = now()
+    run.started_at = run.started_at or run.finished_at
+    if late:
+        # The owner was told it failed; tell them how it actually went.
+        run.notified = False
+        if status == RunStatus.succeeded:
+            run.error = ""
+    await svc._session.flush()
+    return run
 
 
 async def _turn_failure(session: AsyncSession, turn_id: uuid.UUID) -> str | None:
