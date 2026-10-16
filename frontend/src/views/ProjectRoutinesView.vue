@@ -11,6 +11,7 @@
 //
 // 这一页建不了规则：建只在房间右侧那一格。这里摆着全项目的规则，看得到、改得动。
 import type { RoutineInput } from '@/lib/routine'
+import type { RoutineTemplateInput } from '@/lib/routineTemplates'
 import type { Topic } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -35,7 +36,12 @@ const agentName = useProjectAgentName()
 
 const rooms = ref<Topic[]>([])
 
-const { templates, add: addTemplate, remove: removeTemplate } = useRoutineTemplates(() => props.projectId)
+const {
+  templates,
+  add: addTemplate,
+  change: changeTemplate,
+  remove: removeTemplate,
+} = useRoutineTemplates(() => props.projectId)
 
 const {
   routines,
@@ -112,6 +118,19 @@ async function onSubmit(payload: { room: string; body: RoutineInput; keepAsTempl
   if (!(await addTemplate(payload.body))) error.value = t('routines.template.saveFailed')
 }
 
+/** 模板那页改了一条模板：和存一条规则一样，改上了把这一页收起来（列表里那一条已经
+ *  是新的了）；没改上就留在这张表上写一句，人再存一次不用重填。 */
+async function onUpdateTemplate(payload: { id: string; body: RoutineTemplateInput }) {
+  saving.value = true
+  formError.value = ''
+  try {
+    if (await changeTemplate(payload.id, payload.body)) formOpen.value = false
+    else formError.value = t('routines.template.saveFailed')
+  } finally {
+    saving.value = false
+  }
+}
+
 useCommands(() => [
   {
     id: 'routines.refresh',
@@ -154,6 +173,7 @@ useCommands(() => [
     @records-failed-only="setRecordsFailedOnly"
     @update:model-value="(open) => (open ? (formOpen = true) : closeForm())"
     @save="onSubmit"
+    @update-template="(payload) => void onUpdateTemplate(payload)"
     @delete-template="(tpl) => void removeTemplate(tpl.id)"
   />
 </template>

@@ -9,7 +9,7 @@
 // `can_delete` 是后端逐条算好的，这一格不自己算：删不掉的那一条在 `RoutineRow` 里
 // 不画删除，别的动作都在——读得到就改得动。
 import type { Routine, RoutineInput, RoutineRecordsView, RoutineRun } from '@/lib/routine'
-import type { RoutineTemplate } from '@/lib/routineTemplates'
+import type { RoutineTemplate, RoutineTemplateInput } from '@/lib/routineTemplates'
 
 import RoutineBoard from '../routine/RoutineBoard.vue'
 import RoutineCompose from '../routine/RoutineCompose.vue'
@@ -83,6 +83,8 @@ const emit = defineEmits<{
   (e: 'submit', payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }): void
   /** 点了「项目里存的」那一条上的「删除」。 */
   (e: 'delete-template', template: RoutineTemplate): void
+  /** 模板那页改了一条，按了「保存」：改的就是那一条模板本身。 */
+  (e: 'update-template', payload: { id: string; body: RoutineTemplateInput }): void
 }>()
 </script>
 
@@ -117,6 +119,7 @@ const emit = defineEmits<{
         :error="formError"
         @update:model-value="(open) => emit('form-open-change', open)"
         @save="(p) => emit('submit', p)"
+        @update-template="(p) => emit('update-template', p)"
         @delete-template="(tpl) => emit('delete-template', tpl)"
       />
       <!-- 看记录的时候这一格就只剩记录：返回箭头自己带着回列表那条路，上面那串工具

@@ -97,6 +97,8 @@
       "monthly": "Day {day} of every month at {time}",
       "hourly": "{minute} minutes past every hour"
     },
+    "editTitle": "Edit the template “{title}”",
+    "nameLabel": "Template name",
     "presets": {
       "weekly": {
         "title": "Weekly report",

@@ -97,6 +97,8 @@
       "monthly": "每月 {day} 日 {time}",
       "hourly": "每小时的 {minute} 分"
     },
+    "editTitle": "改模板「{title}」",
+    "nameLabel": "模板名字",
     "presets": {
       "weekly": {
         "title": "周报",

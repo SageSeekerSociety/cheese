@@ -11,6 +11,7 @@
 // 取数都接在这里，画的那一半只收结果——panels/ 下的每个 SFC 都是场景棘轮里的「场景」，
 // 新场景必须第一天就是 A 档，所以取数一滴都不能漏到 `PanelRoutines.vue` 里去。
 import type { Routine, RoutineInput } from '@/lib/routine'
+import type { RoutineTemplateInput } from '@/lib/routineTemplates'
 
 import { nextTick, ref, watch } from 'vue'
 
@@ -71,7 +72,25 @@ const {
   tick: props.refreshTick,
 })
 
-const { templates, add: addTemplate, remove: removeTemplate } = useRoutineTemplates(() => props.projectId ?? '')
+const {
+  templates,
+  add: addTemplate,
+  change: changeTemplate,
+  remove: removeTemplate,
+} = useRoutineTemplates(() => props.projectId ?? '')
+
+/** 模板页上改了一条模板：和存一条规则一样，改上了把这一页收起来（那一条已经改在
+ *  列表里了）；没改上就留在这张表上写一句，人再存一次不用重填。 */
+async function onUpdateTemplate(payload: { id: string; body: RoutineTemplateInput }) {
+  saving.value = true
+  formError.value = ''
+  try {
+    if (await changeTemplate(payload.id, payload.body)) formOpen.value = false
+    else formError.value = t('routines.template.saveFailed')
+  } finally {
+    saving.value = false
+  }
+}
 
 /** 表单存下去。勾了「存成模板」就把这张表也收成一条 —— 存规则失败时那一条不留下。
  *  两处各自会失败：规则存下了、模板没存上要说一句，人下次找不到那一条。 */
@@ -179,6 +198,7 @@ defineExpose({
     @open-file="(path) => emit('open-file', path)"
     @form-open-change="(open) => (open ? (formOpen = true) : closeForm())"
     @submit="onSubmit"
+    @update-template="(payload) => void onUpdateTemplate(payload)"
     @delete-template="(tpl) => void removeTemplate(tpl.id)"
   />
 </template>

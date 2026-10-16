@@ -590,6 +590,37 @@ async def create_routine_template(
     return ok(_template(row))
 
 
+@router.patch(
+    "/routine-templates/{template_id}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoutineTemplateOut),
+)
+async def update_routine_template(
+    template_id: uuid.UUID,
+    body: RoutineTemplateIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """改这一条模板本身：名字、目标、补充说明、触发方式、时间都落在原来这一行上。
+
+    和存一条同一套校验、同一份权限（项目的一份，读得到就改得动）。已经照它建出来的
+    规则不动：模板是底稿，建出来的各是各的。
+    """
+    row = await RoutineTemplateService(db).get(template_id)
+    actor = await resolver.resolve(project_id=row.project_id)
+    await resolver.authorize_project(actor, project_id=row.project_id)
+    row = await RoutineTemplateService(db).update(
+        row,
+        title=body.title,
+        goal=body.goal,
+        note=body.note,
+        trigger=body.trigger,
+        spec=body.spec,
+    )
+    await db.commit()
+    return ok(_template(row))
+
+
 @router.delete(
     "/routine-templates/{template_id}",
     dependencies=[ROUTE_DECIDES],

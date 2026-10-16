@@ -4,7 +4,7 @@
 // 画的是同一份；取数、读地址留在容器 `ProjectRoutinesView.vue` 里，这一半只收 props、
 // 只把动作抛上去。
 import type { Routine, RoutineInput, RoutineRecordsView, RoutineRun } from '@/lib/routine'
-import type { RoutineTemplate } from '@/lib/routineTemplates'
+import type { RoutineTemplate, RoutineTemplateInput } from '@/lib/routineTemplates'
 
 import AppPage from '@/components/common/AppPage.vue'
 import RoutineBoard from '@/components/routine/RoutineBoard.vue'
@@ -48,6 +48,7 @@ defineEmits<{
   'update:model-value': [open: boolean]
   save: [payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }]
   'delete-template': [template: RoutineTemplate]
+  'update-template': [payload: { id: string; body: RoutineTemplateInput }]
 }>()
 </script>
 
@@ -65,6 +66,7 @@ defineEmits<{
       :error="formError"
       @update:model-value="(open) => $emit('update:model-value', open)"
       @save="(payload) => $emit('save', payload)"
+      @update-template="(payload) => $emit('update-template', payload)"
       @delete-template="(tpl) => $emit('delete-template', tpl)"
     />
 

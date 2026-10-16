@@ -11,8 +11,10 @@
 //
 // 「时间」和「条件」两颗勾选框看着是两样，其实是同一个 `trigger` 的二选一：一条规则只有
 // 一种触发方式。所以勾上这一颗就是取消那一颗，取消勾选是切换，不是「两样都不要」。
+//
+// 条件那一头记着的是 `eventTrigger`，取消再勾回来还是刚才那一样：勾选框只是它的开关。
 import type { Routine, RoutineInput, RoutineTrigger } from '@/lib/routine'
-import type { RoutineTemplate } from '@/lib/routineTemplates'
+import type { RoutineTemplate, RoutineTemplateInput } from '@/lib/routineTemplates'
 
 import { computed, reactive, ref, watch } from 'vue'
 
@@ -55,6 +57,8 @@ const emit = defineEmits<{
   (e: 'save', payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }): void
   /** 点了「项目里存的」那一条上的「删除」。 */
   (e: 'delete-template', template: RoutineTemplate): void
+  /** 点了「项目里存的」那一条上的「修改」，然后按了「保存」：改的就是那一条模板本身。 */
+  (e: 'update-template', payload: { id: string; body: RoutineTemplateInput }): void
 }>()
 
 /** 两页：新建（那张表）和模板（挑一条铺进去）。改一条已有时只有那张表。 */
@@ -75,6 +79,8 @@ const form = reactive({
 })
 
 const editing = ref<Routine | null>(null)
+/** 正在改的那一条模板；`null` 是没在改模板。改模板时那张表填的是它。 */
+const editingTemplate = ref<RoutineTemplate | null>(null)
 /** 「条件」那一颗勾上时用哪一种：勾上「时间」不会忘掉它上一次选的是哪一样。 */
 const eventTrigger = ref<RoutineTrigger>('library_file_added')
 /** 「存成模板」那一颗。新建时勾得动，改一条已有的时不画（那条规则已经在了）。 */
@@ -90,6 +96,7 @@ watch(
     if (!open) return
     const r = props.routine
     editing.value = r
+    editingTemplate.value = null
     tab.value = 'new'
     asTemplate.value = false
     attempted.value = false
@@ -175,6 +182,8 @@ function whenText(tpl: RoutineTemplate): string {
 
 /** 挑一条模板：把它那几格铺进表里，然后翻到那张表上让人看一眼、再改。 */
 function applyTemplate(tpl: RoutineTemplate) {
+  // 挑一条来填表不是改它：从这一页存下去是建一条规则，不是把模板改掉。
+  editingTemplate.value = null
   form.title = tpl.title
   form.instructions = tpl.goal
   form.note = tpl.note ?? ''
@@ -189,6 +198,34 @@ function applyTemplate(tpl: RoutineTemplate) {
   } else {
     eventTrigger.value = tpl.trigger
   }
+  tab.value = 'new'
+}
+
+/**
+ * 改一条模板本身：把那几格铺进表里，存下去落在原来那一条上。
+ *
+ * 和「挑一条来填表」走的是同一张表、同一份铺法，差的是存的时候往哪去：这一个不再是
+ * 一条新规则的底稿，所以那一页上不画「存成模板」。
+ */
+function editTemplate(tpl: RoutineTemplate) {
+  applyTemplate(tpl)
+  editingTemplate.value = tpl
+}
+
+/** 从「模板」那页挑一条 / 回到那一页：拿起另一条或放下手里这条，都不再是在改某一条。 */
+function showTemplates() {
+  editingTemplate.value = null
+  tab.value = 'template'
+}
+
+/**
+ * 翻回「新建」那一页。
+ *
+ * 手里改着一条模板时这一下要把它放下：不放下的话，这张表上写着的是那条模板、底下那颗
+ * 按钮存下去还是它，而人以为自己站的是一张空表。
+ */
+function showNew() {
+  editingTemplate.value = null
   tab.value = 'new'
 }
 
@@ -210,6 +247,20 @@ const localError = computed(() => {
 function submit() {
   attempted.value = true
   if (localError.value) return
+  const tpl = editingTemplate.value
+  if (tpl) {
+    emit('update-template', {
+      id: tpl.id,
+      body: {
+        title: form.title,
+        goal: form.instructions,
+        note: form.note,
+        trigger: form.trigger,
+        spec: specFromForm(),
+      },
+    })
+    return
+  }
   emit('save', {
     room: form.room,
     body: {
@@ -228,14 +279,18 @@ function submit() {
 <template>
   <div v-if="modelValue" class="compose">
     <p v-if="editing" class="compose__edit">{{ t('routines.editTitle', { title: editing.title }) }}</p>
-    <div v-else class="compose__tabs" role="tablist" :aria-label="t('routines.compose.tab.label')">
+    <!-- 改一条模板：还是那两页页签（改完可能想直接照它建一条），只多一行说清改的是谁。 -->
+    <p v-else-if="editingTemplate" class="compose__edit">
+      {{ t('routines.template.editTitle', { title: editingTemplate.title }) }}
+    </p>
+    <div v-if="!editing" class="compose__tabs" role="tablist" :aria-label="t('routines.compose.tab.label')">
       <button
         type="button"
         role="tab"
         class="compose__tab"
         :class="{ 'compose__tab--on': tab === 'new' }"
         :aria-selected="tab === 'new'"
-        @click="tab = 'new'"
+        @click="showNew"
       >
         {{ t('routines.compose.tab.new') }}
       </button>
@@ -245,7 +300,7 @@ function submit() {
         class="compose__tab"
         :class="{ 'compose__tab--on': tab === 'template' }"
         :aria-selected="tab === 'template'"
-        @click="tab = 'template'"
+        @click="showTemplates"
       >
         {{ t('routines.compose.tab.template') }}
       </button>
@@ -273,14 +328,24 @@ function submit() {
               <span class="tpl__title">{{ tpl.title }}</span>
               <span class="tpl__meta">{{ whenText(tpl) }} · {{ tpl.goal }}</span>
             </button>
+            <!-- 自己存的这几条行尾直接摆「修改」「删除」，不用点开 ⋯；预置那几条没有
+                 —— 平台跟着版本发，要用就照着它建一条，改那条。 -->
+            <button type="button" class="tpl__act" @click="editTemplate(tpl)">
+              {{ t('routines.action.edit') }}
+            </button>
+            <button type="button" class="tpl__act tpl__act--danger" @click="emit('delete-template', tpl)">
+              {{ t('routines.action.delete') }}
+            </button>
           </li>
         </ul>
       </template>
     </div>
 
     <div v-else class="compose__body">
+      <!-- 改模板那张表上没有「频道」可挑：模板不落在哪个房间里，从它建出来的规则才落。
+           房间里那一格照样写出这个房间的名字 —— 它说的是「你在哪儿」，不是给模板定的。 -->
       <v-select
-        v-if="rooms.length"
+        v-if="rooms.length && !editingTemplate"
         v-model="form.room"
         autocomplete="off"
         :items="rooms"
@@ -297,7 +362,13 @@ function submit() {
 
       <p class="t-meta c-faint compose__hint">{{ t('routines.form.autoHint') }}</p>
 
-      <v-text-field v-model="form.title" autocomplete="off" :label="t('routines.form.name')" class="mb-3" />
+      <!-- 改模板时那一格叫「模板名字」：这时候写的是这条模板的名字，不是一条规则的名字。 -->
+      <v-text-field
+        v-model="form.title"
+        autocomplete="off"
+        :label="editingTemplate ? t('routines.template.nameLabel') : t('routines.form.name')"
+        class="mb-3"
+      />
       <v-textarea
         v-model="form.instructions"
         autocomplete="off"
@@ -385,8 +456,9 @@ function submit() {
     </div>
 
     <div class="compose__foot">
+      <!-- 改模板时不画这一颗：改的就是模板本身，没有第二份要存。 -->
       <v-checkbox
-        v-if="!editing"
+        v-if="!editing && !editingTemplate"
         v-model="asTemplate"
         autocomplete="off"
         :label="t('routines.form.keepTemplate')"
@@ -543,6 +615,29 @@ function submit() {
 .tpl__pick:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
+}
+/* 「修改」「删除」摆在行尾，和规则那一行上的两颗一样：改的是这一条，不是挑它。 */
+.tpl__act {
+  flex: none;
+  align-self: stretch;
+  padding: 0 10px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tpl__act:hover {
+  color: var(--ink);
+}
+.tpl__act:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.tpl__act--danger:hover {
+  color: var(--danger-ink);
 }
 .tpl__title {
   color: var(--text);

@@ -4,7 +4,7 @@ A template is what the form held, kept to fill the next one from — not a rule.
 Nothing runs off it and nothing reports back to it, so a template has no owner,
 no state and no run history, and it belongs to the project rather than to the
 room or to the person who typed it: whoever may read the project reads the same
-list, and may add to it or take from it.
+list, and may add to it, change what is on it, or take from it.
 
 What it does share with a rule is the two fields that are easy to get wrong —
 ``trigger`` and ``spec`` — and those go through the same check a rule's do
@@ -62,21 +62,53 @@ class RoutineTemplateService:
         spec: dict,
     ) -> RoutineTemplate:
         """存下一条。名字没写就从目标的第一句里取，和一条规则一样（`name_of`）。"""
-        goal = (goal or "").strip()
-        if not goal:
-            raise ValidationError(say("routineTemplateGoalRequired"))
         row = RoutineTemplate(
             id=uuid.uuid4(),
             project_id=project_id,
-            title=name_of(title, goal),
-            goal=goal,
-            note=(note or "").strip(),
-            trigger=trigger,
-            spec=validate_spec(trigger, spec, CHECK_TZ),
+            **_fields(title=title, goal=goal, note=note, trigger=trigger, spec=spec),
         )
         self._session.add(row)
         await self._session.flush()
         return row
 
+    async def update(
+        self,
+        row: RoutineTemplate,
+        *,
+        title: str,
+        goal: str,
+        note: str,
+        trigger: str,
+        spec: dict,
+    ) -> RoutineTemplate:
+        """改这一条本身：填的是同一批格子，也就过同一套校验。
+
+        改模板不动已经建出来的规则 —— 模板是底稿，从它填出来的一条各是各的。
+        """
+        for field, value in _fields(
+            title=title, goal=goal, note=note, trigger=trigger, spec=spec
+        ).items():
+            setattr(row, field, value)
+        await self._session.flush()
+        return row
+
     async def delete(self, row: RoutineTemplate) -> None:
         await self._session.delete(row)
+
+
+def _fields(*, title: str, goal: str, note: str, trigger: str, spec: dict) -> dict:
+    """存一条和改一条填的是同一批格子：名字、目标、补充说明、触发方式、时间。
+
+    名字没写就从目标的第一句里取（`name_of`）；`spec` 走规则那一套校验，一条规则做不
+    出来的表也不该存成模板。
+    """
+    goal = (goal or "").strip()
+    if not goal:
+        raise ValidationError(say("routineTemplateGoalRequired"))
+    return {
+        "title": name_of(title, goal),
+        "goal": goal,
+        "note": (note or "").strip(),
+        "trigger": trigger,
+        "spec": validate_spec(trigger, spec, CHECK_TZ),
+    }
