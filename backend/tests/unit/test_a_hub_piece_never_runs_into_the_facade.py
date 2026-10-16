@@ -4,11 +4,15 @@
 ``calls``／``local_fs``／``viewers``／``inbound`` 取身子，子模块之间只横着互引兄弟
 （``viewers`` 问 ``sessions`` 要一块屏幕）。运行时反着引一次就是环，而环在这层的
 后果看导入谁先：``import app.domain.agent.device_hub.viewers`` 先到时，门面正引到
-一半，那里的 ``DeviceHub`` 还不存在。
+一半，那里的 ``DeviceHub`` 还不存在——报出来的是「partially initialized module」。
 
-**类型标注不算。** 子模块给 ``hub`` 标 ``pkg.DeviceHub`` 时在 ``TYPE_CHECKING`` 里
-引门面，运行时那一句不执行，导入图上没有这条边——这是这套拆法本来就用的写法，下面
-的判据跟着它走。
+**类型标注不算。** 子模块给 ``hub`` 标 ``pkg.DeviceHub`` 时在 ``if TYPE_CHECKING:``
+里引门面，运行时那一句不执行，导入图上没有这条边——这是这套拆法本来就用的写法，
+下面的判据跟着它走。别名（``as TC``）也认。
+
+**相对写法也算。** ``from . import DeviceHub`` 就是回头引门面，只是名字短；``from
+.link import X`` 是横引兄弟，不算。仓库里相对导入不是空想（``review/services`` 就在
+用），所以两种写法都读。
 
 **这段 C3 看不见。** ``acyclic_siblings`` 数的是 ``app.domain`` 的孩子和它们的孩子
 之间的环；包自己是一个节点，它内部这些子模块不在它的账上。所以在这里点名扫包内，而
@@ -27,14 +31,52 @@ PACKAGE = (
 #: 门面自己当然要从子模块里取名字，它不在这条规矩的对象里。
 FACADE = "__init__.py"
 
+#: 同级兄弟。`from . import X` 取到的是它们，那就是横引，不算回头。
+SIBLINGS = {path.stem for path in PACKAGE.glob("*.py") if path.name != FACADE}
 
-def _is_the_facade(node: ast.ImportFrom | ast.Import) -> bool:
-    """这一句导的是门面吗。两种写法都认：``...device_hub`` 和 ``agent`` 里那个。"""
+
+def _type_checking_names(tree: ast.Module) -> set[str]:
+    """这份文件里能当 ``TYPE_CHECKING`` 用的名字，别名一起收。"""
+    names = {"TYPE_CHECKING"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[-1] == (
+            "typing"
+        ):
+            names.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "TYPE_CHECKING"
+            )
+    return names
+
+
+def _is_type_checking(test: ast.expr, names: set[str]) -> bool:
+    """``if`` 的判断是不是 ``TYPE_CHECKING``（``typing.TYPE_CHECKING`` 也算）。"""
+    called = (
+        getattr(test, "id", None)
+        if isinstance(test, ast.Name)
+        else getattr(test, "attr", None)
+    )
+    return called in names
+
+
+def _is_the_facade(node: ast.AST) -> bool:
+    """这一句导的是门面吗。两种绝对写法、两种相对写法都读。"""
+    if not isinstance(node, (ast.Import, ast.ImportFrom)):
+        return False
     if isinstance(node, ast.Import):
         return any(
             alias.name == MODULE or alias.name.startswith(MODULE + ".")
             for alias in node.names
         )
+    if node.level:
+        # `from .link import X`：同级兄弟。`from . import X`：从门面里取，取到兄弟
+        # （`from . import sessions`）才例外。`from .. import device_hub` 点了门面的名。
+        if node.module is not None:
+            return False
+        if node.level == 1:
+            return any(alias.name not in SIBLINGS for alias in node.names)
+        return any(alias.name == "device_hub" for alias in node.names)
     if node.module == MODULE:
         # `from app.domain.agent.device_hub import X` —— 兄弟是 `...device_hub.link`。
         return True
@@ -44,43 +86,97 @@ def _is_the_facade(node: ast.ImportFrom | ast.Import) -> bool:
     )
 
 
-def _imports_run_at_runtime(path: Path) -> list[tuple[int, str]]:
-    """这份文件里运行时真的会执行的（也就是不在 ``if TYPE_CHECKING:`` 底下的）导入。"""
-    tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
-    inside_type_checking: set[ast.AST] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.If):
-            guarded = node.test
-            named = (
-                getattr(guarded, "id", None)
-                if isinstance(guarded, ast.Name)
-                else getattr(guarded, "attr", None)
-            )
-            if named == "TYPE_CHECKING":
-                inside_type_checking.update(ast.walk(node))
+def _runtime_imports(source: str, where: str) -> list[ast.Import | ast.ImportFrom]:
+    """这段源码里运行时真会执行的导入——``if TYPE_CHECKING:`` 底下的那些不算。
 
-    found: list[tuple[int, str]] = []
+    只走 ``if`` 的 ``body``，不走 ``orelse``：``else:`` 那一支是运行时的。
+    """
+    tree = ast.parse(source, where)
+    names = _type_checking_names(tree)
+    type_only: set[ast.AST] = set()
     for node in ast.walk(tree):
-        if node in inside_type_checking:
-            continue
-        if isinstance(node, (ast.Import, ast.ImportFrom)) and _is_the_facade(node):
-            found.append((node.lineno, ast.unparse(node)))
-    return found
+        if isinstance(node, ast.If) and _is_type_checking(node.test, names):
+            type_only.update(
+                inner for statement in node.body for inner in ast.walk(statement)
+            )
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and node not in type_only
+    ]
+
+
+def _reaching_back(source: str, where: str) -> list[str]:
+    return [
+        ast.unparse(node)
+        for node in _runtime_imports(source, where)
+        if _is_the_facade(node)
+    ]
 
 
 def test_no_hub_submodule_imports_the_facade_at_runtime():
-    pieces = sorted(p for p in PACKAGE.glob("*.py") if p.name != FACADE)
+    pieces = sorted(path for path in PACKAGE.glob("*.py") if path.name != FACADE)
     # 扫不出文件就是路径写歪了，别让这条测试空着过。
-    assert {"link.py", "sessions.py", "calls.py"} <= {p.name for p in pieces}
+    assert {"link.py", "sessions.py", "calls.py"} <= {path.name for path in pieces}
 
     reaching_back = [
-        (path.name, lineno, source)
+        (path.name, node.lineno, ast.unparse(node))
         for path in pieces
-        for lineno, source in _imports_run_at_runtime(path)
+        for node in _runtime_imports(path.read_text(encoding="utf-8"), str(path))
+        if _is_the_facade(node)
     ]
 
     assert not reaching_back, (
         f"这些子模块运行时引了门面：{reaching_back}。"
         "门面引子模块、子模块再引门面就是环，导入谁先决定它炸不炸；"
-        "要 hub 的类型就放进 `if TYPE_CHECKING:`，或在门面里把名字转出去。"
+        "要 hub 的类型就放进 `if TYPE_CHECKING:`，或者在门面里把名字转出去。"
+    )
+
+
+def test_the_guard_reads_the_shapes_it_claims_to_read():
+    """规矩本身也过一遍。
+
+    上面那条测试绿，只说明树里现在干净；它读不认得某种写法的话，有人用那种写法把
+    环引回来，一样是绿的。所以判据对着合成的源码逐条问一遍——写法对了它得报，兄弟
+    和类型标注得放过。
+    """
+    for source in (
+        "from app.domain.agent.device_hub import DeviceHub",
+        "import app.domain.agent.device_hub",
+        "import app.domain.agent.device_hub as pkg",
+        "from app.domain.agent import device_hub",
+        "from app.domain.agent import device_hub as pkg",
+        "from . import DeviceHub",
+        "from .. import device_hub",
+        "def f():\n    from app.domain.agent.device_hub import DeviceHub\n",
+    ):
+        assert _reaching_back(source, "<sample>"), source
+
+    for source in (
+        "from app.domain.agent.device_hub.sessions import _require_screen",
+        "from .link import DeviceTransport",
+        "from . import sessions",
+        "from app.domain.agent import device_link",
+    ):
+        assert not _reaching_back(source, "<sample>"), source
+
+    # 类型标注那一支：`TYPE_CHECKING` 底下的不报，`else:` 里的报。别名一样算。
+    for source in (
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    from app.domain.agent.device_hub import DeviceHub\n",
+        "from typing import TYPE_CHECKING as TC\n"
+        "if TC:\n"
+        "    from app.domain.agent.device_hub import DeviceHub\n",
+        "import typing\nif typing.TYPE_CHECKING:\n    from . import DeviceHub\n",
+    ):
+        assert not _reaching_back(source, "<sample>"), source
+
+    assert _reaching_back(
+        "from typing import TYPE_CHECKING\n"
+        "if TYPE_CHECKING:\n"
+        "    pass\n"
+        "else:\n"
+        "    from app.domain.agent.device_hub import DeviceHub\n",
+        "<sample>",
     )

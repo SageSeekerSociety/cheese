@@ -68,9 +68,14 @@ def _names_imported_from_the_hub() -> dict[str, list[str]]:
 def test_every_name_the_tree_imports_from_the_hub_is_still_there():
     hub = importlib.import_module(MODULE)
     imported = _names_imported_from_the_hub()
-    # 扫不出东西就是扫错了（比如路径写歪），别让这条测试空着过。`HubScreen` 只有
-    # 顶层 `scripts/` 里那处在导，它顺带看着整仓这一半还在扫。
-    assert {"device_hub", "DeviceHub", "DeviceOffline", "HubScreen"} <= set(imported)
+
+    # 扫描范围本身要看着。名字的地板断言看不出范围缩回去了：树里导这些名字的地方
+    # 九成在 `backend/app` 里，缩回 `app` + `tests` 它照样绿。所以直接数范围——顶层
+    # `scripts/` 里那两处在册，才算真的在扫整仓。
+    sites = [site for place in imported.values() for site in place]
+    assert any(site.startswith("scripts/") for site in sites), sites
+    # 一条都扫不出来就是扫错了（路径拼歪、正则改坏），别让这条测试空着过。
+    assert {"device_hub", "DeviceHub", "DeviceOffline"} <= set(imported)
 
     missing = {
         name: where for name, where in imported.items() if not hasattr(hub, name)

@@ -28,10 +28,14 @@ imports by *this* module:
   * the public surface of ``DeviceHub`` — the remote hub must have every public
     method this class has (``test_remote_hub_answers_every_hub_call.py``), so
     each one stays in the class body as a one-line delegation;
-  * the other half of the same rule, reading ``vars(DeviceHub)``
-    (``test_remote_hub_answers_every_hub_call.py``) and overriding it in the
-    test-double subclasses (``test_device_hub.py``): ``_device``,
-    ``attach_device``/``detach_device`` and the device-connection reads;
+  * the other half of the same rule — the names the tree reaches through an
+    *object* rather than this module. The audit takes them off
+    ``vars(DeviceHub)`` (``test_remote_hub_answers_every_hub_call.py``); the
+    hub's own tests call ``_device`` and ``attach_device``/``detach_device`` on
+    an instance (``test_device_hub.py``); the doubles replace the
+    device-connection reads on one (``is_online`` and the screen queries, in
+    ``test_a_replaced_hub_method_is_what_the_hub_uses.py`` and
+    ``test_session_work_leases.py``);
   * the singleton at the bottom, and the failures/screen shape re-exported from
     ``device_contract``.
 
