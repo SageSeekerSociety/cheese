@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1455,6 +1456,207 @@ def _load_by_path(name: str, path: Path):
     return module
 
 
+#: Two sibling modules of one directory, before and after a name walks from the
+#: first to the second. `keep` and `other` stay put so the change is a move and
+#: not a rewrite, and `_helper` is the private name the 2026-10-08 move carried.
+MOVE_BEFORE_FOO = '''\
+def keep(value):
+    return value
+
+
+def _helper(value):
+    return value + 1
+'''
+
+MOVE_AFTER_FOO = '''\
+def keep(value):
+    return value
+'''
+
+MOVE_BEFORE_BAR = '''\
+def other(value):
+    return value
+'''
+
+MOVE_AFTER_BAR = '''\
+def other(value):
+    return value
+
+
+def _helper(value):
+    return value + 2
+'''
+
+#: A script outside the package, reading the moved name from the file it left.
+#: `backend/scripts/` is the directory `[tool.pyright]`'s `include = ["app"]`
+#: leaves unchecked, which is why nothing local saw the 2026-10-08 move.
+STALE_CALLER = "from app.foo import _helper\n"
+MOVED_CALLER = "from app.bar import _helper\n"
+
+
+class MoveFixture:
+    """A throwaway repository whose two modules are siblings under `app`."""
+
+    def __init__(self, root: Path, commit_bar: bool = True) -> None:
+        self.root = root
+        self._write("backend/app/__init__.py", "")
+        self._write("backend/app/foo.py", MOVE_BEFORE_FOO)
+        self._write("backend/scripts/tool.py", STALE_CALLER)
+        tracked = ["backend/app/__init__.py", "backend/app/foo.py",
+                   "backend/scripts/tool.py"]
+        if commit_bar:
+            self._write("backend/app/bar.py", MOVE_BEFORE_BAR)
+            tracked.append("backend/app/bar.py")
+        _git(root, "init", "-q", "-b", "main")
+        for key, value in (
+            ("user.email", "self-test@example.invalid"),
+            ("user.name", "verify-module-split self-test"),
+            ("commit.gpgsign", "false"),
+            ("tag.gpgsign", "false"),
+            ("gc.auto", "0"),
+        ):
+            _git(root, "config", key, value)
+        _git(root, "add", *tracked)
+        _git(root, "commit", "-q", "-m", "both modules before the move")
+        self.base = _git(root, "rev-parse", "HEAD").strip()
+
+    def _write(self, relative: str, text: str) -> None:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def caller(self, source: str) -> None:
+        self._write("backend/scripts/tool.py", source)
+
+    def move(self) -> None:
+        self._write("backend/app/foo.py", MOVE_AFTER_FOO)
+        self._write("backend/app/bar.py", MOVE_AFTER_BAR)
+
+    def run_tool(self) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(TOOL),
+                "--check-moves",
+                "backend/app",
+                "--base-ref",
+                self.base,
+                "--repo-root",
+                str(self.root),
+            ],
+            capture_output=True,
+            text=True,
+            env=ENV,
+            cwd=str(self.root),
+        )
+
+
+class MovedNameTests(unittest.TestCase):
+    """A name that left one file for a sibling while a caller still reads it
+    where it used to be: the shape no gate in this repository caught on
+    2026-10-08, when `ClaudeLaunch` moved between two harness modules and only
+    CI's acceptance job went red."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-")
+        self.addCleanup(tmp.cleanup)
+        self.fixture = MoveFixture(Path(tmp.name) / "repo")
+
+    def test_a_caller_of_the_name_it_left_is_blocked(self) -> None:
+        self.fixture.move()
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("backend/scripts/tool.py:1", result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂", result.stdout)
+        self.assertIn("app.foo._helper", result.stdout)
+
+    def test_the_report_names_the_sibling_that_took_the_name(self) -> None:
+        """A deletion reads as a deletion; the destination is what makes it a move."""
+        self.fixture.move()
+        result = self.fixture.run_tool()
+        self.assertIn("符号搬移: app.foo._helper → app.bar", result.stdout)
+
+    def test_retargeting_the_caller_clears_it(self) -> None:
+        self.fixture.move()
+        self.fixture.caller(MOVED_CALLER)
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("结论: 通过", result.stdout)
+
+    def test_a_destination_not_committed_yet_is_still_the_destination(self) -> None:
+        """The move is read before anyone commits it, which is when it is cheap
+        to fix: the new sibling file is untracked and must count all the same."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-new-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(Path(tmp.name) / "repo", commit_bar=False)
+        fixture.move()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("backend/scripts/tool.py:1", result.stdout + result.stderr)
+        self.assertIn("符号搬移: app.foo._helper → app.bar", result.stdout)
+
+    def test_a_directory_that_is_not_there_cannot_be_judged(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOL),
+                "--check-moves",
+                "backend/app/nowhere",
+                "--repo-root",
+                str(self.fixture.root),
+            ],
+            capture_output=True,
+            text=True,
+            env=ENV,
+            cwd=str(self.fixture.root),
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("cannot judge", result.stderr)
+
+
+class ShadowCopyTests(unittest.TestCase):
+    """A second module under the name this run is about: Python resolves a
+    module by name, so the copy answers for the package in `--runtime-identity`,
+    and every check that walks the tree reads it as part of the change."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory(prefix="split-shadow-")
+        self.addCleanup(tmp.cleanup)
+        self.fixture = Fixture(Path(tmp.name) / "repo")
+
+    def scratch(self) -> Path:
+        """The copy a parity harness parks: `<tempdir>/<dir>/<module>.py`."""
+        directory = Path(tempfile.mkdtemp(prefix="shadow-copy-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        copy = directory / "foo.py"
+        copy.write_text(OLD_SOURCE, encoding="utf-8")
+        return copy
+
+    def test_a_copy_in_the_temp_directory_blocks_the_run(self) -> None:
+        self.fixture.apply_split(SPLIT)
+        copy = self.scratch()
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("duplicate module shadow in sys.path", result.stderr)
+        self.assertIn(str(copy), result.stderr)
+        copy.unlink()
+        self.assertEqual(self.fixture.run_tool().returncode, 0)
+
+    def test_a_pre_split_file_left_beside_the_package_blocks_the_run(self) -> None:
+        """What the 2026-10-16 eslint run found: the leftover is not a difference
+        the change introduced, so the run says which copy to delete instead of
+        reporting on two modules at once."""
+        self.fixture.apply_split(SPLIT)
+        left = self.fixture.root / "pkgroot" / "impl" / "foo.py"
+        self.fixture._write("pkgroot/impl/foo.py", OLD_SOURCE)
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("duplicate module shadow in sys.path", result.stderr)
+        self.assertIn(str(left), result.stderr)
+        left.unlink()
+        self.assertEqual(self.fixture.run_tool().returncode, 0)
+
+
 class UsageTests(unittest.TestCase):
     def test_a_missing_check_facade_cannot_be_judged(self) -> None:
         result = subprocess.run(
@@ -1469,6 +1671,24 @@ class UsageTests(unittest.TestCase):
         """Running the tests while the caller asked for a check is not an answer."""
         result = subprocess.run(
             [sys.executable, str(TOOL), "--self-test", "--check-facade", "whatever"],
+            capture_output=True,
+            text=True,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("cannot judge", result.stderr)
+
+    def test_two_modes_at_once_cannot_be_judged(self) -> None:
+        """Two answers in one exit code: the reader cannot tell which one it is."""
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(TOOL),
+                "--check-facade",
+                "whatever",
+                "--check-moves",
+                "whatever",
+            ],
             capture_output=True,
             text=True,
             env=ENV,
@@ -1500,6 +1720,8 @@ def main(argv: list[str] | None = None) -> int:
     suite = unittest.TestLoader().loadTestsFromTestCase(SplitVerificationTests)
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(RuntimeShapeTests))
     suite.addTests(unittest.TestLoader().loadTestsFromTestCase(CallerContractTests))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(MovedNameTests))
+    suite.addTests(unittest.TestLoader().loadTestsFromTestCase(ShadowCopyTests))
     suite.addTests(
         unittest.TestLoader().loadTestsFromTestCase(DeferredRuleAgreementTests)
     )
