@@ -30,7 +30,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import app.api.routes as routes_pkg
 from app.api.admin_deps import PlatformAdminDep
 from app.api.deps import get_consumptions, get_llm_gateway, get_ownership
-from app.api.routes.connector import recover_business_state
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
@@ -106,6 +105,11 @@ async def lifespan(application: FastAPI):
 
     hub_runtime: Any = device_hub
     if hasattr(hub_runtime, "start"):
+        # `_discover_routers` tolerates a route module that fails to import. At
+        # module scope this import would instead stop the whole process starting.
+        # deferred-import: startup - a route module must stay skippable
+        from app.api.routes.connector import recover_business_state
+
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
