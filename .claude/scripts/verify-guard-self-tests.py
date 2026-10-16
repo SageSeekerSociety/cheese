@@ -1,0 +1,701 @@
+#!/usr/bin/env python3
+"""verify-guard-self-tests.py — every local guard's self-test must actually bite.
+
+WHY THIS EXISTS: a guard declared in `.pre-commit-config.yaml` is trusted to
+judge the tree only because its `--self-test` proves the guard still fires on a
+deliberate violation (the "Guards self-test" step of
+`.github/workflows/repo-guards.yml` says exactly that). That proof is itself
+never checked. A `--self-test` that always prints PASS looks identical to one
+that works whenever the tree is clean — the failure mode the guards exist to
+prevent. Two rules that only memory enforced are what this replaces: a table of
+counts whose self-test could not go red, and a seam test that collected nothing
+while its assertions still passed.
+
+WHAT IT CHECKS, per guard named by a `repo: local` hook:
+
+  have a self-test   the guard answers `--self-test`, or a `test_<stem>.py` /
+                     `test-<stem>.py` sits beside it. Neither is a finding.
+  run green          that self-test exits 0 and prints a success line (PASS, or
+                     unittest's OK).
+  bite               a copy of the guard with its failure signals silenced makes
+                     the self-test exit non-zero — go red — instead of staying
+                     green. Green is what CI reads, so a self-test that stays
+                     green on a silenced guard guards nothing, and is the finding
+                     this tool exists to raise.
+
+HOW THE SILENCING WORKS. It runs on a throwaway copy in the guard's own
+directory — same directory so the guard still resolves its siblings and its repo
+root through `__file__`, a distinct dot-prefixed name so no existing file is
+touched — and the copy is removed in a `finally`. A Python guard is silenced by
+AST-guided edits to the statements *inside functions* other than `self_test()`
+and the `__main__` block: every collector call (`findings.append(…)`,
+`lines.extend(…)`) becomes `None`, `return <non-zero int>` becomes `return 0`,
+`sys.exit(<non-zero>)` becomes `sys.exit(0)`. The entry point is left alone on
+purpose: silencing it would stop the self-test from running at all, which reads
+as red without the self-test having noticed anything. A shell guard gets a
+`return 0` at the top of each `name() {` function, which is how its rules stop
+firing.
+
+WHAT CANNOT BE JUDGED, and is reported as UNVERIFIED rather than as a pass: a
+guard whose self-test lives in a sibling `test_<stem>.py`, or whose `--self-test`
+spawns one (silencing a copy of the guard cannot reach the process the test
+runs, and editing the tree under the test is not this tool's business); a copy
+that will not compile or could not be built; and a copy whose self-test prints
+nothing, or stops printing the success line while still exiting 0 — there the
+run went quiet instead of red, so neither verdict is earned. Give such a guard an
+inline `--self-test` that judges the guard in its own process to be checked.
+
+    python3 .claude/scripts/verify-guard-self-tests.py
+    python3 .claude/scripts/verify-guard-self-tests.py --guard check-file-sizes.py
+    python3 .claude/scripts/verify-guard-self-tests.py --json
+    python3 .claude/scripts/verify-guard-self-tests.py --self-test
+
+Exit code: 0 every guard in scope is covered and biting; 1 at least one finding;
+2 nothing to report but something could not be judged.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import re
+import subprocess
+import sys
+import tempfile
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
+
+GUARD_DIR = Path(".claude/scripts")
+CONFIG_NAME = ".pre-commit-config.yaml"
+DEFAULT_TIMEOUT = 300.0
+#: The lines a green self-test ends on: its own PASS line, or unittest's OK.
+SUCCESS_RE = re.compile(r"^(?:PASS|OK)\b")
+
+#: Statuses that are a finding (a guard that must be fixed).
+FINDING_STATUSES = frozenset({"missing-self-test", "self-test-not-green", "self-test-does-not-bite"})
+
+#: One repair instruction per finding, so a red run says what to do next.
+HINTS = {
+    "missing-self-test": (
+        "给它加一个自测：喂进一个故意违规的夹具，断言它报错（非 0 退出和一句修法），"
+        "并在通过时打印 PASS 行；或者把一个 test_<脚本>.py 放在它旁边。"
+    ),
+    "self-test-not-green": (
+        "自测在当前树上没有打印 PASS 或退出了非 0；先把它修绿，再谈咬合力。"
+    ),
+    "self-test-does-not-bite": (
+        "把守卫的收集器调用和非 0 退出静音之后，自测仍然绿着——它没有在看守卫报不报违规。"
+        "让它喂进一个故意违规的夹具，断言守卫真的以非 0 退出码报错并印出修法。"
+    ),
+    "unverified": (
+        "这次判不了（原因见 detail），不要当成通过。"
+    ),
+}
+
+#: A shell function definition, at the start of a line: `name() {`.
+_SHELL_FUNC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{\s*$")
+
+
+@dataclass
+class Guard:
+    hook: str
+    path: Path
+    kind: str  # "inline" | "sibling" | "none"
+    command: list[str] = field(default_factory=list)
+
+
+@dataclass
+class Outcome:
+    status: str
+    detail: str = ""
+
+
+def local_guard_scripts(config_text: str, root: Path) -> list[tuple[str, Path]]:
+    """Every script a `repo: local` hook's `entry:` names, resolved to a file.
+
+    The config is read as text, not through a YAML parser: none is guaranteed on
+    a bare `python3`, and only `id:` and `entry:` are needed. A path that does not
+    exist relative to the repo root is not one of ours (a hook that `cd`s first
+    names a path under a subtree), so resolution is the filter.
+    """
+    found: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+    hook = "?"
+    for line in config_text.splitlines():
+        id_match = re.match(r"\s*-\s*id:\s*(\S+)\s*$", line)
+        if id_match:
+            hook = id_match.group(1)
+            continue
+        entry_match = re.match(r"\s*entry:\s*(.+?)\s*$", line)
+        if not entry_match:
+            continue
+        for token in re.findall(r"[\w./-]+\.(?:py|sh)", entry_match.group(1)):
+            candidate = root / token
+            try:
+                resolved = candidate.resolve()
+            except OSError:
+                continue
+            if resolved in seen or not resolved.is_file():
+                continue
+            seen.add(resolved)
+            found.append((hook, resolved))
+    return found
+
+
+def self_test_kind(path: Path) -> tuple[str, list[str]]:
+    """How the guard carries its self-test, and the command that runs it."""
+    try:
+        source = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return "none", []
+    if "--self-test" in source:
+        interpreter = sys.executable if path.suffix == ".py" else "bash"
+        return "inline", [interpreter, str(path), "--self-test"]
+    stem = path.stem
+    for name in (f"test_{stem.replace('-', '_')}.py", f"test-{stem}.py"):
+        sibling = path.with_name(name)
+        if sibling.is_file():
+            return "sibling", [sys.executable, str(sibling)]
+    return "none", []
+
+
+def _self_test_lines(tree: ast.Module) -> set[int]:
+    """Line numbers of every `self_test` function, so they are left alone.
+
+    Silencing the self-test's own failure reporting is what makes a no-op read
+    as passable; the point is to break only the guard the self-test judges.
+    """
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "self_test":
+            for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                lines.add(line)
+    return lines
+
+
+def _main_block_lines(tree: ast.Module, source: str) -> set[int]:
+    """Line numbers of the `if __name__ == "__main__":` block, left alone.
+
+    Silencing the entry point would stop the self-test from running at all, and
+    a self-test that never ran also never prints its success line — which would
+    read as a bite without the self-test having noticed anything.
+    """
+    lines: set[int] = set()
+    for node in tree.body:
+        if isinstance(node, ast.If) and "__main__" in (ast.get_source_segment(source, node.test) or ""):
+            for line in range(node.lineno, (node.end_lineno or node.lineno) + 1):
+                lines.add(line)
+    return lines
+
+
+def delegated_self_test(tree: ast.Module, source: str) -> bool:
+    """Does the `--self-test` path hand off to another program?
+
+    A guard that answers `--self-test` by running a sibling test file judges
+    itself in a *different* process, reading the real file rather than the copy
+    this tool silences; nothing a copy does can reach it.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test_source = ast.get_source_segment(source, node.test) or ""
+        if "self_test" not in test_source and "self-test" not in test_source:
+            continue
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call) or not isinstance(inner.func, ast.Attribute):
+                continue
+            target = inner.func.value
+            if isinstance(target, ast.Name) and (
+                (target.id == "subprocess" and inner.func.attr in {"run", "call", "check_call", "check_output", "Popen"})
+                or (target.id == "os" and inner.func.attr.startswith("exec"))
+            ):
+                return True
+    return False
+
+
+def _python_edits(tree: ast.Module, source: str, skip: set[int]) -> dict[int, list[tuple[int, int, bytes]]]:
+    """Byte-slice replacements that turn the guard's failure signals into nothing.
+
+    Only single-line nodes inside a function are rewritten — module level set-up
+    is left working, so a copy that dies did so while running, not on import —
+    and an outer node chosen for replacement stops the walk so a nested call is
+    not also rewritten.
+    """
+    edits: dict[int, list[tuple[int, int, bytes]]] = {}
+    skipped = skip | _main_block_lines(tree, source)
+
+    def record(node: ast.AST, replacement: bytes) -> None:
+        edits.setdefault(node.lineno, []).append((node.col_offset, node.end_col_offset, replacement))
+
+    def visit(node: ast.AST, in_function: bool) -> None:
+        single = (
+            getattr(node, "lineno", None)
+            and getattr(node, "end_lineno", None)
+            and node.lineno == node.end_lineno
+            and node.lineno not in skipped
+        )
+        if single and in_function:
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Attribute) and func.attr in {"append", "add", "extend"}:
+                    record(node, b"None")
+                    return
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "exit"
+                    and isinstance(func.value, ast.Name)
+                    and func.value.id == "sys"
+                    and node.args
+                ):
+                    arg = node.args[0]
+                    if not (isinstance(arg, ast.Constant) and arg.value == 0):
+                        record(node, b"sys.exit(0)")
+                        return
+            if (
+                isinstance(node, ast.Return)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, int)
+                and not isinstance(node.value.value, bool)
+                and node.value.value != 0
+            ):
+                record(node, b"return 0")
+                return
+        enters = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        for child in ast.iter_child_nodes(node):
+            visit(child, in_function or enters)
+
+    visit(tree, False)
+    return edits
+
+
+def mutate_python(source: str) -> tuple[str | None, str]:
+    """A copy of a Python guard whose failure signals are silenced."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as exc:
+        return None, f"守卫无法解析：{exc}"
+    edits = _python_edits(tree, source, _self_test_lines(tree))
+    if not edits:
+        return None, "没有找到可以静音的失败信号（函数里既没有收集器调用，也没有非 0 的 return）"
+    raw = source.encode("utf-8").splitlines(keepends=True)
+    count = 0
+    for lineno in sorted(edits):
+        line = raw[lineno - 1]
+        limit = len(line)
+        for start, end, replacement in sorted(edits[lineno], key=lambda item: -item[0]):
+            if end > limit or start > end:
+                continue
+            line = line[:start] + replacement + line[end:]
+            limit = start
+            count += 1
+        raw[lineno - 1] = line
+    if count == 0:
+        return None, "没有找到可以静音的失败信号"
+    mutant = b"".join(raw).decode("utf-8")
+    try:
+        compile(mutant, "<silenced-guard>", "exec")
+    except SyntaxError as exc:
+        return None, f"静音改写后无法编译：{exc}"
+    return mutant, ""
+
+
+def mutate_shell(source: str) -> tuple[str | None, str]:
+    """A copy of a shell guard whose rule functions return clean immediately."""
+    out: list[str] = []
+    count = 0
+    for line in source.splitlines(keepends=True):
+        out.append(line)
+        if _SHELL_FUNC_RE.match(line.rstrip("\n")):
+            indent = line[: len(line) - len(line.lstrip())]
+            out.append(f"{indent}  return 0\n")
+            count += 1
+    if count == 0:
+        return None, "没有找到可以静音的函数（没有形如 `name() {` 的行）"
+    return "".join(out), ""
+
+
+def _prints_success(text: str) -> bool:
+    return any(SUCCESS_RE.match(line.strip()) for line in text.splitlines())
+
+
+def _tail(*texts: str) -> str:
+    for text in texts:
+        lines = [line for line in text.splitlines() if line.strip()]
+        if lines:
+            return lines[-1].strip()[:200]
+    return ""
+
+
+def _run(command: list[str], cwd: Path, timeout: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=str(cwd), capture_output=True, text=True, timeout=timeout)
+
+
+def check_guard(guard: Guard, root: Path, timeout: float) -> Outcome:
+    if guard.kind == "none":
+        return Outcome("missing-self-test", "既没有 --self-test，旁边也没有 test_<脚本>.py")
+    if guard.kind == "sibling":
+        try:
+            pristine = _run(guard.command, root, timeout)
+        except subprocess.TimeoutExpired:
+            return Outcome("unverified", f"旁边的测试超过 {timeout:g}s 没结束")
+        except OSError as exc:
+            return Outcome("unverified", f"旁边的测试起不来：{exc}")
+        if pristine.returncode != 0 or not _prints_success(pristine.stdout + pristine.stderr):
+            return Outcome("self-test-not-green", _tail(pristine.stdout, pristine.stderr))
+        return Outcome(
+            "unverified",
+            "自测在旁边的测试文件里；静音守卫需要改工作树，本核验器不做。"
+            "给守卫加一个内联 --self-test 才能被核验咬合力",
+        )
+
+    try:
+        pristine = _run(guard.command, root, timeout)
+    except subprocess.TimeoutExpired:
+        return Outcome("unverified", f"自测超过 {timeout:g}s 没结束")
+    except OSError as exc:
+        return Outcome("unverified", f"自测起不来：{exc}")
+    if pristine.returncode != 0 or not _prints_success(pristine.stdout + pristine.stderr):
+        return Outcome("self-test-not-green", _tail(pristine.stdout, pristine.stderr))
+
+    try:
+        source = guard.path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return Outcome("unverified", f"守卫读不出来：{exc}")
+    if guard.path.suffix == ".py":
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as exc:
+            return Outcome("unverified", f"守卫无法解析：{exc}")
+        if delegated_self_test(tree, source):
+            return Outcome(
+                "unverified",
+                "自测在旁边的测试文件里（--self-test 起的是另一个进程，读的是真文件）；"
+                "静音守卫的副本到不了它。给守卫加一个在自身进程里判自己的内联 --self-test 才能核验",
+            )
+        mutant, reason = mutate_python(source)
+    elif guard.path.suffix == ".sh":
+        mutant, reason = mutate_shell(source)
+    else:
+        mutant, reason = None, f"不认识的守卫类型 {guard.path.suffix}"
+    if mutant is None:
+        return Outcome("unverified", reason)
+
+    mutant_path = guard.path.with_name(f".{guard.path.name}.silenced-{uuid.uuid4().hex[:8]}")
+    try:
+        mutant_path.write_text(mutant, encoding="utf-8")
+        command = [mutant_path.as_posix() if part == guard.path.as_posix() else part for part in guard.command]
+        try:
+            silenced = _run(command, root, timeout)
+        except subprocess.TimeoutExpired:
+            return Outcome("unverified", f"静音后的自测超过 {timeout:g}s 没结束")
+        except OSError as exc:
+            return Outcome("unverified", f"静音后的自测起不来：{exc}")
+    finally:
+        mutant_path.unlink(missing_ok=True)
+
+    output = silenced.stdout + silenced.stderr
+    if not output.strip():
+        return Outcome("unverified", f"静音后的自测没有任何输出（退出码 {silenced.returncode}）：既没红也没绿")
+    if silenced.returncode == 0:
+        if _prints_success(output):
+            return Outcome("self-test-does-not-bite", f"守卫被静音后自测仍然绿着：{_tail(silenced.stdout, silenced.stderr)}")
+        return Outcome(
+            "unverified",
+            f"静音后自测不再打印成功行，却仍然退出 0：{_tail(silenced.stdout, silenced.stderr)}",
+        )
+    if "Traceback (most recent call last)" in output:
+        return Outcome("ok", f"静音后自测崩了（退出码 {silenced.returncode}）：{_tail(silenced.stderr, silenced.stdout)}")
+    return Outcome("ok", f"静音后自测变红（退出码 {silenced.returncode}）：{_tail(silenced.stderr, silenced.stdout)}")
+
+
+def evaluate(
+    config_path: Path, root: Path, timeout: float, only: set[str] | None = None
+) -> list[tuple[str, Path, Outcome, bool]]:
+    """Judge every local guard named by the config. Returns (hook, path, outcome, in_scope)."""
+    text = Path(config_path).read_text(encoding="utf-8")
+    guard_dir = (Path(root) / GUARD_DIR).resolve()
+    results: list[tuple[str, Path, Outcome, bool]] = []
+    for hook, path in local_guard_scripts(text, Path(root)):
+        if only and path.name not in only:
+            continue
+        if path.parent != guard_dir:
+            results.append((hook, path, Outcome("skipped", "不在 .claude/scripts 下，本核验器不管"), False))
+            continue
+        kind, command = self_test_kind(path)
+        outcome = check_guard(Guard(hook, path, kind, command), Path(root), timeout)
+        results.append((hook, path, outcome, True))
+    return results
+
+
+def report(results: list[tuple[str, Path, Outcome, bool]]) -> tuple[int, int]:
+    checked = [item for item in results if item[3]]
+    skipped = [item for item in results if not item[3]]
+    if not checked:
+        print("没有在 .pre-commit-config.yaml 里找到 .claude/scripts 下的本地守卫", file=sys.stderr)
+        return 0, 1
+    width = max(len(path.name) for _, path, _, _ in checked)
+    findings = 0
+    unverified = 0
+    for hook, path, outcome, _ in checked:
+        label = outcome.status.upper()
+        print(f"{label:<22} {path.name:<{width}}  {outcome.detail}")
+        if outcome.status in FINDING_STATUSES:
+            findings += 1
+            print(f"  {'':<20} 修法：{HINTS[outcome.status]}")
+        elif outcome.status == "unverified":
+            unverified += 1
+    if skipped:
+        print(f"（另有 {len(skipped)} 个本地钩子的脚本不在 .claude/scripts 下，未核验：{', '.join(path.name for _, path, _, _ in skipped)}）")
+    print(f"共 {len(checked)} 个守卫：有发现 {findings} 个，判不了 {unverified} 个")
+    return findings, unverified
+
+
+def self_test() -> int:
+    """Prove the engine tells a biting self-test from a no-op one, in a throwaway repo."""
+    with tempfile.TemporaryDirectory(prefix="verify-guard-self-tests-") as raw:
+        root = Path(raw)
+        config = write_synthetic_repo(root)
+        results = {path.name: outcome for _, path, outcome, _ in evaluate(config, root, 60.0)}
+    expected = {
+        "biting-guard.py": "ok",
+        "fake-green-guard.py": "self-test-does-not-bite",
+        "no-self-test-guard.py": "missing-self-test",
+        "not-green-guard.py": "self-test-not-green",
+        "delegating-guard.py": "unverified",
+    }
+    failures = []
+    for name, want in expected.items():
+        got = results.get(name)
+        if got is None:
+            failures.append(f"{name}: 没有被核验到")
+        elif got.status != want:
+            failures.append(f"{name}: 判成 {got.status}（{got.detail}），应为 {want}")
+    for failure in failures:
+        print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
+    if failures:
+        return 1
+    print(
+        "PASS: verify-guard-self-tests self-test（有咬合力的自测通过、空转假绿被检出、"
+        "缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
+    )
+    return 0
+
+
+#: Guards for the self-test: one of each verdict the engine must tell apart.
+SYNTHETIC_GUARDS = {
+    "biting-guard.py": '''#!/usr/bin/env python3
+"""A guard whose --self-test proves it fires on a deliberate violation."""
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    problems = []
+    for path in sorted(Path(root).rglob("*.bad")):
+        problems.append(path.name)
+    return problems
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def self_test():
+    import tempfile
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        found = violations_in(root)
+        if found != ["x.bad"]:
+            print(f"SELF-TEST FAIL: 本该报出 x.bad，得到 {found}", file=sys.stderr)
+            return 1
+    print("PASS: 合成守卫自测（.bad 文件被报出）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "fake-green-guard.py": '''#!/usr/bin/env python3
+"""A guard whose --self-test prints PASS and checks nothing."""
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    problems = []
+    for path in sorted(Path(root).rglob("*.bad")):
+        problems.append(path.name)
+    return problems
+
+
+def main(argv):
+    if "--self-test" in argv:
+        print("PASS: 合成假绿守卫自测")
+        return 0
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "no-self-test-guard.py": '''#!/usr/bin/env python3
+"""A guard with no self-test at all."""
+import sys
+
+
+def main():
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
+    "not-green-guard.py": '''#!/usr/bin/env python3
+"""A guard whose --self-test has never gone green."""
+import sys
+
+
+def main(argv):
+    if "--self-test" in argv:
+        print("SELF-TEST FAIL: 这个自测从来没绿过", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "delegating-guard.py": '''#!/usr/bin/env python3
+"""A guard whose --self-test runs a sibling test file, in another process."""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    problems = []
+    for path in sorted(Path(root).rglob("*.bad")):
+        problems.append(path.name)
+    return problems
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return subprocess.call([sys.executable, str(Path(__file__).with_name("test_delegating_guard.py"))])
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+}
+
+#: Files the synthetic guards need beside them, but that are not hooks.
+SYNTHETIC_SIBLINGS = {
+    "test_delegating_guard.py": '''#!/usr/bin/env python3
+"""The test file `delegating-guard.py --self-test` hands off to."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import importlib.util
+
+spec = importlib.util.spec_from_file_location(
+    "delegating_guard", Path(__file__).with_name("delegating-guard.py")
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+def main():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        (Path(raw) / "x.bad").write_text("", encoding="utf-8")
+        if module.violations_in(Path(raw)) != ["x.bad"]:
+            print("SELF-TEST FAIL: 本该报出 x.bad", file=sys.stderr)
+            return 1
+    print("PASS: 委派型守卫的旁置自测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
+}
+
+
+def write_synthetic_repo(root: Path) -> Path:
+    """Lay down the synthetic guards and a local-hook config that names them."""
+    scripts = root / GUARD_DIR
+    scripts.mkdir(parents=True, exist_ok=True)
+    for name, source in {**SYNTHETIC_GUARDS, **SYNTHETIC_SIBLINGS}.items():
+        (scripts / name).write_text(source, encoding="utf-8")
+    lines = ["repos:", "  - repo: local", "    hooks:"]
+    for name in SYNTHETIC_GUARDS:
+        lines += [
+            f"      - id: {name[:-3]}",
+            f"        entry: python3 {(GUARD_DIR / name).as_posix()}",
+            "        language: system",
+        ]
+    config = root / CONFIG_NAME
+    config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return config
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--guard", action="append", default=[], help="只核验这个名字的守卫，可重复")
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="单个自测的秒数上限")
+    parser.add_argument("--json", action="store_true", help="按 JSON 输出，供机器读")
+    parser.add_argument("--self-test", action="store_true", help="证明核验器本身能区分真假自测")
+    args = parser.parse_args(argv)
+
+    if args.self_test:
+        return self_test()
+
+    root = args.root.resolve()
+    config = (args.config or (root / CONFIG_NAME)).resolve()
+    results = evaluate(config, root, args.timeout, set(args.guard) or None)
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "guards": [
+                        {"hook": hook, "script": path.name, "status": outcome.status, "detail": outcome.detail}
+                        for hook, path, outcome, _ in results
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        )
+        in_scope = [item for item in results if item[3]]
+        if not in_scope:
+            print("没有在 .pre-commit-config.yaml 里找到 .claude/scripts 下的本地守卫", file=sys.stderr)
+            unverified = 1
+        else:
+            findings = sum(1 for item in in_scope if item[2].status in FINDING_STATUSES)
+            unverified = sum(1 for item in in_scope if item[2].status == "unverified")
+    else:
+        findings, unverified = report(results)
+    if findings:
+        return 1
+    if unverified:
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
