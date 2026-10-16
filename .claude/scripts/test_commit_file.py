@@ -181,6 +181,17 @@ class CommitFileTest(unittest.TestCase):
     def test_missing_input_file_fails_and_cleans_up(self):
         self.assert_rejected(None, "missing-message")
 
+    def test_git_hooks_keep_callers_umask(self):
+        hook = self.hooks / "pre-commit"
+        hook.write_text("#!/bin/sh\n: > hook-output\n")
+        hook.chmod(0o755)
+        result = self.run_process(
+            ["bash", "-c", 'umask 022; exec bash "$1"', "umask-test", str(SCRIPT)],
+            b"fix(example): keep hook output readable\n",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual((self.repo / "hook-output").stat().st_mode & 0o777, 0o644)
+
     def test_git_failure_propagates_and_cleans_up(self):
         hook = self.hooks / "pre-commit"
         hook.write_text("#!/bin/sh\nprintf 'hook rejected\\n' >&2\nexit 1\n")

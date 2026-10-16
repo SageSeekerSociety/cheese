@@ -48,8 +48,7 @@ while (($#)); do
   shift
 done
 
-umask 077
-message=$(mktemp "${TMPDIR:-/tmp}/commit-file.XXXXXXXXXX")
+message=$(umask 077; mktemp "${TMPDIR:-/tmp}/commit-file.XXXXXXXXXX")
 trap 'rm -f -- "$message"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
