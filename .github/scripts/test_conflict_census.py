@@ -48,12 +48,24 @@ BRANCHES = {
     },
     # The name `[a-z-]+-baseline` cannot match.
     "digits": {"frontend/src/a11y-baseline.json": '{"v": "branch"}\n'},
+    # The second branch on that same path, alphabetically the last of the
+    # contended files and the one two branches contend on: a list sorted by
+    # path prints the count-1 files first, under a header that promises the
+    # opposite order, and `--top` then trims away this one.
+    "digits-two": {"frontend/src/a11y-baseline.json": '{"v": "other"}\n'},
     # Three conflicted files in one branch, so the report cannot be a
     # one-file-per-branch assumption.
     "pair": {
         "backend/app/x.py": "x-branch\n",
         "backend/app/y.py": "y-branch\n",
     },
+    # A legal branch name ending in `/HEAD`. Only `<remote>/HEAD` is an alias;
+    # treating every `*/HEAD` as one hides this branch from the census.
+    "feature/HEAD": {"backend/app/head.py": "new\n"},
+    # The branch whose replay cannot be read, once its blob is removed from the
+    # object store. Its file is one main also changes, so the merge has to read
+    # the blob to compare the two sides; removing it breaks this branch alone.
+    "damaged": {"backend/app/x.py": "x-damaged\n"},
 }
 
 #: What main changes after the branches are cut.
@@ -125,6 +137,12 @@ class ConflictCensusTest(unittest.TestCase):
         # branches to census: the base itself, and the `origin/HEAD` alias.
         self.git("update-ref", "refs/remotes/origin/main", main_sha)
         for branch, sha in self.branch_shas.items():
+            if branch.endswith("/HEAD"):
+                # `%(refname:short)` shortens `refs/remotes/origin/feature/HEAD`
+                # to `origin/feature` — git's own shortening rule, which has
+                # nothing to do with this census. The local branch is what
+                # covers the `/HEAD` rule; no remote ref is made for it.
+                continue
             self.git("update-ref", f"refs/remotes/origin/{branch}", sha)
         self.git("update-ref", "refs/remotes/origin/HEAD", main_sha)
 
@@ -140,6 +158,18 @@ class ConflictCensusTest(unittest.TestCase):
         result = self.run_census("--json", *args)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
+
+    def contended_lines(self, stdout: str) -> list[str]:
+        """The contended-files table, rows only, in the order printed."""
+        head = "contended files, by how many branches conflict on them:\n"
+        _, found, body = stdout.partition(head)
+        self.assertTrue(found, f"no contended-files table in:\n{stdout}")
+        rows = []
+        for line in body.splitlines():
+            if not line.startswith("  ") or line.lstrip().startswith("…"):
+                break
+            rows.append(line)
+        return rows
 
     # -- tests ------------------------------------------------------------
 
@@ -190,12 +220,12 @@ class ConflictCensusTest(unittest.TestCase):
         self.assertEqual(out["examined"], len(BRANCHES))
 
     def test_remote_tracking_branches_are_enumerated(self):
+        # Every branch except the local-only `/HEAD` one, which `build()` gives
+        # no remote ref.
+        remotes = sorted(f"origin/{b}" for b in BRANCHES if not b.endswith("/HEAD"))
         out = self.census_json("--remotes")
-        self.assertEqual(out["examined"], len(BRANCHES))
-        self.assertEqual(
-            sorted(list(out["conflicted"]) + out["clean"]),
-            sorted(f"origin/{branch}" for branch in BRANCHES),
-        )
+        self.assertEqual(out["examined"], len(remotes))
+        self.assertEqual(sorted(list(out["conflicted"]) + out["clean"]), remotes)
         self.assertIn("origin/conflict-a", out["conflicted"])
 
     def test_a_missing_base_is_not_reported_as_no_conflicts(self):
@@ -214,6 +244,10 @@ class ConflictCensusTest(unittest.TestCase):
         result = self.run_census("--base", "main", "typo-branch")
         self.assertEqual(result.returncode, 2)
         self.assertIn("cannot judge", result.stderr)
+        # No enumeration happened, so the message must not claim to have
+        # looked at one.
+        self.assertIn("none of the branches named resolve", result.stderr)
+        self.assertNotIn("local branches", result.stderr)
 
     def test_a_trimmed_file_list_says_how_many_it_hid(self):
         result = self.run_census(
@@ -221,6 +255,76 @@ class ConflictCensusTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("and 3 more contended files", result.stdout)
+
+    def test_the_shortlist_is_ranked_by_contention_not_by_path(self):
+        # `a11y-baseline.json` is contended by two branches and sorts last of
+        # the three contended paths; `x.py` and `y.py` are contended by one and
+        # sort first. The header promises the order the trim uses.
+        result = self.run_census("--base", "main", "digits", "digits-two", "pair", "--top", "1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = self.contended_lines(result.stdout)
+        self.assertEqual(len(rows), 1, result.stdout)
+        self.assertIn("frontend/src/a11y-baseline.json", rows[0])
+        self.assertIn("and 2 more contended files", result.stdout)
+
+    def test_the_whole_table_is_ranked_by_contention(self):
+        result = self.run_census("--base", "main", "digits", "digits-two", "pair", "--top", "0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = self.contended_lines(result.stdout)
+        self.assertEqual(len(rows), 3, result.stdout)
+        self.assertIn("frontend/src/a11y-baseline.json", rows[0])
+        self.assertIn("2  frontend/src/a11y-baseline.json", rows[0])
+        # `--top 0` lists everything and therefore hides nothing.
+        self.assertNotIn("more contended files", result.stdout)
+
+    def test_a_branch_named_slash_HEAD_is_a_branch_not_an_alias(self):
+        out = self.census_json("--base", "main")
+        self.assertIn("feature/HEAD", out["clean"])
+        self.assertEqual(out["examined"], len(BRANCHES))
+
+    def test_a_branch_the_replay_cannot_read_is_not_counted_clean(self):
+        blob = self.git("rev-parse", "damaged:backend/app/x.py").strip()
+        loose = self.repo / ".git" / "objects" / blob[:2] / blob[2:]
+        self.assertTrue(
+            loose.exists(),
+            "the fixture has to hold this blob loose; once packed, deleting it proves nothing",
+        )
+        loose.unlink()
+
+        probe = subprocess.run(
+            ["git", "merge-tree", "--write-tree", "--name-only", "main", "damaged"],
+            cwd=self.repo, capture_output=True, text=True, env=self.env, check=False,
+        )
+        self.assertNotEqual(probe.returncode, 1, "an unreadable replay must not read as a conflict")
+        self.assertIn("unable to read", probe.stderr + probe.stdout)
+
+        out = self.census_json("--base", "main", "damaged", "clean")
+        self.assertEqual(out["unreadable"], ["damaged"])
+        self.assertEqual(out["clean"], ["clean"])
+        self.assertEqual(out["files"], {}, "a branch that could not be read contributes no files")
+
+        text = self.run_census("--base", "main", "damaged", "clean")
+        self.assertIn("1 clean, 0 conflicted, 1 unreadable", text.stdout)
+        self.assertIn("unreadable — cannot judge, not clean:", text.stdout)
+
+    def test_a_root_that_is_not_a_directory_is_not_a_traceback(self):
+        result = subprocess.run(
+            [
+                sys.executable, str(SCRIPT), "--root", str(self.repo / "no-such-dir"),
+                "--base", "main", "--json",
+            ],
+            cwd=self.repo, capture_output=True, text=True, env=self.env, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("cannot judge", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_a_repository_with_no_conflicts_says_so(self):
+        result = self.run_census("--base", "main", "clean")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("no contended files", result.stdout)
+        self.assertIn("1 clean, 0 conflicted, 0 unreadable", result.stdout)
+        self.assertNotIn("conflicted branches:", result.stdout)
 
 
 if __name__ == "__main__":

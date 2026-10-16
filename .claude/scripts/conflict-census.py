@@ -33,7 +33,8 @@ With no BRANCH arguments the branches are every local branch, or — with
 `--remotes` — every remote-tracking branch. The base defaults to whatever this
 checkout calls main (`origin/main` first, then `main`). Exit codes follow
 `arch-metrics.py`: 0 the census was taken, 2 it could not be — a base or a
-branch that does not resolve, or nothing left to examine.
+branch that does not resolve, nothing left to examine, or a `--root` that is
+not a directory.
 
 `git merge-tree` takes two commits and merges them at their merge base, so the
 replay is `<base> <branch>`: what the forge would ask if the branch were merged
@@ -96,6 +97,15 @@ def full_ref(root: Path, name: str) -> str | None:
     return out.strip() or None
 
 
+def is_remote_head(ref: str) -> bool:
+    """Is this ref the `HEAD` alias of a remote-tracking ref, like `origin/HEAD`?
+
+    Exactly `refs/remotes/<remote>/HEAD` — one level below the remote. A branch
+    named `feature/HEAD`, local or remote, is a branch.
+    """
+    return ref.startswith("refs/remotes/") and ref.endswith("/HEAD") and ref.count("/") == 3
+
+
 def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
     """The refs `pattern` names, short, minus `skip` and any `*/HEAD`.
 
@@ -116,8 +126,10 @@ def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
         ref, _, short = line.partition("\t")
         # `origin/HEAD` is skipped by its full name, not its short one:
         # `%(refname:short)` renders it as bare `origin`, which is neither
-        # `*/HEAD` nor a branch, and would be censused as one.
-        if ref == skip or ref.endswith("/HEAD"):
+        # `*/HEAD` nor a branch, and would be censused as one. Only the
+        # `<remote>/HEAD` alias is skipped, not any ref that ends in `/HEAD`:
+        # `feature/HEAD` is an ordinary branch someone may have made.
+        if ref == skip or is_remote_head(ref):
             continue
         branches.append(short)
     return branches
@@ -186,7 +198,13 @@ def render(result: dict[str, Any], base_sha: str | None, top: int, unresolved: l
 
     files = result["files"]
     if files:
-        shown = list(files.items())
+        # Ranked by contention, then by path to break ties, because the header
+        # below claims that order and `--top` trims this list: alphabetical
+        # order would let `--top 1` print the file one branch contends on and
+        # hide the one three branches contend on. `files` stays a path-keyed
+        # mapping so the JSON keeps its keys sorted; the rank belongs to the
+        # text report, where the trimming happens.
+        shown = sorted(files.items(), key=lambda item: (-len(item[1]), item[0]))
         hidden = 0
         if top > 0 and len(shown) > top:
             hidden = len(shown) - top
@@ -224,12 +242,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--remotes", action="store_true", help="enumerate remote-tracking branches, not local ones"
     )
-    parser.add_argument("--top", type=int, default=DEFAULT_TOP, help="contended files to list, 0 for all")
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=DEFAULT_TOP,
+        help="contended files to list, most contended first; 0 for all",
+    )
     parser.add_argument("--json", action="store_true", help="the census as JSON, for a reader")
     parser.add_argument("--root", help="the repository to census; default: the current directory")
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve() if args.root else Path.cwd()
+    if not root.is_dir():
+        print(f"cannot judge: {root} is not a directory", file=sys.stderr)
+        return 2
     arch = load_arch_metrics()
     base, base_sha = resolve_base(root, args.base, arch.main_ref)
     if base is None or base_sha is None:
@@ -254,12 +280,18 @@ def main(argv: list[str] | None = None) -> int:
         branches = enumerate_branches(root, pattern, full_ref(root, base))
 
     if not branches:
-        print(
-            "cannot judge: no branches to examine "
-            f"(looked at {'remote-tracking branches' if args.remotes else 'local branches'})"
-            + (f"; did not resolve: {', '.join(unresolved)}" if unresolved else ""),
-            file=sys.stderr,
-        )
+        # Say what was actually looked at: with branch arguments there is no
+        # enumeration to report on, and claiming "local branches" would name a
+        # search that never happened.
+        if args.branches:
+            detail = f"none of the branches named resolve: {', '.join(unresolved)}"
+        else:
+            detail = (
+                "looked at remote-tracking branches"
+                if args.remotes
+                else "looked at local branches"
+            ) + (f"; did not resolve: {', '.join(unresolved)}" if unresolved else "")
+        print(f"cannot judge: no branches to examine ({detail})", file=sys.stderr)
         return 2
 
     result = census(root, base, branches, arch.replay_conflict)
