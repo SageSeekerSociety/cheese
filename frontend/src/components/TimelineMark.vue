@@ -51,7 +51,9 @@ withDefaults(
   min-width: 0;
   font-size: 12px;
   line-height: var(--lh-12);
-  color: var(--faint);
+  /* 日期是要读的元信息，走 --muted：--faint 只作装饰，浅色下到不了 4.5:1
+     （docs/design-system.md §2.6）。新消息那一档仍然是 --accent-ink。 */
+  color: var(--muted);
 }
 /* 新消息线是这一列里唯一一条要被找到的线，所以它是这里唯一带色的一档。 */
 .tl-mark--unread .tl-mark__rule {

@@ -227,18 +227,31 @@ onMounted(async () => {
   align-items: center;
 }
 
+/* 和 .vision 同一条：光晕挪到独立一层。画在 .dl-hero 自己的 background 上时，
+   标题正好压在它上面，「这个标题坐在什么底色上」就是一张读不出来的图，对比度
+   整段量不出来。独立一层画面不变，底色重新可算。 */
 .dl-hero {
   display: flex;
+  position: relative;
+  isolation: isolate;
   width: 100%;
   padding-top: 88px;
+  text-align: center;
+  flex-direction: column;
+  align-items: center;
+}
+
+.dl-hero::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
   background: radial-gradient(
     640px 320px at 50% 30%,
     color-mix(in srgb, var(--logo-primary) 12%, transparent),
     transparent 70%
   );
-  text-align: center;
-  flex-direction: column;
-  align-items: center;
+  content: '';
 }
 
 /* The app's own icon, its rounded tile drawn into the picture. */
