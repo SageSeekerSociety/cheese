@@ -422,8 +422,15 @@ async def _start_executor(
     ``NO_EXIT_STATUS``, not an error. Raised as the answered failure, that read
     as an install that ran and failed, and left the session on a host that never
     brought its executor up. The two are told apart here, and the caller answers
-    the silent one as the machine it is."""
-    if lease and lease.get("state"):
+    the silent one as the machine it is.
+
+    A lease names the machine it is held on, and only there do the hands it
+    records exist. One that names another machine is not this attempt's hands:
+    the attempt after a host was left — for a full disk, for a connector that
+    went away — carries the lease of the machine just left, and dialing it would
+    answer with that machine's own failure and have it recorded against the one
+    this attempt is on (``_install``)."""
+    if lease and lease.get("state") and lease.get("device_id") == device_id:
         try:
             running = await execution.call(
                 lease, "ping", {}, hub=hub, timeout=lease_claim.INSTALL_MOST_S

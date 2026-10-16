@@ -101,10 +101,39 @@ async def test_the_calls_before_the_install_are_bounded_the_same_way(monkeypatch
     monkeypatch.setattr(execution, "call", call)
     hub = SimpleNamespace(exec=AsyncMock())
 
-    assert await _start(hub, {"state": "/executor"}) == INFO
+    assert await _start(hub, {"device_id": "machine", "state": "/executor"}) == INFO
 
     assert seen == [lease_claim.INSTALL_MOST_S] * len(seen)
     assert seen, "the ping and the prepare were never made"
+
+
+async def test_a_lease_from_another_machine_is_not_dialed(monkeypatch):
+    """A lease names the machine it is held on, and the hands it records are
+    there and nowhere else. The attempt after a host was left — for a full disk,
+    for a connector that went away — still carries the lease of the machine just
+    left; dialing it answered with that machine's own failure, and ``_install``
+    recorded it against the machine this attempt was placed on, marking a
+    healthy host as one that ran out of space. The hands of another machine are
+    not this attempt's: the executor is installed here instead."""
+    monkeypatch.setattr(executor_launch, "script", lambda *a, **k: "print('in')")
+    monkeypatch.setattr(executor_launch, "can_prepare", lambda *a, **k: True)
+    pinged: list[dict] = []
+
+    async def call(target, method, _params, **_kwargs):
+        pinged.append(target)
+        return {}
+
+    monkeypatch.setattr(execution, "call", call)
+    hub = SimpleNamespace(
+        exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(INFO)})
+    )
+
+    # `_start` starts the executor of the machine called "machine".
+    info = await _start(hub, {"device_id": "the-one-just-left", "state": "/executor"})
+
+    assert info == INFO
+    assert pinged == [], "the machine the session was moved off was dialed"
+    assert hub.exec.await_args.args[0] == "machine"
 
 
 @pytest.mark.parametrize(

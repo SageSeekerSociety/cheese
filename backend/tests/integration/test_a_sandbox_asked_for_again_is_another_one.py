@@ -13,11 +13,23 @@ The hosts, the pool and the tool call here are the ones of
 client does.
 """
 
+from datetime import UTC, datetime
+
+from sqlalchemy import select
+
 from app.core.config import settings
+from app.core.device_failures import DeviceCallError
+from app.domain.agent import execution
+from app.domain.device.models import DeviceRow
+from app.domain.device.supply import Supply
+from app.domain.identity.services import IdentityService
+from app.domain.machine.models import CloudHost
+from tests.executor_release import running
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
     home_of,
     host_of,
+    run,
     tool_call,
     working_on,
 )
@@ -43,6 +55,46 @@ def _two_rooms_on_two_hosts(cloud, monkeypatch) -> tuple[str, str]:
     working_on(cloud, cloud.seats[1], "host-b")
     monkeypatch.setattr(settings, "cloud_host_slots_per_core", 2)
     return "host-a", "host-b"
+
+
+def _enrolled(cloud, *device_ids: str) -> None:
+    """The machines' device rows, as enrolling a host leaves behind
+    (``HostPool.enroll``). A lease whose machine has no device row is dropped by
+    the next attempt as one of a machine that was unbound, so without these the
+    attempt after a host is left never dials anything and the lease's machine is
+    never read again."""
+    onward = cloud.seats[0].session.hex[:8]
+
+    async def seed():
+        async with cloud.client.test_request_factory() as db:
+            owner = await IdentityService(db).ensure_agent_user(
+                handle=f"host-owner-{onward}"
+            )
+            for device_id in device_ids:
+                db.add(
+                    DeviceRow(
+                        device_id=device_id,
+                        name=device_id,
+                        token=f"token-{device_id}",
+                        owner_user_id=owner.id,
+                        supply=Supply.cloud,
+                        created_at=datetime.now(UTC),
+                    )
+                )
+            await db.commit()
+
+    run(cloud, seed)
+
+
+def _is_full(cloud, device_id: str) -> bool:
+    async def read():
+        async with cloud.client.test_request_factory() as db:
+            host = await db.scalar(
+                select(CloudHost).where(CloudHost.device_id == device_id)
+            )
+            return host is not None and host.disk_full_since is not None
+
+    return run(cloud, read)
 
 
 def _hands(cloud, seat, tries: int = 3) -> str:
@@ -81,6 +133,43 @@ def test_a_room_asked_for_the_sandbox_it_has_is_moved_to_another_machine(
     # — that one has a slot free and is the pool's first choice besides, since
     # placement prefers the fullest host so the others can empty.
     assert _hands(cloud, seat) == "host-b"
+
+
+def test_the_machine_left_for_its_disk_is_not_dialed_again(cloud, monkeypatch):
+    """The attempt after the full host is left keeps the lease of the machine
+    just left: it names that machine, and dialing it answers with that machine's
+    own refusal again, which ``_install`` records against the host this attempt
+    was placed on. The healthy host was marked as one that ran out of space and
+    the session's call failed, over a machine that had nothing wrong with it."""
+    _two_rooms_on_two_hosts(cloud, monkeypatch)
+    _enrolled(cloud, "host-a", "host-b")
+    seat = cloud.seats[0]
+    full = host_of(cloud, seat).id
+    dialed: list[tuple[str, str]] = []
+
+    async def call(target, method, _params, **_kwargs):
+        device = target["device_id"]
+        dialed.append((device, method))
+        if method == "ping":
+            # A running executor of this release, in a sandbox: the attempt
+            # prepares it in place rather than installing one — which is how
+            # the machine just left gets dialed again.
+            return {**running(), "sandbox": True}
+        if device == "host-a":
+            raise DeviceCallError(NO_ROOM)
+        return {}
+
+    monkeypatch.setattr(execution, "call", call)
+
+    answering = tool_call(cloud, seat)
+
+    assert "unavailable" not in answering, answering
+    assert answering["target"]["device_id"] == "host-b", "the session stayed put"
+    # The host that was left was asked for its hands once, not again on the
+    # attempt that was placed on the other one.
+    assert dialed == [("host-a", "ping"), ("host-a", "prepare"), ("host-b", "ping")]
+    assert host_of(cloud, seat).id != full
+    assert not _is_full(cloud, "host-b"), "a healthy host was marked as full"
 
 
 def test_a_machine_that_ran_out_of_space_is_left_and_takes_no_new_sandbox(
