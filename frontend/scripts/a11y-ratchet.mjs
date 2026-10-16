@@ -66,7 +66,8 @@ function option(name, fallback) {
 const update = process.argv.includes('--update')
 const freezeNew = process.argv.includes('--freeze-new')
 const ID = 'fe-a11y'
-const baselinePath = resolve(ROOT, option('--baseline', 'a11y-baseline.json'))
+const baselineLabel = option('--baseline', 'a11y-baseline.json')
+const baselinePath = resolve(ROOT, baselineLabel)
 
 // Resolve the binary explicitly rather than trusting PATH: `pnpm run` puts
 // node_modules/.bin there but `node scripts/...` does not, and an eslint that
@@ -160,7 +161,7 @@ if (move) {
   } catch (error) {
     console.error(`refusing to re-key the baseline: ${error.message}`)
     console.error('')
-    console.error('wrote nothing; a11y-baseline.json is unchanged.')
+    console.error(`wrote nothing; ${baselineLabel} is unchanged.`)
     process.exit(1)
   }
 }

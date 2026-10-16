@@ -194,6 +194,7 @@ describe('the ratchet on a planted violation', () => {
 // ---------------------------------------------------------------------------
 
 describe('movedBaseline', () => {
+  const sum = (counts) => Object.values(counts).reduce((a, b) => a + b, 0)
   const FROM = 'src/views/Whole.vue'
   const TO = 'src/components/Half.vue'
   const OTHER = 'src/views/Other.vue'
@@ -208,6 +209,7 @@ describe('movedBaseline', () => {
     const plan = movedBaseline(baseline, split, { from: FROM, to: TO, count: 2 })
     assert.deepEqual(plan.next, { [FROM]: 2, [TO]: 2, [OTHER]: 2 })
     assert.equal(plan.total, 6)
+    assert.equal(sum(plan.next), sum(baseline))
     assert.deepEqual(plan.source, { file: FROM, frozen: 4, after: 2, measured: 2 })
     assert.deepEqual(plan.target, { file: TO, frozen: 0, after: 2, measured: 2 })
   })
@@ -239,6 +241,18 @@ describe('movedBaseline', () => {
     assert.throws(
       () => movedBaseline({ [FROM]: 4 }, { [FROM]: 3, [TO]: 3 }, { from: FROM, to: TO, count: 3 }),
       /the tree still shows 3 violation\(s\) in src\/views\/Whole\.vue/
+    )
+  })
+
+  it('refuses a move that empties the source while the tree still measures in it', () => {
+    // The whole allowance moves, so the source key is dropped — and the tree
+    // still shows one violation there. The check has to compare against the
+    // allowance the source keeps (zero), not against the dropped key: a number
+    // read back off `next` would be `undefined`, and every comparison with it
+    // is false, which is how this one silently stopped firing.
+    assert.throws(
+      () => movedBaseline({ [FROM]: 2 }, { [FROM]: 1, [TO]: 2 }, { from: FROM, to: TO, count: 2 }),
+      /the tree still shows 1 violation\(s\) in src\/views\/Whole\.vue, more than the 0 the move/
     )
   })
 
@@ -388,12 +402,23 @@ describe('the ratchet on a split', () => {
       ],
       // `before` also freezes three in a file no probe wrote, so the total is 7.
       ['more than the source ever froze', move(FROM_REL, TO_REL, 5), /frozen total would rise from 7 to 8/],
+      // The whole allowance of four moves, so the source key is dropped — while
+      // the tree still measures two there. Takes the branch where the source
+      // key is gone, which is where the check used to stop firing.
+      [
+        'the whole allowance moves but the source still measures',
+        move(FROM_REL, TO_REL, 4),
+        /still shows 2 violation\(s\) in .*__a11ySplitWhole\.vue, more than the 0 the move/,
+      ],
       [
         'a source the baseline never froze',
         move('src/components/__a11ySplitElsewhere.vue', TO_REL, 2),
         /freezes 0 violation\(s\) in/,
       ],
       ['a count that is not a count', move(FROM_REL, TO_REL, 0), /positive whole number/],
+      // The flag is read as text and must be a plain decimal, so forms a bare
+      // Number() would accept are refused at the flag, before eslint runs.
+      ['a count written as something Number() would take', move(FROM_REL, TO_REL, '0x2'), /positive whole number/],
       ['a target outside the tree', move(FROM_REL, 'src/components/Half.ts', 2), /not a baseline key/],
       ['--freeze-new beside a move', [...move(FROM_REL, TO_REL, 2), '--freeze-new'], /--freeze-new freezes every file/],
       ['one flag of the three', ['--move-from', FROM_REL], /go together, once each/],
@@ -412,6 +437,28 @@ describe('the ratchet on a split', () => {
     }
   })
 
+  it('names the baseline it refused to write, not the default one', () => {
+    // The refusal below names the file it left alone. With --baseline pointing
+    // elsewhere, the default name would be a lie about which file it touched.
+    const scratch = join(sandbox, 'named-elsewhere.json')
+    try {
+      splitInTree()
+      writeFileSync(scratch, JSON.stringify({ files: { [FROM_REL]: 4 } }))
+      const run = runRatchet(
+        ...files(FROM_REL, TO_REL),
+        '--baseline',
+        scratch,
+        '--update',
+        ...move(FROM_REL, TO_REL, 1)
+      )
+      assert.equal(run.status, 1, `${run.stdout}${run.stderr}`)
+      assert.match(run.stderr, /wrote nothing; .*named-elsewhere\.json is unchanged/)
+      assert.deepEqual(frozen(scratch), { [FROM_REL]: 4 })
+    } finally {
+      for (const probe of PROBES) rmSync(probe, { force: true })
+    }
+  })
+
   it('does not excuse a violation the split did not move', () => {
     const scratch = join(sandbox, 'stray.json')
     try {
@@ -423,6 +470,10 @@ describe('the ratchet on a split', () => {
       const dry = runRatchet(...files(FROM_REL, TO_REL, STRAY_REL), '--baseline', scratch, ...move(FROM_REL, TO_REL, 2))
       assert.equal(dry.status, 1, `${dry.stdout}${dry.stderr}`)
       assert.match(dry.stdout, /__a11ySplitStray\.vue: 0 -> 2/)
+      // And the move was read, not ignored: ignoring the flags also exits 1 here
+      // (on the stray alone), so without this line the test would stay green
+      // with --move-* wired to nothing.
+      assert.match(dry.stdout, /^moved 2 violation\(s\): .*__a11ySplitWhole\.vue -> .*__a11ySplitHalf\.vue/m)
 
       const written = runRatchet(
         ...files(FROM_REL, TO_REL, STRAY_REL),

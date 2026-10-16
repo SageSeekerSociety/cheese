@@ -138,9 +138,15 @@ export function movedBaseline(baseline, current, move) {
   }
 
   const targetFrozen = baseline[to] ?? 0
+  // The allowance the source keeps, held on its own rather than read back off
+  // `next`: when nothing is left the key is dropped, and reading it there would
+  // compare against `undefined` — a comparison that is always false, which is
+  // how the check below would stop firing on exactly the move that empties a
+  // file while the tree still measures in it.
+  const keeps = frozen - count
   const next = { ...baseline }
-  if (frozen === count) delete next[from]
-  else next[from] = frozen - count
+  if (keeps === 0) delete next[from]
+  else next[from] = keeps
   next[to] = targetFrozen + count
 
   const after = sum(next)
@@ -152,9 +158,9 @@ export function movedBaseline(baseline, current, move) {
   }
 
   const leftBehind = current[from] ?? 0
-  if (leftBehind > next[from]) {
+  if (leftBehind > keeps) {
     throw new Error(
-      `the tree still shows ${leftBehind} violation(s) in ${from}, more than the ${next[from]} the move ` +
+      `the tree still shows ${leftBehind} violation(s) in ${from}, more than the ${keeps} the move ` +
         `would allow it: fewer violations left ${from} than the count says, and the difference would sit ` +
         `frozen on ${to}`
     )
@@ -173,7 +179,7 @@ export function movedBaseline(baseline, current, move) {
     next,
     count,
     total: before,
-    source: { file: from, frozen, after: frozen - count, measured: leftBehind },
+    source: { file: from, frozen, after: keeps, measured: leftBehind },
     target: { file: to, frozen: targetFrozen, after: next[to], measured },
   }
 }
@@ -197,7 +203,10 @@ export function formatMove(plan, violations = []) {
     .map(([rule, n]) => `${rule.slice(rule.indexOf('/') + 1)} ${n}`)
     .join(', ')
   if (rules) lines.push(`  now measured in ${target.file} (check these are what moved): ${rules}`)
-  lines.push(`frozen total: ${total} -> ${total}`)
+  // The move is total-neutral by construction, so this says what the re-key does
+  // and not what lands on disk: with --update beside it, other files that
+  // improved in the same run are tightened too and the written total is lower.
+  lines.push(`frozen total: ${total} -> ${total} (the move; --update may tighten it further)`)
   return lines.join('\n')
 }
 
