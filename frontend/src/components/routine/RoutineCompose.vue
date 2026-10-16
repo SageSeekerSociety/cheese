@@ -33,7 +33,7 @@ const props = withDefaults(
     defaultRoom?: string
     /** 那个定死的频道叫什么（房间里那一格给）：写在「频道」那一行上。 */
     roomName?: string
-    /** 人自己存下来的模板（「我存的」那一段）。预置不从这里进。 */
+    /** 这个项目里存下来的模板（「项目里存的」那一段）。预置不从这里进。 */
     templates?: RoutineTemplate[]
     saving?: boolean
     error?: string
@@ -53,7 +53,7 @@ const emit = defineEmits<{
   (e: 'update:modelValue', open: boolean): void
   /** `keepAsTemplate` 是那一颗「存成模板」：存下规则的同时，把这张表也收成一条模板。 */
   (e: 'save', payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }): void
-  /** 点了「我存的」那一条上的「删除」。 */
+  /** 点了「项目里存的」那一条上的「删除」。 */
   (e: 'delete-template', template: RoutineTemplate): void
 }>()
 

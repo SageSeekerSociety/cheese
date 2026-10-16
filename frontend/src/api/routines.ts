@@ -9,6 +9,7 @@
 // 又碰不得 API 层，取数这一半只往上面接。
 import type { ListPayload } from '../cx_types'
 import type { Routine, RoutineInput, RoutineRun } from '../lib/routine'
+import type { RoutineTemplate, RoutineTemplateInput } from '../lib/routineTemplates'
 
 import { request } from '../api'
 
@@ -74,4 +75,25 @@ export function routineAction(id: string, action: 'pause' | 'resume' | 'run-now'
 
 export function deleteRoutine(id: string): Promise<{ deleted: string }> {
   return request<{ deleted: string }>(`/routines/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+/**
+ * 「存成模板」那一条：读这个项目存下来的、存一条、删一条。
+ *
+ * 挂在项目上，不挂房间：模板是一张还没落到任何房间里的表，同一个项目里谁存下来的都
+ * 在同一个列表里，谁读得到项目就读得到、也就存得下、删得掉。所以这里没有 `can_delete`。
+ */
+export function listRoutineTemplates(projectId: string): Promise<ListPayload<RoutineTemplate>> {
+  return request<ListPayload<RoutineTemplate>>(`/projects/${encodeURIComponent(projectId)}/routine-templates`)
+}
+
+export function createRoutineTemplate(projectId: string, body: RoutineTemplateInput): Promise<RoutineTemplate> {
+  return request<RoutineTemplate>(`/projects/${encodeURIComponent(projectId)}/routine-templates`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function deleteRoutineTemplate(id: string): Promise<{ deleted: string }> {
+  return request<{ deleted: string }>(`/routine-templates/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }

@@ -1,25 +1,33 @@
 // 「新建」那一页上的模板：一条模板是「填表的起点」，选中它就把那几格铺进那张表。
 //
 // 所以模板带的就是表单要的那几样（目标、触发方式、时间或条件的 `spec`），不另立一套
-// 说法：预置在这里，用户自己存下来的那几条由调用方从浏览器里读出来（`RoutineTemplate`
-// 是同一份形状），两边进同一个列表。
+// 说法：预置在这里，项目里存下来的那几条从后端读出来（同一份形状），两边进同一个列表。
 //
 // 「什么时候跑」那一行由 `routineWhenText` 现算，不存成一句话：存下来的那几条也要跟着
-// 读者换语言，存一句中文进浏览器，英文界面上就永远是一行中文。
+// 读者换语言，存一句中文进库，英文界面上就永远是一行中文。
 import type { RoutineTrigger } from './routine'
 
 import { t } from '@/i18n'
 
 export interface RoutineTemplate {
-  /** 列表里的键。预置是这里起的名字，用户存的那几条是存下来时给的 id。 */
+  /** 列表里的键。预置是这里起的名字，存下来的那几条是后端给的 id。 */
   id: string
   title: string
   /** 铺进「目标」那一格的话。 */
   goal: string
-  /** 有补充说明的（人自己存下来的那几条可能带着）就一起铺进去。 */
+  /** 有补充说明的就一起铺进去。 */
   note?: string
   trigger: RoutineTrigger
   /** 时间那几格（`trigger` 是 `schedule` 时才有），或者条件那几条带的 `scope`。 */
+  spec: Record<string, unknown>
+}
+
+/** 存一条模板时给后端的那几格：同一份形状，`id` 由后端给，名字可以省（省了从目标里取）。 */
+export interface RoutineTemplateInput {
+  title?: string
+  goal: string
+  note?: string
+  trigger: RoutineTrigger
   spec: Record<string, unknown>
 }
 

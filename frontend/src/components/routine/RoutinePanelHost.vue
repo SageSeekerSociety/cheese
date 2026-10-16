@@ -19,6 +19,7 @@ import { useRoutineTemplates } from '@/composables/useRoutineTemplates'
 
 import PanelRoutines from '../panels/PanelRoutines.vue'
 
+import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
 
 const props = withDefaults(
@@ -72,10 +73,12 @@ const {
 
 const { templates, add: addTemplate, remove: removeTemplate } = useRoutineTemplates(() => props.projectId ?? '')
 
-/** 表单存下去。勾了「存成模板」就把这张表也收成一条 —— 存规则失败时那一条不留下。 */
+/** 表单存下去。勾了「存成模板」就把这张表也收成一条 —— 存规则失败时那一条不留下。
+ *  两处各自会失败：规则存下了、模板没存上要说一句，人下次找不到那一条。 */
 async function onSubmit(payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }) {
   const saved = await submit(payload)
-  if (saved && payload.keepAsTemplate) addTemplate(payload.body)
+  if (!saved || !payload.keepAsTemplate) return
+  if (!(await addTemplate(payload.body))) error.value = t('routines.template.saveFailed')
 }
 
 /**
@@ -176,6 +179,6 @@ defineExpose({
     @open-file="(path) => emit('open-file', path)"
     @form-open-change="(open) => (open ? (formOpen = true) : closeForm())"
     @submit="onSubmit"
-    @delete-template="(tpl) => removeTemplate(tpl.id)"
+    @delete-template="(tpl) => void removeTemplate(tpl.id)"
   />
 </template>

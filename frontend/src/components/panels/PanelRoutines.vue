@@ -41,7 +41,7 @@ withDefaults(
     defaultRoom: string
     /** 那个频道叫什么：新建那一页的「频道」那一行上写出来给人看一眼。 */
     roomName?: string
-    /** 人自己存下来的模板（「我存的」那一段）。预置在 `lib/routineTemplates.ts` 里。 */
+    /** 这个项目里存下来的模板（「项目里存的」那一段）。预置的几条在 `lib/routineTemplates.ts` 里。 */
     templates?: RoutineTemplate[]
   }>(),
   {
@@ -81,7 +81,7 @@ const emit = defineEmits<{
   (e: 'form-open-change', open: boolean): void
   /** 表单存下去。 */
   (e: 'submit', payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }): void
-  /** 点了「我存的」那一条上的「删除」。 */
+  /** 点了「项目里存的」那一条上的「删除」。 */
   (e: 'delete-template', template: RoutineTemplate): void
 }>()
 </script>

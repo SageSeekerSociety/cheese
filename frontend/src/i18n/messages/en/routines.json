@@ -88,8 +88,9 @@
   },
   "template": {
     "preset": "From the platform",
-    "mine": "Mine",
-    "mineNote": "(kept in this browser, so another machine won't have them)",
+    "mine": "Saved in this project",
+    "mineNote": "(shared with everyone in the project)",
+    "saveFailed": "The template wasn't saved",
     "when": {
       "daily": "Every day at {time}",
       "weekly": "Every {days} at {time}",

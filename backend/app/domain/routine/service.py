@@ -44,7 +44,6 @@ from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_INFO,
-    WHO_HUMAN,
     WHO_PLATFORM,
     notice,
 )
@@ -106,11 +105,12 @@ def now() -> datetime:
     return datetime.now(UTC)
 
 
-def _name(title: str, instructions: str) -> str:
-    """The rule's name: what was typed, or its goal's first sentence.
+def name_of(title: str, instructions: str) -> str:
+    """A name for what the goal says —— a rule's, or a saved template's: what
+    was typed, or the goal's first sentence.
 
-    Only the goal is required, so a rule usually gets its name from the first
-    thing that goal says —— 「每周一汇总各频道进展。写成三五条」 叫「每周一汇总各频道进展」。
+    Only the goal is required, so the name usually comes from the first thing
+    that goal says —— 「每周一汇总各频道进展。写成三五条」 叫「每周一汇总各频道进展」。
     """
     name = (title or "").strip()
     goal = (instructions or "").strip()
@@ -124,7 +124,7 @@ def _name(title: str, instructions: str) -> str:
     return name[:200]
 
 
-def _validate(trigger: str, spec: dict, tz: str) -> dict:
+def validate_spec(trigger: str, spec: dict, tz: str) -> dict:
     try:
         kind = RoutineTrigger(trigger)
     except ValueError as exc:
@@ -191,9 +191,15 @@ class RoutineService:
         where = [RoutineRun.routine_id == routine_id]
         if failed_only:
             where.append(RoutineRun.status.in_(("failed", "skipped")))
-        total = await self._session.scalar(select(func.count()).select_from(RoutineRun).where(*where))
+        total = await self._session.scalar(
+            select(func.count()).select_from(RoutineRun).where(*where)
+        )
         rows = await self._session.scalars(
-            select(RoutineRun).where(*where).order_by(RoutineRun.created_at.desc()).offset(offset).limit(limit)
+            select(RoutineRun)
+            .where(*where)
+            .order_by(RoutineRun.created_at.desc())
+            .offset(offset)
+            .limit(limit)
         )
         return list(rows), int(total or 0)
 
@@ -224,7 +230,7 @@ class RoutineService:
     ) -> Routine:
         if not instructions.strip():
             raise ValidationError(say("routineInstructionsRequired"))
-        spec = _validate(trigger, spec, tz)
+        spec = validate_spec(trigger, spec, tz)
         await self._check_feedback_batch(spec, topic.project_id)
         if by_agent:
             agent = await self._agent_for(topic.id, agent_handle or by)
@@ -248,7 +254,7 @@ class RoutineService:
             id=uuid.uuid4(),
             project_id=topic.project_id,
             topic_id=topic.id,
-            title=_name(title, instructions),
+            title=name_of(title, instructions),
             instructions=instructions.strip(),
             note=(note or "").strip(),
             trigger=trigger,
@@ -342,7 +348,7 @@ class RoutineService:
         trigger = changes.get("trigger", row.trigger)
         spec = changes.get("spec", row.spec)
         tz = changes.get("timezone", row.timezone)
-        new_spec = _validate(trigger, spec, tz)
+        new_spec = validate_spec(trigger, spec, tz)
         await self._check_feedback_batch(new_spec, row.project_id)
         for key in ("title", "instructions", "note"):
             if key in changes and changes[key] is not None:
@@ -350,7 +356,7 @@ class RoutineService:
         if not row.instructions:
             raise ValidationError(say("routineInstructionsRequired"))
         if not row.title:
-            row.title = _name(row.title, row.instructions)
+            row.title = name_of(row.title, row.instructions)
         if changes.get("agent_handle"):
             row.agent_handle = await self._agent_for(
                 row.topic_id, changes["agent_handle"]

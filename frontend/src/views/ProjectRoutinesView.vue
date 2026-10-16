@@ -5,8 +5,8 @@
 // 主人或项目管理员），那两颗按钮照着它画，这一页不自己算权限。
 //
 // 这一页只负责几件属于「页面」的事：把项目里有哪些房间查出来（新建时要选一个）、把
-// 地址里的 `?routine=` 翻成「展开这一条」、把「我存的」模板接上（存在这台浏览器上，
-// 见 `useRoutineTemplates`），以及页头上那两颗命令。规则那一串和建规则那两页是
+// 地址里的 `?routine=` 翻成「展开这一条」、把项目里存下来的模板接上（存在后端，见
+// `useRoutineTemplates`），以及页头上那两颗命令。规则那一串和建规则那两页是
 // `components/routine/` 里的共用件 —— 房间右侧「例行事务」那一格画的是同一份。
 import type { RoutineInput } from '@/lib/routine'
 import type { Topic } from '../cx_types'
@@ -103,10 +103,12 @@ watch(
 )
 
 /** 表单存下去。勾了「存成模板」就把这张表也收成一条 —— 存规则失败时那一条不留下，
- *  不然「我存的」里会出现一条从没跑起来的表。 */
+ *  不然项目里会出现一条从没跑起来的表。模板和规则是两件事，两处各自会失败：规则
+ *  存下了、模板没存上要说一句，那一条不会自己冒出来，人下次也找不到它。 */
 async function onSubmit(payload: { room: string; body: RoutineInput; keepAsTemplate: boolean }) {
   const saved = await submit(payload)
-  if (saved && payload.keepAsTemplate) addTemplate(payload.body)
+  if (!saved || !payload.keepAsTemplate) return
+  if (!(await addTemplate(payload.body))) error.value = t('routines.template.saveFailed')
 }
 
 useCommands(() => [
@@ -160,6 +162,6 @@ useCommands(() => [
     @records-failed-only="setRecordsFailedOnly"
     @update:model-value="(open) => (open ? (formOpen = true) : closeForm())"
     @save="onSubmit"
-    @delete-template="(tpl) => removeTemplate(tpl.id)"
+    @delete-template="(tpl) => void removeTemplate(tpl.id)"
   />
 </template>

@@ -30,12 +30,14 @@ vi.mock('../api/routines', () => ({
   updateRoutine: vi.fn(),
   routineAction: vi.fn(),
   deleteRoutine: vi.fn(),
+  listRoutineTemplates: vi.fn(),
+  createRoutineTemplate: vi.fn(),
+  deleteRoutineTemplate: vi.fn(),
 }))
 
 const { listTopics } = await import('../api')
-const { deleteRoutine, getRoutine, listProjectRoutines, listRoutineRuns, routineAction } = await import(
-  '../api/routines'
-)
+const { deleteRoutine, getRoutine, listProjectRoutines, listRoutineRuns, listRoutineTemplates, routineAction } =
+  await import('../api/routines')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -108,6 +110,8 @@ beforeEach(() => {
     total: 2,
   })
   vi.mocked(listRoutineRuns).mockResolvedValue({ data: [], total: 0 })
+  // 模板存在项目里（`api/routines.ts` 那三个接口），默认这个项目一条也没有。
+  vi.mocked(listRoutineTemplates).mockResolvedValue({ data: [], total: 0 })
 })
 
 function mount() {

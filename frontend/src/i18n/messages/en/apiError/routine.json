@@ -21,6 +21,8 @@
   "routineRunEnded": "This run has already ended",
   "routineRunNotFound": "This run doesn't exist",
   "routineStatusInvalid": "status can only be succeeded or failed",
+  "routineTemplateGoalRequired": "A template has to say what it should do",
+  "routineTemplateNotFound": "This template doesn't exist",
   "routineTriggerInvalid": "The trigger can only be a schedule or one of the three project events",
   "routinesRoomMemberOnly": "You're not a member of this channel, so you can't see its routines",
   "scheduleHourlyMinute": "An hourly routine needs the minute to run at (0–59)",

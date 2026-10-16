@@ -88,8 +88,9 @@
   },
   "template": {
     "preset": "平台预置",
-    "mine": "我存的",
-    "mineNote": "（存在这台浏览器上，换一台机器就看不到）",
+    "mine": "项目里存的",
+    "mineNote": "（项目成员共用）",
+    "saveFailed": "模板没存上",
     "when": {
       "daily": "每天 {time}",
       "weekly": "每{days} {time}",

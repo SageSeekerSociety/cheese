@@ -31,7 +31,7 @@ defineProps<{
   editing: Routine | null
   saving: boolean
   formError: string
-  /** 人自己存下来的模板（「我存的」那一段）。预置在 `lib/routineTemplates.ts` 里。 */
+  /** 这个项目里存下来的模板（「项目里存的」那一段）。预置在 `lib/routineTemplates.ts` 里。 */
   templates: RoutineTemplate[]
 }>()
 

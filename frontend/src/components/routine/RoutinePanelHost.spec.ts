@@ -21,13 +21,22 @@ vi.mock('../../api/routines', () => ({
   updateRoutine: vi.fn(),
   routineAction: vi.fn(),
   deleteRoutine: vi.fn(),
+  listRoutineTemplates: vi.fn(),
+  createRoutineTemplate: vi.fn(),
+  deleteRoutineTemplate: vi.fn(),
 }))
 
 import RoutinePanelHost from './RoutinePanelHost.vue'
 
-const { createRoutine, getRoutine, listProjectRoutines, listRoutineRuns, updateRoutine } = await import(
-  '../../api/routines'
-)
+const {
+  createRoutine,
+  createRoutineTemplate,
+  getRoutine,
+  listProjectRoutines,
+  listRoutineRuns,
+  listRoutineTemplates,
+  updateRoutine,
+} = await import('../../api/routines')
 
 const vuetify = createVuetify({ components, directives })
 
@@ -82,6 +91,8 @@ const live = {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(listProjectRoutines).mockResolvedValue({ data: [live], total: 1 })
+  // 模板存在项目里（`api/routines.ts` 那三个接口），默认这个项目一条也没有。
+  vi.mocked(listRoutineTemplates).mockResolvedValue({ data: [], total: 0 })
 })
 
 function mount() {
@@ -186,8 +197,16 @@ describe('房间右侧的「例行事务」', () => {
     expect(body.spec).toEqual({ freq: 'weekly', time: '09:00', weekdays: [0] })
   })
 
-  it('勾了「存成模板」：规则存下来之后，「我存的」里多一条，下次能从它开始', async () => {
+  it('勾了「存成模板」：规则存下来之后，「项目里存的」里多一条，下次能从它开始', async () => {
     vi.mocked(createRoutine).mockResolvedValue({ ...live, id: 'new-1' })
+    vi.mocked(createRoutineTemplate).mockResolvedValue({
+      id: 'tpl-1',
+      title: '把这个房间今天的进展写成一页',
+      goal: '把这个房间今天的进展写成一页',
+      note: '',
+      trigger: 'schedule',
+      spec: { freq: 'weekly', time: '09:00', weekdays: [0] },
+    })
     const { findByText, container } = mount()
     await findByText('这个房间的日报')
 
@@ -197,14 +216,19 @@ describe('房间右侧的「例行事务」', () => {
     await check('存成模板')
     await fireEvent.click(button('保存')!)
 
-    await waitFor(() => expect(createRoutine).toHaveBeenCalled())
+    // 存规则和存模板是两件事：这一次保存要把这张表也交给项目。
+    await waitFor(() => expect(createRoutineTemplate).toHaveBeenCalled())
+    const [project, saved] = vi.mocked(createRoutineTemplate).mock.calls[0]
+    expect(project).toBe('p1')
+    expect(saved.goal).toBe('把这个房间今天的进展写成一页')
+
     // 再开一次：模板那一页上有刚存的那一条。
     await fireEvent.click(button('新建')!)
     await waitFor(() => expect(button('保存')).toBeTruthy())
     await fireEvent.click(
       Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.trim() === '模板')!
     )
-    await waitFor(() => expect(document.body.textContent).toContain('我存的'))
+    await waitFor(() => expect(document.body.textContent).toContain('项目里存的'))
     expect(document.body.textContent).toContain('把这个房间今天的进展写成一页')
   })
 

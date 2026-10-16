@@ -13,6 +13,12 @@ rooms of the project have no business reading who set what there. Editing one
 audience: whoever may read it may change it. Deleting is narrower: the person it
 notifies (``owner_handle``) or a project manager. Every response carries
 ``can_delete`` so the frontend knows whether to draw that button.
+
+**Templates are not rules.** A saved template is a filled-in form kept to fill
+the next one from, and it belongs to the project: it is the project's business,
+not one room's, so the people who may read the project read the same list, and
+may add to it or take from it. Nothing runs off a template, so nothing here
+carries ``can_delete`` and no refusal narrows who may remove one.
 """
 
 import uuid
@@ -24,7 +30,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import Page, ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import notice_keys, say
@@ -34,8 +41,9 @@ from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
 from app.domain.routine import service as routines
-from app.domain.routine.models import Routine, RoutineRun
+from app.domain.routine.models import Routine, RoutineRun, RoutineTemplate
 from app.domain.routine.service import RoutineService
+from app.domain.routine.templates import RoutineTemplateService
 from app.domain.routine.trigger import describe_trigger
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -66,6 +74,42 @@ class RoutinePatch(BaseModel):
     spec: dict | None = None
     timezone: str | None = None
     agent_handle: str | None = None
+
+
+class RoutineTemplateIn(BaseModel):
+    #: 名字和一条规则一样可以省：省了就从目标那一句里取（`name_of`）。
+    title: str = Field(default="", max_length=200)
+    #: 「目标」 — the same words the rule form's first field took. Called ``goal``
+    #: here because that is the name a template goes by on the screen.
+    goal: str = ""
+    note: str = ""
+    trigger: str = "schedule"
+    spec: dict = Field(default_factory=dict)
+
+
+class RoutineTemplateOut(BaseModel):
+    """``_template`` 给出去的那一份，照抄过来当声明。
+
+    只声明不校验（``typed_response`` 的 ``response_model=None``）：真正的形状还是
+    那个函数拼的，这里写的用处是让 OpenAPI 认得出这个接口返回什么。
+    """
+
+    id: str
+    title: str
+    goal: str
+    note: str
+    trigger: str
+    spec: dict
+
+
+class RoutineTemplateListOut(Page[RoutineTemplateOut]):
+    """这个项目里存的表，最近存的在最前面。"""
+
+
+class RoutineTemplateDeleted(BaseModel):
+    """一张模板被删掉，回的是它的 id。"""
+
+    deleted: str
 
 
 class ReportIn(BaseModel):
@@ -109,6 +153,23 @@ def _routine(
         "revision": row.revision,
         "created_at": _iso(row.created_at),
         "updated_at": _iso(row.updated_at),
+    }
+
+
+def _template(row: RoutineTemplate) -> dict:
+    """一条模板给出去的形状，就是填表那几格：名字、目标、补充说明、触发方式、时间。
+
+    没有 `trigger_text`：那一行由前端按读者此刻的语言现算（`routineWhenText`），
+    后端算一句话过来，英文界面上会是一行中文。也没有「谁存的」「什么时候存的」——
+    界面上没有这一格，不给出去就不会有人照着它画。
+    """
+    return {
+        "id": str(row.id),
+        "title": row.title,
+        "goal": row.goal,
+        "note": row.note,
+        "trigger": row.trigger,
+        "spec": row.spec,
     }
 
 
@@ -420,7 +481,9 @@ async def run_routine_now(
     from app.api.deps import get_chat_service, get_work_runner
 
     row, actor = await _routine_actor(db, resolver, routine_id)
-    run = await RoutineService(db).run_now(row, by=await _speaker(db, actor, row.topic_id))
+    run = await RoutineService(db).run_now(
+        row, by=await _speaker(db, actor, row.topic_id)
+    )
     await db.commit()
     chat = get_chat_service()
     if run.message_id is not None:
@@ -482,6 +545,65 @@ async def report_run(
     )
     await db.commit()
     return ok(_run(run))
+
+
+@router.get(
+    "/projects/{project_id}/routine-templates",
+    **typed_response(RoutineTemplateListOut),
+)
+async def list_routine_templates(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """这个项目里存下来的填表起点，最近存的在最前面。
+
+    项目的一份，谁读得到这个项目就读得到 —— 不看房间名册：模板不属于哪个房间，
+    它是一张还没落到任何房间里的表。
+    """
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    rows = await RoutineTemplateService(db).list(project_id)
+    return ok(page([_template(r) for r in rows], len(rows)))
+
+
+@router.post(
+    "/projects/{project_id}/routine-templates",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoutineTemplateOut),
+)
+async def create_routine_template(
+    project_id: uuid.UUID,
+    body: RoutineTemplateIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    row = await RoutineTemplateService(db).create(
+        project_id=project_id,
+        title=body.title,
+        goal=body.goal,
+        note=body.note,
+        trigger=body.trigger,
+        spec=body.spec,
+    )
+    await db.commit()
+    return ok(_template(row))
+
+
+@router.delete(
+    "/routine-templates/{template_id}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(RoutineTemplateDeleted),
+)
+async def delete_routine_template(
+    template_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    row = await RoutineTemplateService(db).get(template_id)
+    actor = await resolver.resolve(project_id=row.project_id)
+    await resolver.authorize_project(actor, project_id=row.project_id)
+    await RoutineTemplateService(db).delete(row)
+    await db.commit()
+    return ok({"deleted": str(template_id)})
 
 
 async def _own_agent_works_for(db, project_id, agent_handle, person: str) -> None:
