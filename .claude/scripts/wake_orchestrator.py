@@ -36,7 +36,11 @@ carries the whole line — `我是芝士。<@座位> 【递卡】…`, the shape
 has that prefix stripped before the wake composes its own, however many layers of it
 were pasted. A `我是X。` that came in with the body stands in for `--as` when none was
 given, so a pasted line still says who is speaking. Composing is idempotent: feeding
-the composed message back in reproduces it, which is what `--self-test` asserts.
+the composed message back in reproduces it, which is what `--self-test` asserts. The
+body keeps everything past the prefix — the mention a line opens its body with, the
+bracketed word that is not one of the labels, a `我是…` sentence — since a mention is
+taken as prefix only when a label follows it, and a label is the only thing that says
+where a pasted line's prefix ended.
 
 A run that failed after posting is retried with `--request-id <uuid>`, the same id the
 first run used: the platform returns the message it already stored for that id instead of
@@ -81,9 +85,11 @@ USAGE = ("""usage: wake_orchestrator.py <标签> <正文> [--as <名字>] [--req
 #: The three pieces the wake puts in front of a body, in the shapes a pasted line has
 #: them. `我是X。` is the self-identification `--as` writes, and the name is capped and
 #: barred from punctuation so that a body opening with a sentence like
-#: `我是说，这样不行` is not mistaken for one.
+#: `我是说，这样不行` is not mistaken for one. The sentence has to end: with its full
+#: stop, or with what only a line carries next (`<@…>`/`@…`/`【…】`) — a body that *is*
+#: such a sentence and stops there (`我是来确认的`) is body, not a name.
 SELF_ID = re.compile(
-    r"^我是([^\s。，,、！!？?：:；;【】<>@]{1,20})(?:。|(?=\s*(?:<@|@\w|【|$)))")
+    r"^我是([^\s。，,、！!？?：:；;【】<>@]{1,20})(?:。|(?=\s*(?:<@|@\w|【)))")
 #: A mention, platform form first: `<@handle>` is what the compose writes and what the
 #: platform renders, and the bare `@handle` is the same thing typed by hand.
 MENTION = re.compile(r"^<@([^>\s]{1,60})>|^@([^\s，,。、！!？?：:；;【】<>@]{1,40})")
@@ -162,33 +168,49 @@ def confirmed(blocks, message_id):
 def strip_prefix(text, tags):
     """(name, tag, rest): the wake's own prefix taken off the head of `text`.
 
-    The pieces are consumed left to right and around again, so a line pasted with two
-    layers of prefix comes out with none. What counts as a mention is narrower than the
-    syntax allows: a mention belongs to the prefix when a `我是X。` opened the run or
-    when a tag the caller could mean follows it, so a body that opens by mentioning a
-    person (`@李老师 【重要】…`) is left whole. A `【…】` counts as the tag only when its
-    word is in `tags` — the four labels, plus whatever the caller wrote in the tag slot
-    — so a body that opens with a bracketed word of its own keeps it."""
-    name, tag, opened, rest = "", "", False, text
+    The pieces are read left to right, and each one is taken only as part of a line: a
+    mention counts when a `【…】` the caller could mean comes right after it, and a
+    `【…】` counts when its word is one of `tags` — the four labels, plus whatever the
+    caller wrote in the tag slot. So a body that opens by mentioning a person
+    (`@李老师 【重要】…`) keeps its mention, and a body that opens right after the
+    prefix's own mention (`…【递卡】@张三 请看`) keeps the person it names instead of
+    losing them to the prefix. A line pasted with two layers of prefix comes out with
+    none.
+
+    What comes back is the prefix only when a tag was found in the run: the tag is what
+    says where a pasted line's prefix ends, so with no tag only a `我是X。` that still
+    has the body after it is taken, as the speaker's name. A body that is nothing but
+    that sentence (`我是来确认的`) is left as the body."""
+    pieces, rest, off = [], text, 0
     while True:
         m = SELF_ID.match(rest)
         if m:
-            name, opened, rest = name or m.group(1), True, rest[m.end():].lstrip()
-            continue
-        m = MENTION.match(rest)
-        if m:
-            after = rest[m.end():].lstrip()
-            word = TAG_WORD.match(after)
-            if not (opened or (word and word.group(1) in tags)):
-                break
-            rest = after
-            continue
-        m = TAG_WORD.match(rest)
-        if m and m.group(1) in tags:
-            tag, rest = tag or m.group(1), rest[m.end():].lstrip()
-            continue
-        break
-    return name, tag, rest
+            kind, value = "self", m.group(1)
+            settled = rest[m.end() - 1] == "。"
+        else:
+            m = MENTION.match(rest)
+            if m:
+                word = TAG_WORD.match(rest[m.end():].lstrip())
+                if not (word and word.group(1) in tags):
+                    break
+                kind, value, settled = "mention", "", False
+            else:
+                m = TAG_WORD.match(rest)
+                if not (m and m.group(1) in tags):
+                    break
+                kind, value, settled = "tag", m.group(1), False
+        raw = rest[m.end():]
+        rest = raw.lstrip()
+        off += m.end() + (len(raw) - len(rest))
+        pieces.append((kind, value, off, settled))
+    tags_seen = [p for p in pieces if p[0] == "tag"]
+    if tags_seen:
+        name = next((v for k, v, _o, _s in pieces if k == "self"), "")
+        return name, tags_seen[0][1], text[pieces[-1][2]:]
+    head = pieces[0] if pieces else None
+    if head and head[0] == "self" and head[3] and head[2] < len(text):
+        return head[1], "", text[head[2]:]
+    return "", "", text
 
 
 def normalize(tag, body, as_name):
@@ -551,27 +573,52 @@ def self_test():
          ("", "", "@李老师 【重要】这份方案请过一眼")),
         ("前缀：正文开头自带的【…】不是四个标签之一就留着",
          strip_prefix("【重要】结论", LABELS), ("", "", "【重要】结论")),
+        ("前缀：前缀之后正文自己 @ 的人留着，连后面的逗号一起",
+         [strip_prefix("我是芝士。<@a> 【递卡】@张三 请看这条", LABELS)[2],
+          strip_prefix("我是芝士。<@a> 【递卡】@张三，请看一下", LABELS)[2]],
+         ["@张三 请看这条", "@张三，请看一下"]),
+        ("前缀：前缀之后平台写法 <@某人> 也留着（那是给人点名的，不是前缀）",
+         strip_prefix("我是芝士。<@a> 【递卡】<@张三> 请看这条", LABELS)[2],
+         "<@张三> 请看这条"),
+        ("前缀：正文里后面还跟点名时只取最前面那一个，中间的不动",
+         strip_prefix("我是芝士。<@a> 【递卡】@张三 <@李四> 请看", LABELS)[2],
+         "@张三 <@李四> 请看"),
+        ("前缀：没有标签时，光一个 我是X。 不当名字吃（那条话就是正文）",
+         [strip_prefix("我是来确认的", LABELS), strip_prefix("我是来确认的。", LABELS),
+          strip_prefix("我是说，这样不行", LABELS)],
+         [("", "", "我是来确认的"), ("", "", "我是来确认的。"), ("", "", "我是说，这样不行")]),
+        ("前缀：没有标签、但 我是X。 后面还有正文的，名字照取",
+         [strip_prefix("我是芝士。正文", LABELS), strip_prefix("我是芝士。@张三 请看", LABELS)],
+         [("芝士", "", "正文"), ("芝士", "", "@张三 请看")]),
         ("前缀：剥过一遍的东西再剥一遍不变（幂等）",
          [strip_prefix(strip_prefix(t, LABELS)[2], LABELS)[2] for t in
           ["我是芝士。<@a> 【递卡】正文", "@cheese-abc 【递卡】正文", "正文",
-           "@李老师 【重要】这份方案请过一眼"]],
-         ["正文", "正文", "正文", "@李老师 【重要】这份方案请过一眼"]),
+           "@李老师 【重要】这份方案请过一眼", "我是芝士。<@a> 【递卡】@张三 请看这条"]],
+         ["正文", "正文", "正文", "@李老师 【重要】这份方案请过一眼", "@张三 请看这条"]),
         ("前缀：正文粘着整句 → 标签用参数里的，正文只剩正文，名字顶上 --as",
          parse_args(["递卡", "我是芝士。<@cheese-abc> 【递卡】#1512 PR #3675"])[:3],
          ("递卡", "#1512 PR #3675", "芝士")),
-        ("前缀：给了 --as 就不再用粘进来的名字，也不重复它",
-         parse_args(["--as", "芝士", "交付", "我是芝士。<@a> 【交付】结论"])[:3],
-         ("交付", "结论", "芝士")),
+        ("前缀：给了 --as 就不再用粘进来的名字（名字不同才看得出谁赢）",
+         parse_args(["--as", "甲", "交付", "我是乙。<@a> 【交付】结论"])[:3],
+         ("交付", "结论", "甲")),
+        ("前缀：给了 --as 时正文只当正文，一句 我是… 的话不会被吃掉",
+         parse_args(["--as", "甲", "递卡", "我是来确认的"])[:3],
+         ("递卡", "我是来确认的", "甲")),
         ("前缀：标签位置收到整句时，标签从里面取，剩下的是正文",
          parse_args(["我是芝士。<@a> 【递卡】#1512 PR #3675", ""])[:3],
          ("递卡", "#1512 PR #3675", "芝士")),
+        ("前缀：标签位置收到整句、正文另有一段时两段都留下（换行接上）",
+         parse_args(["我是芝士。<@a> 【递卡】#1512 PR #3675", "还有一句"])[:3],
+         ("递卡", "#1512 PR #3675\n还有一句", "芝士")),
         ("前缀：粘进来的【标签】和参数不一致时按参数发，并在 stderr 说一句",
          tag_mismatch(), (("递卡", "结论"), True)),
         ("前缀：发出去的消息喂回来再组一次是同一个（去重坏掉时这条会红）",
          [a == b for a, b in [roundtrip("递卡", "#1512 PR #3675 head 672653c5"),
                               roundtrip("交付", "结论", as_name="芝士"),
-                              roundtrip("待决", "要定什么｜我倾向 A\n第二行", as_name="芝士")]],
-         [True, True, True]),
+                              roundtrip("待决", "要定什么｜我倾向 A\n第二行", as_name="芝士"),
+                              roundtrip("递卡", "@张三 请看这条 head 672653c5"),
+                              roundtrip("递卡", "我是来确认的")]],
+         [True, True, True, True, True]),
     ]
     bad = 0
     for name, got, want in cases:
