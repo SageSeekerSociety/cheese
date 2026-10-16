@@ -44,24 +44,89 @@ async def test_one_failed_model_call_is_kept_without_alarming(monkeypatch, kind)
     assert alerts == []
 
 
-async def test_a_burst_of_model_failures_alerts_once_with_the_counts(monkeypatch):
-    """What a person can act on is the model path going down: many failures in
-    a few minutes, of whatever kind. That is told once, with how many of each."""
-    backend_log, topic, added, alerts = _recorded(monkeypatch)
-    kinds = ["GatewayUnreachable", "GatewayHTTPError"]
-    for i in range(80):
+async def _fail(backend_log, topic, kind, n=1, **kw):
+    for i in range(n):
         error = BackendErrorIn(
             message="The model was never reached",
-            exc_type=kinds[i % 2],
-            where="model gateway",
-            request_id=f"call-{i}",
+            exc_type=kind,
+            where=kw.pop("where", "model gateway"),
+            request_id=f"call-{uuid.uuid4().hex[:8]}",
+            **kw,
         )
         await backend_log.record(
             None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
         )
+
+
+def _bursts(alerts):
+    return [a for a in alerts if a[1].get("key") == "model-failure-burst"]
+
+
+async def test_a_burst_of_model_failures_alerts_with_the_counts(monkeypatch):
+    """What a person can act on is the model path going down: many failures in
+    a few minutes, of whatever kind. That is told with how many of each."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(backend_log, topic, "GatewayUnreachable", 40)
+    await _fail(backend_log, topic, "GatewayHTTPError", 40)
+    told = _bursts(alerts)
+    assert told
+    last = " ".join(told[-1][0][1])
+    assert "GatewayUnreachable 40" in last and "GatewayHTTPError 40" in last
+
+
+async def test_failures_spread_over_an_ordinary_day_do_not_alert(monkeypatch):
+    """A failure a minute is a busy upstream, not an outage."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(backend_log.time, "time", lambda: clock[0])
+    for _ in range(120):
+        await _fail(backend_log, topic, "GatewayHTTPError")
+        clock[0] += 60
+    assert _bursts(alerts) == []
+
+
+async def test_an_outage_that_goes_on_keeps_being_reported(monkeypatch):
+    """An outage that goes on for half an hour is still handed to the alerting
+    module after its first minutes, which decides when it is news again. Told
+    only at the moment the threshold was crossed, an outage that began inside
+    the repeat window of an earlier spike was never reported at all."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    clock = [1_000_000.0]
+    monkeypatch.setattr(backend_log.time, "time", lambda: clock[0])
+    for _ in range(10 * 60):
+        await _fail(backend_log, topic, "GatewayUnreachable")
+        clock[0] += 1
+    early = len(_bursts(alerts))
+    for _ in range(20 * 60):
+        await _fail(backend_log, topic, "GatewayUnreachable")
+        clock[0] += 1
+    assert len(_bursts(alerts)) > early
+
+
+async def test_only_model_failures_count_toward_the_burst(monkeypatch):
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(backend_log, topic, "ValueError", 80)
+    await _fail(backend_log, topic, "ClientAbandonedTurn", 80)
+    assert _bursts(alerts) == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "category"),
+    [
+        ("SubscriptionHTTPError", "http_auth"),
+        ("GatewayHTTPError", "http_auth"),
+        ("SubscriptionEgressOffline", "egress_offline"),
+    ],
+)
+async def test_a_failure_someone_can_fix_is_told_at_once(monkeypatch, kind, category):
+    """A refused credential or an offline egress fails every turn of a quiet
+    deployment, far below any burst threshold; it is told the first time."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(
+        backend_log, topic, kind, where="model subscription", upstream_failure=category
+    )
     assert len(alerts) == 1
-    lines = " ".join(alerts[0][0][1])
-    assert "GatewayUnreachable" in lines and "GatewayHTTPError" in lines
+    assert alerts[0][1]["key"] != "model-failure-burst"
 
 
 STACK = 'Traceback:\n  File "app/api/routes/x.py", line 12, in go\nValueError: nope'
@@ -125,9 +190,7 @@ def _recorded(monkeypatch):
         backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
     )
     monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
-    monkeypatch.setattr(
-        backend_log, "model_failures", backend_log._ModelFailureRate(), raising=False
-    )
+    monkeypatch.setattr(backend_log, "model_failures", backend_log._ModelFailureRate())
     added = AsyncMock()
     monkeypatch.setattr(backend_log, "keep_record", added)
     alerts = []
@@ -154,7 +217,7 @@ async def test_a_subscription_lane_failure_alerts_like_a_gateway_one(monkeypatch
             None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
         )
     assert added.await_count == 1
-    assert len(alerts) == 1
+    assert _bursts(alerts)
     lines = " ".join(alerts[0][0][1])
     assert "SubscriptionStreamError" in lines
     assert "events: 0" in lines and "upstream: timeout" in lines

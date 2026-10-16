@@ -339,6 +339,12 @@ _MODEL_FAILURE_TYPES = frozenset(
 )
 
 
+#: Failures someone here can fix, told as soon as they happen rather than when
+#: they pile up: the platform's own credential refused upstream (401/403), and
+#: the subscription egress being offline. Either can fail every turn of a quiet
+#: deployment at a rate far below the burst threshold below, indefinitely.
+_ACTIONABLE_MODEL_FAILURES = frozenset({"http_auth", "egress_offline"})
+
 #: How many model failures inside how long make an alert. One failed model call
 #: is not news: across 2026-10-12..15 the gateway carried ~1,300 calls per 30
 #: minutes and 0.75% of them failed — upstream overload (OpenAI "servers are
@@ -360,15 +366,16 @@ class _ModelFailureRate:
     def __init__(self) -> None:
         self._seen: list[tuple[float, str]] = []
 
-    def crossed(self, exc_type: str, now: float) -> dict[str, int] | None:
-        """Count this failure; the counts by type when it is the one that takes
-        the window to the threshold, else ``None``. Only the crossing is
-        reported: past it, the outage is already news, and the alerting
-        module's repeat rules say when it is news again."""
+    def over(self, exc_type: str, now: float) -> dict[str, int] | None:
+        """Count this failure; the counts by type while the window holds at
+        least the threshold, else ``None``. Every failure past it is handed on,
+        not only the one that crossed it: the alerting module's repeat rules
+        decide when an outage that goes on is news again, and they can only do
+        that if they keep hearing of it."""
         cutoff = now - MODEL_FAILURE_WINDOW_S
         self._seen = [seen for seen in self._seen if seen[0] > cutoff]
         self._seen.append((now, exc_type))
-        if len(self._seen) != MODEL_FAILURE_BURST:
+        if len(self._seen) < MODEL_FAILURE_BURST:
             return None
         counts: dict[str, int] = {}
         for _, kind in self._seen:
@@ -376,6 +383,8 @@ class _ModelFailureRate:
         return counts
 
 
+# Process-local, owned by this module for the process's lifetime: an outage
+# is minutes long, and a restart losing the window costs at most one window.
 model_failures = _ModelFailureRate()
 
 
@@ -524,18 +533,28 @@ async def record(
         # Counted before the dedup below: a repeat of the same failure is
         # still one more failed call, and the rate is what this alert reads.
         if err.exc_type in _MODEL_FAILURE_TYPES:
-            counts = model_failures.crossed(err.exc_type, time.time())
+            where = [
+                f"项目：{project}",
+                f"对话：{conversation}",
+                f"请求：{err.request_id or 'unknown'}",
+            ]
+            if err.upstream_failure in _ACTIONABLE_MODEL_FAILURES:
+                alerting.send(
+                    "模型请求失败",
+                    [scrub_secrets(err.message) + _stream_note(err), *where],
+                    key=f"model-actionable:{err.exc_type}:{err.upstream_failure}",
+                )
+            counts = model_failures.over(err.exc_type, time.time())
             if counts is not None:
+                total = sum(counts.values())
                 by_type = "，".join(f"{kind} {n}" for kind, n in sorted(counts.items()))
                 alerting.send(
                     "模型请求大量失败",
                     [
-                        f"{int(MODEL_FAILURE_WINDOW_S / 60)} 分钟内失败 "
-                        f"{MODEL_FAILURE_BURST} 次：{by_type}",
+                        f"{int(MODEL_FAILURE_WINDOW_S / 60)} 分钟内失败 {total} 次"
+                        f"（阈值 {MODEL_FAILURE_BURST}）：{by_type}",
                         f"最近一次：{scrub_secrets(err.message)}{_stream_note(err)}",
-                        f"项目：{project}",
-                        f"对话：{conversation}",
-                        f"请求：{err.request_id or 'unknown'}",
+                        *where,
                     ],
                     key="model-failure-burst",
                 )
