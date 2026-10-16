@@ -74,7 +74,7 @@ def _validate(path: Path, pattern: object) -> None:
                 f" carries {sorted(MATCHED_FIELDS)}"
             )
         if not isinstance(wanted, list) or not wanted or not all(
-            isinstance(value, str) and value for value in wanted
+            isinstance(value, str) and value.strip() for value in wanted
         ):
             raise ValueError(
                 f"{path}: pattern {where!r} field {field!r} must be a non-empty"
