@@ -1,11 +1,14 @@
 <script setup lang="ts">
+// 一版产物长什么样：图片、文档、表格、幻灯片，或者只剩一个下载链接。
+//
+// 取这一版的字节、以及取到之后画成哪一种，在
+// `composables/useArtifactVersionPreview.ts` 那一层：组件不直接碰 API 层
+// （`.claude/rules/architecture.md` 的组件边界）。这里只管画。
 import type { ArtifactVersion } from '../api'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-
-import { artifactVersionBytes } from '../api'
+import { useArtifactVersionPreview } from '../composables/useArtifactVersionPreview'
 import { t } from '../i18n'
-import { DOCUMENT_TYPES, IMAGE_SUFFIXES, imageMimeOf, NEEDS_CONVERSION, sheetKindOf, suffixOf } from '../lib/fileKind'
+import { sheetKindOf } from '../lib/fileKind'
 
 import DesignImage from './panels/preview/DesignImage.vue'
 import PreviewPages from './panels/preview/PreviewPages.vue'
@@ -22,66 +25,12 @@ const props = withDefaults(
   }>(),
   { bare: false }
 )
-const data = ref<ArrayBuffer | null>(null)
-const imageUrl = ref('')
-const text = ref<string | null>(null)
-const loading = ref(false)
-const error = ref('')
-const suffix = computed(() => suffixOf(props.version.filename ?? ''))
-const view = computed(() => DOCUMENT_TYPES[suffix.value]?.view)
-let generation = 0
 
-function clear() {
-  data.value = null
-  text.value = null
-  if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
-  imageUrl.value = ''
-}
-
-watch(
-  () => [props.projectId, props.artifactId, props.version.card_id],
-  async () => {
-    const current = ++generation
-    clear()
-    error.value = ''
-    loading.value = false
-    if (props.version.kind !== 'file') return
-    loading.value = true
-    try {
-      const bytes = await artifactVersionBytes(
-        props.projectId,
-        props.artifactId,
-        props.version.card_id,
-        NEEDS_CONVERSION.has(suffix.value)
-      )
-      if (current !== generation) return
-      data.value = bytes
-      if (IMAGE_SUFFIXES.has(suffix.value)) {
-        imageUrl.value = URL.createObjectURL(new Blob([bytes], { type: imageMimeOf(suffix.value) }))
-      } else if (view.value !== 'pages' && view.value !== 'sheet' && bytes.byteLength <= 1024 * 1024) {
-        const raw = new Uint8Array(bytes)
-        if (!raw.slice(0, 8192).includes(0)) {
-          try {
-            text.value = new TextDecoder('utf-8', { fatal: true }).decode(raw)
-          } catch {
-            /* Binary files keep their download action. */
-          }
-        }
-      }
-    } catch (e) {
-      if (current === generation)
-        error.value = e instanceof Error ? e.message : t('tasks.artifactComparison.previewError')
-    } finally {
-      if (current === generation) loading.value = false
-    }
-  },
-  { immediate: true }
-)
-
-onBeforeUnmount(() => {
-  generation++
-  clear()
-})
+const { data, imageUrl, text, loading, error, suffix, view } = useArtifactVersionPreview(() => ({
+  projectId: props.projectId,
+  artifactId: props.artifactId,
+  version: props.version,
+}))
 </script>
 
 <template>
