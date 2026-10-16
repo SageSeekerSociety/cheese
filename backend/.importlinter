@@ -215,6 +215,18 @@ ancestors =
     app.domain
 unmatched_ignore_imports_alerting = warn
 
+# **2026-10-15 拆包**：`app/domain/topic/repositories.py` 变成一个包（照 #3856 对
+# `app.domain.feedback.services` 的做法）。下面四条不是新债，是同一份债换了导入方：
+# 读 project 的地址 / 环境 / 模型本来就写在这一个文件里，合并进仓库的树记的是
+# `app.domain.topic.repositories`，而那个模块路径现在归包的 `__init__`，它自己不读
+# 这些，所以旧的三条配对再也不会匹配。一个文件分成几个，配对就从三条变成四条 ——
+# 条数变了，环没变。
+ignore_imports =
+    app.domain.topic.repositories.unread -> app.domain.project.models
+    app.domain.topic.repositories.writes -> app.domain.project.address
+    app.domain.topic.repositories.writes -> app.domain.project.environment
+    app.domain.topic.repositories.writes -> app.domain.project.models
+
 # `app.domain.membership.services -> app.domain.delivery.*`: a project invitation
 # is told to the invitee through the delivery ledger, the one way a notification
 # leaves (I11) — the same two edges `team.membership_services` already has for
@@ -490,3 +502,12 @@ containers =
     app.domain
 exhaustive = true
 unmatched_ignore_imports_alerting = warn
+
+# **2026-10-15 拆包**，和 C3 那边同一件事：`app/domain/topic/repositories.py` 变成
+# 一个包，读 `app.domain.block.models` 的 (Block / BlockKind) 原本是这一个文件顶上的
+# 一条导入，包内三个子模块各自要用，于是多出两个导入方、配对从一条变三条。债是同一
+# 笔（`topic -> block`），只是合并进仓库的树里记的模块路径不再是导入方了。
+ignore_imports =
+    app.domain.topic.repositories.replied -> app.domain.block.models
+    app.domain.topic.repositories.statements -> app.domain.block.models
+    app.domain.topic.repositories.unread -> app.domain.block.models
