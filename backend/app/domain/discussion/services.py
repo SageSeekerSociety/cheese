@@ -19,6 +19,8 @@ from app.domain.discussion.repositories import (
 )
 from app.domain.user.services import handles_by_ids, user_service
 
+__all__ = ["DiscussableModelType", "DiscussionService"]
+
 
 class DiscussionService:
     def __init__(
