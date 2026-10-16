@@ -1,7 +1,7 @@
 """这几块共用的 SQL 词汇 —— 从 `repositories.py` 拆出来的。
 
 两张裸表（`_tasks`、`_threads`）是别的领域的行，这一包只取要用的列；一组判据
-（`_mentions`、`_mentions_everyone`、`_muted_now`、`_seated`、`_readable_by`）和两个
+（`_mentions`、`_mentions_everyone`、`_muted_now`、`_seated`、`readable_by`）和两个
 派生表达式（`_last_activity`、`_order_by`）都只写一遍，读、写、角标三边共用，免得
 同一句 `WHERE` 在几个模块里各答一次、各自漂移。
 
@@ -149,7 +149,7 @@ def seen_by(handle: str | None) -> ColumnElement[bool]:
     sit in. ``None`` is nobody in particular, who sees the public ones.
 
     Private chats are not decided here: the listings that use this already
-    leave them out, and the badge maps (``_readable_by``) admit them by seat.
+    leave them out, and the badge maps (``readable_by``) admit them by seat.
     """
     public = Topic.members_only.is_(False)
     if handle is None:
@@ -157,7 +157,7 @@ def seen_by(handle: str | None) -> ColumnElement[bool]:
     return or_(public, _seated(handle))
 
 
-def _readable_by(user_handle: str):
+def readable_by(user_handle: str):
     """Rooms a person's badge maps may name: every public channel, and the
     private chats and private channels they still hold a seat in. One clause
     for both the unread map and the notify-level map, so the two can never
