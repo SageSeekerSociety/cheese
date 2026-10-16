@@ -256,9 +256,9 @@ def test_a_ceiling_that_is_not_a_number_is_refused_rather_than_coerced(client, p
 
     Every body here also carries a ``default`` the route accepts, so nothing but
     the wrong type can be what the refusal is about. With no strict field the
-    ``True``, ``False`` and ``"40"`` bodies would be read as numbers and stored,
-    and this test is what catches that; the rest of the list is refused as a
-    wrong type either way."""
+    ``True``, ``False`` and ``"40"`` bodies are read as integers instead of being
+    refused as a wrong type, and this test is what catches that; the other three
+    are refused as a wrong type either way."""
     pid = project["id"]
     bob = session_auth_headers("bob")
     kept = compute_configs(client, pid)
