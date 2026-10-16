@@ -8,7 +8,9 @@
 
 **类型标注不算。** 子模块给 ``hub`` 标 ``pkg.DeviceHub`` 时在 ``if TYPE_CHECKING:``
 里引门面，运行时那一句不执行，导入图上没有这条边——这是这套拆法本来就用的写法，
-下面的判据跟着它走。别名（``as TC``）也认。
+下面的判据跟着它走。别名（``as TC``）也认。只认这一种写法：``TYPE_CHECKING`` 跟
+别的条件拼在一起（``if TYPE_CHECKING and _X``、``while TYPE_CHECKING``）按运行时
+报，宁可让人把那句挪进 ``if TYPE_CHECKING:``，也不放过一条真的边。
 
 **怎么写不决定判不判。** 判据先把一句解析成它落在哪个模块上，再判那个模块是不是门
 面：``from . import DeviceHub`` 和 ``from app.domain.agent.device_hub import
@@ -155,6 +157,10 @@ def test_the_guard_reads_the_shapes_it_claims_to_read():
         "import app.domain.agent.device_hub as pkg",
         "from app.domain.agent import device_hub",
         "from app.domain.agent import device_hub as pkg",
+        # 一个 `from … import` 可以点好几个名字，门面不一定排在第一个。
+        "from app.domain.agent import device_link, device_hub",
+        "from app.domain.agent.device_hub import *",
+        "from . import *",
         "from . import DeviceHub",
         "from .. import device_hub",
         "def f():\n    from app.domain.agent.device_hub import DeviceHub\n",
@@ -177,6 +183,7 @@ def test_the_guard_reads_the_shapes_it_claims_to_read():
         # 绝对写法的横引兄弟，和 `from . import sessions` 是同一件事。
         "import app.domain.agent.device_hub.link as link_mod",
         "from app.domain.agent.device_hub import sessions",
+        "from app.domain.agent.device_hub import sessions, link",
     ):
         assert not _reaching_back(source, "<sample>"), source
 
