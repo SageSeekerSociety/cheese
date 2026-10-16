@@ -41,7 +41,17 @@ import {
   ROUTINE_DRAFT,
   ROUTINE_RUNS,
   ROUTINE_WEEKLY,
+  SITE_ACT_BASH_OUTPUT,
+  SITE_ACT_EDIT,
+  SITE_ACT_FAILED,
+  SITE_ACT_PLATFORM,
+  SITE_AGENT_LABELS,
+  SITE_AGENTS,
   SITE_DONE,
+  SITE_ONE_TURN,
+  SITE_SAY_DETAIL,
+  SITE_SAY_SHORT,
+  SITE_TURN_START,
   SITE_WORKING,
   siteBundle,
   THREAD_ROWS,
@@ -66,7 +76,11 @@ import PanelRoutines from '@/components/panels/PanelRoutines.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import ProjectFileView from '@/components/panels/ProjectFileView.vue'
+import SiteActRow from '@/components/panels/SiteActRow.vue'
+import SiteAgentTabs from '@/components/panels/SiteAgentTabs.vue'
+import SiteSayRow from '@/components/panels/SiteSayRow.vue'
 import SiteStepOutput from '@/components/panels/SiteStepOutput.vue'
+import SiteTurnHead from '@/components/panels/SiteTurnHead.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
@@ -469,6 +483,126 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '这个房间还没人干过活：会话栏照常在顶上，底下一句话。',
         props: { site: siteBundle({ transcript: [] }) },
         expect: '暂无现场记录',
+      },
+    ],
+  },
+  {
+    id: 'site-agent-tabs',
+    title: 'SiteAgentTabs',
+    about: '现场顶上按队友筛的那一排：一个房间里几个队友并行时，切一个看他做过什么；只有一个队友时整排不画。',
+    file: 'src/components/panels/SiteAgentTabs.vue',
+    component: SiteAgentTabs,
+    needs: ['i18n'],
+    args: { agents: SITE_AGENTS, labels: SITE_AGENT_LABELS, controls: 'demo-site-log' },
+    states: [
+      {
+        name: '两个队友',
+        note: '默认停在「全部」：几段轮次交错着排，哪一段是谁做的由每组的组头署。',
+        props: { viewing: null },
+        expect: '芝士K',
+        expectSelector: '.site-agents__tab--on',
+      },
+      {
+        name: '只看一个队友',
+        note: '选中的那一格填成实心、字提亮；底下那条记录就只剩他这一段。',
+        props: { viewing: 'cheese-k' },
+        expect: '全部',
+      },
+    ],
+  },
+  {
+    id: 'site-turn-head',
+    title: 'SiteTurnHead',
+    about: '现场一轮开头的那一行：谁、什么时候、几步、用了多久，底下那根细条说这一轮的时间花在哪几段。',
+    file: 'src/components/panels/SiteTurnHead.vue',
+    component: SiteTurnHead,
+    needs: ['i18n'],
+    args: { turn: SITE_ONE_TURN, startsAtMs: SITE_TURN_START },
+    states: [
+      {
+        name: '一轮做完了',
+        note: '几步、用了多久写在这里（用时从这一轮开始那一刻算，不是从头一步，不然「思考中」等掉的那十几秒就不见了）。',
+        props: { who: '芝士', live: false },
+        expect: '5 步',
+        expectSelector: '.turn__phases',
+      },
+      {
+        name: '一轮还在跑',
+        note: '右头亮一个「进行中」，那个点是呼吸的（浏览器里看得出来）。',
+        props: { who: '芝士', live: true },
+        expect: '进行中',
+      },
+      {
+        name: '只有一个队友的房间',
+        note: '`who` 由父组件算：只看一个队友、或者房间里只有一个时不给名字，组头上就不写。',
+        props: { who: null, live: false },
+        expect: '5 步',
+      },
+    ],
+  },
+  {
+    id: 'site-act-row',
+    title: 'SiteActRow',
+    about:
+      '现场里的一步：一格圆点、一个动作词、一段参数，右头是时刻。失败的那句错另起一行，平台自己做的事圆点是实心的。',
+    file: 'src/components/panels/SiteActRow.vue',
+    component: SiteActRow,
+    needs: ['i18n'],
+    args: { memberNames: PANEL_NAMES, topicId: DEMO_TOPIC, load: loadLsOutput },
+    states: [
+      {
+        name: '改一个文件',
+        note: '动词是这一步做的事，参数是它指着哪一样 —— 现场一行就这两样，扫一眼知道到哪儿了。',
+        props: { block: SITE_ACT_EDIT, expanded: false },
+        expect: 'landing.css',
+      },
+      {
+        name: '平台的动作',
+        note: '芝士调平台接口（发消息、开工作区）也是它做的事，圆点画成实心的，和自己起的工具分得开。',
+        props: { block: SITE_ACT_PLATFORM, expanded: false },
+        expect: '主按钮已改成琥珀色',
+        expectSelector: '.site-act--platform',
+      },
+      {
+        name: '这一步失败了',
+        note: '那句错另起一行、缩进到这一步底下，不藏在提示里：卡在哪一眼看得见。',
+        props: { block: SITE_ACT_FAILED, expanded: false },
+        expect: '执行器连接中断，结果未知',
+      },
+      {
+        name: '摊开一步的输出',
+        note: '收着时只说这一步打印了多少字节，第一次点开才去取那一段（输出那一行是它自己那一件）。',
+        props: { block: SITE_ACT_BASH_OUTPUT, expanded: true },
+        expect: `输出（${LS_OUTPUT_BYTES} B）`,
+      },
+    ],
+  },
+  {
+    id: 'site-say-row',
+    title: 'SiteSayRow',
+    about: '现场里「芝士说了一句话」的那一行：头像、名字、时刻，正文照对话栏渲染，里面的引用点得动。',
+    file: 'src/components/panels/SiteSayRow.vue',
+    component: SiteSayRow,
+    needs: ['i18n'],
+    args: { memberNames: PANEL_NAMES, agentName: PANEL_NAMES.cheese },
+    states: [
+      {
+        name: '短的一句话',
+        note: '一句话占一行，署名写的是开口的那个人（名册上查不到的 AI 落成项目队友的名字）。',
+        props: { block: SITE_SAY_SHORT, long: false, expanded: false },
+        expect: '收到补充：手机上也要检查。',
+      },
+      {
+        name: '长的一段收成 12 行',
+        note: '父组件量出来越过 12 行那条线（`long`）就收：正文折到 12 行、末尾淡出，底下那颗说清全部有多少行。',
+        props: { block: SITE_SAY_DETAIL, long: true, expanded: false },
+        expect: '展开全部（14 行）',
+      },
+      {
+        name: '摊开之后',
+        note: '摊开就不再收，那颗按钮改说「收起」。',
+        props: { block: SITE_SAY_DETAIL, long: true, expanded: true },
+        expect: '收起',
       },
     ],
   },
