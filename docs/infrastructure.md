@@ -1152,6 +1152,7 @@ Kong tunnels inside TLS on `:443` do not apply inside the mainland.
 | Beijing | `/etc/caddy/Caddyfile` | `scripts/ops/Caddyfile.beijing` |
 | Beijing | `~bjrelay/.ssh/authorized_keys` | `restrict,port-forwarding`, may only listen on `127.0.0.1:18463` and `:18464` |
 | Beijing | `/etc/ssh/sshd_config.d/60-bjrelay.conf` | no passwords; `bjrelay` gets remote forwarding only, 10 s × 2 keepalive |
+| Beijing | `/etc/systemd/system/cheese-bj-relay-watchdog.service`, `/usr/local/libexec/cheese-bj-relay/relay-watchdog.sh` | frees a port held by a dead tunnel session (same design as etrip's `cheese-relay-watchdog`, no Feishu alert) |
 
 Both tunnels currently leave through the default (Unicom) line. From the campus
 exit that Hong Kong's tunnel B uses (table 18443 via 119pve), the Beijing address
