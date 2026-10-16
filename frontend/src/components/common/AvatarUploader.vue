@@ -1,6 +1,5 @@
 <!--
-  这个控件整体是「一张照片 + 一层暗色蒙版 + 浅色提示文字」，和相机 App 的取景蒙版一样，
-  两套主题下都长这样：底下的照片是什么颜色都可能，蒙版和压在上面的字都不能跟着主题翻。
+  这个控件整体是「一张照片 + 一层蒙版 + 压在上面的浅色提示文字」，和相机 App 的取景蒙版一样。
 
   它走的是 §2.5 的反色块，而不是 --surface 那一套语义色 —— 白字压在 --fill-2（浅色下
   #EEEFF1）上只有约 1.2:1，当场就坏。底用 --inverse-surface，字用 --inverse-ink：浅色下
@@ -88,7 +87,7 @@ const onError = (error: Error) => {
     inset: 0;
     opacity: 0;
     transition: opacity var(--dur-quick) var(--ease-standard);
-    /* 蒙版本身：照片上的暗色遮罩 + 浅色虚线框，和相机 App 一样，两套主题下都长这样。 */
+    /* 蒙版本身：压在照片上的一层反色块（§2.5）+ 浅色虚线框，和相机 App 的取景蒙版一样。 */
     border: 2px dashed color-mix(in srgb, var(--inverse-ink) 50%, transparent);
     border-radius: var(--radius-md);
     background-color: color-mix(in srgb, var(--inverse-surface) 25%, transparent);
