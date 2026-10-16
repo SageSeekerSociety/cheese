@@ -478,9 +478,13 @@ DRIVER = textwrap.dedent(
     import json, os, sys
     sys.path.insert(0, {source!r})
     import client
+    import shell_prefix
     import shell_stop
     for name, value in json.loads(os.environ["DRIVER_CONSTANTS"]).items():
-        setattr(client if hasattr(client, name) else shell_stop, name, value)
+        # The shell prefix reads its own limits out of `shell_prefix`; setting
+        # the name on `client` would reach nothing.
+        where = shell_prefix if hasattr(shell_prefix, name) else shell_stop
+        setattr(where, name, value)
     failures = int(os.environ.get("DRIVER_FAILURES", "0"))
     kind = os.environ.get("DRIVER_FAILURE", "out-of-reach")
     real = client.RemoteClient
@@ -520,7 +524,9 @@ DRIVER = textwrap.dedent(
                     raise client.MachineOutOfReach()
             return super().call(method, params, **options)
 
-    client.RemoteClient = Flaky
+    # `shell` and the reader it stands on look their client up in
+    # `shell_prefix`; the watcher's stop goes through `shell_stop`'s.
+    shell_prefix.RemoteClient = Flaky
     shell_stop.RemoteClient = Flaky
     raise SystemExit(client.shell(sys.argv[1], sys.argv[2]))
     """

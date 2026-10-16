@@ -143,3 +143,24 @@ def test_private_files_and_documents_go_back_to_their_conversations(db, tmp_path
     assert rows[in_dm] == (dm, False)
     assert rows[in_public] == (public, True)
     assert rows[by_hand] == (None, False)
+
+
+def test_a_run_that_stopped_after_its_columns_were_committed_completes(db, tmp_path):
+    """The first version of this migration committed its columns and foreign key
+    before an index build that timed out on dev, leaving the revision unstamped.
+    Running it again finishes the job instead of failing on what is there."""
+    project, public = seed_room(db)
+    in_public = _document(db, project, 1)
+    _made_in(db, project, public, in_public)
+    db.execute("ALTER TABLE documents ADD COLUMN room_id uuid")
+    db.execute("ALTER TABLE documents ADD COLUMN kept_at timestamptz")
+    db.execute("ALTER TABLE library_files ADD COLUMN source_path varchar(1024)")
+    db.execute(
+        "ALTER TABLE documents ADD CONSTRAINT fk_documents_room_id_topics"
+        " FOREIGN KEY (room_id) REFERENCES topics (id) ON DELETE CASCADE NOT VALID"
+    )
+
+    db.upgrade(AFTER, {"WORKSPACE_ROOT": str(tmp_path)})
+
+    row = db.fetchrow("SELECT room_id, kept_at FROM documents WHERE id = $1", in_public)
+    assert row["room_id"] == public and row["kept_at"] is not None

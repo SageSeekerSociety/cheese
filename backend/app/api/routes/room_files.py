@@ -44,9 +44,8 @@ from app.domain.project.room_files import (
     artifact_kind_for,
     clean_artifact_path,
 )
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, place_or_404
 from app.domain.textfile import content_version
-from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.room_files")
 
@@ -56,7 +55,7 @@ router = APIRouter(tags=["room-files"])
 async def _in_room(
     db: AsyncSession, resolver: ActorResolver, topic_id: uuid.UUID
 ) -> tuple[Place, Actor]:
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -517,7 +516,7 @@ async def editor_saves_file(
             logger.warning("office editor save refused: %s", exc)
             await db.rollback()
             return JSONResponse({"error": 1, "message": str(exc)}, status_code=403)
-        place = await TopicService(db).place_or_404(target.room_id)
+        place = await place_or_404(db, target.room_id)
         shown = await add_shown_block(
             db,
             project_id=place.project_id,

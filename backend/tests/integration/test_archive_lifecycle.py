@@ -23,6 +23,7 @@ from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, Sandbo
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
@@ -55,6 +56,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         assert room.archived_at is not None
         deadline = room.archived_at + timedelta(seconds=37)
@@ -69,6 +71,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         assert room.cleanup_due_at == deadline
         await service.unarchive(
@@ -80,6 +83,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         assert room.cleanup_due_at == room.archived_at + timedelta(seconds=900)
 
@@ -104,6 +108,7 @@ async def archived_room(client, monkeypatch):
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         await session.commit()
         return room.id, room.cleanup_id

@@ -1,0 +1,8 @@
+{
+  "backToSpaces": "回到空间列表",
+  "pendingBody": "平台管理员审核通过后，这里才能发布题目，邀请码也才能用。审核结果会显示在「空间」页的「我的空间申请」里。",
+  "pendingTitle": "空间还在审核中",
+  "rejectedBody": "可以到「空间」页的「我的空间申请」里修改后重新提交。",
+  "rejectedBodyReason": "驳回原因：{reason}。可以到「空间」页的「我的空间申请」里修改后重新提交。",
+  "rejectedTitle": "空间申请被驳回"
+}

@@ -24,6 +24,7 @@ from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review import forge_clients
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
@@ -296,7 +297,7 @@ async def topic_work_summary(
     every open task in a busy channel took past the timeout on every visit.
     """
     await ProjectService(db).get_or_404(project_id)
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     one = (
         await TaskService(db).get(place.task_id) if place.task_id is not None else None
     )

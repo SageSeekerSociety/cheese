@@ -1,0 +1,53 @@
+{
+  "admin": "Admin console",
+  "empty": {
+    "desc": "Feedback you submit shows up here.",
+    "title": "No feedback yet"
+  },
+  "error": {
+    "desc": "Check your connection and try again.",
+    "dismiss": "Dismiss this notice",
+    "retry": "Try again",
+    "title": "Couldn't load feedback"
+  },
+  "filter": {
+    "any": "Any",
+    "author": "Author",
+    "authorPlaceholder": "Author",
+    "clear": "Clear filters",
+    "days": "Time",
+    "days24": "24 hours",
+    "days30": "30 days",
+    "days7": "7 days",
+    "kind": "Type",
+    "status": "Status"
+  },
+  "filtered": {
+    "clear": "Clear filters",
+    "desc": "Try another filter, or clear them to see everything.",
+    "title": "No feedback matches"
+  },
+  "foot": "Public feedback is visible to everyone; if you file it as private, only you and platform admins can see it — nobody else can search it out or get a link to it.",
+  "hot": {
+    "note": "Scored by support, but newer counts for more: 2 supports today weigh the same as 4 supports {halfLife} days ago. Items worth {threshold} points that aren't finished land in this tab; when fewer than {minItems} clear the bar the rest are filled in by score, so the tab is never empty."
+  },
+  "mine": "My feedback",
+  "more": {
+    "load": "Load more",
+    "showing": "Showing {shown} of {total}"
+  },
+  "search": {
+    "desc": "Try another keyword. Search covers titles, summaries, bodies and submitters.",
+    "placeholder": "Search feedback",
+    "title": "No matching feedback"
+  },
+  "submit": "Submit feedback",
+  "tab": {
+    "active": "In progress",
+    "all": "All",
+    "hot": "Hot",
+    "label": "Feedback tabs",
+    "resolved": "Completed"
+  },
+  "title": "Feedback center"
+}

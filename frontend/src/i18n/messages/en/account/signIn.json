@@ -1,0 +1,21 @@
+{
+  "createAccount": "Create account",
+  "emailCode": "Sign in with an email code",
+  "failed": "Couldn't sign in. Please try again.",
+  "forgotPassword": "Forgot password?",
+  "lastUsed": "Last used",
+  "noAccount": "No account yet?",
+  "notice": {
+    "passwordReset": "Your password has been reset. Sign in with the new one."
+  },
+  "or": "or",
+  "passkey": "Sign in with a passkey",
+  "passkeyCanceled": "Passkey sign-in canceled",
+  "passkeyFailed": "Couldn't sign in with a passkey. Please try again.",
+  "passkeyNotFound": "No matching passkey found",
+  "providerFailed": "Couldn't sign in with that account. Please try again.",
+  "signedIn": "Signed in",
+  "submit": "Sign in",
+  "title": "Sign in",
+  "withProvider": "Sign in with {provider}"
+}

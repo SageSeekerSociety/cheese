@@ -6,7 +6,7 @@ import uuid
 from typing import Any
 from urllib.parse import quote
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.db import release_read_session
 from app.core.device_failures import DeviceCallError, DeviceNotReady, DeviceOffline
@@ -38,6 +38,8 @@ from app.domain.topic.models import Topic
 
 #: How many changed files one comparison reads for a line diff.
 MAX_DIFFED_FILES = 200
+#: How many blob reads one comparison keeps in the air at the same time.
+MAX_BLOB_READS = 8
 #: The longest listing every committed file of one revision may take.
 TREE_DEADLINE_S = 30
 
@@ -304,35 +306,82 @@ class ProjectFiles:
         return old, new
 
     async def committed_blobs(self, oids: list[str]):
-        return {oid: await self._blob({"sha": oid}) for oid in dict.fromkeys(oids)}
+        """Read many blobs at once, each read on a session of its own.
+
+        One `AsyncSession` runs one statement at a time, and every read goes
+        through `repository_data`, which looks the project's binding and its
+        tokens up in the session it is handed (`project/forge.py`) — so reads
+        running together cannot share one. Each takes a session minted off this
+        one's engine, not the module-level factory, which the test harness binds
+        to another database (`review/services/polling.py` does the same).
+        `MAX_BLOB_READS` of them are in the air at a time; the answer holds
+        every oid asked for, as reading them one by one did.
+
+        The reads are collected in the order they were asked for, so a failure
+        reaches the caller where reading one file after another would have put
+        it; the reads still in the air are then cancelled, rather than left
+        asking the forge after the call that wanted them has already failed."""
+        unique = list(dict.fromkeys(oids))
+        if not unique:
+            return {}
+        sessions = async_sessionmaker(self.session.bind, expire_on_commit=False)
+        at_once = asyncio.Semaphore(MAX_BLOB_READS)
+
+        async def read(oid: str) -> bytes:
+            async with at_once, sessions() as session:
+                return await self._blob({"sha": oid}, session)
+
+        running = [asyncio.create_task(read(oid)) for oid in unique]
+        try:
+            return dict(zip(unique, [await task for task in running], strict=True))
+        finally:
+            for task in running:
+                task.cancel()
+            await asyncio.gather(*running, return_exceptions=True)
 
     async def compare_revisions(self, before: str, after: str) -> list[dict]:
         """Compare two delivered trees, never a moving branch or PR merge-base.
 
         Only the first `MAX_DIFFED_FILES` changed files are read for a line
         diff; the rest are listed as changed. Two deliveries far apart in a
-        large repository differ in thousands of files, each one a request."""
+        large repository differ in thousands of files, each one a request, so
+        the reads go out together, `MAX_BLOB_READS` at a time, rather than one
+        file after another — the first pass decides every file's lot in listing
+        order without reading anything, and only then are the blobs the diffed
+        files share asked for."""
         old, new = await self._changed_entries(before, after)
-        changes = []
+        listed: list[tuple[str, dict | None, dict | None, str | None]] = []
         diffed = 0
         for path in sorted(old.keys() | new.keys()):
             left, right = old.get(path), new.get(path)
             if left == right:
                 continue
             entries = [entry for entry in (left, right) if entry]
-            result = {
-                "identical": False,
-                "diff": None,
-                "note": "unsupported",
-            }
+            note = None
             if diffed >= MAX_DIFFED_FILES:
-                result["note"] = "many"
+                # Past the cap, a file is listed as `many` whether or not it
+                # could have been diffed at all.
+                note = "many"
             elif all(
                 entry["kind"] == "blob" and entry["bytes"] <= MAX_TEXT_BYTES
                 for entry in entries
             ):
                 diffed += 1
-                blobs = await self.committed_blobs([entry["oid"] for entry in entries])
+            else:
+                note = "unsupported"
+            listed.append((path, left, right, note))
+        blobs = await self.committed_blobs(
+            [
+                entry["oid"]
+                for _, left, right, note in listed
+                if note is None
+                for entry in (left, right)
+                if entry
+            ]
+        )
+        changes = []
+        for path, left, right, note in listed:
+            if note is None:
                 result = await asyncio.to_thread(
                     compare_bytes,
                     blobs[left["oid"]] if left else b"",
@@ -342,6 +391,8 @@ class ProjectFiles:
                 )
                 if result["diff"] is None:
                     result["note"] = "unsupported"
+            else:
+                result = {"identical": False, "diff": None, "note": note}
             changes.append(
                 {
                     "path": path,
@@ -535,10 +586,13 @@ class ProjectFiles:
             sha = entry["sha"]
         raise NotFoundError(say("committedFileNotFound"))
 
-    async def _blob(self, entry):
-        data = await self._data(
-            self.project_id, self.session, f"/git/blobs/{entry['sha']}"
-        )
+    async def _blob(self, entry, session):
+        """The blob's bytes, read on `session`.
+
+        The caller passes the session to read on: one blob read at a time is
+        this object's own (`self.session`), while reads that go out together
+        each take one of their own (`committed_blobs`)."""
+        data = await self._data(self.project_id, session, f"/git/blobs/{entry['sha']}")
         if not data or data.get("encoding") != "base64":
             raise GatewayUnavailableError(say("forgeNoFileContent"))
         return base64.b64decode(data["content"])
@@ -552,7 +606,7 @@ class ProjectFiles:
             except _NoWorkingCopy:
                 source = "committed"
         head = await self.revision()
-        return await self._blob(await self._entry(path, head)), source
+        return await self._blob(await self._entry(path, head), self.session), source
 
     async def _live_bytes(self, path: str) -> bytes:
         first = await self.live("read", path=path, size=2 * 1024 * 1024)
@@ -579,7 +633,7 @@ class ProjectFiles:
             entry = await self._entry(clean_path(path), revision)
         except NotFoundError:
             return None
-        return await self._blob(entry)
+        return await self._blob(entry, self.session)
 
     async def base_revision(self) -> str | None:
         """The commit this task's work started from: the merge base with the
@@ -604,7 +658,9 @@ class ProjectFiles:
         else:
             entry = await self._entry(path, await self.revision())
             size = entry.get("size", 0)
-            data = await self._blob(entry) if size <= MAX_TEXT_BYTES else b""
+            data = (
+                await self._blob(entry, self.session) if size <= MAX_TEXT_BYTES else b""
+            )
             version = content_version(data) if size <= MAX_TEXT_BYTES else None
         large = size > MAX_TEXT_BYTES
         text = None if large else decode_text(data)

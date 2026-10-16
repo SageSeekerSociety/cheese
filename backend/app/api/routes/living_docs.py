@@ -62,9 +62,9 @@ from app.domain.mentions import (
 )
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService, refuse_writes_if_archived
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
-from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 rooms = APIRouter(prefix="/topics", tags=["topics"])
@@ -77,8 +77,7 @@ async def conversation_document(
 ) -> dict:
     """Which document is this task's living document. It is made, empty, the
     first time anyone asks. Only a task has one."""
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     if place.task is None:
         raise NotFoundError(say("channelHasNoDocument"))
@@ -309,7 +308,7 @@ async def room_documents(
 ) -> dict:
     """The documents 芝士 wrote in this channel or private chat, whether or
     not they are in the library yet, the newest first."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     docs = await Documents(db).of_room(place.room_id)
     return ok(page([document_row(doc) for doc in docs], len(docs)))

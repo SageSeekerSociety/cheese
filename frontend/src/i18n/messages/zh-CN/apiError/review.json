@@ -45,6 +45,7 @@
   "githubRefusedCheckStatus": "GitHub 拒绝查检查状态（HTTP {status}）：{reply}",
   "githubRefusedCheckSuites": "GitHub 拒绝查 check-suites（HTTP {status}）：{reply}",
   "githubRefusedCommitOrder": "GitHub 拒绝比较两个 commit 的先后关系（HTTP {status}）：{reply}",
+  "githubRefusedCommitRead": "GitHub 拒绝读取 commit（HTTP {status}）：{reply}",
   "githubRefusedCompare": "GitHub 拒绝比较改动范围（HTTP {status}）：{reply}",
   "githubRefusedMerge": "GitHub 拒绝合并 PR（HTTP {status}）：{reply}",
   "githubRefusedOpenPr": "GitHub 拒绝开 PR（HTTP {status}）：{reply}",

@@ -273,6 +273,70 @@
       "note": "Focus arrived in the body by keyboard: a focus ring is drawn around the editor box."
     }
   },
+  "previewPanelHeadBar": {
+    "about": "Preview top bar: 'Publish site' on the left (a project-level action, jumping to the website block on the project overview) and open-in-new-tab, fullscreen and reload on the right — every one of them acts on the current preview.",
+    "s1": {
+      "name": "Looking at the current preview",
+      "note": "The first control on the right opens it in a new tab; with a web page or an image there is also fullscreen, and reload at the far right."
+    },
+    "s2": {
+      "name": "The image, fullscreen",
+      "note": "Images get fullscreen too (they are only accurate when enlarged, and wheel zoom is only live in fullscreen); once it is fullscreen that control turns into exit fullscreen."
+    }
+  },
+  "previewPanelFrameStage": {
+    "about": "The web/app stage: an app bar (which file, which version), a runtime status line, the frames below, and region picking laid over the app.",
+    "s1": {
+      "name": "An app that is running",
+      "note": "The bar says what this frame is called, the 'running app' chip says it answers; the line below reports resource, instance and readiness."
+    },
+    "s2": {
+      "name": "Two frames both running",
+      "note": "The frame on stage takes the reader's input, the other is kept without being re-mounted: hidden away, taking no input; the pane that names a file also gets open and download."
+    },
+    "s3": {
+      "name": "The new content did not land",
+      "note": "What is on screen is still the previous page: say which step failed and offer a retry."
+    },
+    "s4": {
+      "name": "Picking a region on an app",
+      "note": "While picking is on, a transparent overlay covers the app; drag out a rectangle."
+    }
+  },
+  "previewPanelDocStage": {
+    "about": "The document stage: a document bar (name, type, edit, history, the other reading, download) plus the body. Word, slides, sheets and Markdown all come through here.",
+    "s1": {
+      "name": "A Markdown file",
+      "note": "Markdown is not converted to PDF: it is shown as what it is, read by the same renderer the chat uses."
+    },
+    "s2": {
+      "name": "This deployment has no converter",
+      "note": "Same for any file: say plainly that document preview is off rather than offering a viewer that cannot render."
+    },
+    "s3": {
+      "name": "Refresh failed, the previous version is still up",
+      "note": "What is on screen is not the latest: the bar says so and names the error; the body stays readable."
+    },
+    "s4": {
+      "name": "The other reading: web view",
+      "note": "A second way to read the same document: the elements carry addressable ids, a sheet cell's address among them, and those ids are the ones used to change the file."
+    }
+  },
+  "previewPanelImageStage": {
+    "about": "The image stage: an image laid into the pane, where a region can be circled and a sentence written, and the composited image handed to the room.",
+    "s1": {
+      "name": "An image",
+      "note": "The image fills the stage, with 'open in new window' in the corner for the original file; circling and annotating happen right on it."
+    },
+    "s2": {
+      "name": "The bytes are not here yet",
+      "note": "Nothing to draw yet: a spinner, not a blank block."
+    },
+    "s3": {
+      "name": "The annotation would not composite",
+      "note": "Circled and written, but the composited image was not produced: the image stays, and the line below names the error."
+    }
+  },
   "previewPanelPage": {
     "about": "Web preview: hands the server-rendered page to a sandboxed iframe (allow-scripts only, not same-origin); changing the page swaps the srcdoc.",
     "s1": {

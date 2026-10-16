@@ -1,0 +1,20 @@
+{
+  "declined": "Won't fix",
+  "deployed": "Deployed",
+  "in_progress": "In progress",
+  "passed": {
+    "deployed": "Deployed",
+    "in_progress": "Processed",
+    "received": "Received",
+    "resolved": "Resolved"
+  },
+  "pending": {
+    "deployed": "Deploy",
+    "in_progress": "Process",
+    "received": "Receive",
+    "resolved": "Resolve"
+  },
+  "received": "Received",
+  "resolved": "Resolved",
+  "unknown": "Unknown"
+}

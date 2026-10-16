@@ -34,7 +34,8 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
 from app.domain.project.protection import branch_protection_of
 from app.domain.review import github_pr
 from app.domain.review import services as pkg
-from app.domain.review.github_pr import GitHubPRRateLimited
+from app.domain.review.forgejo_pr import ForgejoPRClient
+from app.domain.review.github_pr import GitHubPRClient, GitHubPRRateLimited
 from app.domain.review.services._shared import (
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
@@ -89,8 +90,21 @@ async def mark_ready(
     if client is None:
         return {"ready": False, "reason": "这个项目没有绑定 GitHub"}
 
+    # The quota is per installation and shared by every call below, so the
+    # whole hand-over is under it, not just the read that opens it: a refusal
+    # from the commit read, the title write or the flag flip is the same
+    # exhausted quota the sentence answers, and every step here retries from
+    # scratch (the title write is the same string, the flip is idempotent).
     try:
         view = await client.pr_view(task.pr_number)
+        if view.get("draft"):
+            node_id = str(view.get("node_id") or "")
+            if not node_id:
+                raise ValidationError(say("githubNoPrNodeId"))
+            title = await _ready_title(client, view)
+            if title is not None:
+                await client.update_pr(task.pr_number, title=title)
+            await client.mark_ready_for_review(node_id)
     except GitHubPRRateLimited:
         return {
             "ready": False,
@@ -98,17 +112,43 @@ async def mark_ready(
                 "GitHub API 请求额度暂时用尽，PR 尚未标记为可评审；额度恢复后请重试。"
             ),
         }
-    if view.get("draft"):
-        node_id = str(view.get("node_id") or "")
-        if not node_id:
-            raise ValidationError(say("githubNoPrNodeId"))
-        await client.mark_ready_for_review(node_id)
     return {
         "ready": True,
         "already": not bool(view.get("draft")),
         "pr_number": task.pr_number,
         "pr_url": task.pr_url,
     }
+
+
+async def _ready_title(
+    client: GitHubPRClient | ForgejoPRClient, view: dict
+) -> str | None:
+    """The title a draft PR has to go on before it is marked ready, or None
+    to leave the one it already has.
+
+    A draft PR carries the platform's placeholder (`pr_publish.draft_title`),
+    because the line this change will land under is not written until somebody
+    files a card. Marking it ready is the other moment that stops being true:
+    the full `CI required` the ready flag starts reads the PR's title, and a
+    repository that checks its own titles reads `WIP: <任务标题>` there and
+    fails a change every other check passed. The head commit's subject is the
+    title this work already has.
+
+    Only the placeholder is replaced. A subject 递卡 wrote, or one somebody
+    typed on GitHub, is not the platform's to overwrite — and a draft whose
+    title was already corrected is the case this leaves alone.
+
+    A subject that is itself a placeholder is left alone too: writing it would
+    put the very title this is here to remove back on the PR, and the commit
+    behind it is what has to change.
+    """
+    if not pr_publish.is_draft_title(view.get("title")):
+        return None
+    sha = str((view.get("head") or {}).get("sha") or "")
+    subject = await client.commit_subject(sha) if sha else None
+    if subject is None or pr_publish.is_draft_title(subject):
+        return None
+    return subject[:255]
 
 
 async def redescribe(

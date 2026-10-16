@@ -26,7 +26,7 @@ user-facing route lists hosts. The admin dashboard counts them.
 | `CLOUD_SANDBOX_BACKGROUND_CAP_S` | 3600 | A command the executor still runs for the session (a Bash call sent to the background) keeps an idle sandbox up, until this long after the session's last activity. |
 | `CLOUD_POOL_MIN_FREE_SLOTS` | 2 | When the free slots of the live hosts fall below this, the pool sweep adds a host ahead of demand. An idle host is not let go if that would take the free slots below it. |
 | `CLOUD_HOST_IDLE_HOLD_S` | 1800 | How long a host that has no sandbox on it is kept before it is released. |
-| `CLOUD_POOL_MAX_HOSTS` | 10 | The platform's cap on hosts, protecting the cluster: ten hosts' disks written full fit in the cluster's shared thin pool. A session that finds the pool full and every host full is told capacity is tight and to try later. |
+| `CLOUD_POOL_MAX_HOSTS` | 30 | The platform's cap on hosts, protecting the cluster: it rises only as the cluster's shared thin pool grows to hold those hosts' disks written full (thirty are 1.2 TB). A session that finds the pool full and every host full is told capacity is tight and to try later. |
 | `CLOUD_SANDBOX_CREDITS_PER_HOUR` | none | Credits a running sandbox costs per hour. Unset, no cloud sandbox starts. |
 | `CLOUD_VM_CREDITS_PER_HOUR` | `{}` | Credits per hour of a VM sandbox, from creation to release, by its size as `<cores>c<GiB>g` (`4c8g`). A size not listed cannot be created. |
 

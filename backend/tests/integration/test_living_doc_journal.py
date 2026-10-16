@@ -19,9 +19,10 @@ from app.domain.living_doc.models import (
 )
 from app.domain.living_doc.overview import overview_document, seed_overview
 from app.domain.living_doc.services import DocumentJournal, Documents, content_hash
+from app.domain.room_task.dispatch import create_task
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
-from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered, session_auth_headers
 from tests.integration.test_docs import _topic
 from tests.support.living_doc import document_of
@@ -32,7 +33,8 @@ async def seed(factory):
     async with factory() as session:
         await registered(session, "alice")
         project = await project_service(session).create(name="P", owner_handle="alice")
-        task = await TopicService(session).create_task(
+        task = await create_task(
+            session,
             room_id=project.root_topic_id,
             created_by="alice",
             seat_project=seat_project,
@@ -44,7 +46,7 @@ async def seed(factory):
 
 async def task_doc(session, task):
     """The task's document, made the way an editor's ticket makes it."""
-    place = await TopicService(session).place_or_404(task)
+    place = await place_or_404(session, task)
     return await Documents(session).get(
         await TaskService(session).ensure_document(place.task)
     )

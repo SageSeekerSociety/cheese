@@ -17,7 +17,7 @@ const native = new Set(["Read", "Edit", "Write", "NotebookEdit"]);
 // `enter`), so paths need no respelling. Its skills are the exception: the
 // build reads them all from this host's config directory. A project's are the
 // project's, on the executor; one the platform shipped is in the executor's
-// own config directory (`client.py` `skill_paths`, the same mapping).
+// own config directory (`shell_prefix.skill_paths`, the same mapping).
 const skills = execution.central_config + "/skills/";
 const projectSkills = execution.session_workspace + "/.claude/skills/";
 const shipped = new Set(execution.shipped_skills || []);
@@ -25,7 +25,7 @@ const shipped = new Set(execution.shipped_skills || []);
 // that name — a subdirectory's, or one written without its `paths` — with where
 // the executor holds each and what Claude Code adds to its description. They
 // change while the session runs (`release.touch_skills`), so they are read
-// each time (`client.py` `skill_places` reads the same file).
+// each time (`shell_prefix.skill_places` reads the same file).
 const sessionDir = (execution.target_file || "").replace(/[^/]*$/, "");
 const placesFile = sessionDir && sessionDir + "skill-places.json";
 // The one native Read this plugin lets through the session's PreToolUse guard

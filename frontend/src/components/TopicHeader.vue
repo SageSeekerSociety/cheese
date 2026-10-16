@@ -13,15 +13,15 @@
 // seconds for as long as it was open; usage numbers do not move that fast, and
 // nobody watches them. Now they load once, when the popover is opened.
 import type { MenuAction } from '@/components/common/menuAction'
-import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
+import type { ProjectMemberRow, Topic } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useQuery } from '@tanstack/vue-query'
 
 import { useNavigation } from '@/composables/useNavigation'
+import { useTopicUsage } from '@/composables/useTopicUsage'
 
-import { getProjectUsage, getTopicUsage } from '@/api'
 import { menuActionOf, useCommands } from '@/commands'
 import { archiveTopic, topicActions } from '@/commands/topicActions'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -73,49 +73,17 @@ const isWorkTopic = computed(() => props.topic.kind !== 'root')
 const store = useWorkspaceStore()
 // ---- 用量 popover (was the 资源 drawer) ----
 const menuOpen = ref(false)
-const usageLoading = ref(false)
-const topicUsage = ref<UsageStats | null>(null)
-const projectUsage = ref<UsageStats | null>(null)
-
-// 指针移到 ⋯ 上就开始取，点开菜单时多半已经到了；刚取过的（同一个话题、十秒以内）
-// 不再取第二遍——悬停一次紧接着点开是常态。取的时候手里的旧数照样显示，只有
-// 一个数都还没有时才画占位条（TopicUsageSummary），卡片从一出来就是最终尺寸。
-// 没有定时器：20 秒轮询买来的新鲜度没人在看。
-const USAGE_FRESH_MS = 10_000
-let usageFor: string | null = null
-let usageAt = 0
-async function loadUsage() {
-  const tid = props.topic.id
-  const pid = props.topic.project_id
-  if (!tid || !pid) return
-  if (usageLoading.value || (usageFor === tid && Date.now() - usageAt < USAGE_FRESH_MS)) return
-  usageLoading.value = true
-  try {
-    const [tu, pu] = await Promise.all([getTopicUsage(tid), getProjectUsage(pid)])
-    if (props.topic.id !== tid) return
-    topicUsage.value = tu
-    projectUsage.value = pu
-    usageFor = tid
-    usageAt = Date.now()
-  } catch {
-    // Best-effort; the popover just shows 暂无数据.
-  } finally {
-    usageLoading.value = false
-  }
-}
+// 取数（取哪两份、什么时候算新鲜）在 `composables/useTopicUsage.ts` 那一层。
+const {
+  loading: usageLoading,
+  topic: topicUsage,
+  project: projectUsage,
+  load: loadUsage,
+} = useTopicUsage({ topicId: () => props.topic.id, projectId: () => props.topic.project_id })
 
 watch(menuOpen, (open) => {
   if (open) void loadUsage()
 })
-// 换了话题，上一个话题的数不能挂在这一个上。
-watch(
-  () => props.topic.id,
-  () => {
-    topicUsage.value = null
-    projectUsage.value = null
-    usageFor = null
-  }
-)
 
 // ⋯ 里放的是侧栏那一行同一个频道操作菜单（commands/topicActions.ts）：两处各写一份
 // 就会各长各的。桌面和手机都是这一份，桌面是下拉菜单、手机是底部升起的面板

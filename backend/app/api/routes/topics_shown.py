@@ -79,7 +79,7 @@ from app.domain.project.room_files import (
     artifact_kind_for,
     clean_artifact_path,
 )
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -181,7 +181,7 @@ async def show_in_room(
     摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
     （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。
     任务的会话摆的是那个任务的：进任务的列表、成为任务的预览；文件仍存在房间里。"""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     # The teammate that showed it, when a teammate did. A room may seat several,
     # and for an app the author is also WHICH app: each teammate serves from its
@@ -313,7 +313,7 @@ async def list_shown(
 
     一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
     部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     shown = await BlockRepository(db).shown_in_room(place.conversation_id)
     items = [
@@ -339,7 +339,7 @@ async def save_shown_to_library(
 
     一轮里铸出来的凭据在 `authorize_project` 那里只读得进来，所以 芝士 摆得出东西，
     却留不下它：这份东西以后还用不用得上，是人的判断。"""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.require_verified_caller(project_id=place.project_id)
     await resolver.authorize_project(actor, project_id=place.project_id)
     # The file is the room's: only someone the room lets in copies it out.
