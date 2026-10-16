@@ -15,9 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.ports import ProjectTeam
@@ -28,6 +25,7 @@ from app.domain.notification.models import (
     NotificationLevel,
     NotificationType,
 )
+from app.domain.notification.ports import DecisionLine
 from app.domain.notification.preferences import in_app_allowed
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.repositories import NotificationRepository
@@ -512,6 +510,7 @@ class ProjectNotificationService:
         chosen: str,
         decided_by: str,
         publish: Callable[[str, dict], Awaitable[None]],
+        decision_line: DecisionLine,
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
         对话，芝士下一轮读得到。"""
@@ -529,22 +528,20 @@ class ProjectNotificationService:
         row.read = True
         payload["resolved_choice"] = chosen
         row.metadata_payload = payload
-        block = None
+        line = None
         if row.conversation_id is not None and row.project_id is not None:
-            block = await BlockRepository(self._session).add(
+            line = await decision_line(
                 project_id=row.project_id,
                 conversation_id=row.conversation_id,
                 author=decided_by,
-                author_type=AuthorType.participant,
                 content=f"【决策】关于「{row.title}」：选择「{chosen}」。",
-                kind=BlockKind.message,
             )
         saved = await self._repo.save(row)
-        if block is not None:
-            block_payload = BlockOut.model_validate(block).model_dump(mode="json")
+        if line is not None:
+            # 先落库再投：房间里那一行要是投不出去，它也已经在了。
             await self._session.commit()
             await publish(
-                str(block.conversation_id),
-                {"type": "event_block", "block": block_payload},
+                str(row.conversation_id),
+                {"type": "event_block", "block": line},
             )
         return saved

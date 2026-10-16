@@ -206,7 +206,11 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/room_task/presentation.py", "ValidationError"): 1,
     ("app/domain/room_task/snapshots.py", "ValidationError"): 4,
     ("app/domain/routine/schedule.py", "ValidationError"): 8,
-    ("app/domain/routine/service.py", "ValidationError"): 17,
+    # `routine/service.py` 拆成了包，17 处按代码落在哪分红：规则自己那一行
+    # （草稿、确认、启停、改配置、删）在 `service/rules.py`，一次执行怎么结束
+    # （report）在 `service/settlement.py`。总数没变，只是发起方换了文件。
+    ("app/domain/routine/service/rules.py", "ValidationError"): 14,
+    ("app/domain/routine/service/settlement.py", "ValidationError"): 3,
     ("app/domain/site/hosting.py", "AppError"): 2,
     ("app/domain/site/hosting.py", "ValidationError"): 3,
     ("app/domain/site/services.py", "ValidationError"): 12,

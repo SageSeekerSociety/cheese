@@ -20,6 +20,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 // 确认框（Vuetify 的 v-dialog）算位置时要问 `window.visualViewport`，happy-dom 没有
 // 这一件。补一个够用的空壳 —— 浏览器里本来就有它。
@@ -170,6 +171,8 @@ async function open(topic: string, extra: Record<string, unknown> = {}) {
   await until(() => !!ui.container.querySelector('[data-mid]'))
   return ui
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('芝士的提问是一条带快捷回复的消息', () => {
   it('题画在对话里，输入框照样在', async () => {

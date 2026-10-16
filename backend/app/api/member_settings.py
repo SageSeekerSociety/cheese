@@ -45,6 +45,7 @@ _NAMES = {
     "default_model": "settingDefaultModel",
     "default_subagent_model": "settingSubagentModel",
     "execution_environment": "settingEnvironment",
+    "max_concurrent_turns": "settingMaxConcurrentTurns",
     naming.SETTINGS_KEY: "settingTaskNaming",
     "forge_requester_coauthor": "settingCoauthor",
 }
@@ -180,6 +181,9 @@ async def _words(db: AsyncSession, project: Project, key: str, value: object):
         return labels.get(value, value)
     if key == "execution_environment":
         return await environment_words(db, stored(value) or default_environment())
+    if key == "max_concurrent_turns":
+        # A number, the same in every language; unset is the deployment default.
+        return say("settingFollowDefault") if value is None else value
     if key == naming.SETTINGS_KEY:
         mode = naming.naming_mode({naming.SETTINGS_KEY: value})
         return say("settingNamingAuto" if mode == "auto" else "settingNamingManual")

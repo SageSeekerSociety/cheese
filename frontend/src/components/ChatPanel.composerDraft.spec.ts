@@ -16,6 +16,8 @@ import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import { loadComposerDraft, saveComposerDraft } from '@/lib/composerDrafts'
+import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -103,6 +105,8 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 // 这件事本身，不是一个固定的时长——机器一忙，900ms 就不够了。上限只是把卡死变成失败。
 const STORED = { timeout: 10_000 }
 
+beforeAll(loadMarkdownReader)
+
 describe('输入框的内容属于它被打出来的那个话题', () => {
   it('切走再回来，草稿还在；切到别的话题，输入框是空的', async () => {
     const { container, rerender } = render(Panel, {
@@ -111,16 +115,16 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
     })
     await settle()
 
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    await fireEvent.update(textarea, '这句话是说给 t1 的')
+    const box = container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+    await fillComposer(box, '这句话是说给 t1 的')
 
     await rerender({ topic: topicOf('draft-b'), showComposer: true })
     await settle()
-    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('')
+    expect(composerText(container.querySelector<HTMLElement>('.ProseMirror')!)).toBe('')
 
     await rerender({ topic: topicOf('draft-a'), showComposer: true })
     await settle()
-    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('这句话是说给 t1 的')
+    expect(composerText(container.querySelector<HTMLElement>('.ProseMirror')!)).toBe('这句话是说给 t1 的')
   })
 
   it('回复目标不跟着你换话题——它指的是上一个话题里的块', async () => {
@@ -164,7 +168,7 @@ describe('刷新之后草稿还在', () => {
     })
     await settle()
 
-    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('上次没发出去的话')
+    expect(composerText(container.querySelector<HTMLElement>('.ProseMirror')!)).toBe('上次没发出去的话')
   })
 
   it('边打边存：不必等切话题/卸载，输入本身就落盘', async () => {
@@ -174,7 +178,7 @@ describe('刷新之后草稿还在', () => {
     })
     await settle()
 
-    await fireEvent.update(container.querySelector('textarea') as HTMLTextAreaElement, '打了一半')
+    await fillComposer(container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement, '打了一半')
 
     await waitFor(() => expect(loadComposerDraft('live-save')?.draft).toBe('打了一半'), STORED)
   }, 30_000)
@@ -186,10 +190,10 @@ describe('刷新之后草稿还在', () => {
     })
     await settle()
 
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    textarea.focus()
-    await fireEvent.update(textarea, '这条还没送到')
-    await fireEvent.keyDown(textarea, { key: 'Enter' })
+    const box = container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+    box.focus()
+    await fillComposer(box, '这条还没送到')
+    await fireEvent.keyDown(box, { key: 'Enter' })
     await new Promise((r) => setTimeout(r, 900))
 
     // 屏幕上那条还在（发件箱），但磁盘上没有它。
@@ -204,12 +208,12 @@ describe('刷新之后草稿还在', () => {
     })
     await settle()
 
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    await fireEvent.update(textarea, '先打一句')
+    const box = container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+    await fillComposer(box, '先打一句')
     await waitFor(() => expect(loadComposerDraft('sent-away')?.draft).toBe('先打一句'), STORED)
 
-    textarea.focus()
-    await fireEvent.keyDown(textarea, { key: 'Enter' })
+    box.focus()
+    await fireEvent.keyDown(box, { key: 'Enter' })
 
     await waitFor(() => expect(loadComposerDraft('sent-away')).toBeNull(), STORED)
   }, 30_000)
@@ -223,21 +227,21 @@ describe('发出去的消息立刻显示，没送到能重试', () => {
     })
     await settle()
 
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    const box = container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
     // 断线时输入框曾经是 disabled 的：一天二十几次部署，等于每天有相当多的
     // 时间这个框是死的。
-    expect(textarea.disabled).toBe(false)
+    expect(box.getAttribute('contenteditable')).toBe('true')
 
-    textarea.focus()
-    await fireEvent.update(textarea, '断线时说的话')
-    await fireEvent.keyDown(textarea, { key: 'Enter' })
+    box.focus()
+    await fillComposer(box, '断线时说的话')
+    await fireEvent.keyDown(box, { key: 'Enter' })
     await settle()
 
     const pending = container.querySelector('.im-row--pending')
     expect(pending).toBeTruthy()
     expect(pending!.textContent).toContain('断线时说的话')
     // 输入框清空了：这条已经交给发件箱了，不该还留在草稿里。
-    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('')
+    expect(composerText(container.querySelector<HTMLElement>('.ProseMirror')!)).toBe('')
   })
 
   it('待发的消息属于它被打出来的那个话题，不跟着你换房间', async () => {
@@ -246,10 +250,10 @@ describe('发出去的消息立刻显示，没送到能重试', () => {
       global: { plugins: [vuetify, i18n] },
     })
     await settle()
-    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-    textarea.focus()
-    await fireEvent.update(textarea, '这条是发给 t1 的')
-    await fireEvent.keyDown(textarea, { key: 'Enter' })
+    const box = container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+    box.focus()
+    await fillComposer(box, '这条是发给 t1 的')
+    await fireEvent.keyDown(box, { key: 'Enter' })
     await settle()
     expect(container.querySelector('.im-row--pending')).toBeTruthy()
 

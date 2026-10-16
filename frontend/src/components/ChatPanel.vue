@@ -324,11 +324,12 @@ const {
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
 const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
 
-// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
-// 的那一刻做一次，删掉了不会再长回来。
+// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
+// 打开的那一刻做一次，删掉了不会再长回来。
 watch(loadingHistory, (loading, was) => {
   if (!props.inThread || props.alwaysSummon || loading || !was || draft.value) return
-  draft.value = summonPrefill(panel.timeline.messages.value, isMine, agentName.value)
+  const seat = agentSeat.value
+  draft.value = summonPrefill(panel.timeline.messages.value, isMine, seat ? `<@${seat.handle}>` : `@${agentName.value}`)
 })
 
 // The timeline binds these two with `:ref`, so it has to receive the Refs
@@ -563,6 +564,7 @@ useComposerShortcut({
           :topic="topic"
           :mention-pool="mentionPool"
           :topic-list="topicList"
+          :refs="refMaps"
           :agent-seat="agentSeat"
           :agent-name="agentName"
           :always-summon="alwaysSummon"

@@ -20,13 +20,13 @@ async function newTask(page: Page): Promise<string> {
   const task = (await api(page, 'post', `/topics/${room.id}/tasks`, {})) as { id: string };
   await page.goto(`/projects/${projectId}/topics/${room.id}/tasks/${task.id}`);
   await expect(activeTitle(page)).toHaveText('新任务');
-  const composer = page.locator('.composer-input textarea').first();
+  const composer = page.locator('.composer-input .ProseMirror').first();
   await expect(composer).toBeEnabled({ timeout: 15_000 });
   return task.id;
 }
 
 async function say(page: Page, text: string) {
-  const composer = page.locator('.composer-input textarea').first();
+  const composer = page.locator('.composer-input .ProseMirror').first();
   await composer.fill(text);
   await composer.press('Enter');
   await expect(page.getByTestId('chat-scroll').getByText(text)).toBeVisible();
