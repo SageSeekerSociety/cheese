@@ -57,6 +57,18 @@ class LibraryFileOut(BaseModel):
     rank: str
 
 
+class LibraryTextOut(BaseModel):
+    """一份资料读成的文本（`library_records.read_text`）：读不成文本时
+    `content` 是 None，`binary` 或 `too_large` 说为什么。"""
+
+    path: str
+    bytes: int
+    binary: bool
+    too_large: bool
+    content: str | None
+    version: str
+
+
 class LibraryFoldersOut(BaseModel):
     """资料库里的每一个文件夹（整条路径），给「移动到」挑。"""
 
@@ -196,6 +208,19 @@ async def library_file(
     actor = await _reader(project_id, db, resolver)
     rooms = await readable_rooms(db, resolver, actor, project_id)
     return ok(await library_listing.one(db, project_id, rooms, _library_path(path)))
+
+
+@router.get("/{project_id}/library/text", **typed_response(LibraryTextOut))
+async def library_file_text(
+    project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """一份资料读成文本，给芝士读（`cheese_attachment_read` 读 `library/` 开头的地址）：
+    文本文件照原样，PDF 取文字层，别的只回大小。和房间无关，所以没有房间的文档芝士
+    （项目总览、资料库里的文档）也读得到项目给它的材料。"""
+    await _reader(project_id, db, resolver)
+    name = _library_path(path.strip().removeprefix("library/"))
+    found = await library_records.read_text(db, project_id, name)
+    return ok(LibraryTextOut.model_validate(found).model_dump())
 
 
 @router.get("/{project_id}/library/folders", **typed_response(LibraryFoldersOut))

@@ -1139,7 +1139,7 @@ DELEGATED_TOOLS = ToolTable(
         _tool(
             "cheese_attachment_read",
             "读消息里附带的文件或资料库里的文件（消息里写着的地址，资料库的以 library/ "
-            "开头）。只读得了文本；二进制的文件只返回大小。",
+            "开头）。读得了文本和资料库里 PDF 的文字；别的二进制文件只返回大小。",
             {"path": _text("文件的地址")},
             ["path"],
         ),
@@ -1172,7 +1172,7 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     # 画布有自己的编号，跟着它的文档走。
     "cheese_canvas_get",
     "cheese_canvas_edit",
-} | {"cheese_attachment_read"}
+}
 _NEEDS_DOCUMENT = frozenset({"cheese_doc_get", "cheese_doc_edit"})
 _NEEDS_PROJECT = frozenset(
     {
@@ -1527,7 +1527,15 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         query = urllib.parse.urlencode({"project_id": project, "scope": "team"})
         return {"method": "GET", "path": f"/memory/files?{query}"}
     if tool == "cheese_attachment_read":
-        query = urllib.parse.urlencode({"path": args["path"].strip()})
+        path = args["path"].strip()
+        # 资料库是项目的：不在哪个房间里的会话（项目总览的文档芝士）也读得到，
+        # PDF 读成文字。房间里自己的文件才要话题。
+        if path.startswith("library/") and project:
+            query = urllib.parse.urlencode({"path": path})
+            return {"method": "GET", "path": f"/projects/{project}/library/text?{query}"}
+        if not topic:
+            raise ValueError("Missing CHEESE_TOPIC")
+        query = urllib.parse.urlencode({"path": path})
         return {"method": "GET", "path": f"/topics/{topic}/preview/file?{query}"}
     if tool == "cheese_my_tasks":
         return {"method": "GET", "path": "/tasks/joined"}

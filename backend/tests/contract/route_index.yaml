@@ -742,6 +742,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library/restore", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/file", auth: "actor.project", owner: "library"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/text", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/library/folders", auth: "actor.project", owner: "library"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/library", auth: "library.keeper", owner: "library"}
@@ -868,6 +869,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/weeklies", auth: "actor.project", owner: "block"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/tasks", auth: "actor.project", owner: "project.rail"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/progress", auth: "actor.project", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/situation", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/start-steps", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/memory", auth: "memory.closed.write", owner: "memory"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-chat", auth: "project.private.chat", owner: "topic"}

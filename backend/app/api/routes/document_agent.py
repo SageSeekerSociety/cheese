@@ -38,6 +38,7 @@ from app.domain.agent.document import box, question, thread
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.living_doc.comments import CommentThreads
+from app.domain.living_doc.overview import pointed_overview
 from app.domain.living_doc.schemas import AgentAskIn
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,11 @@ async def _asker(db, resolver, document_id: uuid.UUID):
     return reached, reached.actor, redis
 
 
+async def _blank_overview(db, doc) -> bool:
+    overview = await pointed_overview(db, doc.project_id)
+    return overview is not None and overview.id == doc.id and not doc.content.strip()
+
+
 @router.post("/{document_id}/agent")
 async def ask_agent(
     document_id: uuid.UUID,
@@ -85,6 +91,9 @@ async def ask_agent(
         body.selection is not None
     ):
         raise ValidationError(say("docAgentPresetNeedsSelection"))
+    if body.preset == "draft" and not await _blank_overview(db, reached.doc):
+        # 起草只写第一版：写过的总览由人和芝士一处一处地改。
+        raise ValidationError(say("docAgentDraftNeedsBlankOverview"))
     if body.conversation is not None:
         await box.owned(
             redis, body.conversation, asker=actor.handle, document_id=document_id

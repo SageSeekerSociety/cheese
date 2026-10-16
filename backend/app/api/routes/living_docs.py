@@ -448,6 +448,20 @@ async def replace_document(
         raise AuthenticationRequiredError(say("docReceiptNeedsWriter"))
     await require_writable(db, reached)
     doc, actor = reached.doc, reached.actor
+    author = actor.handle
+    # A 芝士 answering someone's question writes a whole document only as its
+    # first version (drafting the project overview, `box.PRESETS["draft"]`): a
+    # document somebody has written is changed passage by passage, so no one's
+    # text is replaced wholesale by it. It writes as itself, as in `/edits`.
+    delegation = resolver.delegation()
+    if delegation is not None:
+        if delegation.agent is None:
+            raise ForbiddenError("This credential names no agent to edit as")
+        if (doc.content or "").strip():
+            raise ForbiddenError(
+                "This document already has content: change it with cheese_doc_edit"
+            )
+        author = delegation.agent
     operation = None
     if body.operation_id is not None:
         operation = {
@@ -470,7 +484,7 @@ async def replace_document(
         resolver,
         doc,
         content,
-        actor=actor.handle,
+        actor=author,
         keep=Counter(canvas_ids(doc.content or "")),
     )
     content = settled.text
@@ -484,13 +498,13 @@ async def replace_document(
         doc.id,
         content=content,
         base=base,
-        actor=actor.handle,
+        actor=author,
         operation=operation,
         check=True,
         agent_authors=agent_authors,
     )
     await db.refresh(doc)
-    await tell_origin_room(db, _origin(resolver, actor), doc, actor.handle)
+    await tell_origin_room(db, _origin(resolver, actor), doc, author)
     return await _with_ref_warnings(db, doc, _with_canvases(stored, [settled]))
 
 

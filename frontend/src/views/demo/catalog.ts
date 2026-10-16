@@ -56,6 +56,7 @@ import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
 import { MODELS_ENTRIES } from './catalogModels'
 import { NOTIFICATION_ENTRIES } from './catalogNotifications'
+import { OVERVIEW_ENTRIES } from './catalogOverview'
 import { PALETTE_ENTRIES } from './catalogPalette'
 import { PANEL_ENTRIES } from './catalogPanels'
 import { PUBLIC_ENTRIES } from './catalogPublic'
@@ -195,6 +196,8 @@ export const CATALOG: CatalogEntry[] = [
   // 首页那一格（那份目录、它两端的两个画面、它带的四个弹窗）在自己的文件里：
   // `catalogHome.ts`。
   ...HOME_ENTRIES,
+  // 项目总览上的现状和起草那一小块在自己的文件里：`catalogOverview.ts`。
+  ...OVERVIEW_ENTRIES,
 ]
 
 /** 一格实际拿到的参数：条目共用的 `args` 叠上这一格自己的 `props`。 */

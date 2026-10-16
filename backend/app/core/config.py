@@ -448,6 +448,10 @@ class Settings(BaseSettings, SandboxSettings):
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # 项目总览上的「现状」：读项目材料写几句现状的那一问。大项目要想一两分钟。
+    project_situation_model: str = "deepseek-flash"
+    project_situation_budget_usd: float = 30.0
+    project_situation_timeout_seconds: float = 240.0
     # A named task is re-judged no sooner than this, and at most this often a
     # day: a title is how people find a task again, so it moves rarely.
     topic_naming_follow_interval_seconds: int = 1800

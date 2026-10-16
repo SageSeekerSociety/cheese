@@ -56,6 +56,8 @@ TOPICS = "topics"
 UNREAD = "unread"
 PRIVATE_UNREAD = "private_unread"
 NOTIFY_LEVELS = "notify_levels"
+#: The overview's 「现状」 was rewritten (`project_situation`).
+SITUATION = "situation"
 
 # The room a conversation is in, its project, and whether only its people see
 # it. Bare SQL: this module sits under the broker, below the domains whose
