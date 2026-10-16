@@ -473,3 +473,48 @@ jobs:
             line="Deployed \`$CANDIDATE_SHA\`."
           fi
           echo "$line dev runs \`$live\`." >> "$GITHUB_STEP_SUMMARY"
+
+  # A failed deploy tells the team's alert group (「Cheese 告警」), not only the
+  # Actions tab: eight dev deploys failed on 2026-10-14 and nobody heard. Its own
+  # job on a hosted runner, because a runner that lost the server mid-deploy
+  # runs nothing more in the deploy job. Which outcomes page, and why each, is
+  # .github/scripts/deploy-alert.py; a skipped deploy job never reaches it.
+  alert:
+    needs: deploy
+    if: always() && (needs.deploy.result == 'failure' || needs.deploy.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Here rather than on a step: an `if:` cannot read the `secrets` context.
+    env:
+      WEBHOOK: ${{ secrets.FEISHU_ALERT_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Decide whether the deploy failed
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ENVIRONMENT: dev（okcheese.com）
+          COMMIT: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
+          # The deploy job's own timeout-minutes, so a hang that used it all up pages.
+          TIMEOUT_MINUTES: '180'
+          # The guard refusing a commit whose CI was rerun while it waited leaves
+          # dev on the release it had; that is CI's news, not a broken deploy.
+          NOT_A_FAILURE_STEPS: Keep automatic deployments from going backwards
+        run: python3 .github/scripts/deploy-alert.py
+      - name: Tell the team the deploy failed
+        if: steps.decide.outputs.text != '' && env.WEBHOOK != ''
+        env:
+          TEXT: ${{ steps.decide.outputs.text }}
+        run: |
+          set -uo pipefail
+          # Never fail on the alert itself: the deploy's result is the finding.
+          curl -sS -m 15 -X POST "$WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}')" \
+            || echo "::warning::could not reach the alert webhook"
