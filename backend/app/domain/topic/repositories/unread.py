@@ -1,7 +1,7 @@
 """频道的角标 —— 未读数、通知级别、已读游标。
 
 从 `repositories.py` 拆出来的一段。这几件事共用一套判据（`statements` 里的
-`_mentions`、`_muted_now`、`_readable_by`）：消息算不算「给我的」、这间房现在静没
+`_mentions`、`_muted_now`、`readable_by`）：消息算不算「给我的」、这间房现在静没
 静音、这间房我能不能看见。读点在这里写一遍，清单页与通知级别页就不会各答一遍、
 各自漂移。
 
@@ -51,9 +51,9 @@ from app.domain.topic.repositories.statements import (
     _mentions,
     _mentions_everyone,
     _muted_now,
-    _readable_by,
     _tasks,
     _threads,
+    readable_by,
 )
 from app.domain.topic.repositories.vocabulary import Unread
 
@@ -128,7 +128,7 @@ async def unread_counts(
         .outerjoin(TopicReadState, read_state(_blocks.c.conversation_id))
         .where(
             Topic.project_id == project_id,
-            _readable_by(user_handle),
+            readable_by(user_handle),
             joined,
             _blocks.c.kind == KIND_MESSAGE,
             _blocks.c.author != user_handle,
@@ -166,7 +166,7 @@ async def unread_counts(
         .outerjoin(TopicReadState, read_state(_blocks.c.conversation_id))
         .where(
             Topic.project_id == project_id,
-            _readable_by(user_handle),
+            readable_by(user_handle),
             joined,
             _blocks.c.kind == KIND_MESSAGE,
             _blocks.c.author != user_handle,
@@ -384,7 +384,7 @@ async def notify_levels(
             Topic.project_id == project_id,
             # 同 unread_counts 的读权限：被请出去的私密房间，我当年的静音记录
             # 还在，但它的 id 不能再告诉我。
-            _readable_by(user_handle),
+            readable_by(user_handle),
             TopicReadState.user_handle == user_handle,
             or_(TopicReadState.notify_level == NotifyLevel.all, _muted_now()),
         )

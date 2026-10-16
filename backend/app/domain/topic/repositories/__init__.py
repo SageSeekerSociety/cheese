@@ -10,7 +10,7 @@
 - `replied` —— 侧栏那盏黄灯（有人回复了我、我还没处理）；
 - `unread` —— 角标未读、通知级别、已读游标；
 - `latest` —— 一间房时间线上最后一条（`last_word`），停滞判据的原料；
-- `statements` —— 共用的裸表与 SQL 判据（`_readable_by`、`_mentions`、
+- `statements` —— 共用的裸表与 SQL 判据（`readable_by`、`_mentions`、
   `_last_activity`、`seen_by`…），几个读点都从这里取，才不会有第二份定义；
 - `vocabulary` —— 路由、前端和这里共用的封闭词表（`TopicSortField`、`SortOrder`）；
 - `progress` —— `TopicProgressRepository`，两个方法一张表，不转发。
@@ -52,6 +52,7 @@ from app.domain.topic.repositories.statements import (
     KIND_ARTIFACT as KIND_ARTIFACT,
 )
 from app.domain.topic.repositories.statements import KIND_EVENT as KIND_EVENT
+from app.domain.topic.repositories.statements import readable_by as readable_by
 from app.domain.topic.repositories.statements import seen_by as seen_by
 from app.domain.topic.repositories.vocabulary import ListedRoom as ListedRoom
 from app.domain.topic.repositories.vocabulary import SortOrder as SortOrder

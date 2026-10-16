@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock
 import pytest
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from app.api.routes import connector
-from app.api.routes.connector import _WebSocketDeviceTransport
+from app.api.routes.connector import devices
+from app.api.routes.connector.devices import _WebSocketDeviceTransport
 from app.domain.device.owner_reads import DeviceIdentity
 
 
@@ -60,17 +60,17 @@ async def test_device_route_cleans_up_a_disconnected_link(monkeypatch, failure):
 
     detach = AsyncMock()
     monkeypatch.setattr(
-        connector.owner_reads,
+        devices.owner_reads,
         "device_for_token",
         AsyncMock(return_value=DeviceIdentity("test-device", "test-device")),
     )
-    monkeypatch.setattr(connector.settings, "device_connection_owner", True)
-    monkeypatch.setattr(connector.device_hub, "attach_device", attach)
-    monkeypatch.setattr(connector.device_hub, "on_device_message", on_message)
-    monkeypatch.setattr(connector.device_hub, "detach_device", detach)
+    monkeypatch.setattr(devices.settings, "device_connection_owner", True)
+    monkeypatch.setattr(devices.device_hub, "attach_device", attach)
+    monkeypatch.setattr(devices.device_hub, "on_device_message", on_message)
+    monkeypatch.setattr(devices.device_hub, "detach_device", detach)
     if failure == "handler":
         with pytest.raises(RuntimeError, match="unexpected handler failure"):
-            await connector.agent_socket(websocket, AsyncMock(), token="test-token")
+            await devices.agent_socket(websocket, AsyncMock(), token="test-token")
     else:
-        await connector.agent_socket(websocket, AsyncMock(), token="test-token")
+        await devices.agent_socket(websocket, AsyncMock(), token="test-token")
     detach.assert_awaited_once_with("test-device", transport)

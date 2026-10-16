@@ -370,9 +370,34 @@ jobs:
         with:
           path: ~/.npm
           key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
-      - name: Install pinned harness binaries
+      # The unpacked tools, not the package cache. The key above never matched
+      # on its own: warm-caches.yml's `backend` job saves one with x64 in it,
+      # these shards are arm64, so every run of all seven unpacked both
+      # packages from the registry again — 9–13s each, measured across runs
+      # 38925235400 / 38925326757 / 38926053508 — and fetched pi from GitHub
+      # Releases again, which is where run 38251886139 died on an HTTP 500.
+      #
+      # Restore only, like the key above: warm-caches.yml's `harness-bins` job
+      # saves this one on main, on arm64 for the same reason these shards are.
+      # The path is absolute under $HOME because the run that saves it and the
+      # run that restores it are different machines.
+      #
+      # The hash names every pin whose build is inside the directory, pi's
+      # included: `pi/launch.py` is where `VERSION` is written and nowhere else
+      # (`test_capability_matrix.py` holds that), and a key without it would
+      # keep serving the old build after a pi bump — the shards only restore,
+      # so nothing in them could refresh it.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: harness-bins
         if: matrix.layer != 'contract'
+        with:
+          path: ~/.cache/cheese-harness-bins
+          key: harness-bins-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**', 'backend/app/domain/agent/harness/pi/launch.py') }}
+      - name: Install pinned harness binaries
+        if: matrix.layer != 'contract' && steps.harness-bins.outputs.cache-hit != 'true'
         run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          mkdir -p "$bins"
           packages="$(uv run python - <<'PY'
           from app.domain.agent.capability.matrix import written
           from app.domain.agent.harness import CLAUDE_CODE, CODEX
@@ -382,13 +407,7 @@ jobs:
           )"
           # Package names and versions come only from checked-in declarations.
           read -r -a pinned_packages <<< "$packages"
-          npm install --prefix "$RUNNER_TEMP/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
-          tools="$RUNNER_TEMP/harness-tools/node_modules/.bin"
-          echo "$tools" >> "$GITHUB_PATH"
-          echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
-          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
-          "$tools/claude" --version
-          "$tools/codex" --version
+          npm install --prefix "$bins/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
           # pi is not an npm package here: the build a room runs is the
           # vendor's compiled release, fetched and checked by the same code the
           # platform serves it with (`app.domain.machine.pi_dist`).
@@ -406,10 +425,43 @@ jobs:
           print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
           PY
           )"
-          mkdir -p "$RUNNER_TEMP/pi"
-          tar -xzf "$archive" -C "$RUNNER_TEMP/pi"
-          echo "CHEESE_TEST_PI=$RUNNER_TEMP/pi/pi/pi" >> "$GITHUB_ENV"
-          "$RUNNER_TEMP/pi/pi/pi" --version
+          mkdir -p "$bins/pi"
+          tar -xzf "$archive" -C "$bins/pi"
+      # Runs on a hit and on a miss alike, so a restored directory that is not
+      # a working set of binaries fails the shard here rather than inside a
+      # test. What it compares is each build's own version against the
+      # declaration the key hashes; the plain `--version` calls alone would
+      # pass on any build at all.
+      - name: Point the tests at the pinned harness binaries
+        if: matrix.layer != 'contract'
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          tools="$bins/harness-tools/node_modules/.bin"
+          echo "$tools" >> "$GITHUB_PATH"
+          echo "CHEESE_TEST_CLAUDE=$tools/claude" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_CODEX=$tools/codex" >> "$GITHUB_ENV"
+          echo "CHEESE_TEST_PI=$bins/pi/pi/pi" >> "$GITHUB_ENV"
+          # The pins, from the same declarations the install step reads.
+          pins="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX, PI
+          every = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(every[CLAUDE_CODE], every[CODEX], every[PI])
+          PY
+          )"
+          read -r claude_pin codex_pin pi_pin <<< "$pins"
+          for want in "claude $claude_pin" "codex $codex_pin" "pi $pi_pin"; do
+            read -r which expected <<< "$want"
+            case "$which" in
+              claude) built="$("$tools/claude" --version)" ;;
+              codex) built="$("$tools/codex" --version)" ;;
+              pi) built="$("$bins/pi/pi/pi" --version)" ;;
+            esac
+            case "$built" in
+              *"$expected"*) ;;
+              *) echo "$which is $built, not the pinned $expected" >&2; exit 1 ;;
+            esac
+          done
 
       - name: Verify integration PostgreSQL storage
         if: matrix.layer == 'integration'

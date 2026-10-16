@@ -108,7 +108,7 @@ async def lifespan(application: FastAPI):
         # `_discover_routers` tolerates a route module that fails to import. At
         # module scope this import would instead stop the whole process starting.
         # deferred-import: startup - a route module must stay skippable
-        from app.api.routes.connector import recover_business_state
+        from app.api.routes.connector.devices import recover_business_state
 
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)

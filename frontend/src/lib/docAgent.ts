@@ -22,6 +22,8 @@ export type AgentPresetId =
   | 'summarize'
   | 'check_all'
   | 'structure'
+  // 只给还空着的项目总览：总览页上的「让 AI 队友起草」，不在框里的常用说法里。
+  | 'draft'
 
 export interface AgentPreset {
   id: AgentPresetId

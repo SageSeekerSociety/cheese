@@ -16,9 +16,12 @@ from pydantic import BaseModel, Field
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.domain.integration.service import FeishuAppService, feishu_app_view
 
-router = APIRouter(prefix="/admin/integrations", tags=["admin"])
+router = APIRouter(
+    prefix="/admin/integrations", tags=["admin"], dependencies=[ROUTE_DECIDES]
+)
 
 
 class FeishuAppIn(BaseModel):
