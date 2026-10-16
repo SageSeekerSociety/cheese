@@ -88,12 +88,18 @@ describe('话题用量', () => {
     expect(f.loading.value).toBe(false)
   })
 
-  it('同一个话题十秒以内不取第二遍', async () => {
+  it('同一个话题十秒以内不取第二遍，手里的旧数照旧留着；过了十秒才重取', async () => {
     const f = mountUsage()
     await f.load()
     now += 3_000
     await f.load()
     expect(getTopicUsage).toHaveBeenCalledTimes(1)
+    // 跳过重取不是把数抹掉：悬停一次紧接着点开，卡里还是刚才那份。
+    expect(f.topic.value?.turns).toBe(1)
+
+    now += 8_000
+    await f.load()
+    expect(getTopicUsage).toHaveBeenCalledTimes(2)
   })
 
   it('换了话题，上一个话题的数不挂在这一个上', async () => {
