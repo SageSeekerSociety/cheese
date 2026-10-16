@@ -44,8 +44,9 @@ const { mdAndUp } = useDisplay()
 </script>
 
 <template>
-  <!-- 单独打开一份文件时的横条：返回、这份文件、它的两面（差异 / 全文），以及对它做的
-       事。全部改动那一面没有这一条，顶部是这次交付的情况（宿主塞进来的 head）。 -->
+  <!-- The bar while one file is open: back, the file, its two faces (diff /
+       full text), and the actions on it. The all-changes face has no bar; its
+       top is the delivery's own state (the head the host slots in). -->
   <div v-if="props.openPath" class="changes-bar" :class="{ 'changes-bar--phone': !mdAndUp }">
     <span v-if="mdAndUp && props.sourceStatus" class="source-status">{{ props.sourceStatus }}</span>
     <span v-if="mdAndUp && props.sourceStatus" class="changes-bar__sep" aria-hidden="true" />
@@ -63,8 +64,9 @@ const { mdAndUp } = useDisplay()
     </span>
     <span v-if="props.fileDirty" class="changes-bar__dot" :title="t('work.room.changes.unsaved')" />
     <v-spacer v-if="mdAndUp" />
-    <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。文档没有
-         这两面：它的差异是一句「二进制文件不同」，而按文本编辑会损坏它。 -->
+    <!-- Diff / edit are two faces of the same file, and only a changed file has
+         both. A document has neither: its diff is the one line "binary file
+         differs", and editing it as text would corrupt it. -->
     <div v-if="props.openDiff && !props.openIsDocument" class="seg seg--sm">
       <button
         type="button"
@@ -83,9 +85,10 @@ const { mdAndUp } = useDisplay()
         {{ props.fileReadOnly || !mdAndUp ? t('work.room.changes.fullText') : t('work.room.changes.edit') }}
       </button>
     </div>
-    <!-- Read-only files (binary / oversized / images) get no 保存 button at
-       all: saving one is what corrupted them. 手机上文件只读（见 CodeEditor
-       那一处），也就没有保存；每份都是只读，不必每份再说一次。 -->
+    <!-- Read-only files (binary / oversized / images) get no save button at
+       all: saving one is what corrupted them. On a phone every file is
+       read-only (see the CodeEditor branch), so there is no save either; one
+       rule, not one per file. -->
     <span v-if="mdAndUp && props.fileReadOnly" class="changes-bar__ro">{{ t('work.room.changes.readOnly') }}</span>
     <BaseButton
       v-else-if="mdAndUp && props.effectiveView === 'edit'"

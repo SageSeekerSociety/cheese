@@ -62,8 +62,9 @@ const { mdAndUp } = useDisplay()
 </script>
 
 <template>
-  <!-- 文档：画出这一版，再把它自己带的修订列在旁边。排在差异前面，因为
-     一份 .docx 的差异只有一句「二进制文件不同」。 -->
+  <!-- A document: render this revision, with the revisions it carries listed
+     beside it. It comes before the diff because a .docx diff is the one line
+     "binary file differs". -->
   <div v-if="props.openPath && props.openIsDocument" class="doc-view">
     <div v-if="props.docLoading && !props.docBytes" class="file-blob">
       <v-progress-circular indeterminate color="primary" size="24" />
@@ -105,16 +106,17 @@ const { mdAndUp } = useDisplay()
       @remove-comment="(id) => void props.review?.remove(id)"
     />
   </div>
-  <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法
-     定位到文件，所以验收动线以前根本立不起来。行号、折行、窗口化都在
-     ChangesDiff 里。 -->
+  <!-- Per-file diff: one section per file, additions and deletions coloured.
+     A single bare diff block cannot be read or located by file, which is why
+     the acceptance flow never stood up. Line numbers, wrapping and windowing
+     all live in ChangesDiff. -->
   <ChangesDiff v-else-if="props.openPath && props.effectiveView === 'diff'" :lines="props.openDiffLines" />
   <div v-else-if="props.openPath && props.openIsImage" class="file-image-view">
     <img :src="props.openRawUrl" :alt="props.openPath" />
   </div>
   <!-- Binary / oversized: no editor. Opening one in Monaco meant every
-     byte utf-8 could not decode came back as U+FFFD, and 保存 wrote
-     the damage to disk. -->
+     byte utf-8 could not decode came back as U+FFFD, and the save button
+     wrote the damage to disk. -->
   <div v-else-if="props.openPath && (props.fileBinary || props.fileTooLarge)" class="file-blob">
     <v-icon size="30" class="c-faint mb-2">
       {{ props.fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
@@ -128,8 +130,8 @@ const { mdAndUp } = useDisplay()
       {{ t('work.room.changes.downloadOriginal') }}
     </BaseButton>
   </div>
-  <!-- 手机上只读：软键盘配 Monaco 不是能救的组合，给一个明确的说法比给一个
-       难用的编辑器好。 -->
+  <!-- Read-only on a phone: a soft keyboard with Monaco is not a combination
+       worth saving; saying so plainly beats an editor nobody can use. -->
   <CodeEditor
     v-else-if="props.openPath"
     :model-value="props.fileDraft"

@@ -133,8 +133,9 @@ async function pick(path: string) {
       @scroll.passive="onScroll"
     >
       <div ref="headBox"><slot name="head" /></div>
-      <!-- 改了哪些文件：一行总数，加上前几个文件（文件树常驻时它就是那棵树，这里
-           只留总数那一行）。点一个就跳到它那一段。 -->
+      <!-- Which files changed: a total row plus the first few files (with the
+           tree column always on, that column is the tree and this keeps only the
+           total). Clicking one jumps to its section. -->
       <div v-show="listDiffs.length" ref="summaryEl" class="changes-summary">
         <div class="changes-summary__row">
           <span class="changes-summary__total">
@@ -149,7 +150,8 @@ async function pick(path: string) {
           <span v-if="props.currentTask && props.currentTask.status !== 'open'" class="c-faint">
             {{ props.sourceStatus }}
           </span>
-          <!-- 顶部那块在的时候，细栏还没出来，打开其他文件和 ⋯ 先在这一行上。 -->
+          <!-- While the head block is up the thin bar has not appeared yet, so
+               open-other and ⋯ sit on this row. -->
           <template v-if="hasHead">
             <v-spacer />
             <BaseButton
@@ -211,8 +213,10 @@ async function pick(path: string) {
         @remove-comment="(id) => void props.review?.remove(id)"
       />
     </div>
-    <!-- 滚过顶部之后的那条细栏：读到第几个文件。是哪个文件不在这里说——那个文件的
-         段头贴在这条栏正下方（ChangesDiffList 的 sticky 段头），已经写着完整路径。 -->
+    <!-- The thin bar after scrolling past the head: which file of how many. It
+         does not name the file; that file's section header sticks right under
+         this bar (ChangesDiffList's sticky row) and already carries the full
+         path. -->
     <div v-if="floatShown && props.fileToolReady" class="changes-float">
       <span v-if="listDiffs.length" class="changes-float__count">{{
         t('work.room.changes.fileOfTotal', { current: currentIndex + 1, total: listDiffs.length })
