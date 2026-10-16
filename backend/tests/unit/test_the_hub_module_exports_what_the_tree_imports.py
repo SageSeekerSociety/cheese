@@ -5,22 +5,48 @@
 
 所以这里不列名单，而是把树里真实的导入语句读出来：不用维护一张会过期的表，谁删掉
 一个还在被导入的名字，谁就红。
+
+**扫的是整仓，不止 `backend/`。** 这是 `backend/AGENTS.md` 对搬走一个公开名字的要求：
+顶层 `scripts/` 里就有人从这个模块取名（`scripts/remote_execution/resident_release.py`
+的 `HubScreen`、`backend/scripts/device_connection_lifecycle_acceptance.py` 的
+`DeviceCallError`），只扫 `app/` 和 `tests/` 的话，删掉名字时这两处红不了。
 """
 
 import ast
 import importlib
+import os
 from pathlib import Path
 
 import app
 
 MODULE = "app.domain.agent.device_hub"
 BACKEND = Path(app.__file__).resolve().parent.parent
+REPO = BACKEND.parent
+
+# 这些目录不是仓库自己读的 Python 源码，进去只会白读几千个文件。
+_SKIP_DIRS = {
+    ".git",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    ".tox",
+    "dist",
+    "build",
+}
 
 
 def _scanned_files() -> list[Path]:
-    return sorted((BACKEND / "app").rglob("*.py")) + sorted(
-        (BACKEND / "tests").rglob("*.py")
-    )
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(REPO):
+        dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        found.extend(
+            Path(dirpath) / name for name in sorted(filenames) if name.endswith(".py")
+        )
+    return found
 
 
 def _names_imported_from_the_hub() -> dict[str, list[str]]:
@@ -34,7 +60,7 @@ def _names_imported_from_the_hub() -> dict[str, list[str]]:
             if isinstance(node, ast.ImportFrom) and node.module == MODULE:
                 for alias in node.names:
                     found.setdefault(alias.name, []).append(
-                        f"{path.relative_to(BACKEND)}:{node.lineno}"
+                        f"{path.relative_to(REPO)}:{node.lineno}"
                     )
     return found
 
@@ -42,8 +68,9 @@ def _names_imported_from_the_hub() -> dict[str, list[str]]:
 def test_every_name_the_tree_imports_from_the_hub_is_still_there():
     hub = importlib.import_module(MODULE)
     imported = _names_imported_from_the_hub()
-    # 扫不出东西就是扫错了（比如路径写歪），别让这条测试空着过。
-    assert {"device_hub", "DeviceHub", "DeviceOffline"} <= set(imported)
+    # 扫不出东西就是扫错了（比如路径写歪），别让这条测试空着过。`HubScreen` 只有
+    # 顶层 `scripts/` 里那处在导，它顺带看着整仓这一半还在扫。
+    assert {"device_hub", "DeviceHub", "DeviceOffline", "HubScreen"} <= set(imported)
 
     missing = {
         name: where for name, where in imported.items() if not hasattr(hub, name)
