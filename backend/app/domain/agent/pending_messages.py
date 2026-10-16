@@ -12,6 +12,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block, consumed_turn
 from app.domain.block.queries import DEFERRED_INPUT, queued_messages
+from app.domain.delivery.agent import redispatch_undelivered
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
@@ -44,6 +45,7 @@ async def finish_work(chat, completion, settle):
         )
         await session.commit()
     nudge_messages(chat, completion.conversation_id)
+    wake_held_deliveries(chat, completion.conversation_id, completion.recipient_handle)
 
 
 async def finish_work_termination(chat, termination, settle):
@@ -64,6 +66,45 @@ async def finish_work_termination(chat, termination, settle):
         )
         await session.commit()
     nudge_messages(chat, termination.conversation_id)
+    wake_held_deliveries(
+        chat, termination.conversation_id, termination.recipient_handle
+    )
+
+
+def wake_held_deliveries(chat, conversation_id, recipient_handle):
+    """Send, in the background, what the platform owes the seat that just freed.
+
+    A delivery tried while its seat still held an earlier work went back to
+    the ledger with a backoff (``delivery.agent.run_attempt``) — the same
+    refusal that defers a person's message, which ``nudge_messages`` wakes on
+    this same ending. Left to its backoff, it waited up to five minutes past
+    the moment it was waiting for, and an agent working in long turns kept
+    taking new work in that gap until the delivery was given up.
+    """
+    runner = _runner
+    if runner is None or not runner.owns_sessions or not runner.accepting_turns:
+        # The periodic dispatch still picks it up when its backoff runs out.
+        return
+
+    async def wake():
+        try:
+            await redispatch_undelivered(
+                chat.session_factory,
+                conversation_id=conversation_id,
+                chat=chat,
+                runner=runner,
+                recipient_handle=recipient_handle,
+            )
+        except Exception:
+            logger.exception(
+                "held delivery wake failed topic=%s seat=%s",
+                conversation_id,
+                recipient_handle,
+            )
+
+    task = asyncio.create_task(wake(), name=f"held-deliveries:{conversation_id}")
+    runner._tasks.add(task)
+    task.add_done_callback(runner._tasks.discard)
 
 
 async def defer_message(session, block_id):
