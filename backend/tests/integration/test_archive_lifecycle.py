@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.device_failures import DeviceOffline
 from app.core.errors import ConflictError
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
@@ -786,6 +787,46 @@ async def test_a_process_still_in_a_claimed_room_is_waited_out_and_named(
     finally:
         holder.kill()
         holder.wait()
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+    assert not room.home.exists()
+
+
+async def test_a_claimed_room_whose_machine_is_offline_waits_for_it_without_alarm(
+    client, session_host_room, monkeypatch, caplog
+):
+    """A machine that is away is the ordinary reason an archived room waits.
+    After the claim as before it: the room stays, the wait is reported when it
+    starts and not again every pass, and nothing reads it as a failure. Once
+    the machine is back the room is cleaned up."""
+    room = session_host_room
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, room.cleanup_id)
+        operation.state = "claimed"
+        operation.resources = [
+            {
+                "kind": "device",
+                "device_id": "center",
+                "resource_id": str(operation.resource_id),
+            }
+        ]
+        await session.commit()
+    online = retire.device_hub.exec
+
+    async def away(device_id, *args, **kwargs):
+        raise DeviceOffline(device_id)
+
+    monkeypatch.setattr(retire.device_hub, "exec", away)
+    with caplog.at_level("DEBUG", logger="cheesex.topic.retire"):
+        assert _sweep(client) == {"completed": 0, "pending": 1}
+        assert _sweep(client) == {"completed": 0, "pending": 1}
+    assert room.home.exists()
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, room.cleanup_id)).state == "claimed"
+    records = [r for r in caplog.records if r.name == "cheesex.topic.retire"]
+    assert not [r for r in records if r.levelname == "ERROR"]
+    assert len([r for r in records if r.levelname == "WARNING"]) == 1
+
+    monkeypatch.setattr(retire.device_hub, "exec", online)
     assert _sweep(client) == {"completed": 1, "pending": 0}
     assert not room.home.exists()
 
