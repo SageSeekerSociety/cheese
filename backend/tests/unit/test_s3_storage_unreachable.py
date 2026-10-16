@@ -46,3 +46,16 @@ async def test_a_download_from_an_unreachable_bucket_is_unavailable_not_a_crash(
         await _unreachable_bucket().download("task-snapshots/k")
     assert raised.value.status_code == 503
     assert raised.value.retryable is True
+
+
+async def test_why_the_bucket_was_unreachable_is_logged(caplog):
+    """The 503 says only "unavailable"; a wrong endpoint or a TLS failure must
+    still be told apart from an outage by whoever reads the log."""
+    with caplog.at_level("WARNING", logger="app.core.storage"):
+        with pytest.raises(BaseError) as raised:
+            await _unreachable_bucket().upload(
+                io.BytesIO(b"# v2 git bundle\n"), "task-snapshots/k", "application/x"
+            )
+    cause = type(raised.value.__cause__).__name__
+    said = [r.getMessage() for r in caplog.records if r.name == "app.core.storage"]
+    assert any(cause in line for line in said), (cause, said)

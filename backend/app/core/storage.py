@@ -17,6 +17,8 @@ import aiofiles.ospath
 from app.core.config import settings
 from app.core.errors import UpstreamUnavailableError
 
+logger = logging.getLogger(__name__)
+
 
 class ObjectStoreUnreachableError(UpstreamUnavailableError):
     """The bucket did not answer: the same operation succeeds once the way out
@@ -195,6 +197,12 @@ class S3StorageBackend(StorageBackend):
             async with self._client() as client:
                 yield client
         except (bucket.ConnectionError, bucket.HTTPClientError) as exc:
+            # Said here, with its cause, because the 503 the caller gets does
+            # not carry it: a TLS failure or a wrong endpoint looks exactly like
+            # an outage from outside, and this line is what tells them apart.
+            # WARNING, not ERROR: a bucket that is away is not this server's
+            # fault, and the alert channel is for this server's faults.
+            logger.warning("object store unreachable: %s: %s", type(exc).__name__, exc)
             raise ObjectStoreUnreachableError() from exc
 
     @asynccontextmanager
