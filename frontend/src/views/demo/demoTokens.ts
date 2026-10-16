@@ -256,7 +256,7 @@ const COLOR_SECTIONS: ReadonlyArray<{ name: string; note: string; prefixes: stri
   },
   {
     name: '头像',
-    note: '两种头像的固定色：队友的方块一个队友一个深色、按 handle 挑；人的首字母底色由 handle 算出来，两套主题同一个值，所以字也是定值。都不用琥珀——琥珀留给关键动作。',
+    note: '两种头像的固定色：队友的方块一个队友一个深色、按 handle 挑；首字母头像（人、团队、空间、项目）的底色由 seed 算出来，两套主题同一个值，所以字也是定值。都不用琥珀——琥珀留给关键动作。',
     prefixes: ['--agent-', '--avatar-'],
   },
   {

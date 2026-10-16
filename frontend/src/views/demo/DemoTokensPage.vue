@@ -102,7 +102,7 @@ const ROLE: Record<string, string> = {
   '--code-type': '类型',
   '--code-function': '函数',
   '--code-deletion': '删掉的行',
-  '--avatar-ink': '人像首字母的字',
+  '--avatar-ink': '头像首字母的字',
   '--agent-ink': '队友头像上的字',
   '--agent-tone-0': '队友色 0',
   '--agent-tone-1': '队友色 1',

@@ -185,11 +185,12 @@
   --inverse-ink: #fff;
   --inverse-fill: rgba(255, 255, 255, 0.14);
 
-  /* ---- Human avatar initials ----
-     A person's fallback avatar is avatarColor() — one fixed OKLCH lightness, the
-     SAME value in both themes — so the initial on it cannot follow the theme either
-     (docs/design-system.md §1.2's one exception). The dark block repeats the
-     value deliberately; do not "fix" it to --ink. */
+  /* ---- Avatar initials ----
+     A fallback avatar — person, team, space or project tile — is avatarColor():
+     one fixed OKLCH lightness, the SAME value in both themes, so the initial on
+     it cannot follow the theme either (docs/design-system.md §1.2's one
+     exception). The dark block repeats the value deliberately; do not "fix" it
+     to --ink. */
   --avatar-ink: #fff;
 
   /* ---- AI teammate avatar ----
