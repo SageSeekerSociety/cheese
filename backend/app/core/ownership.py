@@ -46,7 +46,12 @@ class Ownership:
         self._retry_s = retry_s
         self._engine: AsyncEngine | None = None
         self._connection: AsyncConnection | None = None
-        self._statements = asyncio.Lock()
+        # Made on first use in each event loop, not here: the instance is
+        # cached for the process (`api.deps`), and an asyncio.Lock that once
+        # had to wait belongs to that loop and raises in any later one (a
+        # second lifespan, every test on a fresh loop).
+        self._statements: asyncio.Lock | None = None
+        self._statements_loop: asyncio.AbstractEventLoop | None = None
         self.held = False
 
     async def _to_the_end(self, step: Callable[[], Awaitable[_T]]) -> _T:
@@ -62,8 +67,14 @@ class Ownership:
         one finished after its caller left leaves nothing unretrieved.
         """
 
+        loop = asyncio.get_running_loop()
+        if self._statements is None or self._statements_loop is not loop:
+            self._statements = asyncio.Lock()
+            self._statements_loop = loop
+        statements = self._statements
+
         async def in_turn() -> _T:
-            async with self._statements:
+            async with statements:
                 return await step()
 
         return await asyncio.shield(asyncio.ensure_future(in_turn()))
