@@ -7,7 +7,11 @@
 //      fails here rather than going quietly green;
 //   3. a plant — a file that breaks a rule is written into the tree and the
 //      ratchet must go red on it, name the file and the rule, refuse to freeze
-//      it on a plain --update, and go green once it is frozen on purpose.
+//      it on a plain --update, and go green once it is frozen on purpose;
+//   4. a split — the same plant moved from one file into another, and the
+//      re-key that follows it: the counts move, the total does not, and every
+//      way of getting that wrong is refused, naming the file and the number
+//      that did not add up.
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -18,7 +22,7 @@ import { fileURLToPath } from 'node:url'
 
 import { ESLint } from 'eslint'
 
-import { A11Y_RULE_PREFIX, countsByRule, parseEslintJson } from './a11y-ratchet-core.mjs'
+import { A11Y_RULE_PREFIX, countsByRule, formatMove, movedBaseline, parseEslintJson } from './a11y-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -181,6 +185,256 @@ describe('the ratchet on a planted violation', () => {
     for (const [key, count] of Object.entries(files)) {
       assert.match(key, /^src\/.+\.vue$/, `baseline key is not a src/ .vue path: ${key}`)
       assert.ok(Number.isInteger(count) && count > 0, `${key}: ${count}`)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 4. The move: re-keying a split.
+// ---------------------------------------------------------------------------
+
+describe('movedBaseline', () => {
+  const FROM = 'src/views/Whole.vue'
+  const TO = 'src/components/Half.vue'
+  const OTHER = 'src/views/Other.vue'
+  // Four frozen on the file that splits, two on a file the split does not touch.
+  const baseline = { [FROM]: 4, [OTHER]: 2 }
+  // The split itself: two of the four travelled, so the tree measures two on
+  // each side. Fractions differ on purpose — equal numbers hide which side a
+  // count in the message came from.
+  const split = { [FROM]: 2, [TO]: 2, [OTHER]: 2 }
+
+  it('re-keys the count between the two files and leaves the total alone', () => {
+    const plan = movedBaseline(baseline, split, { from: FROM, to: TO, count: 2 })
+    assert.deepEqual(plan.next, { [FROM]: 2, [TO]: 2, [OTHER]: 2 })
+    assert.equal(plan.total, 6)
+    assert.deepEqual(plan.source, { file: FROM, frozen: 4, after: 2, measured: 2 })
+    assert.deepEqual(plan.target, { file: TO, frozen: 0, after: 2, measured: 2 })
+  })
+
+  it('drops the source key when the whole allowance moves', () => {
+    const plan = movedBaseline({ [FROM]: 2 }, { [TO]: 2 }, { from: FROM, to: TO, count: 2 })
+    assert.deepEqual(plan.next, { [TO]: 2 })
+    assert.equal(plan.total, 2)
+  })
+
+  it('adds to a target that was already frozen', () => {
+    // Into an existing sibling rather than a brand new file: one frozen there
+    // plus two moved, and the tree measures three.
+    const plan = movedBaseline({ [FROM]: 4, [TO]: 1 }, { [FROM]: 2, [TO]: 3 }, { from: FROM, to: TO, count: 2 })
+    assert.deepEqual(plan.next, { [FROM]: 2, [TO]: 3 })
+    assert.deepEqual(plan.target, { file: TO, frozen: 1, after: 3, measured: 3 })
+  })
+
+  it('refuses a count the source never froze — the total would rise', () => {
+    assert.throws(
+      () => movedBaseline({ [FROM]: 2 }, { [TO]: 3 }, { from: FROM, to: TO, count: 3 }),
+      /the frozen total would rise from 2 to 3/
+    )
+  })
+
+  it('refuses a count larger than what actually left the source', () => {
+    // The count says three travelled; the tree still measures three in the
+    // source, so only one did.
+    assert.throws(
+      () => movedBaseline({ [FROM]: 4 }, { [FROM]: 3, [TO]: 3 }, { from: FROM, to: TO, count: 3 }),
+      /the tree still shows 3 violation\(s\) in src\/views\/Whole\.vue/
+    )
+  })
+
+  it('refuses when the target does not measure what the move would freeze there', () => {
+    // One more in the target than travelled: that one was written, not moved.
+    assert.throws(
+      () => movedBaseline({ [FROM]: 4 }, { [FROM]: 2, [TO]: 3 }, { from: FROM, to: TO, count: 2 }),
+      /measures 3 violation\(s\) in src\/components\/Half\.vue, but the move would freeze 2/
+    )
+    // One fewer: the target would sit frozen above what the tree shows, and the
+    // slack is what a later violation would spend.
+    assert.throws(
+      () => movedBaseline({ [FROM]: 4 }, { [FROM]: 2, [TO]: 1 }, { from: FROM, to: TO, count: 2 }),
+      /measures 1 violation\(s\) in src\/components\/Half\.vue, but the move would freeze 2/
+    )
+  })
+
+  it('refuses counts and paths that are not a move at all', () => {
+    const ok = { from: FROM, to: TO, count: 2 }
+    for (const count of [0, -1, 1.5, Number.NaN]) {
+      assert.throws(() => movedBaseline(baseline, split, { ...ok, count }), /positive whole number/, `${count}`)
+    }
+    assert.throws(() => movedBaseline(baseline, split, { ...ok, to: FROM }), /the same file/)
+    assert.throws(() => movedBaseline(baseline, split, { ...ok, to: 'src/components/Half.ts' }), /not a baseline key/)
+    assert.throws(
+      () => movedBaseline(baseline, split, { ...ok, from: '/repo/src/views/Whole.vue' }),
+      /not a baseline key/
+    )
+  })
+})
+
+describe('formatMove', () => {
+  const plan = () =>
+    movedBaseline(
+      { 'src/views/Whole.vue': 4 },
+      { 'src/views/Whole.vue': 3, 'src/components/Half.vue': 1 },
+      { from: 'src/views/Whole.vue', to: 'src/components/Half.vue', count: 1 }
+    )
+
+  it('names both files, both sides of the re-key, and what the target measures', () => {
+    const text = formatMove(plan(), [
+      { file: 'src/components/Half.vue', rule: 'vuejs-accessibility/no-static-element-interactions' },
+      { file: 'src/views/Whole.vue', rule: 'vuejs-accessibility/click-events-have-key-events' },
+    ])
+    assert.match(text, /^moved 1 violation\(s\): src\/views\/Whole\.vue -> src\/components\/Half\.vue/)
+    assert.match(text, /src\/views\/Whole\.vue: frozen 4 -> 3, the tree measures 3/)
+    assert.match(text, /src\/components\/Half\.vue: frozen 0 -> 1, the tree measures 1/)
+    assert.match(text, /check these are what moved\): no-static-element-interactions 1/)
+    assert.match(text, /frozen total: 4 -> 4/)
+  })
+
+  it('lists the rules measured in the target, not the ones left behind', () => {
+    const text = formatMove(plan(), [
+      { file: 'src/components/Half.vue', rule: 'vuejs-accessibility/no-static-element-interactions' },
+      { file: 'src/views/Whole.vue', rule: 'vuejs-accessibility/click-events-have-key-events' },
+    ])
+    assert.doesNotMatch(text, /click-events-have-key-events/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 5. The move through the CLI, against a split planted in the tree.
+// ---------------------------------------------------------------------------
+
+describe('the ratchet on a split', () => {
+  const FROM_REL = 'src/components/__a11ySplitWhole.vue'
+  const TO_REL = 'src/components/__a11ySplitHalf.vue'
+  const STRAY_REL = 'src/components/__a11ySplitStray.vue'
+  const PROBES = [FROM_REL, TO_REL, STRAY_REL].map((rel) => resolve(ROOT, rel))
+  const sandbox = mkdtempSync(join(tmpdir(), 'a11y-split-'))
+
+  after(() => {
+    for (const probe of PROBES) rmSync(probe, { force: true })
+    rmSync(sandbox, { recursive: true, force: true })
+  })
+
+  const runRatchet = (...args) => spawnSync(process.execPath, [RATCHET, ...args], { cwd: ROOT, encoding: 'utf8' })
+  const frozen = (path) => JSON.parse(readFileSync(path, 'utf8')).files
+  // `--files` takes one path per occurrence, so two files are two flags.
+  const files = (...rels) => rels.flatMap((rel) => ['--files', rel])
+  // One clickable <div> is two violations, so a file's count is twice its divs.
+  const withDivs = (n) =>
+    `<script setup lang="ts">\nconst go = () => 1\n</script>\n\n<template>\n${'  <div @click="go">x</div>\n'.repeat(n)}</template>\n`
+  const move = (from, to, count) => ['--move-from', from, '--move-to', to, '--move-count', String(count)]
+
+  // The split under test: four violations in one file become two and two.
+  const splitInTree = () => {
+    writeFileSync(resolve(ROOT, FROM_REL), withDivs(1))
+    writeFileSync(resolve(ROOT, TO_REL), withDivs(1))
+  }
+
+  it('re-keys the counts, and the ratchet is green on the split afterwards', () => {
+    const scratch = join(sandbox, 'baseline.json')
+    try {
+      writeFileSync(scratch, JSON.stringify({ files: { [FROM_REL]: 4 } }))
+      splitInTree()
+
+      // What the split does to the ratchet today: the new key reads as new debt.
+      const blocked = runRatchet(...files(FROM_REL, TO_REL), '--baseline', scratch)
+      assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
+      assert.match(blocked.stdout, /__a11ySplitHalf\.vue: 0 -> 2/)
+
+      // The move reads the tree and, without --update, writes nothing.
+      const dry = runRatchet(...files(FROM_REL, TO_REL), '--baseline', scratch, ...move(FROM_REL, TO_REL, 2))
+      assert.equal(dry.status, 0, `${dry.stdout}${dry.stderr}`)
+      assert.match(dry.stdout, /^moved 2 violation\(s\): .*__a11ySplitWhole\.vue -> .*__a11ySplitHalf\.vue/m)
+      assert.match(dry.stdout, /frozen total: 4 -> 4/)
+      // The rule line is the evidence: one clickable <div> carried over, which is
+      // one violation of each of the two rules it breaks. The summary line below
+      // counts both files (two divs), so it is not this number.
+      assert.match(dry.stdout, /check these are what moved\): .*no-static-element-interactions 1/)
+      assert.deepEqual(frozen(scratch), { [FROM_REL]: 4 }, 'the dry run wrote the baseline')
+
+      // --update writes the re-keyed baseline, and nothing else changes.
+      const written = runRatchet(
+        ...files(FROM_REL, TO_REL),
+        '--baseline',
+        scratch,
+        ...move(FROM_REL, TO_REL, 2),
+        '--update'
+      )
+      assert.equal(written.status, 0, `${written.stdout}${written.stderr}`)
+      assert.deepEqual(frozen(scratch), { [FROM_REL]: 2, [TO_REL]: 2 })
+
+      const green = runRatchet(...files(FROM_REL, TO_REL), '--baseline', scratch)
+      assert.equal(green.status, 0, `${green.stdout}${green.stderr}`)
+    } finally {
+      for (const probe of PROBES) rmSync(probe, { force: true })
+    }
+  })
+
+  it('refuses a move the tree does not show, and writes nothing', () => {
+    const scratch = join(sandbox, 'refusals.json')
+    // A third key the probes never write, so "the frozen total" is not just the
+    // one file under test.
+    const before = { [FROM_REL]: 4, 'src/gone.vue': 3 }
+    const cases = [
+      [
+        'the count is one short of what the target measures',
+        move(FROM_REL, TO_REL, 1),
+        /measures 2 violation\(s\) in .*__a11ySplitHalf\.vue, but the move would freeze 1/,
+      ],
+      [
+        'the count is one more than what left the source',
+        move(FROM_REL, TO_REL, 3),
+        /still shows 2 violation\(s\) in .*__a11ySplitWhole\.vue/,
+      ],
+      // `before` also freezes three in a file no probe wrote, so the total is 7.
+      ['more than the source ever froze', move(FROM_REL, TO_REL, 5), /frozen total would rise from 7 to 8/],
+      [
+        'a source the baseline never froze',
+        move('src/components/__a11ySplitElsewhere.vue', TO_REL, 2),
+        /freezes 0 violation\(s\) in/,
+      ],
+      ['a count that is not a count', move(FROM_REL, TO_REL, 0), /positive whole number/],
+      ['a target outside the tree', move(FROM_REL, 'src/components/Half.ts', 2), /not a baseline key/],
+      ['--freeze-new beside a move', [...move(FROM_REL, TO_REL, 2), '--freeze-new'], /--freeze-new freezes every file/],
+      ['one flag of the three', ['--move-from', FROM_REL], /go together, once each/],
+    ]
+    try {
+      splitInTree()
+      for (const [why, args, match] of cases) {
+        writeFileSync(scratch, JSON.stringify({ files: before }))
+        const run = runRatchet(...files(FROM_REL, TO_REL), '--baseline', scratch, '--update', ...args)
+        assert.equal(run.status, 1, `${why}: ${run.stdout}${run.stderr}`)
+        assert.match(`${run.stdout}${run.stderr}`, match, why)
+        assert.deepEqual(frozen(scratch), before, `${why}: the baseline changed anyway`)
+      }
+    } finally {
+      for (const probe of PROBES) rmSync(probe, { force: true })
+    }
+  })
+
+  it('does not excuse a violation the split did not move', () => {
+    const scratch = join(sandbox, 'stray.json')
+    try {
+      splitInTree()
+      // A third file picks up a clickable <div> of its own while the split happens.
+      writeFileSync(resolve(ROOT, STRAY_REL), withDivs(1))
+      writeFileSync(scratch, JSON.stringify({ files: { [FROM_REL]: 4 } }))
+
+      const dry = runRatchet(...files(FROM_REL, TO_REL, STRAY_REL), '--baseline', scratch, ...move(FROM_REL, TO_REL, 2))
+      assert.equal(dry.status, 1, `${dry.stdout}${dry.stderr}`)
+      assert.match(dry.stdout, /__a11ySplitStray\.vue: 0 -> 2/)
+
+      const written = runRatchet(
+        ...files(FROM_REL, TO_REL, STRAY_REL),
+        '--baseline',
+        scratch,
+        ...move(FROM_REL, TO_REL, 2),
+        '--update'
+      )
+      assert.equal(written.status, 1, `${written.stdout}${written.stderr}`)
+      assert.deepEqual(frozen(scratch), { [FROM_REL]: 4 }, 'the move laundered the stray violation')
+    } finally {
+      for (const probe of PROBES) rmSync(probe, { force: true })
     }
   })
 })
