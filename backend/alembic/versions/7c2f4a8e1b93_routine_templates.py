@@ -32,7 +32,11 @@ def upgrade() -> None:
         sa.Column(
             "project_id",
             sa.Uuid(),
-            sa.ForeignKey("projects.id", ondelete="CASCADE"),
+            sa.ForeignKey(
+                "projects.id",
+                ondelete="CASCADE",
+                name="fk_routine_templates_project_id",
+            ),
             nullable=False,
         ),
         sa.Column("title", sa.String(200), nullable=False),

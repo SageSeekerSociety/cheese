@@ -76,7 +76,12 @@ class RoutineTemplate(UuidPk, Timestamps, Base):
     __tablename__ = "routine_templates"
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_routine_templates_project_id",
+        ),
+        index=True,
     )
     title: Mapped[str] = mapped_column(String(200))
     #: 「目标」 — the words a rule's ``instructions`` holds, under the name the
