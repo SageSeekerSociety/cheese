@@ -76,9 +76,14 @@ const escStem = (file: string) => esc(file.replace(/^topicView\//, '').replace(/
 /** 这一段代码里调没调这个名字。`useTopicPanelState(` 不算调了 `useTopicPanel`。 */
 const calls = (text: string, fn: string) => new RegExp(`(?<![\\w.$])${esc(fn)}\\s*\\(`).test(text)
 
-/** 页面从 `./topicView/<module>` 取值的 import 语句取了哪几个名字（`import type` 不算）。 */
+/** 页面从 `./topicView/<module>` 取值的 import 语句取了哪几个名字（`import type` 不算）。
+ *  取的那几个名字里不许再出现 `from`：否则这一条会从更早的一条 import 一路吞下来，
+ *  把别的模块的名字也算成它取的，接错模块就查不出来了。 */
 function valueImports(text: string, module: string): string[] {
-  const re = new RegExp(`^import\\s+(?!type\\b)([^;]*?)\\sfrom\\s+'\\./topicView/${escStem(module)}'`, 'gm')
+  const re = new RegExp(
+    `^import\\s+(?!type\\b)((?:(?!\\bfrom\\b)[^;])*?)\\sfrom\\s+'\\./topicView/${escStem(module)}'`,
+    'gm'
+  )
   return [...text.matchAll(re)].map((m) => m[1]!)
 }
 
@@ -110,10 +115,15 @@ describe('话题视图的拆分边界', () => {
 
   it('对外还是同一个路由入口：props 和名字都还在这一页', () => {
     const props = page.match(/defineProps<\{([\s\S]*?)\}>\(\)/)?.[1] ?? ''
-    const missing = ['projectId', 'topicId', 'taskId', 'threadId'].filter(
-      (p) => !new RegExp(`\\b${p}\\??:`).test(props)
-    )
-    expect(missing).toEqual([])
+    // 名字、类型和可选性一起钉：四个 prop 怎么算填、怎么算漏，是路由给这一页定的对
+    // 外契约，`taskId?: string` 写成必填会打退调用方，光查名字查不出来。
+    const contract: readonly [string, RegExp][] = [
+      ['projectId', /\bprojectId\s*:\s*string\b/],
+      ['topicId', /\btopicId\s*:\s*string\b/],
+      ['taskId', /\btaskId\s*\?:\s*string\b/],
+      ['threadId', /\bthreadId\s*\?:\s*string\b/],
+    ]
+    expect(contract.filter(([, re]) => !re.test(props)).map(([name]) => name)).toEqual([])
     expect(page).toMatch(/defineOptions\(\{\s*name:\s*'TopicView'\s*\}\)/)
     expect(page).toContain('<template>')
     // 支线那一半仍然是这里异步取的：它是这一页模板里画的，不是搬走的那几块之一。
