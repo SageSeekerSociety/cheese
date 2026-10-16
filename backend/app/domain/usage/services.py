@@ -69,7 +69,7 @@ class UsageService:
 
     async def project_credits_batch(self, projects: list) -> dict[uuid.UUID, dict]:
         """`project_credits` 的批量版：一批项目 → 各自的额度汇总，一条查询取回
-        额度包，再按与逐项目同一条规则（`ledger._applies`）归给各项目。"""
+        额度包，再按与逐项目同一条规则（`usage.balance._applies`）归给各项目。"""
         payers = await ledger.payers_for_projects(self._session, projects)
         return await self._summaries(payers)
 
