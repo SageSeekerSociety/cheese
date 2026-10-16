@@ -287,8 +287,14 @@ def sources():
         for name in (
             "client.py",
             "shell_stop.py",
-            # Windows' locks, process trees and detached starts, which the two
-            # above load from beside them there.
+            # The parts of `client.py` it imports from beside itself: the
+            # command it runs for the build's shell prefix, the namespace it
+            # enters a session into, and the files a turn hands a person.
+            "shell_prefix.py",
+            "namespace.py",
+            "send_user_file.py",
+            # Windows' locks, process trees and detached starts, which
+            # `shell_stop.py` and `runtime.py` load from beside them there.
             "portable.py",
             "proxy.js",
             "private.py",

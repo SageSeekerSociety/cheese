@@ -20,11 +20,16 @@ import pytest
 
 from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
+from app.domain.agent.executor_transport import (
+    read_file_on_the_machine,
+    stat_file_on_the_machine,
+)
 from app.domain.agent.harness.claude_code.remote_execution import client as central
 from app.domain.agent.harness.claude_code.remote_execution import (
     mcp_process,
     release,
     runtime,
+    send_user_file,
 )
 from app.domain.agent.harness.codex.tools import RemoteTools
 from tests.pinned_claude import claude_binary
@@ -675,33 +680,33 @@ def test_send_user_file_paths_keep_the_workspaces_address_and_invent_one_outside
     the name this room already gives a paste with no name of its own.
     """
     config = {"workspace": "/work"}
-    assert central.send_user_file_paths("docs/report.pdf", config) == (
+    assert send_user_file.send_user_file_paths("docs/report.pdf", config) == (
         "/work/docs/report.pdf",
         "docs/report.pdf",
     )
-    assert central.send_user_file_paths("/work/shot.png", config) == (
+    assert send_user_file.send_user_file_paths("/work/shot.png", config) == (
         "/work/shot.png",
         "shot.png",
     )
     # A Windows executor's workspace, as the session sees it (Git Bash's).
-    assert central.send_user_file_paths(
+    assert send_user_file.send_user_file_paths(
         "/c/Users/owner/work/shot.png", {"workspace": "C:\\Users\\owner\\work"}
     ) == ("/c/Users/owner/work/shot.png", "shot.png")
-    machine, rel = central.send_user_file_paths("/tmp/scratch.bin", config)
+    machine, rel = send_user_file.send_user_file_paths("/tmp/scratch.bin", config)
     assert machine == "/tmp/scratch.bin"
     assert rel.startswith("uploads/") and rel.endswith("/scratch.bin")
-    _, escaped = central.send_user_file_paths("/work/../etc/passwd", config)
+    _, escaped = send_user_file.send_user_file_paths("/work/../etc/passwd", config)
     assert escaped.startswith("uploads/")
-    assert central.send_user_file_body(b"%PDF") == {
+    assert send_user_file.send_user_file_body(b"%PDF") == {
         "content_b64": base64.b64encode(b"%PDF").decode("ascii"),
     }
     # No `as` is declared at all: `POST /topics/{id}/shown` reads the kind off
     # the path, so this and the room's table cannot drift — and a .gif or a
     # .webp is not silently filed as text/html the way a client-side fallback
     # used to file it.
-    assert "as" not in central.send_user_file_body(b"GIF89a")
+    assert "as" not in send_user_file.send_user_file_body(b"GIF89a")
     for name, mime in (("shot.gif", "image/gif"), ("shot.webp", "image/webp")):
-        entry = central.send_user_file_entry(name, name, 4)
+        entry = send_user_file.send_user_file_entry(name, name, 4)
         assert entry["isImage"] is True
         assert entry["media_type"] == mime
 
@@ -721,15 +726,15 @@ def test_send_user_file_machine_reads_go_out_through_the_unreachable_breaker():
             return {"value": {"stdout": "2\n"}}
         return {"value": {"stdout": base64.b64encode(b"hi").decode("ascii")}}
 
-    assert central.stat_file_on_the_machine(invoke, "/work/a", "id-stat") == 2
-    assert central.read_file_on_the_machine(invoke, "/work/a", "id-read") == b"hi"
+    assert stat_file_on_the_machine(invoke, "/work/a", "id-stat") == 2
+    assert read_file_on_the_machine(invoke, "/work/a", "id-read") == b"hi"
     assert set(tools) == {"Bash"}
 
     def refuse_invoke(payload, args):
         return {"error": "machine is out of reach"}
 
     with pytest.raises(RuntimeError, match="machine is out of reach"):
-        central.read_file_on_the_machine(refuse_invoke, "/work/a", "id-down")
+        read_file_on_the_machine(refuse_invoke, "/work/a", "id-down")
 
 
 def test_a_machine_file_larger_than_one_command_output_arrives_intact(tmp_path):
@@ -752,11 +757,11 @@ def test_a_machine_file_larger_than_one_command_output_arrives_intact(tmp_path):
         ).stdout
         return {"value": {"stdout": out[:30000]}}
 
-    assert central.read_file_on_the_machine(invoke, str(path), "id-big") == original
+    assert read_file_on_the_machine(invoke, str(path), "id-big") == original
     assert len(ids) == len(set(ids)), "each command needs its own request id"
     empty = tmp_path / "empty"
     empty.write_bytes(b"")
-    assert central.read_file_on_the_machine(invoke, str(empty), "id-empty") == b""
+    assert read_file_on_the_machine(invoke, str(empty), "id-empty") == b""
 
 
 def test_send_user_file_refuses_an_oversize_machine_file_before_reading_it(
