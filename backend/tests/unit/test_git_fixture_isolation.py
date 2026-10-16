@@ -32,7 +32,10 @@ _STORES: list[str] = []
 
 
 @pytest.fixture(autouse=True)
-def _note_the_store() -> None:
+def _note_the_store(_host_git_and_pre_commit_isolated) -> None:
+    """What the suite handed this test, recorded before this test's own fixtures
+    run — the override test at the end of the file reads it. Asking for the
+    isolation fixture by name is what puts this after it."""
     _STORES.append(os.environ.get("PRE_COMMIT_HOME", ""))
 
 
@@ -100,9 +103,10 @@ def test_the_suite_sets_what_keeps_git_off_the_machine() -> None:
 def test_the_isolation_reaches_the_child_that_runs_git() -> None:
     """A variable only isolates anything if the process that reads it has it;
     every `git` the suite runs is a child of a test."""
+    keys = sorted(_EXPECTED_ISOLATION)
     probe = (
         "import json, os; print(json.dumps("
-        "{k: os.environ.get(k) for k in %r}))" % sorted(_EXPECTED_ISOLATION)
+        f"{{k: os.environ.get(k) for k in {keys!r}}}))"
     )
     done = subprocess.run(
         [sys.executable, "-I", "-c", probe], capture_output=True, text=True
@@ -169,7 +173,19 @@ def a_store_of_my_own(monkeypatch, tmp_path: Path) -> Path:
     return store
 
 
-def test_a_test_that_names_its_own_store_keeps_it(a_store_of_my_own: Path) -> None:
+def test_a_test_that_names_its_own_store_keeps_it(
+    a_store_of_my_own: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     """The fixture is a default: a test with a configuration of its own — the
-    one thing this suite is not allowed to take away — keeps it."""
+    one thing this suite is not allowed to take away — keeps it.
+
+    ``_STORES[-1]`` is what the suite handed this test before this test's own
+    fixture replaced it, so the same assertion also says the fixture had a store
+    here to replace.
+    """
+    handed_by_the_suite = Path(_STORES[-1])
+    assert handed_by_the_suite.is_relative_to(tmp_path_factory.getbasetemp()), (
+        "the fixture hands every test a store of its own under this worker's temp"
+    )
+    assert handed_by_the_suite != a_store_of_my_own
     assert os.environ["PRE_COMMIT_HOME"] == str(a_store_of_my_own)
