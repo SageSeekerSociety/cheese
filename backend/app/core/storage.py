@@ -207,7 +207,10 @@ class S3StorageBackend(StorageBackend):
 
     @asynccontextmanager
     async def _client(self):
+        # deferred-import: start-up cost; botocore loads only for a bucket call
         import aioboto3
+
+        # deferred-import: start-up cost; aiobotocore.config, for the same bucket call
         from aiobotocore.config import AioConfig
 
         kwargs = dict(
