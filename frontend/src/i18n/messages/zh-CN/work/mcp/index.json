@@ -12,5 +12,6 @@
   "title": "MCP 服务器",
   "valueSet": "已填写",
   "valueSetBy": "由 {name} 设置，{when}",
-  "removeFailed": "删除失败"
+  "removeFailed": "删除失败",
+  "localValues": "命令写在项目的 .mcp.json 里；填的值会交给命令，{agent}能读到"
 }

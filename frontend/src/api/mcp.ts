@@ -12,14 +12,28 @@ export interface McpVariable {
   updated_by: string | null
   updated_at: string | null
 }
+/** 本地命令类服务器在项目机器上的情况。 */
+export interface McpRun {
+  /** idle 未启动；awaiting 等设备主人允许；refused 设备主人没有允许。 */
+  state: 'idle' | 'running' | 'failed' | 'awaiting' | 'refused'
+  /** 启动失败时日志的最后几行。 */
+  log: string[]
+  /** 项目机器是某位成员自己的设备时，那位成员；云端机器是 null。 */
+  owner: string | null
+}
 export interface McpDeclaringType {
   name: string
   title: string
 }
 export interface McpServer {
   name: string
-  transport: 'http' | 'sse'
+  transport: 'http' | 'sse' | 'stdio'
+  /** 远程的是地址的主机名；本地命令类是空串。 */
   host: string
+  /** 本地命令类要运行的那一行命令；远程的是 null。 */
+  command: string | null
+  /** 本地命令类在项目机器上的情况；远程的是 null。 */
+  run: McpRun | null
   auth: 'oauth' | 'headers'
   status: McpServerStatus
   /** 它从哪来：null 是项目的 .mcp.json，否则是声明它的那几个队友类型。 */

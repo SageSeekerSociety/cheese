@@ -12,5 +12,6 @@
   "title": "MCP servers",
   "valueSet": "Set",
   "valueSetBy": "Set by {name}, {when}",
-  "removeFailed": "Couldn't delete"
+  "removeFailed": "Couldn't delete",
+  "localValues": "Commands come from the project's .mcp.json; values you fill in go to the command and {agent} can read them"
 }

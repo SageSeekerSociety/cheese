@@ -6,5 +6,8 @@
   "save": "Save",
   "add": "Add server",
   "edit": "Edit",
-  "remove": "Delete"
+  "remove": "Delete",
+  "log": "View log",
+  "fill": "Fill in",
+  "values": "Change values"
 }
