@@ -71,8 +71,8 @@
   align-items: center;
   justify-content: center;
   background: var(--fill);
-  /* --avatar-ink, not --ink: the real ground is avatarColor() (a fixed hsl bound
-     inline in the template), identical in both themes — so is the initial. */
+  /* --avatar-ink, not --ink: the real ground is avatarColor() (one fixed OKLCH
+     lightness in utils/avatar.ts), identical in both themes — so is the initial. */
   color: var(--avatar-ink);
   font-size: 12px;
   font-weight: 600;

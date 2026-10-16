@@ -70,7 +70,8 @@
      paint on hover and while current, with the mark on it in #23242a. Both values
      are the same in the two themes on purpose — brand.md §5 fixes that one tile
      at #FFA20F with a #23242a mark in both themes. Not every brand asset is like
-     this: the wordmark and the lockups do ship a light and a dark file (§4/§6).
+     this: the lockups ship a light and a dark file (§4), and the wordmark is one
+     file drawn in `currentColor`, so it follows the text colour around it (§9).
      The boot splash in index.html paints the same #ffa20f. So this is not --accent:
      --accent is the UI amber and it *does* follow the theme
      (#f57f17 / #ffa733). Do not unify the two. */

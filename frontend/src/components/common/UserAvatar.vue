@@ -101,9 +101,7 @@ function onAvatarError() {
   line-height: 1;
   /* 底色是 avatarColor() 按固定 OKLCH 亮度算出来的，两套主题下同一个值，所以压在
      上面的字也不该随主题变——用 --avatar-ink，别换成 var(--ink)/on-surface，那会在
-     深色下变成浅灰压浅底。
-     （另注：这个底色本身在黄绿色相段上对白字只有约 1.7:1，两个主题都读不清——
-      那是 avatarColor() 的问题，不属于深色适配，另有一张卡处理。） */
+     深色下变成浅灰压浅底。 */
   color: var(--avatar-ink);
   font-weight: 600;
 }
