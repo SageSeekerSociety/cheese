@@ -209,9 +209,11 @@ def test_init_still_builds_the_session() -> None:
 def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
     """方法体恰好一句转发，转给子模块里的同名函数——实现只有一份。
 
-    转发本身也是行为：这条要求**每个参数都按同一个名字、同一个顺序原样转出去**，
-    一个不漏、一个不多，默认值也一样。少转一个关键字（`handle` 丢了、窗口参数丢了）、
-    换个顺序（位置调用方错位）、或者改掉一个默认值，都是静默改行为，这条红。
+    转发本身也是行为：这条要求**每个参数都按同一个名字转出去**，一个不漏、一个不多；
+    而调用方调的是门面，所以**门面自己那张形参表**（名字、顺序、位置还是关键字、默认
+    值）必须和子模块实现的一致。少转一个关键字（`handle` 丢了）、把 `status` 挪到 `*`
+    后面、或者改掉一个默认值，都是静默改行为，这条红。关键字在源码里怎么排版不在此列：
+    转发全用关键字，书写顺序对调用方不可观测。
     """
     method = getattr(feedback_repo.FeedbackRepository, name)
     declaration = ast.parse(textwrap.dedent(inspect.getsource(method))).body[0]
@@ -250,7 +252,9 @@ def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
     assert next(iter(parameters)) == first_parameter
     assert not hasattr(forwarded, "__wrapped__"), f"{name} 被子模块包了一层"
 
-    # 一对一、且顺序一致：每个形参一个同名的关键字实参，两边一个不差。
+    # 一对一：每个形参一个同名的关键字实参，一个不漏、一个不多。转发全用关键字
+    # （上面已经证明它不传位置参数、也不摊开 `**kwargs`），所以关键字**书写的**顺序
+    # 对调用方不可观测，这里只比集合——别把源码的排版当成行为来断言。
     passed = {keyword.arg: keyword.value for keyword in call.keywords}
     assert None not in passed, f"{name} 用了 **kwargs 摊开，转发不再是一对一"
     assert [n for n in passed if not isinstance(passed[n], ast.Name)] == []
@@ -260,22 +264,29 @@ def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
     expected = list(parameters) if name in STATIC_METHODS else list(parameters)[1:]
     missing = set(expected) - set(passed)
     extra = set(passed) - set(expected)
-    assert list(passed) == expected, (
+    assert set(passed) == set(expected), (
         f"{name} 的转发表和 {target_module.id}.{name} 的形参对不上："
-        f"漏了 {missing}，多了 {extra}，顺序 {list(passed)} vs {expected}"
+        f"漏了 {missing}，多了 {extra}"
     )
+
+    # 门面自己那张形参表：名字与顺序（AST 里读，看的是写下来的那张表）……
     own = [p for p in method_signature(method) if p != "self"]
-    assert own == expected == list(passed), (
-        f"{name} 自己的形参、转发表和 {target_module.id}.{name} 的形参不是同一张表："
-        f"{own} vs {list(passed)} vs {expected}"
+    assert own == expected, (
+        f"{name} 自己的形参表和 {target_module.id}.{name} 的不是一张表："
+        f"{own} vs {expected}"
     )
-    # 默认值也是行为：把它改掉不影响转发表，但不传它的调用方会换一批结果。
+    # ……以及位置还是关键字、默认值（签名上读）。这四样任缺一样都是静默改行为：
+    # `set_status` 的 `status` 挪到 `*` 后面，`services/writes.py` 里那句位置调用
+    # 就 TypeError，而名字集合看不出来。
     own_parameters = inspect.signature(method).parameters
     drifted = [
-        p for p in expected if own_parameters[p].default != parameters[p].default
+        p
+        for p in expected
+        if (own_parameters[p].kind, own_parameters[p].default)
+        != (parameters[p].kind, parameters[p].default)
     ]
     assert drifted == [], (
-        f"{name} 的默认值和 {target_module.id}.{name} 的不一致：{drifted}"
+        f"{name} 的形参种类或默认值和 {target_module.id}.{name} 的不一致：{drifted}"
     )
 
 
