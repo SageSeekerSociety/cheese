@@ -160,13 +160,24 @@ class AgentSessionService:
         Each session works in a home of its own (``SandboxHome``), so a
         task's files are in its own session's home and in no other session's
         of the same room. None while no session of it has taken a machine:
-        nothing holds a working copy of it yet."""
+        nothing holds a working copy of it yet.
+
+        A lease that is not ready has not taken its machine either: it is a
+        reservation whose executor is still being installed there, or whose
+        installation failed and waits for the next tool call to retry. It names
+        no executor to ask, and the execution route refuses it for the same
+        reason."""
         for row in await self._repo.placed_in_conversation(conversation_id):
             place = row.place()
             if place is None or place.resource_id != generation:
                 continue
-            if place.lease is not None and place.lease.get("kind") == "device":
-                return place.lease, bool((row.execution_request or {}).get(LOST_KEY))
+            lease = place.lease
+            if (
+                lease is not None
+                and lease.get("kind") == "device"
+                and lease.get("status", "ready") == "ready"
+            ):
+                return lease, bool((row.execution_request or {}).get(LOST_KEY))
         return None
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
