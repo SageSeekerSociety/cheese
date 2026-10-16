@@ -127,6 +127,32 @@ def _globals_a_module_reads(source: str) -> set[str]:
     return read & module_level
 
 
+def _replaced_names_taken_from_elsewhere(source: str) -> set[str]:
+    """这一片里出现的、被测试替换的名字，减掉它从门面自己取的那几个。
+
+    取用不只「读模块全局」一种。函数体里写一句 `from <别的模块> import
+    branch_head`，名字绑在局部，`& module_level` 那一关看不见它，可它读的同样是
+    别人那份 —— 测试在门面上换掉的那份照样落空。所以这里换一把尺子，量「这一片
+    **提到**了哪些被替换的名字」，只放过明确从门面取的：只有门面的属性才是测试换
+    得到的那个。
+    """
+    tree = ast.parse(source)
+    from_facade = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == MODULE
+        for alias in node.names
+    }
+    mentioned = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+    mentioned |= {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for alias in node.names
+    }
+    return (mentioned & set(REPLACED_BY_TESTS)) - from_facade
+
+
 def test_every_name_the_tree_reaches_is_still_on_the_facade():
     facade = importlib.import_module(MODULE)
     imported, by_attr = _names_the_tree_reaches()
@@ -181,10 +207,9 @@ def test_the_names_tests_replace_are_read_from_this_module():
     ), "门面自己的身子不再读这些名字了：替换会落空，或者那句判断被删掉了。"
 
     sibling = importlib.import_module(SIBLING)
-    read_there = _globals_a_module_reads(
+    leaked = _replaced_names_taken_from_elsewhere(
         Path(sibling.__file__).read_text(encoding="utf-8")
     )
-    leaked = read_there & set(REPLACED_BY_TESTS)
     assert not leaked, (
         f"{SIBLING} 里的身子读了 {sorted(leaked)}，而这些名字是测试在 "
         f"{MODULE} 上换掉的：换了那边、这边照旧用自己那份，置换成空。"

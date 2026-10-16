@@ -30,10 +30,10 @@ What stayed is the deciding half — whether a PR should exist at all (`enabled`
 `dispatch`, `_run`, `open_pr_for_card`), the sweep that finds branches with
 commits and none (`sweep_draft_prs`, `_draft_pr_for_one_task`, `_branch_ahead`,
 `_open_draft_for_task`) — and that is not only about what the two halves are
-about. Tests replace `enabled`, `dispatch`, `branch_head`, `proposal_client`
-and `_branch_ahead` on THIS module object, so every body that reads one of
-them has to live here; in the sibling it would read the sibling's own copy and
-the replacement would quietly stop taking effect. `tests/unit/
+about. Tests replace `enabled`, `dispatch`, `branch_head`, `proposal_client`,
+`sweep_draft_prs` and `_branch_ahead` on THIS module object, so every body that
+reads one of them has to live here; in the sibling it would read the sibling's
+own copy and the replacement would quietly stop taking effect. `tests/unit/
 test_pr_publish_module_split.py` holds both halves to that.
 """
 
