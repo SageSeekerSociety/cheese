@@ -19,6 +19,9 @@ import { DOC_TOPIC, docSession, NO_REPO, NOTHING_CHANGED } from './catalogFixtur
 import { DOC_PANEL_ENTRIES } from './catalogPanelsDoc'
 import {
   BUILD_LOG_BYTES,
+  CHANGES_ALL_PROPS,
+  CHANGES_BAR_PROPS,
+  CHANGES_CONTENT_PROPS,
   CHANGES_TASK,
   changesBundle,
   checklistAt,
@@ -48,8 +51,11 @@ import {
 import { PREVIEW_PANEL_ENTRIES } from './catalogPanelsPreview'
 import { DEMO_PROJECT, DEMO_TOPIC } from './demoPanels'
 
+import ChangesAllView from '@/components/panels/ChangesAllView.vue'
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import ChangesDiffList from '@/components/panels/ChangesDiffList.vue'
+import ChangesFileBar from '@/components/panels/ChangesFileBar.vue'
+import ChangesFileContent from '@/components/panels/ChangesFileContent.vue'
 import ChangesFileTree from '@/components/panels/ChangesFileTree.vue'
 import ChangesMoreMenu from '@/components/panels/ChangesMoreMenu.vue'
 import ChangesOpenFile from '@/components/panels/ChangesOpenFile.vue'
@@ -186,6 +192,99 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         name: '什么都没改',
         note: '空的时候说哪句话由外面给：看改动说「暂无改动」，看全部文件说「暂无文件」。',
         props: { rows: [] },
+        expect: '暂无改动',
+      },
+    ],
+  },
+  {
+    id: 'changes-file-bar',
+    title: 'ChangesFileBar',
+    about: '改动那一格打开一份文件时顶上那条横条：返回、这份文件、它的两面（差异 / 全文），以及能对它做的事。',
+    file: 'src/components/panels/ChangesFileBar.vue',
+    component: ChangesFileBar,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '打开着改过的一份',
+        note: '一头写着这件任务的状态，中间是路径和两面对切的开关，另一头是下载和版本菜单；没打开文件时整条不画。',
+        props: CHANGES_BAR_PROPS,
+        expect: '差异',
+      },
+      {
+        name: '改到一半',
+        note: '有没保存的改动时路径后面点一颗点，切到全文面就摆出保存；没改动之前那颗按钮是灰的。',
+        props: { ...CHANGES_BAR_PROPS, effectiveView: 'edit' as const, fileDirty: true },
+        expect: '保存',
+      },
+      {
+        name: '打不开的一份',
+        note: '二进制、图片、过大的文件没有编辑面，也就没有保存：这里摆一句「只读」，省得人以为是自己没权限。',
+        props: { ...CHANGES_BAR_PROPS, fileReadOnly: true },
+        expectSelector: '.changes-bar__ro',
+      },
+    ],
+  },
+  {
+    id: 'changes-file-content',
+    title: 'ChangesFileContent',
+    about: '改动那一格里打开着的那一份的正文：文档画成一页，文本按差异或全文出，图片、二进制、过大的各给一个说法。',
+    file: 'src/components/panels/ChangesFileContent.vue',
+    component: ChangesFileContent,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '改过的那一份',
+        note: '默认看差异：新增的行是新建的 README，一整个文件都算增。',
+        props: CHANGES_CONTENT_PROPS,
+        expect: '这个项目放本课程的课件和作业',
+      },
+      {
+        name: '一张图',
+        note: '图片没有文本差异可看，也不该拿去按文本编辑：直接把原图摆出来。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, openIsImage: true },
+        expectSelector: '.file-image-view img',
+      },
+      {
+        name: '二进制文件',
+        note: '解不出文本的文件说清是二进制，只给下载原文件这一条路。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileBinary: true, fileBytes: 40960 },
+        expect: '非文本文件，无法编辑',
+      },
+      {
+        name: '文件太大',
+        note: '超过上限的一份不往浏览器里搬，报一下有多大、让人下载下去看。',
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileTooLarge: true, fileBytes: 9437184 },
+        expect: '文件过大，无法在浏览器中打开',
+      },
+      {
+        name: '文档预览没开',
+        note: '这台机器没装文档渲染器时，不摆一页空白：说明这里看不了，下载原文件看。',
+        props: { ...CHANGES_CONTENT_PROPS, openIsDocument: true, docRendererMissing: true },
+        expect: '文档预览未启用',
+      },
+    ],
+  },
+  {
+    id: 'changes-all-view',
+    title: 'ChangesAllView',
+    about: '改动那一格没打开具体文件时的那一面：先列这次一共改了多少、改了哪几份，再把每一份的差异全摊开。',
+    file: 'src/components/panels/ChangesAllView.vue',
+    component: ChangesAllView,
+    needs: UI,
+    args: {},
+    states: [
+      {
+        name: '整支活的改动',
+        note: '顶上一行是文件数和增删行数，下面按文件一段一段地列；宿主塞进来的那一块（这次交付的情况）在插槽里，这里没给。',
+        props: CHANGES_ALL_PROPS,
+        expect: '个文件 · +',
+      },
+      {
+        name: '这一轮什么都没改',
+        note: '没有改动时收起来的不只是清单：一行总数和文件那几颗也一起收，只留一句「暂无改动」。',
+        props: { ...CHANGES_ALL_PROPS, treeFiles: [], diffByPath: new Map(), fileDiffs: [] },
         expect: '暂无改动',
       },
     ],
