@@ -10,9 +10,13 @@
 里引门面，运行时那一句不执行，导入图上没有这条边——这是这套拆法本来就用的写法，
 下面的判据跟着它走。别名（``as TC``）也认。
 
-**相对写法也算。** ``from . import DeviceHub`` 就是回头引门面，只是名字短；``from
-.link import X`` 是横引兄弟，不算。仓库里相对导入不是空想（``review/services`` 就在
-用），所以两种写法都读。
+**怎么写不决定判不判。** 判据先把一句解析成它落在哪个模块上，再判那个模块是不是门
+面：``from . import DeviceHub`` 和 ``from app.domain.agent.device_hub import
+DeviceHub`` 落在门面上，``from ..device_hub import HubScreen`` 也落在门面上（``..``
+是 ``agent``，再点门面的名）；而 ``from .link import X``、``import
+app.domain.agent.device_hub.link`` 落在兄弟上，``from . import sessions`` 取的名字本
+身就是兄弟，都不算。仓库里相对导入不是空想（``review/services`` 就在用），两种写法
+都得读。
 
 **这段 C3 看不见。** ``acyclic_siblings`` 数的是 ``app.domain`` 的孩子和它们的孩子
 之间的环；包自己是一个节点，它内部这些子模块不在它的账上。所以在这里点名扫包内，而
@@ -60,30 +64,35 @@ def _is_type_checking(test: ast.expr, names: set[str]) -> bool:
     return called in names
 
 
+def _package_at(level: int) -> str | None:
+    """相对导入第 ``level`` 级落在哪个包上。本文件是包的直接子模块。"""
+    parts = MODULE.split(".")
+    if level - 1 >= len(parts):
+        return None
+    return ".".join(parts[: len(parts) - (level - 1)])
+
+
 def _is_the_facade(node: ast.AST) -> bool:
-    """这一句导的是门面吗。两种绝对写法、两种相对写法都读。"""
-    if not isinstance(node, (ast.Import, ast.ImportFrom)):
-        return False
+    """这一句导的是门面吗。先解析它落在哪个模块上，再看那个模块是不是门面。"""
     if isinstance(node, ast.Import):
-        return any(
-            alias.name == MODULE or alias.name.startswith(MODULE + ".")
-            for alias in node.names
-        )
+        # `import a.b.c` 导的是 a.b.c 这个模块本身；带上兄弟的名字就不是门面。
+        return any(alias.name == MODULE for alias in node.names)
+    if not isinstance(node, ast.ImportFrom):
+        return False
+    target = node.module
     if node.level:
-        # `from .link import X`：同级兄弟。`from . import X`：从门面里取，取到兄弟
-        # （`from . import sessions`）才例外。`from .. import device_hub` 点了门面的名。
-        if node.module is not None:
+        package = _package_at(node.level)
+        if package is None:
             return False
-        if node.level == 1:
-            return any(alias.name not in SIBLINGS for alias in node.names)
+        target = f"{package}.{node.module}" if node.module else package
+    if target == MODULE:
+        # 从门面里取名字。取到的是兄弟模块（`from . import sessions`）才不算。
+        return any(alias.name not in SIBLINGS for alias in node.names)
+    if target == PARENT:
+        # `from .. import device_hub` / `from app.domain.agent import device_hub`
         return any(alias.name == "device_hub" for alias in node.names)
-    if node.module == MODULE:
-        # `from app.domain.agent.device_hub import X` —— 兄弟是 `...device_hub.link`。
-        return True
-    # `from app.domain.agent import device_hub as pkg`
-    return node.module == PARENT and any(
-        alias.name == "device_hub" for alias in node.names
-    )
+    # 落到 `...device_hub.link` 这类兄弟模块上的，是横引。
+    return False
 
 
 def _runtime_imports(source: str, where: str) -> list[ast.Import | ast.ImportFrom]:
@@ -149,6 +158,14 @@ def test_the_guard_reads_the_shapes_it_claims_to_read():
         "from . import DeviceHub",
         "from .. import device_hub",
         "def f():\n    from app.domain.agent.device_hub import DeviceHub\n",
+        # 相对写法要多走一级才点到门面：`..` 落到 `agent`，再点它的 `device_hub`。
+        "from ..device_hub import HubScreen",
+        "from ...agent.device_hub import HubScreen",
+        # 普通 `if` 底下的是运行时的，只有 `TYPE_CHECKING` 那一支才算类型标注。
+        "if _HAS_NAMES:\n    from app.domain.agent.device_hub import DeviceHub\n",
+        "from typing import TYPE_CHECKING\n"
+        "if not TYPE_CHECKING:\n"
+        "    from app.domain.agent.device_hub import DeviceHub\n",
     ):
         assert _reaching_back(source, "<sample>"), source
 
@@ -157,6 +174,9 @@ def test_the_guard_reads_the_shapes_it_claims_to_read():
         "from .link import DeviceTransport",
         "from . import sessions",
         "from app.domain.agent import device_link",
+        # 绝对写法的横引兄弟，和 `from . import sessions` 是同一件事。
+        "import app.domain.agent.device_hub.link as link_mod",
+        "from app.domain.agent.device_hub import sessions",
     ):
         assert not _reaching_back(source, "<sample>"), source
 

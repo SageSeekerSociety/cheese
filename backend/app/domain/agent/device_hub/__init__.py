@@ -32,10 +32,11 @@ imports by *this* module:
     *object* rather than this module. The audit takes them off
     ``vars(DeviceHub)`` (``test_remote_hub_answers_every_hub_call.py``); the
     hub's own tests call ``_device`` and ``attach_device``/``detach_device`` on
-    an instance (``test_device_hub.py``); the doubles replace the
-    device-connection reads on one (``is_online`` and the screen queries, in
-    ``test_a_replaced_hub_method_is_what_the_hub_uses.py`` and
-    ``test_session_work_leases.py``);
+    an instance (``test_device_hub.py``); a test asks ``screens_in_project``
+    whether it goes through the ``is_online`` it just put on one
+    (``test_a_replaced_hub_method_is_what_the_hub_uses.py``), and a stand-in hub
+    answers ``all_online_screens`` on one (``test_session_records_its_machine.py``,
+    ``test_own_agent_machine.py``);
   * the singleton at the bottom, and the failures/screen shape re-exported from
     ``device_contract``.
 
