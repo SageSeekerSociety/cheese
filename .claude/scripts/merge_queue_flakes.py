@@ -403,12 +403,14 @@ def _self_test_offline() -> None:
 def _self_test_gh_bytes() -> None:
     """`gh` 那条路也真跑一遍：换掉 subprocess，看 `_gh` 怎么读回作业日志。
 
-    gh 是按字节吐日志的，一个坏字节就落在这一行上。替身照真实的样子演：字节模式
-    把带坏字节的输出原样交回来；`text=True` 或给了 `encoding=` 而又**没给**
-    `errors=`，就在那里当场抛 UnicodeDecodeError —— 那正是「整张榜读不出来」这个
-    毛病的来路。给了 `errors=` 的文本模式是同样合法的另一种写法，替身照它给的
-    那套解出字符串。断言落在效果上：坏字节要变成替换字符出现，不能悄悄不见，也
-    不能连累整份输出。非零退出那条路也走一遍，报错里要带着 gh 说的话。
+    gh 是按字节吐日志的，一个坏字节就落在这一行上。替身照真实的样子演：管道是字节
+    还是文本，由 `text`、`universal_newlines`、`encoding`、`errors` 里给了哪个决定
+    （给了任何一个就是文本，和真实 subprocess 同一条规则）；字节模式把带坏字节的
+    输出原样交回来；文本模式却**没给** `errors=`，就在那里当场抛 UnicodeDecodeError
+    —— 那正是「整张榜读不出来」这个毛病的来路。给了 `errors=` 的文本模式是同样合法
+    的另一种写法，替身照它给的那套解出字符串（替身一律按 utf-8 解，真实 subprocess
+    用的是 locale）。断言落在效果上：坏字节要变成替换字符出现，不能悄悄不见，也不能
+    连累整份输出。非零退出那条路也走一遍，报错里要带着 gh 说的话。
     """
     real_run = subprocess.run
     seen: list[list[str]] = []
@@ -421,9 +423,14 @@ def _self_test_gh_bytes() -> None:
             self.stdout, self.stderr, self.returncode = out, err, code
 
     def text_like(kwargs: dict):
-        """真实 subprocess 的解码参数：给了 text/encoding 就自己解，于是坏字节
-        在没有 `errors=` 时在那里抛，给了 `errors=` 就按它给的那套走。"""
-        if not (kwargs.get("text") or kwargs.get("encoding")):
+        """真实 subprocess 的解码参数：`text`、`universal_newlines`、`encoding`、
+        `errors` 里给了任何一个，管道就是文本模式（CPython 的 text_mode 就是这几
+        个的或），于是坏字节在没有 `errors=` 时在那里抛，给了 `errors=` 就按它给
+        的那套走。"""
+        if not any(
+            kwargs.get(name)
+            for name in ("text", "universal_newlines", "encoding", "errors")
+        ):
             return None
         return kwargs.get("encoding") or "utf-8", kwargs.get("errors")
 
