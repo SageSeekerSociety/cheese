@@ -12,6 +12,12 @@ Usage (keep the password in the command's heredoc, never in a file):
 For every open, started task in the channel it reads platform facts and the PR's GitHub queue state:
   出队          card pending, PR neither merged nor queued, last queue event is a removal
   可采纳未采纳  card pending, PR mergeable >= 5 min, not queued, not removed since
+  待回答        the line is parked on a person and will not move on its own: a question
+                (`cheese_ask`) nobody has answered, or a filed card whose next step is
+                the reviewer's. It needs no quiet minutes — the question is itself the
+                line's newest heartbeat, so judging it by --silent-min hides every fresh
+                question for the whole 40. A line reported here is not also reported as
+                长时间无动静: the same fact twice.
   红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
@@ -51,7 +57,7 @@ REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/"
 
 #: The classes a row carries, in the order the text list prints them. "GitHub 未查"
 #: is not a decision to make — it is the sweep saying it could not look.
-CLASSES = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
+CLASSES = ["出队", "可采纳未采纳", "待回答", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
 BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
 #: The line pr-review.sh puts first in its rendered result, which the delivering seat pastes
 #: into the card body: `独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>`.
@@ -793,6 +799,10 @@ def waiting_of(t, kind):
         return t["waiting_on"]
     if kind == "可采纳未采纳":
         return t.get("reviewer_handle") or t.get("owner_handle")
+    if kind == "待回答":
+        # 问了好几个人、或者问了所有人：平台上没有一个「某某」写得出来，就不写。
+        # 不拿这条线的座位顶 —— 它在等的是被问的人，不是它自己。
+        return None
     return t.get("agent_handle")
 
 
@@ -891,6 +901,30 @@ def stalled_for(now, heartbeat, silent, running=False):
         return None
     w = (now - ts(heartbeat)).total_seconds() / 60
     return w if w >= silent else None
+
+
+def parked_on_a_person(t):
+    """Whether this line has stopped and is waiting for a person to move it: a question
+    the seat asked and ended its turn on (`cheese_ask`), or a filed card whose next step
+    is the reviewer's. The platform says so three ways and any one is enough — the row
+    names who it waits on (`waiting_on`), or says it waits on the reading seat
+    (`awaits_me`), or its presentation phrase is 待回答.
+
+    The phrase carries the case the other two cannot: a question put to several people,
+    or to everyone, names nobody (`room_task.presentation.waiting_on` returns None for
+    it), and the line is just as parked."""
+    phrase = (t.get("presentation") or {}).get("phrase")
+    return bool(t.get("waiting_on") or t.get("awaits_me") or phrase == "awaiting_answer")
+
+
+def awaiting_detail(waited, who, phrase, last_msg_at, last_msg_brief):
+    """The 待回答 line: how long the line has been parked, on whom, and its own last
+    word — the question or the delivery — so the patrol reads that before anyone asks
+    or nudges a second time. `who` is None when nobody in particular is named, and the
+    line says 有人 rather than leaving the field blank."""
+    what = {"awaiting_answer": "回答", "awaiting_review": "审阅"}.get(phrase, "回话")
+    return (f"待 {who or '有人'} {what}，{waited:.0f} 分钟："
+            f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
 
 
 def hhmm(iso):
@@ -1008,11 +1042,22 @@ def sweep(tok, room, silent, skip, want_facts):
             w = age(tail[-1]["created_at"])
             add("连续失败", f"最后 {tail[-1]['created_at'][11:16]} UTC：{said(tail[-1])}", w)
 
-        w = stalled_for(now, heartbeat, silent, running)
-        if w is not None:
-            add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
-                                        pulse["last_message"] or "（还没有消息）",
-                                        t.get("last_output_at")), w)
+        # 待回答：这条线停在别人身上，自己不会往下走 —— 刚问出的问题，或者递上去、
+        # 下一步在验收人手上的卡。它不看 --silent-min：提问本身就是这条线最新的心跳，
+        # 按阈值判的话刚问出的问题要整整 40 分钟才浮出来（2026-10-15 #1620 就是这么漏
+        # 掉的）。已经报了待回答的线也不再补一行长时间无动静 —— 同一件事说两遍。
+        if parked_on_a_person(t):
+            w = age(heartbeat)
+            add("待回答", awaiting_detail(w, t.get("waiting_on"),
+                                         (t.get("presentation") or {}).get("phrase"),
+                                         pulse["last_message_at"],
+                                         pulse["last_message"] or "（还没有消息）"), w)
+        else:
+            w = stalled_for(now, heartbeat, silent, running)
+            if w is not None:
+                add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
+                                            pulse["last_message"] or "（还没有消息）",
+                                            t.get("last_output_at")), w)
 
     rows.sort(key=lambda r: CLASSES.index(r["kind"]))
     return rows, idmap
@@ -1719,9 +1764,10 @@ def _self_test_pulse():
 
 
 def _self_test_sweep():
-    """(name, got, want) for `sweep` 本身那一条线：平台读数换成现成的答案，看 长时间无动静
-    这一类到底按什么开火。只测 helper 测不到这里——把 sweep 里那一行退回「按最后一条
-    消息」，helper 全绿、这几条红。阈值 40 分钟，消息一律 60 分钟前。"""
+    """(name, got, want) for `sweep` 本身那两条线：平台读数换成现成的答案，看 长时间无动静
+    和 待回答 这两类到底按什么开火。只测 helper 测不到这里——把 sweep 里那一行退回「按
+    最后一条消息」，helper 全绿、这几条红。阈值 40 分钟，消息一律 60 分钟前；要更近的
+    消息就自己给 msg_min。"""
     now = datetime.now(timezone.utc)
     at = lambda mins: (now - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
     task = {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese", "started_at": at(300)}
@@ -1729,10 +1775,10 @@ def _self_test_sweep():
     done = {"tool": "Bash", "arg": "跑测试", "output_bytes": 9}
     sysev = lambda kind, mins: [{"created_at": at(mins), "meta": {"event_type": kind}, "content": kind}]
 
-    def kinds(ev_min=None, ev_meta=None, system=(), row=None):
+    def rows_of(ev_min=None, ev_meta=None, system=(), row=None, msg_min=60):
         answers = {
             "/tasks?": [dict(task, **(row or {}))],
-            "kind=message": {"data": [{"created_at": at(60), "author": "a", "content": "等"}]},
+            "kind=message": {"data": [{"created_at": at(msg_min), "author": "a", "content": "等"}]},
             "kind=event": {"data": [{"created_at": at(ev_min), "meta": ev_meta}] if ev_min is not None else []},
             "author=system": {"data": list(system)},
             "author=accept": {"data": []},
@@ -1743,7 +1789,13 @@ def _self_test_sweep():
             rows, _ = sweep("tok", "room", 40, set(), False)
         finally:
             globals()["get"] = real
-        return [r["kind"] for r in rows]
+        return rows
+
+    def kinds(*a, **kw):
+        return [r["kind"] for r in rows_of(*a, **kw)]
+
+    asked = f"待 wangchangxin 回话，2 分钟：最后消息 {at(2)[11:16]} UTC @a「等」"
+    anonymous = f"待 有人 回答，2 分钟：最后消息 {at(2)[11:16]} UTC @a「等」"
 
     return [
         ("sweep：消息 60 分钟前、没有 event，报停摆", kinds(), ["长时间无动静"]),
@@ -1759,14 +1811,30 @@ def _self_test_sweep():
          kinds(60, call, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
         ("sweep：任务行说结算中（被采纳的那一条还要跑一轮写总结），同样没返回的块算在跑，不报",
          kinds(60, call, row={"presentation": {"phrase": "accepted"}}), []),
-        ("sweep：任务行说待回答（这一轮可能还在跑），同样没返回的块不报",
-         kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), []),
+        ("sweep：任务行说待回答（这一轮可能还在跑），报待回答，块没返回就不再报停摆",
+         kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), ["待回答"]),
         ("sweep：不知道座位是谁时别人的 event 不算心跳（10 分钟前的块也不认）",
          kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
         ("sweep：还没点「开始」的行整行跳过（判的是 started_at，行上有座位也一样）",
          kinds(60, done, row={"started_at": None}), []),
         ("sweep：平台给的 last_output_at 10 分钟前，不报",
          kinds(60, done, row={"last_output_at": at(10)}), []),
+        # 待回答这一条线：不等阈值。提问本身就是最新的心跳，2 分钟前问的、阈值 40，
+        # 按 长时间无动静 判是 None —— 少了 sweep 里那段，这几条读成 []。
+        ("sweep：2 分钟前刚问出一句、行上写着在等谁，立刻报待回答（阈值 40 也报）",
+         kinds(msg_min=2, row={"waiting_on": "wangchangxin"}), ["待回答"]),
+        ("sweep：待回答的行报出等谁、等了多久、最后一条提问是什么",
+         [(r["waited_min"], r["detail"]) for r in rows_of(msg_min=2, row={"waiting_on": "wangchangxin"})],
+         [(2, asked)]),
+        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，说「有人」不拿座位顶",
+         [(r["detail"], r["waiting_on"])
+          for r in rows_of(msg_min=2, row={"presentation": {"phrase": "awaiting_answer"},
+                                           "waiting_on": None})],
+         [(anonymous, None)]),
+        ("sweep：行上说在等看的这个人（awaits_me）照样算待回答",
+         kinds(msg_min=2, row={"awaits_me": True}), ["待回答"]),
+        ("sweep：待回答的线不再补一行长时间无动静（消息 60 分钟前也一样）",
+         kinds(row={"waiting_on": "bob"}), ["待回答"]),
     ]
 
 
