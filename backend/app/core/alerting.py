@@ -65,6 +65,16 @@ REPEAT_KEY_PREFIX = "cheese:alert:repeat:"
 # alert goes out rather than waiting, because an alert held up behind a broken
 # Redis is the outage nobody hears about. The budget below still bounds it.
 REDIS_TIMEOUT_S = 1.0
+# How long this process answers a repeat of a key it has just asked Redis about
+# by itself, counting it instead of asking again. Without it every occurrence
+# was its own Redis round trip, and a failure logged a hundred times in one
+# tick opened a hundred connections at once from the shared pool. A minute is
+# far below the shortest repeat window (an hour), so nothing that would have
+# been reported is held back; the count goes along with the next question.
+LOCAL_GATE_S = 60.0
+# Keys this process remembers at once for that gate; past it, the expired ones
+# are forgotten.
+LOCAL_GATE_MAX = 512
 # A webhook that is slow must not hold anything up; it is told or it is not.
 TIMEOUT_S = 5.0
 
@@ -99,8 +109,9 @@ budget = _Budget()
 _REPEAT_SCRIPT = """
 local now = tonumber(ARGV[1])
 local quiet = tonumber(ARGV[2])
+local carried = tonumber(ARGV[3])
 local windows = {}
-for i = 3, #ARGV do windows[#windows + 1] = tonumber(ARGV[i]) end
+for i = 4, #ARGV do windows[#windows + 1] = tonumber(ARGV[i]) end
 local last = tonumber(redis.call('HGET', KEYS[1], 'last'))
 local level = tonumber(redis.call('HGET', KEYS[1], 'level')) or 1
 if last and now - last >= windows[level] * quiet then
@@ -111,10 +122,10 @@ if last and now - last >= windows[level] * quiet then
   level = 1
 end
 if last and now - last < windows[level] then
-  redis.call('HINCRBY', KEYS[1], 'suppressed', 1)
+  redis.call('HINCRBY', KEYS[1], 'suppressed', 1 + carried)
   return -1
 end
-local repeats = tonumber(redis.call('HGET', KEYS[1], 'suppressed')) or 0
+local repeats = (tonumber(redis.call('HGET', KEYS[1], 'suppressed')) or 0) + carried
 local next_level = 1
 if last then next_level = math.min(level + 1, #windows) end
 redis.call('HSET', KEYS[1], 'last', now, 'level', next_level, 'suppressed', 0)
@@ -123,7 +134,7 @@ return repeats
 """
 
 
-async def _repeats(key: str, now: float) -> int | None:
+async def _repeats(key: str, now: float, carried: int = 0) -> int | None:
     """How many repeats to mention (0 = first time anyone hears of it), or
     ``None`` when this is a repeat inside its window and must not go out.
 
@@ -143,6 +154,7 @@ async def _repeats(key: str, now: float) -> int | None:
                 f"{REPEAT_KEY_PREFIX}{digest}",
                 now,
                 QUIET_FACTOR,
+                carried,
                 *REPEAT_WINDOWS_S,
             ),
             REDIS_TIMEOUT_S,
@@ -211,9 +223,19 @@ def send(
     if not configured():
         return
     now = time.time()
+    key = key or title
+    gate = _asked.get(key)
+    if gate is not None and now < gate[0]:
+        gate[1] += 1
+        return
+    carried = gate[1] if gate is not None else 0
+    if len(_asked) >= LOCAL_GATE_MAX:
+        for stale in [k for k, (until, _) in _asked.items() if until <= now]:
+            del _asked[stale]
+    _asked[key] = [now + LOCAL_GATE_S, 0]
     try:
         task = asyncio.create_task(
-            _deliver(title, lines, key or title, now if when is None else when, now)
+            _deliver(title, lines, key, now if when is None else when, now, carried)
         )
     except RuntimeError:
         # No running loop (a sync context, a test). Nothing to alert from here.
@@ -225,14 +247,19 @@ def send(
 
 
 async def _deliver(
-    title: str, lines: list[str], key: str, happened: float, now: float
+    title: str,
+    lines: list[str],
+    key: str,
+    happened: float,
+    now: float,
+    carried: int = 0,
 ) -> None:
     """Decide whether this occurrence is news, and post it if it is.
 
     Repeats are decided before the budget is spent, so a failure that keeps
     recurring cannot use up the room a different one needs.
     """
-    repeats = await _repeats(key, now)
+    repeats = await _repeats(key, now, carried)
     if repeats is None:
         return
     verdict = budget.take(now)
@@ -287,6 +314,10 @@ def _delivery_finished(task: asyncio.Task) -> None:
     if exc is not None:
         logger.error("alert delivery failed", exc_info=exc)
 
+
+# Per key: until when a repeat is counted here rather than asked of Redis, and
+# how many were counted (see LOCAL_GATE_S).
+_asked: dict[str, list] = {}
 
 # Keep a reference so the task is not garbage-collected mid-flight.
 _running: set[asyncio.Task] = set()

@@ -18,6 +18,7 @@ def prefix(monkeypatch) -> str:
     mine = f"cheese:alert:test:{uuid.uuid4().hex}:"
     monkeypatch.setattr(alerting, "budget", alerting._Budget())
     monkeypatch.setattr(alerting, "REPEAT_KEY_PREFIX", mine, raising=False)
+    monkeypatch.setattr(alerting, "_asked", {}, raising=False)
     return mine
 
 
@@ -236,4 +237,25 @@ async def test_a_broken_redis_does_not_silence_alerts(posted, monkeypatch):
     alerting.send("数据库连接被拒", [], key="db-refused")
     await _settled()
 
+    assert len(posted) == 1
+
+
+async def test_a_burst_of_one_failure_asks_redis_once(posted, monkeypatch):
+    """A failure logged a hundred times in one tick is one question to the
+    shared Redis, not a hundred connections taken from its pool at once; the
+    hundred are still counted when the failure is next reported."""
+    real = alerting.get_redis_client()
+    asked: list[object] = []
+
+    class Counting:
+        async def eval(self, *args, **kwargs):
+            asked.append(args)
+            return await real.eval(*args, **kwargs)
+
+    monkeypatch.setattr(alerting, "get_redis_client", lambda: Counting())
+    for _ in range(100):
+        alerting.send("数据库连接被拒", [], key="db-refused")
+    await _settled()
+
+    assert len(asked) == 1
     assert len(posted) == 1
