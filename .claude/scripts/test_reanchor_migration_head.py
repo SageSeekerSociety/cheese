@@ -117,10 +117,30 @@ class ReanchorCommandTests(unittest.TestCase):
         self.sentinel.write_text("stale\n", encoding="utf-8")
         result = self.run_script(self.checker, "--base", "main")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn(
-            "uv run --project backend python .claude/scripts/reanchor-migration-head.py",
-            result.stdout,
-        )
+        command = "uv run --project backend python .claude/scripts/reanchor-migration-head.py"
+        self.assertIn(f"Fix: {command}", result.stdout)
+        self.assertNotIn(f"Fix: {command} --base main", result.stdout)
+
+    def test_sentinel_drift_command_works_before_base_is_merged(self) -> None:
+        self.git("checkout", "-qb", "feature")
+        self.migration("n", "a")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "feature migration")
+        self.git("checkout", "-q", "main")
+        self.migration("b", "a")
+        self.sentinel.write_text("b\n", encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "base advances")
+        self.git("checkout", "-q", "feature")
+
+        check = self.run_script(self.checker, "--base", "main")
+        self.assertEqual(check.returncode, 1, check.stdout + check.stderr)
+        self.assertIn("reanchor-migration-head.py\n", check.stdout)
+        self.assertNotIn("reanchor-migration-head.py --base main", check.stdout)
+
+        repair = self.run_script(self.reanchor)
+        self.assertEqual(repair.returncode, 0, repair.stdout + repair.stderr)
+        self.assertEqual(self.sentinel.read_text(encoding="utf-8"), "n\n")
 
     def test_both_scripts_expose_passing_self_tests(self) -> None:
         for script in (self.reanchor, self.checker):

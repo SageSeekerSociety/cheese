@@ -430,7 +430,6 @@ def main() -> int:
             print("instead of silently forking alembic. See .claude/rules/migrations.md.")
             print(
                 "Fix: uv run --project backend python .claude/scripts/reanchor-migration-head.py"
-                f" --base {args.base}"
             )
             print("::error::backend/alembic/HEAD does not name the migration chain's tip")
             return 1
