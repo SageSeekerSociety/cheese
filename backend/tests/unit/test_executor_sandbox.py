@@ -25,6 +25,45 @@ from app.domain.agent.harness.claude_code.remote_execution.launch import payload
 from tests.support import bubblewrap, executor_release
 
 RUNTIME = Path(runtime.__file__)
+BACKEND = Path(__file__).resolve().parents[2]
+
+# The modules `runtime.py` imports from beside itself, by their bare names.
+PARTS = ("runtime_core", "runtime_commands", "runtime_context", "runtime_calls")
+
+
+def _stage_a_release(store: Path) -> Path:
+    """One release under `store`, holding exactly what a machine stages.
+
+    A release is what `runtime.RELEASE_FILES` lists, `executor_release.install`
+    among the things that build one. A fixture that copied the source directory
+    instead would hold files no release has and miss four that one does, so it
+    would go on passing for a release that never got the modules the runtime
+    imports from beside itself at load.
+    """
+    release = store / ("0" * 64)
+    for name, source in runtime.RELEASE_FILES.items():
+        staged = release / name
+        staged.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(BACKEND / source, staged)
+    return release
+
+
+def _load_the_releases_own_parts(monkeypatch):
+    """Let a release directory be read for the modules it holds.
+
+    A test that starts an executor imports the checkout's `runtime.py` by path,
+    and the runtime then imports its parts by their bare names: `sys.modules`
+    keeps those copies for the rest of the process and `sys.path` keeps the
+    checkout's directory they came from. A later `runpy.run_path` of a release
+    directory would bind to them and never read the release's own, so these
+    fixtures would pass for a release staged without the parts at all. Both are
+    put back by `monkeypatch` when the test ends.
+    """
+    for name in PARTS:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    monkeypatch.setattr(
+        sys, "path", [entry for entry in sys.path if Path(entry) != RUNTIME.parent]
+    )
 
 
 def _bubblewrap_runs() -> bool:
@@ -222,7 +261,7 @@ def test_a_stop_reaches_a_service_named_through_a_state_descriptor(tmp_path):
         process.kill()
 
 
-def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path):
+def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path, monkeypatch):
     """A sandboxed room's reset reaches its executor through the directory it
     opened without following a link: on Linux by `/proc/self/fd`, on a Mac,
     which has no /proc, by the path that directory resolves to. Either way the
@@ -230,8 +269,8 @@ def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path):
     home = tmp_path / "home"
     (home / ".cheese").mkdir(parents=True)
     _, process = _previous_executor(home / ".cheese")
-    release = tmp_path / "release"
-    shutil.copytree(RUNTIME.parent, release / "remote-execution")
+    _load_the_releases_own_parts(monkeypatch)
+    release = _stage_a_release(tmp_path)
     shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
     try:
         reset = subprocess.run(
@@ -270,10 +309,8 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
         "def socket_path(state):\n    return str(state / 'absent')\n"
     )
     if sandbox:
-        release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
-        # The runtime and the parts beside it, the way a release stages them:
-        # it imports those four at load, so a lone `runtime.py` does not run.
-        shutil.copytree(RUNTIME.parent, release / "remote-execution")
+        _load_the_releases_own_parts(monkeypatch)
+        release = _stage_a_release(tmp_path / ".cheese/executor-releases")
         shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
         marker = tmp_path / ".cheese/sandboxes" / project / resource
         marker.parent.mkdir(parents=True)
@@ -297,11 +334,10 @@ def test_a_room_started_from_an_earlier_release_is_stopped_where_a_helper_runs(
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = tmp_path / ".cheese/home" / project / resource
     (home / ".cheese/executor").mkdir(parents=True)
-    release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
-    # The runtime and the parts beside it, the way a release stages them: it
-    # imports those four at load, so a lone `runtime.py` does not run. What
-    # makes this release the earlier one is its `cheese-environment.py`.
-    shutil.copytree(RUNTIME.parent, release / "remote-execution")
+    _load_the_releases_own_parts(monkeypatch)
+    release = _stage_a_release(tmp_path / ".cheese/executor-releases")
+    # What makes this release the earlier one is the environment runner staged
+    # beside it here rather than the one a current release ships.
     (release / "cheese-environment.py").write_text("# an earlier release\n")
     marker = tmp_path / ".cheese/sandboxes" / project / resource
     marker.parent.mkdir(parents=True)
