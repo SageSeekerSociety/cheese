@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+import pathlib
 import textwrap
 
 import pytest
@@ -115,6 +116,17 @@ HOME = {
     ],
 }
 
+#: 住在 ``connections.py`` 里、门面**不**再导出的那六个函数：调用方走类上的转发，或者
+#: ``oauth_services.connections.<name>``。它们没有第二份可比，所以就住在这一个模块里。
+IN_CONNECTIONS_ONLY = [
+    "get_connection_by_provider",
+    "create_connection",
+    "update_connection_tokens",
+    "list_user_connections",
+    "delete_connection",
+    "_connection_to_dict",
+]
+
 #: 门面再导出的名字：调用点和单测按老路径取的就是这些。少一个就是 ImportError。
 REEXPORTED_FROM_PROVIDERS = [
     "OAuthUserInfo",
@@ -150,8 +162,11 @@ def test_the_old_path_answers_the_token_names_with_the_same_objects(name: str) -
     """`seal_oauth_token` / `open_oauth_token` / `TOKEN_UNAVAILABLE_*` 同理。
 
     `TOKEN_UNAVAILABLE_*` 这组字符串是给调用方比对的（两阶段采纳要说明降级原因），
-    两份相等的字面量看着也对、比着也对，所以只认对象同一性 —— 一处改了一处没改，
-    比对就会在两个路径下给出两个答案。
+    所以要的是**同一个对象**，不是各留一份相等的字面量。
+
+    这条挡不住的是「抄一份、文本碰巧一字不差」：CPython 会把这种短字符串驻留，两份同
+    文本的字面量恰好也是同一个对象。它挡得住的是抄一份、文本改过的那种 —— 那才会让
+    两个导入路径给出两个答案，也正是拆分最容易留下的分叉。
     """
     assert getattr(oauth_services, name) is getattr(tokens, name)
 
@@ -190,6 +205,38 @@ def test_each_name_lives_in_the_module_that_owns_it(module, names: list[str]) ->
         assert getattr(module, name) is getattr(oauth_services, name), (
             f"{name} 在两个模块里是两份东西"
         )
+
+
+def test_the_connection_functions_live_in_connections_alone() -> None:
+    """`connections.py` 那六个函数只在子模块里有一份，门面不再导出它们。
+
+    上面 `HOME` 只能管「两处是同一个对象」的名字；连接这一族是另一回事：调用方走类上
+    的转发，或者 `oauth_services.connections.<name>`，门面里根本没有同名的一份可比。
+    谁把它们抄回门面（或搬去别的子模块），这条红 —— 两份实现迟早分叉。
+    """
+    for name in IN_CONNECTIONS_ONLY:
+        assert hasattr(connections, name), f"connections.py 里没有 {name}"
+        assert not hasattr(oauth_services, name), f"{name} 在门面里另有一份"
+
+
+def test_every_function_in_the_submodules_is_reachable_from_the_facade() -> None:
+    """子模块里的每个模块级函数，要么由门面再导出，要么被类上的某个转发叫到。
+
+    这是「每个名字住在哪个模块里，一个不差」的另一半：`HOME` 列的只是门面里还有一份
+    的名字，这里守的是没有遗漏。搬进子模块却没人叫得到的实现（死代码）、或者被抄回一
+    份在门面里、子模块里留一个没人用的原件的，都会在这里露出来。
+    """
+    reexported = {name for names in HOME.values() for name in names}
+    forwarded = {n for n in OAUTH_SERVICE_METHODS if n not in KEPT_IN_THE_CLASS}
+    for module in (providers, tokens, connections):
+        source = pathlib.Path(inspect.getfile(module)).read_text(encoding="utf-8")
+        defined = {
+            node.name
+            for node in ast.parse(source).body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        unaccounted = sorted(defined - reexported - forwarded)
+        assert unaccounted == [], f"{module.__name__} 里没人叫得到的函数：{unaccounted}"
 
 
 def test_the_service_keeps_all_18_methods() -> None:

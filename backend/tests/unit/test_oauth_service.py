@@ -1133,10 +1133,18 @@ class TestGetGithubUserToken:
             refresh_token=None,
         )
 
-        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services.tokens"):
+        with caplog.at_level(logging.ERROR):
             assert await svc.get_github_user_token(42) is None
 
-        assert "could not be" in caplog.text
+        # 判的是这条记录自己的 logger 名，不只看文本。caplog 的 handler 挂在根上，
+        # 记录会一路传上来，所以 `at_level(logger=...)` 里写哪个名字都是绿的 —— 真正
+        # 钉住「这句话是从 `services/tokens.py` 发出来的」的是下面这一条：这条日志跟着
+        # `_decrypt_stored_token` 搬了家，名字对不上就红。
+        assert [
+            record.name
+            for record in caplog.records
+            if "could not be" in record.getMessage()
+        ] == ["app.domain.oauth.services.tokens"]
 
     # "an undecryptable stored refresh_token degrades cleanly, without
     # writing" is covered against a real database in
