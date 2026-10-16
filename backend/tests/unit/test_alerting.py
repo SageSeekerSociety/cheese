@@ -259,3 +259,18 @@ async def test_a_burst_of_one_failure_asks_redis_once(posted, monkeypatch):
 
     assert len(asked) == 1
     assert len(posted) == 1
+
+
+async def test_a_burst_long_over_is_not_counted_into_a_new_episode(posted, clock):
+    """A hundred occurrences in one tick, then nothing for days: when the
+    failure comes back, the alert is about the new episode and does not claim
+    the old burst as repeats of it."""
+    for _ in range(100):
+        alerting.send("数据库连接被拒", [], key="db-refused")
+    await _settled()
+    clock[0] += 3 * 24 * 3600
+    alerting.send("数据库连接被拒", [], key="db-refused")
+    await _settled()
+
+    assert len(posted) == 2
+    assert "又发生了" not in posted[1], posted[1]
