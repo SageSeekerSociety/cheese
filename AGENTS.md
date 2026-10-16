@@ -69,3 +69,5 @@ The work here is code. Do not read or edit the terms or privacy policy (`backend
 ## Follow a pull request you enqueue until it is deployed
 
 Watch a pull request you put into the merge queue until the dev deploy that contains it has finished: `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>`, run under a monitor from the session that owns the work, not a subagent that may end first — a loop that dies with its agent leaves a green PR unenqueued for hours, and output sent to a file or a background shell reaches the session only when the script exits, so a PR stuck short of the queue goes unheard.
+
+A cheese session does not run it: the platform opened the task's PR, and once the work is put up for acceptance the platform tells the session about CI, review comments, conflicts and leaving the merge queue, merges after a person accepts, and says when a dev deploy carries the merge.
