@@ -45,17 +45,20 @@ class StubHandler(BaseHTTPRequestHandler):
             type(self).received_session_auth = (
                 self.headers.get("X-Cheese-Token") == "session-secret"
             )
-            return self.reply(
-                200,
-                {
-                    "data": {
-                        "kind": "github_app",
-                        "token": "app-secret",
-                        "repo": "Acme/Widget",
-                        "api_url": f"http://127.0.0.1:{self.server.server_port}/gh",
-                    }
-                },
-            )
+            data = {
+                "kind": "github_app",
+                "token": "app-secret",
+                "repo": "Acme/Widget",
+                "api_url": f"http://127.0.0.1:{self.server.server_port}/gh",
+                "permissions": "contents: write, metadata: read",
+            }
+            if self.scenario == "invalid-api-url":
+                data["api_url"] = 1
+            if self.scenario == "permissions-omitted":
+                data.pop("permissions")
+            elif self.scenario == "write-denied":
+                data["permissions"] = "contents: read, metadata: read"
+            return self.reply(200, {"data": data})
         if self.path == "/gh/rate_limit":
             if self.scenario == "rate-limited":
                 return self.reply(
@@ -71,19 +74,35 @@ class StubHandler(BaseHTTPRequestHandler):
         if self.path == "/gh/repos/Acme/Widget":
             if self.scenario == "repo-hidden":
                 return self.reply(404, {"message": "Not Found"})
-            repo = {"full_name": "Acme/Widget"}
-            if self.scenario != "permissions-omitted":
-                repo["permissions"] = {
-                    "pull": True,
-                    "push": self.scenario != "write-denied",
-                }
-            return self.reply(200, repo)
+            return self.reply(
+                200,
+                {
+                    "full_name": "Acme/Widget",
+                    "permissions": {
+                        "admin": False,
+                        "maintain": False,
+                        "pull": False,
+                        "push": False,
+                        "triage": False,
+                    },
+                },
+            )
         return self.reply(404, {"message": "unexpected path"})
 
     def do_POST(self):
         self.paths.append(self.path)
         length = int(self.headers.get("Content-Length", "0"))
         self.rfile.read(length)
+        if self.scenario == "graphql-rate-limited":
+            return self.reply(
+                200,
+                {
+                    "errors": [
+                        {"type": "RATE_LIMITED", "message": "API rate limit exceeded"}
+                    ]
+                },
+                {"X-RateLimit-Remaining": "0"},
+            )
         return self.reply(
             200,
             {
@@ -124,17 +143,17 @@ class DoctorTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
-    def run_doctor(self) -> tuple[int, str]:
+    def run_doctor(self, args: tuple[str, ...] = ("github",)) -> tuple[int, str]:
         output = io.StringIO()
         with (
-            patch.object(doctor.sys, "argv", [str(SCRIPT), "github"]),
+            patch.object(doctor.sys, "argv", [str(SCRIPT), *args]),
             contextlib.redirect_stdout(output),
         ):
             result = doctor.main()
         return result, output.getvalue()
 
-    def test_both_layers_pass_with_installation_token(self):
-        result, output = self.run_doctor()
+    def test_both_layers_pass_with_installation_token_and_default_command(self):
+        result, output = self.run_doctor(args=())
         self.assertEqual(result, 0, output)
         self.assertIn("[1] GitHub API: OK", output)
         self.assertIn("REST core remaining=31", output)
@@ -148,6 +167,14 @@ class DoctorTests(unittest.TestCase):
         result, output = self.run_doctor()
         self.assertEqual(result, 1)
         self.assertIn("rate limit is exhausted", output)
+        self.assertIn("Repository access: NOT RUN", output)
+        self.assertNotIn("/gh/repos/Acme/Widget", StubHandler.paths)
+
+    def test_first_layer_graphql_rate_limit_is_failure(self):
+        StubHandler.scenario = "graphql-rate-limited"
+        result, output = self.run_doctor()
+        self.assertEqual(result, 1)
+        self.assertIn("GraphQL API rate limit is exhausted", output)
         self.assertIn("Repository access: NOT RUN", output)
         self.assertNotIn("/gh/repos/Acme/Widget", StubHandler.paths)
 
@@ -170,6 +197,7 @@ class DoctorTests(unittest.TestCase):
                 "Acme/Widget",
                 f"http://127.0.0.1:{dead_port}/gh",
                 f"http://127.0.0.1:{dead_port}/gh/graphql",
+                "contents: write, metadata: read",
             ),
         ):
             output = io.StringIO()
@@ -181,6 +209,14 @@ class DoctorTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertIn("connection or response failed", output.getvalue())
         self.assertIn("Repository access: NOT RUN", output.getvalue())
+
+    def test_invalid_api_url_is_reported_without_traceback(self):
+        StubHandler.scenario = "invalid-api-url"
+        result, output = self.run_doctor()
+        self.assertEqual(result, 1)
+        self.assertIn("invalid REST API URL", output)
+        self.assertIn("Repository access: NOT RUN", output)
+        self.assertNotIn("Traceback", output)
 
     def test_second_layer_hidden_repository_is_failure_even_after_api_passes(self):
         StubHandler.scenario = "repo-hidden"
@@ -195,14 +231,15 @@ class DoctorTests(unittest.TestCase):
         result, output = self.run_doctor()
         self.assertEqual(result, 1)
         self.assertIn("Repository access: FAIL", output)
-        self.assertIn("lacks repository write access", output)
+        self.assertIn("lacks contents:write", output)
 
     def test_second_layer_missing_permissions_is_not_silent_success(self):
         StubHandler.scenario = "permissions-omitted"
         result, output = self.run_doctor()
         self.assertEqual(result, 1)
+        self.assertIn("[1] GitHub API: OK", output)
         self.assertIn("Repository access: FAIL", output)
-        self.assertIn("omitted repository permissions", output)
+        self.assertIn("permissions are missing or malformed", output)
 
 
 if __name__ == "__main__":

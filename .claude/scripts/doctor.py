@@ -162,7 +162,23 @@ def github_api_check(api_url: str, graphql_url: str, token: str) -> tuple[bool, 
         )
 
 
-def installation_check(api_url: str, repo: str, token: str) -> tuple[bool, str]:
+def parse_token_permissions(value: Any) -> dict[str, str] | None:
+    if not isinstance(value, str) or not value:
+        return None
+    grants: dict[str, str] = {}
+    for entry in value.split(","):
+        name, separator, access = entry.partition(":")
+        name = name.strip()
+        access = access.strip()
+        if not separator or not name or not access or name in grants:
+            return None
+        grants[name] = access
+    return grants
+
+
+def installation_check(
+    api_url: str, repo: str, token: str, token_permissions: Any
+) -> tuple[bool, str]:
     parts = repo.split("/", 1)
     if len(parts) != 2 or not all(parts):
         return (
@@ -199,21 +215,21 @@ def installation_check(api_url: str, repo: str, token: str) -> tuple[bool, str]:
                 False,
                 "GitHub returned a different repository; check the project's GitHub installation.",
             )
-        permissions = payload.get("permissions")
-        if not isinstance(permissions, dict):
+        grants = parse_token_permissions(token_permissions)
+        if grants is None:
             return (
                 False,
-                "GitHub omitted repository permissions; token access cannot be verified. Reconnect the GitHub App.",
+                "GitHub App token permissions are missing or malformed; reconnect the installation.",
             )
-        if permissions.get("pull") is not True:
+        if grants.get("metadata") not in {"read", "write"}:
             return (
                 False,
-                "Installation token can read repository metadata but lacks pull access; grant repository read access.",
+                "GitHub App token lacks metadata read access; grant repository read permission.",
             )
-        if permissions.get("push") is not True:
+        if grants.get("contents") != "write":
             return (
                 False,
-                "Installation token lacks repository write access; grant contents write permission.",
+                "GitHub App token lacks contents:write; grant repository write permission.",
             )
         return (
             True,
@@ -250,7 +266,15 @@ def get_installation() -> tuple[str, str, str, str]:
     token = data.get("token")
     repo = data.get("repo")
     api_url = data.get("api_url") or "https://api.github.com"
+    if not isinstance(api_url, str):
+        raise ValueError(
+            "The installation-token response contained an invalid REST API URL."
+        )
     graphql_url = data.get("graphql_url") or f"{api_url.rstrip('/')}/graphql"
+    if not isinstance(graphql_url, str):
+        raise ValueError(
+            "The installation-token response contained an invalid GraphQL API URL."
+        )
     if not isinstance(token, str) or not token or not isinstance(repo, str) or not repo:
         raise ValueError(
             "The installation-token response omitted token or repository metadata; reconnect the GitHub App."
@@ -260,7 +284,7 @@ def get_installation() -> tuple[str, str, str, str]:
         raise ValueError(
             "The installation token's repository does not match GITHUB_REPOSITORY; check project setup."
         )
-    return token, repo, api_url, graphql_url
+    return token, repo, api_url, graphql_url, data.get("permissions")
 
 
 def main() -> int:
@@ -268,7 +292,7 @@ def main() -> int:
         print(f"Usage: {sys.argv[0]} [github]", file=sys.stderr)
         return 2
     try:
-        token, repo, api_url, graphql_url = get_installation()
+        token, repo, api_url, graphql_url, token_permissions = get_installation()
     except (OSError, ValueError, urllib.error.URLError) as error:
         print(f"[1] GitHub API: FAIL — installation token unavailable ({error})")
         print("[2] Repository access: NOT RUN — resolve the token failure above.")
@@ -280,7 +304,9 @@ def main() -> int:
         print("[2] Repository access: NOT RUN — resolve the GitHub API failure above.")
         return 1
 
-    second_ok, second_message = installation_check(api_url, repo, token)
+    second_ok, second_message = installation_check(
+        api_url, repo, token, token_permissions
+    )
     print(f"[2] Repository access: {'OK' if second_ok else 'FAIL'} — {second_message}")
     return 0 if second_ok else 1
 
