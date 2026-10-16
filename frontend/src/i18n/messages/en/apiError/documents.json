@@ -77,5 +77,6 @@
   "rowNumbersNotArray": "{field} must be an array of row numbers",
   "taskDocParticipantsOnly": "Only the task's owner and collaborators can change this task's document; say what you think in the channel",
   "attachmentOriginalReadOnly": "Files sent in a conversation can't be changed. You can create a new file based on one",
-  "docAgentDraftNeedsBlankOverview": "Drafting is only for a project overview that is still empty"
+  "docAgentDraftNeedsBlankOverview": "Drafting is only for a project overview that is still empty",
+  "docWholeWriteNeedsBlank": "This document already has content: change it passage by passage (cheese_doc_edit), not as a whole"
 }

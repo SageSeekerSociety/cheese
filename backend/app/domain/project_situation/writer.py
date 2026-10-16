@@ -20,7 +20,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError
 from app.domain.agent.document import question
 from app.domain.agent.harness.prompt import WRITING
 from app.domain.agent.supply import GATEWAY
@@ -98,7 +98,7 @@ async def write(
     """模型写的现状；问不了、或者回来的是空的，是 None。"""
     try:
         bound = await _bind(session, project_id)
-    except ValidationError as refused:
+    except UnprocessableEntityError as refused:
         logger.info("project situation not written project=%s: %s", project_id, refused)
         return None
     if bound is None:

@@ -29,6 +29,7 @@ from app.core.errors import (
     ForbiddenError,
     NotFoundError,
     SystemBusyError,
+    UnprocessableEntityError,
     ValidationError,
 )
 from app.core.redis import get_redis_client
@@ -93,7 +94,7 @@ async def ask_agent(
         raise ValidationError(say("docAgentPresetNeedsSelection"))
     if body.preset == "draft" and not await _blank_overview(db, reached.doc):
         # 起草只写第一版：写过的总览由人和芝士一处一处地改。
-        raise ValidationError(say("docAgentDraftNeedsBlankOverview"))
+        raise UnprocessableEntityError(say("docAgentDraftNeedsBlankOverview"))
     if body.conversation is not None:
         await box.owned(
             redis, body.conversation, asker=actor.handle, document_id=document_id

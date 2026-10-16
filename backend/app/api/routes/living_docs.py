@@ -433,6 +433,17 @@ async def _agent_authors(db, document_id: uuid.UUID) -> list[str]:
     return sorted(await IdentityService(db).agents_among([h for h in handles if h]))
 
 
+def _answering_agent(resolver: ActorResolver) -> str | None:
+    """The agent a credential answering someone's question writes as; None for
+    any other credential, which writes as its own actor."""
+    delegation = resolver.delegation()
+    if delegation is None:
+        return None
+    if delegation.agent is None:
+        raise ForbiddenError("This credential names no agent to edit as")
+    return delegation.agent
+
+
 @router.put("/{document_id}")
 async def replace_document(
     document_id: uuid.UUID,
@@ -453,15 +464,10 @@ async def replace_document(
     # first version (drafting the project overview, `box.PRESETS["draft"]`): a
     # document somebody has written is changed passage by passage, so no one's
     # text is replaced wholesale by it. It writes as itself, as in `/edits`.
-    delegation = resolver.delegation()
-    if delegation is not None:
-        if delegation.agent is None:
-            raise ForbiddenError("This credential names no agent to edit as")
+    if (answering := _answering_agent(resolver)) is not None:
         if (doc.content or "").strip():
-            raise ForbiddenError(
-                "This document already has content: change it with cheese_doc_edit"
-            )
-        author = delegation.agent
+            raise ForbiddenError(say("docWholeWriteNeedsBlank"))
+        author = answering
     operation = None
     if body.operation_id is not None:
         operation = {
@@ -557,12 +563,7 @@ async def edit_doc_passages(
         settled.append(one)
     # A 芝士 answering someone's question on the document edits as itself.
     delegation = resolver.delegation()
-    if delegation is not None:
-        if delegation.agent is None:
-            raise ForbiddenError("This credential names no agent to edit as")
-        author = delegation.agent
-    else:
-        author = actor.handle
+    author = _answering_agent(resolver) or actor.handle
     editor_is_agent = await IdentityService(db).is_agent(author)
     # A suggestion is made only when it is asked for; an edit, by default, is
     # made.

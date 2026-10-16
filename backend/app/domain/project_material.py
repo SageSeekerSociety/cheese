@@ -27,6 +27,7 @@ from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.topic.reads import open_rooms
 from app.domain.user.models import User, UserProfile
 
 WINDOW = timedelta(days=14)
@@ -59,12 +60,13 @@ async def public_rooms(session: AsyncSession, project_id: uuid.UUID) -> Rooms:
             Topic.project_id == project_id,
             Topic.kind.in_((TopicKind.root, TopicKind.topic)),
             Topic.status == TopicStatus.active,
-            Topic.is_private.is_(False),
-            Topic.members_only.is_(False),
             Topic.deleted_at.is_(None),
         )
     )
-    return Rooms({room_id: title for room_id, title in rows})
+    titles = dict(rows.tuples().all())
+    # 私聊和私密频道不算：项目里不是人人看得到（`open_rooms` 说哪些是）。
+    shown = await open_rooms(session, set(titles))
+    return Rooms({room: title for room, title in titles.items() if room in shown})
 
 
 @dataclass(frozen=True)
