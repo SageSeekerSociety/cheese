@@ -208,12 +208,11 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           node-version: 22
-          # The install below is a `npm ci` of this one lockfile and nothing
-          # else, so the lockfile is the whole cache key. These guards run on
-          # every merge diff; without the cache each run fetched esbuild and
-          # marked from the registry again.
-          cache: 'npm'
-          cache-dependency-path: docs/site/package-lock.json
+          # No cache here, deliberately. docs/site's three packages install in
+          # 0.78s on a hosted runner (run 38923291475), so the cache round
+          # trip costs more than it saves; and these guards never run on main,
+          # so a cache saved here would be visible to this ref alone — the
+          # converse of the `Restore only` note on setup-uv above.
 
       - name: Build the docs site
         if: ${{ !cancelled() && steps.docs_node.outcome == 'success' && steps.docs_tags.outcome == 'success' }}
@@ -224,15 +223,19 @@ jobs:
           npm ci --no-audit --no-fund
           npm run build
           # The docs host's copy, at the root (docs/site/src/where.mjs): the
-          # same sources through the same build, with BASE empty. What a
-          # different BASE changes is docs/site's own code, so a PR that
-          # leaves docs/site alone has nothing here to find that the build
-          # above did not already see — every check the guard exists for (the
-          # link and anchor checks, per-page kind/summary/covers, the
-          # reference generators) runs in it either way. Such a PR is left to
-          # the merge queue, which runs both builds, as does any PR that does
-          # touch docs/site; `git diff --quiet` exits non-zero when it cannot
-          # answer, which runs the build rather than skip it.
+          # same sources through the same build, with BASE empty. The same
+          # generators and the same per-page checks run either way; what BASE
+          # changes is where a link points, and this is the stricter of the two
+          # link checks — build.mjs anchors its href regex on BASE, so an
+          # absolute path with more than one segment, written by hand into
+          # docs content, is checked against the host's pages here and by the
+          # first build not at all. It is also the only run that reaches the
+          # `if (!BASE)` block (sitemap.xml, robots.txt, manual.zip). So a PR
+          # that leaves docs/site alone gives up the earlier signal, not the
+          # check: the merge queue is a merge_group event and runs both builds
+          # whatever the PR changed, as does any pull_request that touches
+          # docs/site. `git diff --quiet` exits non-zero when it cannot answer
+          # (no origin/main, say), which runs the build rather than skip it.
           if [ "${{ github.event_name }}" != "pull_request" ] \
              || ! git -C "$GITHUB_WORKSPACE" diff --quiet origin/main...HEAD -- docs/site; then
             DOCS_BASE= OUT="$OUT-host" npm run build
