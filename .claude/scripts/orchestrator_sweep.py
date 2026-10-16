@@ -1825,8 +1825,11 @@ def _self_test_sweep():
         "presentation": {"phrase": "awaiting_review"},
         "card": {"status": "pending", "pr_number": 42},
     }
+    # 没进过合并队列的 PR：`gh_pr` 的时间线只要 ADDED_TO_MERGE_QUEUE_EVENT 和
+    # REMOVED_FROM_MERGE_QUEUE_EVENT 两种事件，所以「一个队列事件都没有」的真实形状
+    # 是空 nodes —— 可采纳那一支走的就是它。
     adoptable_pr = {"merged": False, "mergeQueueEntry": None,
-                    "timelineItems": {"nodes": [{"__typename": "MergedEvent", "createdAt": at(50)}]}}
+                    "timelineItems": {"nodes": []}}
     adoptable_accept = [{"created_at": at(10), "meta": {"event_type": "accept_ready"},
                          "content": "可以合并"}]
     # 同一张卡上还能同时挂着一句刚问出去的话：短语被待回答压过（`awaiting_answer`
@@ -1862,23 +1865,26 @@ def _self_test_sweep():
         ("sweep：2 分钟前刚问出一句、行上写着在等谁，立刻报待回答（阈值 40 也报）",
          kinds(msg_min=2, row={"waiting_on": "wangchangxin"}), ["待回答"]),
         ("sweep：待回答的行报出等谁、等了多久、最后一条提问是哪个时刻哪句话",
-         # 判的是这几样说出来没有，不是那句话怎么措辞：文案改了不该红。
+         # 判的是这几样说出来没有，不是那句话怎么措辞：`awaiting_detail` 的用词、
+         # 摘要拿什么符号括起来，改了都不该红 —— 摘要的格式由「消息摘要」那两条盯着。
          [(r["waited_min"], "wangchangxin" in r["detail"], at(2)[11:16] in r["detail"],
-           "@a「等」" in r["detail"])
+           "等" in r["detail"])
           for r in rows_of(msg_min=2, row={"waiting_on": "wangchangxin"})],
          [(2, True, True, True)]),
-        ("sweep：递上去等验收人的卡（短语待审阅）同样立刻报待回答，不看阈值",
+        ("sweep：行上写着在等谁、短语是待审阅（递上去等验收的那一类）同样立刻报待回答，"
+         "不看阈值",
          kinds(msg_min=2, row={"waiting_on": "wangchangxin",
                                "presentation": {"phrase": "awaiting_review"}}), ["待回答"]),
         ("sweep：等审阅和等人回话这两条线，看板上写出来不是同一句话",
          # 判据是两条读起来分得清，不是哪一个词 —— 换成「审核」「答复」照样算数。
          [[r["detail"] for r in waiting_on_a_review] != [r["detail"] for r in waiting_on_an_answer]],
          [True]),
-        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，不拿这条线的座位顶",
-         [(r["waiting_on"], "cheese" in r["detail"], at(2)[11:16] in r["detail"])
+        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，写「有人」、不拿这条线的座位顶",
+         [(r["waiting_on"], "cheese" in r["detail"], at(2)[11:16] in r["detail"],
+           "有人" in r["detail"])
           for r in rows_of(msg_min=2, row={"presentation": {"phrase": "awaiting_answer"},
                                            "waiting_on": None})],
-         [(None, False, True)]),
+         [(None, False, True, True)]),
         ("sweep：行上说在等看的这个人（awaits_me）照样算待回答（这条端点上它蕴含 waiting_on，"
          "钉的是规范里那一条判据）",
          kinds(msg_min=2, row={"awaits_me": True}), ["待回答"]),
