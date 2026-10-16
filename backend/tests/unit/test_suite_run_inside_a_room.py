@@ -38,11 +38,19 @@ import sys
 sys.path.insert(0, os.getcwd())
 import tests.conftest  # noqa: F401
 
+from app.domain.agent import machine_launcher
 from tests.unit import test_machine_launcher
 
-test_machine_launcher.test_the_platform_cli_is_on_path_for_whatever_runs(
-    pathlib.Path(sys.argv[1])
-)
+home = pathlib.Path(sys.argv[1])
+
+# A launched session keeps its temporary files on the host, so the suite's own
+# ``_session_tmp_per_test`` fixture points each test's session at a directory of
+# that test's own. No fixture runs here, so the same redirection is made by
+# hand: without it this check would leave a session directory behind in
+# ``/var/tmp`` on every machine that ran the suite.
+machine_launcher.SESSION_TMP = str(home.parent / "var-tmp")
+
+test_machine_launcher.test_the_platform_cli_is_on_path_for_whatever_runs(home)
 """
 
 
