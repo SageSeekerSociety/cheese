@@ -26,7 +26,15 @@
     "backend/app/domain/skill_library/doc_form.md"
   ],
   "e2e": [
-    "backend/**",
+    "backend/app/**",
+    "backend/alembic/**",
+    "backend/alembic.ini",
+    "backend/sandbox/**",
+    "backend/pyproject.toml",
+    "backend/uv.lock",
+    "backend/.python-version",
+    "backend/scripts/seed_fusion_demo.py",
+    "backend/tests/forgejo/**",
     "frontend/**",
     "e2e/**",
     ".github/scripts/ci-test-evidence.py",
@@ -75,7 +83,15 @@
     ".github/workflows/harness-contract.yml"
   ],
   "remote": [
-    "backend/**",
+    "backend/app/**",
+    "backend/alembic/**",
+    "backend/sandbox/**",
+    "backend/pyproject.toml",
+    "backend/uv.lock",
+    "backend/.python-version",
+    "backend/tests/**",
+    "backend/scripts/assert_suite_ran.py",
+    "backend/scripts/device_connection_lifecycle_acceptance.py",
     "cli/**",
     "scripts/remote_execution/**",
     ".dockerignore",
