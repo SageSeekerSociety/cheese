@@ -230,12 +230,14 @@ jobs:
           # absolute path with more than one segment, written by hand into
           # docs content, is checked against the host's pages here and by the
           # first build not at all. It is also the only run that reaches the
-          # `if (!BASE)` block (sitemap.xml, robots.txt, manual.zip). So a PR
-          # that leaves docs/site alone gives up the earlier signal, not the
-          # check: the merge queue is a merge_group event and runs both builds
-          # whatever the PR changed, as does any pull_request that touches
-          # docs/site. `git diff --quiet` exits non-zero when it cannot answer
-          # (no origin/main, say), which runs the build rather than skip it.
+          # `if (!BASE)` block, which is sitemap.xml and robots.txt — only a
+          # host's own root can serve those; manual.zip is built either way.
+          # So a PR that leaves docs/site alone gives up the earlier signal,
+          # not the check: the merge queue is a merge_group event and runs both
+          # builds whatever the PR changed, as does any pull_request that
+          # touches docs/site. `git diff --quiet` exits non-zero when it cannot
+          # answer (no origin/main, say), which runs the build rather than skip
+          # it.
           if [ "${{ github.event_name }}" != "pull_request" ] \
              || ! git -C "$GITHUB_WORKSPACE" diff --quiet origin/main...HEAD -- docs/site; then
             DOCS_BASE= OUT="$OUT-host" npm run build
