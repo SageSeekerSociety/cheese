@@ -200,7 +200,12 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/review/services/cards.py", "ValidationError"): 9,
     ("app/domain/review/services/decisions.py", "ValidationError"): 21,
     ("app/domain/review/services/merge_queue.py", "ValidationError"): 10,
-    ("app/domain/review/services/polling.py", "ValidationError"): 3,
+    # `review/services/polling.py` 拆成了包，3 处按代码落在哪分红：`_seen_head`
+    # 与 `_refresh_github_unseen_head` 各一句 `raise` 在 `polling/seen_head.py`，
+    # `_refresh_stale_pr_snapshot` 的 `except` 在 `polling/snapshot.py`。总数没变，
+    # 只是发起方换了文件。
+    ("app/domain/review/services/polling/seen_head.py", "ValidationError"): 2,
+    ("app/domain/review/services/polling/snapshot.py", "ValidationError"): 1,
     ("app/domain/review/services/reviewers.py", "ValidationError"): 4,
     # `topic/services.py` 拆出了这两处发起方（2026-10-16，`topic -> room_task`
     # 那一笔）：任务的动词搬去 `dispatch.py`，地点的那几句搬去 `place.py`。

@@ -1,6 +1,6 @@
 """What a room does with what its sessions say and do.
 
-A room's sessions (`room/sessions.py`) hand the room one stream of items
+A room's sessions (`room/sessions/`) hand the room one stream of items
 (``RoomReader``) once their own books have taken each: what the session
 said and did, when it started and stopped working, which inputs it took in,
 how its work ended, whether the machine under it is reachable, and what it is
