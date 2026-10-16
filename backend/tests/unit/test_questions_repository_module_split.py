@@ -3,8 +3,16 @@
 拆的是文件，不是行为。三件事要守住：
 
 **旧路径照旧回答。** 仓库内外一直按 `from app.domain.questions.repositories
-import ...` 取这几个名字，按名字打 monkeypatch 也指着这个路径。规矩是「读那一半」
-搬去 `queries.py`、`repositories.py` 负责再导出，调用点一行都不改。
+import ...` 取这几个名字。规矩是「读那一半」搬去 `queries.py`、`repositories.py`
+负责再导出，调用点一行都不改。
+
+import 这一面是等价的，**按名字打补丁不是**：补丁要打在**读那个名字的那份模块**上。
+`_use_fts` 跟着它唯一的调用方去了 `queries.py`，所以 `patch.object(repositories,
+"_use_fts", ...)` 只剩改一个别名，调用点读的还是 `queries` 的那一个。拆之前两者是
+同一份。仓库里没有这样的补丁（`setattr` / `patch` 全仓搜过，一处都不指这些名字），
+`tests/unit/test_feedback_query_module_split.py` 也是这么处理搬走的助手函数的 ——
+那次只钉住了**测试真的在补**的 `_IN_BATCH`。最后两条测试把这里的实际读法钉住，
+不靠一句「老路径照旧」让人以为补丁还有效。
 
 **再导出不是再定义。** 名字在两边必须是同一个对象；读那一半的方法也不许在这个模块
 里再出现一份 —— 两份拷贝就是同一句 SQL 有两个版本，改一边不报错，只是行为慢慢分叉
@@ -20,6 +28,7 @@ import pathlib
 from typing import cast
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.questions import queries, repositories
@@ -122,3 +131,32 @@ def test_the_public_classes_are_all_reachable_from_the_old_path() -> None:
     ):
         assert hasattr(repositories, name), name
     assert issubclass(QuestionRepository, queries.QuestionQueries)
+
+
+def _keyword_sql(keyword: str) -> str:
+    """把 `_keyword_filter` 造出来的条件编译成 SQL，用来分辨走的是哪一支。"""
+    clause = QuestionRepository._keyword_filter(keyword)
+    return str(clause.compile(dialect=postgresql.dialect()))
+
+
+def test_a_long_keyword_still_takes_the_fts_branch() -> None:
+    """前提：不补丁时，长关键词走 FTS，短关键词退化成 ILIKE。下面两条靠它才有意义。"""
+    assert "ILIKE" not in _keyword_sql("hello").upper()
+    assert "ILIKE" in _keyword_sql("hi").upper()
+
+
+def test_the_fts_flag_is_read_from_the_module_that_now_holds_it(monkeypatch) -> None:
+    """`_use_fts` 和它的调用方都住在 `queries.py`，调用时读的就是那一个。"""
+    monkeypatch.setattr(queries, "_use_fts", lambda token: False)
+    assert "ILIKE" in _keyword_sql("hello").upper()
+
+
+def test_patching_the_old_path_does_not_reach_the_reader(monkeypatch) -> None:
+    """老路径上那个名字现在只是个再导出：补它不会改变调用点。
+
+    这条不用说「对不起」—— 它是这次拆分**有意**留下的差别（见文件头的说明），钉在这
+    里是为了让它可读、可判，而不是等谁以为补丁还有效。要让老路径的补丁重新生效，得把
+    调用方也搬回 `repositories.py`；仓库里没有这样的补丁，所以没这么做。
+    """
+    monkeypatch.setattr(repositories, "_use_fts", lambda token: False)
+    assert "ILIKE" not in _keyword_sql("hello").upper()

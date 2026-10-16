@@ -8,6 +8,14 @@ services、路由和单测一直是拿一个 `QuestionRepository(session)` 调�
 
 `QuestionTopicRepository`（提问与标签的关系）和 `QuestionInvitationRepository`
 （邀请）各自只碰自己的两张表，读和写都在一起，所以整个类留在这里。
+
+两处和拆分前**不一样**，都不是 bug，但说出来比让人自己撞上强：
+
+- 顺带 import 进来、只有一处用到的名字（`re`、`or_`、`text`、`timedelta`、
+  `VoteType`、`Discussion`、`DiscussableModelType`）跟着那一处搬去了 `queries.py`；
+  这份模块不再顺带回答它们。仓库里没有调用点从这条路径取这些名字。
+  （`tests/unit/test_feedback_query_module_split.py` 记着同样的取舍。）
+- `_use_fts` 在这里只是再导出：补丁要打在读它的那份模块上。见上面的注释。
 """
 
 from collections.abc import Sequence
