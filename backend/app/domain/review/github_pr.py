@@ -1246,6 +1246,8 @@ class GitHubPRClient:
                 self._url(f"/pulls/{number}"), headers=self._headers(token)
             )
         if resp.status_code != 200:
+            # 403 is the quota and a missing permission alike; only the phrase
+            # tells them apart, and only the quota is worth retrying.
             if resp.status_code == 403 and "API rate limit exceeded" in resp.text:
                 raise GitHubPRRateLimited(
                     f"PR read rate limited (HTTP 403): {resp.text[:300]}"
@@ -1331,13 +1333,15 @@ class GitHubPRClient:
                 headers=self._headers(token),
             )
         if resp.status_code != 200:
-            raise GitHubPRError(
-                say(
-                    "githubPrBodyUpdateFailed",
-                    status=resp.status_code,
-                    reply=resp.text[:300],
-                )
+            refusal = say(
+                "githubPrBodyUpdateFailed",
+                status=resp.status_code,
+                reply=resp.text[:300],
             )
+            # Same quota, second call of the ready hand-over (`pr_view`).
+            if resp.status_code == 403 and "API rate limit exceeded" in resp.text:
+                raise GitHubPRRateLimited(refusal)
+            raise GitHubPRError(refusal)
         return resp.json()
 
     @_as_pr_error
@@ -1387,13 +1391,15 @@ class GitHubPRClient:
                 headers=self._headers(token),
             )
         if resp.status_code != 200:
-            raise GitHubPRError(
-                say(
-                    "githubPrReadyFailed",
-                    status=resp.status_code,
-                    reply=resp.text[:300],
-                )
+            refusal = say(
+                "githubPrReadyFailed",
+                status=resp.status_code,
+                reply=resp.text[:300],
             )
+            # Same quota, last call of the hand-over (`update_pr`).
+            if resp.status_code == 403 and "API rate limit exceeded" in resp.text:
+                raise GitHubPRRateLimited(refusal)
+            raise GitHubPRError(refusal)
         # GraphQL answers 200 with an `errors` array, so a non-200 check alone
         # would read every refusal as a success.
         payload = resp.json()

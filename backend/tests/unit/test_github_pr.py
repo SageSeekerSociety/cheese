@@ -319,6 +319,35 @@ async def test_pr_view_distinguishes_installation_rate_limit_from_permission_403
     assert type(error.value) is GitHubPRError
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("spend_at", ["update_pr", "mark_ready_for_review"])
+@pytest.mark.parametrize("refusal", ["quota", "permission"])
+async def test_ready_writes_read_a_403_the_way_the_reads_do(spend_at, refusal):
+    """The ready hand-over is three calls against one installation quota, and
+    any of them can be the one that spends the last request.
+
+    `mark_ready` answers `GitHubPRRateLimited` with a retry sentence and lets
+    the parent class through as a 500, so a write that reported the quota as an
+    ordinary refusal would be wrong for exactly the case `pr_view` two calls up
+    was changed to handle. The two 403s are the same status and differ only by
+    the phrase, so both directions are pinned here."""
+
+    def transport(_request: httpx.Request) -> httpx.Response:
+        if refusal == "quota":
+            return httpx.Response(403, text="API rate limit exceeded for installation")
+        return httpx.Response(403, json={"message": "Resource not accessible"})
+
+    expected = GitHubPRRateLimited if refusal == "quota" else GitHubPRError
+    call = (
+        (lambda c: c.update_pr(7, title="fix(x): y"))
+        if spend_at == "update_pr"
+        else (lambda c: c.mark_ready_for_review("PR_node"))
+    )
+    with pytest.raises(expected) as error:
+        await call(_client(transport))
+    assert type(error.value) is expected
+
+
 def _unreachable(request: httpx.Request) -> httpx.Response:
     """api.github.com resolved but the TLS handshake never completed — the
     real 2026-08-17 failure, verbatim from the traceback."""

@@ -137,12 +137,18 @@ async def _ready_title(
     Only the placeholder is replaced. A subject 递卡 wrote, or one somebody
     typed on GitHub, is not the platform's to overwrite — and a draft whose
     title was already corrected is the case this leaves alone.
+
+    A subject that is itself a placeholder is left alone too: writing it would
+    put the very title this is here to remove back on the PR, and the commit
+    behind it is what has to change.
     """
     if not pr_publish.is_draft_title(view.get("title")):
         return None
     sha = str((view.get("head") or {}).get("sha") or "")
     subject = await client.commit_subject(sha) if sha else None
-    return subject[:255] if subject else None
+    if subject is None or pr_publish.is_draft_title(subject):
+        return None
+    return subject[:255]
 
 
 async def redescribe(
