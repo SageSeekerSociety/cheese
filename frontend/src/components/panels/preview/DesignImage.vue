@@ -94,6 +94,7 @@ const {
   panStart,
   panMove,
   panEnd,
+  blur,
   scheduleMeasure,
 } = useDesignViewport({
   zoomOnWheel: () => props.zoomOnWheel,
@@ -192,11 +193,11 @@ useDesignShortcuts({
 })
 
 const { discardPrompt, discardKeep, discardCard, answerDiscard, trapDiscardFocus } = useDesignDiscardGuard({
-    active: () => props.active,
-    wouldLoseStrokes: () => wouldLoseStrokes.value,
-    dropAnnotations,
-    pane,
-  })
+  active: () => props.active,
+  wouldLoseStrokes: () => wouldLoseStrokes.value,
+  dropAnnotations,
+  pane,
+})
 
 function cancelSelection() {
   tool.value = 'select'

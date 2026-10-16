@@ -234,6 +234,7 @@ export function useDesignViewport(options: DesignViewportOptions) {
     panStart,
     panMove,
     panEnd,
+    blur,
     scheduleMeasure,
   }
 }
