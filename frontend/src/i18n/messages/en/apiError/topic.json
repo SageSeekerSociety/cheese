@@ -4,7 +4,6 @@
   "bodyRequired": "body can't be empty",
   "channelArchiveOpenTasks": "This channel still has open tasks. Close them before archiving it",
   "channelArchivedNoJoin": "This channel is archived and can't be joined",
-  "channelCreateExternal": "External members can't create channels",
   "channelDeletedCannotUnarchive": "This channel was deleted and can't be brought back",
   "channelGeneralNoLeave": "General includes everyone in the project and can't be left",
   "channelGeneralNoManager": "General is managed by the project's managers and has no manager of its own",

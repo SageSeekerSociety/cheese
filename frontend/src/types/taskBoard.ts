@@ -160,6 +160,8 @@ export type PatchTaskRequestData = {
 
 export type AddTaskParticipantRequestData = {
   deadline: number | null
+  /** 领取的人同意这道题的导师加入项目（#3830）；题目有导师时必须带上。 */
+  agreeMentors?: boolean
   email?: string
   phone?: string
   applyReason?: string

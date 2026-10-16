@@ -36,11 +36,10 @@ export interface Project {
   team_id?: number | null
   team_handle?: string | null // 所属团队的 handle，团队页的地址（`/teams/<handle>`）
   team_name?: string | null // 所属团队的名字，侧栏项目名上面那一行写的就是它
-  /**
-   * 当前这个人能不能管理这个项目的外部成员（邀请、撤回、移出）：项目所有者，或者
-   * 所属团队的所有者、管理员。后端按同一条规则再判一次，这里只决定给不给按钮。
-   */
-  can_manage_members?: boolean
+  /** 我在这个项目里的位置和能做的事（#3830），按钮按它给，后端再判一次。 */
+  my_role?: 'owner' | 'admin' | 'member' | 'mentor' | null
+  my_permissions?: string[]
+  pending_transfer?: { id: string; to_handle: string } | null
   /** 所有者归档这个项目的时间；没归档是 null。 */
   archived_at?: string | null
   [key: string]: unknown

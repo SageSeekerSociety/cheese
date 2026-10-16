@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
+from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -35,6 +36,7 @@ from app.domain.notice_meta import (
     WHO_CHEESE,
     notice,
 )
+from app.domain.project_permissions import Permission
 from app.domain.review import comment_publish, pr_publish
 from app.domain.review.comments import ReviewCommentService
 from app.domain.review.comments import instruction as comment_instruction
@@ -104,6 +106,8 @@ async def _card_actor(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic.id
     )
+    # Deciding a review is the task side of the project (#3830).
+    await require_role(db, actor, topic.project_id, Permission.tasks)
     return actor
 
 

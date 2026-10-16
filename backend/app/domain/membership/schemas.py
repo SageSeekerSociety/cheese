@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +24,8 @@ class MemberOut(BaseModel):
 
 class InvitationCreate(BaseModel):
     user_handle: str = Field(min_length=1, max_length=64)
+    #: The role they take once they accept.
+    role: Literal["member", "mentor"] = "member"
 
 
 class InvitationRespond(BaseModel):
@@ -39,3 +42,53 @@ class InvitationOut(BaseModel):
     status: InvitationStatus
     created_at: datetime
     responded_at: datetime | None
+    role: str = "member"
+
+
+class RoleSet(BaseModel):
+    role: Literal["admin", "member", "mentor"]
+
+
+class GrantsIn(BaseModel):
+    """What each role named may do; a role left out keeps what it has."""
+
+    grants: dict[Literal["admin", "member", "mentor"], list[str]]
+
+
+class TransferCreate(BaseModel):
+    to_handle: str = Field(min_length=1, max_length=64)
+
+
+class TransferOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    from_handle: str
+    to_handle: str
+    status: InvitationStatus
+    created_at: datetime
+    responded_at: datetime | None
+
+
+class MoveIn(BaseModel):
+    team_id: int
+
+
+class RoleOut(BaseModel):
+    """Where the person sits now."""
+
+    role: str | None
+
+
+class RoleGrantsOut(BaseModel):
+    """What each role may do in the project, and whether any differs from its
+    defaults."""
+
+    grants: dict[str, list[str]]
+    changed: bool
+
+
+class MovedOut(BaseModel):
+    project_id: uuid.UUID
+    team_id: int

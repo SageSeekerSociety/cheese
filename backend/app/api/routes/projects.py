@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal, Protocol
 
 from fastapi import APIRouter, Depends, Header, Query, Response
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
@@ -27,6 +26,7 @@ from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import project_task_rows
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
+from app.auth.project_roles import Standing, is_owner, may, standing, standings_in
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -51,7 +51,11 @@ from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.ledger import deliver, settle, settle_card
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.overview import seed_overview
-from app.domain.membership.services import InvitationService, MemberService
+from app.domain.membership.services import (
+    InvitationService,
+    MemberService,
+    OwnershipService,
+)
 from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
 from app.domain.project.github_app import (
@@ -73,6 +77,7 @@ from app.domain.project.schemas import (
     StartStepsOut,
 )
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import PERMISSION_ORDER, Permission
 from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
 from app.domain.review.archive import close_cards_for_archived_topic
@@ -89,7 +94,6 @@ from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.adapters import ComputeCredits
-from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger("cheesex.projects")
 
@@ -138,17 +142,34 @@ def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
 
 
 async def _project_payloads(
-    db: DbSession, projects: Sequence[ProjectRow]
+    db: DbSession, projects: Sequence[ProjectRow], *, viewer: str | None = None
 ) -> list[dict]:
-    """Every project's payload, without a query per project."""
+    """Every project's payload, without a query per project. With ``viewer``,
+    each also says where they sit in it and what that lets them do (#3830)."""
     shells = await effective_shells(db, projects)
     teams = await team_service(db).labels_of(
         {p.team_id for p in projects if p.team_id is not None}
     )
-    return [
+    payloads = [
         _shelled(p, shells[p.id], teams.get(p.team_id) if p.team_id else None)
         for p in projects
     ]
+    if viewer is not None:
+        held = await standings_in(db, projects, viewer)
+        for p, payload in zip(projects, payloads, strict=True):
+            _with_standing(payload, held[p.id])
+    return payloads
+
+
+def _with_standing(payload: dict, held: Standing | None) -> None:
+    """Where the caller sits and what that lets them do: every screen shows or
+    hides its controls by these, never by working the rules out."""
+    payload["my_role"] = held.seat.value if held is not None else None
+    payload["my_permissions"] = (
+        [p.value for p in PERMISSION_ORDER if p in held.permissions]
+        if held is not None
+        else []
+    )
 
 
 async def _project_payload(db: DbSession, project: ProjectRow) -> dict:
@@ -259,7 +280,12 @@ async def list_projects(
     if archived:
         who = await resolver.require_verified_caller()
         projects = await service.list_archived_owned_by(who.handle)
-        return ok(page(await _project_payloads(db, projects), len(projects)))
+        return ok(
+            page(
+                await _project_payloads(db, projects, viewer=who.handle),
+                len(projects),
+            )
+        )
     if team_id is not None:
         # A team's project list is not a directory: every row carries the
         # project's `id`, and that id opens its roster, documents and usage. So
@@ -308,7 +334,10 @@ async def list_projects(
             # route happened to 401 and trip the refresh. Say it here instead.
             resolver.reject_failed_credential(who)
             projects, total = [], 0
-    items = await _project_payloads(db, projects)
+        viewer = who
+    items = await _project_payloads(
+        db, projects, viewer=viewer.handle if viewer.authenticated else None
+    )
     return ok(page(items, total))
 
 
@@ -375,11 +404,18 @@ async def get_project(
     payload["challenge_deadline"] = (
         {"at": deadline.at.isoformat(), "mine": deadline.mine} if deadline else None
     )
-    # Whether this caller runs the project's membership: its owner, or an
-    # owner/admin of its team. The members page shows invite/remove by it.
-    payload["can_manage_members"] = actor.authenticated and await MemberService(
-        db
-    ).manages(project_id, actor.handle)
+    _with_standing(
+        payload,
+        await standing(db, project_id, actor.handle) if actor.authenticated else None,
+    )
+    pending = await OwnershipService(db, deliver=deliver, settle=settle).pending_for(
+        project_id
+    )
+    payload["pending_transfer"] = (
+        {"id": str(pending.id), "to_handle": pending.to_handle}
+        if pending is not None
+        else None
+    )
     return ok(payload)
 
 
@@ -738,26 +774,28 @@ async def set_task_naming(
 # --- Project stewardship: who answers for a project ---------------------------
 
 
-async def require_project_steward(
+async def require_project_settings(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> str:
-    """A verified manager of the project — its owner, or an owner/admin of its
-    team — or a 404 that hides it.
+    """Someone who may change the project's settings, verified — or a 404 that
+    hides the project from everyone who is not in it.
 
-    People and agents need the same standing. A credential alone does
-    not grant authority to change ownership or the project's checks.
+    A credential alone does not grant authority to change the project's
+    checks: a scoped one is refused like everyone without the permission.
 
     Returns the caller's handle so a route can record who acted.
     """
     actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
         raise NotFoundError("Project not found")
-    handle = actor.handle
-    project = await ProjectService(db).get(project_id)
-    if project is None:
+    if await ProjectService(db).get(project_id) is None:
         raise NotFoundError("Project not found")
-    if await MemberService(db).manages(project_id, handle):
-        return handle
+    if actor.via != "cheese" and await may(
+        db, project_id, actor.handle, Permission.edit_settings
+    ):
+        return actor.handle
+    if await may_read_project(db, project_id=project_id, handle=actor.handle):
+        raise ForbiddenError(say("projectPermissionDenied"))
     # Conceal project existence from anonymous callers and outsiders.
     raise NotFoundError("Project not found")
 
@@ -765,8 +803,8 @@ async def require_project_steward(
 async def _project_owner(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> Actor:
-    """The project's owner, verified. Archiving is the owner's alone — not a
-    team admin's — because it takes the project away from everyone in it.
+    """The project's owner, verified. Archiving is the owner's alone — not an
+    admin's — because it takes the project away from everyone in it.
 
     Deliberately not ``authorize_project``: that door refuses every write to an
     archived project, and unarchiving is the one write that has to get through.
@@ -774,7 +812,7 @@ async def _project_owner(
     """
     actor = await resolver.require_verified_caller()
     project = await ProjectService(db).get_or_404(project_id)
-    if actor.authenticated and project.owner_handle == actor.handle:
+    if actor.authenticated and await is_owner(db, project.id, actor.handle):
         return actor
     if actor.authenticated and await may_read_project(
         db, project_id=project_id, handle=actor.handle
@@ -821,129 +859,6 @@ async def unarchive_project(
     )
     await db.commit()
     return ok(await _project_payload(db, project))
-
-
-@router.put("/{project_id}/owner")
-async def set_project_owner(
-    project_id: uuid.UUID,
-    body: dict,
-    db: DbSession,
-    steward: Annotated[str, Depends(require_project_steward)],
-) -> dict:
-    """Hand the project to someone else — or claim it when nobody holds it.
-
-    ``owner_handle`` had seven readers and exactly one writer: ``POST /projects``.
-    A project created without one could therefore never acquire one, and on the
-    dogfood project it never did (#315): the field sat NULL for six days while
-    every one of those readers quietly fell back to someone else, collapsing
-    every owner-level decision onto them and reporting no error anywhere.
-
-    Where the new owner lands, as of 2026-09-27:
-
-    * **On the project's team** — the owner changes and the team does not: the
-      project stays the team's. (Unchanged: this was the only case allowed
-      before.)
-    * **Off it, when the project is the transferor's own** — a project whose
-      team is the transferor's *personal* team is nobody else's; there is no
-      third party to hand it to and no team it has to stay in, so the project
-      MOVES into the recipient's personal team and the transferor is gone from
-      it for good. Without the move it would not be a transfer at all: the
-      project would sit in the transferor's team, where ``may_read_project``
-      still reads it for them and ``MemberService.manages`` — team owner — is
-      still true, so the same route could take the owner right back. On this
-      branch only, their channel seats are taken away too
-      (:meth:`TopicMemberService.revoke_project_seats`): a seat admits you to
-      its channel by itself, so without that the giver could keep speaking in
-      the channels they had joined, which is 借 again, one floor down. On the
-      branch above the giver stays in the project on purpose and their seats
-      are left alone.
-    * **Off it, otherwise** — refused: the project is some team's, and the only
-      people who may own it are that team's.
-
-    (This docstring used to say an outside owner "would own a project they
-    cannot open". That was false: ``may_read_project`` grants the project's own
-    ``owner_handle`` regardless of team, and ``MemberService.manages``
-    short-circuits on the owner too. The real reason is the paragraph above.)
-    """
-    handle = str(body.get("owner_handle") or "").strip()
-    if not handle:
-        raise ValidationError(say("ownerHandleRequired"))
-    project = await ProjectService(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    team_changed_from: int | None = None
-    if handle != project.owner_handle:
-        user = await user_by_handle(db, handle)
-        if user is None:
-            raise ValidationError(say("accountNotFound", handle=handle))
-        if not await team_service(db).is_team_member(project.team_id, user.id):
-            # Not on the project's team. Only a personal project of the
-            # transferor's can leave it — see the docstring.
-            if not await _project_is_personal_to_its_owner(db, project):
-                raise ValidationError(say("transferOutsideTeam", handle=handle))
-            team = await team_service(db).ensure_personal_team(user.id)
-            team_changed_from = project.team_id
-            project.team_id = team.id
-    previous = project.owner_handle
-    project.owner_handle = handle
-    await db.flush()
-    if team_changed_from is not None and previous is not None:
-        # The project left the transferor's team with them still seated in its
-        # channels, and a seat is a reason to reach a channel on its own
-        # (`authorize_topic_access` reads it before project membership). Taking
-        # the seats away is what makes 「转完你就真的出去了」 true. Only on this
-        # branch: on the project's own team the giver stays a member on purpose.
-        moved = await TopicMemberService(db).revoke_project_seats(
-            project_id=project_id, member_handle=previous
-        )
-        logger.info(
-            "project seats revoked on transfer project=%s from=%s to=%s rooms=%s by=%s",
-            project_id,
-            previous,
-            handle,
-            len(moved),
-            steward,
-        )
-    # Ownership moves are rare, consequential, and (per #315) previously
-    # impossible — worth a permanent record of who moved it and from what.
-    logger.info(
-        "project owner set project=%s from=%s to=%s by=%s",
-        project_id,
-        previous,
-        handle,
-        steward,
-    )
-    if team_changed_from is not None:
-        logger.info(
-            "project team moved project=%s from=%s to=%s by=%s",
-            project_id,
-            team_changed_from,
-            project.team_id,
-            steward,
-        )
-    return ok(await _project_payload(db, project))
-
-
-async def _project_is_personal_to_its_owner(
-    db: AsyncSession, project: ProjectRow
-) -> bool:
-    """Whether the project sits in its own owner's personal team.
-
-    Then its team is a one-person team that exists only to hold this person's
-    things, so the project has no other stakeholder to stay with — which is
-    what lets a transfer move it. A shared team's project, or an ownerless
-    project (no user behind ``owner_handle``), is not.
-    """
-    if project.owner_handle is None or project.team_id is None:
-        return False
-    team = await team_service(db).get_team(project.team_id)
-    if team is None or team.personal_owner_user_id is None:
-        return False
-    owner = await user_by_handle(db, project.owner_handle)
-    return owner is not None and owner.id == team.personal_owner_user_id
-
-
-# --- Branch protection (issue #718): 平台侧的分支保护规则 ---------------------
 
 
 def _branch_protection_payload(bp: BranchProtection) -> dict:
@@ -1021,7 +936,7 @@ _BRANCH_PROTECTION_KEYS = (
 
 @router.put(
     "/{project_id}/branch-protection",
-    dependencies=[Depends(require_project_steward)],
+    dependencies=[Depends(require_project_settings)],
 )
 async def set_branch_protection(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
@@ -1086,7 +1001,7 @@ async def set_project_upstream(
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     service = ProjectService(db)
     project = await service.get_or_404(project_id)
     if await binding_for_project(project_id, db) is not None:

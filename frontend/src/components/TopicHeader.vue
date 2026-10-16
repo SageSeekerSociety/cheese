@@ -35,6 +35,7 @@ import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
+import { mayIn } from '@/lib/projectPermissions'
 import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { queryClient } from '@/query/client'
@@ -126,7 +127,7 @@ const projectRead = useQuery(
   computed(() => ({ ...projectQuery(props.topic.project_id), enabled: detailsOpen.value })),
   queryClient
 )
-const managesProject = computed(() => projectRead.data.value?.can_manage_members === true)
+const managesProject = computed(() => mayIn(projectRead.data.value, 'manage_channels'))
 function archiveFromDetails() {
   detailsOpen.value = false
   if (nav) void archiveTopic(props.topic, nav.router)

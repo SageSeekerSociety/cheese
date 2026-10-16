@@ -31,6 +31,7 @@ from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import TopicOut
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -46,11 +47,10 @@ async def set_title(
     """给这个地方起/改标题: a person renaming a channel or a task, or a task's
     own session naming it (`cheese_title`, only where the platform cannot).
 
-    A channel is renamed by anyone who can be in it: which channel is called what
-    is the room's own business, not its creator's alone. Being able to reach the
-    room at all is settled above (`authorize_topic`), which is the same answer a
-    reader of the channel gets — and an outsider to a private channel is still
-    told it does not exist.
+    A channel is renamed by whoever manages it: its own admin, or someone whose
+    role manages every channel (#3830). Being able to reach the room at all is
+    settled above (`authorize_topic`) — an outsider to a private channel is
+    still told it does not exist.
 
     A task's id names the task: a person taking part in it renames it, and that
     title is final; its own session's title the platform may still change
@@ -91,13 +91,12 @@ async def set_title(
         out = await task_out(db, chat, task)
         await db.commit()
         return ok(out)
-    # Renaming a channel takes no more than being able to be in it — the rest of
-    # its settings (说明、可见范围) still belong to whoever manages it
-    # (`topics_channel`). What is left to ask here is that the asker is a
-    # verified person and not, say, an unauthenticated caller on a deployment
-    # with the access check turned off.
+    # A channel's name is one of its settings, like its 说明 and who sees it
+    # (`topics_channel`): whoever manages the channel changes it.
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInForRoom"))
+    if not await TopicMemberService(db).manages(place.room, actor.handle):
+        raise ForbiddenError(say("channelManagerOnly"))
     place.room.title = title[:80]
     await db.flush()
     out = TopicOut.model_validate(place.room).model_dump(mode="json")

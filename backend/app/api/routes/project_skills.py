@@ -49,6 +49,7 @@ from app.domain.notice_meta import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.project_permissions import Permission
 from app.domain.project_skill import importer
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 from app.domain.project_skill.service import ProjectSkillService
@@ -170,7 +171,9 @@ async def _in_project(
         )
         return actor
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     return actor
 
 
@@ -322,7 +325,7 @@ async def add_skill(
     if body.imported:
         # What comes from outside reaches every later session and runs its
         # scripts on the work computer; the project's managers decide that.
-        await MemberService(db).require_manager(project_id, actor)
+        await MemberService(db).require(project_id, actor, Permission.edit_settings)
     service = ProjectSkillService(db)
     row = await service.create(
         project_id=project_id,
@@ -355,7 +358,7 @@ async def preview_import(
     """Read a skill from an uploaded SKILL.md or zip, or a GitHub folder, and
     lay it out for a manager to look over. Nothing is saved."""
     actor = await _person_in_project(db, resolver, project_id, say("skillImport"))
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     if body.content:
         if len(body.content) > importer.MAX_TOTAL_BYTES * 4 // 3 + 4:
             raise ValidationError(say("skillImportTooLarge"))

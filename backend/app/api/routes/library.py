@@ -25,6 +25,7 @@ from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/projects", tags=["library"])
 
@@ -222,7 +223,9 @@ async def _library_keeper(
     `authorize_project`。"""
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.edit_content
+    )
     return actor
 
 

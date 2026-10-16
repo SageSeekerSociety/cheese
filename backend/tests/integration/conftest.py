@@ -290,6 +290,27 @@ def add_external_member(client, project_id: str, handle: str, *, by: str = "owne
     assert ok.status_code == 200, ok.text
 
 
+def offer_project(client, project_id: str, to: str, *, by: str):
+    """``by`` offers the project to ``to``; the response, as the browser gets it."""
+    return client.post(
+        f"/projects/{project_id}/transfer",
+        json={"to_handle": to},
+        headers=session_auth_headers(by),
+    )
+
+
+def hand_over(client, project_id: str, to: str, *, by: str):
+    """``by`` offers the project to ``to`` and ``to`` accepts — the whole handing
+    over. Returns the acceptance's response."""
+    offered = offer_project(client, project_id, to, by=by)
+    assert offered.status_code == 200, offered.text
+    return client.post(
+        f"/transfers/{offered.json()['data']['id']}/respond",
+        json={"accept": True},
+        headers=session_auth_headers(to),
+    )
+
+
 def ask_to_join(
     api_client: "TestClient", team_id: int, token: str, message: str
 ) -> int:
