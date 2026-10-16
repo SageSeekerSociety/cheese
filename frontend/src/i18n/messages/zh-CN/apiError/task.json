@@ -1,5 +1,7 @@
 {
   "contributorNotInProject": "只能把项目成员加为协作者",
+  "mentorConsentRequired": "这道题有导师，同意导师加入项目后才能领取",
+  "mentorNotSpaceAdmin": "{handle} 不是这个空间的管理员，无法设为导师",
   "pdfDraftNotOpen": "从 PDF 生成草稿暂未开放，稍后再试。",
   "pdfScanFallbackFailed": "第 {page} 页是扫描件（没有文字层）：已把这一页渲染成图片发给模型，但模型仍没读出可用内容（{detail}）。",
   "pdfScannedPageNoVision": "第 {page} 页没有文字层（扫描件/图片页），渲染成图片也读不出来：当前草稿模型 {model} 读不了图片。换一个能读图的草稿模型再试。",

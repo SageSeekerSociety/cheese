@@ -56,6 +56,13 @@ from app.domain.conversation.models import Conversation  # noqa: F401
 #: (idle, or given up with its host). Cleared by the first tool call that lands
 #: in a new one; until then the room's lease still names the machine it was on.
 LOST_KEY = "sandbox_lost"
+#: Set in a session's ``execution_request`` when it asked for another cloud
+#: sandbox while it already had one — the spec it is on, asked again
+#: (``session_work.switch_environment``). The host it left is named here so its
+#: next placement does not go straight back to it, which is what the pool's
+#: preference for the fullest host would otherwise do. Cleared by that
+#: placement (``HostPool._placed_off``).
+LEFT_HOST_KEY = "sandbox_left_host"
 
 
 @dataclass(frozen=True, slots=True)

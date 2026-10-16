@@ -11,6 +11,7 @@ from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
+from app.domain.block.queries import turn_starts
 from app.domain.delivery.agent import (
     record_task_instruction,
 )
@@ -313,7 +314,10 @@ async def test_subscription_ingestion_is_disabled_or_uses_the_trimmed_path(
     assert job.interval_seconds == (23 if log_path.strip() else 0)
     if log_path.strip():
         assert await job._job() == 5
-        ingest.assert_awaited_once_with(world.sessions, Path("/tmp/usage.jsonl"))
+        # `block` 那个读是接线时递的，递的就是它本身（`app.periodic_jobs`）。
+        ingest.assert_awaited_once_with(
+            world.sessions, Path("/tmp/usage.jsonl"), turn_starts=turn_starts
+        )
     else:
         ingest.assert_not_awaited()
 

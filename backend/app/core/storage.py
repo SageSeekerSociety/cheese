@@ -15,6 +15,16 @@ import aiofiles.os
 import aiofiles.ospath
 
 from app.core.config import settings
+from app.core.errors import UpstreamUnavailableError
+
+logger = logging.getLogger(__name__)
+
+
+class ObjectStoreUnreachableError(UpstreamUnavailableError):
+    """The bucket did not answer: the same operation succeeds once the way out
+    to it is back."""
+
+    retryable = True
 
 
 @dataclass
@@ -170,6 +180,33 @@ class S3StorageBackend(StorageBackend):
 
     @asynccontextmanager
     async def _get_client(self):  # type: ignore[override]
+        """A client for one operation, and the operation's failure to reach the
+        bucket said as what it is.
+
+        By the time a connection error reaches here the SDK has already retried
+        it (``retries`` in ``_client``), so it is an outage of the way out to the bucket
+        — the box's uplink, a proxy — and not a fault of this server: answered
+        503 and retryable (`ObjectStoreUnreachableError`), not as an unhandled
+        500 with a traceback per request. An answer from the bucket, a 403 or a
+        404, is not this and passes through unchanged.
+        """
+        # deferred-import: start-up cost; botocore loads only for a bucket call
+        from botocore import exceptions as bucket
+
+        try:
+            async with self._client() as client:
+                yield client
+        except (bucket.ConnectionError, bucket.HTTPClientError) as exc:
+            # Said here, with its cause, because the 503 the caller gets does
+            # not carry it: a TLS failure or a wrong endpoint looks exactly like
+            # an outage from outside, and this line is what tells them apart.
+            # WARNING, not ERROR: a bucket that is away is not this server's
+            # fault, and the alert channel is for this server's faults.
+            logger.warning("object store unreachable: %s: %s", type(exc).__name__, exc)
+            raise ObjectStoreUnreachableError() from exc
+
+    @asynccontextmanager
+    async def _client(self):
         import aioboto3
         from aiobotocore.config import AioConfig
 

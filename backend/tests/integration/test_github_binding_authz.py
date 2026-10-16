@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 import pytest
 
 from tests.integration.conftest import (
+    hand_over,
     join_project_team,
     post_project,
     session_auth_headers,
@@ -170,7 +171,7 @@ def test_callback_rejects_foreign_installation_and_spent_state(client, monkeypat
 
 def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatch):
     # A shared team carol owns, alice an ordinary member: alice manages the
-    # project only while she owns it.
+    # project only while she owns it or is its admin.
     import asyncio
     from datetime import UTC, datetime
 
@@ -211,13 +212,16 @@ def test_manager_role_is_rechecked_after_install_link_created(client, monkeypatc
     join_project_team(client, pid, "alice")
     join_project_team(client, pid, "bob")
     state = _state(client, pid)
-    # Transfer through the real management route: alice stops managing it.
-    response = client.put(
-        f"/projects/{pid}/owner",
-        json={"owner_handle": "bob"},
-        headers=session_auth_headers("alice"),
+    # Through the real routes: alice hands the project to bob, who makes her a
+    # plain member — she stops managing it.
+    handed = hand_over(client, pid, "bob", by="alice")
+    assert handed.status_code == 200, handed.text
+    demoted = client.put(
+        f"/projects/{pid}/members/alice/role",
+        json={"role": "member"},
+        headers=session_auth_headers("bob"),
     )
-    assert response.status_code == 200
+    assert demoted.status_code == 200, demoted.text
 
     async def should_not_call(*args):
         pytest.fail("GitHub accessed after initiator lost project management")
@@ -296,6 +300,10 @@ def test_github_management_follows_participant_role_and_own_account(
     assert client.get(connection, headers=auth).status_code == 200
     assert client.get(install, headers=auth).status_code == 403
     _set_team_admin(client, pid, handle, admin=True)
+    if is_agent:
+        # An AI teammate never manages the project, wherever it sits.
+        assert client.get(install, headers=auth).status_code == 403
+        return
     assert client.get(install, headers=auth).status_code == 200
 
     async def no_own_account(self, requested_user_id):

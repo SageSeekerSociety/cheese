@@ -12,6 +12,15 @@ Usage (keep the password in the command's heredoc, never in a file):
 For every open, started task in the channel it reads platform facts and the PR's GitHub queue state:
   出队          card pending, PR neither merged nor queued, last queue event is a removal
   可采纳未采纳  card pending, PR mergeable >= 5 min, not queued, not removed since
+  待回答        the line is parked on a person and will not move on its own: a question
+                (`cheese_ask`) nobody has answered, or a filed card whose next step is
+                the reviewer's. It needs no quiet minutes — the question is itself the
+                line's newest heartbeat, so judging it by --silent-min hides every fresh
+                question for the whole 40. A line already carrying another class
+                (可采纳未采纳, 出队 — a card waiting on its reviewer is both) keeps that
+                one row instead, unless the parking is a real question (`awaiting_answer`):
+                no other class says "somebody was asked", so that one always gets its row.
+                A parked line is never also 长时间无动静. One fact, one line.
   红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
@@ -51,7 +60,7 @@ REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/"
 
 #: The classes a row carries, in the order the text list prints them. "GitHub 未查"
 #: is not a decision to make — it is the sweep saying it could not look.
-CLASSES = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
+CLASSES = ["出队", "可采纳未采纳", "待回答", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
 BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
 #: The line pr-review.sh puts first in its rendered result, which the delivering seat pastes
 #: into the card body: `独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>`.
@@ -793,6 +802,10 @@ def waiting_of(t, kind):
         return t["waiting_on"]
     if kind == "可采纳未采纳":
         return t.get("reviewer_handle") or t.get("owner_handle")
+    if kind == "待回答":
+        # 问了好几个人、或者问了所有人：平台上没有一个「某某」写得出来，就不写。
+        # 不拿这条线的座位顶 —— 它在等的是被问的人，不是它自己。
+        return None
     return t.get("agent_handle")
 
 
@@ -893,6 +906,30 @@ def stalled_for(now, heartbeat, silent, running=False):
     return w if w >= silent else None
 
 
+def parked_on_a_person(t):
+    """Whether this line has stopped and is waiting for a person to move it: a question
+    the seat asked and ended its turn on (`cheese_ask`), or a filed card whose next step
+    is the reviewer's. The platform says so three ways and any one is enough — the row
+    names who it waits on (`waiting_on`), or says it waits on the reading seat
+    (`awaits_me`), or its presentation phrase is 待回答.
+
+    The phrase carries the case the other two cannot: a question put to several people,
+    or to everyone, names nobody (`room_task.presentation.waiting_on` returns None for
+    it), and the line is just as parked."""
+    phrase = (t.get("presentation") or {}).get("phrase")
+    return bool(t.get("waiting_on") or t.get("awaits_me") or phrase == "awaiting_answer")
+
+
+def awaiting_detail(waited, who, phrase, last_msg_at, last_msg_brief):
+    """The 待回答 line: how long the line has been parked, on whom, and its own last
+    word — the question or the delivery — so the patrol reads that before anyone asks
+    or nudges a second time. `who` is None when nobody in particular is named, and the
+    line says 有人 rather than leaving the field blank."""
+    what = {"awaiting_answer": "回答", "awaiting_review": "审阅"}.get(phrase, "回话")
+    return (f"待 {who or '有人'} {what}，{waited:.0f} 分钟："
+            f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
+
+
 def hhmm(iso):
     return f"{iso[11:16]} UTC" if iso else "没有"
 
@@ -917,13 +954,17 @@ def sweep(tok, room, silent, skip, want_facts):
     tasks = d.get("data", d) if isinstance(d, dict) else d
     rows, facts, idmap = [], {}, {}
     for t in tasks:
-        if not t.get("started_at") or str(t["number"]) in skip:
+        # 行的开始时刻：后端把 `started_at` 从 TaskOut 上撤了（任务创建即开始，行上只有
+        # `created_at`）。只认 `started_at` 会把线上每一条在办任务整行跳过、一条信号都
+        # 报不出来。老行还带这个键时照旧认它——值为 None 仍是「还没点开始」，整行跳过。
+        started = t["started_at"] if "started_at" in t else t.get("created_at")
+        if not started or str(t["number"]) in skip:
             continue
         tid = t["id"]
         idmap[tid] = t["number"]
         name = f"#{t['number']} {t['title'][:28]} @{t.get('agent_handle') or '-'}" + (f" 等:{t['waiting_on']}" if t.get("waiting_on") else "")
         msg = get(tok, f"/topics/{tid}/history?limit=1&kind=message")["data"]
-        last_msg = msg[-1]["created_at"] if msg else t["started_at"]
+        last_msg = msg[-1]["created_at"] if msg else started
         # 心跳：座位跑命令是 event 块，不是消息。只看消息会把一条正在跑长命令的线报成
         # 停摆（2026-10-13 #1468 跑了 70 分钟命令、被按「70 分钟没消息」催过）。event 只认
         # 座位自己写的：system 的 turn_failed 也是 event，但那不是它在动。
@@ -981,7 +1022,10 @@ def sweep(tok, room, silent, skip, want_facts):
         if red_recent and want_facts and pr is not None and "error" not in pr and pr.get("cases") is None:
             pr["cases"] = failing_cases(pr.get("checks") or [])
 
+        reported = set()
+
         def add(kind, text, waited=None, waiting=None):
+            reported.add(kind)
             rows.append(row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg, pulse))
 
         if card.get("status") == "pending" and n:
@@ -1008,11 +1052,34 @@ def sweep(tok, room, silent, skip, want_facts):
             w = age(tail[-1]["created_at"])
             add("连续失败", f"最后 {tail[-1]['created_at'][11:16]} UTC：{said(tail[-1])}", w)
 
-        w = stalled_for(now, heartbeat, silent, running)
-        if w is not None:
-            add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
-                                        pulse["last_message"] or "（还没有消息）",
-                                        t.get("last_output_at")), w)
+        # 待回答：这条线停在别人身上，自己不会往下走 —— 刚问出的问题，或者递上去、
+        # 下一步在验收人手上的卡。它不看 --silent-min：提问本身就是这条线最新的心跳，
+        # 按阈值判的话刚问出的问题要整整 40 分钟才浮出来（2026-10-15 #1620 就是这么漏
+        # 掉的）。停在别人身上的线也不再补一行长时间无动静 —— 那不是停摆，球本来就在
+        # 别人手上。
+        #
+        # 等验收人那一类不重复出：这一轮已经为它报过别的类别，就不再报待回答 ——
+        # 可采纳未采纳 / 出队 那一行本来就把「在等谁」写在名字上（`waiting_of` 返回的
+        # 正是行的 `waiting_on`），而「可以合并、等着人点采纳」的卡按平台的说法就是
+        # awaiting_review —— 不挡的话每一张可采纳未采纳的卡都会跟着多出一行，同一件
+        # 事说两遍。
+        #
+        # 真问出去的问题不挡：别的类别说不出「有人被问了、还没答」，挡掉它就是把
+        # #1620 那类漏看原样搬回来。一张卡可以既能合并、又刚问了人一句 —— 那是两件
+        # 事，出两行。
+        phrase = (t.get("presentation") or {}).get("phrase")
+        if parked_on_a_person(t):
+            if phrase == "awaiting_answer" or not reported:
+                w = age(heartbeat)
+                add("待回答", awaiting_detail(w, t.get("waiting_on"), phrase,
+                                             pulse["last_message_at"],
+                                             pulse["last_message"] or "（还没有消息）"), w)
+        else:
+            w = stalled_for(now, heartbeat, silent, running)
+            if w is not None:
+                add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
+                                            pulse["last_message"] or "（还没有消息）",
+                                            t.get("last_output_at")), w)
 
     rows.sort(key=lambda r: CLASSES.index(r["kind"]))
     return rows, idmap
@@ -1719,31 +1786,65 @@ def _self_test_pulse():
 
 
 def _self_test_sweep():
-    """(name, got, want) for `sweep` 本身那一条线：平台读数换成现成的答案，看 长时间无动静
-    这一类到底按什么开火。只测 helper 测不到这里——把 sweep 里那一行退回「按最后一条
-    消息」，helper 全绿、这几条红。阈值 40 分钟，消息一律 60 分钟前。"""
+    """(name, got, want) for `sweep` 本身那两条线：平台读数换成现成的答案，看 长时间无动静
+    和 待回答 这两类到底按什么开火。只测 helper 测不到这里——把 sweep 里那一行退回「按
+    最后一条消息」，helper 全绿、这几条红。阈值 40 分钟，消息一律 60 分钟前；要更近的
+    消息就自己给 msg_min。"""
     now = datetime.now(timezone.utc)
     at = lambda mins: (now - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
     task = {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese", "started_at": at(300)}
+    # 线上现在的行：后端把 `started_at` 从 TaskOut 上撤了（任务创建即开始），开始时刻
+    # 只剩 `created_at`。老用例的 `task` 带这个键，是为了钉住「值为 None 就整行跳过」。
+    task_now = {k: v for k, v in task.items() if k != "started_at"} | {"created_at": at(300)}
     call = {"tool": "Bash", "arg": "跑测试"}
     done = {"tool": "Bash", "arg": "跑测试", "output_bytes": 9}
     sysev = lambda kind, mins: [{"created_at": at(mins), "meta": {"event_type": kind}, "content": kind}]
 
-    def kinds(ev_min=None, ev_meta=None, system=(), row=None):
+    def rows_of(ev_min=None, ev_meta=None, system=(), row=None, msg_min=60, accept=(), pr=None,
+                base=None):
         answers = {
-            "/tasks?": [dict(task, **(row or {}))],
-            "kind=message": {"data": [{"created_at": at(60), "author": "a", "content": "等"}]},
+            "/tasks?": [dict(base if base is not None else task, **(row or {}))],
+            "kind=message": {"data": [{"created_at": at(msg_min), "author": "a", "content": "等"}]},
             "kind=event": {"data": [{"created_at": at(ev_min), "meta": ev_meta}] if ev_min is not None else []},
             "author=system": {"data": list(system)},
-            "author=accept": {"data": []},
+            "author=accept": {"data": list(accept)},
         }
-        real = globals()["get"]
+        real, real_pr = globals()["get"], globals()["gh_pr"]
         globals()["get"] = lambda tok, path: next(v for k, v in answers.items() if k in path)
+        globals()["gh_pr"] = lambda n, board=False: pr
         try:
             rows, _ = sweep("tok", "room", 40, set(), False)
         finally:
-            globals()["get"] = real
-        return [r["kind"] for r in rows]
+            globals()["get"], globals()["gh_pr"] = real, real_pr
+        return rows
+
+    def kinds(*a, **kw):
+        return [r["kind"] for r in rows_of(*a, **kw)]
+
+    waiting_on_a_review = rows_of(msg_min=2, row={"waiting_on": "wangchangxin",
+                                                  "presentation": {"phrase": "awaiting_review"}})
+    waiting_on_an_answer = rows_of(msg_min=2, row={"waiting_on": "wangchangxin",
+                                                   "presentation": {"phrase": "awaiting_answer"}})
+    # 一张可以合并、等人点采纳的卡：平台说它就是 awaiting_review、等的是验收人，所以
+    # 「停在人身上」和「可采纳未采纳」两条判据同时成立 —— 每一张可采纳未采纳都是这个
+    # 形状，不只是造得出来。
+    adoptable = {
+        "waiting_on": "wangchangxin",
+        "presentation": {"phrase": "awaiting_review"},
+        "card": {"status": "pending", "pr_number": 42},
+    }
+    # 没进过合并队列的 PR：`gh_pr` 的时间线只要 ADDED_TO_MERGE_QUEUE_EVENT 和
+    # REMOVED_FROM_MERGE_QUEUE_EVENT 两种事件，所以「一个队列事件都没有」的真实形状
+    # 是空 nodes —— 可采纳那一支走的就是它。
+    adoptable_pr = {"merged": False, "mergeQueueEntry": None,
+                    "timelineItems": {"nodes": []}}
+    adoptable_accept = [{"created_at": at(10), "meta": {"event_type": "accept_ready"},
+                         "content": "可以合并"}]
+    # 同一张卡上还能同时挂着一句刚问出去的话：短语被待回答压过（`awaiting_answer`
+    # 在平台上先于卡判定），等的是被问的那个人，而「可以合并」由 PR 的合并态单独
+    # 成立。两件事，出两行。
+    adoptable_asking = dict(adoptable, waiting_on="bob",
+                            presentation={"phrase": "awaiting_answer"})
 
     return [
         ("sweep：消息 60 分钟前、没有 event，报停摆", kinds(), ["长时间无动静"]),
@@ -1759,14 +1860,61 @@ def _self_test_sweep():
          kinds(60, call, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
         ("sweep：任务行说结算中（被采纳的那一条还要跑一轮写总结），同样没返回的块算在跑，不报",
          kinds(60, call, row={"presentation": {"phrase": "accepted"}}), []),
-        ("sweep：任务行说待回答（这一轮可能还在跑），同样没返回的块不报",
-         kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), []),
+        ("sweep：任务行说待回答（这一轮可能还在跑），报待回答，块没返回就不再报停摆",
+         kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), ["待回答"]),
         ("sweep：不知道座位是谁时别人的 event 不算心跳（10 分钟前的块也不认）",
          kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
         ("sweep：还没点「开始」的行整行跳过（判的是 started_at，行上有座位也一样）",
          kinds(60, done, row={"started_at": None}), []),
+        # 与上一条成对：老行带着 `started_at`、值为 None 才跳过；线上现在的行根本没有
+        # 这个键，不能跟着一起跳过，否则每一条在办任务都被咽掉、一条信号都报不出来。
+        ("sweep：行上没有 started_at 这个键、只剩 created_at（后端已下线该字段），照常扫出停摆",
+         kinds(60, done, base=task_now), ["长时间无动静"]),
         ("sweep：平台给的 last_output_at 10 分钟前，不报",
          kinds(60, done, row={"last_output_at": at(10)}), []),
+        # 待回答这一条线：不等阈值。提问本身就是最新的心跳，2 分钟前问的、阈值 40，
+        # 按 长时间无动静 判是 None —— 少了 sweep 里那段，这几条读成 []。
+        ("sweep：2 分钟前刚问出一句、行上写着在等谁，立刻报待回答（阈值 40 也报）",
+         kinds(msg_min=2, row={"waiting_on": "wangchangxin"}), ["待回答"]),
+        ("sweep：待回答的行报出等谁、等了多久、最后一条提问是哪个时刻哪句话",
+         # 判的是这几样说出来没有，不是那句话怎么措辞：`awaiting_detail` 的用词、
+         # 摘要拿什么符号括起来，改了都不该红 —— 摘要的格式由「消息摘要」那两条盯着。
+         [(r["waited_min"], "wangchangxin" in r["detail"], at(2)[11:16] in r["detail"],
+           "等" in r["detail"])
+          for r in rows_of(msg_min=2, row={"waiting_on": "wangchangxin"})],
+         [(2, True, True, True)]),
+        ("sweep：行上写着在等谁、短语是待审阅（递上去等验收的那一类）同样立刻报待回答，"
+         "不看阈值",
+         kinds(msg_min=2, row={"waiting_on": "wangchangxin",
+                               "presentation": {"phrase": "awaiting_review"}}), ["待回答"]),
+        ("sweep：等审阅和等人回话这两条线，看板上写出来不是同一句话",
+         # 判据是两条读起来分得清，不是哪一个词 —— 换成「审核」「答复」照样算数。
+         [[r["detail"] for r in waiting_on_a_review] != [r["detail"] for r in waiting_on_an_answer]],
+         [True]),
+        # 这一条问不出具体是谁：写出来的那句得是句人话 —— 不拿这条线的座位顶（它在等
+        # 的是被问的人），也不能把「没有名字」漏成 None。具体用哪个词是文案，换词不该红。
+        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，写成人话、不拿这条线的座位顶",
+         [(r["waiting_on"], "cheese" in r["detail"], at(2)[11:16] in r["detail"],
+           "None" in r["detail"])
+          for r in rows_of(msg_min=2, row={"presentation": {"phrase": "awaiting_answer"},
+                                           "waiting_on": None})],
+         [(None, False, True, False)]),
+        ("sweep：行上说在等看的这个人（awaits_me）照样算待回答（这条端点上它蕴含 waiting_on，"
+         "钉的是规范里那一条判据）",
+         kinds(msg_min=2, row={"awaits_me": True}), ["待回答"]),
+        ("sweep：待回答的线不再补一行长时间无动静（消息 60 分钟前也一样）",
+         kinds(row={"waiting_on": "bob"}), ["待回答"]),
+        # 可以合并的卡同时也是「停在验收人身上」：两行会把同一件事说两遍，只留可采纳
+        # 未采纳那一行（它本来就把在等谁写在名字上）。
+        ("sweep：可以合并、等人点采纳的卡只出一行（可采纳未采纳），不再跟着一行待回答",
+         [(r["kind"], r["waiting_on"]) for r in
+          rows_of(row=adoptable, accept=adoptable_accept, pr=adoptable_pr)],
+         [("可采纳未采纳", "wangchangxin")]),
+        # 但真问出去的一句不挡：能合并和「有人被问了、还没答」是两件事，两行都要。
+        ("sweep：可以合并的卡又刚问了人一句，两行都在（可采纳未采纳 + 待回答）",
+         [(r["kind"], r["waiting_on"]) for r in
+          rows_of(row=adoptable_asking, accept=adoptable_accept, pr=adoptable_pr)],
+         [("可采纳未采纳", "bob"), ("待回答", "bob")]),
     ]
 
 

@@ -1,0 +1,14 @@
+{
+  "actionFailed": "操作失败",
+  "commentSendFailed": "评论发送失败",
+  "commentsLoadFailed": "评论加载失败",
+  "dashboardLoadFailed": "数据加载失败",
+  "deleteFailed": "删除失败",
+  "listLoadFailed": "反馈列表加载失败",
+  "loadMoreFailed": "加载更多失败",
+  "mineLoadFailed": "「我的反馈」加载失败",
+  "openFailed": "这条反馈打不开",
+  "queueLoadFailed": "管理队列加载失败",
+  "repliesLoadFailed": "回复加载失败",
+  "submitFailed": "提交失败"
+}

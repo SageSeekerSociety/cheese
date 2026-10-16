@@ -16,6 +16,7 @@ import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { vGuideAnchor } from '../composables/useGuideAnchors'
+import { useKeepAudience } from '../composables/useKeepAudience'
 import { useMentionOutside } from '../composables/useMentionOutside'
 import { noteFacts, useProjectTour } from '../composables/useProjectTour'
 import { useStartSteps } from '../composables/useStartSteps'
@@ -30,6 +31,7 @@ import ChatTimeline from './chat/ChatTimeline.vue'
 import { useComposerShortcut } from './chat/composables/useComposerShortcut'
 import MentionOutsidePrompt from './chat/MentionOutsidePrompt.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
+import KeepToLibraryConfirm from './room/KeepToLibraryConfirm.vue'
 import MemberActivity from './room/MemberActivity.vue'
 import MessageQuote from './room/MessageQuote.vue'
 import RoomComposer from './room/RoomComposer.vue'
@@ -42,6 +44,8 @@ const props = withDefaults(
     topic: Topic | null
     /** 私聊里的消息不能转为任务：不给「转为任务」。 */
     noUpgrade?: boolean
+    /** 这是一段私聊：只有里面的人看得到，保存到资料库前要先确认。 */
+    privateChat?: boolean
     // 这一栏里每条消息都是说给芝士听的：1:1 私聊那种只有它一个对话方的地方。
     // 别处叫它靠 @ 它（和 @ 人同一套），见 sendDraft。
     alwaysSummon?: boolean
@@ -180,8 +184,21 @@ const pins = useChannelPins({
   report: (message) => (panel.errorMsg.value = message),
   seen: () => panel.timeline.messages.value.some((m) => typeof m.meta?.pinned_block_id === 'string'),
 })
+// 私密频道和私聊里的东西只有这里的人看得到：保存到资料库之前先说清保存后谁会看到。
+const keeping = ref<Block | null>(null)
+const keepAudience = useKeepAudience(
+  () => props.topic?.id ?? null,
+  () => keeping.value !== null
+)
 function keepFile(block: Block) {
-  if (props.topic) pins.keep(props.topic.id, block)
+  if (!props.topic) return
+  if (props.privateChat || props.topic.members_only) keeping.value = block
+  else pins.keep(props.topic.id, block)
+}
+function confirmKeep() {
+  const block = keeping.value
+  keeping.value = null
+  if (block && props.topic) pins.keep(props.topic.id, block)
 }
 function nameOf(handle: string): string {
   return panel.refMaps.mentionNames[handle] || handle
@@ -307,11 +324,12 @@ const {
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
 const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
 
-// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
-// 的那一刻做一次，删掉了不会再长回来。
+// 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上 @ 它的那枚标签。只在
+// 打开的那一刻做一次，删掉了不会再长回来。
 watch(loadingHistory, (loading, was) => {
   if (!props.inThread || props.alwaysSummon || loading || !was || draft.value) return
-  draft.value = summonPrefill(panel.timeline.messages.value, isMine, agentName.value)
+  const seat = agentSeat.value
+  draft.value = summonPrefill(panel.timeline.messages.value, isMine, seat ? `<@${seat.handle}>` : `@${agentName.value}`)
 })
 
 // The timeline binds these two with `:ref`, so it has to receive the Refs
@@ -376,7 +394,9 @@ useComposerShortcut({
         :title-override="titleOverride"
         :back-label="backLabel"
         @back="emit('back')"
-      />
+      >
+        <template v-if="$slots['header-actions']" #actions><slot name="header-actions" /></template>
+      </ChatPanelHeader>
 
       <!-- The timeline gets its own boundary: one bad row must not take the
            composer, the new-message pill or the error toast down with it.
@@ -544,6 +564,7 @@ useComposerShortcut({
           :topic="topic"
           :mention-pool="mentionPool"
           :topic-list="topicList"
+          :refs="refMaps"
           :agent-seat="agentSeat"
           :agent-name="agentName"
           :always-summon="alwaysSummon"
@@ -566,6 +587,13 @@ useComposerShortcut({
         </RoomComposer>
       </div>
     </template>
+    <KeepToLibraryConfirm
+      :name="keeping ? keeping.content.split('/').pop() ?? keeping.content : null"
+      :people="keepAudience.people.value"
+      :project-people="keepAudience.projectPeople.value"
+      @confirm="confirmKeep"
+      @cancel="keeping = null"
+    />
   </div>
 </template>
 

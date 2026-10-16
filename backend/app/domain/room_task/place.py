@@ -5,11 +5,13 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import NotFoundError, ValidationError
+from app.core.sentences import say
 from app.domain.agent_session.models import AgentSession
 from app.domain.living_doc.services import Documents
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.thread.models import Thread
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicStatus
 
 
 @dataclass(frozen=True)
@@ -95,6 +97,31 @@ class PlaceResolver:
             room = await self._session.get(Topic, thread.room_id)
             return Place(room=room, thread=thread) if room is not None else None
         return None
+
+
+async def place_or_404(session: AsyncSession, place_id: uuid.UUID) -> Place:
+    """The conversation this id names — a room, or one of its tasks — or 404.
+
+    The route-level counterpart of `TopicService.get_or_404`, and the front door
+    of most routes: they are addressed by a conversation id that may be either a
+    room or a task, and a task's place carries its room (the roster, files and
+    work computer are the room's, the history and the session are the task's).
+
+    它从前是 `TopicService` 的一个方法，跟着「按 id 取一个地方」这件事搬到本模块：
+    回答它要读 `tasks` 和 `threads`，而那是本包的行 —— 第 2 层的 `topic` 反过来
+    读，才是层表上那条向上的边（`docs/manual/dev/architecture.md`）。
+    """
+    place = await PlaceResolver(session).conversation(place_id)
+    if place is None:
+        raise NotFoundError("Topic not found")
+    return place
+
+
+def require_doc_writable(place: Place) -> None:
+    """归档后工作面冻结 (spec §6.3): an archived room's document takes no more
+    writes."""
+    if place.room.status == TopicStatus.archived:
+        raise ValidationError(say("topicArchivedDocFrozen"))
 
 
 async def living_doc_of(session: AsyncSession, place: Place):

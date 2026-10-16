@@ -47,7 +47,7 @@ export interface WaitingFace {
 /** 等我回答的一条邀请或申请（后端 `api/awaiting_asks.py`）：有人邀请我加入项目或
  *  团队，或有人申请加入我管的团队。答了就不在清单上了。 */
 export interface WaitingAsk {
-  kind: 'project_invite' | 'team_invite' | 'join_request'
+  kind: 'project_invite' | 'project_transfer' | 'team_invite' | 'join_request'
   /** 回答时交回去的号：项目邀请是 uuid，团队的邀请和申请是数字的字符串。 */
   id: string
   /** 加入的是哪里：项目或团队的 id。 */
@@ -55,8 +55,8 @@ export interface WaitingAsk {
   place: WaitingFace
   /** 发起的人：邀请人，或提出申请的人。 */
   person: WaitingFace
-  /** 团队邀请给的角色；其余两种没有。 */
-  role: 'MEMBER' | 'ADMIN' | 'OWNER' | null
+  /** 邀请给的角色：团队邀请是大写那三种，项目邀请是成员或导师；其余没有。 */
+  role: 'MEMBER' | 'ADMIN' | 'OWNER' | 'member' | 'mentor' | null
   /** 邀请或申请时附的那句话；没写是空串。 */
   message: string
   at: string

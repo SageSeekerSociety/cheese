@@ -869,13 +869,13 @@ answers with 404 itself, so the check covers the tunnel and the front door
 without depending on an application rollout.
 
 Neither of those saves a request already on its way down a tunnel that stalls:
-it hangs until ssh gives the line up, about 20 s, and then fails with 502. So
-reads (`GET`, `HEAD`) go through their own `reverse_proxy` with a 10 s
-`response_header_timeout`. A read with no response headers by then counts as a
-failure, marks that tunnel down for `fail_duration`, and is retried on the other
-one within `lb_try_duration` (15 s, longer than the timeout or no retry is left
-to make). Writes keep the original block with no header timeout: Caddy does not
-retry them, so a timeout would only cut off a slow write.
+it hangs until ssh gives the line up, about 20 s, and then fails with 502. The
+proxy deliberately sets no `response_header_timeout` to cut that short. One was
+tried on 2026-10-09 (reads given up after 10 s and retried on the other tunnel)
+and removed: it also cut reads that are slow on a healthy tunnel, such as an
+Office-to-PDF preview or a project export, ran them twice, and each timeout
+marked a healthy tunnel down for writes too. 1043 reads ended in an error in six
+days, against the 29 stall 502s of the one day (2026-10-09) it was added to fix.
 
 Each tunnel also still forwards `127.0.0.1:18443` (tunnel B: `18444`) to
 api-front's TLS listener `127.0.0.1:18443`, which terminates TLS on the dev
@@ -1152,6 +1152,7 @@ Kong tunnels inside TLS on `:443` do not apply inside the mainland.
 | Beijing | `/etc/caddy/Caddyfile` | `scripts/ops/Caddyfile.beijing` |
 | Beijing | `~bjrelay/.ssh/authorized_keys` | `restrict,port-forwarding`, may only listen on `127.0.0.1:18463` and `:18464` |
 | Beijing | `/etc/ssh/sshd_config.d/60-bjrelay.conf` | no passwords; `bjrelay` gets remote forwarding only, 10 s × 2 keepalive |
+| Beijing | `/etc/systemd/system/cheese-bj-relay-watchdog.service`, `/usr/local/libexec/cheese-bj-relay/relay-watchdog.sh` | frees a port held by a dead tunnel session (same design as etrip's `cheese-relay-watchdog`, no Feishu alert) |
 
 Both tunnels currently leave through the default (Unicom) line. From the campus
 exit that Hong Kong's tunnel B uses (table 18443 via 119pve), the Beijing address

@@ -16,10 +16,10 @@ from app.api.task_instructions import say_became_task
 from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.handles import recipient_seat
+from app.domain.room_task.dispatch import create_task
 from app.domain.room_task.models import Task
 from app.domain.thread.models import Thread
 from app.domain.thread.services import thread_teammate
-from app.domain.topic.services import TopicService
 
 
 def turns_in_place(block: Block, room_id: uuid.UUID) -> bool:
@@ -65,7 +65,8 @@ async def turn_into_task(
             if root is not None
             else None
         )
-    task = await TopicService(db).create_task(
+    task = await create_task(
+        db,
         room_id=thread.room_id,
         created_by=by,
         title=title,

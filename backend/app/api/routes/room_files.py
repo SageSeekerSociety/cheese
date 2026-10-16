@@ -20,8 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker, get_chat_service
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
+from app.auth.project_roles import may
 from app.core.config import settings
 from app.core.errors import (
     ConflictError,
@@ -44,9 +46,9 @@ from app.domain.project.room_files import (
     artifact_kind_for,
     clean_artifact_path,
 )
-from app.domain.room_task.place import Place
+from app.domain.project_permissions import Permission
+from app.domain.room_task.place import Place, place_or_404
 from app.domain.textfile import content_version
-from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.room_files")
 
@@ -54,15 +56,23 @@ router = APIRouter(tags=["room-files"])
 
 
 async def _in_room(
-    db: AsyncSession, resolver: ActorResolver, topic_id: uuid.UUID
+    db: AsyncSession,
+    resolver: ActorResolver,
+    topic_id: uuid.UUID,
+    *,
+    writes: bool = False,
 ) -> tuple[Place, Actor]:
-    place = await TopicService(db).place_or_404(topic_id)
+    """The room and who is in it; ``writes`` also asks that their role lets them
+    change files (#3830)."""
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
+    if writes:
+        await require_role(db, actor, place.project_id, Permission.edit_content)
     return place, actor
 
 
@@ -74,6 +84,9 @@ def _room_path(raw: str) -> str:
     path = clean_artifact_path(raw)
     if library.library_name(path) is not None:
         raise ValidationError(say("libraryOriginalReadOnly"))
+    if library.is_message_attachment(path):
+        # 发进对话的那一份是原件：消息指着它，浏览器也按「这个地址的字节不会变」留着它。
+        raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
     return path
 
 
@@ -110,6 +123,8 @@ class RoomFileOut(BaseModel):
     author_kind: str | None
     #: 最后那次保存从哪个门进来的：取值见 ``room_files.SOURCES``。空 = 同上。
     source: str | None
+    #: 有人从这里把它保存到了资料库（#3828）。
+    in_library: bool
 
 
 class RoomFileListOut(Page[RoomFileOut]):
@@ -131,13 +146,15 @@ async def list_files(
     作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存
     补齐，没保存过的那几份照列。
 
-    `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
+    `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。`in_library` 说
+    这一份有没有人保存到资料库（`POST /topics/{topic_id}/shown/save`）。
     """
     place, _ = await _in_room(db, resolver, topic_id)
     items, total = await asyncio.to_thread(
         library.list_room_files, place.project_id, place.room_id
     )
     saved = await room_files.latest_by_path(db, place.room_id)
+    kept = await library_records.saved_from(db, place.room_id)
     rows: list[dict] = []
     for item in items:
         last = saved.get(item["path"])
@@ -149,6 +166,7 @@ async def list_files(
                 "author": (last.author_handle or None) if last is not None else None,
                 "author_kind": last.author_kind if last is not None else None,
                 "source": last.source if last is not None else None,
+                "in_library": item["path"] in kept,
             }
         )
     return ok({**page(rows, total), "truncated": total > len(items)})
@@ -213,7 +231,7 @@ async def restore_file_revision(
 ) -> dict:
     """Put an earlier save back. The current state becomes one more revision
     back, so a restore is itself undoable."""
-    place, actor = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id, writes=True)
     row = await room_files.revision_or_404(db, place.room_id, revision_id)
     made = await room_files.restore_revision(
         db,
@@ -237,7 +255,7 @@ async def copy_into_room(
     was given, and the room works on its own copy — which is also how a user's
     file becomes the template for a new one without being overwritten.
     """
-    place, actor = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id, writes=True)
     source = clean_artifact_path(str(body.get("source") or ""))
     target = _room_path(str(body.get("path") or ""))
     if artifact_kind_for(target) not in ARTIFACT_MIME:
@@ -303,7 +321,7 @@ async def new_from_template(
     The name must keep the template's format: a 「报告」 saved as .xlsx would be a
     file that no program opens as what its name says.
     """
-    place, actor = await _in_room(db, resolver, topic_id)
+    place, actor = await _in_room(db, resolver, topic_id, writes=True)
     template = catalogue.find(str(body.get("template") or ""))
     if template is None:
         raise ValidationError(say("templateNotFound"))
@@ -357,7 +375,8 @@ async def open_in_editor(
     """The signed config the browser opens the office editor with.
 
     When it cannot open, ``reason`` is a code (``not_configured``,
-    ``unsupported``, ``library_original``) that the screen words in its
+    ``unsupported``, ``library_original``, ``attachment_original``) that the
+    screen words in its
     reader's language (``work.room.fileEditor.unavailable.<code>``)."""
     place, actor = await _in_room(db, resolver, topic_id)
     clean = clean_artifact_path(path)
@@ -367,6 +386,8 @@ async def open_in_editor(
         return ok({"enabled": False, "reason": "unsupported"})
     if library.library_name(clean) is not None:
         return ok({"enabled": False, "reason": "library_original", "copyable": True})
+    if library.is_message_attachment(clean):
+        return ok({"enabled": False, "reason": "attachment_original", "copyable": True})
     version = await asyncio.to_thread(
         room_files.current_version,
         place.project_id,
@@ -383,7 +404,8 @@ async def open_in_editor(
         version=version,
         handle=actor.handle,
         display_name=actor.handle,
-        can_edit=actor.authenticated,
+        can_edit=actor.authenticated
+        and await may(db, place.project_id, actor.handle, Permission.edit_content),
     )
     return ok(
         {
@@ -506,7 +528,7 @@ async def editor_saves_file(
             logger.warning("office editor save refused: %s", exc)
             await db.rollback()
             return JSONResponse({"error": 1, "message": str(exc)}, status_code=403)
-        place = await TopicService(db).place_or_404(target.room_id)
+        place = await place_or_404(db, target.room_id)
         shown = await add_shown_block(
             db,
             project_id=place.project_id,

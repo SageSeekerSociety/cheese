@@ -72,10 +72,12 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import BlockOut, BlockRepository, _actor_in_place
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
+from app.auth.project_roles import may
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -97,8 +99,9 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.project_permissions import Permission
+from app.domain.room_task.place import place_or_404
 from app.domain.thread.services import answered_in
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -135,7 +138,7 @@ async def send_chat_message(
     changes nothing (`Place.keeps_work`). Of the agents, only the task's own
     session publishes there, in its turn.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Sign in to send a message")
@@ -162,6 +165,7 @@ async def send_chat_message(
         # reads it and answers in a 支线 under it; speaking in the main line
         # is joining first.
         raise ForbiddenError(say("channelJoinToPost"))
+    await require_role(db, actor, place.project_id, Permission.speak)
     content = body.content.strip()
     attachments = [
         {"path": a.path, "mime": a.mime}
@@ -181,6 +185,7 @@ async def send_chat_message(
         if body.quoted_context
         else None,
         client_id=str(body.request_id),
+        may_summon=await may(db, place.project_id, actor.handle, Permission.ask_agent),
     )
     stored = await BlockRepository(db).get(anchor_id)
     sent = BlockOut.model_validate(stored).model_dump(mode="json")
@@ -314,7 +319,7 @@ async def leave_a_note(
     房间里的一条消息。那边这一刻没有在跑的轮次就没人接住，如实回 `delivered: false`。
     """
 
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     sender = actor.handle
     if not actor.authenticated:

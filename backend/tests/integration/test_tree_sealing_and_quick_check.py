@@ -343,3 +343,143 @@ def test_ready_only_changes_existing_pr_review_state(client, monkeypatch):
             assert task.status == TaskStatus.open
 
     client.portal.call(run)
+
+
+def test_ready_puts_the_commits_title_on_a_placeholder_pr(client, monkeypatch):
+    """The `CI required` run the ready flag starts reads the PR's title, and
+    this repository checks it. A draft PR still carrying the platform's
+    placeholder is marked ready under the head commit's title, and the title
+    goes on before the flag — later is a round of CI failed for `WIP: 任务名`.
+    """
+    project, room = _room(client)
+    github = AsyncMock()
+    github.pr_view.return_value = {
+        "draft": True,
+        "node_id": "PR_node",
+        "title": "WIP: 领用额度",
+        "head": {"sha": "abc123"},
+    }
+    github.commit_subject.return_value = "fix(usage): a claim is answered once"
+    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
+
+    async def run():
+        async with client.test_factory() as session:
+            task = await _task(session, project, room, "ready")
+            service = AcceptService(session, roster_team=project_team)
+            task.pr_number, task.pr_url = 123, "https://example/pull/123"
+            assert (await service.mark_ready(room, task.id))["ready"] is True
+            github.commit_subject.assert_awaited_once_with("abc123")
+            github.update_pr.assert_awaited_once_with(
+                123, title="fix(usage): a claim is answered once"
+            )
+            named = [
+                call[0]
+                for call in github.mock_calls
+                if call[0] in ("update_pr", "mark_ready_for_review")
+            ]
+            assert named == ["update_pr", "mark_ready_for_review"]
+
+    client.portal.call(run)
+
+
+def test_ready_leaves_the_placeholder_alone_when_the_commit_is_one_too(
+    client, monkeypatch
+):
+    """Writing the commit's placeholder onto the PR would put back the title
+    this is here to remove — the PR still fails the title check, and now the
+    platform wrote the bad title itself. The commit is what has to change."""
+    project, room = _room(client)
+    github = AsyncMock()
+    github.pr_view.return_value = {
+        "draft": True,
+        "node_id": "PR_node",
+        "title": "WIP: 领用额度",
+        "head": {"sha": "abc123"},
+    }
+    github.commit_subject.return_value = "WIP: still sketching this one"
+    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
+
+    async def run():
+        async with client.test_factory() as session:
+            task = await _task(session, project, room, "ready")
+            service = AcceptService(session, roster_team=project_team)
+            task.pr_number, task.pr_url = 123, "https://example/pull/123"
+            assert (await service.mark_ready(room, task.id))["ready"] is True
+            github.update_pr.assert_not_awaited()
+            github.mark_ready_for_review.assert_awaited_once_with("PR_node")
+
+    client.portal.call(run)
+
+
+def test_ready_leaves_a_title_that_is_not_the_placeholder(client, monkeypatch):
+    """Only the platform's own placeholder is the platform's to replace: a
+    title the card or a person already wrote stays, and this asserts it with a
+    commit subject standing by — without one the test would pass whether the
+    placeholder was recognised or not."""
+    project, room = _room(client)
+    github = AsyncMock()
+    github.pr_view.return_value = {
+        "draft": True,
+        "node_id": "PR_node",
+        "title": "fix(usage): a claim is answered once",
+        "head": {"sha": "abc123"},
+    }
+    github.commit_subject.return_value = "fix(usage): some other title entirely"
+    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
+
+    async def run():
+        async with client.test_factory() as session:
+            task = await _task(session, project, room, "ready")
+            service = AcceptService(session, roster_team=project_team)
+            task.pr_number, task.pr_url = 123, "https://example/pull/123"
+            assert (await service.mark_ready(room, task.id))["ready"] is True
+            github.update_pr.assert_not_awaited()
+            github.mark_ready_for_review.assert_awaited_once_with("PR_node")
+
+    client.portal.call(run)
+
+
+def test_ready_answers_an_exhausted_quota_wherever_it_hits(client, monkeypatch):
+    """The quota is per installation: whichever call in the hand-over spends
+    the last request, the caller gets the sentence that says so and can retry,
+    not a transport error. The steps are idempotent, so nothing is half done.
+    """
+    from app.domain.review.github_pr import GitHubPRRateLimited
+
+    project, room = _room(client)
+    github = AsyncMock()
+    github.pr_view.return_value = {
+        "draft": True,
+        "node_id": "PR_node",
+        "title": "WIP: 领用额度",
+        "head": {"sha": "abc123"},
+    }
+    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
+
+    async def run():
+        async with client.test_factory() as session:
+            task = await _task(session, project, room, "ready")
+            service = AcceptService(session, roster_team=project_team)
+            task.pr_number, task.pr_url = 123, "https://example/pull/123"
+            github.commit_subject.return_value = "fix(usage): a claim is answered once"
+
+            # The read that opens the hand-over is always the first call, so
+            # each leg spends the quota one call later than the one above it.
+            github.commit_subject.side_effect = GitHubPRRateLimited("limited")
+            read = await service.mark_ready(room, task.id)
+            assert read["ready"] is False and "额度暂时用尽" in read["reason"]
+            github.update_pr.assert_not_awaited()
+            github.mark_ready_for_review.assert_not_awaited()
+
+            github.commit_subject.side_effect = None
+            github.update_pr.side_effect = GitHubPRRateLimited("limited")
+            write = await service.mark_ready(room, task.id)
+            assert write["ready"] is False and "额度暂时用尽" in write["reason"]
+            github.mark_ready_for_review.assert_not_awaited()
+
+            github.update_pr.side_effect = None
+            github.mark_ready_for_review.side_effect = GitHubPRRateLimited("limited")
+            flip = await service.mark_ready(room, task.id)
+            assert flip["ready"] is False and "额度暂时用尽" in flip["reason"]
+
+    client.portal.call(run)

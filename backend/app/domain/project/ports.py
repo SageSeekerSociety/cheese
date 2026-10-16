@@ -16,6 +16,7 @@
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -193,8 +194,10 @@ class LibraryFiles(Protocol):
         data: bytes,
         added_by: str | None,
         room_id: uuid.UUID | None,
+        source_path: str | None = None,
     ) -> str:
-        """放进一份新资料，交回它在那里的名字（撞名加 ``(n)``，不覆盖）。"""
+        """放进一份新资料，交回它在那里的名字（撞名加 ``(n)``，不覆盖）。
+        ``source_path`` 是它在 ``room_id`` 那个房间文件区里的路径。"""
         ...
 
     async def stored(
@@ -243,6 +246,8 @@ class TaskBrief:
     intro: str
     space_id: int
     is_team_submission: bool
+    #: Who joins the project made for a claim as a mentor (#3830).
+    mentors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -301,3 +306,15 @@ class TaskTerms(Protocol):
     async def terms(self, task_id: int) -> AcceptedTerms:
         """这道赛题审过之后要落的条款。"""
         ...
+
+
+class SeatMentors(Protocol):
+    """Seat a task's mentors in the project made for a claim of it (#3830).
+
+    Roles live in `membership`, one layer up; whoever builds the service hands
+    this in.
+    """
+
+    async def __call__(
+        self, session: AsyncSession, project_id: uuid.UUID, handles: Sequence[str]
+    ) -> None: ...

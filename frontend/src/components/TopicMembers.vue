@@ -95,8 +95,8 @@ function sessionsOf(handle: string): SessionEnvironment[] {
 // 「位」而不是「人」：同一句话要数得下一个 AI 队友。
 const countLabel = computed(() => t('work.room.roster.count', { count: members.value.length }))
 
-// Compact indicator: the first few human faces as a stack, capped so the
-// stack never grows unbounded — extra people fold into a "+N" tile.
+// Compact indicator: the first few faces as a stack, capped so the stack never
+// grows unbounded; the rest fold into "+N".
 const MAX_FACES = 3
 const stackFaces = computed(() => members.value.slice(0, MAX_FACES))
 const overflow = computed(() => Math.max(0, members.value.length - MAX_FACES))
@@ -400,10 +400,10 @@ async function onRemove(handle: string) {
   margin-left: -7px;
   font-size: 0.66rem;
   font-weight: 700;
-  /* 这圈 #fff 是故意写死的：底色由 UserAvatar 按 seed（member_handle）用
-     avatarColor() 算出来，两套主题下是同一个值，压在上面的字也得是同一个值。
+  /* 用 --avatar-ink 而不是 var(--ink)：底色由 UserAvatar 按 seed（member_handle）
+     用 avatarColor() 算出来，两套主题下是同一个值，压在上面的字也得是同一个值。
      底色逐人不同 —— 一排脸共用一个颜色就等于没有脸，而这一排存在的意义正是彼此不同。 */
-  color: #fff;
+  color: var(--avatar-ink);
   border: 1.5px solid var(--surface);
   box-sizing: border-box;
   overflow: hidden;
@@ -536,7 +536,7 @@ async function onRemove(handle: string) {
   border-radius: var(--radius-pill);
   font-size: 0.72rem;
   font-weight: 700;
-  color: #fff; /* theme-invariant ground, see .members-mini__face */
+  color: var(--avatar-ink); /* theme-invariant ground, see .members-mini__face */
   flex: none;
   overflow: hidden;
 }

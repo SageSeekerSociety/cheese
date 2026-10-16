@@ -45,7 +45,7 @@ from app.domain.feedback.schemas import (
     FeedbackProposalResult,
 )
 from app.domain.feedback.services import FeedbackService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["feedback"])
@@ -74,7 +74,7 @@ async def _actor_in_topic(
     authorize. Copying the order matters: authorize-then-resolve would authorize
     a caller who has not been resolved against this topic yet.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

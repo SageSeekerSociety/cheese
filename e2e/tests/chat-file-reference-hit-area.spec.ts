@@ -569,7 +569,7 @@ test("compact desktop menu keeps all actions on its captured message after hover
   await open("self");
   await menu.getByText("编辑", { exact: true }).click();
   await expect(page.locator('[data-mid="self"] .im-text')).toHaveCount(0);
-  await expect(page.locator('[data-mid="self"] textarea')).toHaveValue(
+  await expect(page.locator('[data-mid="self"] .ProseMirror')).toHaveText(
     "自己的消息。",
   );
   await expect(row.locator(".im-text")).toContainText("前一条消息。");

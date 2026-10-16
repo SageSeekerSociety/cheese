@@ -1161,6 +1161,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     from app.domain.project import forge
     from app.domain.project.models import Project, ProjectForge
     from app.domain.repository import forge_files
+    from app.domain.review import forge_clients
     from tests.support import git_store
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
@@ -1169,8 +1170,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     default_branch = forge.default_branch
     remote_head = forge_files.branch_head
     remote_data = forge_files.repository_data
-    remote_tokens = forge_files.tokens_for_project
-    remote_status = forge_files.status_client
+    remote_status = forge_clients.compare_status
     remote_author_email = forge.ensure_author_email
 
     async def provision_repository(project_id, session, **kwargs):
@@ -1217,36 +1217,26 @@ def stub_project_forge(monkeypatch, tmp_path):
         result = git_store.run(["git", "rev-parse", "--verify", branch], repo, 20, None)
         return result.stdout.strip() if result.returncode == 0 else None
 
-    async def tokens_for_project(project_id, session):
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
+    async def compare_status(project_id, session, *, base, head, release_session=False):
         if not await test_repository(project_id, session):
-            return await remote_tokens(project_id, session)
-        return SimpleNamespace(
-            installation_token=AsyncMock(return_value=("test-token", ""))
-        )
-
-    async def status_client(project_id, session):
-        from types import SimpleNamespace
-
-        if not await test_repository(project_id, session):
-            return await remote_status(project_id, session)
-
-        async def compare_status(*, base, head, **kwargs):
-            repo = git_store.path(project_id)
-            revisions = [
-                git_store.git(repo, "rev-parse", revision).strip()
-                for revision in (base, head)
-            ]
-            if revisions[0] == revisions[1]:
-                return "identical"
-            result = git_store.run(
-                ["git", "merge-base", "--is-ancestor", *revisions], repo, 20, None
+            return await remote_status(
+                project_id,
+                session,
+                base=base,
+                head=head,
+                release_session=release_session,
             )
-            return "ahead" if result.returncode == 0 else "diverged"
-
-        return SimpleNamespace(compare_status=compare_status)
+        repo = git_store.path(project_id)
+        revisions = [
+            git_store.git(repo, "rev-parse", revision).strip()
+            for revision in (base, head)
+        ]
+        if revisions[0] == revisions[1]:
+            return "identical"
+        result = git_store.run(
+            ["git", "merge-base", "--is-ancestor", *revisions], repo, 20, None
+        )
+        return "ahead" if result.returncode == 0 else "diverged"
 
     async def repository_data(project_id, session, path="", **kwargs):
         import base64
@@ -1380,8 +1370,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
     monkeypatch.setattr(forge, "repository_data", repository_data)
-    monkeypatch.setattr(forge_files, "tokens_for_project", tokens_for_project)
-    monkeypatch.setattr(forge_files, "status_client", status_client)
+    monkeypatch.setattr(forge_clients, "compare_status", compare_status)
 
 
 @pytest.fixture

@@ -18,13 +18,20 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_chat_service
-from app.api.doc_access import authorize_in_project, frozen, reach, require_writable
+from app.api.doc_access import (
+    authorize_in_project,
+    frozen,
+    reach,
+    require_role,
+    require_writable,
+)
 from app.api.doc_identity import operation_actor
 from app.api.doc_mentions import notified_handles
 from app.api.doc_store import announce, store, tell_origin_room
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import Page, ok, page, typed_response
 from app.api.topics_deps import _actor_in_place
+from app.api.write_access import ROUTE_DECIDES
 from app.core import rank
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -40,12 +47,14 @@ from app.domain.agent_instance.adapters import project_team
 from app.domain.block.documents import whose_document
 from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
+from app.domain.conversation import services as conversations
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab, work_edits
 from app.domain.living_doc.overview import overview_document
 from app.domain.living_doc.schemas import (
     DocumentIn,
     DocumentRenameIn,
+    DocumentRowOut,
     PassageEditsIn,
     RestoreIn,
     document_row,
@@ -59,9 +68,10 @@ from app.domain.mentions import (
 )
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService, refuse_writes_if_archived
+from app.domain.project_permissions import Permission
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
-from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 rooms = APIRouter(prefix="/topics", tags=["topics"])
@@ -74,8 +84,7 @@ async def conversation_document(
 ) -> dict:
     """Which document is this task's living document. It is made, empty, the
     first time anyone asks. Only a task has one."""
-    topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     if place.task is None:
         raise NotFoundError(say("channelHasNoDocument"))
@@ -168,13 +177,20 @@ async def project_documents(
 ) -> dict:
     """The project's own documents, the latest changed first, a page at a time
     (`next` is the cursor of the following page, null at the end). A room's
-    living document is the room's and is not listed. The order is the one
-    `app.core.rank` writes down, so the library page can merge these with the
-    library's own pages into one list."""
+    living document is the room's and is not listed, nor is one a conversation
+    keeps — except to 芝士 working in that conversation, whose own writing it
+    is. The order is the one `app.core.rank` writes down, so the library page
+    can merge these with the library's own pages into one list."""
     actor = await resolver.resolve(project_id=project_id, read_only=True)
     await authorize_in_project(resolver, actor, project_id)
     after = rank.decode(cursor) if cursor else None
-    docs = await Documents(db).of_project(project_id, after=after, limit=limit + 1)
+    origin = _origin(resolver, actor)
+    docs = await Documents(db).of_project(
+        project_id,
+        after=after,
+        limit=limit + 1,
+        also_of_room=await conversations.room_of(db, origin) if origin else None,
+    )
     rows = [
         {**document_row(doc), "rank": rank.encode(1, doc.updated_at, str(doc.id))}
         for doc in docs[:limit]
@@ -191,9 +207,11 @@ async def create_document(
 ) -> dict:
     """A new document of the project's own: empty, with ``content``, or a copy
     of what another document says now (``copy_of``). 芝士 making one from a
-    room puts it in that room as a line to open."""
+    room puts it in that room as a line to open, and the document stays that
+    conversation's until someone saves it to the library (#3828)."""
     actor = await resolver.resolve(project_id=project_id)
     await authorize_in_project(resolver, actor, project_id)
+    await require_role(db, actor, project_id, Permission.edit_content)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("docEditNeedsWriter"))
     await refuse_writes_if_archived(db, project_id)
@@ -208,11 +226,13 @@ async def create_document(
             # A task's document goes by its task's title.
             task = await TaskService(db).of_document(source.id)
             title = source.title or (task.title if task is not None else "")
+    origin = _origin(resolver, actor)
     doc = await Documents(db).create(
         project_id=project_id,
         title=title,
         author=actor.handle,
         number=await take_number(db, project_id, Numbered.document),
+        room_id=await conversations.room_of(db, origin) if origin else None,
     )
     settled = await _settled(
         db, resolver, doc, content or "", actor=actor.handle, keep=Counter()
@@ -240,9 +260,7 @@ async def create_document(
             await db.commit()
             raise
         await db.refresh(doc)
-    await tell_origin_room(
-        db, _origin(resolver, actor), doc, actor.handle, created=True
-    )
+    await tell_origin_room(db, origin, doc, actor.handle, created=True)
     return await _with_ref_warnings(
         db, doc, _with_canvases(ok(document_row(doc)), [settled])
     )
@@ -270,6 +288,38 @@ async def _own(db, resolver, document_id: uuid.UUID):
         raise ForbiddenError(say("docIsProjectOverview"))
     await require_writable(db, reached)
     return reached
+
+
+@router.post(
+    "/{document_id}/keep",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(DocumentRowOut),
+)
+async def keep_document(
+    document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Save a document 芝士 wrote in a conversation to the library, where
+    everyone in the project finds it (#3828). Only a person does this: a
+    session's credential reads the project and writes nothing at its level,
+    because whether a document is worth keeping is a person's call."""
+    reached = await _own(db, resolver, document_id)
+    await resolver.authorize_project(reached.actor, project_id=reached.doc.project_id)
+    await Documents(db).keep(reached.doc)
+    await db.commit()
+    await db.refresh(reached.doc)
+    return ok(document_row(reached.doc))
+
+
+@rooms.get("/{topic_id}/documents", **typed_response(Page[DocumentRowOut]))
+async def room_documents(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The documents 芝士 wrote in this channel or private chat, whether or
+    not they are in the library yet, the newest first."""
+    place = await place_or_404(db, topic_id)
+    await _actor_in_place(resolver, place)
+    docs = await Documents(db).of_room(place.room_id)
+    return ok(page([document_row(doc) for doc in docs], len(docs)))
 
 
 @router.patch("/{document_id}")
@@ -452,8 +502,9 @@ async def edit_doc_passages(
     resolver: ActorResolverDep,
 ) -> dict:
     """Change passages of the document: each ``old`` (once in its Markdown)
-    becomes ``new``, directly, or as suggestions when an AI teammate asks for
-    that (``mode: "suggest"``).
+    becomes ``new``, directly, or as suggestions when the caller asks for that
+    (``mode: "suggest"``) — an AI teammate, or a person whose role lets them
+    comment but not edit.
 
     For the room's agent and for people alike, each edits as themselves.
     Nothing is applied unless every edit can be; a refusal names the edit
@@ -461,7 +512,13 @@ async def edit_doc_passages(
     reached = await reach(db, resolver, document_id, enforce=True)
     if not reached.actor.authenticated:
         raise AuthenticationRequiredError(say("docEditNeedsWriter"))
-    await require_writable(db, reached)
+    # Suggesting a change is commenting on the text, not changing it: a mentor
+    # suggests, and someone who may edit decides (#3830).
+    await require_writable(
+        db,
+        reached,
+        Permission.comment if body.mode == "suggest" else Permission.edit_content,
+    )
     doc, actor = reached.doc, reached.actor
     if doc.version == 0:
         raise NotFoundError(say("docIsEmpty"))
@@ -493,9 +550,9 @@ async def edit_doc_passages(
     else:
         author = actor.handle
     editor_is_agent = await IdentityService(db).is_agent(author)
-    # Only an AI teammate proposes instead of editing, and only when it says so:
-    # a person's edit, like the agent's by default, is made.
-    mode = "suggest" if editor_is_agent and body.mode == "suggest" else "direct"
+    # A suggestion is made only when it is asked for; an edit, by default, is
+    # made.
+    mode = "suggest" if body.mode == "suggest" else "direct"
     # The service's store takes the document's lock in a transaction of its own.
     agent_authors = await _agent_authors(db, doc.id)
     await db.commit()

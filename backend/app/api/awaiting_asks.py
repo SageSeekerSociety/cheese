@@ -1,4 +1,5 @@
-"""待我处理里不属于哪个项目的那几件：有人邀请我、有人申请加入我管的团队。
+"""待我处理里不属于哪个项目的那几件：有人邀请我、有人想把项目转让给我、有人申请加入
+我管的团队。
 
 它们和 `awaiting_deps.waiting_items` 是同一份清单的另一半：那一半按项目里的事实现
 算（任务、验收卡、提问、拍板），这一半按邀请和申请现在的状态现算 —— 还在等回答的
@@ -17,14 +18,17 @@ from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.domain.membership.services import pending_invitations_for
+from app.domain.membership.services import (
+    pending_invitations_for,
+    pending_transfers_for,
+)
 from app.domain.project.services import ProjectService
 from app.domain.team import membership_services as team_applications
 from app.domain.team.models import TeamMembershipApplication
 from app.domain.team.services import team_service
 from app.domain.user.services import faces_by_handle, usernames_by_ids
 
-AskKind = Literal["project_invite", "team_invite", "join_request"]
+AskKind = Literal["project_invite", "project_transfer", "team_invite", "join_request"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +56,8 @@ class MembershipAsk:
     #: 发起的人：邀请人，或提出申请的人。
     person: Face
     at: datetime
-    #: 团队邀请给的角色（`MEMBER` / `ADMIN` / `OWNER`）；其余两种没有。
+    #: 邀请给的角色：团队邀请是 `MEMBER` / `ADMIN` / `OWNER`，项目邀请是
+    #: `member` / `mentor`；其余两种没有。
     role: str | None = None
     #: 邀请或申请时附的那句话；没写就空。
     message: str = ""
@@ -82,6 +87,7 @@ async def membership_asks(
 ) -> list[MembershipAsk]:
     """等 `handle` 回答的邀请和申请，新的在前。"""
     invitations = await pending_invitations_for(db, handle)
+    transfers = await pending_transfers_for(db, handle)
     team_invites: list[TeamMembershipApplication] = []
     join_requests: list[TeamMembershipApplication] = []
     if user_id is not None:
@@ -89,12 +95,12 @@ async def membership_asks(
         join_requests = await team_applications.pending_requests_answerable_by(
             db, user_id
         )
-    if not (invitations or team_invites or join_requests):
+    if not (invitations or transfers or team_invites or join_requests):
         return []
 
     # 每种实体一次取完：一屏上的邀请人、申请人、团队、项目各问一趟。
     projects = await ProjectService(db).get_projects_by_ids(
-        [i.project_id for i in invitations]
+        [i.project_id for i in invitations] + [t.project_id for t in transfers]
     )
     teams_of = team_service(db)
     team_ids = list({a.team_id for a in (*team_invites, *join_requests)})
@@ -105,7 +111,12 @@ async def membership_asks(
         [a.initiator_id for a in team_invites] + [a.user_id for a in join_requests],
     )
     people = await faces_by_handle(
-        db, [*(i.inviter_handle for i in invitations), *usernames.values()]
+        db,
+        [
+            *(i.inviter_handle for i in invitations),
+            *(t.from_handle for t in transfers),
+            *usernames.values(),
+        ],
     )
 
     def person(person_handle: str) -> Face:
@@ -129,6 +140,21 @@ async def membership_asks(
                 place=Face(name=project.name, handle=None, avatar_url=None),
                 person=person(invitation.inviter_handle),
                 at=invitation.created_at,
+                role=invitation.role,
+            )
+        )
+    for transfer in transfers:
+        project = projects.get(transfer.project_id)
+        if project is None:
+            continue
+        asks.append(
+            MembershipAsk(
+                kind="project_transfer",
+                id=str(transfer.id),
+                place_id=str(project.id),
+                place=Face(name=project.name, handle=None, avatar_url=None),
+                person=person(transfer.from_handle),
+                at=transfer.created_at,
             )
         )
 

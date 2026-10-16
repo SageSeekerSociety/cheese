@@ -270,9 +270,9 @@ function hoverProjectPage(name: string) {
   prefetchPage(name)
 }
 
-// 「转让项目」在这个菜单里也有一条（成员页那颗按钮保留，别删）。谁转得动，项目行
-// 自己就说得出：所有者，或者管得了这个项目的团队管理员（`can_manage_members`）——
-// 和成员页那颗按钮同一个判据，后端动手时按同一条规则再判一次。
+// 「转让项目」在这个菜单里也有一条（成员页那颗按钮保留，别删）。只有所有者转得动
+// （#3830），项目行上的 `my_role` 说得出——和成员页那颗按钮同一个判据，后端动手时
+// 按同一条规则再判一次。
 //
 // 「退出项目」这里也有一条（成员页那颗按钮保留，别删）——所有者换「转让项目」，其余
 // 的人换「退出项目」，两句是同一件事的两半。
@@ -283,12 +283,8 @@ function hoverProjectPage(name: string) {
 const transferOpen = ref(false)
 const leaveOpen = ref(false)
 const currentProject = computed(() => props.projects.find((p) => p.id === props.selectedProjectId) ?? null)
-const canTransfer = computed(
-  () =>
-    !!currentProject.value &&
-    (currentProject.value.owner_handle === myHandle() || currentProject.value.can_manage_members === true)
-)
-const canLeave = computed(() => !!currentProject.value && currentProject.value.owner_handle !== myHandle())
+const canTransfer = computed(() => currentProject.value?.my_role === 'owner')
+const canLeave = computed(() => !!currentProject.value && currentProject.value.my_role !== 'owner')
 // 项目名上面那一行：这个项目归哪个团队，点了进团队的项目列表。地址和顶栏那颗 ← 退到
 // 的是同一处（ParentBackButton 的 owningTeam）：个人项目只有本人打得开自己那一页，
 // 对他写「个人」，对被邀请进来的人不画这一行。

@@ -39,8 +39,9 @@ for (const f of fs.readdirSync(SCENES).filter((f) => f.endsWith('.json'))) {
 const UI_STRINGS = path.join(REPO, 'frontend/src/i18n/messages/zh-CN')
 const leaves = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
 // The catalog is a tree of files — `work/`, `apiError/`, `roomNotice/`,
-// `notifications/` and `tasks/` are directories since the split (docs/i18n.md
-// §2) — so every `.json` under it is read, at any depth.
+// `notifications/`, `tasks/`, `account/`, `feedback/` and `spaces/` are
+// directories since the split (docs/i18n.md §2) — so every `.json` under it is
+// read, at any depth.
 const catalogFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
   e.isDirectory() ? catalogFiles(path.join(dir, e.name)) : e.name.endsWith('.json') ? [path.join(dir, e.name)] : [])
 registerUiStrings(catalogFiles(UI_STRINGS).flatMap((f) => leaves(JSON.parse(fs.readFileSync(f, 'utf8')))))
@@ -369,13 +370,13 @@ ${p.library.files.map((f) => fold(`${inline(f.title)} · ${f.chars} 字符`, cod
 
   out.push(`## 相关常量 {#constants}
 
-\`prompt.py\` 里模块级的东西：预算、上限，和那些整段拼进提示词的文本。行号链到 GitHub 上的源码。
+\`prompt.py\` 里模块级的东西：预算、上限，和那些整段拼进提示词的文本。行号链到 GitHub 上的源码——常量写在哪个文件就链到哪个文件（提示词分成 \`prompt.py\` 和它同目录的三个模块之后，预算和引用上限不在门面那一份里）。
 
 | 常量 | 类型 | 值 | 代码里的说明 |
 |---|---|---|---|
 ${p.constants.map((c) => {
     const shown = c.kind === 'int' ? `\`${c.value}\`` : c.value.length <= 40 ? `\`${c.value}\`` : `${c.value.length} 字符${c.in_blocks.length ? '，见上面「' + inline(c.in_blocks[0]) + '」那一块' : ''}`
-    return `| [\`${c.name}\`](${blob(PROMPT_SRC, c.line)}) | ${c.kind === 'int' ? '整数' : '文本'} | ${shown} | ${cell(c.comment || '—')} |`
+    return `| [\`${c.name}\`](${blob(c.file || PROMPT_SRC, c.line)}) | ${c.kind === 'int' ? '整数' : '文本'} | ${shown} | ${cell(c.comment || '—')} |`
   }).join('\n')}`)
 
   return {

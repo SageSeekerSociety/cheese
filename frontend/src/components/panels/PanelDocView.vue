@@ -19,7 +19,7 @@ import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
 import type { CanvasData } from '../../types/canvas'
 
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -181,6 +181,21 @@ const emit = defineEmits<{
   'mention-outside-add': []
   'mention-outside-dismiss': []
 }>()
+
+// 顶栏画到页面上的那个位置（`barTo`）。这个位置在页面自己那一行里，要等页面挂进文档
+// 里才找得到；而项目目标那一页是保活的：人走开时它整棵树摘在文档外面，文档要是这时候
+// 才打开，按选择器去找什么也找不到。Teleport 拿着一个找不到的目标照样挂上，顶栏就哪儿
+// 都没画，之后它的每一次更新、卸下都踩在一棵没挂上的子树上，页面跟着坏掉。所以位置由
+// 这里自己找：挂上之后、页面回到屏幕上时各找一次，找到了才把顶栏送过去。
+const barTarget = shallowRef<HTMLElement | null>(null)
+function findBarTarget() {
+  barTarget.value = props.barTo ? document.querySelector<HTMLElement>(props.barTo) : null
+}
+onMounted(findBarTarget)
+onActivated(findBarTarget)
+watch(() => props.barTo, findBarTarget, { flush: 'post' })
+// 页面不再要顶栏画过去时（`barTo` 没了），当场就画回原处，不等上面那次重找。
+const barEl = computed(() => (props.barTo ? barTarget.value : null))
 
 /** 大标题：对话的名字，或者资料库文档自己的名字（没起名时是「未命名文档」）。 */
 const docTitle = computed(() =>
@@ -436,7 +451,7 @@ defineExpose({
     <template v-else>
       <!-- Stage: the editor + (optionally) a docked tool panel beside it. -->
       <div class="doc-stage flex-grow-1">
-        <Teleport :to="barTo || 'body'" defer :disabled="!barTo">
+        <Teleport v-if="!barTo || barEl" :to="barEl || 'body'" :disabled="!barEl">
           <DocTopBar
             class="doc-top"
             :class="{ 'doc-top--inline': !!barTo }"

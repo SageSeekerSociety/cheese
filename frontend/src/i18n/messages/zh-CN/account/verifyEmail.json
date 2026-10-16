@@ -1,0 +1,15 @@
+{
+  "accountCreated": "注册成功",
+  "changeEmail": "更换邮箱",
+  "codeInvalid": "验证码为 6 位数字",
+  "failed": "验证失败，稍后重试",
+  "noCode": "没有收到验证码？",
+  "passwordAgain": "再次输入注册时设置的密码",
+  "resend": "重新发送",
+  "resendFailed": "发送失败，稍后重试",
+  "resendIn": "{seconds} 秒后可重新发送",
+  "resent": "验证码已重新发送",
+  "sentTo": "验证码已发送至 {email}",
+  "submit": "完成注册",
+  "title": "验证邮箱"
+}

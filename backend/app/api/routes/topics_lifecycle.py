@@ -22,6 +22,7 @@ from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.delivery.ledger import settle_card
 from app.domain.review.archive import close_cards_for_archived_topic
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -49,6 +50,7 @@ async def archive_topic(
         by=actor.handle,
         settle_card=settle_card,
         cards=close_cards_for_archived_topic,
+        close_tasks=close_room_tasks,
     )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
     await db.commit()
@@ -126,6 +128,7 @@ async def delete_topic(
         by=actor.handle,
         settle_card=settle_card,
         cards=close_cards_for_archived_topic,
+        close_tasks=close_room_tasks,
     )
     await db.commit()
     await tell_project(topic_id, TOPICS)

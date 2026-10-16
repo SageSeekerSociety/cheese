@@ -27,7 +27,6 @@ import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
 import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
-import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
 import { siteStatusLabel } from '../../lib/siteStatusLabel'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
@@ -554,7 +553,6 @@ const rowLabels = computed(() =>
               :face-label="faceLabel(faceRows.get(m.id))"
               :face-status="faceStatus(faceRows.get(m.id))"
               :editing="editingId === m.id"
-              :edit-text="editingId === m.id ? editableText(m.content, refs) : undefined"
               :saving="editSaving"
               :mention-pool="mentionPool"
               :topic-list="topicList"

@@ -35,8 +35,8 @@ export function namesOnlyPeople(expanded: string, seat: AgentSeat, pool: Member[
   )
 }
 
-/** The visible @ used by both the composer and explicit preview questions. */
+/** The visible @ the composer writes to hand a draft to the teammate: its reference, drawn as a chip. */
 export function withAgentMention(text: string, seat: AgentSeat, pool: Member[], topics: MentionTopic[]): string {
   if (!seat || mentionsAgent(expandComposerMentions(text, seat, pool, topics), seat, pool)) return text
-  return `@${seat.label} ${text}`
+  return `<@${seat.handle}> ${text}`
 }

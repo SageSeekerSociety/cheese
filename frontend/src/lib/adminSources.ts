@@ -2,7 +2,7 @@
 //
 // 新建模型时的第一条线路、给已有模型加线路、改一条线路，三处收的是同一组字段，所以
 // 草稿、校验与「草稿 → 请求体」都放在这里，表单组件只管画。校验与服务端
-// （`backend/app/domain/agent/schemas.py`、`gateway_models.py`）同一套规则，写在界面上
+// （`backend/app/domain/agent/schemas.py`、`gateway_models/`）同一套规则，写在界面上
 // 是为了省一次往返，判据仍以服务端为准。
 
 import type { GatewayProtocol, GatewaySourceFields } from '@/api/admin/gateway'

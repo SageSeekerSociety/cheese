@@ -3,6 +3,17 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    SmallInteger,
+    String,
+    column,
+    or_,
+    select,
+    table,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
@@ -12,7 +23,6 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import say
-from app.domain.task.repositories import TaskMembershipRepository
 from app.domain.team.models import (
     Team,
     TeamMemberRole,
@@ -31,6 +41,35 @@ from app.domain.user.services import (
     usernames_by_ids,
 )
 
+# 两张裸表：`task` 及它的名册。这两个领域互相依赖 —— `task` 读团队来判权限，团队读
+# 这两行来判「这个团队还被锁着没有」—— 所以这一包只取要用的列，和
+# `topic/repositories/statements.py` 的 `_tasks`/`_threads` 同一条规矩：谁被依赖谁
+# 不伸手，由依赖方自己读。
+_task = table(
+    "task",
+    column("id", BigInteger),
+    column("team_locking_policy", String),
+    column("deleted_at", DateTime(timezone=True)),
+)
+_task_membership = table(
+    "task_membership",
+    column("task_id", BigInteger),
+    column("member_id", BigInteger),
+    column("is_team", Boolean),
+    column("approved", SmallInteger),
+    column("completion_status", String),
+    column("deadline", DateTime(timezone=True)),
+    column("deleted_at", DateTime(timezone=True)),
+)
+
+#: 一件活走到哪一步还算「没结束」。字面值取自 `task.models.TaskMembership` 的
+#: `completion_status`；这一包认不出那个类（`task` 在第 4 层），只认这三个字符串。
+_ONGOING_COMPLETION_STATUSES = (
+    "NOT_SUBMITTED",
+    "PENDING_REVIEW",
+    "REJECTED_RESUBMITTABLE",
+)
+
 
 async def check_team_locking_status(session, team_id: int) -> None:
     """Check if a team is locked due to participation in tasks with locking policies.
@@ -40,17 +79,30 @@ async def check_team_locking_status(session, team_id: int) -> None:
     completion status is still ongoing. Raises ForbiddenError if locked.
     """
 
-    membership_repo = TaskMembershipRepository(session=session)
-    locking_policies = ["LOCK_ON_APPROVAL"]
-    locked = await membership_repo.find_active_locked_memberships(
-        team_id=team_id,
-        locking_policies=locking_policies,
+    now = datetime.now(UTC)
+    stmt = (
+        select(_task_membership.c.task_id)
+        .select_from(
+            _task_membership.join(_task, _task.c.id == _task_membership.c.task_id)
+        )
+        .where(
+            _task_membership.c.member_id == team_id,
+            _task_membership.c.is_team.is_(True),
+            _task_membership.c.approved == 0,  # APPROVED
+            _task_membership.c.deleted_at.is_(None),
+            _task.c.deleted_at.is_(None),
+            _task.c.team_locking_policy == "LOCK_ON_APPROVAL",
+            _task_membership.c.completion_status.in_(_ONGOING_COMPLETION_STATUSES),
+            or_(
+                _task_membership.c.deadline.is_(None),
+                _task_membership.c.deadline > now,
+            ),
+        )
     )
+    locked = list(await session.scalars(stmt))
     if locked:
-        task_names = []
-        for m in locked:
-            # We don't eagerly load the task, so just mention the task ID.
-            task_names.append(str(m.task_id))
+        # We don't eagerly load the task, so just mention the task ID.
+        task_names = [str(task_id) for task_id in locked]
         msg = (
             "Team membership cannot be changed because the team is "
             f"participating in locked task(s): {', '.join(task_names)}"

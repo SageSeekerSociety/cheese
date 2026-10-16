@@ -37,6 +37,8 @@ vi.mock('../../api', async () => {
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic: Topic = {
   id: 'room-1',
@@ -118,6 +120,8 @@ async function hover(container: Element, id: string) {
   await fireEvent.mouseOver(container.querySelector<HTMLElement>(`[data-mid="${id}"]`)!)
 }
 
+beforeAll(loadMarkdownReader)
+
 describe('改自己发过的消息', () => {
   it('只有自己的消息上有「编辑」', async () => {
     const view = await mount()
@@ -137,9 +141,9 @@ describe('改自己发过的消息', () => {
     await fireEvent.click(view.getByTitle('编辑'))
     await flush()
 
-    const box = view.getByRole('textbox', { name: '编辑' }) as HTMLTextAreaElement
-    expect(box.value).toBe('周五交初稿')
-    await fireEvent.update(box, '周六交初稿')
+    const box = view.getByRole('textbox', { name: '编辑' })
+    expect(composerText(box)).toBe('周五交初稿')
+    await fillComposer(box, '周六交初稿')
     await fireEvent.click(view.getByRole('button', { name: '保存' }))
     await flush()
 
@@ -155,7 +159,7 @@ describe('改自己发过的消息', () => {
     await fireEvent.click(view.getByTitle('编辑'))
     await flush()
     const box = view.getByRole('textbox', { name: '编辑' })
-    await fireEvent.update(box, '改了一半')
+    await fillComposer(box, '改了一半')
     await fireEvent.keyDown(box, { key: 'Escape' })
     await flush()
 

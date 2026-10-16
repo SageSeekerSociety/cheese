@@ -4,7 +4,7 @@
 管理后台的第五块（前四块在 `admin_members.py` / `admin_feedback.py` / `admin_stats.py` /
 `admin_spaces.py`），管的还是平台自己的东西：哪些模型在上架、各自烧了多少、项目的刹车值
 设在哪。这些字在反馈功能删掉之后仍然成立，所以门是共用的 `PlatformAdminDep`，
-服务是 `domain/agent/gateway_models.py`，两者都不从反馈那边借。
+服务是 `domain/agent/gateway_models/`（按职责拆开的包），两者都不从反馈那边借。
 
 **失败要看得见**：这一页的动作是人点出来的，网关不可达、网关拒绝了这次写、想改的是
 config.yaml 里的模型，都得在页面上有一句能读的原因。分两处翻，因为两处各答得上一半：

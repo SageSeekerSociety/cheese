@@ -104,6 +104,11 @@ OFF_DISK_SPECS = (
     "src/views/demo/demoTransitions.spec.ts",
     "src/views/feedback/scroll.spec.ts",
     "src/views/home/Landing.spec.ts",
+    # Reads TopicView.vue and walks topicView/ off disk to hold the split
+    # boundary, the per-file budgets and the route entry in place. Added in
+    # #3899 (befe4ab9, 2026-10-16 07:34) without a tuple entry; that PR's
+    # cifast check was skipped, so this list's own test was the first to notice.
+    "src/views/workspace/TopicView.splitBoundary.spec.ts",
 )
 # Config whose change invalidates the narrow type project and the related graph.
 FRONTEND_META = {
