@@ -209,10 +209,10 @@ jobs:
         with:
           node-version: 22
           # No cache here, deliberately. docs/site is three packages and the
-          # install is a couple of seconds on a hosted runner (0.78s in run
-          # 38923291475, 2s in run 38927604231); and these guards never run on
-          # main, so a cache saved here would be visible to this ref alone —
-          # the converse of the `Restore only` note on setup-uv above.
+          # install is about two seconds on a hosted runner (2s in runs
+          # 38926053508 and 38927604231); and these guards never run on main,
+          # so a cache saved here would be visible to this ref alone — the
+          # converse of the `Restore only` note on setup-uv above.
 
       - name: Build the docs site
         if: ${{ !cancelled() && steps.docs_node.outcome == 'success' && steps.docs_tags.outcome == 'success' }}
