@@ -39,6 +39,7 @@ from app.domain.task.repositories import (
 from app.domain.task.services import TaskMembershipService
 from app.domain.task.submission_state import claim_state
 from app.domain.team.models import Team
+from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -396,8 +397,6 @@ async def _enrich_task_user_state(
     # ship arrays of bare ids / `{id}` stubs, so the dialog rendered
     # "确定要让小队\"undefined\"退出该赛题吗？". Bulk-fetch real Team rows
     # for every team_id that shows up across the task list.
-    from app.domain.team.repositories import TeamRepository as _TeamRepo
-
     team_repo = _TeamRepo(session=db)
 
     by_id = {task.id: task for task in tasks}
