@@ -18,7 +18,7 @@ from typing import cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import release_read_session
-from app.core.errors import GatewayUnavailableError
+from app.core.errors import UpstreamUnavailableError
 from app.core.sentences import say
 from app.domain.project.forge import binding_for_project, tokens_for_project
 from app.domain.project.github_app import GitHubAppTokens
@@ -32,7 +32,7 @@ async def proposal_client(project_id: uuid.UUID, session: AsyncSession):
         return None
     tokens = await tokens_for_project(project_id, session)
     if tokens is None:
-        raise GatewayUnavailableError(say("forgeCredentialsMissing"))
+        raise UpstreamUnavailableError(say("forgeCredentialsMissing"))
     owner, repo = binding.repo.split("/", 1)
     if binding.kind == "github_app":
         return GitHubPRClient(
@@ -44,12 +44,12 @@ async def proposal_client(project_id: uuid.UUID, session: AsyncSession):
 async def status_client(project_id: uuid.UUID, session: AsyncSession):
     binding = await binding_for_project(project_id, session)
     if binding is None:
-        raise GatewayUnavailableError(say("forgeNoRepository"))
+        raise UpstreamUnavailableError(say("forgeNoRepository"))
     if binding.kind == "github_app":
         return default_client()
     if binding.kind == "forgejo":
         return ForgejoClient(binding.api_url)
-    raise GatewayUnavailableError(say("forgeKindUnknown"))
+    raise UpstreamUnavailableError(say("forgeKindUnknown"))
 
 
 async def compare_status(
@@ -68,10 +68,10 @@ async def compare_status(
     """
     binding = await binding_for_project(project_id, session)
     if binding is None:
-        raise GatewayUnavailableError(say("forgeNoRepository"))
+        raise UpstreamUnavailableError(say("forgeNoRepository"))
     tokens = await tokens_for_project(project_id, session)
     if tokens is None:
-        raise GatewayUnavailableError(say("forgeCredentialsMissing"))
+        raise UpstreamUnavailableError(say("forgeCredentialsMissing"))
     owner, repo = binding.repo.split("/", 1)
     if release_session:
         await release_read_session(session)

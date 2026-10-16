@@ -1170,7 +1170,6 @@ def stub_project_forge(monkeypatch, tmp_path):
     default_branch = forge.default_branch
     remote_head = forge_files.branch_head
     remote_data = forge_files.repository_data
-    remote_tokens = forge_files.tokens_for_project
     remote_status = forge_clients.compare_status
     remote_author_email = forge.ensure_author_email
 
@@ -1217,16 +1216,6 @@ def stub_project_forge(monkeypatch, tmp_path):
             return None
         result = git_store.run(["git", "rev-parse", "--verify", branch], repo, 20, None)
         return result.stdout.strip() if result.returncode == 0 else None
-
-    async def tokens_for_project(project_id, session):
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock
-
-        if not await test_repository(project_id, session):
-            return await remote_tokens(project_id, session)
-        return SimpleNamespace(
-            installation_token=AsyncMock(return_value=("test-token", ""))
-        )
 
     async def compare_status(project_id, session, *, base, head, release_session=False):
         if not await test_repository(project_id, session):
@@ -1381,7 +1370,6 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
     monkeypatch.setattr(forge, "repository_data", repository_data)
-    monkeypatch.setattr(forge_files, "tokens_for_project", tokens_for_project)
     monkeypatch.setattr(forge_clients, "compare_status", compare_status)
 
 
