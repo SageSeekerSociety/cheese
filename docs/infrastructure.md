@@ -869,13 +869,13 @@ answers with 404 itself, so the check covers the tunnel and the front door
 without depending on an application rollout.
 
 Neither of those saves a request already on its way down a tunnel that stalls:
-it hangs until ssh gives the line up, about 20 s, and then fails with 502. So
-reads (`GET`, `HEAD`) go through their own `reverse_proxy` with a 10 s
-`response_header_timeout`. A read with no response headers by then counts as a
-failure, marks that tunnel down for `fail_duration`, and is retried on the other
-one within `lb_try_duration` (15 s, longer than the timeout or no retry is left
-to make). Writes keep the original block with no header timeout: Caddy does not
-retry them, so a timeout would only cut off a slow write.
+it hangs until ssh gives the line up, about 20 s, and then fails with 502. The
+proxy deliberately sets no `response_header_timeout` to cut that short. One was
+tried on 2026-10-09 (reads given up after 10 s and retried on the other tunnel)
+and removed: it also cut reads that are slow on a healthy tunnel, such as an
+Office-to-PDF preview or a project export, ran them twice, and each timeout
+marked a healthy tunnel down for writes too. It logged 1043 failed reads in six
+days, against about 29 stall 502s a day before it.
 
 Each tunnel also still forwards `127.0.0.1:18443` (tunnel B: `18444`) to
 api-front's TLS listener `127.0.0.1:18443`, which terminates TLS on the dev
