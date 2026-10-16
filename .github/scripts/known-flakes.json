@@ -1,5 +1,5 @@
 {
-  "about": "The patterns rerun-failed.py knows already, and the shortest handling for each. What the run object carries is the workflow path and the event — not the failed job names and not the log — so match names those two; different keys intersect and the values under one key are alternatives. rerun false means the run is not one a retry helps; true means a rerun is the standard response and the handling is printed with it. A pattern only ever explains a refusal or annotates a rerun: none of them widens what the five gates in rerun-failed.py already allow. Written 2026-10-16 to move seven per-incident notes out of task histories.",
+  "about": "The patterns rerun-failed.py knows already, and the shortest handling for each. What the run object carries is the workflow path and the event — not the failed job names and not the log — so match names those two; different keys intersect and the values under one key are alternatives. rerun false means the run is not one a retry helps; true means a rerun is the standard response and the handling is printed with it. A pattern only ever explains a refusal or annotates a rerun: none of them widens what the five gates in rerun-failed.py already allow. Written 2026-10-16, moving these per-incident notes out of task histories.",
   "patterns": [
     {
       "id": "dependabot-registry-502",

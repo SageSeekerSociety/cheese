@@ -73,7 +73,7 @@ def _validate(path: Path, pattern: object) -> None:
                 f"{path}: pattern {where!r} matches {field!r}, and a run only"
                 f" carries {sorted(MATCHED_FIELDS)}"
             )
-        if not isinstance(wanted, list) or not all(
+        if not isinstance(wanted, list) or not wanted or not all(
             isinstance(value, str) and value for value in wanted
         ):
             raise ValueError(

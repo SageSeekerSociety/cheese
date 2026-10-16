@@ -179,6 +179,7 @@ class KnownPatternTest(unittest.TestCase):
         for damage in (
             {"match": {"jobs": ["integration"]}},
             {"match": {}},
+            {"match": {"event": []}},
             {"rerun": "yes"},
             {"action": ""},
             {"symptoms": []},
