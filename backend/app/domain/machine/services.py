@@ -654,7 +654,9 @@ class HostPool:
         again, this one. Written only when there is one to forget, since this
         runs on every placement."""
         row = await self._session.get(AgentSession, session_id)
-        request = (row.execution_request or {}) if row is not None else {}
+        if row is None:
+            return
+        request = row.execution_request or {}
         if LEFT_HOST_KEY not in request:
             return
         row.execution_request = {
