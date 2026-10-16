@@ -9,8 +9,6 @@
 形状和常量在 `plan.py`，要写的文件由 `layout.py` 码，报告在 `report.py`。
 """
 
-from __future__ import annotations
-
 import json
 
 from app.core.sentences import listing, say

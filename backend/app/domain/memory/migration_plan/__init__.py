@@ -27,8 +27,6 @@ team」这两条可以在单测里直接问，不用先跑一次模型。
 问模型的那段话在 `migration_prompt.py`；重导出这些名字的入口在 `migration.py`。
 """
 
-from __future__ import annotations
-
 from .decode import build_plan, decode_answer
 from .plan import (
     REASON_MAX,

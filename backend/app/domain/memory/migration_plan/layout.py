@@ -5,8 +5,6 @@
 写——写下去以后会怎样（版本冲突、事务）在 `migration_service.apply` 里。
 """
 
-from __future__ import annotations
-
 from app.core.sentences import listing, say
 from app.domain.memory.files import (
     INDEX_NAME,

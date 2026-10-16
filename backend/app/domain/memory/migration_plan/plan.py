@@ -9,8 +9,6 @@
 `layout.py`；报告在 `report.py`。这一份只放它们共用的形状和常量。
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import StrEnum
 

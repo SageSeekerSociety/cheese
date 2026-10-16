@@ -4,8 +4,6 @@
 一条条列出来、要写的文件全文附上、只建议和丢掉的分开写，最后一行说清下一步。
 """
 
-from __future__ import annotations
-
 from .plan import REPORT_TITLE, TEAM_INDEX_GOAL_LINES, Destination, MigrationPlan
 
 
