@@ -46,9 +46,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
 from app.core.sentences import say
-from app.domain.event_about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_about import EventAbout, landing
 from app.domain.notice_meta import (
     EVENT_GATE_ABANDONED,
     SEVERITY_WARN,

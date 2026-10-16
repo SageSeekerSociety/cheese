@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 
 from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, say
-from app.domain.event_about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
+from app.domain.event_about import EventAbout, landing
 from app.domain.membership.services import MemberService
 from app.domain.repository import identity
 from app.domain.review import (

@@ -34,10 +34,10 @@ from app.domain.agent_instance.adapters import named_teammate
 from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
-from app.domain.event_about import EventAbout, landing
 from app.domain.block.models import AGENT_NOTICE_META_KEY, AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.event_about import EventAbout, landing
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope

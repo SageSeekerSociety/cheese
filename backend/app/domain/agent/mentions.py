@@ -42,13 +42,13 @@ from app.core.text import markdown_preview
 from app.domain.addressing import Event, Hand, address
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.event_about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import is_task, room_of
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery.models import Delivery
 from app.domain.delivery_events import DeliveryEvent, event_id_for
+from app.domain.event_about import EventAbout, landing
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document, DocumentComment

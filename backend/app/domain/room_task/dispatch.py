@@ -23,10 +23,10 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.event_about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import room_of
+from app.domain.event_about import EventAbout, landing
 from app.domain.identity.handles import names_a_person, recipient_seat
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import (

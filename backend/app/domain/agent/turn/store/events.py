@@ -14,11 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.obs import scrub_secrets
 from app.core.sentences import say
 from app.domain.agent.step_output import output_tail
-from app.domain.event_about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.output_effects import append_output, fail_step, retain_step_output
 from app.domain.block.queries import output_event_exists, turn_action_exists
 from app.domain.block.schemas import BlockOut
+from app.domain.event_about import EventAbout, landing
 
 logger = logging.getLogger("app.domain.agent.room_events")
 
