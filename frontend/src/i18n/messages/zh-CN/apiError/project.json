@@ -73,6 +73,7 @@
   "inviteWhom": "要邀请谁",
   "itemVersionMissing": "这一项没有这一版",
   "leaveProjectSignIn": "需要登录后才能退出项目",
+  "maxConcurrentTurnsInvalid": "max_concurrent_turns 要在 {min} 到 {max} 之间，或传 null 恢复系统默认",
   "memoryEntryNotFound": "记忆条目不存在",
   "mergeIntoOtherItem": "into 必须是清单上另一项的 id",
   "modeInvalid": "mode 只能是 {modes} 之一",

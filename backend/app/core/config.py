@@ -881,20 +881,26 @@ class Settings(BaseSettings, SandboxSettings):
 
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
-    # Overridable per project via project.settings["max_concurrent_turns"].
+    # A project that wants another number sets its own in
+    # project.settings["max_concurrent_turns"]; ``app.core.turn_ceiling`` reads
+    # it, and PUT /projects/{project_id}/compute-configs is what writes it.
     #
     # The number comes from the room side. A room runs up to
     # `MAX_RESIDENT_TASKS_PER_ROOM` threads and its own line is not one of them,
     # so a saturated room is five turns, and a project normally has more than
     # one room working. At 2, a single busy room queued three of its own threads
-    # behind itself while the rest of the project waited on top of that.
+    # behind itself while the rest of the project waited on top of that. At 16,
+    # a project running sixteen or more task lines at once queued work of its
+    # own behind the ceiling. 20 lifts that, stopping short of 32: one jump was
+    # thought to fall hard on the small machines, so the default moves in steps
+    # and the projects that need more say so themselves.
     #
     # This is the ONLY concurrency gate in the system: nothing limits how many
     # turns land on ONE machine. So this number also decides what a single
     # self-hosted laptop can be asked to run at once, which is not what it is
     # named for and not a limit anybody chose. Raise this and that exposure
     # rises with it, until a per-machine gate exists.
-    max_concurrent_turns: int = 16
+    max_concurrent_turns: int = 20
 
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)

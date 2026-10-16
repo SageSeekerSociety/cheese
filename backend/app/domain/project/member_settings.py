@@ -2,10 +2,11 @@
 
 Everything else in a project's settings is its managers' (the project owner and
 the owners and admins of its team). These are the everyday choices of how the
-project works — which model, which environment a new agent gets, how tasks are
-named, whose name a commit carries — and the people and agents doing that work
-may change them. Spend stays bounded by what the managers keep: the team's plan
-and the project's tier policy still decide what a model or a machine may cost.
+project works — which model, which environment a new agent gets, how many of
+its turns may run at once, how tasks are named, whose name a commit carries —
+and the people and agents doing that work may change them. Spend stays bounded
+by what the managers keep: the team's plan and the project's tier policy still
+decide what a model or a machine may cost.
 
 What makes a setting safe to open is that nobody learns of a change by
 accident: every change is said in the project's 综合, credited to whoever made
@@ -20,11 +21,14 @@ from typing import Final
 #: The ``Project.settings`` keys a member may change. ``task_naming`` is
 #: ``room_task.naming.SETTINGS_KEY``, written out here because this layer may
 #: not read that one; ``app/api/member_settings.py`` checks the two agree.
+#: ``max_concurrent_turns`` is read (and its own default kept) by
+#: ``app.core.turn_ceiling.project_max_concurrent_turns``.
 MEMBER_SETTINGS: Final = frozenset(
     {
         "default_model",
         "default_subagent_model",
         "execution_environment",
+        "max_concurrent_turns",
         "task_naming",
         "forge_requester_coauthor",
     }

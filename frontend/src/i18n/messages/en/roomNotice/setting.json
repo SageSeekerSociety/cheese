@@ -4,6 +4,7 @@
   "settingDefaultModel": "the project main model",
   "settingSubagentModel": "the default subagent model",
   "settingEnvironment": "the environment new agents use",
+  "settingMaxConcurrentTurns": "the project's concurrent turn limit",
   "settingTaskNaming": "task naming",
   "settingCoauthor": "co-author credit",
   "settingEffort": "thinking effort",
