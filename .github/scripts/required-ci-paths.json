@@ -85,6 +85,7 @@
   "remote": [
     "backend/app/**",
     "backend/alembic/**",
+    "backend/alembic.ini",
     "backend/sandbox/**",
     "backend/pyproject.toml",
     "backend/uv.lock",

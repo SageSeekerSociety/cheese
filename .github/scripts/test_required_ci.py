@@ -305,6 +305,7 @@ class RequiredCITest(unittest.TestCase):
             "backend/sandbox/cheese",
             "backend/pyproject.toml",
             "backend/uv.lock",
+            "backend/.python-version",
             "frontend/src/main.ts",
             "e2e/tests/login.spec.ts",
         ):
@@ -334,10 +335,13 @@ class RequiredCITest(unittest.TestCase):
         # remote-execution.yml builds backend/sandbox/Dockerfile.private, runs a
         # pytest selection whose files load tests/conftest.py (and, through it,
         # tests/isolation.py and tests/support/*), and names two scripts on the
-        # command line. Anything under one of those roots has to select it.
+        # command line. Anything under one of those roots has to select it —
+        # including alembic.ini, which conftest's `python -m alembic upgrade`
+        # reads from backend/ when a DB-backed test builds its schema.
         for path in (
             "backend/app/domain/agent/executor_transport.py",
             "backend/alembic/env.py",
+            "backend/alembic.ini",
             "backend/sandbox/Dockerfile.private",
             "backend/tests/conftest.py",
             "backend/tests/support/processes.py",
@@ -347,6 +351,7 @@ class RequiredCITest(unittest.TestCase):
             "backend/scripts/device_connection_lifecycle_acceptance.py",
             "backend/pyproject.toml",
             "backend/uv.lock",
+            "backend/.python-version",
         ):
             with self.subTest(path=path):
                 self.assertTrue(gate.select([path])["remote"])
