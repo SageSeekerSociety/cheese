@@ -206,7 +206,13 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         #     那一条已经收进 `notification/ports.py` 的口子，落话的是
         #     `block/adapters.py`，本模块不再读 room 的表） ---
         ("app.domain.notification.services", "app.domain.project.repositories"),
-        ("app.domain.oauth.services", "app.domain.user.repositories"),
+        # oauth.services 拆成了包（`services/__init__.py` 门面 + 三个子模块）。两条
+        # 按 handle 取身份的模块级函数留在门面里，函数内那句
+        # `from app.domain.user.repositories import UserRepository` 也跟着留在那儿，
+        # 于是发起方从 `app.domain.oauth.services` 换成包的 `__init__` —— 守卫按文件
+        # 路径取名，包的入口就是 `…services.__init__`。同一份债换了导入方，不是新债，
+        # 和 `review.services` 拆包时 `_shared` 接手那三条是同一回事。
+        ("app.domain.oauth.services.__init__", "app.domain.user.repositories"),
         # --- pin --- 置顶要确认那一块在这个频道主线上，再在主线写一行「置顶了…」：
         # 读一块、写一块，block 领域没有 service 层，和 announce 同一个理由入账。
         ("app.domain.pin.services", "app.domain.block.repositories"),
