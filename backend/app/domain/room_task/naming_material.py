@@ -20,7 +20,8 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import names_a_person
 from app.domain.living_doc.services import Documents
 from app.domain.room_task.models import Task, TaskTitleSource

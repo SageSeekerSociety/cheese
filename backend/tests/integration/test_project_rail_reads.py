@@ -17,7 +17,8 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.room_task.models import Task

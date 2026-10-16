@@ -4,7 +4,8 @@ import asyncio
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 

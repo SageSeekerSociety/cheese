@@ -6,13 +6,13 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 # `AuthorType` and `BlockKind` are re-exported: a route that writes a block
-# reads them from here, not from `models`, so it does not depend on the table
-# definitions directly.
-from app.domain.block.models import (
-    AuthorType as AuthorType,
-)
+# reads them from here, not from `block.models` / `event_author`, so it does
+# not depend on the table definitions directly.
 from app.domain.block.models import (
     BlockKind as BlockKind,
+)
+from app.domain.event_author import (
+    AuthorType as AuthorType,
 )
 
 

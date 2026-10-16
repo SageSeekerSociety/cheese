@@ -12,7 +12,8 @@ main line is told without opening it.
 
 import uuid
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.thread.models import Thread
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
 from tests.integration.conftest import (

@@ -450,6 +450,38 @@ unmatched_ignore_imports_alerting = warn
 # a two-field wire shape. The shape moved down; computing it stays in
 # `room_task/presentation.py`, which reads room and task rows.
 #
+# `event_about` joined at layer 1 (2026-10-16), the same move as `notice_meta`
+# and `presentation_meta`: `EventAbout` — the four things one event can be about
+# — and the `landing()` that turns one of them into where it lands (`Landing`:
+# the project and the conversation) lived in `block/about.py` at layer 4, and
+# they are pure vocabulary — the module imports `enum`, `uuid` and `dataclasses`
+# and nothing else. Six packages read them — `topic` at layer 2, `review`,
+# `room_task`, `pin` and `block` itself at layer 4, `agent` at layer 5 — and the
+# table lived in `block` at layer 4, so the layer-2 reader climbed two layers
+# for a closed four-row table. The table
+# and `landing()` moved down. Writing the event row stays in `block`:
+# whoever says something into a room now hands the call in (the `PlatformLine` port
+# in `topic/ports.py`), and stepping through `landing()` is what that
+# implementation does before it appends — the landing guard asks for exactly
+# that, so the table keeps deciding where a line goes.
+#
+# `event_author` joined at layer 1 (2026-10-16), the next step of the same
+# commit that took `topic -> block` to zero. `AuthorType` — participant or
+# platform — lived in `block/models.py` at layer 4, and `topic` at layer 2 reads
+# that column twice: the unread badge and 「回复了我」 both filter on it, through
+# the bare `blocks` table that package declares itself. The vocabulary moved
+# down; `block/models.py` imports it back for the mapped column, and the column's
+# one judged landing place stays `app.domain.block.authorship`, which keeps the
+# pair of twins (`is_participant` for a row, `participant_blocks` for a `WHERE`).
+# Why the move was forced rather than merely tidy: the column may only be read as
+# an enum member (`tests/unit/test_author_type_two_values.py`), and a package
+# that cannot name the enum can only spell the member as a string literal — the
+# exact thing that guard exists to catch. Importers were followed one by one and
+# now take it from `app.domain.event_author`; `block/models.py` still imports it
+# for its own mapped column, so the name is reachable as an attribute of that
+# module — nobody imports it from there. `block.schemas` re-exports it on purpose
+# for routes, and takes it from layer 1 the way every other importer does.
+#
 # `environment_diagnosis` joined at layer 3 (2026-10-14), out of the `project`
 # package it was written in. It takes no project row — the route hands it two
 # ids, the settings and the failure — and what it reads is `gateway_chat` and
@@ -513,7 +545,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet : project_material
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : project_permissions
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : event_about : event_author : project_permissions
 containers =
     app.domain
 exhaustive = true

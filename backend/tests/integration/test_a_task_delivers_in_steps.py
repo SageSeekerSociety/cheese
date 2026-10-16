@@ -332,7 +332,8 @@ def test_a_task_from_something_that_is_not_a_message_still_closes(client):
     import asyncio
     import uuid
 
-    from app.domain.block.models import AuthorType, Block, BlockKind
+    from app.domain.block.models import Block, BlockKind
+    from app.domain.event_author import AuthorType
     from tests.integration.test_tasks import _room
 
     project, room = _room(client)

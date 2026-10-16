@@ -16,9 +16,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import update
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.queries import turn_starts
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.topic.services import TopicService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once

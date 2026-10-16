@@ -18,6 +18,7 @@ from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
+from app.domain.block.adapters import platform_line
 from app.domain.room_task.services import TaskService
 from app.domain.topic.directory import channel_directory
 from app.domain.topic.services import TopicService
@@ -79,6 +80,7 @@ async def step_into_channel(
             topic,
             by=actor.handle,
             content=say("channelSteppedIn", actor=f"<@{actor.handle}>"),
+            events=platform_line,
         )
     await db.commit()
     await announce_stale(topic.id, "topics", id=topic.id)
@@ -111,6 +113,7 @@ async def hand_over_channel(
                 actor=f"<@{actor.handle}>",
                 manager=f"<@{body.handle}>",
             ),
+            events=platform_line,
         )
     await db.commit()
     await announce_stale(topic.id, "topics", id=topic.id)

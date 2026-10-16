@@ -33,8 +33,9 @@ from app.domain.block.asked import (
     skipped_by,
     skipped_by_all,
 )
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 
 #: Codex's `request_user_input` caps one call at three questions of two or three
 #: options each; a longer list reads as a form, which is what this replaced.

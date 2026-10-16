@@ -35,6 +35,7 @@ from app.core.storage import S3StorageBackend
 from app.domain.agent import device_storage
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.adapters import platform_line
 from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
@@ -305,6 +306,7 @@ async def _archive(client, monkeypatch, room_id, device_id, machine):
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
             close_tasks=close_room_tasks,
+            events=platform_line,
         )
         await session.commit()
         cleanup_id = (await TopicService(session).get_or_404(room_id)).cleanup_id

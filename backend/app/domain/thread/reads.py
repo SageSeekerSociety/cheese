@@ -31,11 +31,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.block.indexed_rows import FAILED_TURN_ROWS
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
 )
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column, names_a_person
 from app.domain.thread.models import Thread
 
