@@ -76,9 +76,13 @@ async function openSite(blocks: Block[], props: Record<string, unknown> = {}) {
     props: { topicId: topic.id, active: true, ...props },
     global: { plugins: [vuetify] },
   })
-  // 正文是懒加载的阅读器画的（common/MarkdownView），首帧那一块是空的：
-  // 等它真的画出来再交回去，不然下面断言读的是还没画的那一帧。
-  await waitFor(() => expect(utils.container.querySelector('.site-msg__body')?.textContent?.trim()).toBeTruthy())
+  // 正文是懒加载的阅读器画的（common/MarkdownView），首帧那一块是照原文先画的：
+  // 等阅读器真的画出来再交回去，不然下面断言读的是原文那一帧。
+  await waitFor(() => {
+    const body = utils.container.querySelector('.site-msg__body')
+    expect(body?.textContent?.trim()).toBeTruthy()
+    expect(body?.querySelector('.md-plain-first')).toBeNull()
+  })
   return utils
 }
 
