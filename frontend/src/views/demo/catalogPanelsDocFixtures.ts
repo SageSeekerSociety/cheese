@@ -21,6 +21,7 @@ import { Editor as TiptapEditor } from '@tiptap/core'
 import { AGENT_NAME, docSession } from './catalogFixtures'
 import { PANEL_NAMES } from './catalogPanelsFixtures'
 
+import { DocEditor } from '@/components/panels/doc/docEditor'
 import { docExtensions } from '@/lib/docSchema'
 import { SLASH_ITEMS } from '@/lib/docSlashMenu'
 import { versionDiff } from '@/lib/versionDiff'
@@ -75,12 +76,16 @@ export function demoEditorStandalone(markdown = ''): Editor {
  * `editorProps` 上，正文列的排版有一半按它挂（`.doc-editor :deep(.doc-prose ...)`）。
  * 预览站里没有 DocSurface 那一层，只能建的时候自己加上 —— 不加，那一格画出来就是一段
  * 没排过版的裸正文，而排版正是这一格要看的东西。
+ *
+ * 建的是 `DocEditor`（`@tiptap/vue-3` 那一支，`DocSurface` 建的也正是它），不是上面两把
+ * 用的 `@tiptap/core` 版：正文列是这一册里唯一用 `EditorContent` 挂编辑器的一件，而
+ * `EditorContent` 拿到没被 `markRaw` 过的编辑器，就会和自己的效果互相触发、绕不出来，
+ * 整条测试进程停在那儿。真的那两把都建 vue 版，这一把也得是。
  */
 export function demoProseEditor(markdown = ''): Editor {
-  const editor = new TiptapEditor({
-    element: document.createElement('div'),
+  const editor = new DocEditor({
     extensions: docExtensions(),
-    content: '',
+    editable: true,
     editorProps: { attributes: { class: 'doc-prose' } },
   })
   if (markdown) editor.commands.setContent(markdown, { contentType: 'markdown' })
