@@ -71,7 +71,8 @@ GATE_STALE_GRACE_S = 600
 #: `nudge`（读一次房间的座位，再 submit 一轮），本进程几乎没有要算的；一次重部署
 #: 之后攒下的孤儿卡都落在同一轮里，一张接一张等于把这几十张卡按轮询周期
 #: （`gate_sweep_interval_s`，默认 300 秒）排队。八个是拿连接池的零头换来的上限
-#: ——一个 worker 手里是 20 个池内加 15 个溢出——不是吞吐目标。
+#: ——部署默认 `BACKEND_WORKERS=1`，一个 worker 手里是 20 个池内加 15 个溢出；worker
+#: 多了这一份按 `db_connections_per_worker()` 摊薄，那时 8 就该跟着小——不是吞吐目标。
 AT_ONCE = 8
 
 _ABANDONED_OUTPUT = (
@@ -175,8 +176,10 @@ async def sweep(
     `nudge`，两张卡之间除了数据库没有别的东西共用，所以几张卡在 `AT_ONCE` 以内
     同时判。交回的列表跟一张一张判时同序，轮询和启动扫底读到的都是这个。
 
-    `nudge` 抛出去照旧中止整轮（和一张一张判时一样，那一下本来就不在 `try` 里）：
-    判死已经提交过了，不会被回滚。
+    `nudge` 抛出去照旧从这里抛给调用方（那一下本来就不在 `try` 里，所以不算某张卡
+    的错）：判死已经提交过了，不会被回滚。和一张一张判时不同的一点是，`gather`
+    不会取消同一批里别的卡 —— 异常交给调用方的当下，剩下的几张还在接着判完，这一
+    轮的返回值也就没有了。
     """
     async with session_factory() as session:
         stale = await find_abandoned(session, now=now)

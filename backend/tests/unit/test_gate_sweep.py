@@ -23,6 +23,9 @@ from app.domain.review.models import AcceptStatus
 NOW = datetime(2026, 10, 16, tzinfo=UTC)
 #: 替身判死一张卡的默认耗时。够长，够让同一轮里别的卡挤进来。
 HOW_LONG_S = 0.02
+#: 等「前面那张先判完」的上限。链上每张卡等的只是别人那 20 毫秒，5 秒是它的两百多
+#: 倍；真等不到，说明一张卡不再等别人先跑完 —— 那时候要红，不是把测试挂在那儿。
+WAIT_FOR_S = 5
 
 
 class _Session:
@@ -69,19 +72,30 @@ class _Repo:
 
 
 class _Condemning:
-    """替掉 `condemn`：记下同时在判几张，并真的等一会儿再交回。"""
+    """替掉 `condemn`：记下同时在判几张，并真的等一会儿再交回。
+
+    `after` 钉的是判完的先后：它给的那张卡先判完，然后再轮到自己。完成顺序要定死
+    就只能这样钉 —— 拿睡眠长短去凑只是「都等了一会儿」，谁先回来仍然看机器忙不忙。
+    """
 
     def __init__(
         self,
         *,
         how_long: dict[uuid.UUID, float] | None = None,
         failing: frozenset[uuid.UUID] = frozenset(),
+        after: dict[uuid.UUID, tuple[uuid.UUID, ...]] | None = None,
     ) -> None:
         self.how_long = how_long or {}
         self.failing = failing
+        self.after = after or {}
+        self.released: dict[uuid.UUID, asyncio.Event] = {}
         self.in_flight = 0
         self.peak = 0
         self.finished: list[uuid.UUID] = []
+
+    def _released(self, card_id: uuid.UUID) -> asyncio.Event:
+        """这张卡不再挡着等它的那张 —— 判死和判失败都算。"""
+        return self.released.setdefault(card_id, asyncio.Event())
 
     async def __call__(self, session: object, card: SimpleNamespace) -> None:
         self.in_flight += 1
@@ -90,9 +104,12 @@ class _Condemning:
             await asyncio.sleep(self.how_long.get(card.id, HOW_LONG_S))
             if card.id in self.failing:
                 raise RuntimeError("这张卡判不下去")
+            for earlier in self.after.get(card.id, ()):
+                await asyncio.wait_for(self._released(earlier).wait(), WAIT_FOR_S)
             self.finished.append(card.id)
         finally:
             self.in_flight -= 1
+            self._released(card.id).set()
 
 
 def _card(settled: bool = False) -> SimpleNamespace:
@@ -110,6 +127,7 @@ def _world(
     settled: frozenset[uuid.UUID] = frozenset(),
     failing: frozenset[uuid.UUID] = frozenset(),
     how_long: dict[uuid.UUID, float] | None = None,
+    after: dict[uuid.UUID, tuple[uuid.UUID, ...]] | None = None,
 ) -> SimpleNamespace:
     """把一轮 `sweep` 的四个外界换成桩。
 
@@ -117,7 +135,7 @@ def _world(
     `get` 的时候状态已经不是 `pending_gate`。
     """
     sessions = _Sessions()
-    condemning = _Condemning(how_long=how_long, failing=failing)
+    condemning = _Condemning(how_long=how_long, failing=failing, after=after)
     nudged: list[uuid.UUID] = []
 
     async def find_abandoned(session: object, *, now: datetime | None = None):
@@ -166,7 +184,8 @@ async def test_one_cards_failure_leaves_the_others_alone(
     """一张卡判失败只算它自己：别的卡照判、照提交，它自己回滚。
 
     这是「一张卡出错不能把另一张卡已经判死的结果回滚掉」那一条在并发之后仍然
-    成立的样子 —— 同时判不等于共用一次成败。
+    成立的样子 —— 同时判不等于共用一次成败。串行那一版也是绿的：它钉的是这次
+    改动不许弄丢的东西，不是并发本身。
     """
     cards = [_card() for _ in range(4)]
     doomed = cards[1]
@@ -189,15 +208,15 @@ async def test_the_report_keeps_the_order_the_cards_came_in(
 ) -> None:
     """交回的列表按查出卡片的顺序，不按判完的先后。
 
-    所以这里让先查出的卡判得最慢：完成顺序和查出的顺序正好反过来。
+    完成顺序在这里定死成和查出的顺序正好反过来：最后查出的先判完，先查出的等它
+    前面那张交回之后再交回。
     """
     cards = [_card() for _ in range(4)]
     settled = frozenset({cards[2].id})
-    how_long = {
-        card.id: HOW_LONG_S * (len(cards) - index) for index, card in enumerate(cards)
-    }
+    # 卡片 2 已经结算，不会走到替身这里，所以这条链绕过它：3 先判完，1 等 3，0 等 1。
+    after = {cards[0].id: (cards[1].id,), cards[1].id: (cards[3].id,)}
 
-    world = _world(monkeypatch, cards, settled=settled, how_long=how_long)
+    world = _world(monkeypatch, cards, settled=settled, after=after)
     result = await world.run()
 
     assert world.condemning.finished == [
