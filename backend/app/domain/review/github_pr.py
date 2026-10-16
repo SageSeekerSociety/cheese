@@ -1264,14 +1264,27 @@ class GitHubPRClient:
         platform's placeholder is marked ready under the commit's own title,
         because the full `CI required` that the ready flag starts reads the
         PR's title, and a repository checking its own titles reads nothing
-        but `WIP:` there."""
+        but `WIP:` there.
+
+        A refusal raises where the rest of this class raises — `GitHubPRError`,
+        or `GitHubPRRateLimited` for the quota — not `GitHubPrError`: the two
+        are unrelated siblings, and only the first pair is what callers along
+        the ready path handle (`_as_pr_error`'s docstring). `_refused` above is
+        the older client's idiom and belongs to that one."""
         token, _ = await self._tokens.write_token()
         async with forge_client(transport=self._transport, timeout=20.0) as client:
             resp = await client.get(
                 self._url(f"/commits/{sha}"), headers=self._headers(token)
             )
         if resp.status_code != 200:
-            raise _refused("githubRefusedCommitRead", resp)
+            refusal = say(
+                "githubRefusedCommitRead",
+                status=resp.status_code,
+                reply=resp.text[:300],
+            )
+            if resp.status_code == 403 and "API rate limit exceeded" in resp.text:
+                raise GitHubPRRateLimited(refusal)
+            raise GitHubPRError(refusal)
         message = ((resp.json().get("commit") or {}).get("message") or "").strip()
         return message.splitlines()[0] if message else None
 

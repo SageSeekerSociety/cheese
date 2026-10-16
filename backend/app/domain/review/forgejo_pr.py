@@ -392,8 +392,13 @@ class ForgejoPRClient:
         title starts with `WIP:`, so `mark_ready_for_review` below "un-drafts"
         it by rewriting that title. What it rewrites it TO is the placeholder
         minus the prefix — the task's own (Chinese) title — which is why the
-        reader of this method puts a real title on first."""
-        data = await self._request("GET", f"/commits/{quote(sha, safe='')}")
+        reader of this method puts a real title on first.
+
+        `/git/commits/{sha}`, not `/commits/{sha}`: Forgejo routes the single
+        commit under `/git` (Gitea's GitHub-compatible alias for it is not in
+        Forgejo), which is the path `landing_forge.py` and `forge_files.py`
+        already read a commit at."""
+        data = await self._request("GET", f"/git/commits/{quote(sha, safe='')}")
         message = ((data.get("commit") or {}).get("message") or "").strip()
         return message.splitlines()[0] if message else None
 

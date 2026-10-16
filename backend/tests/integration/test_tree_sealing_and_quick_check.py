@@ -404,3 +404,41 @@ def test_ready_leaves_a_title_that_is_not_the_placeholder(client, monkeypatch):
             github.mark_ready_for_review.assert_awaited_once_with("PR_node")
 
     client.portal.call(run)
+
+
+def test_ready_answers_an_exhausted_quota_wherever_it_hits(client, monkeypatch):
+    """The quota is per installation: whichever call in the hand-over spends
+    the last request, the caller gets the sentence that says so and can retry,
+    not a transport error. The steps are idempotent, so nothing is half done.
+    """
+    from app.domain.review.github_pr import GitHubPRRateLimited
+
+    project, room = _room(client)
+    github = AsyncMock()
+    github.pr_view.return_value = {
+        "draft": True,
+        "node_id": "PR_node",
+        "title": "WIP: 领用额度",
+        "head": {"sha": "abc123"},
+    }
+    monkeypatch.setattr(AcceptService, "_app_pr_client", AsyncMock(return_value=github))
+
+    async def run():
+        async with client.test_factory() as session:
+            task = await _task(session, project, room, "ready")
+            service = AcceptService(session, roster_team=project_team)
+            task.pr_number, task.pr_url = 123, "https://example/pull/123"
+
+            github.commit_subject.side_effect = GitHubPRRateLimited("rate limited")
+            read = await service.mark_ready(room, task.id)
+            assert read["ready"] is False and "额度暂时用尽" in read["reason"]
+            github.update_pr.assert_not_awaited()
+            github.mark_ready_for_review.assert_not_awaited()
+
+            github.commit_subject.side_effect = None
+            github.commit_subject.return_value = "fix(usage): a claim is answered once"
+            github.mark_ready_for_review.side_effect = GitHubPRRateLimited("limited")
+            flipped = await service.mark_ready(room, task.id)
+            assert flipped["ready"] is False and "额度暂时用尽" in flipped["reason"]
+
+    client.portal.call(run)

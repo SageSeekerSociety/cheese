@@ -90,8 +90,21 @@ async def mark_ready(
     if client is None:
         return {"ready": False, "reason": "这个项目没有绑定 GitHub"}
 
+    # The quota is per installation and shared by every call below, so the
+    # whole hand-over is under it, not just the read that opens it: a refusal
+    # from the commit read, the title write or the flag flip is the same
+    # exhausted quota the sentence answers, and every step here retries from
+    # scratch (the title write is the same string, the flip is idempotent).
     try:
         view = await client.pr_view(task.pr_number)
+        if view.get("draft"):
+            node_id = str(view.get("node_id") or "")
+            if not node_id:
+                raise ValidationError(say("githubNoPrNodeId"))
+            title = await _ready_title(client, view)
+            if title is not None:
+                await client.update_pr(task.pr_number, title=title)
+            await client.mark_ready_for_review(node_id)
     except GitHubPRRateLimited:
         return {
             "ready": False,
@@ -99,14 +112,6 @@ async def mark_ready(
                 "GitHub API 请求额度暂时用尽，PR 尚未标记为可评审；额度恢复后请重试。"
             ),
         }
-    if view.get("draft"):
-        node_id = str(view.get("node_id") or "")
-        if not node_id:
-            raise ValidationError(say("githubNoPrNodeId"))
-        title = await _ready_title(client, view)
-        if title is not None:
-            await client.update_pr(task.pr_number, title=title)
-        await client.mark_ready_for_review(node_id)
     return {
         "ready": True,
         "already": not bool(view.get("draft")),

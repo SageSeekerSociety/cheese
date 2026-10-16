@@ -271,6 +271,30 @@ async def test_commit_subject_is_the_messages_first_line():
     assert request.url.path == "/repos/acme/widgets/commits/abc123"
 
 
+@pytest.mark.anyio
+async def test_commit_subject_refusals_raise_what_callers_catch():
+    """`GitHubPrError` (the older client's) and `GitHubPRError` are unrelated:
+    the ready path catches the pair below and nothing else, so a refusal here
+    in the other class would reach `mark_ready`'s caller as a 500 — including
+    the rate limit `pr_view` two methods up turns into an answer."""
+    rate_limited = lambda: _client(  # noqa: E731 — a transport, twice
+        lambda request: httpx.Response(
+            403, text="API rate limit exceeded for installation"
+        )
+    ).commit_subject("abc123")
+
+    with pytest.raises(GitHubPRRateLimited) as limited:
+        await rate_limited()
+    assert limited.value.args[0].key == "githubRefusedCommitRead"
+
+    with pytest.raises(GitHubPRError) as refused:
+        await _client(lambda request: httpx.Response(500, text="boom")).commit_subject(
+            "abc123"
+        )
+    assert type(refused.value) is GitHubPRError
+    assert refused.value.args[0].key == "githubRefusedCommitRead"
+
+
 # ---- unreachable GitHub ------------------------------------------------------
 
 

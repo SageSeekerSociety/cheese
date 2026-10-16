@@ -158,11 +158,18 @@ async def test_commit_subject_is_the_messages_first_line():
     proposal from being marked ready under the wrong title: Forgejo has no
     draft flag, so `mark_ready_for_review` un-drafts one by rewriting its
     `WIP:` title, and the title left to rewrite is the placeholder minus the
-    prefix — the task's own title, not the change's."""
+    prefix — the task's own title, not the change's.
+
+    Forgejo routes the single commit under `/git`, and only there: the mock
+    answers that one path and 404s the rest, so a read addressed at
+    `/commits/{sha}` (Gitea's GitHub-compatible alias, absent from Forgejo)
+    fails here instead of passing on a transport that answers anything."""
     seen: list[httpx.Request] = []
 
     def server(request):
         seen.append(request)
+        if not request.url.path.endswith("/git/commits/reviewed"):
+            return httpx.Response(404, text="404 page not found")
         return httpx.Response(
             200,
             json={
@@ -183,4 +190,5 @@ async def test_commit_subject_is_the_messages_first_line():
         == "fix(docs): the page says what it means"
     )
     [request] = seen
-    assert request.url.path.endswith("/repos/acme/docs/commits/reviewed")
+    assert request.url.path.endswith("/repos/acme/docs/git/commits/reviewed")
+    assert request.url.path == "/api/v1/repos/acme/docs/git/commits/reviewed"
