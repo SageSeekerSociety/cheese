@@ -197,7 +197,7 @@ async def _note_needs_human(
 
 
 async def _record_task_nudge(
-    self: pkg.AcceptService, *, topic, task, content, headline, meta
+    self: pkg.AcceptService, *, topic, task, content, headline, meta, replaces=None
 ):
     return await _record_task_nudge_from_room(
         self._session,
@@ -206,6 +206,7 @@ async def _record_task_nudge(
         content=content,
         headline=headline,
         meta=meta,
+        replaces=replaces,
         announce=_announce_of(self),
         record_instruction=self._record_instruction,
     )
@@ -481,6 +482,10 @@ async def _dispatch_nudges(
                 detail=nudge.detail or None,
                 detail_label=nudge.detail_label or None,
             ),
+            # Each kind's newest nudge restates that kind's whole current state
+            # on this PR, so it replaces one of its kind still waiting for the
+            # agent (`delivery.agent.record_task_instruction`).
+            replaces=f"pr:{card.pr_number}:{nudge.kind.value}",
         )
     for nudge in fresh:
         ledger.record(nudge.kind, nudge.signature)
