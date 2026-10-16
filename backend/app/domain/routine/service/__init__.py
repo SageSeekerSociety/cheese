@@ -39,10 +39,10 @@ from app.domain.delivery.agent import dispatch_pending as dispatch_pending
 
 # 兼容门面：拆包之前那份 ``service.py`` 自己定义的名字，下面这一个不落 —— 八个常量、
 # ``now``、两个校验助手、``RoutineService``、十一个函数，外加它当时 import 进来、
-# 被别人按模块属性取用的 ``dispatch_pending``。它顺手 import 进来、并不属于本域的
-# 那些名字（``Routine``、``Block``、``Topic`` 之类）不再从这条路取，仓库里也没有
-# 调用方用它们。每个都写成 ``X as X`` 显式再导出，``RoutineService`` 仍是同一个类
-# 对象。
+# 被别人按模块属性取用的 ``dispatch_pending``。除了上面这一个，它当时只是 import
+# 进来、自己并不定义的名字（本域的 ``Routine``、``RoutineRun``，跨域的 ``Block``、
+# ``Topic`` 都在内）不再从这条路取，仓库里也没有调用方用它们。每个都写成 ``X as X``
+# 显式再导出，``RoutineService`` 仍是同一个类对象。
 from app.domain.routine.service._shared import (
     EVENT_RUNS_PER_HOUR as EVENT_RUNS_PER_HOUR,
 )
