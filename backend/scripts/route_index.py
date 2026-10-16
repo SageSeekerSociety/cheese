@@ -7,7 +7,7 @@
 
 The index this emits is NOT committed. It changes with every route, and as a
 tracked file 84 commits from 83 PRs touched it in the twelve days it existed; it
-is generated where it is judged instead (the frontend `request-paths` job, and the
+is generated where it is judged instead (the frontend `check` job, and the
 addressing contract suite). `--check` is the first-FULL guard (v6
 reading-boundary pilot): literal later routes have a unique URL, so an earlier
 FULL match proves that URL unreachable for the reported method. Parameterized
