@@ -180,6 +180,9 @@ function startTreeDrag(e: MouseEvent) {
 // 树上点一个改过的文件：回到全部改动那一面，滚到它那一段。没打开文件的时候全部改动
 // 那一面本来就在，`reveal` 直接生效。
 const allView = ref<InstanceType<typeof ChangesAllView> | null>(null)
+// 「另 N 个文件」展不展开，由这一面点、状态放在这里：打开一份文件时全部改动那一面被卸掉
+// （`v-else`），状态跟着它走的话，返回时展开的那份清单又收回去了。
+const summaryAll = ref(false)
 async function pickFile(path: string) {
   if (!props.diffByPath.has(path)) {
     emit('select-file', path)
@@ -344,11 +347,13 @@ const fileRows = computed(() =>
             :file-source="props.fileSource"
             :file-tool-ready="props.fileToolReady"
             :refreshing="props.refreshing"
+            :summary-all="summaryAll"
             :review="props.review"
             @select-file="emit('select-file', $event)"
             @open-other="pickerOpen = true"
             @select-version="emit('select-version', $event)"
             @refresh="emit('refresh')"
+            @update:summary-all="summaryAll = $event"
           >
             <template #head><slot name="head" /></template>
           </ChangesAllView>

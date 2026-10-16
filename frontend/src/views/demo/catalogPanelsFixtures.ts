@@ -136,6 +136,7 @@ export const CHANGES_ALL_PROPS = {
   fileSource: CHANGES.fileSource,
   fileToolReady: CHANGES.fileToolReady,
   refreshing: CHANGES.refreshing,
+  summaryAll: false,
   review: CHANGES.review,
 }
 

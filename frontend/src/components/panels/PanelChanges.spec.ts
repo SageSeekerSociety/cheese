@@ -143,6 +143,38 @@ function fileRow(name: string): HTMLElement {
   return row as HTMLElement
 }
 
+/** 五份文件的差异：清单先列前三个，多出来的那几份让「另 N 个文件」露出来。 */
+function diffOfFive(): string {
+  return ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts']
+    .map((p) =>
+      [
+        `diff --git a/${p} b/${p}`,
+        'index 0000000..1111111 100644',
+        `--- a/${p}`,
+        `+++ b/${p}`,
+        '@@ -1,2 +1,3 @@',
+        ' const a = 1',
+        `+// ${p}`,
+      ].join('\n')
+    )
+    .join('\n')
+}
+
+/** 把这一格量成放不下文件树那么窄：树收起来，文件名改列在顶部那块下面。量宽度的
+ *  观察者换成测试自己报数的那一个（照着 `PanelPreview.imageRegion.spec.ts`）。 */
+function stubNarrowPanel() {
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe(el: Element) {
+        this.cb([{ target: el, contentRect: { width: 400, height: 0 } }] as unknown as ResizeObserverEntry[])
+      }
+      disconnect() {}
+    }
+  )
+}
+
 /** 全部改动那一面里某个文件那一段的「打开」：单独看这一份。 */
 async function openSection(path: string) {
   const section = await waitFor(() => {
@@ -198,6 +230,36 @@ describe('树上有什么，点开的是什么', () => {
     await fireEvent.click(screen.getByRole('button', { name: '返回全部改动' }))
     expect(await screen.findByText('-const b = 2')).toBeTruthy()
     expect(screen.getByText('+# hi')).toBeTruthy()
+  })
+
+  it('放不下文件树时，展开的「另 N 个文件」在点开一份再返回之后还是展开的', async () => {
+    const diff = diffOfFive()
+    getGitDiff.mockResolvedValue({ diff })
+    listFiles.mockResolvedValue({
+      data: ['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/d.ts', 'src/e.ts'].map((path) => ({ path, bytes: 120 })),
+      total: 5,
+      source: 'live',
+    })
+    stubNarrowPanel()
+    try {
+      mount()
+      // 清单先列前三个，其余收在「另 2 个文件」里。
+      await fireEvent.click(await screen.findByText('另 2 个文件'))
+      await waitFor(() => expect(document.querySelectorAll('.changes-summary__file').length).toBe(5))
+      expect(document.querySelector('.changes-summary__more')?.textContent?.trim()).toBe('收起')
+
+      // 点开一份，再回全部改动。
+      await openSection('src/d.ts')
+      await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('p1', 'src/d.ts', 'room-1', 't-1', 'live'))
+      await fireEvent.click(screen.getByRole('button', { name: '返回全部改动' }))
+      await waitFor(() => expect(document.querySelector('.diff-file[data-path="src/d.ts"]')).toBeTruthy())
+
+      // 展不展开是这一格记着的：返回时清单不该又收回去。
+      expect(document.querySelectorAll('.changes-summary__file').length).toBe(5)
+      expect(document.querySelector('.changes-summary__more')?.textContent?.trim()).toBe('收起')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('没有差异的文件只有一面：不摆「差异 / 全文」这个开关', async () => {

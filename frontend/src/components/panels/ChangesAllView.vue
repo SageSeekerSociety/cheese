@@ -31,6 +31,11 @@ const props = defineProps<{
   fileSource: FileSource
   fileToolReady: boolean
   refreshing: boolean
+  /**
+   * 文件清单收不收着。「另 N 个文件」由这里说，但状态归外面：这一面在打开文件时被
+   * 卸掉（`v-else`），状态留在这一面里的话，返回时展开的那份清单又收回去了。
+   */
+  summaryAll: boolean
   /** 这件任务的批注；宿主不给就不画（`composables/useReviewComments.ts`）。 */
   review?: ReviewBundle | null
 }>()
@@ -41,6 +46,7 @@ const emit = defineEmits<{
   'open-other': []
   'select-version': [source: FileSource]
   refresh: []
+  'update:summaryAll': [value: boolean]
 }>()
 
 // 这一面按树上的顺序排（文件夹在前、按名字），和左边那一列从上往下对得上；
@@ -53,8 +59,7 @@ const listDiffs = computed(() =>
 
 // 文件树不在的时候，顶部那块下面列前几个文件，其余收在「另 N 个文件」里。
 const SUMMARY_FIRST = 3
-const summaryAll = ref(false)
-const summaryFiles = computed(() => (summaryAll.value ? listDiffs.value : listDiffs.value.slice(0, SUMMARY_FIRST)))
+const summaryFiles = computed(() => (props.summaryAll ? listDiffs.value : listDiffs.value.slice(0, SUMMARY_FIRST)))
 function dirOf(path: string): string {
   const cut = path.lastIndexOf('/')
   return cut < 0 ? '' : path.slice(0, cut + 1)
@@ -193,10 +198,10 @@ async function pick(path: string) {
             v-if="listDiffs.length > SUMMARY_FIRST"
             type="button"
             class="changes-summary__more"
-            @click="summaryAll = !summaryAll"
+            @click="emit('update:summaryAll', !props.summaryAll)"
           >
             {{
-              summaryAll
+              props.summaryAll
                 ? t('work.room.changes.fewerFiles')
                 : t('work.room.changes.moreFiles', { count: listDiffs.length - SUMMARY_FIRST })
             }}
