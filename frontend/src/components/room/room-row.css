@@ -62,9 +62,9 @@
   width: 28px;
   flex: 0 0 28px;
 }
-/* Person avatar — the pill-shaped tile; teammates draw through CheeseAvatar.
-   Colored initial on a per-seed deterministic background (hash → hue),
-   matching the Space avatars' visual language. */
+/* Person avatar: colored initial on a per-seed deterministic background
+   (hash → hue), matching the Space avatars' visual language.
+   Dead rule — nothing renders `.im-avatar` any more. */
 .im-avatar {
   width: 28px;
   height: 28px;
@@ -72,8 +72,9 @@
   align-items: center;
   justify-content: center;
   background: var(--fill);
-  /* --avatar-ink, not --ink: the real ground is avatarColor() (one fixed OKLCH
-     lightness in utils/avatar.ts), identical in both themes — so is the initial. */
+  /* --avatar-ink, not --ink: white stands on the avatarColor() ground (one
+     fixed OKLCH lightness in utils/avatar.ts) this rule was written for; the
+     --fill above is not that ground. */
   color: var(--avatar-ink);
   font-size: 12px;
   font-weight: 600;

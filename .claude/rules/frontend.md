@@ -37,9 +37,8 @@ parts no gate can see.
     avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
     OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
     its ink is a token that is the same in both themes too: `--avatar-ink`
-    (`--accent-on` and `--brand-ink` are the same family; style.css carries the
-    value, and the ratchets ban the hex). A theme-following token there —
-    `--ink`, `on-surface` — is what breaks it.
+    (the value lives in style.css; the ratchets ban the hex). A theme-following
+    token there — `--ink`, `on-surface` — is what breaks it.
 - The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary).
   Pick by how important the information is, not by how it looks. `--faint` is not a
   text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
