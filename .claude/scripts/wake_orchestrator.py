@@ -35,12 +35,13 @@ Whatever the caller passes, the line goes out with one prefix, never two: a body
 carries the whole line — `我是芝士。<@座位> 【递卡】…`, the shape a line is copied in —
 has that prefix stripped before the wake composes its own, however many layers of it
 were pasted. A `我是X。` that came in with the body stands in for `--as` when none was
-given, so a pasted line still says who is speaking. Composing is idempotent: feeding
-the composed message back in reproduces it, which is what `--self-test` asserts. The
-body keeps everything past the prefix — the mention a line opens its body with, the
-bracketed word that is not one of the labels, a `我是…` sentence — since a mention is
-taken as prefix only when a label follows it, and a label is the only thing that says
-where a pasted line's prefix ended.
+given, so a pasted line still says who is speaking. Composing never doubles the prefix
+and is idempotent for a body that did not itself open with one: feeding the composed
+message back in reproduces it, which is what `--self-test` asserts. The body keeps
+everything past the prefix — the mention a line opens its body with, the bracketed word
+that is not one of the labels, a `我是…` sentence — since a mention is taken as prefix
+only when a label follows it, and a label is the only thing that says where a pasted
+line's prefix ended.
 
 A run that failed after posting is retried with `--request-id <uuid>`, the same id the
 first run used: the platform returns the message it already stored for that id instead of
@@ -86,8 +87,8 @@ USAGE = ("""usage: wake_orchestrator.py <标签> <正文> [--as <名字>] [--req
 #: them. `我是X。` is the self-identification `--as` writes, and the name is capped and
 #: barred from punctuation so that a body opening with a sentence like
 #: `我是说，这样不行` is not mistaken for one. The sentence has to end: with its full
-#: stop, or with what only a line carries next (`<@…>`/`@…`/`【…】`) — a body that *is*
-#: such a sentence and stops there (`我是来确认的`) is body, not a name.
+#: stop, or with what only a line carries next (`<@…>`/`@词…`/`【…】`) — a body that
+#: *is* such a sentence and stops there (`我是来确认的`) is body, not a name.
 SELF_ID = re.compile(
     r"^我是([^\s。，,、！!？?：:；;【】<>@]{1,20})(?:。|(?=\s*(?:<@|@\w|【)))")
 #: A mention, platform form first: `<@handle>` is what the compose writes and what the
@@ -165,7 +166,7 @@ def confirmed(blocks, message_id):
     return any((b or {}).get("id") == message_id for b in blocks or [])
 
 
-def strip_prefix(text, tags):
+def strip_prefix(text, tags, take_name=True):
     """(name, tag, rest): the wake's own prefix taken off the head of `text`.
 
     The pieces are read left to right, and each one is taken only as part of a line: a
@@ -178,50 +179,63 @@ def strip_prefix(text, tags):
     none.
 
     What comes back is the prefix only when a tag was found in the run: the tag is what
-    says where a pasted line's prefix ends, so with no tag only a `我是X。` that still
-    has the body after it is taken, as the speaker's name. A body that is nothing but
-    that sentence (`我是来确认的`) is left as the body."""
+    says where a pasted line's prefix ends, so with no tag a `我是X。` is taken on its
+    own only when the body still follows it, and the run ends there — a body that is
+    nothing but that sentence (`我是来确认的`) is left as the body. A tag also ends the
+    prefix: `我是X。` after one is taken only when the line continues past it (`我是…。
+    <@b> 【交付】…`, the second layer of a paste), never as the head of the body. With
+    `take_name` false — the caller named the speaker with `--as` — that last reading is
+    off too, since a body is then never the one who is speaking."""
     pieces, rest, off = [], text, 0
     while True:
         m = SELF_ID.match(rest)
         if m:
-            kind, value = "self", m.group(1)
-            settled = rest[m.end() - 1] == "。"
+            nxt = rest[m.end():].lstrip()
+            word = TAG_WORD.match(nxt)
+            if MENTION.match(nxt) or (word and word.group(1) in tags):
+                kind, value = "self", m.group(1)
+            elif take_name and not pieces and rest[m.end() - 1] == "。" and nxt:
+                # `我是X。` with the body after it and no line around it: the speaker's
+                # name, and the run ends here.
+                pieces.append(("self", m.group(1),
+                               m.end() + (len(rest) - m.end() - len(nxt))))
+                break
+            else:
+                break
         else:
             m = MENTION.match(rest)
             if m:
                 word = TAG_WORD.match(rest[m.end():].lstrip())
                 if not (word and word.group(1) in tags):
                     break
-                kind, value, settled = "mention", "", False
+                kind, value = "mention", ""
             else:
                 m = TAG_WORD.match(rest)
                 if not (m and m.group(1) in tags):
                     break
-                kind, value, settled = "tag", m.group(1), False
+                kind, value = "tag", m.group(1)
         raw = rest[m.end():]
         rest = raw.lstrip()
         off += m.end() + (len(raw) - len(rest))
-        pieces.append((kind, value, off, settled))
+        pieces.append((kind, value, off))
     tags_seen = [p for p in pieces if p[0] == "tag"]
     if tags_seen:
-        name = next((v for k, v, _o, _s in pieces if k == "self"), "")
+        name = next((v for k, v, _o in pieces if k == "self"), "")
         return name, tags_seen[0][1], text[pieces[-1][2]:]
-    head = pieces[0] if pieces else None
-    if head and head[0] == "self" and head[3] and head[2] < len(text):
-        return head[1], "", text[head[2]:]
+    if pieces and pieces[0][0] == "self":
+        return pieces[0][1], "", text[pieces[0][2]:]
     return "", "", text
 
 
 def normalize(tag, body, as_name):
     """(tag, body, as_name) with any wake prefix the caller pasted on the input taken off.
 
-    Idempotent in the sense that matters: the message composed from this, fed back in,
-    composes to itself, because the prefix the compose adds is exactly what
-    `strip_prefix` removes. A `我是X。` pasted in stands in for `--as` when none was
-    given, so a line copied whole still names whoever wrote it."""
+    Idempotent for a body that did not itself open with a prefix: the message composed
+    from this, fed back in, composes to itself, because the prefix the compose adds is
+    exactly what `strip_prefix` removes. A `我是X。` pasted in stands in for `--as` when
+    none was given, so a line copied whole still names whoever wrote it."""
     tag = tag.strip().strip("【】").strip()
-    name, body_tag, rest = strip_prefix(body, set(LABELS) | {tag})
+    name, body_tag, rest = strip_prefix(body, set(LABELS) | {tag}, take_name=not as_name)
     if body_tag and body_tag != tag:
         print(f"note: the body says 【{body_tag}】 and the tag argument says {tag}; "
               f"sending 【{tag}】", file=sys.stderr)
@@ -590,6 +604,15 @@ def self_test():
         ("前缀：没有标签、但 我是X。 后面还有正文的，名字照取",
          [strip_prefix("我是芝士。正文", LABELS), strip_prefix("我是芝士。@张三 请看", LABELS)],
          [("芝士", "", "正文"), ("芝士", "", "@张三 请看")]),
+        ("前缀：前缀之后正文自己是一句 我是…。 时整句留着（不当前缀的第二层）",
+         [strip_prefix("我是甲。<@a> 【递卡】我是来确认的。", LABELS),
+          strip_prefix("我是甲。<@a> 【递卡】我是来确认的", LABELS),
+          strip_prefix("我是芝士。<@a> 【递卡】我是来确认的。请看一下这条", LABELS)],
+         [("甲", "递卡", "我是来确认的。"), ("甲", "递卡", "我是来确认的"),
+          ("芝士", "递卡", "我是来确认的。请看一下这条")]),
+        ("前缀：两层粘贴时第二层开头的 我是X。 照剥（后面接着点名和标签）",
+         strip_prefix("我是甲。<@a> 【递卡】我是乙。<@b> 【交付】结论", LABELS),
+         ("甲", "递卡", "结论")),
         ("前缀：剥过一遍的东西再剥一遍不变（幂等）",
          [strip_prefix(strip_prefix(t, LABELS)[2], LABELS)[2] for t in
           ["我是芝士。<@a> 【递卡】正文", "@cheese-abc 【递卡】正文", "正文",
@@ -602,8 +625,11 @@ def self_test():
          parse_args(["--as", "甲", "交付", "我是乙。<@a> 【交付】结论"])[:3],
          ("交付", "结论", "甲")),
         ("前缀：给了 --as 时正文只当正文，一句 我是… 的话不会被吃掉",
-         parse_args(["--as", "甲", "递卡", "我是来确认的"])[:3],
-         ("递卡", "我是来确认的", "甲")),
+         [parse_args(["--as", "甲", "递卡", "我是来确认的"])[:3],
+          parse_args(["--as", "甲", "递卡", "我是来确认的。请看一下这条"])[:3],
+          parse_args(["--as", "甲", "交付", "我是乙。结论"])[:3]],
+         [("递卡", "我是来确认的", "甲"), ("递卡", "我是来确认的。请看一下这条", "甲"),
+          ("交付", "我是乙。结论", "甲")]),
         ("前缀：标签位置收到整句时，标签从里面取，剩下的是正文",
          parse_args(["我是芝士。<@a> 【递卡】#1512 PR #3675", ""])[:3],
          ("递卡", "#1512 PR #3675", "芝士")),
@@ -617,8 +643,12 @@ def self_test():
                               roundtrip("交付", "结论", as_name="芝士"),
                               roundtrip("待决", "要定什么｜我倾向 A\n第二行", as_name="芝士"),
                               roundtrip("递卡", "@张三 请看这条 head 672653c5"),
-                              roundtrip("递卡", "我是来确认的")]],
-         [True, True, True, True, True]),
+                              roundtrip("递卡", "我是来确认的"),
+                              roundtrip("递卡", "我是来确认的。"),
+                              roundtrip("递卡", "我是来确认的。请看一下这条"),
+                              roundtrip("递卡", "我是来确认的。请看一下这条", as_name="甲"),
+                              roundtrip("递卡", "我是甲。", as_name="芝士")]],
+         [True, True, True, True, True, True, True, True, True]),
     ]
     bad = 0
     for name, got, want in cases:
