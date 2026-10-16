@@ -20,8 +20,8 @@
    不少，而且上面那张落点表正好覆盖它；
 3. 每个名字现在住在哪个子模块里 —— 这是「谁的职责归谁」的可执行版。它同时在给下一
    次搬迁当路标：**动布局就要动这张表**，这是故意的，不是意外；
-4. 没有哪个类或函数在包里写了两遍 —— 扫四个子模块的每一个顶层定义，不是只看表里
-   那几行；门面只做再导出，自己不许定义任何东西；
+4. 没有哪个类或函数在包里写了两遍 —— 扫包里每一个文件的顶层定义，不是只看表里那
+   几行；门面只做再导出，自己一个类、一个函数都不定义；
 5. 全仓还有谁从这个路径取名字也一起看着：删掉一个还在被导入的名字就红。
 """
 
@@ -192,17 +192,28 @@ def _names_imported_from_the_package() -> dict[str, list[str]]:
 
 
 def _defined_at_the_top_level(path: Path) -> set[str]:
-    """一个文件顶层定义了哪些类、函数和常量。"""
+    """一个文件顶层定义了哪些类和函数。
+
+    只看类和函数，不看赋值：两个模块各写一个 `logger = logging.getLogger(__name__)`
+    是两个互不相干的对象，不是「同一个东西写了两遍」，把常量也数进来会让这条守卫在
+    正常写法上无故变红。
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
-    names: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, ast.Assign):
-            names.update(t.id for t in node.targets if isinstance(t, ast.Name))
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names.add(node.target.id)
-    return names
+    return {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    }
+
+
+def _package_files() -> list[Path]:
+    """包里除了门面自己以外的每一个文件。
+
+    按目录数，不按上面那张表里的模块对象数：表里只有四个子模块，新加一个文件、
+    里面又写一份同名定义，只数表是看不见的。
+    """
+    package = Path(importlib.import_module(MODULE).__file__).parent
+    return sorted(p for p in package.glob("*.py") if p.name != "__init__.py")
 
 
 def test_the_old_path_answers_the_same_objects():
@@ -234,32 +245,37 @@ def test_the_public_face_is_exactly_what_it_was():
 
 
 def test_no_class_or_function_is_written_twice():
-    """包里每个顶层定义只许出现在一个文件里。
+    """包里每个类、每个函数只许定义一次。
 
-    扫的是四个子模块里**所有**的顶层定义，不是上面那张表里的那几行：表只列公开名
-    字，一个私有辅助函数、一个常量在别处又写一遍，只看表是看不见的。
+    扫的是包目录下**每一个**文件的顶层定义，不是上面那张表里的那几行、也不是表里
+    那几个模块：表只列公开名字，一个私有辅助函数在别处又写一遍，只看表是看不见的；
+    新加一个子模块、里面写一份同名的东西，只数表里的模块也看不见。
     """
     where: dict[str, list[str]] = {}
-    for module in HOME:
-        for name in _defined_at_the_top_level(Path(module.__file__)):
-            where.setdefault(name, []).append(module.__name__)
+    for path in _package_files():
+        for name in _defined_at_the_top_level(path):
+            where.setdefault(name, []).append(path.name)
 
     twice = {name: homes for name, homes in where.items() if len(homes) > 1}
     assert not twice, f"这些东西在包里写了不止一份：{twice}"
 
-    # 门面只做再导出，自己不许定义任何东西 —— 在这儿写一份就是第二份。
-    facade = _defined_at_the_top_level(Path(importlib.import_module(MODULE).__file__))
-    assert not (facade & set(where)), sorted(facade & set(where))
+    # 门面只做再导出，自己一个类、一个函数都不许定义。
+    facade = Path(importlib.import_module(MODULE).__file__)
+    assert not (facade_defs := _defined_at_the_top_level(facade)), sorted(facade_defs)
 
 
 def test_every_name_the_tree_imports_from_the_package_is_still_there():
     package = importlib.import_module(MODULE)
     imported = _names_imported_from_the_package()
 
-    # 扫描范围本身要看着：只有包自己那一条（`plan.py` 里那句延迟导入）时也要红。
-    # 真实调用方全换成别的拼法、这条一条都没扫到时，它不能照样绿。
+    # 扫描范围本身要看着：真正调用它的那一处不见了（`backend/app/` 里只剩包自己那句
+    # 延迟导入、剩下全在这道测试文件里）就要红 —— 真实调用方换了拼法而扫描看不见时，
+    # 不能靠这道测试自己那句 import 把地板撑住。
     sites = [site for places in imported.values() for site in places]
-    assert any(not site.startswith(_PACKAGE_DIR) for site in sites), sites
+    assert any(
+        site.startswith("backend/app/") and not site.startswith(_PACKAGE_DIR)
+        for site in sites
+    ), sites
     assert {"build_plan", "Destination", "render_report"} <= set(imported)
 
     missing = {
