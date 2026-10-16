@@ -221,18 +221,24 @@ def settle_mergeable(read, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sle
 
     GitHub resets every in-flight PR to UNKNOWN the moment main moves and only recomputes when
     something looks; a single read right after a merge would call a perfectly good card unknown.
-    `read` returns one pullRequest body or None; the retries stop at the first decided answer
-    (MERGEABLE or CONFLICTING), at an already merged PR, and at a read that failed."""
+    `read` returns one pullRequest body or None. The retries stop at the first decided answer
+    (MERGEABLE or CONFLICTING), at an already merged PR, and at a retry that failed to read, which
+    keeps the body already in hand rather than calling a PR that was just read unreadable."""
     body = read()
     for _ in range(retries):
         if body is None or body["merged"] or body["mergeable"] != "UNKNOWN":
             break
         sleep(delay)
-        body = read()
+        again = read()
+        if again is None:
+            break
+        body = again
     return body
 
 
-def gh_facts(n):
+def gh_facts(n, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sleep=time.sleep):
+    """One PR's facts. The retry arguments are settle_mergeable's, so the offline self-test can
+    drive this function itself without waiting."""
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){'
          'merged headRefOid mergeable comments(last:100){nodes{body}}}}}' % tuple(REPO))
 
@@ -243,7 +249,7 @@ def gh_facts(n):
         except (TypeError, ValueError, KeyError):
             return None
 
-    body = settle_mergeable(read)
+    body = settle_mergeable(read, retries, delay, sleep)
     return None if body is None else pr_facts(body)
 
 
@@ -451,34 +457,54 @@ def self_test():
     check("有冲突", facts(pr=pr(mergeable="CONFLICTING")), "交总调度", "conflicting")
     check("GitHub 还在算", facts(pr=pr(mergeable="UNKNOWN")), "交总调度", "mergeable_unknown", "UNKNOWN")
 
+    # GitHub resets mergeable to UNKNOWN whenever main moves, so gh_facts itself has to outlast
+    # that; these go through gh_facts rather than settle_mergeable, or reverting the call inside it
+    # to a single read — the very behaviour the retry exists to replace — would leave them green.
     def raw(mergeable, merged=False):
         return {"merged": merged, "headRefOid": H, "mergeable": mergeable, "comments": {"nodes": []}}
 
-    def settle(*answers, retries=MERGEABLE_RETRIES):
-        """(the PR facts, how many reads, how long it waited) for a GitHub answering `answers` in order."""
-        calls, waits = [], []
+    def github(*answers):
+        """A stubbed `gh` answering `answers` in order, repeating the last, counting its calls;
+        a None entry is a read that failed."""
+        asked = []
 
-        def read():
-            calls.append(1)
-            return answers[min(len(calls) - 1, len(answers) - 1)]
+        def fake(args):
+            asked.append(1)
+            body = answers[min(len(asked) - 1, len(answers) - 1)]
+            return None if body is None else json.dumps({"data": {"repository": {"pullRequest": body}}})
 
-        return pr_facts(settle_mergeable(read, retries=retries, sleep=waits.append)), calls, waits
+        return fake, asked
 
-    # GitHub resets mergeable to UNKNOWN whenever main moves; a single read there would hand a good card off.
-    p, calls, waits = settle(raw("UNKNOWN"), raw("MERGEABLE"))
-    check("UNKNOWN 后算出能合就按会采判", facts(pr=p), "会采", has="审查来自卡")
-    if calls != [1, 1] or waits != [MERGEABLE_DELAY]:
-        failures.append(f"UNKNOWN 后等到算出能合，只查两次: got {len(calls)} reads, waits {waits!r}")
-    check("UNKNOWN 后算出有冲突就按冲突判", facts(pr=settle(raw("UNKNOWN"), raw("CONFLICTING"))[0]),
-          "交总调度", "conflicting")
-    check("一直 UNKNOWN 仍按原契约报", facts(pr=settle(raw("UNKNOWN"))[0]),
-          "交总调度", "mergeable_unknown", "UNKNOWN")
-    if len(settle(raw("UNKNOWN"))[1]) != MERGEABLE_RETRIES + 1:
-        failures.append("一直 UNKNOWN 时按 MERGEABLE_RETRIES 重查后放弃")
-    if len(settle(raw("MERGEABLE"))[1]) != 1 or len(settle(raw("UNKNOWN", merged=True))[1]) != 1:
-        failures.append("已经有明确答案、或 PR 已合并时都不重查")
-    if settle(raw("UNKNOWN"), retries=0)[1] != [1]:
-        failures.append("retries 与 sleep 可注入，方便离线自测不等待")
+    real_gh = gh
+    try:
+        globals()["gh"], asked = github(raw("UNKNOWN"), raw("MERGEABLE"))
+        waits = []
+        check("UNKNOWN 后算出能合就按会采判", facts(pr=gh_facts(9, sleep=waits.append)),
+              "会采", has="审查来自卡")
+        if asked != [1, 1] or not waits:
+            failures.append(f"算出能合就停，且中间要等: got {len(asked)} reads, waits {waits!r}")
+        globals()["gh"], asked = github(raw("UNKNOWN"), raw("CONFLICTING"))
+        check("UNKNOWN 后算出有冲突就按冲突判", facts(pr=gh_facts(9, sleep=lambda _: None)),
+              "交总调度", "conflicting")
+        if asked != [1, 1]:
+            failures.append(f"算出有冲突就停，不再重查: got {len(asked)} reads")
+        globals()["gh"], asked = github(raw("UNKNOWN"))
+        check("一直 UNKNOWN 仍按原契约报", facts(pr=gh_facts(9, sleep=lambda _: None)),
+              "交总调度", "mergeable_unknown", "UNKNOWN")
+        if len(asked) != MERGEABLE_RETRIES + 1:
+            failures.append(f"一直 UNKNOWN 时按 MERGEABLE_RETRIES 重查后放弃: {len(asked)} reads")
+        globals()["gh"], asked = github(raw("MERGEABLE"))
+        if gh_facts(9, sleep=lambda _: None)["mergeable"] != "MERGEABLE" or asked != [1]:
+            failures.append(f"已经有明确答案时不重查: {len(asked)} reads")
+        globals()["gh"], asked = github(raw("UNKNOWN", merged=True))
+        if gh_facts(9, sleep=lambda _: None)["merged"] is not True or asked != [1]:
+            failures.append(f"已合并的 PR 不重查: {len(asked)} reads")
+        globals()["gh"], _ = github(raw("UNKNOWN"), None)
+        card_facts = gh_facts(9, sleep=lambda _: None)
+        if not card_facts or card_facts["mergeable"] != "UNKNOWN":
+            failures.append(f"重查那次读失败时保留已经读到的结果: got {card_facts!r}")
+    finally:
+        globals()["gh"] = real_gh
     check("PR 已合并", facts(pr=pr(merged=True)), "交总调度", "pr_merged")
     # 部署
     check("碰正式部署脚本", facts(files=["backend/a.py", "deploy/deploy-docker.sh"]), "交总调度",
