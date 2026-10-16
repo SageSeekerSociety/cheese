@@ -21,7 +21,10 @@ import httpx
 from app.core.sentences import say
 from app.domain.review.merge_state import RED_CONCLUSIONS
 
-logger = logging.getLogger(__name__)
+#: Named for the package rather than for this file: before the split every
+#: record from this code carried the one module's name, and the pieces that
+#: log keep carrying it. `preparation/` does the same, for the same reason.
+logger = logging.getLogger("app.domain.review.github_pr")
 
 
 class GitHubPrError(RuntimeError):
