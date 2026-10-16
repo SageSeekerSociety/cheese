@@ -66,7 +66,9 @@ describe('catalog 门面', () => {
     expect(SHARDS.flatMap(([, entries]) => entries.map((entry) => entry.id))).toEqual(SPLIT_IDS)
   })
 
-  it('每一册整册连着排在目录里，册内顺序没动', () => {
+  it('每一册在目录里整册连着排，中间没插进别的', () => {
+    // 这一条只钉「连着」：`want` 就是从目录展开的那个数组里取的，册内的先后它验不了 ——
+    // 那一半由下面一条的 `SPLIT_IDS` 管。
     const ids = facade.CATALOG.map((entry) => entry.id)
     for (const [name, entries] of SHARDS) {
       const want = entries.map((entry) => entry.id)
@@ -77,12 +79,14 @@ describe('catalog 门面', () => {
   })
 
   it('拆出去那 17 条彼此的先后没动', () => {
-    // 上面那一圈只看「每册自己连着排」，看不出两册对调了位置：`CATALOG` 里只留拆出去
-    // 那 17 条，剩下的先后必须还是 `SHARDS` 从前往后拼起来那一串。少了这一句，把
-    // `...COMMON_ENTRIES` 和 `...CONVERSATION_ENTRIES` 换个个儿，上面每一条都还绿。
+    // 上面那一圈看不出两册对调了位置，也看不出册内被换过顺序：`CATALOG` 里只留拆出去
+    // 那 17 条，剩下的先后必须还是从 `common` 到 `panel-views` 那一串。少了这一条，
+    // 把 `...COMMON_ENTRIES` 和 `...CONVERSATION_ENTRIES` 换个个儿，其余每一条都还绿。
+    //
+    // 它钉的是这 17 条**彼此**的先后。整段落在目录的哪个位置是门面里那段展开顺序自己
+    // 的事，这里不复述；某一册挪到没拆的那二十几个 `catalog*.ts` 中间，相对次序没变，
+    // 这一条不红，也不再另设一条去钉 —— 位置没有第二处权威可对。
     const ids = facade.CATALOG.map((entry) => entry.id)
-    // 只钉这 17 条**彼此**的先后。某一册挪到没拆的那二十几个 `catalog*.ts` 中间，
-    // 这 17 条的相对次序不变，这一条不红 —— 那不是这次改动的主张，别在这里管。
     expect(
       ids.filter((id) => SPLIT_IDS.includes(id)),
       '拆出去那 17 条的先后变了'
