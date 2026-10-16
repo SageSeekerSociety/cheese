@@ -1434,15 +1434,20 @@ def self_test() -> int:
     )
 
     # --- a base it cannot read is not a clean tree ---------------------------
-    # Every path through `main()` that could not reach `--base` wrote a note and
-    # exited 0, which the pre-commit hook and the CI step read exactly as "read
-    # the added migrations and cleared them". Driven through the real command in
-    # a real repository: the exit code, and the `git rev-parse` that runs before
-    # the read, are the whole of what is asserted here, and the pure functions
-    # above cannot see either.
+    # The local path through `main()` that could not reach `--base` wrote a note
+    # and exited 0, which the pre-commit hook read exactly as "read the added
+    # migrations and cleared them". Driven through the real command in a real
+    # repository: the exit code, and the `git rev-parse` that runs before the
+    # read, are the whole of what is asserted here, and the pure functions above
+    # cannot see either.
     lab = Path(tempfile.mkdtemp(prefix="migration-safety-self-test-"))
     lab_env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
     lab_env.pop("GIT_DIR", None)
+    # `CI` goes too, so that the child is the local path these assertions are
+    # about. The code they pin read it: under `CI` an unreachable base already
+    # exited 2, so leaving it set would let the unfixed script pass whenever the
+    # self-test ran in CI — which is the only place it runs on its own.
+    lab_env.pop("CI", None)
     try:
         versions = lab / "backend" / "alembic" / "versions"
         versions.mkdir(parents=True)
