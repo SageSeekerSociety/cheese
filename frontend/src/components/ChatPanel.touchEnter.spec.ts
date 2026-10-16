@@ -18,6 +18,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n from '@/i18n'
+import { composerText, fillComposer } from '@/test/composerInput'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -66,35 +67,36 @@ beforeEach(() => {
   }))
 })
 
-function composerOf(isTouch: boolean): HTMLTextAreaElement {
+function composerOf(isTouch: boolean): HTMLElement {
   pretendTouchDevice(isTouch)
   const { container } = render(Panel, {
     props: { topic, showComposer: true },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
-  const textarea = container.querySelector('textarea') as HTMLTextAreaElement
-  expect(textarea).toBeTruthy()
-  return textarea
+  const box = container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+  expect(box).toBeTruthy()
+  return box
 }
 
-/** 回车有没有被拦下来——拦下来就是「当成发送」，放过去就是换行。 */
-function enterSwallowed(textarea: HTMLTextAreaElement, shiftKey = false): boolean {
-  textarea.focus()
-  const ev = new KeyboardEvent('keydown', { key: 'Enter', shiftKey, bubbles: true, cancelable: true })
-  textarea.dispatchEvent(ev)
-  return ev.defaultPrevented
+/** 打两个字、按一下回车之后，输入框里剩下的字：换了行就多一个换行，发出去了就空了。 */
+async function afterEnter(box: HTMLElement, shiftKey = false): Promise<string> {
+  box.focus()
+  await fillComposer(box, '看看')
+  box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey, bubbles: true, cancelable: true }))
+  await Promise.resolve()
+  return composerText(box)
 }
 
 describe('回车键在两种设备上的意思', () => {
-  it('触摸屏：回车交给输入框换行', () => {
-    expect(enterSwallowed(composerOf(true))).toBe(false)
+  it('触摸屏：回车是换行', async () => {
+    expect(await afterEnter(composerOf(true))).toBe('看看\n')
   })
 
-  it('有指针设备：回车还是发送', () => {
-    expect(enterSwallowed(composerOf(false))).toBe(true)
+  it('有指针设备：回车还是发送', async () => {
+    expect(await afterEnter(composerOf(false))).toBe('')
   })
 
-  it('触摸屏上 Shift+Enter 一样是换行', () => {
-    expect(enterSwallowed(composerOf(true), true)).toBe(false)
+  it('触摸屏上 Shift+Enter 一样是换行', async () => {
+    expect(await afterEnter(composerOf(true), true)).toBe('看看\n')
   })
 })

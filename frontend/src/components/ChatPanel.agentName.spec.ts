@@ -15,6 +15,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { composerText, fillComposer } from '@/test/composerInput'
 
 // 发出去的消息走 POST，这里把每一次的正文记下来——「@ 的是谁」最终就落在正文里。
 const sent = vi.hoisted(() => [] as { content: string }[])
@@ -317,11 +318,11 @@ describe('任务或支线另有队友时，发送框 @ 的是那一位', () => {
   // 名册是**异步**取的，名字就位之前发送框不补 @（RoomComposer 也是先等 summonReady）。
   // 先等提示语换成这件事那位再打字，否则测的是「名册还没到」那一刻，而不是换人有没有生效。
   async function typeAndSummon(container: Element, name: string) {
-    const box = container.querySelector<HTMLTextAreaElement>('.composer textarea')
+    const box = container.querySelector<HTMLElement>('.composer .ProseMirror')
     expect(box).toBeTruthy()
-    await waitFor(() => expect(box!.placeholder).toBe(t('work.room.composer.placeholderDm', { name })))
+    await waitFor(() => expect(box!.getAttribute('aria-label')).toBe(t('work.room.composer.placeholderDm', { name })))
     box!.focus()
-    await fireEvent.update(box!, '整理一下方案')
+    await fillComposer(box!, '整理一下方案')
     await fireEvent.keyDown(box!, { key: 'Enter', ctrlKey: true })
     await settle()
     return box!
@@ -359,9 +360,9 @@ describe('任务或支线另有队友时，发送框 @ 的是那一位', () => {
     await settle()
 
     await waitFor(() => expect(container.textContent).toContain(t('work.room.composer.summon', { name: '无言' })))
-    const box = container.querySelector<HTMLTextAreaElement>('.composer textarea')!
+    const box = container.querySelector<HTMLElement>('.composer .ProseMirror')!
     box.focus()
-    await fireEvent.update(box, '整理一下方案')
+    await fillComposer(box, '整理一下方案')
     await fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true })
     await settle()
     expect(sent[0]?.content).toBe(`<@${OTHER}> 整理一下方案`)
@@ -372,8 +373,9 @@ describe('任务或支线另有队友时，发送框 @ 的是那一位', () => {
     const { container } = renderThread('t4', 'thread-4', OTHER)
     await settle()
 
-    const box = container.querySelector<HTMLTextAreaElement>('.composer textarea')!
-    await waitFor(() => expect(box.value).toBe('@无言 '))
+    const box = container.querySelector<HTMLElement>('.composer .ProseMirror')!
+    await waitFor(() => expect(composerText(box)).toBe(`<@${OTHER}> `))
+    expect(box.querySelector('.mention')?.textContent).toBe('@无言')
   })
 
   it('这件事没单独指定，还是房间那位', async () => {

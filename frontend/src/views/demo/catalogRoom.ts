@@ -29,6 +29,7 @@ import GuideBubble from '@/components/common/GuideBubble.vue'
 import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
+import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
@@ -507,6 +508,31 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '附件那一枚左边是它的记号（图片是缩略图、有第一页的文档是封面、其余是类型图标），右边一直写着名字。',
         props: { replyLabel: null, atts: CHIP_ATTS.slice(0, 1), topicId: 'demo' },
         expect: '预算.xlsx',
+      },
+    ],
+  },
+  {
+    id: 'room-composer-editor',
+    title: 'ComposerEditor',
+    about: '打字的那一块：正文是要发出去的那段字，里面点到的人、频道画成标签，标签当一个字删。',
+    file: 'src/components/room/ComposerEditor.vue',
+    component: ComposerEditor,
+    needs: UI_T,
+    states: [
+      {
+        name: '点了一个人，还贴了一段代码',
+        note: '标签和对话里的样子一样；``` 围起来的几行画成代码块，里面按 Tab 是缩进。',
+        props: {
+          modelValue: '请 <@alice> 看一下这段：\n```\ndef f(x):\n    return x * 2\n```',
+          names: { mentionNames: { alice: 'Alice' }, topicTitles: {}, notified: true },
+        },
+        expect: '@Alice',
+      },
+      {
+        name: '还没打字',
+        note: '空着的时候是一行提示语，打了字就没了。',
+        props: { modelValue: '', names: { mentionNames: {}, topicTitles: {} }, placeholder: `给${AGENT_NAME}发消息` },
+        expect: `给${AGENT_NAME}发消息`,
       },
     ],
   },

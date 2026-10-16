@@ -9,8 +9,8 @@ import { Editor } from '@tiptap/vue-3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as Y from 'yjs'
 
-import { createTokenChips, tokenChipsKey } from '../lib/docDecorations'
 import { docExtensions, exportMarkdown, writeMarkdown } from '../lib/docSchema'
+import { createTokenChips, tokenChipsKey } from '../lib/tokenChips'
 
 import { useDocRefMenu } from './useDocRefMenu'
 

@@ -147,7 +147,7 @@ async function mount() {
   await flush()
   const pane = view.container.querySelector<HTMLElement>('[data-testid="chat-scroll"]')!
   const row = (id: string) => view.container.querySelector<HTMLElement>(`[data-mid="${id}"]`)!
-  const composer = () => view.container.querySelector<HTMLElement>('.composer-input textarea')!
+  const composer = () => view.container.querySelector<HTMLElement>('.composer-input .ProseMirror')!
   const before = view.getByTestId('before')
   return { view, pane, row, composer, before }
 }

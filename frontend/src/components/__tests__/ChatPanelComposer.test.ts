@@ -104,6 +104,8 @@ vi.mock('../../api/messages', () => ({
 
 import ChatPanel from '../ChatPanel.vue'
 
+import { composerText, fillComposer } from '@/test/composerInput'
+
 function topic(id = 'topic-A'): Topic {
   return {
     id,
@@ -140,8 +142,8 @@ function mountPanel(slots: Record<string, () => unknown> = {}, topicId?: string)
   })
 }
 
-function composerBox(container: Element): HTMLTextAreaElement | null {
-  return container.querySelector<HTMLTextAreaElement>('.composer textarea')
+function composerBox(container: Element): HTMLElement | null {
+  return container.querySelector<HTMLElement>('.composer .ProseMirror')
 }
 
 beforeAll(() => {
@@ -197,12 +199,13 @@ describe('对话栏自己的输入栏', () => {
     await flush()
     await fireEvent.click(getByRole('button', { name: /查资料，写成一份报告/ }))
     const box = composerBox(container)!
-    expect(box.value).toContain('@芝士')
-    expect(box.value).toContain('报告')
+    expect(box.querySelector('.mention')?.textContent).toBe('@芝士')
+    expect(composerText(box)).toContain('<@cheese-topica>')
+    expect(composerText(box)).toContain('报告')
     expect(document.activeElement).toBe(box)
     expect(sent).toHaveLength(0)
     expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
-    await fireEvent.update(box, '@芝士 帮我起草一份项目介绍')
+    await fillComposer(box, '@芝士 帮我起草一份项目介绍')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
     expect(JSON.parse(sent[0].payload)).toMatchObject({
@@ -494,14 +497,14 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     box.focus()
-    await fireEvent.update(box, '看看这个')
+    await fillComposer(box, '看看这个')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
     expect(JSON.parse(sent[0].payload).content).toBe('看看这个')
     expect(JSON.parse(sent[0].payload).summon).toBeUndefined()
 
     box.focus()
-    await fireEvent.update(box, '@芝士 再看看')
+    await fillComposer(box, '@芝士 再看看')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
 
@@ -517,7 +520,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     box.focus()
-    await fireEvent.update(box, '@')
+    await fillComposer(box, '@')
     await flush()
 
     const menu = container.querySelector('.mention-menu')
@@ -540,7 +543,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     box.focus()
-    await fireEvent.update(box, '@')
+    await fillComposer(box, '@')
     await flush()
     const menu = container.querySelector('.mention-menu')!.textContent
     expect(menu).toContain('Alice')
@@ -555,12 +558,12 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     box.focus()
-    await fireEvent.update(box, '@')
+    await fillComposer(box, '@')
     await flush()
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
 
-    expect(box.value).toBe('@芝士 ')
+    expect(composerText(box)).toBe('<@cheese-topica> ')
     // 挑完人就是接着打字的时刻——焦点不该被那次回车带走。
     expect(document.activeElement).toBe(box)
   })
@@ -584,7 +587,7 @@ describe('对话栏自己的输入栏', () => {
       await flush()
       const box = composerBox(container)!
       box.focus()
-      await fireEvent.update(box, '@')
+      await fillComposer(box, '@')
       await flush()
       expect(container.querySelector('.mention-menu'), '@ 候选没弹出来').toBeTruthy()
       return { container, box }
@@ -620,7 +623,7 @@ describe('对话栏自己的输入栏', () => {
 
       // 走到第三项是 @here。这里钉的正是键盘导航本身：回车跟着高亮走，第一项
       // （芝士）没被挑中——正文说了算。
-      expect(box.value).toBe('@here ')
+      expect(composerText(box)).toBe('<@here> ')
       // 挑完就是接着打字的时刻，焦点不该被那次回车带走。
       expect(document.activeElement).toBe(box)
     })
@@ -635,7 +638,7 @@ describe('对话栏自己的输入栏', () => {
       expect(activeIndex(container)).toBe(3)
       await fireEvent.keyDown(box, { key: 'Enter' })
       await flush()
-      expect(box.value).toBe('@Alice ')
+      expect(composerText(box)).toBe('<@alice> ')
     })
 
     it('Esc 收起候选，再打字又打开；收起的时候回车是发送', async () => {
@@ -652,7 +655,7 @@ describe('对话栏自己的输入栏', () => {
       expect(message?.content).toBe('@')
 
       box.focus()
-      await fireEvent.update(box, '@a')
+      await fillComposer(box, '@a')
       await flush()
       expect(container.querySelector('.mention-menu')).toBeTruthy()
     })
@@ -666,16 +669,17 @@ describe('对话栏自己的输入栏', () => {
     await flush()
 
     const box = composerBox(container)!
-    await fireEvent.update(box, '看看这个')
+    await fillComposer(box, '看看这个')
     const btn = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) })
     expect(btn.getAttribute('aria-pressed')).toBe('false')
 
     await fireEvent.click(btn)
-    expect(box.value, '按钮没把 @ 写进正文——那它就是个只有它自己知道的开关').toBe('@芝士 看看这个')
+    expect(composerText(box), '按钮没把 @ 写进正文——那它就是个只有它自己知道的开关').toBe('<@cheese-topica> 看看这个')
+    expect(box.querySelector('.mention')?.textContent).toBe('@芝士')
     expect(btn.getAttribute('aria-pressed')).toBe('true')
 
     await fireEvent.click(btn)
-    expect(box.value).toBe('看看这个')
+    expect(composerText(box)).toBe('看看这个')
     expect(btn.getAttribute('aria-pressed')).toBe('false')
   })
 
@@ -686,7 +690,7 @@ describe('对话栏自己的输入栏', () => {
     const box = composerBox(container)!
     const btn = getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) })
     expect(btn.getAttribute('aria-pressed')).toBe('false')
-    await fireEvent.update(box, '@芝士 看看这个')
+    await fillComposer(box, '@芝士 看看这个')
     expect(btn.getAttribute('aria-pressed'), '正文里 @ 了它，按钮却没亮——两边说的不是同一件事').toBe('true')
   })
 
@@ -719,9 +723,9 @@ describe('对话栏自己的输入栏', () => {
     await flush()
 
     const box = composerBox(container)!
-    await fireEvent.update(box, '看看这个')
+    await fillComposer(box, '看看这个')
     await fireEvent.click(getByRole('button', { name: t('work.room.composer.summon', { name: '芝士' }) }))
-    expect(box.value).toBe('@芝士 看看这个')
+    expect(composerText(box)).toBe('<@cheese-topicL> 看看这个')
 
     box.focus()
     await fireEvent.keyDown(box, { key: 'Enter' })
@@ -741,7 +745,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     box.focus()
-    await fireEvent.update(box, '看看这个')
+    await fillComposer(box, '看看这个')
     await fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
     await flush()
 
@@ -790,7 +794,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     box.focus()
-    await fireEvent.update(box, '看看这个')
+    await fillComposer(box, '看看这个')
     await fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
     await flush()
 
@@ -803,7 +807,7 @@ describe('对话栏自己的输入栏', () => {
 
     const box = composerBox(container)!
     box.focus()
-    await fireEvent.update(box, '@波比 你看下')
+    await fillComposer(box, '@波比 你看下')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
 

@@ -66,14 +66,14 @@ describe('不能说话的地方', () => {
   it('输入框的位置写着为什么，没有能打字的地方', () => {
     const c = mount({ conversationId: 't1', composerClosed: '只有负责人可以在这里和芝士对话' })
     expect(c.textContent).toContain('只有负责人可以在这里和芝士对话')
-    expect(c.querySelector('textarea')).toBeNull()
+    expect(c.querySelector<HTMLElement>('.ProseMirror')).toBeNull()
     expect(c.querySelector('.composer-send')).toBeNull()
     expect(c.querySelector('.back')).not.toBeNull()
   })
 
   it('能说话时输入框照旧', () => {
     const c = mount({ conversationId: 't1' })
-    expect(c.querySelector('textarea')).not.toBeNull()
+    expect(c.querySelector<HTMLElement>('.ProseMirror')).not.toBeNull()
   })
 
   it('读的是任务自己的对话，不是房间的', async () => {

@@ -53,6 +53,8 @@ vi.mock('@/api/messages', () => ({
 
 import ChatPanel from './ChatPanel.vue'
 
+import { fillComposer } from '@/test/composerInput'
+
 const Panel = ChatPanel as unknown as Component
 
 function channel(id: string, extra: Partial<Topic> = {}): Topic {
@@ -107,9 +109,9 @@ describe('@ 了不在频道里的人', () => {
       global: { plugins: [createVuetify({ components, directives }), i18n] },
     })
     await flush()
-    const box = view.container.querySelector<HTMLTextAreaElement>('.composer textarea')!
+    const box = view.container.querySelector<HTMLElement>('.composer .ProseMirror')!
     box.focus()
-    await fireEvent.update(box, '<@carol> 看一下')
+    await fillComposer(box, '<@carol> 看一下')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
 

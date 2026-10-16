@@ -24,6 +24,7 @@ import { postChatMessage } from '../api/messages'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
+import { composerText, fillComposer } from '@/test/composerInput'
 
 async function flushPromises() {
   await vi.advanceTimersByTimeAsync(0)
@@ -98,10 +99,10 @@ function sends(): ChatMessageBody[] {
 }
 
 async function type(view: ReturnType<typeof mountPanel>, text: string) {
-  const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
-  textarea.focus()
-  await fireEvent.update(textarea, text)
-  await fireEvent.keyDown(textarea, { key: 'Enter' })
+  const box = view.container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+  box.focus()
+  await fillComposer(box, text)
+  await fireEvent.keyDown(box, { key: 'Enter' })
   await flushPromises()
 }
 /** What the panel said on a socket, by frame type. */
@@ -380,8 +381,8 @@ it('can send while initial history is pending and preserves live messages when i
   expect(sockets).toHaveLength(1)
   sockets[0].onopen?.()
   await flushPromises()
-  const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
-  expect(textarea.disabled).toBe(false)
+  const box = view.container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
+  expect(box.getAttribute('contenteditable')).toBe('true')
   await type(view, 'hello before history')
   const block = stored(sends()[0])
   sockets[0].onmessage?.({ data: JSON.stringify({ type: 'user_block', block }) })
@@ -491,13 +492,13 @@ it('editing a message that failed to send puts its text back in the box and take
   await flushPromises()
   sockets[0].onopen?.()
   await flushPromises()
-  const textarea = view.container.querySelector('textarea') as HTMLTextAreaElement
+  const box = view.container.querySelector<HTMLElement>('.ProseMirror') as HTMLElement
   await type(view, 'the words I typed')
-  expect(textarea.value).toBe('')
+  expect(composerText(box)).toBe('')
 
   await fireEvent.click(view.getByText(t('work.room.outbox.edit')))
   await flushPromises()
-  expect(textarea.value).toBe('the words I typed')
+  expect(composerText(box)).toBe('the words I typed')
   expect(view.container.querySelector('.im-row--pending')).toBeNull()
   // 拿回来编辑的那条不会在重连之后自己又发出去。
   sockets[0].onclose?.()

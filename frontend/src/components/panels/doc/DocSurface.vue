@@ -38,14 +38,13 @@ import {
   createCommentHighlights,
   createEmptyLineHint,
   createTitleEcho,
-  createTokenChips,
-  tokenChipsKey,
 } from '../../../lib/docDecorations'
 import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
 import { refsVersion } from '../../../lib/refDirectory'
+import { createTokenChips, tokenChipsKey } from '../../../lib/tokenChips'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 import MentionMenu from '../../room/MentionMenu.vue'
 

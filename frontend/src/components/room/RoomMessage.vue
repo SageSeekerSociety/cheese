@@ -85,14 +85,13 @@ const props = defineProps<{
    */
   outgoing?: { error?: string; failed: boolean } | null
   /**
-   * 正在改这条自己发过的消息：正文换成输入框，里面先放着 `editText`。
+   * 正在改这条自己发过的消息：正文换成输入框，里面先放着原文。
    * `saving` 是保存请求还在路上。
    *
    * 这一行同时挂上 `im-row--editing`（见 room-row.css）：编辑时要抬掉这一行的
    * containment，否则 @ 候选菜单弹不出这一行，人只看得见贴着框沿的一条。
    */
   editing?: boolean
-  editText?: string
   saving?: boolean
   /** 这一行在频道主线上、我能在那里说话：文件的 ⋯ 里能置顶到频道。 */
   pinnable?: boolean
@@ -318,8 +317,9 @@ function renderPlain(text: string): string {
       </div>
       <MessageEditor
         v-else-if="editing"
-        :text="editText ?? block.content"
+        :text="block.content"
         :saving="!!saving"
+        :refs="refs"
         :mention-pool="mentionPool"
         :topic-list="topicList"
         @save="emit('save-edit', $event)"
