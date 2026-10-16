@@ -19,7 +19,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.routine.models import RoutineTemplate
 from app.domain.routine.service import name_of, validate_spec
@@ -104,7 +104,7 @@ def _fields(*, title: str, goal: str, note: str, trigger: str, spec: dict) -> di
     """
     goal = (goal or "").strip()
     if not goal:
-        raise ValidationError(say("routineTemplateGoalRequired"))
+        raise UnprocessableEntityError(say("routineTemplateGoalRequired"))
     return {
         "title": name_of(title, goal),
         "goal": goal,
