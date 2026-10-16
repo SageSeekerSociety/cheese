@@ -32,7 +32,6 @@ from app.domain.delivery.ledger import settle_card
 from app.domain.repository import identity
 from app.domain.review.services import AcceptService
 from app.domain.room_task import snapshots
-from app.domain.room_task.models import TaskSnapshot
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["git"])
@@ -130,8 +129,8 @@ async def download_task_snapshot(
 ) -> Response:
 
     await _task_for(db, project_id, task_id, x_cheese_token)
-    row = await db.get(TaskSnapshot, snapshot_id)
-    if row is None or row.task_id != task_id:
+    row = await snapshots.get(db, task_id=task_id, snapshot_id=snapshot_id)
+    if row is None:
         raise NotFoundError(say("taskBackupNotFound"))
     return Response(
         await snapshots.download(row),
