@@ -53,11 +53,14 @@ relative `./`/`../`, resolved the way `frontend_grade.resolve_spec` resolves
 `component: X as ...` or `component: markRaw(X)`). An import that no entry
 renders is not an entry.
 
-The catalog files are `frontend/src/views/demo/catalog.ts` and the
-`catalog*.ts` volumes beside it that it value-imports AND spreads
-(`import { X_ENTRIES } from './catalogX'` ... `...X_ENTRIES`), followed
-transitively from each volume the same way; `catalog*Fixtures.ts` files are
-data and are not read. WHY START FROM catalog.ts: `CATALOG` there is what
+The catalog files are `frontend/src/views/demo/catalog.ts` and the volumes it
+value-imports AND spreads (`import { X_ENTRIES } from './catalogX'` ...
+`...X_ENTRIES`), followed transitively from each volume the same way. A volume
+is one of two shapes: a `catalog*.ts` beside the entry point, or a `.ts` under
+`frontend/src/views/demo/catalog/` — the scene shards the entry point groups
+its own entries into. Both are read the same way and under the same rule: an
+import that is not spread reaches nothing. `catalog*Fixtures.ts` files are data
+and are not read. WHY START FROM catalog.ts: `CATALOG` there is what
 the preview site renders and what `catalog.spec.ts` mounts, and a volume
 gets into it only by being imported and spread there. Scanning every `.ts`
 under `views/demo/` instead counted things the site never shows — a
@@ -108,8 +111,14 @@ DEFAULT_BASELINE = "frontend/catalog-baseline.json"
 #: A spec file puts nothing on the site, whatever it imports.
 SPEC = re.compile(r"\.(spec|test)\.(ts|js)$")
 
-#: A catalog volume: `catalog.ts` itself or `catalogAccept.ts`, `catalogBase.ts`, ...
+#: A catalog volume beside the entry point: `catalogAccept.ts`, `catalogBase.ts`, ...
 VOLUME = re.compile(r"^catalog[A-Za-z0-9_]*\.ts$")
+
+#: ...or one level down, grouped by scene. The names there are scene words
+#: (`room`, `panel-views`), not `catalog*` ones, so the shape above cannot be
+#: the test; what makes a file a shard is being under this directory and
+#: reaching `CATALOG` the same way every volume does — imported and spread.
+SHARD_DIR = "catalog"
 
 #: An import with its clause: `import A from 'x'`, `import A, { b } from 'x'`.
 IMPORT_CLAUSE = re.compile(
@@ -266,8 +275,40 @@ def named_locals(clause: str) -> list[str]:
     return names
 
 
+def volume_target(demo: Path, importer: Path, spec: str) -> Path | None:
+    """Where a relative import lands, when it lands on a catalog volume.
+
+    Two shapes count, and nothing else does:
+
+      * a flat `catalog*.ts` beside the entry point — the original volumes;
+      * a `.ts` under `catalog/` — the scene shards.
+
+    Everything else a relative `.ts` import of theirs might be is refused: the
+    router, a scene module, a helper. That is on purpose — "which files are
+    catalog volumes" is a question about the layout, and answering it by
+    guessing from a name would let a `.ts` that the site never renders in.
+    """
+    if not spec.startswith("./"):
+        return None
+    name = spec[2:]
+    if not name.endswith(".ts"):
+        name += ".ts"
+    if name.endswith("Fixtures.ts") or SPEC.search(name):
+        return None
+    target = Path(os.path.normpath(importer.parent / name))
+    try:
+        parts = target.relative_to(demo).parts
+    except ValueError:
+        return None  # outside the preview site
+    if len(parts) == 1 and not VOLUME.match(parts[0]):
+        return None
+    if len(parts) > 2 or (len(parts) == 2 and parts[0] != SHARD_DIR):
+        return None
+    return target
+
+
 def catalog_files(root: Path) -> list[Path]:
-    """`catalog.ts` and every `catalog*.ts` volume it value-imports, transitively.
+    """`catalog.ts`, every volume beside it and every shard under `catalog/`.
 
     Only what `catalog.ts` reaches is on the site: `DemoCatalog.vue` and
     `catalog.spec.ts` both read `CATALOG` from it, and a volume reaches
@@ -276,8 +317,9 @@ def catalog_files(root: Path) -> list[Path]:
     the importing file; a `.ts` beside it that nobody imports (an orphan
     volume), or imports without spreading, the router, the scene modules and
     the fixture files (`catalog*Fixtures.ts` — data, never entries) are not
-    walked. Imports are read after `strip_comments`, so a commented-out
-    import or spread follows nothing.
+    walked. Which files are volumes at all is `volume_target`'s answer. Imports
+    are read after `strip_comments`, so a commented-out import or spread
+    follows nothing.
     """
     demo = root / DEMO_DIR
     entry = demo / "catalog.ts"
@@ -295,21 +337,16 @@ def catalog_files(root: Path) -> list[Path]:
         except OSError as exc:
             raise Unjudgeable(f"cannot read {path}: {exc}") from exc
         for type_only, clause, spec in IMPORT_CLAUSE.findall(text):
-            if type_only or not spec.startswith("./"):
+            if type_only:
                 continue
-            name = spec[2:]
-            if "/" in name:
-                continue
-            if not name.endswith(".ts"):
-                name += ".ts"
-            if not VOLUME.match(name) or name.endswith("Fixtures.ts") or SPEC.search(name):
+            target = volume_target(demo, path, spec)
+            if target is None:
                 continue
             if not any(
                 re.search(r"\.\.\.\s*" + re.escape(local) + r"(?![\w$])", text)
                 for local in named_locals(clause)
             ):
                 continue  # imported, but none of its arrays is spread into a list
-            target = demo / name
             if target.is_file():
                 todo.append(target)
     return sorted(seen)
@@ -803,6 +840,29 @@ def self_test() -> int:
                     "import { NEW_ENTRIES } from './catalogNew'\n"
                     "export const MORE = [\n  ...NEW_ENTRIES,\n"),
             }, 0),
+            # A shard under `catalog/` is a volume too, and under the same rule:
+            # imported AND spread. Its name is a scene word, so nothing about
+            # the name says so — the directory does.
+            ("control: a shard under catalog/ catalogues when imported and spread", {
+                "frontend/src/views/demo/catalog/navigation.ts": volume,
+                catalog_ts: _spread_into_catalog("NEW_ENTRIES", "./catalog/navigation"),
+            }, 0),
+            ("(b) a shard under catalog/ that catalog.ts never spreads does not catalogue it", {
+                "frontend/src/views/demo/catalog/navigation.ts": volume,
+                catalog_ts: _spread_into_catalog("NEW_ENTRIES", "./catalog/navigation").replace(
+                    "  ...NEW_ENTRIES,\n", "") + "void NEW_ENTRIES\n",
+            }, 1),
+            ("(b) a shard under catalog/ that catalog.ts never imports does not catalogue it", {
+                "frontend/src/views/demo/catalog/navigation.ts": volume,
+            }, 1),
+            ("(b) a `.ts` beside catalog.ts that is not a `catalog*.ts` does not catalogue it", {
+                "frontend/src/views/demo/sceneNavigation.ts": volume,
+                catalog_ts: _spread_into_catalog("NEW_ENTRIES", "./sceneNavigation"),
+            }, 1),
+            ("(b) a `catalog/` file in any other directory does not catalogue it", {
+                "frontend/src/views/demo/scenes/catalogNavigation.ts": volume,
+                catalog_ts: _spread_into_catalog("NEW_ENTRIES", "./scenes/catalogNavigation"),
+            }, 1),
         ]
         for label, changes, want in cases:
             _fixture(root, {"frontend/src/components/NewA.vue": _A, **changes})
