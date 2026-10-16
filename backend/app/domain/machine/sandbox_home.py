@@ -41,7 +41,7 @@ def destroy(cleanup, project, resource) -> dict:
     cleanup["end_holders"]([home, work])
     cleanup["check_no_writers"]([home, work])
     for path in (work, home, cleanup["resource_tmp"](resource)):
-        if path.exists():
+        if path is not None and path.exists():
             cleanup["remove_tree"](path)
     # Last, as the room's cleanup does: until the home is gone, it is the
     # sandbox's to have written.
