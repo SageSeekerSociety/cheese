@@ -263,7 +263,7 @@ async def test_the_alerts_bar_counts_a_different_number_of_each_thing():
 @pytest.mark.anyio
 async def test_swapping_two_counts_is_a_payload_the_alerts_assertion_rejects():
     """Two buckets swapped is the change the pinned payload must not survive:
-    4 under 待审核题目 and 1 under 待审核报名 is the same six numbers in the wrong
+    1 under 待审核题目 and 4 under 待审核报名 is the same six numbers in the wrong
     places, and a fixture whose two buckets held equal counts would let exactly
     that pass. This holds that the pair above goes red when it happens.
     """
