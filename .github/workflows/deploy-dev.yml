@@ -71,6 +71,8 @@ permissions:
   # The feedback step at the end reads when each shipped commit's PR was
   # opened and merged.
   pull-requests: read
+  # The deploy job records a deployment of the commit it releases.
+  deployments: write
 
 jobs:
   eligibility:
@@ -150,18 +152,31 @@ jobs:
     if: >-
       needs.eligibility.outputs.ready == 'true' &&
       needs.eligibility.outputs.superseded == ''
-    # Names this job's target so GitHub records a deployment for it (a job
-    # with `environment:` gets one created on start and marked
-    # success/failure at the end). Nothing about the deploy changes — this is
-    # what makes "did this change reach dev?" answerable from the API instead
-    # of by hunting for a workflow run by filename, which is how the accept
-    # path used to guess it (#206). The env has no protection rules, so it adds
-    # no approval step.
-    environment: dev
+    # The job records a GitHub deployment to `dev` itself (the first and last
+    # steps), so "did this change reach dev?" is answerable from the API (#206).
+    # Not `environment: dev`: that records the run's own SHA, which for a
+    # build-completed event is main's tip when the event fired and for a
+    # dispatch is the dispatch ref, neither of which need be the commit
+    # released, so a merge would read as deployed before any deploy carried it.
     runs-on: [self-hosted, cheese-dev]
     # The first Forge cutover archives workspaces and builds a recovery bundle per task.
     timeout-minutes: 180
     steps:
+      # A record that cannot be written does not hold up the release.
+      - name: Record a deployment of the released commit
+        id: deployment
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$CANDIDATE_SHA" --jq .sha)"
+          id="$(python3 -c 'import json, sys; print(json.dumps({"ref": sys.argv[1], "environment": "dev", "auto_merge": False, "required_contexts": []}))' "$sha" \
+            | gh api "repos/$GITHUB_REPOSITORY/deployments" --input - --jq .id)"
+          gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses" -f state=in_progress \
+            -f log_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
       # The candidate may predate this guard. Read policy from the workflow's
       # default-branch commit before checking out that candidate's deploy code.
       - name: Check out automatic deployment policy
@@ -473,3 +488,20 @@ jobs:
             line="Deployed \`$CANDIDATE_SHA\`."
           fi
           echo "$line dev runs \`$live\`." >> "$GITHUB_STEP_SUMMARY"
+
+      # A run that skipped because dev already runs this commit or a newer one
+      # succeeds too: dev then serves something that contains the candidate.
+      - name: Finish the deployment record
+        if: always() && steps.deployment.outputs.id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ID: ${{ steps.deployment.outputs.id }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          case "$OUTCOME" in
+            success) state=success ;;
+            failure) state=failure ;;
+            *) state=error ;;
+          esac
+          gh api "repos/$GITHUB_REPOSITORY/deployments/$ID/statuses" -f state="$state" \
+            -f log_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" >/dev/null

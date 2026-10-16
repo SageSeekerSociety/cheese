@@ -278,6 +278,62 @@ class ReleaseOrdering(unittest.TestCase):
         self.assertEqual(checkout["if"], "steps.release.outputs.skip != 'true'")
 
 
+class DeploymentRecord(unittest.TestCase):
+    """The deployment GitHub records for a dev release names the commit released.
+
+    `environment:` would record the run's own SHA: main's tip when the build
+    event fired, or the dispatch ref. The platform reads these deployments to
+    tell a task its merge reached dev, so a later SHA there reads as deployed
+    before any release carried it."""
+
+    released = "c" * 40
+
+    def test_the_deploy_job_records_no_deployment_of_the_run_sha(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        self.assertNotIn("environment", workflow["jobs"]["deploy"])
+
+    def test_the_recorded_deployment_is_of_the_candidate(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        steps = workflow["jobs"]["deploy"]["steps"]
+        record = next(step for step in steps if step.get("id") == "deployment")
+        self.assertIs(steps[0], record)
+        self.assertIn("github.event.workflow_run.head_sha", record["env"]["CANDIDATE_SHA"])
+        with tempfile.TemporaryDirectory(dir=ROOT / ".tmp") as directory:
+            bin_dir, log = Path(directory) / "bin", Path(directory) / "gh.log"
+            bin_dir.mkdir()
+            fake = bin_dir / "gh"
+            fake.write_text(
+                "#!/usr/bin/env bash\n"
+                f'echo "ARGS $*" >> {log}\n'
+                'case "$*" in\n'
+                f'  *commits/*) echo {self.released} ;;\n'
+                f'  *"/deployments --input"*) echo "BODY $(cat)" >> {log}; echo 7 ;;\n'
+                "esac\n"
+            )
+            fake.chmod(0o755)
+            output = Path(directory) / "output"
+            environment = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                           "GITHUB_REPOSITORY": "example/app", "GITHUB_SERVER_URL": "https://github.com",
+                           "GITHUB_RUN_ID": "1", "CANDIDATE_SHA": self.released[:9],
+                           "GITHUB_OUTPUT": str(output)}
+            result = subprocess.run(["bash", "-eu", "-c", record["run"]], cwd=directory,
+                                    env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            lines = log.read_text().splitlines()
+            body = json.loads(next(line for line in lines if line.startswith("BODY "))[5:])
+            self.assertEqual(body["ref"], self.released)
+            self.assertEqual(body["environment"], "dev")
+            self.assertTrue(any("deployments/7/statuses" in line and "state=in_progress" in line
+                                for line in lines))
+            self.assertEqual(output.read_text(), "id=7\n")
+
+    def test_the_record_is_finished_whatever_the_job_did(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        last = workflow["jobs"]["deploy"]["steps"][-1]
+        self.assertTrue(last["if"].startswith("always()"))
+        self.assertEqual(last["env"]["ID"], "${{ steps.deployment.outputs.id }}")
+
+
 class CandidateCI(unittest.TestCase):
     candidate = "a" * 40
 
