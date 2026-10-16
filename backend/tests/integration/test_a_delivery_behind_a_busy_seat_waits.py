@@ -198,13 +198,16 @@ async def test_an_instruction_still_behind_a_busy_seat_a_day_later_is_given_up(
 
 
 @pytest.mark.anyio
-async def test_a_seat_held_by_a_turn_that_already_ended_is_not_busy(
-    business_db_factory, tmp_path
+@pytest.mark.parametrize("how", ["ended", "gone quiet"])
+async def test_a_seat_held_by_a_turn_that_is_not_running_is_not_busy(
+    business_db_factory, tmp_path, how
 ):
-    """The agent's session went out of reach mid-turn: the platform ended the
-    turn, but the input it had read still holds the seat, and nothing will
-    release it. An instruction refused by that hold is not waiting for any
-    work to finish; it is paged about and given up half an hour on."""
+    """The agent's session went out of reach mid-turn. Either the platform
+    ended the turn, or it could not tell the session was gone and the turn
+    stays open, silent for hours. Either way the input it had read still holds
+    the seat and nothing will release it. An instruction refused by that hold
+    is not waiting for any work to finish; it is paged about and given up half
+    an hour on."""
     factory = business_db_factory
     conversation, seat, instance_id = await _room_with_agent(factory)
     screen = Seat()
@@ -212,20 +215,33 @@ async def test_a_seat_held_by_a_turn_that_already_ended_is_not_busy(
     chat = _chat(factory, screen, runner, tmp_path)
     try:
         await _busy(chat, runner, screen, conversation, seat)
-        # The turn ends as an unreachable session's does: its interval is
-        # closed, and the input it had read is left holding the seat.
         async with asyncio.timeout(HANG_S):
             while not await _read_by_session(factory, conversation):
                 await asyncio.sleep(0.05)
         async with factory() as session:
-            await session.execute(
-                update(AgentTurn)
-                .where(
-                    AgentTurn.conversation_id == conversation,
-                    AgentTurn.stopped_at.is_(None),
+            if how == "ended":
+                # Its interval is closed; the input is left holding the seat.
+                await session.execute(
+                    update(AgentTurn)
+                    .where(
+                        AgentTurn.conversation_id == conversation,
+                        AgentTurn.stopped_at.is_(None),
+                    )
+                    .values(stopped_at=datetime.now(UTC))
                 )
-                .values(stopped_at=datetime.now(UTC))
-            )
+            else:
+                # Still open, and nothing has come of it for two hours.
+                hours_ago = datetime.now(UTC) - timedelta(hours=2)
+                await session.execute(
+                    update(AgentTurn)
+                    .where(AgentTurn.conversation_id == conversation)
+                    .values(started_at=hours_ago)
+                )
+                await session.execute(
+                    update(Block)
+                    .where(Block.conversation_id == conversation)
+                    .values(created_at=hours_ago)
+                )
             await session.commit()
         delivery_id = await _instruction_for(
             factory, conversation, instance_id, "the checks on PR 12 failed"

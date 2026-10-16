@@ -48,10 +48,13 @@ GAVE_UP = "Not started within 30 minutes of being given"
 # that work to end, not for a computer that is gone: a seat runs one turn at a
 # time, and one turn can run for hours. Such a delivery's half hour counts from
 # the last attempt that found the seat busy (`Delivery.seat_busy_at`), not from
-# when it was given. A turn whose session went out of reach is ended, and an
-# input it left holding the seat does not count as busy, so those deliveries
-# give up half an hour on as before.
+# when it was given. An input left holding the seat by a turn that ended or
+# went quiet does not count as busy (`SEAT_HELD`), so those deliveries give up
+# half an hour on as before.
 SEAT_BUSY = "The agent's seat was still working on an earlier input"
+# Refused by an input whose turn is over, or has gone quiet, and still holds
+# the seat: nothing will release it, so this is not waiting on anything.
+SEAT_HELD = "The agent's seat is held by an input of a turn that is not running"
 # The backstop for a seat that never frees: longer than any turn dev ran in the
 # 15 days to 2026-10-16 (11,531 turns, p99 3.1 h, longest 22.9 h), so a delivery
 # behind any real turn still goes in; one older than this is behind something
@@ -424,9 +427,9 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat, machines
                 if row.state == "claimed":
                     row.state = "pending"
                     row.retry_at = now() + timedelta(seconds=retry_after(row.attempts))
-                    # A busy seat is the one refusal admission names; anything
-                    # else is not known here.
-                    if row.last_error != SEAT_BUSY:
+                    # Admission names why it refused the seat (`SEAT_BUSY`,
+                    # `SEAT_HELD`); any other refusal is not known here.
+                    if row.last_error is None:
                         row.last_error = (
                             "Input was not dispatched; "
                             "admission or preparation did not complete"

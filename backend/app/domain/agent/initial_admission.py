@@ -3,11 +3,13 @@
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Protocol
 
-from sqlalchemy import and_, exists, func, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.admission import Lease
@@ -18,7 +20,7 @@ from app.domain.agent.pending_messages import defer_message
 from app.domain.agent.queries import conversation_seat
 from app.domain.agent.seat_admission import seat_admission
 from app.domain.block.models import Block
-from app.domain.delivery.agent import SEAT_BUSY, now
+from app.domain.delivery.agent import SEAT_BUSY, SEAT_HELD, now
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.identity.handles import agent_instance_handle
@@ -122,8 +124,10 @@ async def admitted_initial(
                 and pending
                 and delivery_id is not None
                 and attempt_id is not None
-                and await _held_by_a_running_turn(session, topic_id, seated[1])
             ):
+                # Says why on the attempt it refused; only a running turn
+                # makes the seat busy (`delivery.agent.waited_too_long`).
+                busy = await _held_by_a_running_turn(session, topic_id, seated[1])
                 await session.execute(
                     update(Delivery)
                     .where(
@@ -131,7 +135,13 @@ async def admitted_initial(
                         Delivery.attempt_id == attempt_id,
                         Delivery.state == "claimed",
                     )
-                    .values(seat_busy_at=now(), last_error=SEAT_BUSY)
+                    .values(
+                        **(
+                            {"seat_busy_at": now(), "last_error": SEAT_BUSY}
+                            if busy
+                            else {"last_error": SEAT_HELD}
+                        )
+                    )
                 )
             if (pending or away) and user_block_id is not None:
                 await defer_message(session, user_block_id)
@@ -150,16 +160,26 @@ async def admitted_initial(
 async def _held_by_a_running_turn(session, topic_id, recipient_handle) -> bool:
     """Whether what holds this seat is a turn that is still running.
 
-    A seat is also held by the input of a turn that has already ended without
-    a word on it: the session went out of reach (`room.sessions.reading`'s
-    ``out_of_reach``), which ends the turn's interval but leaves its inputs
-    held, since being out of reach is not proof the session died. A delivery
-    refused by that hold is not waiting for work to finish, and nothing
-    releases the hold: it is not marked busy (`delivery.agent.SEAT_BUSY`), so
-    it gives up half an hour on, as before. An open interval is a session the
-    host still reaches: one out of reach for two minutes is ended
-    (`session_host.host`, ``gone_after_s``).
+    A seat is also held by the input of a turn that is over in all but name.
+    A session out of reach has its turn ended (`room.sessions.reading`'s
+    ``out_of_reach``) with the inputs it read left held, since being out of
+    reach is not proof the session died; and a turn whose death nobody can
+    prove stays open (`death_evidence.unknown_row`). Nothing releases either
+    hold, and a delivery refused by one is not waiting for work to finish. So
+    a turn counts as running only while its interval is open and it has said
+    something, or started, within the orphan sweep's silence limit
+    (`settings.turn_silence_timeout_s`) — what a task's close counts as work
+    too (`room_task.closing.unfinished`).
     """
+    quiet_since = now() - timedelta(seconds=settings.turn_silence_timeout_s)
+    said_lately = (
+        select(Block.id)
+        .where(
+            Block.turn_id.in_([AgentTurn.id, AgentTurn.continuation_id]),
+            Block.created_at >= quiet_since,
+        )
+        .exists()
+    )
     return bool(
         await session.scalar(
             select(
@@ -176,6 +196,7 @@ async def _held_by_a_running_turn(session, topic_id, recipient_handle) -> bool:
                             ),
                             AgentTurn.conversation_id == NativeInput.conversation_id,
                             AgentTurn.stopped_at.is_(None),
+                            or_(AgentTurn.started_at >= quiet_since, said_lately),
                         )
                     ),
                 )
