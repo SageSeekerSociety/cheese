@@ -90,6 +90,11 @@ HIGH_RISK = (
     ("文案", "backend/app/core/sentences.py"),
 )
 CI_CHECK = "CI required"
+#: What the platform writes in a card's note once its PR is in the merge queue. It rewrites the
+#: note when the PR leaves the queue, so the note reads the card's state now — decided_at does not:
+#: the platform sets that on every decision and never clears it, so a card whose PR was refused or
+#: pulled back out of the queue keeps it while its card sits pending again.
+QUEUE_NOTE = "已进入合并队列"
 #: One PR read: each GraphQL field, and the key pr_facts() files it under. The query is built from
 #: this table so its two ends cannot drift, and the offline stub answers only the fields a query
 #: names, as GitHub does — a field dropped from the query is missing from the body and the next
@@ -188,9 +193,9 @@ def judge(f, me):
             bad.append(("conflicting", "PR 有冲突"))
         elif pr.get("mergeable") != "MERGEABLE":
             # A PR in the merge queue answers UNKNOWN until the queue gets to it, and the platform
-            # keeps its card pending with a decided_at while the queue works; either way the card is
-            # behind the queue, not blocked on a number GitHub has not computed yet.
-            if pr.get("in_queue") or card.get("decided_at"):
+            # keeps its card pending while the queue works; either way the card is behind the queue,
+            # not blocked on a number GitHub has not computed yet.
+            if pr.get("in_queue") or QUEUE_NOTE in (card.get("note") or ""):
                 notes.append("已在合并队列，合并交给队列")
             else:
                 bad.append(("mergeable_unknown", f"GitHub 还没算出能不能合（{pr.get('mergeable')}）"))
@@ -349,8 +354,10 @@ def accept(tok, task, me):
         ok, detail = post(tok, f"/accept-cards/{card['id']}/approve", {"approver_handle": me})
         if not ok:
             return f"approve 被拒：{detail}"
-        # judge() only says 会采 with a head, and it falls back to the PR's own while the platform
-        # has not shown the card one; that is the same commit approve has just recorded.
+        # judge() only says 会采 with a head: the card's own once the platform has shown one, else
+        # the PR's. The platform records a card's head from its own read of the PR, so a card it has
+        # not shown one for yet may refuse this accept — the re-read and second attempt below are
+        # what pick up the head it has written by then.
         head = shown_head(card, f["pr"])
         ok, detail = post(tok, f"/accept-cards/{card['id']}/accept",
                           {"decided_by": me, "head_sha": head})
@@ -363,7 +370,9 @@ def accept(tok, task, me):
 
 def row_of(f, verdict, why, notes):
     card = f["card"] or {}
-    return {"task": f["task"], "pr": card.get("pr_number"), "head": card.get("pr_head_sha"),
+    # The same head judge() ruled on, so a 会采 row always names a commit: a card the platform has
+    # not shown one for would otherwise print `head -` on a line the documented shape calls <sha8>.
+    return {"task": f["task"], "pr": card.get("pr_number"), "head": shown_head(card, f["pr"]),
             "verdict": "accept" if verdict == "会采" else "handoff",
             "codes": [c for c, _ in why],
             "reasons": [{"code": c, "detail": d, "reply": REASONS[c]} for c, d in why],
@@ -495,9 +504,16 @@ def self_test():
           "会采", has="已在合并队列")
     check("队列里也照常拦冲突", facts(pr=pr(mergeable="CONFLICTING", in_queue=True)),
           "交总调度", "conflicting")
-    check("卡上已采纳、卡在队列里，也不按 UNKNOWN 拦",
-          facts(card=card(decided_at="2026-01-01T00:00:00Z"), pr=pr(mergeable="UNKNOWN", in_queue=False)),
+    check("平台说已进合并队列的卡，也不按 UNKNOWN 拦",
+          facts(card=card(note="PR #9 已进入合并队列，等待队列检查和实际合并。"),
+                pr=pr(mergeable="UNKNOWN", in_queue=False)),
           "会采", has="已在合并队列")
+    # decided_at is set on every decision and never cleared, so a card whose PR already left the
+    # queue — refused or pulled back out — still carries it and still has to hand off.
+    check("记过采纳但已经离开队列的，仍按未算出来交总调度",
+          facts(card=card(decided_at="2026-01-01T00:00:00Z", note="PR #9 没有通过合并队列检查。"),
+                pr=pr(mergeable="UNKNOWN", in_queue=False)),
+          "交总调度", "mergeable_unknown")
 
     # GitHub resets mergeable to UNKNOWN whenever main moves, so gh_facts itself has to outlast
     # that; these go through gh_facts rather than settle_mergeable, or reverting the call inside it
@@ -670,6 +686,10 @@ def self_test():
     ok_row = row_of(facts(), *judge(facts(), "me"))
     if line(ok_row) != "[会采] #1 PR #9 head aaaaaaaa｜审查来自卡" or ok_row["codes"] != []:
         failures.append(f"会采行格式: got {line(ok_row)!r}")
+    # 会采的行要指名一个提交：卡上还没有版本时就是 PR 自己的 head，不能是 "-"。
+    fresh = facts(card=card(pr_head_sha=None))
+    if line(row_of(fresh, *judge(fresh, "me"))) != "[会采] #1 PR #9 head aaaaaaaa｜审查来自卡":
+        failures.append(f"卡上还没有版本时会采行也要有 head: got {line(row_of(fresh, *judge(fresh, 'me')))!r}")
 
     for x in failures:
         print("FAIL", x)
