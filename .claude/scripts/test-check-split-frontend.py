@@ -211,6 +211,104 @@ class SplitContracts(unittest.TestCase):
                                   '<button id="action" @click="close()" aria-label="Close"/>'))
         self.invoke(0)
 
+    def test_destructured_local_binding_cannot_fall_back_to_global(self):
+        declarations = [
+            "const {blur} = {blur: () => {}};",
+            "const {action: blur} = {action: () => {}};",
+            "const [{nested: [blur]}] = [{nested: [() => {}]}];",
+            "const [blur = () => {}] = [];",
+        ]
+        for declaration in declarations:
+            with self.subTest(declaration=declaration):
+                self.baseline(sfc(declaration + " blur();"))
+                self.write("Panel.vue", sfc("import {usePanel} from './usePanel'; usePanel(); blur();"))
+                self.write("usePanel.ts", "export function usePanel() { " + declaration + " return {}; }")
+                self.assertIn("formerly local blur", self.invoke(1, ("Panel.vue", "usePanel.ts")))
+                self.write("Panel.vue", sfc("import {usePanel} from './usePanel'; const {blur} = usePanel(); blur();"))
+                self.write("usePanel.ts", "export function usePanel() { " + declaration + " return {blur}; }")
+                self.invoke(0, ("Panel.vue", "usePanel.ts"))
+
+    def test_unused_nested_rest_binding_is_still_a_local_export_candidate(self):
+        declaration = "const {actions: {...blur}} = {actions: {}};"
+        self.baseline(sfc(declaration))
+        self.write("Panel.vue", sfc("import {usePanel} from './usePanel'; const api = usePanel(); void api;"))
+        self.write("usePanel.ts", "export function usePanel() { return {blur}; }")
+        self.assertIn("formerly local blur", self.invoke(1, ("Panel.vue", "usePanel.ts")))
+        self.write("usePanel.ts", "export function usePanel() { " + declaration + " return {blur}; }")
+        self.invoke(0, ("Panel.vue", "usePanel.ts"))
+
+    def test_shorthand_export_uses_its_value_binding(self):
+        self.baseline(sfc("function blur() {} blur();"))
+        self.write("Panel.vue", sfc("import {usePanel} from './usePanel'; const api = usePanel(); api.blur();"))
+        for returned in ("{blur}", "{blur: blur}"):
+            with self.subTest(returned=returned):
+                self.write("usePanel.ts", "export function usePanel() { return " + returned + "; }")
+                self.assertIn("formerly local blur", self.invoke(1, ("Panel.vue", "usePanel.ts")))
+                self.write("usePanel.ts", "export function usePanel() { const blur = () => {}; return " + returned + "; }")
+                self.invoke(0, ("Panel.vue", "usePanel.ts"))
+
+    def test_aria_property_binding_no_longer_supplies_attribute(self):
+        original = sfc("const label = 'Action'", '<button id="action" :aria-label="label"/>')
+        self.baseline(original)
+        self.write("Panel.vue", original.replace(":aria-label=", ":aria-label.prop="))
+        self.assertIn("[1 aria]", self.invoke(1))
+        self.write("Panel.vue", original)
+        self.invoke(0)
+        self.write("Panel.vue", original.replace(":aria-label=", ":aria-label.attr="))
+        self.invoke(0)
+
+    def test_unchanged_import_with_unrelated_local_shadow(self):
+        original = sfc("import {ref} from 'vue'; const value = ref(0); "
+                       "function unused() { const ref = 1; return ref; } void value;")
+        self.baseline(original)
+        self.invoke(0)
+        self.baseline(original.replace("const ref = 1; return ref;", "const inner = 1; return inner;"))
+        self.invoke(0)
+
+    def test_extracted_shadow_preserves_preexisting_global_reference(self):
+        helper = "function helper() { const blur = () => {}; blur(); }"
+        self.baseline(sfc(helper + " helper(); blur();"))
+        self.write("Panel.vue", sfc("import {helper} from './helper'; helper(); blur();"))
+        self.write("helper.ts", "export " + helper)
+        self.invoke(0, ("Panel.vue", "helper.ts"))
+        self.write("helper.ts", "export function helper() { blur(); }")
+        self.assertIn("formerly local blur", self.invoke(1, ("Panel.vue", "helper.ts")))
+
+    def test_existing_global_does_not_whitelist_new_fallback(self):
+        original = sfc("function systemAction() { blur(); } "
+                       "function localAction() { const blur = () => {}; blur(); } "
+                       "systemAction(); localAction();")
+        self.baseline(original)
+        self.invoke(0)
+        self.write("Panel.vue", original.replace("const blur = () => {}; ", ""))
+        self.invoke(1)
+        # Equal total global-use counts must not hide a different reference's loss.
+        self.write("Panel.vue", original.replace("function systemAction() { blur(); }", "function systemAction() {}")
+                   .replace("const blur = () => {}; ", ""))
+        self.invoke(1)
+        self.write("Panel.vue", original)
+        self.invoke(0)
+
+    def test_ambiguous_lexical_relocation_cannot_be_whitelisted(self):
+        original = sfc("function systemAction() { blur(); } "
+                       "function localAction() { const blur = () => {}; blur(); } "
+                       "systemAction(); localAction();")
+        self.baseline(original)
+        # Removing/renaming the local scope is ambiguous even if every remaining
+        # external expression matches a pre-existing global expression.
+        self.write("Panel.vue", sfc("function systemAction() { blur(); } systemAction();"))
+        self.assertIn("ambiguous lexical provenance", self.invoke(2))
+        self.write("Panel.vue", original)
+        self.invoke(0)
+
+    def test_user_marker_cannot_suppress_script_type_diagnostic(self):
+        original = sfc("const marker = '/* template probes */'; const rows: string[] = []; void marker;")
+        self.baseline(original)
+        self.write("Panel.vue", original.replace("string[]", "Array<missingType>"))
+        self.assertIn("missingType", self.invoke(1))
+        self.write("Panel.vue", original)
+        self.invoke(0)
+
     def test_missing_baseline_files_syntax_and_scope(self):
         self.baseline(sfc())
         self.invoke(2, base="not-a-ref")
@@ -228,8 +326,12 @@ class SplitContracts(unittest.TestCase):
 
     def test_unsupported_scope_fails_closed(self):
         self.baseline(sfc())
-        self.write("Panel.vue", sfc("const list = [1]", '<button v-for="n in list" :id="n" aria-label="Item"/>'))
-        self.invoke(2)
+        # Keep the original anchor and attribute; do not reference the loop
+        # variable. Only the unsupported v-for scope may make this unjudged.
+        self.write("Panel.vue", sfc("const list = [1]", '<button v-for="n in list" id="action" aria-label="Action">Go</button>'))
+        self.assertIn("template scope/spread/dynamic argument", self.invoke(2))
+        self.write("Panel.vue", sfc("const list = [1]"))
+        self.invoke(0)
 
     def test_missing_dependency_does_not_fall_back_to_fixture(self):
         self.baseline(sfc())

@@ -19,8 +19,9 @@ Supported contracts/boundaries:
   and types, not Options API state. aria-bearing elements need a unique static
   id or data-testid (tag + anchor, across the group). Expressions must retain
   their AST spelling: this is NOT a proof about renamed props or computed values.
-  Duplicate/missing anchors, v-for/slot scopes, spreads/dynamic arguments and
-  external/preprocessed SFC blocks are unjudged, not silently accepted.
+  A .prop binding cannot replace an attribute; .attr preserves attribute mode.
+  Other ARIA modifiers, duplicate/missing anchors, v-for/slot scopes, spreads/
+  dynamic arguments and external/preprocessed SFC blocks are unjudged.
 * TypeScript checks ONLY the named sources and installed declaration libraries.
   Actual lexical scopes, type parameters and built-in types come from its checker.
   Template expressions get lexical name probes, not Vue's full template typing.
@@ -33,7 +34,10 @@ Supported contracts/boundaries:
   callbacks/uncalled helpers cannot stand in for an executed props watch.
 * Script imports/exports and composable return bindings are checked by TS. A
   formerly local value resolving to a library global (e.g. blur/close/focus),
-  including in a template, is a violation even when DOM typing accepts it.
+  including shorthand values/templates, is a violation even when DOM accepts it.
+  Existing external references are matched by named-function scope, expression
+  and checker origin, never exempted by name. A collision or renamed/moved scope
+  with unmatched local uses of the same name is unjudged rather than a pass.
   This does not prove arbitrary runtime control flow, event timing, side effects,
   component prop wiring or behavioral equivalence of function implementations.
 
@@ -111,8 +115,12 @@ function prepare(file, text) {
           if (['for', 'slot'].includes(p.name) || (['bind', 'on'].includes(p.name) && !p.arg)
             || (p.arg && !p.arg.isStatic)) unknown(file, 'template scope/spread/dynamic argument: ' + p.loc.source);
           if (p.name === 'bind' && p.arg?.isStatic && p.arg.content.startsWith('aria-')) {
+            const modifiers = p.modifiers.map(m => typeof m === 'string' ? m : m.content);
+            if (modifiers.some(m => !['prop', 'attr'].includes(m))
+              || (modifiers.includes('prop') && modifiers.includes('attr')))
+              unknown(file, 'unsupported aria binding modifiers: ' + p.loc.source);
             if (!p.exp) unknown(file, 'same-name aria binding shorthand is unsupported');
-            else aria[p.arg.content] = 'bound:' + expression(p.exp.content, file);
+            else aria[p.arg.content] = (modifiers.includes('prop') ? 'property:' : 'bound:') + expression(p.exp.content, file);
           }
           if (p.exp && !['for', 'slot'].includes(p.name)) {
             const code = p.name === 'on' ? `(($event: any) => { ${p.exp.content}; });`
@@ -143,12 +151,12 @@ function prepare(file, text) {
     }
   }
   item.setup = true;
-  item.code = (d.script?.content || '') + '\n' + imports + '\nfunction __split_setup__() {\n' + body
-    + '\n/* template probes */\n' + item.probes.join('\n') + '\n}\nexport default {};';
-  item.probeStart = item.code.indexOf('/* template probes */');
+  item.code = (d.script?.content || '') + '\n' + imports + '\nfunction __split_setup__() {\n' + body;
+  item.probeStart = item.code.length;
+  item.code += '\n/* template probes */\n' + item.probes.join('\n') + '\n}\nexport default {};';
   return item;
 }
-function analyze(sources, entry, baseline, oldNames = new Set()) {
+function analyze(sources, entry, baseline) {
   const items = new Map(Object.entries(sources).map(([f, t]) => [f, prepare(f, t)]));
   if (findings.some(f => f.code === 2)) return null;
   const virtual = f => '/__split__/' + f + (f.endsWith('.vue') ? '.ts' : '');
@@ -200,7 +208,8 @@ function analyze(sources, entry, baseline, oldNames = new Set()) {
   for (const d of program.getGlobalDiagnostics())
     unknown(entry, 'TS environment: ' + ts.flattenDiagnosticMessageText(d.messageText, ' '));
   const symbol = n => {
-    const s = checker.getSymbolAtLocation(n);
+    const s = ts.isShorthandPropertyAssignment(n.parent) && n.parent.name === n
+      ? checker.getShorthandAssignmentValueSymbol(n.parent) : checker.getSymbolAtLocation(n);
     return s && s.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(s) : s;
   };
   const sourceNodes = [...byVirtual.keys()].map(f => program.getSourceFile(f));
@@ -240,7 +249,12 @@ function analyze(sources, entry, baseline, oldNames = new Set()) {
   }
   if (!baseline) for (const f of items.keys())
     if (f.endsWith('.vue') && !rendered.has(f)) unknown(f, 'imported SFC is not rendered by its consumer');
-  const names = new Set(), props = new Set(), active = new Set(), calls = [];
+  const names = new Set(), props = new Set(), active = new Set(), calls = [], references = [];
+  const bindNames = n => {
+    if (ts.isIdentifier(n)) names.add(n.text);
+    else if (ts.isObjectBindingPattern(n) || ts.isArrayBindingPattern(n))
+      for (const element of n.elements) if (ts.isBindingElement(element)) bindNames(element.name);
+  };
   const ownerFunction = n => { for (let p = n.parent; p; p = p.parent) if (ts.isFunctionLike(p)) return p; return null; };
   const isVue = (n, name) => {
     const s = symbol(n);
@@ -256,7 +270,7 @@ function analyze(sources, entry, baseline, oldNames = new Set()) {
     && (isVue(n, name) || symbol(n)?.declarations?.some(d => d.getSourceFile().fileName === shim));
   for (const sf of sourceNodes) walk(sf, n => {
     if (ts.isFunctionDeclaration(n) && n.name?.text === '__split_setup__') active.add(n);
-    if ((ts.isVariableDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n)) && n.name && ts.isIdentifier(n.name)) names.add(n.name.text);
+    if ((ts.isVariableDeclaration(n) || ts.isFunctionDeclaration(n) || ts.isClassDeclaration(n) || ts.isParameter(n)) && n.name) bindNames(n.name);
     if (ts.isCallExpression(n)) calls.push(n);
     if (ts.isVariableDeclaration(n) && n.initializer) {
       let init = unwrap(n.initializer);
@@ -345,6 +359,21 @@ function analyze(sources, entry, baseline, oldNames = new Set()) {
     }
     watches.push(call.arguments.map(a => canonical(a, sf, replacements)).join('|'));
   }
+  // A declaration's spelling is only a candidate filter. Preserve the origin
+  // of each VALUE reference, not a name-wide exemption for existing globals.
+  const referenceKey = (n, sf) => {
+    const scopes = [];
+    for (let p = n.parent; p; p = p.parent) if (ts.isFunctionLike(p)) {
+      const name = p.name || (ts.isVariableDeclaration(p.parent) ? p.parent.name : null);
+      if (name && ts.isIdentifier(name) && name.text === '__split_setup__') continue;
+      scopes.unshift(name ? canonical(name, sf) : `anonymous:${p.kind}:${p.parameters.map(a => canonical(a.name, sf)).join(',')}`);
+    }
+    let use = n;
+    while (use.parent && [ts.isCallExpression, ts.isNewExpression, ts.isPropertyAccessExpression,
+      ts.isElementAccessExpression, ts.isParenthesizedExpression, ts.isNonNullExpression,
+      ts.isPropertyAssignment, ts.isShorthandPropertyAssignment].some(test => test(use.parent))) use = use.parent;
+    return JSON.stringify([n.text, scopes, canonical(use, sf)]);
+  };
   // Indirect props routing cannot be accepted as an empty watch fact set.
   for (const sf of sourceNodes) walk(sf, n => {
     const item = byVirtual.get(sf.fileName);
@@ -355,14 +384,54 @@ function analyze(sources, entry, baseline, oldNames = new Set()) {
       || (ts.isBindingElement(n.parent) && n.parent.propertyName === n);
     if (isName) return;
     const s = symbol(n);
-    if (!baseline && oldNames.has(n.text) && s?.declarations?.length
-      && s.declarations.every(d => !byVirtual.has(d.getSourceFile().fileName)))
-      report(1, 'binding', item.file, 'formerly local ' + n.text + ' now resolves outside the split (possibly a DOM global)');
     if (item.probeStart !== undefined && n.pos >= item.probeStart && !s
       && !ts.isTypeNode(n.parent) && n.text !== 'undefined')
       report(baseline ? 2 : 1, 'binding', item.file, 'unbound template identifier: ' + n.text);
+    const raw = checker.getSymbolAtLocation(n);
+    if (!ts.isShorthandPropertyAssignment(n.parent) && raw?.declarations?.some(d => d.name === n)) return;
+    for (let p = n.parent; p; p = p.parent)
+      if (ts.isTypeNode(p) || ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) return;
+    if (!s?.declarations?.length) return; // Unresolved values are diagnosed above/by TS.
+    const local = s.declarations.some(d => byVirtual.has(d.getSourceFile().fileName));
+    if (local) names.add(n.text);
+    const origin = local ? 'local' : JSON.stringify(s.declarations.map(d =>
+      [d.getSourceFile().fileName, d.pos, s.name]).sort());
+    references.push({name: n.text, key: referenceKey(n, sf), origin, file: item.file});
   });
-  return {items, watches, names};
+  return {items, watches, names, references};
+}
+function checkBindings(old, current) {
+  for (const name of old.names) {
+    const before = old.references.filter(r => r.name === name);
+    const after = current.references.filter(r => r.name === name);
+    const external = after.filter(r => r.origin !== 'local');
+    if (!external.length) continue;
+    let violation = null, ambiguous = null;
+    const used = new Map();
+    for (const ref of external) {
+      const matches = before.filter(r => r.key === ref.key);
+      const origins = new Set(matches.map(r => r.origin));
+      if ((matches.length && origins.size === 1 && origins.has('local'))
+        || !before.some(r => r.origin !== 'local')) violation = ref;
+      else if (origins.size === 1 && origins.has(ref.origin)) {
+        const count = (used.get(ref.key) || 0) + 1;
+        used.set(ref.key, count);
+        if (count > matches.length) ambiguous = ref;
+      } else ambiguous = ref;
+    }
+    // Even unchanged global uses cannot excuse a lost local use in another
+    // scope. Renamed/moved scopes and collisions require a human, not a name
+    // whitelist or a total-count comparison that could cancel two changes.
+    for (const ref of before.filter(r => r.origin === 'local')) {
+      const needed = before.filter(r => r.key === ref.key && r.origin === 'local').length;
+      const retained = after.filter(r => r.key === ref.key && r.origin === 'local').length;
+      if (retained < needed) ambiguous = external[0];
+    }
+    if (violation) report(1, 'binding', violation.file,
+      'formerly local ' + name + ' now resolves outside the split (possibly a DOM global)');
+    else if (ambiguous) unknown(ambiguous.file, 'ambiguous lexical provenance for ' + name
+      + ': cannot match external references and retained local uses by scope/expression');
+  }
 }
 function anchors(result, baseline) {
   const map = new Map();
@@ -380,8 +449,9 @@ function anchors(result, baseline) {
   return map;
 }
 const old = analyze(input.old, input.oldFile, true);
-const current = old && analyze(input.current, input.entry, false, old.names);
+const current = old && analyze(input.current, input.entry, false);
 if (old && current) {
+  checkBindings(old, current);
   const before = anchors(old, true), after = anchors(current, false);
   for (const [key, element] of before) {
     if (!Object.keys(element.aria).length) continue;
