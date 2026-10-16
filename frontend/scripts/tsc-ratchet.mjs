@@ -5,6 +5,8 @@
 //   node scripts/tsc-ratchet.mjs --update   rewrite the baseline downward
 //   node scripts/tsc-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
+// Failures print full diagnostics for regressed files (to stderr with --json).
+//
 // `--project <tsconfig>` and `--baseline <file>` judge another project against
 // another baseline. They exist so ratchet-report.test.mjs can run this script
 // on a one-file fixture instead of type-checking the whole tree a second time.
@@ -41,7 +43,7 @@ const ID = 'vue-tsc'
 const LOCAL_BIN = resolve(ROOT, 'node_modules/.bin/vue-tsc')
 const BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : 'vue-tsc'
 
-const run = spawnSync(BIN, ['--noEmit', ...(project ? ['-p', project] : [])], {
+const run = spawnSync(BIN, ['--noEmit', '--pretty', 'false', ...(project ? ['-p', project] : [])], {
   cwd: ROOT,
   encoding: 'utf8',
   shell: process.platform === 'win32',
