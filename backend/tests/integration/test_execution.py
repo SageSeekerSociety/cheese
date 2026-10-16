@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 
+from app.domain.block.queries import turn_starts
 from app.domain.usage.subscription_ingest import ingest_once
 from tests.integration.conftest import (
     post_message,
@@ -58,7 +59,7 @@ def _metered(client, pid: str, tid: str, log) -> None:
         )
         + "\n"
     )
-    asyncio.run(ingest_once(client.test_factory, log))
+    asyncio.run(ingest_once(client.test_factory, log, turn_starts=turn_starts))
 
 
 def test_transcript_and_usage_after_chat(client, tmp_path):

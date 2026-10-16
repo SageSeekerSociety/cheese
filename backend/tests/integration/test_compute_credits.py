@@ -140,6 +140,7 @@ def _metered(client, project_id: str, topic_id: str, log) -> None:
     """The proxy's log line for the turn's traffic, and the ingest that reads it."""
     import asyncio as _asyncio
 
+    from app.domain.block.queries import turn_starts
     from app.domain.usage.subscription_ingest import ingest_once
 
     with log.open("a") as out:
@@ -161,7 +162,7 @@ def _metered(client, project_id: str, topic_id: str, log) -> None:
             )
             + "\n"
         )
-    _asyncio.run(ingest_once(client.test_factory, log))  # type: ignore[attr-defined]
+    _asyncio.run(ingest_once(client.test_factory, log, turn_starts=turn_starts))  # type: ignore[attr-defined]
 
 
 def _run_turn(client, topic_id: str, meter=None) -> list[dict]:

@@ -783,6 +783,29 @@ class BlockRepository:
         stmt = stmt.order_by(Block.created_at, Block.id)
         return list((await self._session.scalars(stmt)).all())
 
+    async def turn_starts(
+        self, conversation_id: uuid.UUID
+    ) -> list[tuple[datetime, uuid.UUID]]:
+        """When each of this conversation's turns began, oldest first.
+
+        One conversation's own blocks: a task's turns sit under the task's own
+        id, and folding them into its room's would attribute the same turn
+        twice. A turn lands several blocks, so its start is the earliest of
+        them; the metering proxy's log carries no work id and attaches each
+        call to whichever turn was under way at its timestamp.
+        """
+        stmt = (
+            select(Block.turn_id, func.min(Block.created_at))
+            .where(
+                Block.conversation_id == conversation_id,
+                Block.turn_id.is_not(None),
+            )
+            .group_by(Block.turn_id)
+            .order_by(func.min(Block.created_at))
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return [(started, work_id) for work_id, started in rows if work_id and started]
+
     async def turn_history(self, conversation_id: uuid.UUID) -> list[Block]:
         """Inputs awaiting consumption and the latest AI message, their watermark.
 
