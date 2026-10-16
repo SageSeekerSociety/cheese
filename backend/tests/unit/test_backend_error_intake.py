@@ -44,12 +44,12 @@ async def test_one_failed_model_call_is_kept_without_alarming(monkeypatch, kind)
     assert alerts == []
 
 
-async def _fail(backend_log, topic, kind, n=1, **kw):
-    for i in range(n):
+async def _fail(backend_log, topic, kind, n=1, where="model gateway", **kw):
+    for _ in range(n):
         error = BackendErrorIn(
             message="The model was never reached",
             exc_type=kind,
-            where=kw.pop("where", "model gateway"),
+            where=where,
             request_id=f"call-{uuid.uuid4().hex[:8]}",
             **kw,
         )
