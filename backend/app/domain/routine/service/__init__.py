@@ -6,7 +6,7 @@
 要么是这一轮压根没开始或开始了没有回音 —— 后者由投递台账和轮次记录判出来。结算
 之后那条消息写明它跑得怎么样，并且按跑完的时刻沉到主线底下。
 
-这个包 2026-10-15 之前是一个 1078 行的模块，按职责拆成下面几块：
+这个包原是一个 1078 行的模块，按职责拆成下面几块：
 
 * ``_shared`` —— 处处要用的那几个数与钟（超时、每小时事件上限、触发标签、``now``）。
   叶子，只依赖 ``app.core.config`` 与 ``routine.models``。
@@ -19,7 +19,7 @@
 * ``service`` —— ``RoutineService`` 本身：只存 ``_session``，方法全是一句转发。
 
 ``RoutineService`` 的每个方法只转发，不作决定；决定在它转发到的那个模块里，一个
-决定只写一遍。包门面（这里）把拆之前的模块名字空间原样再导出一遍，所以
+决定只写一遍。包门面（这里）把拆之前那份模块**自己定义**的名字再导出一遍，所以
 ``app.domain.routine.service`` 这个导入路径、``RoutineService`` 这个类对象、
 以及按模块属性取的 patch 点（``periodic.py`` 的 ``service.sweep``、单元测试里的
 ``"app.domain.routine.service.sweep"``）都照旧。
@@ -37,10 +37,12 @@ from __future__ import annotations
 # 否则那条路是 AttributeError。
 from app.domain.delivery.agent import dispatch_pending as dispatch_pending
 
-# 兼容门面：拆包之前那份 ``service.py`` 的模块名字空间里能答出名来的，下面这一个
-# 不落 —— 八个常量、``now``、两个校验助手、``RoutineService``、十一个函数，外加
-# 它当时 import 进来、被别人按模块属性取用的 ``dispatch_pending``。每个都写成
-# ``X as X`` 显式再导出，``RoutineService`` 仍是同一个类对象。
+# 兼容门面：拆包之前那份 ``service.py`` 自己定义的名字，下面这一个不落 —— 八个常量、
+# ``now``、两个校验助手、``RoutineService``、十一个函数，外加它当时 import 进来、
+# 被别人按模块属性取用的 ``dispatch_pending``。它顺手 import 进来、并不属于本域的
+# 那些名字（``Routine``、``Block``、``Topic`` 之类）不再从这条路取，仓库里也没有
+# 调用方用它们。每个都写成 ``X as X`` 显式再导出，``RoutineService`` 仍是同一个类
+# 对象。
 from app.domain.routine.service._shared import (
     EVENT_RUNS_PER_HOUR as EVENT_RUNS_PER_HOUR,
 )
