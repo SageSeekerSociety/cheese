@@ -556,7 +556,11 @@ async def record(
                         f"最近一次：{scrub_secrets(err.message)}{_stream_note(err)}",
                         *where,
                     ],
-                    key="model-failure-burst",
+                    # Keyed by the kind of failure that dominates the window,
+                    # not one key for every burst: an upstream-overload spike
+                    # (stream cuts) must not hold back, under its repeat window,
+                    # the gateway outage (unreachable) that follows it.
+                    key=f"model-failure-burst:{max(counts, key=counts.__getitem__)}",
                 )
         verdict = intake.admit(
             str(project or ""),

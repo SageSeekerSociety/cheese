@@ -5,6 +5,7 @@ on whether the channel works — 「宁可漏报也不能刷屏：房间是对�
 So the flood assertion below is the acceptance criterion in executable form.
 """
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -59,7 +60,7 @@ async def _fail(backend_log, topic, kind, n=1, where="model gateway", **kw):
 
 
 def _bursts(alerts):
-    return [a for a in alerts if a[1].get("key") == "model-failure-burst"]
+    return [a for a in alerts if str(a[1].get("key")).startswith("model-failure-burst")]
 
 
 async def test_a_burst_of_model_failures_alerts_with_the_counts(monkeypatch):
@@ -487,3 +488,83 @@ def test_room_from_path_ignores_paths_that_name_no_room() -> None:
     assert room_from_path("/users/me") == (None, None)
     assert room_from_path("/projects/by-task/abc") == (None, None)
     assert room_from_path("/health") == (None, None)
+
+
+@pytest.fixture
+def delivered(monkeypatch):
+    """What actually reaches the channel through the real alerting module, its
+    repeat rules included, on a clock the test turns."""
+    import time as clock_module
+
+    from app.core import alerting
+    from app.domain import backend_log
+
+    topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    monkeypatch.setattr(
+        backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
+    )
+    monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
+    monkeypatch.setattr(backend_log, "model_failures", backend_log._ModelFailureRate())
+    monkeypatch.setattr(backend_log, "keep_record", AsyncMock())
+    monkeypatch.setattr(
+        alerting.settings, "feishu_alert_webhook", "https://example/hook"
+    )
+    monkeypatch.setattr(alerting, "budget", alerting._Budget())
+    monkeypatch.setattr(alerting, "_asked", {})
+    monkeypatch.setattr(
+        alerting, "REPEAT_KEY_PREFIX", f"cheese:alert:test:{uuid.uuid4().hex}:"
+    )
+    now = [1_000_000.0]
+    monkeypatch.setattr(clock_module, "time", lambda: now[0])
+    posted: list[tuple[float, str]] = []
+
+    async def capture(text: str) -> None:
+        posted.append((now[0], text))
+
+    monkeypatch.setattr(alerting, "_post", capture)
+
+    async def fail(kind: str, n: int, every_s: float) -> None:
+        for _ in range(n):
+            await _fail(backend_log, topic, kind)
+            while alerting._running:
+                await asyncio.gather(*list(alerting._running), return_exceptions=True)
+            now[0] += every_s
+
+    return SimpleNamespace(fail=fail, posted=posted, now=now)
+
+
+async def test_a_gateway_outage_right_after_an_overload_spike_is_told(delivered):
+    """An ordinary upstream-overload spike, quiet, then our gateway going down
+    for two minutes: the outage reaches the channel, not only the spike."""
+    await delivered.fail("GatewayStreamError", 35, 8)
+    delivered.now[0] += 15 * 60
+    outage_starts = delivered.now[0]
+    await delivered.fail("GatewayUnreachable", 100, 1.2)
+
+    during = [text for at, text in delivered.posted if at >= outage_starts]
+    assert during and "GatewayUnreachable" in during[0], delivered.posted
+
+
+@pytest.mark.parametrize("category", ["http_error", "rate_limit", "timeout"])
+async def test_an_upstream_that_is_busy_is_not_told_at_once(monkeypatch, category):
+    """Overload, rate limits and timeouts are the upstream's, retried by the
+    caller; one of them is not news, whatever lane it came from."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(
+        backend_log,
+        topic,
+        "SubscriptionHTTPError",
+        where="model subscription",
+        upstream_failure=category,
+    )
+    assert alerts == []
+
+
+async def test_the_burst_threshold_is_where_it_says(monkeypatch):
+    from app.domain.backend_log import MODEL_FAILURE_BURST
+
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    await _fail(backend_log, topic, "GatewayUnreachable", MODEL_FAILURE_BURST - 1)
+    assert _bursts(alerts) == []
+    await _fail(backend_log, topic, "GatewayUnreachable")
+    assert len(_bursts(alerts)) == 1
