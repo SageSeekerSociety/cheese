@@ -62,7 +62,7 @@
   width: 28px;
   flex: 0 0 28px;
 }
-/* Human avatar: colored initial on a per-user deterministic background
+/* Avatar: colored initial on a per-seed deterministic background
    (hash → hue), matching the Space avatars' visual language. */
 .im-avatar {
   width: 28px;

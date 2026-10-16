@@ -98,7 +98,7 @@ const onError = (error: Error) => {
 <style lang="scss">
 .uploader-inner {
   height: 100%;
-  /* 压在蒙版上的字和图标：和蒙版同一族，不随主题翻。 */
+  /* 压在蒙版上的字和图标：和蒙版同一族的 --inverse-ink，两套主题下都是浅色。 */
   color: var(--inverse-ink);
 }
 </style>
