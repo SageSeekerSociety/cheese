@@ -30,6 +30,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+# Assemble the app up front: this file drives the app stack, and conftest now does
+# that only for `client`/`python_client` (the layer ceiling counts wall clock).
+import app.main  # noqa: F401
 from app.core.errors import BadRequestError
 from app.domain.space.analytics_compute import (
     APPROVED_MAP,
