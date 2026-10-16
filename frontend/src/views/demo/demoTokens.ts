@@ -245,14 +245,19 @@ const COLOR_SECTIONS: ReadonlyArray<{ name: string; note: string; prefixes: stri
     prefixes: ['--accent', '--ok', '--warn', '--danger', '--signal-yellow', '--signal-blue'],
   },
   {
+    name: '品牌',
+    note: '品牌漆：首页方块悬停、选中时的底色，和压在上面的图形。两套主题同一个值——那一格是标志本身，不是界面底色，所以不用跟着主题变的 --accent。',
+    prefixes: ['--brand-'],
+  },
+  {
     name: '代码色',
     note: '代码块在两套主题下都是反色的：深底浅字。行内代码用 --fill，不是反色块。',
     prefixes: ['--code-'],
   },
   {
-    name: '队友头像',
-    note: '一个队友一个深色，按 handle 挑；从不用琥珀——琥珀留给关键动作。',
-    prefixes: ['--agent-'],
+    name: '头像',
+    note: '两种头像：队友的方块一个队友一个深色、按 handle 挑；首字母头像（人、团队、空间、项目）的底色由 seed 算出来，两套主题同一个值，所以字也是定值。都不用琥珀——琥珀留给关键动作。',
+    prefixes: ['--agent-', '--avatar-'],
   },
   {
     name: '额度与图表',

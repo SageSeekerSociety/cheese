@@ -536,6 +536,9 @@ const told = computed(() => toldByMessage(props.refs))
   white-space: nowrap;
 }
 .im-artifact__kind {
+  /* 文件类型（「网页」「文档」）是读者要看的字，不是装饰：它挂在 .t-meta 上，
+     那档的 --faint 浅色下只有 4.33:1，够不到 4.5:1（docs/design-system.md §2.6）。 */
+  color: var(--muted);
   text-align: left;
 }
 .im-artifact__go {
