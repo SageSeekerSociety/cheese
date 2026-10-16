@@ -4,5 +4,6 @@
   "disconnected": "未连接",
   "missingValues": "需要填写 {names}",
   "needsReconnect": "需要重新连接",
-  "ready": "已就绪"
+  "ready": "已就绪",
+  "shadowed": "仓库的 .mcp.json 里有同名服务器，这一条不生效"
 }

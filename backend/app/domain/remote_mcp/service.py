@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 import time
 import uuid
@@ -26,12 +27,17 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import single_use_state
+from app.core.config import settings
 from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.remote_mcp import declared, oauth, upstream
 from app.domain.remote_mcp.declared import Declared, RemoteServer
-from app.domain.remote_mcp.models import ProjectMcpConnection, ProjectMcpSecret
+from app.domain.remote_mcp.models import (
+    ProjectMcpConnection,
+    ProjectMcpSecret,
+    ProjectMcpServer,
+)
 from app.domain.remote_mcp.ports import ProjectTypes, TypeOfSeat
 
 logger = logging.getLogger(__name__)
@@ -133,6 +139,29 @@ def _status(
     return CONNECTED
 
 
+async def _added_rows(
+    db: AsyncSession, project_id: uuid.UUID
+) -> dict[str, ProjectMcpServer]:
+    rows = await db.scalars(
+        select(ProjectMcpServer)
+        .where(ProjectMcpServer.project_id == project_id)
+        .order_by(ProjectMcpServer.created_at)
+    )
+    return {row.name: row for row in rows}
+
+
+async def _with_added(
+    db: AsyncSession, project_id: uuid.UUID, found: Declared
+) -> Declared:
+    return declared.with_settings(
+        found,
+        [
+            declared.settings_server(row.name, row.url, row.header_name)
+            for row in (await _added_rows(db, project_id)).values()
+        ],
+    )
+
+
 async def _project_declared(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -141,10 +170,12 @@ async def _project_declared(
     fresh: bool = False,
 ) -> Declared:
     """Every remote server anyone in the project may need connected: its
-    `.mcp.json`'s and those of its teammates' types."""
+    `.mcp.json`'s, those added in its settings, and its teammates' types'."""
 
     return declared.with_types(
-        await declared.read(db, project_id, fresh=fresh),
+        await _with_added(
+            db, project_id, await declared.read(db, project_id, fresh=fresh)
+        ),
         await project_types(db, project_id),
     )
 
@@ -160,7 +191,8 @@ async def _seat_declared(
 
     agent_type = await type_of_seat(db, project_id, agent_handle)
     return declared.with_types(
-        await declared.read(db, project_id), [agent_type] if agent_type else []
+        await _with_added(db, project_id, await declared.read(db, project_id)),
+        [agent_type] if agent_type else [],
     )
 
 
@@ -225,13 +257,21 @@ async def settings_view(
     """
 
     found: Declared = await _project_declared(db, project_id, project_types, fresh=True)
+    added = await _added_rows(db, project_id)
     types = await project_types(db, project_id)
     connections = await _connections(db, project_id)
     secret_rows = await _secret_rows(db, project_id)
     values = _secret_values(project_id, secret_rows)
     servers = []
-    for server in found.servers:
+    shadowed = [
+        declared.settings_server(row.name, row.url, row.header_name)
+        for name, row in added.items()
+        if name in found.shadowed
+    ]
+    for server in [*found.servers, *shadowed]:
         connection = connections.get(server.name)
+        from_settings = server.name in found.added or server in shadowed
+        row = added.get(server.name) if from_settings else None
         state = _status(server, connection, values)
         servers.append(
             {
@@ -240,8 +280,17 @@ async def settings_view(
                 "host": _host(server.url),
                 "auth": "oauth" if server.uses_oauth else "headers",
                 "status": state,
+                "added": {
+                    "by": row.added_by,
+                    "at": _when(row.created_at),
+                    "url": row.url,
+                    "header": row.header_name,
+                }
+                if row is not None
+                else None,
+                "shadowed": server in shadowed,
                 "declared_by": None
-                if server.name in found.names
+                if server.name in found.names or row is not None
                 else [
                     {"name": agent_type.name, "title": agent_type.title}
                     for agent_type in types
@@ -506,6 +555,147 @@ async def disconnect(db: AsyncSession, project_id: uuid.UUID, name: str) -> None
     await db.delete(row)
     await db.commit()
     await upstream.forget((project_id, name))
+
+
+# --- servers added in settings ------------------------------------------------------
+
+_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def _checked(name: str, url: str, header_name: str | None) -> None:
+    if not _NAME.match(name):
+        raise ValidationError(say("mcpServerNameInvalid"))
+    parts = urlsplit(url)
+    if not parts.netloc or (
+        parts.scheme != "https" and not settings.remote_mcp_allow_private_hosts
+    ):
+        raise ValidationError(say("mcpServerNeedsHttps", host=parts.hostname or url))
+    if header_name is not None and not re.match(r"^[A-Za-z0-9-]{1,128}$", header_name):
+        raise ValidationError(say("mcpHeaderNameInvalid"))
+
+
+async def _added_row(
+    db: AsyncSession, project_id: uuid.UUID, name: str
+) -> ProjectMcpServer:
+    row = await db.scalar(
+        select(ProjectMcpServer).where(
+            ProjectMcpServer.project_id == project_id, ProjectMcpServer.name == name
+        )
+    )
+    if row is None:
+        raise NotFoundError(say("mcpServerNotAdded"))
+    return row
+
+
+async def _store_header(
+    db: AsyncSession, project_id: uuid.UUID, name: str, value: str, handle: str
+) -> None:
+    variable = declared.settings_variable(name)
+    row = await db.scalar(
+        select(ProjectMcpSecret).where(
+            ProjectMcpSecret.project_id == project_id,
+            ProjectMcpSecret.name == variable,
+        )
+    )
+    sealed = _seal(Purpose.MCP_SECRET, value, _secret_binding(project_id, variable))
+    if row is None:
+        db.add(
+            ProjectMcpSecret(
+                project_id=project_id, name=variable, value=sealed, updated_by=handle
+            )
+        )
+    else:
+        row.value, row.updated_by = sealed, handle
+
+
+async def _forget_credentials(
+    db: AsyncSession, project_id: uuid.UUID, name: str
+) -> None:
+    """Drop what was authorized for a server: its connection (revoked) and the
+    header value it sent. Done when its address changes, so a token or a key
+    issued for one host is never sent to another, and when it is removed."""
+    row = await db.scalar(
+        select(ProjectMcpConnection).where(
+            ProjectMcpConnection.project_id == project_id,
+            ProjectMcpConnection.server_name == name,
+        )
+    )
+    if row is not None:
+        await _revoke(row)
+        await db.delete(row)
+    await db.execute(
+        delete(ProjectMcpSecret).where(
+            ProjectMcpSecret.project_id == project_id,
+            ProjectMcpSecret.name == declared.settings_variable(name),
+        )
+    )
+    await upstream.forget((project_id, name))
+
+
+async def add_server(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    name: str,
+    url: str,
+    header_name: str | None,
+    header_value: str | None,
+    handle: str,
+    project_types: ProjectTypes,
+) -> None:
+    """Add a remote server in settings. Its name is one no other source of the
+    project uses, so the server an agent calls by that name is not in doubt."""
+    _checked(name, url, header_name)
+    if header_name is not None and not header_value:
+        raise ValidationError(say("mcpValueRequired"))
+    found = await _project_declared(db, project_id, project_types, fresh=True)
+    if name in found.names or found.get(name) is not None or name in found.shadowed:
+        raise ValidationError(say("mcpServerNameTaken", name=name))
+    db.add(
+        ProjectMcpServer(
+            project_id=project_id,
+            name=name,
+            url=url,
+            header_name=header_name,
+            added_by=handle,
+        )
+    )
+    # A secret left by an earlier server of this name is not this one's.
+    await _forget_credentials(db, project_id, name)
+    if header_name is not None and header_value:
+        await _store_header(db, project_id, name, header_value, handle)
+    await db.commit()
+
+
+async def update_server(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    name: str,
+    url: str,
+    header_name: str | None,
+    header_value: str | None,
+    handle: str,
+) -> None:
+    """Change a server added in settings. A new address or a new way of signing
+    in forgets what was authorized for the old one."""
+    _checked(name, url, header_name)
+    row = await _added_row(db, project_id, name)
+    if row.url != url or row.header_name != header_name:
+        await _forget_credentials(db, project_id, name)
+        if header_name is not None and not header_value:
+            raise ValidationError(say("mcpValueRequired"))
+    row.url, row.header_name = url, header_name
+    if header_name is not None and header_value:
+        await _store_header(db, project_id, name, header_value, handle)
+    await db.commit()
+
+
+async def remove_server(db: AsyncSession, project_id: uuid.UUID, name: str) -> None:
+    row = await _added_row(db, project_id, name)
+    await _forget_credentials(db, project_id, name)
+    await db.delete(row)
+    await db.commit()
 
 
 # --- secret values --------------------------------------------------------------

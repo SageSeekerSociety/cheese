@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 项目的远程 MCP 服务器（#1909）。清单来自仓库默认分支的 .mcp.json，连接属于项目：
-// 任何成员都能连接或断开，谁授权的写在每一行上。
+// 项目的远程 MCP 服务器（#1909）。清单来自三处：在这里添加的、仓库默认分支的
+// .mcp.json、AI 队友类型自带的。连接属于项目，项目里所有人通过 AI 队友共用一个账号，
+// 谁授权的写在每一行上。在这里添加的那几条可以编辑、删除，别的来源要去它们自己那里改。
 //
 // 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：取数、连接/断开/填密钥、
 // 以及授权回来那一条回跳都在 `composables/useProjectMcpSettings.ts` 里，由设置页接线。
@@ -24,6 +25,9 @@ const props = defineProps<{
   /** 每个变量正在填的密钥原文（按 variable 的名字）。
    *  `props` 里读得到，改要走 `update:value` —— 那一层才管清空。 */
   values: Record<string, string>
+  /** 能不能添加、编辑、删除、连接（配置 AI 队友的权限）。 */
+  manages: boolean
+  agentName: string
 }>()
 
 const emit = defineEmits<{
@@ -32,6 +36,9 @@ const emit = defineEmits<{
   (e: 'save', name: string): void
   (e: 'clear', name: string): void
   (e: 'update:value', value: { name: string; value: string }): void
+  (e: 'add'): void
+  (e: 'edit', server: McpServer): void
+  (e: 'remove', server: McpServer): void
 }>()
 
 function missing(server: McpServer) {
@@ -39,6 +46,7 @@ function missing(server: McpServer) {
 }
 
 function statusLine(server: McpServer) {
+  if (server.shadowed) return t('work.mcp.status.shadowed')
   switch (server.status) {
     case 'connected':
       // 带授权人的那一句在模板里用 <i18n-t> 画，名字是一颗 UserRef。
@@ -61,6 +69,10 @@ function declaredBy(types: McpDeclaringType[]) {
   return t('work.mcp.source.types', { types: titles }, types.length)
 }
 
+function dot(server: McpServer) {
+  return server.shadowed ? 'status-dot--warn' : DOT[server.status]
+}
+
 const DOT: Record<McpServer['status'], string> = {
   connected: 'status-dot--ok',
   ready: 'status-dot--ok',
@@ -79,9 +91,12 @@ const fieldValue = (name: string) => props.values[name] ?? ''
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-connection</v-icon>
       <span class="page-section-title">{{ t('work.mcp.title') }}</span>
+      <BaseButton v-if="manages" kind="secondary" size="sm" prepend-icon="mdi-plus" class="ms-auto" @click="emit('add')">
+        {{ t('work.mcp.action.add') }}
+      </BaseButton>
     </div>
     <div class="page-section-body">
-      <p class="t-body c-faint settings-hint mb-3">{{ t('work.mcp.hint') }}</p>
+      <p class="t-body c-muted settings-hint mb-3">{{ t('work.mcp.hint', { agent: agentName }) }}</p>
       <v-alert v-if="error" type="error" variant="tonal" density="comfortable" class="mb-3">{{ error }}</v-alert>
       <template v-if="list">
         <p v-if="list.problem === 'invalid'" class="t-body c-muted">{{ t('work.mcp.problem.invalid') }}</p>
@@ -94,7 +109,17 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                 <span class="t-body c-ink mcp-row__title">{{ server.name }}</span>
                 <span class="t-meta">{{ server.host }}</span>
                 <i18n-t
-                  v-if="!server.declared_by"
+                  v-if="server.added"
+                  scope="global"
+                  keypath="work.mcp.source.settings"
+                  tag="span"
+                  class="t-meta-read"
+                  data-testid="mcp-source"
+                >
+                  <template #name><UserRef :handle="server.added.by" /></template>
+                </i18n-t>
+                <i18n-t
+                  v-else-if="!server.declared_by"
                   scope="global"
                   keypath="work.mcp.source.project"
                   tag="span"
@@ -106,9 +131,9 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                 <span v-else class="t-meta-read" data-testid="mcp-source">{{ declaredBy(server.declared_by) }}</span>
               </div>
               <div class="mcp-row__state">
-                <span class="status-dot" :class="DOT[server.status]" />
+                <span class="status-dot" :class="dot(server)" />
                 <i18n-t
-                  v-if="server.status === 'connected' && server.authorized_by"
+                  v-if="!server.shadowed && server.status === 'connected' && server.authorized_by"
                   scope="global"
                   keypath="work.mcp.status.connectedBy"
                   tag="span"
@@ -119,7 +144,8 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                 </i18n-t>
                 <span v-else class="t-body c-text">{{ statusLine(server) }}</span>
               </div>
-              <div v-if="server.auth === 'oauth'" class="mcp-row__action">
+              <div class="mcp-row__action">
+                <template v-if="manages && !server.shadowed && server.auth === 'oauth'">
                 <BaseButton
                   v-if="server.status === 'connected'"
                   kind="ghost"
@@ -138,9 +164,18 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                 >
                   {{ t(server.status === 'needs_reconnect' ? 'work.mcp.action.reconnect' : 'work.mcp.action.connect') }}
                 </BaseButton>
+                </template>
+                <template v-if="manages && server.added">
+                  <BaseButton kind="ghost" size="sm" @click="emit('edit', server)">
+                    {{ t('work.mcp.action.edit') }}
+                  </BaseButton>
+                  <BaseButton kind="ghost" size="sm" @click="emit('remove', server)">
+                    {{ t('work.mcp.action.remove') }}
+                  </BaseButton>
+                </template>
               </div>
             </div>
-            <div v-for="variable in server.variables" :key="variable.name" class="mcp-var">
+            <div v-for="variable in server.added ? [] : server.variables" :key="variable.name" class="mcp-var">
               <span class="t-meta mcp-var__name">{{ variable.name }}</span>
               <v-text-field
                 :model-value="fieldValue(variable.name)"
@@ -227,6 +262,12 @@ const fieldValue = (name: string) => props.values[name] ?? ''
   flex: 1 1 200px;
   gap: 8px;
   min-width: 0;
+}
+
+.mcp-row__action {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .mcp-var {

@@ -4,12 +4,13 @@
   "connectFailedWith": "Failed to connect {name}: {reason}",
   "connectedNotice": "{name} connected",
   "disconnectFailed": "Failed to disconnect",
-  "empty": "No remote MCP servers",
-  "hint": "Upstream services see the authorizing person's account, so authorize with a bot or service account",
+  "empty": "No MCP servers",
+  "hint": "Everyone in the project reaches these servers through {agent} with one shared account",
   "listSeparator": ", ",
   "loadFailed": "Failed to load MCP servers",
   "saveFailed": "Failed to save",
   "title": "MCP servers",
   "valueSet": "Set",
-  "valueSetBy": "Set by {name}, {when}"
+  "valueSetBy": "Set by {name}, {when}",
+  "removeFailed": "Couldn't delete"
 }

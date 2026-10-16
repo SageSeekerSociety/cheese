@@ -1,4 +1,5 @@
-"""A project's connections to the remote MCP servers its `.mcp.json` declares.
+"""A project's remote MCP servers added in its settings, and its connections to
+the remote MCP servers it declares (there, in its `.mcp.json`, or by a type).
 
 Both tables belong to the PROJECT, never to a person: whoever connects a server
 connects it for every session in the project, and is recorded so everyone can
@@ -70,3 +71,23 @@ class ProjectMcpSecret(UuidPk, Timestamps, Base):
     name: Mapped[str] = mapped_column(String(128))
     value: Mapped[str] = mapped_column(Text)
     updated_by: Mapped[str] = mapped_column(String(64))
+
+
+class ProjectMcpServer(UuidPk, Timestamps, Base):
+    """A remote server added in project settings, beside those the repository's
+    `.mcp.json` declares. A server that sends a header keeps the header's value
+    as the project secret its template names (`declared.settings_variable`)."""
+
+    __tablename__ = "project_mcp_servers"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_project_mcp_server"),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(64))
+    url: Mapped[str] = mapped_column(Text)
+    #: The header it is authorized by; None is OAuth.
+    header_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    added_by: Mapped[str] = mapped_column(String(64))

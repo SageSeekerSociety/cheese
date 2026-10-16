@@ -4,5 +4,6 @@
   "disconnected": "Not connected",
   "missingValues": "Needs {names}",
   "needsReconnect": "Needs reconnecting",
-  "ready": "Ready"
+  "ready": "Ready",
+  "shadowed": "A server with the same name in the repository's .mcp.json takes its place"
 }

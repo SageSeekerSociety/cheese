@@ -98,6 +98,11 @@ class Declared:
     servers: tuple[RemoteServer, ...] = ()
     #: Every name `.mcp.json` uses, stdio entries included.
     names: tuple[str, ...] = ()
+    #: The servers added in project settings that are in `servers`.
+    added: tuple[str, ...] = ()
+    #: Those added in settings whose name `.mcp.json` also uses: the
+    #: repository's stands, and these are left out of `servers`.
+    shadowed: tuple[str, ...] = ()
     #: Why nothing could be read, when that is the answer: "missing" (no
     #: `.mcp.json` on the default branch), "invalid", or "unreadable".
     problem: str | None = None
@@ -158,10 +163,44 @@ def remote(name: str, spec: dict) -> RemoteServer:
     )
 
 
+def settings_variable(name: str) -> str:
+    """The project secret that holds the header value of a server added in
+    settings: a `${VAR}` like any other, so the call path expands it."""
+    return "CHEESE_MCP_" + re.sub(r"[^A-Za-z0-9]", "_", name).upper()
+
+
+def settings_server(name: str, url: str, header_name: str | None) -> RemoteServer:
+    return RemoteServer(
+        name=name,
+        transport="http",
+        url=url,
+        headers={header_name: "${" + settings_variable(name) + "}"}
+        if header_name
+        else {},
+    )
+
+
+def with_settings(found: Declared, added: Iterable[RemoteServer]) -> Declared:
+    """The repository's servers and those added in project settings. A name the
+    repository's `.mcp.json` uses stays the repository's: the one added in
+    settings is shadowed, and said to be."""
+    servers, kept, shadowed = list(found.servers), [], []
+    for server in added:
+        if server.name in found.names:
+            shadowed.append(server.name)
+            continue
+        servers.append(server)
+        kept.append(server.name)
+    return replace(
+        found, servers=tuple(servers), added=tuple(kept), shadowed=tuple(shadowed)
+    )
+
+
 def with_types(found: Declared, types: Iterable) -> Declared:
     """The project's servers and its teammates' types' remote ones, where the
-    types are ``AgentTypeDef``s. A name the project uses stays the project's."""
-    servers, taken = list(found.servers), set(found.names)
+    types are ``AgentTypeDef``s. A name the project uses, in its `.mcp.json` or
+    its settings, stays the project's."""
+    servers, taken = list(found.servers), set(found.names) | set(found.added)
     for agent_type in types:
         for name, spec in agent_type.inline_servers().items():
             if name in taken or not isinstance(spec.get("url"), str):

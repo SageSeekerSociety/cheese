@@ -20,6 +20,7 @@ from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep, require_seated_agent
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import require
 from app.core.config import settings
 from app.core.errors import (
@@ -118,6 +119,65 @@ async def disconnect(
 ) -> dict:
     await manager(db, project_id, resolver)
     await service.disconnect(db, project_id, name)
+    return ok(None)
+
+
+class ServerIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    url: str = Field(min_length=1, max_length=2048)
+    auth: str = Field(pattern="^(oauth|headers)$")
+    header: str | None = Field(default=None, max_length=128)
+    value: str | None = Field(default=None, max_length=8192)
+
+
+@router.post("/projects/{project_id}/mcp/servers", dependencies=[ROUTE_DECIDES])
+async def add_server(
+    project_id: uuid.UUID, body: ServerIn, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Add a remote server in project settings, beside the repository's."""
+    handle = await manager(db, project_id, resolver)
+    await service.add_server(
+        db,
+        project_id,
+        name=body.name,
+        url=body.url,
+        header_name=body.header if body.auth == "headers" else None,
+        header_value=body.value if body.auth == "headers" else None,
+        handle=handle,
+        project_types=project_types,
+    )
+    return ok(None)
+
+
+@router.put("/projects/{project_id}/mcp/servers/{name}", dependencies=[ROUTE_DECIDES])
+async def update_server(
+    project_id: uuid.UUID,
+    name: str,
+    body: ServerIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    handle = await manager(db, project_id, resolver)
+    await service.update_server(
+        db,
+        project_id,
+        name=name,
+        url=body.url,
+        header_name=body.header if body.auth == "headers" else None,
+        header_value=body.value if body.auth == "headers" else None,
+        handle=handle,
+    )
+    return ok(None)
+
+
+@router.delete(
+    "/projects/{project_id}/mcp/servers/{name}", dependencies=[ROUTE_DECIDES]
+)
+async def remove_server(
+    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await manager(db, project_id, resolver)
+    await service.remove_server(db, project_id, name)
     return ok(None)
 
 

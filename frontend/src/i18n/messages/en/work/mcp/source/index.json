@@ -1,4 +1,5 @@
 {
   "project": "From the project's {file}",
-  "types": "Declared by the {types} type | Declared by the {types} types"
+  "types": "Declared by the {types} type | Declared by the {types} types",
+  "settings": "Added in project settings by {name}"
 }

@@ -27,6 +27,7 @@ import DeviceSessionsSwitch from '@/components/DeviceSessionsSwitch.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
+import McpServerDialog from '@/components/McpServerDialog.vue'
 import ProjectMcpSettings from '@/components/ProjectMcpSettings.vue'
 import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vue'
 import AgentTeamSettings from '@/components/settings/AgentTeamSettings.vue'
@@ -240,7 +241,9 @@ const environment = useProjectEnvironmentSettings(() => props.projectId, {
   room: () => (typeof query.room === 'string' ? query.room : undefined),
   diagnoseRoom: (roomId) => diagnoseRoomEnvironment(props.projectId, roomId),
 })
+const configuresAgents = computed(() => mayIn(projectRead.data.value, 'configure_agents'))
 const mcp = useProjectMcpSettings(() => props.projectId, {
+  agentName: () => agentName.value,
   revealGate: gate,
   enabled: () => section.value === 'mcp',
 })
@@ -494,7 +497,31 @@ function close() {
           @disconnect="mcp.disconnect"
           @save="mcp.save"
           @clear="mcp.clear"
+          :manages="configuresAgents"
+          :agent-name="agentName"
           @update:value="({ name, value }) => mcp.setValue(name, value)"
+          @add="mcp.openAdd"
+          @edit="mcp.openEdit"
+          @remove="mcp.remove"
+        />
+        <McpServerDialog
+          v-if="section === 'mcp'"
+          v-model="mcp.form.open"
+          :initial="
+            mcp.form.editing?.added
+              ? {
+                  name: mcp.form.editing.name,
+                  url: mcp.form.editing.added.url,
+                  auth: mcp.form.editing.auth,
+                  header: mcp.form.editing.added.header,
+                  value: null,
+                }
+              : null
+          "
+          :agent-name="agentName"
+          :saving="mcp.form.saving"
+          :error="mcp.form.error"
+          @save="mcp.submit"
         />
 
         <!-- Exporting is for everyone who can read the project; the archive follows the

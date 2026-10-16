@@ -24,9 +24,23 @@ export interface McpServer {
   status: McpServerStatus
   /** 它从哪来：null 是项目的 .mcp.json，否则是声明它的那几个队友类型。 */
   declared_by: McpDeclaringType[] | null
+  /** 在项目设置里添加的那一条：谁、什么时候加的，和它的完整地址；别的来源是 null。 */
+  added: { by: string; at: string; url: string; header: string | null } | null
+  /** 在项目设置里加的这一条被仓库 .mcp.json 里的同名服务器盖住了。 */
+  shadowed: boolean
   authorized_by: string | null
   authorized_at: string | null
   variables: McpVariable[]
+}
+/** 「添加 / 编辑 MCP 服务器」那张表交出来的东西。 */
+export interface McpServerDraft {
+  name: string
+  url: string
+  auth: 'oauth' | 'headers'
+  /** 请求头的名字（填写请求头时）。 */
+  header: string | null
+  /** 请求头的值；编辑时不改就是 null。 */
+  value: string | null
 }
 export interface McpServerList {
   servers: McpServer[]
@@ -64,4 +78,21 @@ export function clearMcpSecret(projectId: string, name: string): Promise<null> {
 }
 export function getRoomMcpServers(topicId: string): Promise<{ servers: RoomMcpServer[] }> {
   return request(`/topics/${encodeURIComponent(topicId)}/mcp/servers`)
+}
+export function addMcpServer(projectId: string, draft: McpServerDraft): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers`, {
+    method: 'POST',
+    body: JSON.stringify(draft),
+  })
+}
+export function updateMcpServer(projectId: string, draft: McpServerDraft): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(draft.name)}`, {
+    method: 'PUT',
+    body: JSON.stringify(draft),
+  })
+}
+export function removeMcpServer(projectId: string, name: string): Promise<null> {
+  return request(`/projects/${encodeURIComponent(projectId)}/mcp/servers/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  })
 }
