@@ -25,6 +25,7 @@ from app.core.sentences import say
 from app.domain.membership.services import MemberService
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.site.models import Site, SiteRelease
 
@@ -55,7 +56,9 @@ async def can_publish_site(
     project = await ProjectService(session).get(project_id)
     if project is None or not handle:
         return False
-    return await MemberService(session).manages(project_id, handle)
+    return await MemberService(session).manages(
+        project_id, handle, Permission.edit_settings
+    )
 
 
 async def get_current_release(

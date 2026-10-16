@@ -19,6 +19,7 @@ from app.api.deps import (
     get_chat_service,
     get_work_runner,
 )
+from app.api.doc_access import require_role
 from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -69,6 +70,7 @@ from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project_permissions import Permission
 from app.domain.repository import service as workspace_paths
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
@@ -104,10 +106,7 @@ async def create_topic(
 ) -> dict:
     actor = await resolver.resolve(project_id=body.project_id)
     await resolver.authorize_project(actor, project_id=body.project_id)
-    if not await TopicMemberService(db).may_open_channels(
-        body.project_id, actor.handle, team=project_team
-    ):
-        raise ForbiddenError(say("channelCreateExternal"))
+    await require_role(db, actor, body.project_id, Permission.create_channels)
     # The creator becomes the topic's roster owner (fusion-design §3), and the
     # creator is whoever the credential names — nobody when there is none.
     topic = await TopicService(db).create(
@@ -1194,6 +1193,7 @@ async def summon_agent(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
+    await require_role(db, actor, place.project_id, Permission.ask_agent)
     # The conversation the button is in: a 支线's or a task's retry runs there.
     if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})

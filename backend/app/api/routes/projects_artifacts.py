@@ -76,6 +76,7 @@ from app.domain.documents.compare import compare as office_compare
 from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.textfile import compare_bytes
 
@@ -271,7 +272,9 @@ async def _artifact_keeper(
     「这个名字对不对」正是要人判断的那部分。"""
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.edit_content
+    )
     return await channels_unseen(db, resolver, actor, project_id)
 
 

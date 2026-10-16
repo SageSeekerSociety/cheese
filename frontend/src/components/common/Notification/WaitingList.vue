@@ -120,7 +120,7 @@
                 <span data-user-content>{{ askTitleOf(item) }}</span>
               </template>
               <span v-if="item.message" class="waiting__detail t-body" data-user-content>{{ item.message }}</span>
-              <span v-if="item.role && item.role !== 'MEMBER'" class="waiting__where">
+              <span v-if="item.role && item.role !== 'MEMBER' && item.role !== 'member'" class="waiting__where">
                 {{ t('home.inbox.invite.asRole', { role: t(`home.inbox.role.${item.role}`) }) }}
               </span>
               <template #side>
@@ -254,6 +254,7 @@ function askLabelOf(item: WaitingAsk): string {
 function askTitleOf(item: WaitingAsk): string {
   const person = item.person.name
   if (item.kind === 'project_invite') return t('home.inbox.invite.project', { person })
+  if (item.kind === 'project_transfer') return t('home.inbox.invite.transfer', { person })
   if (item.kind === 'team_invite') return t('home.inbox.invite.team', { person })
   return t('home.inbox.invite.request', { person })
 }
@@ -266,7 +267,8 @@ interface Group {
   items: WaitingItem[]
 }
 
-const placeKindOf = (item: WaitingAsk) => (item.kind === 'project_invite' ? 'project' : 'team')
+const placeKindOf = (item: WaitingAsk) =>
+  item.kind === 'project_invite' || item.kind === 'project_transfer' ? 'project' : 'team'
 
 // 按要处理的地方分组：项目里的事按项目，邀请和申请按要加入的项目或团队。组的先后
 // 跟着组里最近那一件走（清单本来就是最近的在前）。

@@ -18,11 +18,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.core.device_failures import DeviceCallError
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness.claude_code import executor_launch
 from app.domain.machine import lease_claim, session_work
-from app.domain.machine.sandbox_wait import SANDBOX_PREPARING
+from app.domain.machine.sandbox_wait import (
+    DISK_FULL,
+    EXECUTOR_SETUP_FAILED,
+    SANDBOX_PREPARING,
+)
 
 pytestmark = pytest.mark.anyio
 
@@ -96,10 +101,39 @@ async def test_the_calls_before_the_install_are_bounded_the_same_way(monkeypatch
     monkeypatch.setattr(execution, "call", call)
     hub = SimpleNamespace(exec=AsyncMock())
 
-    assert await _start(hub, {"state": "/executor"}) == INFO
+    assert await _start(hub, {"device_id": "machine", "state": "/executor"}) == INFO
 
     assert seen == [lease_claim.INSTALL_MOST_S] * len(seen)
     assert seen, "the ping and the prepare were never made"
+
+
+async def test_a_lease_from_another_machine_is_not_dialed(monkeypatch):
+    """A lease names the machine it is held on, and the hands it records are
+    there and nowhere else. The attempt after a host was left — for a full disk,
+    for a connector that went away — still carries the lease of the machine just
+    left; dialing it answered with that machine's own failure, and ``_install``
+    recorded it against the machine this attempt was placed on, marking a
+    healthy host as one that ran out of space. The hands of another machine are
+    not this attempt's: the executor is installed here instead."""
+    monkeypatch.setattr(executor_launch, "script", lambda *a, **k: "print('in')")
+    monkeypatch.setattr(executor_launch, "can_prepare", lambda *a, **k: True)
+    pinged: list[dict] = []
+
+    async def call(target, method, _params, **_kwargs):
+        pinged.append(target)
+        return {}
+
+    monkeypatch.setattr(execution, "call", call)
+    hub = SimpleNamespace(
+        exec=AsyncMock(return_value={"exit": 0, "stdout": json.dumps(INFO)})
+    )
+
+    # `_start` starts the executor of the machine called "machine".
+    info = await _start(hub, {"device_id": "the-one-just-left", "state": "/executor"})
+
+    assert info == INFO
+    assert pinged == [], "the machine the session was moved off was dialed"
+    assert hub.exec.await_args.args[0] == "machine"
 
 
 @pytest.mark.parametrize(
@@ -182,10 +216,15 @@ class _Pool:
 
     ``answered`` is what the pool has to say about the session being placed
     elsewhere: True when it has another host that can run the sandbox.
+
+    ``space_asked`` records the hosts a write was refused for want of space on:
+    that is the mark no new sandbox is placed on until a reading finds room
+    again (``CloudHost.disk_full_since``, ``HostPool.ran_out_of_space``).
     """
 
     answered = True
     asked: list[tuple[uuid.UUID, uuid.UUID]] = []
+    space_asked: list[uuid.UUID] = []
 
     def __init__(self, db, hub=None):
         self.db = db
@@ -193,6 +232,9 @@ class _Pool:
     async def leave_unusable(self, session_id, host_id):
         type(self).asked.append((session_id, host_id))
         return type(self).answered
+
+    async def ran_out_of_space(self, host_id):
+        type(self).space_asked.append(host_id)
 
     async def tell_ready(self, session_id):
         return None
@@ -206,15 +248,26 @@ def _install_case(
     host_id=None,
     whole=False,
     answered=True,
+    lease=None,
+    prepared=False,
+    call_exc: BaseException | None = None,
 ):
     """One installation on a Cloud host, failing the way ``exc`` says.
 
     ``result`` instead runs the real ``_start_executor`` against a machine whose
     connector answered that — so what actually comes back over the wire is
     translated by the code under test, not hand-made into the exception.
+
+    ``lease`` is what the session is holding on the machine; a lease carrying a
+    ``state`` is one whose executor is already there, so the attempt pings it and
+    ``prepare``s it before installing anything. ``prepared`` lets that prepare go
+    through, and ``call_exc`` is what the machine answers it with — which is how
+    a machine's refusal of a call reaches the code under test, translated by
+    ``execution.call``'s own caller rather than hand-made into an exception.
     """
     _Pool.answered = answered
     _Pool.asked = []
+    _Pool.space_asked = []
     monkeypatch.setattr(session_work, "AsyncSession", _Db)
     monkeypatch.setattr(session_work, "AgentSessionService", _Sessions)
     monkeypatch.setattr(session_work, "HostPool", _Pool)
@@ -225,7 +278,25 @@ def _install_case(
     )
     monkeypatch.setattr(lease_claim, "kept", _kept)
 
-    if result is None:
+    if call_exc is not None:
+        # The executor is already on the machine (a lease with a state), so the
+        # attempt pings it and prepares it; the prepare is the call the machine
+        # refuses. The ping's answer is not the refusal: a `DeviceCallError` is
+        # a `RuntimeError`, and `_start_executor` waits those out into an empty
+        # answer.
+        monkeypatch.setattr(executor_launch, "can_prepare", lambda *a, **k: True)
+        monkeypatch.setattr(
+            executor_launch, "payload_for", lambda *a, **k: {"prepared": 1}
+        )
+
+        async def call(_lease, method, _params, **_kwargs):
+            if method == "ping":
+                return {"state": "/executor/state"}
+            raise call_exc
+
+        monkeypatch.setattr(execution, "call", call)
+        hub = SimpleNamespace()
+    elif result is None:
         assert exc is not None, "a case fails either by raising or by an answer"
 
         async def install(*_args, **_kwargs):
@@ -235,6 +306,11 @@ def _install_case(
         hub = SimpleNamespace()
     else:
         monkeypatch.setattr(executor_launch, "script", lambda *a, **k: "print('in')")
+        if prepared:
+            monkeypatch.setattr(executor_launch, "can_prepare", lambda *a, **k: True)
+            monkeypatch.setattr(
+                executor_launch, "payload_for", lambda *a, **k: {"prepared": 1}
+            )
         hub = SimpleNamespace(exec=AsyncMock(return_value=result))
     return session_work._install(
         "bind",
@@ -251,7 +327,7 @@ def _install_case(
         actor_handle="someone",
         work_resource=str(uuid.uuid4()),
         hub=hub,
-        lease={"device_id": "dev-1"},
+        lease={"device_id": "dev-1"} if lease is None else lease,
         device_id="dev-1",
         sandbox=False,
         platform_machine=True,
@@ -363,11 +439,11 @@ async def test_the_decision_to_leave_is_not_made_from_the_machines_own_words(
     outcome = await _install_case(
         monkeypatch,
         host_id=uuid.uuid4(),
-        result={"exit": 1, "stdout": "", "stderr": "no space left on device\n"},
+        result={"exit": 1, "stdout": "", "stderr": "no such file or directory\n"},
     )
 
     assert _Pool.asked == [], "a host that answered was given up"
-    assert "no space left on device" in outcome["unavailable"]
+    assert "no such file or directory" in outcome["unavailable"]
 
 
 async def test_a_machine_that_is_nobody_s_cloud_host_keeps_its_old_answer(monkeypatch):
@@ -392,11 +468,11 @@ async def test_an_install_that_ran_and_failed_is_still_reported_to_the_room(
     outcome = await _install_case(
         monkeypatch,
         host_id=uuid.uuid4(),
-        exc=session_work.ExecutorSetupFailed("no space left on device"),
+        exc=session_work.ExecutorSetupFailed("no such file or directory"),
     )
 
     assert _Pool.asked == [], "a host that answered was given up anyway"
-    assert "no space left on device" in outcome["unavailable"]
+    assert "no such file or directory" in outcome["unavailable"]
 
 
 async def test_a_whole_vm_is_not_left_when_its_install_fails(monkeypatch):
@@ -453,3 +529,94 @@ async def test_the_installed_executor_is_asked_to_answer_inside_the_same_budget(
 
     assert seen == [lease_claim.INSTALL_MOST_S], "the installed executor was not asked"
     assert outcome["target"]["state"] == INFO["state"]
+
+
+async def test_a_host_whose_prepare_ran_out_of_space_is_left(monkeypatch):
+    """FB-101. A host's disk was full, so every ``prepare`` of every tool call
+    of the session was refused by the machine — ``ENOSPC`` on the temporary file
+    the room's config was written through, which the machine answered as a
+    failure of the call. That was nobody's 500 to answer: the session stayed on
+    the host because only a connector that went away or an install the connector
+    killed was placed away from, and its tool calls were answered 502 for as
+    long as it stayed there."""
+    host_id = uuid.uuid4()
+
+    outcome = await _install_case(
+        monkeypatch,
+        host_id=host_id,
+        lease={"device_id": "dev-1", "state": "/executor/state"},
+        prepared=True,
+        # What FB-101 reported, verbatim: the temporary file a `prepare` writes
+        # the room's config through, and the errno the machine's own `OSError`
+        # carries.
+        call_exc=DeviceCallError(
+            "OSError: [Errno 28] No space left on device: "
+            "'.cheese-platform-skills.json.next'"
+        ),
+    )
+
+    assert [asked[1] for asked in _Pool.asked] == [host_id]
+    assert _Pool.space_asked == [host_id], "the host is still offered to new sandboxes"
+    assert outcome.message == SANDBOX_PREPARING
+    assert await outcome.progress() is True, "the caller is not told to try again"
+
+
+async def test_a_host_whose_install_ran_out_of_space_is_left_without_a_sandbox_taken(
+    monkeypatch,
+):
+    """The same ENOSPC arriving as the install's own report (``[Errno 28]`` in
+    its stderr, which ``ExecutorSetupFailed.reason`` reads as ``DISK_FULL``).
+    Recorded the same way, so the host takes no new sandbox until a reading finds
+    room — and this session is placed elsewhere rather than left on it."""
+    host_id = uuid.uuid4()
+
+    outcome = await _install_case(
+        monkeypatch,
+        host_id=host_id,
+        exc=session_work.ExecutorSetupFailed(
+            "OSError: [Errno 28] No space left on device"
+        ),
+    )
+
+    assert [asked[1] for asked in _Pool.asked] == [host_id]
+    assert _Pool.space_asked == [host_id]
+    assert outcome.message == SANDBOX_PREPARING
+
+
+async def test_a_full_host_with_nowhere_else_to_go_says_so(monkeypatch):
+    """No other host has room, so the session stays where it is; the full host
+    is still marked, and the room is told what is wrong instead of waiting out
+    every tool call of the turn on a machine that cannot take a write."""
+    host_id = uuid.uuid4()
+
+    outcome = await _install_case(
+        monkeypatch,
+        host_id=host_id,
+        answered=False,
+        exc=session_work.ExecutorSetupFailed(
+            "OSError: [Errno 28] No space left on device"
+        ),
+    )
+
+    assert _Pool.space_asked == [host_id]
+    assert outcome["unavailable"] == EXECUTOR_SETUP_FAILED.format(reason=DISK_FULL)
+
+
+async def test_a_whole_vm_that_ran_out_of_space_is_not_marked(monkeypatch):
+    """A whole VM is the session's own machine and is not offered to anybody:
+    marking it would say nothing about the pool, and its disk filling up is its
+    session's own business. It is waited for where it is, as before."""
+    host_id = uuid.uuid4()
+
+    outcome = await _install_case(
+        monkeypatch,
+        host_id=host_id,
+        whole=True,
+        exc=session_work.ExecutorSetupFailed(
+            "OSError: [Errno 28] No space left on device"
+        ),
+    )
+
+    assert _Pool.space_asked == [], "the session's own VM was marked for the pool"
+    assert _Pool.asked == []
+    assert "unavailable" in outcome

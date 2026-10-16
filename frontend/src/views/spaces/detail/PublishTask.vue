@@ -29,7 +29,9 @@ import PublishTaskView from './PublishTaskView.vue'
 import { AttachmentsApi } from '@/api/attachments'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
+import { mentorOptions } from '@/lib/taskMentors'
 import { isTeachingBlank } from '@/lib/teaching'
+import { myAccount, myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
 
@@ -197,6 +199,13 @@ const teachingPayload = computed(() =>
 
 const publishing = ref(false)
 
+// 能当导师的人：出题人自己和空间管理员（#3830）；新发的题默认是出题人自己。
+const mentorChoices = computed(() => {
+  const handle = myHandle()
+  const me = handle ? { handle, name: myAccount()?.nickname || handle } : null
+  return mentorOptions(spaceStore.currentSpace?.admins, me)
+})
+
 async function publish(form: TaskFormSubmitData) {
   const id = currentSpaceId.value
   if (!id || publishing.value) return
@@ -266,6 +275,8 @@ async function publish(form: TaskFormSubmitData) {
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
     :publishing="publishing"
+    :mentor-options="mentorChoices"
+    :default-mentor="myHandle() || undefined"
     @cancel="router.push(listTo)"
     @use-template="useTemplate"
     @import="importFile"

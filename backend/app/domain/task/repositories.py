@@ -11,6 +11,7 @@ from app.domain.task.models import (
     Task,
     TaskAccessDomain,
     TaskMembership,
+    TaskMentor,
     TaskSubmissionSchemaEntry,
     TaskTagRelation,
 )
@@ -833,4 +834,35 @@ class TaskAccessDomainRepository:
         for item in existing:
             item.deleted_at = now
             item.updated_at = now
+        await self._session.flush()
+
+
+class TaskMentorRepository:
+    """The mentors a task's publisher chose (#3830)."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def for_tasks(self, task_ids: Sequence[int]) -> dict[int, list[str]]:
+        if not task_ids:
+            return {}
+        rows = await self._session.execute(
+            select(TaskMentor.task_id, TaskMentor.user_handle)
+            .where(TaskMentor.task_id.in_(list(task_ids)))
+            .order_by(TaskMentor.task_id, TaskMentor.user_handle)
+        )
+        out: dict[int, list[str]] = {}
+        for task_id, handle in rows.all():
+            out.setdefault(task_id, []).append(handle)
+        return out
+
+    async def of_task(self, task_id: int) -> list[str]:
+        return (await self.for_tasks([task_id])).get(task_id, [])
+
+    async def replace(self, task_id: int, handles: Sequence[str]) -> None:
+        await self._session.execute(
+            delete(TaskMentor).where(TaskMentor.task_id == task_id)
+        )
+        for handle in dict.fromkeys(handles):
+            self._session.add(TaskMentor(task_id=task_id, user_handle=handle))
         await self._session.flush()

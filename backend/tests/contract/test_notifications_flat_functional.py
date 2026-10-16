@@ -270,7 +270,7 @@ async def test_marking_the_feed_read_does_not_answer_what_waits(
 async def _seed_project(factory) -> str:
     """一个项目，直接落行 —— ``POST /projects`` 在这套 harness 里是 503（它要的代码
     托管服务没配），而这个用例要的只是一个收得下通知的项目。"""
-    from app.domain.project.models import Project
+    from app.domain.project.models import Project, ProjectMember
 
     async with factory() as session:
         project = Project(
@@ -278,6 +278,9 @@ async def _seed_project(factory) -> str:
         )
         session.add(project)
         await session.flush()
+        # The harness signs in as 芝士, an AI teammate: it is in a project by
+        # its seat on the roster, not by the owner column.
+        session.add(ProjectMember(project_id=project.id, user_handle=_AGENT_HANDLE))
         project_id = str(project.id)
         await session.commit()
     return project_id

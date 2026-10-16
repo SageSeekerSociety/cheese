@@ -45,6 +45,9 @@ defineProps<{
   materialsState: SpaceMaterialsState
   libraryTo: string
   publishing: boolean
+  /** 能当导师的人和默认的那一位（出题人自己，#3830）。 */
+  mentorOptions?: { title: string; value: string }[]
+  defaultMentor?: string
 }>()
 
 const drafts = defineModel<PublishDraft[]>('drafts', { required: true })
@@ -234,6 +237,8 @@ function discardImport() {
         :domain-groups="domainGroups"
         :parameters-only="batch"
         :teaching-custom="teachingOwn"
+        :mentor-options="mentorOptions"
+        :default-mentor="defaultMentor"
         @invalid="formInvalid = $event"
         @submit="onSubmit"
       >

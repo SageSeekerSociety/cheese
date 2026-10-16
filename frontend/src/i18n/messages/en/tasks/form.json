@@ -89,5 +89,10 @@
     "rankRequired": "Choose a difficulty",
     "submitterTypeRequired": "Choose who takes it",
     "teamSizeOrder": "The maximum cannot be below the minimum"
+  },
+  "mentor": {
+    "require": "Add mentors to the claimers' projects",
+    "label": "Mentors",
+    "hint": "Claimers must agree before claiming. Mentors see the project's public channels, documents and files"
   }
 }

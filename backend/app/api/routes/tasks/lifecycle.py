@@ -12,6 +12,7 @@ from app.api.response import ok
 from app.api.routes.tasks._common import (
     PatchTaskParticipantRequest,
     PatchTaskRequest,
+    set_task_mentors,
 )
 from app.api.task_deps import (
     get_task_membership_service,
@@ -476,6 +477,11 @@ async def patch_task(
 
     # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
     apply_task_teaching(task, coerce_teaching(payload.teaching))
+
+    if payload.mentors is not None:
+        await set_task_mentors(
+            db, task=task, handles=payload.mentors, creator_user_id=task.creator_id
+        )
 
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)

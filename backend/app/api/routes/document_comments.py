@@ -45,6 +45,7 @@ from app.domain.living_doc.comments import CommentThreads, comment_out
 from app.domain.living_doc.schemas import node_out
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.mentions import canonicalize_refs
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/documents", tags=["document-comments"])
 
@@ -76,7 +77,7 @@ async def add_comment(
     archived project, is frozen and takes no comments."""
     reached = await reach(db, resolver, document_id)
     # Says why: an archived project, a closed task, or someone not working it.
-    await require_writable(db, reached)
+    await require_writable(db, reached, Permission.comment)
     content = body.content.strip()
     if not content:
         raise ValidationError(say("commentEmpty"))
@@ -206,7 +207,7 @@ async def _mutate(db, resolver, document_id, comment_id, body, action, hand_off=
     )
     if operation.receipt is not None:
         return operation.receipt
-    await require_writable(db, reached)
+    await require_writable(db, reached, Permission.comment)
     reply = action == "reply"
     assert not reply or isinstance(body, ReplyIn)
     result = await CommentThreads(db).mutate(

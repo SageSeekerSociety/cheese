@@ -89,5 +89,10 @@
     "rankRequired": "未选择难度",
     "submitterTypeRequired": "未选择参与方式",
     "teamSizeOrder": "最多人数不能少于最少人数"
+  },
+  "mentor": {
+    "require": "把导师加入领取者的项目",
+    "label": "导师",
+    "hint": "领取者同意后才能领取。导师能看到项目里的公开频道、文档和文件"
   }
 }

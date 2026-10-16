@@ -17,6 +17,7 @@ from app.domain.project.ports import (
     Claim,
     ComputeCredits,
     DefaultTeammate,
+    SeatMentors,
     SeedOverview,
     TaskBrief,
     TaskTerms,
@@ -90,6 +91,7 @@ class ProjectService:
         sessions: SessionStore | None = None,
         close_tasks: CloseRoomTasks | None = None,
         events: PlatformLine | None = None,
+        seat_mentors: SeatMentors | None = None,
     ):
         """``settle_card``：归档项目要把房间里等验收人的那几句话一起收掉，
         而结一张卡是 `review` 和 `delivery` 做的事，本包够不着
@@ -122,7 +124,10 @@ class ProjectService:
         ``task_terms``：报名这条路要读赛题那几行（赛题、谁报的名、审过之后落什么
         条款），那几行也在第 4 层（`app.domain.project.ports.TaskTerms`）。只有
         ``for_participation``、``activate_participation`` 和 ``create`` 带着赛题 id
-        的那条路要它，同样不给也能构造。"""
+        的那条路要它，同样不给也能构造。
+
+        ``seat_mentors``：报名开出新项目时，赛题点名的导师要坐进去，而角色是上一层
+        `membership` 的事（`app.domain.project.ports.SeatMentors`）。没递进来就不坐。"""
         self._session = session
         self._repo = ProjectRepository(session)
         self._installations = ProjectGitInstallationRepository(session)
@@ -137,6 +142,7 @@ class ProjectService:
         self._sessions = sessions
         self._close_tasks = close_tasks
         self._events = events
+        self._seat_mentors = seat_mentors
 
     async def _seed_default_teammate(
         self,
@@ -313,6 +319,11 @@ class ProjectService:
             team_id=team_id,
             external_task_id=task.id,
         )
+        # The claimer agreed to the task's mentors before claiming; they join
+        # the project it opened, once — a project reused on reapplication keeps
+        # whoever its people kept.
+        if task.mentors and self._seat_mentors is not None:
+            await self._seat_mentors(self._session, project.id, task.mentors)
 
         # The original requirements may be rich-text JSON. Keep their canonical
         # page reachable instead of copying serialized editor data into Markdown.

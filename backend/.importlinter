@@ -410,6 +410,11 @@ unmatched_ignore_imports_alerting = warn
 # a document's mini-apps are part of the document, it keeps its pictures in the
 # `library` blob store on the same layer, and only routes import it.
 #
+# `project_permissions` joined at layer 1 (2026-10-16): the roles of a project
+# and what each may do (#3830) are asked by `topic`, `topic_membership`,
+# `review` and `membership` alike, and `project` sits beside the first two, so
+# the names live below all of them. The module imports nothing.
+#
 # `delivery_events` joined at layer 1 (2026-10-14), the same move once more:
 # the notification codes (`NotificationType`) and the shape of one event
 # (`DeliveryEvent`, `event_id_for`, `dedup_key`) are what every layer needs to
@@ -454,7 +459,7 @@ unmatched_ignore_imports_alerting = warn
 # `review` at 2, `room_task` and `pin` and `agent` at 3 and 4, `block` itself at
 # 4, so each of them climbed to layer 4 for a closed four-row table. The table
 # and `landing()` moved down. Writing the event row stays in `block`:
-# whoever says something into a room now hands the call in (the `RoomEvent` port
+# whoever says something into a room now hands the call in (the `PlatformLine` port
 # in `topic/ports.py`), and stepping through `landing()` is what that
 # implementation does before it appends — the landing guard asks for exactly
 # that, so the table keeps deciding where a line goes.
@@ -514,7 +519,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : event_about
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : event_about : project_permissions
 containers =
     app.domain
 exhaustive = true

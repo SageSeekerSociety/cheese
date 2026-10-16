@@ -1,4 +1,4 @@
-import type { ListPayload, Project, ProjectInvitation, ProjectMemberRow, Topic, TopicMemberRow } from '../cx_types'
+import type { ListPayload, ProjectInvitation, ProjectMemberRow, Topic, TopicMemberRow } from '../cx_types'
 
 import { changesAwaiting } from './awaitingChanged'
 import { request } from './http'
@@ -26,14 +26,79 @@ export function leaveProject(projectId: string): Promise<{ deleted: boolean }> {
   })
 }
 
-// 转让项目给名册上的另一个人。所有者自己退不掉（后端会拒，得先转让），这是他
-// 离得开的那条路的第一步。新所有者必须已经在名册上（后端会验，不在就退回来一句
-// 「请先把 TA 加进项目成员」）；他接手之后，原所有者就只剩成员身份，再退出一次
-// 才真的走（membership/services.py 的 leave）。
-export function setProjectOwner(projectId: string, ownerHandle: string): Promise<Project> {
-  return request<Project>(`/projects/${encodeURIComponent(projectId)}/owner`, {
+// ---- 角色、权限表与转让（#3830）-----------------------------------------------
+
+export type ProjectRoleName = 'admin' | 'member' | 'mentor'
+
+// 把比自己低的人设为管理员、成员或导师。
+export function setMemberRole(projectId: string, handle: string, role: ProjectRoleName): Promise<{ role: string }> {
+  return request<{ role: string }>(
+    `/projects/${encodeURIComponent(projectId)}/members/${encodeURIComponent(handle)}/role`,
+    { method: 'PUT', body: JSON.stringify({ role }) }
+  )
+}
+
+export interface RoleGrants {
+  grants: Record<ProjectRoleName, string[]>
+  /** 有没有哪个角色和默认值不一样。 */
+  changed: boolean
+}
+
+export function getRoleGrants(projectId: string): Promise<RoleGrants> {
+  return request<RoleGrants>(`/projects/${encodeURIComponent(projectId)}/roles`)
+}
+
+export function setRoleGrants(
+  projectId: string,
+  grants: Partial<Record<ProjectRoleName, string[]>>
+): Promise<RoleGrants> {
+  return request<RoleGrants>(`/projects/${encodeURIComponent(projectId)}/roles`, {
     method: 'PUT',
-    body: JSON.stringify({ owner_handle: ownerHandle }),
+    body: JSON.stringify({ grants }),
+  })
+}
+
+export function resetRoleGrants(projectId: string): Promise<RoleGrants> {
+  return request<RoleGrants>(`/projects/${encodeURIComponent(projectId)}/roles`, { method: 'DELETE' })
+}
+
+export interface ProjectTransfer {
+  id: string
+  project_id: string
+  from_handle: string
+  to_handle: string
+  status: string
+}
+
+// 所有者把项目交给项目里的一个人；对方接受之前什么都不变。
+export function offerTransfer(projectId: string, toHandle: string): Promise<ProjectTransfer> {
+  return request<ProjectTransfer>(`/projects/${encodeURIComponent(projectId)}/transfer`, {
+    method: 'POST',
+    body: JSON.stringify({ to_handle: toHandle }),
+  })
+}
+
+export function cancelTransfer(projectId: string): Promise<ProjectTransfer> {
+  return request<ProjectTransfer>(`/projects/${encodeURIComponent(projectId)}/transfer`, {
+    method: 'DELETE',
+  })
+}
+
+// 答了这次转让，它就从「等你处理」里了结，所以告诉角标重读。
+export function respondToTransfer(transferId: string, accept: boolean): Promise<ProjectTransfer> {
+  return changesAwaiting(
+    request<ProjectTransfer>(`/transfers/${encodeURIComponent(transferId)}/respond`, {
+      method: 'POST',
+      body: JSON.stringify({ accept }),
+    })
+  )
+}
+
+// 把自己的个人项目移到自己管理的团队。
+export function moveProjectToTeam(projectId: string, teamId: number): Promise<{ project_id: string; team_id: number }> {
+  return request<{ project_id: string; team_id: number }>(`/projects/${encodeURIComponent(projectId)}/move`, {
+    method: 'POST',
+    body: JSON.stringify({ team_id: teamId }),
   })
 }
 
@@ -41,10 +106,14 @@ export function setProjectOwner(projectId: string, ownerHandle: string): Promise
 // 团队里的人自动就在团队的每个项目里；项目自己能加的只有团队以外的人。进来之后他
 // 看得见这个项目的话题，所以要由他本人点头——邀请发出去，他接受了才算数。
 
-export function inviteExternalMember(projectId: string, handle: string): Promise<ProjectInvitation> {
+export function inviteExternalMember(
+  projectId: string,
+  handle: string,
+  role: 'member' | 'mentor' = 'member'
+): Promise<ProjectInvitation> {
   return request<ProjectInvitation>(`/projects/${encodeURIComponent(projectId)}/invitations`, {
     method: 'POST',
-    body: JSON.stringify({ user_handle: handle }),
+    body: JSON.stringify({ user_handle: handle, role }),
   })
 }
 

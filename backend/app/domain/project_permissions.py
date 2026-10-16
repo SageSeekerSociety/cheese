@@ -1,0 +1,110 @@
+"""What each role in a project may do (#3830).
+
+A project has one owner, and everyone else in it holds one of three roles:
+admin, member, mentor. The owner holds every permission and is not in the
+table below; each role is a set of the permissions listed here, defaulting to
+:data:`DEFAULT_GRANTS`, and a project may change a role's set (its
+``project_role_grants`` row). The two locked permissions cannot be changed: an
+admin always manages people and roles and nobody else ever does, so a project
+can never lose everyone able to manage it.
+
+The keys and their defaults are the frontend's ``lib/projectPermissions.ts``,
+name for name.
+
+What the owner alone does is not a permission: handing the project over,
+moving a personal project into a team, archiving it.
+"""
+
+import enum
+
+
+class Role(enum.StrEnum):
+    admin = "admin"
+    member = "member"
+    mentor = "mentor"
+
+
+class Seat(enum.StrEnum):
+    """Where a person sits in a project: a role, or above them all."""
+
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+    mentor = "mentor"
+
+
+class Permission(enum.StrEnum):
+    #: Invite people into the project and take them out of it.
+    manage_members = "manage_members"
+    #: Make people members or mentors, only below oneself; only the owner makes
+    #: someone an admin.
+    change_roles = "change_roles"
+    #: The project's settings: address, default model, environment, repository
+    #: and merge rules, the project site, importing skills, members' own agents.
+    edit_settings = "edit_settings"
+    export_project = "export_project"
+    #: Create public or private channels and bring people into ones you are in.
+    create_channels = "create_channels"
+    #: Change, archive and delete any channel without being its admin, and step
+    #: into a private one.
+    manage_channels = "manage_channels"
+    speak = "speak"
+    #: Ask the project's AI teammates for an answer, a document, a piece of work.
+    ask_agent = "ask_agent"
+    #: Create tasks and review what they hand back.
+    tasks = "tasks"
+    #: Create, change and delete documents and files, and save them to the library.
+    edit_content = "edit_content"
+    #: Comment on documents and suggest changes to their text.
+    comment = "comment"
+    #: Add and retire AI teammates; their skills, MCP servers and shared memory.
+    configure_agents = "configure_agents"
+
+
+#: What manages people, the project's settings or every channel — never done
+#: by something running unattended on a person's behalf.
+MANAGING: frozenset[Permission] = frozenset(
+    {
+        Permission.manage_members,
+        Permission.change_roles,
+        Permission.edit_settings,
+        Permission.manage_channels,
+    }
+)
+
+#: The order the table lists them in.
+PERMISSION_ORDER: tuple[Permission, ...] = tuple(Permission)
+
+LOCKED: frozenset[Permission] = frozenset(
+    {Permission.manage_members, Permission.change_roles}
+)
+
+DEFAULT_GRANTS: dict[Role, frozenset[Permission]] = {
+    Role.admin: frozenset(Permission),
+    Role.member: frozenset(
+        {
+            Permission.export_project,
+            Permission.create_channels,
+            Permission.speak,
+            Permission.ask_agent,
+            Permission.tasks,
+            Permission.edit_content,
+            Permission.comment,
+            Permission.configure_agents,
+        }
+    ),
+    Role.mentor: frozenset(
+        {Permission.speak, Permission.ask_agent, Permission.comment}
+    ),
+}
+
+
+def with_locks(role: Role, granted: frozenset[Permission]) -> frozenset[Permission]:
+    """A role's set with the locked permissions where they always are."""
+    if role is Role.admin:
+        return granted | LOCKED
+    return granted - LOCKED
+
+
+#: Higher first. A person manages only those strictly below their own seat.
+RANK: dict[Seat, int] = {Seat.owner: 3, Seat.admin: 2, Seat.member: 1, Seat.mentor: 1}

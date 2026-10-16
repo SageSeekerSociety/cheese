@@ -448,7 +448,7 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 
 - **不动 Vuetify 自己的 z-index。** 它的浮层会自己往上叠：第一个按基值（菜单 2000、弹窗 2400），此后每开一层 +10。所以我们的 token 要么落在 2000 以下（设置浮层），要么跟它同层或更高（应用浮层）。
 - `--z-overlay` 与 Vuetify 弹窗基值同为 2400：两者同时在场时由 DOM 顺序决出。当前没有一处会同时出现（应用浮层各自独占屏幕），所以保持原值不动；真要叠在一起，把那一处抬到 `--z-overlay-2` 与 `--z-menu` 之间的空档。
-- `z-index` 写在 CSS 里用 token；Vuetify 组件的 `:z-index` 属性只收数字，读不到 CSS 变量，这时在 JS 里留一份带注释的常量（目前只有 `--z-menu` 一份，见 `RichTextToolbar.vue` 的 `MENU_Z`、`CommandPalette.vue` 的 `SHEET_Z`）。
+- `z-index` 写在 CSS 里用 token；Vuetify 组件的 `:z-index` 属性只收数字，读不到 CSS 变量，这时在 JS 里留一份带注释的常量（目前只有 `--z-menu` 一份，见 `richTextActions.ts` 的 `MENU_Z`、`CommandPalette.vue` 的 `SHEET_Z`）。
 
 ### 3.9 表单与设置行
 

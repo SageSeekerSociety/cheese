@@ -18,7 +18,13 @@ from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_chat_service
-from app.api.doc_access import authorize_in_project, frozen, reach, require_writable
+from app.api.doc_access import (
+    authorize_in_project,
+    frozen,
+    reach,
+    require_role,
+    require_writable,
+)
 from app.api.doc_identity import operation_actor
 from app.api.doc_mentions import notified_handles
 from app.api.doc_store import announce, store, tell_origin_room
@@ -62,6 +68,7 @@ from app.domain.mentions import (
 )
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService, refuse_writes_if_archived
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
@@ -204,6 +211,7 @@ async def create_document(
     conversation's until someone saves it to the library (#3828)."""
     actor = await resolver.resolve(project_id=project_id)
     await authorize_in_project(resolver, actor, project_id)
+    await require_role(db, actor, project_id, Permission.edit_content)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("docEditNeedsWriter"))
     await refuse_writes_if_archived(db, project_id)
@@ -494,8 +502,9 @@ async def edit_doc_passages(
     resolver: ActorResolverDep,
 ) -> dict:
     """Change passages of the document: each ``old`` (once in its Markdown)
-    becomes ``new``, directly, or as suggestions when an AI teammate asks for
-    that (``mode: "suggest"``).
+    becomes ``new``, directly, or as suggestions when the caller asks for that
+    (``mode: "suggest"``) — an AI teammate, or a person whose role lets them
+    comment but not edit.
 
     For the room's agent and for people alike, each edits as themselves.
     Nothing is applied unless every edit can be; a refusal names the edit
@@ -503,7 +512,13 @@ async def edit_doc_passages(
     reached = await reach(db, resolver, document_id, enforce=True)
     if not reached.actor.authenticated:
         raise AuthenticationRequiredError(say("docEditNeedsWriter"))
-    await require_writable(db, reached)
+    # Suggesting a change is commenting on the text, not changing it: a mentor
+    # suggests, and someone who may edit decides (#3830).
+    await require_writable(
+        db,
+        reached,
+        Permission.comment if body.mode == "suggest" else Permission.edit_content,
+    )
     doc, actor = reached.doc, reached.actor
     if doc.version == 0:
         raise NotFoundError(say("docIsEmpty"))
@@ -535,9 +550,9 @@ async def edit_doc_passages(
     else:
         author = actor.handle
     editor_is_agent = await IdentityService(db).is_agent(author)
-    # Only an AI teammate proposes instead of editing, and only when it says so:
-    # a person's edit, like the agent's by default, is made.
-    mode = "suggest" if editor_is_agent and body.mode == "suggest" else "direct"
+    # A suggestion is made only when it is asked for; an edit, by default, is
+    # made.
+    mode = "suggest" if body.mode == "suggest" else "direct"
     # The service's store takes the document's lock in a transaction of its own.
     agent_authors = await _agent_authors(db, doc.id)
     await db.commit()

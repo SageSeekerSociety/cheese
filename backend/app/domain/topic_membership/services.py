@@ -38,6 +38,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project_permissions import Permission
 from app.domain.topic.models import (
     Topic,
     TopicKind,
@@ -82,7 +83,9 @@ class TopicMemberService:
             return False
         if member is not None and member.role == TopicRole.owner:
             return True
-        return await MemberService(self._session).manages(topic.project_id, actor)
+        return await MemberService(self._session).manages(
+            topic.project_id, actor, Permission.manage_channels
+        )
 
     async def require_manager(self, topic_id: uuid.UUID, actor: str) -> Topic:
         topic = await self._topics.get(topic_id)
@@ -182,7 +185,9 @@ class TopicMemberService:
         # deferred-import: cycle membership.services -> topic_membership.services
         from app.domain.membership.services import MemberService
 
-        if await MemberService(self._session).manages(topics[0].project_id, actor):
+        if await MemberService(self._session).manages(
+            topics[0].project_id, actor, Permission.manage_channels
+        ):
             return {t.id for t in topics}
         return await self._repo.topic_ids_for_member(
             [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
@@ -600,12 +605,14 @@ class TopicMemberService:
         )
 
     async def may_bring_in(self, topic: Topic, actor: str) -> bool:
-        """May ``actor`` add someone to this channel: a person in it, or someone
-        who manages it. An AI teammate's seat lets it act in the channel, not
-        invite."""
-        if await self._repo.get(
-            topic_id=topic.id, member_handle=actor
-        ) is not None and not await IdentityService(self._session).is_agent(actor):
+        """May ``actor`` add someone to this channel: a person in it whose role
+        lets them bring people into channels, or someone who manages it. An AI
+        teammate's seat lets it act in the channel, not invite."""
+        if (
+            await self._repo.get(topic_id=topic.id, member_handle=actor) is not None
+            and not await IdentityService(self._session).is_agent(actor)
+            and await self.may_open_channels(topic.project_id, actor)
+        ):
             return True
         return await self.manages(topic, actor)
 
@@ -646,7 +653,9 @@ class TopicMemberService:
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
         if member is not None and member.role == TopicRole.owner:
             return True
-        return await MemberService(self._session).manages(topic.project_id, actor)
+        return await MemberService(self._session).manages(
+            topic.project_id, actor, Permission.manage_channels
+        )
 
     async def require_administrator(self, topic_id: uuid.UUID, actor: str) -> Topic:
         topic = await self._topics.get(topic_id)
@@ -708,7 +717,9 @@ class TopicMemberService:
             raise NotFoundError("Topic not found")
         if topic.status == TopicStatus.archived:
             raise ValidationError(say("channelArchivedNoJoin"))
-        if not await MemberService(self._session).manages(topic.project_id, actor):
+        if not await MemberService(self._session).manages(
+            topic.project_id, actor, Permission.manage_channels
+        ):
             raise NotFoundError("Topic not found")
         if await self._repo.get(topic_id=topic_id, member_handle=actor) is not None:
             return False
@@ -741,24 +752,19 @@ class TopicMemberService:
             await self._ensure_member(topic_id, actor, role=TopicRole.member)
         elif not await self.manages(topic, actor) or not await MemberService(
             self._session
-        ).manages(topic.project_id, actor):
+        ).manages(topic.project_id, actor, Permission.manage_channels):
             raise ForbiddenError(say("channelPublicProjectManagerOnly"))
         topic.members_only = members_only
         await self._session.flush()
         return topic
 
-    async def may_open_channels(
-        self, project_id: uuid.UUID, handle: str, *, team: ProjectTeam
-    ) -> bool:
-        """Whether ``handle`` may open a new channel here: anyone in the
-        project but an external member, who was invited in to take part, not
-        to arrange it."""
-        # deferred-import: cycle membership.roster -> topic_membership.services
-        from app.domain.membership.roster import roster
+    async def may_open_channels(self, project_id: uuid.UUID, handle: str) -> bool:
+        """Whether ``handle`` may open a new channel here (#3830)."""
+        # deferred-import: cycle membership.services -> topic_membership.services
+        from app.domain.membership.services import MemberService
 
-        return not any(
-            m.handle == handle and m.source == "external"
-            for m in await roster(self._session, project_id, team=team)
+        return await MemberService(self._session).manages(
+            project_id, handle, Permission.create_channels
         )
 
     async def _on_project(

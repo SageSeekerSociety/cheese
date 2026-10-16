@@ -16,6 +16,7 @@
 """
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -245,6 +246,8 @@ class TaskBrief:
     intro: str
     space_id: int
     is_team_submission: bool
+    #: Who joins the project made for a claim as a mentor (#3830).
+    mentors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -303,3 +306,15 @@ class TaskTerms(Protocol):
     async def terms(self, task_id: int) -> AcceptedTerms:
         """这道赛题审过之后要落的条款。"""
         ...
+
+
+class SeatMentors(Protocol):
+    """Seat a task's mentors in the project made for a claim of it (#3830).
+
+    Roles live in `membership`, one layer up; whoever builds the service hands
+    this in.
+    """
+
+    async def __call__(
+        self, session: AsyncSession, project_id: uuid.UUID, handles: Sequence[str]
+    ) -> None: ...

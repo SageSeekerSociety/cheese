@@ -36,6 +36,18 @@ export function lastOpenedProjectId(): string | null {
 }
 
 /**
+ * 这个项目上次待的地方（一件任务，或一个频道）；没记过就是 null。和
+ * `lastOpenedProjectId` 一样从存储里直接读、不经过 store：手机把后台的页面收走后再
+ * 打开，是从入口重新落一次，那一下就得知道该去哪儿（`router/home.ts` 的
+ * `landingForMember`）。记着的那件任务/那个频道还在不在，由读这个项目的频道清单时
+ * 校验（`queries.ts` 里 `forgetPlace` 那一条），这里只认存储里那份。
+ */
+export function lastPlaceOf(projectKey: string | null): RememberedPlace | null {
+  if (!projectKey) return null
+  return validPlaceMap(loadLayout().lastPlaceByProject)[projectKey] ?? null
+}
+
+/**
  * 这个人自己选过、要记住的界面偏好：栏宽、右侧面板的开合，和每个项目上次待的地方。
  *
  * 它要的只有「当前是哪个项目」——写回存储时 `lastProjectId` 记的是它，所以传进来的是
