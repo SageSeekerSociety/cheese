@@ -136,7 +136,8 @@ def main() -> int:
         jobs = fetch_jobs(env["REPO"], env["RUN_ID"], env["RUN_ATTEMPT"], env["GH_TOKEN"])
     except (urllib.error.URLError, OSError, ValueError) as error:
         print(f"::warning::could not read this run's jobs: {error}")
-        if env.get("DEPLOY_RESULT") != "failure":
+        # The gate's verdict needs no API read; a refusal stays quiet here too.
+        if env.get("DEPLOY_RESULT") != "failure" or env.get("REFUSED") == "true":
             return 0
         reason = "部署作业失败；读不到是哪一步（GitHub API 不可达），见运行页"
     else:

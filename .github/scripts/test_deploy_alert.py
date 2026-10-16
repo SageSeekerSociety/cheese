@@ -133,6 +133,7 @@ class TheStepTheWorkflowRuns(unittest.TestCase):
         down = urllib.error.URLError("unreachable")
         self.assertIn("【严重】", self.run_main(error=down, DEPLOY_RESULT="failure"))
         self.assertEqual(self.run_main(error=down, DEPLOY_RESULT="cancelled"), "")
+        self.assertEqual(self.run_main(error=down, DEPLOY_RESULT="failure", REFUSED="true"), "")
 
 
 if __name__ == "__main__":
