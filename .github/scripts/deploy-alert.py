@@ -19,9 +19,16 @@ What pages and what does not, by the deploy job's conclusion:
   run that a newer deploy replaced in the concurrency group (every cancelled dev
   deploy on 2026-10-16 looks like this: no runner, no steps), and one cancelled
   before its timeout was cancelled by a person.
-- A job that stopped in a step named in NOT_A_FAILURE_STEPS stays quiet: those
-  are a release gate refusing (an approval denied, validation that regressed
-  while the run waited), which leaves the deployment as it was.
+- A release gate's refusal stays quiet: REFUSED is `true` when the gate said
+  so itself (deploy/check-auto-deploy.py's `refused` output, an approver's
+  denial), which leaves the deployment as it was. It is not read off the step
+  name: the same step fails on a GitHub read that kept dropping or a running
+  release the guard cannot place, and those must page.
+- A timeout in WAITS_FOR_A_PERSON, the step that waits on an approver, stays
+  quiet: nobody approving in time is not a deploy that broke.
+- When the job list cannot be read, a deploy job that ended `failure` still
+  pages, saying the reason is unknown; a `cancelled` one does not, since most
+  of those are runs a newer deploy replaced.
 """
 
 from __future__ import annotations
@@ -30,6 +37,8 @@ import json
 import os
 import re
 import sys
+import time
+import urllib.error
 import urllib.request
 from datetime import datetime
 
@@ -48,8 +57,17 @@ def fetch_jobs(repo: str, run_id: str, attempt: str, token: str) -> list[dict]:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        return json.load(response).get("jobs", [])
+    # Three tries a few seconds apart: one dropped read must not decide that a
+    # failed deploy goes unannounced.
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.load(response).get("jobs", [])
+        except (urllib.error.URLError, OSError, ValueError):
+            if attempt == 2:
+                raise
+            time.sleep(5 * (attempt + 1))
+    raise AssertionError("unreachable")
 
 
 def _seconds(job: dict) -> float:
@@ -73,14 +91,13 @@ def stopped_at(job: dict) -> str:
     return ""
 
 
-def assess(job: dict | None, timeout_minutes: int, not_a_failure: set[str]) -> str | None:
+def assess(job: dict | None, timeout_minutes: int, refused: bool = False,
+           waits_for_a_person: str = "") -> str | None:
     """The alert's reason line, or None when this outcome must not page."""
-    if job is None:
+    if job is None or refused:
         return None
     conclusion = job.get("conclusion")
     step = stopped_at(job)
-    if step and step in not_a_failure:
-        return None
     if conclusion == "failure":
         if step:
             return f"失败的步骤：{step}"
@@ -90,6 +107,8 @@ def assess(job: dict | None, timeout_minutes: int, not_a_failure: set[str]) -> s
         and job.get("runner_name")
         and _seconds(job) >= timeout_minutes * 60 - TIMEOUT_SLACK_SECONDS
     )
+    if timed_out and step and step == waits_for_a_person:
+        return None
     if timed_out:
         where = f"，停在：{step}" if step else ""
         return f"超时：跑满 {timeout_minutes} 分钟被中止{where}"
@@ -113,13 +132,20 @@ def message(environment: str, commit: str, reason: str, run_url: str) -> str:
 
 def main() -> int:
     env = os.environ
-    jobs = fetch_jobs(env["REPO"], env["RUN_ID"], env["RUN_ATTEMPT"], env["GH_TOKEN"])
-    job = next((j for j in jobs if j.get("name") == env.get("DEPLOY_JOB", "deploy")), None)
-    not_a_failure = {line.strip() for line in env.get("NOT_A_FAILURE_STEPS", "").splitlines()}
-    reason = assess(job, int(env["TIMEOUT_MINUTES"]), not_a_failure - {""})
-    if reason is None:
-        print(f"deploy job ended {job and job.get('conclusion')}: not a failure to page about")
-        return 0
+    try:
+        jobs = fetch_jobs(env["REPO"], env["RUN_ID"], env["RUN_ATTEMPT"], env["GH_TOKEN"])
+    except (urllib.error.URLError, OSError, ValueError) as error:
+        print(f"::warning::could not read this run's jobs: {error}")
+        if env.get("DEPLOY_RESULT") != "failure":
+            return 0
+        reason = "部署作业失败；读不到是哪一步（GitHub API 不可达），见运行页"
+    else:
+        job = next((j for j in jobs if j.get("name") == env.get("DEPLOY_JOB", "deploy")), None)
+        reason = assess(job, int(env["TIMEOUT_MINUTES"]), env.get("REFUSED") == "true",
+                        env.get("WAITS_FOR_A_PERSON", ""))
+        if reason is None:
+            print(f"deploy job ended {job and job.get('conclusion')}: not a failure to page about")
+            return 0
     text = message(env["ENVIRONMENT"], env.get("COMMIT", ""), reason, env["RUN_URL"])
     print(text)
     with open(env["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:

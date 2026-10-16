@@ -354,6 +354,33 @@ class CandidateCI(unittest.TestCase):
                 GUARD.ci_ready(self.candidate)
         self.assertEqual(len(reads), 3)
 
+    def require_ci(self, *answers):
+        """Run the post-approval recheck against `answers`; return what it wrote
+        to GITHUB_OUTPUT and the exception it stopped with."""
+        github, _reads = self.github(*answers)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            with patch.dict(os.environ, {"GITHUB_REPOSITORY": "example/app", "GH_TOKEN": "t",
+                                         "GITHUB_OUTPUT": str(output)}), \
+                    patch.object(GUARD.sys, "argv", ["check-auto-deploy.py", "--require-ci", self.candidate]), \
+                    github, self.assertRaises(BaseException) as stopped:
+                GUARD.main()
+            return (output.read_text() if output.exists() else ""), stopped.exception
+
+    def test_a_release_whose_validation_failed_says_it_was_refused(self):
+        """The deploy alert stays quiet on a gate's refusal and pages on anything else
+        that fails this step; this output is how it tells the two apart."""
+        failed = {"workflow_runs": [self.queue_record(conclusion="failure")]}
+        written, stopped = self.require_ci({"workflow_runs": [self.run_record()]}, failed)
+        self.assertIsInstance(stopped, SystemExit)
+        self.assertIn("refused=true", written)
+
+    def test_a_guard_that_crashed_does_not_say_it_refused(self):
+        """Deploy run 37710891132 failed in this step on a GitHub read, not a verdict."""
+        written, stopped = self.require_ci(ConnectionResetError("reset by peer"))
+        self.assertIsInstance(stopped, ConnectionResetError)
+        self.assertNotIn("refused", written)
+
     def test_a_refusal_is_not_read_again(self):
         refused = GUARD.HTTPError("https://api.github.com/x", 403, "rate limited", {}, io.BytesIO(b""))
         github, reads = self.github(refused)
@@ -476,7 +503,8 @@ class CandidateCI(unittest.TestCase):
                 with self.assertRaises(SystemExit) as refused:
                     GUARD.main()
             self.assertIn(self.candidate, str(refused.exception.code))
-            self.assertFalse(output.exists())
+            # A refusal is not a skip: a skip would leave the deploy job green.
+            self.assertNotIn("skip=", output.read_text() if output.exists() else "")
             deploy.assert_not_called()
 
     @staticmethod

@@ -84,6 +84,10 @@ jobs:
     # human approving via manual-approval. A tight timeout here would not
     # catch a hang, it would cancel a deploy waiting on its approver.
     environment: production
+    # Read by the alert job below: the gate refusing is the one failure of the
+    # deploy job that is not a broken deploy.
+    outputs:
+      refused: ${{ steps.recheck.outputs.refused || steps.approval.outputs.approval-status == 'denied' }}
 
     steps:
       # Approval gate: GitHub's native environment required-reviewers isn't
@@ -91,6 +95,7 @@ jobs:
       # approving via an auto-opened issue. Skipped for dry-run (it changes
       # nothing). Approver comments "approve"/"yes"/"lgtm" to proceed.
       - name: Require manual approval
+        id: approval
         if: ${{ !inputs.dry_run }}
         uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
         with:
@@ -107,6 +112,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
 
       - name: Recheck validation after approval
+        id: recheck
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -180,12 +186,12 @@ jobs:
           # GitHub's default job timeout, which the deploy job keeps so it can wait
           # on its approver; a hang that used it all up past approval pages.
           TIMEOUT_MINUTES: '360'
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
           # The approval lives in this deploy job: an approver denying, or nobody
           # approving within the timeout, is a decision and leaves etrip as it
           # was, and so does validation that regressed while it waited.
-          NOT_A_FAILURE_STEPS: |
-            Require manual approval
-            Recheck validation after approval
+          REFUSED: ${{ needs.deploy.outputs.refused }}
+          WAITS_FOR_A_PERSON: Require manual approval
         run: python3 .github/scripts/deploy-alert.py
       - name: Tell the team the deploy failed
         if: steps.decide.outputs.text != '' && env.WEBHOOK != ''

@@ -159,6 +159,10 @@ jobs:
     # no approval step.
     environment: dev
     runs-on: [self-hosted, cheese-dev]
+    # Read by the alert job below: the gate refusing is the one failure of the
+    # deploy job that is not a broken deploy.
+    outputs:
+      refused: ${{ steps.release.outputs.refused }}
     # The first Forge cutover archives workspaces and builds a recovery bundle per task.
     timeout-minutes: 180
     steps:
@@ -501,11 +505,12 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ENVIRONMENT: dev（okcheese.com）
           COMMIT: ${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
           # The deploy job's own timeout-minutes, so a hang that used it all up pages.
           TIMEOUT_MINUTES: '180'
           # The guard refusing a commit whose CI was rerun while it waited leaves
           # dev on the release it had; that is CI's news, not a broken deploy.
-          NOT_A_FAILURE_STEPS: Keep automatic deployments from going backwards
+          REFUSED: ${{ needs.deploy.outputs.refused }}
         run: python3 .github/scripts/deploy-alert.py
       - name: Tell the team the deploy failed
         if: steps.decide.outputs.text != '' && env.WEBHOOK != ''
