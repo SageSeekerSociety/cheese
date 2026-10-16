@@ -406,6 +406,8 @@ v2 要求复盘产出 workflow-tree 新版，但资料库里还没有这份东�
                   {"awaits_me": True}):
         check("不恢复：" + str(extra), eligible(t=dict(task, **extra)), None)
     check("两次失败之间有活动，不构成连续故障", eligible(pulse=at(4)), None)
+    check("没有更新活动的旧故障仍不能自动恢复",
+          eligible([event("old-a", 2900), event("old-b", 2880)], pulse=at(4320)), None)
     check("事件倒序仍按时间识别", eligible(list(reversed(pair))), eligible())
     first, why = recovery_wake(task, [], now)
     check("首次允许", why, None)
