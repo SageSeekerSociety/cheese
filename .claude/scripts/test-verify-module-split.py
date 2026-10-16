@@ -825,6 +825,154 @@ class Widget:
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
 
+    def test_a_self_only_method_dropped_is_not_excused_by_a_namesake(self) -> None:
+        """A method that took only `self` leaves no shape behind to match.
+
+        `def _reset(value)` shares the name and the arity with `_reset(self)` and
+        nothing else. Reading that as the lift is how a deleted method goes out
+        unnoticed.
+        """
+        old = '''\
+"""A class whose private helper is about to be dropped."""
+
+
+class Widget:
+    def render(self):
+        return self._reset()
+
+    def _reset(self):
+        return 1
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self):
+        return 1
+""",
+            "painting.py": "def _reset(value):\n    return value\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("符号没了: Widget._reset", result.stdout)
+
+    def test_a_self_only_method_dropped_survives_no_namesake_either(self) -> None:
+        """Arity zero is not a parameter list the lost method could have had."""
+        old = '''\
+"""A class whose private helper is about to be dropped."""
+
+
+class Widget:
+    def render(self):
+        return self._reset()
+
+    def _reset(self):
+        return 1
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self):
+        return 1
+""",
+            "painting.py": "def _reset():\n    return 1\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("符号没了: Widget._reset", result.stdout)
+
+    def test_a_self_only_lift_that_keeps_the_name_self_is_a_note(self) -> None:
+        """The other half of the same guard: the name `self` is still evidence.
+
+        Emitting the instance means the function's only parameter is the one the
+        method kept, and a namesake would have to invent that name to match.
+        """
+        old = '''\
+"""A class whose private helper is about to become a function."""
+
+
+class Widget:
+    def render(self):
+        return self._reset()
+
+    def _reset(self):
+        return 1
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self):
+        return _reset(self)
+
+
+from .painting import _reset  # noqa: E402
+""",
+            "painting.py": "def _reset(self):\n    return 1\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("方法被提到模块级: Widget._reset", result.stdout)
+
+    def test_a_lift_may_rename_a_vararg(self) -> None:
+        """No caller can name a vararg, so a lift is free to rename one."""
+        old = '''\
+"""A class whose private helper is about to become a function."""
+
+
+class Widget:
+    def render(self, *colours):
+        return self._paint(*colours)
+
+    def _paint(self, *colours):
+        return str(colours)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self, *colours):
+        return _paint(*colours)
+
+
+from .painting import _paint  # noqa: E402
+""",
+            "painting.py": "def _paint(*values):\n    return str(values)\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
+
+    def test_a_lift_may_drop_a_positional_only_instance(self) -> None:
+        """`/` closes the positional-only group; it is not a parameter name."""
+        old = '''\
+"""A class whose private helper is about to become a function."""
+
+
+class Widget:
+    def render(self, width):
+        return self._paint(width)
+
+    def _paint(self, /, width):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self, width):
+        return _paint(width)
+
+
+from .painting import _paint  # noqa: E402
+""",
+            "painting.py": "def _paint(width):\n    return str(width)\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
+
     def test_a_logger_is_not_required_of_the_package(self) -> None:
         old = '''\
 """A module with the logger every module in this repository has."""

@@ -587,6 +587,28 @@ def signature_locations(package: Package) -> dict[str, set[str]]:
     return index
 
 
+def _shape_params(signature: Signature) -> tuple[str, ...]:
+    """The parameter names a lift has to reproduce.
+
+    `Signature.params` is written for callers, and two of its entries are not
+    names: the `/` that closes the positional-only group, and the `*args` or
+    `**kwargs` marker, which carries a name no caller can use. Renaming a vararg
+    leaves every caller alone, so a lift may do it; a `/` cannot survive losing
+    the parameter it guards.
+    """
+    names: list[str] = []
+    for param in signature.params:
+        if param == "/":
+            continue
+        if param.startswith("**"):
+            names.append("**")
+        elif param.startswith("*"):
+            names.append("*")
+        else:
+            names.append(param)
+    return tuple(names)
+
+
 def _lifted_shape(original: Signature, function: Signature) -> bool:
     """Is `function` the old method's parameter list with the instance handled?
 
@@ -594,17 +616,24 @@ def _lifted_shape(original: Signature, function: Signature) -> bool:
     `_room(self, project, topic, agent)` stays four wide and `_require_screen`
     spells the same slot `hub` — or the method was spending it on its owner and
     the function does without, `_fan_out_screen_data(self, screen, raw)` becoming
-    `_fan_out_screen_data(screen, raw)`. Everything after that first parameter
-    matches by name; a function sharing only the name and the arity is another
-    function.
+    `_fan_out_screen_data(screen, raw)`.
+
+    The instance slot is pinned by what follows it, or by the name it kept: a
+    tail that matches ties the two parameter lists together, and so does a
+    function whose first parameter is still called `self`. With neither — a
+    method that took only `self` — `def _reset(value)` and `def _reset()` match
+    on the name and the arity and nothing else, which is nothing to go on, so
+    neither is read as a lift. A real lift of such a method that renamed the
+    instance reads the same way and gets a red where the other reading gets a
+    note; the class it left is where a person settles which one it was.
     """
     if original.kind.startswith("async") != function.kind.startswith("async"):
         return False
-    before, after = original.params, function.params
+    before, after = _shape_params(original), _shape_params(function)
     if len(after) == len(before):
-        return after[1:] == before[1:]
+        return after[1:] == before[1:] and (len(before) > 1 or after[0] == before[0])
     if len(after) == len(before) - 1:
-        return after == before[1:]
+        return len(before) > 1 and after == before[1:]
     return False
 
 
@@ -628,8 +657,9 @@ def lifted_to_module_level(old: ModuleFacts, package: Package, key: str) -> str 
     callers never call the function at all. Neither tells a lift from a namesake;
     the parameter list does.
 
-    Two unrelated functions can still share a name and a parameter list, and then
-    nothing here tells them apart. That way round the cost is a note a person can
+    Two unrelated functions can still share a name and the whole parameter list:
+    `def _paint(width)` is the lift of `_paint(self, width)` and a namesake alike
+    to anything readable here. That way round the cost is a note a person can
     check; the other way round the cost is a red run on a real lift.
     """
     head, _, member = key.rpartition(".")
