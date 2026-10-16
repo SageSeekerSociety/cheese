@@ -486,3 +486,37 @@ async def test_a_read_that_fails_stops_the_reads_still_in_the_air(monkeypatch):
     asked = len(started)
     await asyncio.sleep(0.01)
     assert len(started) == asked  # and none went out after the call failed
+
+
+class RefusedFirst(Exception):
+    """What a test's forge raises for the first path, failing late."""
+
+
+class RefusedLater(Exception):
+    """What a test's forge raises for a later path, failing early."""
+
+
+@pytest.mark.anyio
+async def test_the_failure_that_reaches_the_caller_is_the_first_in_path_order(
+    monkeypatch,
+):
+    """Two reads failing, and the caller hears the earlier path's failure.
+
+    Reading one file after another stopped at the first path that failed, and
+    reading them together has to fail the same way: a later path's failure
+    arriving first must not be the one raised, or a comparison of the two
+    trees reports a different file depending on which read the forge refused
+    first."""
+    reader = ProjectFiles(_project_session(), uuid.uuid4(), None)
+
+    async def blob(entry, session):
+        if entry["sha"] == "late":
+            await asyncio.sleep(0.05)
+            raise RefusedFirst("the forge refused the first path, late")
+        if entry["sha"] == "early":
+            raise RefusedLater("the forge refused a later path, early")
+        return entry["sha"].encode()
+
+    monkeypatch.setattr(reader, "_blob", blob)
+    with pytest.raises(RefusedFirst):
+        await reader.committed_blobs(["late", "early"])
