@@ -40,7 +40,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
 from app.domain.remote_mcp import oauth, service, upstream
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(tags=["remote-mcp"])
 
@@ -250,7 +250,7 @@ async def room_servers(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """The room's read-only view: whose authorization its sessions act with."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         project_id=place.project_id, topic_id=place.conversation_id
     )

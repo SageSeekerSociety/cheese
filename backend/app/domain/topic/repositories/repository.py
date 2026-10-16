@@ -187,6 +187,9 @@ class TopicRepository:
     ) -> int:
         return await reads.count_for_project(self, project_id=project_id, viewer=viewer)
 
+    async def has_open_tasks(self, room_id: uuid.UUID) -> bool:
+        return await reads.has_open_tasks(self, room_id=room_id)
+
     # ---- 有人回复了我、我还没处理（侧栏那盏黄灯） -----------------------
 
     async def replied_to_me(

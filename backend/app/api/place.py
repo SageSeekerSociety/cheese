@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
+from app.domain.room_task.place import place_or_404
 from app.domain.topic.models import room_ref
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
@@ -76,7 +77,7 @@ async def task_conversation(
     see its room; 404 when the id is a room's or nobody's."""
     from app.core.errors import NotFoundError
 
-    place = await TopicService(db).place_or_404(conversation_id)
+    place = await place_or_404(db, conversation_id)
     if place.task is None:
         raise NotFoundError(say("taskNotFound"))
     actor = await resolver.resolve(

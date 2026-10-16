@@ -21,7 +21,7 @@ from app.core.sentences import say
 from app.domain.feedback.claims import is_platform_project
 from app.domain.platform_stats import throughput
 from app.domain.platform_stats.throughput import SeatThroughputOut
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="/throughput", tags=["throughput"])
 
@@ -32,7 +32,7 @@ async def _from_platform_room(
     db: DbSession, resolver: ActorResolverDep, topic: uuid.UUID
 ) -> None:
     """The caller is in this room, and the room's project works on the platform."""
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     who = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

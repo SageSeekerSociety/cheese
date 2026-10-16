@@ -69,9 +69,9 @@ from app.domain.preview.office import (
     render_to_pdf,
 )
 from app.domain.project.room_files import clean_artifact_path
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
-from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -168,7 +168,7 @@ async def upload_attachment(
     this room, because a pasted screenshot has no name of its own to be filed
     under."""
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     await resolver.require_verified_caller(
         project_id=topic.project_id, topic_id=topic_id
     )
@@ -298,7 +298,7 @@ async def attachment_raw(
     cannot carry the header, and the cookie is how they prove the same viewer.
     """
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     if download:
         await resolver.require_verified_caller(
             project_id=topic.project_id, topic_id=topic_id
@@ -369,7 +369,7 @@ async def attachment_as_pdf(
     point at afterwards. Those are drawn from the original bytes instead.
     """
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
@@ -430,7 +430,7 @@ async def attachment_as_html(
     this is the shape a sheet can be shown in without losing its cell addresses.
     """
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id

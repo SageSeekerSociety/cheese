@@ -83,7 +83,9 @@ from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
 from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
+from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task.closing import close_task
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
@@ -349,7 +351,7 @@ async def create_task(
     """新建任务：a task owned by whoever creates it, empty until they say what
     it is for. Its agent starts on the owner's first message; its owner
     reviews its changes (`TaskService.default_reviewer`)."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -358,7 +360,8 @@ async def create_task(
     )
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
-    task = await TopicService(db).create_task(
+    task = await task_dispatch.create_task(
+        db,
         room_id=place.room_id,
         created_by=actor.handle,
         title=body.title,
@@ -419,16 +422,26 @@ async def update_task(
             db, place.project_id, given, task.owner_handle, settings_now
         ):
             raise ForbiddenError(say("ownAgentOtherOwnersTask"))
-        await TopicService(db).give_task_teammate(
-            task, given, by=actor.handle, seat_project=seat_project, team=project_team
+        await task_dispatch.give_task_teammate(
+            db,
+            task,
+            given,
+            by=actor.handle,
+            seat_project=seat_project,
+            team=project_team,
         )
     elif not await may_work_for(
         db, place.project_id, task.agent_handle, task.owner_handle, settings_now
     ):
         # Handed to someone whose own agent it is not (#2991): the task goes
         # back to the project's teammate, and its new owner may give it theirs.
-        await TopicService(db).give_task_teammate(
-            task, None, by=actor.handle, seat_project=seat_project, team=project_team
+        await task_dispatch.give_task_teammate(
+            db,
+            task,
+            None,
+            by=actor.handle,
+            seat_project=seat_project,
+            team=project_team,
         )
     if body.contributor_handles is not None:
         people = await members.project_people(place.project_id, team=project_team)
@@ -507,7 +520,7 @@ async def create_teammate_task(
     conversation it is in: the 支线 itself (``here``), or a new task that hangs
     under the message the 支线 is under. A teammate whose own idea it is asks
     first (`cheese_ask`), and the person who answers is who it does it for."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -516,7 +529,7 @@ async def create_teammate_task(
     )
     if actor.via != "cheese":
         raise ForbiddenError(say("teammateTaskByTeammate"))
-    TopicService.refuse_tasks_in_private(place.room)
+    task_dispatch.refuse_tasks_in_private(place.room)
     if body.here and place.thread is None:
         raise UnprocessableEntityError(say("teammateTaskHereOnlyInThread"))
     if not body.here and not body.summary.strip():
@@ -581,7 +594,8 @@ async def create_teammate_task(
         await db.commit()
         await announce_stale(place.room_id, "topics", id=place.room_id)
         return ok(out)
-    task = await TopicService(db).create_task(
+    task = await task_dispatch.create_task(
+        db,
         room_id=place.room_id,
         created_by=actor.handle,
         title=body.title,

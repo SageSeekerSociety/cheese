@@ -36,9 +36,9 @@ from app.domain.living_doc.schemas import document_row
 from app.domain.membership.roster import roster
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task
+from app.domain.room_task.place import place_or_404
 from app.domain.search import bm25
 from app.domain.topic.models import Topic
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import faces_by_handle
 
@@ -119,7 +119,7 @@ async def _readable_rooms(
 ) -> tuple[dict[uuid.UUID, Topic], int]:
     """The rooms this caller may read, and how many others were left out."""
     if topic is not None:
-        place = await TopicService(db).place_or_404(topic)
+        place = await place_or_404(db, topic)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
         actor = await resolver.resolve(project_id=project_id, topic_id=topic)

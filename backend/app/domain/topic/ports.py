@@ -11,11 +11,11 @@
 出去。
 
 后半截（`RoomThread`、`SessionStore`、`WorkspacePaths`、`ReviewCards`、
-`PendingDecisions`、`ArchivedCards`、`OpenTaskCounts`）是本包在上面各层各自只取一
-两次调用的那些：支线的根消息（第 4 层）、一间房的会话状态（第 3 层）、转写与工作
-目录落在哪（第 3 层）、「这间房等着谁动手」的两个角标和归档时收卡（第 3、4 层）、
-还有一间房里有几个活还在走（第 4 层）。它们的形状大多就是提供方已有的类或函数，
-递进来的就是那个对象本身，本包不另包一层。
+`PendingDecisions`、`ArchivedCards`、`OpenTaskCounts`、`CloseRoomTasks`）是本包在
+上面各层各自只取一两次调用的那些：支线的根消息（第 4 层）、一间房的会话状态
+（第 3 层）、转写与工作目录落在哪（第 3 层）、「这间房等着谁动手」的两个角标和
+归档时收卡收活（第 3、4 层）、还有一间房里有几个活还在走（第 4 层）。它们的形状
+大多就是提供方已有的类或函数，递进来的就是那个对象本身，本包不另包一层。
 
 递回来的都是内置类型：本包认不出别人家的类，也不该认得。
 """
@@ -266,3 +266,20 @@ class OpenTaskCounts(Protocol):
     async def underway_counts(
         self, room_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, int]: ...
+
+
+class CloseRoomTasks(Protocol):
+    """一间房关掉了，里面还没结束的活跟着结束；还回被结束的那几条的 id。
+
+    形状就是 `room_task.archive.close_room_tasks`，实现留在那里，递进来的就是那个
+    函数本身 —— 和 `ArchivedCards` 一样。一条活没有房间就没有上下文，也没有回去
+    的路，所以关一个地方要把它里面的活一起关掉。
+
+    为什么结束这件事不在这个口子里：那句话要落进每条活自己的支线，而写块的是本包
+    （`topic`），递回来的 id 就是给那几句话用的。一条早就结束的活不回报，也不重
+    写它的 `closed_at`。
+    """
+
+    async def __call__(
+        self, session: AsyncSession, room_id: uuid.UUID
+    ) -> Sequence[uuid.UUID]: ...
