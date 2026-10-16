@@ -282,10 +282,17 @@ class HostPool:
             if _still_moving(host) and host.released_at is None:
                 await self.refresh(host)
             # Every tool call of the session comes through here: a sandbox that
-            # is where it was is answered without the pool.
+            # is where it was is answered without the pool. One whose host
+            # stopped answering is moved off it instead: the sweep gives such a
+            # host up only after LOST_AFTER, and the call waiting here has
+            # minutes (`leave_unusable`).
             if _keeps(host):
-                _touch(home)
-                return host
+                if self._answers(host) or not await self.leave_unusable(
+                    session_id, host.id
+                ):
+                    _touch(home)
+                    return host
+                home = None
 
         if home is None and not whole_machine:
             # A whole VM is admitted at its own price once its size is known
@@ -307,10 +314,15 @@ class HostPool:
                 await self.forget(host)
                 home = None
             elif _keeps(host):
-                _touch(home)
-                host.idle_since = None
-                await self._session.flush()
-                return host
+                if self._answers(host) or not await self.leave_unusable(
+                    session_id, host.id
+                ):
+                    _touch(home)
+                    host.idle_since = None
+                    await self._session.flush()
+                    return host
+                # Moved off a host that stopped answering; placed below.
+                home = None
             else:
                 await self._fail(host)
                 # The locks were let go around the provider; look again.
@@ -420,6 +432,17 @@ class HostPool:
         if host.device_id is None or self._hub.is_online(host.device_id):
             return True
         return host.enrolled_at is None or now - host.enrolled_at < CONNECT_GRACE
+
+    def _answers(self, host: CloudHost) -> bool:
+        """Whether a call to this host can be answered: its connector is up, or
+        it dropped moments ago and the call waits for it to come back
+        (``device_hub.reconnecting``). The same line ``session_work._reachable``
+        draws before making a call. A host with no machine yet answers nothing:
+        one still dialling in is waited for, not left."""
+        return host.device_id is not None and (
+            self._hub.is_online(host.device_id)
+            or self._hub.reconnecting(host.device_id)
+        )
 
     async def _require_room_to_grow(self, *, whole_machine: bool = False) -> None:
         """Refuse to add a host while the provider keeps failing them, or when
@@ -587,6 +610,66 @@ class HostPool:
         else:
             home.session_id = None
             await self._session.flush()
+
+    async def leave_unusable(self, session_id: uuid.UUID, host_id: uuid.UUID) -> bool:
+        """Move the session off a host that cannot run its sandbox, when
+        another host of the pool can: an install there timed out or its
+        connector went away (`session_work._install`), or the host stopped
+        answering at all (`place`).
+
+        The pool gives a host up only after ``LOST_AFTER`` of silence
+        (``_lost``), which is right for the pool and longer than the tool call
+        waiting on it has: that call is answered that the machine is still
+        being prepared, and so is every call after it while the session stays
+        there. Its sandbox is disposable — what counts is what was pushed — so
+        it is placed on a host that answers instead of waiting the sweep out.
+        One that had been working there is told it is in a new sandbox
+        (``LOST_KEY``), as when the sweep gives the host up (``_fail``).
+
+        Answers whether the session was moved. False when it has no sandbox on
+        ``host_id``, when that host is a whole VM's — the session's own, waited
+        for where it is — or when the pool has nowhere else to put it: leaving
+        would not get it a sandbox any sooner.
+        """
+        await self._repo.lock_pool()
+        home = await self._repo.current_home(session_id)
+        host = await self._repo.get(host_id)
+        if (
+            home is None
+            or host is None
+            or host.id != home.host_id
+            or host.device_id is None
+            or host.whole_machine
+        ):
+            return False
+        if not await self._elsewhere(host):
+            return False
+        # Read without a lock, and before the pool: a tool call holds the
+        # session's row and then the pool, and this runs from both sides of it.
+        row = await self._session.get(AgentSession, session_id)
+        lease = (row.work_lease if row is not None else None) or {}
+        if row is not None and (
+            lease.get("status", "ready") == "ready"
+            and lease.get("device_id") == host.device_id
+        ):
+            row.execution_request = {**(row.execution_request or {}), LOST_KEY: True}
+        await self.leave(session_id)
+        return True
+
+    async def _elsewhere(self, host: CloudHost) -> bool:
+        """Whether the pool has another host that can run a sandbox now: it
+        would take one (``accepting``, a slot free) and its connector answers.
+        Called holding the pool. A host still dialling in does not count: the
+        session would wait for it exactly as it waits for the one it is on."""
+        load = await self._repo.occupancy()
+        return any(
+            other.id != host.id
+            and accepting(other)
+            and other.device_id is not None
+            and self._hub.is_online(other.device_id)
+            and free_slots(other, load) > 0
+            for other in await self._repo.live()
+        )
 
     async def keep_on_device(
         self,
