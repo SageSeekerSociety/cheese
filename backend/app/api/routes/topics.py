@@ -137,7 +137,8 @@ async def create_topic(
 def _viewer(actor: Actor) -> str | None:
     """The handle 与我的相关性 is computed against, or None for "no one".
 
-    An unidentified caller resolves to the ``anonymous`` actor (api/auth.py),
+    An unidentified caller resolves to the ``anonymous`` actor
+    (api/auth/resolver.py),
     which is a placeholder rather than a person: it is in no roster, on no
     card, and @-able by nobody. Handing it to the relevance query would have it
     honestly answer "unrelated to everything" — three round trips to learn what

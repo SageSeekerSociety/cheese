@@ -108,7 +108,7 @@ MECHANICAL = (
 HIGH_RISK = (
     ("迁移", "backend/alembic/"),
     ("鉴权", "backend/app/auth/"),
-    ("鉴权", "backend/app/api/auth.py"),
+    ("鉴权", "backend/app/api/auth/"),
     ("鉴权", "backend/app/domain/identity/"),
     ("鉴权", "backend/app/domain/authz/"),
     ("鉴权", "cli/internal/auth/"),

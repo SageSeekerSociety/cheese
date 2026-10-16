@@ -121,6 +121,10 @@ if last and now - last >= windows[level] * quiet then
   last = nil
   level = 1
 end
+if not last then
+  -- Counted under an episode that is over: it is not this one's repeats.
+  carried = 0
+end
 if last and now - last < windows[level] then
   redis.call('HINCRBY', KEYS[1], 'suppressed', 1 + carried)
   return -1
@@ -316,7 +320,9 @@ def _delivery_finished(task: asyncio.Task) -> None:
 
 
 # Per key: until when a repeat is counted here rather than asked of Redis, and
-# how many were counted (see LOCAL_GATE_S).
+# how many were counted (see LOCAL_GATE_S). Owned by this module for the life
+# of the process; nothing resets it, which is why a test that sends the same
+# key twice has to give itself a fresh one.
 _asked: dict[str, list] = {}
 
 # Keep a reference so the task is not garbage-collected mid-flight.
