@@ -16,8 +16,10 @@ For every open, started task in the channel it reads platform facts and the PR's
                 (`cheese_ask`) nobody has answered, or a filed card whose next step is
                 the reviewer's. It needs no quiet minutes — the question is itself the
                 line's newest heartbeat, so judging it by --silent-min hides every fresh
-                question for the whole 40. A line reported here is not also reported as
-                长时间无动静: the same fact twice.
+                question for the whole 40. The fallback of the classes: a line already
+                reported as something else (可采纳未采纳, 出队 — a card waiting on its
+                reviewer is both) keeps that one row, and a parked line is never also
+                长时间无动静. One fact, one line.
   红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
@@ -1015,7 +1017,10 @@ def sweep(tok, room, silent, skip, want_facts):
         if red_recent and want_facts and pr is not None and "error" not in pr and pr.get("cases") is None:
             pr["cases"] = failing_cases(pr.get("checks") or [])
 
+        reported = set()
+
         def add(kind, text, waited=None, waiting=None):
+            reported.add(kind)
             rows.append(row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg, pulse))
 
         if card.get("status") == "pending" and n:
@@ -1045,13 +1050,21 @@ def sweep(tok, room, silent, skip, want_facts):
         # 待回答：这条线停在别人身上，自己不会往下走 —— 刚问出的问题，或者递上去、
         # 下一步在验收人手上的卡。它不看 --silent-min：提问本身就是这条线最新的心跳，
         # 按阈值判的话刚问出的问题要整整 40 分钟才浮出来（2026-10-15 #1620 就是这么漏
-        # 掉的）。已经报了待回答的线也不再补一行长时间无动静 —— 同一件事说两遍。
+        # 掉的）。停在别人身上的线也不再补一行长时间无动静 —— 那不是停摆，球本来就在
+        # 别人手上。
+        #
+        # 这一轮已经为它报过别的类别，就不再报待回答：可采纳未采纳 / 出队 / 它们那一
+        # 行本来就把「在等谁」写在名字上（`waiting_of` 返回的正是行的 `waiting_on`），
+        # 而「可以合并、等着人点采纳」的卡按平台的说法就是 awaiting_review —— 不挡的
+        # 话每一张可采纳未采纳的卡都会跟着多出一行，同一件事说两遍。待回答是这一类的
+        # 兜底：这条线除了停在人身上没别的可说时才用它。
         if parked_on_a_person(t):
-            w = age(heartbeat)
-            add("待回答", awaiting_detail(w, t.get("waiting_on"),
-                                         (t.get("presentation") or {}).get("phrase"),
-                                         pulse["last_message_at"],
-                                         pulse["last_message"] or "（还没有消息）"), w)
+            if not reported:
+                w = age(heartbeat)
+                add("待回答", awaiting_detail(w, t.get("waiting_on"),
+                                             (t.get("presentation") or {}).get("phrase"),
+                                             pulse["last_message_at"],
+                                             pulse["last_message"] or "（还没有消息）"), w)
         else:
             w = stalled_for(now, heartbeat, silent, running)
             if w is not None:
@@ -1775,20 +1788,21 @@ def _self_test_sweep():
     done = {"tool": "Bash", "arg": "跑测试", "output_bytes": 9}
     sysev = lambda kind, mins: [{"created_at": at(mins), "meta": {"event_type": kind}, "content": kind}]
 
-    def rows_of(ev_min=None, ev_meta=None, system=(), row=None, msg_min=60):
+    def rows_of(ev_min=None, ev_meta=None, system=(), row=None, msg_min=60, accept=(), pr=None):
         answers = {
             "/tasks?": [dict(task, **(row or {}))],
             "kind=message": {"data": [{"created_at": at(msg_min), "author": "a", "content": "等"}]},
             "kind=event": {"data": [{"created_at": at(ev_min), "meta": ev_meta}] if ev_min is not None else []},
             "author=system": {"data": list(system)},
-            "author=accept": {"data": []},
+            "author=accept": {"data": list(accept)},
         }
-        real = globals()["get"]
+        real, real_pr = globals()["get"], globals()["gh_pr"]
         globals()["get"] = lambda tok, path: next(v for k, v in answers.items() if k in path)
+        globals()["gh_pr"] = lambda n, board=False: pr
         try:
             rows, _ = sweep("tok", "room", 40, set(), False)
         finally:
-            globals()["get"] = real
+            globals()["get"], globals()["gh_pr"] = real, real_pr
         return rows
 
     def kinds(*a, **kw):
@@ -1798,6 +1812,18 @@ def _self_test_sweep():
                                                   "presentation": {"phrase": "awaiting_review"}})
     waiting_on_an_answer = rows_of(msg_min=2, row={"waiting_on": "wangchangxin",
                                                    "presentation": {"phrase": "awaiting_answer"}})
+    # 一张可以合并、等人点采纳的卡：平台说它就是 awaiting_review、等的是验收人，所以
+    # 「停在人身上」和「可采纳未采纳」两条判据同时成立 —— 每一张可采纳未采纳都是这个
+    # 形状，不只是造得出来。
+    adoptable = {
+        "waiting_on": "wangchangxin",
+        "presentation": {"phrase": "awaiting_review"},
+        "card": {"status": "pending", "pr_number": 42},
+    }
+    adoptable_pr = {"merged": False, "mergeQueueEntry": None,
+                    "timelineItems": {"nodes": [{"__typename": "MergedEvent", "createdAt": at(50)}]}}
+    adoptable_accept = [{"created_at": at(10), "meta": {"event_type": "accept_ready"},
+                         "content": "可以合并"}]
 
     return [
         ("sweep：消息 60 分钟前、没有 event，报停摆", kinds(), ["长时间无动静"]),
@@ -1848,6 +1874,12 @@ def _self_test_sweep():
          kinds(msg_min=2, row={"awaits_me": True}), ["待回答"]),
         ("sweep：待回答的线不再补一行长时间无动静（消息 60 分钟前也一样）",
          kinds(row={"waiting_on": "bob"}), ["待回答"]),
+        # 可以合并的卡同时也是「停在验收人身上」：两行会把同一件事说两遍，只留可采纳
+        # 未采纳那一行（它本来就把在等谁写在名字上）。
+        ("sweep：可以合并、等人点采纳的卡只出一行（可采纳未采纳），不再跟着一行待回答",
+         [(r["kind"], r["waiting_on"]) for r in
+          rows_of(row=adoptable, accept=adoptable_accept, pr=adoptable_pr)],
+         [("可采纳未采纳", "wangchangxin")]),
     ]
 
 
