@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.core.sentences import NoticeList, listing, say
-from app.domain.block.about import EventAbout, landing
+from app.domain.event_about import EventAbout, landing
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     AuthorType,

@@ -47,7 +47,7 @@ from app.domain.addressing import (
 )
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.about import EventAbout, landing
+from app.domain.event_about import EventAbout, landing
 from app.domain.block.asked import asked_of, settled, skipped_by
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository

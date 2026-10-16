@@ -23,7 +23,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.block.about import EventAbout, landing
+from app.domain.event_about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import room_of

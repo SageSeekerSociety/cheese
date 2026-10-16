@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.about import EventAbout, landing
+from app.domain.event_about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
