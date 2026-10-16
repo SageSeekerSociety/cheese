@@ -482,10 +482,12 @@ class ExecutorSetupFailed(RuntimeError):
     own account of why; the agent is told its last line instead of a bare
     server error, so the reason reaches the room.
 
-    ``killed``: the command never exited on its own (``NO_EXIT_STATUS``), so
-    what it reports is not an answer at all — there is no reason in it, and the
-    machine is one that stopped bringing the executor up rather than one that
-    tried and failed."""
+    ``killed``: the command never exited on its own (``NO_EXIT_STATUS``) — the
+    connector killed it at the deadline it was given, or never got it started.
+    That is not the install's own account of why it failed, and a shared host is
+    answered as a machine to be placed away from rather than told about. What
+    the connector leaves in ``stderr`` when it could not start the command is in
+    there too, and goes unread on that path."""
 
     def __init__(self, stderr: str, *, killed: bool = False) -> None:
         super().__init__(stderr)
