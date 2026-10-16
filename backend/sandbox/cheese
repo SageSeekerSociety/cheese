@@ -4021,10 +4021,29 @@ class _BranchQueued(RuntimeError):
         self.pr = pr
 
 
+# In a task checkout's git directory: the sync failure last told to the room,
+# with whom and when (`_report_sync_failure`); removed by a sync that went
+# through.
+_SYNC_FAILURE_TOLD = "cheese-sync-failure-told"
+# Said once while it lasts, not at every sync: a sync runs at every turn's end
+# and every commit, so a failure that persists (the platform's storage out of
+# reach) told one room on dev the same thing 277 times, which teaches people
+# to skip it. Said again when what is said changes, after a sync that went
+# through, or this long after the last time, for whoever comes back to a room
+# that has scrolled past it while the work is still only on the machine.
+_SYNC_FAILURE_RETELL_S = 24 * 3600
+
+
 def _report_sync_failure(
-    task_id: str, branch: str | None, queued_pr: int | None = None
+    admin: Path,
+    task_id: str,
+    branch: str | None,
+    queued_pr: int | None = None,
+    *,
+    delivered: bool = False,
 ) -> None:
-    """Tell the room that a task's work did not reach its branch.
+    """Tell the room that a task's work did not reach its branch, or, when it
+    did (`delivered`), that what is not committed was not backed up.
 
     Only the failure: a turn that ends with its work still on the machine looks
     identical to one that succeeded — that is what let a rejected push read as a
@@ -4039,19 +4058,42 @@ def _report_sync_failure(
         f"⚠️ 这轮的改动没能推回 {where}——它还留在那台机器上，采纳和 diff 现在"
         "看不到它。请重试本轮；若机器被回收，改动会丢失。"
     )
-    if queued_pr:
+    if delivered:
+        content = (
+            f"⚠️ 已提交的改动都在 {where} 上了，但没提交的改动（包括未跟踪的文件）"
+            "没能备份到平台——它们还只在那台机器上，下次同步会再试；若机器在那之前"
+            "被回收，这部分会丢失。"
+        )
+    elif queued_pr:
         # Retrying cannot help: the branch stays locked until the queue is done.
         content = (
             f"⚠️ {where} 上采纳之后的新提交进不了 PR #{queued_pr}——它已在合并"
             "队列里，排队的分支不能再改。提交留在那台机器上并已备份；PR 合并后"
             "在新任务里交付它们，或由验收人退回这张卡、PR 撤出队列后再推。"
         )
+    told_file = admin / _SYNC_FAILURE_TOLD
+    try:
+        told = json.loads(told_file.read_text())
+        if (
+            told["topic"] == TOPIC
+            and told["content"] == content
+            and datetime.now(UTC).timestamp() - told["at"] < _SYNC_FAILURE_RETELL_S
+        ):
+            return
+    except (OSError, ValueError, KeyError, TypeError):
+        pass  # Never told, or unreadable: tell.
     if not _tell_room(content):
         print(
             f"[cheese] 同步失败的通知未送达，任务 {task_id} 的 "
             "cheese-sync.log 保留了结果",
             file=sys.stderr,
         )
+        return
+    told_file.write_text(
+        json.dumps(
+            {"topic": TOPIC, "content": content, "at": datetime.now(UTC).timestamp()}
+        )
+    )
 
 
 def _tell_room(content: str) -> bool:
@@ -4226,6 +4268,8 @@ def _sync_task(task_id: str) -> list[str]:
         record.flush()
         branch = None
         closed = False
+        not_backed_up = None
+        delivered = False
         try:
             project = _need("CHEESE_PROJECT", PROJECT)
             data = _call("GET", f"/projects/{project}/git/tasks/{task_id}")["data"]
@@ -4289,9 +4333,22 @@ def _sync_task(task_id: str) -> list[str]:
                 )
             )
             _tell_room_left_out(admin, data, dropped)
-            _once_more_if_transient(
-                lambda: _backup_task_snapshot(worktree, data, head, snapshot)
-            )
+            try:
+                _once_more_if_transient(
+                    lambda: _backup_task_snapshot(worktree, data, head, snapshot)
+                )
+            except Exception as exc:
+                if closed:
+                    raise  # Only backed up, never delivered: nothing else to try.
+                # The push does not wait on the platform's storage: committed
+                # work left on the machine with the backup is work review and
+                # every other machine cannot see either.
+                not_backed_up = exc
+                record.write(
+                    f"{datetime.now(UTC).isoformat()} backup failed "
+                    f"{type(exc).__name__}: {exc}; delivering anyway\n"
+                )
+                record.flush()
             if closed:
                 # Kept, never delivered: what the checkout holds is in the
                 # backup, on whichever branch an agent went on to use it for.
@@ -4322,10 +4379,17 @@ def _sync_task(task_id: str) -> list[str]:
                 # point: its report is the reason to look, and the sync that
                 # would carry it forward is the one being abandoned here.
                 _flush_pre_push_reports()
+            if not_backed_up is not None and snapshot != head:
+                # Files that are not committed stay only here until a backup
+                # takes them. Without any, the branch now holds all the
+                # backup would have, and the next sync has nothing to retry.
+                delivered = True
+                raise not_backed_up
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
             )
+            (admin / _SYNC_FAILURE_TOLD).unlink(missing_ok=True)
             return left_out
         except BaseException as exc:
             record.write(
@@ -4336,8 +4400,14 @@ def _sync_task(task_id: str) -> list[str]:
                 # work went missing, and when a room leaves this machine the
                 # platform tells the room which task stayed behind and why.
                 raise _ClosedTaskNotBackedUp(str(exc)) from exc
-            queued = exc.pr if isinstance(exc, _BranchQueued) else None
-            _report_sync_failure(task_id, branch, queued)
+            # The queue's message says the commits are backed up, true only
+            # when they were.
+            queued = (
+                exc.pr
+                if isinstance(exc, _BranchQueued) and not_backed_up is None
+                else None
+            )
+            _report_sync_failure(admin, task_id, branch, queued, delivered=delivered)
             raise
 
 

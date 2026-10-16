@@ -896,8 +896,11 @@ def test_a_backup_refused_once_is_rebuilt_against_the_base_it_has_now(device):
     git(work, "add", "small.txt")
     git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "small file")
 
-    with pytest.raises(urllib.error.HTTPError):
-        cli._sync_task(task)
+    # Everything it holds is committed, so the push carries it all regardless.
+    cli._sync_task(task)
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == git(
+        work, "rev-parse", "HEAD"
+    )
 
     # The large commit reaches the base another way, and the checkout sees it.
     git(work, "push", "-q", "origin", f"{large}:refs/heads/main")
@@ -1207,8 +1210,8 @@ def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
         for line in (home / "posted.jsonl").read_text().splitlines()
     ]
     assert len(told) == 1
-    assert open_task in told[0]
-    assert closed not in told[0]
+    assert tasks[open_task]["branch"] in told[0]
+    assert tasks[closed]["branch"] not in told[0]
 
 
 def test_a_backup_leaves_out_generated_and_oversized_untracked_files_and_says_so(
@@ -1292,3 +1295,106 @@ def test_the_room_hears_once_of_each_large_file_a_backup_leaves_behind(
     assert "export.bin" in second
     assert "model.bin" not in second
     assert capsys.readouterr().err == ""
+
+
+def test_a_backup_that_fails_still_delivers_the_commits(device):
+    """The platform's storage out of reach must not keep committed work off
+    its branch too. The room is told what is actually missing: the files that
+    are not committed, which only a backup takes, and not the commits."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    head = _commit(work, "a.txt", "committed\n")
+    (work / "draft.txt").write_text("not committed\n")
+    (home / "upload-limit").write_text("1")
+
+    with pytest.raises(urllib.error.HTTPError):
+        cli._sync_task(task)
+
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    (told,) = _told_the_room(home)
+    assert "没能推回" not in told
+    assert "备份" in told
+
+
+def test_committed_work_whose_backup_fails_is_delivered_without_a_warning(device):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    head = _commit(work, "a.txt", "committed\n")
+    (home / "upload-limit").write_text("1")
+
+    cli._sync_task(task)
+
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == head
+    assert _told_the_room(home) == []
+
+
+def test_work_neither_backed_up_nor_pushed_is_told_as_not_pushed(device):
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    before = git(remote, "rev-parse", tasks[task]["branch"])
+    _commit(work, "a.txt", "committed\n")
+    (home / "upload-limit").write_text("1")
+    reject = remote / "hooks/pre-receive"
+    reject.write_text("#!/bin/sh\nexit 1\n")
+    reject.chmod(0o755)
+
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+
+    assert git(remote, "rev-parse", tasks[task]["branch"]) == before
+    (told,) = _told_the_room(home)
+    assert "没能推回" in told
+
+
+def test_a_lasting_sync_failure_is_told_once_until_it_changes(device):
+    """A sync runs at every turn and every commit; a failure that lasts is
+    news once. A different failure, or the same one after a sync that went
+    through, is news again."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    reject = remote / "hooks/pre-receive"
+    reject.write_text("#!/bin/sh\nexit 1\n")
+    reject.chmod(0o755)
+    for turn in range(3):
+        _commit(work, f"turn{turn}.txt", "work\n")
+        with pytest.raises(RuntimeError):
+            cli._sync_task(task)
+    assert len(_told_the_room(home)) == 1
+
+    # The push goes through again, but the backup of what is not committed
+    # does not: a different failure.
+    reject.unlink()
+    (work / "draft.txt").write_text("not committed\n")
+    (home / "upload-limit").write_text("1")
+    for _ in range(2):
+        with pytest.raises(urllib.error.HTTPError):
+            cli._sync_task(task)
+    assert len(_told_the_room(home)) == 2
+
+    (home / "upload-limit").unlink()
+    cli._sync_task(task)
+    (home / "upload-limit").write_text("1")
+    (work / "draft.txt").write_text("edited again\n")
+    with pytest.raises(urllib.error.HTTPError):
+        cli._sync_task(task)
+    first, second, third = _told_the_room(home)
+    assert third == second
+
+
+def test_a_lasting_sync_failure_is_told_again_after_a_while(device, monkeypatch):
+    cli, tasks, remote, home = device
+    monkeypatch.setattr(cli, "_SYNC_FAILURE_RETELL_S", 0)
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    reject = remote / "hooks/pre-receive"
+    reject.write_text("#!/bin/sh\nexit 1\n")
+    reject.chmod(0o755)
+    _commit(work, "a.txt", "work\n")
+    for _ in range(2):
+        with pytest.raises(RuntimeError):
+            cli._sync_task(task)
+    assert len(_told_the_room(home)) == 2
