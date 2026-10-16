@@ -19,6 +19,12 @@ import GatewayModelsService`` 落在门面上；而 ``from .cache import _cached
 app.domain.agent.gateway_models.cache`` 落在兄弟上，``from . import cache`` 取的名字
 本身就是兄弟，都不算。
 
+**按名字导的也算。** ``__import__("app.domain.agent.gateway_models", …)`` 和
+``importlib.import_module("app.domain.agent.gateway_models")`` 运行时一样建得出那条边，
+环一样炸，而 `ast` 里它们只是普通调用。字面量正好是门面的模块名、调用的又是这两个名
+字中的一个，就报；点到兄弟模块（``…gateway_models.cache``）的不算，那和静态写法一
+样是横引。
+
 **这段 C3 看不见。** ``acyclic_siblings`` 数的是 ``app.domain`` 的孩子和它们的孩子
 之间的环；包自己是一个节点，它内部这些子模块不在它的账上。所以在这里点名扫包内，而
 不是指望契约。
@@ -37,7 +43,29 @@ PACKAGE = (
 FACADE = "__init__.py"
 
 #: 同级兄弟。`from . import X` 取到的是它们，那就是横引，不算回头。
-SIBLINGS = {path.stem for path in PACKAGE.glob("*.py") if path.name != FACADE}
+SIBLINGS = {path.stem for path in PACKAGE.glob("*.py") if path.name != FACADE} | {
+    path.name
+    for path in PACKAGE.iterdir()
+    if path.is_dir() and path.name != "__pycache__"
+}
+
+
+def _piece_files() -> list[Path]:
+    """包内全部子模块，递归。以后多一层子包也不漏在扫描外。"""
+    return sorted(
+        path
+        for path in PACKAGE.rglob("*.py")
+        if path.relative_to(PACKAGE).as_posix() != FACADE
+        and "__pycache__" not in path.parts
+    )
+
+
+def _module_of(path: Path) -> str:
+    """这个文件自己的模块名——相对导入要按它在包里的位置算。"""
+    parts = path.relative_to(PACKAGE).with_suffix("").parts
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join([MODULE, *parts])
 
 
 def _type_checking_names(tree: ast.Module) -> set[str]:
@@ -65,35 +93,104 @@ def _is_type_checking(test: ast.expr, names: set[str]) -> bool:
     return called in names
 
 
-def _package_at(level: int) -> str | None:
-    """相对导入第 ``level`` 级落在哪个包上。本文件是包的直接子模块。"""
-    parts = MODULE.split(".")
-    if level - 1 >= len(parts):
+def _package_at(module: str, level: int) -> str | None:
+    """``module`` 里第 ``level`` 级的相对导入落在哪个包上。
+
+    ``.`` 一级落到自己所在的包，``..`` 两级落到它的父包，依此类推。
+    """
+    parts = module.split(".")
+    if level >= len(parts):
         return None
-    return ".".join(parts[: len(parts) - (level - 1)])
+    return ".".join(parts[: len(parts) - level])
 
 
-def _is_the_facade(node: ast.AST) -> bool:
-    """这一句导的是门面吗。先解析它落在哪个模块上，再看那个模块是不是门面。"""
+def _imported_module(node: ast.AST, module: str) -> str | None:
+    """这一句导的是哪个模块（多点一级 `a.b.c` 就落到 `a.b.c` 上）。"""
     if isinstance(node, ast.Import):
-        # `import a.b.c` 导的是 a.b.c 这个模块本身；带上兄弟的名字就不是门面。
-        return any(alias.name == MODULE for alias in node.names)
+        # `import a.b.c` 导的是 `a.b.c` 这个模块本身；一句点几个名字时，任一个点中
+        # 门面就算。
+        for alias in node.names:
+            if alias.name in (MODULE, PARENT):
+                return alias.name
+        return None
     if not isinstance(node, ast.ImportFrom):
+        return None
+    if not node.level:
+        return node.module
+    package = _package_at(module, node.level)
+    if package is None:
+        return None
+    return f"{package}.{node.module}" if node.module else package
+
+
+def _is_the_facade(node: ast.AST, module: str) -> bool:
+    """这一句导的是门面吗。先解析它落在哪个模块上，再看那个模块是不是门面。"""
+    target = _imported_module(node, module)
+    if target is None:
         return False
-    target = node.module
-    if node.level:
-        package = _package_at(node.level)
-        if package is None:
-            return False
-        target = f"{package}.{node.module}" if node.module else package
     if target == MODULE:
         # 从门面里取名字。取到的是兄弟模块（`from . import cache`）才不算。
-        return any(alias.name not in SIBLINGS for alias in node.names)
+        return not isinstance(node, ast.ImportFrom) or any(
+            alias.name not in SIBLINGS for alias in node.names
+        )
     if target == PARENT:
         # `from .. import gateway_models`，或绝对写法的同一条。
         return any(alias.name == "gateway_models" for alias in node.names)
     # 落到 `...gateway_models.cache` 这类兄弟模块上的，是横引。
     return False
+
+
+def _dynamic_imports(source: str, where: str) -> list[ast.Call]:
+    """运行时按名字导门面的调用——`from` 看得见，这两种看不见。
+
+    `__import__("app.domain.agent.gateway_models")` 和
+    `importlib.import_module("app.domain.agent.gateway_models")` 都会在运行时建出那条
+    边来，环该炸还炸；`ast` 里它们只是普通调用，得单独认。
+    """
+    tree = ast.parse(source, where)
+    # `import importlib`／`import importlib as il`／`from importlib import ...`
+    # 都收成「哪个名字上的 import_module 算 importlib 的」。
+    heads: set[str] = set()
+    if_modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] == "importlib":
+                    heads.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == (
+            "importlib"
+        ):
+            if_modules.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "import_module"
+            )
+    found: list[ast.Call] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        first = node.args[0]
+        if not (isinstance(first, ast.Constant) and isinstance(first.value, str)):
+            continue
+        # 只认门面自己。点到 `…gateway_models.cache` 是横引兄弟，和静态写法的
+        # `import …gateway_models.cache` 同一件事——`__init__` 早就在 `sys.modules`
+        # 里，不会重跑一遍。
+        if first.value != MODULE:
+            continue
+        func = node.func
+        called = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+        # `importlib.import_module` 和 `importlib.util.…` 都落在 importlib 上。
+        receiver = getattr(func, "value", None)
+        while isinstance(receiver, ast.Attribute):
+            receiver = receiver.value
+        on_importlib = isinstance(receiver, ast.Name) and receiver.id in heads
+        if (
+            called == "__import__"
+            or called in if_modules
+            or (called == "import_module" and on_importlib)
+        ):
+            found.append(node)
+    return found
 
 
 def _runtime_imports(source: str, where: str) -> list[ast.Import | ast.ImportFrom]:
@@ -116,24 +213,31 @@ def _runtime_imports(source: str, where: str) -> list[ast.Import | ast.ImportFro
     ]
 
 
-def _reaching_back(source: str, where: str) -> list[str]:
+def _reaching_back(
+    source: str, where: str, module: str = f"{MODULE}._piece"
+) -> list[str]:
+    """这段源码里运行时会建到门面上的那些写法。"""
     return [
         ast.unparse(node)
         for node in _runtime_imports(source, where)
-        if _is_the_facade(node)
-    ]
+        if _is_the_facade(node, module)
+    ] + [ast.unparse(node) for node in _dynamic_imports(source, where)]
 
 
-def test_no_gateway_models_piece_imports_the_facade_at_runtime():
-    pieces = sorted(path for path in PACKAGE.glob("*.py") if path.name != FACADE)
+def test_no_gateway_models_piece_reaches_the_facade_at_runtime():
+    pieces = _piece_files()
     # 扫不出文件就是路径写歪了，别让这条测试空着过。
     assert {"answers.py", "models.py", "sources.py"} <= {path.name for path in pieces}
 
     reaching_back = [
-        (path.name, node.lineno, ast.unparse(node))
+        (path.relative_to(PACKAGE).as_posix(), node.lineno, ast.unparse(node))
         for path in pieces
         for node in _runtime_imports(path.read_text(encoding="utf-8"), str(path))
-        if _is_the_facade(node)
+        if _is_the_facade(node, _module_of(path))
+    ] + [
+        (path.relative_to(PACKAGE).as_posix(), node.lineno, ast.unparse(node))
+        for path in pieces
+        for node in _dynamic_imports(path.read_text(encoding="utf-8"), str(path))
     ]
 
     assert not reaching_back, (
@@ -171,6 +275,15 @@ def test_the_guard_reads_the_shapes_it_claims_to_read():
         "from typing import TYPE_CHECKING\n"
         "if not TYPE_CHECKING:\n"
         "    from app.domain.agent.gateway_models import reset_cache\n",
+        # 按名字导的，`ast` 里只是普通调用，但运行时一样建出那条边。
+        '__import__("app.domain.agent.gateway_models")',
+        '__import__("app.domain.agent.gateway_models", fromlist=["cache"])',
+        'import importlib\nimportlib.import_module("app.domain.agent.gateway_models")',
+        'import importlib as il\nil.import_module("app.domain.agent.gateway_models")',
+        "from importlib import import_module\n"
+        'import_module("app.domain.agent.gateway_models")',
+        "import importlib.util\n"
+        'importlib.util.import_module("app.domain.agent.gateway_models")',
     ):
         assert _reaching_back(source, "<sample>"), source
 
@@ -183,6 +296,15 @@ def test_the_guard_reads_the_shapes_it_claims_to_read():
         "import app.domain.agent.gateway_models.cache as cache_mod",
         "from app.domain.agent.gateway_models import cache",
         "from app.domain.agent.gateway_models import cache, _shared",
+        # 按名字导兄弟模块——横引，不是回头。
+        "import importlib\n"
+        'importlib.import_module("app.domain.agent.gateway_models.cache")',
+        'importlib.import_module("app.somewhere.else")',
+        # 名字对上了，但调的不是导模块的那两个名字。
+        'convert("app.domain.agent.gateway_models")',
+        'import importlib\nimportlib.reload("app.domain.agent.gateway_models")',
+        # 参数不是字面量，判据看不见它导的是哪个模块。
+        "import importlib\nimportlib.import_module(SOME_NAME)",
     ):
         assert not _reaching_back(source, "<sample>"), source
 

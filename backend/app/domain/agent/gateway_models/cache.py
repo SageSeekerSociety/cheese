@@ -5,9 +5,10 @@
 
 `_cache` 与 `_cache_generation` 是模块级状态，`reset_cache()` 是清它的唯一出口：每个写
 操作成功后由 `answers._after_write` 调一次，单测也靠它把上一个用例的答案丢掉。门面
-（`gateway_models/__init__.py`）按原路径把它再导出一份，`gateway_models.reset_cache()`
-照旧写得出来，而 `_cache` / `_cache_generation` 是会被重新绑定的名字，别名会指到旧对象
-上，就留在这一处、不由门面转发。
+（`gateway_models/__init__.py`）按原路径把它们再导出一份：`gateway_models.reset_cache()`
+照旧写得出来，`gateway_models._cache` 也在，重导出的是同一个 dict 对象，往它身上
+`.clear()` 落得到这一处。`_cache_generation` 是唯一会被重新绑定的名字（`reset_cache`
+里 `global` 加一，换的是对象），别名会指到旧那个上，所以不转发、只留在这里。
 """
 
 from __future__ import annotations

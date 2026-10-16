@@ -70,7 +70,7 @@ def _window(
     §3.1 冻结的示例（`2026-09-16 .. 2026-09-23`、当天 `2026-09-23`）逐字一致。
     `since..until`（半开）给平台自己的仓储用，覆盖同样的这些天。
     """
-    today = _today(service)
+    today = service._today()
     start = today - timedelta(days=days)
     since = datetime.combine(start, dtime.min, tzinfo=UTC)
     until = datetime.combine(today, dtime.min, tzinfo=UTC) + timedelta(days=1)
