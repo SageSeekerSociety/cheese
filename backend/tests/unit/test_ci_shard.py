@@ -170,12 +170,20 @@ def assert_case_durations(report):
     }
 
 
-def test_duration_generation_retains_full_nodeids(tmp_path, monkeypatch, duration_runs):
+def test_duration_generation_retains_full_nodeids(
+    tmp_path, monkeypatch, capsys, duration_runs
+):
     from scripts import test_durations
 
     output = tmp_path / "durations.json"
     monkeypatch.setattr(test_durations, "OUTPUT", output)
+    slow_list = tmp_path / "slow_tests.txt"
+    slow_list.write_text("tests/test_c.py::test_api\n")
+    monkeypatch.setattr(test_durations, "SLOW_LIST", slow_list)
     assert test_durations.main(duration_runs) == 0
+    stdout = capsys.readouterr().out
+    assert "tests/slow_tests.txt" in stdout
+    assert "tests/test_c.py::test_api" in stdout
     report = json.loads(output.read_text())
     assert_case_durations(report)
     assert list(report["tests"]) == sorted(report["tests"])
