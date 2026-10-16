@@ -595,15 +595,21 @@ def _shape_params(signature: Signature) -> tuple[str, ...]:
     `**kwargs` marker, which carries a name no caller can use. Renaming a vararg
     leaves every caller alone, so a lift may do it; a `/` cannot survive losing
     the parameter it guards.
+
+    A marker keeps its kind. `*` and `*args` look alike once the name is gone,
+    but they are not alike: the first accepts no positional and the second any
+    number, so a namesake carrying the wrong one is not this method's lift.
     """
     names: list[str] = []
     for param in signature.params:
         if param == "/":
             continue
         if param.startswith("**"):
-            names.append("**")
-        elif param.startswith("*"):
+            names.append("**...")
+        elif param == "*":
             names.append("*")
+        elif param.startswith("*"):
+            names.append("*...")
         else:
             names.append(param)
     return tuple(names)
@@ -618,20 +624,35 @@ def _lifted_shape(original: Signature, function: Signature) -> bool:
     the function does without, `_fan_out_screen_data(self, screen, raw)` becoming
     `_fan_out_screen_data(screen, raw)`.
 
-    The instance slot is pinned by what follows it, or by the name it kept: a
-    tail that matches ties the two parameter lists together, and so does a
-    function whose first parameter is still called `self`. With neither — a
-    method that took only `self` — `def _reset(value)` and `def _reset()` match
-    on the name and the arity and nothing else, which is nothing to go on, so
-    neither is read as a lift. A real lift of such a method that renamed the
-    instance reads the same way and gets a red where the other reading gets a
-    note; the class it left is where a person settles which one it was.
+    The instance slot is pinned by what follows it, or by a list that came out
+    unchanged: a tail that matches ties the two lists together, and so does
+    keeping every name the method had, `self` included. With neither — a method
+    that took only `self`, and a function that renamed it — `def _reset(value)`
+    and `def _reset()` match on the name and the arity and nothing else, which
+    is nothing to go on, so neither is read as a lift. A real lift of such a
+    method that renamed the instance reads the same way and gets a red where the
+    other reading gets a note; the class it left is where a person settles which
+    one it was.
+
+    A member that takes no instance at all — a `@staticmethod` — has no slot to
+    lose, so `def _unavailable()` moving out as `def _unavailable()` is compared
+    as it stands and matches.
     """
     if original.kind.startswith("async") != function.kind.startswith("async"):
         return False
     before, after = _shape_params(original), _shape_params(function)
+    if before == after:
+        # Nothing was dropped, so there is no instance slot to explain: the
+        # function has every name the member had. A `@staticmethod` moving out
+        # unchanged lands here, empty parameter list and all, and an empty list
+        # is also the namesake both readings share.
+        return True
     if len(after) == len(before):
-        return after[1:] == before[1:] and (len(before) > 1 or after[0] == before[0])
+        # Equal width and the lists differ, so the first slot is the one that
+        # changed. A tail under it that matches pins that slot to the instance;
+        # with no tail below it there is only the arity, and a namesake has that
+        # too.
+        return after[1:] == before[1:] and len(before) > 1
     if len(after) == len(before) - 1:
         return len(before) > 1 and after == before[1:]
     return False

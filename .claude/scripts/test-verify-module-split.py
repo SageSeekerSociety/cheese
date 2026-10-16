@@ -882,38 +882,71 @@ class Widget:
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("符号没了: Widget._reset", result.stdout)
 
-    def test_a_self_only_lift_that_keeps_the_name_self_is_a_note(self) -> None:
-        """The other half of the same guard: the name `self` is still evidence.
+    def test_a_parameterless_member_moved_out_is_a_note(self) -> None:
+        """A `@staticmethod` has no instance slot, so the empty list is the shape.
 
-        Emitting the instance means the function's only parameter is the one the
-        method kept, and a namesake would have to invent that name to match.
+        `_unavailable()` moving out as `_unavailable()` dropped nothing and has
+        no parameter left to carry evidence; reading it as a lost symbol would
+        red-light a plain move.
         """
         old = '''\
 """A class whose private helper is about to become a function."""
 
 
 class Widget:
-    def render(self):
-        return self._reset()
+    @staticmethod
+    def _unavailable():
+        return "n/a"
 
-    def _reset(self):
-        return 1
+    def render(self):
+        return self._unavailable()
 '''
         files = {
             "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
             "models.py": """\
 class Widget:
     def render(self):
-        return _reset(self)
+        return _unavailable()
 
 
-from .painting import _reset  # noqa: E402
+from .painting import _unavailable  # noqa: E402
 """,
-            "painting.py": "def _reset(self):\n    return 1\n",
+            "painting.py": 'def _unavailable():\n    return "n/a"\n',
         }
         result = self.fixture(old).split_and_run(files)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("方法被提到模块级: Widget._reset", result.stdout)
+        self.assertIn("方法被提到模块级: Widget._unavailable", result.stdout)
+
+    def test_a_keyword_only_method_is_not_excused_by_a_vararg_namesake(self) -> None:
+        """`*` and `*args` take a different number of positionals.
+
+        `_paint(width, *args, strict)` accepts an extra positional that
+        `_paint(self, width, *, strict)` never did, so it is not this method's
+        lift; the method is gone and the namesake only shares its name.
+        """
+        old = '''\
+"""A class whose private helper is about to be dropped."""
+
+
+class Widget:
+    def render(self, width):
+        return self._paint(width, strict=True)
+
+    def _paint(self, width, *, strict):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self, width):
+        return str(width)
+""",
+            "painting.py": "def _paint(width, *args, strict):\n    return str(width)\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("符号没了: Widget._paint", result.stdout)
 
     def test_a_lift_may_rename_a_vararg(self) -> None:
         """No caller can name a vararg, so a lift is free to rename one."""
