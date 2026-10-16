@@ -308,7 +308,7 @@ async def room_documents(
 ) -> dict:
     """The documents 芝士 wrote in this channel or private chat, whether or
     not they are in the library yet, the newest first."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     docs = await Documents(db).of_room(place.room_id)
     return ok(page([document_row(doc) for doc in docs], len(docs)))

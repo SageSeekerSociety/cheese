@@ -168,7 +168,7 @@ async def list_attachments(
     """The files sent in this channel or private chat, its tasks and 支线
     included, the newest first, each once — and whether it is in the library
     yet. Saving one there is `POST /topics/{topic_id}/shown/save`."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     rows = await in_room.attachments(db, place.room_id)
     return ok(page(rows, len(rows)))
