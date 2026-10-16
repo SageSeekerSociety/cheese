@@ -99,16 +99,28 @@ def _defined_on_the_root() -> set[str]:
 
 
 def _imported_modules(module) -> set[str]:
+    """每个 import 指到的模块全名，含它点名从里面取的那几个。
+
+    `from a.b import c` 既算 `a.b`，也算 `a.b.c`——只收前半截会漏掉
+    `from app.domain.agent import chat` 这种写法，而那正是本文件自己用的写法。
+    相对 import 按本模块的包名还原成全名，`from .chat import ChatService` 于是
+    同样算到 `app.domain.agent.chat`。
+    """
     tree = ast.parse(pathlib.Path(module.__file__).read_text())
-    modules = {
-        node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-    }
-    modules |= {
-        alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Import)
-        for alias in node.names
-    }
+    package = (module.__package__ or "").split(".")
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            # 绝对写法 `from a.b import c` 的 module 就是全名；相对写法按本模块的
+            # 包名补回去，一个点是自己这一层。
+            base = node.module or ""
+            if node.level:
+                prefix = ".".join(package[: len(package) - node.level + 1])
+                base = f"{prefix}.{base}" if base else prefix
+            modules.add(base)
+            modules |= {f"{base}.{alias.name}" for alias in node.names if base}
+        elif isinstance(node, ast.Import):
+            modules |= {alias.name for alias in node.names}
     return modules
 
 
