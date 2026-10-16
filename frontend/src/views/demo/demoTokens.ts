@@ -250,9 +250,9 @@ const COLOR_SECTIONS: ReadonlyArray<{ name: string; note: string; prefixes: stri
     prefixes: ['--code-'],
   },
   {
-    name: '队友头像',
-    note: '一个队友一个深色，按 handle 挑；从不用琥珀——琥珀留给关键动作。',
-    prefixes: ['--agent-'],
+    name: '头像',
+    note: '两种头像的固定色：队友的方块一个队友一个深色、按 handle 挑；人的首字母底色由 handle 算出来，两套主题同一个值，所以字也是定值。都不用琥珀——琥珀留给关键动作。',
+    prefixes: ['--agent-', '--avatar-'],
   },
   {
     name: '额度与图表',

@@ -71,9 +71,9 @@
   align-items: center;
   justify-content: center;
   background: var(--fill);
-  /* Literal on purpose: the real ground is avatarColor() (a fixed hsl bound
+  /* --avatar-ink, not --ink: the real ground is avatarColor() (a fixed hsl bound
      inline in the template), identical in both themes — so is the initial. */
-  color: #fff;
+  color: var(--avatar-ink);
   font-size: 12px;
   font-weight: 600;
   /* 人是圆的，AI 队友是超椭圆（CheeseAvatar）。 */

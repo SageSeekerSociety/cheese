@@ -172,6 +172,13 @@
   --inverse-ink: #fff;
   --inverse-fill: rgba(255, 255, 255, 0.14);
 
+  /* ---- Human avatar initials ----
+     A person's fallback avatar is avatarColor() — hsl(hue, 55%, 55%), the SAME
+     value in both themes — so the initial on it cannot follow the theme either
+     (docs/design-system.md §1.2's one exception). The dark block repeats the
+     value deliberately; do not "fix" it to --ink. */
+  --avatar-ink: #fff;
+
   /* ---- AI teammate avatar ----
      CheeseAvatar's tile and eyes. Warm deep tones, one per teammate, picked by
      handle (agentTone); tone 0 is the warm black of the app icon. Never amber:
@@ -463,6 +470,8 @@
   --inverse-surface: #3a3d44;
   --inverse-ink: #f3f4f6; /* 9.9:1 on --inverse-surface */
   --inverse-fill: rgba(255, 255, 255, 0.1);
+
+  --avatar-ink: #fff; /* same as light, deliberately: the ground does not change */
 
   /* Lifted like --inverse-surface: a tile lighter than the page, not a hole in it. */
   --agent-ink: #f6efe4;

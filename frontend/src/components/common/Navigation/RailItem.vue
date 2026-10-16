@@ -272,20 +272,18 @@ button.app-rail-item {
         opacity var(--dur-quick) var(--ease-standard);
     }
 
-    // Brand paint. These two literals are deliberate and identical in both
-    // themes: the 知是 mark is the brand, not a surface, so it must not shift
-    // with the theme any more than a printed logo would. What DID have to
-    // change is the ink on top — it used to be `on-primary`, a value Vuetify
-    // derives from `primary`, which differs between the themes (#F57F17 vs the
-    // lightened #FFA733) and could flip the glyph to white on this bright
-    // amber. Pinning it to one dark ink keeps the logo at 7.7:1 against the
-    // brand colour, in BOTH themes.
+    // Brand paint: the tile under the 知是 mark goes solid amber on hover and
+    // while current — docs/design-system.md §1.6 gives the current navigation
+    // position (and the brand mark itself) the accent, so the fill is --accent
+    // and the glyph on it is --accent-on. That ink is the one dark value both
+    // themes share (§2.6: never white on amber — 2.65:1 in light), which is
+    // what keeps the glyph readable instead of the `on-primary` this used to be.
     &:hover,
     &[aria-current] {
-      background: #ffa20f;
+      background: var(--accent);
 
       .cheese-icon {
-        fill: #23242a;
+        fill: var(--accent-on);
         opacity: var(--v-high-emphasis-opacity);
       }
     }
