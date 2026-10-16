@@ -40,6 +40,11 @@ read by other scripts: change them only together with their readers.
 --apply also accepts the 会采 cards as OKCHEESE_USER: approve, then accept with the card's head.
 When the platform refuses because the card has never shown a version (it refreshes the card as it
 refuses), the card is read and judged again and accepted once more if it still passes.
+
+orchestrator_sweep.py's --auto-accept-check and --auto-accept run this same judgement over
+the cards it lists as 可采纳未采纳, through decide() below: the first prints the answer under
+the sweep's own list, the second also accepts the 会采 cards. The five conditions and this
+script's shapes are the sweep's only source for them.
 """
 import json, os, re, subprocess, sys, time, urllib.error, urllib.request
 
@@ -402,6 +407,19 @@ def value_of(argv, flag):
     return argv[i]
 
 
+def decide(tok, task, me, apply=False):
+    """One card, read fresh: judge it and, when asked and it passes, accept it.
+
+    Returns the row shape `line()` prints and --json carries. The CLI's own loop builds
+    its rows through this, and orchestrator_sweep.py asks for a card's verdict through
+    it too, so the two entry points cannot judge the same card two ways."""
+    f = gather(tok, task, me)
+    row = row_of(f, *judge(f, me))
+    if apply and row["verdict"] == "accept":
+        row["applied"] = accept(tok, task, me)
+    return row
+
+
 def main():
     argv = sys.argv
     if argv[1:2] == ["--self-test"]:
@@ -419,10 +437,7 @@ def main():
                and str(t["number"]) not in skip]
     rows = []
     for t in pending:
-        f = gather(tok, t, me)
-        row = row_of(f, *judge(f, me))
-        if apply and row["verdict"] == "accept":
-            row["applied"] = accept(tok, t, me)
+        row = decide(tok, t, me, apply)
         rows.append(row)
         if not as_json:
             print(line(row))
@@ -650,6 +665,30 @@ def self_test():
         failures.append("正式部署的文件不再算一遍高风险")
     check("前缀只到文件名为止", facts(files=["backend/app/api/auth.py/x", "scripts/redeploy.sh.d/x"]), "会采")
     check("名字相近但不是鉴权文件", facts(files=["backend/app/api/auth_extra/x.py", "deployment.md"]), "会采")
+    # decide() is the one entry point both the CLI's --apply and orchestrator_sweep.py's
+    # --auto-accept-check / --auto-accept go through. The judgement itself is checked above;
+    # this pins the two things decision-by-callers depends on: apply=False makes no write at
+    # all (that is what makes the sweep's check-only flag read-only), and apply=True writes
+    # to the 会采 card and to nothing else.
+    real = {name: globals()[name] for name in ("gather", "post")}
+    try:
+        writes = []
+        globals()["gather"] = lambda tok, t, me: facts()
+        globals()["post"] = lambda tok, path, body: (writes.append(path), (True, ""))[1]
+        if decide("tok", {"id": "t", "number": 1, "card": {"id": "c"}}, "me")["verdict"] != "accept" or writes:
+            failures.append(f"decide 默认只判不写: got {writes!r}")
+        got = decide("tok", {"id": "t", "number": 1, "card": {"id": "c"}}, "me", True)
+        if writes != ["/accept-cards/c/approve", "/accept-cards/c/accept"] or got.get("applied") != "已采纳 head " + H[:8]:
+            failures.append(f"decide --apply 对会采的卡 approve 再 accept: got {got!r} {writes!r}")
+        writes = []
+        globals()["gather"] = lambda tok, t, me: facts(files=["backend/alembic/versions/x.py"])
+        got = decide("tok", {"id": "t", "number": 1, "card": {"id": "c"}}, "me", True)
+        if writes or got["verdict"] != "handoff" or got["codes"] != ["high_risk"]:
+            failures.append(f"decide --apply 对交总调度的卡一个写都不发: got {got!r} {writes!r}")
+    finally:
+        for name, fn in real.items():
+            globals()[name] = fn
+
     # 采纳人与读失败
     check("验收人不是自己", facts(card=card(reviewer_handle="someone")), "交总调度", "not_reviewer", "someone")
     check("读不到卡", {"task": 1, "card": {}, "pr": None, "error": "读不到这张卡"}, "交总调度", "unreadable",
