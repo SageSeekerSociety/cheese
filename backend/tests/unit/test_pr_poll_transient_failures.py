@@ -12,9 +12,16 @@ What is worth waking someone for is the retries NOT working. That is what these
 tests pin: a blip is a warning, a blip that will not stop is an error, and a
 failure that is not the network at all is an error immediately — a bug in the
 poller is not something a later tick repairs.
+
+The same tick also walks every card the book holds, and no card depends on
+another. The tests at the bottom pin what follows from that: a tick does not
+cost the sum of its cards' round trips, and one card failing still leaves the
+rest of the tick's cards advanced.
 """
 
+import asyncio
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -142,3 +149,86 @@ async def test_a_tick_that_works_forgives_the_misses_before_it(monkeypatch, capl
             await pr_poll.poll_open_prs(chat, announce, **_PORTS)
 
     assert _errors(caplog) == []
+
+
+# ——— 一拍里所有卡 ————————————————————————————————————————————————
+
+#: 每张卡自己要花的墙钟。一拍的卡是一轮轮 against GitHub 和设备连接所有者的往返，
+#: 这里用一段谁都短的睡眠代替：断言的是「一拍不是这些往返之和」，不是某一趟有多慢。
+_CARD_S = 0.1
+_CARDS = 24
+
+
+def _many_cards_poller(
+    monkeypatch, *, failing: frozenset[int] = frozenset()
+) -> tuple[SimpleNamespace, list[uuid.UUID], list[uuid.UUID]]:
+    """A chat binding whose book holds `_CARDS` cards, each taking `_CARD_S`.
+
+    Every card answers in `_CARD_S` of wall clock, so carrying them one at a
+    time cannot finish in less than `_CARDS * _CARD_S` — that is the sum the
+    tick is not allowed to be. `failing` names the ones that raise instead.
+
+    Returns the binding, the card ids in book order, and the cards that were
+    advanced to the end.
+    """
+    card_ids = [uuid.uuid4() for _ in range(_CARDS)]
+    done: list[uuid.UUID] = []
+
+    @asynccontextmanager
+    async def sessions():
+        yield _Session()
+
+    class _AcceptService:
+        def __init__(self, _session, *, announce=None, **_ports) -> None: ...  # noqa: ARG002
+
+        async def open_pr_card_ids(self, project_id=None) -> list[uuid.UUID]:
+            assert project_id is None
+            return list(card_ids)
+
+        async def advance_pr_card(self, card_id, **_kwargs) -> None:
+            await asyncio.sleep(_CARD_S)
+            if card_ids.index(card_id) in failing:
+                raise KeyError("pr_number")
+            done.append(card_id)
+
+    monkeypatch.setattr(
+        "app.domain.review.services.AcceptService", _AcceptService, raising=True
+    )
+    monkeypatch.setattr(
+        pr_poll, "_note_card_poll_crashed", _nothing_on_the_card, raising=True
+    )
+    return (
+        SimpleNamespace(session_factory=sessions, work_runner=None),
+        card_ids,
+        done,
+    )
+
+
+async def test_a_tick_does_not_cost_the_sum_of_its_cards(monkeypatch):
+    """一拍里每张卡各走各的，没有谁等谁 —— 否则一轮的墙钟就是全项目的往返之和。
+
+    一轮跑在 60 秒的钟上，卡片却随着项目里开着的 PR 增长；串行的代价是拿分钟
+    换的，而且每分钟都付一次。
+    """
+    chat, _card_ids, _done = _many_cards_poller(monkeypatch)
+    serial = _CARDS * _CARD_S
+
+    started = time.monotonic()
+    result = await pr_poll.poll_open_prs(chat, announce, **_PORTS)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < serial / 2, f"{_CARDS} 卡 {elapsed:.3f}s，串行 {serial:.1f}s"
+    assert result["cards_checked"] == _CARDS
+    assert result["errors"] == []
+
+
+async def test_one_card_failing_does_not_stop_the_others(monkeypatch):
+    """一张卡炸了，同一拍里其余的照常走完 —— 它们本来就不共享任何东西。"""
+    chat, card_ids, done = _many_cards_poller(monkeypatch, failing=frozenset({7}))
+
+    result = await pr_poll.poll_open_prs(chat, announce, **_PORTS)
+
+    assert len(result["errors"]) == 1
+    assert str(card_ids[7]) in result["errors"][0]
+    assert result["cards_checked"] == _CARDS - 1
+    assert done == [card_id for index, card_id in enumerate(card_ids) if index != 7]

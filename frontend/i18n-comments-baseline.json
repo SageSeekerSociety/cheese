@@ -98,7 +98,7 @@
     "src/components/panels/PanelPreview.vue": 2,
     "src/components/panels/PanelPreviewView.vue": 29,
     "src/components/panels/PanelRoutines.vue": 2,
-    "src/components/panels/PanelSite.vue": 18,
+    "src/components/panels/PanelSite.vue": 1,
     "src/components/panels/PanelTabs.vue": 9,
     "src/components/panels/PanelThreads.vue": 2,
     "src/components/panels/preview/DesignImage.vue": 3,

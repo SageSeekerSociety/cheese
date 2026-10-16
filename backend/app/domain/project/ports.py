@@ -193,8 +193,10 @@ class LibraryFiles(Protocol):
         data: bytes,
         added_by: str | None,
         room_id: uuid.UUID | None,
+        source_path: str | None = None,
     ) -> str:
-        """放进一份新资料，交回它在那里的名字（撞名加 ``(n)``，不覆盖）。"""
+        """放进一份新资料，交回它在那里的名字（撞名加 ``(n)``，不覆盖）。
+        ``source_path`` 是它在 ``room_id`` 那个房间文件区里的路径。"""
         ...
 
     async def stored(

@@ -2,10 +2,12 @@
 
 A task's living document is read by whoever may enter the task's channel, and
 written by the people working the task and the task's own session: what others
-have to say about a task they say in the channel. A document of the project's
-own — the project's goals among them — is the project's members', and 芝士's
-wherever in the project it works. Every document route asks here, so they never
-disagree.
+have to say about a task they say in the channel. A document 芝士 wrote in a
+channel or a private chat is that conversation's until someone saves it to the
+library: whoever may enter the conversation reads and writes it (#3828). A
+document of the project's own — the project's goals and every saved one among
+them — is the project's members', and 芝士's wherever in the project it works.
+Every document route asks here, so they never disagree.
 
 `asked_of` is the one derivation the comment routes and the agent routes share:
 from the caller's reach, the question an agent asks about this document. It
@@ -27,9 +29,8 @@ from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.place import Place
+from app.domain.room_task.place import Place, place_or_404, require_doc_writable
 from app.domain.room_task.services import TaskService
-from app.domain.topic.services import TopicService
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,8 @@ class Reached:
     doc: Document
     actor: Actor
     #: The room the document is the living document of — or the room of the task
-    #: it is the living document of; None for a project's own.
+    #: it is the living document of, or the conversation that keeps it; None for
+    #: a project's own.
     place: Place | None
     #: The task whose living document this is.
     task: Task | None = None
@@ -61,7 +63,7 @@ async def reach(
         raise NotFoundError(say("docNotFound"))
     task = await TaskService(db).of_document(doc.id)
     if task is not None:
-        place = await TopicService(db).place_or_404(task.id)
+        place = await place_or_404(db, task.id)
         actor = await resolver.resolve(
             topic_id=place.conversation_id, project_id=place.project_id
         )
@@ -69,6 +71,16 @@ async def reach(
             actor, project_id=place.project_id, topic_id=place.room_id, enforce=enforce
         )
         return Reached(doc, actor, place, task, resolver.credential_conversation())
+    if doc.room_id is not None and doc.kept_at is None:
+        place = await place_or_404(db, doc.room_id)
+        # Not resolved against the room's own conversation: 芝士 working in one
+        # of the room's tasks or 支线 holds that conversation's credential, and
+        # the room is what decides who reads the document.
+        actor = await resolver.resolve(project_id=place.project_id)
+        await resolver.authorize_topic(
+            actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
+        )
+        return Reached(doc, actor, place, None, resolver.credential_conversation())
     actor = await resolver.resolve(project_id=doc.project_id)
     await authorize_in_project(resolver, actor, doc.project_id)
     return Reached(doc, actor, None)
@@ -93,7 +105,7 @@ async def require_writable(db: AsyncSession, reached: Reached) -> None:
     """An archived room's document, and every document of an archived project,
     takes no more writes."""
     if reached.place is not None:
-        TopicService(db).require_doc_writable(reached.place)
+        require_doc_writable(reached.place)
     if reached.task is not None:
         if reached.task.status != TaskStatus.open:
             raise ValidationError(say("taskClosedNoTurn"))

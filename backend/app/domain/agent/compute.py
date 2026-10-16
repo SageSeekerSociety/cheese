@@ -2,7 +2,7 @@
 
 Symmetric to AIPool (profiles.py). The pool answers WHERE a turn runs — which
 machine pool — and WHAT runs there — which harness. Each backend it holds is a
-room's sessions of one harness over one machine pool (`room/sessions.py`),
+room's sessions of one harness over one machine pool (`room/sessions/`),
 started, spoken to and read on the session core.
 
 Every backend in the pool keeps a live session. There used to be a second

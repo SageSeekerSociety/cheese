@@ -276,7 +276,7 @@ owners:
   admin: "Platform admin membership and allow-list; domain/admin/AdminService, not every /admin route business domain."
   usage.report: "What a team or a person used of their credits this month, as ratios for members; domain/usage/report.py."
   usage.plans: "Credit plans, which plan each team is on, credits administrators issue, and their audit; domain/usage/plans.py and ledger.py."
-  agent.models: "AI model catalogue, gateway project budgets and audit; domain/agent/gateway_admin.py and gateway_models.py."
+  agent.models: "AI model catalogue, gateway project budgets and audit; domain/agent/gateway_admin.py and gateway_models/."
   agent.execution: "Agent session execution/control/diagnostics; domain/agent runtime and domain/agent_session. HTTP diagnostics are assembled in app/main.py."
   agent.types: "Agent type catalogue; domain/agent_type/library.py."
   agent.instances: "Project agent identities/configuration; domain/agent_instance/services.py and configuration.py."
@@ -749,10 +749,12 @@ routes:
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/library/move", auth: "library.keeper", owner: "library"}
   # app.api.routes.living_docs
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/document", auth: "actor.topic", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/documents", auth: "actor.topic", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/overview", auth: "project.documents", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/about", auth: "document.reader", owner: "living_doc"}
+  - {protocol: "http", method: "POST", path: "/documents/{document_id}/keep", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "PATCH", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "DELETE", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}", auth: "document.reader", owner: "living_doc"}
@@ -1151,6 +1153,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/check-result", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/clone-from", auth: "actor.topic", owner: "topic"}
   # app.api.routes.topics_attachments
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments", auth: "actor.topic", owner: "room.files"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/attachments", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/raw", auth: "actor.topic.verified", owner: "room.files"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/attachments/pdf", auth: "actor.topic", owner: "room.files"}

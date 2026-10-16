@@ -63,6 +63,10 @@ from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team, seat_handles, seat_project
 from app.domain.conversation.services import room_of
 from app.domain.room_task import naming
+from app.domain.room_task.dispatch import (
+    refuse_tasks_in_private,
+    upgrade_block_to_place,
+)
 from app.domain.room_task.schemas import TaskOut
 from app.domain.thread.adapters import root_block_of
 from app.domain.thread.services import open_thread
@@ -223,7 +227,7 @@ async def upgrade_block(
     )
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
-    TopicService.refuse_tasks_in_private(parent)
+    refuse_tasks_in_private(parent)
     if turns_in_place(block, parent.id):
         thread = await open_thread(db, block.id, by=actor.handle)
         task, made = await turn_into_task(
@@ -243,7 +247,8 @@ async def upgrade_block(
             naming.nudge(task.id, "message")
             await dispatch(chat)
         return ok(out)
-    room, task = await TopicService(db).upgrade_block_to_place(
+    room, task = await upgrade_block_to_place(
+        db,
         block_id=block_id,
         created_by=actor.handle,
         seat_project=seat_project,

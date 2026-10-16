@@ -10,6 +10,7 @@ from app.domain.delivery.ledger import settle_card
 from app.domain.memory.models import MemoryDreamRun
 from app.domain.project.services import ProjectService
 from app.domain.review.archive import close_cards_for_archived_topic
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
@@ -215,6 +216,7 @@ def test_an_archived_project_is_not_given_a_memory_dream(client, tmp_path):
                 session,
                 settle_card=settle_card,
                 cards=close_cards_for_archived_topic,
+                close_tasks=close_room_tasks,
             ).archive(project.id, by=OWNER)
             project_id = project.id
             await session.commit()

@@ -7,7 +7,7 @@ covers:
   - backend/app/domain/agent/gateway.py
   - backend/app/domain/agent/gateway_admin.py
   - backend/app/domain/agent/gateway_catalog.py
-  - backend/app/domain/agent/gateway_models.py
+  - backend/app/domain/agent/gateway_models/
   - backend/app/api/routes/admin_models.py
   - backend/scripts/gateway_conformance.py
 ---
@@ -105,7 +105,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 | `gateway.py` | 管理客户端，L0/L1/L2 三个层次的定义就写在这个文件的 docstring 里；铸 key、设额度、drain 用量 |
 | `gateway_admin.py` | 「会抛」的管理客户端（管理页必须看得见失败）：`GatewayUnreachable` / `GatewayRefused` 分开抛，凭据从不回显或落日志 |
 | `gateway_catalog.py` | 目录快照与定时刷新（上面那一节） |
-| `gateway_models.py` | 管理页的服务：模型与逐模型用量、项目额度；`_TTL_SECONDS = 15`，因为 `/model/info` 与一周用量都是百 KB 级 |
+| `gateway_models/` | 管理页的服务（`GatewayModelsService`）：模型与逐模型用量、项目额度；`_TTL_SECONDS = 15`，因为 `/model/info` 与一周用量都是百 KB 级。2026-10 由一个 1,119 行的单文件按职责拆成包，`__init__.py` 保持原来每个方法、常量与重导出 |
 | `api/routes/admin_models.py` | `/admin/gateway` 的路由：模型列表/详情/新建/改/删/停用，线路的加/改/删/停用/排序（`/models/{name}/sources/...`），项目额度、审计 |
 
 翻译的规矩：**连接性失败由路由层翻**（不可达 503、被拒 502），页面才能告诉人「是网关挂了，过会儿再试」还是「你这个动作本身不被允许」；「模型不存在」404、「请求体不合法 / 不变式被违反 / 对 config 模型写」400 由服务层抛，因为那几种要读库或读网关才知道。

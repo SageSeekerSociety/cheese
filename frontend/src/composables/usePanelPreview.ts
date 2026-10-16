@@ -128,12 +128,11 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
    * 标注合成图要进房间：上传是取数这一层的事。
    *
    * 附件路径是上传给的，消息得等它回来才拼得出来，所以这一步交给这一层、由画的那
-   * 一半按 prop 调；origin 用 clipboard —— 它是那句话的配图，不是一份要进资料库供
-   * 人浏览的文档。
+   * 一半按 prop 调。
    */
   async function uploadAnnotation(topicId: string, image: ImageUpload): Promise<ChatAttachment> {
     const file = new File([image.blob], image.filename, { type: 'image/png' })
-    return uploadAttachment(topicId, file, 'clipboard')
+    return uploadAttachment(topicId, file)
   }
 
   return {

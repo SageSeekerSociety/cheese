@@ -24,14 +24,14 @@ from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
 from app.domain.pin.services import Pins
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
 async def _channel(db, resolver, topic_id: uuid.UUID, *, acting: bool):
     """The channel and who is asking. A task or a 支线 has no pins."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     if place.conversation_id != place.room_id:
         raise NotFoundError("Topic not found")
     actor = await resolver.resolve(topic_id=topic_id, project_id=place.project_id)

@@ -59,7 +59,7 @@ from app.domain.feedback.schemas import (
 )
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="/feedback", tags=["feedback"])
 
@@ -156,7 +156,7 @@ async def _in_room(
     """
     if topic is None:
         return await resolver.resolve(), None
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     who = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

@@ -40,8 +40,8 @@ from app.core.errors import NotFoundError
 from app.domain.agent.chat import ChatService
 from app.domain.feedback.proposals import ProposalService
 from app.domain.identity.actor import Actor
+from app.domain.room_task.place import place_or_404
 from app.domain.thread import reads as thread_reads
-from app.domain.topic.services import TopicService
 
 #: How many recently finished tasks a channel's overview shows beside the open
 #: ones (the client's `RECENT_DONE`).
@@ -57,7 +57,7 @@ async def room_snapshot(
     task), or None when it is neither — a thread's own line, say. The caller
     has authorised `actor` for the room."""
     try:
-        place = await TopicService(db).place_or_404(conversation_id)
+        place = await place_or_404(db, conversation_id)
     except NotFoundError:
         return None
     room = place.room

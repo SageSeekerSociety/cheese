@@ -56,6 +56,7 @@ import { LIBRARY_ENTRIES } from './catalogLibrary'
 import { MARKET_ENTRIES } from './catalogMarket'
 import { MODELS_ENTRIES } from './catalogModels'
 import { NOTIFICATION_ENTRIES } from './catalogNotifications'
+import { PALETTE_ENTRIES } from './catalogPalette'
 import { PANEL_ENTRIES } from './catalogPanels'
 import { PUBLIC_ENTRIES } from './catalogPublic'
 import { QUEUE_ENTRIES } from './catalogQueue'
@@ -147,6 +148,8 @@ export const CATALOG: CatalogEntry[] = [
   ...KNOWLEDGE_ENTRIES,
   // 资料库页拆出来的四件：`catalogLibrary.ts`。
   ...LIBRARY_ENTRIES,
+  // 命令面板拆出来的四块（顶上那一栏、结果、桌面上的操作清单、底栏）：`catalogPalette.ts`。
+  ...PALETTE_ENTRIES,
   // 发题表单那一组（从 1089 行的 TaskForm 拆出来的七张卡加两个弹窗，夹具在自己
   // 那一份里）在自己的文件里：`catalogTaskForm.ts`。
   ...TASK_FORM_ENTRIES,
@@ -175,7 +178,7 @@ export const CATALOG: CatalogEntry[] = [
   ...SHARED_ENTRIES,
   // 整页那两件（一项产物的版本历史、小队的对外一面）在自己的文件里：`catalogViews.ts`。
   ...VIEW_ENTRIES,
-  // 一个频道的文件那一页在自己的文件里：`catalogChannelFiles.ts`。
+  // 频道和私聊「文件」那一格在自己的文件里：`catalogChannelFiles.ts`。
   ...CHANNEL_FILES_ENTRIES,
   // 频道那两个弹窗（删频道前的确认、新建支线）在自己的文件里：`catalogChannelDialogs.ts`。
   ...CHANNEL_DIALOG_ENTRIES,

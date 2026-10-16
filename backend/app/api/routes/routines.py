@@ -31,6 +31,7 @@ from app.domain.agent_instance.own import may_work_for
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
+from app.domain.room_task.place import place_or_404
 from app.domain.routine import service as routines
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import RoutineService
@@ -303,7 +304,7 @@ async def list_routines(
     topic: uuid.UUID | None = None,
 ) -> dict:
     if topic is not None:
-        place = await TopicService(db).place_or_404(topic)
+        place = await place_or_404(db, topic)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
         actor = await _viewer(db, resolver, project_id, place.room_id)
@@ -321,7 +322,7 @@ async def list_routines(
 async def create_routine(
     topic_id: uuid.UUID, body: RoutineIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _viewer(db, resolver, place.project_id, topic_id)
     room = await TopicService(db).get(place.room_id)
     if room is None:

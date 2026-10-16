@@ -43,6 +43,7 @@ from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.room_task.models import Task
 from app.domain.run_record.models import RunRecord
 from app.domain.team.models import Team
@@ -359,6 +360,7 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
                 by="alice",
                 settle_card=settle_card,
                 cards=close_cards_for_archived_topic,
+                close_tasks=close_room_tasks,
             )
             await db.commit()
 

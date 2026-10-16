@@ -56,6 +56,9 @@ vi.mock('@/api', async () => {
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listRoomAttachments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listRoomDocuments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    listRoomFiles: vi.fn().mockResolvedValue({ data: [], total: 0, truncated: false }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     attachmentRawUrl: () => '',
   }

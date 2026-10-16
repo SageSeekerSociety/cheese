@@ -44,6 +44,7 @@ from app.domain.project.address import (
     thing_by_number,
 )
 from app.domain.project.services import ProjectService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/addresses", tags=["addresses"])
@@ -88,7 +89,7 @@ async def _authorize_thing(
         if thing.kind is Numbered.document:
             await reach(db, resolver, thing.id)
         else:
-            place = await TopicService(db).place_or_404(thing.id)
+            place = await place_or_404(db, thing.id)
             await _actor_in_place(resolver, place)
     except ForbiddenError as refused:
         raise NotFoundError(_NOT_FOUND) from refused

@@ -39,6 +39,7 @@ from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
@@ -558,6 +559,7 @@ async def test_an_archived_rooms_cleanup_checkpoints_once_and_goes_on(
             by="alice",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         await db.commit()
     entry = {
