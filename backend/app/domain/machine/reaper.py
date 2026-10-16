@@ -151,25 +151,35 @@ def _as_ai_status(value: object) -> AiStatus:
 
 
 class _Hub(Protocol):
-    """Typing-only stand-in for the device hub: the sweep asks one thing of it,
-    whether a host's connector is up. Declared rather than imported so this
-    module stays below ``agent`` in the domain layering."""
+    """Typing-only stand-in for the device hub: the sweep asks it whether a
+    host's connector is up, the pool whether one is on its way back. Declared
+    rather than imported so this module stays below ``agent`` in the domain
+    layering."""
 
     def is_online(self, device_id: str) -> bool: ...
+    def reconnecting(self, device_id: str) -> bool: ...
 
 
 class PoolSweep:
     """The pool's maintenance, mixed into ``HostPool``.
 
     The attributes are the pool's own (``services.HostPool.__init__`` sets
-    them); they are declared here so this half of the class is readable on its
-    own and type-checked against them."""
+    them), and so are the four verbs below: adding a host is placement, so it
+    stays in ``services``, and the sweep calls it through the same ``self``.
+    Both are declared here so this half of the class is readable on its own and
+    type-checked against them."""
 
     _session: AsyncSession
     _repo: CloudHostRepository
     _client: MicroCloudClient
     _devices: DeviceService
     _hub: _Hub
+
+    # ``HostPool``'s own, called from ``maintain`` and ``_grow`` below.
+    async def _provider_failing(self, now: datetime) -> int: ...
+    async def _host_body(self) -> dict: ...
+    async def _require_room_to_grow(self, *, whole_machine: bool = False) -> None: ...
+    async def _acquire(self, body: dict, home: dict | None) -> CloudHost: ...
 
     async def maintain(self) -> None:
         """Keep the pool the size its sessions need.
