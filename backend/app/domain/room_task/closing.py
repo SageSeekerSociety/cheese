@@ -52,8 +52,11 @@ from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
 
-#: Half an hour is how long an instruction to an AI teammate is retried
-#: (`delivery.agent.GIVE_UP_AFTER`); a summary turn is a few minutes.
+#: Half an hour is how long an instruction to an AI teammate is retried when
+#: nothing but a refusal holds it back (`delivery.agent.GIVE_UP_AFTER`). One
+#: behind its agent's busy seat waits longer, but the turn holding that seat
+#: runs in the task and holds this close too (`unfinished`). A summary turn is
+#: a few minutes.
 CLOSE_AT_THE_LATEST = timedelta(minutes=45)
 
 #: Marks the instruction whose turn ends the task, in the delivery's payload.

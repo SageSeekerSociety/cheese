@@ -76,6 +76,12 @@ class Delivery(UuidPk, Base):
         DateTime(timezone=True), nullable=True
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 最近一次尝试发现收件人那一席还在做前一件事的时刻（`agent.SEAT_BUSY`）。
+    #: 放弃的那半小时从这里算，不从写下这一行算（`agent.waited_too_long`）：
+    #: 一席一次只跑一轮，排在一轮长活后面的投递是在等，不是送不到。
+    seat_busy_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     #: 去重键，全表唯一。跟着**事件**走（事件 id + 收件人），不跟着这一次发送尝试
     #: 走 —— 重试、补发、同一条事件被算两遍，算出来都是同一个键。
     dedup_key: Mapped[str] = mapped_column(String(160), unique=True)

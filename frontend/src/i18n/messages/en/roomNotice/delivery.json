@@ -1,5 +1,6 @@
 {
   "deliveryGaveUp": "{agent} couldn't start within 30 minutes",
+  "deliveryGaveUpBusy": "{agent} stayed busy and couldn't start within 24 hours",
   "labelTimedDeliveryNote": "What you wrote then",
   "reminder": "Reminder: {text}",
   "timedDelivery": "You asked the platform to hand you this at this time"

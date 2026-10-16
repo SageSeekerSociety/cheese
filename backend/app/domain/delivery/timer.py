@@ -19,10 +19,12 @@ from app.core.sentences import say
 from app.domain.conversation.services import room_of
 from app.domain.delivery.agent import (
     GAVE_UP,
+    GAVE_UP_BUSY,
     GIVE_UP_AFTER,
     dispatch_pending,
     instance_for_seat,
     record_agent,
+    waited_too_long,
 )
 from app.domain.delivery.ledger import Ledger
 from app.domain.delivery.models import Delivery, TimedDelivery
@@ -223,11 +225,12 @@ async def deliver_due(
 
 async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int:
     """Fail every instruction to an AI teammate that has not started half an
-    hour after it was given (`agent.GIVE_UP_AFTER`), and say so once in each
-    conversation where a person's message went unanswered: whoever waits there
-    sees it, and 「重试」 starts a turn again. Returns how many gave up."""
+    hour after it was given — or after its seat was last found busy, up to a
+    day (`agent.waited_too_long`) — and say so once in each conversation where
+    a person's message went unanswered: whoever waits there sees it, and
+    「重试」 starts a turn again. Returns how many gave up."""
     stamp = _utcnow()
-    told: dict[uuid.UUID, str] = {}
+    told: dict[uuid.UUID, tuple[str, bool]] = {}
     async with sessions() as session:
         rows = list(
             await session.scalars(
@@ -237,15 +240,21 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
                     Delivery.sent_at.is_(None),
                     Delivery.state.in_(("pending", "claimed")),
                     Delivery.attempts > 0,
-                    Delivery.recorded_at < stamp - GIVE_UP_AFTER,
+                    waited_too_long(stamp),
                     or_(Delivery.lease_until.is_(None), Delivery.lease_until <= stamp),
                 )
                 .with_for_update(skip_locked=True)
             )
         )
         for row in rows:
+            # Still waiting on a busy seat a day after it was given, or not
+            # started for any other reason half an hour on: the line says which.
+            busy = (
+                row.seat_busy_at is not None
+                and row.seat_busy_at >= stamp - GIVE_UP_AFTER
+            )
             row.state = "failed"
-            row.last_error = GAVE_UP
+            row.last_error = GAVE_UP_BUSY if busy else GAVE_UP
             # A finished task waiting on this turn to be written up closes
             # without it.
             if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
@@ -260,12 +269,12 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
                 row.conversation_id is not None
                 and row.type == NotificationType.MENTION.value
             ):
-                told.setdefault(row.conversation_id, row.recipient_handle)
+                told.setdefault(row.conversation_id, (row.recipient_handle, busy))
         await session.commit()
-    for conversation_id, seat in told.items():
+    for conversation_id, (seat, busy) in told.items():
         await chat.post_system_event(
             conversation_id,
-            say("deliveryGaveUp", agent=f"<@{seat}>"),
+            say("deliveryGaveUpBusy" if busy else "deliveryGaveUp", agent=f"<@{seat}>"),
             meta=notice(
                 EVENT_TURN_FAILED,
                 severity=SEVERITY_ERROR,

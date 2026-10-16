@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Protocol
 
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ValidationError
@@ -16,6 +17,7 @@ from app.domain.agent.pending_messages import defer_message
 from app.domain.agent.queries import conversation_seat
 from app.domain.agent.seat_admission import seat_admission
 from app.domain.block.models import Block
+from app.domain.delivery.agent import SEAT_BUSY, now
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
@@ -62,11 +64,15 @@ async def admitted_initial(
     user_block_id: uuid.UUID | None = None,
     recipient_instance_id: uuid.UUID | None = None,
     recipient_handle: str | None = None,
+    attempt_id: uuid.UUID | None = None,
 ) -> AsyncIterator[bool]:
     """Every initial turn rechecks durable ownership after project admission.
 
     Yields True when the seat still holds an input whose outcome is not settled:
-    the turn does not start, and a person's message waits for it instead.
+    the turn does not start, and a person's message waits for it instead. A
+    delivery's attempt (``delivery_id`` with its ``attempt_id``) refused for
+    that reason says so on the ledger (`delivery.agent.SEAT_BUSY`): it is
+    waiting for the work to end, and is not given up as one that cannot start.
 
     The seat itself was taken before project admission, while this turn was on
     its way in (``RunnerIntake._admit``), so that a turn which cannot run yet
@@ -110,6 +116,16 @@ async def admitted_initial(
                 and await owner_is_away(session, instance_id, device_hub)
             )
             told_away = False
+            if pending and delivery_id is not None and attempt_id is not None:
+                await session.execute(
+                    update(Delivery)
+                    .where(
+                        Delivery.id == delivery_id,
+                        Delivery.attempt_id == attempt_id,
+                        Delivery.state == "claimed",
+                    )
+                    .values(seat_busy_at=now(), last_error=SEAT_BUSY)
+                )
             if (pending or away) and user_block_id is not None:
                 await defer_message(session, user_block_id)
                 if away:

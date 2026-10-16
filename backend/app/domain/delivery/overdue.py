@@ -16,12 +16,15 @@ from datetime import timedelta
 from sqlalchemy import func, select
 
 from app.core import alerting
-from app.domain.delivery.agent import now
+from app.domain.delivery.agent import now, waited_too_long
 from app.domain.delivery.models import Delivery
 
 logger = logging.getLogger(__name__)
 
 #: Past this, a delivery is not waiting for a room to come back; it is stuck.
+#: One waiting behind its agent's busy seat counts it from the last attempt
+#: that found the seat busy, as the give-up sweep does (`waited_too_long`):
+#: that one is waiting for a turn to end, which is nobody's problem yet.
 OVERDUE_AFTER = timedelta(minutes=30)
 #: States the dispatcher keeps trying. ``sending`` is one attempt in flight,
 #: and ``uncertain`` and ``failed`` are never retried, so none of them loops.
@@ -47,7 +50,7 @@ async def report_overdue(sessions) -> int:
                     Delivery.agent_instance_id.is_not(None),
                     Delivery.sent_at.is_(None),
                     Delivery.state.in_(OWED),
-                    Delivery.recorded_at < now() - OVERDUE_AFTER,
+                    waited_too_long(now(), after=OVERDUE_AFTER),
                 )
                 .group_by(Delivery.conversation_id, Delivery.recipient_handle)
                 .order_by(func.min(Delivery.recorded_at))

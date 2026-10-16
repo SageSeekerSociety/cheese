@@ -12,7 +12,7 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select, true, update
+from sqlalchemy import func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -43,6 +43,35 @@ RETRY_CAP_SECONDS = 300
 # it retry every five minutes for ever.
 GIVE_UP_AFTER = timedelta(minutes=30)
 GAVE_UP = "Not started within 30 minutes of being given"
+# An attempt refused because the agent's seat still holds an earlier input
+# (`initial_admission.admitted_initial`) is waiting for that work to end, not
+# for a computer that is gone: a seat runs one turn at a time, and one turn can
+# run for hours. Such a delivery's half hour counts from the last attempt that
+# found the seat busy (`Delivery.seat_busy_at`), not from when it was given. A
+# turn whose machine is gone stops holding the seat once the orphan sweep ends
+# it, so the busy refusals stop and the half hour runs out as for any other.
+SEAT_BUSY = "The agent's seat was still working on an earlier input"
+# The backstop for a seat that never frees: longer than any turn dev ran in the
+# 15 days to 2026-10-16 (11,531 turns, p99 3.1 h, longest 22.9 h), so a delivery
+# behind any real turn still goes in; one older than this is behind something
+# that is not going to end.
+BUSY_GIVE_UP_AFTER = timedelta(hours=24)
+GAVE_UP_BUSY = "Not started within 24 hours of being given; its seat stayed busy"
+
+
+def waited_too_long(stamp, *, after=GIVE_UP_AFTER):
+    """Whether a delivery has waited past what its refusals justify, at ``stamp``.
+
+    ``after`` from when it was given, or from the last attempt that found its
+    seat busy if one did; past `BUSY_GIVE_UP_AFTER` from when it was given in
+    any case. The give-up sweep (`timer.give_up_stale`), the dispatcher that
+    leaves those rows to it, and the overdue alert (`overdue.report_overdue`)
+    all read this one rule.
+    """
+    return or_(
+        func.coalesce(Delivery.seat_busy_at, Delivery.recorded_at) < stamp - after,
+        Delivery.recorded_at < stamp - BUSY_GIVE_UP_AFTER,
+    )
 
 
 def retry_after(attempts: int) -> float:
@@ -176,8 +205,8 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
     claimed = []
     async with sessions() as session:
         rows = list(
-            await session.scalars(
-                select(Delivery)
+            await session.execute(
+                select(Delivery, waited_too_long(stamp))
                 .where(
                     Delivery.agent_instance_id.is_not(None),
                     Delivery.id.in_(delivery_ids)
@@ -193,12 +222,12 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 .with_for_update(skip_locked=True)
             )
         )
-        for row in rows:
+        for row, too_long in rows:
             if row.state == "sending":
                 row.state = "uncertain"
                 row.last_error = "Sender stopped before recording the receiver result"
                 continue
-            if row.attempts > 0 and stamp - row.recorded_at > GIVE_UP_AFTER:
+            if row.attempts > 0 and too_long:
                 # Not tried again; the sweep fails it and says so where people
                 # wait (`timer.give_up_stale`).
                 continue
@@ -246,6 +275,9 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                     )
                     continue
             row.state = "claimed"
+            # Whatever refused the previous attempt, this one says its own
+            # (`run_attempt`, `initial_admission.admitted_initial`).
+            row.last_error = None
             row.attempt_id = uuid.uuid4()
             row.lease_until = stamp + timedelta(seconds=LEASE_SECONDS)
             row.attempts += 1
@@ -309,7 +341,7 @@ async def redispatch_undelivered(
     this does. Only rows the session was never reached for are taken, and only
     this conversation's: an interrupted sending attempt stays withheld
     (module docstring). How long an instruction given up on waits before its
-    own sweep fails it is untouched (`GIVE_UP_AFTER`) — this moves the wait
+    own sweep fails it is untouched (`waited_too_long`) — this moves the wait
     that a person asked to skip, not that one.
 
     The other caller is a seat whose work just ended (``recipient_handle``
@@ -391,10 +423,13 @@ async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat, machines
                 if row.state == "claimed":
                     row.state = "pending"
                     row.retry_at = now() + timedelta(seconds=retry_after(row.attempts))
-                    row.last_error = (
-                        "Input was not dispatched; "
-                        "admission or preparation did not complete"
-                    )
+                    # A busy seat is the one refusal admission names; anything
+                    # else is not known here.
+                    if row.last_error != SEAT_BUSY:
+                        row.last_error = (
+                            "Input was not dispatched; "
+                            "admission or preparation did not complete"
+                        )
                 elif row.state == "sending":
                     row.state = "uncertain"
                     row.last_error = (

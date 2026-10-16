@@ -701,6 +701,9 @@ class RunnerIntake:
                 user_block_id=landed_user_block_id,
                 recipient_instance_id=recipient_instance_id,
                 recipient_handle=recipient_handle,
+                # A delivery's attempt is the turn it runs as
+                # (`delivery.agent.dispatch_pending`).
+                attempt_id=turn_id,
             ) as offered:
                 if offered:
                     return
