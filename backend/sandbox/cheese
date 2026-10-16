@@ -4089,11 +4089,18 @@ def _report_sync_failure(
             file=sys.stderr,
         )
         return
-    told_file.write_text(
-        json.dumps(
-            {"topic": TOPIC, "content": content, "at": datetime.now(UTC).timestamp()}
+    try:
+        told_file.write_text(
+            json.dumps(
+                {
+                    "topic": TOPIC,
+                    "content": content,
+                    "at": datetime.now(UTC).timestamp(),
+                }
+            )
         )
-    )
+    except OSError:
+        pass  # Told again next time; the sync's own error is what gets raised.
 
 
 def _tell_room(content: str) -> bool:
@@ -4384,7 +4391,9 @@ def _sync_task(task_id: str) -> list[str]:
                 # takes them. Without any, the branch now holds all the
                 # backup would have, and the next sync has nothing to retry.
                 delivered = True
-                raise not_backed_up
+                raise _NotBackedUp(
+                    f"{type(not_backed_up).__name__}: {not_backed_up}", left_out
+                ) from not_backed_up
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
@@ -4409,6 +4418,35 @@ def _sync_task(task_id: str) -> list[str]:
             )
             _report_sync_failure(admin, task_id, branch, queued, delivered=delivered)
             raise
+
+
+class _NotBackedUp(RuntimeError):
+    """An open task's commits reached its branch; its uncommitted files did
+    not reach the platform's backup.
+
+    Told apart from a failed push because whatever reads the branch (the
+    acceptance card, `push-fix`) has what it needs, while `sync --all` still
+    counts the task as failed: those files go with the machine.
+    """
+
+    def __init__(self, reason: str, left_out: list[str]):
+        super().__init__(reason)
+        self.left_out = left_out
+
+
+def _sync_delivered(task_id: str) -> None:
+    """`cheese sync --task` and `push-fix`: one task's sync, which has done
+    its job once the commits are on the branch."""
+    try:
+        left_out = _sync_task(task_id)
+    except _NotBackedUp as exc:
+        print(
+            f"[cheese] 任务 {task_id} 的提交已推上去，但没提交的改动没能备份到平台"
+            f"（{exc}），下次同步会再试。",
+            file=sys.stderr,
+        )
+        left_out = exc.left_out
+    _print_left_out(task_id, left_out)
 
 
 class _ClosedTaskNotBackedUp(RuntimeError):
@@ -5575,12 +5613,11 @@ def main() -> None:
         if a.all:
             _sync_all_tasks()
         else:
-            task = _task_id(a.task)
-            _print_left_out(task, _sync_task(task))
+            _sync_delivered(_task_id(a.task))
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         task = _task_id(a.task)
-        _print_left_out(task, _sync_task(task))
+        _sync_delivered(task)
         path = f"/topics/{task}/push-fix"
         if a.drop_dependency:
             path += "?drop_dependency=true"
