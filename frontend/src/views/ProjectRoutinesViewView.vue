@@ -1,9 +1,8 @@
 <script setup lang="ts">
-// 例行事务的画面：一条规则一行（`RoutineBoard`），建一条规则的那两页
+// 例行事务的画面：一条规则一行（`RoutineBoard`），改一条已有的那一页
 // （`RoutineCompose`）。两样都是 `components/routine/` 里的共用件 —— 房间右侧那一格
 // 画的是同一份；取数、读地址留在容器 `ProjectRoutinesView.vue` 里，这一半只收 props、
 // 只把动作抛上去。
-import type { Topic } from '@/cx_types'
 import type { Routine, RoutineInput, RoutineRecordsView, RoutineRun } from '@/lib/routine'
 import type { RoutineTemplate } from '@/lib/routineTemplates'
 
@@ -25,8 +24,8 @@ defineProps<{
   loading: boolean
   error: string
   roomNames: Record<string, string>
-  rooms: Topic[]
-  defaultRoom: string
+  /** 改一条已有的时，表单里「频道」那一行写的名字。这一页建不了规则，没有可挑的频道。 */
+  roomName: string
   formOpen: boolean
   editing: Routine | null
   saving: boolean
@@ -54,14 +53,13 @@ defineEmits<{
 
 <template>
   <AppPage :title="t('navigation.project.routines')">
-    <!-- 建一条规则的那两页占满这一页：工具条上的「新建」此刻没有别的意思，那一串也
-         收起来（这一页自己带着「取消」）。 -->
+    <!-- 改一条已有的占满这一页：工具条上那串此刻没有别的意思，那一串也收起来
+         （这一页自己带着「取消」）。 -->
     <RoutineCompose
       v-if="formOpen"
       :model-value="formOpen"
       :routine="editing"
-      :rooms="rooms"
-      :default-room="defaultRoom"
+      :room-name="roomName"
       :templates="templates"
       :saving="saving"
       :error="formError"

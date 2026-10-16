@@ -4,10 +4,12 @@
 // 存下来就在跑，没有人再点一次确认。删不删得掉是后端逐条说的（`can_delete` —— 规则
 // 主人或项目管理员），那两颗按钮照着它画，这一页不自己算权限。
 //
-// 这一页只负责几件属于「页面」的事：把项目里有哪些房间查出来（新建时要选一个）、把
-// 地址里的 `?routine=` 翻成「展开这一条」、把项目里存下来的模板接上（存在后端，见
-// `useRoutineTemplates`），以及页头上那两颗命令。规则那一串和建规则那两页是
-// `components/routine/` 里的共用件 —— 房间右侧「例行事务」那一格画的是同一份。
+// 这一页只负责几件属于「页面」的事：把项目里有哪些房间查出来（每条规则要写出它长在哪个
+// 房间）、把地址里的 `?routine=` 翻成「展开这一条」、把项目里存下来的模板接上（存在
+// 后端，见 `useRoutineTemplates`），以及页头上那颗「刷新」。规则那一串和改规则的那一页
+// 是 `components/routine/` 里的共用件 —— 房间右侧「例行事务」那一格画的是同一份。
+//
+// 这一页建不了规则：建只在房间右侧那一格。这里摆着全项目的规则，看得到、改得动。
 import type { RoutineInput } from '@/lib/routine'
 import type { Topic } from '../cx_types'
 
@@ -52,7 +54,6 @@ const {
   act,
   remove,
   startEdit,
-  startNew,
   closeForm,
   submit,
   openRecords,
@@ -61,10 +62,10 @@ const {
   setRecordsFailedOnly,
 } = useRoutineList({ projectId: props.projectId })
 
-// 新建时落在哪个房间：地址里点名了就用它（房间面板里的「新建」也是这么带过来的），
-// 否则第一个房间。
-const defaultRoom = computed(() => (typeof route.query.room === 'string' ? route.query.room : rooms.value[0]?.id ?? ''))
 const roomNames = computed(() => Object.fromEntries(rooms.value.map((r) => [r.id, r.title])))
+// 改一条已有的时，表单里「频道」那一行写的是它长在哪个房间：这一页建不了规则，这里
+// 没有可挑的频道。
+const editingRoomName = computed(() => (editing.value ? roomNames.value[editing.value.topic_id] ?? '' : ''))
 
 async function loadRooms() {
   const projectId = props.projectId
@@ -121,14 +122,6 @@ useCommands(() => [
     header: {},
     run: reload,
   },
-  {
-    id: 'routines.new',
-    title: t('routines.action.new'),
-    icon: 'mdi-plus',
-    disabled: !rooms.value.length,
-    header: { primary: true, accent: true },
-    run: startNew,
-  },
 ])
 </script>
 
@@ -143,8 +136,7 @@ useCommands(() => [
     :loading="loading"
     :error="error"
     :room-names="roomNames"
-    :rooms="rooms"
-    :default-room="defaultRoom"
+    :room-name="editingRoomName"
     :form-open="formOpen"
     :editing="editing"
     :saving="saving"

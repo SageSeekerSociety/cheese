@@ -25,7 +25,6 @@ import {
   SEARCH_HITS,
   SEARCH_HITS_LIBRARY_ONLY,
   searchSection,
-  topic,
 } from './catalogScenesWorkspaceFixtures'
 
 import ConnectViewView from '@/views/ConnectViewView.vue'
@@ -200,8 +199,7 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       loading: false,
       error: '',
       roomNames: { 'topic-weekly': '周会' },
-      rooms: [topic()],
-      defaultRoom: 'topic-weekly',
+      roomName: '周会',
       formOpen: false,
       editing: null,
       saving: false,
