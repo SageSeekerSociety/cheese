@@ -61,11 +61,22 @@ def _piece_files() -> list[Path]:
 
 
 def _module_of(path: Path) -> str:
-    """这个文件自己的模块名——相对导入要按它在包里的位置算。"""
+    """这个文件自己的模块名。"""
     parts = path.relative_to(PACKAGE).with_suffix("").parts
     if parts[-1] == "__init__":
         parts = parts[:-1]
     return ".".join([MODULE, *parts])
+
+
+def _package_of(path: Path) -> str:
+    """这个文件的 ``__package__``——相对导入按它算，不按 ``__name__``。
+
+    包的 ``__init__.py`` 上两者是同一个（``sub/__init__.py`` 就是 ``…gateway_models
+    .sub``），别的模块上它比 ``__name__`` 短一级。拿 ``__name__`` 当锚点，子包的
+    ``__init__.py`` 里每一句相对导入都会多折一级。
+    """
+    module = _module_of(path)
+    return module if path.name == FACADE else module.rpartition(".")[0]
 
 
 def _type_checking_names(tree: ast.Module) -> set[str]:
@@ -93,39 +104,40 @@ def _is_type_checking(test: ast.expr, names: set[str]) -> bool:
     return called in names
 
 
-def _package_at(module: str, level: int) -> str | None:
-    """``module`` 里第 ``level`` 级的相对导入落在哪个包上。
+def _package_at(package: str, level: int) -> str | None:
+    """``__package__`` 里第 ``level`` 级的相对导入落在哪个包上。
 
-    ``.`` 一级落到自己所在的包，``..`` 两级落到它的父包，依此类推。
+    ``.`` 一级就落在包自己身上（``__package__`` 已经是锚点），``..`` 两级落到它的
+    父包，依此类推——和 CPython 的 ``resolve_name`` 一样，从锚点往上少折一级。
     """
-    parts = module.split(".")
-    if level >= len(parts):
+    parts = package.split(".")
+    if level - 1 >= len(parts):
         return None
-    return ".".join(parts[: len(parts) - level])
+    return ".".join(parts[: len(parts) - (level - 1)])
 
 
-def _imported_module(node: ast.AST, module: str) -> str | None:
+def _imported_module(node: ast.AST, package: str) -> str | None:
     """这一句导的是哪个模块（多点一级 `a.b.c` 就落到 `a.b.c` 上）。"""
     if isinstance(node, ast.Import):
         # `import a.b.c` 导的是 `a.b.c` 这个模块本身；一句点几个名字时，任一个点中
-        # 门面就算。
-        for alias in node.names:
-            if alias.name in (MODULE, PARENT):
-                return alias.name
-        return None
+        # 门面就算——所以门面优先，别被同一句里靠前的 `app.domain.agent` 抢先。
+        names = {alias.name for alias in node.names}
+        if MODULE in names:
+            return MODULE
+        return PARENT if PARENT in names else None
     if not isinstance(node, ast.ImportFrom):
         return None
     if not node.level:
         return node.module
-    package = _package_at(module, node.level)
-    if package is None:
+    base = _package_at(package, node.level)
+    if base is None:
         return None
-    return f"{package}.{node.module}" if node.module else package
+    return f"{base}.{node.module}" if node.module else base
 
 
-def _is_the_facade(node: ast.AST, module: str) -> bool:
+def _is_the_facade(node: ast.AST, package: str) -> bool:
     """这一句导的是门面吗。先解析它落在哪个模块上，再看那个模块是不是门面。"""
-    target = _imported_module(node, module)
+    target = _imported_module(node, package)
     if target is None:
         return False
     if target == MODULE:
@@ -213,14 +225,15 @@ def _runtime_imports(source: str, where: str) -> list[ast.Import | ast.ImportFro
     ]
 
 
-def _reaching_back(
-    source: str, where: str, module: str = f"{MODULE}._piece"
-) -> list[str]:
-    """这段源码里运行时会建到门面上的那些写法。"""
+def _reaching_back(source: str, where: str, package: str = MODULE) -> list[str]:
+    """这段源码里运行时会建到门面上的那些写法。
+
+    ``package`` 是被扫那份源码的 ``__package__``，合成源码默认按包根算。
+    """
     return [
         ast.unparse(node)
         for node in _runtime_imports(source, where)
-        if _is_the_facade(node, module)
+        if _is_the_facade(node, package)
     ] + [ast.unparse(node) for node in _dynamic_imports(source, where)]
 
 
@@ -233,7 +246,7 @@ def test_no_gateway_models_piece_reaches_the_facade_at_runtime():
         (path.relative_to(PACKAGE).as_posix(), node.lineno, ast.unparse(node))
         for path in pieces
         for node in _runtime_imports(path.read_text(encoding="utf-8"), str(path))
-        if _is_the_facade(node, _module_of(path))
+        if _is_the_facade(node, _package_of(path))
     ] + [
         (path.relative_to(PACKAGE).as_posix(), node.lineno, ast.unparse(node))
         for path in pieces
@@ -245,6 +258,19 @@ def test_no_gateway_models_piece_reaches_the_facade_at_runtime():
         "门面引子模块、子模块再引门面就是环，导入谁先决定它炸不炸；"
         "要服务自己的类型就放进 `if TYPE_CHECKING:`，或者在门面里把名字转出去。"
     )
+
+
+def test_the_relative_anchor_is_the_package_not_the_module():
+    """相对导入的锚点按 ``__package__`` 算，包的 ``__init__.py`` 上它短一级不对。
+
+    拿 ``__name__`` 当锚点：``sub/__init__.py`` 会被当成 ``…gateway_models.sub``
+    再往上折，``from .. import gateway_models`` 落到 ``…agent`` 上、认不出来，而
+    ``from . import leaf`` 落到 ``…gateway_models`` 上、被当成回头引报出来。
+    """
+    assert _package_of(PACKAGE / "models.py") == MODULE
+    assert _package_of(PACKAGE / FACADE) == MODULE
+    assert _package_of(PACKAGE / "sub" / "leaf.py") == f"{MODULE}.sub"
+    assert _package_of(PACKAGE / "sub" / FACADE) == f"{MODULE}.sub"
 
 
 def test_the_guard_reads_the_shapes_it_claims_to_read():
@@ -284,8 +310,29 @@ def test_the_guard_reads_the_shapes_it_claims_to_read():
         'import_module("app.domain.agent.gateway_models")',
         "import importlib.util\n"
         'importlib.util.import_module("app.domain.agent.gateway_models")',
+        # 一句 `import` 点好几个名字，门面不一定排在第一个。
+        "import app.domain.agent, app.domain.agent.gateway_models",
     ):
         assert _reaching_back(source, "<sample>"), source
+
+    # 子包里的相对写法：锚点是那份文件自己的 `__package__`。子包的 `__init__.py`
+    # 上它和 `__name__` 是同一个，拿 `__name__` 当锚点会多折一级。
+    sub = f"{MODULE}.sub"
+    for source in (
+        # 子包要门面得再往上折一级：`..` 落到的还是 `…gateway_models` 自己。
+        "from ... import gateway_models as gm",
+        "from ...gateway_models import GatewayModelsService",
+    ):
+        assert _reaching_back(source, "<sample>", package=sub), source
+
+    for source in (
+        # 子包引自己的兄弟——`…gateway_models.sub` 上的名字，不是门面的。
+        "from . import leaf",
+        "from .leaf import thing",
+        # 落到 `…gateway_models` 上，但取的是兄弟模块，横引。
+        "from .. import cache",
+    ):
+        assert not _reaching_back(source, "<sample>", package=sub), source
 
     for source in (
         "from app.domain.agent.gateway_models.cache import _cached",

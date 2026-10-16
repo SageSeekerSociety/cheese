@@ -71,13 +71,47 @@ def _dotted(node: ast.expr) -> str | None:
     return None
 
 
-def _names_reached_in(source: str, where: str) -> dict[str, list[str]]:
+def _package_of(path: Path) -> str | None:
+    """这份文件的 ``__package__``——相对导入按它折算；不在后端包里就返回 None。
+
+    ``app/x/y.py`` 和 ``app/x/__init__.py`` 的锚点都是 ``app.x``：``__init__.py``
+    的 ``__name__`` 和 ``__package__`` 本来就是同一个。
+    """
+    try:
+        rel = path.resolve().relative_to(BACKEND)
+    except ValueError:
+        return None
+    parts = rel.with_suffix("").parts
+    return ".".join(parts[:-1]) if len(parts) > 1 else None
+
+
+def _absolute_module(node: ast.ImportFrom, package: str | None) -> str | None:
+    """一句 ``from … import`` 落在哪个模块上；相对的按 ``package`` 折算。
+
+    相对写法不折算就认不出来：``from .. import gateway_models as pkg`` 和绝对写法
+    ``from app.domain.agent import gateway_models`` 是同一句话，后面 ``pkg.X`` 取
+    的也是门面上的名字。
+    """
+    if not node.level:
+        return node.module
+    if package is None:
+        return None
+    parts = package.split(".")
+    if node.level - 1 >= len(parts):
+        return None
+    base = ".".join(parts[: len(parts) - (node.level - 1)])
+    return f"{base}.{node.module}" if node.module else base
+
+
+def _names_reached_in(
+    source: str, where: str, package: str | None = None
+) -> dict[str, list[str]]:
     """一处源码里从门面取的名字，连同取的地方。
 
     三种取法都算：`from …gateway_models import X` 直接取 `X`；`from …agent import
     gateway_models`（或 `import …gateway_models as gm`）先把模块绑成一个本地名，之后
     那个名字上的属性就是从门面取；`import app.domain.agent.gateway_models` 不带别名
-    时绑的是顶层包，后面整条属性链写全，也算。
+    时绑的是顶层包，后面整条属性链写全，也算。相对的写法按 ``package`` 折算成同一句。
     """
     found: dict[str, list[str]] = {}
     tree = ast.parse(source, where)
@@ -94,11 +128,12 @@ def _names_reached_in(source: str, where: str) -> dict[str, list[str]]:
             continue
         if not isinstance(node, ast.ImportFrom):
             continue
-        if node.module == MODULE:
+        target = _absolute_module(node, package)
+        if target == MODULE:
             for alias in node.names:
                 if alias.name != "*":
                     found.setdefault(alias.name, []).append(f"{where}:{node.lineno}")
-        elif node.module == PARENT:
+        elif target == PARENT:
             bound.update(
                 alias.asname or alias.name
                 for alias in node.names
@@ -121,10 +156,12 @@ def _names_reached_on_the_package() -> dict[str, list[str]]:
     for path in _scanned_files():
         source = path.read_text(encoding="utf-8")
         # 先按字符串过一遍：树里两千个文件，只有提到这个模块的那几个才值得解析。
-        if "gateway_models" not in source:
+        # 包自己是个例外：里面写 `from . import GatewayModelsService` 一个「gateway_
+        # models」都不带，一样是取门面上的名字。
+        if "gateway_models" not in source and PACKAGE not in path.parents:
             continue
         where = str(path.relative_to(REPO))
-        for name, sites in _names_reached_in(source, where).items():
+        for name, sites in _names_reached_in(source, where, _package_of(path)).items():
             found.setdefault(name, []).extend(sites)
     return found
 
@@ -220,6 +257,18 @@ def test_the_scan_starts_at_the_repository_root():
     assert any(name.startswith("scripts/") for name in scanned), scanned
 
 
+def test_the_relative_anchor_is_the_package_not_the_module():
+    """相对导入按 ``__package__`` 折算，包的 ``__init__.py`` 上它不比 ``__name__`` 长。
+
+    拿 ``__name__`` 当锚点：``sub/__init__.py`` 会被多折一级，``from .. import
+    gateway_models`` 落到 ``…agent`` 之外、后面 ``gateway_models.X`` 就少抓一个名字。
+    """
+    assert _package_of(PACKAGE / "models.py") == MODULE
+    assert _package_of(PACKAGE / FACADE) == MODULE
+    assert _package_of(PACKAGE / "sub" / "leaf.py") == f"{MODULE}.sub"
+    assert _package_of(PACKAGE / "sub" / FACADE) == f"{MODULE}.sub"
+
+
 def test_the_scans_read_the_shapes_they_claim_to_read():
     """两条扫描各自的判据也过一遍。
 
@@ -237,6 +286,34 @@ def test_the_scans_read_the_shapes_they_claim_to_read():
         "app.domain.agent.gateway_models.reset_cache()",
     ):
         assert "reset_cache" in _names_reached_in(source, "<sample>"), source
+
+    # 相对写法折算出来是同一句话。子包的 `__init__.py` 锚点和别的模块一样是
+    # `…gateway_models.sub`，不能按 `__name__` 多折一级。
+    sub = f"{MODULE}.sub"
+    for source, package in (
+        ("from .. import gateway_models\ngateway_models.reset_cache()", MODULE),
+        ("from . import reset_cache", MODULE),
+        ("from . import reset_cache as rc\nrc()", MODULE),
+        # 子包回门面：`...gateway_models` 折算出来正是门面，直接取名字。
+        ("from ...gateway_models import reset_cache", sub),
+        # 三级相对向上落到 `app.domain.agent`（门面的上一级），从那里取
+        # `gateway_models` 再取属性，和绝对写法同义。
+        ("from ... import gateway_models as gm\ngm.reset_cache()", sub),
+    ):
+        assert "reset_cache" in _names_reached_in(source, "<sample>", package), source
+
+    for source, package in (
+        # 相对写法点到兄弟上的，和绝对写法一样不算。
+        ("from . import cache\ncache.reset_cache()", MODULE),
+        ("from .leaf import thing\nthing.reset_cache()", sub),
+        ("from .. import cache\ncache.reset_cache()", sub),
+        # 折过头的那种：三级相对再加 `agent` 落到 `app.domain.agent.agent`，不是门面，
+        # 认成门面就是多认（别人从那儿取名字反而不会被发现）。
+        ("from ...agent import gateway_models as gm\ngm.reset_cache()", sub),
+    ):
+        assert "reset_cache" not in _names_reached_in(source, "<sample>", package), (
+            source
+        )
 
     for source in (
         # 兄弟模块和它的属性不是门面上的名字。
@@ -289,13 +366,16 @@ def test_every_name_a_piece_reaches_on_the_service_is_on_the_service():
 
 
 def test_no_piece_of_the_split_grows_past_the_ceiling():
+    # 门面也算一片。`_pieces()` 把它排除在外是因为别处的扫描不扫它，不是因为它不该
+    # 受这个上限管——它正是包里最长的那一份。
     sized = {
         path.relative_to(PACKAGE).as_posix(): len(
             path.read_text(encoding="utf-8").splitlines()
         )
-        for path in _pieces()
+        for path in PACKAGE.rglob("*.py")
+        if "__pycache__" not in path.parts
     }
-    assert {"answers.py", "models.py", "sources.py"} <= set(sized)
+    assert {"__init__.py", "answers.py", "models.py", "sources.py"} <= set(sized)
 
     oversized = {name: lines for name, lines in sized.items() if lines > SPLIT_CEILING}
 
