@@ -63,6 +63,7 @@ function mount() {
         topic: TOPIC,
         mentionPool: [],
         topicList: [],
+        refs: { mentionNames: {}, topicTitles: {} },
         agentSeat: null,
         agentName: '芝士',
         alwaysSummon: false,

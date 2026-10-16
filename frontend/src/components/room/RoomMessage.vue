@@ -25,7 +25,6 @@ import {
 } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
 import { toldByMessage } from '../../lib/refChip'
-import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import AttachmentVideo from '../AttachmentVideo.vue'
@@ -85,14 +84,13 @@ const props = defineProps<{
    */
   outgoing?: { error?: string; failed: boolean } | null
   /**
-   * 正在改这条自己发过的消息：正文换成输入框，里面先放着 `editText`。
+   * 正在改这条自己发过的消息：正文换成输入框，里面先放着原文。
    * `saving` 是保存请求还在路上。
    *
    * 这一行同时挂上 `im-row--editing`（见 room-row.css）：编辑时要抬掉这一行的
    * containment，否则 @ 候选菜单弹不出这一行，人只看得见贴着框沿的一条。
    */
   editing?: boolean
-  editText?: string
   saving?: boolean
   /** 这一行在频道主线上、我能在那里说话：文件的 ⋯ 里能置顶到频道。 */
   pinnable?: boolean
@@ -185,10 +183,6 @@ const {
 // edited, so each one told its person (drawn as the @chip), unless a
 // members-only channel could not reach them.
 const told = computed(() => toldByMessage(props.refs))
-
-function renderPlain(text: string): string {
-  return renderPlainWith(text, told.value)
-}
 </script>
 
 <template>
@@ -318,8 +312,9 @@ function renderPlain(text: string): string {
       </div>
       <MessageEditor
         v-else-if="editing"
-        :text="editText ?? block.content"
+        :text="block.content"
         :saving="!!saving"
+        :refs="refs"
         :mention-pool="mentionPool"
         :topic-list="topicList"
         @save="emit('save-edit', $event)"
@@ -357,23 +352,16 @@ function renderPlain(text: string): string {
           :class="{ 'fold-clamped': clamped }"
           :style="clamped ? { maxHeight: `${foldPx}px` } : undefined"
         >
-          <!-- 还没落库的那条（正在写、正在送）不带「复制」：它的代码块还在长。 -->
+          <!-- 人说的话和芝士的一样按 Markdown 画：输入框里写成代码的，发出去也是代码。
+               单个回车照样是换行（as="chat"）。还没落库的那条（正在写、正在送）不带
+               「复制」：它的代码块还在长。 -->
           <MarkdownView
-            v-if="isAgent"
             class="im-text md-content"
             :source="block.content"
             as="chat"
             :names="told"
             :copy-code="!outgoing"
           />
-          <!-- 现场尊重原文: human text renders verbatim — newlines and
-             spacing preserved (pre-wrap), no markdown reflow. 「已编辑」接在最后
-             一个字后面，不另起一行。 -->
-          <div v-else class="im-text im-text--verbatim">
-            <span v-html="renderPlain(block.content)" /><span v-if="edited" class="im-edited">{{
-              t('work.room.message.edited')
-            }}</span>
-          </div>
           <!-- Fade at the cut edge, so a folded reply reads as "there is more" rather than "it ends here". -->
           <div v-if="clamped" class="fold-fade" aria-hidden="true" />
         </div>
@@ -387,7 +375,7 @@ function renderPlain(text: string): string {
           <v-icon size="16">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
           {{ expanded ? t('work.room.message.showLess') : t('work.room.message.showMore') }}
         </button>
-        <div v-if="isAgent && edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
+        <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
       <MessageQuote v-if="block.meta?.quoted_context" :quote="block.meta.quoted_context" />
       <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
@@ -495,18 +483,11 @@ function renderPlain(text: string): string {
   background: var(--fill);
   border-color: var(--faint);
 }
-/* 现场尊重原文: exactly what the human typed, line breaks included. */
-.im-text--verbatim {
-  white-space: pre-wrap;
-}
 /* 「已编辑」：元信息那一档的字，跟在正文后面。 */
 .im-edited {
   font-size: 12px;
   line-height: var(--lh-12);
   color: var(--faint);
-}
-.im-text--verbatim .im-edited {
-  margin-left: 6px;
 }
 /* 芝士摆出来的一份东西。正文平铺之后，这一栏里描边的块只剩它——所以那道边就是
    「这不是一句话，是一个可以打开的东西」。 */

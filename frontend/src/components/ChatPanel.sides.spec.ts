@@ -22,6 +22,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 const ME = 'me'
@@ -120,6 +121,8 @@ function sides(container: Element): boolean[] {
   // 报 TS2488（仓库里其它 spec 也一律用 Array.from）。
   return Array.from(container.querySelectorAll('.im-row')).map((r) => r.classList.contains('im-row--self'))
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('哪一条是我说的', () => {
   it('我说的认得出来，别人和芝士都不是', async () => {

@@ -51,6 +51,9 @@ vi.mock('@/api/messages', () => ({
 
 import ChatPanel from './ChatPanel.vue'
 
+import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
+
 const Panel = ChatPanel as unknown as Component
 
 function channel(id: string, extra: Partial<Topic> = {}): Topic {
@@ -99,9 +102,9 @@ async function summonFrom(props: Record<string, unknown>) {
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
   await flush()
-  const box = view.container.querySelector<HTMLTextAreaElement>('.composer textarea')!
+  const box = view.container.querySelector<HTMLElement>('.composer .ProseMirror')!
   box.focus()
-  await fireEvent.update(box, '@芝士 看看这个')
+  await fillComposer(box, '@芝士 看看这个')
   await fireEvent.keyDown(box, { key: 'Enter' })
   await flush()
   return view
@@ -110,6 +113,8 @@ async function summonFrom(props: Record<string, unknown>) {
 function saidWorking(view: Awaited<ReturnType<typeof summonFrom>>): boolean {
   return (view.emitted('working') ?? []).some((args) => (args as unknown[])[0] === true)
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('叫芝士之后，哪里说它在干活', () => {
   it('频道主线上叫它，主线不说它在干活 —— 它在支线里回答', async () => {
