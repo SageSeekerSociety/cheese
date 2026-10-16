@@ -10,6 +10,7 @@ name: Warm dependency caches
 # Keys, and the suites that restore them:
 #   backend uv (setup-uv inputs)       test.yml, harness-contract.yml, remote-execution.yml
 #   npm-harness-pins-*                 test.yml, harness-contract.yml
+#   harness-bins-v1-*                  test.yml (its arm64 shards)
 #   pre-commit uv (setup-uv inputs)    repo-guards.yml
 #   npm-remote-execution-*             mcp-contract.yml, mcp-equivalence.yml
 #   go-*                               cli.yml
@@ -91,6 +92,98 @@ jobs:
           )"
           read -r -a pinned_packages <<< "$packages"
           npm install --prefix "$RUNNER_TEMP/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
+
+  # The unpacked tools test.yml's shards put on PATH, under the key they
+  # restore. This is the one job here that is not on ubuntu-latest: the shards
+  # run on arm64 (test.yml's `runner` input) and what gets cached is native —
+  # the npm packages carry platform binaries, pi's tarball is built per
+  # platform — so a directory unpacked on x64 is one the shards can never use.
+  #
+  # `npm-harness-pins-*` is here for the same reason: the key the `backend` job
+  # above saves has x64 in it, so the shards' restore of that key never
+  # matched, and every one of them pulled both packages from the registry on
+  # every run.
+  harness-bins:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          save-cache: true
+
+      - name: Install Python and dependencies
+        run: |
+          uv python install 3.13
+          uv sync --frozen --all-extras
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: harness-bins
+        with:
+          # An absolute path under $HOME, so a shard that restores it lands on
+          # the same one this job unpacked into. $RUNNER_TEMP cannot be used
+          # here: it names this run's own directory, not a path a later run can
+          # ask for.
+          path: ~/.cache/cheese-harness-bins
+          key: harness-bins-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+
+      # The unpacking test.yml does on a miss, so the cache holds exactly what
+      # a shard would have produced on its own. It runs only when this key had
+      # nothing to restore, which is also the condition actions/cache saves
+      # under: leaving an existing key alone is what stops this job from
+      # overwriting a cache the shards are already reading.
+      - name: Unpack the pinned harness binaries
+        if: steps.harness-bins.outputs.cache-hit != 'true'
+        run: |
+          bins="$HOME/.cache/cheese-harness-bins"
+          mkdir -p "$bins"
+          packages="$(uv run python - <<'PY'
+          from app.domain.agent.capability.matrix import written
+          from app.domain.agent.harness import CLAUDE_CODE, CODEX
+          pins = {name: declaration.pinned_version for name, declaration in written().items()}
+          print(f"@anthropic-ai/claude-code@{pins[CLAUDE_CODE]} @openai/codex@{pins[CODEX]}")
+          PY
+          )"
+          read -r -a pinned_packages <<< "$packages"
+          npm install --prefix "$bins/harness-tools" --no-audit --no-fund "${pinned_packages[@]}"
+          case "$(uname -m)" in
+            x86_64) pi_platform=linux-x64 ;;
+            aarch64 | arm64) pi_platform=linux-arm64 ;;
+          esac
+          archive="$(uv run python - "$RUNNER_TEMP/pi-dist" "$pi_platform" <<'PY'
+          import asyncio, sys
+          from pathlib import Path
+          from app.domain.agent.harness import PI
+          from app.domain.agent.capability.matrix import written
+          from app.domain.machine import pi_dist
+          version = written()[PI].pinned_version
+          print(asyncio.run(pi_dist.ensure_cached(Path(sys.argv[1]), version, sys.argv[2])))
+          PY
+          )"
+          mkdir -p "$bins/pi"
+          tar -xzf "$archive" -C "$bins/pi"
 
   guards:
     runs-on: ubuntu-latest
