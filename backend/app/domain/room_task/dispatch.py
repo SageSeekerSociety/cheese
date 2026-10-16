@@ -39,7 +39,7 @@ from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.owner import resolve_owner
 from app.domain.topic.ports import ProjectTeam, RoomThread, SeatProject
-from app.domain.topic.repositories import TopicRepository
+from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 
@@ -61,7 +61,7 @@ async def upgrade_block_to_place(
     block = await BlockRepository(session).get(block_id)
     if block is None:
         raise NotFoundError("Block not found")
-    parent = await TopicRepository(session).get(
+    parent = await TopicService(session).get(
         await room_of(session, block.conversation_id)
     )
     if parent is None:
