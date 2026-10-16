@@ -339,6 +339,13 @@ def test_a_message_sent_while_the_task_is_written_up_is_not_dropped(
     assert r.status_code == 200, r.text
     assert _task(client, task_id)["presentation"]["phrase"] == "accepted"
 
+    # The write-up turn holds the seat while the owner asks; the runtime is not
+    # here, so an interval of the teammate's that says nothing stands in for it.
+    # The seat is taken — the platform admits no turn into it, which is what
+    # makes the message wait — and a turn quiet past the closing rules' own
+    # limit is no work of theirs, so only the message can hold the task open.
+    _turn_starts(client, task_id, at=datetime.now(UTC) - timedelta(hours=36))
+
     _owner_asks(client, _task(client, task_id), taken=taken)
 
     summary_turn_ends(client, task_id)
