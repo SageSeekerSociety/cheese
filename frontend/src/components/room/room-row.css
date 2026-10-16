@@ -152,7 +152,9 @@
 .im-time {
   font-family: var(--font-mono);
   font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
-  color: var(--faint);
+  /* 时间戳是读者要看的东西，走 --muted：--faint 只作装饰，浅色下到不了 4.5:1
+     （docs/design-system.md §2.6）。 */
+  color: var(--muted);
 }
 /* ---- 正文平铺，不套气泡 ----
    气泡是给短句用的。这一栏里最长的一半内容是芝士的产出 —— markdown、代码块、
