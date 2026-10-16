@@ -32,7 +32,13 @@ APP = Path(app.__file__).parent
 # business backend calling a hub that may be a RemoteDeviceHub.
 OWNER_ONLY = {
     APP / "device_connection_app.py",
-    APP / "api" / "routes" / "connector.py",
+    # The connector routes became a package (2026-10-16); every file of it is
+    # mounted in the owner process alone, so the whole directory is listed.
+    APP / "api" / "routes" / "connector" / "__init__.py",
+    APP / "api" / "routes" / "connector" / "connections.py",
+    APP / "api" / "routes" / "connector" / "devices.py",
+    APP / "api" / "routes" / "connector" / "schemas.py",
+    APP / "api" / "routes" / "connector" / "screen.py",
     APP / "domain" / "agent" / "device_hub" / "__init__.py",
     APP / "domain" / "agent" / "device_hub" / "calls.py",
     APP / "domain" / "agent" / "device_hub" / "inbound.py",
