@@ -122,8 +122,8 @@ okcheese.com, www.okcheese.com, hk.okcheese.com {
 		# No response_header_timeout, reads included. A 10 s one with read retries
 		# (2026-10-09) cut GETs that are legitimately slow (Office-to-PDF preview,
 		# project export), ran them twice, and its failures marked healthy tunnels
-		# down for writes too: 1043 failed reads in six days, against about 29 a
-		# day from the tunnel stalls it was meant to absorb.
+		# down for writes too: 1043 reads ended in an error in six days, against 29
+		# stall 502s in the 24 h it was added to fix (2026-10-09).
 		# Neither line is reliably the faster one: tunnel A (dorm Unicom line)
 		# answered in 47 ms one minute and 0.3-1.5 s the next, while tunnel B
 		# (campus line) held at 90-170 ms (2026-10-04). least_conn counts
@@ -169,8 +169,8 @@ docs.okcheese.com {
 		# No response_header_timeout, reads included. A 10 s one with read retries
 		# (2026-10-09) cut GETs that are legitimately slow (Office-to-PDF preview,
 		# project export), ran them twice, and its failures marked healthy tunnels
-		# down for writes too: 1043 failed reads in six days, against about 29 a
-		# day from the tunnel stalls it was meant to absorb.
+		# down for writes too: 1043 reads ended in an error in six days, against 29
+		# stall 502s in the 24 h it was added to fix (2026-10-09).
 		# Neither line is reliably the faster one: tunnel A (dorm Unicom line)
 		# answered in 47 ms one minute and 0.3-1.5 s the next, while tunnel B
 		# (campus line) held at 90-170 ms (2026-10-04). least_conn counts

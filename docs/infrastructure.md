@@ -874,8 +874,8 @@ proxy deliberately sets no `response_header_timeout` to cut that short. One was
 tried on 2026-10-09 (reads given up after 10 s and retried on the other tunnel)
 and removed: it also cut reads that are slow on a healthy tunnel, such as an
 Office-to-PDF preview or a project export, ran them twice, and each timeout
-marked a healthy tunnel down for writes too. It logged 1043 failed reads in six
-days, against about 29 stall 502s a day before it.
+marked a healthy tunnel down for writes too. 1043 reads ended in an error in six
+days, against the 29 stall 502s of the one day (2026-10-09) it was added to fix.
 
 Each tunnel also still forwards `127.0.0.1:18443` (tunnel B: `18444`) to
 api-front's TLS listener `127.0.0.1:18443`, which terminates TLS on the dev
