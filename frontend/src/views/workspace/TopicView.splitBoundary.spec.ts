@@ -6,11 +6,12 @@
 // `.spec.ts` 锁着——它们一行没改，拆分后照样通过；谁把哪一块的接线掏空，它们就红
 // （把 `useTopicAddress` 那一行换成注释，`TopicView.deepLink.spec.ts` 立刻红 4 条）。
 //
-// 这一份锁的是它们锁不到的三件事：这一页和拆出去的每一块都在预算内；那些职责真的搬进
-// 了模块、主文件里没有留一份；对外那个路由入口没变。扫源码而不是挂载：它断言的是「哪
+// 这一份锁的是它们锁不到的三件事：这一页和 `topicView/` 下的每一块都在预算内（预算不是
+// 只套在这份名单上，名单对不上目录也红）；那些职责真的搬进了模块、主文件里没有留一份；
+// 对外那个路由入口没变——四个 prop 一个不多一个不少。扫源码而不是挂载：它断言的是「哪
 // 一段代码在哪个文件里」，那是文件本身说的事，挂载这一页要拖进来 Vuetify 和十几次接口
 // 调用，也答不出多一行少一行。
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -36,6 +37,11 @@ const BUDGET = 650
 
 const PAGE = 'TopicView.vue'
 
+/** `topicView/` 下现在有哪些模块文件，按文件名排。行数预算按这个数，不按名单数。 */
+const onDisk = readdirSync(join(HERE, 'topicView'))
+  .filter((name) => name.endsWith('.ts'))
+  .sort()
+
 /** 拆出去的那几块，和它们各自管的事。 */
 const MODULES: readonly [string, string][] = [
   ['topicView/shared.ts', '共用的类型：这个地址指着谁，两块组件往回够的那几处'],
@@ -58,6 +64,13 @@ const FACTORIES: readonly [string, string][] = [
 ]
 
 /** 从主文件搬进哪一块的那几件事：拆之前每一处都是主文件自己 new 出来的。 */
+/** 主文件只要类型的那几处。`shared.ts` 里全是类型，上面那条查的是取值 import，够不到它：
+ *  这一页把两侧组件的把手类型从那儿引进来，删掉这一行就等于少了一块没人看着。 */
+const TYPE_IMPORTS: readonly [string, string][] = [
+  ['topicView/shared.ts', 'ChatColumnHandle'],
+  ['topicView/shared.ts', 'WorkPanelHandle'],
+]
+
 const MOVED: readonly [string, string][] = [
   ['topicView/address.ts', 'useRoomTabHistory'],
   ['topicView/address.ts', 'useTopBarBack'],
@@ -97,6 +110,15 @@ const wired = (text: string, module: string, fn: string) =>
  *  里面还嵌着尖括号，硬配会把它整条漏掉。 */
 const assigned = (text: string, fn: string) => new RegExp(`=\\s*${esc(fn)}\\s*(?:<[^;()]*>)?\\s*\\(`).test(text)
 
+/** 页面 `import type { … } from './topicView/<module>'` 里有没有这个名字。 */
+const wiredType = (text: string, module: string, name: string) => {
+  const re = new RegExp(
+    `^import\\s+type\\s+((?:(?!\\bfrom\\b)[^;])*?)\\sfrom\\s+'\\./topicView/${escStem(module)}'`,
+    'gm'
+  )
+  return [...text.matchAll(re)].some((m) => new RegExp(`(^|[\\s{,])${esc(name)}([\\s,}]|$)`).test(m[1]!))
+}
+
 /** 这一块自己交出来的就是那个工厂：`export function useXxx`。 */
 const exportsFactory = (file: string, fn: string) =>
   new RegExp(`\\bexport\\s+function\\s+${esc(fn)}\\b`).test(code(raw(file)))
@@ -104,9 +126,15 @@ const exportsFactory = (file: string, fn: string) =>
 const page = code(raw(PAGE))
 
 describe('话题视图的拆分边界', () => {
-  it('主文件和拆出去的每一块都在 650 行以内', () => {
-    const sizes = [PAGE, ...MODULES.map(([file]) => file)].map((file) => [file, lines(raw(file))] as const)
+  it('主文件和 topicView 下的每一块都在 650 行以内', () => {
+    // 按目录数，不按上面那份名单数：单是名单的话，新搬出去的一块就没预算管着了。
+    const files = [PAGE, ...onDisk.map((name) => `topicView/${name}`)]
+    const sizes = files.map((file) => [file, lines(raw(file))] as const)
     expect(sizes.filter(([, n]) => n > BUDGET)).toEqual([])
+  })
+
+  it('名单就是目录：搬出去的那几块一个不少', () => {
+    expect(MODULES.map(([file]) => file).sort()).toEqual(onDisk.map((name) => `topicView/${name}`).sort())
   })
 
   it('主文件从同目录那几块取值，并且真的调了它们', () => {
@@ -116,6 +144,15 @@ describe('话题视图的拆分边界', () => {
       expect([`${file} 交出了 ${fn}`, exportsFactory(file, fn)]).toEqual([`${file} 交出了 ${fn}`, true])
       expect([fn, wired(page, file, fn)]).toEqual([fn, true])
       expect([`${fn} 的返回值被接住`, assigned(page, fn)]).toEqual([`${fn} 的返回值被接住`, true])
+    }
+  })
+
+  it('只要类型的那几处也在：`shared.ts` 被页面按类型引到了', () => {
+    for (const [file, name] of TYPE_IMPORTS) {
+      expect([`页面从 ${file} 引了类型 ${name}`, wiredType(page, file, name)]).toEqual([
+        `页面从 ${file} 引了类型 ${name}`,
+        true,
+      ])
     }
   })
 
@@ -137,6 +174,10 @@ describe('话题视图的拆分边界', () => {
       ['threadId', /\bthreadId\s*\?:\s*string\b/],
     ]
     expect(contract.filter(([, re]) => !re.test(props)).map(([name]) => name)).toEqual([])
+    // 一个不多：多一个 prop，路由那边没有第五个键给它，收到的永远是 undefined。
+    // 上面那张表只管「这四个还在不在」，多出来的它看不见。
+    const declared = [...props.matchAll(/(?:^|[\s;{])([A-Za-z_$][\w$]*)\s*\??\s*:/g)].map((m) => m[1]!)
+    expect(declared).toEqual(['projectId', 'topicId', 'taskId', 'threadId'])
     expect(page).toMatch(/defineOptions\(\{\s*name:\s*'TopicView'\s*\}\)/)
     expect(page).toContain('<template>')
     // 支线那一半仍然是这里异步取的：它是这一页模板里画的，不是搬走的那几块之一。
