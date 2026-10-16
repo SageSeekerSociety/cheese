@@ -215,8 +215,7 @@ def render(report: dict) -> str:
     for row in report["tests"]:
         mark = "  [疑似合并冲突]" if row["flagged"] else ""
         lines.append(
-            f"  {row['runs']:>6} {row['share'] * 100:>6.1f}%  "
-            f"{row['test']}{mark}"
+            f"  {row['runs']:>6} {row['share'] * 100:>6.1f}%  {row['test']}{mark}"
         )
         lines.append(f"          ↳ {_clip(row['signature'], 70)}")
     return "\n".join(lines)
@@ -258,7 +257,9 @@ def _unique(payloads: list[dict]) -> list[dict]:
 def fetch_jobs(repo: str, run_id: int) -> list[dict]:
     jobs: list[dict] = []
     for page in range(1, 101):
-        data = _gh_json(f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100&page={page}")
+        data = _gh_json(
+            f"repos/{repo}/actions/runs/{run_id}/jobs?per_page=100&page={page}"
+        )
         items = data["jobs"]
         jobs.extend(items)
         if len(items) < 100:
@@ -312,7 +313,9 @@ def load_offline(root: Path, limit: int) -> list[Run]:
         payloads.extend(json.loads(path.read_text())["workflow_runs"])
 
     ordered = sorted(
-        _unique(payloads), key=lambda r: (r.get("created_at") or "", r["id"]), reverse=True
+        _unique(payloads),
+        key=lambda r: (r.get("created_at") or "", r["id"]),
+        reverse=True,
     )
 
     runs: list[Run] = []
@@ -397,8 +400,60 @@ def _self_test_offline() -> None:
             assert "merge_group runs" in said.getvalue(), (missing, said.getvalue())
 
 
+def _self_test_gh_bytes() -> None:
+    """`gh` 那条路也真跑一遍：换掉 subprocess，看 `_gh` 怎么读回 stdout。
+
+    gh 是按字节吐作业日志的，一个坏字节就落在这一行上。按文本模式抓，Python
+    当场抛 UnicodeDecodeError，整张榜跟着读不出来。这里让替身照真实的样子演
+    两种模式：文本模式抛，字节模式把带坏字节的输出交回来，等 `_gh` 自己替换着
+    解。非零退出那条路也走一遍：报错里要带着 gh 说的话，而不是一声不响。
+    """
+    real_run = subprocess.run
+    seen: list[list[str]] = []
+
+    class Proc:
+        def __init__(self, out: bytes, err: bytes, code: int) -> None:
+            self.stdout, self.stderr, self.returncode = out, err, code
+
+    def text_mode(kwargs: dict) -> bool:
+        return bool(kwargs.get("text") or kwargs.get("encoding"))
+
+    def fake_run(args, **kwargs):
+        seen.append(args)
+        if text_mode(kwargs):
+            raise UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start byte")
+        return Proc(b"assert 'closed' == 'open' \xff\xfe\n", b"", 0)
+
+    subprocess.run = fake_run
+    try:
+        out = _gh(["api", "x"])
+    finally:
+        subprocess.run = real_run
+
+    assert seen == [["gh", "api", "x"]], seen
+    assert out.startswith("assert 'closed' == 'open' "), repr(out)
+    assert "�" in out and "\xff" not in out, repr(out)
+
+    def failing(args, **kwargs):
+        if text_mode(kwargs):
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        return Proc(b"", b"HTTP 404 \xff\n", 1)
+
+    subprocess.run = failing
+    try:
+        try:
+            _gh(["api", "y"])
+        except RuntimeError as exc:
+            said = str(exc)
+        else:
+            raise AssertionError("a gh that exits non-zero must not look like success")
+    finally:
+        subprocess.run = real_run
+    assert "failed (1)" in said and "�" in said, said
+
+
 def self_test() -> int:
-    """离线核对整条链路：抽取 → 聚合 → 渲染，外加两个 loader 走一遍读盘。
+    """离线核对整条链路：抽取 → 聚合 → 渲染，外加取数和两个 loader 各走一遍。
 
     假样本刻意造出两类红：一个签名跨 5 条用例（组合出来的真故障，要标出来），
     一条用例在两个运行里各红一次（偶发，不标）。抽取那步再混进 `[gw2]` 前缀，
@@ -432,10 +487,14 @@ def self_test() -> int:
 
     top_sig = report["signatures"][0]
     assert top_sig["signature"].startswith("TypeError: boom"), top_sig
-    assert top_sig["hits"] == 5 and top_sig["tests"] == 5 and top_sig["runs"] == 1, top_sig
+    assert top_sig["hits"] == 5 and top_sig["tests"] == 5 and top_sig["runs"] == 1, (
+        top_sig
+    )
     assert top_sig["flagged"], "a signature across 5 tests must be flagged"
 
-    flaky_sig = next(r for r in report["signatures"] if "AssertionError" in r["signature"])
+    flaky_sig = next(
+        r for r in report["signatures"] if "AssertionError" in r["signature"]
+    )
     assert flaky_sig["tests"] == 1 and not flaky_sig["flagged"], flaky_sig
 
     top_test = report["tests"][0]
@@ -445,7 +504,9 @@ def self_test() -> int:
     assert abs(top_test["share"] - 0.5) < 1e-9, top_test
     assert not top_test["flagged"], "a lone flake must not be flagged"
 
-    cluster_test = next(r for r in report["tests"] if r["test"] == "tests/a.py::test_one")
+    cluster_test = next(
+        r for r in report["tests"] if r["test"] == "tests/a.py::test_one"
+    )
     assert cluster_test["runs"] == 1 and cluster_test["flagged"], cluster_test
 
     # 渲染也要真跑一遍：断言标出来的行确实带着标记，而不是只信聚合的结果。
@@ -453,12 +514,13 @@ def self_test() -> int:
     assert "[疑似合并冲突]" in text, text
     assert "tests/b.py::test_flaky" in text, text
 
+    _self_test_gh_bytes()
     _self_test_offline()
 
     print(
         "self-test ok: "
         f"{report['runs_total']} runs, {report['runs_failed']} failed, "
-        f"flagged={report['flagged_signatures']}; offline loader ok"
+        f"flagged={report['flagged_signatures']}; gh decode ok; offline loader ok"
     )
     return 0
 
@@ -482,7 +544,9 @@ def main(argv: list[str]) -> int:
         default=DEFAULT_RUNS,
         help="how many recent merge_group runs (default 300)",
     )
-    parser.add_argument("--top", type=int, default=DEFAULT_TOP, help="rows per board (default 20)")
+    parser.add_argument(
+        "--top", type=int, default=DEFAULT_TOP, help="rows per board (default 20)"
+    )
     parser.add_argument(
         "--json-dir", type=Path, help="offline sample directory; see module docstring"
     )
@@ -495,7 +559,9 @@ def main(argv: list[str]) -> int:
             "[疑似合并冲突] (default 5: one flake dirties one case)"
         ),
     )
-    parser.add_argument("--self-test", action="store_true", help="run the offline self-test")
+    parser.add_argument(
+        "--self-test", action="store_true", help="run the offline self-test"
+    )
     args = parser.parse_args(argv)
 
     if args.self_test:

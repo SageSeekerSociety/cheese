@@ -303,6 +303,10 @@ def _owner_asks(client, task: dict, *, taken: bool) -> None:
     its choosing; with no runtime here that is a race between the write-up
     ending and the message's turn ending, and the task closes when the second
     wins. Written here it is going, and it stays going for the whole test.
+
+    Neither leaves `consumed_turn` behind: a turn writes that stamp when it
+    stops, so one still going leaves the message unread, and only the open
+    turn bearing the message's own id says that it is taken.
     """
     topic = uuid.UUID(str(task["id"]))
     asked = uuid.uuid4()
@@ -320,7 +324,7 @@ def _owner_asks(client, task: dict, *, taken: bool) -> None:
                     kind=BlockKind.message,
                     content="顺便把首页也测一下",
                     meta={
-                        "consumed_turn": str(asked) if taken else None,
+                        "consumed_turn": None,
                         "agent_recipient": {"handle": TEAMMATE, "mentioned": True},
                     },
                 )
