@@ -38,7 +38,7 @@ from app.api.routes.users._common import (
     _own_email,
     _send_email_code,
     _signup_consent,
-    _trusted_device,
+    _trusted_device_id,
     logger,
 )
 from app.api.users_deps import (
@@ -296,10 +296,10 @@ async def _oauth_login_redirect(
     as a password login would: the provider stands in for the password only,
     and a trusted browser skips the second step here as it does there.
     """
-    trust = None
+    trust_id = None
     if await TOTPService(session).is_2fa_enabled(user_id):
-        trust = await _trusted_device(request, session, user_id)
-        if trust is None:
+        trust_id = await _trusted_device_id(request, session, user_id)
+        if trust_id is None:
             return RedirectResponse(
                 _oauth_frontend_url(
                     settings.frontend_2fa_verify_path,
@@ -328,7 +328,7 @@ async def _oauth_login_redirect(
         user_id=user_id,
         handle=user_obj.username,
         login_method=f"oauth:{provider_id}",
-        trust_device_id=trust.id if trust else None,
+        trust_device_id=trust_id,
     )
     return redirect
 

@@ -11,7 +11,6 @@ from fastapi import (
     Path,
     Request,
 )
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import (
@@ -54,7 +53,7 @@ from app.api.routes.users._common import (
     _send_email_code,
 )
 from app.core.client_address import resolved_client_address
-from app.domain.passkey.models import PasskeyCredential
+from app.domain.passkey.services import PasskeyService
 from app.domain.user.login_security import TOTPService
 from app.domain.user.verification_service import (
     EmailCodePurpose,
@@ -203,17 +202,13 @@ async def get_my_auth_methods(
     user = await auth_service.get_user(auth_user.user_id)
     if user is None:
         raise NotFoundError("User not found")
-    passkeys = await session.scalar(
-        select(func.count())
-        .select_from(PasskeyCredential)
-        .where(PasskeyCredential.user_id == user.id)
-    )
+    passkey = await PasskeyService.for_session(session).has_passkey(user.id)
     two_factor = await TOTPService(session).is_2fa_enabled(user.id)
     return ok(
         {
             # An account created through a third-party sign-in may have none.
             "password": bool(user.hashed_password),
-            "passkey": bool(passkeys),
+            "passkey": passkey,
             "twoFactor": two_factor,
             "emailCode": _email_code_confirms(user.email, two_factor=two_factor),
         }
