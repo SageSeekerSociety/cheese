@@ -20,7 +20,7 @@
 
 - `migration_sources.py`：旧的一边长什么样——`Source`、`OldEntry`、
   `overview_entries`、`sources_digest`。
-- `migration_plan.py`：一条旧记忆的去处合不合法、新树写成什么样、报告怎么写——
+- `migration_plan/`：一条旧记忆的去处合不合法、新树写成什么样、报告怎么写——
   `Destination`、`Decision`、`MigrationPlan`、`build_plan`、`render_report` 等。
 - `migration_prompt.py`：问模型的那段话——`MIGRATION_SYSTEM`、`migration_prompt`。
 
