@@ -1551,30 +1551,92 @@ def shared(value):
 
 SHARED_CALLER = "from app.foo import shared\n"
 
+#: A name that also happens to be a module beside the file it leaves. The package
+#: holds a module named `helper`, so a view that copies every neighbour in under
+#: its bare name lets `from app.foo import helper` walk into `app.helper` and pass
+#: a name `app.foo` no longer offers.
+NAMESAKE_BEFORE_FOO = '''\
+def keep(value):
+    return value
+
+
+def helper(value):
+    return value
+'''
+
+NAMESAKE_AFTER_FOO = '''\
+def keep(value):
+    return value
+'''
+
+NAMESAKE_SIBLING = '''\
+"""`app/helper.py`: a module, and not a name `app.foo` hands out."""
+
+
+def other(value):
+    return value
+'''
+
+NAMESAKE_CALLER = "from app.foo import helper\n"
+
+#: A module two levels under the package root, forwarding a sibling's name. The
+#: file spells that import `y`, which is a name only the package around it can
+#: place on a file — `app/domain/y.py` here, not `app/y.py`.
+NESTED_BEFORE_X = '''\
+from .y import z
+
+
+def keep(value):
+    return value
+
+
+def removed(value):
+    return value
+'''
+
+NESTED_AFTER_X = '''\
+from .y import z
+
+
+def keep(value):
+    return value
+'''
+
+NESTED_SIBLING = '''\
+def z(value):
+    return value
+'''
+
+NESTED_CALLER = "from app.domain.x import z\n"
+
 
 class MoveFixture:
     """A throwaway repository whose two modules are siblings under `app`."""
 
     def __init__(
-        self, root: Path, commit_bar: bool = True, relative_export: bool = False
+        self,
+        root: Path,
+        commit_bar: bool = True,
+        relative_export: bool = False,
+        files: dict[str, str] | None = None,
     ) -> None:
         self.root = root
-        self._write("backend/app/__init__.py", "")
-        self._write(
-            "backend/app/foo.py",
-            EXPORT_BEFORE_FOO if relative_export else MOVE_BEFORE_FOO,
-        )
-        self._write(
-            "backend/scripts/tool.py", SHARED_CALLER if relative_export else STALE_CALLER
-        )
-        tracked = ["backend/app/__init__.py", "backend/app/foo.py",
-                   "backend/scripts/tool.py"]
+        written = {
+            "backend/app/__init__.py": "",
+            "backend/app/foo.py": (
+                EXPORT_BEFORE_FOO if relative_export else MOVE_BEFORE_FOO
+            ),
+            "backend/scripts/tool.py": (
+                SHARED_CALLER if relative_export else STALE_CALLER
+            ),
+        }
         if relative_export:
-            self._write("backend/app/base.py", EXPORT_BASE)
-            tracked.append("backend/app/base.py")
+            written["backend/app/base.py"] = EXPORT_BASE
         if commit_bar:
-            self._write("backend/app/bar.py", MOVE_BEFORE_BAR)
-            tracked.append("backend/app/bar.py")
+            written["backend/app/bar.py"] = MOVE_BEFORE_BAR
+        written.update(files or {})
+        for relative, text in written.items():
+            self._write(relative, text)
         _git(root, "init", "-q", "-b", "main")
         for key, value in (
             ("user.email", "self-test@example.invalid"),
@@ -1584,7 +1646,7 @@ class MoveFixture:
             ("gc.auto", "0"),
         ):
             _git(root, "config", key, value)
-        _git(root, "add", *tracked)
+        _git(root, "add", *written)
         _git(root, "commit", "-q", "-m", "both modules before the move")
         self.base = _git(root, "rev-parse", "HEAD").strip()
 
@@ -1603,6 +1665,10 @@ class MoveFixture:
     def drop(self) -> None:
         """A name deleted outright: no sibling takes it, so only the loss shows."""
         self._write("backend/app/foo.py", EXPORT_AFTER_FOO)
+
+    def rewrite(self, relative: str, text: str) -> None:
+        """One file as it stands after the change, for the shapes of their own."""
+        self._write(relative, text)
 
     def run_tool(
         self, directory: str = "backend/app"
@@ -1714,6 +1780,54 @@ class MovedNameTests(unittest.TestCase):
                 )
                 self.assertIn("调用方导入断裂: app.foo._helper", result.stdout)
 
+    def test_a_name_that_is_also_a_module_beside_it_is_still_a_break(self) -> None:
+        """`app/helper.py` is a module of the package, not a submodule of the
+        file `app/foo.py`: a view that copies every neighbour in under its bare
+        name walks down `app.foo.helper` and passes a name the file gave up."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-namesake-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/foo.py": NAMESAKE_BEFORE_FOO,
+                "backend/app/helper.py": NAMESAKE_SIBLING,
+                "backend/scripts/tool.py": NAMESAKE_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/foo.py", NAMESAKE_AFTER_FOO)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂: app.foo.helper", result.stdout)
+        # One step further, the file itself is gone and `app/helper.py` stands
+        # where it was: still not an answer for `app.foo.helper`.
+        (fixture.root / "backend/app/foo.py").unlink()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("调用方导入断裂: app.foo.helper", result.stdout)
+
+    def test_a_re_export_from_a_sibling_down_a_level_is_not_a_break(self) -> None:
+        """`from .y import z` written by a module that is not the package's only
+        level: the short name in the file means `app/domain/y.py`, and a view
+        that puts the package's own keys in the module's place reads the
+        caller's import as broken while it still resolves."""
+        tmp = tempfile.TemporaryDirectory(prefix="split-moves-nested-")
+        self.addCleanup(tmp.cleanup)
+        fixture = MoveFixture(
+            Path(tmp.name) / "repo",
+            commit_bar=False,
+            files={
+                "backend/app/domain/__init__.py": "",
+                "backend/app/domain/x.py": NESTED_BEFORE_X,
+                "backend/app/domain/y.py": NESTED_SIBLING,
+                "backend/scripts/tool.py": NESTED_CALLER,
+            },
+        )
+        fixture.rewrite("backend/app/domain/x.py", NESTED_AFTER_X)
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("调用方导入断裂", result.stdout)
+
 
 class ShadowCopyTests(unittest.TestCase):
     """A second module under the name this run is about: Python resolves a
@@ -1748,6 +1862,19 @@ class ShadowCopyTests(unittest.TestCase):
         on exactly that, from one unrelated `/tmp/foo.py` on 2026-10-16."""
         self.fixture.apply_split(SPLIT)
         stranger = self.stranger()
+        result = self.fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn(str(stranger), result.stderr)
+
+    def test_an_empty_file_is_not_a_copy_of_an_empty_module(self) -> None:
+        """A package's blank module is the commonest file in the repository, and
+        its text says nothing about anybody else's blank `<name>.py`: matched on
+        it, one empty file on the machine would refuse the run."""
+        self.fixture.apply_split({**SPLIT, "blank.py": ""})
+        directory = Path(tempfile.mkdtemp(prefix="shadow-other-"))
+        self.addCleanup(shutil.rmtree, directory, True)
+        stranger = directory / "foo.py"
+        stranger.write_text("", encoding="utf-8")
         result = self.fixture.run_tool()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn(str(stranger), result.stderr)

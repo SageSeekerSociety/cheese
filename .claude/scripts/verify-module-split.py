@@ -128,7 +128,7 @@ import sys
 import tempfile
 import textwrap
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 EXIT_OK, EXIT_DIFFERENT, EXIT_CANNOT_JUDGE = 0, 1, 2
@@ -1314,6 +1314,39 @@ def _containing_package(path: Path, root: Path) -> Path | None:
     return top
 
 
+def _names_from_beside(real: Package, key: str, facts: ModuleFacts) -> set[str]:
+    """The names `facts` still offers by importing them from a neighbour.
+
+    The module's own facts memory such an import the way the file spells it
+    (`from .base import shared` is `("base", "shared")`), and only the package's
+    own table can say which file that lands on — a level or two up, or a
+    submodule of this one. The answer comes back as a name this module binds,
+    so the caller-facing view never has to carry a neighbour under a name of its
+    own.
+    """
+    here = real.modules.get(key)
+    if here is None:
+        return set()
+    names = set(here.relative_imports)
+    for star in here.star_imports:
+        star_facts = real.modules.get(star)
+        if star_facts is not None:
+            names |= set(star_facts.defined) | set(star_facts.imported)
+            names |= set(star_facts.all_list or ())
+    if key:
+        # A package hands out its own submodules: `from <package> import <sub>`.
+        names |= {
+            module[len(key) + 1 :]
+            for module in real.modules
+            if module.startswith(key + ".") and "." not in module[len(key) + 1 :]
+        }
+    return {
+        name
+        for name in names
+        if name not in facts.defined and _has_binding(real, key, name)
+    }
+
+
 def module_package(
     module_path: Path,
     root: Path,
@@ -1321,31 +1354,42 @@ def module_package(
     facts: ModuleFacts | None,
     cache: dict[Path, Package],
 ) -> Package:
-    """`_target_exists`'s view of one module: itself, plus how it resolves names.
+    """`_target_exists`'s view of one module: itself, and how it resolves names.
 
-    A caller's `from app.foo import x` asks about `app.foo` alone, but the
-    answer can be a relative re-export (`from .base import x`) or a submodule
-    the module hands out, and those are written against the package the module
-    sits in. So that package is read from disk and keyed again from this
-    module: the module itself lands on `""`, a sibling or an ancestor keeps the
-    path a relative import inside the module spells, and a name the module
-    still forwards resolves instead of reading as a break.
+    The module is the whole of what a caller's `from app.foo import x` may
+    reach: nothing beside it belongs in this table under a bare name, or the
+    walk down `app.foo.x` finds the module `app/helper.py` and calls it a
+    submodule of `app.foo` that is not there. What this module still forwards
+    from a neighbour is resolved against the package it sits in — the one
+    reader that can place `from .base import shared` on a file — and handed
+    over as a name the module itself binds.
     """
-    modules: dict[str, ModuleFacts] = {} if facts is None else {"": facts}
+    if facts is None:
+        return Package(root=module_path.parent, modules={})
     package_dir = _containing_package(module_path, root)
     if package_dir is None:
-        return Package(root=module_path.parent, modules=modules)
+        return Package(root=module_path.parent, modules={"": facts})
     package_name = _dotted_name(package_dir, root)
     if package_dir not in cache:
         cache[package_dir] = read_package(package_dir, package_name)
-    inside = dotted[len(package_name) + 1 :]
-    for key, sibling in cache[package_dir].modules.items():
-        if key in ("", inside):
-            continue
-        modules[key[len(inside) + 1 :] if key.startswith(inside + ".") else key] = (
-            sibling
-        )
-    return Package(root=module_path.parent, modules=modules)
+    inside = dotted[len(package_name) + 1 :] if package_name else dotted
+    resolved = _names_from_beside(cache[package_dir], inside, facts)
+    if not resolved:
+        return Package(root=module_path.parent, modules={"": facts})
+    return Package(
+        root=module_path.parent,
+        modules={
+            "": replace(
+                facts,
+                imported=facts.imported | resolved,
+                relative_imports={
+                    name: place
+                    for name, place in facts.relative_imports.items()
+                    if name not in resolved
+                },
+            )
+        },
+    )
 
 
 def check_moves(
@@ -1493,11 +1537,16 @@ def _text_of(entry: Path) -> str | None:
 
 
 def package_texts(package_dir: Path) -> set[str]:
-    """Every text the package holds, so a copy of any of them is recognisable."""
+    """Every text the package holds, so a copy of any of them is recognisable.
+
+    Empty files are left out. A package's blank `__init__.py` is the commonest
+    file there is, and its text is no evidence at all: matched on it, any
+    unrelated blank `/tmp/<name>.py` would refuse the run.
+    """
     texts: set[str] = set()
     for path in sorted(package_dir.rglob("*.py")):
         text = _text_of(path)
-        if text is not None:
+        if text is not None and text.strip():
             texts.add(text)
     return texts
 
@@ -1516,7 +1565,8 @@ def shadow_copies(package_dir: Path, texts: set[str]) -> list[Path]:
     found: list[Path] = []
     for root in SCRATCH_ROOTS:
         for candidate in _shadow_in(root, package_dir.name, SCRATCH_DEPTH):
-            if _text_of(candidate) in texts:
+            text = _text_of(candidate)
+            if text is not None and text.strip() and text in texts:
                 found.append(candidate)
     return found
 
@@ -1829,7 +1879,9 @@ def run_check(args: argparse.Namespace) -> int:
         )
         return EXIT_CANNOT_JUDGE
     if shadows := shadow_copies(
-        package_dir, package_texts(package_dir) | {old_source}
+        package_dir,
+        package_texts(package_dir)
+        | ({old_source} if old_source.strip() else set()),
     ):
         return refuse_shadow(shadows)
 
