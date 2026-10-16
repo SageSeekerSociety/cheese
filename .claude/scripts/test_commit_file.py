@@ -66,11 +66,12 @@ class CommitFileTest(unittest.TestCase):
         # `git log --format=%B` adds a record newline; remove exactly that byte.
         self.assertEqual(self.git("log", "-1", "--format=%B")[:-1], expected)
 
-    def assert_rejected(self, message, *args):
+    def assert_rejected(self, message, *args, expected=b"commit-file:"):
         before = self.run_process(["git", "rev-parse", "--verify", "HEAD"])
         index = self.git("write-tree")
         result = self.commit(message, *args)
         self.assertNotEqual(result.returncode, 0, result.stdout.decode())
+        self.assertIn(expected, result.stderr)
         after = self.run_process(["git", "rev-parse", "--verify", "HEAD"])
         self.assertEqual((before.returncode, before.stdout), (after.returncode, after.stdout))
         self.assertEqual(self.git("write-tree"), index)
@@ -142,7 +143,9 @@ class CommitFileTest(unittest.TestCase):
             b" \n\t",
         ):
             with self.subTest(message=message):
-                self.assert_rejected(message)
+                result = self.assert_rejected(message)
+                self.assertIn(b"quoted heredoc", result.stderr)
+                self.assertNotIn(b"Traceback", result.stderr)
 
     def test_code_examples_allow_literal_syntax(self):
         message = (
@@ -161,6 +164,8 @@ class CommitFileTest(unittest.TestCase):
         self.assert_message(b"fix(example): original\n")
 
     def test_disallowed_arguments_cannot_replace_validated_message(self):
+        for name in ("one", "two"):
+            (self.repo / name).write_text(f"fix(example): message from {name}\n")
         for args in (
             ("-m", "replacement"),
             ("-F", "elsewhere"),
@@ -173,6 +178,7 @@ class CommitFileTest(unittest.TestCase):
             ("--cleanup=strip",),
             ("-a",),
             ("one", "two"),
+            ("one", "--", "two"),
             ("--",),
         ):
             with self.subTest(args=args):
@@ -196,8 +202,7 @@ class CommitFileTest(unittest.TestCase):
         hook = self.hooks / "pre-commit"
         hook.write_text("#!/bin/sh\nprintf 'hook rejected\\n' >&2\nexit 1\n")
         hook.chmod(0o755)
-        result = self.assert_rejected(b"fix(example): valid\n")
-        self.assertIn(b"hook rejected", result.stderr)
+        self.assert_rejected(b"fix(example): valid\n", expected=b"hook rejected")
 
 
 if __name__ == "__main__":
