@@ -304,9 +304,12 @@ def _owner_asks(client, task: dict, *, taken: bool) -> None:
     ending and the message's turn ending, and the task closes when the second
     wins. Written here it is going, and it stays going for the whole test.
 
-    Neither leaves `consumed_turn` behind: a turn writes that stamp when it
-    stops, so one still going leaves the message unread, and only the open
-    turn bearing the message's own id says that it is taken.
+    What the taken one writes is the state between the scan picking the message
+    up and the turn building its prompt: the turn is there, carrying the
+    message's own id, and it has not run a prompt — an attempt counted there
+    takes the message out of the queue for good. So the message is still
+    waiting, and still unread, because a turn stamps `consumed_turn` only when
+    it stops.
     """
     topic = uuid.UUID(str(task["id"]))
     asked = uuid.uuid4()
@@ -339,7 +342,6 @@ def _owner_asks(client, task: dict, *, taken: bool) -> None:
                         agent_handle=TEAMMATE,
                         content="",
                         started_at=started,
-                        delivered_at=started,
                     )
                 )
             await session.commit()

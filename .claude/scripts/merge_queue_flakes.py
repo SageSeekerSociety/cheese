@@ -401,28 +401,40 @@ def _self_test_offline() -> None:
 
 
 def _self_test_gh_bytes() -> None:
-    """`gh` 那条路也真跑一遍：换掉 subprocess，看 `_gh` 怎么读回 stdout。
+    """`gh` 那条路也真跑一遍：换掉 subprocess，看 `_gh` 怎么读回作业日志。
 
-    gh 是按字节吐作业日志的，一个坏字节就落在这一行上。按文本模式抓，Python
-    当场抛 UnicodeDecodeError，整张榜跟着读不出来。这里让替身照真实的样子演
-    两种模式：文本模式抛，字节模式把带坏字节的输出交回来，等 `_gh` 自己替换着
-    解。非零退出那条路也走一遍：报错里要带着 gh 说的话，而不是一声不响。
+    gh 是按字节吐日志的，一个坏字节就落在这一行上。替身照真实的样子演：字节模式
+    把带坏字节的输出原样交回来；`text=True` 或给了 `encoding=` 而又**没给**
+    `errors=`，就在那里当场抛 UnicodeDecodeError —— 那正是「整张榜读不出来」这个
+    毛病的来路。给了 `errors=` 的文本模式是同样合法的另一种写法，替身照它给的
+    那套解出字符串。断言落在效果上：坏字节要变成替换字符出现，不能悄悄不见，也
+    不能连累整份输出。非零退出那条路也走一遍，报错里要带着 gh 说的话。
     """
     real_run = subprocess.run
     seen: list[list[str]] = []
+    bad = b"assert 'closed' == 'open' \xff\xfe\n"
+    #: 坏字节该以替换字符出现，不是悄悄消失，也不是连累整份输出。
+    replaced = "\N{REPLACEMENT CHARACTER}"
 
     class Proc:
-        def __init__(self, out: bytes, err: bytes, code: int) -> None:
+        def __init__(self, out, err, code: int) -> None:
             self.stdout, self.stderr, self.returncode = out, err, code
 
-    def text_mode(kwargs: dict) -> bool:
-        return bool(kwargs.get("text") or kwargs.get("encoding"))
+    def text_like(kwargs: dict):
+        """真实 subprocess 的解码参数：给了 text/encoding 就自己解，于是坏字节
+        在没有 `errors=` 时在那里抛，给了 `errors=` 就按它给的那套走。"""
+        if not (kwargs.get("text") or kwargs.get("encoding")):
+            return None
+        return kwargs.get("encoding") or "utf-8", kwargs.get("errors")
 
     def fake_run(args, **kwargs):
         seen.append(args)
-        if text_mode(kwargs):
+        how = text_like(kwargs)
+        if how and how[1] is None:
             raise UnicodeDecodeError("utf-8", b"\xff\xfe", 0, 1, "invalid start byte")
-        return Proc(b"assert 'closed' == 'open' \xff\xfe\n", b"", 0)
+        if how:
+            return Proc(bad.decode(*how), "", 0)
+        return Proc(bad, b"", 0)
 
     subprocess.run = fake_run
     try:
@@ -431,13 +443,14 @@ def _self_test_gh_bytes() -> None:
         subprocess.run = real_run
 
     assert seen == [["gh", "api", "x"]], seen
-    assert out.startswith("assert 'closed' == 'open' "), repr(out)
-    assert "�" in out and "\xff" not in out, repr(out)
+    assert out == f"assert 'closed' == 'open' {replaced}{replaced}\n", repr(out)
 
     def failing(args, **kwargs):
-        if text_mode(kwargs):
+        how = text_like(kwargs)
+        if how and how[1] is None:
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
-        return Proc(b"", b"HTTP 404 \xff\n", 1)
+        err = b"HTTP 404 \xff\n"
+        return Proc("", err.decode(*how), 1) if how else Proc(b"", err, 1)
 
     subprocess.run = failing
     try:
@@ -449,7 +462,7 @@ def _self_test_gh_bytes() -> None:
             raise AssertionError("a gh that exits non-zero must not look like success")
     finally:
         subprocess.run = real_run
-    assert "failed (1)" in said and "�" in said, said
+    assert "failed (1)" in said and replaced in said, said
 
 
 def self_test() -> int:
