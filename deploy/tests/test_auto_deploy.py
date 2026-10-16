@@ -504,7 +504,10 @@ class CandidateCI(unittest.TestCase):
                     GUARD.main()
             self.assertIn(self.candidate, str(refused.exception.code))
             # A refusal is not a skip: a skip would leave the deploy job green.
-            self.assertNotIn("skip=", output.read_text() if output.exists() else "")
+            written = output.read_text() if output.exists() else ""
+            self.assertNotIn("skip=", written)
+            # And it says it refused, so the deploy alert does not page on it.
+            self.assertIn("refused=true", written)
             deploy.assert_not_called()
 
     @staticmethod

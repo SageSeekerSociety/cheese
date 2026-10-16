@@ -1,6 +1,8 @@
 """Eight dev deploys failed on 2026-10-14 and the alert group heard of none."""
 
 import importlib.util
+import io
+import json
 import os
 import pathlib
 import tempfile
@@ -118,6 +120,14 @@ class TheStepTheWorkflowRuns(unittest.TestCase):
 
     def test_a_refusal_the_workflow_passes_on_reaches_nobody(self) -> None:
         self.assertEqual(self.run_main([job("failure", [(GUARD, "failure")])], REFUSED="true"), "")
+
+    def test_one_dropped_read_of_the_job_list_is_read_again(self) -> None:
+        body = io.BytesIO(json.dumps({"jobs": [job("failure", DEPLOY_FAILED)]}).encode())
+        answers = [urllib.error.URLError("reset"), body]
+        with patch.object(alert.urllib.request, "urlopen", side_effect=answers), \
+                patch.object(alert.time, "sleep"):
+            jobs = alert.fetch_jobs("o/r", "1", "1", "t")
+        self.assertEqual(jobs[0]["conclusion"], "failure")
 
     def test_an_unreadable_job_list_still_pages_a_failed_deploy(self) -> None:
         down = urllib.error.URLError("unreachable")

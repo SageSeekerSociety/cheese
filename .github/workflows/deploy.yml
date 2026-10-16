@@ -94,6 +94,10 @@ jobs:
       # available on this plan (private repo), so gate the prod deploy on a human
       # approving via an auto-opened issue. Skipped for dry-run (it changes
       # nothing). Approver comments "approve"/"yes"/"lgtm" to proceed.
+      # The alert job reads approval-status == 'denied' as a decision and stays
+      # quiet. The action also reports denied when its own GitHub calls fail in
+      # the wait loop (main.go maps every exit 1 there to denied), so such a
+      # failure goes unannounced too; it cannot be told apart from a denial.
       - name: Require manual approval
         id: approval
         if: ${{ !inputs.dry_run }}
