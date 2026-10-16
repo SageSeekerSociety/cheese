@@ -138,3 +138,7 @@ def test_this_is_a_package_and_its_facade_carries_every_body():
     assert (github_pr.GitHubPRClient.__module__) == f"{MODULE}.legacy"
     assert github_pr.HttpxGitHubPrClient.__module__ == f"{MODULE}.httpx_client"
     assert github_pr.GitHubPrClient.__module__ == f"{MODULE}.protocol"
+    # 日志名还是拆之前那一个。记录现在从子模块发出来，`getLogger(__name__)` 会
+    # 悄悄换成 `._shared`，按模块名过滤日志的地方就跟着断——`room/sessions/`
+    # 和 `session_host` 的守卫都是这么钉的。
+    assert github_pr.logger.name == MODULE
