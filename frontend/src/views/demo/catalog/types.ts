@@ -5,6 +5,8 @@
  * 从 `../catalog.ts` 拆出来的一册：类型一个字没改。分册（`./common.ts` 那一批）
  * 和门面（`../catalog.ts`）都从这里取，所以「条目长什么样」只有一处定义。
  */
+import type { Component } from 'vue'
+
 /**
  * 这一件要在什么环境里才长得对。
  *
