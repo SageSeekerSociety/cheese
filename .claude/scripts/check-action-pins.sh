@@ -79,10 +79,11 @@ if [ "$SELF_TEST" = 1 ]; then
 
   # A file holding both, in the two shapes this repo writes a step: the pinned
   # action as a list item, the unpinned one under a key of its own. Both are in
-  # use — 145 of the 223 `uses:` lines under .github/workflows carry the dash
-  # and 78 do not — so the second shape hangs on the `-?` in the scan staying
-  # optional. Losing it leaves those lines unread rather than reported, which
-  # is the silent half of what this guard is for.
+  # use — when this case was written, 145 of the 223 `uses:` lines under
+  # .github/workflows carried the dash and 78 did not — so the second shape
+  # hangs on the `-?` in the scan staying optional. Losing it leaves those
+  # lines unread rather than reported, which is the silent half of what this
+  # guard is for.
   printf 'jobs:\n  a:\n    steps:\n      - uses: actions/checkout@%s # v4\n      - name: Bad\n        uses: a/b@v1\n' \
     "$sha" > "$tmp/.github/workflows/w.yml"
   verdict "$tmp"
@@ -95,9 +96,9 @@ if [ "$SELF_TEST" = 1 ]; then
 
   # The report has to reach the reader: the annotation turns the failure into a
   # line on the pull request, and the other two say where to get the sha and
-  # what to write. Matched on the parts the report is for, not on its wording —
-  # ids and the path in, prose about.
-  says "::error::unpinned GitHub Action" "the failure must carry the annotation CI reads"
+  # what to write. Matched on the annotation marker, the endpoint and the
+  # pinned form — not on the sentences around them, which the guard may reword.
+  says "::error::" "the failure must carry the annotation CI reads"
   says "repos/<owner>/<repo>/git/ref/tags/" "the failure must say how to resolve the tag"
   says "uses: <owner>/<repo>@<40-char-sha>" "the failure must show the pinned form to write instead"
 
