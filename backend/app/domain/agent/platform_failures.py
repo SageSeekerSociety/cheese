@@ -17,7 +17,7 @@ Two kinds of failure arrive here and they are recognised differently:
   ``failure_code`` on the exception or the result they travel in.
 
 This module is what every caller imports and nothing else needs to know about.
-The work sits in four siblings, split by which of the two kinds above they
+The work sits in five siblings, split by which of the two kinds above they
 recognise:
 
 - ``platform_failure_types`` — the shape one classification answers in
@@ -30,7 +30,7 @@ recognise:
 - ``platform_failure_cli_notices`` — the lines Claude Code prints into the
   conversation as if the agent had said them.
 
-Every name that used to resolve here still does: the four halves are imported
+Every name that used to resolve here still does: the five halves are imported
 in full rather than only in part, so `app.domain.agent.platform_failures._xxx`
 keeps working for anything that reaches a helper by that path or patches it by
 string. Renaming is not what a size split is for.
