@@ -168,7 +168,10 @@ function stubNarrowPanel() {
     class {
       constructor(private cb: ResizeObserverCallback) {}
       observe(el: Element) {
-        this.cb([{ target: el, contentRect: { width: 400, height: 0 } }] as unknown as ResizeObserverEntry[])
+        this.cb(
+          [{ target: el, contentRect: { width: 400, height: 0 } }] as unknown as ResizeObserverEntry[],
+          this as unknown as ResizeObserver
+        )
       }
       disconnect() {}
     }
