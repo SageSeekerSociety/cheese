@@ -8,6 +8,10 @@ rename carries it along; a route without one stops the app from starting.
 
 from __future__ import annotations
 
+import ast
+import subprocess
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, FastAPI, WebSocket
 from fastapi.testclient import TestClient
 
@@ -24,9 +28,17 @@ from app.api.write_access_baseline import UNDECLARED
 from app.core.errors import register_exception_handlers
 from app.main import app
 
-# The frozen list may only shrink. Lower this when you declare routes; raising
-# it lets a new route skip the declaration, which is what the list exists to stop.
-_CEILING = 403
+# The frozen list may only shrink, and where it started is read from git rather
+# than kept here as a number: branches lower the list in parallel, and a
+# constant in this file is one line all of them have to edit and conflict on.
+_BASELINE = "backend/app/api/write_access_baseline.py"
+
+# In order, the refs whose merge base with HEAD can name where this branch
+# started: `origin/main` is what a clone of this repo has, and the other two
+# cover one with no remote and one of a single branch.
+_BASELINE_REFS = ("origin/main", "main", "HEAD~1")
+
+_ROOT = Path(__file__).resolve().parents[3]
 
 # The routes only a 芝士 credential may call. Widening one to ROUTE_DECIDES lets
 # a person's browser session through, so it is a decision, not a refactor:
@@ -60,10 +72,112 @@ def test_the_frozen_list_names_only_undeclared_routes_that_exist() -> None:
     )
 
 
+def _frozen_list_size(source: str) -> int:
+    """How many entries the `UNDECLARED` literal in `source` holds.
+
+    Parsed rather than counted by lines: a path template long enough wraps its
+    entry onto a second line.
+    """
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == "UNDECLARED" for t in targets):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call):
+            [value] = value.args
+        return len(set(ast.literal_eval(value)))
+    raise AssertionError(f"no UNDECLARED in {_BASELINE}")
+
+
+def _baseline_source() -> str | None:
+    """The baseline file as the commit this branch started from had it.
+
+    None when git cannot name that commit: a shallow checkout has neither the
+    refs nor the parent it takes to compute a merge base. The caller then has
+    nothing to compare against — see `_refuse_growth`.
+    """
+    for ref in _BASELINE_REFS:
+        base = subprocess.run(
+            ["git", "-C", str(_ROOT), "merge-base", "HEAD", ref],
+            capture_output=True,
+            text=True,
+        )
+        revs = base.stdout.split()
+        if base.returncode or not revs:
+            continue
+        shown = subprocess.run(
+            ["git", "-C", str(_ROOT), "show", f"{revs[0]}:{_BASELINE}"],
+            capture_output=True,
+            text=True,
+        )
+        if not shown.returncode:
+            return shown.stdout
+    return None
+
+
+def _refuse_growth(current: int, frozen: str | None) -> str | None:
+    """Why a list of `current` entries may not stand, or None.
+
+    The floor is the frozen list where this branch started, so lowering it is
+    free of this file, and freezing a route the fork point did not have is
+    refused. With none to read — see `_baseline_source` — there is nothing to
+    compare against, and this says nothing rather than guess.
+    """
+    if frozen is None:
+        return None
+    baseline = _frozen_list_size(frozen)
+    if current <= baseline:
+        return None
+    return (
+        f"the frozen list holds {current} routes, up from {baseline} where this "
+        "branch started: declare the new route instead of freezing it"
+    )
+
+
 def test_the_frozen_list_does_not_grow() -> None:
-    assert len(UNDECLARED) <= _CEILING, "declare the new route instead"
-    # Ratchet: once the list shrinks, the ceiling follows it down.
-    assert len(UNDECLARED) == _CEILING, f"lower _CEILING to {len(UNDECLARED)}"
+    reason = _refuse_growth(len(UNDECLARED), _baseline_source())
+    assert reason is None, reason
+
+
+def _a_frozen_list(size: int) -> str:
+    """A baseline file standing in for one that froze `size` routes."""
+    entries = "".join(f'        ("DELETE", "/x/{i}"),\n' for i in range(size))
+    return (
+        "UNDECLARED: frozenset[tuple[str, str]] = frozenset(\n"
+        f"    {{\n{entries}    }}\n)\n"
+    )
+
+
+# Three entries, one of them wrapped the way a long path template is: a count
+# that reads lines instead of the literal gets four.
+_WRAPPED = """\
+UNDECLARED: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("DELETE", "/admin/admins/{target}"),
+        ("PUT", "/users/{userId}/identity"),
+        (
+            "PUT",
+            "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
+        ),
+    }
+)
+"""
+
+
+def test_a_list_that_grew_past_the_fork_point_is_refused() -> None:
+    frozen = _a_frozen_list(403)
+    assert _refuse_growth(404, frozen), "a route frozen since the fork point"
+    assert _refuse_growth(403, frozen) is None
+    assert _refuse_growth(402, frozen) is None
+
+
+def test_the_fork_points_list_is_counted_wherever_an_entry_wraps() -> None:
+    assert _frozen_list_size(_WRAPPED) == 3
 
 
 def _app(*routers: APIRouter, guarded: bool = False) -> FastAPI:
