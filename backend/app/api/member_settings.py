@@ -1,13 +1,13 @@
-"""Settings any member of a project may change, and the line each change leaves.
+"""Project settings that are said in 综合 when they change, and the line each
+change leaves.
 
 Which project settings these are is ``app.domain.project.member_settings``; an
 agent's thinking effort, context compaction and skills are the same kind of
-choice about one teammate. Whoever passes the project's door may change them: a
-member, an external member, or an agent working in one of the project's
-conversations (``ActorResolver.authorize_project`` with ``member_setting``).
-What a change may cost stays where it was decided — the team's plan, the specs
-the project is offered, whose computer a session may run on, and the project's
-tier policy, which stays its managers'.
+choice about one teammate. Who may change them is whoever's role may change the
+project's settings (``Permission.edit_settings``, #3830); an agent working in a
+conversation does not. What a change may cost stays where it was decided — the
+team's plan, the specs the project is offered, whose computer a session may run
+on, and the project's tier policy.
 
 Every change is one platform line in the project's 综合, credited to whoever
 made it, naming the setting and what it was and is now. The line's ``meta``
@@ -38,6 +38,7 @@ from app.domain.notice_meta import (
 from app.domain.project.member_settings import MEMBER_SETTINGS
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.room_task import naming
 
 #: Each member setting → the sentence that names it in the room line.
@@ -72,9 +73,12 @@ _EFFORTS = {
 
 
 async def member_setting_actor(resolver: ActorResolver, project_id: uuid.UUID) -> Actor:
-    """The caller, let through the door a member setting takes."""
+    """The caller, let through the door these settings take: someone whose role
+    may change the project's settings (#3830)."""
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id, member_setting=True)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.edit_settings
+    )
     return actor
 
 

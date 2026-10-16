@@ -112,11 +112,15 @@ class FakeSession:
                 [(b.id, b.conversation_id) for b in self.blocks if b.id in uuids]
             )
         if key == "Block":
+            # A student filter binds that person's handle; the other strings bound
+            # (the mentor role it leaves out) name no block's author.
+            authors = strings & {b.author for b in self.blocks}
             rows = [
                 b
                 for b in self.blocks
                 if (not uuids or b.id in uuids or b.project_id in uuids)
                 and self._within(b.created_at, moments)
+                and (not authors or b.author in authors)
             ]
             rows.sort(key=lambda b: b.created_at, reverse=True)
             return _FakeResult(rows[:QUESTION_LIMIT])
@@ -263,6 +267,7 @@ async def test_filters_lists_only_students_the_asker_may_read(monkeypatch):
     session = FakeSession(
         projects=[alice, bob, carol],
         users=[user("alice", "爱丽丝"), user("bob", None), user("carol", "卡罗")],
+        blocks=[block(alice), block(bob), block(carol)],
     )
     svc = _service(monkeypatch, session, readable=[alice.id, bob.id])
 
@@ -277,7 +282,9 @@ async def test_filters_falls_back_to_the_handle_when_there_is_no_nickname(monkey
     alice = project("Alice 的作业", "alice", 1)
     bob = project("Bob 的作业", "bob", 2)
     session = FakeSession(
-        projects=[alice, bob], users=[user("alice", "爱丽丝"), user("bob", None)]
+        projects=[alice, bob],
+        users=[user("alice", "爱丽丝"), user("bob", None)],
+        blocks=[block(alice), block(bob)],
     )
     svc = _service(monkeypatch, session)
 

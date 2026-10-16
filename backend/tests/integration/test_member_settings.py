@@ -1,11 +1,11 @@
-"""Anyone in a project may change how it works day to day, and everyone is told.
+"""Whoever may edit a project's settings changes how it works, and everyone is told.
 
-The project's main model and its new agents' environment are any member's to
-change, not only its managers'. Each change leaves one line in the project's
-综合, credited to whoever made it and saying what the setting was and is now;
-that line is the record of the change. Someone outside the project changes
-nothing, and what stays a manager's (the tier policy, which bounds what those
-settings may cost) still refuses a member.
+The project's main model, its new agents' environment, how many turns run at
+once, task naming and forge attribution are the project's settings: its owner
+and admins change them by default, a plain member does not (#3830). Each change
+leaves one line in the project's 综合, credited to whoever made it and saying
+what the setting was and is now; that line is the record of the change. Someone
+outside the project changes nothing.
 """
 
 import pytest
@@ -23,7 +23,8 @@ VM = {"kind": "sandbox", "spec": "vm"}
 
 @pytest.fixture
 def project(client, monkeypatch):
-    """alice's project, with bob on its team: a member who manages nothing.
+    """alice's project, with bob on its team made its admin, and carol on its
+    team as a plain member.
 
     The deployment offers the platform's sandboxes, so a project has an
     environment to switch its new agents to."""
@@ -32,6 +33,13 @@ def project(client, monkeypatch):
     monkeypatch.setattr(settings, "microcloud_vm_offering_id", "vm-offering")
     data = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     join_project_team(client, data["id"], "bob")
+    join_project_team(client, data["id"], "carol")
+    made = client.put(
+        f"/projects/{data['id']}/members/bob/role",
+        json={"role": "admin"},
+        headers=session_auth_headers("alice"),
+    )
+    assert made.status_code == 200, made.text
 
     # Approved, so Claude is shown and its tier is what Free leaves out.
     async def approve() -> None:
@@ -67,14 +75,14 @@ def models(client, pid) -> tuple[str, str]:
     )
 
 
-def test_a_member_changes_the_main_model_and_the_new_agents_environment(
+def test_an_admin_changes_the_main_model_and_the_new_agents_environment(
     client, project
 ):
     pid = project["id"]
     bob = session_auth_headers("bob")
     model, beyond_the_plan = models(client, pid)
 
-    # The team's plan still bounds what a member may pick.
+    # The team's plan still bounds what an admin may pick.
     refused = client.put(
         f"/projects/{pid}/default-model", json={"model": beyond_the_plan}, headers=bob
     )
@@ -132,9 +140,10 @@ def test_saving_a_setting_as_it_already_is_says_nothing(client, project):
     assert [line["meta"]["to"] for line in setting_lines(client, project)] == ["manual"]
 
 
-def test_someone_outside_the_project_changes_nothing(client, project):
+@pytest.mark.parametrize("who", ["eve", "carol"], ids=["outsider", "plain-member"])
+def test_someone_without_the_permission_changes_nothing(client, project, who):
     pid = project["id"]
-    eve = session_auth_headers("eve")
+    headers = session_auth_headers(who)
 
     for path, body in (
         ("default-model", {"model": models(client, pid)[0]}),
@@ -142,24 +151,18 @@ def test_someone_outside_the_project_changes_nothing(client, project):
         ("compute-configs", {"max_concurrent_turns": 40}),
         ("task-naming", {"mode": "manual"}),
         ("forge-attribution", {"requester_coauthor": True}),
+        ("tier-policy", {"allowed_tiers": ["included"]}),
     ):
-        refused = client.put(f"/projects/{pid}/{path}", json=body, headers=eve)
+        refused = client.put(f"/projects/{pid}/{path}", json=body, headers=headers)
         assert refused.status_code == 403, (path, refused.text)
 
     assert setting_lines(client, project) == []
 
 
-def test_what_bounds_the_cost_of_those_settings_stays_a_managers(client, project):
-    pid = project["id"]
-    policy = {"allowed_tiers": ["included"]}
-
-    refused = client.put(
-        f"/projects/{pid}/tier-policy", json=policy, headers=session_auth_headers("bob")
-    )
-    assert refused.status_code == 403, refused.text
+def test_the_owner_sets_what_bounds_the_cost_of_those_settings(client, project):
     owner = client.put(
-        f"/projects/{pid}/tier-policy",
-        json=policy,
+        f"/projects/{project['id']}/tier-policy",
+        json={"allowed_tiers": ["included"]},
         headers=session_auth_headers("alice"),
     )
     assert owner.status_code == 200, owner.text
@@ -173,12 +176,12 @@ def compute_configs(client, pid, who="alice") -> dict:
     return r.json()["data"]
 
 
-def test_how_many_of_a_projects_turns_may_run_at_once_is_any_members_to_move(
+def test_how_many_of_a_projects_turns_may_run_at_once_is_an_admins_to_move(
     client, project
 ):
     """A project with sixteen task lines at once is what lifted the default:
     the number is on this project's own config, where anyone in it can read it
-    and say otherwise, and each move leaves one line in the 综合."""
+    and its admins say otherwise, and each move leaves one line in the 综合."""
     pid = project["id"]
     bob = session_auth_headers("bob")
 

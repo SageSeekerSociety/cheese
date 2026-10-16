@@ -21,13 +21,16 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
+from app.auth.project_roles import require
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.document.question import Asked
 from app.domain.identity.actor import Actor
+from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
 from app.domain.project.services import ProjectArchivedError, refuse_writes_if_archived
+from app.domain.project_permissions import Permission
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, place_or_404, require_doc_writable
 from app.domain.room_task.services import TaskService
@@ -98,12 +101,33 @@ async def authorize_in_project(
     if actor.via == "cheese" and resolver.credential_conversation() is not None:
         await resolver.refuse_unseated_agent(actor, project_id=project_id)
         return
-    await resolver.authorize_project(actor, project_id=project_id)
+    # The least a write to a document needs; ``require_writable`` asks for what
+    # the write itself needs.
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.comment
+    )
 
 
-async def require_writable(db: AsyncSession, reached: Reached) -> None:
+async def require_role(
+    db: AsyncSession, actor: Actor, project_id: uuid.UUID, permission: Permission
+) -> None:
+    """A person only does what their role lets them; an AI teammate writes as it
+    was asked to, and its own gates are elsewhere."""
+    if actor.via != "cheese" and not await IdentityService(db).is_agent(actor.handle):
+        await require(db, project_id, actor.handle, permission)
+
+
+async def require_writable(
+    db: AsyncSession,
+    reached: Reached,
+    permission: Permission = Permission.edit_content,
+) -> None:
     """An archived room's document, and every document of an archived project,
-    takes no more writes."""
+    takes no more writes; and a person writes only what their role lets them
+    (#3830): changing a document is ``edit_content``, commenting on it or
+    suggesting a change is ``comment``. An AI teammate writes as it was asked
+    to."""
+    await require_role(db, reached.actor, reached.doc.project_id, permission)
     if reached.place is not None:
         require_doc_writable(reached.place)
     if reached.task is not None:

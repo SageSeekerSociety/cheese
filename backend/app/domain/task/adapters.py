@@ -21,7 +21,7 @@ from app.domain.task.models import Task, TaskMembership
 from app.domain.task.teaching import protocol_for_task
 
 
-def as_brief(task: Task) -> TaskBrief:
+def as_brief(task: Task, *, mentors: tuple[str, ...] = ()) -> TaskBrief:
     """这道赛题，收成 `project` 认得的那几栏。
 
     路由手上本来就有这一行，所以这里是个纯函数，不再查一次；`TaskTerms.brief` 靠
@@ -33,6 +33,7 @@ def as_brief(task: Task) -> TaskBrief:
         intro=task.intro,
         space_id=task.space_id,
         is_team_submission=task.submitter_type == SUBMITTER_TEAM,
+        mentors=mentors,
     )
 
 

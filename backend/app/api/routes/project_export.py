@@ -13,13 +13,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.types import Receive, Scope, Send
 
 from app.api.auth import ActorResolverDep
-from app.auth.project_access import may_read_project
+from app.auth.project_roles import may
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
+from app.core.sentences import say
 from app.domain.deliverables.export import create_archive
 from app.domain.identity.services import IdentityService
 from app.domain.library import records as library_records
 from app.domain.library import service as library
+from app.domain.project_permissions import Permission
 
 
 class ProjectArchiveResponse(FileResponse):
@@ -48,10 +50,10 @@ async def export_project(
     actor = await resolver.resolve(project_id=project_id)
     if actor.via != "token" or actor.user_id is None:
         raise AuthenticationRequiredError("Project export requires a human login")
-    if await IdentityService(db).is_agent(actor.handle) or not await may_read_project(
-        db, project_id=project_id, handle=actor.handle
+    if await IdentityService(db).is_agent(actor.handle) or not await may(
+        db, project_id, actor.handle, Permission.export_project
     ):
-        raise ForbiddenError("Project export requires project access")
+        raise ForbiddenError(say("projectPermissionDenied"))
     archive, _ = await create_archive(
         project_id,
         db,

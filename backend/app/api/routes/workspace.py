@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, Request, Response
 
 from app.api.auth import ActorResolverDep, require_seated_in_its_room
 from app.api.deps import get_chat_service
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
@@ -21,6 +22,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review import forge_clients
 from app.domain.room_task.models import Task, TaskStatus
@@ -212,6 +214,12 @@ async def write_file(
     teammate is told before its next tool call to re-read the file.
     """
     await ProjectService(db).get_or_404(project_id)
+    await require_role(
+        db,
+        await resolver.resolve(project_id=project_id),
+        project_id,
+        Permission.edit_content,
+    )
     path = (body.get("path") or "").strip()
     content = body.get("content") or ""
     version = body.get("version") or None

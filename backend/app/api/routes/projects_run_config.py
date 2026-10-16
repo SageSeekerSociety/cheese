@@ -95,6 +95,7 @@ from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.project.schemas import ProjectDefaultModelUpdate
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.usage.model_access import ModelAccess
 from app.domain.usage.services import UsageService
 
@@ -213,7 +214,7 @@ async def get_compute_configs(
     # is anyone's in the project.
     can_manage = True
     try:
-        await MemberService(db).require_manager(project_id, actor)
+        await MemberService(db).require(project_id, actor, Permission.edit_settings)
     except ForbiddenError:
         can_manage = False
     devices = [
@@ -269,7 +270,7 @@ async def list_device_sessions(
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     listed, hidden = [], 0
     for topic, session in await device_sessions(db, project_id, device_id):
         try:
@@ -381,7 +382,7 @@ async def set_tier_policy(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     service = ProjectService(db)
     project = await service.get_or_404(project_id)
     patch: dict[str, object] = {}

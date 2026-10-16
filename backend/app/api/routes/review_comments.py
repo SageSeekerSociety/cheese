@@ -17,6 +17,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
+from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
@@ -25,6 +26,7 @@ from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
+from app.domain.project_permissions import Permission
 from app.domain.review import document_compare
 from app.domain.review.comments import ReviewCommentService, describe
 from app.domain.review.schemas import ReviewCommentEdit, ReviewCommentIn
@@ -162,8 +164,9 @@ async def review_comparison(
 async def write_review_comment(
     task_id: uuid.UUID, body: ReviewCommentIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    _place, actor, task = await task_conversation(db, resolver, task_id)
+    place, actor, task = await task_conversation(db, resolver, task_id)
     author = _person(actor)
+    await require_role(db, actor, place.project_id, Permission.comment)
     comment = await ReviewCommentService(db).write(
         task.id,
         author,

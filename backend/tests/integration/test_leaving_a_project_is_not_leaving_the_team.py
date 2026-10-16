@@ -27,6 +27,7 @@ import uuid
 from datetime import UTC, datetime
 
 from tests.conftest import seed_user
+from tests.integration.conftest import hand_over, offer_project
 
 
 def auth(token: str) -> dict[str, str]:
@@ -413,13 +414,14 @@ def test_someone_who_was_an_external_member_and_is_now_on_the_team_leaves_for_re
     assert still_on_the_team(client, pid, "mate")
 
 
-def test_a_project_handed_to_someone_who_left_it_still_has_an_owner(client, bearer):
-    """接手一个自己退出过的项目的人，照样是所有者、照样进得来。
+def test_a_project_is_handed_to_someone_who_left_it_only_once_they_are_back(
+    client, bearer
+):
+    """项目只交给项目里的人：退出过的人得先回来（邀请 → 接受），才接得了手。
 
     「他不在这个项目里」说的是**小队带来的人不在这儿**，不是「这个 handle 永远进不
-    来」。所有者是另一条来路（``projects.owner_handle``），它排在这条事实前面；一个
-    退出过项目的人后来接手了它，名册上照样得有他 —— 否则这就成了一个没有所有者的项
-    目。"""
+    来」。回来之后他接手，名册上照样得有他、照样进得来 —— 否则这就成了一个没有所有
+    者的项目。"""
     tid = team_of(client, owner="cap", members=("mate",))
     pid = project_in(client, tid, owner="cap")
     root = root_topic(client, pid, who="cap")
@@ -427,11 +429,13 @@ def test_a_project_handed_to_someone_who_left_it_still_has_an_owner(client, bear
     assert leave(client, pid, "mate").status_code == 200
     assert "mate" not in roster(client, pid, who="cap")
 
-    handed = client.put(
-        f"/projects/{pid}/owner",
-        json={"owner_handle": "mate"},
-        headers=auth(seed_user(client, "cap")),
-    )
+    refused = offer_project(client, pid, "mate", by="cap")
+    assert refused.status_code == 422, refused.text
+
+    sent = invite(client, pid, by="cap", who="mate")
+    assert sent.status_code == 200, sent.text
+    accept(client, sent.json()["data"]["id"], "mate")
+    handed = hand_over(client, pid, "mate", by="cap")
     assert handed.status_code == 200, handed.text
 
     rows = roster(client, pid, who="cap")
@@ -468,11 +472,7 @@ def test_a_team_admin_who_left_a_project_no_longer_manages_it(client, bearer):
     root = root_topic(client, pid, who="cap")
     assert leave(client, pid, "mate").status_code == 200
 
-    took_over = client.put(
-        f"/projects/{pid}/owner",
-        json={"owner_handle": "mate"},
-        headers=auth(seed_user(client, "mate")),
-    )
+    took_over = offer_project(client, pid, "mate", by="mate")
 
     assert took_over.status_code in (403, 404)
     assert not reads(client, pid, root, "mate")

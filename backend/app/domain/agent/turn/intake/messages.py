@@ -125,8 +125,12 @@ class RunnerIntake:
         attachments: list[dict] | None = None,
         client_id: str | None = None,
         quoted_context: dict | None = None,
+        may_summon: bool = True,
     ) -> uuid.UUID:
         """Persist one human message now, then deliver it to whoever it named.
+
+        ``may_summon`` is False for a person whose role does not let them use the
+        project's AI teammates (#3830): the message is said, and wakes nobody.
 
         Only model turns use queue/credit gates; quotes carry no summon authority.
         **谁被点名是这里算的，不是发送方算好递进来的**（不变量 I13）。以前还有一个
@@ -173,7 +177,7 @@ class RunnerIntake:
             recipient_handle is not None
             and await chat_service.has_running_turn(topic_id, recipient_handle)
         )
-        mentioned = any(
+        mentioned = may_summon and any(
             (payload.get("meta") or {}).get("agent_recipient", {}).get("mentioned")
             for payload in payloads
         )

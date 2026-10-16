@@ -6,6 +6,7 @@ from app.api.response import ok
 from app.api.routes.tasks._common import (
     CreateTaskRequest,
     _create_task_entity,
+    set_task_mentors,
 )
 from app.api.task_deps import (
     _task_attachment_service,
@@ -48,6 +49,14 @@ async def create_task(
         db=db,
         creator_user_id=auth_user.user_id,
     )
+
+    if payload.mentors:
+        await set_task_mentors(
+            db,
+            task=task,
+            handles=payload.mentors,
+            creator_user_id=auth_user.user_id,
+        )
 
     if payload.attachment_ids:
         # 材料是随题一起发出去的，所以挂在这里做：题目已经建好（``_create_task_entity``

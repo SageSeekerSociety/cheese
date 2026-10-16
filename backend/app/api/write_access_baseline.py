@@ -402,7 +402,6 @@ UNDECLARED: frozenset[tuple[str, str]] = frozenset(
         ("PUT", "/projects/{project_id}/library"),
         ("PUT", "/projects/{project_id}/mcp/secrets/{name}"),
         ("PUT", "/projects/{project_id}/own-agents"),
-        ("PUT", "/projects/{project_id}/owner"),
         ("PUT", "/projects/{project_id}/slug"),
         ("PUT", "/projects/{project_id}/task-naming"),
         ("PUT", "/projects/{project_id}/tier-policy"),

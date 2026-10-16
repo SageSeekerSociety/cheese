@@ -460,6 +460,7 @@ class AgentWorkRunner:
         attachments: list[dict] | None = None,
         client_id: str | None = None,
         quoted_context: dict | None = None,
+        may_summon: bool = True,
     ) -> uuid.UUID:
         return await self._intake.receive_message(
             chat_service,
@@ -470,6 +471,7 @@ class AgentWorkRunner:
             attachments=attachments,
             client_id=client_id,
             quoted_context=quoted_context,
+            may_summon=may_summon,
         )
 
     def _receive_message(self, chat_service, topic_id, turn_id, **message) -> None:

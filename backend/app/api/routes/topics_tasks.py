@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
+from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -81,6 +82,7 @@ from app.domain.idempotency.keys import action_key
 from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
+from app.domain.project_permissions import Permission
 from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import dispatch as task_dispatch
@@ -360,6 +362,7 @@ async def create_task(
     )
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
+    await require_role(db, actor, place.project_id, Permission.tasks)
     task = await task_dispatch.create_task(
         db,
         room_id=place.room_id,
