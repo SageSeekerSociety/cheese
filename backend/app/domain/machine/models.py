@@ -220,9 +220,11 @@ class CloudHost(UuidPk, Timestamps, Base):
     failed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    # Since when the disk guard has found the host's disk below its floor, in
-    # bytes or in inodes (``disk_guard``); NULL while it has room. Such a host
-    # takes no new sandbox until a later reading finds room again.
+    # Since when the host's disk was found short of room, in bytes or in
+    # inodes: by the disk guard's own reading (``disk_guard``), or by a write
+    # it refused (``session_work._install``, ``HostPool.ran_out_of_space``);
+    # NULL while it has room. Such a host takes no new sandbox until a reading
+    # finds room again.
     disk_full_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
