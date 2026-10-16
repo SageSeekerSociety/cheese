@@ -54,7 +54,48 @@ if [ "$SELF_TEST" = 1 ]; then
     > "$tmp/.github/workflows/w.yml"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a local composite action must pass"
 
-  echo "PASS: check-action-pins self-test (pinned, mutable tag, short sha, local action)"
+  # An exit code alone does not say the author can act on a failure, so the
+  # cases below read the message too: what the guard prints is what sends the
+  # reader to the right file, or to every file in the tree.
+  CODE=0
+  OUT=""
+  verdict() { OUT="$(bash "$me" "$1" 2>&1)" && CODE=0 || CODE=$?; }
+  says() {
+    case "$OUT" in
+      *"$1"*) ;;
+      *) self_fail "$2 (exit $CODE, got: $OUT)" ;;
+    esac
+  }
+
+  # The shape this guard exists to prevent: a scan that matched nothing because
+  # there was nothing to scan reads exactly like a tree that is clean.
+  empty="$(mktemp -d)"
+  verdict "$empty"
+  [ "$CODE" -ne 0 ] || self_fail "a tree with no .github/workflows must fail, not read as clean"
+  says "does not exist" "the failure must say the directory was missing"
+  says "$empty/.github/workflows" "the failure must name the directory it could not find"
+  rm -rf "$empty"
+
+  # A file holding both: the guard has to pick the unpinned line out of it. One
+  # that names the pinned line too gets switched off the first time it fires.
+  printf 'jobs:\n  a:\n    steps:\n      - uses: actions/checkout@%s # v4\n      - uses: a/b@v1\n' \
+    "$sha" > "$tmp/.github/workflows/w.yml"
+  verdict "$tmp"
+  [ "$CODE" -ne 0 ] || self_fail "an unpinned action beside a pinned one must fail"
+  says "a/b@v1" "the report must name the action that is not pinned"
+  says "w.yml:5" "the report must point at the line to fix"
+  case "$OUT" in
+    *"checkout@$sha"*) self_fail "a pinned action must not be reported (got: $OUT)" ;;
+  esac
+
+  # What the reader does next has to be in the output: CI turns the annotation
+  # into a failure line, and the command resolves the tag for a pin.
+  says "::error::" "the failure must carry the annotation CI reads"
+  says "git/ref/tags/" "the failure must say how to resolve the tag"
+  says "uses: <owner>/<repo>@" "the failure must show the pinned form to write instead"
+
+  echo "PASS: check-action-pins self-test (pinned, mutable tag, short sha, local action,"
+  echo "      missing workflows dir, only the offender named, actionable report)"
   exit 0
 fi
 
