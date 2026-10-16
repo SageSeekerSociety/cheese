@@ -18,6 +18,7 @@ looked for, both of which nobody has to set up:
 Nothing is said while either is still running, or when the watch runs out.
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -61,6 +62,13 @@ logger = logging.getLogger("cheesex.review.landing_watch")
 #: the branch cancels the run it superseded.
 _FAILED = frozenset({"failure", "timed_out", "startup_failure"})
 
+#: How many merges are looked at at once. A look holds a database connection
+#: only while it reads and writes its own landing row: what it waits on is the
+#: forge, and that is asked with no session open (`_look`). So what this bounds
+#: is the forge calls in flight, not the pool — eight of them still leave a
+#: worker's 20 + 15 connections (`core.config`) to every other request.
+AT_ONCE = 8
+
 
 async def watch_landings(
     chat: Chat,
@@ -100,11 +108,44 @@ async def watch_landings(
                 .order_by(TaskLanding.landed_at)
             )
         )
-    looked = 0
-    errors: list[str] = []
-    for landing_id in ids:
+    slots = asyncio.Semaphore(AT_ONCE)
+    # Gathered in `ids` order: however the looks interleave, the report reads
+    # the same as it did one merge at a time.
+    looked_at = await asyncio.gather(
+        *(
+            _look_at(
+                chat,
+                landing_id,
+                announce=announce,
+                record_instruction=record_instruction,
+                task_teammate=task_teammate,
+                slots=slots,
+            )
+            for landing_id in ids
+        )
+    )
+    return {
+        "gone_on": len(gone_on),
+        "closed": len(closed),
+        "landings_looked_at": sum(looked for looked, _ in looked_at),
+        "errors": [error for _, error in looked_at if error is not None],
+    }
+
+
+async def _look_at(
+    chat: Chat,
+    landing_id: uuid.UUID,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+    slots: asyncio.Semaphore,
+) -> tuple[int, str | None]:
+    """One merge's look, its failure kept to itself: what this returns is what
+    the sweep reports in `landing_id` order, whether the look raised or not."""
+    async with slots:
         try:
-            looked += await _look(
+            looked = await _look(
                 chat,
                 landing_id,
                 announce=announce,
@@ -112,14 +153,9 @@ async def watch_landings(
                 task_teammate=task_teammate,
             )
         except Exception as exc:  # noqa: BLE001 — one merge must not stop the rest
-            errors.append(f"{landing_id}: {exc}")
             logger.warning("landing watch failed for %s", landing_id, exc_info=True)
-    return {
-        "gone_on": len(gone_on),
-        "closed": len(closed),
-        "landings_looked_at": looked,
-        "errors": errors,
-    }
+            return 0, f"{landing_id}: {exc}"
+        return looked, None
 
 
 async def _look(
