@@ -509,7 +509,11 @@ _BASELINE: dict[str, int] = {
     "app/domain/thread/services.py": 1,
     "app/domain/topic/cleanup_trigger.py": 1,
     "app/domain/room_cleanup/retire.py": 8,
-    "app/domain/topic/services.py": 14,
+    # 2026-10-16，`topic -> room_task` 那一笔把任务动词和取地点的那几句搬了家，
+    # 三句英文拒绝跟着走：dispatch 两处、place 一处，`topic/services.py` 14 → 11。
+    "app/domain/room_task/dispatch.py": 2,
+    "app/domain/room_task/place.py": 1,
+    "app/domain/topic/services.py": 11,
     "app/domain/topic_membership/services.py": 10,
     "app/domain/usage/ledger.py": 1,
     "app/domain/user/mail_quota.py": 1,
