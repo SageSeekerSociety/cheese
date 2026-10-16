@@ -409,7 +409,12 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/project_hooks.py": 4,
     "app/domain/agent/queries.py": 4,
     "app/domain/agent/resource_cleanup.py": 23,
-    "app/domain/agent/room/sessions.py": 3,
+    # 2026-10: room/sessions.py 按职责拆分，三句话跟着抛它的函数走——门面的
+    # control（这个房间没有会话）、books 的 _hear（房间的读者没接上）、
+    # reading 的 _owning（平台这会儿不管会话），总数不变。
+    "app/domain/agent/room/sessions/__init__.py": 1,
+    "app/domain/agent/room/sessions/books.py": 1,
+    "app/domain/agent/room/sessions/reading.py": 1,
     "app/domain/agent/session_host/claude_code.py": 3,
     "app/domain/agent/session_host/consumptions.py": 4,
     "app/domain/agent/session_host/driver.py": 1,
