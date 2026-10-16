@@ -78,10 +78,11 @@ if [ "$SELF_TEST" = 1 ]; then
   says "$tmp/none/.github/workflows" "the failure must name the directory it could not find"
 
   # A file holding both, in the two shapes this repo writes a step: the pinned
-  # action as a list item, the unpinned one under a `name:` of its own. The
-  # second shape hangs on the `-?` in the scan staying optional — most of this
-  # repo's `uses:` lines are that shape, and losing it would leave them unread
-  # rather than reported, which is the silent half of what this guard is for.
+  # action as a list item, the unpinned one under a key of its own. Both are in
+  # use — 145 of the 223 `uses:` lines under .github/workflows carry the dash
+  # and 78 do not — so the second shape hangs on the `-?` in the scan staying
+  # optional. Losing it leaves those lines unread rather than reported, which
+  # is the silent half of what this guard is for.
   printf 'jobs:\n  a:\n    steps:\n      - uses: actions/checkout@%s # v4\n      - name: Bad\n        uses: a/b@v1\n' \
     "$sha" > "$tmp/.github/workflows/w.yml"
   verdict "$tmp"
@@ -92,11 +93,13 @@ if [ "$SELF_TEST" = 1 ]; then
     *"checkout@$sha"*) self_fail "a pinned action must not be reported (got: $OUT)" ;;
   esac
 
-  # What the reader does next has to be in the output: CI turns the annotation
-  # into a failure line, and the command resolves the tag for a pin.
-  says "::error::" "the failure must carry the annotation CI reads"
-  says "git/ref/tags/" "the failure must say how to resolve the tag"
-  says "uses: <owner>/<repo>@" "the failure must show the pinned form to write instead"
+  # The report has to reach the reader: the annotation turns the failure into a
+  # line on the pull request, and the other two say where to get the sha and
+  # what to write. Matched on the parts the report is for, not on its wording —
+  # ids and the path in, prose about.
+  says "::error::unpinned GitHub Action" "the failure must carry the annotation CI reads"
+  says "repos/<owner>/<repo>/git/ref/tags/" "the failure must say how to resolve the tag"
+  says "uses: <owner>/<repo>@<40-char-sha>" "the failure must show the pinned form to write instead"
 
   echo "PASS: check-action-pins self-test (pinned, mutable tag, short sha, local action,"
   echo "      missing workflows dir, only the offender named, actionable report)"
