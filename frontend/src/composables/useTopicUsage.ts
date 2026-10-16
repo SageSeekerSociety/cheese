@@ -11,7 +11,7 @@
 import type { MaybeRefOrGetter } from 'vue'
 import type { UsageStats } from '@/cx_types'
 
-import { ref, toValue } from 'vue'
+import { ref, toValue, watch } from 'vue'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
 
@@ -51,6 +51,16 @@ export function useTopicUsage(scope: TopicUsageScope) {
       loading.value = false
     }
   }
+
+  // 换了话题，上一个话题的数不能挂在这一个上。
+  watch(
+    () => toValue(scope.topicId),
+    () => {
+      topic.value = null
+      project.value = null
+      loadedFor = null
+    }
+  )
 
   return { loading, topic, project, load }
 }
