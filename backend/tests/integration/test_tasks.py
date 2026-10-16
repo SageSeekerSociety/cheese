@@ -25,8 +25,8 @@ from sqlalchemy import text
 from app.api import deps as session_turn_deps
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
-from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
     in_thread,
@@ -688,8 +688,9 @@ def test_talking_in_the_room_does_not_reach_the_task(client):
 
 def _step(client, project_id, room_id, task_id, content) -> str:
     """One step an AI session took, in the room's line or in a task's."""
-    from app.domain.block.models import AuthorType, BlockKind
+    from app.domain.block.models import BlockKind
     from app.domain.block.repositories import BlockRepository
+    from app.domain.event_author import AuthorType
 
     author = room_agent_seat(client, room_id)
 

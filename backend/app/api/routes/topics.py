@@ -50,7 +50,6 @@ from app.domain.block.asked import Awaited
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
     checklist_text,
@@ -64,6 +63,7 @@ from app.domain.delivery.agent import (
     record_task_instruction,
     redispatch_undelivered,
 )
+from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor

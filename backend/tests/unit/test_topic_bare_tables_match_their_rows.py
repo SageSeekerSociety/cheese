@@ -7,7 +7,7 @@
 
 所以这条测试分两半，都不连库：
 
-1. 副本与真表对一遍：列名、表名、两个短码和它们代表的枚举。
+1. 副本与真表对一遍：列名、表名、`kind` 的三个短码和它们代表的枚举。
 2. 那几条走裸表的读法，把语句**建出来**这件事本身。别名（`_blocks.alias()`）取列只能
    写 `.c.`，属性写法（`root.id`）在建语句时当场 AttributeError —— 2026-10-16 就是这
    么栽的，而它只在真库上才跑得到。用一个只收语句的假会话把这四条读法走一遍，等于在
@@ -20,14 +20,14 @@ import uuid
 
 from sqlalchemy.dialects import postgresql
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.block.repositories import BlockRepository
 from app.domain.room_task.models import Task
 from app.domain.thread.models import Thread
 from app.domain.topic.repositories import replied
 from app.domain.topic.repositories.latest import last_word
 from app.domain.topic.repositories.repository import TopicRepository
 from app.domain.topic.repositories.statements import (
-    AUTHOR_PARTICIPANT,
     KIND_ARTIFACT,
     KIND_EVENT,
     KIND_MESSAGE,
@@ -62,11 +62,14 @@ def test_each_copy_points_at_the_table_it_copies() -> None:
 
 
 def test_the_short_codes_are_the_enums_they_stand_for() -> None:
-    """`kind` / `author_type` 存的是枚举成员名；逐字抄下来的几个码不能和枚举分家。"""
+    """`kind` 存的是枚举成员名；逐字抄下来的三个码不能和枚举分家。
+
+    `author_type` 那一列不在这一条里：它不抄，直接 import 第 1 层的
+    `app.domain.event_author`，没有会分叉的第二份。
+    """
     assert KIND_MESSAGE == BlockKind.message.value
     assert KIND_ARTIFACT == BlockKind.artifact.value
     assert KIND_EVENT == BlockKind.event.value
-    assert AUTHOR_PARTICIPANT == AuthorType.participant.value
 
 
 class _AnswersNothing:
@@ -107,6 +110,40 @@ def _sql(statement: object) -> str:
         statement.compile(  # type: ignore[attr-defined]
             dialect=postgresql.dialect()
         )
+    )
+
+
+def _after_from(statement: object) -> str:
+    """语句里 `FROM` 之后的那截。
+
+    两份副本选的列本来就不一样（一边是模型全行，一边只手抄了几个列），拿整个文本
+    比一定不等；能比、也必须相等的是 `FROM` 之后的 `WHERE` / `ORDER BY` / `LIMIT` ——
+    那才是「取的是不是同一条」。
+    """
+    flat = " ".join(_sql(statement).split())
+    assert " FROM " in flat, flat
+    return flat.split(" FROM ", 1)[1]
+
+
+async def test_the_copied_query_asks_the_original_s_question() -> None:
+    """`last_word` 和 `latest_for_topic` 是同一句 SQL 的两种写法。
+
+    抄对列名只保证语句建得出来：总序、过滤和取几条都可以悄悄改成另一条行，两边
+    还都跑得通。所以这里把两份语句 `FROM` 之后的部分比一遍 —— 一份改了，另一份
+    没跟着改，这条就红。
+    """
+    topic = uuid.uuid4()
+    original_session = _AnswersNothing()
+    copy_session = _AnswersNothing()
+
+    await BlockRepository(original_session).latest_for_topic(topic)  # type: ignore[arg-type]
+    await last_word(copy_session, topic)  # type: ignore[arg-type]
+
+    assert _after_from(copy_session.seen[-1]) == _after_from(
+        original_session.seen[-1]
+    ), (
+        "手抄的那条和 `block/history.py` 的 `latest_for_topic` 问的不是同一条行了："
+        "两边都还要改一处。"
     )
 
 

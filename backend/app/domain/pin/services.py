@@ -15,10 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.membership.ports import ProjectTeam
 from app.domain.pin.models import Pin
 from app.domain.topic.models import Topic, TopicStatus

@@ -89,12 +89,15 @@ _blocks = table(
 
 
 # `blocks.kind` / `blocks.author_type` 存的是短字符串（`Enum(native_enum=False)`，
-# 成员名就是值），本包看不见 `block.models` 那两个枚举，所以在这里逐字写下来。
-# 改一个字，这里和 `block/models.py` 就各说一份 —— 和上面三张表的列名同一条规矩。
+# 成员名就是值）。`author_type` 那一档不在这里：`replied.py` 和 `unread.py` 直接
+# import 第 1 层的 `app.domain.event_author` —— 判这一列的判据要求按枚举成员读
+# （`tests/unit/test_author_type_two_values.py`），抄成字符串正是它要防的东西，而
+# 本包够不到第 4 层的那个枚举。`kind` 没有这条要求，本包也看不见
+# `block.models.BlockKind`，三个名字在这里逐字写下来 —— 改一个字，这里和
+# `block/models.py` 就各说一份，和上面三张表的列名同一条规矩。
 KIND_MESSAGE = "message"
 KIND_ARTIFACT = "artifact"
 KIND_EVENT = "event"
-AUTHOR_PARTICIPANT = "participant"
 
 
 def _muted_now() -> ColumnElement[bool]:

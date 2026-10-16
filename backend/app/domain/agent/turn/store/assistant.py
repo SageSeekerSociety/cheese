@@ -10,11 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import ConflictError
 from app.core.sentences import say
 from app.domain.agent.turn.store.events import EventAuthorResolver
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.output_effects import append_output
 from app.domain.block.queries import any_output_event_exists, last_turn_output
 from app.domain.block.schemas import BlockOut
 from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.topic.models import Topic

@@ -19,8 +19,10 @@
 类只转发。转发的方法不拿决定 —— 那正是两份实现不会漂移的原因。
 
 2026-10-16，`topic -> block` 那几条向上的边收掉时这里多了两样：`latest.py`
-（房间最后一条改读裸表）和两个码（`KIND_ARTIFACT`、`KIND_EVENT` —— 停滞判据要拿
-它们跟 `blocks.kind` 比，另两个码 `KIND_MESSAGE`、`AUTHOR_PARTICIPANT` 只在包内用）。
+（房间最后一条改读裸表）和三个码（`KIND_ARTIFACT`、`KIND_EVENT` —— 停滞判据要拿
+它们跟 `blocks.kind` 比，`KIND_MESSAGE` 只在包内用）。同一天晚些时候，`author_type`
+那一档不再逐字抄成字符串：它 import 第 1 层的 `app.domain.event_author`，因为判这一
+列的守卫要求按枚举成员读，而抄下来的字符串正是它要防的东西。
 
 `_replied_to_me_statement` 是这里唯一一个下划线名字，因为它原来就在这个模块里，
 外面按老路径取它：`.claude/scripts/explain_channel_detail.py` 拿它出来对着几条

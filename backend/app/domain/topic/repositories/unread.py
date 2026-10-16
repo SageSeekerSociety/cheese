@@ -29,6 +29,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import aliased
 
 from app.domain.conversation.models import Conversation
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
     agent_dm_key,
@@ -45,7 +46,6 @@ from app.domain.topic.models import (
     TopicReadState,
 )
 from app.domain.topic.repositories.statements import (
-    AUTHOR_PARTICIPANT,
     KIND_MESSAGE,
     _blocks,
     _mentions,
@@ -153,7 +153,7 @@ async def unread_counts(
                 or_(
                     and_(
                         took_part,
-                        _blocks.c.author_type == AUTHOR_PARTICIPANT,
+                        _blocks.c.author_type == AuthorType.participant,
                         ~agent_handle_column(_blocks.c.author),
                     ),
                     _mentions(user_handle),
@@ -187,7 +187,7 @@ async def unread_counts(
             ),
             _blocks.c.kind == KIND_MESSAGE,
             _blocks.c.author != user_handle,
-            _blocks.c.author_type == AUTHOR_PARTICIPANT,
+            _blocks.c.author_type == AuthorType.participant,
             ~agent_handle_column(_blocks.c.author),
             unseen,
         )

@@ -44,7 +44,8 @@ from sqlalchemy import select
 import app.models  # noqa: F401 — register every table so FKs resolve
 from app.core.db import async_session_factory
 from app.domain.agent_instance.adapters import project_team, seat_project
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.block.repositories import BlockRepository
 from app.domain.deliverables import artifacts as project_artifacts
 from app.domain.device.service import device_service_for_session

@@ -25,9 +25,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import aliased
 
+from app.domain.event_author import AuthorType
 from app.domain.topic.models import TopicReadState
 from app.domain.topic.repositories.statements import (
-    AUTHOR_PARTICIPANT,
     KIND_MESSAGE,
     _blocks,
     _mentions,
@@ -121,7 +121,7 @@ def _replied_to_me_statement(user_handle: str) -> Select:
                 _blocks.c.conversation_id.in_(_replied_inner),
             ),
             _blocks.c.kind == KIND_MESSAGE,
-            _blocks.c.author_type == AUTHOR_PARTICIPANT,
+            _blocks.c.author_type == AuthorType.participant,
             _blocks.c.author != user_handle,
             # 两处都还没读过才算「我还没处理」（见上）：这条块所在的那条线
             # 没读过，这个频道也没在它落地之后打开过。
