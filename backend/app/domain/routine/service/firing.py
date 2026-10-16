@@ -1,0 +1,212 @@
+"""把一条规则变成一次执行：执行行、主线上的那条消息、交给队友的提示词。
+
+一行 `RoutineRun` 和它那条消息、支线的开口行、那一笔投递，在同一个事务里写好；
+送不送得到是投递台账的事。重复的执行键由 `uq_routine_occurrence` 挡掉，所以这里
+返回 `None` 就是「这一次已经排过了」。
+
+`run_prompt` 是交给队友的那段话本身，它和 `TRIGGER_LABELS` 一起定义「这是哪种活」。
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.sentences import say, with_keys
+from app.domain.block.authorship import AuthorType
+from app.domain.block.models import Block, BlockKind
+from app.domain.delivery.agent import instance_for_seat, record_agent
+from app.domain.delivery_events import DeliveryEvent
+from app.domain.feedback import triage as feedback_triage
+from app.domain.notice_meta import (
+    EVENT_ROUTINE_RUN,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    notice,
+)
+from app.domain.notification.models import NotificationType
+from app.domain.routine.models import (
+    Routine,
+    RoutineRun,
+    RoutineTrigger,
+    RunStatus,
+)
+from app.domain.routine.service._shared import (
+    NO_FEEDBACK_WAITING,
+    TRIGGER_LABELS,
+    now,
+)
+from app.domain.thread.services import answered_in
+
+
+def run_prompt(routine: Routine, run: RoutineRun, previous: str = "") -> str:
+    folder = routine.output_dir or "房间根目录"
+    lines = [
+        f"【{TRIGGER_LABELS[RoutineTrigger(routine.trigger)]}工作】{routine.title}",
+        f"这是规则「{routine.title}」的一次执行（执行 id {run.id}）。"
+        f"{run.trigger_detail}",
+        "",
+        f"工作内容：{routine.instructions}",
+        "资料范围："
+        + (routine.context_scope or "按工作内容需要，只用你有权访问的项目内容"),
+        f"结果保存到：{folder}（用 cheese show 放进房间，文件名带上日期）",
+        "",
+        "做完后必须交回结果，成功失败都要交：",
+        f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
+        'summary="结果，或失败原因", outputs=["房间里的结果文件路径"])',
+        "成功时的 summary 会作为你的一条消息发在频道主线上，频道里的人直接读它："
+        "写清结论，可以分几点，不用在这里再发一遍。",
+        "没有交回结果的一次执行会被记为失败。",
+    ]
+    if previous:
+        lines += ["", "上一次执行交回的结果：", previous]
+    return "\n".join(lines)
+
+
+async def _fire(
+    session: AsyncSession,
+    routine: Routine,
+    *,
+    occurrence_key: str,
+    detail: str,
+    scheduled_for: datetime | None,
+    skip_reason: str | None = None,
+) -> RoutineRun | None:
+    stamp = now()
+    run_id = uuid.uuid4()
+    inserted = await session.scalar(
+        insert(RoutineRun)
+        .values(
+            id=run_id,
+            routine_id=routine.id,
+            occurrence_key=occurrence_key[:300],
+            trigger_detail=detail,
+            routine_revision=routine.revision,
+            scheduled_for=scheduled_for,
+            status=(RunStatus.skipped if skip_reason else RunStatus.queued).value,
+            error=skip_reason or "",
+            created_at=stamp,
+            finished_at=stamp if skip_reason else None,
+            outputs=[],
+        )
+        .on_conflict_do_nothing(constraint="uq_routine_occurrence")
+        .returning(RoutineRun.id)
+    )
+    if inserted is None:
+        return None
+    run = await session.get(RoutineRun, run_id)
+    assert run is not None
+    if skip_reason:
+        return run
+    # The run's message, in the main line where the rule lives. It says
+    # 「运行中」 until the run is settled, and the run happens in its 支线 (in
+    # a private chat, where there are no 支线, in the chat itself).
+    message = Block(
+        id=uuid.uuid4(),
+        project_id=routine.project_id,
+        conversation_id=routine.topic_id,
+        author=routine.agent_handle,
+        author_type=AuthorType.participant,
+        kind=BlockKind.message,
+        content="",
+        meta={},
+        created_at=stamp,
+    )
+    session.add(message)
+    await session.flush()
+    run.message_id = message.id
+    place = await answered_in(session, message)
+    agent = await instance_for_seat(session, routine.project_id, routine.agent_handle)
+    if agent is None or not agent.is_active:
+        run.status = RunStatus.failed.value
+        run.error = f"执行者 {routine.agent_handle} 已不在这个项目里"
+        run.finished_at = stamp
+        return run
+    content = run_prompt(routine, run, await _previous_result(session, routine))
+    batch_size = routine.spec.get("feedback_batch")
+    if batch_size:
+        batch = await feedback_triage.untriaged(session, batch_size)
+        if not batch:
+            # Nothing waiting is not news: no turn, no message, and no daily
+            # notice to the owner saying so (`notified` is what
+            # `_announce_finished` reads).
+            run.message_id = None
+            await session.delete(message)
+            run.status = RunStatus.skipped.value
+            run.error = NO_FEEDBACK_WAITING
+            run.finished_at = stamp
+            run.notified = True
+            return run
+        content = f"{content}\n\n{feedback_triage.batch_prompt(batch)}"
+    event_id = uuid.uuid4()
+    line = say("routineRunStarted", title=routine.title)
+    session.add(
+        Block(
+            id=event_id,
+            project_id=routine.project_id,
+            conversation_id=place,
+            author="system",
+            author_type=AuthorType.platform,
+            kind=BlockKind.event,
+            content=line,
+            # A row, not `BlockRepository.add`: the key is recorded here.
+            meta=with_keys(
+                {
+                    **notice(
+                        EVENT_ROUTINE_RUN,
+                        severity=SEVERITY_INFO,
+                        who=WHO_PLATFORM,
+                        detail=content,
+                        detail_label=say(
+                            "labelRoutineWorkFor", who=f"<@{routine.agent_handle}>"
+                        ),
+                    ),
+                    "routine_id": str(routine.id),
+                    "routine_run_id": str(run.id),
+                },
+                content=line,
+            ),
+        )
+    )
+    await record_agent(
+        session,
+        DeliveryEvent(
+            id=event_id,
+            type=NotificationType.ROOM_NOTICE,
+            payload={
+                "projectId": str(routine.project_id),
+                "topicId": str(routine.topic_id),
+                "eventType": EVENT_ROUTINE_RUN,
+                "severity": SEVERITY_INFO,
+                # 这一轮跑的是主人交代的活，所以它读主人的 private 记忆（组装那一
+                # 轮的时候从这一笔投递上认出来）。写在这里而不是规则表上：读的那
+                # 一侧（agent）不认识周期任务这个域，而这一笔它本来就在读。
+                "routineOwner": routine.owner_handle,
+            },
+            occurred_at=stamp,
+        ),
+        conversation_id=place,
+        instance_id=agent.id,
+        content=content,
+    )
+    run.delivery_event_id = event_id
+    return run
+
+
+async def _previous_result(session: AsyncSession, routine: Routine) -> str:
+    """What the rule's last successful run handed back: where this one picks
+    up (last week's report, the feedback already sorted)."""
+    summary = await session.scalar(
+        select(RoutineRun.summary)
+        .where(
+            RoutineRun.routine_id == routine.id,
+            RoutineRun.status == RunStatus.succeeded.value,
+        )
+        .order_by(RoutineRun.finished_at.desc())
+        .limit(1)
+    )
+    return summary or ""

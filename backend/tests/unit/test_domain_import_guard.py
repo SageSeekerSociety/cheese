@@ -216,7 +216,10 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- routine ---
         # 一次执行的那条消息变了（开始、跑完）要整行推给开着频道的人，整行里
         # 有它的表情回应；block 领域没有 service 层，和 pin 同一个理由入账。
-        ("app.domain.routine.service", "app.domain.block.repositories"),
+        # `routine.service` 拆成了包，这条边现在由 `service/sweep.py` 发起（整行
+        # 推送就在 `publish_run_messages`）；被摸的 module 一个没变，同一笔债
+        # 挪了发起方。拆分前这条在 `app.domain.routine.service` 名下。
+        ("app.domain.routine.service.sweep", "app.domain.block.repositories"),
         # --- questions ---
         ("app.domain.questions.services", "app.domain.user.repositories"),
         ("app.domain.questions.services", "app.domain.answers.repositories"),

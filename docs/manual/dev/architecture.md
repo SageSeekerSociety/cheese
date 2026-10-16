@@ -181,7 +181,7 @@ app/domain/<包>/
 
 写入只有 10 处、在 5 个文件里。领取在锁住话题行和会话行之后、在 Python 里比较 JSON（`session_work.py:1008`）；续约是每次安装一个 asyncio 任务，每 10 秒开会话、锁行、改 JSON（`lease_claim.py:67`）；没有回收，读的人自己比 `claim_until`。时间来自**各后端进程自己的时钟**（`lease_claim.py:46`），滚动发布时两个进程读同一行，时钟差直接变成 TTL 误差。三个常数（30 秒心跳超时、10 秒续一次、660 秒总时限）和 Temporal 的心跳超时、start-to-close 一一对得上，参数没问题，问题在存储形状。
 
-仓库里已经有目标形状的先例：`review/services/poll_claim.py` 用 `poll_claim` / `poll_claimed_until` 两列一条 `UPDATE ... WHERE poll_claimed_until IS NULL OR < now()` 领取；`notification/outbox.py`、`routine/service.py`、`usage/compute.py` 等用 `FOR UPDATE SKIP LOCKED`，`routine/service.py:393` 的注释明说两个进程同时扫。
+仓库里已经有目标形状的先例：`review/services/poll_claim.py` 用 `poll_claim` / `poll_claimed_until` 两列一条 `UPDATE ... WHERE poll_claimed_until IS NULL OR < now()` 领取；`notification/outbox.py`、`routine/service/`、`usage/compute.py` 等用 `FOR UPDATE SKIP LOCKED`，`routine/service/archive.py:68` 的注释明说两个进程同时扫。
 
 ### 四个轴，各有一个权威来源 {#lease-axes}
 
