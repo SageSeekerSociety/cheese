@@ -217,6 +217,9 @@ def test_top_tests_orders_full_nodeids(
     monkeypatch.setattr(ci_shard, "DURATIONS", output)
     assert test_durations.main(duration_runs) == 0
     capsys.readouterr()
+    recorded = json.loads(output.read_text())
+    recorded["tests"] = dict(reversed(list(recorded["tests"].items())))
+    output.write_text(json.dumps(recorded))
     assert ci_shard.main(["--top-tests", str(limit)]) == 0
     captured = capsys.readouterr()
     assert captured.err == ""
