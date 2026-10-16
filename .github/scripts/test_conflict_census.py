@@ -306,9 +306,10 @@ class ConflictCensusTest(unittest.TestCase):
 
     def test_a_plain_alias_of_a_slash_named_remote_is_not_a_branch(self):
         # Both shapes of the marker have to survive the same remote name: a
-        # plain ref for `a/b`'s marker sits at `refs/remotes/a/b/HEAD`, and a
-        # rule that fixes the depth at `<remote>/HEAD` censuses it as a branch
-        # called `a/b` while dropping the symbolic shape of the same remote.
+        # plain ref for `a/b`'s marker sits at `refs/remotes/a/b/HEAD`, deeper
+        # than `<remote>/HEAD` for any remote without a slash in its name. The
+        # configured remote is what says where that marker is.
+        self.git("remote", "add", "a/b", ".")
         self.git("update-ref", "refs/remotes/a/b/main", self.main_sha)
         self.git("update-ref", "refs/remotes/a/b/HEAD", self.main_sha)
 
@@ -316,6 +317,18 @@ class ConflictCensusTest(unittest.TestCase):
         counted = sorted(list(out["conflicted"]) + out["clean"])
         self.assertNotIn("a/b", counted)
         self.assertIn("a/b/main", counted)
+
+    def test_a_remote_branch_whose_name_ends_in_slash_HEAD_is_a_branch(self):
+        # `foo/HEAD` is a branch of `origin`, at `refs/remotes/origin/foo/HEAD`,
+        # and `git branch -r` lists it as one. Only the remote's own `HEAD` is
+        # its marker, so a bare suffix rule would drop a real branch here.
+        self.git("update-ref", "refs/remotes/origin/foo/HEAD", self.main_sha)
+
+        out = self.census_json("--remotes")
+        counted = sorted(list(out["conflicted"]) + out["clean"])
+        # `%(refname:short)` drops the trailing `/HEAD` here too, so the branch
+        # is listed as `origin/foo`; whether it is listed at all is the rule.
+        self.assertIn("origin/foo", counted)
 
     def test_a_symbolic_branch_under_refs_heads_is_still_a_branch(self):
         # Only `refs/remotes/` holds aliases. A branch someone pointed at

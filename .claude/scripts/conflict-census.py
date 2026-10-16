@@ -97,27 +97,41 @@ def full_ref(root: Path, name: str) -> str | None:
     return out.strip() or None
 
 
-def is_remote_alias(ref: str, symref: str) -> bool:
+def remote_marker_refs(root: Path) -> set[str]:
+    """Full names of the `<remote>/HEAD` markers of the remotes this repo has.
+
+    The marker sits one level below the remote and a remote's name may itself
+    contain a `/` — `git remote add a/b …` is legal — so where the marker is
+    cannot be read off the ref. The configured remotes are what say it.
+    """
+    return {f"refs/remotes/{name}/HEAD" for name in git(root, "remote").split()}
+
+
+def is_remote_alias(ref: str, symref: str, markers: set[str]) -> bool:
     """Is this ref an alias rather than a branch, under `refs/remotes/`?
 
     The `<remote>/HEAD` marker has two shapes. A `fetch` writes it as a symbolic
-    ref, which `%(symref)` names; a clone old enough to predate that left a
-    plain ref, which only the path identifies. `%(refname:short)` renders the
-    bare alias as the remote's own name — `origin` for `origin/HEAD` — so a
-    suffix rule cannot see it and the path is what is left.
+    ref, which `%(symref)` names, and then `%(refname:short)` renders it as the
+    remote's own name — `origin` for `origin/HEAD` — so no suffix rule sees it.
+    A clone old enough to predate symbolic aliases left a plain ref instead,
+    which only its place identifies: the remote's own name, one level below it,
+    which is what `markers` holds. The bare `<remote>/HEAD` slot of a remote
+    with no `/` in its name is also read as a marker, so a stale plain one whose
+    remote is gone is still not censused.
 
-    The path is the slot, at any depth, because a remote's name may itself
-    contain a `/` (`git remote add a/b …` is legal) and its marker then sits at
-    `refs/remotes/a/b/HEAD`. A remote-tracking ref for a branch literally named
-    `HEAD` lands in that same slot and cannot be told from the marker by shape;
-    the slot is read as the marker, which is what git means by it.
+    A remote-tracking branch whose own name ends in `/HEAD` — a branch of
+    `origin` called `foo/HEAD`, at `refs/remotes/origin/foo/HEAD` — is at none
+    of those, and git's own `git branch -r` lists it as a branch. It is
+    censused; a bare suffix rule would drop it.
 
-    Nothing under `refs/heads/` is treated as an alias: a branch is a branch,
-    even one someone pointed at another with `git symbolic-ref`.
+    Nothing under `refs/heads/` is an alias: a branch is a branch, even one
+    someone pointed at another with `git symbolic-ref`.
     """
     if not ref.startswith("refs/remotes/"):
         return False
-    return bool(symref.strip()) or ref.endswith("/HEAD")
+    if symref.strip() or ref in markers:
+        return True
+    return ref.endswith("/HEAD") and ref.count("/") == 3
 
 
 def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
@@ -135,13 +149,14 @@ def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
     out = git(
         root, "for-each-ref", "--format=%(refname)%09%(refname:short)%09%(symref)", pattern
     )
+    markers = remote_marker_refs(root)
     branches: list[str] = []
     for line in out.splitlines():
         if not line.strip():
             continue
         ref, _, rest = line.partition("\t")
         short, _, symref = rest.partition("\t")
-        if ref == skip or is_remote_alias(ref, symref):
+        if ref == skip or is_remote_alias(ref, symref, markers):
             continue
         branches.append(short)
     return branches
