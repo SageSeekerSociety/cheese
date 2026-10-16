@@ -1,0 +1,114 @@
+import type { Ref } from 'vue'
+import type { RememberedPlace, StoredLayout } from './types'
+
+import { ref } from 'vue'
+
+import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
+
+// 当前打开的是哪个项目，和围着它的界面状态（栏宽、上次待的房间、为什么打不开）。
+const LAYOUT_KEY = 'cheesex.layout'
+
+function loadLayout(): StoredLayout {
+  const saved = storageGetJson<unknown>(LAYOUT_KEY)
+  return typeof saved === 'object' && saved !== null ? (saved as StoredLayout) : {}
+}
+
+// 存进来的这份是整个浏览器一份，可能是老版本写的、也可能被人手改过：只留下三项
+// 都齐、而且都说得通的那些，别的当没记过。
+function validPlaceMap(value: unknown): Record<string, RememberedPlace> {
+  if (typeof value !== 'object' || value === null) return {}
+  const places: Record<string, RememberedPlace> = {}
+  for (const [projectKey, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const { kind, id, room } = raw as Partial<RememberedPlace>
+    if ((kind !== 'task' && kind !== 'channel') || typeof id !== 'string' || typeof room !== 'string') continue
+    places[projectKey] = { kind, id, room }
+  }
+  return places
+}
+
+const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+// 手机底栏「工作区」那一格要在冷启动时就知道该落到哪个项目，那时 store 里还没有
+// 打开过任何项目——所以这个值从存储里直接读，不经过 store 实例。
+export function lastOpenedProjectId(): string | null {
+  return loadLayout().lastProjectId ?? null
+}
+
+/**
+ * 这个人自己选过、要记住的界面偏好：栏宽、右侧面板的开合，和每个项目上次待的地方。
+ *
+ * 它要的只有「当前是哪个项目」——写回存储时 `lastProjectId` 记的是它，所以传进来的是
+ * 那个 ref 本身，不是某一刻的值。
+ */
+export function useLayout(projectId: Ref<string | null>) {
+  const stored = loadLayout()
+  const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
+  const panelPref = ref<boolean | null>(typeof stored.panelOpen === 'boolean' ? stored.panelOpen : null)
+  // 每个项目上次待的地方。rail 的项目格子用它落回那里，而不是每次都落在项目首页
+  //（每天都走的主路径不该多加一跳）。
+  const lastPlaceByProject = ref<Record<string, RememberedPlace>>(validPlaceMap(stored.lastPlaceByProject))
+
+  function persistLayout() {
+    storageSetJson(LAYOUT_KEY, {
+      chatPct: chatPct.value,
+      panelOpen: panelPref.value ?? undefined,
+      lastProjectId: projectId.value ?? undefined,
+      lastPlaceByProject: lastPlaceByProject.value,
+    })
+  }
+
+  function setChatPct(pct: number) {
+    chatPct.value = clampNum(pct, 25, 80)
+    persistLayout()
+  }
+
+  function setPanelPref(open: boolean) {
+    panelPref.value = open
+    persistLayout()
+  }
+
+  /**
+   * 记住正待着的这个**地方**是哪个项目的：回到项目时 rail 那一格落回它。
+   *
+   * 在任务页上记的是那件任务——只记它所在的频道，回来就只到频道、到不了任务，
+   * 而那正是「回到我昨天做的那件事」差的那一步。
+   */
+  function rememberPlace(projectKey: string, place: RememberedPlace) {
+    if (!projectKey || !place.id || !place.room) return
+    const held = lastPlaceByProject.value[projectKey]
+    if (held && held.kind === place.kind && held.id === place.id && held.room === place.room) return
+    lastPlaceByProject.value = { ...lastPlaceByProject.value, [projectKey]: place }
+    persistLayout()
+  }
+
+  /**
+   * 这个项目上次待的地方；没记过就交回 null，落回项目首页。
+   *
+   * 「还在不在」在读到这个项目的频道清单时校验：记着的那件任务所在频道被删了、或被
+   * 收成了别的房间，就不该再把人送进一个打不开的房间。
+   */
+  function placeFor(projectKey: string): RememberedPlace | null {
+    return lastPlaceByProject.value[projectKey] ?? null
+  }
+
+  function forgetPlace(projectKey: string) {
+    if (!(projectKey in lastPlaceByProject.value)) return
+    const next = { ...lastPlaceByProject.value }
+    delete next[projectKey]
+    lastPlaceByProject.value = next
+    persistLayout()
+  }
+
+  return {
+    chatPct,
+    panelPref,
+    lastPlaceByProject,
+    persistLayout,
+    setChatPct,
+    setPanelPref,
+    rememberPlace,
+    placeFor,
+    forgetPlace,
+  }
+}
