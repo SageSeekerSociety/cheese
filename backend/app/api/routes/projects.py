@@ -56,6 +56,7 @@ from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
 from app.domain.project.github_app import (
     github_app_read_token_for_project,
+    parse_github_repo,
 )
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
@@ -75,7 +76,6 @@ from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
 from app.domain.review.archive import close_cards_for_archived_topic
-from app.domain.review.github_pr import parse_github_repo
 from app.domain.room_task import naming
 from app.domain.room_task.services import TaskService
 from app.domain.shell.service import effective_shells

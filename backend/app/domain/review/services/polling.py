@@ -142,8 +142,8 @@ async def _refresh_github_unseen_head(
 
 
 async def _status_client(self: pkg.AcceptService, project_id: uuid.UUID):
-    # deferred-import: tests replace this name on app.domain.project.forge
-    from app.domain.project.forge import status_client
+    # deferred-import: tests replace this name on app.domain.review.forge_clients
+    from app.domain.review.forge_clients import status_client
 
     return _remote(self, await status_client(project_id, self._session))
 
@@ -566,8 +566,8 @@ async def _app_pr_client(self: pkg.AcceptService, topic: Topic):  # noqa: ANN202
     """The App-token client for this project's upstream, or None when the
     project has no GitHub side at all (no installation, or an upstream that
     is not a GitHub https remote)."""
-    # deferred-import: tests replace this name on app.domain.project.forge
-    from app.domain.project.forge import proposal_client
+    # deferred-import: tests replace this name on app.domain.review.forge_clients
+    from app.domain.review.forge_clients import proposal_client
 
     return _remote(self, await proposal_client(topic.project_id, self._session))
 

@@ -17,7 +17,6 @@ from app.domain.review.github_pr import (
     GitHubPRError,
     GitHubPRMergeBlocked,
     GitHubPRRateLimited,
-    parse_github_repo,
 )
 
 
@@ -60,27 +59,6 @@ def _client(handler) -> GitHubPRClient:
         cast(GitHubAppTokens, _FakeTokens()),
         transport=httpx.MockTransport(route),
     )
-
-
-# ---- parse_github_repo -------------------------------------------------------
-
-
-def test_parse_accepts_https_github_shapes():
-    assert parse_github_repo("https://github.com/acme/widgets") == ("acme", "widgets")
-    assert parse_github_repo("https://github.com/acme/widgets.git") == (
-        "acme",
-        "widgets",
-    )
-    assert parse_github_repo("https://github.com/acme/widgets/") == ("acme", "widgets")
-
-
-def test_parse_rejects_everything_else():
-    # SSH is excluded on purpose: installation tokens only work over https.
-    assert parse_github_repo("git@github.com:acme/widgets.git") is None
-    assert parse_github_repo("https://gitlab.com/acme/widgets") is None
-    assert parse_github_repo("/home/repos/widgets") is None
-    assert parse_github_repo(None) is None
-    assert parse_github_repo("") is None
 
 
 # ---- open_pr -----------------------------------------------------------------

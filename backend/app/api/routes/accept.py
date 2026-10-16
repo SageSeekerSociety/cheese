@@ -35,11 +35,11 @@ from app.domain.notice_meta import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.project.forge import proposal_client
 from app.domain.review import comment_publish, pr_publish
 from app.domain.review.comments import ReviewCommentService
 from app.domain.review.comments import instruction as comment_instruction
 from app.domain.review.comments import summary as comment_summary
+from app.domain.review.forge_clients import proposal_client
 from app.domain.review.github_pr import GitHubPRError
 from app.domain.review.models import DeliverableKind
 from app.domain.review.schemas import (

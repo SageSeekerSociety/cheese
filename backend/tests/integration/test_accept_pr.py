@@ -523,7 +523,7 @@ def app_world(client, monkeypatch):
     from app.domain.project import github_app
     from app.domain.project.models import ProjectForge
     from app.domain.repository import forge_files
-    from app.domain.review import pr_publish
+    from app.domain.review import forge_clients, pr_publish
     from app.domain.review import services as review_services
 
     fake = FakeGitHubPrClient()
@@ -656,7 +656,7 @@ def app_world(client, monkeypatch):
     monkeypatch.setattr(
         project_forge, "github_app_tokens_for_project", _tokens_for_project
     )
-    monkeypatch.setattr(project_forge, "GitHubPRClient", _AppPrOpener)
+    monkeypatch.setattr(forge_clients, "GitHubPRClient", _AppPrOpener)
 
     async def provision(project_id, session, **kwargs):
         binding = ProjectForge(
@@ -3469,8 +3469,7 @@ def test_ready_on_a_pr_that_is_not_a_draft_says_so_instead_of_failing(client, sw
 def test_ready_reports_github_installation_rate_limit_without_changing_pr(
     client, sweeping, monkeypatch
 ):
-    from app.domain.project import forge as project_forge
-    from app.domain.review.github_pr import GitHubPRRateLimited
+    from app.domain.review.github_pr import GitHubPRClient, GitHubPRRateLimited
 
     _, tid = _room_with_work(client)
     _sweep(client)
@@ -3479,7 +3478,7 @@ def test_ready_reports_github_installation_rate_limit_without_changing_pr(
     async def limited(_self, _number):
         raise GitHubPRRateLimited("API rate limit exceeded for installation ID")
 
-    monkeypatch.setattr(project_forge.GitHubPRClient, "pr_view", limited)
+    monkeypatch.setattr(GitHubPRClient, "pr_view", limited)
     response = _ready(client, tid)
 
     assert response.status_code == 200, response.text

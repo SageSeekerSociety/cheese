@@ -42,6 +42,7 @@ from app.domain.project.github_app import (
     GitHubAppError,
     fetch_user_installation_repos,
     list_user_installations,
+    parse_github_repo,
 )
 from app.domain.project.repositories import (
     ProjectGitInstallationRepository,
@@ -49,7 +50,6 @@ from app.domain.project.repositories import (
     RepositoryTakenError,
 )
 from app.domain.project.services import ProjectService
-from app.domain.review.github_pr import parse_github_repo
 from app.domain.user.repositories import UserRepository
 
 logger = logging.getLogger(__name__)

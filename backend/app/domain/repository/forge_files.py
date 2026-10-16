@@ -24,11 +24,9 @@ from app.domain.project.forge import (
     branch_head,
     default_branch,
     repository_data,
-    status_client,
-    tokens_for_project,
 )
 from app.domain.repository import merge3
-from app.domain.repository.ports import ExecutorCall
+from app.domain.repository.ports import CompareStatus, ExecutorCall
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
@@ -99,17 +97,21 @@ class ProjectFiles:
         *,
         release_session: bool = False,
         executor: ExecutorCall | None = None,
+        compare_status: CompareStatus | None = None,
     ):
-        """``executor`` 是在任务那台机器上跑一次文件操作的东西（`ports.ExecutorCall`）。
+        """``executor`` 是在任务那台机器上跑一次文件操作的东西（`ports.ExecutorCall`）；
+        ``compare_status`` 是问托管方「这个提交交付过没有」那一次调用
+        （`ports.CompareStatus`）。
 
-        谁构造谁给：只有走进 ``live()`` 的那几条路要它，读已提交版本的（``revision``、
-        ``committed_entries``、``comparison``、``history``）不接线，``None`` 就是不给。
-        真的走到要读工作目录那条路上还是没有它，就是有个门漏了，``live()`` 当场炸掉，
-        不会静默去读一个不存在的副本。
+        谁构造谁给：只有走进 ``live()`` 的那几条路要 ``executor``，只有点名比一个
+        提交和当前版本（``diff`` 带 ``ref``）的那条路要 ``compare_status``，其余不接线，
+        ``None`` 就是不给。真的走到要它的那条路上还是没有它，就是有个门漏了，当场炸掉，
+        不会静默跳过这一次检查。
         """
         self.session, self.project_id, self.task_id = session, project_id, task_id
         self.release_session = release_session
         self._executor = executor
+        self._compare_status = compare_status
 
     async def _data(self, *args, **kwargs):
         if self.release_session:
@@ -460,16 +462,15 @@ class ProjectFiles:
         else:
             head = await self.revision()
             if ref and ref != head:
-                tokens = await tokens_for_project(self.project_id, self.session)
-                if tokens is None:
-                    raise GatewayUnavailableError(say("forgeCredentialsMissing"))
-                await self._release()
-                token, _ = await tokens.installation_token()
-                owner, repo = binding.repo.split("/", 1)
-                client = await status_client(self.project_id, self.session)
-                await self._release()
-                relation = await client.compare_status(
-                    owner=owner, repo=repo, base=ref, head=head, token=token
+                if self._compare_status is None:  # pragma: no cover - 接线漏了才会走到
+                    # i18n-exempt: developer miswiring, not a readable refusal
+                    raise RuntimeError("compare_status was not handed in")
+                relation = await self._compare_status(
+                    self.project_id,
+                    self.session,
+                    base=ref,
+                    head=head,
+                    release_session=self.release_session,
                 )
                 if relation not in ("ahead", "identical"):
                     raise NotFoundError(say("commitNotDelivered"))
