@@ -189,7 +189,7 @@ class RequiredCITest(unittest.TestCase):
                 self.assertTrue(gate.select([path])["backend"])
         for path in (
             "frontend/src/i18n/messages/zh-CN/work/room/doc/index.json",
-            "frontend/src/i18n/messages/zh-CN/account.json",
+            "frontend/src/i18n/messages/zh-CN/account/index.json",
         ):
             with self.subTest(path=path):
                 selected = gate.select([path])

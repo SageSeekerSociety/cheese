@@ -1,0 +1,21 @@
+{
+  "createAccount": "创建账号",
+  "emailCode": "使用邮箱验证码登录",
+  "failed": "登录失败，稍后重试",
+  "forgotPassword": "忘记密码",
+  "lastUsed": "上次使用",
+  "noAccount": "还没有账号？",
+  "notice": {
+    "passwordReset": "密码已重置，用新密码登录"
+  },
+  "or": "或",
+  "passkey": "使用通行密钥登录",
+  "passkeyCanceled": "已取消通行密钥登录",
+  "passkeyFailed": "通行密钥登录失败，稍后重试",
+  "passkeyNotFound": "未找到匹配的通行密钥",
+  "providerFailed": "第三方登录失败，稍后重试",
+  "signedIn": "登录成功",
+  "submit": "登录",
+  "title": "登录",
+  "withProvider": "使用 {provider} 登录"
+}

@@ -1,0 +1,10 @@
+{
+  "codeTooSoon": "Request a new code in {wait}.",
+  "mailLimit": "Email can't be sent right now. Try again later.",
+  "minutes": "1 minute | {count} minutes",
+  "seconds": "1 second | {count} seconds",
+  "tooManyWait": "Too many attempts. Try again in {wait}.",
+  "wrongEmailCode": "The code is wrong or has expired.",
+  "wrongPassword": "Wrong username or password.",
+  "wrongPasswordWait": "Wrong username or password. Try again in {wait}."
+}
