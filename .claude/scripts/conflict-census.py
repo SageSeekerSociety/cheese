@@ -97,8 +97,26 @@ def full_ref(root: Path, name: str) -> str | None:
     return out.strip() or None
 
 
+def is_remote_alias(ref: str, symref: str) -> bool:
+    """Is this ref an alias rather than a branch, under `refs/remotes/`?
+
+    The `<remote>/HEAD` marker has two shapes. A `fetch` writes it as a symbolic
+    ref, which `%(symref)` names; a clone old enough to predate that left a
+    plain ref, which only the path identifies — `refs/remotes/<remote>/HEAD`,
+    exactly one level below the remote. Deeper, `/HEAD` is an ordinary branch
+    name, and `%(refname:short)` renders the bare alias as the remote's own
+    name, so neither shape can be caught by a suffix rule alone.
+
+    Nothing under `refs/heads/` is treated as an alias: a branch is a branch,
+    even one someone pointed at another with `git symbolic-ref`.
+    """
+    if not ref.startswith("refs/remotes/"):
+        return False
+    return bool(symref.strip()) or (ref.endswith("/HEAD") and ref.count("/") == 3)
+
+
 def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
-    """The refs `pattern` names, short, minus `skip` and any alias.
+    """The refs `pattern` names, short, minus `skip` and any remote alias.
 
     `for-each-ref` is what keeps this a ref pattern: the same glob handed to
     `rev-list` in argument position is a pathspec, matches no path, and returns
@@ -108,13 +126,6 @@ def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
     at a `/`, so the one-level form silently omits every namespaced branch —
     including this repository's own `task/<id>`, which is to say exactly the
     branch a census is run on. `**` crosses the `/`.
-
-    The alias is found by `%(symref)`, which names the target of a symbolic ref
-    and is empty for every real branch. Matching the name instead is wrong in
-    both directions: `%(refname:short)` renders `refs/remotes/origin/HEAD` as
-    bare `origin`, which no suffix rule catches, while a remote whose name
-    contains a `/` (git allows one) puts its alias deeper than any fixed depth —
-    and a branch legitimately named `feature/HEAD` is not symbolic, so it stays.
     """
     out = git(
         root, "for-each-ref", "--format=%(refname)%09%(refname:short)%09%(symref)", pattern
@@ -125,7 +136,7 @@ def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
             continue
         ref, _, rest = line.partition("\t")
         short, _, symref = rest.partition("\t")
-        if ref == skip or symref.strip():
+        if ref == skip or is_remote_alias(ref, symref):
             continue
         branches.append(short)
     return branches

@@ -291,6 +291,29 @@ class ConflictCensusTest(unittest.TestCase):
         self.assertNotIn("weird/remote", counted)
         self.assertIn("weird/remote/main", counted)
 
+    def test_a_plain_ref_where_a_modern_clone_has_an_alias_is_not_a_branch(self):
+        # A clone old enough to predate symbolic aliases carries a plain ref at
+        # `refs/remotes/<remote>/HEAD`, which `%(symref)` cannot see. Its short
+        # name is the remote's own, so without a rule for that shape it is
+        # censused as a branch called `legacy`.
+        self.git("update-ref", "refs/remotes/legacy/main", self.main_sha)
+        self.git("update-ref", "refs/remotes/legacy/HEAD", self.main_sha)
+
+        out = self.census_json("--remotes")
+        counted = sorted(list(out["conflicted"]) + out["clean"])
+        self.assertNotIn("legacy", counted)
+        self.assertIn("legacy/main", counted)
+
+    def test_a_symbolic_branch_under_refs_heads_is_still_a_branch(self):
+        # Only `refs/remotes/` holds aliases. A branch someone pointed at
+        # another branch with `git symbolic-ref` is still a branch, and
+        # dropping it would lose a branch from the census rather than an alias.
+        self.git("symbolic-ref", "refs/heads/alias", "refs/heads/main")
+
+        out = self.census_json("--base", "main")
+        self.assertIn("alias", out["clean"])
+        self.assertEqual(out["examined"], len(BRANCHES) + 1)
+
     def test_a_branch_named_slash_HEAD_is_a_branch_not_an_alias(self):
         out = self.census_json("--base", "main")
         self.assertIn("feature/HEAD", out["clean"])
