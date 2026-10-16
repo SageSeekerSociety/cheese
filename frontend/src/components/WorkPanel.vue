@@ -23,6 +23,7 @@
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
+import type { ConversationFile } from '../composables/useConversationFiles'
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest, OpenedDocument } from '../lib/docReview'
@@ -48,6 +49,7 @@ import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import { usePreviewPointer } from './panels/preview/usePreviewPointer'
+import RoomFilesPanelHost from './room/RoomFilesPanelHost.vue'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
@@ -406,7 +408,7 @@ function pollThreads() {
 }
 
 function hasContent(key: TabKey): boolean {
-  if (key === 'chat' || key === 'overview' || key === 'threads') return true
+  if (key === 'chat' || key === 'overview' || key === 'threads' || key === 'files') return true
   // 「定时与触发」也是永远有得看的一格：没有规则时它写的是「还没有规则，点新建」——
   // 那一格自己是让人动手建一条的地方，不是一个「暂无」。数有几条要现问后端，而这一格
   // 关着的时候不该为此多打一个请求。
@@ -420,12 +422,13 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、定时与触发。任务没有
-// 支线和定时，其余几格都有。
-const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'routines'])
+// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、文件、定时与触发。任务没有
+// 支线、文件和定时，其余几格都有。
+const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'files', 'routines'])
+const TASK_HIDDEN_TABS: ReadonlySet<string> = new Set(['routines', 'threads', 'files'])
 const tabs = computed(() =>
   workPanelTabs(props.withChat).filter((tab) =>
-    props.taskId ? tab.key !== 'routines' && tab.key !== 'threads' : CHANNEL_TABS.has(tab.key)
+    props.taskId ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
   )
 )
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
@@ -625,6 +628,12 @@ const docRefs = new Map<string, InstanceType<typeof PanelDocHostComponent>>()
 // 改动」，面板已经切过去了，那一块还在网络上，ref 也就还没接上。这时候递过去会被 `?.`
 // 静默吞掉——高亮不发生，也不报错。所以递不出去的先记在这儿，`keepDocRef` 接上再补一次。
 const waitingReviews = new Map<string, DocReviewRequest>()
+/** 「文件」那一格里点开一份：文档开成文档，附件按路径开。 */
+function openConversationFile(row: ConversationFile) {
+  if (row.kind === 'document') void openDocument({ id: row.id, title: row.name })
+  else void openFile(row.id)
+}
+
 async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
   const path = DOC_TAB + document.id
   noteFileOrigin()
@@ -817,6 +826,14 @@ defineExpose({
           <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
              （`refreshTick`）—— 芝士可能刚在房间里起草了一条。规则交回的结果文件点开
              在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
+          <RoomFilesPanelHost
+            v-if="mounted.has('files')"
+            v-show="active === 'files'"
+            :class="enterClass('files')"
+            :topic-id="taskId ?? topicId"
+            :seats-only="!!topic?.members_only"
+            @open="openConversationFile"
+          />
           <RoutinePanelHost
             v-if="mounted.has('routines')"
             v-show="active === 'routines'"

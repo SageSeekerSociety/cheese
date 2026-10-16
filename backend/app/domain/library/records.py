@@ -16,6 +16,7 @@ from pathlib import Path
 from sqlalchemy import delete, func, literal, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.errors import ConflictError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
@@ -36,6 +37,7 @@ def _new_row(
     *,
     added_by: str | None,
     room_id: uuid.UUID | None,
+    source_path: str | None = None,
 ) -> LibraryFileRecord:
     record_id = uuid.uuid4()
     size, sha256 = measured
@@ -47,6 +49,7 @@ def _new_row(
         sha256=sha256,
         added_by=added_by,
         room_id=room_id,
+        source_path=source_path,
         location=blobs.LOCAL,
         blob_key=blobs.new_key(project_id, record_id),
     )
@@ -192,17 +195,26 @@ async def add(
     data: service.Content,
     added_by: str | None,
     room_id: uuid.UUID | None,
+    source_path: str | None = None,
 ) -> str:
     """放进一份新资料，记下是谁在哪放的。撞名不覆盖：拿下一个 `(n)`。返回它的名字。
 
     `filename` 可以带文件夹（`合同/报价.xlsx`），编号加在最后一层上。占名字就是插
-    入那一行：同一时刻两份同名的上传，唯一索引让后到的那一份去拿下一个号。"""
+    入那一行：同一时刻两份同名的上传，唯一索引让后到的那一份去拿下一个号。
+    `source_path` 是从房间文件区里哪一份存过来的（`saved_from`）。"""
     measured = await asyncio.to_thread(service.measure, data)
     for attempt in range(1, 1000):
         name = service.next_name(filename, attempt)
         if await _taken(session, project_id, name):
             continue
-        row = _new_row(project_id, name, measured, added_by=added_by, room_id=room_id)
+        row = _new_row(
+            project_id,
+            name,
+            measured,
+            added_by=added_by,
+            room_id=room_id,
+            source_path=source_path,
+        )
         try:
             async with session.begin_nested():
                 session.add(row)
@@ -211,6 +223,28 @@ async def add(
         await _put(row, data)
         return name
     raise UnprocessableEntityError(say("tooManySameNameFiles", name=filename))
+
+
+async def saved_from(session: AsyncSession, room_id: uuid.UUID) -> set[str]:
+    """这个房间文件区里已经存进资料库的那几份的路径（`add` 的 `source_path`）。
+
+    资料库里那一份后来被替换、改名都还算：它还在资料库里（替换记的是新的一行，存进来
+    的那一行成了旧版本，名字跟着改名一起改）。删掉了就不算。"""
+    now = aliased(LibraryFileRecord)
+    rows = await session.scalars(
+        select(LibraryFileRecord.source_path).where(
+            LibraryFileRecord.room_id == room_id,
+            LibraryFileRecord.source_path.is_not(None),
+            select(now.id)
+            .where(
+                now.project_id == LibraryFileRecord.project_id,
+                now.name == LibraryFileRecord.name,
+                now.superseded_at.is_(None),
+            )
+            .exists(),
+        )
+    )
+    return {path for path in rows if path}
 
 
 async def replace(

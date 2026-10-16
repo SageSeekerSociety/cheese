@@ -74,6 +74,9 @@ def _room_path(raw: str) -> str:
     path = clean_artifact_path(raw)
     if library.library_name(path) is not None:
         raise ValidationError(say("libraryOriginalReadOnly"))
+    if library.is_message_attachment(path):
+        # 发进对话的那一份是原件：消息指着它，浏览器也按「这个地址的字节不会变」留着它。
+        raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
     return path
 
 
@@ -110,6 +113,8 @@ class RoomFileOut(BaseModel):
     author_kind: str | None
     #: 最后那次保存从哪个门进来的：取值见 ``room_files.SOURCES``。空 = 同上。
     source: str | None
+    #: 有人从这里把它保存到了资料库（#3828）。
+    in_library: bool
 
 
 class RoomFileListOut(Page[RoomFileOut]):
@@ -131,13 +136,15 @@ async def list_files(
     作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存
     补齐，没保存过的那几份照列。
 
-    `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
+    `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。`in_library` 说
+    这一份有没有人保存到资料库（`POST /topics/{topic_id}/shown/save`）。
     """
     place, _ = await _in_room(db, resolver, topic_id)
     items, total = await asyncio.to_thread(
         library.list_room_files, place.project_id, place.room_id
     )
     saved = await room_files.latest_by_path(db, place.room_id)
+    kept = await library_records.saved_from(db, place.room_id)
     rows: list[dict] = []
     for item in items:
         last = saved.get(item["path"])
@@ -149,6 +156,7 @@ async def list_files(
                 "author": (last.author_handle or None) if last is not None else None,
                 "author_kind": last.author_kind if last is not None else None,
                 "source": last.source if last is not None else None,
+                "in_library": item["path"] in kept,
             }
         )
     return ok({**page(rows, total), "truncated": total > len(items)})
@@ -357,7 +365,8 @@ async def open_in_editor(
     """The signed config the browser opens the office editor with.
 
     When it cannot open, ``reason`` is a code (``not_configured``,
-    ``unsupported``, ``library_original``) that the screen words in its
+    ``unsupported``, ``library_original``, ``attachment_original``) that the
+    screen words in its
     reader's language (``work.room.fileEditor.unavailable.<code>``)."""
     place, actor = await _in_room(db, resolver, topic_id)
     clean = clean_artifact_path(path)
@@ -367,6 +376,8 @@ async def open_in_editor(
         return ok({"enabled": False, "reason": "unsupported"})
     if library.library_name(clean) is not None:
         return ok({"enabled": False, "reason": "library_original", "copyable": True})
+    if library.is_message_attachment(clean):
+        return ok({"enabled": False, "reason": "attachment_original", "copyable": True})
     version = await asyncio.to_thread(
         room_files.current_version,
         place.project_id,

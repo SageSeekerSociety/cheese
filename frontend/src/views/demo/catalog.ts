@@ -175,7 +175,7 @@ export const CATALOG: CatalogEntry[] = [
   ...SHARED_ENTRIES,
   // 整页那两件（一项产物的版本历史、小队的对外一面）在自己的文件里：`catalogViews.ts`。
   ...VIEW_ENTRIES,
-  // 一个频道的文件那一页在自己的文件里：`catalogChannelFiles.ts`。
+  // 频道和私聊「文件」那一格在自己的文件里：`catalogChannelFiles.ts`。
   ...CHANNEL_FILES_ENTRIES,
   // 频道那两个弹窗（删频道前的确认、新建支线）在自己的文件里：`catalogChannelDialogs.ts`。
   ...CHANNEL_DIALOG_ENTRIES,

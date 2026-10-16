@@ -221,11 +221,9 @@ def test_attachments_upload_library_and_raw_read_the_same(client):
         files={"file": ("shot.png", shot, "image/png")},
     )
     assert uploaded.status_code == 200, uploaded.text
-    assert uploaded.json()["data"] == {
-        "bytes": len(shot),
-        "mime": "image/png",
-        "path": "library/shot.png",
-    }
+    sent = uploaded.json()["data"]
+    assert (sent["bytes"], sent["mime"]) == (len(shot), "image/png")
+    assert sent["path"].startswith("uploads/") and sent["path"].endswith("/shot.png")
 
     given = client.post(
         f"/projects/{pid}/library",
