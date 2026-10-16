@@ -1794,8 +1794,10 @@ def _self_test_sweep():
     def kinds(*a, **kw):
         return [r["kind"] for r in rows_of(*a, **kw)]
 
-    asked = f"待 wangchangxin 回话，2 分钟：最后消息 {at(2)[11:16]} UTC @a「等」"
-    anonymous = f"待 有人 回答，2 分钟：最后消息 {at(2)[11:16]} UTC @a「等」"
+    waiting_on_a_review = rows_of(msg_min=2, row={"waiting_on": "wangchangxin",
+                                                  "presentation": {"phrase": "awaiting_review"}})
+    waiting_on_an_answer = rows_of(msg_min=2, row={"waiting_on": "wangchangxin",
+                                                   "presentation": {"phrase": "awaiting_answer"}})
 
     return [
         ("sweep：消息 60 分钟前、没有 event，报停摆", kinds(), ["长时间无动静"]),
@@ -1823,15 +1825,26 @@ def _self_test_sweep():
         # 按 长时间无动静 判是 None —— 少了 sweep 里那段，这几条读成 []。
         ("sweep：2 分钟前刚问出一句、行上写着在等谁，立刻报待回答（阈值 40 也报）",
          kinds(msg_min=2, row={"waiting_on": "wangchangxin"}), ["待回答"]),
-        ("sweep：待回答的行报出等谁、等了多久、最后一条提问是什么",
-         [(r["waited_min"], r["detail"]) for r in rows_of(msg_min=2, row={"waiting_on": "wangchangxin"})],
-         [(2, asked)]),
-        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，说「有人」不拿座位顶",
-         [(r["detail"], r["waiting_on"])
+        ("sweep：待回答的行报出等谁、等了多久、最后一条提问是哪个时刻哪句话",
+         # 判的是这几样说出来没有，不是那句话怎么措辞：文案改了不该红。
+         [(r["waited_min"], "wangchangxin" in r["detail"], at(2)[11:16] in r["detail"],
+           "@a「等」" in r["detail"])
+          for r in rows_of(msg_min=2, row={"waiting_on": "wangchangxin"})],
+         [(2, True, True, True)]),
+        ("sweep：递上去等验收人的卡（短语待审阅）同样立刻报待回答，不看阈值",
+         kinds(msg_min=2, row={"waiting_on": "wangchangxin",
+                               "presentation": {"phrase": "awaiting_review"}}), ["待回答"]),
+        ("sweep：等审阅和等人回话这两条线，看板上写出来不是同一句话",
+         # 判据是两条读起来分得清，不是哪一个词 —— 换成「审核」「答复」照样算数。
+         [[r["detail"] for r in waiting_on_a_review] != [r["detail"] for r in waiting_on_an_answer]],
+         [True]),
+        ("sweep：问了好几个人（waiting_on 为空、短语是待回答）也报，不拿这条线的座位顶",
+         [(r["waiting_on"], "cheese" in r["detail"], at(2)[11:16] in r["detail"])
           for r in rows_of(msg_min=2, row={"presentation": {"phrase": "awaiting_answer"},
                                            "waiting_on": None})],
-         [(anonymous, None)]),
-        ("sweep：行上说在等看的这个人（awaits_me）照样算待回答",
+         [(None, False, True)]),
+        ("sweep：行上说在等看的这个人（awaits_me）照样算待回答（这条端点上它蕴含 waiting_on，"
+         "钉的是规范里那一条判据）",
          kinds(msg_min=2, row={"awaits_me": True}), ["待回答"]),
         ("sweep：待回答的线不再补一行长时间无动静（消息 60 分钟前也一样）",
          kinds(row={"waiting_on": "bob"}), ["待回答"]),
