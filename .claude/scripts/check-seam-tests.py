@@ -26,14 +26,12 @@ def _is_ast_type(node: ast.AST, names: set[str]) -> bool:
     )
 
 
-def _isinstance_of_function(node: ast.AST, names: set[str]) -> bool:
+def _isinstance_of_function(node: ast.AST) -> bool:
     return (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "isinstance"
         and len(node.args) >= 2
-        and isinstance(node.args[0], ast.Name)
-        and node.args[0].id in names
         and _is_ast_type(node.args[1], {"FunctionDef", "AsyncFunctionDef"})
     )
 
@@ -102,7 +100,7 @@ def _findings(tree: ast.Module) -> list[tuple[int, str]]:
         if isinstance(node, (ast.For, ast.AsyncFor)) and _is_walk_call(node.iter):
             names = _target_names(node.target)
             if names and any(
-                _isinstance_of_function(child, names)
+                _isinstance_of_function(child)
                 for child in ast.walk(node)
                 if child is not node
             ):
@@ -115,7 +113,7 @@ def _findings(tree: ast.Module) -> list[tuple[int, str]]:
                 value_expressions = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
                 expressions = [*generator.ifs, *value_expressions]
                 if names and any(
-                    _isinstance_of_function(child, names)
+                    _isinstance_of_function(child)
                     for expression in expressions
                     for child in ast.walk(expression)
                 ):

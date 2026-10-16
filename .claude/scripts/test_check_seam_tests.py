@@ -47,6 +47,18 @@ for node in ast.walk(parse_module()):
             "tree.body",
         )
 
+    def test_recursive_walk_reports_nested_and_aliased_methods(self) -> None:
+        self._assert_rejected(
+            """
+for node in ast.walk(tree):
+    for method in node.body:
+        alias = method
+        if isinstance(alias, ast.FunctionDef):
+            functions.append(alias)
+""",
+            "tree.body",
+        )
+
     def test_recursive_walk_reports_comprehensions(self) -> None:
         self._assert_rejected(
             "functions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]",
