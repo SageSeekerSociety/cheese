@@ -11,7 +11,7 @@ import { identityChanges } from '@/lib/identity'
 import { myHandle } from '@/me'
 import { reading } from '@/query/project'
 
-export { lastOpenedProjectId } from './workspace/layout'
+export { lastOpenedProjectId, lastPlaceOf } from './workspace/layout'
 export type { RememberedPlace } from './workspace/types'
 
 // 当前打开的是哪个项目，和围着它的界面状态（栏宽、上次待的房间、为什么打不开）。

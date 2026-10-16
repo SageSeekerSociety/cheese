@@ -258,6 +258,21 @@
       "note": "The body is still on its way: draws a skeleton, the editor gives way."
     }
   },
+  "panelDocProse": {
+    "about": "The prose column itself: mounts an editor that already exists and lays the whole typography set over it — heading sizes, paragraph spacing, lists, tables, code blocks, quotes, comment marks, edit marks and collaborative cursors. Locating paragraphs and flashing a passage are someone else's concern.",
+    "s1": {
+      "name": "An article",
+      "note": "Handed an editor holding 'Rollout process': headings a size up, a little air between paragraphs, the body laid out as a column capped at 720px."
+    },
+    "s2": {
+      "name": "Empty doc",
+      "note": "The editor is empty: the ghost placeholder line shows up in the body, the caret resting at its left edge."
+    },
+    "s3": {
+      "name": "Keyboard focus",
+      "note": "Focus arrived in the body by keyboard: a focus ring is drawn around the editor box."
+    }
+  },
   "previewPanelHeadBar": {
     "about": "Preview top bar: 'Publish site' on the left (a project-level action, jumping to the website block on the project overview) and open-in-new-tab, fullscreen and reload on the right — every one of them acts on the current preview.",
     "s1": {
