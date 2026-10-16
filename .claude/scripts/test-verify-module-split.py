@@ -630,8 +630,8 @@ from .painting import _paint  # noqa: E402
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
 
-    def test_a_removed_method_is_not_excused_by_a_namesake_function(self) -> None:
-        """A name collision is not a lift: nothing in the package calls `_paint`."""
+    def test_a_namesake_with_a_different_parameter_list_is_not_a_lift(self) -> None:
+        """A name collision is not a lift: the parameters are not the method's."""
         old = '''\
 """A class whose private helper is about to be dropped."""
 
@@ -650,19 +650,28 @@ class Widget:
     def render(self, width):
         return str(width)
 """,
-            # An unrelated helper that happens to share the name. Every real
-            # package here has a few of these; none of them is the lost method.
-            "painting.py": "def _paint(colour):\n    return colour\n",
+            # An unrelated helper that happens to share the name, and is called
+            # as often as the lost method ever was. Every real package here has
+            # a few of these; none of them is the lost method.
+            "painting.py": """\
+def _paint(colour):
+    return colour
+
+
+def paint_all(items):
+    return [_paint(item) for item in items]
+""",
         }
         result = self.fixture(old).split_and_run(files)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("符号没了: Widget._paint", result.stdout)
 
-    def test_a_lift_called_through_its_module_is_still_a_note(self) -> None:
-        """This repository calls lifted helpers as `_books._room(self, ...)`.
+    def test_a_lift_that_keeps_the_instance_is_a_note(self) -> None:
+        """This repository writes a lift both ways.
 
-        Reaching the function through its module is a lift like any other; only
-        reading the name as a bare call would red-light the repo's own splits.
+        `_require_screen` keeps the instance as its first parameter and spells it
+        `hub`; the callers reach it through its module as `painting._paint(self,
+        width)`. The parameter list is what says the method moved.
         """
         old = '''\
 """A class whose private helper is about to become a function."""
@@ -685,16 +694,20 @@ class Widget:
     def render(self, width):
         return painting._paint(self, width)
 """,
-            "painting.py": "def _paint(self, width):\n    return str(width)\n",
+            "painting.py": "def _paint(hub, width):\n    return str(width)\n",
         }
         result = self.fixture(old).split_and_run(files)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
 
-    def test_a_namesake_only_stored_in_a_local_is_not_a_lift(self) -> None:
-        """A local variable spelled `_paint` is not a caller of `_paint`."""
+    def test_a_lift_whose_callers_only_pass_it_as_a_value_is_a_note(self) -> None:
+        """`partial(_paint, 1)` is a caller even though it never calls it.
+
+        Judging by the call sites instead of the parameter list is what would
+        report this lift as a lost symbol.
+        """
         old = '''\
-"""A class whose private helper is about to be dropped."""
+"""A class whose private helper is about to become a function."""
 
 
 class Widget:
@@ -707,27 +720,33 @@ class Widget:
         files = {
             "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
             "models.py": """\
+import functools
+from .painting import _paint
+
+
 class Widget:
     def render(self, width):
-        return str(width)
+        return self._paint(width)
+
+
+apply = functools.partial(_paint, 1)
+all_of = list(map(_paint, [1, 2]))
 """,
-            "painting.py": "def _paint(colour):\n    return colour\n",
-            # Nothing calls `_paint`; the name only ever lands in a local.
-            "extra.py": "def tint():\n    _paint = 3\n    return _paint\n",
+            "painting.py": "def _paint(width):\n    return str(width)\n",
         }
         result = self.fixture(old).split_and_run(files)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("符号没了: Widget._paint", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
 
-    def test_a_self_recursive_namesake_is_not_a_lift(self) -> None:
-        """A namesake that only calls itself has no caller at all."""
+    def test_a_namesake_with_an_extra_parameter_is_not_a_lift(self) -> None:
+        """Same name and arity, different parameters: a different function."""
         old = '''\
 """A class whose private helper is about to be dropped."""
 
 
 class Widget:
     def render(self, width):
-        return self._paint(width)
+        return str(width)
 
     def _paint(self, width):
         return str(width)
@@ -739,18 +758,48 @@ class Widget:
     def render(self, width):
         return str(width)
 """,
-            "painting.py": ("def _paint(n):\n    return _paint(n - 1) if n else 0\n"),
+            "painting.py": "def _paint(width, height):\n    return str(width)\n",
         }
         result = self.fixture(old).split_and_run(files)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("符号没了: Widget._paint", result.stdout)
 
-    def test_a_method_call_on_an_instance_is_not_a_lift(self) -> None:
-        """`svc._room(...)` is a method call, not proof the method moved.
+    def test_a_sync_function_is_not_the_lift_of_an_async_method(self) -> None:
+        """A lift keeps `async`; dropping it is a break the callers see."""
+        old = '''\
+"""A class whose async private helper is about to be dropped."""
 
-        The package itself calls `_room` this way in `books.py`. Reading any
-        dotted call as a lift is how the checker goes green on a deleted method
-        — the callers left behind are always there to be read.
+
+class Widget:
+    async def render(self, width):
+        return await self._paint(width)
+
+    async def _paint(self, width):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    async def render(self, width):
+        return await _paint(width)
+
+
+from .painting import _paint  # noqa: E402
+""",
+            "painting.py": "def _paint(width):\n    return str(width)\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("符号没了: Widget._paint", result.stdout)
+
+    def test_a_namesake_with_the_same_shape_is_a_note(self) -> None:
+        """The one case the parameter list cannot settle.
+
+        A module-level function that shares the name *and* the parameter list is
+        a lift and a namesake alike to anything this can read. It gets a note a
+        person can check; calling every one of them a lost symbol instead is how
+        the checker red-lights the repo's own splits.
         """
         old = '''\
 """A class whose private helper is about to be dropped."""
@@ -770,13 +819,11 @@ class Widget:
     def render(self, width):
         return str(width)
 """,
-            "painting.py": "def _paint(colour):\n    return colour\n",
-            # `svc` is whatever the caller passes, not the module `painting`.
-            "users.py": "def size(svc):\n    return svc._paint(3)\n",
+            "painting.py": "def _paint(width):\n    return width\n",
         }
         result = self.fixture(old).split_and_run(files)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("符号没了: Widget._paint", result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
 
     def test_a_logger_is_not_required_of_the_package(self) -> None:
         old = '''\

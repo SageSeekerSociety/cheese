@@ -142,9 +142,6 @@ class ModuleFacts:
     #: qualified name (`Widget.render`) -> signature
     signatures: dict[str, Signature] = field(default_factory=dict)
     deferred: list[DeferredImport] = field(default_factory=list)
-    #: every name the file's code calls as a function, a function's calls to
-    #: itself not among them — see `_called_names`
-    called: set[str] = field(default_factory=set)
 
 
 def _param_text(arg: ast.arg, has_default: bool) -> str:
@@ -443,75 +440,6 @@ def _deferred_keys(
     return (resolved,) if resolved else ()
 
 
-def _module_aliases(tree: ast.AST) -> set[str]:
-    """The names this file bound to a module, not to a function or a class.
-
-    Telling `books._room(...)` from `svc._room(...)` needs it: the first reaches a
-    module-level function, the second reaches a method on whatever `svc` is. Only
-    the first is left behind by a lift.
-    """
-    aliases: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for name in node.names:
-                aliases.add(name.asname or name.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            for name in node.names:
-                if name.name != "*":
-                    aliases.add(name.asname or name.name)
-    return aliases
-
-
-def _base_name(node: ast.expr) -> str | None:
-    """The leftmost name of `a.b.c`: "a". None when it is not a dotted name."""
-    while isinstance(node, ast.Attribute):
-        node = node.value
-    return node.id if isinstance(node, ast.Name) else None
-
-
-def _callee_name(func: ast.expr, modules: set[str]) -> str | None:
-    """The plain name a call goes through: `f()` -> "f", `mod.f()` -> "f".
-
-    A dotted call counts only when its base is a module this file imported:
-    `books._room(self, ...)` is a lifted function being called, while
-    `self._room(...)` or `svc._room(...)` is a method call, and reading one of
-    those as proof of a lift is how a method that really went missing is reported
-    as a note.
-    """
-    if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute) and _base_name(func.value) in modules:
-        return func.attr
-    return None
-
-
-def _called_names(tree: ast.AST) -> set[str]:
-    """Every name the file's code calls as a function.
-
-    A call is what a lift leaves behind: `self._x(w)` is rewritten to `_x(self, w)`,
-    or to `books._x(self, w)` when the callers reach it through its module. A plain
-    reference is not — `_x` as a local variable, an annotation, a `del` target or a
-    dict key says nothing about a method having moved. A function calling itself
-    does not count either: a namesake that only recurses has no caller at all.
-    """
-    modules = _module_aliases(tree)
-    called: set[str] = set()
-
-    def visit(node: ast.AST, enclosing: str | None) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                visit(child, child.name)
-                continue
-            if isinstance(child, ast.Call):
-                target = _callee_name(child.func, modules)
-                if target is not None and target != enclosing:
-                    called.add(target)
-            visit(child, enclosing)
-
-    visit(tree, None)
-    return called
-
-
 def read_source(
     source: str, path: str, module_name: str = "", package_name: str = ""
 ) -> ModuleFacts:
@@ -520,7 +448,6 @@ def read_source(
     _collect_statements(tree.body, facts, package_name)
     facts.all_list, facts.all_unreadable = _read_all(tree)
     facts.deferred = _deferred(source, module_name)
-    facts.called = _called_names(tree)
     return facts
 
 
@@ -660,41 +587,65 @@ def signature_locations(package: Package) -> dict[str, set[str]]:
     return index
 
 
-def lifted_to_module_level(package: Package, key: str) -> str | None:
+def _lifted_shape(original: Signature, function: Signature) -> bool:
+    """Is `function` the old method's parameter list with the instance handled?
+
+    A lift writes the instance one of two ways: it keeps it as a parameter —
+    `_room(self, project, topic, agent)` stays four wide and `_require_screen`
+    spells the same slot `hub` — or the method was spending it on its owner and
+    the function does without, `_fan_out_screen_data(self, screen, raw)` becoming
+    `_fan_out_screen_data(screen, raw)`. Everything after that first parameter
+    matches by name; a function sharing only the name and the arity is another
+    function.
+    """
+    if original.kind.startswith("async") != function.kind.startswith("async"):
+        return False
+    before, after = original.params, function.params
+    if len(after) == len(before):
+        return after[1:] == before[1:]
+    if len(after) == len(before) - 1:
+        return after == before[1:]
+    return False
+
+
+def lifted_to_module_level(old: ModuleFacts, package: Package, key: str) -> str | None:
     """The module holding a class member that is now a plain function.
 
-    Splitting a long class lifts a private helper out to a function that takes
-    the instance. The name is still in the package and its callers were
-    rewritten in the same commit, so calling it a lost symbol would red-light
-    the repo's own splits.
+    Splitting a long class lifts a private helper out to a function. The name is
+    still in the package and the class no longer has the member, so calling it a
+    lost symbol would red-light the repo's own splits.
 
-    The rewrite is what this looks for, not the name: a module-level function
-    that happens to share the name proves nothing, and `DeviceHub._require_screen`
-    sitting next to an unrelated `_require_screen` is how a method that really
-    went missing gets reported as a note and the whole run as clean. The tell is
-    that the package *calls* the name — `self._x(w)` became `_x(self, w)`, or
-    `mod._x(self, w)` when the callers reach it through its module, which is how
-    this repo writes it. Both count; a name that only turns up in a local
-    variable, an annotation, a `del` or a dict key is a lost member, not a lift.
+    What this reads is the parameter list, not the name and not the call sites: a
+    module-level function named `_x` whose parameters are the old method's with
+    `self` renamed or dropped is the lift. A name alone proves nothing —
+    `DeviceHub._require_screen` sitting next to an unrelated `_require_screen` is
+    how a method that really went missing gets reported as a note and the whole
+    run as clean.
+
+    Call sites are deliberately not read. They go wrong in both directions:
+    `svc._x(3)` is a method call on an object that merely shares a name with a
+    module, while `partial(_x, 1)`, `map(_x, ...)` and `@_x` are a lift whose
+    callers never call the function at all. Neither tells a lift from a namesake;
+    the parameter list does.
+
+    Two unrelated functions can still share a name and a parameter list, and then
+    nothing here tells them apart. That way round the cost is a note a person can
+    check; the other way round the cost is a red run on a real lift.
     """
     head, _, member = key.rpartition(".")
     if not head or not member.startswith("_"):
         return None
-    holder = next(
-        (
-            module_key
-            for module_key, facts in package.modules.items()
-            if isinstance(
-                facts.defined.get(member), (ast.FunctionDef, ast.AsyncFunctionDef)
-            )
-        ),
-        None,
-    )
-    if holder is None:
+    original = old.signatures.get(key)
+    if original is None:
         return None
-    if not any(member in facts.called for facts in package.modules.values()):
-        return None
-    return holder or "__init__.py"
+    for module_key, facts in package.modules.items():
+        node = facts.defined.get(member)
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        function = facts.signatures.get(member)
+        if function is not None and _lifted_shape(original, function):
+            return module_key or "__init__.py"
+    return None
 
 
 #: Names bound by a call the package must not be asked to repeat. This is the
@@ -835,7 +786,7 @@ def check_signatures(old: ModuleFacts, package: Package, findings: Findings) -> 
                 f"定义搬走但包顶层没暴露: {key} 现在只在 {', '.join(sorted(where))} 里"
             )
             continue
-        lifted = lifted_to_module_level(package, key)
+        lifted = lifted_to_module_level(old, package, key)
         if lifted:
             findings.note(
                 f"方法被提到模块级: {key} 现在是 {lifted} 里的普通函数, 类上没有了"
