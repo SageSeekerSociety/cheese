@@ -35,6 +35,13 @@ vi.mock('@/api', async () => ({
   ...(await vi.importActual<typeof import('@/api')>('@/api')),
   lookupUser: (...a: unknown[]) => lookupUser(...a),
 }))
+const inboxListeners = new Set<() => void>()
+vi.mock('@/lib/inboxLive', () => ({
+  onInboxChange: (fn: () => void) => {
+    inboxListeners.add(fn)
+    return () => inboxListeners.delete(fn)
+  },
+}))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 // 确认框回什么由这一格决定：`wait` 解出真就是人点了确定。
@@ -68,7 +75,10 @@ beforeAll(() => {
 afterEach(() => {
   cleanup()
   route.query = {}
+  inboxListeners.clear()
   vi.clearAllMocks()
+  vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [] } as never)
+  vi.mocked(TeamsApi.listTeamJoinRequests).mockResolvedValue({ applications: [] } as never)
   // 默认「点了确定」：取消那一格在下面的用例里单独摆。
   dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
 })
@@ -358,6 +368,49 @@ describe('answering a join request', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /批准/ })).toBeNull())
     expect(TeamsApi.approveJoinRequest).toHaveBeenCalledTimes(1)
     expect(TeamsApi.approveJoinRequest).toHaveBeenCalledWith(7, 31)
+  })
+
+  it('shows pending request count on the tab immediately and updates in real time when inbox pushes', async () => {
+    const first = {
+      id: 31,
+      status: 'PENDING',
+      createdAt: Date.now(),
+      user: { id: 9, username: 'shenlan', nickname: 'shenlan' },
+    }
+    const second = {
+      id: 32,
+      status: 'PENDING',
+      createdAt: Date.now(),
+      user: { id: 10, username: 'lz123y', nickname: 'lz123y' },
+    }
+    let applications = [first]
+    vi.mocked(TeamsApi.listTeamJoinRequests).mockImplementation(async () => ({ applications }) as never)
+
+    // 默认停在「成员列表」页签，不点「加入申请」也该立刻读出待处理数字。
+    mount({ role: 'OWNER' })
+
+    const requestsTab = await screen.findByRole('tab', { name: /加入申请/ })
+    await waitFor(() => expect(requestsTab.textContent).toContain('1'))
+
+    // 切到「加入申请」页签：第一条申请已经在表里。
+    await fireEvent.click(requestsTab)
+    await screen.findByText('shenlan')
+
+    // 有人新递了一条申请，收件箱连接推来通知：不用刷新页面，列表和页签角标当场更新。
+    applications = [first, second]
+    for (const fn of inboxListeners) fn()
+
+    await screen.findByText('lz123y')
+    await waitFor(() => expect(requestsTab.textContent).toContain('2'))
+  })
+
+  it('does not fetch join requests for a regular member until they become an admin', async () => {
+    const { team } = mount({ role: 'MEMBER' })
+    for (const fn of inboxListeners) fn()
+    expect(TeamsApi.listTeamJoinRequests).not.toHaveBeenCalled()
+
+    team.value = { ...team.value, role: 'ADMIN' }
+    await waitFor(() => expect(TeamsApi.listTeamJoinRequests).toHaveBeenCalledWith(7))
   })
 })
 
