@@ -26,6 +26,10 @@ on:
       - backend/app/domain/agent/harness/claude_code/device_launch.py
       - backend/app/domain/agent/harness/claude_code/remote_execution/client.py
       - backend/app/domain/agent/harness/codex/**
+      # The pi pin: the tarball in `harness-bins-*` is the build this version
+      # names, so a bump here has to re-warm that key the same way a Claude
+      # Code or Codex bump re-warms `npm-harness-pins-*`.
+      - backend/app/domain/agent/harness/pi/launch.py
       - scripts/remote_execution/package-lock.json
       - cli/go.mod
       - cli/go.sum
@@ -147,7 +151,15 @@ jobs:
           # here: it names this run's own directory, not a path a later run can
           # ask for.
           path: ~/.cache/cheese-harness-bins
-          key: harness-bins-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
+          # Every pin whose build is in the directory, pi's included: the pi
+          # tarball is fetched under `written()[PI].pinned_version`, and that
+          # version is written only in `pi/launch.py`
+          # (`test_capability_matrix.py` holds it there). Without it a pi bump
+          # would leave this key unchanged, the shards — which only restore —
+          # would keep restoring the old build, and every one of them would go
+          # red on `pinned_claude.pi_binary` with no way to repair itself from
+          # the pull-request side.
+          key: harness-bins-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**', 'backend/app/domain/agent/harness/pi/launch.py') }}
 
       # The unpacking test.yml does on a miss, so the cache holds exactly what
       # a shard would have produced on its own. It runs only when this key had
