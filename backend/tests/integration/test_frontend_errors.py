@@ -185,7 +185,14 @@ def test_a_dev_servers_errors_are_kept_but_not_alerted(client, alerted):
     report("from vite", "http://127.0.0.1:3000")
     report("from localhost", "http://localhost:5317")
     report("from the desktop app", "http://tauri.localhost")
+    report("from the mac desktop app", "tauri://localhost")
     report("from the site", "https://okcheese.example")
+    report("from a broken origin", "http://[::1")
 
-    assert alerted == ["前端报错：from the desktop app", "前端报错：from the site"]
-    assert len(_topic_events(client, tid)) == 4
+    assert alerted == [
+        "前端报错：from the desktop app",
+        "前端报错：from the mac desktop app",
+        "前端报错：from the site",
+        "前端报错：from a broken origin",
+    ]
+    assert len(_topic_events(client, tid)) == 6

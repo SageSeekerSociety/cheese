@@ -57,10 +57,13 @@ def _from_a_dev_server(origin: str | None) -> bool:
     are a user's app and still alert."""
     if not origin:
         return False
-    parts = urlsplit(origin.strip().lower())
+    try:
+        parts = urlsplit(origin.strip().lower())
+        host = parts.hostname or ""
+    except ValueError:  # an Origin no browser sends ("http://[::1"): not a dev server
+        return False
     if parts.scheme not in ("http", "https"):
         return False
-    host = parts.hostname or ""
     if host == "localhost":
         return True
     try:
