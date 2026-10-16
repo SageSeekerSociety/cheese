@@ -21,7 +21,9 @@ The cases are the rules the script exists to keep, stated before it was written:
   6. a fetched remote commit nobody integrated is refused — the fetch alone must
      not turn "drop their commit" into "force it away";
   7. another history pushed under the same branch name is refused; both sides
-     look diverged to a commit count, and only the reflog tells them apart.
+     look diverged to a commit count, and only the reflog tells them apart;
+  8. looking at that fetched commit first (`git checkout origin/task/42` and
+     back) does not license the force push that 6 refused.
 """
 
 import os
@@ -208,6 +210,27 @@ class PushRewrittenTest(unittest.TestCase):
         self.assertEqual(result.returncode, 3, result.stderr)
         self.assertEqual(fx.remote_ref(), theirs)
         self.assertIn("fetch", result.stderr)
+
+    def test_inspecting_the_remote_tip_first_is_still_refused(self):
+        """A detached look at their commit must not make it ours to overwrite."""
+        fx = self.fx
+        self.pushed_task_branch()
+        theirs = self.theirs_on_the_remote()
+
+        git(fx.work, "commit", "-q", "--amend", "-m", "mine, reworded")
+        git(fx.work, "fetch", "-q", "origin")
+        git(fx.work, "checkout", "-q", "--detach", "origin/task/42")
+        git(fx.work, "checkout", "-q", "task/42")
+        self.assertIn(
+            theirs,
+            git(fx.work, "reflog", "show", "--format=%H", "HEAD").stdout.split(),
+            "the detached checkout did not even reach HEAD's reflog",
+        )
+
+        result = self.run_script(fx.work)
+
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(fx.remote_ref(), theirs)
 
     def test_unrelated_history_under_the_branch_name_is_refused(self):
         """Both counts are non-zero here too; only the reflog rules it out."""

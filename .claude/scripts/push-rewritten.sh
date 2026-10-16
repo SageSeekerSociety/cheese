@@ -12,7 +12,7 @@
 # It refuses to force-push anything but a `task/*` branch; refuses when the two
 # histories are not diverged the way a rewrite makes them (a plain fast-forward,
 # or a checkout behind the remote that a force would silently clobber); refuses
-# when the remote tip is not a commit this checkout ever carried (a fetch nobody
+# when the remote tip is not a commit this branch ever held (a fetch nobody
 # integrated, or a different history under the same branch name); and lets
 # `--force-with-lease` be the atomic last word on whether the remote still holds
 # the commit we validated against. If it does not, the remote moved since the
@@ -28,7 +28,7 @@
 #   2  refused before pushing: not a task/* branch, detached HEAD, unknown
 #      argument, or no remote-tracking ref to validate against
 #   3  refused before pushing: the histories do not diverge like a rewrite, or
-#      the remote tip is a commit this checkout never carried
+#      the remote tip is a commit this branch never held
 #   4  refused by the lease: the remote moved since the last fetch
 set -euo pipefail
 
@@ -103,20 +103,25 @@ if [ "$behind" -eq 0 ]; then
   exit 3
 fi
 
-# The commit we are about to overwrite must be one this checkout has actually
-# carried. A rewrite keeps the tip it discarded in HEAD's reflog, so an amended
-# or rebased branch passes. A tip that only ever arrived by `git fetch` — someone
-# else's commit, or a different history pushed under this branch name — never
-# entered this reflog, and a force push would drop it. The counts above cannot
-# tell those apart: unrelated histories also give both counts non-zero, and a
-# fetch makes the lease agree with the remote, so neither of them would stop it.
-reflog="$(git reflog show --format=%H HEAD 2>/dev/null || true)"
+# The commit we are about to overwrite must be one this branch has actually
+# held. A rewrite keeps the commit it discarded in the branch's reflog, so an
+# amended or rebased branch passes. A tip that only ever arrived by `git fetch`
+# — someone else's commit, or a different history pushed under this branch name
+# — never held this branch, and a force push would drop it. The counts above
+# cannot tell those apart: unrelated histories also give both counts non-zero,
+# and a fetch makes the lease agree with the remote, so neither stops it.
+#
+# The branch's own reflog, not HEAD's: inspecting a fetched tip (`git checkout
+# origin/<branch>` and back) puts it in HEAD's reflog without ever making it
+# this branch's, and that must not be enough to overwrite it.
+reflog="$(git reflog show --format=%H "refs/heads/$branch" 2>/dev/null || true)"
 if ! grep -qx -- "$remote_oid" <<<"$reflog"; then
-  printf 'push-rewritten: refusing: %s is at %s, which this checkout never carried.\n' \
-    "$tracking" "${remote_oid:0:12}" >&2
+  printf 'push-rewritten: refusing: %s is at %s, which %s never held.\n' \
+    "$tracking" "${remote_oid:0:12}" "$branch" >&2
   printf '  A force push would drop whatever is on it.\n' >&2
   if [ -z "$reflog" ]; then
-    printf '  (HEAD has no reflog here — reflogs disabled? — so this cannot be verified.)\n' >&2
+    printf '  (%s has no reflog here — reflogs disabled? — so this cannot be verified.)\n' \
+      "$branch" >&2
   fi
   printf '  Run `git fetch %s` and rebase or merge onto %s/%s to keep it; if the name is\n' \
     "$REMOTE" "$REMOTE" "$branch" >&2
