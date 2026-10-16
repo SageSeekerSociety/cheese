@@ -3,7 +3,8 @@
 // 「谁在管这个团队」的判断、以及三格列表的画法。现在画法全在同目录的 `MembersView.vue`，
 // 这一层只剩**接线** —— 哪一件点哪一下、递什么上去，看下面那个模板就够了：
 //
-//   1. **读**。进来取一次成员；页签切到「加入申请」「已发送邀请」时各取一次。
+//   1. **读**。进来取一次成员，能带人进来的顺手取一次加入申请（页签上的红色数字靠它）；
+//      收件箱来新通知或窗口回到前台时在后台重读；切到「已发送邀请」时取邀请。
 //   2. **写**。升管理员 / 降成员 / 移出、批准 / 拒绝、撤回邀请、邀请某人，都在这层。
 //   3. **地址**。`?tab=` / `?applicationId=` / `?invite=1` 读出要显示哪一格。自己名下只有
 //      自己，没有这一页（侧栏里也不列），直接输地址进来的送回它的项目。
@@ -14,9 +15,10 @@ defineOptions({ name: 'Members' })
 
 import type { Team, TeamMember, TeamMembershipApplication, TeamVisibility } from '@/types'
 
-import { computed, inject, onMounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
+import { useEventListener } from '@vueuse/core'
 
 import { useAccountLookup } from '@/composables/useAccountLookup'
 
@@ -27,6 +29,7 @@ import { ApiError } from '@/api'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { onInboxChange } from '@/lib/inboxLive'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
@@ -83,38 +86,6 @@ const updateActiveTabFromRoute = () => {
   if (route.query.invite === '1' && canBringPeopleIn.value) isInviteDialogActive.value = true
 }
 
-onMounted(() => {
-  const teamId = teamData.value!.id
-  fetchTeamMembers(teamId)
-
-  updateActiveTabFromRoute()
-})
-watch(() => route.query.invite, updateActiveTabFromRoute)
-
-watch(
-  [teamData, activeTab],
-  ([newTeamData, newTab]) => {
-    if (!newTeamData || !canBringPeopleIn.value) return
-
-    const teamId = teamData.value!.id
-
-    if (newTab === 'requests') {
-      fetchJoinRequests(teamId)
-    } else if (newTab === 'invitations') {
-      fetchTeamInvitations(teamId)
-    }
-  },
-  { immediate: true }
-)
-
-watch(
-  () => route.query,
-  () => {
-    updateActiveTabFromRoute()
-  },
-  { immediate: true }
-)
-
 // 按完整的用户名或邮箱找人，邀请查到的那一位。以前这里是一格 UID：没人知道别人的
 // UID，打进去的用户名原样当 userId 发出去，被参数校验挡回来；以数字开头的用户名还会
 // 被截成一个数，请到另一个人。
@@ -143,11 +114,15 @@ const answering = ref<number>()
 const loadingRequests = ref(false)
 const failedRequests = ref(false)
 const requestsError = ref<string | null>(null)
+let requestsRead = 0
+let requestsLoaded = false
 
 const teamInvitations = ref<TeamMembershipApplication[]>([])
 const loadingInvitations = ref(false)
 const failedInvitations = ref(false)
 const invitationsError = ref<string | null>(null)
+let invitationsRead = 0
+let invitationsLoaded = false
 
 const fetchTeamMembers = async (teamId: number) => {
   failedMembers.value = false
@@ -167,45 +142,116 @@ const retryMembers = () => {
   if (teamData.value) fetchTeamMembers(teamData.value.id)
 }
 
-const fetchJoinRequests = async (teamId: number) => {
-  loadingRequests.value = true
-  failedRequests.value = false
-  requestsError.value = null
+// quiet：手里已经有上一份名单时，后台重读不把整页换成转圈，也不因一次瞬断把好好的列表刷成报错。
+const fetchJoinRequests = async (teamId: number, quiet = false) => {
+  const read = ++requestsRead
+  const silent = quiet && requestsLoaded
+  if (!silent) {
+    loadingRequests.value = true
+    failedRequests.value = false
+    requestsError.value = null
+  }
   try {
     const response = await TeamsApi.listTeamJoinRequests(teamId)
+    if (read !== requestsRead || teamData.value?.id !== teamId || !canBringPeopleIn.value) return
+    requestsLoaded = true
     joinRequests.value = response.applications
+    failedRequests.value = false
+    requestsError.value = null
   } catch (error) {
+    if (read !== requestsRead || teamData.value?.id !== teamId) return
     console.error('Failed to load join requests', error)
-    failedRequests.value = true
-    requestsError.value = error instanceof Error && error.message ? error.message : null
+    if (!silent) {
+      failedRequests.value = true
+      requestsError.value = error instanceof Error && error.message ? error.message : null
+    }
   } finally {
-    loadingRequests.value = false
+    if (read === requestsRead) {
+      loadingRequests.value = false
+    }
   }
 }
 
 const retryRequests = () => {
-  if (teamData.value) fetchJoinRequests(teamData.value.id)
+  if (teamData.value) void fetchJoinRequests(teamData.value.id)
 }
 
-const fetchTeamInvitations = async (teamId: number) => {
-  loadingInvitations.value = true
-  failedInvitations.value = false
-  invitationsError.value = null
+const fetchTeamInvitations = async (teamId: number, quiet = false) => {
+  const read = ++invitationsRead
+  const silent = quiet && invitationsLoaded
+  if (!silent) {
+    loadingInvitations.value = true
+    failedInvitations.value = false
+    invitationsError.value = null
+  }
   try {
     const response = await TeamsApi.listTeamInvitations(teamId)
+    if (read !== invitationsRead || teamData.value?.id !== teamId || !canBringPeopleIn.value) return
+    invitationsLoaded = true
     teamInvitations.value = response.invitations
+    failedInvitations.value = false
+    invitationsError.value = null
   } catch (error) {
+    if (read !== invitationsRead || teamData.value?.id !== teamId) return
     console.error('Failed to load sent invitations', error)
-    failedInvitations.value = true
-    invitationsError.value = error instanceof Error && error.message ? error.message : null
+    if (!silent) {
+      failedInvitations.value = true
+      invitationsError.value = error instanceof Error && error.message ? error.message : null
+    }
   } finally {
-    loadingInvitations.value = false
+    if (read === invitationsRead) {
+      loadingInvitations.value = false
+    }
   }
 }
 
 const retryInvitations = () => {
-  if (teamData.value) fetchTeamInvitations(teamData.value.id)
+  if (teamData.value) void fetchTeamInvitations(teamData.value.id)
 }
+
+onMounted(() => {
+  const teamId = teamData.value!.id
+  void fetchTeamMembers(teamId)
+
+  updateActiveTabFromRoute()
+})
+watch(() => route.query.invite, updateActiveTabFromRoute)
+
+watch(
+  () => route.query,
+  () => {
+    updateActiveTabFromRoute()
+  },
+  { immediate: true }
+)
+
+watch(activeTab, (newTab) => {
+  const teamId = teamData.value?.id
+  if (teamId === undefined || !canBringPeopleIn.value) return
+
+  if (newTab === 'requests') {
+    void fetchJoinRequests(teamId, true)
+  } else if (newTab === 'invitations') {
+    void fetchTeamInvitations(teamId, true)
+  }
+})
+
+// 有人递来新的加入申请（或回掉了发出去的邀请），服务端会经收件箱连接推一声
+// （`lib/inboxLive.ts`）：当场在后台重读，页签上的数字和列表不用刷新页面就跟上。
+// 连接断开期间漏掉的、或别的管理员刚审掉的，切回窗口时补读一次。
+const refreshLive = () => {
+  const teamId = teamData.value?.id
+  if (teamId === undefined || !canBringPeopleIn.value) return
+  void fetchJoinRequests(teamId, true)
+  if (activeTab.value === 'invitations') {
+    void fetchTeamInvitations(teamId, true)
+  }
+}
+onScopeDispose(onInboxChange(refreshLive))
+useEventListener(window, 'focus', refreshLive)
+useEventListener(document, 'visibilitychange', () => {
+  if (document.visibilityState === 'visible') refreshLive()
+})
 
 // 下面几个操作成功时有的回 204，响应体是空串：失败只认 withErrorHandling 给的 undefined，
 // 拿真假判断会把成功当失败——不提示、不刷新，那一行还挂着，再点一次就是「找不到」。
@@ -229,7 +275,7 @@ const confirmInvite = async () => {
     inviteRoleInput.value = 'MEMBER'
     inviteMessageInput.value = ''
     isInviteDialogActive.value = false
-    await fetchTeamInvitations(teamData.value!.id)
+    await fetchTeamInvitations(teamData.value!.id, true)
   }
 }
 
@@ -315,7 +361,7 @@ const approveRequest = async (requestId: number) => {
   if (result !== undefined) {
     toast.success(t('teams.members.approveDone'))
     // 刷新数据
-    await Promise.all([fetchJoinRequests(teamData.value!.id), fetchTeamMembers(teamData.value!.id)])
+    await Promise.all([fetchJoinRequests(teamData.value!.id, true), fetchTeamMembers(teamData.value!.id)])
   }
   answering.value = undefined
 }
@@ -334,7 +380,7 @@ const rejectRequest = async (requestId: number) => {
   if (result !== undefined) {
     toast.success(t('teams.members.rejectDone'))
     // 刷新数据
-    await fetchJoinRequests(teamData.value!.id)
+    await fetchJoinRequests(teamData.value!.id, true)
   }
   answering.value = undefined
 }
@@ -352,7 +398,7 @@ const cancelInvitation = async (invitationId: number) => {
   if (result !== undefined) {
     toast.success(t('teams.members.cancelDone'))
     // 刷新数据
-    await fetchTeamInvitations(teamData.value!.id)
+    await fetchTeamInvitations(teamData.value!.id, true)
   }
 }
 
@@ -393,8 +439,26 @@ watch(
     joinCopied.value = false
     joinError.value = ''
     joinHandleError.value = ''
+    requestsRead += 1
+    requestsLoaded = false
+    joinRequests.value = []
+    loadingRequests.value = false
+    failedRequests.value = false
+    requestsError.value = null
+    invitationsRead += 1
+    invitationsLoaded = false
+    teamInvitations.value = []
+    loadingInvitations.value = false
+    failedInvitations.value = false
+    invitationsError.value = null
     if (teamId === undefined || !allowed) {
       return
+    }
+    // 「加入申请」页签上的红色数字就在顶上露着，不等切过去才问；普通成员没这页签，
+    // 也不发那个必回 403 的请求。
+    void fetchJoinRequests(teamId)
+    if (activeTab.value === 'invitations') {
+      void fetchTeamInvitations(teamId)
     }
     void runJoinLink(async () => {
       const data = await TeamsApi.getJoinLink(teamId)
