@@ -7,7 +7,7 @@ surface before a PR. It is **not** a substitute for full CI: green here means
 the selected local checks really ran and passed, nothing more.
 
 ```
-task ci:fast                 # quick tier (default): 180s, static hooks + tests/types
+task ci:fast                 # quick tier: CPU-sized budget, static hooks + tests/types
 task ci:fast -- --types      # quick + the full pyright / vue-tsc manual hooks
 python3 .github/scripts/ci-fast.py --tier quick   # equivalent without `task`
 python3 .github/scripts/ci-fast.py --tier static --pre-push   # the push-time report
@@ -21,25 +21,31 @@ tier, which is *not* what `task ci:fast` runs — the Taskfile passes
 
 | tier | budget | runs |
 |------|--------|------|
-| `static` | 180s | only the pre-commit static hooks the path map selects (guards always run). No pytest, no types. This is the legacy direct-invocation default. |
-| `quick` | 180s | static hooks **plus** the selected backend `pure` tests and frontend narrow-typecheck / related Vitest. This is what `task ci:fast` runs. |
+| `static` | 180–720s, CPU-sized | only the pre-commit static hooks the path map selects (guards always run). No pytest, no types. This is the legacy direct-invocation default. |
+| `quick` | 180–720s, CPU-sized | static hooks **plus** the selected backend `pure` tests and frontend narrow-typecheck / related Vitest. This is what `task ci:fast` runs. |
 | `extended` | 900s | the **same selection** as quick, only the whole-tier budget is raised to 900s. It does not expand coverage. |
 
 `extended` is the same work with more wall clock. It does not add suites, and a
 run that still exhausts 900s is reported **unknown**, never trimmed to green.
 
-The quick tier's 180s is the work machine's own limit, not a property of the
-selection. A narrowed frontend run seeds the read-off-disk specs beside the
-changed roots, and those cost ~70s on the work machine (127 tests, 71.4s wall,
-one worker per file, measured when there were fifteen of them): on a tight local
-budget the tier can exhaust it and report unknown where the runner (1200s) has
-room. That is the budget talking, not the change.
+Default budgets use the process's available CPUs, the same affinity-aware
+count as the Vitest worker planner: quick/static get `ceil(180 * max(1, 4 / CPUs))`
+seconds. One CPU gets 720s, two get 360s, three get 240s, and four or more keep
+180s. An unavailable CPU count is treated as one. This is a bounded scheduling
+heuristic, not a performance guarantee: a CPU quota or contention can make the
+machine slower than its affinity mask suggests.
 
-Both bounds are overridable, because they describe the machine rather than the
-tier: `--budget` and `--memory-mib` default to the work machine's own limits
-(the 3072 MiB default is literally its session cap), and a machine that can back
-more gets more. Required CI's draft job passes its own pair (below); `extended`
-raises only the budget.
+`--budget` takes precedence over `CI_FAST_BUDGET_SECONDS`, which takes precedence
+over the tier default. The environment value must be finite and positive and is
+floored at 180s; an explicit `--budget` stays exact, including a shorter bound.
+`extended` defaults to 900s. Neither override changes the selected checks or the
+per-check timeout (`--timeout`, default 900s). The report records `budget_seconds`
+and `budget_source`; exhausting either bound still reports unknown, never pass.
+
+For example, `CI_FAST_BUDGET_SECONDS=600 task ci:fast` gives a quota-constrained
+machine ten minutes without changing repository config. Required CI's draft job
+already passes `--budget 1200`, so its bound is unchanged. `--memory-mib` remains
+independent (default 3072 MiB, the work machine's session cap).
 
 ## The pre-push entry point
 
