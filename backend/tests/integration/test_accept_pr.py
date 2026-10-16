@@ -1575,6 +1575,101 @@ def test_click_405_surfaces_githubs_reason_and_stops(client, app_world):
     assert _topic(client, tid)["accepted_at"] is None
 
 
+def _github_enforces(monkeypatch) -> None:
+    """这个项目的仓库自己开着分支保护/合并队列：平台不再自己判，直接调 GitHub
+    的合并 API（`_pr_verdict` 返回的 `enforces`）。真实实现要打 HTTP，`app_world`
+    把它钉成 False（「平台补位」那条路），走强制那条路的用例自己钉成 True。"""
+    from app.domain.review import services as review_services
+
+    async def _enforces(_repo, _token):
+        return True
+
+    monkeypatch.setattr(review_services, "_github_enforces", _enforces)
+
+
+def _room_event_settled(
+    client, topic_id: str, event_type: str, *, times: int = 1, tries: int = 40
+) -> int:
+    """房间事件是 fire-and-forget（spawn 出去的），给事件循环几拍落块的时间。"""
+    count = _room_event_count(client, topic_id, event_type)
+    for _ in range(tries):
+        if count >= times:
+            break
+        time.sleep(0.05)
+        count = _room_event_count(client, topic_id, event_type)
+    return count
+
+
+def test_a_conflicting_pr_stops_the_accept_in_a_github_enforced_project(
+    client, app_world, monkeypatch
+):
+    """GitHub 自己开着保护的项目：冲突的 PR 在点击那一刻停下，说清是冲突。
+
+    这道闸过去只在平台补位的项目上（`if not enforces` 那一条），强制项目会带着
+    `dirty` 去调合并 API；合并队列不收一个合不进去的 PR，入队那一步抛出的
+    `GitHubPrError` 落进调用点笼统的 `except Exception`，成了「PR 的合并结果暂时
+    无法确认，请重试以核对仓库状态」——把「先解冲突」读成了「重试一次」，而重试
+    不会让冲突消失（2026-10-16 采纳 PR #3927 时的样子）。
+
+    钉 `enforces=True` 是为了让这真的走强制那条路：不钉的话，`if not enforces`
+    那道守卫会替这道闸挡住合并调用，测的就不是强制项目了。"""
+    fake = app_world["fake"]
+    _github_enforces(monkeypatch)
+    _, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.mergeable_by_number[number] = False  # GitHub: CONFLICTING / DIRTY
+
+    attempts: list[dict] = []
+
+    async def refused_by_the_queue(**kw):
+        # 生产上这是 `_enqueue_if_required` 撞上 GitHub 的拒收：合并队列不要一个
+        # 合不进去的 PR，`_queue_request` 因此抛 GitHubPrError。
+        attempts.append(kw)
+        raise github_pr.GitHubPrError("GitHub did not confirm queue entry")
+
+    monkeypatch.setattr(fake, "merge_pull_request", refused_by_the_queue)
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    message = r.json()["message"]
+    assert "冲突" in message
+    assert "无法确认" not in message
+    assert attempts == []  # 压根没去撞那道墙
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert "冲突" in card["note"]
+    assert card["note_level"] == "error"
+    assert _room_event_settled(client, tid, "accept_conflict") == 1
+    assert _topic(client, tid)["accepted_at"] is None
+
+
+def test_a_conflicting_pr_stops_the_accept_when_the_platform_enforces(
+    client, app_world
+):
+    """平台补位的项目：冲突同样停下，说清是冲突、卡上写明、房间有事件。
+
+    这条路上过去只有一句 `acceptBlocked`（「现在不能采纳（合并态：dirty）：与
+    目标分支冲突」）：一个状态词，卡上没有 note，房间也没有事件——芝士不知道有
+    活要干，人也不知道这件事不会自己好。"""
+    fake = app_world["fake"]
+    _, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.mergeable_by_number[number] = False
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    message = r.json()["message"]
+    assert "冲突" in message
+    assert "现在不能采纳" not in message  # 不是那句「合并态：dirty」
+    assert "无法确认" not in message
+    assert fake.merge_calls == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert "冲突" in card["note"]
+    assert card["note_level"] == "error"
+    assert _room_event_settled(client, tid, "accept_conflict") == 1
+
+
 def _strip_delivery_claim(client, card_id: str) -> None:
     """把卡还原成 change_subject 出现之前递的存量卡（真正的纯讨论卡）。现在的
     递卡路径必填 subject，所以只能落库后抹掉。"""
