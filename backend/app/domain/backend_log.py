@@ -339,6 +339,46 @@ _MODEL_FAILURE_TYPES = frozenset(
 )
 
 
+#: How many model failures inside how long make an alert. One failed model call
+#: is not news: across 2026-10-12..15 the gateway carried ~1,300 calls per 30
+#: minutes and 0.75% of them failed — upstream overload (OpenAI "servers are
+#: overloaded", DeepSeek "too busy") that Claude Code retries and that nobody
+#: here can act on. Alerting each failure type once an hour made 334 alerts in
+#: two weeks, which is how the outage alert of 2026-10-15 went unread.
+#: Normal operation measured a median of 5 failures per 30 minutes, p95 33 and
+#: p99 67 (≈ 2 / 11 / 22 per 10 minutes); our own gateway going down showed as
+#: 50-120 refusals within one or two minutes, and losing the box's route abroad
+#: as 35-96 per 30 minutes. 30 in 10 minutes is above the normal p99 rate and
+#: is crossed within a minute by a gateway outage.
+MODEL_FAILURE_BURST = 30
+MODEL_FAILURE_WINDOW_S = 600.0
+
+
+class _ModelFailureRate:
+    """Recent model failures, to tell a blip from an outage."""
+
+    def __init__(self) -> None:
+        self._seen: list[tuple[float, str]] = []
+
+    def crossed(self, exc_type: str, now: float) -> dict[str, int] | None:
+        """Count this failure; the counts by type when it is the one that takes
+        the window to the threshold, else ``None``. Only the crossing is
+        reported: past it, the outage is already news, and the alerting
+        module's repeat rules say when it is news again."""
+        cutoff = now - MODEL_FAILURE_WINDOW_S
+        self._seen = [seen for seen in self._seen if seen[0] > cutoff]
+        self._seen.append((now, exc_type))
+        if len(self._seen) != MODEL_FAILURE_BURST:
+            return None
+        counts: dict[str, int] = {}
+        for _, kind in self._seen:
+            counts[kind] = counts.get(kind, 0) + 1
+        return counts
+
+
+model_failures = _ModelFailureRate()
+
+
 def _headline(err: BackendErrorIn) -> str:
     message = err.message.strip().splitlines()[0] if err.message.strip() else ""
     if len(message) > _CONTENT_MESSAGE_LIMIT:
@@ -481,6 +521,24 @@ async def record(
     project, conversation = await _where(db, project_id, topic_id)
     accepted = 0
     for err in errors:
+        # Counted before the dedup below: a repeat of the same failure is
+        # still one more failed call, and the rate is what this alert reads.
+        if err.exc_type in _MODEL_FAILURE_TYPES:
+            counts = model_failures.crossed(err.exc_type, time.time())
+            if counts is not None:
+                by_type = "，".join(f"{kind} {n}" for kind, n in sorted(counts.items()))
+                alerting.send(
+                    "模型请求大量失败",
+                    [
+                        f"{int(MODEL_FAILURE_WINDOW_S / 60)} 分钟内失败 "
+                        f"{MODEL_FAILURE_BURST} 次：{by_type}",
+                        f"最近一次：{scrub_secrets(err.message)}{_stream_note(err)}",
+                        f"项目：{project}",
+                        f"对话：{conversation}",
+                        f"请求：{err.request_id or 'unknown'}",
+                    ],
+                    key="model-failure-burst",
+                )
         verdict = intake.admit(
             str(project or ""),
             fingerprint(err),
@@ -503,17 +561,6 @@ async def record(
             meta=_record_meta(event_meta(err, verdict), conversation),
         )
         accepted += 1
-        if err.exc_type in _MODEL_FAILURE_TYPES:
-            alerting.send(
-                "模型请求失败",
-                [
-                    f"项目：{project}",
-                    f"对话：{conversation}",
-                    scrub_secrets(err.message) + _stream_note(err),
-                    f"请求：{err.request_id or 'unknown'}",
-                ],
-                key=f"model-gateway:{err.exc_type}",
-            )
     return {"accepted": accepted, "dropped": len(errors) - accepted}
 
 

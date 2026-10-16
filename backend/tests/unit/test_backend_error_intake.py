@@ -26,19 +26,10 @@ from app.domain.backend_log import (
 
 
 @pytest.mark.parametrize("kind", ["GatewayHTTPError", "GatewayStreamError"])
-async def test_gateway_failure_is_kept_and_alerts_once(monkeypatch, kind):
-    from app.core import alerting
-    from app.domain import backend_log
-
-    topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
-    monkeypatch.setattr(
-        backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
-    )
-    monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
-    added = AsyncMock()
-    monkeypatch.setattr(backend_log, "keep_record", added)
-    alerts = []
-    monkeypatch.setattr(alerting, "send", lambda *args, **kw: alerts.append((args, kw)))
+async def test_one_failed_model_call_is_kept_without_alarming(monkeypatch, kind):
+    """Upstream overload fails about one call in 130 on an ordinary day, and the
+    caller retries it. Each one is recorded; none of them is news."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
     error = BackendErrorIn(
         message="Model response stream failed before completion",
         exc_type=kind,
@@ -50,9 +41,27 @@ async def test_gateway_failure_is_kept_and_alerts_once(monkeypatch, kind):
             None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
         )
     assert added.await_count == 1
+    assert alerts == []
+
+
+async def test_a_burst_of_model_failures_alerts_once_with_the_counts(monkeypatch):
+    """What a person can act on is the model path going down: many failures in
+    a few minutes, of whatever kind. That is told once, with how many of each."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    kinds = ["GatewayUnreachable", "GatewayHTTPError"]
+    for i in range(80):
+        error = BackendErrorIn(
+            message="The model was never reached",
+            exc_type=kinds[i % 2],
+            where="model gateway",
+            request_id=f"call-{i}",
+        )
+        await backend_log.record(
+            None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+        )
     assert len(alerts) == 1
-    assert alerts[0][1]["key"] == f"model-gateway:{kind}"
-    assert any("call-1" in line for line in alerts[0][0][1])
+    lines = " ".join(alerts[0][0][1])
+    assert "GatewayUnreachable" in lines and "GatewayHTTPError" in lines
 
 
 STACK = 'Traceback:\n  File "app/api/routes/x.py", line 12, in go\nValueError: nope'
@@ -116,6 +125,9 @@ def _recorded(monkeypatch):
         backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
     )
     monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
+    monkeypatch.setattr(
+        backend_log, "model_failures", backend_log._ModelFailureRate(), raising=False
+    )
     added = AsyncMock()
     monkeypatch.setattr(backend_log, "keep_record", added)
     alerts = []
@@ -124,26 +136,27 @@ def _recorded(monkeypatch):
 
 
 async def test_a_subscription_lane_failure_alerts_like_a_gateway_one(monkeypatch):
-    """The lane is not what makes a failure: before this, only
-    `where == "model gateway"` alerted, so a stalled subscription room paged
-    nobody — and the record itself was missing entirely (#1447)."""
+    """The lane is not what makes a failure: before #1447 only
+    `where == "model gateway"` alerted, so a stalled subscription lane paged
+    nobody — and the record itself was missing entirely."""
     backend_log, topic, added, alerts = _recorded(monkeypatch)
-    error = BackendErrorIn(
-        message="Model response stream was cut before the upstream ended it",
-        exc_type="SubscriptionStreamError",
-        where="model subscription",
-        request_id="req-1",
-        received_events=0,
-        upstream_failure="timeout",
-        ended_by="upstream",
-    )
-    await backend_log.record(
-        None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
-    )
+    for i in range(80):
+        error = BackendErrorIn(
+            message="Model response stream was cut before the upstream ended it",
+            exc_type="SubscriptionStreamError",
+            where="model subscription",
+            request_id=f"req-{i}",
+            received_events=0,
+            upstream_failure="timeout",
+            ended_by="upstream",
+        )
+        await backend_log.record(
+            None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+        )
     assert added.await_count == 1
     assert len(alerts) == 1
-    assert alerts[0][1]["key"] == "model-gateway:SubscriptionStreamError"
     lines = " ".join(alerts[0][0][1])
+    assert "SubscriptionStreamError" in lines
     assert "events: 0" in lines and "upstream: timeout" in lines
 
 
