@@ -21,7 +21,10 @@ from REASONS and the sentence to send back to the line.
             triggers its background check, so the PR is read up to MERGEABLE_RETRIES more
             times, MERGEABLE_DELAY apart, and only a still-UNKNOWN answer is reported. A PR
             already in the merge queue answers UNKNOWN for as long as it sits there, which is
-            no reason to hold its card: that one is read once and accepts normally.
+            no reason to hold its card: that one is read once and accepts normally. A card the
+            platform has not shown a version for yet is judged on the PR's own head: the platform
+            records one only once the card has been approved, so reading that as a mismatch would
+            hand off every fresh card before approve is ever called.
   部署      the PR touches no production deploy file (prod_deploy) and nothing in HIGH_RISK
             (high_risk); a rename counts on both its old and new path
   采纳人    the card's reviewer is OKCHEESE_USER: the platform takes an accept only from them
@@ -87,6 +90,11 @@ HIGH_RISK = (
     ("文案", "backend/app/core/sentences.py"),
 )
 CI_CHECK = "CI required"
+#: One PR read: each GraphQL field, and the key pr_facts() files it under. The query is built from
+#: this table, so a field cannot be read without being asked for — read() swallows the KeyError of
+#: one that is missing, which would turn every card into `unreadable` with nothing else to show for it.
+PR_FIELDS = (("merged", "merged"), ("headRefOid", "head"), ("mergeable", "mergeable"),
+             ("isInMergeQueue", "in_queue"))
 #: How many times more to read a PR GitHub has not yet decided mergeability for, and the gap between reads.
 MERGEABLE_RETRIES, MERGEABLE_DELAY = 3, 2.0
 #: The line pr-review.sh renders first, which the delivering seat pastes into the card body.
@@ -144,13 +152,23 @@ def deploy_reasons(files):
     return out
 
 
+def shown_head(card, pr):
+    """The commit to judge a card on: the one the platform has shown it, or the PR's own head.
+
+    The platform records pr_head_sha only once a card has been approved or accepted, so a card
+    that has just been handed off carries none. Reading that as "卡上还没有显示过版本" hands off
+    every new card before accept() ever gets to approve one, and the platform's own refusal —
+    NEVER_SHOWN, which accept() retries with a re-read — can never be reached."""
+    return card.get("pr_head_sha") or (pr or {}).get("head")
+
+
 def judge(f, me):
     """会采 or 交总调度 for one card, from facts already read. Pure: `f` is what gather() returns.
 
     Returns (verdict, reasons, notes): reasons is a list of (code, detail) for 交总调度, empty
     for 会采; notes says what is worth knowing about a 会采."""
     card, pr = f["card"], f["pr"]
-    head = card.get("pr_head_sha")
+    head = shown_head(card, pr)
     bad, notes = [], []
     if f.get("error"):
         bad.append(("unreadable", f["error"]))
@@ -168,9 +186,10 @@ def judge(f, me):
         if pr.get("mergeable") == "CONFLICTING":
             bad.append(("conflicting", "PR 有冲突"))
         elif pr.get("mergeable") != "MERGEABLE":
-            # A PR in the merge queue answers UNKNOWN until the queue gets to it; the card is
-            # simply behind the queue, not blocked on a number GitHub has not computed yet.
-            if pr.get("in_queue"):
+            # A PR in the merge queue answers UNKNOWN until the queue gets to it, and the platform
+            # keeps its card pending with a decided_at while the queue works; either way the card is
+            # behind the queue, not blocked on a number GitHub has not computed yet.
+            if pr.get("in_queue") or card.get("decided_at"):
                 notes.append("已在合并队列，合并交给队列")
             else:
                 bad.append(("mergeable_unknown", f"GitHub 还没算出能不能合（{pr.get('mergeable')}）"))
@@ -219,9 +238,9 @@ def gh(args, paginate=False):
 
 def pr_facts(body):
     """What judge() reads about a PR, out of one GraphQL pullRequest body."""
-    return {"merged": body["merged"], "head": body["headRefOid"], "mergeable": body["mergeable"],
-            "in_queue": body["isInMergeQueue"],
-            "comments": [c["body"] for c in body["comments"]["nodes"]]}
+    f = {key: body[field] for field, key in PR_FIELDS}
+    f["comments"] = [c["body"] for c in body["comments"]["nodes"]]
+    return f
 
 
 def settle_mergeable(read, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sleep=time.sleep):
@@ -249,8 +268,8 @@ def settle_mergeable(read, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sle
 def gh_facts(n, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sleep=time.sleep):
     """One PR's facts. The retry arguments are settle_mergeable's, so the offline self-test can
     drive this function itself without waiting."""
-    q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){'
-         'merged headRefOid mergeable isInMergeQueue comments(last:100){nodes{body}}}}}' % tuple(REPO))
+    q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){%s '
+         'comments(last:100){nodes{body}}}}}' % (REPO[0], REPO[1], " ".join(f for f, _ in PR_FIELDS)))
 
     def read():
         out = gh(["graphql", "-f", "query=" + q, "-F", f"n={n}"])
@@ -291,7 +310,7 @@ def gather(tok, task, me):
         f["error"] = f"GitHub 上读不到 PR #{n}"
         return f
     f["pr"] = pr
-    head = card.get("pr_head_sha")
+    head = shown_head(card, pr)
     f["ci"] = ci_on(head) if head else None
     f["review"] = latest_review(card.get("change_body"), pr["comments"])
     rv = f["review"]
@@ -329,10 +348,13 @@ def accept(tok, task, me):
         ok, detail = post(tok, f"/accept-cards/{card['id']}/approve", {"approver_handle": me})
         if not ok:
             return f"approve 被拒：{detail}"
+        # judge() only says 会采 with a head, and it falls back to the PR's own while the platform
+        # has not shown the card one; that is the same commit approve has just recorded.
+        head = shown_head(card, f["pr"])
         ok, detail = post(tok, f"/accept-cards/{card['id']}/accept",
-                          {"decided_by": me, "head_sha": card["pr_head_sha"]})
+                          {"decided_by": me, "head_sha": head})
         if ok:
-            return f"已采纳 head {card['pr_head_sha'][:8]}"
+            return f"已采纳 head {head[:8]}"
         if NEVER_SHOWN not in detail or attempt:
             return f"accept 被拒：{detail}"
     return "accept 被拒"
@@ -464,13 +486,17 @@ def self_test():
           "交总调度", "review_major", "有 1 条")
     # 版本
     check("head 不一致", facts(pr=pr(head=OLD)), "交总调度", "head_mismatch", "不是 PR 的 head bbbbbbbb")
-    check("卡上没有版本", facts(card=card(pr_head_sha=None)), "交总调度", "head_mismatch", "还没有显示过版本")
+    check("卡上还没有版本就按 PR 自己的 head 判", facts(card=card(pr_head_sha=None)),
+          "会采", has="审查来自卡")
     check("有冲突", facts(pr=pr(mergeable="CONFLICTING")), "交总调度", "conflicting")
     check("GitHub 还在算", facts(pr=pr(mergeable="UNKNOWN")), "交总调度", "mergeable_unknown", "UNKNOWN")
     check("在合并队列里就不按 UNKNOWN 拦", facts(pr=pr(mergeable="UNKNOWN", in_queue=True)),
           "会采", has="已在合并队列")
     check("队列里也照常拦冲突", facts(pr=pr(mergeable="CONFLICTING", in_queue=True)),
           "交总调度", "conflicting")
+    check("卡上已采纳、卡在队列里，也不按 UNKNOWN 拦",
+          facts(card=card(decided_at="2026-01-01T00:00:00Z"), pr=pr(mergeable="UNKNOWN", in_queue=False)),
+          "会采", has="已在合并队列")
 
     # GitHub resets mergeable to UNKNOWN whenever main moves, so gh_facts itself has to outlast
     # that; these go through gh_facts rather than settle_mergeable, or reverting the call inside it
@@ -528,6 +554,39 @@ def self_test():
             failures.append(f"重查那次读失败时保留已经读到的结果: got {card_facts!r}")
     finally:
         globals()["gh"] = real_gh
+
+    # A card handed off a moment ago: the platform records pr_head_sha only once the card has been
+    # approved, so accept() has to get as far as approve for the card ever to be taken. Driven
+    # through accept() itself, or reverting judge()'s fallback leaves every check here green while
+    # every fresh card is handed off unseen.
+    real = {name: globals()[name] for name in ("get", "gh", "post")}
+    try:
+        calls = []
+        globals()["get"] = lambda tok, path: [{"id": "c", "pr_number": 9, "pr_head_sha": None,
+                                               "reviewer_handle": "me",
+                                               "change_body": f"x\n独立 review：head {H[:8]} 结论 无 blocker/major\n"}]
+
+        def fresh_gh(args, paginate=False):
+            if args and args[0] == "graphql":
+                return json.dumps({"data": {"repository": {"pullRequest": raw("MERGEABLE")}}})
+            if "check-runs" in args[0]:
+                return json.dumps({"check_runs": [{"started_at": "2026-01-01", "conclusion": "success"}]})
+            return '{"filename": "backend/app/x.py"}'
+
+        def keep_post(tok, path, body):
+            calls.append((path, body))
+            return True, ""
+
+        globals()["gh"], globals()["post"] = fresh_gh, keep_post
+        said = accept("tok", {"id": "t", "number": 1, "card": {"id": "c"}}, "me")
+        want = [("/accept-cards/c/approve", {"approver_handle": "me"}),
+                ("/accept-cards/c/accept", {"decided_by": "me", "head_sha": H})]
+        if calls != want or not said.startswith("已采纳 head "):
+            failures.append(f"卡上还没有版本时也要走到 approve 和 accept: {said!r} {calls!r}")
+    finally:
+        for name, fn in real.items():
+            globals()[name] = fn
+
     check("PR 已合并", facts(pr=pr(merged=True)), "交总调度", "pr_merged")
     # 部署
     check("碰正式部署脚本", facts(files=["backend/a.py", "deploy/deploy-docker.sh"]), "交总调度",
