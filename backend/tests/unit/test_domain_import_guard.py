@@ -281,8 +281,18 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.project.repositories"),
-        ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
+        # 2026-10-16：`topic_membership/services.py` 变成了包（门面在 `__init__.py`，
+        # 名册与席位那一半在 `housekeeping.py`）。这两条边本来就在，发起方是门面的
+        # 入口文件；守卫按文件路径取名，包的入口就是 `…services.__init__`。跟搬走的
+        # 两半没关系——两条读的 repository 都还在门面里（`__init__` 建它们）。
+        (
+            "app.domain.topic_membership.services.__init__",
+            "app.domain.project.repositories",
+        ),
+        (
+            "app.domain.topic_membership.services.__init__",
+            "app.domain.topic.repositories",
+        ),
         # --- webhook / workspace ---
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
         # --- app/api/routes ---

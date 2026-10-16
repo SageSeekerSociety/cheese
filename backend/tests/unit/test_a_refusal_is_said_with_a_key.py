@@ -523,7 +523,9 @@ _BASELINE: dict[str, int] = {
     "app/domain/room_task/dispatch.py": 2,
     "app/domain/room_task/place.py": 1,
     "app/domain/topic/services.py": 11,
-    "app/domain/topic_membership/services.py": 10,
+    # 2026-10-16：`topic_membership/services.py` 变成一个包，门面在 `__init__.py`。
+    # 说拒绝的那一半一行没搬，10 句还是 10 句，只是换了路径。
+    "app/domain/topic_membership/services/__init__.py": 10,
     "app/domain/usage/ledger.py": 1,
     "app/domain/user/mail_quota.py": 1,
     "app/domain/user/passwords.py": 2,

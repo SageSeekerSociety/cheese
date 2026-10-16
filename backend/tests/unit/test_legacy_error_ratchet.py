@@ -231,7 +231,9 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/domain/textfile.py", "ValidationError"): 1,
     ("app/domain/thread/services.py", "ValidationError"): 2,
     ("app/domain/topic/services.py", "ValidationError"): 10,
-    ("app/domain/topic_membership/services.py", "ValidationError"): 10,
+    # 2026-10-16：`topic_membership/services.py` 变成一个包，门面在 `__init__.py`。
+    # 带 `raise` 的那一半一行没搬，10 处还是 10 处，只是换了路径。
+    ("app/domain/topic_membership/services/__init__.py", "ValidationError"): 10,
     ("tests/integration/test_accept_pr.py", "ValidationError"): 2,
     ("tests/integration/test_accept_pr_publish.py", "GatewayUnavailableError"): 1,
     ("tests/integration/test_chat_realtime.py", "ValidationError"): 1,
