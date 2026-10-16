@@ -18,7 +18,7 @@
     "src/components/admin/AdminModelDetailDrawer.vue": 5,
     "src/components/admin/AdminModelFormDialog.vue": 3,
     "src/components/admin/AdminModelPriceCell.vue": 2,
-    "src/components/admin/AdminQueueDetail.vue": 24,
+    "src/components/admin/AdminQueueDetail.vue": 1,
     "src/components/admin/AdminQueueList.vue": 8,
     "src/components/admin/AdminQueueRow.vue": 11,
     "src/components/admin/AdminShareBar.vue": 2,
