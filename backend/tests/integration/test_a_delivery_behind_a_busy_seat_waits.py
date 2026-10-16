@@ -10,8 +10,9 @@ The rules, as stated before the code was written:
 
 - an instruction refused only because its seat is busy — a turn there is still
   running — is still owed past half an hour, and goes in when that work ends;
-- a seat held by a turn that has already ended is not busy: the instruction
-  is paged about and given up half an hour on, as before;
+- a seat held by a turn that is not running — it has ended, or it has said
+  nothing for the orphan sweep's silence limit — is not busy: the
+  instruction is paged about and given up half an hour on, as before;
 - nobody is paged about it while it waits;
 - it does not wait forever: a day after it was given it is given up, and a
   person waiting on it is told so, not told it waited half an hour.
@@ -56,6 +57,45 @@ async def _time_passes(factory, delivery_id, by: timedelta) -> None:
             row.seat_busy_at -= by
         row.retry_at = None
         await session.commit()
+
+
+async def _turn_ages(factory, conversation, by: timedelta) -> None:
+    """``by`` passes for the turn running in ``conversation``: it started that
+    much earlier, and everything it said was said that much earlier."""
+    async with factory() as session:
+        await session.execute(
+            update(AgentTurn)
+            .where(AgentTurn.conversation_id == conversation)
+            .values(started_at=AgentTurn.started_at - by)
+        )
+        await session.execute(
+            update(Block)
+            .where(Block.conversation_id == conversation)
+            .values(created_at=Block.created_at - by)
+        )
+        await session.commit()
+
+
+async def _agent_works(factory, screen, conversation, actor) -> None:
+    """The agent runs a command in its turn, and the room has it."""
+    stamp = datetime.now(UTC)
+    screen.uses(conversation, "Bash", agent=actor, command="pytest")
+    async with asyncio.timeout(HANG_S):
+        while not await _said_since(factory, conversation, stamp):
+            await asyncio.sleep(0.05)
+
+
+async def _said_since(factory, conversation, stamp) -> bool:
+    async with factory() as session:
+        return bool(
+            await session.scalar(
+                select(Block.id).where(
+                    Block.conversation_id == conversation,
+                    Block.turn_id.is_not(None),
+                    Block.created_at >= stamp,
+                )
+            )
+        )
 
 
 async def _read_by_session(factory, conversation) -> bool:
@@ -133,11 +173,14 @@ async def test_an_instruction_behind_a_long_turn_goes_in_when_it_ends(
         await _try_once(factory, chat, runner, delivery_id)
         paged_before = await report_overdue(factory)
 
-        # The turn goes on for well over half an hour. The instruction is
-        # tried again meanwhile, and each time the seat is still busy: its
-        # half hour counts from the last of those, not the first.
-        for _ in range(2):
+        # The turn goes on for well over half an hour, working all the while.
+        # The instruction is tried again meanwhile, and each time the seat is
+        # still busy: its half hour counts from the last of those, not the
+        # first.
+        for _ in range(3):
             await _time_passes(factory, delivery_id, timedelta(minutes=25))
+            await _turn_ages(factory, conversation, timedelta(minutes=25))
+            await _agent_works(factory, screen, conversation, actor)
             await _try_once(factory, chat, runner, delivery_id)
 
         # Nobody is paged about it, and the give-up sweep leaves it owed.
