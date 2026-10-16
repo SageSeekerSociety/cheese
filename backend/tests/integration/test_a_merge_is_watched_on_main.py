@@ -180,8 +180,15 @@ def test_two_merges_of_one_task_that_both_fail_reopen_it_once(client, app_world,
     watch(client)
 
     said = _said(client, task_id)
-    assert sum("任务已重新打开" in line for line in said) == 1
-    assert sum("会在这一步一起修复" in line for line in said) == 1
+    reopened = [line for line in said if "任务已重新打开" in line]
+    still_going = [line for line in said if "会在这一步一起修复" in line]
+    assert len(reopened) == 1
+    assert len(still_going) == 1
+    # The earlier merge is the one that reopens the task, as it was when the
+    # looks went one merge at a time: which of the two is a new step is not
+    # something a tick may decide by which look got there first.
+    assert "backend" in reopened[0]
+    assert "e2e" in still_going[0]
     assert _task(client, task_id)["status"] == "open"
     # One merge each: a merge that broke a check is told to the owner either way.
     assert _owner_heard(client, task_id) == heard + 2

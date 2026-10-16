@@ -11,6 +11,10 @@ What these tests pin is what a reader of the tick's result can see: several
 looks are in flight together instead of one after another, and the counts and
 error lines come out in the order the merges were read — so a tick that looks at
 eight merges at once reports what the eight-at-a-time tick reported.
+
+A task that delivers in steps has a landing per merge, and those are the one
+thing the tick keeps in order: its own looks wait for each other, because the
+second one reads the task the first one wrote.
 """
 
 import asyncio
@@ -28,28 +32,33 @@ LOOK_S = 0.2
 class _Session:
     """The reads `watch_landings` makes for itself before it fans out."""
 
-    def __init__(self, ids: list[uuid.UUID]) -> None:
-        self._ids = ids
+    def __init__(self, rows: list[tuple[uuid.UUID, uuid.UUID]]) -> None:
+        self._rows = rows
 
     async def commit(self) -> None: ...
 
-    async def scalars(self, _statement):
-        return list(self._ids)
+    async def execute(self, _statement):
+        return list(self._rows)
 
 
-def _chat(ids: list[uuid.UUID]) -> SimpleNamespace:
+def _chat(rows: list[tuple[uuid.UUID, uuid.UUID]]) -> SimpleNamespace:
     @asynccontextmanager
     async def sessions():
-        yield _Session(ids)
+        yield _Session(rows)
 
     return SimpleNamespace(session_factory=sessions)
+
+
+def _rows(ids: list[uuid.UUID]) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    """One task each: what the watch reads when no task has merged twice."""
+    return [(landing_id, uuid.uuid4()) for landing_id in ids]
 
 
 async def _nothing(*_args, **_kwargs) -> None:
     """A line said in a room; the looks under it are faked here."""
 
 
-def _tick(monkeypatch, ids: list[uuid.UUID], look):
+def _tick(monkeypatch, rows: list[tuple[uuid.UUID, uuid.UUID]], look):
     """`watch_landings` down to the looks: nothing else on this tick has work."""
 
     async def gone_on_while_working(_sessions, **_kwargs):
@@ -62,7 +71,7 @@ def _tick(monkeypatch, ids: list[uuid.UUID], look):
     monkeypatch.setattr(landing_watch, "close_overdue", close_overdue)
     monkeypatch.setattr(landing_watch, "tell_room_undelivered", _nothing)
     monkeypatch.setattr(landing_watch, "_look", look)
-    return _chat(ids)
+    return _chat(rows)
 
 
 async def _watch(chat):
@@ -89,7 +98,7 @@ async def test_the_merges_are_looked_at_at_once(monkeypatch):
             in_flight -= 1
         return 1
 
-    chat = _tick(monkeypatch, ids, look)
+    chat = _tick(monkeypatch, _rows(ids), look)
     started = asyncio.get_running_loop().time()
     result = await _watch(chat)
     spent = asyncio.get_running_loop().time() - started
@@ -120,7 +129,7 @@ async def test_a_merge_whose_look_fails_is_reported_and_holds_up_no_other(
             raise RuntimeError("the forge said no")
         return 1
 
-    chat = _tick(monkeypatch, ids, look)
+    chat = _tick(monkeypatch, _rows(ids), look)
     result = await _watch(chat)
 
     assert sorted(looked_at) == sorted(ids), "a failed look stopped the rest"
@@ -139,7 +148,7 @@ async def test_the_report_reads_as_it_did_one_merge_at_a_time(monkeypatch):
             raise RuntimeError(f"no forge for {landing_id}")
         return 1
 
-    chat = _tick(monkeypatch, ids, look)
+    chat = _tick(monkeypatch, _rows(ids), look)
     result = await _watch(chat)
 
     assert result["errors"] == [
@@ -147,3 +156,42 @@ async def test_the_report_reads_as_it_did_one_merge_at_a_time(monkeypatch):
         f"{ids[1]}: no forge for {ids[1]}",
     ]
     assert result["landings_looked_at"] == 2
+
+
+async def test_a_tasks_own_merges_are_looked_at_one_after_the_other(monkeypatch):
+    """A task that delivers in steps owns two of the merges being watched: its
+    looks wait for each other, and the other tasks' still go at once."""
+    task = uuid.uuid4()
+    first, second = uuid.uuid4(), uuid.uuid4()
+    rows = [(first, task), (second, task)] + [
+        (uuid.uuid4(), uuid.uuid4()) for _ in range(4)
+    ]
+    in_flight = 0
+    most_in_flight = 0
+    ours_in_flight = 0
+    most_ours_in_flight = 0
+
+    async def look(_chat, landing_id, **_kwargs):
+        nonlocal in_flight, most_in_flight, ours_in_flight, most_ours_in_flight
+        ours = landing_id in (first, second)
+        in_flight += 1
+        most_in_flight = max(most_in_flight, in_flight)
+        if ours:
+            ours_in_flight += 1
+            most_ours_in_flight = max(most_ours_in_flight, ours_in_flight)
+        try:
+            await asyncio.sleep(LOOK_S)
+        finally:
+            in_flight -= 1
+            if ours:
+                ours_in_flight -= 1
+        return 1
+
+    result = await _watch(_tick(monkeypatch, rows, look))
+
+    assert most_ours_in_flight == 1, (
+        f"two merges of one task were looked at together "
+        f"({most_ours_in_flight} of them): the second reads what the first wrote"
+    )
+    assert most_in_flight > 1, "no other task's merge was looked at alongside them"
+    assert result["landings_looked_at"] == len(rows)

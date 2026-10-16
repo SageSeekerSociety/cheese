@@ -96,9 +96,9 @@ async def watch_landings(
         for overdue in closed:
             await tell_room_undelivered(session, overdue, announce=announce)
         await session.commit()
-        ids = list(
-            await session.scalars(
-                select(TaskLanding.id)
+        watching = list(
+            await session.execute(
+                select(TaskLanding.id, TaskLanding.task_id)
                 .where(
                     or_(
                         TaskLanding.checks == ChecksOutcome.watching,
@@ -108,28 +108,72 @@ async def watch_landings(
                 .order_by(TaskLanding.landed_at)
             )
         )
+    # One chain of looks per task, the chains gathered: a task that delivers in
+    # steps has a landing per merge, and two looks at the same task must not
+    # overlap — the second would read the task as closed before the first
+    # reopened it, and reopen it a second time. Different tasks have nothing to
+    # say to each other, and their looks go at once.
+    chains: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for landing_id, task_id in watching:
+        chains.setdefault(task_id, []).append(landing_id)
     slots = asyncio.Semaphore(AT_ONCE)
-    # Gathered in `ids` order: however the looks interleave, the report reads
-    # the same as it did one merge at a time.
-    looked_at = await asyncio.gather(
-        *(
-            _look_at(
-                chat,
-                landing_id,
-                announce=announce,
-                record_instruction=record_instruction,
-                task_teammate=task_teammate,
-                slots=slots,
+    looked_at = {
+        landing_id: seen
+        for chain in await asyncio.gather(
+            *(
+                _look_at_one_task(
+                    chat,
+                    landing_ids,
+                    announce=announce,
+                    record_instruction=record_instruction,
+                    task_teammate=task_teammate,
+                    slots=slots,
+                )
+                for landing_ids in chains.values()
             )
-            for landing_id in ids
         )
-    )
+        for landing_id, seen in chain.items()
+    }
     return {
         "gone_on": len(gone_on),
         "closed": len(closed),
-        "landings_looked_at": sum(looked for looked, _ in looked_at),
-        "errors": [error for _, error in looked_at if error is not None],
+        # Reported in `landed_at` order, the order the looks went in before they
+        # were gathered.
+        "landings_looked_at": sum(
+            looked_at[landing_id][0] for landing_id, _ in watching
+        ),
+        "errors": [
+            looked_at[landing_id][1]
+            for landing_id, _ in watching
+            if looked_at[landing_id][1] is not None
+        ],
     }
+
+
+async def _look_at_one_task(
+    chat: Chat,
+    landing_ids: list[uuid.UUID],
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction | None,
+    task_teammate: TaskTeammate | None,
+    slots: asyncio.Semaphore,
+) -> dict[uuid.UUID, tuple[int, str | None]]:
+    """One task's merges, looked at one after the other, each by `_look_at`:
+    what its second look reads is what the first wrote, which is what it read
+    when the looks went one merge at a time."""
+
+    looked_at = {}
+    for landing_id in landing_ids:
+        looked_at[landing_id] = await _look_at(
+            chat,
+            landing_id,
+            announce=announce,
+            record_instruction=record_instruction,
+            task_teammate=task_teammate,
+            slots=slots,
+        )
+    return looked_at
 
 
 async def _look_at(
@@ -211,16 +255,7 @@ async def _look(
 
     async with sessions() as session:
         landing = await session.get(TaskLanding, landing_id, with_for_update=True)
-        # The task's row too: a task that delivers in steps has a landing per
-        # merge, and two of them may be looking in the same sweep. Both would
-        # read a closed task as closed and reopen it, so the second one waits
-        # here and reads what the first wrote, exactly as it did when the
-        # looks were one at a time.
-        task = (
-            await session.get(Task, landing.task_id, with_for_update=True)
-            if landing
-            else None
-        )
+        task = await session.get(Task, landing.task_id) if landing else None
         if landing is None or task is None:
             return 0
         landing.merge_sha = sha
