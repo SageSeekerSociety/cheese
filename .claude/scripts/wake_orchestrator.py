@@ -170,36 +170,53 @@ def strip_prefix(text, tags, take_name=True):
     """(name, tag, rest): the wake's own prefix taken off the head of `text`.
 
     The pieces are read left to right, and each one is taken only as part of a line: a
-    mention counts when a `【…】` the caller could mean comes right after it, and a
+    mention counts when a `【…】` the caller could mean comes right after it, a
     `【…】` counts when its word is one of `tags` — the four labels, plus whatever the
-    caller wrote in the tag slot. So a body that opens by mentioning a person
-    (`@李老师 【重要】…`) keeps its mention, and a body that opens right after the
-    prefix's own mention (`…【递卡】@张三 请看`) keeps the person it names instead of
-    losing them to the prefix. A line pasted with two layers of prefix comes out with
-    none.
+    caller wrote in the tag slot — and a `我是X` counts when one of those two comes next.
+    So a body that opens by mentioning a person (`@李老师 【重要】…`) keeps its mention,
+    and a body that opens right after the prefix's own mention (`…【递卡】@张三 请看`)
+    keeps the person it names instead of losing them to the prefix. A line pasted with
+    two layers of prefix comes out with none.
 
     What comes back is the prefix only when a tag was found in the run: the tag is what
     says where a pasted line's prefix ends, so with no tag a `我是X。` is taken on its
-    own only when the body still follows it, and the run ends there — a body that is
-    nothing but that sentence (`我是来确认的`) is left as the body. A tag also ends the
-    prefix: `我是X。` after one is taken only when the line continues past it (`我是…。
-    <@b> 【交付】…`, the second layer of a paste), never as the head of the body. With
+    own only when the body still follows it — a body that is nothing but that sentence
+    (`我是来确认的`) keeps it. A tag also ends the prefix: `我是X。` past one is another
+    layer only where a whole line follows it (`我是…。<@b> 【交付】…`), the seat it was
+    pasted with, never the head of a body. The run goes on past either reading, so a
+    body that opens with a line of its own still has that line taken off. With
     `take_name` false — the caller named the speaker with `--as` — that last reading is
-    off too, since a body is then never the one who is speaking."""
+    off too, since a body is then never the one who is speaking.
+
+    Nothing else is taken. A mention is only ever taken together with the label after
+    it, so a head that has one and no label (`--as 乙 递卡 "我是甲。<@a> 正文"`) keeps
+    both rather than going out as a lone dangling mention."""
+    def opens_a_line(s):
+        """Whether `s` opens the next piece of a wake line: a label this caller could
+        mean, or a mention a label follows. A mention alone is not one — a sentence may
+        name someone (`我是说 @张三 请看`), and taking it for a line would eat the head
+        of a body and read the speaker's name out of its first words."""
+        word = TAG_WORD.match(s)
+        if word and word.group(1) in tags:
+            return True
+        m = MENTION.match(s)
+        if m:
+            word = TAG_WORD.match(s[m.end():].lstrip())
+            return bool(word and word.group(1) in tags)
+        return False
+
     pieces, rest, off = [], text, 0
     while True:
         m = SELF_ID.match(rest)
         if m:
             nxt = rest[m.end():].lstrip()
-            word = TAG_WORD.match(nxt)
-            if MENTION.match(nxt) or (word and word.group(1) in tags):
+            if opens_a_line(nxt) or (take_name and not pieces
+                                     and rest[m.end() - 1] == "。" and nxt):
+                # Either the head of a line, or `我是X。` at the very top with a body
+                # after it and no line around it — the speaker's name. Both go on with
+                # the run, so a body that opens with a line of its own still has that
+                # line taken off (`我是甲。我是甲。【递卡】正文` leaves `正文`).
                 kind, value = "self", m.group(1)
-            elif take_name and not pieces and rest[m.end() - 1] == "。" and nxt:
-                # `我是X。` with the body after it and no line around it: the speaker's
-                # name, and the run ends here.
-                pieces.append(("self", m.group(1),
-                               m.end() + (len(rest) - m.end() - len(nxt))))
-                break
             else:
                 break
         else:
@@ -604,15 +621,43 @@ def self_test():
         ("前缀：没有标签、但 我是X。 后面还有正文的，名字照取",
          [strip_prefix("我是芝士。正文", LABELS), strip_prefix("我是芝士。@张三 请看", LABELS)],
          [("芝士", "", "正文"), ("芝士", "", "@张三 请看")]),
+        ("前缀：正文自己是一句 我是… 的话时，它后面跟的点名不算前缀（不伪造说话人）",
+         [strip_prefix("我是说 @张三 请看", LABELS),
+          strip_prefix("我是说 <@张三> 请看", LABELS),
+          strip_prefix("我是甲@张三 请看", LABELS),
+          strip_prefix("我是甲 @张三。看这条", LABELS),
+          strip_prefix("我是甲 @张三 【重要】x", LABELS)],
+         [("", "", "我是说 @张三 请看"), ("", "", "我是说 <@张三> 请看"),
+          ("", "", "我是甲@张三 请看"), ("", "", "我是甲 @张三。看这条"),
+          ("", "", "我是甲 @张三 【重要】x")]),
+        ("前缀：同上，一路走到参数里也不吃掉开头（给了 --as 更不该认名字）",
+         [parse_args(["递卡", "我是说 @张三 请看"])[:3],
+          parse_args(["--as", "甲", "递卡", "我是甲 <@a> 请处理"])[:3],
+          parse_args(["--as", "甲", "递卡", "我是甲 @张三 请看"])[:3]],
+         [("递卡", "我是说 @张三 请看", ""), ("递卡", "我是甲 <@a> 请处理", "甲"),
+          ("递卡", "我是甲 @张三 请看", "甲")]),
         ("前缀：前缀之后正文自己是一句 我是…。 时整句留着（不当前缀的第二层）",
          [strip_prefix("我是甲。<@a> 【递卡】我是来确认的。", LABELS),
           strip_prefix("我是甲。<@a> 【递卡】我是来确认的", LABELS),
           strip_prefix("我是芝士。<@a> 【递卡】我是来确认的。请看一下这条", LABELS)],
          [("甲", "递卡", "我是来确认的。"), ("甲", "递卡", "我是来确认的"),
           ("芝士", "递卡", "我是来确认的。请看一下这条")]),
+        ("前缀：同一句后面跟的吃点名不算第二层，整句留着（连点名一起）",
+         [strip_prefix("我是甲。<@a> 【递卡】我是来确认的。@张三 请看", LABELS),
+          strip_prefix("我是甲。<@a> 【递卡】我是来确认的。@张三，请看", LABELS)],
+         [("甲", "递卡", "我是来确认的。@张三 请看"),
+          ("甲", "递卡", "我是来确认的。@张三，请看")]),
         ("前缀：两层粘贴时第二层开头的 我是X。 照剥（后面接着点名和标签）",
          strip_prefix("我是甲。<@a> 【递卡】我是乙。<@b> 【交付】结论", LABELS),
          ("甲", "递卡", "结论")),
+        ("前缀：第二层没有点名的两层名字也剥净（旧版会把第二层当正文留下）",
+         [strip_prefix("我是甲。我是乙。<@a> 【递卡】正文", LABELS),
+          strip_prefix("我是甲。我是甲。【递卡】正文", LABELS),
+          strip_prefix("我是甲。我是甲。【递卡】", LABELS)],
+         [("甲", "递卡", "正文"), ("甲", "递卡", "正文"), ("甲", "递卡", "")]),
+        ("前缀：两层名字后面只是正文时，只取第一层当名字，第二层留正文里",
+         strip_prefix("我是甲。我是甲。正文", LABELS),
+         ("甲", "", "我是甲。正文")),
         ("前缀：剥过一遍的东西再剥一遍不变（幂等）",
          [strip_prefix(strip_prefix(t, LABELS)[2], LABELS)[2] for t in
           ["我是芝士。<@a> 【递卡】正文", "@cheese-abc 【递卡】正文", "正文",
@@ -627,9 +672,14 @@ def self_test():
         ("前缀：给了 --as 时正文只当正文，一句 我是… 的话不会被吃掉",
          [parse_args(["--as", "甲", "递卡", "我是来确认的"])[:3],
           parse_args(["--as", "甲", "递卡", "我是来确认的。请看一下这条"])[:3],
-          parse_args(["--as", "甲", "交付", "我是乙。结论"])[:3]],
+          parse_args(["--as", "甲", "交付", "我是乙。结论"])[:3],
+          parse_args(["--as", "甲", "递卡", "我是甲。<@a> 正文"])[:3],
+          parse_args(["--as", "甲", "递卡", "我是甲。【重要】结论"])[:3],
+          parse_args(["--as", "芝士", "递卡", "我是甲。<@a> 【递卡】正文"])[:3]],
          [("递卡", "我是来确认的", "甲"), ("递卡", "我是来确认的。请看一下这条", "甲"),
-          ("交付", "我是乙。结论", "甲")]),
+          ("交付", "我是乙。结论", "甲"), ("递卡", "我是甲。<@a> 正文", "甲"),
+          ("递卡", "我是甲。【重要】结论", "甲"),
+          ("递卡", "正文", "芝士")]),
         ("前缀：标签位置收到整句时，标签从里面取，剩下的是正文",
          parse_args(["我是芝士。<@a> 【递卡】#1512 PR #3675", ""])[:3],
          ("递卡", "#1512 PR #3675", "芝士")),
