@@ -184,9 +184,7 @@ def test_a_viewer_whose_sign_in_ended_stops_driving_the_screen(client, monkeypat
 
     The interval is 25s in production; its length is not what this pins, so it
     is shortened to keep the test quick."""
-    monkeypatch.setattr(
-        "app.api.routes.connector.screen.VIEW_RECHECK_EVERY_S", 0.2
-    )
+    monkeypatch.setattr("app.api.routes.connector.screen.VIEW_RECHECK_EVERY_S", 0.2)
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     user_id, sid, page = _signed_in_viewer(client, "alice")
     screen = _register_screen(
