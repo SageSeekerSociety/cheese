@@ -13,6 +13,7 @@ from scripts.route_index import (
     _full,
     collect,
     first_match_findings,
+    print_sections,
 )
 
 
@@ -114,3 +115,36 @@ def test_records_keep_their_methods_for_the_http_intersection():
     )
     assert not record.all_literal
     assert record.segments == ("users", "{userId}")
+
+
+def test_each_section_of_a_merged_run_carries_its_own_status(capsys):
+    """The marker is the contract: the caller reads a section's status off it.
+
+    One child answers all three questions, so a caller that wants one of them
+    must be able to see that answer go red without the other two turning red
+    with it. Written out literally — the separator is what the addressing
+    contract suite parses, so a change to it belongs in this test.
+    """
+    code = print_sections(
+        [
+            ("emit", 0, '{"settings_profile": {"name": "p"}}'),
+            ("check", 1, "first-match guard: 2 provable shadow(s)"),
+            ("check-annotations", 0, "route annotations complete (1 addresses)"),
+        ]
+    )
+
+    assert code == 1, "a provable shadow still has to leave the run non-zero"
+    assert capsys.readouterr().out == (
+        "## route-index section emit status 0\n"
+        '{"settings_profile": {"name": "p"}}\n'
+        "## route-index section check status 1\n"
+        "first-match guard: 2 provable shadow(s)\n"
+        "## route-index section check-annotations status 0\n"
+        "route annotations complete (1 addresses)\n"
+    )
+
+    assert print_sections([("emit", 0, "{}"), ("check", 0, "")]) == 0
+    assert capsys.readouterr().out == (
+        "## route-index section emit status 0\n{}\n"
+        "## route-index section check status 0\n"
+    ), "a section with no output prints its marker and nothing else"

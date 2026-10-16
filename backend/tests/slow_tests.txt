@@ -9,7 +9,6 @@
 #
 # One test per line: its node id, then its layer and its slowest time in those
 # runs, for orientation only.
-tests/contract/test_api_addressing_contract.py::test_the_profiled_first_match_guard_uses_exact_frozen_registrations  # contract, 13.2s
 tests/unit/test_suite_run_inside_a_room.py::test_a_launcher_test_run_inside_a_room_fetches_nothing_from_its_platform  # pure, 10.0s
 tests/unit/test_personal_sessions.py::test_a_third_session_lets_the_least_recently_used_one_go[asyncio]  # pure, 9.8s
 tests/unit/test_personal_sessions.py::test_an_answer_starts_as_soon_as_the_model_does[asyncio]  # pure, 9.1s
