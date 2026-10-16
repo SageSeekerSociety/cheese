@@ -309,6 +309,52 @@ class SplitContracts(unittest.TestCase):
         self.write("Panel.vue", original)
         self.invoke(0)
 
+    def test_runtime_class_heritage_retains_value_bindings(self):
+        declarations = [
+            "class Preview extends Image {} void new Preview();",
+            "const Preview = class extends Image {}; void new Preview();",
+            "class Preview extends (Image as new () => object) {} void new Preview();",
+            "class Preview extends (Image satisfies new () => object) {} void new Preview();",
+            "void new Image();",  # Ordinary construction remains the control.
+        ]
+        local = "const Image = class { src = 'local-image'; };"
+        for usage in declarations:
+            with self.subTest(usage=usage):
+                self.baseline(sfc(local + usage))
+                self.write("Panel.vue", sfc("import {usePanel} from './usePanel'; usePanel(); " + usage))
+                self.write("usePanel.ts", "export function usePanel() { " + local + " return {}; }")
+                self.assertIn("formerly local Image", self.invoke(1, ("Panel.vue", "usePanel.ts")))
+                self.write("Panel.vue", sfc("import {usePanel} from './usePanel'; const {Image} = usePanel(); " + usage))
+                self.write("usePanel.ts", "export function usePanel() { " + local + " return {Image}; }")
+                self.invoke(0, ("Panel.vue", "usePanel.ts"))
+
+    def test_generic_runtime_heritage_checks_only_the_base_value(self):
+        local = "const Array = class<T> { value?: T };"
+        usage = "class Preview<T> extends Array<T> {} void Preview;"
+        self.baseline(sfc(local + usage))
+        self.write("Panel.vue", sfc("import {usePanel} from './usePanel'; usePanel(); " + usage))
+        self.write("usePanel.ts", "export function usePanel() { " + local + " return {}; }")
+        self.assertIn("formerly local Array", self.invoke(1, ("Panel.vue", "usePanel.ts")))
+        self.write("Panel.vue", sfc("import {usePanel} from './usePanel'; const {Array} = usePanel(); " + usage))
+        self.write("usePanel.ts", "export function usePanel() { " + local + " return {Array}; }")
+        self.invoke(0, ("Panel.vue", "usePanel.ts"))
+
+    def test_type_heritage_and_wrapper_annotations_are_not_value_uses(self):
+        annotations = [
+            "interface Shape extends Error {} class ShapeImpl implements Error { name = ''; message = ''; }",
+            "class Box<T> {} const boxed = new Box<Error>(); function generic<T extends Error>(v: T): T { return v; }",
+            "const value = {} as Error; const checked = {name: '', message: ''} satisfies Error; type Snapshot = typeof Error;",
+        ]
+        for annotation in annotations:
+            with self.subTest(annotation=annotation):
+                self.baseline(sfc("function unused() { const Error = class {}; return Error; } " + annotation))
+                # Removing an unused local does not create a runtime fallback:
+                # every remaining Error occurrence is in a type-only position.
+                self.write("Panel.vue", sfc("function unused() { return 0; } " + annotation))
+                self.invoke(0)
+                self.write("Panel.vue", sfc("function unused() { return 0; } " + annotation.replace("Error", "MissingType")))
+                self.assertIn("MissingType", self.invoke(1))
+
     def test_missing_baseline_files_syntax_and_scope(self):
         self.baseline(sfc())
         self.invoke(2, base="not-a-ref")

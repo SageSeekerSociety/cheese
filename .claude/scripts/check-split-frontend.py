@@ -389,8 +389,11 @@ function analyze(sources, entry, baseline) {
       report(baseline ? 2 : 1, 'binding', item.file, 'unbound template identifier: ' + n.text);
     const raw = checker.getSymbolAtLocation(n);
     if (!ts.isShorthandPropertyAssignment(n.parent) && raw?.declarations?.some(d => d.name === n)) return;
+    // ExpressionWithTypeArguments is a TypeNode by kind, but its expression
+    // in class extends is runtime. TS's contextual API keeps that expression
+    // while excluding type arguments, interface heritage and implements.
     for (let p = n.parent; p; p = p.parent)
-      if (ts.isTypeNode(p) || ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) return;
+      if (ts.isPartOfTypeNode(p) || ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) return;
     if (!s?.declarations?.length) return; // Unresolved values are diagnosed above/by TS.
     const local = s.declarations.some(d => byVirtual.has(d.getSourceFile().fileName));
     if (local) names.add(n.text);
