@@ -56,7 +56,12 @@ from app.api.response import ok
 from app.api.topics_deps import _actor_in_place
 from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
-from app.core.errors import ConflictError, SystemBusyError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    SystemBusyError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import exception_text, say
 from app.domain.agent import execution
 from app.domain.documents.convert import (
@@ -232,6 +237,9 @@ async def decide_document_revisions(
         # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
         # 栏照常列），能做的只是不动它。
         raise ValidationError(say("libraryOriginalReadOnly"))
+    if library.is_message_attachment(clean):
+        # 发进对话的原件同理：消息指着的就是它。
+        raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")

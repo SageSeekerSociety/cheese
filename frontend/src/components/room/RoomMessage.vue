@@ -154,6 +154,10 @@ const fileBlock = computed(() => props.block.kind === 'attachment' || props.bloc
 
 // 作者改过它：正文后面标一句「已编辑」。
 const edited = computed(() => !!props.block.meta?.edited_at)
+/** 从资料库里挑来附上的那一份本来就在资料库里，不再给「保存到资料库」。 */
+function inLibrary(path: string): boolean {
+  return path.startsWith('library/')
+}
 
 // 队友的步骤清单：照结构画，不照正文画。
 const checklist = computed(() => {
@@ -300,7 +304,9 @@ const told = computed(() => toldByMessage(props.refs))
           :name="artifactName(block)"
           :can-open="block.kind === 'artifact'"
           :can-download="block.kind === 'attachment'"
-          :can-keep="block.kind === 'artifact' && !!topicId"
+          :can-keep="
+            (block.kind === 'artifact' || (block.kind === 'attachment' && !inLibrary(block.content))) && !!topicId
+          "
           :pinnable="pinnable"
           :pinned="pinned"
           @open="emit('open-file', block.content)"

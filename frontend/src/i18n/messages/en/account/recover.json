@@ -1,0 +1,10 @@
+{
+  "email": "Account email",
+  "failed": "Couldn't send the email. Please try again.",
+  "lede": "Enter your account email and we will send you a link to reset your password",
+  "rememberPassword": "Remember your password?",
+  "sent": "Reset email sent. Check your inbox.",
+  "sentTitle": "Check your email",
+  "submit": "Send reset email",
+  "title": "Reset password"
+}

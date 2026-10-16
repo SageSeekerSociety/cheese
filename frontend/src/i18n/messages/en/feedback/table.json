@@ -1,0 +1,29 @@
+{
+  "col": {
+    "assignee": "Assignee",
+    "comments": "Comments",
+    "id": "ID",
+    "kind": "Kind",
+    "priority": "Priority",
+    "source": "Source",
+    "status": "Status",
+    "supports": "Supports",
+    "title": "Title",
+    "updated": "Updated",
+    "user": "User"
+  },
+  "empty": {
+    "desc": "Nobody has submitted feedback yet.",
+    "title": "No feedback yet"
+  },
+  "error": {
+    "retry": "Retry",
+    "title": "Couldn't load the table"
+  },
+  "filtered": {
+    "clear": "Clear filters",
+    "desc": "Try another keyword, or click \"All\" to clear the filters.",
+    "title": "No feedback matches"
+  },
+  "label": "Feedback list"
+}

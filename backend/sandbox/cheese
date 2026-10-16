@@ -149,7 +149,7 @@ class ToolTable:
 #: out, the session's own document, or its room's living document.
 _DOCUMENT_ARG = {
     "type": "string",
-    "description": "项目资料库里那份文档的编号；省略就是这里的实况文档",
+    "description": "那份文档的编号（见 cheese_doc_list）；省略就是这里的实况文档",
 }
 
 
@@ -423,7 +423,7 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_doc_get",
             "读一份文档，末尾列出还没人处理的修改建议。不给 document 读这里的实况"
-            "文档；给了读项目资料库里的那一份（编号见 cheese_doc_list）。读到的这一版"
+            "文档；给了读编号是它的那一份（编号见 cheese_doc_list）。读到的这一版"
             "就是接下来 cheese_doc_set 写回所依据的那一版；没读过就写，只有文档还是"
             "空的时才让你写。",
             {"document": _DOCUMENT_ARG},
@@ -473,9 +473,12 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_new",
-            "在项目资料库里新建一份文档，项目成员都能看、能改，当前对话里会出现这份"
-            "文档，点开就在对话旁边。有人要一份独立的文档（调研、方案、清单）时用它；"
-            "这里的实况文档用 cheese_doc_set。给 content 就把它写成第一版。"
+            "新建一份文档。它留在当前这段对话里：能看到这里的人都能看、能改，资料库里"
+            "没有它；当前对话里会出现这份文档，点开就在对话旁边。有人要一份独立的文档"
+            "（调研、方案、清单）时用它；这里的实况文档用 cheese_doc_set。给 content "
+            "就把它写成第一版。写的是以后还会反复用到的东西（方案、规范、操作说明）时，"
+            "写完问一句要不要保存到资料库，项目里的人在资料库里才找得到它；保存由人在"
+            "文档上点「保存到资料库」，你做不了。一次性的分析、复盘、周报不用问。"
             "返回文档编号，之后读写都带上 document。",
             {
                 "title": _text("文档标题，正文里别再用一级标题重复"),
@@ -485,8 +488,8 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_doc_list",
-            "列出项目资料库里的文档（编号、标题、最近谁改的），最近改过的在前。"
-            "不含各任务的实况文档。",
+            "列出资料库里的文档和你在当前这段对话里建的文档（编号、标题、最近谁改的），"
+            "最近改过的在前。不含各任务的实况文档。",
         ),
         _tool(
             "cheese_app_save",
@@ -2009,7 +2012,7 @@ def _doc_get(args: dict, host) -> str:
 
 
 def _document(host, args: dict | None = None) -> dict:
-    """本次要读写的文档：点了名的那一份（项目资料库里的），会话本来就是对着
+    """本次要读写的文档：点了名的那一份（按编号），会话本来就是对着
     某份文档开的（CHEESE_DOCUMENT），或者是任务里的会话，用任务的实况文档。"""
     named = str((args or {}).get("document") or "").strip()
     if named:
@@ -2071,7 +2074,7 @@ def _searched(args: dict, host, document: str) -> str:
     else:
         where = f"这里的实况文档{named}"
     return (
-        f"这次没给 document，找的是{where}；要改项目资料库里的文档，"
+        f"这次没给 document，找的是{where}；要改别的文档，"
         "带上它的 document 编号（见 cheese_doc_list）。"
     )
 
@@ -2165,13 +2168,13 @@ def _doc_new(args: dict, host) -> str:
         except (ValueError, KeyError, TypeError):
             raise exc from None
         raise PlatformToolError(
-            f"没建成，资料库里没有多出文档：{why} 改好正文再 cheese_doc_new。"
+            f"没建成，没有多出文档：{why} 改好正文再 cheese_doc_new。"
         ) from exc
     doc = answer.get("data") or {}
     host.doc_versions[doc["id"]] = doc.get("doc_version", 0)
     shown = "当前对话里已经出现这份文档。" if host.environ.get("CHEESE_TOPIC") else ""
     lines = [
-        f"已在资料库新建《{doc.get('title') or args['title']}》，编号 {doc['id']}"
+        f"已新建《{doc.get('title') or args['title']}》，编号 {doc['id']}"
         f"（第 {doc.get('doc_version', 0)} 版）。{shown}之后读写它都带上 document。"
     ]
     lines += _made_canvases(answer)
@@ -3065,7 +3068,7 @@ def _say_library(args, data, env) -> str:
 def _say_documents(args, data, env) -> str:
     rows = (data or {}).get("data") or []
     if not rows:
-        return "资料库里还没有文档。"
+        return "还没有文档。"
     return "\n".join(
         f"{row['id']}\t{row.get('title') or '未命名文档'}\t{row.get('author') or ''}"
         f" {str(row.get('updated_at') or '')[:16]}"

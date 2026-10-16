@@ -1,0 +1,40 @@
+{
+  "confirmDelete": "Delete this announcement?",
+  "day": "{month}/{date}",
+  "dayWithYear": "{month}/{date}/{year}",
+  "delete": "Delete",
+  "edit": "Edit",
+  "editTitle": "Edit announcement",
+  "edited": "Edited",
+  "empty": "No announcements",
+  "expiredFold": "Expired · {count}",
+  "expiresOn": "Expires {day}",
+  "form": {
+    "content": "Body",
+    "expiry": "Expires on (optional)",
+    "notifyHint": "{count} members of this space will be notified. Later edits notify no one.",
+    "pinned": "Pin",
+    "publish": "Post",
+    "save": "Save",
+    "title": "Title"
+  },
+  "loadFailed": "Couldn't load announcements",
+  "morePinned": "{count} more pinned",
+  "pin": "Pin",
+  "pinnedTag": "Pinned",
+  "publish": "Post announcement",
+  "publishedOn": "Posted {day}",
+  "toast": {
+    "deleteFailed": "Could not delete",
+    "deleted": "Deleted",
+    "pinFailed": "Could not pin",
+    "pinned": "Pinned",
+    "publishFailed": "Could not post",
+    "published": "Posted",
+    "saveFailed": "Could not save",
+    "saved": "Saved",
+    "unpinFailed": "Could not unpin",
+    "unpinned": "Unpinned"
+  },
+  "unpin": "Unpin"
+}

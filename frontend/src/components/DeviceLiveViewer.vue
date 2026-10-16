@@ -8,28 +8,37 @@
 // view a screen may type into it — the trust boundary the agent already runs
 // inside), so the component defaults to interactive; pass `readonly` where a
 // surface wants perception without control.
+//
+// 连的是 `composables/useDeviceScreen.ts` 那一层：端点在 API 层，组件不直接碰
+// （`.claude/rules/architecture.md` 的组件边界）。这里只有 xterm 和它的大小。
 import '@xterm/xterm/css/xterm.css'
 
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useEventListener } from '@vueuse/core'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 
-import { screenWsUrl } from '../api'
+import { useDeviceScreen } from '../composables/useDeviceScreen'
 import { t } from '../i18n'
 
 const props = defineProps<{ sid: string; readonly?: boolean }>()
 
 const host = ref<HTMLDivElement | null>(null)
-const status = ref<'connecting' | 'open' | 'closed'>('connecting')
 let term: Terminal | null = null
 let fit: FitAddon | null = null
-let socket: WebSocket | null = null
 let ro: ResizeObserver | null = null
 
+const { status, connect, send, isOpen } = useDeviceScreen(() => props.sid, {
+  // 屏幕数据是字节、控制帧是字符串，xterm 自己分得清。
+  onData: (chunk) => term?.write(chunk),
+  // first sized frame attaches this viewer on the backend
+  onAttached: () => fitAndResize(),
+  // 换到另一台屏幕：上一台的画面不能留着。
+  onSwitched: () => term?.reset(),
+})
+
 function sendResize(): void {
-  if (!term || !socket || socket.readyState !== WebSocket.OPEN) return
-  socket.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+  if (!term || !isOpen()) return
+  send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
 }
 
 function fitAndResize(): void {
@@ -39,40 +48,6 @@ function fitAndResize(): void {
     // fit throws if the element has no layout yet — ignore, a later tick retries.
   }
   sendResize()
-}
-
-function connect(sid: string): void {
-  teardownSocket()
-  status.value = 'connecting'
-  const ws = new WebSocket(screenWsUrl(sid))
-  ws.binaryType = 'arraybuffer'
-  socket = ws
-  ws.onopen = () => {
-    status.value = 'open'
-    fitAndResize() // first sized frame attaches this viewer on the backend
-  }
-  ws.onmessage = (ev: MessageEvent) => {
-    if (ev.data instanceof ArrayBuffer) {
-      term?.write(new Uint8Array(ev.data))
-    } else if (typeof ev.data === 'string') {
-      term?.write(ev.data)
-    }
-  }
-  ws.onclose = () => {
-    if (socket === ws) status.value = 'closed'
-  }
-  ws.onerror = () => {
-    if (socket === ws) status.value = 'closed'
-  }
-}
-
-function teardownSocket(): void {
-  if (socket) {
-    socket.onclose = null
-    socket.onerror = null
-    socket.close()
-    socket = null
-  }
 }
 
 onMounted(() => {
@@ -93,7 +68,7 @@ onMounted(() => {
     // screen that was never subscribed.
     const enc = new TextEncoder()
     term.onData((d) => {
-      if (socket && socket.readyState === WebSocket.OPEN) socket.send(enc.encode(d))
+      if (isOpen()) send(enc.encode(d))
     })
   }
   fitAndResize()
@@ -102,28 +77,9 @@ onMounted(() => {
   connect(props.sid)
 })
 
-// Switching to a different screen reconnects + clears the buffer.
-watch(
-  () => props.sid,
-  (sid) => {
-    term?.reset()
-    connect(sid)
-  }
-)
-
-// 有网就自动转出来 (owner spec): if the 现场 socket dropped (a network blip closes
-// it and this read-only viewer has no retry loop by design — offline it simply
-// shows 已断开, and spinning is acceptable), reconnect the moment the network is
-// back. Driving recovery off the online edge means no busy loop can hammer the
-// hub while offline.
-useEventListener(window, 'online', () => {
-  if (status.value === 'closed') connect(props.sid)
-})
-
 onBeforeUnmount(() => {
   ro?.disconnect()
   ro = null
-  teardownSocket()
   term?.dispose()
   term = null
   fit = null

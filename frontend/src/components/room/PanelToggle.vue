@@ -4,7 +4,11 @@
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-defineProps<{ open: boolean }>()
+const props = defineProps<{
+  open: boolean
+  /** 面板里只有「文件」一格（私聊）：开关就叫「文件」，不叫「概览」。 */
+  files?: boolean
+}>()
 const emit = defineEmits<{ (e: 'toggle'): void }>()
 </script>
 
@@ -17,10 +21,14 @@ const emit = defineEmits<{ (e: 'toggle'): void }>()
     :class="{ 'panel-toggle--open': open }"
     :aria-expanded="open ? 'true' : 'false'"
     aria-controls="topic-panel"
-    :title="open ? t('work.room.panel.close') : t('work.room.panel.open')"
+    :title="
+      props.files
+        ? t(open ? 'work.room.panel.closeFiles' : 'work.room.panel.openFiles')
+        : t(open ? 'work.room.panel.close' : 'work.room.panel.open')
+    "
     @click="emit('toggle')"
   >
-    {{ t('work.room.panel.label') }}
+    {{ props.files ? t('work.room.tabs.files') : t('work.room.panel.label') }}
   </BaseButton>
 </template>
 

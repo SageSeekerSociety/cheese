@@ -29,6 +29,8 @@ import { COMPUTE_DEVICES } from './catalogFixtures'
 export function computeState(over: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
   return {
     default: { kind: 'sandbox', spec: 'standard' },
+    max_concurrent_turns: 20,
+    max_concurrent_turns_from: 'deployment',
     can_manage: true,
     devices: COMPUTE_DEVICES,
     specs: [
