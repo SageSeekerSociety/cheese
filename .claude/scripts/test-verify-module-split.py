@@ -630,6 +630,34 @@ from .painting import _paint  # noqa: E402
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
 
+    def test_a_removed_method_is_not_excused_by_a_namesake_function(self) -> None:
+        """A name collision is not a lift: nothing in the package calls `_paint`."""
+        old = '''\
+"""A class whose private helper is about to be dropped."""
+
+
+class Widget:
+    def render(self, width):
+        return str(width)
+
+    def _paint(self, width):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self, width):
+        return str(width)
+""",
+            # An unrelated helper that happens to share the name. Every real
+            # package here has a few of these; none of them is the lost method.
+            "painting.py": "def _paint(colour):\n    return colour\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("符号没了: Widget._paint", result.stdout)
+
     def test_a_logger_is_not_required_of_the_package(self) -> None:
         old = '''\
 """A module with the logger every module in this repository has."""

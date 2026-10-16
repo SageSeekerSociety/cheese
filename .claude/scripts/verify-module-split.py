@@ -142,6 +142,8 @@ class ModuleFacts:
     #: qualified name (`Widget.render`) -> signature
     signatures: dict[str, Signature] = field(default_factory=dict)
     deferred: list[DeferredImport] = field(default_factory=list)
+    #: every bare name the file's code reads, `self.x` not among them
+    referenced: set[str] = field(default_factory=set)
 
 
 def _param_text(arg: ast.arg, has_default: bool) -> str:
@@ -448,6 +450,9 @@ def read_source(
     _collect_statements(tree.body, facts, package_name)
     facts.all_list, facts.all_unreadable = _read_all(tree)
     facts.deferred = _deferred(source, module_name)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            facts.referenced.add(node.id)
     return facts
 
 
@@ -594,15 +599,32 @@ def lifted_to_module_level(package: Package, key: str) -> str | None:
     the instance. The name is still in the package and its callers were
     rewritten in the same commit, so calling it a lost symbol would red-light
     the repo's own splits.
+
+    The rewrite is what this looks for, not the name: a module-level function
+    that happens to share the name proves nothing, and `DeviceHub._require_screen`
+    sitting next to an unrelated `_require_screen` is how a method that really
+    went missing gets reported as a note and the whole run as clean. The tell is
+    that the package calls the bare name — `self._x(...)` became `_x(self, ...)`
+    — so a name nothing in the package reads is a lost member, not a lift.
     """
     head, _, member = key.rpartition(".")
     if not head or not member.startswith("_"):
         return None
-    for module_key, facts in package.modules.items():
-        node = facts.defined.get(member)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return module_key or "__init__.py"
-    return None
+    holder = next(
+        (
+            module_key
+            for module_key, facts in package.modules.items()
+            if isinstance(
+                facts.defined.get(member), (ast.FunctionDef, ast.AsyncFunctionDef)
+            )
+        ),
+        None,
+    )
+    if holder is None:
+        return None
+    if not any(member in facts.referenced for facts in package.modules.values()):
+        return None
+    return holder or "__init__.py"
 
 
 #: Names bound by a call the package must not be asked to repeat. This is the
