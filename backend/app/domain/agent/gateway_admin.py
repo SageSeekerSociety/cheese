@@ -9,19 +9,81 @@ turn 不能因为网关抽风就失败,所以那里把错误吃掉了。管理�
 这里只做 HTTP 与解析:不做缓存(管理页看得本就少,且它要的是当下这一眼),不写审计
 (那要落库、要记操作人,是服务层的事)。``api_key`` 是上游模型的凭据,只进请求体,
 绝不回显、绝不进日志——把它写进响应或日志,等于把这条模型连同它的额度送人。
+
+这一层只管取和折:要的形状与线路键住在 ``gateway_admin_types``,折的活住在
+``gateway_admin_parsers``。本模块把两边导入进来用,也按原路径重导出;方向见下那条注释。
 """
 
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
-from urllib.parse import quote
 
 import httpx
 
 from app.core.sentences import say
-from app.domain.agent.gateway import price_is_set
-from app.domain.agent.schemas import split_upstream
-from app.domain.usage.pricing import declared_free
+
+# 这个模块从两个下层文件取名字：`gateway_admin_types`（线路键与页面形状，谁都不依赖）
+# 和 `gateway_admin_parsers`（网关 JSON -> 页面形状的纯函数，只依赖 types）。方向是一条
+# 直线：types <- parsers <- 本文件，没有回头路，
+# `scripts/check_boundaries.py` 的 C3 才过得了。
+#
+# **本模块按原路径重导出上面这些名字** —— 单测和别处按
+# `app.domain.agent.gateway_admin._xxx`、`.ModelUsage` 取名字，或者把这些名字当字符串
+# 目标打补丁，都照旧；拆三个文件是为了让每一个都在行数上限内，
+# 不是要把引用方赶上一次改名。
+#
+# 拆的边界是「谁需要谁」，不是「哪段看起来像另一件事」：解析函数要造的形状与要读的线路键
+# 若是留在这里，就轮到解析层反过来导入本模块，同层成环——所以那批名字下沉到了 types。
+#
+# `noqa: F401` 的那些本模块不再引用：留着是为了本模块的名字集合不缩水 —— 少一个，
+# `from app.domain.agent.gateway_admin import <它>` 就从导入期起炸。
+#
+# 没有跟着回来的是搬走的函数顺手用的那几个 `quote`、`dataclass`、`price_is_set`、
+# `split_upstream`、`declared_free`：它们不是本模块的词汇，跟着回来只会让打在它们
+# 身上的补丁看着还在、其实谁也不读了。要打在它们的调用处，就打到 parsers 上。
+from app.domain.agent.gateway_admin_parsers import (
+    _accumulate,
+    _admin_key,
+    _admin_model,
+    _admin_source,  # noqa: F401
+    _capability_params,
+    _combine,  # noqa: F401
+    _dict,  # noqa: F401
+    _entries,
+    _error_message,
+    _int,  # noqa: F401
+    _metrics_of,
+    _num,  # noqa: F401
+    _price_params,
+    _price_value,  # noqa: F401
+    _quote,
+    _read_capabilities,  # noqa: F401
+    _read_prices,  # noqa: F401
+    _short,
+    _source_info,
+    _try_order,  # noqa: F401
+    _unpriced_note,  # noqa: F401
+    _usage,
+    _window_totals,
+    _zero_usage,  # noqa: F401
+)
+from app.domain.agent.gateway_admin_types import (
+    _CAPABILITY_FIELDS,  # noqa: F401
+    _PRICE_FIELDS,  # noqa: F401
+    _SOURCE_INFO_KEYS,  # noqa: F401
+    _UPSTREAM_INFO_KEYS,  # noqa: F401
+    EXTRA_HEADERS,  # noqa: F401
+    FREE,  # noqa: F401
+    NO_EXPLICIT_CACHE,  # noqa: F401
+    SESSION_HEADER,  # noqa: F401
+    SPEND_CAP,  # noqa: F401
+    UPSTREAM_HEADERS,  # noqa: F401
+    AdminKey,
+    AdminModel,
+    AdminSource,  # noqa: F401
+    ModelUsage,
+    UsageWindow,
+    catalogue_info,  # noqa: F401
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,65 +94,6 @@ _TIMEOUT = 8.0
 # 一次分页取多少 key。本平台一把 key 对一个项目,量级几十上百,size=100 基本一次取完;
 # 循环只是兜底,不让「项目多到一页之外」变成静默漏项。
 _KEY_PAGE_SIZE = 100
-
-# 我方对外用短名,网关用 LiteLLM 的字段名。翻译只在这一处发生,别让字段名散到服务层
-# 和前端去——那样改一个名字要同时改三处,漏一处就是一处静默对不上。
-_PRICE_FIELDS = {
-    "input": "input_cost_per_token",
-    "output": "output_cost_per_token",
-    "cache_read": "cache_read_input_token_cost",
-    "cache_creation": "cache_creation_input_token_cost",
-}
-
-# 能力位同理:网关用 supports_*/adaptive 一整套名字,页面只关心这几件。
-_CAPABILITY_FIELDS = {
-    "reasoning": "supports_reasoning",
-    "vision": "supports_vision",
-    "adaptive_thinking": "supports_adaptive_thinking",
-    "mid_conversation_system": "supports_mid_conversation_system",
-}
-
-# 一条线路自己的 model_info 键：不跟着模型走，加新线路时也不从别的线路抄。名字与网关
-# 侧读它们的钩子（deploy/gateway 的 upstream_headers.py）逐字一致。
-#
-# 静态请求头不写进 model_info，写进 ``litellm_params.extra_headers``：LiteLLM 原样把
-# 它发给上游（两种协议都实测过），而 ``/model/info`` 对每把虚拟 key 都开放，
-# model_info 原样回、litellm_params 过 LiteLLM 的掩码（名字里带 key/token/secret/
-# auth/password/credential/cookie 一段的头，值被打码）。所以页面只列头名，头的值
-# 按「名字不像凭据就是公开的」对待，凭据走 ``api_key``。config.yaml 里写在
-# model_info 的那份（``cheese_upstream_headers``）照样读出头名。
-EXTRA_HEADERS = "extra_headers"
-UPSTREAM_HEADERS = "cheese_upstream_headers"
-SESSION_HEADER = "cheese_session_header"
-FREE = "cheese_free"
-# What one upstream model needs (no_explicit_cache.py, spend_cap.py), not
-# the model as people pick it: a new source on the same upstream model takes
-# them from a row that has them, one on another upstream does not.
-NO_EXPLICIT_CACHE = "cheese_no_explicit_cache"
-SPEND_CAP = "cheese_spend_cap_usd"
-_UPSTREAM_INFO_KEYS = frozenset({NO_EXPLICIT_CACHE, SPEND_CAP})
-_SOURCE_INFO_KEYS = frozenset({UPSTREAM_HEADERS, SESSION_HEADER, FREE}) | (
-    _UPSTREAM_INFO_KEYS
-)
-
-
-def catalogue_info(info: Mapping[str, object]) -> dict[str, object]:
-    """一行 model_info 里属于**模型**、同组每一行必须一字不差的那部分。
-
-    目录读 ``/model/info`` 列出的第一行（上架、名字、档位、思考档、能力都从那一行来），
-    哪一行排第一不由我们定，所以同组每一行都得带同一份。线路自己的键
-    (``_SOURCE_INFO_KEYS``)与网关自己写进去的键(``id``、``db_model``、``blocked``……)
-    都不在内 —— 抄了 ``id`` 就是两行同一个部署 id,一行 429 冷却全组(#3294)。
-    """
-    return {
-        key: value
-        for key, value in info.items()
-        if (key.startswith("cheese_") and key not in _SOURCE_INFO_KEYS)
-        # 每一个显式写了的 supports_* 都抄：`supports_output_config`、
-        # `supports_max_reasoning_effort` 决定思考档能不能送到上游，少抄一个，
-        # 落到新线路的请求就悄悄丢了 effort。没写（None）的是网关自己的默认，不抄。
-        or (key.startswith("supports_") and isinstance(value, bool))
-    }
 
 
 class GatewayAdminError(Exception):
@@ -110,108 +113,6 @@ class GatewayUnreachable(GatewayAdminError):
 
 class GatewayRefused(GatewayAdminError):
     """网关答了话,而且拒绝了(4xx/5xx),例如对 config.yaml 里的模型做写操作。"""
-
-
-@dataclass(frozen=True)
-class AdminSource:
-    """一个模型下的一条线路 —— 网关里的一条部署(``/model/info`` 的一行)。
-
-    ``order`` 是 LiteLLM 的优先级(小的先试,相同的一起分流,没有的垫底)。
-    ``header_names`` 只有头名:值可能是凭据一类的东西,页面不该读到。
-    ``catalogue`` 是这一行里属于模型的那份元数据(``catalogue_info``),给「加线路」抄用。
-    """
-
-    source_id: str
-    origin: str  # "config" | "runtime"
-    blocked: bool
-    order: int | None
-    protocol: str | None  # None = 认不出的前缀,``upstream_model`` 是完整模型串
-    upstream_model: str  # LiteLLM 的完整模型串
-    api_base: str | None
-    prices: dict[str, float]
-    free: bool
-    priced: bool
-    header_names: tuple[str, ...]
-    session_header: str | None
-    catalogue: dict[str, object]
-    # This row's keys for its upstream model (``_UPSTREAM_INFO_KEYS``).
-    upstream_info: dict[str, object]
-
-
-@dataclass(frozen=True)
-class AdminModel:
-    """管理页眼里的一条模型。
-
-    ``origin`` 决定它可不可改:``config`` 来自 config.yaml,页面只读;``runtime`` 是
-    经管理 API 加进库的,可改可删。
-
-    ``selectable`` 是**存储里的原始标记**(网关的 ``cheese_selectable``),不含
-    ``blocked`` 折算;停用与否单独放在 ``blocked`` 里,两者各存各的。能不能真的被
-    选到(``offered = selectable && priced && !blocked``)由服务层合起来算——客户端
-    这一层只如实搬运网关的字段,不替上层做判断,免得两处各算一遍算出两个答案。
-    """
-
-    name: str
-    model_id: str
-    label: str
-    origin: str  # "config" | "runtime"
-    blocked: bool
-    selectable: bool
-    priced: bool
-    # 档位（网关的 ``cheese_tier``）,缺省 ``included``:方案按它限定可用的模型。
-    tier: str
-    # 需要平台管理员给团队开通才能用(网关的 ``cheese_overseas``):Claude、GPT、Gemini。
-    overseas: bool
-    upstream_model: str
-    api_base: str | None
-    provider: str
-    prices: dict[str, float]  # input/output/cache_read/cache_creation,缺的键不出现
-    capabilities: dict[str, bool]  # 键见 _CAPABILITY_FIELDS
-    supports_notes: str | None  # 缺价的原因等人话,priced=False 时给出
-    # 这个模型的全部线路,按网关试它们的先后排好。模型那一层的字段读自
-    # ``/model/info`` 列出的第一行(目录也读那一行);``origin`` 有一行来自
-    # config.yaml 就是 ``config``,``blocked`` 要每一行都停了才算,``priced`` 要每条
-    # 在用的线路都有价 —— 与 ``LlmGateway.models`` 给选择器的答案同一个口径。
-    sources: tuple[AdminSource, ...] = ()
-
-
-@dataclass(frozen=True)
-class AdminKey:
-    """一条虚拟 key。项目额度(刹车)就落在它的 ``max_budget`` 上。"""
-
-    key_hash: str
-    alias: str
-    user_id: str | None
-    spend: float
-    max_budget: float | None
-    budget_duration: str | None
-    blocked: bool
-    created_at: str | None
-
-
-@dataclass(frozen=True)
-class ModelUsage:
-    """一个模型(或整平台)在一个窗口里的一条用量。"""
-
-    spend_usd: float
-    requests: int
-    failed_requests: int
-    prompt_tokens: int
-    completion_tokens: int
-    cache_read_tokens: int
-    total_tokens: int
-
-
-@dataclass(frozen=True)
-class UsageWindow:
-    """一段闭区间里的用量,平台级、按模型、按项目各切一份。"""
-
-    start_date: str
-    end_date: str
-    totals: ModelUsage  # 平台级
-    by_model: dict[str, ModelUsage]  # model_group -> 用量
-    by_key: dict[str, ModelUsage]  # key hash -> 用量
-    daily: list[dict]  # [{date, totals: ModelUsage, by_model: {name: ModelUsage}}]
 
 
 class GatewayAdmin:
@@ -597,367 +498,3 @@ class GatewayAdmin:
             "/key/update",
             json={"key": key_hash, "max_budget": max_budget_usd},
         )
-
-
-# ---------------------------------------------------------------------------
-# 解析:网关给的形状 -> 页面要的形状。都写成小函数,免得一个方法里混着「怎么读」和
-# 「怎么用」。字段缺失一律当「没有」,不猜、不补默认值——猜出来的价格比没有价格更坏。
-# ---------------------------------------------------------------------------
-
-
-def _short(exc: Exception) -> str:
-    return " ".join(str(exc).split())[:200] or type(exc).__name__
-
-
-def _quote(model_id: str) -> str:
-    """模型 id 进 URL 路径前先转义。
-
-    运行时模型的 id 是人给的字符串(契约 §0),可能带斜杠或空格,原样拼进路径会把
-    路径切错、打到另一条路由上。``safe=""`` 连斜杠也一并编码。
-    """
-    return quote(model_id, safe="")
-
-
-def _error_message(response: httpx.Response) -> str:
-    """网关错误体里给人看的那句话。
-
-    LiteLLM 有两种失败体,都要认:
-
-    * ``{"detail": {"error": "..."}}``——老式 FastAPI 拒绝的形状(config 模型那条
-      就是这个形状);普通错误则是 ``{"detail": "..."}``。
-    * ``{"error": {"message": "...", "type": "auth_error", ...}}``——真正的
-      ``ProxyException`` 走这条路(见 ``proxy_server.py`` 的 handler,它把
-      ``exc.to_dict()`` 塞进顶层的 ``error`` 键),**没有 ``detail`` 键**。少认这一支,
-      页面就会看到整坨 dict 的 repr,而不是那句人话。
-
-    优先级:``error.message`` > ``detail.error`` > ``detail`` > ``error`` 的字符串化 >
-    状态码。页面要原样显示原因,不能只报一个数字。
-    """
-    try:
-        body = response.json()
-    except ValueError:
-        text = (response.text or "").strip()
-        return (
-            text[:300]
-            if text
-            else say("gatewayAdminHttpStatus", status=response.status_code)
-        )
-    if isinstance(body, dict):
-        error = body.get("error")
-        if isinstance(error, dict) and isinstance(error.get("message"), str):
-            return error["message"]
-        detail = body.get("detail")
-        if isinstance(detail, dict) and isinstance(detail.get("error"), str):
-            return detail["error"]
-        if isinstance(detail, str):
-            return detail
-        if detail is not None:
-            return str(detail)
-        if error is not None:
-            return str(error)
-    return (
-        str(body)[:300]
-        if body
-        else say("gatewayAdminHttpStatus", status=response.status_code)
-    )
-
-
-def _num(value: object) -> float:
-    return (
-        float(value)
-        if isinstance(value, int | float) and not isinstance(value, bool)
-        else 0.0
-    )
-
-
-def _int(value: object) -> int:
-    return (
-        int(value)
-        if isinstance(value, int | float) and not isinstance(value, bool)
-        else 0
-    )
-
-
-def _zero_usage() -> ModelUsage:
-    return ModelUsage(0.0, 0, 0, 0, 0, 0, 0)
-
-
-def _combine(a: ModelUsage, b: ModelUsage) -> ModelUsage:
-    return ModelUsage(
-        spend_usd=a.spend_usd + b.spend_usd,
-        requests=a.requests + b.requests,
-        failed_requests=a.failed_requests + b.failed_requests,
-        prompt_tokens=a.prompt_tokens + b.prompt_tokens,
-        completion_tokens=a.completion_tokens + b.completion_tokens,
-        cache_read_tokens=a.cache_read_tokens + b.cache_read_tokens,
-        total_tokens=a.total_tokens + b.total_tokens,
-    )
-
-
-def _accumulate(acc: dict[str, ModelUsage], key: str, usage: ModelUsage) -> None:
-    current = acc.get(key)
-    acc[key] = usage if current is None else _combine(current, usage)
-
-
-def _usage(metrics: object) -> ModelUsage:
-    """网关的 ``metrics`` 一段 -> 一条 ModelUsage。缺的字段当 0。"""
-    m = metrics if isinstance(metrics, dict) else {}
-    return ModelUsage(
-        spend_usd=_num(m.get("spend")),
-        requests=_int(m.get("api_requests")),
-        failed_requests=_int(m.get("failed_requests")),
-        prompt_tokens=_int(m.get("prompt_tokens")),
-        completion_tokens=_int(m.get("completion_tokens")),
-        cache_read_tokens=_int(m.get("cache_read_input_tokens")),
-        total_tokens=_int(m.get("total_tokens")),
-    )
-
-
-def _entries(breakdown: object, key: str) -> dict:
-    if not isinstance(breakdown, dict):
-        return {}
-    value = breakdown.get(key)
-    return value if isinstance(value, dict) else {}
-
-
-def _metrics_of(entry: object) -> object:
-    return entry.get("metrics") if isinstance(entry, dict) else None
-
-
-def _window_totals(payload: object, daily: list[dict]) -> ModelUsage:
-    """平台级总量优先信网关自己的 ``metadata``;它缺了再把逐日加起来兜底。"""
-    meta = payload.get("metadata") if isinstance(payload, dict) else None
-    if isinstance(meta, dict):
-        return ModelUsage(
-            spend_usd=_num(meta.get("total_spend")),
-            requests=_int(meta.get("total_api_requests")),
-            failed_requests=_int(meta.get("total_failed_requests")),
-            prompt_tokens=_int(meta.get("total_prompt_tokens")),
-            completion_tokens=_int(meta.get("total_completion_tokens")),
-            cache_read_tokens=_int(meta.get("total_cache_read_input_tokens")),
-            total_tokens=_int(meta.get("total_tokens")),
-        )
-    total = _zero_usage()
-    for day in daily:
-        usage = day.get("totals")
-        if isinstance(usage, ModelUsage):
-            total = _combine(total, usage)
-    return total
-
-
-def _price_value(sources: tuple[object, ...], field: str) -> float | None:
-    """两处单价里的第一个正数;全非正则取第一个数(含 0)。
-
-    两处是 ``litellm_params`` 与 ``model_info``。与 ``price_is_set`` 同序:
-    一个部署可能把费率写在任一处,只读一处会把另一处的模型误报成无价。
-    """
-    zero: float | None = None
-    for src in sources:
-        if not isinstance(src, dict):
-            continue
-        value = src.get(field)
-        if isinstance(value, int | float) and not isinstance(value, bool):
-            if value > 0:
-                return float(value)
-            if zero is None:
-                zero = float(value)
-    return zero
-
-
-def _read_prices(params: object, info: object) -> dict[str, float]:
-    out: dict[str, float] = {}
-    for short, field in _PRICE_FIELDS.items():
-        value = _price_value((params, info), field)
-        if value is not None:
-            out[short] = value
-    return out
-
-
-def _read_capabilities(info: dict) -> dict[str, bool]:
-    """只带显式布尔位;网关给 None 是「不知道」,不能当成 False 报出去。"""
-    out: dict[str, bool] = {}
-    for short, field in _CAPABILITY_FIELDS.items():
-        value = info.get(field)
-        if isinstance(value, bool):
-            out[short] = value
-    return out
-
-
-def _price_params(prices: Mapping[str, float | None] | None) -> dict[str, float]:
-    out: dict[str, float] = {}
-    if not prices:
-        return out
-    for short, field in _PRICE_FIELDS.items():
-        value = prices.get(short)
-        if isinstance(value, int | float) and not isinstance(value, bool):
-            out[field] = float(value)
-    return out
-
-
-def _capability_params(
-    capabilities: Mapping[str, bool] | None,
-) -> dict[str, bool]:
-    out: dict[str, bool] = {}
-    if not capabilities:
-        return out
-    for short, field in _CAPABILITY_FIELDS.items():
-        if capabilities.get(short) is not None:
-            out[field] = bool(capabilities[short])
-    return out
-
-
-def _source_info(free: bool | None, session_header: str | None) -> dict[str, object]:
-    """线路自己的那几个 model_info 键。``None`` 是「不动」,所以不出现。
-
-    清空用的是空值而不是 null:网关 PATCH 合并 model_info 时丢掉 null
-    (``exclude_none``),发 null 等于什么都没改。``""`` 让网关侧的钩子不转会话
-    (它只认非空的头名)。会话头只有名字,放在 model_info 里公开无妨。
-    """
-    out: dict[str, object] = {}
-    if free is not None:
-        out[FREE] = bool(free)
-    if session_header is not None:
-        out[SESSION_HEADER] = session_header
-    return out
-
-
-def _unpriced_note(params: object, info: object) -> str | None:
-    """无价时给人一句人话:缺的是哪一边,以及为什么会坏事。"""
-    if price_is_set(params, info):
-        return None
-    inp = _price_value((params, info), "input_cost_per_token")
-    out = _price_value((params, info), "output_cost_per_token")
-    has_in = inp is not None and inp > 0
-    has_out = out is not None and out > 0
-    if not has_in and not has_out:
-        return "网关没给输入或输出单价;无价模型会让项目的 max_budget 刹车静默失效。"
-    missing = "输入" if not has_in else "输出"
-    present = "输出" if missing == "输入" else "输入"
-    return (
-        f"网关只给了{present}单价,缺{missing}单价;只定一边会让一半流量按零计费,"
-        "同样是刹车失效。"
-    )
-
-
-def _dict(value: object) -> dict:
-    return value if isinstance(value, dict) else {}
-
-
-def _admin_source(row: dict) -> AdminSource:
-    info = _dict(row.get("model_info"))
-    params = _dict(row.get("litellm_params"))
-    upstream = params.get("model")
-    upstream = upstream if isinstance(upstream, str) else ""
-    api_base = params.get("api_base")
-    order = params.get("order", info.get("order"))
-    header_names = {
-        name
-        for source in (params.get(EXTRA_HEADERS), info.get(UPSTREAM_HEADERS))
-        if isinstance(source, dict)
-        for name in source
-        if isinstance(name, str)
-    }
-    session = info.get(SESSION_HEADER)
-    model_id = info.get("id")
-    return AdminSource(
-        source_id=model_id if isinstance(model_id, str) and model_id else "",
-        origin="runtime" if info.get("db_model") is True else "config",
-        blocked=info.get("blocked") is True,
-        order=order if isinstance(order, int) and not isinstance(order, bool) else None,
-        protocol=split_upstream(upstream)[0],
-        upstream_model=upstream,
-        api_base=api_base if isinstance(api_base, str) and api_base else None,
-        prices=_read_prices(params, info),
-        free=declared_free(params, info),
-        priced=price_is_set(params, info),
-        header_names=tuple(sorted(header_names)),
-        session_header=session if isinstance(session, str) and session else None,
-        catalogue=catalogue_info(info),
-        upstream_info={k: v for k, v in info.items() if k in _UPSTREAM_INFO_KEYS},
-    )
-
-
-def _try_order(pair: tuple[int, AdminSource]) -> tuple[bool, int, int]:
-    """网关试线路的先后:有 order 的按数从小到大,没有的垫底,同档按列出的先后。"""
-    index, source = pair
-    return (source.order is None, source.order or 0, index)
-
-
-def _admin_model(name: str, rows: list[dict]) -> AdminModel:
-    """一组同名的行 -> 一个模型。模型层的字段读第一行(目录也读它),能不能用、
-    有没有价看整组,口径见 ``AdminModel.sources``。"""
-    row = rows[0]
-    info = _dict(row.get("model_info"))
-    params = _dict(row.get("litellm_params"))
-    upstream = params.get("model")
-    api_base = params.get("api_base")
-    provider = info.get("litellm_provider")
-    if not isinstance(provider, str) or not provider:
-        # 没给 provider 就从上游名里取前缀(``anthropic/xxx`` -> ``anthropic``)。
-        provider = (
-            upstream.split("/", 1)[0]
-            if isinstance(upstream, str) and "/" in upstream
-            else ""
-        )
-    model_id = info.get("id")
-    label = info.get("cheese_label")
-    tier = info.get("cheese_tier")
-    sources = tuple(
-        s for _, s in sorted(enumerate(_admin_source(r) for r in rows), key=_try_order)
-    )
-    live = [r for r in rows if _dict(r.get("model_info")).get("blocked") is not True]
-    unpriced = next(
-        (
-            r
-            for r in (live or rows)
-            if not price_is_set(r.get("litellm_params"), _dict(r.get("model_info")))
-        ),
-        None,
-    )
-    return AdminModel(
-        name=name,
-        model_id=model_id if isinstance(model_id, str) and model_id else name,
-        label=label if isinstance(label, str) and label else name,
-        origin="config" if any(s.origin == "config" for s in sources) else "runtime",
-        blocked=not live,
-        selectable=info.get("cheese_selectable") is True,
-        priced=unpriced is None,
-        tier=tier if isinstance(tier, str) and tier else "included",
-        overseas=info.get("cheese_overseas") is True,
-        upstream_model=upstream if isinstance(upstream, str) else "",
-        api_base=api_base if isinstance(api_base, str) and api_base else None,
-        provider=provider,
-        prices=_read_prices(params, info),
-        capabilities=_read_capabilities(info),
-        supports_notes=(
-            None
-            if unpriced is None
-            else _unpriced_note(
-                unpriced.get("litellm_params"), _dict(unpriced.get("model_info"))
-            )
-        ),
-        sources=sources,
-    )
-
-
-def _admin_key(row: dict) -> AdminKey:
-    token = row.get("token")
-    alias = row.get("key_alias") or row.get("key_name")
-    user_id = row.get("user_id")
-    max_budget = row.get("max_budget")
-    budget_duration = row.get("budget_duration")
-    created_at = row.get("created_at")
-    return AdminKey(
-        key_hash=token if isinstance(token, str) else "",
-        alias=alias if isinstance(alias, str) else "",
-        user_id=user_id if isinstance(user_id, str) else None,
-        spend=_num(row.get("spend")),
-        max_budget=(
-            _num(max_budget)
-            if isinstance(max_budget, int | float) and not isinstance(max_budget, bool)
-            else None
-        ),
-        budget_duration=budget_duration if isinstance(budget_duration, str) else None,
-        blocked=row.get("blocked") is True,
-        created_at=created_at if isinstance(created_at, str) else None,
-    )
