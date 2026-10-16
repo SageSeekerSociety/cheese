@@ -777,10 +777,12 @@ class Settings(BaseSettings, SandboxSettings):
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
     # The most hosts the pool holds at once. It
     # protects the MicroCloud cluster; a session that finds the pool full is told
-    # capacity is tight and to try later. Ten hosts' disks written full are
-    # 400 GB, within what 119pve's shared thin pool had free (464 GB, 2026-10-06);
-    # twenty would not be.
-    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
+    # capacity is tight and to try later. Thirty hosts are a hundred and twenty
+    # sandbox slots, and their disks written full are 1.2 TB: the cluster's
+    # shared thin pool is what has to hold them, so this rises only with the
+    # storage behind it. (At ten, whose 400 GB did fit, the pool had 464 GB
+    # free — 2026-10-06.)
+    cloud_pool_max_hosts: int = Field(default=30, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
@@ -998,8 +1000,11 @@ class Settings(BaseSettings, SandboxSettings):
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
-    # workflow it triggers after merge.
-    accept_pr_poll_interval_s: int = 300
+    # workflow it triggers after merge. This is the clock every card's merge
+    # state is mirrored on, so it is also how late a green or merged PR reaches
+    # its card; `review/queries.CHECK_WATCH_TICKS` counts 「还在等 CI」 off three
+    # of these.
+    accept_pr_poll_interval_s: int = 60
     # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
     # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
     # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是

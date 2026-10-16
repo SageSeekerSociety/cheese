@@ -76,7 +76,7 @@
   "ownAgentServiceHostRefused": "This project doesn't allow the model service at {host}",
   "ownAgentsClosedHere": "This project doesn't allow members to bring their own Claude Code",
   "ownerMachineOffline": "Can't start: the computer holding this model connection is offline",
-  "projectCredentialManagerOnly": "Only the project owner or a team admin can manage project credentials",
+  "projectCredentialManagerOnly": "Only someone who can change the project's settings can manage its credentials",
   "projectNoGatewayKey": "The project “{name}” has no gateway key yet, so its budget can't be set",
   "projectNotFound": "Project not found",
   "projectNotFoundById": "The project {project_id} doesn't exist",

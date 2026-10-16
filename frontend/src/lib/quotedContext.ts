@@ -40,7 +40,7 @@ export type SlidePageQuote = Readonly<
      * 那一段。少了它两件事从消息上分不开 —— 受话人会拿选中的一行当整页看。
      *
      * 可选是为了读得懂已经在库里的消息：那些消息写在那之前，一律当整页。
-     * 写出去的时候一定带上（`PanelPreviewView.vue` 的 `sendLocator`）。
+     * 写出去的时候一定带上（`preview/usePreviewLocator.ts` 的 `sendLocator`）。
      */
     scope?: 'page' | 'selection'
     text: string

@@ -13,10 +13,17 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
+  docStageProps,
   fileEditorUnsupported,
   fileHistoryWith,
+  frameStageProps,
+  headBarProps,
+  imageRegionWith,
+  imageStageProps,
+  PREVIEW_DOC_FILE,
   PREVIEW_IMAGE_SRC,
   previewCsvBytes,
+  previewFrame,
   revisionsWith,
   SKETCH_PEN,
   SKETCH_RECT,
@@ -27,6 +34,10 @@ import DesignRegionNote from '@/components/panels/preview/DesignRegionNote.vue'
 import DesignSketchOverlay from '@/components/panels/preview/DesignSketchOverlay.vue'
 import DesignSketchToolbar from '@/components/panels/preview/DesignSketchToolbar.vue'
 import DesignViewportToolbar from '@/components/panels/preview/DesignViewportToolbar.vue'
+import PreviewDocStage from '@/components/panels/preview/PreviewDocStage.vue'
+import PreviewFrameStage from '@/components/panels/preview/PreviewFrameStage.vue'
+import PreviewHeadBar from '@/components/panels/preview/PreviewHeadBar.vue'
+import PreviewImageStage from '@/components/panels/preview/PreviewImageStage.vue'
 import PreviewLocator from '@/components/panels/preview/PreviewLocator.vue'
 import PreviewMarkdown from '@/components/panels/preview/PreviewMarkdown.vue'
 import PreviewPage from '@/components/panels/preview/PreviewPage.vue'
@@ -41,6 +52,7 @@ import RoomFileEditor from '@/components/panels/preview/RoomFileEditor.vue'
 import RoomFileHistory from '@/components/panels/preview/RoomFileHistory.vue'
 import SlideThumbRail from '@/components/panels/preview/SlideThumbRail.vue'
 import { t } from '@/i18n'
+import { DOCUMENT_TYPES } from '@/lib/fileKind'
 
 const UI: CatalogNeed[] = ['vuetify', 'i18n']
 const T: CatalogNeed[] = ['i18n']
@@ -48,6 +60,210 @@ const T: CatalogNeed[] = ['i18n']
 const MARKDOWN_SAMPLE = ['# 一份说明', '', '这一页把 Markdown 按文档的读法读出来。'].join('\n')
 
 export const PREVIEW_PANEL_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'preview-panel-head-bar',
+    title: 'PreviewHeadBar · 预览顶栏',
+    get about() {
+      return t('catalog.previewPanelHeadBar.about')
+    },
+    file: 'src/components/panels/preview/PreviewHeadBar.vue',
+    component: PreviewHeadBar,
+    needs: UI,
+    states: [
+      {
+        get name() {
+          return t('catalog.previewPanelHeadBar.s1.name')
+        },
+        get note() {
+          return t('catalog.previewPanelHeadBar.s1.note')
+        },
+        props: headBarProps({ previewUrl: 'http://127.0.0.1:4173/', displayedFrame: previewFrame() }),
+        expect: '发布网站',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelHeadBar.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelHeadBar.s2.note')
+        },
+        props: headBarProps({ projectId: null, previewUrl: null, isImageArtifact: true, previewFull: true }),
+        expectSelector: '.mdi-fullscreen-exit',
+      },
+    ],
+  },
+  {
+    id: 'preview-panel-frame-stage',
+    title: 'PreviewFrameStage · 网页/应用那一档',
+    get about() {
+      return t('catalog.previewPanelFrameStage.about')
+    },
+    file: 'src/components/panels/preview/PreviewFrameStage.vue',
+    component: PreviewFrameStage,
+    needs: UI,
+    states: [
+      {
+        get name() {
+          return t('catalog.previewPanelFrameStage.s1.name')
+        },
+        get note() {
+          return t('catalog.previewPanelFrameStage.s1.note')
+        },
+        props: frameStageProps({ displayedFrame: previewFrame() }),
+        expect: '运行中的应用',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelFrameStage.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelFrameStage.s2.note')
+        },
+        props: frameStageProps({
+          path: 'docs/week-1.md',
+          frames: [previewFrame(), previewFrame({ id: 2, label: '预览 · 第二版' })],
+          displayedFrame: previewFrame({ id: 2, label: '预览 · 第二版' }),
+        }),
+        expect: '预览 · 第二版',
+        expectSelector: '.mdi-download',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelFrameStage.s3.name')
+        },
+        get note() {
+          return t('catalog.previewPanelFrameStage.s3.note')
+        },
+        props: frameStageProps({ displayedFrame: previewFrame(), previewError: '内容域没有应答' }),
+        expect: '内容域没有应答',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelFrameStage.s4.name')
+        },
+        get note() {
+          return t('catalog.previewPanelFrameStage.s4.note')
+        },
+        props: frameStageProps({ displayedFrame: previewFrame(), pickTarget: 'region', pickOn: true }),
+        expectSelector: '[data-testid="preview-region-pick"]',
+      },
+    ],
+  },
+  {
+    id: 'preview-panel-doc-stage',
+    title: 'PreviewDocStage · 文档那一档',
+    get about() {
+      return t('catalog.previewPanelDocStage.about')
+    },
+    file: 'src/components/panels/preview/PreviewDocStage.vue',
+    component: PreviewDocStage,
+    needs: UI,
+    states: [
+      {
+        get name() {
+          return t('catalog.previewPanelDocStage.s1.name')
+        },
+        get note() {
+          return t('catalog.previewPanelDocStage.s1.note')
+        },
+        props: docStageProps(),
+        expect: '课件和作业都在这里',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelDocStage.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelDocStage.s2.note')
+        },
+        props: docStageProps({
+          documentType: DOCUMENT_TYPES.docx,
+          documentName: PREVIEW_DOC_FILE.path,
+          documentSuffix: 'docx',
+          previewFile: PREVIEW_DOC_FILE,
+          docRendererMissing: true,
+        }),
+        expect: '文档预览未启用',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelDocStage.s3.name')
+        },
+        get note() {
+          return t('catalog.previewPanelDocStage.s3.note')
+        },
+        props: docStageProps({
+          documentType: DOCUMENT_TYPES.docx,
+          documentName: PREVIEW_DOC_FILE.path,
+          documentSuffix: 'docx',
+          previewFile: PREVIEW_DOC_FILE,
+          docBytes: new ArrayBuffer(8),
+          docError: '接口返回 502',
+        }),
+        expect: '刷新失败，当前显示的是上一次的内容',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelDocStage.s4.name')
+        },
+        get note() {
+          return t('catalog.previewPanelDocStage.s4.note')
+        },
+        props: docStageProps({
+          documentType: DOCUMENT_TYPES.docx,
+          documentName: PREVIEW_DOC_FILE.path,
+          documentSuffix: 'docx',
+          previewFile: PREVIEW_DOC_FILE,
+          canPage: true,
+          docPage: true,
+          docPageHtml: '<p>示例网页</p>',
+        }),
+        expectSelector: 'iframe.page-frame',
+      },
+    ],
+  },
+  {
+    id: 'preview-panel-image-stage',
+    title: 'PreviewImageStage · 图片那一档',
+    get about() {
+      return t('catalog.previewPanelImageStage.about')
+    },
+    file: 'src/components/panels/preview/PreviewImageStage.vue',
+    component: PreviewImageStage,
+    needs: UI,
+    states: [
+      {
+        get name() {
+          return t('catalog.previewPanelImageStage.s1.name')
+        },
+        get note() {
+          return t('catalog.previewPanelImageStage.s1.note')
+        },
+        props: imageStageProps(),
+        expect: '在新窗口打开',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelImageStage.s2.name')
+        },
+        get note() {
+          return t('catalog.previewPanelImageStage.s2.note')
+        },
+        props: imageStageProps({ imageRegion: imageRegionWith({ src: '' }) }),
+        expectSelector: '.doc__state',
+      },
+      {
+        get name() {
+          return t('catalog.previewPanelImageStage.s3.name')
+        },
+        get note() {
+          return t('catalog.previewPanelImageStage.s3.note')
+        },
+        props: imageStageProps({ annotateError: '这张图太大，标注合不出来' }),
+        expect: '这张图太大，标注合不出来',
+      },
+    ],
+  },
   {
     id: 'preview-panel-page',
     title: 'PreviewPage · 网页视图',

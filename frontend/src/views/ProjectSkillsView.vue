@@ -29,6 +29,7 @@ import ProjectSkillsViewView from './ProjectSkillsViewView.vue'
 import { useCommands } from '@/commands'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
+import { mayIn } from '@/lib/projectPermissions'
 import { useDialog } from '@/plugins/dialog'
 import { queryClient } from '@/query/client'
 import { projectQuery } from '@/query/project'
@@ -53,7 +54,7 @@ async function load() {
     ])
     if (props.projectId !== projectId) return
     skills.value = listed.data
-    canImport.value = project.can_manage_members === true
+    canImport.value = mayIn(project, 'edit_settings')
     const focus = typeof route.query.skill === 'string' ? route.query.skill : null
     if (focus && skills.value.some((s) => s.id === focus)) open(focus)
   } catch (e) {

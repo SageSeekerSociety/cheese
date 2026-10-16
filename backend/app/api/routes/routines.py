@@ -31,6 +31,7 @@ from app.domain.agent_instance.own import may_work_for
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.routine import service as routines
 from app.domain.routine.models import Routine, RoutineRun
@@ -133,17 +134,18 @@ def _is_person(actor: Actor) -> bool:
 async def _manages_project(
     db: AsyncSession, actor: Actor, project_id: uuid.UUID
 ) -> bool:
-    """Is ``actor`` a project manager — its owner, or an owner/admin of the team
-    the project belongs to?
+    """May ``actor`` manage every channel of the project, and so every routine
+    in them, not only their own?
 
-    Not a new judgment: ``MemberService.manages`` is the same one the project's
-    own routes ask (``app/domain/membership/services.py``). Credentials come
-    first: a handle that arrived through the deprecated body/param fallback is
-    whatever the caller typed, and anyone can type the owner's handle.
+    Credentials come first: a handle that arrived through the deprecated
+    body/param fallback is whatever the caller typed, and anyone can type the
+    owner's handle.
     """
     if not actor.authenticated:
         return False
-    return await MemberService(db).manages(project_id, actor.handle)
+    return await MemberService(db).manages(
+        project_id, actor.handle, Permission.manage_channels
+    )
 
 
 async def _sees_room(

@@ -28,6 +28,7 @@ from app.domain.notification.models import (
 _CALLS_TO_ACT = (
     NotificationType.CHEESE_QUESTION,
     NotificationType.PROJECT_INVITE,
+    NotificationType.PROJECT_TRANSFER,
     NotificationType.TEAM_INVITATION,
     NotificationType.TEAM_JOIN_REQUEST,
 )

@@ -47,6 +47,7 @@ from app.domain.machine.environments import (
 )
 from app.domain.machine.session_reports import conversation_sessions, devices_held_by
 from app.domain.membership.services import MemberService
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404, session_keeps_work
 from app.domain.topic.services import TopicService
 
@@ -62,7 +63,9 @@ async def _may_move_task(db, resolver, actor, topic, task) -> bool:
     if actor.handle == task.owner_handle:
         return True
     try:
-        await MemberService(db).require_manager(topic.project_id, actor)
+        await MemberService(db).require(
+            topic.project_id, actor, Permission.edit_settings
+        )
         return True
     except ForbiddenError:
         pass

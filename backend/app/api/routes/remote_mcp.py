@@ -20,6 +20,7 @@ from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep, require_seated_agent
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.auth.project_roles import require
 from app.core.config import settings
 from app.core.errors import (
     AppError,
@@ -39,6 +40,7 @@ from app.domain.conversation import services as conversations
 from app.domain.identity.services import IdentityService
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
+from app.domain.project_permissions import Permission
 from app.domain.remote_mcp import oauth, service, upstream
 from app.domain.room_task.place import place_or_404
 
@@ -72,6 +74,7 @@ async def manager(
     dropping it or setting its secret changes what every room of the project
     can reach, which no agent decides, prompted by whatever it last read."""
     handle = await member(db, project_id, resolver)
+    await require(db, project_id, handle, Permission.configure_agents)
     refusal = await policy.refuse_management_action(
         await resolver.resolve(project_id=project_id),
         carries_agent_binding=IdentityService(db).is_agent,

@@ -125,7 +125,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/project_environment.py", "ValidationError"): 6,
     ("app/api/routes/project_sites.py", "AppError"): 1,
     ("app/api/routes/project_skills.py", "ValidationError"): 6,
-    ("app/api/routes/projects.py", "ValidationError"): 9,
+    ("app/api/routes/projects.py", "ValidationError"): 6,
     ("app/api/routes/projects_artifacts.py", "ValidationError"): 1,
     ("app/api/routes/projects_run_config.py", "ValidationError"): 4,
     ("app/api/routes/remote_mcp.py", "AppError"): 3,

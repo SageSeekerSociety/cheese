@@ -44,6 +44,7 @@ from app.domain.project.address import (
     thing_by_number,
 )
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.topic.services import TopicService
 
@@ -204,7 +205,7 @@ async def set_project_slug(
     leading here and no other project can take it."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     project = await ProjectService(db).get_or_404(project_id)
     try:
         slug = await rename_slug(db, project, body.slug)

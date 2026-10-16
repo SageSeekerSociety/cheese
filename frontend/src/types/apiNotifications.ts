@@ -9,6 +9,7 @@ export type NotificationType =
   | 'THREAD_REPLY'
   | 'REACTION'
   | 'PROJECT_INVITE'
+  | 'PROJECT_TRANSFER'
   | 'TEAM_JOIN_REQUEST'
   | 'TEAM_INVITATION'
   | 'TEAM_REQUEST_APPROVED'

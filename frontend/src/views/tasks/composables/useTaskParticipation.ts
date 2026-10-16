@@ -74,6 +74,8 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
           applyReason: contactInfo.applyReason,
           personalAdvantage: undefined,
           remark: undefined,
+          // 领取确认框里列出了导师，按下确认就是同意他们加入项目。
+          agreeMentors: (taskData.value.mentors?.length ?? 0) > 0,
         },
         teamId
       )
@@ -105,6 +107,8 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         applyReason: contactInfo?.applyReason,
         personalAdvantage: undefined,
         remark: undefined,
+        // 领取确认框里列出了导师，按下确认就是同意他们加入项目。
+        agreeMentors: (taskData.value.mentors?.length ?? 0) > 0,
       })
 
       toast.success(t('tasks.participation.joined'))

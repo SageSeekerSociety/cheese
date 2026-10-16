@@ -79,6 +79,7 @@ from app.domain.project.room_files import (
     artifact_kind_for,
     clean_artifact_path,
 )
+from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -341,7 +342,9 @@ async def save_shown_to_library(
     却留不下它：这份东西以后还用不用得上，是人的判断。"""
     place = await place_or_404(db, topic_id)
     actor = await resolver.require_verified_caller(project_id=place.project_id)
-    await resolver.authorize_project(actor, project_id=place.project_id)
+    await resolver.authorize_project(
+        actor, project_id=place.project_id, permission=Permission.edit_content
+    )
     # The file is the room's: only someone the room lets in copies it out.
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
