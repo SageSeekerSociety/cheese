@@ -39,8 +39,9 @@ for (const f of fs.readdirSync(SCENES).filter((f) => f.endsWith('.json'))) {
 const UI_STRINGS = path.join(REPO, 'frontend/src/i18n/messages/zh-CN')
 const leaves = (v) => (typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
 // The catalog is a tree of files — `work/`, `apiError/`, `roomNotice/`,
-// `notifications/` and `tasks/` are directories since the split (docs/i18n.md
-// §2) — so every `.json` under it is read, at any depth.
+// `notifications/`, `tasks/`, `account/`, `feedback/` and `spaces/` are
+// directories since the split (docs/i18n.md §2) — so every `.json` under it is
+// read, at any depth.
 const catalogFiles = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
   e.isDirectory() ? catalogFiles(path.join(dir, e.name)) : e.name.endsWith('.json') ? [path.join(dir, e.name)] : [])
 registerUiStrings(catalogFiles(UI_STRINGS).flatMap((f) => leaves(JSON.parse(fs.readFileSync(f, 'utf8')))))

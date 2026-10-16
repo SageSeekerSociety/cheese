@@ -1,7 +1,7 @@
 // 把 `<locale>/index.ts` 那一行 glob 扫到的 JSON 合成 vue-i18n 要的那一团消息。
 //
-// 这个目录里的**文件路径就是它在命名空间里的键路径**：`account.json` 是命名空间
-// `account` 本身，`work/room/doc/index.json` 装 `work.room.doc` 下的键，每一层的
+// 这个目录里的**文件路径就是它在命名空间里的键路径**：`global.json` 是命名空间
+// `global` 本身，`work/room/doc/index.json` 装 `work.room.doc` 下的键，每一层的
 // `index.json` 装这一层自己的散键。所以加一份词表不用改任何登记表——放进这个目录
 // 它就在里面了（`docs/i18n.md` 第 2 节）。
 

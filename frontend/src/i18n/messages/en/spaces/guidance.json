@@ -1,0 +1,6 @@
+{
+  "intro": "This board's default. Projects built from its challenges read it when the AI teammate starts a new conversation; a single challenge can set its own to override it.",
+  "save": "Save",
+  "saveFailed": "Couldn't save",
+  "saveSuccess": "Saved"
+}
