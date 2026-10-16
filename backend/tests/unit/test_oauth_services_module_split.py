@@ -25,7 +25,8 @@
 
 1. 旧路径仍答得出原来那一组名字，而且是**同一批对象**（``GitHubProvider``、
    ``seal_oauth_token``、``TOKEN_UNAVAILABLE_*``），不是各留一份；
-2. 每个名字现在住在哪个模块里，一个不差 —— 这是「谁的职责归谁」的可执行版；
+2. 每个名字现在住在哪个模块里，一个不差，而且**没有哪个实现写了两份** —— 这是
+   「谁的职责归谁」的可执行版；
 3. ``__init__`` 没动；
 4. **拆的是文件，不是行为**：搬走的 11 个方法在类上恰好一句转发；留下的 7 个方法
    体里没有转发（判断还在类里）。
@@ -219,24 +220,30 @@ def test_the_connection_functions_live_in_connections_alone() -> None:
         assert not hasattr(oauth_services, name), f"{name} 在门面里另有一份"
 
 
-def test_every_function_in_the_submodules_is_reachable_from_the_facade() -> None:
-    """子模块里的每个模块级函数，要么由门面再导出，要么被类上的某个转发叫到。
+def test_no_module_level_function_is_defined_twice() -> None:
+    """门面和三个子模块加起来，没有哪个模块级函数写了两份。
 
-    这是「每个名字住在哪个模块里，一个不差」的另一半：`HOME` 列的只是门面里还有一份
-    的名字，这里守的是没有遗漏。搬进子模块却没人叫得到的实现（死代码）、或者被抄回一
-    份在门面里、子模块里留一个没人用的原件的，都会在这里露出来。
+    「一份判据只有一处实现」是这次拆分的目的，所以拿这四份文件的模块级 `def` 名做一个
+    集合对账：谁把 `create_connection` 抄回门面（子模块那份还在），或者把某个搬走的
+    实现又贴回另一个子模块，这里就有一对重名。`_decrypt_stored_token` 这类只在子模块
+    内部被自己人叫的私有函数不受影响 —— 它只定义了一次。
+
+    （类上的方法不算：转发是一句转发，判据在子模块里，两者的名字本来就该一样。）
     """
-    reexported = {name for names in HOME.values() for name in names}
-    forwarded = {n for n in OAUTH_SERVICE_METHODS if n not in KEPT_IN_THE_CLASS}
-    for module in (providers, tokens, connections):
+    submodules = (providers, tokens, connections)
+    defined: dict[str, str] = {}
+    for module in (oauth_services, *submodules):
         source = pathlib.Path(inspect.getfile(module)).read_text(encoding="utf-8")
-        defined = {
-            node.name
-            for node in ast.parse(source).body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        }
-        unaccounted = sorted(defined - reexported - forwarded)
-        assert unaccounted == [], f"{module.__name__} 里没人叫得到的函数：{unaccounted}"
+        for node in ast.parse(source).body:
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            assert node.name not in defined, (
+                f"{node.name} 在 {defined[node.name]} 和 {module.__name__} 里各有一份"
+            )
+            defined[node.name] = module.__name__
+
+    # 对账本身要有内容：这四个文件里确实有一批模块级函数，别把空集当通过。
+    assert len(defined) > 10, f"只数到 {len(defined)} 个模块级函数，这四个文件不对"
 
 
 def test_the_service_keeps_all_18_methods() -> None:

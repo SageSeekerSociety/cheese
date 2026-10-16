@@ -1140,11 +1140,18 @@ class TestGetGithubUserToken:
         # 记录会一路传上来，所以 `at_level(logger=...)` 里写哪个名字都是绿的 —— 真正
         # 钉住「这句话是从 `services/tokens.py` 发出来的」的是下面这一条：这条日志跟着
         # `_decrypt_stored_token` 搬了家，名字对不上就红。
-        assert [
+        #
+        # 挑记录用的 `could not be` 同时也把这句日志的措辞固定住了：改措辞也会红，报
+        # 错信息看着像 logger 名不对。两条一起固定是有意的 —— 这句是给运维看的降级
+        # 说明，`test_a_refusal_is_said_with_a_key.py` 按同一句话数着它的语料。
+        logs = [
             record.name
             for record in caplog.records
             if "could not be" in record.getMessage()
-        ] == ["app.domain.oauth.services.tokens"]
+        ]
+        assert logs == ["app.domain.oauth.services.tokens"], (
+            f"降级日志的来源/措辞变了：{logs}；期望 tokens 子模块里那一句"
+        )
 
     # "an undecryptable stored refresh_token degrades cleanly, without
     # writing" is covered against a real database in
