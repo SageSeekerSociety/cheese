@@ -95,8 +95,8 @@ function sessionsOf(handle: string): SessionEnvironment[] {
 // 「位」而不是「人」：同一句话要数得下一个 AI 队友。
 const countLabel = computed(() => t('work.room.roster.count', { count: members.value.length }))
 
-// Compact indicator: the first few human faces as a stack, capped so the
-// stack never grows unbounded — extra people fold into a "+N" tile.
+// Compact indicator: the first few faces as a stack — an AI teammate is one of
+// them — capped so the stack never grows unbounded; the rest fold into "+N".
 const MAX_FACES = 3
 const stackFaces = computed(() => members.value.slice(0, MAX_FACES))
 const overflow = computed(() => Math.max(0, members.value.length - MAX_FACES))
