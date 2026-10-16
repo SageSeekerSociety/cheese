@@ -847,6 +847,17 @@ def self_test() -> int:
                 "frontend/src/views/demo/catalog/navigation.ts": volume,
                 catalog_ts: _spread_into_catalog("NEW_ENTRIES", "./catalog/navigation"),
             }, 0),
+            # Reached from another volume rather than from catalog.ts, so this
+            # case goes red if volume_target() ever stops accepting the shard
+            # shape: the flat-only rule refuses `./catalog/navigation` outright.
+            ("control: a shard under catalog/ reached through another volume catalogues it", {
+                "frontend/src/views/demo/catalog/navigation.ts": volume,
+                "frontend/src/views/demo/catalogMore.ts": FIXTURE[
+                    "frontend/src/views/demo/catalogMore.ts"].replace(
+                    "export const MORE = [\n",
+                    "import { NEW_ENTRIES } from './catalog/navigation'\n"
+                    "export const MORE = [\n  ...NEW_ENTRIES,\n"),
+            }, 0),
             ("(b) a shard under catalog/ that catalog.ts never spreads does not catalogue it", {
                 "frontend/src/views/demo/catalog/navigation.ts": volume,
                 catalog_ts: _spread_into_catalog("NEW_ENTRIES", "./catalog/navigation").replace(

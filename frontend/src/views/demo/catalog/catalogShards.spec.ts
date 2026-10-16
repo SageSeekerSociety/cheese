@@ -66,7 +66,7 @@ describe('catalog 门面', () => {
     expect(SHARDS.flatMap(([, entries]) => entries.map((entry) => entry.id))).toEqual(SPLIT_IDS)
   })
 
-  it('每一册整册连着排在目录里，册内顺序没动', () => {
+  it('每一册整册连着排在目录里，册与册之间、册内顺序都没动', () => {
     const ids = facade.CATALOG.map((entry) => entry.id)
     for (const [name, entries] of SHARDS) {
       const want = entries.map((entry) => entry.id)
@@ -74,6 +74,10 @@ describe('catalog 门面', () => {
       expect(at, `catalog/${name}.ts 的第一条不在 CATALOG 里`).toBeGreaterThanOrEqual(0)
       expect(ids.slice(at, at + want.length), `catalog/${name}.ts 那一册没连着排`).toEqual(want)
     }
+    // 上面那一圈只看「每册自己连着排」，看不出两册对调了位置：`CATALOG` 里只留拆出去
+    // 那 17 条，剩下的先后必须还是 `SHARDS` 拼起来那一串。少了这一句，把
+    // `...COMMON_ENTRIES` 和 `...CONVERSATION_ENTRIES` 换个个儿，四条断言全绿。
+    expect(ids.filter((id) => SPLIT_IDS.includes(id))).toEqual(SPLIT_IDS)
   })
 
   it('目录里没有重复的 id', () => {
