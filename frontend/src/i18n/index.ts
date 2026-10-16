@@ -186,14 +186,34 @@ export async function awaitBootPack(pack: Promise<unknown>, ms: number = BOOT_PA
     .catch(() => {})
 }
 
+/** 等一份语言包，但不等到底：期限一到就走，包之后到了也照旧进 i18n（`fetchCatalog`
+ *  在它落地时自己登记）。和 `awaitBootPack` 的分工：那一份包一到就得决定界面用哪一门，
+ *  所以它管的是「之后要用上它」；这一份只管「别把挂载堵在这里」——入口自带的 zh-CN
+ *  已经在手上，缺的只是那几个命名空间，界面照常（见上面 `catalogs` 里那份 catch）。 */
+function waitForPackAtMost(pack: Promise<unknown>, ms: number = BOOT_PACK_WAIT_MS): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms)
+  })
+  const landed = pack.then(
+    () => {},
+    () => {}
+  )
+  return Promise.race([landed, deadline]).finally(() => clearTimeout(timer))
+}
+
 /** 首屏那一份语言包到位了：zh-CN 进来就有，en 得等它取回来（四个入口在挂载前等它，
  *  所以 `main.ts` 那份启动骨架要留到挂载）。没人在等它的结果，所以走 `unattended`。 */
 // zh-CN 首屏用不上的那部分（messages/zh-CN/deferred.ts）也在挂载前到位：入口跑起来就去取，
 // 和第一页要的那几次请求一起走，哪一页都不会有一瞬间缺字。界面是英文时也要它：英文缺键时
 // 兜底的是 zh-CN。
+//
+// 两份包都有期限，`main.ts` 那句「哪一样都不会让挂载失败，都有自己的期限」才对得住：那一
+// 部分取包卡在网络上时（既不成功也不失败），不设期限就等于挂载永远等不到，启动骨架一直
+// 转。等过头就照上面那份 `catalogs` 的打算来：缺的只是那几个命名空间。
 export const localeReady = Promise.all([
   awaitBootPack(loadLocale(initialLocale, true)),
-  loadLocale(ENTRY_LOCALE, true),
+  waitForPackAtMost(loadLocale(ENTRY_LOCALE, true)),
 ]).then(() => undefined)
 
 let sentences: Promise<void> | null = null
