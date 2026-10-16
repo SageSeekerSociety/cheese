@@ -145,9 +145,12 @@ def _names_reached_on_the_package() -> dict[str, list[str]]:
     for path in _scanned_files():
         source = path.read_text(encoding="utf-8")
         # 先按字符串过一遍：树里两千个文件，只有提到这个模块的那几个才值得解析。
+        # 认的是 `app.api` 不是 `api.auth`：三种取法里 `app.api` 都连着出现，而
+        # `from app.api import auth as am` 里中间隔着 `import`，`api.auth` 不连，
+        # 只认后者的预筛会把这类文件整个跳过。
         # 包自己是个例外：里面写 `from .resolver import ActorResolver` 一个
-        # 「api.auth」都不带，一样是取门面上的名字，所以包内文件一律解析。
-        if "api.auth" not in source and PACKAGE not in path.parents:
+        # `app.api` 都不带，一样是取门面上的名字，所以包内文件一律解析。
+        if "app.api" not in source and PACKAGE not in path.parents:
             continue
         where = str(path.relative_to(REPO))
         for name, sites in _names_reached_in(source, where, _package_of(path)).items():
@@ -185,11 +188,18 @@ def _piece_imports_its_own_facade_in(source: str, where: str) -> list[str]:
     """
     offenders: list[str] = []
     package = MODULE if where == PIECE else _package_of(REPO / where)
-    for node in ast.walk(ast.parse(source, where)):
+    tree = ast.parse(source, where)
+    # 别的模块被绑成的本地名。`from app.domain.user import repositories` 之后写
+    # `repositories.UserRepository(...)`，被替换的名字在名面上一个都不出现，只有
+    # 属性这一层看得见。回读门面的 `pkg` 不算在内。
+    receivers: set[str] = set()
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name in (MODULE, PARENT):
                     offenders.append(f"{where}:{node.lineno} import {alias.name}")
+                elif alias.asname:
+                    receivers.add(alias.asname)
             continue
         if not isinstance(node, ast.ImportFrom):
             continue
@@ -201,9 +211,18 @@ def _piece_imports_its_own_facade_in(source: str, where: str) -> list[str]:
             # 看不见它读过了什么。
             if any(a.name == "auth" and a.asname != "pkg" for a in node.names):
                 offenders.append(f"{where}:{node.lineno} from {PARENT} import auth")
-        elif any(a.name in REPLACED for a in node.names):
-            names = ",".join(sorted(a.name for a in node.names))
-            offenders.append(f"{where}:{node.lineno} imports {names}")
+        else:
+            if any(a.name in REPLACED for a in node.names):
+                names = ",".join(sorted(a.name for a in node.names))
+                offenders.append(f"{where}:{node.lineno} imports {names}")
+            receivers.update(a.asname or a.name for a in node.names if a.name != "*")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute) or node.attr not in REPLACED:
+            continue
+        head = node.value
+        bound = head.id if isinstance(head, ast.Name) else _dotted(head) or ""
+        if bound.split(".")[0] in receivers:
+            offenders.append(f"{where}:{node.lineno} {bound}.{node.attr}")
     return offenders
 
 
@@ -333,6 +352,16 @@ def test_the_scans_read_the_shapes_they_claim_to_read():
         ("from app.api import auth as pkg", False),
         ("from app.domain.user.repositories import Account", False),
         ("from app.api.auth.resolver import ActorResolver", False),
+        # 模块别名取属性：名字不在名面上，只有属性这一层看得见。
+        (
+            "from app.domain.user import repositories\nrepositories.UserRepository(1)",
+            True,
+        ),
+        ("import app.domain.user.repositories as repos\nrepos.UserRepository(1)", True),
+        # 取的是别的模块上的别的名字，不算。
+        ("from app.domain.user import repositories\nrepositories.Account(1)", False),
+        # 回读门面的 `pkg.` 不算副本。
+        ("from app.api import auth as pkg\npkg.UserRepository(1)", False),
     ):
         got = bool(_piece_imports_its_own_facade_in(source, PIECE))
         assert got is caught, (source, got, caught)
