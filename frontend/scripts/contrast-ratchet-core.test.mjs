@@ -25,6 +25,8 @@ import {
   keyOf,
   luminance,
   roundRatio,
+  tierOf,
+  TIERS,
   tightenedBaseline,
   TOLERANCE,
   worstOf,
@@ -51,6 +53,20 @@ describe('floorFor', () => {
     // A pill's chevron is drawn at 14px. It is a graphic, not a word, so WCAG
     // puts it on the 3:1 step — and it is the class of run axe-core never saw.
     assert.equal(floorFor({ size: 14, weight: 400, icon: true }), 3)
+  })
+
+  it('gives each rung a name, and reads the floor off the rung', () => {
+    // The names are what a failure quotes ("the graphic rung"), so a report says
+    // which step was missed instead of a bare number.
+    const probes = {
+      body: { size: 16, weight: 400, icon: false },
+      large: { size: 24, weight: 400, icon: false },
+      graphic: { size: 14, weight: 400, icon: true },
+    }
+    for (const [name, probe] of Object.entries(probes)) {
+      assert.equal(tierOf(probe), name)
+      assert.equal(floorFor(probe), TIERS[name], `${name} reads its floor off its rung`)
+    }
   })
 })
 
@@ -389,6 +405,93 @@ describe('compare', () => {
     assert.match(report, /--accent is a fill and not a text colour/)
     assert.match(report, /--faint is decoration/)
     assert.match(report, /contrast-baseline\.json/)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3b. The --faint rung: the token decides the fix, never the verdict.
+// ---------------------------------------------------------------------------
+
+describe('the --faint rung', () => {
+  // `--faint` is the project's decorative rung — a deliberate 3:1 for icons,
+  // dividers and placeholder shapes (docs/design-system.md §2.6, #3691). A run
+  // painted with it is judged on the rung its own size, weight and font put it
+  // on, and a failure quotes the fix for that token.
+  const faintWords = run({ faint: true })
+  const faintGlyph = run({
+    faint: true,
+    selector: 'i.mdi-chevron-right.mdi',
+    icon: true,
+    size: 14,
+    need: 3,
+    ratio: 4.33,
+    text: '',
+  })
+
+  it('does not lift a run off the rung its size and weight put it on', () => {
+    assert.equal(tierOf(faintWords), 'body')
+    assert.equal(floorFor(faintWords), 4.5)
+    // 4.33:1 is where #3691 found body text on the public pages. The token does
+    // not make it a graphic's problem: it is still below the text floor.
+    const result = compare({}, runsOf(faintWords))
+    assert.equal(result.ok, false)
+    assert.equal(result.added.length, 1)
+  })
+
+  it('passes a decoration on the 3:1 rung it is for, at a ratio words would fail', () => {
+    // The chevron in --faint at 4.33:1 owes 3:1, which it clears — there is
+    // nothing here for the ratchet to report or to freeze.
+    const result = compare({}, runsOf(faintGlyph))
+    assert.equal(result.ok, true)
+    assert.equal(result.added.length, 0)
+    assert.equal(result.belowFloor, 0)
+  })
+
+  it('blocks a decoration on that rung once it drops below 3:1', () => {
+    const result = compare({}, runsOf(run({ ...faintGlyph, ratio: 2.65 })))
+    assert.equal(result.ok, false)
+    assert.match(formatContrastReport(result), /\(the graphic rung\)/)
+    assert.match(formatContrastReport(result), /a decoration that\n\s+reads below 3:1 needs the token itself moved/)
+  })
+
+  it('hands words painted with it the fix for the token, not a deeper token', () => {
+    const report = formatContrastReport(compare({}, runsOf(faintWords)))
+    assert.match(report, /\(the body rung\)/)
+    assert.match(report, /--faint is the decorative rung/)
+    assert.match(report, /Do not deepen the token/)
+    assert.match(report, /Put\n\s+the words on --muted \(\.t-meta-read \/ \.t-eyebrow-read\)/)
+  })
+
+  it('says that only for a run painted with the token', () => {
+    // Same key, same ratio, same floor — the tag is the whole difference, so
+    // this pair is what shows the report is reading the tag.
+    const report = formatContrastReport(compare({}, runsOf(run({}))))
+    assert.doesNotMatch(report, /--faint is the decorative rung/)
+    assert.match(report, /--faint is decoration/, 'the generic hint still names the token')
+  })
+
+  it('repeats the fix on a frozen run that slipped further below its floor', () => {
+    const report = formatContrastReport(compare(frozen(4.6), runsOf(run({ faint: true, ratio: 2.65 }))))
+    assert.match(report, /Frozen runs that are below their floor/)
+    assert.match(report, /Do not deepen the token/)
+  })
+
+  it('offers no colour fix where the failure is not a contrast failure', () => {
+    // Tagged, and the walker cannot read the run at all, so there is no ratio
+    // to answer for.
+    const blind = formatContrastReport(
+      compare(
+        {},
+        runsOf(run({ faint: true, unjudged: 'a background image or gradient sits between the run and its ground' }))
+      )
+    )
+    assert.match(blind, /Runs the check cannot measure/)
+    assert.doesNotMatch(blind, /Do not deepen the token/)
+    // Tagged and measured, reported only because a sibling of the same selector
+    // sits on a picture: the ratio itself clears the floor.
+    const sibling = formatContrastReport(compare({}, withHidden(1, { faint: true, ratio: 6.1 })))
+    assert.match(sibling, /cannot read/)
+    assert.doesNotMatch(sibling, /Do not deepen the token/)
   })
 })
 
