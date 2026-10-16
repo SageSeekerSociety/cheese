@@ -53,7 +53,7 @@
            目的地上 —— 页面栈里那几层右边是这一页自己的操作。
            它自己带高度与内边距：这一颗**过去没有任何样式规则**（桌上那颗有），所以
            它一直是 Vuetify 的默认尺寸，比旁边那颗语言开关高一档。 -->
-      <HelpAndFeedbackMenu v-if="!backTo" compact />
+      <HelpAndFeedbackMenu v-if="!backTo" compact :logged-in="userMenu.loggedIn.value" />
 
       <!-- 用户头像菜单：只在一级目的地上。页面栈里的那几层（有 ← 的）右边留给
            这一页自己的操作——个人项在那儿既不相关，也挤掉了标题的宽度 (§3.4)。 -->

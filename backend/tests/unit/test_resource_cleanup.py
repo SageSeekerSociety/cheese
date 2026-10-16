@@ -695,6 +695,48 @@ def test_removal_deletes_a_home_whatever_was_not_pushed(tmp_path):
     assert not home.exists()
 
 
+def test_removal_deletes_a_rooms_home_on_a_windows_machine(tmp_path):
+    """Windows is a platform people enrol their machines on, and its Python
+    has no uids: a room archived off such a machine is removed there all the
+    same. Run as that Python would run it."""
+    project, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    home, work = cleanup.resource_paths(tmp_path, project, resource)
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude/settings.json").write_text("{}")
+    work.mkdir(parents=True)
+    as_windows = (
+        # The standard library it imports is loaded as this system's first:
+        # only the script itself is to see Windows.
+        "import os, runpy, shutil, subprocess, sys, tarfile, urllib.request\n"
+        "for name in ('getuid', 'geteuid', 'getgid', 'getegid'):\n"
+        "    delattr(os, name)\n"
+        "sys.platform = 'win32'\n"
+        "sys.argv = sys.argv[1:]\n"
+        "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+    )
+
+    removed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            as_windows,
+            cleanup.__file__,
+            "remove",
+            project,
+            resource,
+            str(uuid.uuid4()),
+            "-",
+        ],
+        env={**os.environ, "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert removed.returncode == 0, removed.stderr
+    assert not home.exists() and not work.exists()
+
+
 class _Bucket:
     """A presigned PUT URL's other end: what it was sent, and its answer."""
 

@@ -64,6 +64,10 @@ export interface TopicEnvironment {
 // where the project's agents that have started are working now.
 export interface ProjectComputeConfigs {
   default: Environment
+  // How many of this project's turns may run at once, and whether that is the
+  // project's own number or the deployment's.
+  max_concurrent_turns: number
+  max_concurrent_turns_from: 'project' | 'deployment'
   /** Whether this caller may move agents already on a device elsewhere (a manager's); the default is anyone's. */
   can_manage: boolean
   devices: EnvironmentDevice[]

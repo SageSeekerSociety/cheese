@@ -9,7 +9,6 @@ import { PLATFORM_LANDING } from '@/lib/adminSections'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { inDesktopApp, openInBrowser } from '@/lib/desktopApp'
 import { docsUrl } from '@/lib/docsSite'
-import AccountService from '@/services/account'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 顶栏的「帮助与反馈」入口。**桌面和移动共用这一份** —— 两处各写一遍的话，
@@ -28,7 +27,14 @@ import { useFeedbackStore } from '@/stores/feedback'
 // 点本身对读屏和色觉障碍读者不成立 —— 所以状态同时写进**可访问名字**里
 // （`aria-label` 会是「帮助与反馈，有未读更新」），不只靠一个色点。这条是设计稿的
 // 复核专门提出来的：照抄通知铃铛会把铃铛自己的同一个缺陷一起搬过来。
-const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
+const props = withDefaults(
+  defineProps<{
+    compact?: boolean
+    /** 挂它的顶栏是不是登录态：未读数和「管理后台」只在登录后才有意义（见下面 refresh）。 */
+    loggedIn: boolean
+  }>(),
+  { compact: false }
+)
 
 const store = useFeedbackStore()
 const { t } = useI18n()
@@ -75,7 +81,9 @@ const items = computed(() => {
   return all
 })
 
-const loggedIn = computed(() => AccountService._loggedIn.value)
+// 登录态由挂它的那条顶栏传进来（`AppBar` / `MobileAppBar` 各自有它）：这个组件在
+// `src/components/**` 下，不能自己去读 `services/account`（`.claude/rules/architecture.md`）。
+const loggedIn = computed(() => props.loggedIn)
 
 /** 问一次「我是谁」与「有多少未读」。
  *

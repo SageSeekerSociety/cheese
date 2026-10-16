@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -326,8 +327,6 @@ async def _dispatch(name: str, body: dict[str, Any]) -> Any:
 
 
 def _uuids(body: dict[str, Any], *names: str) -> dict[str, Any]:
-    import uuid
-
     value = dict(body)
     for name in names:
         if value.get(name):

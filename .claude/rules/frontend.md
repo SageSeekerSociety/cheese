@@ -18,6 +18,14 @@ say which files have an allowance; check there before copying a neighbour. After
 a change, `frontend-design` (a skill) walks the whole checklist including the
 parts no gate can see.
 
+## 沙箱里不要跑全树检查
+
+**不要在沙箱里跑全树 `pnpm run typecheck` / `node scripts/typecheck.mjs` / `vue-tsc` / `pnpm run build`，也不要跑不带文件参数的 `pnpm exec vitest run`——会被 3 GiB 内存上限杀掉。只跑你改的单个测试文件，或从仓库根跑 `task ci:fast`。**
+
+`pnpm run lint` 和 `pnpm run lint:style` 轻量，到哪都能跑；`pnpm exec vitest run
+--dir src` 这类整目录跑法、`pnpm run build` 和 `pnpm run typecheck` 都吃内存，
+能不能跑取决于这台机器有多大。
+
 ## The product has a dark theme. Every colour you write must survive it.
 
 - **Never a colour literal in CSS, and never a Vuetify palette NAME** — the two
@@ -36,7 +44,9 @@ parts no gate can see.
     BACKGROUND is itself theme-invariant, the ink on it must be too. The default
     avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
     OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
-    its `#fff` text is correct and "fixing" it to a token breaks it.
+    its ink is a token that is the same in both themes too: `--avatar-ink`
+    (the value lives in style.css; the ratchets ban the hex). A theme-following
+    token there — `--ink`, `on-surface` — is what breaks it.
 - The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary).
   Pick by how important the information is, not by how it looks. `--faint` is not a
   text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
@@ -180,7 +190,9 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
   reason fails.
 - The gate is two commands, seconds each, runs anywhere: `pnpm exec vitest run
   --dir src/i18n` and `pnpm run lint:i18n` (Chinese typed into `src/` outside the
-  catalog, none allowed except annotated data lines).
+  catalog, none allowed except annotated data lines; a Chinese HTML comment in a
+  template is counted against `frontend/i18n-comments-baseline.json`, which only
+  goes down — `pnpm run lint:i18n:update` after removing some).
 
 ## The two ratchets
 
@@ -214,8 +226,3 @@ Do not raise a baseline to make a gate green; baselines only go down.
 **Never add `--fix` to a gate script.** It rewrites the checkout and can exit 0
 on a violation it silently repaired — the writing forms are `lint:style:fix` and
 `lint:fix`, kept separate from the checking forms on purpose.
-
-## 哪些检查在小机器上跑不动
-
-`pnpm exec vitest run --dir src`、`pnpm run lint`、`pnpm run lint:style` 轻量,
-到哪都能跑。`pnpm run build` 和 `pnpm run typecheck` 吃内存,能不能跑取决于这台机器有多大。

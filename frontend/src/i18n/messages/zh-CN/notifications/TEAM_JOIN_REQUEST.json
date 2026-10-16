@@ -1,11 +1,4 @@
 {
-  "action": {
-    "approve": "批准",
-    "reject": "拒绝"
-  },
-  "body": "请求加入团队 \"{team}\"",
-  "title": "{requester} 请求加入团队",
-  "title_anonymous": "有人请求加入团队",
   "toast": {
     "approveFailed": "批准申请失败，请稍后再试",
     "approved": "已批准申请",

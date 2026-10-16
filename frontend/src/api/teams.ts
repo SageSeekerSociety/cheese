@@ -9,6 +9,7 @@ import type {
   TeamVisibility,
 } from '@/types'
 
+import { changesAwaiting } from './awaitingChanged'
 import { axiosMutation, axiosRequest } from './axiosHttp'
 
 /** Teams have always used the new API origin; JSON calls expose only the payload.
@@ -118,11 +119,12 @@ export namespace TeamsApi {
       true
     )
 
+  // 批准、拒绝、接受、拒绝邀请都了结「等你处理」里的一件，所以告诉角标重读。
   export const approveJoinRequest = (teamId: number, requestId: number) =>
-    axiosMutation({ url: `/teams/${teamId}/requests/${requestId}/approve`, method: 'POST' }, true)
+    changesAwaiting(axiosMutation({ url: `/teams/${teamId}/requests/${requestId}/approve`, method: 'POST' }, true))
 
   export const rejectJoinRequest = (teamId: number, requestId: number) =>
-    axiosMutation({ url: `/teams/${teamId}/requests/${requestId}/reject`, method: 'POST' }, true)
+    changesAwaiting(axiosMutation({ url: `/teams/${teamId}/requests/${requestId}/reject`, method: 'POST' }, true))
 
   // 团队邀请相关API
   export const createInvitation = (teamId: number, data: TeamInvitationCreate) =>
@@ -160,8 +162,8 @@ export namespace TeamsApi {
     )
 
   export const acceptInvitation = (invitationId: number) =>
-    axiosMutation({ url: `/users/me/team-invitations/${invitationId}/accept`, method: 'POST' }, true)
+    changesAwaiting(axiosMutation({ url: `/users/me/team-invitations/${invitationId}/accept`, method: 'POST' }, true))
 
   export const declineInvitation = (invitationId: number) =>
-    axiosMutation({ url: `/users/me/team-invitations/${invitationId}/decline`, method: 'POST' }, true)
+    changesAwaiting(axiosMutation({ url: `/users/me/team-invitations/${invitationId}/decline`, method: 'POST' }, true))
 }

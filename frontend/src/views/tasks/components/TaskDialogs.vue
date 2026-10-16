@@ -147,6 +147,10 @@
       </v-checkbox>
     </div>
 
+    <!-- The task's mentors join the project the claim opens (#3830): said before
+         confirming, which is the claimer's agreement. -->
+    <TaskMentorNotice v-if="taskData?.mentors?.length" :names="mentorNames" class="mb-4" />
+
     <!-- Before confirming, lay out what will be inherited (#944): the resource
          pack, the composed guidance (and which layer it came from), and the
          materials that will be carried. This is the page to see before deciding. -->
@@ -223,6 +227,7 @@ import TaskInheritance from './TaskInheritance.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import TaskMentorNotice from '@/components/tasks/TaskMentorNotice.vue'
 
 const { t } = useI18n()
 
@@ -250,6 +255,8 @@ const events = useEvents()
 const { inheritance, loading: inheritanceLoading } = useTaskInheritance(() => props.taskData?.id)
 
 // 各种对话框的状态
+// 这道题点名的导师，按昵称连成一句（#3830）。
+const mentorNames = computed(() => (props.taskData?.mentors ?? []).map((m) => m.nickname).join('、'))
 const verifyInfoDialogOpen = ref(false)
 const privacyDialogOpen = ref(false)
 const teamSelectionDialogOpen = ref(false)

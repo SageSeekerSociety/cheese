@@ -16,7 +16,6 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { isAgentBlock } from '@/lib/authorship'
 import { clockTime } from '@/lib/dateText'
-import { renderPlain } from '@/lib/renderMessage'
 
 const props = defineProps<{
   root: Block
@@ -55,14 +54,7 @@ const time = computed(() => clockTime(new Date(props.root.created_at).getTime())
         :class="{ 'fold-clamped': clamped }"
         :style="clamped ? { maxHeight: `${foldPx}px` } : undefined"
       >
-        <MarkdownView
-          v-if="isAgentBlock(root)"
-          class="thread-root__text"
-          :source="root.content"
-          as="chat"
-          :names="refs"
-        />
-        <div v-else class="thread-root__text thread-root__text--plain" v-html="renderPlain(root.content, refs)" />
+        <MarkdownView class="thread-root__text" :source="root.content" as="chat" :names="refs" />
         <div v-if="clamped" class="fold-fade" aria-hidden="true" />
       </div>
       <button
@@ -115,8 +107,5 @@ const time = computed(() => clockTime(new Date(props.root.created_at).getTime())
   line-height: var(--lh-15);
   color: var(--text);
   overflow-wrap: anywhere;
-}
-.thread-root__text--plain {
-  white-space: pre-wrap;
 }
 </style>

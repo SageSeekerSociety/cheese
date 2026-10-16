@@ -1,0 +1,34 @@
+# 改动前后交替各两轮，同一台机器、同一个库、同一条命令
+# before = /tmp/base-tree（7867ee023 的只读导出，含全部测量脚本）
+# after  = 任务工作目录（四个源文件已改）
+# 命令见 README.md；每轮把原始样本写到 PERF_OUT，下面每段就是那次运行的完整 stdout。
+
+########## before#1  loadavg=96.24
+== Leg 1: in-process ASGI, 20 concurrent, 5 batches (median) ==
+channel detail             single wall    63.0 cpu   38.1 db  26.6 encode   0.1 | burst(20) wall  1290.7 cpu   764.4 (59.2% of wall, loop idle   526.4) worst  1283.8 pg    36.3      1.7KiB rows=None
+awaiting-me (reference)    single wall   112.8 cpu   43.3 db  37.8 encode   0.3 | burst(20) wall  1418.8 cpu   791.4 (55.8% of wall, loop idle   627.4) worst  1412.1 pg   187.7     26.9KiB rows=66
+
+raw samples -> /tmp/pair-b1.json
+raw -> /tmp/pair-b1.json
+########## after#1  loadavg=92.00
+== Leg 1: in-process ASGI, 20 concurrent, 5 batches (median) ==
+channel detail             single wall    95.4 cpu   45.7 db  24.6 encode   0.2 | burst(20) wall  1418.5 cpu   829.6 (58.5% of wall, loop idle   588.8) worst  1404.1 pg    33.6      1.7KiB rows=None
+awaiting-me (reference)    single wall   114.5 cpu   44.2 db  35.0 encode   0.3 | burst(20) wall  1153.8 cpu   834.1 (72.3% of wall, loop idle   319.7) worst  1148.1 pg   144.3     26.9KiB rows=66
+
+raw samples -> /tmp/pair-a1.json
+raw -> /tmp/pair-a1.json
+########## before#2  loadavg=73.56
+== Leg 1: in-process ASGI, 20 concurrent, 5 batches (median) ==
+channel detail             single wall   100.0 cpu   38.8 db  23.9 encode   0.1 | burst(20) wall  1167.4 cpu   691.0 (59.2% of wall, loop idle   476.4) worst  1165.6 pg    55.5      1.7KiB rows=None
+awaiting-me (reference)    single wall   111.4 cpu   41.3 db  35.5 encode   0.3 | burst(20) wall  1132.9 cpu   748.2 (66.0% of wall, loop idle   384.7) worst  1129.1 pg   204.1     26.9KiB rows=66
+
+raw samples -> /tmp/pair-b2.json
+raw -> /tmp/pair-b2.json
+########## after#2  loadavg=67.06
+== Leg 1: in-process ASGI, 20 concurrent, 5 batches (median) ==
+channel detail             single wall    53.2 cpu   34.0 db  21.8 encode   0.1 | burst(20) wall   727.4 cpu   610.9 (84.0% of wall, loop idle   116.5) worst   721.4 pg    47.8      1.7KiB rows=None
+awaiting-me (reference)    single wall   106.7 cpu   39.9 db  33.0 encode   0.3 | burst(20) wall   912.2 cpu   701.4 (76.9% of wall, loop idle   210.8) worst   905.7 pg   122.5     26.9KiB rows=66
+
+raw samples -> /tmp/pair-a2.json
+raw -> /tmp/pair-a2.json
+DONE

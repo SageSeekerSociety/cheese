@@ -30,16 +30,16 @@ const mine = (m: Block) => m.author === ME
 describe('支线输入框先带上「@芝士 」', () => {
   it('我在这条支线里的上一句叫过它', () => {
     const said = [message(ME, true), message('bob', false)]
-    expect(summonPrefill(said, mine, '芝士')).toBe('@芝士 ')
+    expect(summonPrefill(said, mine, '<@cheese>')).toBe('<@cheese> ')
   })
 
   it('我上一句没叫它，哪怕更早叫过', () => {
     const said = [message(ME, true), message(ME, false)]
-    expect(summonPrefill(said, mine, '芝士')).toBe('')
+    expect(summonPrefill(said, mine, '<@cheese>')).toBe('')
   })
 
   it('我还没在这里说过话', () => {
-    expect(summonPrefill([message('bob', true)], mine, '芝士')).toBe('')
+    expect(summonPrefill([message('bob', true)], mine, '<@cheese>')).toBe('')
   })
 })
 

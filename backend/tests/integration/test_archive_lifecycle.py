@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.core.device_failures import DeviceOffline
 from app.core.errors import ConflictError
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
@@ -22,6 +23,7 @@ from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, Sandbo
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
@@ -54,6 +56,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         assert room.archived_at is not None
         deadline = room.archived_at + timedelta(seconds=37)
@@ -68,6 +71,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         assert room.cleanup_due_at == deadline
         await service.unarchive(
@@ -79,6 +83,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         assert room.cleanup_due_at == room.archived_at + timedelta(seconds=900)
 
@@ -103,6 +108,7 @@ async def archived_room(client, monkeypatch):
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         await session.commit()
         return room.id, room.cleanup_id
@@ -786,6 +792,46 @@ async def test_a_process_still_in_a_claimed_room_is_waited_out_and_named(
     finally:
         holder.kill()
         holder.wait()
+    assert _sweep(client) == {"completed": 1, "pending": 0}
+    assert not room.home.exists()
+
+
+async def test_a_claimed_room_whose_machine_is_offline_waits_for_it_without_alarm(
+    client, session_host_room, monkeypatch, caplog
+):
+    """A machine that is away is the ordinary reason an archived room waits.
+    After the claim as before it: the room stays, the wait is reported when it
+    starts and not again every pass, and nothing reads it as a failure. Once
+    the machine is back the room is cleaned up."""
+    room = session_host_room
+    async with client.test_factory() as session:
+        operation = await session.get(RoomCleanup, room.cleanup_id)
+        operation.state = "claimed"
+        operation.resources = [
+            {
+                "kind": "device",
+                "device_id": "center",
+                "resource_id": str(operation.resource_id),
+            }
+        ]
+        await session.commit()
+    online = retire.device_hub.exec
+
+    async def away(device_id, *args, **kwargs):
+        raise DeviceOffline(device_id)
+
+    monkeypatch.setattr(retire.device_hub, "exec", away)
+    with caplog.at_level("DEBUG", logger="cheesex.topic.retire"):
+        assert _sweep(client) == {"completed": 0, "pending": 1}
+        assert _sweep(client) == {"completed": 0, "pending": 1}
+    assert room.home.exists()
+    async with client.test_factory() as session:
+        assert (await session.get(RoomCleanup, room.cleanup_id)).state == "claimed"
+    records = [r for r in caplog.records if r.name == "cheesex.topic.retire"]
+    assert not [r for r in records if r.levelname == "ERROR"]
+    assert len([r for r in records if r.levelname == "WARNING"]) == 1
+
+    monkeypatch.setattr(retire.device_hub, "exec", online)
     assert _sweep(client) == {"completed": 1, "pending": 0}
     assert not room.home.exists()
 

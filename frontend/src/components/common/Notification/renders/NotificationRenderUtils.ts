@@ -17,11 +17,6 @@ export interface RenderedNotificationContent {
   title: string
   body: string
   routerLink?: { name: string; params?: Record<string, any>; query?: Record<string, any> }
-  actions?: Array<{
-    text: string
-    color?: string
-    handler: () => void
-  }>
 }
 
 /**

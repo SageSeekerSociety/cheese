@@ -1,19 +1,22 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
-import type { components } from './api/openapi'
 import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
-import type { DeviceScreen } from './types/deviceSessions'
 import type { EnvironmentFailure } from './types/environment'
 export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { DeviceScreen } from './types/deviceSessions'
-export type { WaitingItem } from './types/waiting'
+export type { WaitingAsk, WaitingFace, WaitingItem, WaitingWork } from './types/waiting'
+// 下面这四节领域类型搬去了 ./types/ 里各自一个模块（采纳卡/验收、资源池市场/节点看板/
+// 算力额度、self-hosted 设备连接器、反馈）。这里只把名字转出去，`@/cx_types` 对外的
+// 名字一个都没变 —— 模式同下面 profile 那一节；搬出去是因为本文件顶在行数上限上。
+export type * from './types/acceptCard'
+export type * from './types/devices'
+export type * from './types/feedback'
+export type * from './types/market'
 
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
 import type { Shell } from '@/lib/shell'
-
-type Schemas = components['schemas']
 
 export interface Project {
   id: string
@@ -33,11 +36,10 @@ export interface Project {
   team_id?: number | null
   team_handle?: string | null // 所属团队的 handle，团队页的地址（`/teams/<handle>`）
   team_name?: string | null // 所属团队的名字，侧栏项目名上面那一行写的就是它
-  /**
-   * 当前这个人能不能管理这个项目的外部成员（邀请、撤回、移出）：项目所有者，或者
-   * 所属团队的所有者、管理员。后端按同一条规则再判一次，这里只决定给不给按钮。
-   */
-  can_manage_members?: boolean
+  /** 我在这个项目里的位置和能做的事（#3830），按钮按它给，后端再判一次。 */
+  my_role?: 'owner' | 'admin' | 'member' | 'mentor' | null
+  my_permissions?: string[]
+  pending_transfer?: { id: string; to_handle: string } | null
   /** 所有者归档这个项目的时间；没归档是 null。 */
   archived_at?: string | null
   [key: string]: unknown
@@ -612,136 +614,6 @@ export interface UsageStats {
   unpriced_tokens: number
 }
 
-// ---- 采纳卡 / 验收 (eval C5/A3) ----
-
-export type AcceptStatus =
-  | 'pending'
-  | 'accepted'
-  | 'rejected'
-  | 'revoked'
-  | 'conflict'
-  // 机器闸门 (eval C2): the project's check_command is running / failed.
-  | 'pending_gate'
-  | 'gate_failed'
-  // 闸门没跑成：检查没能在门禁环境里跑起来，对代码没有结论（不是「未通过」）。
-  | 'gate_blocked'
-  // 两阶段采纳 (2026-08-16 → #718 退役): 历史状态。采纳回到「点一下就是合并」
-  // 之后不再有卡进入它，存量卡也已迁回 pending —— 这里留着只为极端残留兜底。
-  | 'pr_open'
-  | string
-
-// 合并态 (#718): the card's status IS the merge state. Computed server-side
-// (backend domain/review/merge_state.py) — the browser never derives it, it
-// only puts words and a dot next to what the backend said.
-export type MergeStateWord = 'clean' | 'unstable' | 'blocked' | 'behind' | 'dirty' | 'unknown'
-
-// 谁的活 (#718 的表格): who moves next. `human` + no PR = the platform lane,
-// where accepting is purely a human judgment and never gated by the state.
-export type MergeWho = 'ci' | 'agent' | 'platform' | 'human'
-
-export interface MergeReason {
-  kind: string
-  // The check names involved, ready for the card face (红了哪个要能看见).
-  checks: string[]
-  detail: string
-}
-
-export interface MergeStateInfo {
-  state: MergeStateWord
-  who: MergeWho
-  // At least one entry server-side; the basis for the verdict.
-  reasons: MergeReason[]
-  head_sha: string | null
-  checked_at: string | null
-  since: string | null
-}
-
-// 绿了自动合 (#718): only meaningful when the project allows it; armed by a
-// reviewer while the card is blocked/behind, merged by the platform when the
-// rules are met.
-export interface AutoMergeInfo {
-  allowed: boolean
-  armed_by: string | null
-  armed_at: string | null
-}
-
-// 托管方的能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：
-// 界面上每一处判断读它要用的那一位。`declaration` 是这个托管方在人点采纳之前就
-// 该写在卡上的一句话，GitHub 那一档为空（卡上有提案页链接）。
-export interface ForgeInfo {
-  // 'unknown' 不是第四种托管方，是「这张卡这会儿读不出自己的托管方」：所有能力位
-  // 都是 false，采纳按钮灰着，卡上那句话说的就是这件事。
-  kind: 'github_app' | 'forgejo' | 'unknown'
-  reports_checks: boolean
-  hosts_proposals: boolean
-  can_write_remote: boolean
-  pushes_to_external_remote: boolean
-  identity: 'user' | 'platform'
-  declaration: string
-}
-
-export interface AcceptCard {
-  id: string
-  task_id?: string | null
-  topic_id: string
-  reviewer_handle: string
-  focus: string
-  // 提交与 PR 规范: the commit subject + body this topic will be squash-merged
-  // under. Null on a card filed without them (the platform then falls back to
-  // the topic title).
-  change_subject: string | null
-  change_body: string | null
-  status: AcceptStatus
-  decided_by: string | null
-  decided_at: string | null
-  note: string
-  // 这条 note 是「停住了」(error) 还是「还在走」(info)；空 note 是 null。
-  // 后端算好下发（domain/review/notes.py），别在这边按文案开头去猜。
-  note_level: 'error' | 'info' | null
-  created_at: string
-  // 机器闸门: when the check passed + the tail of its output.
-  gate_passed_at: string | null
-  gate_output: string
-  // 主分支保护 (spec §4.4): votes so far / votes needed.
-  approvals: string[]
-  approvals_required: number
-  // 采纳 PR 化 (#188 §5.1): the real GitHub PR this card rides on, when the
-  // platform opened one (flag-gated, best-effort).
-  pr_number: number | null
-  pr_url: string | null
-  // 合并态 (#718): what stands between this card and the trunk, and whose move
-  // it is. Always present — a platform-lane card carries who="human".
-  merge_state: MergeStateInfo
-  // 托管方是谁、它能做什么 —— 卡生成的那一刻就带着（后端 domain/review/forge.py）。
-  // 这是卡上唯一的一份：别从别的字段推「这个项目接没接 GitHub」。
-  forge: ForgeInfo
-  auto_merge: AutoMergeInfo
-  // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
-  // being queried against.
-  pr_repo: string | null
-  pr_head_sha: string | null
-  pr_merged_at: string | null
-  // 这次交付更新的是哪一项产物，以及这张卡自己是它的第几版 (#1085 结论三/五)。
-  // 版本号是后端按卡的状态算好的（还没采纳的那一张算的是它采纳之后的号），前端
-  // 一个都不推。落地之前递的那些卡没有这一项，所以是 null。
-  artifact: { id: string; name: string; version: number } | null
-  // 这一版交出去的是什么：一份文件（`filename`，字节在递卡那一刻落了快照）、一个
-  // 地址（`url`），或者这次合并本身（`merge`，没有可下载的东西）。
-  deliverable: { kind: 'file' | 'link' | 'merge'; filename: string | null; url: string | null } | null
-  completes_task?: boolean // 这次交付是不是任务的最后一步；不是的话采纳后任务接着做下一步
-}
-
-// GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).
-export interface PrChecks {
-  available: boolean
-  reason?: string
-  pr_number?: number
-  pr_url?: string
-  state?: string
-  mergeable?: boolean | null
-  checks?: { name: string; status: string; conclusion: string | null; url?: string }[]
-}
-
 // ---- 通知中心 (G2/G3) ----
 
 // GET /projects/{id}/notifications?target_handle=
@@ -757,70 +629,6 @@ export interface Notification {
   payload: Record<string, unknown>
   read_at: string | null
   created_at: string
-}
-
-// ---- 资源池市场 (design v3: AI 池 + 算力池) ----
-
-// A pool listing in the 市场 catalog / a project's settings selector.
-export interface PoolListing {
-  kind: 'ai' | 'compute'
-  id: string
-  label: string
-  tier: string
-  price: string
-  description: string
-  available: boolean
-  default: boolean
-}
-
-// GET /api/market/pools
-export interface MarketPools {
-  ai: PoolListing[]
-  compute: PoolListing[]
-}
-
-// ---- 节点看板 (spec §9.1: where turns physically run) ----
-
-// One compute node this deployment runs, with liveness.
-export interface MarketNode {
-  id: string
-  label: string
-  // Which sandbox spec this node IS — the same id the 市场 catalogue lists.
-  kind: 'standard' | 'vm' | 'devices_of'
-  online: boolean
-  // Whether an unconfigured topic lands on this node.
-  current: boolean
-  detail: string
-  description: string
-}
-
-// GET /api/market/nodes
-export interface MarketNodes {
-  nodes: MarketNode[]
-  active_turns_total: number
-  current_provider: string
-}
-
-// ---- 算力额度 (spec §9.1 机构提供算力 → real quotas) ----
-
-// One credit grant (issued when the project linked an institutional task).
-export interface ComputeGrantRow {
-  id: string
-  project_id: string | null
-  source_task_id: number | null
-  credits_total: number
-  credits_used: number
-  created_at: string
-}
-
-// Shared team grants plus credits restricted to the requesting project.
-export interface ProjectCredits {
-  team_id: number | null
-  unlimited: boolean
-  credits_total: number
-  credits_used: number
-  credits_remaining: number
-  grants: ComputeGrantRow[]
 }
 
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
@@ -889,54 +697,6 @@ export interface OAuthConnectionInfo {
   hasRefreshToken: boolean
 }
 
-// ---- self-hosted 设备连接器 (P3 Phase B) ----
-
-// A compute machine (算力节点) the signed-in human enrolled. A device is pure compute
-// — it has NO agent identity; the agents running on it are `screens` (each carries its
-// own agent). See execution-architecture v3 / fusion-design §5.
-export interface MyDevice {
-  device_id: string
-  name: string
-  online: boolean
-  project_ids: string[]
-  // Teams this machine is registered for (为团队注册设备, v4): every project of
-  // these teams may run on it.
-  team_ids: number[]
-  screens: DeviceScreen[]
-  // Who works on this machine now (each session whose work computer it is), for its owner only.
-  in_use?: DeviceUser[] | null
-  // On a team's device list: the team's projects this machine is attached to
-  // directly, rather than through the team.
-  attached_projects?: { id: string; name: string }[]
-}
-
-export interface DeviceUser {
-  project_id: string
-  project_name: string
-  topic_id: string
-  topic_title: string
-  agent_handle: string
-  agent_name: string
-  agent_name_source?: string
-}
-
-// A team the signed-in user belongs to (GET /teams/my-teams) — trimmed to what
-// the device pages need. Includes the auto-provisioned personal team (个人 =
-// 单人真团队), which the backend sorts first and flags `personal`.
-export interface MyTeam {
-  id: number
-  handle: string
-  name: string
-  personal?: boolean
-}
-
-// The result of approving a pending device flow (binds the machine to its owner).
-export interface DeviceApproval {
-  device_id: string
-  device_name: string
-  project_id: string | null
-}
-
 // ---- AI 队友 (agent 类型与实例) ----
 //
 // GET /agent-types: built-in starting configurations for new agents.
@@ -981,97 +741,4 @@ export interface ProjectAgent {
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
   created_at?: string | null
-}
-
-// ---- 反馈 (feedback) ----
-//
-// 平台级的收件箱（`backend/app/api/routes/feedback.py`），不属于任何项目。字段名
-// 与后端 schema 逐字对应 —— 不在这里发明第二个名字，那会让「这个字段到底是哪个」
-// 变成每次读前端代码都要回去查一遍的事。
-//
-// 三处**故意**不叫原型里的名字：
-//   * `supports` 是计数、`comments` 也是计数（原型里 `comments` 是数组），
-//     详情页的评论在 `FeedbackDetail.thread`。
-//   * 作者是 `author_handle`、时间是 `created_at`：蛇形是这一层的约定。
-//   * 原型那个 `source: 'user' | 'agent'` 不存在 —— 它是 `author_is_agent`。
-//     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
-//     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
-//
-// 下面这些是后端 OpenAPI 生成类型（`src/api/openapi.d.ts`）的别名：字段、可空和
-// 必有与否都以 `backend/app/domain/feedback/schemas.py` 为准，改字段改那边，再跑
-// 后端导出；这份类型由类型检查现场生成（`frontend/scripts/typecheck.mjs`）。读字段要记住两件事：
-//   * `author_avatar_id` 为 null 的意思是「画彩色首字母」，不要退回
-//     `/avatars/default`，那会让没挑过头像的人共用一张脸。
-//   * 评论的 `reply_count` 是服务端数的整栋楼回复数，不是这一页带回来几条；
-//     「展开更多」靠它和手上条数比较。
-export type FeedbackKind = Schemas['FeedbackKind']
-/** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
-export type FeedbackStatus = Schemas['FeedbackStatus']
-export type FeedbackVisibility = Schemas['FeedbackVisibility']
-export type FeedbackPriority = Schemas['FeedbackPriority']
-/** 列表里的一行。 */
-export type FeedbackCard = Schemas['FeedbackCard']
-export type FeedbackTimelineEntry = Schemas['TimelineOut']
-/** 一条评论。`parent_id` 只指向顶层评论，层级恒为两层。 */
-export type FeedbackComment = Schemas['CommentOut']
-/** 管理员之间的内部备注，只增不改。 */
-export type FeedbackNote = Schemas['NoteOut']
-export type FeedbackDetail = Schemas['FeedbackDetail']
-/** 标签页上的数。`unassigned` 只在管理端列表里有（`FeedbackAdminCounts`）。 */
-export type FeedbackCounts = Schemas['FeedbackCounts'] & Partial<Pick<Schemas['FeedbackAdminCounts'], 'unassigned'>>
-export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
-  counts: FeedbackCounts
-}
-/** `GET /feedback/meta` —— 词表。颜色不在这里（那是前端的视觉决定，见 lib/feedbackMeta.ts）。 */
-export type FeedbackMeta = Schemas['FeedbackMeta']
-/** 写完之后的计数，不是增量。 */
-export type FeedbackSupportResult = Schemas['SupportOut']
-export type FeedbackCommentLikeResult = Schemas['CommentLikeOut']
-
-/** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */
-export interface FeedbackCreateBody {
-  kind: FeedbackKind
-  title: string
-  summary?: string
-  problem?: string
-  visibility: FeedbackVisibility
-  priority?: FeedbackPriority
-  why?: string | null
-  expectation?: string | null
-  what_happened?: string | null
-  repro?: string | null
-  evidence?: string | null
-  logs?: string | null
-  session_id?: string | null
-  environment?: string | null
-  tags?: string[]
-}
-
-/** 提案卡上的那份 payload（`Block.meta.feedback_proposal`）。 */
-export interface FeedbackProposalPayload {
-  kind: FeedbackKind
-  title: string
-  summary: string
-  problem: string
-  visibility: FeedbackVisibility
-  why: string | null
-  expectation: string | null
-  what_happened: string | null
-  repro: string | null
-  evidence: string | null
-  logs: string | null
-  session_id: string | null
-  environment: string | null
-  tags: string[]
-  /** 用户原话，或者那句「用户没有就这个问题说过话」。**必填**，见方案稿 §5.0。 */
-  user_said: string
-  /** 服务端算的指纹，「不用」和去重都认它。 */
-  fingerprint: string
-}
-
-export interface FeedbackProposal {
-  block_id: string
-  author_handle: string
-  authored_at: string
-  payload: FeedbackProposalPayload
 }

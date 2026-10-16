@@ -1,0 +1,291 @@
+{
+  "alerts": {
+    "empty": "No alerts",
+    "inactivePublishers": {
+      "hint": "No challenge published in 30 days",
+      "label": "Inactive publishers"
+    },
+    "loadFailed": "Couldn't load alerts",
+    "overdueReviews": {
+      "hint": "Submitted over 7 days ago, not reviewed",
+      "label": "Overdue reviews"
+    },
+    "pendingClaims": {
+      "hint": "Open challenges with claims to approve",
+      "label": "Claims to approve"
+    },
+    "pendingReviews": {
+      "hint": "Open challenges with submissions to review",
+      "label": "Submissions to review"
+    },
+    "pendingTasks": {
+      "hint": "Open the challenges awaiting review",
+      "label": "Challenges to review"
+    },
+    "stalledTasks": {
+      "hint": "Claimed, but nothing submitted in 14 days",
+      "label": "Stalled challenges"
+    }
+  },
+  "all": "All",
+  "chart": {
+    "noDistribution": "No distribution data",
+    "noTrend": "No trend data",
+    "summary": "{total} / {points} points"
+  },
+  "distribution": {
+    "ALL_SUCCESS": "All passed",
+    "APPROVED": "Approved",
+    "DISAPPROVED": "Rejected",
+    "FAILED": "Failed",
+    "IN_PROGRESS": "Submitted",
+    "NONE": "Pending",
+    "NOT_STARTED": "Nothing submitted",
+    "NOT_SUBMITTED": "Not submitted",
+    "NO_PARTICIPANTS": "No claims",
+    "PARTIAL_SUCCESS": "Some passed",
+    "PENDING_REVIEW": "Awaiting review",
+    "REJECTED_RESUBMITTABLE": "Returned, can resubmit",
+    "SUCCESS": "Passed",
+    "WITHOUT_REAL_NAME": "Not verified",
+    "WITH_REAL_NAME": "Verified"
+  },
+  "export": {
+    "failed": "Export failed. Try again later"
+  },
+  "filter": {
+    "allCategories": "All categories",
+    "apply": "Apply",
+    "approval": "Review",
+    "approvalOption": {
+      "ALL": "All",
+      "APPROVED": "Approved only",
+      "DISAPPROVED": "Rejected only",
+      "NONE": "Pending"
+    },
+    "category": "Category",
+    "from": "From",
+    "preset": {
+      "180d": "Last 6 months",
+      "30d": "Last 30 days",
+      "all": "All"
+    },
+    "presetLabel": "Time range",
+    "reset": "Reset",
+    "to": "To"
+  },
+  "groupBy": {
+    "day": "Daily",
+    "label": "Interval",
+    "month": "Monthly",
+    "week": "Weekly"
+  },
+  "learning": {
+    "allKnowledgePoints": "All",
+    "allStudents": "All",
+    "buildOutline": "Build lecture outline",
+    "clear": "Clear",
+    "knowledgePoint": "Topic",
+    "lede": "Where members got stuck talking to the AI, to pick what the next lecture covers",
+    "loadFailed": "Couldn't load learning data",
+    "noProjects": "No member projects visible",
+    "noTime": "None",
+    "outline": {
+      "empty": "Nothing to cover yet",
+      "missing": "1 message could no longer be read and was left out of this outline | {n} messages could no longer be read and were left out of this outline",
+      "session": "Suggested lecture {n}"
+    },
+    "outlineHint": "Sections follow the order you ticked",
+    "questions": {
+      "empty": "No member messages",
+      "hint": "{n} in all. Tick the ones to include in the outline",
+      "title": "Member messages"
+    },
+    "queue": {
+      "flagged": "Questions members marked as unanswerable",
+      "hint": "Shared sticking points, ordered by how many members hit them",
+      "noFlagged": "No marked questions",
+      "noStuck": "No shared sticking points",
+      "title": "To handle",
+      "unavailable": "Nothing to show"
+    },
+    "quote": {
+      "pick": "Select this message from {name}",
+      "source": "View original"
+    },
+    "selected": "{n} messages selected",
+    "stuck": {
+      "counts": "{students} members · {projects} projects · {questions} messages",
+      "latest": "Latest {time}",
+      "pick": "Select sticking point {label}"
+    },
+    "student": "Member",
+    "summary": "{projects} member projects · {students} members · {questions} messages · {stuck} shared sticking points",
+    "toast": {
+      "filtersFailed": "Couldn't load learning filters",
+      "outlineFailed": "Couldn't build the outline"
+    },
+    "unclassified": "Unclassified"
+  },
+  "overview": {
+    "alerts": "Needs attention",
+    "distribution": {
+      "approval": "Challenge review",
+      "category": "Categories",
+      "completion": "Completion"
+    },
+    "empty": "No overview data",
+    "loadFailed": "Couldn't load the overview",
+    "metric": {
+      "claims": {
+        "hint": "A person or a team counts once",
+        "label": "Claims"
+      },
+      "members": {
+        "hint": "Teams counted by member",
+        "label": "Members"
+      },
+      "publishers": {
+        "hint": "Published at least one counted challenge",
+        "label": "Publishers"
+      },
+      "submitted": {
+        "hint": "Submit rate {rate}",
+        "label": "Submitted"
+      },
+      "succeeded": {
+        "hint": "Success rate {rate}",
+        "label": "Succeeded"
+      },
+      "tasks": {
+        "hint": "Challenges counted",
+        "label": "Challenges"
+      }
+    },
+    "trend": {
+      "joined": "Claims",
+      "succeeded": "Successes"
+    }
+  },
+  "participants": {
+    "approval": "Claim review",
+    "completion": "Completion",
+    "distribution": {
+      "approval": "Claim review",
+      "className": "Class",
+      "completion": "Completion",
+      "grade": "Grade",
+      "major": "Major",
+      "realName": "Real name"
+    },
+    "empty": "No participant data",
+    "export": "Export participants",
+    "loadFailed": "Couldn't load participant data",
+    "metric": {
+      "approved": {
+        "hint": "Claims that were approved",
+        "label": "Approved claims"
+      },
+      "claims": {
+        "hint": "A person or a team counts once",
+        "label": "Claims"
+      },
+      "realName": {
+        "hint": "Members with a verified real name",
+        "label": "Verified members"
+      },
+      "succeeded": {
+        "hint": "Claims marked successful",
+        "label": "Succeeded"
+      }
+    },
+    "realName": "Real name",
+    "realNameOption": {
+      "all": "All",
+      "with": "Verified",
+      "without": "Not verified"
+    },
+    "trend": {
+      "joined": "Claims",
+      "submitted": "Submissions",
+      "succeeded": "Successes"
+    }
+  },
+  "publisher": {
+    "all": "All",
+    "label": "Publisher"
+  },
+  "publishers": {
+    "col": {
+      "approvedParticipantCount": "Approved claims",
+      "avgParticipantsPerTask": "Claims per challenge",
+      "lastTaskCreatedAt": "Last published",
+      "participantCount": "Claims",
+      "publisherName": "Publisher",
+      "submissionConversionRate": "Submit rate",
+      "submittedParticipantCount": "Submitted",
+      "successRate": "Success rate",
+      "successfulParticipantCount": "Succeeded",
+      "taskCount": "Challenges"
+    },
+    "empty": "No publishers",
+    "export": "Export publisher data",
+    "loadFailed": "Couldn't load publisher data",
+    "rank": {
+      "bestRate": "Best success rate",
+      "claims": "{n} claims",
+      "mostClaims": "Most claims",
+      "mostTasks": "Most challenges",
+      "tasks": "{n} challenges"
+    },
+    "sort": {
+      "lastTaskCreatedAt": "Last published",
+      "participantCount": "Claims",
+      "successRate": "Success rate",
+      "taskCount": "Challenges"
+    },
+    "tableLabel": "Publisher list"
+  },
+  "sortBy": "Sort",
+  "sortOrder": {
+    "asc": "Ascending",
+    "desc": "Descending",
+    "label": "Order"
+  },
+  "tabs": {
+    "alerts": "Alerts",
+    "learning": "Learning",
+    "overview": "Overview",
+    "participants": "Participants",
+    "publishers": "Publishers",
+    "tasks": "Challenges"
+  },
+  "tasks": {
+    "col": {
+      "approved": "Review",
+      "category": "Category",
+      "createdAt": "Created",
+      "deadline": "Deadline",
+      "participantCount": "Claims",
+      "pendingParticipantApprovalCount": "Claims to approve",
+      "pendingReviewCount": "To review",
+      "publisher": "Publisher",
+      "submissionConversionRate": "Submit rate",
+      "successRate": "Success rate",
+      "taskName": "Challenge"
+    },
+    "empty": "No tasks",
+    "export": "Export challenges",
+    "loadFailed": "Couldn't load challenge data",
+    "pendingClaims": "Claims to approve",
+    "pendingReviews": "Submissions to review",
+    "sort": {
+      "createdAt": "Created",
+      "participantCount": "Claims",
+      "pendingReviewCount": "To review",
+      "successRate": "Success rate"
+    },
+    "tableLabel": "Task list"
+  },
+  "title": "Data"
+}

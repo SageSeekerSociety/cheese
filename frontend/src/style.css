@@ -65,6 +65,19 @@
      the theme (white on #f57f17 is 2.6:1). */
   --accent-on: #191a1c;
 
+  /* ---- Brand mark ----
+     The logo has one colour (docs/brand.md §2/§5): the home tile goes flat brand
+     paint on hover and while current, with the mark on it in #23242a. Both values
+     are the same in the two themes on purpose — brand.md §5 fixes that one tile
+     at #FFA20F with a #23242a mark in both themes. Not every brand asset is like
+     this: the lockups ship a light and a dark file (§4), and the wordmark is one
+     file drawn in `currentColor`, so it follows the text colour around it (§9).
+     The boot splash in index.html paints the same #ffa20f. So this is not --accent:
+     --accent is the UI amber and it *does* follow the theme
+     (#f57f17 / #ffa733). Do not unify the two. */
+  --brand-fill: #ffa20f;
+  --brand-ink: #23242a;
+
   /* ---- Status (ONLY for real status; dot + neutral text) ----
      Each status has three parts, and they are NOT interchangeable:
        --x       the mark  — 6px dot, 1px border, icon fill. Never body text.
@@ -171,6 +184,14 @@
   --inverse-surface: #23242a;
   --inverse-ink: #fff;
   --inverse-fill: rgba(255, 255, 255, 0.14);
+
+  /* ---- Avatar initials ----
+     A fallback avatar — person, team, space or project tile — is avatarColor():
+     one fixed OKLCH lightness, the SAME value in both themes, so the initial on
+     it cannot follow the theme either (docs/design-system.md §1.2's one
+     exception). The dark block repeats the value deliberately; do not "fix" it
+     to --ink. */
+  --avatar-ink: #fff;
 
   /* ---- AI teammate avatar ----
      CheeseAvatar's tile and eyes. Warm deep tones, one per teammate, picked by
@@ -408,6 +429,10 @@
   --accent-wash: #2e2216;
   --accent-on: #191a1c; /* same as light, deliberately: see the light set */
 
+  /* ---- Brand mark ---- */
+  --brand-fill: #ffa20f; /* same as light, deliberately: brand.md §5 fixes the tile */
+  --brand-ink: #23242a;
+
   /* ---- Status ---- */
   --ok: #3fbf7f;
   --ok-ink: #6fd9a0;
@@ -463,6 +488,8 @@
   --inverse-surface: #3a3d44;
   --inverse-ink: #f3f4f6; /* 9.9:1 on --inverse-surface */
   --inverse-fill: rgba(255, 255, 255, 0.1);
+
+  --avatar-ink: #fff; /* same as light, deliberately: the ground does not change */
 
   /* Lifted like --inverse-surface: a tile lighter than the page, not a hole in it. */
   --agent-ink: #f6efe4;

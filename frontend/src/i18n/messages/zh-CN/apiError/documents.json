@@ -75,5 +75,6 @@
   "revisionsWordOnly": "只有 Word 文档带修订记录",
   "rowNumbersInvalid": "{field} 里的序号要是从 1 起的整数",
   "rowNumbersNotArray": "{field} 要是一个序号数组",
-  "taskDocParticipantsOnly": "只有任务的负责人和协作者可以修改这个任务的文档，意见请在频道里提"
+  "taskDocParticipantsOnly": "只有任务的负责人和协作者可以修改这个任务的文档，意见请在频道里提",
+  "attachmentOriginalReadOnly": "对话里发来的原件不能修改，可以基于它新建一份"
 }

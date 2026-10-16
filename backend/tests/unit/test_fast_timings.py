@@ -28,7 +28,10 @@ APP = Path(__file__).resolve().parents[2] / "app"
 
 
 def _module_file(dotted: str) -> Path:
-    return APP / Path(*dotted.removeprefix("app.").split(".")).with_suffix(".py")
+    """The source of a dotted module — a package's ``__init__.py`` included."""
+    base = APP / Path(*dotted.removeprefix("app.").split("."))
+    init = base / "__init__.py"
+    return init if init.is_file() else base.with_suffix(".py")
 
 
 def _assigned_at_module_level(path: Path) -> set[str]:

@@ -648,7 +648,6 @@
     "PUT /projects/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_sha}",
     "PUT /projects/{project_id}/library",
     "PUT /projects/{project_id}/mcp/secrets/{name}",
-    "PUT /projects/{project_id}/owner",
     "PUT /projects/{project_id}/slug",
     "PUT /projects/{project_id}/task-naming",
     "PUT /projects/{project_id}/tier-policy",

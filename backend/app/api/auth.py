@@ -15,11 +15,14 @@ from typing import Annotated
 from fastapi import Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.audience import rooms_its_audience_may_read
+from app.auth.audience import seats_only as _private
 from app.auth.project_access import (
     may_read_project,
     may_write_project,
     outsiders_reading,
 )
+from app.auth.project_roles import may
 from app.common.auth import verify_access_token
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import get_db
@@ -50,6 +53,7 @@ from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import refuse_writes_if_archived
+from app.domain.project_permissions import Permission
 from app.domain.task.repositories import TaskRepository
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
@@ -100,12 +104,6 @@ def _token_verifier(token: str) -> TokenIdentity | None:
     return TokenIdentity(handle=claims.handle, user_id=claims.user_id)
 
 
-def _private(topic: Topic | None) -> bool:
-    """Whether only the room's own seats may read it: a private chat (the one
-    place this file reads that flag), or a private channel."""
-    return bool(topic and (topic.is_private or topic.members_only))
-
-
 class ActorResolver:
     """Per-request resolver. Reads the human bearer token + agent scoped token,
     then resolves/authorizes against the DB."""
@@ -128,6 +126,10 @@ class ActorResolver:
         # or a room of one, is refused while that project is archived — here,
         # once, so that no write route can forget to ask (see ``resolve``).
         self._writes = writes
+        self._project_credential = False
+        # Set when a delegated answer is shown to a document's readers: the
+        # document's task, or None for a document of no task.
+        self._answer_for_readers: tuple[uuid.UUID | None] | None = None
         self._bearer = bearer
         self._cheese_token = cheese_token
         # A ``cheese`` call made from inside a self-hosted device screen carries that
@@ -206,6 +208,10 @@ class ActorResolver:
                 raise ForbiddenError(say("tokenOtherTopic"))
         if not read_only:
             await self._refuse_archived_write(project_id=project_id, topic_id=topic_id)
+        if claims.shown_to_readers:
+            self._answer_for_readers = (
+                uuid.UUID(claims.topic_id) if claims.topic_id else None,
+            )
         return Actor(handle=claims.handle, user_id=claims.user_id, via="delegated")
 
     def credential_agent(self) -> str | None:
@@ -273,6 +279,7 @@ class ActorResolver:
         # traffic pays for neither the parse nor the extra read.
         credential_project: uuid.UUID | None = None
         if looks_like_project_agent_credential(self._cheese_token):
+            self._project_credential = True
             credential_project = project_id or (
                 await self.project_of_topic(topic_id) if topic_id else None
             )
@@ -718,7 +725,7 @@ class ActorResolver:
                 member = await self._is_project_member(pid, handle)
             return member
 
-        return {
+        readable = {
             room_id
             for room_id, private in rooms
             if await authorize_topic_access(
@@ -730,6 +737,28 @@ class ActorResolver:
                 seats_only=private,
             )
         }
+        if self._writes or not readable:
+            return readable
+        # An agent's reads end up in its answer: only what everyone the answer
+        # reaches may read themselves (``app.auth.audience``).
+        conversation = self.turn_conversation(actor)
+        if conversation is not None:
+            answer_room = await conversations.room_of(self._session, conversation)
+        elif self._project_credential and actor.via == "cheese":
+            answer_room = None
+        elif self._answer_for_readers is not None and actor.via == "delegated":
+            (task,) = self._answer_for_readers
+            answer_room = (
+                await conversations.room_of(self._session, task) if task else None
+            )
+        else:
+            return readable
+        return readable & await rooms_its_audience_may_read(
+            self._session,
+            project_id=project_id,
+            answer_room=answer_room,
+            room_ids=list(readable),
+        )
 
     async def topic_admits_handle(
         self, actor: Actor, *, project_id: uuid.UUID, topic_id: uuid.UUID, handle: str
@@ -743,8 +772,9 @@ class ActorResolver:
         to somebody this answers yes about).
 
         The rule is not restated here. The handle is swapped on the actor and the
-        door's own method answers, which keeps ONE read of ``is_private`` in this
-        file (``tests/unit/test_is_private_read_points.py`` is a ratchet: a
+        door's own method answers, which keeps the one read of ``is_private``
+        where it is (``seats_only``; ``tests/unit/test_is_private_read_points.py``
+        is a ratchet: a
         second read point is a second declaration of the same fact, and two
         declarations drift). What is taken as given is the credential half only —
         a handle in a body presents nothing, and this asks whether the room would
@@ -757,18 +787,20 @@ class ActorResolver:
         )
 
     async def authorize_project(
-        self, actor: Actor, *, project_id: uuid.UUID, member_setting: bool = False
+        self,
+        actor: Actor,
+        *,
+        project_id: uuid.UUID,
+        permission: Permission | None = None,
     ) -> None:
         """Require a verified participant with project membership.
 
         An agent's per-turn credential reads the project from the conversation
         it was minted in instead (``authorize_reading_from``); what it writes
-        still needs the membership it does not have. ``member_setting`` is the
-        one exception: a setting any member may change
-        (``app/api/member_settings.py``) an agent changes from that
-        conversation too, on the same two conditions as its reads. Nobody it
-        answers to there is outside the project, so the change is one any of
-        them could have made themselves.
+        still needs the membership it does not have.
+
+        ``permission`` is what a write needs (``project_roles.may``); without one,
+        a write needs someone who works in the project rather than looking on.
 
         A project that is not there is 404, not 403: the id is a UUID and
         answering "you are not a member of it" about a project that does not
@@ -786,21 +818,23 @@ class ActorResolver:
                 return  # Trusted development credential; anonymous access stays denied.
             raise AuthenticationRequiredError(say("signInForProject"))
         conversation = self.turn_conversation(actor)
-        if conversation is not None and (not self._writes or member_setting):
+        if conversation is not None and not self._writes:
             await self.authorize_reading_from(
-                actor,
-                project_id=project_id,
-                conversation_id=conversation,
-                writes=self._writes,
+                actor, project_id=project_id, conversation_id=conversation
             )
             return
         if await self._is_project_member(project_id, actor.handle):
-            if self._writes and not await may_write_project(
-                self._session, project_id=project_id, handle=actor.handle
+            if self._writes and not await (
+                may(self._session, project_id, actor.handle, permission)
+                if permission is not None
+                else may_write_project(
+                    self._session, project_id=project_id, handle=actor.handle
+                )
             ):
-                # The 赛题's asker and its board's teacher read the project;
-                # changing it is its own people's.
-                raise ForbiddenError(say("projectObserverReadOnly"))
+                # A write is its own people's, each by what their role lets them
+                # do (#3830): a mentor looks on, and a role may have lost the
+                # permission a route asks for.
+                raise ForbiddenError(say("projectPermissionDenied"))
             return
         if await ProjectRepository(self._session).get(project_id) is None:
             raise NotFoundError(say("projectNotFound"))
@@ -831,7 +865,6 @@ class ActorResolver:
         *,
         project_id: uuid.UUID,
         conversation_id: uuid.UUID,
-        writes: bool = False,
     ) -> None:
         """Let an agent read the project from the conversation it works in.
 
@@ -840,8 +873,6 @@ class ActorResolver:
         room shows its answer to may read the project themselves: what the
         agent reads ends up in the room, so a room with somebody from outside
         the project would hand that person what the project keeps from them.
-        ``writes`` is a member setting being changed from there, which the
-        refusal names instead.
         """
         if await conversations.project_of(self._session, conversation_id) != project_id:
             raise ForbiddenError(say("projectMemberOnly"))
@@ -852,13 +883,7 @@ class ActorResolver:
         if await outsiders_reading(
             self._session, project_id=project_id, room_id=room_id
         ):
-            raise ForbiddenError(
-                say(
-                    "projectSettingWithOutsiders"
-                    if writes
-                    else "projectReadsWithOutsiders"
-                )
-            )
+            raise ForbiddenError(say("projectReadsWithOutsiders"))
 
     async def authorize_task(self, actor: Actor, *, task_id: int) -> None:
         """Require a verified caller who may see this 赛题.

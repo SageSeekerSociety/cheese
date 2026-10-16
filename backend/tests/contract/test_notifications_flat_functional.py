@@ -197,12 +197,11 @@ async def test_cursor_pagination_round_trip(authed_client: AsyncClient) -> None:
 
 
 @pytest.mark.anyio
-async def test_read_filter_and_type_filter(authed_client: AsyncClient) -> None:
+async def test_read_filter(authed_client: AsyncClient) -> None:
     factory = authed_client.test_factory  # type: ignore[attr-defined]
     await _seed(factory, read=False, type_=NotificationType.MENTION)
     await _seed(factory, read=True, type_=NotificationType.REPLY)
 
-    # read=false filter → only the unread mention.
     resp = await authed_client.get(
         "/notifications", params={"pageSize": 10, "read": False}
     )
@@ -210,25 +209,68 @@ async def test_read_filter_and_type_filter(authed_client: AsyncClient) -> None:
     assert data["page"]["total"] == 1
     assert data["notifications"][0]["type"] == "MENTION"
 
-    # type filter narrows to REPLY.
-    resp = await authed_client.get(
-        "/notifications", params={"pageSize": 10, "type": "REPLY"}
-    )
-    data = resp.json()["data"]
-    assert data["page"]["total"] == 1
-    assert data["notifications"][0]["type"] == "REPLY"
 
-    # Unknown type → 400.
-    resp = await authed_client.get(
-        "/notifications", params={"pageSize": 10, "type": "NOPE"}
+@pytest.mark.anyio
+async def test_the_feed_leaves_out_what_calls_the_person_to_act(
+    authed_client: AsyncClient,
+) -> None:
+    """动态记发生过的事；叫人去处理一件事的通知不在里面 —— 那件事在「等你处理」里
+    列着，办完就消失，动态再列一遍就是一页上两处、办完还留一条说「等你」的旧话。
+
+    芝士的提问、邀请、加入申请，以及说一张验收卡在等人的平台提示都不进列表、不算
+    未读；同是平台提示、却没有一处列着的（任务几天没有进展）照旧在动态里。
+    """
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    for kind in (
+        NotificationType.CHEESE_QUESTION,
+        NotificationType.PROJECT_INVITE,
+        NotificationType.TEAM_INVITATION,
+        NotificationType.TEAM_JOIN_REQUEST,
+    ):
+        await _seed(factory, type_=kind)
+    await _seed(
+        factory,
+        type_=NotificationType.ROOM_NOTICE,
+        metadata={"eventType": "accept_ready", "cardId": "c0ffee"},
     )
-    assert resp.status_code == 400
+    quiet = await _seed(
+        factory,
+        type_=NotificationType.ROOM_NOTICE,
+        metadata={"eventType": "task_quiet", "content": "三天没有进展"},
+    )
+    mention = await _seed(factory, type_=NotificationType.MENTION)
+
+    listed = (
+        await authed_client.get("/notifications", params={"pageSize": 20})
+    ).json()["data"]
+    assert sorted(n["id"] for n in listed["notifications"]) == sorted([quiet, mention])
+    assert listed["page"]["total"] == 2
+
+    unread = await authed_client.get("/notifications/unread-count")
+    assert unread.json()["data"]["count"] == 2
+
+
+@pytest.mark.anyio
+async def test_marking_the_feed_read_does_not_answer_what_waits(
+    authed_client: AsyncClient,
+) -> None:
+    """「全部标为已读」只读掉动态里的。一条还在等回答的提问不因此算办完：它的通知
+    要等那件事真的了结才结掉（`delivery/ledger.py` 的 `settle`）。"""
+    factory = authed_client.test_factory  # type: ignore[attr-defined]
+    question = await _seed(factory, type_=NotificationType.CHEESE_QUESTION)
+    await _seed(factory, type_=NotificationType.MENTION)
+
+    resp = await authed_client.put("/notifications/status", json={"read": True})
+    assert resp.json()["data"]["count"] == 1
+
+    row = (await authed_client.get(f"/notifications/{question}")).json()["data"]
+    assert row["notification"]["read"] is False
 
 
 async def _seed_project(factory) -> str:
     """一个项目，直接落行 —— ``POST /projects`` 在这套 harness 里是 503（它要的代码
     托管服务没配），而这个用例要的只是一个收得下通知的项目。"""
-    from app.domain.project.models import Project
+    from app.domain.project.models import Project, ProjectMember
 
     async with factory() as session:
         project = Project(
@@ -236,6 +278,9 @@ async def _seed_project(factory) -> str:
         )
         session.add(project)
         await session.flush()
+        # The harness signs in as 芝士, an AI teammate: it is in a project by
+        # its seat on the roster, not by the owner column.
+        session.add(ProjectMember(project_id=project.id, user_handle=_AGENT_HANDLE))
         project_id = str(project.id)
         await session.commit()
     return project_id

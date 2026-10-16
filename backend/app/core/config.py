@@ -777,10 +777,12 @@ class Settings(BaseSettings, SandboxSettings):
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
     # The most hosts the pool holds at once. It
     # protects the MicroCloud cluster; a session that finds the pool full is told
-    # capacity is tight and to try later. Ten hosts' disks written full are
-    # 400 GB, within what 119pve's shared thin pool had free (464 GB, 2026-10-06);
-    # twenty would not be.
-    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
+    # capacity is tight and to try later. Thirty hosts are a hundred and twenty
+    # sandbox slots, and their disks written full are 1.2 TB: the cluster's
+    # shared thin pool is what has to hold them, so this rises only with the
+    # storage behind it. (At ten, whose 400 GB did fit, the pool had 464 GB
+    # free — 2026-10-06.)
+    cloud_pool_max_hosts: int = Field(default=30, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
@@ -881,20 +883,26 @@ class Settings(BaseSettings, SandboxSettings):
 
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
-    # Overridable per project via project.settings["max_concurrent_turns"].
+    # A project that wants another number sets its own in
+    # project.settings["max_concurrent_turns"]; ``app.core.turn_ceiling`` reads
+    # it, and PUT /projects/{project_id}/compute-configs is what writes it.
     #
     # The number comes from the room side. A room runs up to
     # `MAX_RESIDENT_TASKS_PER_ROOM` threads and its own line is not one of them,
     # so a saturated room is five turns, and a project normally has more than
     # one room working. At 2, a single busy room queued three of its own threads
-    # behind itself while the rest of the project waited on top of that.
+    # behind itself while the rest of the project waited on top of that. At 16,
+    # a project running sixteen or more task lines at once queued work of its
+    # own behind the ceiling. 20 lifts that, stopping short of 32: one jump was
+    # thought to fall hard on the small machines, so the default moves in steps
+    # and the projects that need more say so themselves.
     #
     # This is the ONLY concurrency gate in the system: nothing limits how many
     # turns land on ONE machine. So this number also decides what a single
     # self-hosted laptop can be asked to run at once, which is not what it is
     # named for and not a limit anybody chose. Raise this and that exposure
     # rises with it, until a per-machine gate exists.
-    max_concurrent_turns: int = 16
+    max_concurrent_turns: int = 20
 
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
@@ -992,8 +1000,11 @@ class Settings(BaseSettings, SandboxSettings):
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
-    # workflow it triggers after merge.
-    accept_pr_poll_interval_s: int = 300
+    # workflow it triggers after merge. This is the clock every card's merge
+    # state is mirrored on, so it is also how late a green or merged PR reaches
+    # its card; `review/queries.CHECK_WATCH_TICKS` counts 「还在等 CI」 off three
+    # of these.
+    accept_pr_poll_interval_s: int = 60
     # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
     # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
     # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是

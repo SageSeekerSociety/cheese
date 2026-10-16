@@ -871,7 +871,7 @@ test.describe('房间输入框：下面那一行放得下，手指点得中', ()
       if (size.width < 960) await chatTab.click();
       await expect(page.locator('.composer-actions')).toBeVisible();
       // 有字时发送键才可点（禁用的按钮不接点击，量不出来）。只填不发。
-      await page.locator('.composer-input textarea:not([aria-hidden])').fill('量一下');
+      await page.locator('.composer-input .ProseMirror').fill('量一下');
       const got = await measureComposer(page);
       expect(got, `${size.width}：没找到输入框`).not.toBeNull();
       if (size.width < 960) expect(got!.coarse, '手机这一档要在触屏下量').toBe(true);

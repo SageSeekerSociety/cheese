@@ -16,7 +16,7 @@ covers:
 
 ## 额度从哪来 {#grants}
 
-额度以「算力额度」（credits）为单位，一笔一笔的额度包（`compute_grants` 表）只挂在团队上，不发给团队里的个人。准入、扣费和余额都走 `usage/ledger.py` 这一处。每个包记着：
+额度以「算力额度」（credits）为单位，一笔一笔的额度包（`compute_grants` 表）只挂在团队上，不发给团队里的个人。准入、扣费和余额都走 `usage/` 里的账本 `Ledger` 这一处：只读的一半在 `usage/ledger_queries.py`，写入和发放的一半在 `usage/ledger.py`；计划的时间窗口、费率、付款方和余额规则各在 `usage/windows.py`、`usage/rates.py`、`usage/payers.py`、`usage/balance.py`。每个包记着：
 
 - `source`：来源。方案按期发放（`plan_period`）、题目发给项目的定向额度（`task_earmark`）、购买（`purchase`）、管理员发放（`admin_grant`）。
 - `project_id`：有值时只给这个项目用。

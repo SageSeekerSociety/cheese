@@ -16,8 +16,11 @@ asks the project domain before the batch gets here.
 """
 
 import hashlib
+import ipaddress
+import re
 import time
 import uuid
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +33,48 @@ from app.domain.run_record.service import keep as keep_record
 DEDUP_WINDOW_S = 600.0
 MAX_BLOCKS_PER_WINDOW = 30  # per project
 _SEEN_PRUNE_AT = 512
+
+
+# A tab still running the previous build asks for a chunk the deploy removed.
+# The page already recovers from that by itself — `frontend/src/services/
+# staleBuild.ts` reloads it on these same messages (keep the two in step) — and
+# what still arrives here is the sibling imports of the route it was loading,
+# rejected while the reload was under way: 29 + 5 alerts in two weeks, none of
+# which anyone could act on. Kept as run records, not alerted.
+_STALE_BUILD_RE = re.compile(
+    r"Failed to fetch dynamically imported module|error loading dynamically "
+    r"imported module|Importing a module script failed|Unable to preload CSS",
+    re.IGNORECASE,
+)
+
+
+def _from_a_dev_server(origin: str | None) -> bool:
+    """Whether the page that reported was served by someone's local or preview
+    dev server (``http://localhost:5317``, ``http://127.0.0.1:3000``) whose API
+    proxy points at this backend. Its errors are that developer's, of code that
+    may never ship; they are kept, but not alerted to everyone. Not a desktop
+    client: Tauri's origins (``tauri://localhost``, ``http://tauri.localhost``)
+    are a user's app and still alert."""
+    if not origin:
+        return False
+    try:
+        parts = urlsplit(origin.strip().lower())
+        host = parts.hostname or ""
+    except ValueError:  # an Origin no browser sends ("http://[::1"): not a dev server
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    if host == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def worth_alerting(err: "FrontendErrorIn", origin: str | None) -> bool:
+    return not (_from_a_dev_server(origin) or _STALE_BUILD_RE.search(err.message))
 
 
 class FrontendErrorIn(BaseModel):
@@ -109,7 +154,9 @@ def event_meta(err: FrontendErrorIn) -> dict:
     return meta
 
 
-async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
+async def record(
+    db: AsyncSession, body: FrontendErrorBatchIn, *, origin: str | None = None
+) -> dict:
     """Admit the batch and keep the survivors. A dropped duplicate still counts
     as received: the reporting client never retries.
 
@@ -137,6 +184,8 @@ async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
         # Only here: `admit` returned True, so this fingerprint is one nobody has
         # seen in the dedup window. Every repeat of it is already excluded above,
         # which is what keeps a render loop from becoming a thousand alerts.
+        if not worth_alerting(err, origin):
+            continue
         alerting.send(
             f"前端报错：{err.message}",
             [

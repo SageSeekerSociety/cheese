@@ -45,7 +45,7 @@ const TASK_RESOURCES = new Set(['split', 'task_created'])
 function delivers(row: NoticeRow): boolean {
   const n = row.notice
   if (n?.mode !== 'action') return false
-  return !!(n.docRequest || n.docSuggestions || n.libraryDoc || TASK_RESOURCES.has(n.resource))
+  return !!(n.docEdits || n.docSuggestions || n.libraryDoc || TASK_RESOURCES.has(n.resource))
 }
 
 /** 谁做的；不参与合并的行是 null。 */

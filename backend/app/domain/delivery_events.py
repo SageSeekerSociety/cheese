@@ -50,7 +50,8 @@ class NotificationType(str, Enum):
     REPLY = "REPLY"
     REACTION = "REACTION"
     PROJECT_INVITE = "PROJECT_INVITE"
-    DEADLINE_REMIND = "DEADLINE_REMIND"
+    #: The owner offers you their project (`membership.OwnershipService`).
+    PROJECT_TRANSFER = "PROJECT_TRANSFER"
 
     TEAM_JOIN_REQUEST = "TEAM_JOIN_REQUEST"
     TEAM_INVITATION = "TEAM_INVITATION"

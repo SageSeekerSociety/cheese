@@ -91,6 +91,7 @@ from app.domain.agent_instance.schemas import (
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -171,7 +172,9 @@ async def create_project_agent(
 ) -> dict:
     """Add an agent to this project. It starts with an empty memory pool."""
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.create(
@@ -206,7 +209,9 @@ async def update_project_agent(
     context compaction and skills) is said in the project's 综合.
     """
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
@@ -245,7 +250,9 @@ async def deactivate_project_agent(
     away.
     """
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
@@ -262,7 +269,9 @@ async def set_project_default_agent(
 ) -> dict:
     """Select the existing agent that new rooms start with."""
     actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.configure_agents
+    )
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
     instance = await service.get_in_project(

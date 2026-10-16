@@ -546,16 +546,6 @@ class TestTaskMembershipRepository:
         assert result is m
         session.add.assert_called_once_with(m)
 
-    @pytest.mark.anyio
-    async def test_find_active_locked_memberships(self):
-        session = _mock_session()
-        m = _membership(is_team=True)
-        session.execute.return_value = _mock_scalars([m])
-        repo = TaskMembershipRepository(session)
-
-        result = await repo.find_active_locked_memberships(100, ["ALWAYS"])
-        assert list(result) == [m]
-
 
 # ---------------------------------------------------------------------------
 # TaskSubmissionRepository

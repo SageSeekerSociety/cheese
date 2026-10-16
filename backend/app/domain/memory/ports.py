@@ -8,7 +8,7 @@
 （`docs/manual/dev/architecture.md` 的层表），所以本包只写下自己要的那两次调用 ——
 和 `webhook/ports.py` 的 `Poster`、`integration/ports.py` 的 `RoomFiles` 同一条规矩。
 
-和 `policy/ports.py` 那份不同，这里交回来的行本包认得 —— ``block`` 和 ``memory``
+和上面那两份不同，这里交回来的行本包认得 —— ``block`` 和 ``memory``
 同在第 4 层，名字写得出，就不必当不透明的看。
 """
 

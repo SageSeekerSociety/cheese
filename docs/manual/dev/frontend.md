@@ -199,7 +199,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 两边的键一一对应：`zh-CN` 的每个键在 `en` 里都有非空的英文，每个键都有源码引用，没有例外清单。缺译文就补上，没人用就删掉。语言名和切换标签是母语写法（每种语言里都是同一个字符串），所以它们根本不住在目录里，而是 `languages.ts` 的常量：于是「英文目录里出现 CJK 是正确的」这件事没有豁免可躲。
 
-目录之外，`pnpm run lint:i18n` 扫 `src/` 里写死的中文，一行也不放过；只有被比较、被解析或被存进数据的中文可以留下，并且要在同一行写 `// i18n-data: 理由`（模板里是 `<!-- i18n-data: 理由 -->`）。规则全文在 `docs/i18n.md` §4、§5。
+目录之外，`pnpm run lint:i18n` 扫 `src/` 里写死的中文，一行也不放过；只有被比较、被解析或被存进数据的中文可以留下，并且要在同一行写 `// i18n-data: 理由`（模板里是 `<!-- i18n-data: 理由 -->`）。模板 HTML 注释里的中文是唯一按基线棘轮算的一种（注释在生产构建里会被去掉，在 vitest 和 `vite dev` 里不会，带汉字的会撞上检查 DOM 的测试）：只拦新增，基线在 `frontend/i18n-comments-baseline.json`，清掉一些后跑 `pnpm run lint:i18n:update` 收紧。规则全文在 `docs/i18n.md` §4、§5。
 
 `fallbackLocale` 是 `zh-CN`：少一个 key 退化成可读的中文而不是原始 key；这个回退在运行时是**静默的**，保证不缺 key 的是 `catalog.spec.ts`。开发构建对每一次缺失和回退都告警。
 

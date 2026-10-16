@@ -41,13 +41,15 @@ covers:
 
 一份资料在消息里、在字节端点上都是同一个地址：`library/<名字>`（`library_ref` / `library_name`）。**不拷贝**——一份资料在这个项目里只有一份字节。送上机器的那一份是另一回事，它落在会话 home 的 `attachments/` 下（`domain/agent/place.py`），**不落在检出目录里**，芝士拿到的是机器报回来的绝对路径；`cheese library get` 走的也是这条（默认落到 `$HOME/attachments/library/<名字>`）。
 
-上传这条路上有一个岔口（`POST /topics/{id}/attachments`）：用户挑出来或拖进来的文件进资料库；剪贴板里贴进来的那张图**不进**（`origin="clipboard"`），落在房间文件区一个 `uploads/<随机串>/` 里。理由是资料库的前提是「名字就是身份」，而截图没有名字，`image.png` 是浏览器替它编的，它只属于那条消息。已经是资料库里那一份被当附件再选一次时，一个字节都不写，直接回它自己的地址。
+发进对话的文件**不进**资料库（`POST /topics/{id}/attachments`，#3828）：它落在房间文件区一个 `uploads/<随机串>/` 里，谁读得到跟着那个频道或私聊走。频道和私聊的「文件」那一格（`GET /topics/{id}/attachments`，`domain/library/in_room.py`）列出这些附件；有人按「保存到资料库」（`POST /topics/{id}/shown/save`，`save_to_library`）才进资料库，那一行记下它从哪个房间的哪个路径来（`room_id` + `source_path`），列表据此标「已在资料库」。已经是资料库里那一份被当附件再选一次时，一个字节都不写，直接回它自己的地址。
+
+芝士在对话里写的文档同理：`documents.room_id` 是它所在的频道或私聊，`kept_at` 为空时只有读得了那段对话的人读得到（`doc_access.reach`），资料库的列表和搜索都不列它（`repositories.project_own`）。`POST /documents/{id}/keep` 只有人能按。
 
 「扔掉一份资料」（`records.remove`）不找替代品：旧消息里那枚 chip 随之打不开，这是对的——那条引用指的就是这一份，在它的位置上摆一份别的东西，才是把读者读到的内容换掉。`records.read_attachment_text` 遇到「资料已经不在」与「地址写错了」给的是两句不同的话。
 
 ## 资料库的记录表 {#library-records}
 
-`library_files`（`domain/library/models.py`，读写在 `records.py`）一行是一份存下来的字节：名字、谁放进来的、在哪个房间、什么时候、多大、sha256、字节在哪。读、判断在不在、列清单、项目导出都查这张表，不扫目录。三条放进来的路都经过 `records.add`：话题里上传（`POST /topics/{id}/attachments`）、从房间留下（`save_to_library`）、资料库页上直接放（`POST /projects/{id}/library`）。先记一行、再写字节，请求结束时一起提交。
+`library_files`（`domain/library/models.py`，读写在 `records.py`）一行是一份存下来的字节：名字、谁放进来的、在哪个房间、什么时候、多大、sha256、字节在哪。读、判断在不在、列清单、项目导出都查这张表，不扫目录。两条放进来的路都经过 `records.add`：从房间留下（`save_to_library`）、资料库页上直接放（`POST /projects/{id}/library`）。先记一行、再写字节，请求结束时一起提交。
 
 「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，它的字节原地不动，新字节记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和字节一起扔掉。
 

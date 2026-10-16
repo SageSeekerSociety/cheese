@@ -44,7 +44,7 @@ from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import room_column
 from app.domain.identity.handles import agent_handle_column
-from app.domain.project.models import Project
+from app.domain.project.models import Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
@@ -86,6 +86,7 @@ class _Question:
         block_id: uuid.UUID,
         topic_id: uuid.UUID,
         project: Project,
+        student: str,
         student_name: str,
         topic_title: str,
         knowledge_point: str | None,
@@ -96,7 +97,7 @@ class _Question:
         self.topic_id = topic_id
         self.project_id = project.id
         self.project_name = project.name
-        self.student = project.owner_handle or ""
+        self.student = student
         self.student_name = student_name
         self.topic_title = topic_title
         self.knowledge_point = knowledge_point
@@ -235,8 +236,10 @@ class SpaceLearningService:
         *,
         from_dt: datetime | None,
         to_dt: datetime | None,
+        author: str | None = None,
     ):
-        """成员说的话: 参与者写的、而且不是芝士（或它的分身）说的。
+        """成员说的话: 参与者写的、而且不是芝士（或它的分身）说的，也不是导师说的
+        —— 导师是来看的老师，他的话不是学生撞上的问题（#3830）。
 
         「是不是人说的」问的是署名而不是档位 —— ``AuthorType`` 早就只剩
         「参与者 / 平台自己」两档，人和 agent 都是 participant（见
@@ -252,6 +255,13 @@ class SpaceLearningService:
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
+                ~select(ProjectRole.id)
+                .where(
+                    ProjectRole.project_id == Block.project_id,
+                    ProjectRole.user_handle == Block.author,
+                    ProjectRole.role == "mentor",
+                )
+                .exists(),
                 # 私聊和私密频道都不属于管理员看板：说话的人只给在场的人看。
                 Topic.is_private.is_(False),
                 Topic.members_only.is_(False),
@@ -263,6 +273,8 @@ class SpaceLearningService:
             stmt = stmt.where(Block.created_at >= from_dt)
         if to_dt is not None:
             stmt = stmt.where(Block.created_at <= to_dt)
+        if author is not None:
+            stmt = stmt.where(Block.author == author)
         return stmt
 
     async def _rooms_of(self, blocks: list[Block]) -> dict[uuid.UUID, uuid.UUID]:
@@ -306,8 +318,7 @@ class SpaceLearningService:
         project_ids = [
             pid
             for pid, project in projects.items()
-            if (student is None or (project.owner_handle or "") == student)
-            and (
+            if (
                 knowledge_point is None
                 or category_of_project.get(pid) == knowledge_point
             )
@@ -319,7 +330,7 @@ class SpaceLearningService:
             (
                 await self._session.execute(
                     self._student_question_blocks(
-                        project_ids, from_dt=from_dt, to_dt=to_dt
+                        project_ids, from_dt=from_dt, to_dt=to_dt, author=student
                     )
                 )
             )
@@ -353,9 +364,8 @@ class SpaceLearningService:
                     block_id=block.id,
                     topic_id=rooms[block.id],
                     project=project,
-                    student_name=names.get(
-                        project.owner_handle or "", project.owner_handle or ""
-                    ),
+                    student=block.author,
+                    student_name=names.get(block.author, block.author),
                     topic_title=titles_by_topic.get(rooms[block.id], ""),
                     knowledge_point=name,
                     created_at=block.created_at,
@@ -373,7 +383,21 @@ class SpaceLearningService:
         project_ids = await self._readable_project_ids(space_id=space_id, handle=handle)
         projects = await self._load_projects(project_ids)
 
-        owners = sorted({p.owner_handle for p in projects.values() if p.owner_handle})
+        # 成员是说过话的人，不是项目的所有者：一个小组项目里不止一个学生。
+        owners = sorted(
+            {
+                b.author
+                for b in (
+                    await self._session.execute(
+                        self._student_question_blocks(
+                            list(projects), from_dt=None, to_dt=None
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            }
+        )
         names = await self._display_names(set(owners))
 
         return {
@@ -548,9 +572,7 @@ class SpaceLearningService:
             )
         ).all()
         titles_by_topic = {row[0]: row[1] for row in topic_rows}
-        names = await self._display_names(
-            {(projects[b.project_id].owner_handle or "") for b in readable}
-        )
+        names = await self._display_names({b.author for b in readable})
 
         grouped: dict[str, list[Block]] = {}
         for block in readable:
@@ -563,8 +585,7 @@ class SpaceLearningService:
         for index, (point, point_blocks) in enumerate(grouped.items(), start=1):
             excerpts = []
             for block in sorted(point_blocks, key=lambda b: b.created_at):
-                project = projects[block.project_id]
-                owner = project.owner_handle or ""
+                owner = block.author
                 excerpts.append(
                     {
                         "blockId": str(block.id),

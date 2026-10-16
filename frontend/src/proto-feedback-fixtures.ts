@@ -20,9 +20,9 @@
  *
  * **这一份现在只是个薄入口**：夹具按职责分在 `./proto-feedback-fixtures/` 下面 ——
  * `support`（原语：常量、两条工厂、线程分页）、`handwritten` 与 `filler`（两批数据）、
- * `rows`（那份数据本身与增删）、`list`（列表的读侧）、`stats`（看板）、
- * `members`（成员名单）、`routes`（路由表）。从这里出去的名字和原来一模一样，
- * 调用方一行都不用改。
+ * `rows`（那份数据本身与增删）、`list`（列表的读侧）、`stats`（看板里的反馈、用量、
+ * 平台）、`statsRoutes`（看板里的耗时、管线、产品、集成）、`members`（成员名单）、
+ * `routes`（路由表）。从这里出去的名字和原来一模一样，调用方一行都不用改。
  */
 export type { MockReply } from './proto-feedback-fixtures/routes'
 export { routes } from './proto-feedback-fixtures/routes'

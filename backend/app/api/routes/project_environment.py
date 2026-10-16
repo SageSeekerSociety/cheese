@@ -36,6 +36,7 @@ from app.domain.notice_meta import (
 from app.domain.project.environment import EnvironmentConfig, project_environment
 from app.domain.project.models import Project
 from app.domain.project.services import refuse_writes_if_archived
+from app.domain.project_permissions import Permission
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
@@ -58,7 +59,9 @@ async def access(
         raise NotFoundError("Project not found")
     user = await UserRepository(db).get_by_id(auth_user.user_id)
     handle = user.username if user else ""
-    steward = bool(user) and await MemberService(db).manages(project_id, handle)
+    steward = bool(user) and await MemberService(db).manages(
+        project_id, handle, Permission.edit_settings
+    )
     member = bool(user) and any(
         m.handle == handle for m in await roster(db, project_id, team=project_team)
     )

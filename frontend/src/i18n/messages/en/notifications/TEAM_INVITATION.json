@@ -1,11 +1,4 @@
 {
-  "action": {
-    "accept": "Accept",
-    "decline": "Decline"
-  },
-  "body": "Join \"{team}\" as {role}",
-  "title": "{inviter} invited you to a team",
-  "title_anonymous": "You've been invited to a team",
   "toast": {
     "acceptFailed": "Couldn’t accept the invitation. Try again later",
     "accepted": "Invitation accepted",

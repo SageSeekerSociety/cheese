@@ -16,7 +16,7 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.delivery.input_identity import InputReconciliationPending
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 #: 送给别的 handle 时说的那一句。说清楚还有哪条路可走 —— 收件人不对不是故障，是这
@@ -41,7 +41,7 @@ async def send_note(
     if not content.strip():
         raise ValidationError(say("deliveryNoteEmpty"))
     try:
-        target = await TopicService(session).place_or_404(to_thread)
+        target = await place_or_404(session, to_thread)
     except NotFoundError:
         raise ValidationError(NOT_YOUR_OWN_THREAD) from None
     if target.project_id != from_project_id:

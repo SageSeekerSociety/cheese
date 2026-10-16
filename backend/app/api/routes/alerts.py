@@ -29,6 +29,7 @@ from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationE
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
+from app.domain.block.adapters import DecisionLine
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
@@ -37,7 +38,7 @@ from app.domain.notification.schemas import (
     ResolveIn,
 )
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="", tags=["alerts"])
 
@@ -104,7 +105,7 @@ async def create_notification(
     conversation_id = None
     room_id = None
     if body.topic_id is not None:
-        place = await TopicService(db).place_or_404(body.topic_id)
+        place = await place_or_404(db, body.topic_id)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
         conversation_id = place.conversation_id
@@ -273,6 +274,8 @@ async def resolve_notification(
         chosen=body.chosen,
         decided_by=handle,
         publish=get_broker().publish,
+        # 拍板那句话落在房间里，那一层 `notification` 够不着（`block/adapters.py`）。
+        decision_line=DecisionLine(db),
     )
     await db.commit()
     return ok(_dump(resolved))

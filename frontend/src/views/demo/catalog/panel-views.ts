@@ -1,0 +1,215 @@
+/**
+ * 工作面板那三格自己的内容：改动（`PanelChangesView`）、预览
+ * （`PanelPreviewView`）、概览里的文档（`PanelDocView`）。
+ *
+ * 三格都是「给宿主塞进面板里」的正文，样例参数（改动的树、预览的文件、协同文档的
+ * 会话）在 `../catalogFixtures.ts`；文档那一格的头像配色走 `avatarColor`。
+ */
+import type { CatalogEntry } from './types'
+
+import { avatarColor } from '@/utils/avatar'
+
+import {
+  AGENT_NAME,
+  CHANGES_EMPTY,
+  changesPanelProps,
+  docPanelProps,
+  docSession,
+  NO_REPO,
+  PREVIEW_EMPTY,
+  previewPanelProps,
+} from '../catalogFixtures'
+
+import { UI } from './needs'
+
+import PanelChangesView from '@/components/panels/PanelChangesView.vue'
+import PanelDocView from '@/components/panels/PanelDocView.vue'
+import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
+
+export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'panel-changes',
+    title: 'PanelChangesView',
+    about: '改动那一格：一棵标着增删的树，默认把全部改动连着排，单独打开一份可以看全文或编辑。',
+    file: 'src/components/panels/PanelChangesView.vue',
+    component: PanelChangesView,
+    needs: UI,
+    states: [
+      {
+        name: '读改动的时候',
+        note: '转圈，不是骨架：这一格等的东西说不准是一份 diff、一个编辑器、一张图，还是「只读 / 二进制」那一句提示 —— 等的是什么形状，它并不知道。',
+        props: changesPanelProps({
+          loading: true,
+          openPath: null,
+          openDiff: null,
+          openDiffLines: [],
+          fileToolReady: false,
+        }),
+      },
+      {
+        name: '这一轮什么都没改',
+        note: '树上和右边都写「暂无改动」。',
+        props: CHANGES_EMPTY,
+        expect: '暂无改动',
+      },
+      {
+        name: '全部改动',
+        note: '默认那一面：树上每行一个文件（+N −M 标着改了多少），右边每个文件一段连着往下排。顶部那块（这次交付的情况）由宿主塞进 head 插槽，这里没有。',
+        props: changesPanelProps({ openPath: null, openDiff: null, openDiffLines: [] }),
+        expect: '3 个文件',
+      },
+      {
+        name: '单独打开一份',
+        note: '点段头的「打开」：只看这一份，横条上有返回、差异和全文两面。',
+        props: changesPanelProps(),
+        expect: '这个项目放本课程的课件和作业',
+      },
+      {
+        name: '保存冲突',
+        note: '你编辑期间芝士又改了同一份文件：两个版本都留着，由人按一下决定谁赢 —— 静默替人选一个，就是改动消失的方式。',
+        props: changesPanelProps({ fileConflict: true, fileDirty: true }),
+        expect: '你编辑期间，这个文件已被修改',
+      },
+      {
+        name: '没绑仓库',
+        note: '这个项目没有代码仓库：一句话说清，不画一棵空树。',
+        props: changesPanelProps(NO_REPO),
+        expect: '暂无代码仓库',
+      },
+      {
+        name: '读不到改动',
+        note: '取 diff 失败：说清失败的是什么，还留着「回到已提交版本」这条出路。',
+        props: changesPanelProps({ errorMsg: '拉取改动失败：请求超时', fileSource: 'live' }),
+        expect: '拉取改动失败',
+      },
+    ],
+  },
+  {
+    id: 'panel-preview',
+    title: 'PanelPreviewView',
+    about: '预览那一格：芝士最后摆出来的那一样 —— 一篇文档、一张表、一个跑着的应用，或者一句「还没有」。',
+    file: 'src/components/panels/PanelPreviewView.vue',
+    component: PanelPreviewView,
+    needs: UI,
+    states: [
+      {
+        name: '读预览的时候',
+        note: '转圈，不是骨架：底下那一格可能是网页、文档、表格、图片，等完才知道是哪一样。',
+        props: previewPanelProps({ loading: true }),
+      },
+      {
+        name: '还没有东西可看',
+        note: '房间里还没摆出过任何东西：一句话，不是一块空白。',
+        props: PREVIEW_EMPTY,
+        expect: '暂无预览',
+      },
+      {
+        name: '一篇 markdown',
+        note: '正文直接画出来（和聊天用的是同一个渲染器）：标题、清单都在，顶上是文件名和类型。',
+        props: previewPanelProps(),
+        expect: '课件和作业都在这里',
+      },
+      {
+        name: '这一份读不到了',
+        note: '文件还在清单上、字节取不到：说的是「无法读取文件」，和「预览加载失败」不是同一件事。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewNamed: false,
+          previewReadError: '这个文件已经不在了',
+        }),
+        expect: '无法读取文件',
+      },
+      {
+        name: '跑着的应用断了',
+        note: '机器上没在跑，还是跑了但应用自己没了 —— 两句不同的话。这里给的是第一句。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewNamed: true,
+          previewAppNote: '课程网站',
+          previewNamedPath: 'app',
+          previewTunnelUp: false,
+        }),
+        expect: '应用预览暂不可用',
+      },
+      {
+        name: '取预览失败',
+        note: '读这一格本身失败：一句「预览加载失败」，底下一行是这个错。',
+        props: previewPanelProps({
+          previewFile: null,
+          documentType: null,
+          documentName: '',
+          previewMime: '',
+          previewError: '接口返回 502',
+        }),
+        expect: '预览加载失败',
+      },
+    ],
+  },
+  {
+    id: 'panel-doc',
+    title: 'PanelDocView',
+    about: '概览那一格的文档：工具条、正文和评论侧栏，窄面板中评论以抽屉展开。',
+    file: 'src/components/panels/PanelDocView.vue',
+    component: PanelDocView,
+    needs: UI,
+    states: [
+      {
+        name: '没有话题',
+        note: '这一格属于一个话题；没有话题时说的话和「文档是空的」不一样。',
+        props: docPanelProps({ topic: null }),
+        expect: '选择一个频道查看文档',
+      },
+      {
+        name: '文档还在路上的时候',
+        note: '加载期间摆的是骨架，编辑器让位 —— 空编辑器会亮出「芝士会在这里维护文档」，那句话的意思是「这篇是空的」，而它还没到。',
+        props: docPanelProps({ loading: true }),
+      },
+      {
+        name: '一篇文档',
+        note: '标题（话题名）、工具条、正文和评论入口都在。正文是一份协同文档，几个人同时打开时横条上是他们的头像。',
+        props: docPanelProps({
+          session: docSession(
+            '## 课程资料\n\n每周一更新一次，作业在这里登记。\n\n- 第一周：读书报告\n- 第二周：小组讨论'
+          ),
+          peers: [
+            {
+              clientId: 2,
+              handle: 'li-laoshi',
+              agent: false,
+              name: '李老师',
+              avatar: '',
+              color: avatarColor('li-laoshi'),
+            },
+            {
+              clientId: 3,
+              handle: 'cheese-demo',
+              agent: true,
+              name: AGENT_NAME,
+              avatar: '',
+              color: avatarColor('cheese-demo'),
+            },
+          ],
+        }),
+        expect: '课程资料',
+      },
+      {
+        name: '没连上',
+        note: '断开时改动留在本地，连上后自动合并：顶栏上说的是状态，不是错误。',
+        props: docPanelProps({ session: docSession('还没同步的改动也在这里。'), connection: 'offline' }),
+        expect: '没连上，改动会在连上后同步',
+      },
+      {
+        name: '没有编辑权限',
+        note: '只读由凭证决定：横条上写着只读，点不回编辑，⋯ 里也没有那一项。',
+        props: docPanelProps({ session: docSession('只能看，不能改。'), editable: false, readOnly: true }),
+        expect: '只读',
+      },
+    ],
+  },
+]

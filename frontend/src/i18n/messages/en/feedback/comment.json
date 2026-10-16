@@ -1,0 +1,16 @@
+{
+  "agent": "AI teammate",
+  "cancel": "Cancel",
+  "collapse": "Collapse",
+  "confirm": "Delete it",
+  "delete": "Delete",
+  "deleteAsk": "Delete this comment?",
+  "deleteAskWithReplies": "Delete this comment and its {n} replies?",
+  "like": "Like",
+  "likeAria": "Like this comment",
+  "liked": "Liked",
+  "reply": "Reply",
+  "replyPlaceholder": "Reply to {handle}",
+  "replyTo": "Replying to {handle}",
+  "unlikeAria": "Remove your like"
+}

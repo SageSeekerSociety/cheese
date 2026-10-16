@@ -39,7 +39,7 @@ from app.core.sentences import exception_text, say
 from app.domain.admin.services import AdminService
 from app.domain.docs_site import access, assistant, library, retrieval, site, tools
 from app.domain.docs_site.limits import AskLimits
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.usage import pricing
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.user.sessions import SessionService
@@ -418,7 +418,7 @@ async def _agent_scope(
         if not who.authenticated:
             raise AuthenticationRequiredError("Login required")
         return False
-    place = await TopicService(db).place_or_404(body.topic)
+    place = await place_or_404(db, body.topic)
     who = await actor.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

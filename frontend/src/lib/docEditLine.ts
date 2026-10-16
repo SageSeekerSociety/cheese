@@ -53,8 +53,6 @@ export function docLineInTurn(block: Block): boolean {
 export interface DocLine {
   /** The thing done, without who did it: `改了《方案》`. */
   action: string
-  /** Who asked for it, by name; null when nobody did. */
-  requester: string | null
   /** Who did it, by name, for a line outside a turn. */
   actors: string[]
   /** The same people as `actors`, by handle. */
@@ -65,8 +63,6 @@ export interface DocLine {
   library: LibraryDocCard | null
   /** The passages 「查看改动」 marks; empty when there is nothing to mark. */
   edits: DocEdit[]
-  /** The requester's handle, for a change made at someone's request. */
-  requestedBy: string | null
   /** Changes proposed rather than made: the line opens the document where they wait. */
   suggested: boolean
 }
@@ -98,47 +94,39 @@ export function docLineOf(
         : library.suggestions
           ? t('work.room.notice.docLine.suggested', { title, n: library.suggestions })
           : t('work.room.notice.docLine.edited', { title }),
-      requester: null,
       actors,
       actorHandles,
       count: edits.length || null,
       library,
       edits,
-      requestedBy: null,
       suggested: library.suggestions > 0,
     }
   }
   const suggestions = notice.docSuggestions ?? 0
-  const request = notice.docRequest ?? null
+  const edits = suggestions ? [] : notice.docEdits ?? []
+  // The name the conversation's own document goes by; lines stored before it
+  // was written say 「文档」.
+  const title = typeof meta(block).doc_title === 'string' ? (meta(block).doc_title as string) : ''
   return {
     action: suggestions
-      ? t('work.room.notice.docLine.suggestedDoc', { n: suggestions })
-      : t('work.room.notice.docLine.editedDoc'),
-    requester: request ? nameOf(request.requestedBy) : null,
+      ? title
+        ? t('work.room.notice.docLine.suggested', { title, n: suggestions })
+        : t('work.room.notice.docLine.suggestedDoc', { n: suggestions })
+      : title
+        ? t('work.room.notice.docLine.edited', { title })
+        : t('work.room.notice.docLine.editedDoc'),
     actors,
     actorHandles,
-    count: request?.edits.length || null,
+    count: edits.length || null,
     library: null,
-    edits: request?.edits ?? [],
-    requestedBy: request?.requestedBy ?? null,
+    edits,
     suggested: suggestions > 0,
   }
 }
 
 /** What the line says before its count (`inTurn`: without who did it, the turn says that). */
 export function docLineSentence(line: DocLine, inTurn: boolean): string {
-  if (inTurn) {
-    return line.requester
-      ? t('work.room.notice.docLine.forInTurn', { requester: line.requester, action: line.action })
-      : line.action
-  }
-  if (line.requester) {
-    return t('work.room.notice.docLine.forBy', {
-      requester: line.requester,
-      agent: joined(line.actors),
-      action: line.action,
-    })
-  }
+  if (inTurn) return line.action
   return line.actors.length
     ? t('work.room.notice.docLine.by', { actor: joined(line.actors), action: line.action })
     : line.action
@@ -151,14 +139,7 @@ export function docLineSentence(line: DocLine, inTurn: boolean): string {
  */
 export function docLineSentenceWithRefs(line: DocLine, inTurn: boolean): string {
   const token = (handle: string) => `<@${handle}>`
-  return docLineSentence(
-    {
-      ...line,
-      requester: line.requestedBy ? token(line.requestedBy) : line.requester,
-      actors: line.actorHandles.map(token),
-    },
-    inTurn
-  )
+  return docLineSentence({ ...line, actors: line.actorHandles.map(token) }, inTurn)
 }
 
 /** 「3 处」, or '' when the line does not count its changes. */

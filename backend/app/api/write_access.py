@@ -44,6 +44,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver
+from app.api.write_access_baseline import UNDECLARED
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BaseError, ForbiddenError
 from app.core.sandbox_auth import (
@@ -229,8 +230,6 @@ _SEALED: dict[int, APIRoute] = {}
 def seal(app: FastAPI) -> None:
     """Refuse to start with a write route nobody decided the callers of, and
     admit the rest for ``refuse_unsealed_writes``."""
-    from app.api.write_access_baseline import UNDECLARED
-
     found = violations(app, UNDECLARED)
     if found:
         raise RuntimeError(

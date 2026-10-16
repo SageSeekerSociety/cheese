@@ -94,7 +94,7 @@ stylelint 会拦下新增的写死颜色（§7）。
 | `color="amber"` / `color="amber-darken-2"` | `color="primary"` | 主色 |
 | `color="red"` | `color="error"` | 状态色走语义名 |
 
-**唯一的例外**：底色本身不随主题变的地方，压在上面的前景色也不该变。例如默认头像的底色由 `avatarColor()` 按固定的 OKLCH 亮度算出，两套主题下是同一个值，上面的白字就该保持写死的 `#fff`；换成 `on-surface` 反而会坏。这种地方**必须在代码里写明为什么**，否则下一个人会「顺手修好」它。
+**唯一的例外**：底色本身不随主题变的地方，压在上面的前景色也不该变。例如默认头像的底色由 `avatarColor()` 按固定的 OKLCH 亮度算出，两套主题下是同一个值，上面的字就用 `--avatar-ink`——一个两套主题同值的令牌（`--accent-on`、`--brand-ink` 是同一族）；换成 `on-surface` 反而会坏。这种地方**必须在代码里写明为什么**，否则下一个人会「顺手修好」它。
 
 ### 1.3 中性色：按信息离读者多远选
 
@@ -448,7 +448,7 @@ AI 队友的头像（`CheeseAvatar`）有自己的一组颜色：五档暖色的
 
 - **不动 Vuetify 自己的 z-index。** 它的浮层会自己往上叠：第一个按基值（菜单 2000、弹窗 2400），此后每开一层 +10。所以我们的 token 要么落在 2000 以下（设置浮层），要么跟它同层或更高（应用浮层）。
 - `--z-overlay` 与 Vuetify 弹窗基值同为 2400：两者同时在场时由 DOM 顺序决出。当前没有一处会同时出现（应用浮层各自独占屏幕），所以保持原值不动；真要叠在一起，把那一处抬到 `--z-overlay-2` 与 `--z-menu` 之间的空档。
-- `z-index` 写在 CSS 里用 token；Vuetify 组件的 `:z-index` 属性只收数字，读不到 CSS 变量，这时在 JS 里留一份带注释的常量（目前只有 `--z-menu` 一份，见 `RichTextToolbar.vue` 的 `MENU_Z`、`CommandPalette.vue` 的 `SHEET_Z`）。
+- `z-index` 写在 CSS 里用 token；Vuetify 组件的 `:z-index` 属性只收数字，读不到 CSS 变量，这时在 JS 里留一份带注释的常量（目前只有 `--z-menu` 一份，见 `richTextActions.ts` 的 `MENU_Z`、`CommandPalette.vue` 的 `SHEET_Z`）。
 
 ### 3.9 表单与设置行
 

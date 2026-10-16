@@ -25,6 +25,7 @@ import TaskFormSection from '@/components/tasks/form/TaskFormSection.vue'
 import TaskFormTime from '@/components/tasks/form/TaskFormTime.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import TaskMentorNotice from '@/components/tasks/TaskMentorNotice.vue'
 
 /** 只吃 vuetify 的那几件。 */
 const UI: CatalogNeed[] = ['vuetify']
@@ -147,6 +148,19 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         expect: '报名通过后锁定',
       },
       {
+        name: '有导师',
+        note: '勾上后从空间管理员里挑导师，默认是出题人自己；领取者领取前会看到并同意。',
+        props: participation({
+          mentorsJoin: true,
+          mentors: ['zhoulq'],
+          mentorOptions: [
+            { title: '周立群（我）', value: 'zhoulq' },
+            { title: '刘洋', value: 'liuyang' },
+          ],
+        }),
+        expect: '把导师加入领取者的项目',
+      },
+      {
         name: '最多比最少还少（标红）',
         note: '跨字段的那条规矩，红字落在每队人数那一格下面。',
         props: participation({
@@ -156,6 +170,22 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
           maxTeamSizeControl: red('最多人数不能少于最少人数'),
         }),
         expect: '最多人数不能少于最少人数',
+      },
+    ],
+  },
+  {
+    id: 'task-mentor-notice',
+    title: 'TaskMentorNotice',
+    about: '领取确认框里说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
+    file: 'src/components/tasks/TaskMentorNotice.vue',
+    component: TaskMentorNotice,
+    needs: UI_T,
+    states: [
+      {
+        name: '一位导师',
+        note: '领题前说清，学生同意后才能领。',
+        props: { names: '周立群' },
+        expect: '会作为导师加入你的项目',
       },
     ],
   },

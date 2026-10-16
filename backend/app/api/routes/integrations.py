@@ -53,7 +53,7 @@ from app.domain.notice_meta import (
 )
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["integrations"])
@@ -136,7 +136,7 @@ async def _in_room(
     db: AsyncSession, resolver: ActorResolver, topic: uuid.UUID
 ) -> tuple[uuid.UUID, uuid.UUID, str]:
     """(project, room, speaker) for a call made from a room."""
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     actor = await resolver.resolve(project_id=place.project_id, topic_id=topic)
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=topic, enforce=True

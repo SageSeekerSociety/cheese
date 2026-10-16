@@ -252,11 +252,9 @@ it('sends the marked-up image together with the note as one message', async () =
   await fireEvent.click(ui.getByRole('button', { name: '加入对话' }))
   await waitFor(() => expect(ui.emitted().locate).toBeTruthy())
   expect(api.uploadAttachment).toHaveBeenCalledTimes(1)
-  const [topic, file, origin] = vi.mocked(api.uploadAttachment).mock.calls[0]
+  const [topic, file] = vi.mocked(api.uploadAttachment).mock.calls[0]
   expect(topic).toBe('room')
   expect((file as File).name).toBe('design-annotated.png')
-  // 房间附件而不是资料库：这张合成图是一次性的话，不是这个项目要留的文件。
-  expect(origin).toBe('clipboard')
   const payload = (ui.emitted().locate as [{ message: string; attachments?: unknown[] }][])[0][0]
   expect(payload.attachments).toEqual([attachment])
   expect(payload.message).toContain('标注 1 处')

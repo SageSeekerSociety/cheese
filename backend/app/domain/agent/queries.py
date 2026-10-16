@@ -29,6 +29,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     memory_changed_notice,
 )
+from app.domain.agent.proposals import propose
 from app.domain.agent_instance.adapters import named_teammate
 from app.domain.agent_instance.configuration import catalog
 from app.domain.agent_instance.models import AgentInstance
@@ -48,7 +49,6 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.policy import gate
-from app.domain.policy.proposals import propose
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -66,9 +66,8 @@ logger = logging.getLogger(__name__)
 class _Proposed:
     """闸门把这次调用变成了一条提议：那条提议，和它在房间里刚落下的那条事件。
 
-    `landed` 是 `None` 表示这条提议之前就提过了（`policy/proposals.py` 按身份去
-    重）。两个调用点各取一半——轮次要那条事件来收场，平台自己发起的那几轮要那句话
-    来抛。
+    `landed` 是 `None` 表示这条提议之前就提过了（`proposals.py` 按身份去重）。两
+    个调用点各取一半——轮次要那条事件来收场，平台自己发起的那几轮要那句话来抛。
     """
 
     proposal: gate.Proposal
@@ -300,9 +299,10 @@ async def _pass_policy_gate(
 
     提议**不是报错**（结论 40：产物是一条给人的提议）。所以它不能顺着 `raise`
     走：轮次那条路上抛出去的东西最后是屏幕上一个红色的 error 帧，而同一个判决
-    在 `PUT /topics/{id}/compute-profile` 上是 200 加一个 `proposal` 字段——一
-    个判决两种形状，人看到的还是「出错了」。拒绝仍然抛：那一档要的就是一次说
-    得出口的拒绝（I27），和「解析不出模型」在调用点是同一种东西。
+    在网关代填那条路（`api/routes/llm_proxy.py`）上是一份 `allow=false` 加
+    `reason_kind=binding` 的应答体——一个判决两种形状，人看到的还是「出错了」。
+    拒绝仍然抛：那一档要的就是一次说得出口的拒绝（I27），和「解析不出模型」在调
+    用点是同一种东西。
 
     交回来的那条事件可能是 `None`：这条提议已经提过了（`propose` 按身份去重）。
     调用点照样收场，只是房间里不再多一句一样的话。
@@ -318,7 +318,7 @@ async def _pass_policy_gate(
         return None
     if topic_id is None:
         raise gate.OverTier(verdict.content)
-    block = await propose(session, verdict, place_id=topic_id, announce=announce)
+    block = await propose(session, verdict, place_id=topic_id)
     return _Proposed(
         verdict, _block_payload(BlockOut.model_validate(block)) if block else None
     )

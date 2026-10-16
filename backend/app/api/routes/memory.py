@@ -33,6 +33,7 @@ from app.domain.memory.files import (
 )
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.models import MemoryFileRecord
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -123,7 +124,13 @@ async def delete_memory(
     if entry is None or entry.path == INDEX_NAME:
         raise missing
     try:
-        await resolver.authorize_project(actor, project_id=entry.project_id)
+        await resolver.authorize_project(
+            actor,
+            project_id=entry.project_id,
+            permission=Permission.configure_agents
+            if entry.scope is not MemoryFileScope.private
+            else None,
+        )
     except (ForbiddenError, NotFoundError) as exc:
         raise missing from exc
     if entry.scope is MemoryFileScope.private and entry.owner_handle != actor.handle:

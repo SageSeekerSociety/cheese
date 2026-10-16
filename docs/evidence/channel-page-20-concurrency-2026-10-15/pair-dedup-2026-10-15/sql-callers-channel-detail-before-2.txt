@@ -1,0 +1,87 @@
+ids {"project": "81d88117-e1a3-40d4-b97d-1e3103904714", "room": "026c457c-db2d-46cb-9e1e-99bc9e3ee329", "task": "1c1fa696-8b85-4ded-8074-a16dcd8c651c"} requests=1 loadavg=110.35 78.89 66.23 27/11860 14677
+
+== channel detail: 34 statements, 29 distinct ==
+  x1  rows=0     SELECT blocks.conversation_id, threads.room_id FROM blocks LEFT 
+        app/domain/topic/repositories.py:747 replied_to_me x1
+  x1  rows=1     SELECT tasks.id, (SELECT max(blocks.created_at) AS max_1 FROM bl
+        app/domain/room_task/repositories.py:570 last_block_at_for_tasks x1
+  x2  rows=0     SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.a
+        app/domain/block/repositories.py:607 _awaiting_an_answer x2
+  x1  rows=1     SELECT topics.id, coalesce(greatest((SELECT max(blocks.created_a
+        app/domain/topic/repositories.py:605 last_activity_for_topics x1
+  x1  rows=0     SELECT coalesce((SELECT tasks.room_id FROM tasks WHERE tasks.id 
+        app/domain/notification/repositories.py:491 decision_topic_ids x1
+  x1  rows=1     SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.numbe
+        app/domain/room_task/repositories.py:248 underway_others x1
+  x2  rows=0     SELECT inside.room_id FROM (SELECT tasks.id AS id, tasks.room_id
+        (unset) x2
+  x3  rows=0     SELECT threads.id, threads.room_id FROM threads WHERE threads.ro
+        app/domain/conversation/services.py:118 threads_of_rooms x3
+  x1  rows=6     SELECT tasks.id, tasks.room_id, tasks.accepted_at, greatest(topi
+        app/domain/room_task/services.py:300 unseen_deliveries x1
+  x1  rows=0     SELECT blocks.conversation_id, blocks.created_at, blocks.meta FR
+        app/domain/block/waits.py:223 _unanswered x1
+  x1  rows=0     SELECT DISTINCT ON (blocks.conversation_id, blocks.author) block
+        app/domain/block/waits.py:181 _last_said x1
+  x1  rows=0     SELECT blocks.conversation_id, blocks.turn_id, blocks.created_at
+        app/domain/block/waits.py:356 _failed_turns x1
+  x1  rows=1     SELECT topics.project_id AS topics_project_id, topics.parent_id 
+        app/domain/room_task/place.py:80 resolve x1
+  x2  rows=2     SELECT projects.name AS projects_name, projects.slug AS projects
+        app/domain/project/repositories.py:56 get x2
+  x1  rows=0     SELECT tasks.project_id, tasks.room_id, tasks.title, tasks.numbe
+        app/domain/room_task/repositories.py:224 underway_with x1
+  x1  rows=1     SELECT tasks.room_id, count(tasks.id) AS count_1 FROM tasks WHER
+        app/domain/room_task/repositories.py:212 underway_counts x1
+  x1  rows=7     SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards
+        app/domain/review/repositories.py:269 list_recent_for_places x1
+  x1  rows=1     SELECT tasks.id, tasks.room_id FROM tasks WHERE tasks.room_id IN
+        app/domain/room_task/repositories.py:261 tasks_of_rooms x1
+  x1  rows=7     SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards
+        app/domain/review/repositories.py:355 reviewer_topic_ids x1
+  x1  rows=8     SELECT tasks.id, tasks.room_id FROM tasks WHERE tasks.room_id IN
+        app/domain/agent/liveness.py:158 moving_topics x1
+  x1  rows=0     SELECT accept_cards.topic_id, accept_cards.task_id, accept_cards
+        app/domain/review/repositories.py:179 latest_by_task x1
+  x1  rows=0     SELECT topic_memberships.topic_id FROM topic_memberships WHERE t
+        app/domain/topic_membership/repositories.py:65 topic_ids_for_member x1
+  x1  rows=0     SELECT topic_memberships.topic_id, topic_memberships.role FROM t
+        app/domain/topic_membership/repositories.py:78 roles_for_member x1
+  x1  rows=0     SELECT "user".id, "user".username, "user".email, "user".email_do
+        app/domain/user/repositories.py:33 get_by_username x1
+  x1  rows=0     SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_
+        app/domain/agent/liveness.py:109 running_tasks x1
+  x1  rows=0     SELECT threads.id FROM threads WHERE threads.room_id IN ($1::UUI
+        app/domain/topic/repositories.py:741 replied_to_me x1
+  x1  rows=0     SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_
+        app/domain/agent/liveness.py:170 moving_topics x1
+  x1  rows=0     SELECT threads.id, threads.room_id FROM threads WHERE threads.ro
+        app/domain/agent/liveness.py:162 moving_topics x1
+  x1  rows=0     SELECT project_members.project_id, project_members.user_handle, 
+        (unset) x1
+
+== awaiting-me (reference): 12 statements, 12 distinct ==
+  x1  rows=178   SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.a
+        app/domain/block/repositories.py:607 _awaiting_an_answer x1
+  x1  rows=71    SELECT accept_cards.id, accept_cards.topic_id, accept_cards.task
+        app/domain/review/repositories.py:238 listed x1
+  x1  rows=118   SELECT tasks.id, tasks.project_id, tasks.room_id, tasks.title, t
+        app/domain/room_task/repositories.py:194 listed_by_ids x1
+  x1  rows=6     SELECT anon_1.place, said_since.author, said_since.at FROM unnes
+        app/domain/block/repositories.py:634 _awaiting_an_answer x1
+  x1  rows=0     SELECT threads.id, threads.room_id FROM threads WHERE threads.ro
+        app/domain/conversation/services.py:118 threads_of_rooms x1
+  x1  rows=621   SELECT topics.id FROM topics WHERE topics.project_id IN ($3::UUI
+        app/domain/topic/repositories.py:467 visible_unarchived_ids_for_projects x1
+  x1  rows=118   SELECT tasks.id, tasks.room_id, tasks.status = $1 AS underway, t
+        app/domain/room_task/repositories.py:537 brief_for_projects x1
+  x1  rows=144   SELECT topics.id, topics.project_id, topics.title, topics.status
+        app/domain/topic/repositories.py:509 listed_by_ids x1
+  x1  rows=12    SELECT notification.id, notification.receiver_id, notification.r
+        app/domain/notification/repositories.py:460 still_open x1
+  x1  rows=13    SELECT projects.name, projects.slug, projects.owner_handle, proj
+        app/domain/project/repositories.py:409 list_visible_to x1
+  x1  rows=0     SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_
+        app/domain/agent/liveness.py:109 running_tasks x1
+  x1  rows=0     SELECT "user".id, "user".username, "user".email, "user".email_do
+        app/domain/user/repositories.py:33 get_by_username x1

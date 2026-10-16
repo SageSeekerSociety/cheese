@@ -104,6 +104,7 @@ async def save_to_library(
         data=data,
         added_by=by,
         room_id=room_id,
+        source_path=path,
     )
     await announce(
         session,

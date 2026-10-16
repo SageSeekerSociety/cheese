@@ -1,11 +1,4 @@
 {
-  "action": {
-    "approve": "Approve",
-    "reject": "Reject"
-  },
-  "body": "Join \"{team}\"",
-  "title": "{requester} asked to join your team",
-  "title_anonymous": "Someone asked to join your team",
   "toast": {
     "approveFailed": "Couldn’t approve the request. Try again later",
     "approved": "Request approved",

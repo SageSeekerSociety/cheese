@@ -290,6 +290,27 @@ def add_external_member(client, project_id: str, handle: str, *, by: str = "owne
     assert ok.status_code == 200, ok.text
 
 
+def offer_project(client, project_id: str, to: str, *, by: str):
+    """``by`` offers the project to ``to``; the response, as the browser gets it."""
+    return client.post(
+        f"/projects/{project_id}/transfer",
+        json={"to_handle": to},
+        headers=session_auth_headers(by),
+    )
+
+
+def hand_over(client, project_id: str, to: str, *, by: str):
+    """``by`` offers the project to ``to`` and ``to`` accepts — the whole handing
+    over. Returns the acceptance's response."""
+    offered = offer_project(client, project_id, to, by=by)
+    assert offered.status_code == 200, offered.text
+    return client.post(
+        f"/transfers/{offered.json()['data']['id']}/respond",
+        json={"accept": True},
+        headers=session_auth_headers(to),
+    )
+
+
 def ask_to_join(
     api_client: "TestClient", team_id: int, token: str, message: str
 ) -> int:
@@ -564,16 +585,57 @@ def inbox(client, handle: str, kind: str | None = None) -> list[dict]:
     expects to hear something an account first (``seed_user``, which this
     calls too, so here it only finds that account).
     """
-    params: dict = {"pageSize": 100}
-    if kind is not None:
-        params["type"] = kind
     r = client.get(
         "/notifications",
-        params=params,
+        params={"pageSize": 100},
         headers={"Authorization": f"Bearer {seed_user(client, handle)}"},
     )
     assert r.status_code == 200, r.text
-    return r.json()["data"]["notifications"]
+    rows = r.json()["data"]["notifications"]
+    return rows if kind is None else [row for row in rows if row["type"] == kind]
+
+
+def mail(client, token: str, kind: str) -> list[dict]:
+    """Every notification of ``kind`` that reached the holder of ``token``, newest
+    first, each read the way their browser reads one (``GET /notifications/{id}``).
+
+    Not the feed (``inbox``): a notification calling the person to act — a
+    question, a card waiting on them, an invitation — only calls them back; the
+    thing itself waits in 等你处理, so the feed leaves it out
+    (``NotificationRepository._in_feed``). That it reached them, and what it says
+    now, is still read here.
+    """
+    import asyncio
+
+    from sqlalchemy import select
+
+    from app.common.auth import verify_access_token
+    from app.domain.notification.models import Notification
+
+    claims = verify_access_token(token)
+    assert claims is not None and claims.user_id is not None
+
+    async def ids() -> list[int]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(Notification.id)
+                .where(
+                    Notification.receiver_id == claims.user_id,
+                    Notification.recipient_handle.is_(None),
+                    Notification.type == kind,
+                    Notification.deleted_at.is_(None),
+                )
+                .order_by(Notification.created_at.desc(), Notification.id.desc())
+            )
+            return list(rows.all())
+
+    headers = {"Authorization": f"Bearer {token}"}
+    found = []
+    for notification_id in asyncio.run(ids()):
+        r = client.get(f"/notifications/{notification_id}", headers=headers)
+        assert r.status_code == 200, r.text
+        found.append(r.json()["data"]["notification"])
+    return found
 
 
 def post_message(client, topic_id: str, handle: str, body: dict) -> dict:

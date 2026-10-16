@@ -1,0 +1,23 @@
+{
+  "copied": "Link copied",
+  "copyFailed": "Could not copy. Click the button above to open the browser again.",
+  "copyLink": "Copy the link to paste into a browser",
+  "failed": "Could not open the browser. Try again.",
+  "haveAccount": "Already have an account?",
+  "lede": "You sign in in your browser, where your saved passwords, passkeys and other accounts are. You will come back here when it is done.",
+  "openAgain": "Open the browser again",
+  "recover": {
+    "open": "Reset it in your browser",
+    "title": "Reset your password"
+  },
+  "signin": {
+    "open": "Sign in with your browser",
+    "title": "Sign in to Cheese"
+  },
+  "signup": {
+    "open": "Sign up with your browser",
+    "title": "Create a Cheese account"
+  },
+  "toSignIn": "Sign in",
+  "waiting": "Opened in your browser. You will come back here when it is done."
+}

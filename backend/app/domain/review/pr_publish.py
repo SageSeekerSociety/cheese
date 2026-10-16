@@ -49,12 +49,11 @@ from app.domain.project.forge import (
     background_quota,
     branch_head,
     installation_known_closed,
-    proposal_client,
     quota_serves_background,
-    status_client,
 )
 from app.domain.repository import identity
 from app.domain.review import archive, notes, pr_text
+from app.domain.review.forge_clients import proposal_client, status_client
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.github_pr import GitHubPRClient
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -71,6 +70,31 @@ logger = logging.getLogger("cheesex.pr_publish")
 #: 采纳现场的补开（AcceptService._publish_pr_for_accept）就是它的重试路径；重试
 #: 开出 PR 后 `record_pr` 会把这条 note 清掉。
 PR_OPEN_FAILED_PREFIX = "开 PR 失败"
+
+#: 草稿 PR 顶着的占位标题。No `Reviewed-by` and no card: nobody has accepted,
+#: and the subject this change will land under is not written until somebody
+#: files a card — this prefix says both. 递卡 replaces it (`sync_pr_text`), and
+#: so does `AcceptService.mark_ready` for the tasks marked ready first: the
+#: full `CI required` that the ready flag starts reads the PR's title, and a
+#: repository checking its own titles reads `WIP:` there and fails a change
+#: everything else passed.
+DRAFT_TITLE_PREFIX = "WIP: "
+
+
+def draft_title(fallback: str) -> str:
+    """The placeholder a task's draft PR opens under."""
+    return f"{DRAFT_TITLE_PREFIX}{fallback}"[:255]
+
+
+def is_draft_title(title: str | None) -> bool:
+    """Whether a PR's title is still the platform's placeholder — the only
+    title the platform gets to overwrite.
+
+    A subject 递卡 wrote, or one somebody typed on GitHub, does not start with
+    the prefix, so recognising the placeholder is also what keeps either of
+    them from being clobbered."""
+    return (title or "").startswith(DRAFT_TITLE_PREFIX)
+
 
 _TASKS: set[asyncio.Task] = set()
 
@@ -766,10 +790,7 @@ async def _open_draft_for_task(session: AsyncSession, task) -> dict | None:  # n
     opened = await client.open_pr(
         head=branch,
         base=base,
-        # No `Reviewed-by` and no card: nobody has accepted, and the subject
-        # this change will land under is not written until somebody files a
-        # card. `WIP:` says both — and 递卡 replaces it (`sync_pr_text`).
-        title=f"WIP: {task.title or branch}"[:255],
+        title=draft_title(task.title or branch),
         body=pr_text.pr_body(room, "", None, who),
         draft=True,
     )

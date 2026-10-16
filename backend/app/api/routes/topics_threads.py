@@ -28,10 +28,11 @@ from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.schemas import BlockOut
+from app.domain.room_task.dispatch import say_thread_title
+from app.domain.room_task.place import place_or_404
 from app.domain.thread import reads
 from app.domain.thread.schemas import ThreadOut
 from app.domain.thread.services import open_thread, thread_of, thread_teammate
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -68,7 +69,7 @@ async def open_block_thread(
     conversation_id = await reads.said_in(db, block_id)
     if conversation_id is None:
         raise NotFoundError("Block not found")
-    place = await TopicService(db).place_or_404(conversation_id)
+    place = await place_or_404(db, conversation_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("threadOpenedByPerson"))
@@ -97,7 +98,7 @@ async def create_thread(
     A person opens it, as with the other road into a 支线: 芝士 does not open
     one by itself, and cats may not speak in a channel they have not joined.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("threadOpenedByPerson"))
@@ -107,8 +108,8 @@ async def create_thread(
         raise ForbiddenError(say("channelJoinToPost"))
     # 频道域把标题说在主线里，支线由这里开：`open_thread` 属于 `thread`，而
     # `thread` 在 `topic` 之上（C5 层表），频道域不能反向 import 它。
-    block_id = await TopicService(db).say_thread_title(
-        room_id=place.room_id, title=body.title, by=actor.handle
+    block_id = await say_thread_title(
+        db, room_id=place.room_id, title=body.title, by=actor.handle
     )
     thread = await open_thread(db, block_id, by=actor.handle)
     out = _thread_out(thread).model_dump(mode="json")
@@ -125,7 +126,7 @@ async def list_threads(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict:
     """A channel's 支线 with replies, the latest reply first."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     rows = await reads.in_room(
         db,
@@ -149,7 +150,7 @@ async def get_thread(
     Any other task reads the same way, opened beside the channel as a 支线 is:
     the message it hangs under is the one it was made from (a reply in a
     支线, or a main-line message), or none for a task created on its own."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     thread = await thread_of(db, topic_id)
     if thread is None and place.task is not None:

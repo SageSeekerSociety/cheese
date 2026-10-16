@@ -17,7 +17,6 @@ const VERSION: DocAppVersion = {
   version: 1,
   note: '',
   author: 'cheese',
-  requested_by: null,
   checked: false,
   created_at: '2026-10-14T10:08:26Z',
   code: '<template><p>x</p></template>',

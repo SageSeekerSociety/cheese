@@ -56,7 +56,12 @@ from app.api.response import ok
 from app.api.topics_deps import _actor_in_place
 from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
-from app.core.errors import ConflictError, SystemBusyError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    SystemBusyError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import exception_text, say
 from app.domain.agent import execution
 from app.domain.documents.convert import (
@@ -81,9 +86,9 @@ from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import clean_artifact_path
 from app.domain.repository.forge_files import ProjectFiles
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
-from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -106,7 +111,7 @@ async def recalc_spreadsheet(
     because a room on a remote machine has no file here — the same reason
     `artifact` takes `content_b64`.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     path = clean_artifact_path(body.get("path") or "")
     raw = _document_bytes(body, place.project_id, place.room_id, path)
@@ -139,7 +144,7 @@ async def convert_document(
     himself. It also gets a room a PDF of a Word file, which is how it looks at
     its own layout before delivering it.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     path = clean_artifact_path(body.get("path") or "")
     target = str(body.get("to") or "").strip()
@@ -175,7 +180,7 @@ async def list_document_revisions(
     opening Word.
     """
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
@@ -220,7 +225,7 @@ async def decide_document_revisions(
     conflict here rather than an overwrite.
     """
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
@@ -232,6 +237,9 @@ async def decide_document_revisions(
         # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
         # 栏照常列），能做的只是不动它。
         raise ValidationError(say("libraryOriginalReadOnly"))
+    if library.is_message_attachment(clean):
+        # 发进对话的原件同理：消息指着的就是它。
+        raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")

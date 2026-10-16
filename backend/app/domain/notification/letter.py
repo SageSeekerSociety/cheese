@@ -69,7 +69,7 @@ _HEADLINES: Final[dict[str, str]] = {
     "THREAD_REPLY": "你参与的支线有新回复",
     "REACTION": "有人对你的内容做出了反应",
     "PROJECT_INVITE": "你收到了项目邀请",
-    "DEADLINE_REMIND": "有一个截止时间快到了",
+    "PROJECT_TRANSFER": "你收到了项目转让",
     "DEVICE_IN_USE": "有 AI 队友开始在你的设备上工作",
 }
 

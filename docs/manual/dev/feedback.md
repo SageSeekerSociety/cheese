@@ -164,7 +164,7 @@ docker exec <backend 容器> python -m scripts.feedback_status FB-12 declined \
 
 ## 每日分诊：定时规则带一批没人处理的反馈 {#triage}
 
-一条定时规则的 `spec` 里加 `feedback_batch: N`（1–10），它每次响的时候，平台把最早的 N 条「没人处理」的反馈连同分诊步骤附在工作说明后面交给房间里的队友（`feedback/triage.py`，在 `routine/service.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套：人建、存下来就在跑，结果交回给规则的主人。
+一条定时规则的 `spec` 里加 `feedback_batch: N`（1–10），它每次响的时候，平台把最早的 N 条「没人处理」的反馈连同分诊步骤附在工作说明后面交给房间里的队友（`feedback/triage.py`，在 `routine/service/firing.py` 的 `_fire` 里接上）。规则本身就是[例行](/dev/routine#triggers)那一套：人建、存下来就在跑，结果交回给规则的主人。
 
 - **「没人处理」** 是 `received` 且没有指派人：指派和领取都会把它推到「处理中」，还停在「已收录」的就是没人碰过的。只发公开、没被标成安全问题的：队友读得到的只有这些。私密和安全的那几栏照旧由反馈管理员看，新来的时候飞书群里有那条只带编号的消息。
 - **选哪几条是平台定的**，不是队友自己去列表里挑：两天的执行不会各自理解一遍「没人处理」，一天里一条都没有的时候整次执行记成 `skipped`（「没有待分诊的反馈」），不派活，也不通知主人。

@@ -6,7 +6,6 @@ import pytest
 
 from app.domain.authz.policy import (
     authorize_topic_access,
-    can_manage_project_members,
     refuse_management_action,
     refuse_unauthenticated_chat,
 )
@@ -156,69 +155,6 @@ async def test_tokenless_socket_is_refused():
         "auth_required",
         "请先登录再进入频道",
     )
-
-
-# --- Project roster (who may add/remove members, change project roles) -------
-#
-# The project roster is the floor of topic access control (a project member
-# reaches every topic above), so unlike every other judgment here it refuses the
-# Phase-0 handle fallback outright.
-
-OWNER = "alice"
-
-
-def _project_adapters(*, owner: str | None = OWNER, team_admins: set | None = None):
-    async def project_owner(_pid):
-        return owner
-
-    async def team_manager(_pid, handle):
-        return handle in (team_admins or set())
-
-    return dict(project_owner=project_owner, team_manager=team_manager)
-
-
-async def _may_manage(actor, **adapters):
-    return await can_manage_project_members(
-        actor, project_id=PID, **_project_adapters(**adapters)
-    )
-
-
-async def test_project_owner_may_manage_members():
-    assert await _may_manage(_actor("token", OWNER)) is True
-
-
-async def test_an_admin_of_the_projects_team_may_manage_members():
-    assert await _may_manage(_actor("token", "bob"), team_admins={"bob"})
-
-
-async def test_a_team_admin_may_manage_when_the_project_has_no_owner():
-    # owner_handle is nullable; the team's admins keep such a project manageable.
-    assert await _may_manage(_actor("token", "bob"), owner=None, team_admins={"bob"})
-
-
-async def test_someone_who_only_belongs_may_not_manage_members():
-    assert not await _may_manage(_actor("token", "bob"))
-
-
-async def test_project_outsider_with_a_token_may_not_manage_members():
-    assert await _may_manage(_actor("token", "mallory")) is False
-
-
-async def test_claimed_handle_may_not_manage_members():
-    # Claiming to be the owner proves nothing — a claim being enough WAS the hole.
-    assert await _may_manage(_actor("handle", OWNER)) is False
-    assert (
-        await _may_manage(_actor("handle", "anonymous"), team_admins={"anonymous"})
-        is False
-    )
-
-
-@pytest.mark.parametrize("via", ["token", "cheese"])
-async def test_management_is_the_same_rule_for_people_and_agents(via):
-    actor = _actor(via, "participant")
-    assert not await _may_manage(actor)
-    assert await _may_manage(actor, team_admins={"participant"})
-    assert await _may_manage(actor, owner="participant")
 
 
 async def _refuse_management(actor, *, bound: set[str] = frozenset()):

@@ -9,7 +9,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen } from '@testing-library/vue'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { isAgentBlock } from '../../lib/authorship'
 import { collapseNotices } from '../../lib/platformNotice'
@@ -17,6 +17,8 @@ import { collapseNotices } from '../../lib/platformNotice'
 import ChatTimeline from './ChatTimeline.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 function said(id: string, content: string): Block {
   return {
@@ -90,6 +92,8 @@ function mount(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => setLocale('zh-CN'))
 
+beforeAll(loadMarkdownReader)
+
 describe('a row tells the panel which row it is', () => {
   it('the fade-in that ended belongs to the row it played on', async () => {
     const { container, emitted } = mount({ arrived: new Set(['b']) })
@@ -102,7 +106,7 @@ describe('a row tells the panel which row it is', () => {
   it('saving an edit saves the message being edited', async () => {
     const { emitted } = mount({ editingId: 'b', barEditable: true })
     const box = screen.getByRole('textbox')
-    await fireEvent.update(box, 'second, reworded')
+    await fillComposer(box, 'second, reworded')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))
     const saved = emitted('save-edit') as [Block, string][]
     expect(saved.map(([block, text]) => [block.id, text])).toEqual([['b', 'second, reworded']])

@@ -42,6 +42,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.room_cleanup import retire
+from app.domain.room_task.archive import close_room_tasks
 from app.domain.topic.models import KeptRoomFiles, RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered, session_auth_headers
@@ -303,6 +304,7 @@ async def _archive(client, monkeypatch, room_id, device_id, machine):
             by="owner",
             settle_card=settle_card,
             cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
         )
         await session.commit()
         cleanup_id = (await TopicService(session).get_or_404(room_id)).cleanup_id

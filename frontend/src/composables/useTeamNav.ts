@@ -5,7 +5,7 @@
 // `HomeSidebar`、手机整页 `HomeHub`）各挂一份目录，判断只有这一份。
 import type { Team, TeamMember } from '@/types'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
@@ -15,6 +15,7 @@ import { useJoinSpace } from '@/composables/useJoinSpace'
 
 import { ApiError } from '@/api'
 import { createAvatar } from '@/api/avatars'
+import { onAwaitingChanged } from '@/api/awaitingChanged'
 import { SpacesApi } from '@/api/spaces'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
@@ -86,6 +87,12 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
   useEventListener(window, 'focus', () => {
     if (active()) void loadTeams()
   })
+  // 在待办里接受了一条团队邀请（或别的会了结待办的事）：名单可能多了一个团队，当场重读。
+  onScopeDispose(
+    onAwaitingChanged(() => {
+      if (active()) void loadTeams()
+    })
+  )
   // 窗口从窄变宽，侧栏这时才露出来，此前一次没读过：补一次。
   watch(active, (now) => {
     if (!now) return

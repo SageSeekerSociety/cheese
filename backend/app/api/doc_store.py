@@ -35,6 +35,7 @@ from app.domain.living_doc.models import Document
 from app.domain.living_doc.schemas import document_snapshot
 from app.domain.living_doc.services import DocumentJournal
 from app.domain.room_task import naming
+from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.doc_checks import living_doc_warnings
 
@@ -74,7 +75,6 @@ async def store(
     operation: dict | None,
     quiet: bool = False,
     suggestions: list[dict] | None = None,
-    requested_by: str | None = None,
     edits: list[dict] | None = None,
     suggested: bool = False,
     reason: str | None = None,
@@ -87,7 +87,7 @@ async def store(
     ``suggestions`` are the ones pending in the stored state, kept with it on
     every store. A ``suggested`` store proposed ``edits`` (each with its
     ``suggestion_id``) without changing the text: no version, only the line
-    that says so. ``requested_by`` is who an edit was made for.
+    that says so; a direct one's ``edits`` go on its line, for 「查看改动」.
     """
     journal = DocumentJournal(db)
     await journal.lock(doc.id)
@@ -153,7 +153,6 @@ async def store(
         actors=actors,
         operation_id=operation_id,
         quiet=quiet,
-        requested_by=requested_by,
         edits=edits,
         turn_id=turn_id,
     )
@@ -249,8 +248,6 @@ async def tell_origin_room(
     nowhere else."""
     if conversation_id is None or await whose_document(db, doc) != (None, None):
         return
-    from app.domain.room_task.place import PlaceResolver
-
     place = await PlaceResolver(db).conversation(conversation_id)
     if place is None:
         return

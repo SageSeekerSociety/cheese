@@ -111,7 +111,7 @@ async def announce(
     `event_id` 是这条事件的身份，投递账本按它去重（结论 58「去重键跟事件」）。默认
     就是房间里刚落下的那一行 —— 一次性的提示说完即止，它的身份和它那一行同生。给
     得出一个更长命的身份的调用点才填它：同一件事被问第二遍仍然是同一条事件，那个
-    id 不能每次新建（`domain/policy/proposals.py`）。
+    id 不能每次新建（`domain/agent/proposals.py` 的 `identity` 就是这么算的）。
 
     `about_card` 是这句话说的那张验收卡：随投递一起记下（`payload.cardId`），卡的
     那次决定据此把这一批提示一起结掉（`delivery/ledger.py` 的 `settle_card`）。

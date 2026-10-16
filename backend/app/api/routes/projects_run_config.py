@@ -60,15 +60,26 @@ the same prefix and tags, is all it takes.
 import uuid
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.member_settings import change_project_settings, member_setting_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    ForbiddenError,
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
+from app.core.turn_ceiling import (
+    TURN_CEILING_MAX,
+    TURN_CEILING_MIN,
+    max_concurrent_turns_for,
+    project_max_concurrent_turns,
+)
 from app.domain.agent.environment import (
     default_environment,
     dump,
@@ -84,6 +95,7 @@ from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.project.schemas import ProjectDefaultModelUpdate
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.usage.model_access import ModelAccess
 from app.domain.usage.services import UsageService
 
@@ -169,13 +181,26 @@ async def save_default_model(
 # --- Execution environment: what a new agent in this project gets ---
 
 
+def _turn_ceiling(project_settings: dict | None) -> dict:
+    """How many of this project's turns may run at once, and where that number
+    came from — ``project`` when the project chose one, ``deployment`` when it
+    follows the deployment default. The same shape as a conversation's
+    environment (``default`` + ``default_from``), because it is the same
+    question about a different limit."""
+    own = project_max_concurrent_turns(project_settings)
+    return {
+        "max_concurrent_turns": max_concurrent_turns_for(project_settings),
+        "max_concurrent_turns_from": "deployment" if own is None else "project",
+    }
+
+
 @router.get("/{project_id}/compute-configs")
 async def get_compute_configs(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """The environment a new agent in this project gets, where its agents
     are now, the sandbox specs it is offered and the people's computers it
-    has."""
+    has, and how many of its turns may run at once."""
     # deferred-import: tests replace this name on app.domain.agent.device_hub
     from app.domain.agent.device_hub import device_hub
 
@@ -189,7 +214,7 @@ async def get_compute_configs(
     # is anyone's in the project.
     can_manage = True
     try:
-        await MemberService(db).require_manager(project_id, actor)
+        await MemberService(db).require(project_id, actor, Permission.edit_settings)
     except ForbiddenError:
         can_manage = False
     devices = [
@@ -203,6 +228,7 @@ async def get_compute_configs(
     return ok(
         {
             "default": dump(project_default(project.settings) or default_environment()),
+            **_turn_ceiling(project.settings),
             "can_manage": can_manage,
             "devices": [
                 {
@@ -244,7 +270,7 @@ async def list_device_sessions(
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     listed, hidden = [], 0
     for topic, session in await device_sessions(db, project_id, device_id):
         try:
@@ -259,7 +285,15 @@ async def list_device_sessions(
 
 
 class ComputeConfigsIn(BaseModel):
-    default: dict
+    """Either half of the config, so a caller can move one without the other:
+    omitted fields stay as they are. ``max_concurrent_turns: null`` clears the
+    project's own ceiling, so the project follows the deployment default
+    again."""
+
+    default: dict | None = None
+    # ``strict``: a JSON ``true`` is an ``int`` in Python, and taking it as one
+    # throttles the project to a single turn at a time. A number stays a number.
+    max_concurrent_turns: int | None = Field(default=None, strict=True)
 
 
 @router.put("/{project_id}/compute-configs", dependencies=[ROUTE_DECIDES])
@@ -269,21 +303,42 @@ async def save_compute_configs(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """What a new agent in this project gets. Anyone in the project may choose
-    it (``member_settings``); nobody already working moves."""
+    """What a new agent in this project gets, and how many of its turns may run
+    at once. Anyone in the project may choose either (``member_settings``);
+    nobody already working moves."""
     actor = await member_setting_actor(resolver, project_id)
     project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    environment = parse(body.default)
-    await check_allowed(db, project, environment, actor)
-    await change_project_settings(
-        db,
-        project,
-        {"execution_environment": environment.model_dump()},
-        by=actor.handle,
+    patch: dict[str, object] = {}
+    remove: list[str] = []
+    if "default" in body.model_fields_set and body.default is not None:
+        environment = parse(body.default)
+        await check_allowed(db, project, environment, actor)
+        patch["execution_environment"] = environment.model_dump()
+    if "max_concurrent_turns" in body.model_fields_set:
+        ceiling = body.max_concurrent_turns
+        if ceiling is None:
+            remove.append("max_concurrent_turns")
+        elif not TURN_CEILING_MIN <= ceiling <= TURN_CEILING_MAX:
+            raise UnprocessableEntityError(
+                say(
+                    "maxConcurrentTurnsInvalid",
+                    min=TURN_CEILING_MIN,
+                    max=TURN_CEILING_MAX,
+                )
+            )
+        else:
+            patch["max_concurrent_turns"] = ceiling
+    settings_now = await change_project_settings(
+        db, project, patch, remove=remove, by=actor.handle
     )
-    return ok({"default": dump(environment)})
+    return ok(
+        {
+            "default": dump(project_default(settings_now) or default_environment()),
+            **_turn_ceiling(settings_now),
+        }
+    )
 
 
 # --- 档位策略 (结论 3 后半 / 40 后半): 哪几档可以自己发生，超档怎么办 -----
@@ -327,7 +382,7 @@ async def set_tier_policy(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     service = ProjectService(db)
     project = await service.get_or_404(project_id)
     patch: dict[str, object] = {}
