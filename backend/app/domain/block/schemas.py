@@ -5,7 +5,15 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.block.models import AuthorType, BlockKind
+# `AuthorType` and `BlockKind` are re-exported: a route that writes a block
+# reads them from here, not from `models`, so it does not depend on the table
+# definitions directly.
+from app.domain.block.models import (
+    AuthorType as AuthorType,
+)
+from app.domain.block.models import (
+    BlockKind as BlockKind,
+)
 
 
 class ReactionOut(BaseModel):

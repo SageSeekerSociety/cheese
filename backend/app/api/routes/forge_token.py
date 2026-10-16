@@ -11,9 +11,7 @@ The provider's administrative credentials never leave the backend.
 import asyncio
 import base64
 import binascii
-import hmac
 import uuid
-from datetime import UTC, datetime
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -26,7 +24,6 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import require_seated_agent
@@ -40,9 +37,8 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
-from app.domain.project.forgejo_tokens import ForgejoTokenError, open_forge_token
+from app.domain.project.forgejo_tokens import ForgejoTokenError, credential_is_leased
 from app.domain.project.github_app import GitHubAppError
-from app.domain.project.models import ForgeToken
 from app.domain.room_task.place import session_keeps_work
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
@@ -215,18 +211,12 @@ async def forge_transport(
             + path[len(repository) :]
         )
     elif binding.kind == "forgejo":
-        leases = await db.scalars(
-            select(ForgeToken).where(
-                ForgeToken.project_id == project_id,
-                ForgeToken.api_url == binding.api_url,
-                ForgeToken.username == binding.repo.split("/", 1)[0],
-                ForgeToken.expires_at > datetime.now(UTC),
-                ForgeToken.value.is_not(None),
-            )
-        )
-        if not any(
-            hmac.compare_digest(credential.encode(), open_forge_token(lease).encode())
-            for lease in leases
+        if not await credential_is_leased(
+            project_id,
+            db,
+            api_url=binding.api_url,
+            username=binding.repo.split("/", 1)[0],
+            credential=credential,
         ):
             return denied
         base = binding.api_url.removesuffix("/api/v1").rstrip("/")
