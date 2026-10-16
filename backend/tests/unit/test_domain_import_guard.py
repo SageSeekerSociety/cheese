@@ -202,9 +202,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.knowledge.services", "app.domain.user.repositories"),
         ("app.domain.machine.services", "app.domain.project.repositories"),
         ("app.domain.membership.services", "app.domain.project.repositories"),
-        # --- notification（项目收件箱：写入前核项目在不在，拍板时把决定发回房间。
-        #     这两条是 alert/ 并进来时原样带过来的） ---
-        ("app.domain.notification.services", "app.domain.block.repositories"),
+        # --- notification（项目收件箱：写入前核项目在不在。拍板时把决定发回房间
+        #     那一条已经收进 `notification/ports.py` 的口子，落话的是
+        #     `block/adapters.py`，本模块不再读 room 的表） ---
         ("app.domain.notification.services", "app.domain.project.repositories"),
         ("app.domain.oauth.services", "app.domain.user.repositories"),
         # --- pin --- 置顶要确认那一块在这个频道主线上，再在主线写一行「置顶了…」：
