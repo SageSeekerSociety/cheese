@@ -40,13 +40,16 @@ method is in.
 The rules both halves share live beside them, each where it belongs rather than
 in this file: a plan's time windows (``windows``), the rates a call is priced
 at (``rates``), who pays and what their plan allows (``payers``), and what a
-payer may still spend (``balance``). Those are pure — no session, no row — and
-this module is the only writer among them.
+payer may still spend (``balance``). Three of the four decide without a session
+and without a row — ``windows``, ``rates`` and ``balance`` — and none of them
+charges; ``payers`` is the fourth and the one exception, because working out
+who pays needs the team's plan read back, and a person without a personal team
+gets one made on the way (``team_terms``, ``payer_for_person``).
 
 Every name a caller takes from this module is still answered from here: the
 re-exports below are the public path, not a convenience, because callers and
 tests all along have written ``from app.domain.usage.ledger import ...``
-(``tests/unit/test_ledger_module_split.py`` pins that face).
+(``tests/unit/test_usage_ledger_module_split.py`` pins that face).
 
 Two things about that face are worth saying rather than letting someone find
 out. Most of the private helpers that used to sit at this module's top level

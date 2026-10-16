@@ -198,20 +198,22 @@ def test_none_of_the_read_half_is_defined_here() -> None:
     tree = ast.parse(pathlib.Path(ledger.__file__).read_text())
     defined: set[str] = set()
     for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             defined.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            defined.add(node.name)
+            if node.name == "Ledger":
+                defined.update(
+                    member.name
+                    for member in node.body
+                    if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                )
         elif isinstance(node, ast.Assign):
             defined.update(
                 target.id for target in node.targets if isinstance(target, ast.Name)
             )
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             defined.add(node.target.id)
-        elif isinstance(node, ast.ClassDef) and node.name == "Ledger":
-            defined.update(
-                member.name
-                for member in node.body
-                if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
-            )
     clash = defined & (set(MOVED_PRIVATE) | set(READ_METHODS))
     assert not clash, (
         f"这些名字在 `ledger.py` 里被又定义了一份，而不是继承/再导出：{sorted(clash)}"
@@ -223,11 +225,13 @@ def test_the_seam_is_where_the_docstrings_say_it_is() -> None:
 
     只读那一半在 `LedgerQueries`，写和发在 `Ledger`；`Ledger.__init__` 是唯一
     把 session 放进 `self._session` 的地方。
+
+    `vars(Ledger)` 只列 `Ledger` 自己写下的名字（继承来的不在里面），所以这里
+    不再按「和读半重名的就拿掉」过滤 —— 那样会把一个重写只读方法的 `Ledger` 从
+    两份名单里同时抹掉，两边对得上、遮蔽却看不见。
     """
     read = {name for name in vars(LedgerQueries) if not name.startswith("__")}
-    own = {
-        name for name in vars(Ledger) if name not in read and not name.startswith("__")
-    }
+    own = {name for name in vars(Ledger) if not name.startswith("__")}
     assert read == set(READ_METHODS), (
         "只读那一半的名单变了 —— 搬走或搬回一个方法都要同步 `READ_METHODS`："
         f"多出 {sorted(read - set(READ_METHODS))}，"
@@ -238,7 +242,7 @@ def test_the_seam_is_where_the_docstrings_say_it_is() -> None:
         f"多出 {sorted(own - set(WRITE_METHODS))}，"
         f"少了 {sorted(set(WRITE_METHODS) - own)}"
     )
-    assert set(READ_METHODS).isdisjoint(WRITE_METHODS)
+    assert read.isdisjoint(own)
 
 
 @pytest.mark.parametrize("name", READ_METHODS)
