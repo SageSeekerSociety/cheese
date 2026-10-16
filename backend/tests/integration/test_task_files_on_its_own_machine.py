@@ -246,6 +246,36 @@ def test_pushed_work_shows_while_its_machine_is_still_being_set_up(client):
     assert read.json()["data"]["content"] == "POOL = 1\n"
 
 
+def test_a_machine_still_finishing_setup_with_a_copy_is_read(client, machines):
+    # Setup got far enough to record where the executor is, and the task's
+    # copy on that machine has work nobody pushed. That work is what the
+    # panel shows, not the branch.
+    home, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    _seat(
+        client,
+        task,
+        device="working",
+        lease={
+            "kind": "device",
+            "device_id": "working",
+            "resource_id": str(uuid.uuid4()),
+            "status": "preparing",
+            "home": str(home),
+            "state": str(home / ".cheese/executor"),
+        },
+    )
+    worktree = home / ".cheese/tasks" / str(task.id)
+    worktree.mkdir(parents=True)
+    subprocess.run(["git", "init", str(worktree)], check=True, capture_output=True)
+    (worktree / "draft.md").write_text("draft\n")
+
+    listing = _live(client, pid, room, task, "files")
+
+    assert listing.status_code == 200, listing.text
+    assert [f["path"] for f in listing.json()["data"]["data"]] == ["draft.md"]
+
+
 def _read(client, pid, room, task, path):
     return client.get(
         f"/projects/{pid}/file",
