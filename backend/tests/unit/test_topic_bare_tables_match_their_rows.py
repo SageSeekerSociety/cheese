@@ -15,6 +15,7 @@
 
 第二半里「用的是不是那三份裸表」按**对象**比，不按表名或 SQL 文本里的子串 —— 退回
 ORM 模型时表名一模一样（`Block.__tablename__` 也是 `blocks`），文本比抓不住那一步。
+那五条读法建出来的**每一条**语句都过这一关，不只后头单独钉的那两条。
 """
 
 from __future__ import annotations
@@ -177,6 +178,13 @@ async def test_the_bare_table_reads_build_their_statements() -> None:
     assert session.seen, "一条语句都没建出来：读法没走到建语句那一步"
     for statement in session.seen:
         _sql(statement)
+
+    borrowed = sorted({name for s in session.seen for name in _borrowed_models(s)})
+    assert not borrowed, (
+        f"这几条读法够回了别人家模型的真表：{borrowed}。`topic` 在第 2 层，`block` /"
+        "`thread` / `room_task` 都在更外 —— 用它们的模型就是把那几条向上边接回来，"
+        "而这一档清的正是它们。逐条查在这里，不是只查后头单独钉的那两条。"
+    )
 
 
 def _tables_in(statement: object) -> list[object]:
