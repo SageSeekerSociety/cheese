@@ -252,7 +252,12 @@ def test_a_ceiling_that_is_not_a_number_is_refused_rather_than_coerced(client, p
     either taken as a number would throttle the project to one turn at a time.
     The body is refused before the handler reads it, and the config does not
     move — the refusal is the framework's, not this route's, so it is a 400
-    naming the field rather than the range."""
+    naming the field rather than the range.
+
+    Every body here also carries a ``default`` the route accepts, so nothing but
+    the wrong type can be what the refusal is about: with no strict field a
+    wrong type is either coerced or dropped as an unknown key and the request
+    succeeds, which is what this test is here to catch."""
     pid = project["id"]
     bob = session_auth_headers("bob")
     kept = compute_configs(client, pid)
@@ -260,26 +265,44 @@ def test_a_ceiling_that_is_not_a_number_is_refused_rather_than_coerced(client, p
     for not_a_number in (True, False, "40", 1.5, [20], {"n": 20}):
         refused = client.put(
             f"/projects/{pid}/compute-configs",
-            json={"max_concurrent_turns": not_a_number},
+            json={"default": VM, "max_concurrent_turns": not_a_number},
             headers=bob,
         )
         assert refused.status_code == 400, (not_a_number, refused.text)
-        assert "max_concurrent_turns" in refused.text, not_a_number
+        refused_at = refused.json()["error"]["data"]["details"]
+        assert [error["loc"][-1] for error in refused_at] == ["max_concurrent_turns"], (
+            not_a_number,
+            refused.text,
+        )
 
     assert compute_configs(client, pid) == kept
     assert setting_lines(client, project) == []
 
 
-def test_a_body_that_moves_neither_half_leaves_the_config_alone(client, project):
+def test_a_body_that_names_only_the_environment_leaves_the_ceiling_alone(
+    client, project
+):
+    """A body naming only ``default`` is the request this route took before the
+    ceiling existed, so a project that has set its own ceiling is the case that
+    matters: the setting must survive a body that never mentions it. Only
+    ``null`` clears it."""
     pid = project["id"]
-    before = compute_configs(client, pid)
+    bob = session_auth_headers("bob")
+
+    raised = client.put(
+        f"/projects/{pid}/compute-configs",
+        json={"max_concurrent_turns": 40},
+        headers=bob,
+    )
+    assert raised.status_code == 200, raised.text
 
     unchanged = client.put(
         f"/projects/{pid}/compute-configs",
         json={"default": VM},
-        headers=session_auth_headers("bob"),
+        headers=bob,
     )
     assert unchanged.status_code == 200, unchanged.text
     kept = unchanged.json()["data"]
-    assert kept["max_concurrent_turns"] == before["max_concurrent_turns"]
-    assert kept["max_concurrent_turns_from"] == "deployment"
+    assert kept["max_concurrent_turns"] == 40
+    assert kept["max_concurrent_turns_from"] == "project"
+    assert compute_configs(client, pid)["max_concurrent_turns"] == 40
