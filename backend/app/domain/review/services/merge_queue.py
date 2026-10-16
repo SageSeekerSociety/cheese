@@ -11,6 +11,7 @@ from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.repository import identity
 from app.domain.review import (
+    github_pr,
     merge_state,
     notes,
     pr_text,
@@ -234,6 +235,13 @@ async def _merge_pr_for_accept(
             _capped("acceptStoppedMergeStateUnread", pr=number, error=str(exc)),
         )
     self._write_merge_mirror(card, verdict, who, seen)
+    # 冲突先停下，两种项目都一样。这里的 `dirty` 是 GitHub 的话：强制项目那份是
+    # 它的 `mergeStateStatus` 原样透传，非强制项目那份也抄自它的 `dirty` /
+    # `mergeable=False` —— 冲突不会自己消失，让下面的合并调用去撞它，强制项目
+    # 那条路上会被笼统的 `except Exception` 说成「合并结果暂时无法确认」
+    # （2026-10-16 采纳 PR #3927 时的样子），把「先解冲突」读成了「重试一次」。
+    if verdict.state == "dirty":
+        await self._stop_accept_conflict(card, topic)
     # GitHub enforcing → its merge API is the gate (405 = blocked, 如实转
     # 译). Platform enforcing → only clean, or unstable whose reds are not
     # on the required roster, may merge; everything else is refused with
@@ -266,6 +274,19 @@ async def _merge_pr_for_accept(
                 topic, decided_by, card, attribution
             ),
             sha=seen,
+        )
+    except github_pr.GitHubPrError as exc:
+        # GitHub 答复了：这次没合上，理由在它自己的话里（合并队列的入队在
+        # `_enqueue_if_required` 被拒就走这一支）。笼统的那个 `except` 只适合
+        # 「对面可能已经合了、而我们没收到答复」，一个答复不是那种情况 ——
+        # 说成「暂时无法确认」会让人去重试一件不会因为重试而改变的事。
+        logger.warning(
+            "merge request refused for card %s: %s", card.id, exc, exc_info=True
+        )
+        await self._stop_accept_pr_unavailable(
+            card,
+            topic,
+            _capped("acceptStoppedMergeCallFailed", pr=number, error=str(exc)),
         )
     except Exception:  # noqa: BLE001 — the remote may have merged before disconnecting
         logger.exception("merge request failed for card %s", card.id)
