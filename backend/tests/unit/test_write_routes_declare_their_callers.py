@@ -33,10 +33,17 @@ from app.main import app
 # constant in this file is one line all of them have to edit and conflict on.
 _BASELINE = "backend/app/api/write_access_baseline.py"
 
-# In order, the refs whose merge base with HEAD can name where this branch
-# started: `origin/main` is what a clone of this repo has, and the other two
-# cover one with no remote and one of a single branch.
+# In order, the refs whose merge base with HEAD can be read where they exist:
+# `origin/main` is what a clone of this repo has, and the other two cover one
+# with no remote and one of a single branch.
 _BASELINE_REFS = ("origin/main", "main", "HEAD~1")
+
+# What the floor falls back to where no merge base can be read at all. The unit
+# tests run on a depth-1 checkout, which has neither a parent nor `origin/main`,
+# and a guard that waves through whatever it cannot read is off in exactly the
+# run that gates a merge. Nobody owes an edit here: the comparison is `<=`, so
+# lowering the list is not a change to this file.
+_FLOOR_WITHOUT_HISTORY = 403
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -97,45 +104,54 @@ def _frozen_list_size(source: str) -> int:
 def _baseline_source() -> str | None:
     """The baseline file as the commit this branch started from had it.
 
-    None when git cannot name that commit: a shallow checkout has neither the
-    refs nor the parent it takes to compute a merge base. The caller then has
-    nothing to compare against — see `_refuse_growth`.
+    None when git can name no such commit and yields from no ref here either: a
+    shallow checkout has neither the parent nor the refs a merge base needs, and
+    git itself need not be installed. `_refuse_growth` then has a floor of its
+    own rather than none.
     """
-    for ref in _BASELINE_REFS:
-        base = subprocess.run(
-            ["git", "-C", str(_ROOT), "merge-base", "HEAD", ref],
-            capture_output=True,
-            text=True,
-        )
-        revs = base.stdout.split()
-        if base.returncode or not revs:
-            continue
-        shown = subprocess.run(
-            ["git", "-C", str(_ROOT), "show", f"{revs[0]}:{_BASELINE}"],
-            capture_output=True,
-            text=True,
-        )
-        if not shown.returncode:
-            return shown.stdout
+    try:
+        for ref in _BASELINE_REFS:
+            base = subprocess.run(
+                ["git", "-C", str(_ROOT), "merge-base", "HEAD", ref],
+                capture_output=True,
+                text=True,
+            )
+            revs = base.stdout.split()
+            if base.returncode or not revs:
+                continue
+            shown = subprocess.run(
+                ["git", "-C", str(_ROOT), "show", f"{revs[0]}:{_BASELINE}"],
+                capture_output=True,
+                text=True,
+            )
+            if not shown.returncode:
+                return shown.stdout
+    except OSError:
+        # No git on PATH, or what it is pointed at is not a repository.
+        pass
     return None
 
 
 def _refuse_growth(current: int, frozen: str | None) -> str | None:
     """Why a list of `current` entries may not stand, or None.
 
-    The floor is the frozen list where this branch started, so lowering it is
-    free of this file, and freezing a route the fork point did not have is
-    refused. With none to read — see `_baseline_source` — there is nothing to
-    compare against, and this says nothing rather than guess.
+    The floor is the frozen list at the commit this branch started from — read
+    from git, so lowering the list needs no edit in this file and two branches
+    lowering it touch nothing in common. Where that commit cannot be read,
+    `_FLOOR_WITHOUT_HISTORY` stands in for it, so the rule still answers rather
+    than going quiet.
     """
-    if frozen is None:
-        return None
-    baseline = _frozen_list_size(frozen)
-    if current <= baseline:
+    floor = _FLOOR_WITHOUT_HISTORY
+    where = "the floor a checkout without history gets"
+    if frozen is not None:
+        fork_point = _frozen_list_size(frozen)
+        if fork_point < floor:
+            floor, where = fork_point, "where this branch started"
+    if current <= floor:
         return None
     return (
-        f"the frozen list holds {current} routes, up from {baseline} where this "
-        "branch started: declare the new route instead of freezing it"
+        f"the frozen list holds {current} routes, over the {floor} allowed by "
+        f"{where}: declare the new route instead of freezing it"
     )
 
 
@@ -174,10 +190,24 @@ def test_a_list_that_grew_past_the_fork_point_is_refused() -> None:
     assert _refuse_growth(404, frozen), "a route frozen since the fork point"
     assert _refuse_growth(403, frozen) is None
     assert _refuse_growth(402, frozen) is None
+    # A fork point below the fallback is what the fork point is for: what the
+    # branch started from decides, not the number standing in for it.
+    assert _refuse_growth(403, _a_frozen_list(380))
+
+
+def test_a_fork_point_that_cannot_be_read_is_not_a_guard_turned_off() -> None:
+    assert _refuse_growth(_FLOOR_WITHOUT_HISTORY + 1, None)
+    assert _refuse_growth(_FLOOR_WITHOUT_HISTORY, None) is None
 
 
 def test_the_fork_points_list_is_counted_wherever_an_entry_wraps() -> None:
     assert _frozen_list_size(_WRAPPED) == 3
+
+
+def test_the_parsed_file_matches_the_list_the_app_is_sealed_with() -> None:
+    assert _frozen_list_size((_ROOT / _BASELINE).read_text(encoding="utf-8")) == len(
+        UNDECLARED
+    )
 
 
 def _app(*routers: APIRouter, guarded: bool = False) -> FastAPI:
