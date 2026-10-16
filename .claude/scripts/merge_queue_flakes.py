@@ -408,9 +408,9 @@ def _self_test_gh_bytes() -> None:
     （给了任何一个就是文本，和真实 subprocess 同一条规则）；字节模式把带坏字节的
     输出原样交回来；文本模式却**没给** `errors=`，就在那里当场抛 UnicodeDecodeError
     —— 那正是「整张榜读不出来」这个毛病的来路。给了 `errors=` 的文本模式是同样合法
-    的另一种写法，替身照它给的那套解出字符串（替身一律按 utf-8 解，真实 subprocess
-    用的是 locale）。断言落在效果上：坏字节要变成替换字符出现，不能悄悄不见，也不能
-    连累整份输出。非零退出那条路也走一遍，报错里要带着 gh 说的话。
+    的另一种写法，替身照它给的那套解出字符串（没给 `encoding=` 时替身按 utf-8 解，
+    真实那边用的是 locale）。断言落在效果上：坏字节要变成替换字符出现，不能悄悄不见，
+    也不能连累整份输出。非零退出那条路也走一遍，报错里要带着 gh 说的话。
     """
     real_run = subprocess.run
     seen: list[list[str]] = []
@@ -424,15 +424,17 @@ def _self_test_gh_bytes() -> None:
 
     def text_like(kwargs: dict):
         """真实 subprocess 的解码参数：`text`、`universal_newlines`、`encoding`、
-        `errors` 里给了任何一个，管道就是文本模式（CPython 的 text_mode 就是这几
-        个的或），于是坏字节在没有 `errors=` 时在那里抛，给了 `errors=` 就按它给
-        的那套走。"""
+        `errors` 里给了任何一个真值，管道就是文本模式（CPython 的 text_mode 就是这
+        四个的或），于是坏字节在没有 `errors=` 时在那里抛，给了 `errors=` 就按它给
+        的那套走。文本模式用哪个编码解，就是给的 `encoding=` 本身——空串在真实那边
+        也是 `LookupError`，不能悄悄回落到 utf-8 把一个会崩的写法放过去。"""
         if not any(
             kwargs.get(name)
             for name in ("text", "universal_newlines", "encoding", "errors")
         ):
             return None
-        return kwargs.get("encoding") or "utf-8", kwargs.get("errors")
+        given = kwargs.get("encoding")
+        return ("utf-8" if given is None else given), kwargs.get("errors")
 
     def fake_run(args, **kwargs):
         seen.append(args)
