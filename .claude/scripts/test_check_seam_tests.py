@@ -37,19 +37,32 @@ assert not added
         result = self._run(SCRIPT.parents[2])
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_recursive_walk_reports_class_method_trap(self) -> None:
+    def test_recursive_walk_reports_tuple_types_and_call_arguments(self) -> None:
         self._assert_rejected(
             """
-for node in ast.walk(tree):
-    if isinstance(node, ast.FunctionDef):
+for node in ast.walk(parse_module()):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         functions.append(node)
 """,
             "tree.body",
         )
 
-    def test_dir_difference_reports_override_trap(self) -> None:
+    def test_recursive_walk_reports_comprehensions(self) -> None:
+        self._assert_rejected(
+            "functions = [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]",
+            "tree.body",
+        )
+
+    def test_dir_difference_reports_inline_assertion(self) -> None:
         self._assert_rejected(
             "assert not (set(dir(Child)) - set(dir(Parent)))",
+            "cls.__dict__",
+        )
+
+    def test_dir_difference_reports_assignment_then_assertion(self) -> None:
+        self._assert_rejected(
+            """added = set(dir(Child)) - set(dir(Parent))
+assert not added""",
             "cls.__dict__",
         )
 

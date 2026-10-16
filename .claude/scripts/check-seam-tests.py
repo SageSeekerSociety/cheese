@@ -15,6 +15,48 @@ HINTS = {
 }
 
 
+def _is_ast_type(node: ast.AST, names: set[str]) -> bool:
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return any(_is_ast_type(element, names) for element in node.elts)
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "ast"
+        and node.attr in names
+    )
+
+
+def _isinstance_of_function(node: ast.AST, names: set[str]) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "isinstance"
+        and len(node.args) >= 2
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id in names
+        and _is_ast_type(node.args[1], {"FunctionDef", "AsyncFunctionDef"})
+    )
+
+
+def _is_walk_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "walk"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "ast"
+        and bool(node.args)
+    )
+
+
+def _target_names(node: ast.AST) -> set[str]:
+    if isinstance(node, ast.Name):
+        return {node.id}
+    if isinstance(node, (ast.Tuple, ast.List)):
+        return set().union(*(_target_names(element) for element in node.elts))
+    return set()
+
+
 def _is_dir_call(node: ast.AST) -> bool:
     return (
         isinstance(node, ast.Call)
@@ -33,48 +75,77 @@ def _is_set_of_dir(node: ast.AST) -> bool:
     )
 
 
+def _is_dir_difference(node: ast.AST) -> bool:
+    if (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Sub)
+        and _is_set_of_dir(node.left)
+        and _is_set_of_dir(node.right)
+    ):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "difference"
+        and _is_set_of_dir(node.func.value)
+        and len(node.args) == 1
+        and _is_set_of_dir(node.args[0])
+    )
+
+
 def _findings(tree: ast.Module) -> list[tuple[int, str]]:
     findings: list[tuple[int, str]] = []
 
-    # Walking the whole module to collect functions also collects class methods
-    # as if they were module-level functions.
+    # Walking a module to collect functions also collects class methods as if
+    # they were module-level functions. Handle loops and comprehensions alike.
     for node in ast.walk(tree):
-        if not isinstance(node, (ast.For, ast.AsyncFor)):
-            continue
-        if not isinstance(node.iter, ast.Call):
-            continue
-        if not isinstance(node.iter.func, ast.Attribute) or node.iter.func.attr != "walk":
-            continue
-        if not node.iter.args or not isinstance(node.iter.args[0], ast.Name):
-            continue
-        if any(
-            isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Name)
-            and child.func.id == "isinstance"
-            and any(
-                isinstance(arg, ast.Attribute)
-                and isinstance(arg.value, ast.Name)
-                and arg.value.id == "ast"
-                and arg.attr in {"FunctionDef", "AsyncFunctionDef"}
-                for arg in child.args[1:]
-            )
-            for child in ast.walk(node)
-        ):
-            findings.append((node.lineno, "recursive-class-methods"))
-            break
+        if isinstance(node, (ast.For, ast.AsyncFor)) and _is_walk_call(node.iter):
+            names = _target_names(node.target)
+            if names and any(
+                _isinstance_of_function(child, names)
+                for child in ast.walk(node)
+                if child is not node
+            ):
+                findings.append((node.lineno, "recursive-class-methods"))
+        elif isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+            for generator in node.generators:
+                if not _is_walk_call(generator.iter):
+                    continue
+                names = _target_names(generator.target)
+                value_expressions = [node.key, node.value] if isinstance(node, ast.DictComp) else [node.elt]
+                expressions = [*generator.ifs, *value_expressions]
+                if names and any(
+                    _isinstance_of_function(child, names)
+                    for expression in expressions
+                    for child in ast.walk(expression)
+                ):
+                    findings.append((node.lineno, "recursive-class-methods"))
+
+    assigned_differences: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and _is_dir_difference(node.value):
+            for target in node.targets:
+                assigned_differences.update((name, node.lineno) for name in _target_names(target))
+        elif isinstance(node, ast.AnnAssign) and node.value and _is_dir_difference(node.value):
+            assigned_differences.update((name, node.lineno) for name in _target_names(node.target))
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assert):
             continue
-        if any(
-            isinstance(child, ast.BinOp)
-            and isinstance(child.op, ast.Sub)
-            and _is_set_of_dir(child.left)
-            and _is_set_of_dir(child.right)
-            for child in ast.walk(node.test)
-        ):
-            findings.append((node.lineno, "dir-difference"))
-            break
+        inline_difference = any(_is_dir_difference(child) for child in ast.walk(node.test))
+        assigned_name = next(
+            (
+                child.id
+                for child in ast.walk(node.test)
+                if isinstance(child, ast.Name) and child.id in assigned_differences
+            ),
+            None,
+        )
+        if inline_difference or assigned_name:
+            line = node.lineno
+            if not inline_difference:
+                line = min(assigned_differences[child.id] for child in ast.walk(node.test) if isinstance(child, ast.Name) and child.id in assigned_differences)
+            findings.append((line, "dir-difference"))
 
     return findings
 
