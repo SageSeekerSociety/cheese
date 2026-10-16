@@ -143,9 +143,10 @@ from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 # assembles the whole FastAPI app (`_discover_routers()` imports every module
 # under `app/api/routes/`, which costs ~20s), and a conftest import is paid by
 # every pytest process that collects anything under `tests/` — the pure layer
-# included, where 466 of the 572 files never touch the app. The two fixtures
-# that drive the app (`client`, `python_client`) import it inside their own
-# bodies, so only a run that actually asks for one of them pays for it.
+# included, where 445 of the 572 files under `tests/unit/` never mention
+# `client` or `TestClient` at all. The two fixtures that drive the app
+# (`client`, `python_client`) import it inside their own bodies, so only a run
+# that actually asks for one of them pays for it.
 from tests.support.collab import install as install_collab  # noqa: E402
 from tests.support.seat_channel import SeatChannel  # noqa: E402
 
