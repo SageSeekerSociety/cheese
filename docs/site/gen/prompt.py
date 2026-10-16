@@ -931,12 +931,19 @@ def run_ast(reason: str) -> dict:
     appends: list[tuple] = []
     _walk_parts(function.body, [], appends)
 
+    # The four files, not just `prompt.py`: the two document budgets and the
+    # reply-quote cap are written in the modules it re-exports, and this path
+    # has no imported module to read their values off, so a façade-only scan
+    # would quietly drop those rows from the reference page.
     constants = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id.isupper():
-            value = _literal(node.value)
-            if isinstance(value, (str, int)) and not isinstance(value, bool):
-                constants[node.targets[0].id] = {"name": node.targets[0].id, "kind": "int" if isinstance(value, int) else "str", "line": node.targets[0].lineno, "value": value, "comment": comment_above(lines, node.targets[0].lineno)}
+    for path in source_files():
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id.isupper():
+                value = _literal(node.value)
+                if isinstance(value, (str, int)) and not isinstance(value, bool):
+                    constants[node.targets[0].id] = {"name": node.targets[0].id, "kind": "int" if isinstance(value, int) else "str", "file": str(path.relative_to(ROOT)), "line": node.targets[0].lineno, "value": value, "comment": comment_above(lines, node.targets[0].lineno)}
 
     blocks = []
     for node, conditions in appends:
