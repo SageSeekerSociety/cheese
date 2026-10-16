@@ -428,7 +428,10 @@ def main() -> int:
             print("Every migration PR must move backend/alembic/HEAD to its new revision id")
             print("(one line). That is what makes two concurrent migration PRs collide in git")
             print("instead of silently forking alembic. See .claude/rules/migrations.md.")
-            print(f"Fix: echo {tip} > {sentinel_path}")
+            print(
+                "Fix: uv run --project backend python .claude/scripts/reanchor-migration-head.py"
+                f" --base {args.base}"
+            )
             print("::error::backend/alembic/HEAD does not name the migration chain's tip")
             return 1
 
@@ -451,7 +454,10 @@ def main() -> int:
     print("Both sides added a migration on top of the same parent. `alembic upgrade head`")
     print("refuses a forked chain, so this would red main and abort the deploy.")
     print(f"Fix: merge {args.base} into this branch, then run")
-    print("  python3 .claude/scripts/check-migration-fork.py --rechain")
+    print(
+        "  uv run --project backend python .claude/scripts/reanchor-migration-head.py"
+        f" --base {args.base}"
+    )
     print("which re-points this branch's migrations at its head and moves the sentinel.")
     print("A fork this branch made itself still needs `uv run alembic merge heads` or a split.")
     print("See .claude/rules/migrations.md.")
