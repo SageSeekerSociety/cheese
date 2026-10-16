@@ -92,6 +92,15 @@ const wired = (text: string, module: string, fn: string) =>
   valueImports(text, module).some((clause) => new RegExp(`(^|[\\s{,])${esc(fn)}([\\s,}]|$)`).test(clause)) &&
   calls(text, fn)
 
+/** 页面调它的时候接住了返回值：`const x = useXxx(` 或者拆开来接。光调一下不算取了值。
+ *  泛型那一截粗略带过就好：`useTopicHeader<TaskHalf extends Record<string, unknown>>`
+ *  里面还嵌着尖括号，硬配会把它整条漏掉。 */
+const assigned = (text: string, fn: string) => new RegExp(`=\\s*${esc(fn)}\\s*(?:<[^;()]*>)?\\s*\\(`).test(text)
+
+/** 这一块自己交出来的就是那个工厂：`export function useXxx`。 */
+const exportsFactory = (file: string, fn: string) =>
+  new RegExp(`\\bexport\\s+function\\s+${esc(fn)}\\b`).test(code(raw(file)))
+
 const page = code(raw(PAGE))
 
 describe('话题视图的拆分边界', () => {
@@ -102,7 +111,11 @@ describe('话题视图的拆分边界', () => {
 
   it('主文件从同目录那几块取值，并且真的调了它们', () => {
     for (const [file, fn] of FACTORIES) {
+      // 四件事一起查：那一块交出了这个工厂、页面按名字从它那里取值、页面调了它、
+      // 而且接住了返回值。少哪一件都可能是线断了，而剩下三件还照样成立。
+      expect([`${file} 交出了 ${fn}`, exportsFactory(file, fn)]).toEqual([`${file} 交出了 ${fn}`, true])
       expect([fn, wired(page, file, fn)]).toEqual([fn, true])
+      expect([`${fn} 的返回值被接住`, assigned(page, fn)]).toEqual([`${fn} 的返回值被接住`, true])
     }
   })
 
