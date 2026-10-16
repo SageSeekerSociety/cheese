@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import { CATALOG } from './catalog'
 import { VIEW_SETTINGS_WORKSPACE_ENTRIES } from './catalogViewSettingsWorkspace'
+import * as facade from './catalogViewSettingsWorkspace'
 
 /** 这十条原来内联在 `catalogViewSettingsWorkspace.ts` 里，拆成分卷之后一条都不能少、也不能换地方。 */
 const IDS = [
@@ -28,6 +29,11 @@ const IDS = [
 describe('账号设置与项目工作台那一册', () => {
   it('出去的就是同样那十条，一条不多一条不少，先后也没动', () => {
     expect(VIEW_SETTINGS_WORKSPACE_ENTRIES.map((entry) => entry.id)).toEqual(IDS)
+  })
+
+  it('门面上出去的值就这一个', () => {
+    // 类型在运行时不存在，这里说的是值的面：拆之前这个文件也只导出这一个值。
+    expect(Object.keys(facade).sort()).toEqual(['VIEW_SETTINGS_WORKSPACE_ENTRIES'])
   })
 
   it('这十条在目录里整册连着排，中间没插进别的', () => {

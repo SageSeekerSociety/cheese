@@ -5,7 +5,7 @@
  * `VIEW_SETTINGS_WORKSPACE_ENTRIES` 交给 `catalogViews.ts`；各屏公用数据见
  * `catalogViewSettingsWorkspaceFixtures.ts`。
  */
-import type { CatalogEntry } from './catalog'
+import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
   DEVICE_TEAMS,
