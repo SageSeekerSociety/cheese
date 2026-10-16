@@ -120,7 +120,7 @@ With `--ssh`, executor calls retain the SSH transport; launcher uploads still cr
 
 ## Standalone SSH acceptance
 
-Stage a release into one directory on the execution host: the files `RELEASE_FILES` in `runtime_core.py` lists — `runtime.py` and the modules beside it, plus `mcp_process.py`, `project_hooks.py`, `package_mirrors.py`, `raster_images.py` and `cli_worker.py`, which the checkout keeps elsewhere. `runtime.py` imports four modules from beside itself at load (`runtime_core.py`, `runtime_commands.py`, `runtime_context.py`, `runtime_calls.py`), so a lone `runtime.py` does not start, and the commands a room runs load the rest of them by name from there. Start it with a JSON configuration file on standard input:
+Stage a release into one directory on the execution host: the files `RELEASE_FILES` in `runtime_core.py` lists — `runtime.py` and the modules beside it, `mcp_process.py` among them, plus `project_hooks.py`, `package_mirrors.py`, `raster_images.py`, `cli_worker.py` and `cheese`, which the checkout keeps elsewhere. `runtime.py` imports four modules from beside itself at load (`runtime_core.py`, `runtime_commands.py`, `runtime_context.py`, `runtime_calls.py`), so a lone `runtime.py` does not start, and the commands a room runs load the rest of them by name from there. Start it with a JSON configuration file on standard input:
 
 ```json
 {

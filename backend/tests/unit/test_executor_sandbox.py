@@ -48,7 +48,7 @@ def _stage_a_release(store: Path) -> Path:
     return release
 
 
-def _load_the_releases_own_parts(monkeypatch):
+def _load_the_releases_own_parts(monkeypatch, request):
     """Let a release directory be read for the modules it holds.
 
     A test that starts an executor imports the checkout's `runtime.py` by path,
@@ -57,13 +57,26 @@ def _load_the_releases_own_parts(monkeypatch):
     checkout's directory they came from. A later `runpy.run_path` of a release
     directory would bind to them and never read the release's own, so these
     fixtures would pass for a release staged without the parts at all. Both are
-    put back by `monkeypatch` when the test ends.
+    put back when the test ends.
+
+    `delitem` records an undo only for a name that is already in `sys.modules`,
+    and the first of these tests to run has none: the release's own copies,
+    which the test's own load puts there, would answer `import` under those
+    names for the rest of the process out of a directory pytest has since
+    deleted. So they are taken out once more at the end, whatever the test left
+    under them, and `monkeypatch` puts back the copies that were there before.
     """
     for name in PARTS:
         monkeypatch.delitem(sys.modules, name, raising=False)
     monkeypatch.setattr(
         sys, "path", [entry for entry in sys.path if Path(entry) != RUNTIME.parent]
     )
+
+    def _forget_whatever_answered_to_them():
+        for name in PARTS:
+            sys.modules.pop(name, None)
+
+    request.addfinalizer(_forget_whatever_answered_to_them)
 
 
 def _bubblewrap_runs() -> bool:
@@ -261,7 +274,7 @@ def test_a_stop_reaches_a_service_named_through_a_state_descriptor(tmp_path):
         process.kill()
 
 
-def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path, monkeypatch):
+def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path, monkeypatch, request):
     """A sandboxed room's reset reaches its executor through the directory it
     opened without following a link: on Linux by `/proc/self/fd`, on a Mac,
     which has no /proc, by the path that directory resolves to. Either way the
@@ -269,7 +282,7 @@ def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".cheese").mkdir(parents=True)
     _, process = _previous_executor(home / ".cheese")
-    _load_the_releases_own_parts(monkeypatch)
+    _load_the_releases_own_parts(monkeypatch, request)
     release = _stage_a_release(tmp_path)
     shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
     try:
@@ -288,7 +301,7 @@ def test_a_sandboxed_rooms_reset_stops_its_executor(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("sandbox", [True, False])
 def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
-    tmp_path, monkeypatch, sandbox
+    tmp_path, monkeypatch, sandbox, request
 ):
     """The teardown runs outside every sandbox. A sandboxed room can rewrite
     its own installation, so for one its programs come from the release it was
@@ -309,7 +322,7 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
         "def socket_path(state):\n    return str(state / 'absent')\n"
     )
     if sandbox:
-        _load_the_releases_own_parts(monkeypatch)
+        _load_the_releases_own_parts(monkeypatch, request)
         release = _stage_a_release(tmp_path / ".cheese/executor-releases")
         shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
         marker = tmp_path / ".cheese/sandboxes" / project / resource
@@ -322,7 +335,7 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
 
 
 def test_a_room_started_from_an_earlier_release_is_stopped_where_a_helper_runs(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, request
 ):
     """A sandbox on a cloud host lives in the helper's cgroup, and stopping it
     is the helper bringing that down. The room may have been started from a
@@ -334,7 +347,7 @@ def test_a_room_started_from_an_earlier_release_is_stopped_where_a_helper_runs(
     project, resource = str(uuid.uuid4()), str(uuid.uuid4())
     home = tmp_path / ".cheese/home" / project / resource
     (home / ".cheese/executor").mkdir(parents=True)
-    _load_the_releases_own_parts(monkeypatch)
+    _load_the_releases_own_parts(monkeypatch, request)
     release = _stage_a_release(tmp_path / ".cheese/executor-releases")
     # What makes this release the earlier one is the environment runner staged
     # beside it here rather than the one a current release ships.
