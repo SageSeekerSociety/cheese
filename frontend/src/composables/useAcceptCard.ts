@@ -97,8 +97,10 @@ export function useAcceptCard(props: AcceptCardHost) {
   }
 
   // 按下去打到哪个端点（acceptCard/actions.ts）：采纳、退回、作废、人工放行、改派、
-  // 撤回采纳、布防自动合并、下载这一版交出去的那一份。它们读的那几张卡由上面
-  // 拼好，`reload` 就是本文件交给宿主那一只手的同一个。
+  // 撤回采纳、布防自动合并、下载这一版交出去的那一份。它们读的那几张卡由上面拼好。
+  // 这里的 `reload` 不是返回给宿主的那一只：写操作会把「要一起等的话题行刷新」当实参
+  // 递进来（`reload(store.refreshTopicRow(topicId))`），形参必须原样转给 `load`，否则
+  // 卡会比话题行先换，框先收走再长回来。
   const actions = useAcceptCardActions({
     store,
     topicId,
@@ -107,7 +109,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     acceptedCard,
     needsPr,
     comments,
-    reload: () => load(),
+    reload: (alongside?: Promise<unknown>) => load(alongside),
   })
 
   watch(
