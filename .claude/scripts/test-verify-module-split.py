@@ -882,15 +882,15 @@ class Widget:
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("符号没了: Widget._reset", result.stdout)
 
-    def test_a_parameterless_member_moved_out_is_a_note(self) -> None:
-        """A `@staticmethod` has no instance slot, so the empty list is the shape.
+    def test_a_lift_that_drops_nothing_is_the_same_call(self) -> None:
+        """A lift keeps the parameter list, so an unchanged one is the lift.
 
-        `_unavailable()` moving out as `_unavailable()` dropped nothing and has
-        no parameter left to carry evidence; reading it as a lost symbol would
-        red-light a plain move.
+        Neither helper loses a parameter on the way out: `_unavailable` takes
+        none, and `_label` keeps the instance as its only one. Nothing is left
+        to explain, and both read as lifts rather than as lost symbols.
         """
         old = '''\
-"""A class whose private helper is about to become a function."""
+"""A class whose private helpers are about to become functions."""
 
 
 class Widget:
@@ -899,23 +899,30 @@ class Widget:
         return "n/a"
 
     def render(self):
-        return self._unavailable()
+        return self._label() + _unavailable()
+
+    def _label(self):
+        return "w"
 '''
         files = {
             "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
             "models.py": """\
 class Widget:
     def render(self):
-        return _unavailable()
+        return _label(self) + _unavailable()
 
 
-from .painting import _unavailable  # noqa: E402
+from .painting import _label, _unavailable  # noqa: E402
 """,
-            "painting.py": 'def _unavailable():\n    return "n/a"\n',
+            "painting.py": (
+                'def _unavailable():\n    return "n/a"\n\n\n'
+                'def _label(self):\n    return "w"\n'
+            ),
         }
         result = self.fixture(old).split_and_run(files)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("方法被提到模块级: Widget._unavailable", result.stdout)
+        self.assertIn("方法被提到模块级: Widget._label", result.stdout)
 
     def test_a_keyword_only_method_is_not_excused_by_a_vararg_namesake(self) -> None:
         """`*` and `*args` take a different number of positionals.
