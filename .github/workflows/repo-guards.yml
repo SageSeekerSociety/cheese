@@ -208,6 +208,12 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           node-version: 22
+          # The install below is a `npm ci` of this one lockfile and nothing
+          # else, so the lockfile is the whole cache key. These guards run on
+          # every merge diff; without the cache each run fetched esbuild and
+          # marked from the registry again.
+          cache: 'npm'
+          cache-dependency-path: docs/site/package-lock.json
 
       - name: Build the docs site
         if: ${{ !cancelled() && steps.docs_node.outcome == 'success' && steps.docs_tags.outcome == 'success' }}
@@ -217,5 +223,19 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run build
-          # The docs host's copy, at the root (docs/site/src/where.mjs).
-          DOCS_BASE= OUT="$OUT-host" npm run build
+          # The docs host's copy, at the root (docs/site/src/where.mjs): the
+          # same sources through the same build, with BASE empty. What a
+          # different BASE changes is docs/site's own code, so a PR that
+          # leaves docs/site alone has nothing here to find that the build
+          # above did not already see — every check the guard exists for (the
+          # link and anchor checks, per-page kind/summary/covers, the
+          # reference generators) runs in it either way. Such a PR is left to
+          # the merge queue, which runs both builds, as does any PR that does
+          # touch docs/site; `git diff --quiet` exits non-zero when it cannot
+          # answer, which runs the build rather than skip it.
+          if [ "${{ github.event_name }}" != "pull_request" ] \
+             || ! git -C "$GITHUB_WORKSPACE" diff --quiet origin/main...HEAD -- docs/site; then
+            DOCS_BASE= OUT="$OUT-host" npm run build
+          else
+            echo "docs/site is untouched by this PR; the docs-host build waits for the merge queue"
+          fi
