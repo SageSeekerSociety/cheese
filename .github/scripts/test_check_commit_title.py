@@ -37,6 +37,44 @@ class CommitTitleTest(unittest.TestCase):
                 result = run(title)
                 self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_the_platforms_placeholder_is_named_and_answered(self):
+        """The platform's own title reads as that, and comes with the way out:
+        set it in the PR title over REST, and the edit checks it again on its
+        own, so no new commit is needed."""
+        result = run("WIP: 记忆改造")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("still the platform's placeholder title", result.stdout)
+        self.assertIn("gh api -X PATCH repos/", result.stdout)
+        self.assertIn("pr-title.yml", result.stdout)
+        self.assertIn("no new commit", result.stdout)
+        # The check also reads a branch's commit subjects (merge queue), where
+        # the way out is the message, not the PR title: it says so rather than
+        # sending that reader to edit a title nothing reads.
+        self.assertIn("amend that commit's message", result.stdout)
+
+    def test_an_ordinary_mistake_is_not_answered_as_a_placeholder(self):
+        result = run("update stuff")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn("placeholder", result.stdout)
+
+    def test_a_title_that_merely_starts_with_wip_is_not_the_placeholder(self):
+        result = run("WIPped up the docs")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn("placeholder", result.stdout)
+
+    def test_wrapping_a_valid_title_in_the_placeholder_does_not_pass_it(self):
+        """Recognising the platform's title must not become a way past the
+        convention: the same words under `WIP:` are still refused."""
+        result = run("WIP: fix(chat): the pane keeps following")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("::error::", result.stdout)
+
+    def test_a_placeholder_among_other_titles_is_answered_too(self):
+        result = run(stdin="fix: one (#1)\nWIP: 记忆改造 (#2)\n")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("still the platform's placeholder title", result.stdout)
+        self.assertIn("gh api -X PATCH repos/", result.stdout)
+
     def test_refuses_titles_outside_the_convention(self):
         for title in [
             "修一下分页的 bug",
@@ -79,6 +117,10 @@ class CommitTitleTest(unittest.TestCase):
         result = run("--pull-request", ready)
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertIn("::error::", result.stdout)
+        # Whose title it is decides the answer: the platform's placeholder is
+        # not the author's format slip, so it is named and answered as such.
+        self.assertIn("still the platform's placeholder title", result.stdout)
+        self.assertIn("gh api -X PATCH repos/", result.stdout)
         retitled = pull_request(
             title="fix(chat): the pane keeps following when the rows above it shrink",
             draft=False,
