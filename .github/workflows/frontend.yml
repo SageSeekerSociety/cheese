@@ -27,10 +27,12 @@ name: Frontend Test
 #           ratcheted configs (component boundaries, direct Web Storage,
 #           accessibility). 215 s of checks, ~239 s with the setup.
 #   check   everything else: the ratchets that are not eslint (scenes, scene
-#           debt, catalog, stylelint, i18n), the ratchets' own unit tests, the
-#           collaboration service, and the two checks that need the backend's
-#           Python environment — the API type ratchet and the request paths.
-#           211 s of checks, ~235 s with the setup.
+#           debt, catalog, stylelint, i18n, global fallbacks), the ratchets' own
+#           unit tests, the collaboration service, and the two checks that need
+#           the backend's Python environment — the API type ratchet and the
+#           request paths. 211 s of checks, ~235 s with the setup, measured
+#           before the global-fallback step landed; that step adds ~34 s on one
+#           work-machine sandbox, and has no runner P50 yet.
 #
 # The single `check` job they replace measured 448 s end to end, and it was the
 # longest thing on any frontend change; split, the critical path is the longer
@@ -316,6 +318,32 @@ jobs:
       # Pure node, no dependency, about a second. Read-only unless `--update`.
       - name: Hardcoded Chinese (i18n)
         run: pnpm run lint:i18n
+
+      # A component calls a bare name it binds nothing for, and a module in this
+      # tree declares that name and exports it to nobody: the call does not
+      # fail, it reaches the browser global of the same name and does nothing.
+      # That is what a function moved into a composable and left unexported
+      # looks like — 2026-10-16 (#1618), `blur()` moved into
+      # useDesignViewport.ts without an `export`, and DesignImage.vue's
+      # `if (!on) blur()` called `window.blur`, which drops nothing, silently.
+      #
+      # Nothing else in this workflow sees it. The eslint job's tree-wide run
+      # cannot (the config injects the browser globals and turns `no-undef` off
+      # for TS), the type check cannot (`lib.dom` declares the same names), and a
+      # template's calls are in no scope at all — which is why this rule reads
+      # both halves itself, through `vue-eslint-parser`.
+      #
+      # A plain rule, not a ratchet: measured at 0 findings over 751 components
+      # and 957 modules on 2026-10-16, so there is nothing to freeze, no
+      # baseline file and no `--update` — a baseline's one use is to let a
+      # finding stand, and this rule's whole subject is a call that fails in
+      # silence. Read-only. Its tests, including the plant that requires this
+      # command to fail on a composable that keeps a function to itself and a
+      # component that calls it by bare name, are in
+      # scripts/test-global-fallback-ratchet.mjs, run by the Ratchet unit tests
+      # step below. Measured over the tree on one work-machine sandbox: ~34 s.
+      - name: Global fallbacks (a bare call to a module's own name)
+        run: pnpm run lint:global-fallback
 
       # Via the package script, not a bare `node --test scripts/`: passing a
       # DIRECTORY resolves as a module entry point on node 22 while node 20

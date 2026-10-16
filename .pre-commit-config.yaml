@@ -185,6 +185,30 @@ repos:
         pass_filenames: false
         files: ^frontend/(src/.*\.vue|eslint\.(a11y\.)?config\.mjs|a11y-baseline\.json|package\.json|pnpm-lock\.yaml|scripts/(a11y-ratchet|tsc-ratchet-core|ratchet-report))
 
+      # A component calls a bare name it binds nothing for, and a module in this
+      # tree declares that name and exports it to nobody: the call does not
+      # fail, it reaches a browser global of the same name and does nothing.
+      # That is what a function moved into a composable and left unexported
+      # looks like — 2026-10-16 (#1618), `blur()` moved into
+      # useDesignViewport.ts and DesignImage.vue's `if (!on) blur()` reached
+      # `window.blur`, which drops nothing. The base eslint config cannot see
+      # it (it injects the browser globals and turns `no-undef` off for TS),
+      # vue-tsc cannot (`lib.dom` declares the same names) and a template's
+      # calls are in no scope at all, which is why the rule is its own script
+      # over `vue-eslint-parser`.
+      #
+      # A plain rule, not a ratchet: 0 findings over 751 components and 957
+      # modules on 2026-10-16, so there is nothing to freeze and no baseline to
+      # edit — a baseline's one use is to let a finding stand, and this rule is
+      # about a call that fails in silence. Read-only; its tests are
+      # scripts/test-global-fallback-ratchet.mjs in `pnpm run test:ratchet`.
+      - id: global-fallback
+        name: bare calls to a name a module keeps to itself (headless parser)
+        entry: bash -c 'cd frontend && pnpm run lint:global-fallback'
+        language: system
+        pass_filenames: false
+        files: ^frontend/(src/.*\.(vue|ts)|package\.json|scripts/(check-global-fallback-ratchet|global-fallback-ratchet-core|test-global-fallback-ratchet|tsc-ratchet-core|ratchet-report)\.mjs)$
+
       # Every page the router reaches and every SFC under
       # src/components/panels/ has to render with no backend, no route and no
       # business store. The freeze is the tree at the merge base with
