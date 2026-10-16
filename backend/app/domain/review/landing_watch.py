@@ -62,11 +62,11 @@ logger = logging.getLogger("cheesex.review.landing_watch")
 #: the branch cancels the run it superseded.
 _FAILED = frozenset({"failure", "timed_out", "startup_failure"})
 
-#: How many merges are looked at at once. A look holds a database connection
-#: only while it reads and writes its own landing row: what it waits on is the
-#: forge, and that is asked with no session open (`_look`). So what this bounds
-#: is the forge calls in flight, not the pool — eight of them still leave a
-#: worker's 20 + 15 connections (`core.config`) to every other request.
+#: How many merges are looked at at once. What a look mostly waits on is the
+#: forge, asked with no session open (`_look`) — but it does hold a connection
+#: while it reads and writes, so this is a bound on pooled connections as well
+#: as on forge calls. Eight of them still leave a worker's 20 + 15 connections
+#: (`core.config`, at one worker) to every other request.
 AT_ONCE = 8
 
 
@@ -211,7 +211,16 @@ async def _look(
 
     async with sessions() as session:
         landing = await session.get(TaskLanding, landing_id, with_for_update=True)
-        task = await session.get(Task, landing.task_id) if landing else None
+        # The task's row too: a task that delivers in steps has a landing per
+        # merge, and two of them may be looking in the same sweep. Both would
+        # read a closed task as closed and reopen it, so the second one waits
+        # here and reads what the first wrote, exactly as it did when the
+        # looks were one at a time.
+        task = (
+            await session.get(Task, landing.task_id, with_for_update=True)
+            if landing
+            else None
+        )
         if landing is None or task is None:
             return 0
         landing.merge_sha = sha
