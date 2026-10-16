@@ -18,6 +18,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent_instance.adapters import task_teammate
+from app.domain.block.queries import turn_starts
 from app.domain.block.services import last_block_at
 from app.domain.delivery import periodic as delivery_periodic
 from app.domain.delivery.agent import (
@@ -171,7 +172,9 @@ def periodic_jobs(
         compute=compute,
         sessions=sessions,
     )
-    usage_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    usage_periodic.register_periodic_jobs(
+        jobs, sessions=sessions, turn_starts=turn_starts
+    )
     backend_log.register_periodic_jobs(jobs)
     run_record_periodic.register_periodic_jobs(jobs, sessions=sessions)
     notification_periodic.register_periodic_jobs(jobs, sessions=sessions)

@@ -29,6 +29,7 @@ from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationE
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
+from app.domain.block.adapters import DecisionLine
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
@@ -273,6 +274,8 @@ async def resolve_notification(
         chosen=body.chosen,
         decided_by=handle,
         publish=get_broker().publish,
+        # 拍板那句话落在房间里，那一层 `notification` 够不着（`block/adapters.py`）。
+        decision_line=DecisionLine(db),
     )
     await db.commit()
     return ok(_dump(resolved))

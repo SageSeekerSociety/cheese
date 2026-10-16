@@ -15,6 +15,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.block.models import AuthorType
+from app.domain.block.queries import turn_starts
 from app.domain.block.repositories import BlockRepository
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
@@ -120,8 +121,8 @@ async def test_a_row_records_all_four_buckets_and_a_cost_once(
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid, inp=100, out=50, cache_read=9850, cache_write=40))
 
-    first = await ingest_once(business_db_factory, log)
-    again = await ingest_once(business_db_factory, log)
+    first = await ingest_once(business_db_factory, log, turn_starts=turn_starts)
+    again = await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     assert first == {"landed": 1, "skipped": 0}
     assert again == {"landed": 0, "skipped": 0}  # checkpoint: exactly-once
@@ -152,7 +153,7 @@ async def test_cache_reads_are_charged_at_the_cache_read_rate(
         + _row(pid, tid, inp=1, out=0, cache_read=10_000)
     )
 
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     fresh, cached = await _rows(business_db_factory, pid)
     assert fresh.credits == pytest.approx(10_000 * OPUS[0] / CREDIT_USD)
@@ -175,7 +176,7 @@ async def test_cache_writes_are_charged_by_their_lifetime(
         + _row(pid, tid, inp=0, out=0, cache_write=3000)
     )
 
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     hour, both, unsplit = await _rows(business_db_factory, pid)
     assert hour.cost_usd == pytest.approx(1000 * OPUS[4])
@@ -210,7 +211,7 @@ async def test_same_tokens_cost_the_same_credits_on_gateway_and_subscription(
             split=(700, 0),
         )
     )
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     async with business_db_factory() as session:
         uid = await registered(session, "u")
@@ -247,7 +248,7 @@ async def test_a_dated_snapshot_is_priced_as_its_model(
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid, inp=1000, out=0, model="claude-haiku-4-5-20251001"))
 
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     [row] = await _rows(business_db_factory, pid)
     assert row.cost_usd == pytest.approx(1000 * HAIKU[0])
@@ -262,7 +263,10 @@ async def test_an_unpriced_model_still_records_its_usage(
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid, inp=70, out=30, model="claude-unknown-9"))
 
-    assert await ingest_once(business_db_factory, log) == {"landed": 1, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 1,
+        "skipped": 0,
+    }
 
     [row] = await _rows(business_db_factory, pid)
     assert (row.model, row.total_tokens) == ("claude-unknown-9", 100)
@@ -282,11 +286,17 @@ async def test_an_unreachable_price_table_defers_the_pass_instead_of_free_usage(
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid))
 
-    assert await ingest_once(business_db_factory, log) == {"landed": 0, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 0,
+        "skipped": 0,
+    }
     assert await _rows(business_db_factory, pid) == []
 
     _price(monkeypatch, {"claude-opus-5": OPUS})
-    assert await ingest_once(business_db_factory, log) == {"landed": 1, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 1,
+        "skipped": 0,
+    }
     [row] = await _rows(business_db_factory, pid)
     assert row.cost_usd > 0
 
@@ -296,11 +306,11 @@ async def test_appended_lines_ingest_incrementally(business_db_factory, tmp_path
     pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid))
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     with log.open("a") as fh:
         fh.write(_row(pid, tid, inp=7, out=3))
-    result = await ingest_once(business_db_factory, log)
+    result = await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     assert result["landed"] == 1
     async with business_db_factory() as session:
@@ -313,11 +323,11 @@ async def test_rotated_file_is_a_new_generation(business_db_factory, tmp_path):
     pid, tid = await _seed(business_db_factory)
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, tid, inp=11, out=0))
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     # Replace the file wholesale (rotation): its rows are NEW spend.
     log.write_text(_row(pid, tid, inp=13, out=0))
-    result = await ingest_once(business_db_factory, log)
+    result = await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     assert result["landed"] == 1
     async with business_db_factory() as session:
@@ -338,7 +348,7 @@ async def test_unattributable_rows_are_skipped_not_wedged_on(
     ghost = _row("00000000-0000-0000-0000-000000000000", tid)
     log.write_text(orphan + ghost + _row(pid, tid))
 
-    result = await ingest_once(business_db_factory, log)
+    result = await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     assert result == {"landed": 1, "skipped": 2}
     async with business_db_factory() as session:
@@ -361,7 +371,7 @@ async def test_a_row_for_a_missing_project_holds_the_log_until_it_appears(
         + _row(pid, tid, inp=11, out=0)
     )
 
-    held = await ingest_once(business_db_factory, log)
+    held = await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     # Nothing consumed: not the late row, and not the row behind it.
     assert held == {"landed": 0, "skipped": 0}
@@ -380,10 +390,13 @@ async def test_a_row_for_a_missing_project_holds_the_log_until_it_appears(
         )
         await session.commit()
 
-    second = await ingest_once(business_db_factory, log)
+    second = await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     assert second == {"landed": 2, "skipped": 0}
-    assert await ingest_once(business_db_factory, log) == {"landed": 0, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 0,
+        "skipped": 0,
+    }
 
 
 @pytest.mark.anyio
@@ -399,8 +412,14 @@ async def test_a_row_for_a_missing_project_is_given_up_once_it_ages_out(
         _row(uuid.uuid4(), tid, inp=9, out=0, ts=old) + _row(pid, tid, inp=11, out=0)
     )
 
-    assert await ingest_once(business_db_factory, log) == {"landed": 1, "skipped": 1}
-    assert await ingest_once(business_db_factory, log) == {"landed": 0, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 1,
+        "skipped": 1,
+    }
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 0,
+        "skipped": 0,
+    }
     rows = await _rows(business_db_factory, pid)
     assert [row.input_tokens for row in rows] == [11]
 
@@ -418,8 +437,14 @@ async def test_invalid_topic_keeps_project_usage_and_advances_once(
     log = tmp_path / "usage.jsonl"
     original = _row(pid, invalid_topic, inp=17, out=3) + _row(pid, tid, inp=7, out=2)
     log.write_text(original)
-    assert await ingest_once(business_db_factory, log) == {"landed": 2, "skipped": 0}
-    assert await ingest_once(business_db_factory, log) == {"landed": 0, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 2,
+        "skipped": 0,
+    }
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 0,
+        "skipped": 0,
+    }
     assert log.read_text() == original
     async with business_db_factory() as session:
         rows = list(
@@ -446,7 +471,10 @@ async def test_a_task_conversation_keeps_its_usage(business_db_factory, tmp_path
         task_id = task.id
     log = tmp_path / "usage.jsonl"
     log.write_text(_row(pid, task_id, inp=11, out=4))
-    assert await ingest_once(business_db_factory, log) == {"landed": 1, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 1,
+        "skipped": 0,
+    }
     assert [
         (r.conversation_id, r.total_tokens)
         for r in await _rows(business_db_factory, pid)
@@ -486,7 +514,10 @@ async def test_a_call_made_during_a_tasks_turn_records_that_turn(
         _row(pid, task_id, inp=11, out=4, ts=during_first)
         + _row(pid, task_id, inp=21, out=4, ts=during_second)
     )
-    assert await ingest_once(business_db_factory, log) == {"landed": 2, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 2,
+        "skipped": 0,
+    }
     assert [
         (r.conversation_id, r.turn_id, r.total_tokens)
         for r in await _rows(business_db_factory, pid)
@@ -516,7 +547,10 @@ async def test_a_line_admission_named_as_the_dream_lands_as_the_dream(
         line(dream.DREAM_KIND, 50) + line("free", 60) + _row(pid, tid, out=70)
     )
 
-    assert await ingest_once(business_db_factory, log) == {"landed": 3, "skipped": 0}
+    assert await ingest_once(business_db_factory, log, turn_starts=turn_starts) == {
+        "landed": 3,
+        "skipped": 0,
+    }
     rows = await _rows(business_db_factory, pid)
     assert [(r.kind, r.output_tokens) for r in rows] == [
         (dream.DREAM_KIND, 50),

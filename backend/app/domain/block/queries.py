@@ -22,6 +22,7 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 
 import uuid
 from collections.abc import Iterable
+from datetime import datetime
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -81,6 +82,19 @@ async def turn_history(
 ) -> list[Block]:
     """Read the canonical turn-history ordering in the caller's transaction."""
     return await BlockRepository(session).turn_history(conversation_id)
+
+
+async def turn_starts(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> list[tuple[datetime, uuid.UUID]]:
+    """Read when each of this conversation's turns began, oldest first.
+
+    The usage books need this: the metering proxy's log carries no work id, so
+    a metered call is billed to whichever turn was under way at its timestamp
+    (`usage.subscription_ingest`). Called through the read boundary because
+    that reader sits a layer below this one.
+    """
+    return await BlockRepository(session).turn_starts(conversation_id)
 
 
 async def earlier_message_count(
