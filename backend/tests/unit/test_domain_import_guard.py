@@ -254,8 +254,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.task.services", "app.domain.user.repositories"),
         ("app.domain.task.visibility_service", "app.domain.space.repositories"),
         ("app.domain.task.visibility_service", "app.domain.user.repositories"),
-        # --- team ---
-        ("app.domain.team.services", "app.domain.task.repositories"),
         # --- thread --- 支线摘要要每条支线最后说的那一句：一次查询读一批块，
         # block 领域没有 service 层。
         ("app.domain.thread.reads", "app.domain.block.repositories"),
