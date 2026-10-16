@@ -2,11 +2,17 @@
 """The orchestrator's patrol sweep: list what needs a decision across a channel's task lines.
 
 It reads the platform and GitHub and writes nothing, except under --sync-doc, which
-appends the rendered board to one document and never restates anything above it.
+appends the board, --auto-accept, which accepts eligible cards, or
+--recover-environment, which sends bounded recovery wakes.
+The latter requires two distinct environmental turn failures since the last heartbeat,
+a stopped open task, and complete message history. It never changes environments or
+permissions: it wakes the current seat, at most twice per task with a 30-minute cooldown.
+The task's message history persists the budget; stable request IDs deduplicate retries.
+A generic provider 502 does not qualify without work-machine/environment context.
 
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
-      [--silent-min 40] [--skip 1443,1405] [--json | --render | --sync-doc <document id>] \
+      [--silent-min 40] [--skip 1443,1405] [--json | --render | --sync-doc <document id> | --recover-environment] \
       [--auto-accept-check | --auto-accept]
   python3 .claude/scripts/orchestrator_sweep.py --self-test   (offline: no token, no network, no gh)
 
@@ -68,6 +74,8 @@ the calls a plain sweep makes unchanged.
 import contextlib, io, json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timedelta, timezone
 
+from orchestrator_actions import environment_recovery, recovery_wake
+
 API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/")
 
@@ -107,7 +115,7 @@ ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
               "review_head", "review_since", "review_verdict", "review_tier", "waited_min", "waiting_on",
               "stage", "detail", "changed", "verified", "checks", "cases",
               "last_event_at", "last_message_at", "last_message", "last_output_at",
-              "running", "heartbeat_min", "auto_accept")
+              "running", "heartbeat_min", "recovery", "auto_accept")
 #: How much of a line's last message the row carries: enough to tell "审查在跑" from
 #: "等总调度", not the whole message.
 _MESSAGE_BRIEF = 80
@@ -853,6 +861,7 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "last_output_at": pulse.get("last_output_at"),
         "running": pulse.get("running"),
         "heartbeat_min": pulse.get("heartbeat_min"),
+        "recovery": None,
         "read": good,
         # 采纳判据那一层填，没跑判据的就是 None。判据本身是 orchestrator_autoaccept 的，
         # 行只把它带出去（text 的尾部一块、--json 的一项）。
@@ -962,7 +971,7 @@ def pulse_detail(waited, last_event, last_msg_at, last_msg_brief, last_output=No
             + f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
 
 
-def sweep(tok, room, silent, skip, want_facts, adopt=None):
+def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None):
     """The rows the text list prints, each also carrying the board's fields. GitHub
     facts are read only for tasks that have a PR: for the pending ones always, and for
     the rest only when `want_facts`, which is set by the flags that show the board — so
@@ -984,7 +993,7 @@ def sweep(tok, room, silent, skip, want_facts, adopt=None):
         # `created_at`）。只认 `started_at` 会把线上每一条在办任务整行跳过、一条信号都
         # 报不出来。老行还带这个键时照旧认它——值为 None 仍是「还没点开始」，整行跳过。
         started = t["started_at"] if "started_at" in t else t.get("created_at")
-        if not started or str(t["number"]) in skip:
+        if not started or str(t["number"]) in skip or (only is not None and t["id"] not in only):
             continue
         tid = t["id"]
         idmap[tid] = t["number"]
@@ -1081,6 +1090,9 @@ def sweep(tok, room, silent, skip, want_facts, adopt=None):
         if len(tail) >= 2 and all(meta(m)["event_type"] == "turn_failed" for m in tail[-2:]) and tail[-1]["created_at"] > last_msg:
             w = age(tail[-1]["created_at"])
             add("连续失败", f"最后 {tail[-1]['created_at'][11:16]} UTC：{said(tail[-1])}", w)
+            rows[-1]["recovery"] = environment_recovery(t, sysev, heartbeat, now)
+            if rows[-1]["recovery"]:
+                rows[-1]["detail"] += "；环境故障，可用 --recover-environment 限次重唤醒"
 
         # 待回答：这条线停在别人身上，自己不会往下走 —— 刚问出的问题，或者递上去、
         # 下一步在验收人手上的卡。它不看 --silent-min：提问本身就是这条线最新的心跳，
@@ -1113,6 +1125,52 @@ def sweep(tok, room, silent, skip, want_facts, adopt=None):
 
     rows.sort(key=lambda r: CLASSES.index(r["kind"]))
     return rows, idmap
+
+
+def recovery_messages(tok, topic):
+    """Complete durable ledger or refusal; truncation must not reset the budget."""
+    messages, before, seen = [], None, set()
+    for _ in range(50):
+        page = get(tok, f"/topics/{topic}/history?limit=200&kind=message"
+                   + (f"&before={before}" if before else ""))
+        messages.extend(page["data"])
+        if page.get("has_more") is False:
+            return messages
+        before = page.get("oldest_id")
+        if not before or before in seen:
+            break
+        seen.add(before)
+    raise ValueError("未读全恢复记录，不执行自动恢复")
+
+
+def recover_environment(tok, room, rows):
+    """Opt-in wakes, with a fresh eligibility check after reading the ledger.
+
+    Only message POST is used: no seat switch, machine change, stop or permission
+    escalation. A refused or uncertain write stops this invocation; rerunning uses
+    the same task slot's request_id instead of creating an unbounded retry loop.
+    """
+    seen = set()
+    for r in rows:
+        if not r.get("recovery") or r["topic"] in seen:
+            continue
+        seen.add(r["topic"])
+        messages = recovery_messages(tok, r["topic"])
+        fresh, _ = sweep(tok, room, 40, set(), False, only={r["topic"]})
+        candidate = next((f for f in fresh if f.get("recovery")), None)
+        if not candidate:
+            print(f"#{r['task']}：状态已变化，不重唤醒")
+            continue
+        body, why = recovery_wake({"id": r["topic"], "agent_handle": candidate["seat"]},
+                                  messages, datetime.now(timezone.utc))
+        if body is None:
+            print(f"#{r['task']}：{why}")
+            continue
+        sent = send(tok, "POST", f"/topics/{r['topic']}/messages", body)
+        if not isinstance(sent, dict) or not sent.get("id"):
+            raise SystemExit(f"#{r['task']}：发送结果不确定，未确认重唤醒；"
+                             f"request_id {body['request_id']}")
+        print(f"#{r['task']}：恢复请求已发送 {sent['id']}，不代表环境已恢复")
 
 
 def _autoaccept():
@@ -1153,6 +1211,7 @@ def auto_accept_text(rows):
     aa = _autoaccept()
     return ["", f"自动采纳（{len(judged)} 张可采纳的卡，判据由 orchestrator_autoaccept 给定）："] \
         + [aa.line(r["auto_accept"]) for r in judged]
+
 
 
 def text(rows):
@@ -2251,6 +2310,92 @@ def _self_test_jobs():
     ]
 
 
+def _self_test_recovery():
+    """Exercise the real CLI -> sweep -> history -> POST path, entirely offline."""
+    import contextlib, io
+    from unittest.mock import patch
+
+    now = datetime.now(timezone.utc)
+    at = lambda minutes: (now - timedelta(minutes=minutes)).isoformat()
+    task = {"id": "t1", "number": 1685, "title": "环境恢复", "status": "open",
+            "created_at": at(120), "agent_handle": "cheese-a",
+            "presentation": {"phrase": "started"}}
+    failures = [{"id": f"failure-{i}", "turn_id": f"turn-{i}", "created_at": at(mins),
+                 "meta": {"event_type": "turn_failed", "i18n": {"detail": {
+                     "params": {"said": "Failed to prepare work machine: 502 Bad Gateway"}}}}}
+                for i, mins in enumerate((5, 2))]
+    messages, posts, reads = [], [], []
+    state = {"task": task, "complete": True, "stale": False}
+
+    def fake_get(tok, path):
+        reads.append(path)
+        if "/tasks?" in path:
+            t = state["task"]
+            if state["stale"] and any("limit=200&kind=message" in p for p in reads):
+                t = dict(t, presentation={"phrase": "running"})
+            return {"data": [t]}
+        if "kind=message" in path:
+            return {"data": list(messages), "has_more": not state["complete"],
+                    "oldest_id": "same-cursor"}
+        if "author=system" in path:
+            return {"data": failures}
+        return {"data": []}
+
+    def fake_send(tok, method, path, body):
+        posts.append((method, path, body))
+        messages.append({**body, "id": "wake-" + str(len(posts)), "created_at": at(0)})
+        return messages[-1]
+
+    def run(*flags):
+        reads.clear()
+        with patch.object(sys, "argv", ["sweep", "room", *flags]), contextlib.redirect_stdout(io.StringIO()):
+            main()
+
+    out = []
+    with patch.dict(globals(), get=fake_get, send=fake_send, login=lambda: "offline"):
+        rows, _ = sweep("offline", "room", 40, set(), False)
+        recovery = next(r for r in rows if r["kind"] == "连续失败")["recovery"]
+        out.append(("环境候选进入巡检行", recovery is not None, True))
+        out.append(("跳过的任务不进入恢复候选", sweep("offline", "room", 40, {"1685"}, False)[0], []))
+        run()
+        out.append(("默认巡检零写入", len(posts), 0))
+        state["stale"] = True
+        run("--recover-environment")
+        out.append(("发之前任务恢复运行，不打扰", len(posts), 0))
+        state["stale"], state["complete"] = False, False
+        try:
+            run("--recover-environment")
+            refused = False
+        except ValueError:
+            refused = True
+        out.append(("历史不完整拒绝执行", (refused, len(posts)), (True, 0)))
+        state["complete"] = True
+        run("--recover-environment")
+        out.append(("显式恢复只发任务消息", [(m, p) for m, p, _ in posts],
+                    [("POST", "/topics/t1/messages")]))
+        out.append(("恢复消息点名当前座位并带幂等键",
+                    bool(posts and "<@cheese-a>" in posts[0][2]["content"]
+                         and posts[0][2].get("request_id")), True))
+        run("--recover-environment")
+        out.append(("同一失败再次巡检不重复唤醒", len(posts), 1))
+        # New failures after the first wake still obey the durable cooldown.
+        messages[0]["created_at"] = at(10)
+        run("--recover-environment")
+        out.append(("新进程读取历史仍受冷却保护", len(posts), 1))
+        messages[0]["created_at"] = at(31)
+        run("--recover-environment")
+        out.append(("冷却后第二次恢复", len(posts), 2))
+        messages[-1]["created_at"] = at(30)
+        run("--recover-environment")
+        out.append(("新失败也不能突破两次上限", len(posts), 2))
+        # Pagination must include an old wake, not just the latest page.
+        with patch.dict(globals(), get=lambda tok, path: (
+                {"data": [messages[0]], "has_more": False} if "&before=" in path else
+                {"data": [messages[1]], "has_more": True, "oldest_id": "page-1"})):
+            out.append(("恢复账本翻页读全", len(recovery_messages("tok", "t1")), 2))
+    return out
+
+
 def self_test():
     """离线自测：不开网络、不取 token、不调 gh，覆盖读段和读红两条新路径。"""
     bad, total = [], 0
@@ -2271,7 +2416,7 @@ def self_test():
         check("读用例：" + line, got, want)
     for name, got, want in (_self_test_board() + _self_test_review() + _self_test_patterns()
                             + _self_test_jobs() + _self_test_pulse() + _self_test_sweep()
-                            + _self_test_adopt()):
+                            + _self_test_recovery() + _self_test_adopt()):
         check("看板：" + name, got, want)
     for line in bad:
         print("FAIL " + line)
@@ -2291,8 +2436,10 @@ def main():
     as_json = "--json" in argv
     as_render = "--render" in argv
     document = value_of(argv, "--sync-doc")
+    recover = "--recover-environment" in argv
     given = [name for name, on in (("--json", as_json), ("--render", as_render),
-                                   ("--sync-doc", document is not None)) if on]
+                                   ("--sync-doc", document is not None),
+                                   ("--recover-environment", recover)) if on]
     if len(given) > 1:
         raise SystemExit("、".join(given) + " 只能给一个")
     # `--sync-doc "$VAR"` with an empty VAR arrives as an id of "": counting it as the flag
@@ -2317,6 +2464,8 @@ def main():
         print(render(rows, metrics, silent, now, room))
         return
     text(rows)
+    if recover:
+        recover_environment(tok, room, rows)
     if document:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
         print(sync_doc(tok, document, render(rows, metrics, silent, now, room)))

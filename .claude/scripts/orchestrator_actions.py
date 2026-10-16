@@ -12,7 +12,8 @@ Usage: python3 .claude/scripts/orchestrator_actions.py --self-test   (offline)
 
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from uuid import NAMESPACE_URL, uuid5
 
 #: The sections an item list has been written under. 工作流 v2 §5 names it
 #: 「行动项」; retros written before v2 landed called the same list 「改进」 or
@@ -160,6 +161,80 @@ def last_retro(docs):
     return best
 
 
+# Recovery is a bounded wake, not permission to change a task's environment.
+# The platform's messages are the ledger: a new patrol process or work machine
+# must not reset the budget. Two lifetime slots deliberately have no auto-reset.
+RECOVERY_COOLDOWN = timedelta(minutes=30)
+RECOVERY_LIMIT = 2
+_RECOVERY_MARK = "[orchestrator-environment-recovery:v1:"
+_ENV_CONTEXT = re.compile(r"work.?machine|environment|sandbox|provision|工作机|环境", re.I)
+
+
+def environment_failure(event):
+    """Read the full failure detail, not the sweep's 100-character preview."""
+    meta = event.get("meta") or {}
+    if meta.get("event_type") != "turn_failed" or meta.get("severity") == "info":
+        return None
+    detail = ((meta.get("i18n") or {}).get("detail") or {})
+    text = str((detail.get("params") or {}).get("said") or "")
+    low = text.casefold()
+    # A human refusal must not be turned into a retry on a different authority.
+    if any(word in low for word in ("permission denied", "user denied", "user rejected",
+                                    "not authorized", "forbidden", "权限拒绝", "用户拒绝")):
+        return None
+    if "failed to prepare work machine" in low:
+        return "机器准备失败"
+    if "read-only file system" in low:
+        return "只读文件系统"
+    if "502 bad gateway" in low and _ENV_CONTEXT.search(text):
+        return "环境网关失败"
+    return None
+
+
+def environment_recovery(task, events, heartbeat, now):
+    """Only two distinct, recent failed turns after all observed activity qualify.
+
+    Unknown/running/parked tasks are not safe to wake. Both failures must name
+    an environmental cause; a model error next to a machine error is not a streak.
+    """
+    if (task.get("status") != "open" or not task.get("agent_handle")
+            or (task.get("presentation") or {}).get("phrase") != "started"
+            or task.get("waiting_on") or task.get("awaits_me")):
+        return None
+    tail = sorted((e for e in events if (e.get("meta") or {}).get("event_type")), key=_created)[-2:]
+    if len(tail) != 2 or not all(e.get("id") for e in tail) or tail[0]["id"] == tail[1]["id"]:
+        return None
+    if not all(e.get("turn_id") for e in tail) or tail[0]["turn_id"] == tail[1]["turn_id"]:
+        return None
+    reasons = [environment_failure(e) for e in tail]
+    times = [_created(e) for e in tail]
+    if (not all(reasons) or not heartbeat or min(times) <= _created({"created_at": heartbeat})
+            or not now - timedelta(hours=24) <= min(times) <= max(times) <= now):
+        return None
+    return {"action": "wake", "reason": reasons[-1], "failure_ids": [e["id"] for e in tail]}
+
+
+def recovery_wake(task, messages, now):
+    """A stable request per task/slot deduplicates simultaneous patrols server-side.
+
+    Call only with complete message history and a freshly eligible task. A lost
+    POST reply can be retried with this same request; history, not local files,
+    supplies the cooldown and the hard ceiling.
+    """
+    used = [m for m in messages if str(m.get("content") or "").startswith(_RECOVERY_MARK)]
+    if len(used) >= RECOVERY_LIMIT:
+        return None, "已用完本任务的两次自动重唤醒"
+    if used and (any(_created(m) == _EARLIEST for m in used)
+                 or now - max(map(_created, used)) < RECOVERY_COOLDOWN):
+        return None, "自动恢复冷却中（30 分钟）"
+    slot = len(used) + 1
+    request_id = str(uuid5(NAMESPACE_URL, f"orchestrator-environment-recovery:v1:{task['id']}:{slot}"))
+    content = (f"{_RECOVERY_MARK}{slot}]\n"
+               f"我是芝士。<@{task['agent_handle']}> 连续两轮遇到环境故障，请在原授权范围内"
+               "重新检查环境并继续任务。不得绕过权限拒绝；若仍失败，报告阻碍，不自行反复唤醒。")
+    return {"content": content, "request_id": request_id}, None
+
+
 def self_test():
     """Offline: no token, no network. Every input is a shape a real retro wrote.
 
@@ -294,6 +369,62 @@ v2 要求复盘产出 workflow-tree 新版，但资料库里还没有这份东�
               doc("总调度复盘 B（UTC）", "2026-10-14T10:18:56Z"),
           ])["title"],
           "总调度复盘 B（UTC）")
+
+    now = datetime(2026, 10, 16, 12, tzinfo=timezone.utc)
+    at = lambda minutes: (now - timedelta(minutes=minutes)).isoformat()
+    task = {"id": "task-a", "status": "open", "agent_handle": "cheese-a",
+            "presentation": {"phrase": "started"}}
+    def event(id, minutes, said="Failed to prepare work machine"):
+        return {"id": id, "turn_id": id, "created_at": at(minutes),
+                "meta": {"event_type": "turn_failed",
+                         "i18n": {"detail": {"params": {"said": said}}}}}
+    pair = [event("one", 5), event("two", 2)]
+    eligible = lambda ev=pair, t=task, pulse=at(10): environment_recovery(t, ev, pulse, now)
+    check("两轮机器故障可重唤醒", eligible(),
+          {"action": "wake", "reason": "机器准备失败", "failure_ids": ["one", "two"]})
+    for said, reason in (("Read-only file system", "只读文件系统"),
+                         ("work machine: 502 Bad Gateway", "环境网关失败"),
+                         ("model provider: 502 Bad Gateway", None),
+                         ("502 Bad Gateway", None), ("quota exceeded", None),
+                         ("permission denied: Read-only file system", None),
+                         ("x" * 150 + "Failed to prepare work machine", "机器准备失败")):
+        check("完整详情分类：" + said[:40], environment_failure(event("x", 1, said)), reason)
+    for label, ev in (("单次", pair[:1]), ("重复事件", [pair[0], pair[0]]),
+                      ("同轮两次记录", [pair[0], dict(pair[1], turn_id="one")]),
+                      ("轮次缺失", [dict(e, turn_id=None) for e in pair]),
+                      ("非失败通知", [pair[0], dict(pair[1], meta={**pair[1]["meta"], "severity": "info"})]),
+                      ("普通错误穿插", [event("a", 5, "quota exceeded"), pair[1]]),
+                      ("已恢复", pair + [{"id": "ok", "created_at": at(1),
+                                         "meta": {"event_type": "turn_succeeded"}}]),
+                      ("旧失败", [event("a", 1500), pair[1]]),
+                      ("未来时间", [pair[0], event("a", -1)])):
+        check("不恢复：" + label, eligible(ev), None)
+    for phrase in ("running", "awaiting_answer", "awaiting_review", "accepted", None):
+        check("不打扰运行或等待任务：" + str(phrase),
+              eligible(t=dict(task, presentation={"phrase": phrase})), None)
+    for extra in ({"status": "closed"}, {"agent_handle": None}, {"waiting_on": "owner"},
+                  {"awaits_me": True}):
+        check("不恢复：" + str(extra), eligible(t=dict(task, **extra)), None)
+    check("两次失败之间有活动，不构成连续故障", eligible(pulse=at(4)), None)
+    check("没有更新活动的旧故障仍不能自动恢复",
+          eligible([event("old-a", 2900), event("old-b", 2880)], pulse=at(4320)), None)
+    check("事件倒序仍按时间识别", eligible(list(reversed(pair))), eligible())
+    first, why = recovery_wake(task, [], now)
+    check("首次允许", why, None)
+    check("同任务并发请求幂等", recovery_wake(task, [], now)[0], first)
+    check("不同任务不共用幂等键", recovery_wake(dict(task, id="task-b"), [], now)[0]["request_id"]
+          == first["request_id"], False)
+    prior = {**first, "created_at": at(29)}
+    check("未满冷却不发送", recovery_wake(task, [prior], now)[0], None)
+    prior["created_at"] = at(30)
+    second, why = recovery_wake(task, [prior], now)
+    check("满30分钟可再试", why, None)
+    check("第二次使用新的幂等键", second["request_id"] != first["request_id"], True)
+    check("两次后永久停，不因换天重置",
+          recovery_wake(task, [prior, {**second, "created_at": at(31)}], now + timedelta(days=2))[0], None)
+    check("缺失恢复时间不猜", recovery_wake(task, [first], now)[0], None)
+    check("普通消息不消耗恢复次数",
+          recovery_wake(task, [{"content": "继续", "created_at": at(1)}], now)[0], first)
 
     for f in failures:
         print("FAIL", f)
