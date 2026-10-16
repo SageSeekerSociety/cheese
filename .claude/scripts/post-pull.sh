@@ -53,9 +53,10 @@ else
     echo "  No frontend dependency changes."
 fi
 
-# 4. Baseline changes
+# 4. Baseline changes (backend boundaries are measured from the merge base,
+# not stored in a baseline file).
 BASELINES=()
-for baseline in backend/.boundary-baseline.json frontend/.a11y-baseline.json; do
+for baseline in frontend/import-boundary-baseline.json frontend/a11y-baseline.json; do
     if changed "$baseline"; then
         BASELINES+=("$baseline")
     fi

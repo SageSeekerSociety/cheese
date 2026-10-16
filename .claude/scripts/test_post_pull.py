@@ -14,7 +14,7 @@ import unittest
 SCRIPT = Path(__file__).with_name("post-pull.sh")
 UV_LOCK = "backend/uv.lock"
 PNPM_LOCK = "frontend/pnpm-lock.yaml"
-BASELINES = ("backend/.boundary-baseline.json", "frontend/.a11y-baseline.json")
+BASELINES = ("frontend/import-boundary-baseline.json", "frontend/a11y-baseline.json")
 
 
 class PostPullTest(unittest.TestCase):
@@ -124,8 +124,10 @@ class PostPullTest(unittest.TestCase):
             "other/pyproject.toml",
             "desktop/pnpm-lock.yaml",
             "frontend/pnpm-lock.yaml.backup",
-            "backend/.boundary-baseline.json.backup",
-            "frontend/.a11y-baseline.json.backup",
+            "frontend/import-boundary-baseline.json.backup",
+            "frontend/a11y-baseline.json.backup",
+            "backend/.boundary-baseline.json",
+            "frontend/.a11y-baseline.json",
         )
         self.advance(paths)
         self.assert_effects(paths)
@@ -159,6 +161,38 @@ class PostPullTest(unittest.TestCase):
         self.git("commit", "--quiet", "-m", "remove baseline")
         self.git("update-ref", "ORIG_HEAD", before)
         self.assert_effects((BASELINES[0],))
+
+    def test_renamed_watched_files_are_still_detected(self) -> None:
+        paths = (UV_LOCK, PNPM_LOCK, *BASELINES)
+        before = self.git("rev-parse", "HEAD")
+        for path in paths:
+            self.git("mv", path, f"{path}.bak")
+        self.git("commit", "--quiet", "-m", "rename watched files")
+        self.git("update-ref", "ORIG_HEAD", before)
+        self.assert_effects(paths)
+
+    def test_migration_notice_lists_changed_paths(self) -> None:
+        path = "backend/alembic/versions/new_revision.py"
+        self.advance((path,))
+        result, _ = self.run_script()
+        self.assertIn(path, result.stdout)
+        self.assertNotIn("No new migrations", result.stdout)
+
+    def test_migration_failure_stops_later_checks(self) -> None:
+        self.advance((PNPM_LOCK,))
+        self.env["POST_PULL_TEST_FAIL"] = "uv"
+        result, calls = self.run_script(success=False)
+        self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+        self.assertEqual([call[0] for call in calls], ["uv"])
+        self.assertNotIn("=== Done ===", result.stdout)
+
+    def test_unavailable_health_endpoint_is_nonfatal(self) -> None:
+        self.advance(())
+        self.env["POST_PULL_TEST_FAIL"] = "curl"
+        result, calls = self.run_script()
+        self.assertEqual(calls[-1][0], "curl")
+        self.assertIn("SKIP:", result.stdout)
+        self.assertIn("=== Done ===", result.stdout)
 
     def test_missing_orig_head_is_not_reported_as_no_changes(self) -> None:
         result, calls = self.run_script(success=False)
