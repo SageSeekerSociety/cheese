@@ -119,8 +119,17 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- agent --- (announce writes the room line itself: 平台说的每一句
         # 都从这一个函数出去，走 block 领域的 service 就要把整条 DI 图拖进来)
         ("app.domain.agent.announce", "app.domain.block.repositories"),
-        ("app.domain.agent.chat", "app.domain.block.repositories"),
-        ("app.domain.agent.chat", "app.domain.project.repositories"),
+        # chat_admission / chat_lifecycle / chat_places 是从 agent.chat 里拆出来的
+        # 那三块（准入与并发、停与「还在不在」、会场与 session 指针）。原先记在
+        # `agent.chat` 名下的一对 repository 跟着代码搬了家：读 block（准入时要看
+        # 这个座位说了什么、停的时候要认这条活真干出了东西；block 领域没有 service
+        # 层，`platform_stats.pipeline` 那条注释讲的是同一件事）落在
+        # chat_admission 与 chat_lifecycle；读项目表（会场里那个座位归谁，决定记
+        # 在谁名下）落在 chat_places。拆模块没有新增跨包的边，只是发起方从 chat.py
+        # 换成了这三个模块，所以按同一笔债入账。
+        ("app.domain.agent.chat_admission", "app.domain.block.repositories"),
+        ("app.domain.agent.chat_lifecycle", "app.domain.block.repositories"),
+        ("app.domain.agent.chat_places", "app.domain.project.repositories"),
         # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
         # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
         # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`
