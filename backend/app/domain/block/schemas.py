@@ -5,7 +5,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
+from app.domain.event_author import AuthorType
 
 
 class ReactionOut(BaseModel):

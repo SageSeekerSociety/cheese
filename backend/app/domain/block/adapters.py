@@ -14,10 +14,11 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.event_about import EventAbout, landing
+from app.domain.event_author import AuthorType
 
 
 class DecisionLine:

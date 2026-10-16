@@ -104,11 +104,15 @@ def _session_and_repo() -> tuple[TopicRepository, _AnswersNothing]:
     return TopicRepository(session), session  # type: ignore[arg-type]
 
 
-def _sql(statement: object) -> str:
-    """把语句编译成 Postgres 的 SQL 文本 —— 建不出来的语句在这儿当场炸。"""
+def _sql(statement: object, *, literal: bool = False) -> str:
+    """把语句编译成 Postgres 的 SQL 文本 —— 建不出来的语句在这儿当场炸。
+
+    `literal=True` 把绑定参数就地渲染成字面量，用来比「问的是不是同一句」。
+    """
     return str(
         statement.compile(  # type: ignore[attr-defined]
-            dialect=postgresql.dialect()
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True} if literal else {},
         )
     )
 
@@ -119,8 +123,11 @@ def _after_from(statement: object) -> str:
     两份副本选的列本来就不一样（一边是模型全行，一边只手抄了几个列），拿整个文本
     比一定不等；能比、也必须相等的是 `FROM` 之后的 `WHERE` / `ORDER BY` / `LIMIT` ——
     那才是「取的是不是同一条」。
+
+    编译要带 `literal_binds`：`LIMIT 1` 和 `LIMIT 2` 默认都编成同一个
+    `LIMIT %(param_1)s`，两份语句的文本于是永远相等，条数改了也看不出来。
     """
-    flat = " ".join(_sql(statement).split())
+    flat = " ".join(_sql(statement, literal=True).split())
     assert " FROM " in flat, flat
     return flat.split(" FROM ", 1)[1]
 
