@@ -17,7 +17,7 @@ minutes), and at once on any check that finds the disk below a floor.
 
 - Below ``sandbox_disk_free_floor`` of its bytes or ``sandbox_inodes_free_floor``
   of its inodes, a platform host takes no new sandbox
-  (``CloudHost.disk_full_since``, ``services.accepting``) until a reading finds
+  (``CloudHost.disk_full_since``, ``reaper.accepting``) until a reading finds
   room again, and the machine's heaviest sandbox — the most of either, as a
   share of the filesystem — is destroyed and its room told what it held and
   where. One a reading: the next shows whether that was enough.
