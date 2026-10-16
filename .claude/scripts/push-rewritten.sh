@@ -25,8 +25,9 @@
 # Exit codes:
 #   0  pushed, or nothing to push
 #   1  git failed for a reason other than the lease
-#   2  refused before pushing: not a task/* branch, detached HEAD, unknown
-#      argument, or no remote-tracking ref to validate against
+#   2  refused before pushing without judging the branch: not a task/* branch,
+#      detached HEAD, unknown argument, no remote-tracking ref to validate
+#      against, or a branch with no reflog to check the remote tip against
 #   3  refused before pushing: the histories do not diverge like a rewrite, or
 #      the remote tip is a commit this branch never held
 #   4  refused by the lease: the remote moved since the last fetch
@@ -115,14 +116,16 @@ fi
 # origin/<branch>` and back) puts it in HEAD's reflog without ever making it
 # this branch's, and that must not be enough to overwrite it.
 reflog="$(git reflog show --format=%H "refs/heads/$branch" 2>/dev/null || true)"
+if [ -z "$reflog" ]; then
+  printf 'push-rewritten: %s has no reflog, so this cannot be checked.\n' "$branch" >&2
+  printf '  Reflogs are off here (`core.logAllRefUpdates false`?) or were expired;\n' >&2
+  printf '  nothing was pushed. Turn reflogs back on, or push by hand as the header says.\n' >&2
+  exit 2
+fi
 if ! grep -qx -- "$remote_oid" <<<"$reflog"; then
   printf 'push-rewritten: refusing: %s is at %s, which %s never held.\n' \
     "$tracking" "${remote_oid:0:12}" "$branch" >&2
   printf '  A force push would drop whatever is on it.\n' >&2
-  if [ -z "$reflog" ]; then
-    printf '  (%s has no reflog here — reflogs disabled? — so this cannot be verified.)\n' \
-      "$branch" >&2
-  fi
   printf '  Run `git fetch %s` and rebase or merge onto %s/%s to keep it; if the name is\n' \
     "$REMOTE" "$REMOTE" "$branch" >&2
   printf '  not the branch you meant to push, check out the right one.\n' >&2

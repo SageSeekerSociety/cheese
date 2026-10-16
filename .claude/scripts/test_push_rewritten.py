@@ -23,7 +23,9 @@ The cases are the rules the script exists to keep, stated before it was written:
   7. another history pushed under the same branch name is refused; both sides
      look diverged to a commit count, and only the reflog tells them apart;
   8. looking at that fetched commit first (`git checkout origin/task/42` and
-     back) does not license the force push that 6 refused.
+     back) does not license the force push that 6 refused;
+  9. with the branch's reflog unavailable the run says so and exits 2 — it did
+     not judge the branch, so it must not read like the refusals above.
 """
 
 import os
@@ -37,9 +39,21 @@ SCRIPT = REPO_ROOT / ".claude" / "scripts" / "push-rewritten.sh"
 
 ENV = dict(os.environ)
 # A caller that is itself inside a git command (a hook, `git -c ...`) exports
-# these; inherited, they would point every fixture command at the caller's repo
-# instead of the throwaway one, and the suite would test the wrong tree.
-for _leak in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+# most of these. GIT_DIR and friends point every fixture command at the caller's
+# repository; GIT_CONFIG_PARAMETERS carries the caller's `-c` settings into ours
+# (a `-c core.logAllRefUpdates=false` there would silently disarm the reflog
+# check). Inherited either way, the suite would test something other than what
+# it says.
+for _leak in (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_PREFIX",
+    "GIT_CONFIG_PARAMETERS",
+):
     ENV.pop(_leak, None)
 ENV.update(
     GIT_CONFIG_NOSYSTEM="1",
@@ -208,8 +222,41 @@ class PushRewrittenTest(unittest.TestCase):
         result = self.run_script(fx.work)
 
         self.assertEqual(result.returncode, 3, result.stderr)
+        # Not asserted on the message: several exit-3 paths say "fetch", so the
+        # keyword would not tell this rule apart from the counts check. The
+        # reflog guard is pinned by the exit code and the commit still being on
+        # the remote; the case goes red when the guard is removed.
         self.assertEqual(fx.remote_ref(), theirs)
-        self.assertIn("fetch", result.stderr)
+
+    def test_branch_without_a_reflog_says_so_and_exits_2(self):
+        """No reflog means the branch was not judged, not that it was refused."""
+        fx = self.fx
+        self.pushed_task_branch()
+
+        git(fx.work, "commit", "-q", "--amend", "-m", "first, reworded")
+        before = fx.remote_ref()
+        git(
+            fx.work,
+            "-c",
+            "core.logAllRefUpdates=false",
+            "reflog",
+            "expire",
+            "--expire=now",
+            "--all",
+        )
+        self.assertEqual(
+            git(
+                fx.work, "reflog", "show", "--format=%H", "refs/heads/task/42"
+            ).stdout.strip(),
+            "",
+            "the reflog was not cleared, so this case tests nothing",
+        )
+
+        result = self.run_script(fx.work)
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(fx.remote_ref(), before)
+        self.assertIn("reflog", result.stderr)
 
     def test_inspecting_the_remote_tip_first_is_still_refused(self):
         """A detached look at their commit must not make it ours to overwrite."""
