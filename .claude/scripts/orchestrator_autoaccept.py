@@ -91,8 +91,9 @@ HIGH_RISK = (
 )
 CI_CHECK = "CI required"
 #: One PR read: each GraphQL field, and the key pr_facts() files it under. The query is built from
-#: this table, so a field cannot be read without being asked for — read() swallows the KeyError of
-#: one that is missing, which would turn every card into `unreadable` with nothing else to show for it.
+#: this table so its two ends cannot drift, and the offline stub answers only the fields a query
+#: names, as GitHub does — a field dropped from the query is missing from the body and the next
+#: read raises, rather than every card quietly coming back unreadable on the next live run.
 PR_FIELDS = (("merged", "merged"), ("headRefOid", "head"), ("mergeable", "mergeable"),
              ("isInMergeQueue", "in_queue"))
 #: How many times more to read a PR GitHub has not yet decided mergeability for, and the gap between reads.
@@ -513,7 +514,14 @@ def self_test():
         def fake(args):
             asked.append(1)
             body = answers[min(len(asked) - 1, len(answers) - 1)]
-            return None if body is None else json.dumps({"data": {"repository": {"pullRequest": body}}})
+            if body is None:
+                return None
+            # GitHub answers only the fields the query names, and this stub answers the same way:
+            # a field dropped from the query is then missing from the body and breaks the read
+            # here, instead of this stub quietly supplying it and leaving the query unguarded.
+            q = next((a for a in args if a.startswith("query=")), "")
+            return json.dumps({"data": {"repository": {"pullRequest":
+                              {k: v for k, v in body.items() if k == "comments" or k in q}}}})
 
         return fake, asked
 
