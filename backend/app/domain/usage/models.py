@@ -37,7 +37,7 @@ from app.domain.conversation.models import Conversation  # noqa: F401
 
 class GrantSource(StrEnum):
     """Where a credit pack came from; it decides when the pack lapses and where
-    it falls in the order a charge drains packs in (``usage.ledger``)."""
+    it falls in the order a charge drains packs in (``usage.balance``)."""
 
     # The team's plan, one per period; lapses when the period ends.
     PLAN_PERIOD = "plan_period"
@@ -69,7 +69,7 @@ class Plan(Timestamps, Base):
     # A plan that issues no pack: at most ``credits`` within each window.
     # ``{"hours": 5, "credits": 100}`` starts at a team's first call and resets
     # that many hours later; ``{"calendar": "week" | "month", "credits": 100}``
-    # resets every Monday or every first of the month (``usage.ledger``).
+    # resets every Monday or every first of the month (``usage.windows``).
     windows: Mapped[list] = mapped_column(JSON, default=list)
     # The model tiers its teams may use, the subscription (Claude) models
     # included; NULL is every tier.
