@@ -658,6 +658,126 @@ class Widget:
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("符号没了: Widget._paint", result.stdout)
 
+    def test_a_lift_called_through_its_module_is_still_a_note(self) -> None:
+        """This repository calls lifted helpers as `_books._room(self, ...)`.
+
+        Reaching the function through its module is a lift like any other; only
+        reading the name as a bare call would red-light the repo's own splits.
+        """
+        old = '''\
+"""A class whose private helper is about to become a function."""
+
+
+class Widget:
+    def render(self, width):
+        return self._paint(width)
+
+    def _paint(self, width):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+from . import painting
+
+
+class Widget:
+    def render(self, width):
+        return painting._paint(self, width)
+""",
+            "painting.py": "def _paint(self, width):\n    return str(width)\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("方法被提到模块级: Widget._paint", result.stdout)
+
+    def test_a_namesake_only_stored_in_a_local_is_not_a_lift(self) -> None:
+        """A local variable spelled `_paint` is not a caller of `_paint`."""
+        old = '''\
+"""A class whose private helper is about to be dropped."""
+
+
+class Widget:
+    def render(self, width):
+        return self._paint(width)
+
+    def _paint(self, width):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self, width):
+        return str(width)
+""",
+            "painting.py": "def _paint(colour):\n    return colour\n",
+            # Nothing calls `_paint`; the name only ever lands in a local.
+            "extra.py": "def tint():\n    _paint = 3\n    return _paint\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("符号没了: Widget._paint", result.stdout)
+
+    def test_a_self_recursive_namesake_is_not_a_lift(self) -> None:
+        """A namesake that only calls itself has no caller at all."""
+        old = '''\
+"""A class whose private helper is about to be dropped."""
+
+
+class Widget:
+    def render(self, width):
+        return self._paint(width)
+
+    def _paint(self, width):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self, width):
+        return str(width)
+""",
+            "painting.py": ("def _paint(n):\n    return _paint(n - 1) if n else 0\n"),
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("符号没了: Widget._paint", result.stdout)
+
+    def test_a_method_call_on_an_instance_is_not_a_lift(self) -> None:
+        """`svc._room(...)` is a method call, not proof the method moved.
+
+        The package itself calls `_room` this way in `books.py`. Reading any
+        dotted call as a lift is how the checker goes green on a deleted method
+        — the callers left behind are always there to be read.
+        """
+        old = '''\
+"""A class whose private helper is about to be dropped."""
+
+
+class Widget:
+    def render(self, width):
+        return self._paint(width)
+
+    def _paint(self, width):
+        return str(width)
+'''
+        files = {
+            "__init__.py": 'from .models import Widget\n\n__all__ = ["Widget"]\n',
+            "models.py": """\
+class Widget:
+    def render(self, width):
+        return str(width)
+""",
+            "painting.py": "def _paint(colour):\n    return colour\n",
+            # `svc` is whatever the caller passes, not the module `painting`.
+            "users.py": "def size(svc):\n    return svc._paint(3)\n",
+        }
+        result = self.fixture(old).split_and_run(files)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("符号没了: Widget._paint", result.stdout)
+
     def test_a_logger_is_not_required_of_the_package(self) -> None:
         old = '''\
 """A module with the logger every module in this repository has."""

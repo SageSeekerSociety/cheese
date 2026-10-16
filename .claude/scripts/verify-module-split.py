@@ -142,8 +142,9 @@ class ModuleFacts:
     #: qualified name (`Widget.render`) -> signature
     signatures: dict[str, Signature] = field(default_factory=dict)
     deferred: list[DeferredImport] = field(default_factory=list)
-    #: every bare name the file's code reads, `self.x` not among them
-    referenced: set[str] = field(default_factory=set)
+    #: every name the file's code calls as a function, a function's calls to
+    #: itself not among them — see `_called_names`
+    called: set[str] = field(default_factory=set)
 
 
 def _param_text(arg: ast.arg, has_default: bool) -> str:
@@ -442,6 +443,75 @@ def _deferred_keys(
     return (resolved,) if resolved else ()
 
 
+def _module_aliases(tree: ast.AST) -> set[str]:
+    """The names this file bound to a module, not to a function or a class.
+
+    Telling `books._room(...)` from `svc._room(...)` needs it: the first reaches a
+    module-level function, the second reaches a method on whatever `svc` is. Only
+    the first is left behind by a lift.
+    """
+    aliases: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for name in node.names:
+                aliases.add(name.asname or name.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for name in node.names:
+                if name.name != "*":
+                    aliases.add(name.asname or name.name)
+    return aliases
+
+
+def _base_name(node: ast.expr) -> str | None:
+    """The leftmost name of `a.b.c`: "a". None when it is not a dotted name."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _callee_name(func: ast.expr, modules: set[str]) -> str | None:
+    """The plain name a call goes through: `f()` -> "f", `mod.f()` -> "f".
+
+    A dotted call counts only when its base is a module this file imported:
+    `books._room(self, ...)` is a lifted function being called, while
+    `self._room(...)` or `svc._room(...)` is a method call, and reading one of
+    those as proof of a lift is how a method that really went missing is reported
+    as a note.
+    """
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute) and _base_name(func.value) in modules:
+        return func.attr
+    return None
+
+
+def _called_names(tree: ast.AST) -> set[str]:
+    """Every name the file's code calls as a function.
+
+    A call is what a lift leaves behind: `self._x(w)` is rewritten to `_x(self, w)`,
+    or to `books._x(self, w)` when the callers reach it through its module. A plain
+    reference is not — `_x` as a local variable, an annotation, a `del` target or a
+    dict key says nothing about a method having moved. A function calling itself
+    does not count either: a namesake that only recurses has no caller at all.
+    """
+    modules = _module_aliases(tree)
+    called: set[str] = set()
+
+    def visit(node: ast.AST, enclosing: str | None) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, child.name)
+                continue
+            if isinstance(child, ast.Call):
+                target = _callee_name(child.func, modules)
+                if target is not None and target != enclosing:
+                    called.add(target)
+            visit(child, enclosing)
+
+    visit(tree, None)
+    return called
+
+
 def read_source(
     source: str, path: str, module_name: str = "", package_name: str = ""
 ) -> ModuleFacts:
@@ -450,9 +520,7 @@ def read_source(
     _collect_statements(tree.body, facts, package_name)
     facts.all_list, facts.all_unreadable = _read_all(tree)
     facts.deferred = _deferred(source, module_name)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            facts.referenced.add(node.id)
+    facts.called = _called_names(tree)
     return facts
 
 
@@ -604,8 +672,10 @@ def lifted_to_module_level(package: Package, key: str) -> str | None:
     that happens to share the name proves nothing, and `DeviceHub._require_screen`
     sitting next to an unrelated `_require_screen` is how a method that really
     went missing gets reported as a note and the whole run as clean. The tell is
-    that the package calls the bare name — `self._x(...)` became `_x(self, ...)`
-    — so a name nothing in the package reads is a lost member, not a lift.
+    that the package *calls* the name — `self._x(w)` became `_x(self, w)`, or
+    `mod._x(self, w)` when the callers reach it through its module, which is how
+    this repo writes it. Both count; a name that only turns up in a local
+    variable, an annotation, a `del` or a dict key is a lost member, not a lift.
     """
     head, _, member = key.rpartition(".")
     if not head or not member.startswith("_"):
@@ -622,7 +692,7 @@ def lifted_to_module_level(package: Package, key: str) -> str | None:
     )
     if holder is None:
         return None
-    if not any(member in facts.referenced for facts in package.modules.values()):
+    if not any(member in facts.called for facts in package.modules.values()):
         return None
     return holder or "__init__.py"
 
