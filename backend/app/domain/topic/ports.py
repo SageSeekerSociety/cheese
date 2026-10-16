@@ -11,10 +11,11 @@
 出去。
 
 后半截（`RoomThread`、`SessionStore`、`WorkspacePaths`、`ReviewCards`、
-`PendingDecisions`、`ArchivedCards`）是本包在第 3、4 层各自只取一两次调用的那些：
-支线的根消息（第 4 层）、一间房的会话状态（第 3 层）、转写与工作目录落在哪
-（第 3 层）、还有「这间房等着谁动手」的两个角标和归档时收卡（第 3、4 层）。它们的
-形状大多就是提供方已有的类或函数，递进来的就是那个对象本身，本包不另包一层。
+`PendingDecisions`、`ArchivedCards`、`OpenTaskCounts`）是本包在上面各层各自只取一
+两次调用的那些：支线的根消息（第 4 层）、一间房的会话状态（第 3 层）、转写与工作
+目录落在哪（第 3 层）、「这间房等着谁动手」的两个角标和归档时收卡（第 3、4 层）、
+还有一间房里有几个活还在走（第 4 层）。它们的形状大多就是提供方已有的类或函数，
+递进来的就是那个对象本身，本包不另包一层。
 
 递回来的都是内置类型：本包认不出别人家的类，也不该认得。
 """
@@ -251,3 +252,17 @@ class ArchivedCards(Protocol):
         by: str,
         settle_card: SettleCard | None,
     ) -> object: ...
+
+
+class OpenTaskCounts(Protocol):
+    """这批房间里各有几个活还在走：``{房间: 个数}``，一个都没有的房间不在字典里。
+
+    形状就是 `room_task.services.TaskService.underway_counts`，递进来的就是那个服务
+    实例。全部频道那一页的卡片上「N 个进行中的任务」是这一个数，侧栏那一行的
+    `my_tasks.open` 和项目总览也是 —— 同一个判据只有 `room_task` 算得出，而它读的是
+    `tasks` 表的两列（`status`、`closing_since`），这两列的意思归它解释。
+    """
+
+    async def underway_counts(
+        self, room_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, int]: ...
