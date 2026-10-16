@@ -19,7 +19,9 @@ from REASONS and the sentence to send back to the line.
   版本      the card shows the PR's current head, and GitHub calls the PR MERGEABLE. GitHub
             answers UNKNOWN for every in-flight PR the moment main moves, until a lookup
             triggers its background check, so the PR is read up to MERGEABLE_RETRIES more
-            times, MERGEABLE_DELAY apart, and only a still-UNKNOWN answer is reported
+            times, MERGEABLE_DELAY apart, and only a still-UNKNOWN answer is reported. A PR
+            already in the merge queue answers UNKNOWN for as long as it sits there, which is
+            no reason to hold its card: that one is read once and accepts normally.
   部署      the PR touches no production deploy file (prod_deploy) and nothing in HIGH_RISK
             (high_risk); a rename counts on both its old and new path
   采纳人    the card's reviewer is OKCHEESE_USER: the platform takes an accept only from them
@@ -166,7 +168,12 @@ def judge(f, me):
         if pr.get("mergeable") == "CONFLICTING":
             bad.append(("conflicting", "PR 有冲突"))
         elif pr.get("mergeable") != "MERGEABLE":
-            bad.append(("mergeable_unknown", f"GitHub 还没算出能不能合（{pr.get('mergeable')}）"))
+            # A PR in the merge queue answers UNKNOWN until the queue gets to it; the card is
+            # simply behind the queue, not blocked on a number GitHub has not computed yet.
+            if pr.get("in_queue"):
+                notes.append("已在合并队列，合并交给队列")
+            else:
+                bad.append(("mergeable_unknown", f"GitHub 还没算出能不能合（{pr.get('mergeable')}）"))
     # CI
     ci = f.get("ci")
     if ci in ("failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"):
@@ -213,6 +220,7 @@ def gh(args, paginate=False):
 def pr_facts(body):
     """What judge() reads about a PR, out of one GraphQL pullRequest body."""
     return {"merged": body["merged"], "head": body["headRefOid"], "mergeable": body["mergeable"],
+            "in_queue": body["isInMergeQueue"],
             "comments": [c["body"] for c in body["comments"]["nodes"]]}
 
 
@@ -222,11 +230,13 @@ def settle_mergeable(read, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sle
     GitHub resets every in-flight PR to UNKNOWN the moment main moves and only recomputes when
     something looks; a single read right after a merge would call a perfectly good card unknown.
     `read` returns one pullRequest body or None. The retries stop at the first decided answer
-    (MERGEABLE or CONFLICTING), at an already merged PR, and at a retry that failed to read, which
-    keeps the body already in hand rather than calling a PR that was just read unreadable."""
+    (MERGEABLE or CONFLICTING), at an already merged PR, at a PR in the merge queue — GitHub
+    answers UNKNOWN for the whole time it sits there, so waiting would never end — and at a retry
+    that failed to read, which keeps the body in hand rather than calling a PR that was just read
+    unreadable."""
     body = read()
     for _ in range(retries):
-        if body is None or body["merged"] or body["mergeable"] != "UNKNOWN":
+        if body is None or body["merged"] or body["isInMergeQueue"] or body["mergeable"] != "UNKNOWN":
             break
         sleep(delay)
         again = read()
@@ -240,7 +250,7 @@ def gh_facts(n, retries=MERGEABLE_RETRIES, delay=MERGEABLE_DELAY, sleep=time.sle
     """One PR's facts. The retry arguments are settle_mergeable's, so the offline self-test can
     drive this function itself without waiting."""
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){'
-         'merged headRefOid mergeable comments(last:100){nodes{body}}}}}' % tuple(REPO))
+         'merged headRefOid mergeable isInMergeQueue comments(last:100){nodes{body}}}}}' % tuple(REPO))
 
     def read():
         out = gh(["graphql", "-f", "query=" + q, "-F", f"n={n}"])
@@ -399,7 +409,8 @@ def self_test():
     def facts(**over):
         f = {"task": 1, "card": {"id": "c", "pr_number": 9, "pr_head_sha": H, "reviewer_handle": "me",
                                  "change_body": f"x\n独立 review：head {H[:8]} 结论 无 blocker/major\n"},
-             "pr": {"head": H, "mergeable": "MERGEABLE", "merged": False, "comments": []},
+             "pr": {"head": H, "mergeable": "MERGEABLE", "merged": False, "in_queue": False,
+                    "comments": []},
              "ci": "success", "files": ["backend/app/x.py"]}
         f.update(over)
         f["review"] = latest_review(f["card"].get("change_body"), (f["pr"] or {}).get("comments"))
@@ -456,12 +467,17 @@ def self_test():
     check("卡上没有版本", facts(card=card(pr_head_sha=None)), "交总调度", "head_mismatch", "还没有显示过版本")
     check("有冲突", facts(pr=pr(mergeable="CONFLICTING")), "交总调度", "conflicting")
     check("GitHub 还在算", facts(pr=pr(mergeable="UNKNOWN")), "交总调度", "mergeable_unknown", "UNKNOWN")
+    check("在合并队列里就不按 UNKNOWN 拦", facts(pr=pr(mergeable="UNKNOWN", in_queue=True)),
+          "会采", has="已在合并队列")
+    check("队列里也照常拦冲突", facts(pr=pr(mergeable="CONFLICTING", in_queue=True)),
+          "交总调度", "conflicting")
 
     # GitHub resets mergeable to UNKNOWN whenever main moves, so gh_facts itself has to outlast
     # that; these go through gh_facts rather than settle_mergeable, or reverting the call inside it
     # to a single read — the very behaviour the retry exists to replace — would leave them green.
-    def raw(mergeable, merged=False):
-        return {"merged": merged, "headRefOid": H, "mergeable": mergeable, "comments": {"nodes": []}}
+    def raw(mergeable, merged=False, queued=False):
+        return {"merged": merged, "headRefOid": H, "mergeable": mergeable, "isInMergeQueue": queued,
+                "comments": {"nodes": []}}
 
     def github(*answers):
         """A stubbed `gh` answering `answers` in order, repeating the last, counting its calls;
@@ -481,8 +497,10 @@ def self_test():
         waits = []
         check("UNKNOWN 后算出能合就按会采判", facts(pr=gh_facts(9, sleep=waits.append)),
               "会采", has="审查来自卡")
-        if asked != [1, 1] or not waits:
-            failures.append(f"算出能合就停，且中间要等: got {len(asked)} reads, waits {waits!r}")
+        # The waited value, not just that something was waited: a wrong delay forwarded from
+        # gh_facts to settle_mergeable is what this catches, and it is the module's contract.
+        if asked != [1, 1] or waits != [MERGEABLE_DELAY]:
+            failures.append(f"算出能合就停，且中间按 MERGEABLE_DELAY 等: got {len(asked)} reads, waits {waits!r}")
         globals()["gh"], asked = github(raw("UNKNOWN"), raw("CONFLICTING"))
         check("UNKNOWN 后算出有冲突就按冲突判", facts(pr=gh_facts(9, sleep=lambda _: None)),
               "交总调度", "conflicting")
@@ -499,6 +517,11 @@ def self_test():
         globals()["gh"], asked = github(raw("UNKNOWN", merged=True))
         if gh_facts(9, sleep=lambda _: None)["merged"] is not True or asked != [1]:
             failures.append(f"已合并的 PR 不重查: {len(asked)} reads")
+        globals()["gh"], asked = github(raw("UNKNOWN", queued=True))
+        check("在合并队列里 UNKNOWN 也按会采判", facts(pr=gh_facts(9, sleep=lambda _: None)),
+              "会采", has="已在合并队列")
+        if asked != [1]:
+            failures.append(f"在合并队列里不重查，UNKNOWN 是那里的常态: {len(asked)} reads")
         globals()["gh"], _ = github(raw("UNKNOWN"), None)
         card_facts = gh_facts(9, sleep=lambda _: None)
         if not card_facts or card_facts["mergeable"] != "UNKNOWN":
