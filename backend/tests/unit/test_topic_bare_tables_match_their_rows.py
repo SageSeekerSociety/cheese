@@ -12,6 +12,9 @@
    写 `.c.`，属性写法（`root.id`）在建语句时当场 AttributeError —— 2026-10-16 就是这
    么栽的，而它只在真库上才跑得到。用一个只收语句的假会话把这四条读法走一遍，等于在
    本地把它们预演一次。
+
+第二半里「用的是不是那三份裸表」按**对象**比，不按表名或 SQL 文本里的子串 —— 退回
+ORM 模型时表名一模一样（`Block.__tablename__` 也是 `blocks`），文本比抓不住那一步。
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from __future__ import annotations
 import uuid
 
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.sql.util import find_tables
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -42,6 +46,10 @@ COPIES = (
     ("_tasks", _tasks, Task),
     ("_threads", _threads, Thread),
 )
+
+#: 那三张真表本身。本包只该拿上面的副本取行，不该有任何一个出现在语句里 ——
+#: 出现就是够回了模型，也就是向上边。
+FOREIGN_TABLES = tuple(model.__table__ for _, _, model in COPIES)
 
 
 def test_every_declared_column_is_a_column_of_the_real_table() -> None:
@@ -171,17 +179,55 @@ async def test_the_bare_table_reads_build_their_statements() -> None:
         _sql(statement)
 
 
+def _tables_in(statement: object) -> list[object]:
+    """这条语句由哪几张表拼出来，按**调用那一份对象**给出。
+
+    `find_tables` 把语句里每一处 `FROM` / `JOIN` 的元素原样交出来，于是「用的是
+    `statements.py` 里那份裸表，还是别人家模型的 `__table__`」比得出来 —— 光看
+    名字比不出来：两者都叫 `blocks`，SQL 文本里长得一样。
+    """
+    return list(find_tables(statement))  # type: ignore[arg-type]
+
+
+def _borrowed_models(statement: object) -> list[str]:
+    """这条语句够回了哪几张别人家模型的真表 —— 按对象比，不按表名。
+
+    退回模型时语句里会多出 `Block.__table__` 这一份，而 `_mentions` 这类判据闭包
+    里还留着裸表，所以只断「裸表出现过」抓不住那一步（照样绿）。这一条断的是反面：
+    那几张真表一份都不该出现 —— 它们正是这一档要清掉的向上边的落点。
+    """
+    tables = _tables_in(statement)
+    return [t.name for t in FOREIGN_TABLES if any(t is other for other in tables)]
+
+
 def test_the_replied_to_me_statement_still_reads_the_bare_block_table() -> None:
-    """那条缓存的语句仍指着裸表：改动把它换成别人的表，SQL 文本里看得出来。"""
-    sql = _sql(replied._replied_to_me_statement("user-1"))
-    assert "blocks" in sql
-    assert "threads" in sql
+    """那条缓存的语句仍拿裸表取行 —— 没被换回 `block` / `thread` 的模型。"""
+    statement = replied._replied_to_me_statement("user-1")
+    tables = _tables_in(statement)
+    assert any(t is _blocks for t in tables), (
+        "「回复了我」不再从 statements 里那份裸表 blocks 取行了"
+    )
+    assert any(t is _threads for t in tables), "那条语句不再连裸表 threads"
+    borrowed = _borrowed_models(statement)
+    assert not borrowed, (
+        f"这条语句又够回了别人家模型的真表：{borrowed}。"
+        "`topic` 在第 2 层，`block` 在第 4 层、`thread` 更外 —— 用它们的模型就等于"
+        "把那几条向上边接回来，而这一档清的正是它们。"
+    )
 
 
 async def test_the_unread_badge_still_reads_the_bare_task_table() -> None:
     """未读角标那条仍按裸表连 `tasks` —— 这是 `topic -> room_task` 那一读的落点。"""
     repo, session = _session_and_repo()
     await repo.unread_counts(uuid.uuid4(), "user-1")
-    joins_tasks = [s for s in session.seen if "tasks" in _sql(s)]
+    joins_tasks = [s for s in session.seen if any(t is _tasks for t in _tables_in(s))]
     assert joins_tasks, "未读角标没有再连裸表 tasks：那一读被改成了别的东西"
-    assert any("blocks" in _sql(s) for s in joins_tasks)
+    assert any(any(t is _blocks for t in _tables_in(s)) for s in joins_tasks), (
+        "连了 tasks 却没连裸表 blocks：这个 EXISTS 子查询的形状变了。"
+    )
+    borrowed = [name for s in session.seen for name in _borrowed_models(s)]
+    assert not borrowed, (
+        f"角标那几条语句又够回了别人家模型的真表：{borrowed}。"
+        "`tasks` 的模型在 `room_task`（本包够不着），够回去就是 `topic -> room_task`"
+        "那条向上边。"
+    )
