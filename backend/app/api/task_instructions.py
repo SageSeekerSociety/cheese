@@ -12,6 +12,11 @@ from app.api.topics_deps import BlockRepository
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.agent.opening import OPENING, PURPOSE
+from app.domain.delivery.agent import dispatch_pending, record_task_instruction
+from app.domain.delivery_events import DeliveryEvent
+from app.domain.notification.models import NotificationType
+from app.domain.thread.models import Thread
 
 #: How many messages before the one a task comes from its agent is shown: what
 #: was being talked about when it was said.
@@ -28,8 +33,6 @@ def _lines(blocks) -> str:
 async def source_text(db, block) -> str:
     """The message a task comes from, with what was said just before it, and
     its 支线 when it has one."""
-    from app.domain.thread.models import Thread
-
     earlier = await BlockRepository(db).messages_before(
         block.conversation_id, block.created_at, limit=SOURCE_CONTEXT_MESSAGES
     )
@@ -72,11 +75,6 @@ async def tell_task(db, task, content: str, *, opening: bool = False) -> None:
     """Keep an instruction for the task's own session; dispatched after commit
     (`dispatch`). ``opening`` marks the first one, which drafts the task's
     document from where it came from (`agent/opening.py`)."""
-    from app.domain.agent.opening import OPENING, PURPOSE
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery_events import DeliveryEvent
-    from app.domain.notification.models import NotificationType
-
     payload = {"projectId": str(task.project_id), "topicId": str(task.room_id)}
     if opening:
         payload[PURPOSE] = OPENING
@@ -94,8 +92,6 @@ async def tell_task(db, task, content: str, *, opening: bool = False) -> None:
 
 
 async def dispatch(chat: ChatService) -> None:
-    from app.domain.delivery.agent import dispatch_pending
-
     await dispatch_pending(chat.session_factory, chat=chat, runner=get_work_runner())
 
 

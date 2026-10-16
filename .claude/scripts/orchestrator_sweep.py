@@ -954,13 +954,17 @@ def sweep(tok, room, silent, skip, want_facts):
     tasks = d.get("data", d) if isinstance(d, dict) else d
     rows, facts, idmap = [], {}, {}
     for t in tasks:
-        if not t.get("started_at") or str(t["number"]) in skip:
+        # 行的开始时刻：后端把 `started_at` 从 TaskOut 上撤了（任务创建即开始，行上只有
+        # `created_at`）。只认 `started_at` 会把线上每一条在办任务整行跳过、一条信号都
+        # 报不出来。老行还带这个键时照旧认它——值为 None 仍是「还没点开始」，整行跳过。
+        started = t["started_at"] if "started_at" in t else t.get("created_at")
+        if not started or str(t["number"]) in skip:
             continue
         tid = t["id"]
         idmap[tid] = t["number"]
         name = f"#{t['number']} {t['title'][:28]} @{t.get('agent_handle') or '-'}" + (f" 等:{t['waiting_on']}" if t.get("waiting_on") else "")
         msg = get(tok, f"/topics/{tid}/history?limit=1&kind=message")["data"]
-        last_msg = msg[-1]["created_at"] if msg else t["started_at"]
+        last_msg = msg[-1]["created_at"] if msg else started
         # 心跳：座位跑命令是 event 块，不是消息。只看消息会把一条正在跑长命令的线报成
         # 停摆（2026-10-13 #1468 跑了 70 分钟命令、被按「70 分钟没消息」催过）。event 只认
         # 座位自己写的：system 的 turn_failed 也是 event，但那不是它在动。
@@ -1789,13 +1793,17 @@ def _self_test_sweep():
     now = datetime.now(timezone.utc)
     at = lambda mins: (now - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
     task = {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese", "started_at": at(300)}
+    # 线上现在的行：后端把 `started_at` 从 TaskOut 上撤了（任务创建即开始），开始时刻
+    # 只剩 `created_at`。老用例的 `task` 带这个键，是为了钉住「值为 None 就整行跳过」。
+    task_now = {k: v for k, v in task.items() if k != "started_at"} | {"created_at": at(300)}
     call = {"tool": "Bash", "arg": "跑测试"}
     done = {"tool": "Bash", "arg": "跑测试", "output_bytes": 9}
     sysev = lambda kind, mins: [{"created_at": at(mins), "meta": {"event_type": kind}, "content": kind}]
 
-    def rows_of(ev_min=None, ev_meta=None, system=(), row=None, msg_min=60, accept=(), pr=None):
+    def rows_of(ev_min=None, ev_meta=None, system=(), row=None, msg_min=60, accept=(), pr=None,
+                base=None):
         answers = {
-            "/tasks?": [dict(task, **(row or {}))],
+            "/tasks?": [dict(base if base is not None else task, **(row or {}))],
             "kind=message": {"data": [{"created_at": at(msg_min), "author": "a", "content": "等"}]},
             "kind=event": {"data": [{"created_at": at(ev_min), "meta": ev_meta}] if ev_min is not None else []},
             "author=system": {"data": list(system)},
@@ -1858,6 +1866,10 @@ def _self_test_sweep():
          kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
         ("sweep：还没点「开始」的行整行跳过（判的是 started_at，行上有座位也一样）",
          kinds(60, done, row={"started_at": None}), []),
+        # 与上一条成对：老行带着 `started_at`、值为 None 才跳过；线上现在的行根本没有
+        # 这个键，不能跟着一起跳过，否则每一条在办任务都被咽掉、一条信号都报不出来。
+        ("sweep：行上没有 started_at 这个键、只剩 created_at（后端已下线该字段），照常扫出停摆",
+         kinds(60, done, base=task_now), ["长时间无动静"]),
         ("sweep：平台给的 last_output_at 10 分钟前，不报",
          kinds(60, done, row={"last_output_at": at(10)}), []),
         # 待回答这一条线：不等阈值。提问本身就是最新的心跳，2 分钟前问的、阈值 40，
