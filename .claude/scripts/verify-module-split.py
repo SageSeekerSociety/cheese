@@ -69,8 +69,8 @@ CONSUMERS. Git-tracked and unignored new Python files across the repository
 (including cli/, scripts/, backend/scripts/ and .claude/scripts/) are scanned
 for imports from the package and literal setattr / monkeypatch.setattr /
 unittest.mock.patch targets. A facade alias does not preserve a moved function's
-global lookups. Patches on a named logging.getLogger object are checked against
-the new modules' logger names; selecting a parent logger for handlers is valid.
+global lookups. Patches on emission methods of a named logging.getLogger object
+are checked against the new modules' logger names; parent handlers remain valid.
 Comments and single-line strings that say patch/replace/mock (or 替换/补丁) are
 checked for package-qualified targets. The convention `tests replace this name
 on <module>` is compared with the adjacent import's source, not interpreted as
@@ -1101,6 +1101,24 @@ class ConsumerChecks(ast.NodeVisitor):
                     logger == self.dotted
                     and logger not in self.logger_names
                     and self.logger_names
+                    # Child records still traverse the parent's handlers and
+                    # propagation settings, but never its emission methods.
+                    and isinstance(attribute, ast.Constant)
+                    and attribute.value
+                    in {
+                        "debug",
+                        "info",
+                        "warning",
+                        "warn",
+                        "error",
+                        "exception",
+                        "critical",
+                        "fatal",
+                        "log",
+                        "_log",
+                        "handle",
+                        "makeRecord",
+                    }
                 ):
                     self.block(
                         node,
@@ -1109,7 +1127,7 @@ class ConsumerChecks(ast.NodeVisitor):
             elif (
                 isinstance(attribute, ast.Constant)
                 and isinstance(attribute.value, str)
-                and len(node.args) >= 3
+                and (len(node.args) >= 3 or function == "unittest.mock.patch.object")
             ):
                 target = self.name(obj) + "." + attribute.value
             elif isinstance(obj, ast.Constant) and isinstance(obj.value, str):
@@ -1156,7 +1174,11 @@ def check_consumers(
         if not path.is_file():
             continue  # a tracked pre-split file was removed in the working tree
         source = path.read_text(encoding="utf-8")
-        if dotted.split(".")[-1] not in source:
+        # Package-relative imports need not spell the package's name at all.
+        if (
+            not path.is_relative_to(package.root)
+            and dotted.split(".")[-1] not in source
+        ):
             continue
         try:
             tree = ast.parse(source, filename=relative)

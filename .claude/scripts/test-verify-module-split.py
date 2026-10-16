@@ -490,6 +490,70 @@ class CallerContractTests(unittest.TestCase):
         )
         self.assert_result(0)
 
+    def test_package_relative_imports_do_not_need_the_package_name_in_source(
+        self,
+    ) -> None:
+        for relative, source in (
+            ("consumer.py", "from . import loads\n"),
+            ("nested/__init__.py", "from .. import loads\n"),
+        ):
+            with self.subTest(relative=relative):
+                self.write_package({"__init__.py": "", relative: source})
+                self.assert_result(1, "调用方导入断裂", "app.impl.foo.loads")
+                self.write_package({"__init__.py": "from .worker import loads\n"})
+                self.assert_result(0)
+
+    def test_patch_object_can_supply_the_mock_without_a_third_argument(self) -> None:
+        path = "backend/tests/test_decode.py"
+        for extra in ("", ", return_value={}"):
+            with self.subTest(extra=extra):
+                self.write_package({"__init__.py": ""})
+                source = (
+                    "from app.impl import foo\n"
+                    "from unittest.mock import patch\n"
+                    f"with patch.object(foo, 'loads'{extra}):\n    pass\n"
+                )
+                self.fixture._write(path, source)
+                self.assert_result(1, "补丁目标断裂", "app.impl.foo.loads")
+                self.write_package({"__init__.py": "from .worker import loads\n"})
+                self.assert_result(0)
+
+    def test_patching_parent_logger_handlers_still_captures_child_records(self) -> None:
+        self.write_package(
+            {
+                "__init__.py": "from .worker import emit\n",
+                "worker.py": (
+                    "import logging\nLOG = logging.getLogger(__name__)\n"
+                    "def emit():\n    LOG.warning('hello')\n"
+                ),
+            }
+        )
+        source = (
+            "import logging\nfrom unittest.mock import patch\n"
+            "from app.impl.foo import emit\n"
+            "seen = []\n"
+            "class Capture(logging.Handler):\n"
+            "    def emit(self, record):\n        seen.append(record.getMessage())\n"
+            "with patch.object(logging.getLogger('app.impl.foo'), 'handlers', [Capture()]):\n"
+            "    emit()\n"
+            "assert seen == ['hello'], seen\n"
+        )
+        self.fixture._write("scripts/consumer.py", source)
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import sys; sys.path.insert(0, sys.argv[1]); " + source,
+                str(self.fixture.root / "backend"),
+            ],
+            capture_output=True,
+            text=True,
+            env=ENV,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assert_result(0)
+
     def test_an_unreadable_relevant_caller_is_not_a_pass(self) -> None:
         self.fixture._write(
             "cli/consumer.py",
