@@ -271,8 +271,9 @@ def test_the_teardown_runs_a_sandboxed_rooms_programs_from_its_release(
     )
     if sandbox:
         release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
-        (release / "remote-execution").mkdir(parents=True)
-        shutil.copy(RUNTIME, release / "remote-execution/runtime.py")
+        # The runtime and the parts beside it, the way a release stages them:
+        # it imports those four at load, so a lone `runtime.py` does not run.
+        shutil.copytree(RUNTIME.parent, release / "remote-execution")
         shutil.copy(environment_runner.__file__, release / "cheese-environment.py")
         marker = tmp_path / ".cheese/sandboxes" / project / resource
         marker.parent.mkdir(parents=True)
@@ -297,8 +298,10 @@ def test_a_room_started_from_an_earlier_release_is_stopped_where_a_helper_runs(
     home = tmp_path / ".cheese/home" / project / resource
     (home / ".cheese/executor").mkdir(parents=True)
     release = tmp_path / ".cheese/executor-releases" / ("0" * 64)
-    (release / "remote-execution").mkdir(parents=True)
-    shutil.copy(RUNTIME, release / "remote-execution/runtime.py")
+    # The runtime and the parts beside it, the way a release stages them: it
+    # imports those four at load, so a lone `runtime.py` does not run. What
+    # makes this release the earlier one is its `cheese-environment.py`.
+    shutil.copytree(RUNTIME.parent, release / "remote-execution")
     (release / "cheese-environment.py").write_text("# an earlier release\n")
     marker = tmp_path / ".cheese/sandboxes" / project / resource
     marker.parent.mkdir(parents=True)

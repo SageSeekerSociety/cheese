@@ -120,7 +120,7 @@ With `--ssh`, executor calls retain the SSH transport; launcher uploads still cr
 
 ## Standalone SSH acceptance
 
-Copy `runtime.py` and `mcp_process.py` from `backend/app/domain/agent/harness/claude_code/remote_execution/` into one directory on the execution host. Start it with a JSON configuration file on standard input:
+Copy the whole `backend/app/domain/agent/harness/claude_code/remote_execution/` directory into one directory on the execution host. `runtime.py` imports four modules from beside itself at load (`runtime_core.py`, `runtime_commands.py`, `runtime_context.py`, `runtime_calls.py`), so a lone `runtime.py` does not start; the commands and the stop it runs load the rest of the directory from there too (`mcp_process.py` and the others). Start it with a JSON configuration file on standard input:
 
 ```json
 {
