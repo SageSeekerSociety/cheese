@@ -22,6 +22,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.library import records as library_records
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.overview import pointed_overview
+from app.domain.project.models import Project
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.thread.models import Thread
@@ -209,7 +210,8 @@ async def gather(
     handles = {author for said in talk_rooms.values() for author, _, _ in said}
     names = await _names(session, handles)
 
-    lines = [f"今天：{now:%Y-%m-%d}", ""]
+    name = await session.scalar(select(Project.name).where(Project.id == project_id))
+    lines = [f"# 项目：{name or ''}", f"今天：{now:%Y-%m-%d}", ""]
     lines += ["## 项目目标（人写的项目总览文档）", _clip(goal) or "（空）", ""]
 
     lines.append(
