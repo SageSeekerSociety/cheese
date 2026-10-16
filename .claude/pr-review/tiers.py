@@ -201,11 +201,19 @@ def under(path, prefix):
 
 def is_test(path):
     name = path.rsplit("/", 1)[-1]
+    # This runs tests; it is not itself a test module.
+    claude_script_self_test = (
+        path.startswith(".claude/scripts/")
+        and path != ".claude/scripts/test-changed.py"
+        and name.endswith(".py")
+        and (name.startswith("test-") or name.endswith("-test.py"))
+    )
     return (
         name.endswith((".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx",
                        ".test.ts", ".test.tsx", ".test.js", ".test.jsx"))
         or (name.startswith("test_") and name.endswith(".py"))
         or name.endswith("_test.py")
+        or claude_script_self_test
         or "/tests/" in path
         or "/test/" in path
         or "__tests__/" in path
@@ -513,6 +521,15 @@ def self_test():
         ("backend/tests/unit/test_pr_text_trailers.py", "C"),
         ("backend/test_x.py", "C"),  # test_ prefix
         ("backend/scripts/fusion_boot_test.py", "C"),  # _test.py suffix
+        (".claude/scripts/test-review.py", "C"),  # test- self-test
+        (".claude/scripts/review-test.py", "C"),  # -test.py self-test
+        (".claude/scripts/review.py", "B"),  # ordinary implementation script
+        (".claude/scripts/testing.py", "B"),  # not test- or -test.py
+        (".claude/scripts/latest.py", "B"),  # no hyphen before test.py
+        (".claude/scripts/test-changed.py", "B"),  # test runner, not a test module
+        (".claude/scripts/test-dev-db.sh", "B"),  # only Python test files match
+        (".claude/test-review.py", "B"),  # hyphen pattern is scoped to scripts/
+        ("scripts/test-review.py", "B"),  # hyphen pattern is scoped to .claude/scripts/
         ("backend/tests/conftest.py", "C"),  # /tests/ alone, no test name of its own
         ("docs/site/test/ask-walk.test.mjs", "C"),  # /test/ alone: not a .test.js suffix
         ("frontend/src/components/__tests__/acceptHarness.ts", "C"),  # __tests__/

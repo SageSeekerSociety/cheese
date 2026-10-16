@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+from typing import NoReturn
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -236,10 +237,25 @@ def should_skip(candidate: str, rebuilt: bool = False) -> bool:
     return False
 
 
+def refuse(message: str) -> NoReturn:
+    """Stop the release because its validation is no longer successful.
+
+    This is the gate's verdict, not a broken deploy, and it is the one way this
+    script fails that the deploy alert (.github/scripts/deploy-alert.py) stays
+    quiet on. It says so in an output, because a crash here (GitHub still
+    unreachable after the retries, docker failing, a running release it cannot
+    place) fails the same step with the same exit code and must page.
+    """
+    if path := os.environ.get("GITHUB_OUTPUT"):
+        with Path(path).open("a") as output:
+            output.write("refused=true\n")
+    raise SystemExit(message)
+
+
 def main() -> None:
     if sys.argv[1] == "--require-ci":
         if not ci_ready_settled(sys.argv[2]):
-            raise SystemExit("The release commit no longer has successful validation.")
+            refuse("The release commit no longer has successful validation.")
         return
     if sys.argv[1] == "--ci-only":
         ready = ci_ready_settled(sys.argv[2])
@@ -256,7 +272,7 @@ def main() -> None:
     # That release did not happen, so the job fails: a skip would leave it
     # green, and a green deploy job reads as "this commit is on dev".
     if not ci_ready_settled(candidate):
-        raise SystemExit(f"Not deploying {candidate}: its validation is no longer successful.")
+        refuse(f"Not deploying {candidate}: its validation is no longer successful.")
     skip = should_skip(candidate, rebuilt=rebuilt)
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"skip={str(skip).lower()}\n")
