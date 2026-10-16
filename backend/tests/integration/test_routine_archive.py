@@ -147,7 +147,8 @@ def test_a_room_without_active_rules_is_left_alone(client):
     # 只有一条暂停的规则，没有在跑的。
     parked = _weekly(client, room, headers=PERSON).json()["data"]
     assert (
-        client.post(f"/routines/{parked['id']}/pause", headers=PERSON).status_code == 200
+        client.post(f"/routines/{parked['id']}/pause", headers=PERSON).status_code
+        == 200
     )
 
     assert _archive(client, room).status_code == 200

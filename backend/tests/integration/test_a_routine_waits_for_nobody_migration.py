@@ -19,14 +19,16 @@ BEFORE = "49a2e86fa493"
 AFTER = "0d7f3a9c41b6"
 
 
-def _rule(db: ReplayDatabase, project: uuid.UUID, room: uuid.UUID, state: str) -> uuid.UUID:
+def _rule(
+    db: ReplayDatabase, project: uuid.UUID, room: uuid.UUID, state: str
+) -> uuid.UUID:
     rule = uuid.uuid4()
     db.execute(
         "INSERT INTO routines (id, project_id, topic_id, title, instructions,"
         " trigger, spec, timezone, state, agent_handle, owner_handle,"
         " proposed_by, next_run_at, revision, created_at, updated_at)"
         " VALUES ($1, $2, $3, '每周进展', '整理本周各房间的进展', 'schedule',"
-        " '{\"freq\": \"weekly\", \"weekdays\": [0], \"time\": \"09:00\"}'::jsonb,"
+        ' \'{"freq": "weekly", "weekdays": [0], "time": "09:00"}\'::jsonb,'
         " 'Asia/Shanghai', $4, 'cheese-abc', 'alice', 'cheese-abc', NULL, 1,"
         " now(), now())",
         rule,

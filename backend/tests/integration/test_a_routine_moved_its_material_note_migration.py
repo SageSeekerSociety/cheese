@@ -37,7 +37,7 @@ def _rule(
         " context_scope, output_dir, trigger, spec, timezone, state, agent_handle,"
         " owner_handle, proposed_by, next_run_at, revision, created_at, updated_at)"
         " VALUES ($1, $2, $3, '每周进展', '整理本周各房间的进展', $4, $5, 'schedule',"
-        " '{\"freq\": \"weekly\", \"weekdays\": [0], \"time\": \"09:00\"}'::jsonb,"
+        ' \'{"freq": "weekly", "weekdays": [0], "time": "09:00"}\'::jsonb,'
         " 'Asia/Shanghai', 'active', 'cheese-abc', 'alice', 'alice', NULL, 1,"
         " now(), now())",
         rule,

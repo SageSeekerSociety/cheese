@@ -619,11 +619,15 @@ def test_the_list_carries_what_became_of_the_latest_run(client):
     已暂停 —— 这后两档只能从最近一次执行看出来。整页一次问完，不是每行一次往返。"""
     room = _room(client, _project(client))
     routine = _weekly(client, room, headers=PERSON).json()["data"]
-    assert [r["last_run_status"] for r in _listed(client, routine["project_id"])] == [None]
+    assert [r["last_run_status"] for r in _listed(client, routine["project_id"])] == [
+        None
+    ]
 
     _seed_runs(client, routine["id"], ["failed", "succeeded", "queued"])
 
-    assert [r["last_run_status"] for r in _listed(client, routine["project_id"])] == ["queued"]
+    assert [r["last_run_status"] for r in _listed(client, routine["project_id"])] == [
+        "queued"
+    ]
 
 
 def test_a_page_of_records_counts_what_the_filter_keeps(client):
@@ -635,14 +639,18 @@ def test_a_page_of_records_counts_what_the_filter_keeps(client):
         client, routine["id"], ["failed", "succeeded", "failed", "succeeded", "queued"]
     )
 
-    first = client.get(f"/routines/{routine['id']}/runs?limit=2", headers=PERSON).json()["data"]
+    first = client.get(
+        f"/routines/{routine['id']}/runs?limit=2", headers=PERSON
+    ).json()["data"]
     assert first["total"] == 5
     assert [r["status"] for r in first["data"]] == ["queued", "succeeded"]
 
     second = client.get(
         f"/routines/{routine['id']}/runs?limit=2&offset=2", headers=PERSON
     ).json()["data"]
-    assert {r["id"] for r in second["data"]}.isdisjoint({r["id"] for r in first["data"]})
+    assert {r["id"] for r in second["data"]}.isdisjoint(
+        {r["id"] for r in first["data"]}
+    )
 
     missed = client.get(
         f"/routines/{routine['id']}/runs?failed_only=true", headers=PERSON
