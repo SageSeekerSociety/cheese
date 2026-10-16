@@ -8,13 +8,7 @@
 -->
 <template>
   <div class="avatar-upload" :class="{ 'avatar-upload--empty': !avatarFile }">
-    <v-img
-      :src="previewUrl || src || undefined"
-      aspect-ratio="1"
-      class="rounded-lg avatar"
-      rounded="0"
-      size="180"
-    />
+    <v-img :src="previewUrl || src || undefined" aspect-ratio="1" class="rounded-lg avatar" rounded="0" size="180" />
     <file-select
       v-model="files"
       accept="image/*"
