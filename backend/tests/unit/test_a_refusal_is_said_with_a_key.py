@@ -484,7 +484,10 @@ _BASELINE: dict[str, int] = {
     "app/domain/questions/services.py": 31,
     "app/domain/repository/service.py": 2,
     "app/domain/review/events.py": 1,
-    "app/domain/review/github_pr.py": 11,
+    #: 2026-10-16 拆包：#1666 把 `review/github_pr.py` 分成同名包，
+    #: 同一份债按摊到哪一片重新记：11 -> 4 + 7，一格没多。
+    "app/domain/review/github_pr/_shared.py": 4,
+    "app/domain/review/github_pr/legacy.py": 7,
     "app/domain/review/pr_publish.py": 5,
     "app/domain/review/services/cards.py": 2,
     "app/domain/room_task/services.py": 1,
