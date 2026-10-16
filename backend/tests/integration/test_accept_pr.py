@@ -886,6 +886,17 @@ def _age_queue_mirror(client, card_id: str, *, seconds: int) -> str:
     return stale_at
 
 
+def _watch_window() -> int:
+    """「还在等 CI」的持有窗口，秒 —— `queries.CHECK_WATCH_TICKS` 个轮询间隔
+    （默认 3 × 60）。拨时钟的用例照它算，别复写「900」「300」这类数字：
+    `accept_pr_poll_interval_s` 一动它们就悄悄错位，而错位的那一侧是断言不
+    再钉在边界上（2026-10-16 300→60 时这里红过一次）。"""
+    from app.core.config import settings
+    from app.domain.review.queries import CHECK_WATCH_TICKS
+
+    return CHECK_WATCH_TICKS * settings.accept_pr_poll_interval_s
+
+
 def _waiting_on_checks(client, topic_id: str) -> bool:
     """环境释放判据读的就是它（`machine.lifecycle`）。"""
     from app.domain.review.queries import waiting_on_checks
@@ -938,7 +949,7 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     assert first["checked_at"] > enqueued["checked_at"]  # 只有 checked_at 走
 
     # 摆成「上一次看这张卡是三个轮询间隔以前」：不再刷的话，判据就不认它了。
-    stale_at = _age_queue_mirror(client, cid, seconds=3 * 300 + 1)
+    stale_at = _age_queue_mirror(client, cid, seconds=_watch_window() + 1)
     assert not _waiting_on_checks(client, tid)
 
     _poll(client)  # 队列里的下一跳：把有效期续上
@@ -953,10 +964,19 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     assert again["checked_at"] > stale_at
     assert _waiting_on_checks(client, tid)
 
-    # 这时浏览器来读一次卡。读卡这条路对「比地板（`accept_pr_snapshot_floor_s`
-    # = 60s）还旧」的快照会自己重算一遍，所以把 `checked_at` 拨到地板之外、
-    # 持有窗口（900s）之内：读卡会去重算它。
-    aged_at = _age_queue_mirror(client, cid, seconds=300)
+    # 这时浏览器来读一次卡。读卡这条路对「比地板（`accept_pr_snapshot_floor_s`）
+    # 还旧」的快照会自己重算一遍，所以把 `checked_at` 拨到地板之外、持有窗口
+    # 之内的一段——两个数都从设置里算，下面那条 assert 钉着这段确实存在：
+    # 地板追平窗口时这条用例就没法摆出「读卡会重算、判据却还认」这个状态了。
+    from app.core.config import settings as _settings
+
+    floor = _settings.accept_pr_snapshot_floor_s
+    window = _watch_window()
+    assert floor < window, (
+        f"地板的 {floor}s 不小于持有窗口的 {window}s，这条用例摆不出"
+        "「读卡重算、但判据仍认它是等 CI」的那段区间"
+    )
+    aged_at = _age_queue_mirror(client, cid, seconds=(floor + window) // 2)
     assert _waiting_on_checks(client, tid)  # 还在窗口里，判据照样认它
 
     _cards(client, tid)

@@ -651,7 +651,11 @@ class TestWhoseMove:
 # ---- 读镜像：还在等 CI 吗（`checks_running`，环境释放判据读它）----------------
 
 _LOOKED = datetime(2026, 10, 12, 0, 0, tzinfo=UTC)
-#: 三个轮询间隔（`queries.CHECK_WATCH_TICKS` 乘 `accept_pr_poll_interval_s`）。
+#: 生产那个窗口：`queries.CHECK_WATCH_TICKS` 个轮询间隔（3 ×
+#: `accept_pr_poll_interval_s`，默认共 180s）。`checks_running` 把窗口当参数
+#: 收，这几条用例量的是它的边界，所以窗口取默认那一个就够，不跟着设置走；
+#: 边界本身按 `_FRESH` 算（见 `test_the_window_is_measured_from_…`），
+#: 不另抄一份「3 分钟」。
 _FRESH = timedelta(minutes=3)
 
 
@@ -681,8 +685,9 @@ def test_a_fresh_mirror_saying_ci_runs_is_waiting_on_ci():
 
 def test_the_window_is_measured_from_when_the_poller_last_looked():
     """边界上是还在新鲜期内（`>` 不是 `>=`）：那正是轮询该写下一次的间隔。"""
-    assert checks_running(_mirror(), now=_at(3), fresh_for=_FRESH)
-    assert not checks_running(_mirror(), now=_at(3.1), fresh_for=_FRESH)
+    window = _FRESH.total_seconds() / 60
+    assert checks_running(_mirror(), now=_at(window), fresh_for=_FRESH)
+    assert not checks_running(_mirror(), now=_at(window + 0.1), fresh_for=_FRESH)
 
 
 @pytest.mark.parametrize(
