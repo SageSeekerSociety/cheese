@@ -131,7 +131,7 @@ class ConflictCensusTest(unittest.TestCase):
             self.write(relative, contents)
         self.git("add", "-A")
         self.git("commit", "-qm", "feat: main moves")
-        main_sha = self.git("rev-parse", "HEAD").strip()
+        main_sha = self.main_sha = self.git("rev-parse", "HEAD").strip()
 
         # Remote-tracking refs, including the two a census must not treat as
         # branches to census: the base itself, and the `origin/HEAD` alias.
@@ -144,7 +144,9 @@ class ConflictCensusTest(unittest.TestCase):
                 # covers the `/HEAD` rule; no remote ref is made for it.
                 continue
             self.git("update-ref", f"refs/remotes/origin/{branch}", sha)
-        self.git("update-ref", "refs/remotes/origin/HEAD", main_sha)
+        # The alias is a symbolic ref, the shape `git fetch` leaves behind.
+        # Creating it as a plain ref would test a state no repository is in.
+        self.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 
     # -- the script -------------------------------------------------------
 
@@ -276,6 +278,18 @@ class ConflictCensusTest(unittest.TestCase):
         self.assertIn("2  frontend/src/a11y-baseline.json", rows[0])
         # `--top 0` lists everything and therefore hides nothing.
         self.assertNotIn("more contended files", result.stdout)
+
+    def test_a_remote_whose_own_name_has_a_slash_keeps_its_alias_out(self):
+        # `git remote add a/b …` is legal, and then the alias sits at
+        # `refs/remotes/a/b/HEAD` — one level deeper than `origin/HEAD`. A rule
+        # that counts slashes drops it and censuses the alias as a branch.
+        self.git("update-ref", "refs/remotes/weird/remote/main", self.main_sha)
+        self.git("symbolic-ref", "refs/remotes/weird/remote/HEAD", "refs/remotes/weird/remote/main")
+
+        out = self.census_json("--remotes")
+        counted = sorted(list(out["conflicted"]) + out["clean"])
+        self.assertNotIn("weird/remote", counted)
+        self.assertIn("weird/remote/main", counted)
 
     def test_a_branch_named_slash_HEAD_is_a_branch_not_an_alias(self):
         out = self.census_json("--base", "main")

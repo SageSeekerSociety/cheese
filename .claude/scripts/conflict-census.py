@@ -97,17 +97,8 @@ def full_ref(root: Path, name: str) -> str | None:
     return out.strip() or None
 
 
-def is_remote_head(ref: str) -> bool:
-    """Is this ref the `HEAD` alias of a remote-tracking ref, like `origin/HEAD`?
-
-    Exactly `refs/remotes/<remote>/HEAD` — one level below the remote. A branch
-    named `feature/HEAD`, local or remote, is a branch.
-    """
-    return ref.startswith("refs/remotes/") and ref.endswith("/HEAD") and ref.count("/") == 3
-
-
 def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
-    """The refs `pattern` names, short, minus `skip` and any `*/HEAD`.
+    """The refs `pattern` names, short, minus `skip` and any alias.
 
     `for-each-ref` is what keeps this a ref pattern: the same glob handed to
     `rev-list` in argument position is a pathspec, matches no path, and returns
@@ -117,19 +108,24 @@ def enumerate_branches(root: Path, pattern: str, skip: str | None) -> list[str]:
     at a `/`, so the one-level form silently omits every namespaced branch —
     including this repository's own `task/<id>`, which is to say exactly the
     branch a census is run on. `**` crosses the `/`.
+
+    The alias is found by `%(symref)`, which names the target of a symbolic ref
+    and is empty for every real branch. Matching the name instead is wrong in
+    both directions: `%(refname:short)` renders `refs/remotes/origin/HEAD` as
+    bare `origin`, which no suffix rule catches, while a remote whose name
+    contains a `/` (git allows one) puts its alias deeper than any fixed depth —
+    and a branch legitimately named `feature/HEAD` is not symbolic, so it stays.
     """
-    out = git(root, "for-each-ref", "--format=%(refname)%09%(refname:short)", pattern)
+    out = git(
+        root, "for-each-ref", "--format=%(refname)%09%(refname:short)%09%(symref)", pattern
+    )
     branches: list[str] = []
     for line in out.splitlines():
         if not line.strip():
             continue
-        ref, _, short = line.partition("\t")
-        # `origin/HEAD` is skipped by its full name, not its short one:
-        # `%(refname:short)` renders it as bare `origin`, which is neither
-        # `*/HEAD` nor a branch, and would be censused as one. Only the
-        # `<remote>/HEAD` alias is skipped, not any ref that ends in `/HEAD`:
-        # `feature/HEAD` is an ordinary branch someone may have made.
-        if ref == skip or is_remote_head(ref):
+        ref, _, rest = line.partition("\t")
+        short, _, symref = rest.partition("\t")
+        if ref == skip or symref.strip():
             continue
         branches.append(short)
     return branches
