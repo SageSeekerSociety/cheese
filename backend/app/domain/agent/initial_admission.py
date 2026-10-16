@@ -5,13 +5,14 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Protocol
 
-from sqlalchemy import update
+from sqlalchemy import and_, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.admission import Lease
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import owner_is_away
 from app.domain.agent.pending_messages import defer_message
 from app.domain.agent.queries import conversation_seat
@@ -19,7 +20,7 @@ from app.domain.agent.seat_admission import seat_admission
 from app.domain.block.models import Block
 from app.domain.delivery.agent import SEAT_BUSY, now
 from app.domain.delivery.input_holds import seat_has_unfinished_input
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
@@ -116,7 +117,13 @@ async def admitted_initial(
                 and await owner_is_away(session, instance_id, device_hub)
             )
             told_away = False
-            if pending and delivery_id is not None and attempt_id is not None:
+            if (
+                seated is not None
+                and pending
+                and delivery_id is not None
+                and attempt_id is not None
+                and await _held_by_a_running_turn(session, topic_id, seated[1])
+            ):
                 await session.execute(
                     update(Delivery)
                     .where(
@@ -138,6 +145,43 @@ async def admitted_initial(
                 meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
             )
         yield pending or away
+
+
+async def _held_by_a_running_turn(session, topic_id, recipient_handle) -> bool:
+    """Whether what holds this seat is a turn that is still running.
+
+    A seat is also held by the input of a turn that has already ended without
+    a word on it: the session went out of reach (`room.sessions.reading`'s
+    ``out_of_reach``), which ends the turn's interval but leaves its inputs
+    held, since being out of reach is not proof the session died. A delivery
+    refused by that hold is not waiting for work to finish, and nothing
+    releases the hold: it is not marked busy (`delivery.agent.SEAT_BUSY`), so
+    it gives up half an hour on, as before. An open interval is a session the
+    host still reaches: one out of reach for two minutes is ended
+    (`session_host.host`, ``gone_after_s``).
+    """
+    return bool(
+        await session.scalar(
+            select(
+                exists().where(
+                    NativeInput.conversation_id == topic_id,
+                    NativeInput.recipient_handle == recipient_handle,
+                    NativeInput.completed_at.is_(None),
+                    NativeInput.terminated_at.is_(None),
+                    exists().where(
+                        and_(
+                            AgentTurn.id
+                            == func.coalesce(
+                                NativeInput.execution_work_id, NativeInput.work_id
+                            ),
+                            AgentTurn.conversation_id == NativeInput.conversation_id,
+                            AgentTurn.stopped_at.is_(None),
+                        )
+                    ),
+                )
+            )
+        )
+    )
 
 
 async def seat_instance(

@@ -43,13 +43,14 @@ RETRY_CAP_SECONDS = 300
 # it retry every five minutes for ever.
 GIVE_UP_AFTER = timedelta(minutes=30)
 GAVE_UP = "Not started within 30 minutes of being given"
-# An attempt refused because the agent's seat still holds an earlier input
-# (`initial_admission.admitted_initial`) is waiting for that work to end, not
-# for a computer that is gone: a seat runs one turn at a time, and one turn can
-# run for hours. Such a delivery's half hour counts from the last attempt that
-# found the seat busy (`Delivery.seat_busy_at`), not from when it was given. A
-# turn whose machine is gone stops holding the seat once the orphan sweep ends
-# it, so the busy refusals stop and the half hour runs out as for any other.
+# An attempt refused because the agent's seat still holds an input of a turn
+# that is still running (`initial_admission.admitted_initial`) is waiting for
+# that work to end, not for a computer that is gone: a seat runs one turn at a
+# time, and one turn can run for hours. Such a delivery's half hour counts from
+# the last attempt that found the seat busy (`Delivery.seat_busy_at`), not from
+# when it was given. A turn whose session went out of reach is ended, and an
+# input it left holding the seat does not count as busy, so those deliveries
+# give up half an hour on as before.
 SEAT_BUSY = "The agent's seat was still working on an earlier input"
 # The backstop for a seat that never frees: longer than any turn dev ran in the
 # 15 days to 2026-10-16 (11,531 turns, p99 3.1 h, longest 22.9 h), so a delivery

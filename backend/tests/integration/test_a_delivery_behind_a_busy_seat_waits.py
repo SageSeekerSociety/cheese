@@ -8,24 +8,32 @@ seat still holding an earlier input at that moment.
 
 The rules, as stated before the code was written:
 
-- an instruction refused only because its seat is busy is still owed past half
-  an hour, and goes in when the work it waited for ends;
+- an instruction refused only because its seat is busy — a turn there is still
+  running — is still owed past half an hour, and goes in when that work ends;
+- a seat held by a turn that has already ended is not busy: the instruction
+  is paged about and given up half an hour on, as before;
 - nobody is paged about it while it waits;
-- it does not wait forever: a day after it was given it is given up.
+- it does not wait forever: a day after it was given it is given up, and a
+  person waiting on it is told so, not told it waited half an hour.
 """
 
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select, update
 
 from app.api.deps import get_work_runner
 from app.domain.agent.chat import ChatService
+from app.domain.agent.models import AgentTurn
+from app.domain.block.models import Block
 from app.domain.delivery.agent import dispatch_pending
-from app.domain.delivery.models import Delivery
+from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.delivery.overdue import report_overdue
 from app.domain.delivery.timer import give_up_stale
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notification.models import NotificationType
 from tests.conftest import stub_compute
 from tests.integration.test_a_freed_seat_takes_the_delivery_it_held_back import (
     Seat,
@@ -36,13 +44,42 @@ from tests.integration.test_a_freed_seat_takes_the_delivery_it_held_back import 
 from tests.support.hang import HANG_S
 
 
-async def _given_ago(factory, delivery_id, ago: timedelta) -> None:
-    """Time passes: the instruction was given ``ago``, and its backoff is over."""
+async def _time_passes(factory, delivery_id, by: timedelta) -> None:
+    """``by`` passes for the instruction: every moment on it, from when it was
+    given to its last attempt, is that much further back, and its backoff is
+    over."""
     async with factory() as session:
         row = await session.get(Delivery, delivery_id)
-        row.recorded_at = row.event_at = datetime.now(UTC) - ago
+        row.recorded_at -= by
+        row.event_at -= by
+        if row.seat_busy_at is not None:
+            row.seat_busy_at -= by
         row.retry_at = None
         await session.commit()
+
+
+async def _read_by_session(factory, conversation) -> bool:
+    async with factory() as session:
+        return bool(
+            await session.scalar(
+                select(NativeInput.id).where(
+                    NativeInput.conversation_id == conversation,
+                    NativeInput.echoed_at.is_not(None),
+                )
+            )
+        )
+
+
+async def _room_lines(factory, conversation) -> list[Block]:
+    async with factory() as session:
+        return list(
+            await session.scalars(
+                select(Block).where(
+                    Block.conversation_id == conversation,
+                    Block.meta["event_type"].as_string() == "turn_failed",
+                )
+            )
+        )
 
 
 async def _busy(chat, runner, screen, conversation, seat) -> None:
@@ -97,9 +134,11 @@ async def test_an_instruction_behind_a_long_turn_goes_in_when_it_ends(
         paged_before = await report_overdue(factory)
 
         # The turn goes on for well over half an hour. The instruction is
-        # tried again meanwhile, and the seat is still busy.
-        await _given_ago(factory, delivery_id, timedelta(minutes=50))
-        await _try_once(factory, chat, runner, delivery_id)
+        # tried again meanwhile, and each time the seat is still busy: its
+        # half hour counts from the last of those, not the first.
+        for _ in range(2):
+            await _time_passes(factory, delivery_id, timedelta(minutes=25))
+            await _try_once(factory, chat, runner, delivery_id)
 
         # Nobody is paged about it, and the give-up sweep leaves it owed.
         assert await report_overdue(factory) == paged_before
@@ -133,16 +172,73 @@ async def test_an_instruction_still_behind_a_busy_seat_a_day_later_is_given_up(
     chat = _chat(factory, screen, runner, tmp_path)
     try:
         await _busy(chat, runner, screen, conversation, seat)
+        # A person's message to it, given a day ago.
         delivery_id = await _instruction_for(
-            factory, conversation, instance_id, "the checks on PR 12 failed"
+            factory, conversation, instance_id, f"<@{seat}> take a look"
         )
-        await _given_ago(factory, delivery_id, timedelta(hours=25))
+        async with factory() as session:
+            row = await session.get(Delivery, delivery_id)
+            row.type = NotificationType.MENTION.value
+            await session.commit()
+        await _time_passes(factory, delivery_id, timedelta(hours=25))
         await _try_once(factory, chat, runner, delivery_id)
 
         await give_up_stale(factory, chat=chat)
 
         row = await _row(factory, delivery_id)
         assert row.state == "failed" and row.sent_at is None
+        # The person is told, once, and not that it waited half an hour.
+        [line] = await _room_lines(factory, conversation)
+        assert (line.meta or {}).get("retryable") is True
+        said = re.sub(r"<@[\w-]+>", "", line.content or "")
+        assert "30" not in said, line.content
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_seat_held_by_a_turn_that_already_ended_is_not_busy(
+    business_db_factory, tmp_path
+):
+    """The agent's session went out of reach mid-turn: the platform ended the
+    turn, but the input it had read still holds the seat, and nothing will
+    release it. An instruction refused by that hold is not waiting for any
+    work to finish; it is paged about and given up half an hour on."""
+    factory = business_db_factory
+    conversation, seat, instance_id = await _room_with_agent(factory)
+    screen = Seat()
+    runner = get_work_runner()
+    chat = _chat(factory, screen, runner, tmp_path)
+    try:
+        await _busy(chat, runner, screen, conversation, seat)
+        # The turn ends as an unreachable session's does: its interval is
+        # closed, and the input it had read is left holding the seat.
+        async with asyncio.timeout(HANG_S):
+            while not await _read_by_session(factory, conversation):
+                await asyncio.sleep(0.05)
+        async with factory() as session:
+            await session.execute(
+                update(AgentTurn)
+                .where(
+                    AgentTurn.conversation_id == conversation,
+                    AgentTurn.stopped_at.is_(None),
+                )
+                .values(stopped_at=datetime.now(UTC))
+            )
+            await session.commit()
+        delivery_id = await _instruction_for(
+            factory, conversation, instance_id, "the checks on PR 12 failed"
+        )
+        await _try_once(factory, chat, runner, delivery_id)
+        paged_before = await report_overdue(factory)
+        await _time_passes(factory, delivery_id, timedelta(minutes=20))
+        await _try_once(factory, chat, runner, delivery_id)
+        await _time_passes(factory, delivery_id, timedelta(minutes=15))
+
+        assert await report_overdue(factory) == paged_before + 1
+        await give_up_stale(factory, chat=chat)
+        assert (await _row(factory, delivery_id)).state == "failed"
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)
