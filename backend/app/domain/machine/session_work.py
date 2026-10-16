@@ -403,10 +403,17 @@ async def _start_executor(
     ``isolated`` on the machine gets (`_sandboxed`). ``platform_machine``: a
     Cloud machine, where the install may add what a sandbox needs. Raises
     ``launch.SandboxRefused`` when the machine cannot give the room its
-    sandbox."""
+    sandbox.
+
+    Every call into the machine is bounded by ``lease_claim.INSTALL_MOST_S``:
+    a machine that stopped answering — its connector gone silent, its executor
+    hung — fails this attempt instead of holding the tool call that asked for
+    its hands. What the failure leaves behind is answered by the caller."""
     if lease and lease.get("state"):
         try:
-            running = await execution.call(lease, "ping", {}, hub=hub)
+            running = await execution.call(
+                lease, "ping", {}, hub=hub, timeout=lease_claim.INSTALL_MOST_S
+            )
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code != 500:
                 raise
@@ -431,6 +438,7 @@ async def _start_executor(
                     platform_machine=platform_machine,
                 ),
                 hub=hub,
+                timeout=lease_claim.INSTALL_MOST_S,
             )
     installed = await hub.exec(
         device_id,
@@ -443,7 +451,7 @@ async def _start_executor(
             sandbox=sandbox,
             platform_machine=platform_machine,
         ),
-        timeout=660,
+        timeout=lease_claim.INSTALL_MOST_S,
     )
     if (refusal := launch.refused(installed)) is not None:
         raise refusal
@@ -943,7 +951,7 @@ async def _attempt(
     # its caller left — leaves the installation running, and the claim ends
     # with it: handed over as ready, lapsed when it fails, or left to lapse
     # unrenewed when this process goes. Cancelled with the request instead, it
-    # left the claim standing for its full 660s with nobody installing, and
+    # left the claim standing for its full cap with nobody installing, and
     # every start of the session failed until then.
     work = asyncio.ensure_future(
         _install(
@@ -972,6 +980,7 @@ async def _attempt(
             claim=claim,
             now=now,
             cloud_host_id=cloud_host.id if cloud_host is not None else None,
+            cloud_vm=cloud_host is not None and cloud_host.whole_machine,
             owner_device=selected is not None,
             own=isinstance(environment, Sandbox),
             tells_agent=tells_agent,
@@ -1030,6 +1039,10 @@ async def _install(
     claim,
     now,
     cloud_host_id,
+    # Whether the host is the session's own VM rather than a shared one. False
+    # by default, which is the case that may be given up: `leave_unusable`
+    # refuses a whole machine on its own (`services.leave_unusable`).
+    cloud_vm=False,
     owner_device,
     own,
     tells_agent=False,
@@ -1088,7 +1101,12 @@ async def _install(
                         target["status"] = "preparing"
                         target["environment_status"] = status
                 if target["status"] == "ready":
-                    await execution.call(target, "ping", {}, hub=hub)
+                    # Bounded like the install: an executor that installed and
+                    # then will not answer is a machine this attempt gives up on
+                    # too, not one that holds the call that asked for its hands.
+                    await execution.call(
+                        target, "ping", {}, hub=hub, timeout=lease_claim.INSTALL_MOST_S
+                    )
         except Exception as exc:
             # Setup is resumable at the same physical allocation; it is not a
             # dispatched model operation and must not create a replacement lease.
@@ -1111,11 +1129,25 @@ async def _install(
                 return {
                     "unavailable": EXECUTOR_SETUP_FAILED.format(reason=exc.reason())
                 }
+            away = isinstance(exc, (DeviceOffline, TimeoutError))
+            if away and cloud_host_id is not None:
+                # The host could not bring the session's executor up: its
+                # connector went away, or the install outlasted the deadline
+                # every call into a machine is given (`_start_executor`). A
+                # whole VM is the session's own, waited for where it is; a
+                # shared host is left when the pool has another that can run
+                # the sandbox, so the next attempt is placed there instead of
+                # being pinned to this one for the rest of the tool call.
+                moved = not cloud_vm and await HostPool(db, hub=hub).leave_unusable(
+                    session_id, cloud_host_id
+                )
+                await db.commit()
+                if moved:
+                    return _Preparing(SANDBOX_PREPARING, _another_attempt)
+                return _CLOUD_PREPARING
             if isinstance(exc, DeviceOffline):
                 # The machine went away while its executor was being set up: the
                 # same answer as when it is away before setup starts (above).
-                if cloud_host_id is not None:
-                    return _CLOUD_PREPARING
                 return {"unavailable": str(say("environmentDeviceOffline"))}
             raise
         current = await TopicService(db).lock_for_execution(room_id)

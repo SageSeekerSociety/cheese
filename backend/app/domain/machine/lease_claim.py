@@ -29,9 +29,21 @@ logger = logging.getLogger(__name__)
 # renewals, so a slow beat does not hand a live installation's claim away.
 CLAIM_TTL_S = 30.0
 CLAIM_RENEW_S = 10.0
-# The longest one installation holds the claim, renewed or not: the install
-# command's own deadline (`session_work._start_executor`).
-CLAIM_MOST_S = 660.0
+# The longest an installation of a session's executor may take before the
+# machine it runs on is given up on: the deadline of the install command
+# itself, and of the in-place preparation beside it (`session_work`). One
+# installation burning a whole tool call is what made a hung host look like a
+# machine that never finishes preparing: the call that waited on it was the
+# last the session had. Kept well inside the 660 s one tool call has in full,
+# so the attempt fails and the session is placed again while its caller still
+# has time. Minutes, not seconds: a first install on a Cloud host may add
+# packages with apt-get (`bootstrap.sandbox_tools`).
+INSTALL_MOST_S = 120.0
+# The longest one installation holds the claim, renewed or not. One TTL past
+# the install command's own deadline, so the claim cannot lapse while the
+# installation that took it is still running: an installation ending at its
+# deadline, or a renewal beat arriving late, both leave it standing.
+CLAIM_MOST_S = INSTALL_MOST_S + CLAIM_TTL_S
 
 
 def still_preparing(lease: dict | None) -> bool:
