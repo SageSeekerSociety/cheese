@@ -19,12 +19,15 @@ import { t } from '@/i18n'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-export function useTopicHeader(opts: {
+/** 上面那两份绑定绑给 `TaskHeader` / `TopicHeader`，属性名一个都不能少：任务页那一半
+ *  带过来的是哪几格，页面绑的时候就得是哪几格。所以带上它的类型，而不是擦成
+ *  `Record<string, unknown>`——擦掉之后每一格都是 unknown，绑给页头一个都对不上。 */
+export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
   place: () => TopicPlace
   room: () => Topic | null
   /** 任务页那一份任务，和它给页头的那一半参数。 */
   task: ComputedRef<RoomTask | null>
-  taskHeaderProps: ComputedRef<Record<string, unknown>>
+  taskHeaderProps: ComputedRef<TaskHalf>
   memberNames: ComputedRef<Record<string, string>>
   roomAgents: ComputedRef<TopicMemberRow[]>
   roomConnected: Ref<boolean>
