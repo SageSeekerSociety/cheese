@@ -35,6 +35,7 @@ from app.domain.living_doc.models import Document
 from app.domain.living_doc.schemas import document_snapshot
 from app.domain.living_doc.services import DocumentJournal
 from app.domain.room_task import naming
+from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.doc_checks import living_doc_warnings
 
@@ -247,8 +248,6 @@ async def tell_origin_room(
     nowhere else."""
     if conversation_id is None or await whose_document(db, doc) != (None, None):
         return
-    from app.domain.room_task.place import PlaceResolver
-
     place = await PlaceResolver(db).conversation(conversation_id)
     if place is None:
         return
