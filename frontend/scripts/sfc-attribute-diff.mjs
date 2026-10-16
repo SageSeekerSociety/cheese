@@ -94,6 +94,12 @@ function analyze(source, file) {
       const anchors = Object.fromEntries(node.props.filter((p) => p.type === 6 &&
         ['id', 'ref', 'role', 'type', 'name', 'data-testid'].includes(p.name)).map((p) => [p.name, p.value?.content ?? '']))
       for (const prop of node.props) {
+        if (prop.type === 7 && prop.name === 'bind' && prop.arg?.isStatic && prop.exp &&
+          ['key', 'id', 'ref', 'role', 'type', 'name', 'data-testid'].includes(prop.arg.content)) {
+          anchors[`:${prop.arg.content}`] = JSON.stringify(fingerprint(expression(prop.exp.content)))
+        }
+      }
+      for (const prop of node.props) {
         if (prop.type !== 7 || prop.name !== 'bind' || !prop.exp) continue
         const attr = prop.arg ? prop.arg.isStatic ? prop.arg.content : `[${prop.arg.content}]` : '(v-bind)'
         // Parse every binding, including non-ARIA attributes. No regex over templates.

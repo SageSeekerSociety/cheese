@@ -84,6 +84,14 @@ test('matches each anchored element, not the attribute count or first same-tag e
   assert.match(result.output, /1 regression/)
 })
 
+test('dynamic keys keep a repaired sibling from masking another element losing its fallback', (t) => {
+  const f = fixture(t, `<button :key="'a'" :aria-expanded="${before}" />\n<button :key="'b'" :aria-expanded="${bad}" />`)
+  f.split(`<button :key="'b'" :aria-expanded="${before}" />\n<button :key="'a'" :aria-expanded="${bad}" />`)
+  const result = f.run()
+  assert.equal(result.status, 1, result.output)
+  assert.match(result.output, /1 regression/)
+})
+
 test('a new unrelated element with the same payload is not mistaken for the old element', (t) => {
   const f = fixture(t, `<button id="a" :aria-expanded="${before}" />`)
   f.split(`<button id="b" :aria-expanded="${bad}" />`)
