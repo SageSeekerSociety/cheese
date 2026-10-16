@@ -202,7 +202,7 @@ async def list_related_to(
 
     `visible_to` is a superset of `may_see`, not the whole of it, so the rows
     this returns are **not yet** the answer: `FeedbackService.list_mine` makes
-    the last cut with `may_see` itrepository. Both halves are needed and neither is
+    the last cut with `may_see` itself. Both halves are needed and neither is
     optional — see `visible_to` for which half lives where and why.
     """
     where = [

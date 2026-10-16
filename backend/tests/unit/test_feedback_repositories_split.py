@@ -209,8 +209,9 @@ def test_init_still_builds_the_session() -> None:
 def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
     """方法体恰好一句转发，转给子模块里的同名函数——实现只有一份。
 
-    转发本身也是行为：这条要求**每个参数都按同一个名字原样转出去**，一个不漏、
-    一个不多。少转一个关键字（`handle` 丢了、窗口参数丢了）就是静默改行为，这条红。
+    转发本身也是行为：这条要求**每个参数都按同一个名字、同一个顺序原样转出去**，
+    一个不漏、一个不多，默认值也一样。少转一个关键字（`handle` 丢了、窗口参数丢了）、
+    换个顺序（位置调用方错位）、或者改掉一个默认值，都是静默改行为，这条红。
     """
     method = getattr(feedback_repo.FeedbackRepository, name)
     declaration = ast.parse(textwrap.dedent(inspect.getsource(method))).body[0]
@@ -249,26 +250,32 @@ def test_every_method_is_one_forward_to_its_sibling_module(name: str) -> None:
     assert next(iter(parameters)) == first_parameter
     assert not hasattr(forwarded, "__wrapped__"), f"{name} 被子模块包了一层"
 
-    # 一对一：每个形参一个同名的关键字实参，两边一个不差。
+    # 一对一、且顺序一致：每个形参一个同名的关键字实参，两边一个不差。
     passed = {keyword.arg: keyword.value for keyword in call.keywords}
     assert None not in passed, f"{name} 用了 **kwargs 摊开，转发不再是一对一"
     assert [n for n in passed if not isinstance(passed[n], ast.Name)] == []
     assert {n: passed[n].id for n in passed} == {n: n for n in passed}, (
         f"{name} 转发时换了名字：{ {n: passed[n].id for n in passed} }"
     )
-    missing = set(parameters) - {first_parameter} - set(passed)
-    extra = set(passed) - set(parameters)
-    expected = (
-        set(parameters)
-        if name in STATIC_METHODS
-        else set(parameters) - {first_parameter}
-    )
-    assert set(passed) == expected, (
+    expected = list(parameters) if name in STATIC_METHODS else list(parameters)[1:]
+    missing = set(expected) - set(passed)
+    extra = set(passed) - set(expected)
+    assert list(passed) == expected, (
         f"{name} 的转发表和 {target_module.id}.{name} 的形参对不上："
-        f"漏了 {missing}，多了 {extra}"
+        f"漏了 {missing}，多了 {extra}，顺序 {list(passed)} vs {expected}"
     )
-    assert set(passed) == {p for p in method_signature(method) if p != "self"}, (
-        f"{name} 的转发表和它自己的形参对不上"
+    own = [p for p in method_signature(method) if p != "self"]
+    assert own == expected == list(passed), (
+        f"{name} 自己的形参、转发表和 {target_module.id}.{name} 的形参不是同一张表："
+        f"{own} vs {list(passed)} vs {expected}"
+    )
+    # 默认值也是行为：把它改掉不影响转发表，但不传它的调用方会换一批结果。
+    own_parameters = inspect.signature(method).parameters
+    drifted = [
+        p for p in expected if own_parameters[p].default != parameters[p].default
+    ]
+    assert drifted == [], (
+        f"{name} 的默认值和 {target_module.id}.{name} 的不一致：{drifted}"
     )
 
 
