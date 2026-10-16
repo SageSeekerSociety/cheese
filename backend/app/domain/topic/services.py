@@ -28,15 +28,9 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.event_about import EventAbout, landing
-from app.domain.block.models import (
-    AuthorType,
-    Block,
-    BlockKind,
-)
-from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import room_of
 from app.domain.delivery_events import SettleCard
+from app.domain.event_about import EventAbout
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.topic.models import (
     NotifyLevel,
@@ -53,6 +47,7 @@ from app.domain.topic.ports import (
     ForkTranscript,
     NamedTeammate,
     PendingDecisions,
+    PlatformLine,
     ProjectHarness,
     ProjectTeam,
     ReviewCards,
@@ -62,11 +57,15 @@ from app.domain.topic.ports import (
     WorkspacePaths,
 )
 from app.domain.topic.repositories import (
+    KIND_ARTIFACT,
+    KIND_EVENT,
+    LastWord,
     SortOrder,
     TopicProgressRepository,
     TopicRepository,
     TopicSortField,
     Unread,
+    last_word,
 )
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -104,7 +103,7 @@ def _require_room(parent: Topic) -> None:
 logger = logging.getLogger("cheesex.topic")
 
 
-def _is_mid_turn_block(block: Block) -> bool:
+def _is_mid_turn_block(block: LastWord) -> bool:
     """Is this block the middle of a turn rather than the end of one?
 
     A tool action by 芝士 — `meta.tool` is stamped by the 现场 event writer, so
@@ -117,23 +116,27 @@ def _is_mid_turn_block(block: Block) -> bool:
 
     摆出来的一份东西（`cheese show`）也是一轮的中间：摆完总要说一句它是什么，一轮
     停在「摆出来」上，和停在一个工具动作上是同一种断法。
+
+    两个 `kind` 的码是 `blocks` 列里存的短字符串（`KIND_ARTIFACT`、`KIND_EVENT`，
+    在 `repositories/statements.py` 里逐字写着）—— 本包在第 2 层，看不见
+    `block.models` 那两个枚举。
     """
     if not looks_like_agent_handle(block.author):
         return False
-    if block.kind == BlockKind.artifact:
+    if block.kind == KIND_ARTIFACT:
         return True
-    return block.kind == BlockKind.event and bool((block.meta or {}).get("tool"))
+    return block.kind == KIND_EVENT and bool((block.meta or {}).get("tool"))
 
 
-def _stall_block_summary(block: Block | None) -> dict | None:
+def _stall_block_summary(block: LastWord | None) -> dict | None:
     """What the stall verdict was read off, so a caller can check it by hand
     instead of trusting the boolean."""
     if block is None:
         return None
     return {
         "id": str(block.id),
-        "kind": str(block.kind),
-        "author_type": str(block.author_type),
+        "kind": block.kind,
+        "author_type": block.author_type,
         "tool": (block.meta or {}).get("tool"),
         "created_at": _as_utc(block.created_at).isoformat(),
     }
@@ -156,7 +159,6 @@ class TopicService:
         from app.domain.project.services import ProjectService
 
         self._projects = ProjectService(session)
-        self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
 
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
@@ -288,18 +290,23 @@ class TopicService:
         )
         return topic
 
-    async def note(self, topic: Topic, *, by: str, content: str) -> None:
+    async def note(
+        self, topic: Topic, *, by: str, content: str, events: PlatformLine
+    ) -> None:
         """One platform line in a channel's main line, about something ``by``
-        did there."""
-        landed = landing(EventAbout.room, project_id=topic.project_id, room_id=topic.id)
-        await self._blocks.add(
-            project_id=landed.project_id,
-            conversation_id=landed.conversation_id,
+        did there.
+
+        ``events`` 是递进来的口子：写一条块在第 4 层（`block`），本包在第 2 层，
+        而这一句「关于这个房间」的落点由那张封闭表算（`landing()`，在
+        `block/adapters.py` 的实现那一侧）。
+        """
+        await events(
+            self._session,
+            about=EventAbout.room,
+            project_id=topic.project_id,
+            room_id=topic.id,
             author=by,
-            author_type=AuthorType.platform,
             content=content,
-            kind=BlockKind.event,
-            meta={"platform": True},
         )
 
     async def get_many(self, topic_ids: set[uuid.UUID]) -> list[Topic]:
@@ -434,7 +441,7 @@ class TopicService:
         )
         # The room's OWN line: a task's conversation is its own, and a room
         # that has gone quiet while one of its tasks talks is still quiet.
-        last = await self._blocks.latest_for_topic(room_id)
+        last = await last_word(self._session, room_id)
         silent_for_s = (
             None
             if last is None
@@ -543,6 +550,7 @@ class TopicService:
         settle_card: SettleCard,
         cards: ArchivedCards,
         close_tasks: CloseRoomTasks,
+        events: PlatformLine,
     ) -> Topic:
         """A person archives a channel (idempotent): it leaves everyone's
         sidebar and is read, not spoken in, until someone unarchives it. A
@@ -558,9 +566,16 @@ class TopicService:
             return topic
         if await self._repo.has_open_tasks(topic.id):
             raise ValidationError(say("channelArchiveOpenTasks"))
-        await self._archive_one(topic, by=by, settle_card=settle_card, cards=cards)
+        await self._archive_one(
+            topic, by=by, settle_card=settle_card, cards=cards, events=events
+        )
         await self._archive_children(
-            topic, by=by, settle_card=settle_card, cards=cards, close_tasks=close_tasks
+            topic,
+            by=by,
+            settle_card=settle_card,
+            cards=cards,
+            close_tasks=close_tasks,
+            events=events,
         )
         await self._session.flush()
         return topic
@@ -573,6 +588,7 @@ class TopicService:
         settle_card: SettleCard | None,
         cards: ArchivedCards,
         close_tasks: CloseRoomTasks,
+        events: PlatformLine,
     ) -> None:
         """Closing a place closes what is inside it.
 
@@ -585,23 +601,18 @@ class TopicService:
         """
         # 活那一行由上面那句口子改成结束（`CloseRoomTasks`）：`tasks` 是本包向上的
         # 那张表里的行，结束一件活是那个域的判断，不是本包的。本包说的是**为什么**它
-        # 结束了 —— 那句话要落在每条活自己的支线里，房间自己那条归档的话落在房间上，
-        # 而后来的谁打开这条支线，看到的是一句说到一半就没了的活。
+        # 结束了 —— 那句话要落在每条活自己的支线里（`PlatformLine` 写下去），房间
+        # 自己那条归档的话落在房间上，而后来的谁打开这条支线，看到的是一句说到一半
+        # 就没了的活。
         for thread_id in await close_tasks(self._session, topic.id):
-            landed = landing(
-                EventAbout.task,
+            await events(
+                self._session,
+                about=EventAbout.task,
                 project_id=topic.project_id,
                 room_id=topic.id,
                 task_id=thread_id,
-            )
-            await self._blocks.add(
-                project_id=landed.project_id,
-                conversation_id=landed.conversation_id,
                 author=by,
-                author_type=AuthorType.platform,
                 content=say("threadArchivedWithRoom", room=topic.title),
-                kind=BlockKind.event,
-                meta={"platform": True},
             )
         # 卡上还开着的验收卡由 `_archive_one` 一并收：它们和房间自己的卡挂在同一
         # 个房间上，一次问清比每条活问一次少一半的往返，也不会漏掉一条活被收工
@@ -616,6 +627,7 @@ class TopicService:
                 cascaded_from=topic.title,
                 settle_card=settle_card,
                 cards=cards,
+                events=events,
             )
             await self._archive_children(
                 child,
@@ -623,6 +635,7 @@ class TopicService:
                 settle_card=settle_card,
                 cards=cards,
                 close_tasks=close_tasks,
+                events=events,
             )
 
     async def _overview_room(self, project_id: uuid.UUID) -> uuid.UUID:
@@ -651,6 +664,7 @@ class TopicService:
         by: str,
         settle_card: SettleCard | None,
         cards: ArchivedCards,
+        events: PlatformLine,
         cascaded_from: str | None = None,
     ) -> None:
         topic.status = TopicStatus.archived
@@ -689,21 +703,22 @@ class TopicService:
         )
         # 房间归档是项目的事，不是这个房间的事（结论 14）：房间关掉之后没人再打开
         # 它的时间线，而「少了一个房间」恰恰是项目总览要记的一行。
-        landed = landing(
-            EventAbout.project, project_id=topic.project_id, room_id=overview_room
-        )
-        await self._blocks.add(
-            project_id=landed.project_id,
-            conversation_id=landed.conversation_id,
+        await events(
+            self._session,
+            about=EventAbout.project,
+            project_id=topic.project_id,
+            room_id=overview_room,
             author=by,
-            author_type=AuthorType.platform,
             content=note,
-            kind=BlockKind.event,
-            meta={"platform": True},
         )
 
     async def unarchive(
-        self, topic_id: uuid.UUID, *, by: str, sessions: SessionStore
+        self,
+        topic_id: uuid.UUID,
+        *,
+        by: str,
+        sessions: SessionStore,
+        events: PlatformLine,
     ) -> Topic:
         """Bring an archived topic back to active (idempotent). Accept markers
         are kept — un-archiving doesn't rewrite acceptance history (use 撤回采纳
@@ -738,19 +753,13 @@ class TopicService:
         topic.cleanup_id = None
         # 归档落总览，取消归档就落在同一条线上：一个房间回到项目里，和它离开项目
         # 是同一件事的两面，读的人也在同一个地方读。
-        landed = landing(
-            EventAbout.project,
+        await events(
+            self._session,
+            about=EventAbout.project,
             project_id=topic.project_id,
             room_id=await self._where_said(topic),
-        )
-        await self._blocks.add(
-            project_id=landed.project_id,
-            conversation_id=landed.conversation_id,
             author=by,
-            author_type=AuthorType.platform,
             content=say("roomUnarchived", actor=f"<@{by}>", room=topic.title),
-            kind=BlockKind.event,
-            meta={"platform": True},
         )
         await self._session.flush()
         return topic
@@ -765,6 +774,7 @@ class TopicService:
         settle_card: SettleCard,
         cards: ArchivedCards,
         close_tasks: CloseRoomTasks,
+        events: PlatformLine,
     ) -> None:
         """A person deletes a channel: it leaves every list for good, and what
         was said in it, the tasks in it and its documents go with it.
@@ -788,13 +798,16 @@ class TopicService:
         if topic.status != TopicStatus.archived:
             if await self._repo.has_open_tasks(topic.id):
                 raise UnprocessableEntityError(say("channelArchiveOpenTasks"))
-            await self._archive_one(topic, by=by, settle_card=settle_card, cards=cards)
+            await self._archive_one(
+                topic, by=by, settle_card=settle_card, cards=cards, events=events
+            )
             await self._archive_children(
                 topic,
                 by=by,
                 settle_card=settle_card,
                 cards=cards,
                 close_tasks=close_tasks,
+                events=events,
             )
         deleted_at = datetime.now(UTC)
         topic.deleted_at = deleted_at
@@ -821,6 +834,7 @@ class TopicService:
         settle_card: SettleCard | None,
         cards: ArchivedCards,
         close_tasks: CloseRoomTasks,
+        events: PlatformLine,
     ) -> None:
         """Archive every room of a project being archived — the overview and the
         private chats too, which nobody can archive one at a time.
@@ -845,7 +859,7 @@ class TopicService:
             # The overview's children were already taken along with it.
             if topic.status != TopicStatus.archived:
                 await self._archive_one(
-                    topic, by=by, settle_card=settle_card, cards=cards
+                    topic, by=by, settle_card=settle_card, cards=cards, events=events
                 )
                 await self._archive_children(
                     topic,
@@ -853,18 +867,24 @@ class TopicService:
                     settle_card=settle_card,
                     cards=cards,
                     close_tasks=close_tasks,
+                    events=events,
                 )
             topic.archived_with_project = True
         await self._session.flush()
 
     async def unarchive_with_project(
-        self, project_id: uuid.UUID, *, by: str, sessions: SessionStore
+        self,
+        project_id: uuid.UUID,
+        *,
+        by: str,
+        sessions: SessionStore,
+        events: PlatformLine,
     ) -> None:
         """Bring back the rooms :meth:`archive_with_project` took along."""
         for topic in await self._repo.lock_all_in_project(project_id):
             if not topic.archived_with_project:
                 continue
-            await self.unarchive(topic.id, by=by, sessions=sessions)
+            await self.unarchive(topic.id, by=by, sessions=sessions, events=events)
             topic.archived_with_project = False
         await self._session.flush()
 

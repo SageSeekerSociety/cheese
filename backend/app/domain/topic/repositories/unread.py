@@ -28,7 +28,6 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import aliased
 
-from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.conversation.models import Conversation
 from app.domain.identity.handles import (
     CHEESE_HANDLE,
@@ -46,6 +45,9 @@ from app.domain.topic.models import (
     TopicReadState,
 )
 from app.domain.topic.repositories.statements import (
+    AUTHOR_PARTICIPANT,
+    KIND_MESSAGE,
+    _blocks,
     _mentions,
     _mentions_everyone,
     _muted_now,
@@ -104,7 +106,7 @@ async def unread_counts(
     )
     unseen = or_(
         TopicReadState.last_read_seq.is_(None),
-        Block.seq > TopicReadState.last_read_seq,
+        _blocks.c.seq > TopicReadState.last_read_seq,
     )
 
     def read_state(conversation_id):
@@ -115,33 +117,33 @@ async def unread_counts(
 
     main = (
         select(
-            Block.conversation_id,
+            _blocks.c.conversation_id,
             # A private room is two people talking: every message counts.
             func.bool_or(Topic.is_private),
             func.count(),
             func.count().filter(_mentions(user_handle)),
             func.count().filter(_mentions_everyone()),
         )
-        .join(Topic, Topic.id == Block.conversation_id)
-        .outerjoin(TopicReadState, read_state(Block.conversation_id))
+        .join(Topic, Topic.id == _blocks.c.conversation_id)
+        .outerjoin(TopicReadState, read_state(_blocks.c.conversation_id))
         .where(
             Topic.project_id == project_id,
             _readable_by(user_handle),
             joined,
-            Block.kind == BlockKind.message,
-            Block.author != user_handle,
+            _blocks.c.kind == KIND_MESSAGE,
+            _blocks.c.author != user_handle,
             unseen,
         )
-        .group_by(Block.conversation_id)
+        .group_by(_blocks.c.conversation_id)
     )
-    root = aliased(Block)
-    mine = aliased(Block)
+    root = _blocks.alias()
+    mine = _blocks.alias()
     took_part = or_(
-        select(root.id)
-        .where(root.id == _threads.c.root_block_id, root.author == user_handle)
+        select(root.c.id)
+        .where(root.c.id == _threads.c.root_block_id, root.c.author == user_handle)
         .exists(),
-        select(mine.id)
-        .where(mine.conversation_id == _threads.c.id, mine.author == user_handle)
+        select(mine.c.id)
+        .where(mine.c.conversation_id == _threads.c.id, mine.c.author == user_handle)
         .exists(),
     )
     replies = (
@@ -151,31 +153,31 @@ async def unread_counts(
                 or_(
                     and_(
                         took_part,
-                        Block.author_type == AuthorType.participant,
-                        ~agent_handle_column(Block.author),
+                        _blocks.c.author_type == AUTHOR_PARTICIPANT,
+                        ~agent_handle_column(_blocks.c.author),
                     ),
                     _mentions(user_handle),
                 )
             ),
             func.count().filter(_mentions(user_handle)),
         )
-        .join(_threads, _threads.c.id == Block.conversation_id)
+        .join(_threads, _threads.c.id == _blocks.c.conversation_id)
         .join(Topic, Topic.id == _threads.c.room_id)
-        .outerjoin(TopicReadState, read_state(Block.conversation_id))
+        .outerjoin(TopicReadState, read_state(_blocks.c.conversation_id))
         .where(
             Topic.project_id == project_id,
             _readable_by(user_handle),
             joined,
-            Block.kind == BlockKind.message,
-            Block.author != user_handle,
+            _blocks.c.kind == KIND_MESSAGE,
+            _blocks.c.author != user_handle,
             unseen,
         )
         .group_by(_threads.c.room_id)
     )
     tasks = (
-        select(Block.conversation_id, func.count())
-        .join(_tasks, _tasks.c.id == Block.conversation_id)
-        .outerjoin(TopicReadState, read_state(Block.conversation_id))
+        select(_blocks.c.conversation_id, func.count())
+        .join(_tasks, _tasks.c.id == _blocks.c.conversation_id)
+        .outerjoin(TopicReadState, read_state(_blocks.c.conversation_id))
         .where(
             _tasks.c.project_id == project_id,
             _tasks.c.status == "open",
@@ -183,13 +185,13 @@ async def unread_counts(
                 _tasks.c.owner_handle == user_handle,
                 cast(_tasks.c.contributor_handles, JSONB).contains([user_handle]),
             ),
-            Block.kind == BlockKind.message,
-            Block.author != user_handle,
-            Block.author_type == AuthorType.participant,
-            ~agent_handle_column(Block.author),
+            _blocks.c.kind == KIND_MESSAGE,
+            _blocks.c.author != user_handle,
+            _blocks.c.author_type == AUTHOR_PARTICIPANT,
+            ~agent_handle_column(_blocks.c.author),
             unseen,
         )
-        .group_by(Block.conversation_id)
+        .group_by(_blocks.c.conversation_id)
     )
     said: dict[uuid.UUID, tuple[int, int, int]] = {}
     private: set[uuid.UUID] = set()
@@ -325,7 +327,7 @@ async def private_unread_counts(
                 theirs.member_handle != user_handle,
             ),
         )
-        .join(Block, Block.conversation_id == Topic.id)
+        .join(_blocks, _blocks.c.conversation_id == Topic.id)
         .outerjoin(
             TopicReadState,
             and_(
@@ -341,15 +343,15 @@ async def private_unread_counts(
             .where(TopicMembership.topic_id == Topic.id)
             .scalar_subquery()
             == 2,
-            Block.kind == BlockKind.message,
+            _blocks.c.kind == KIND_MESSAGE,
             # A private room has tasks too — resolving an upstream
             # conflict opens one there — and the same rule applies: the
             # badge is about the room's own conversation, which the join
             # on `conversation_id` already picks.
-            Block.author != user_handle,
+            _blocks.c.author != user_handle,
             or_(
                 TopicReadState.last_read_seq.is_(None),
-                Block.seq > TopicReadState.last_read_seq,
+                _blocks.c.seq > TopicReadState.last_read_seq,
             ),
         )
         .group_by(theirs.member_handle)
@@ -440,11 +442,11 @@ async def mark_read_many(
             func.gen_random_uuid(),
             Conversation.id,
             literal(user_handle),
-            func.coalesce(func.max(Block.seq), 0),
+            func.coalesce(func.max(_blocks.c.seq), 0),
             literal(now),
             literal(now),
         )
-        .outerjoin(Block, Block.conversation_id == Conversation.id)
+        .outerjoin(_blocks, _blocks.c.conversation_id == Conversation.id)
         .where(Conversation.id.in_(topic_ids))
         .group_by(Conversation.id)
     )

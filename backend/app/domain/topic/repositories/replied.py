@@ -25,9 +25,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import aliased
 
-from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.topic.models import TopicReadState
-from app.domain.topic.repositories.statements import _mentions, _threads
+from app.domain.topic.repositories.statements import (
+    AUTHOR_PARTICIPANT,
+    KIND_MESSAGE,
+    _blocks,
+    _mentions,
+    _threads,
+)
 
 if TYPE_CHECKING:
     from app.domain.topic import repositories as pkg
@@ -62,12 +67,12 @@ def _replied_to_me_statement(user_handle: str) -> Select:
     是这条语句唯一的形状要求 —— 见下面那个 OR 的注释。
     """
     # 「回复我发的消息」：另说的一条块指着我写的某一块。别名和 `unread_counts`
-    # 里 `took_part` 那一处同一个写法 —— exists() 要关联到外层的 Block，就不能
-    # 用同一个 Block。
-    mine = aliased(Block)
+    # 里 `took_part` 那一处同一个写法 —— exists() 要关联到外层那张表，就不能
+    # 用同一张。
+    mine = _blocks.alias()
     answers_mine = (
-        select(mine.id)
-        .where(mine.id == Block.reply_to, mine.author == user_handle)
+        select(mine.c.id)
+        .where(mine.c.id == _blocks.c.reply_to, mine.c.author == user_handle)
         .exists()
     )
     # 同一个人在两处已读：这间房自己那一位（主线取它），和这条块所在那条线的
@@ -83,7 +88,7 @@ def _replied_to_me_statement(user_handle: str) -> Select:
 
     def past(state):
         """这条块在那一位后面吗。没有那一行 = 那一条线从没打开过，全都还没读。"""
-        return or_(state.last_read_seq.is_(None), Block.seq > state.last_read_seq)
+        return or_(state.last_read_seq.is_(None), _blocks.c.seq > state.last_read_seq)
 
     def opened_before(state):
         """这个人上次打开这个频道，是在这条块落地之前吗（从没打开过 = 是）。
@@ -91,18 +96,18 @@ def _replied_to_me_statement(user_handle: str) -> Select:
         已读位那行的时间戳就是「上次打开」：`mark_read` 每回把它推到现在
         （`TopicReadRepository.mark_read_many` 的 upsert）。
         """
-        return or_(state.updated_at.is_(None), state.updated_at < Block.created_at)
+        return or_(state.updated_at.is_(None), state.updated_at < _blocks.c.created_at)
 
     return (
-        select(Block.conversation_id, _threads.c.room_id)
-        .outerjoin(_threads, _threads.c.id == Block.conversation_id)
+        select(_blocks.c.conversation_id, _threads.c.room_id)
+        .outerjoin(_threads, _threads.c.id == _blocks.c.conversation_id)
         .outerjoin(
             room_state,
             read_state_of(
-                room_state, func.coalesce(_threads.c.room_id, Block.conversation_id)
+                room_state, func.coalesce(_threads.c.room_id, _blocks.c.conversation_id)
             ),
         )
-        .outerjoin(line_state, read_state_of(line_state, Block.conversation_id))
+        .outerjoin(line_state, read_state_of(line_state, _blocks.c.conversation_id))
         .where(
             # 两个分支都约束 `blocks.conversation_id`（`blocks` 上每个索引的首列），
             # 规划器才能把房间收窄完再去碰 `blocks`。原来第二支写的是外连接进来的
@@ -112,12 +117,12 @@ def _replied_to_me_statement(user_handle: str) -> Select:
             # `channel-page-20-concurrency-2026-10-15.md` §2，七种写法的执行计划
             # 在 `explain-channel-detail.txt`）。
             or_(
-                Block.conversation_id.in_(_replied_rooms),
-                Block.conversation_id.in_(_replied_inner),
+                _blocks.c.conversation_id.in_(_replied_rooms),
+                _blocks.c.conversation_id.in_(_replied_inner),
             ),
-            Block.kind == BlockKind.message,
-            Block.author_type == AuthorType.participant,
-            Block.author != user_handle,
+            _blocks.c.kind == KIND_MESSAGE,
+            _blocks.c.author_type == AUTHOR_PARTICIPANT,
+            _blocks.c.author != user_handle,
             # 两处都还没读过才算「我还没处理」（见上）：这条块所在的那条线
             # 没读过，这个频道也没在它落地之后打开过。
             past(line_state),

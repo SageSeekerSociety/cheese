@@ -9,13 +9,18 @@
 - `writes` —— 建、锁、私聊房间的取得；
 - `replied` —— 侧栏那盏黄灯（有人回复了我、我还没处理）；
 - `unread` —— 角标未读、通知级别、已读游标；
-- `statements` —— 共用的 SQL 判据（`_readable_by`、`_mentions`、`_last_activity`、
-  `seen_by`…），几个读点都从这里取，才不会有第二份定义；
+- `latest` —— 一间房时间线上最后一条（`last_word`），停滞判据的原料；
+- `statements` —— 共用的裸表与 SQL 判据（`_readable_by`、`_mentions`、
+  `_last_activity`、`seen_by`…），几个读点都从这里取，才不会有第二份定义；
 - `vocabulary` —— 路由、前端和这里共用的封闭词表（`TopicSortField`、`SortOrder`）；
 - `progress` —— `TopicProgressRepository`，两个方法一张表，不转发。
 
 拆的规矩是「一个决定只写一遍」：每一条判据、每一次读、每一次写都只有一处实现，
 类只转发。转发的方法不拿决定 —— 那正是两份实现不会漂移的原因。
+
+2026-10-16，`topic -> block` 那几条向上的边收掉时这里多了两样：`latest.py`
+（房间最后一条改读裸表）和两个码（`KIND_ARTIFACT`、`KIND_EVENT` —— 停滞判据要拿
+它们跟 `blocks.kind` 比，另两个码 `KIND_MESSAGE`、`AUTHOR_PARTICIPANT` 只在包内用）。
 
 `_replied_to_me_statement` 是这里唯一一个下划线名字，因为它原来就在这个模块里，
 外面按老路径取它：`.claude/scripts/explain_channel_detail.py` 拿它出来对着几条
@@ -30,6 +35,8 @@ import 会在 C3（`sibling domains are acyclic`）上多出环，而包里的�
 
 from __future__ import annotations
 
+from app.domain.topic.repositories.latest import LastWord as LastWord
+from app.domain.topic.repositories.latest import last_word as last_word
 from app.domain.topic.repositories.progress import (
     TopicProgressRepository as TopicProgressRepository,
 )
@@ -39,6 +46,10 @@ from app.domain.topic.repositories.replied import (
 from app.domain.topic.repositories.repository import (
     TopicRepository as TopicRepository,
 )
+from app.domain.topic.repositories.statements import (
+    KIND_ARTIFACT as KIND_ARTIFACT,
+)
+from app.domain.topic.repositories.statements import KIND_EVENT as KIND_EVENT
 from app.domain.topic.repositories.statements import seen_by as seen_by
 from app.domain.topic.repositories.vocabulary import ListedRoom as ListedRoom
 from app.domain.topic.repositories.vocabulary import SortOrder as SortOrder

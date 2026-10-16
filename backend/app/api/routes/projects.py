@@ -46,6 +46,7 @@ from app.domain.agent_instance.adapters import (
 )
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.adapters import platform_line
 from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.ledger import deliver, settle, settle_card
@@ -802,6 +803,7 @@ async def archive_project(
         settle_card=settle_card,
         cards=close_cards_for_archived_topic,
         close_tasks=close_room_tasks,
+        events=platform_line,
     ).archive(project_id, by=owner.handle)
     await InvitationService(
         db, deliver=deliver, settle=settle, team=project_team
@@ -816,9 +818,9 @@ async def unarchive_project(
 ) -> dict:
     """取消归档: the project and the rooms archived with it come back."""
     owner = await _project_owner(project_id, db, resolver)
-    project = await ProjectService(db, sessions=AgentSessionService(db)).unarchive(
-        project_id, by=owner.handle
-    )
+    project = await ProjectService(
+        db, sessions=AgentSessionService(db), events=platform_line
+    ).unarchive(project_id, by=owner.handle)
     await db.commit()
     return ok(await _project_payload(db, project))
 
