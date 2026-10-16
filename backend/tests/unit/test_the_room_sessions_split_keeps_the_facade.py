@@ -39,6 +39,7 @@ from app.domain.agent.room.sessions import (
     Live,
     RoomSessions,
 )
+from app.domain.agent.room.sessions import records as _records
 
 PACKAGE = (
     pathlib.Path(__file__).resolve().parents[2]
@@ -62,12 +63,16 @@ def _tree(name: str) -> ast.Module:
     return ast.parse((PACKAGE / name).read_text())
 
 
-def _piece_functions() -> dict[str, list[str]]:
-    """身子里的每个函数名 → 写着它的文件（正常只有一个）。"""
+def _piece_names() -> dict[str, list[str]]:
+    """身子里的每个顶层名字（函数、类）→ 写着它的文件（正常只有一个）。
+
+    类也要收：``Clock``/``Live`` 由门面从 ``records.py`` 端出来，别处再写一份
+    同名类，名字就有了两块身子，而函数那一遍看不见。
+    """
     homes: dict[str, list[str]] = {}
     for piece in PIECES:
         for node in _tree(piece).body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 homes.setdefault(node.name, []).append(piece)
     return homes
 
@@ -99,8 +104,14 @@ def _facade_methods() -> dict[str, ast.FunctionDef | ast.AsyncFunctionDef]:
 
 
 def _facade_names() -> set[str]:
-    """门面答得出的名字：模块级的，加上类自己的、和它 ``__init__`` 里立起的字段。"""
-    names = set(vars(facade))
+    """一个实例答得出的名字：类上有的，加上 ``__init__`` 里立起的字段。
+
+    取 ``dir(RoomSessions)``，不取 ``vars(facade)``：模块全局名里有些是身子从
+    ``pkg.`` 上读的常量、记录（``RUNNER_GONE_S``、``Clock`` 之类），它们**不是**
+    实例上的属性，``svc.<它们>`` 在运行时是 ``AttributeError``，拿全局名当答案就
+    正是漏掉这一类。
+    """
+    names = set(dir(RoomSessions))
     for name, node in _facade_methods().items():
         names.add(name)
         for inner in ast.walk(node):
@@ -112,9 +123,11 @@ def _facade_names() -> set[str]:
 
 def test_the_old_path_still_answers_with_the_same_objects():
     """调用方、类型标注和 monkeypatch 目标都还落在原来那个名字上。"""
-    assert facade.RoomSessions is RoomSessions
-    assert facade.Clock is Clock
-    assert facade.Live is Live
+    # 类自己的路径没变，报错栈和日志里认的还是这个名字。
+    assert RoomSessions.__module__ == "app.domain.agent.room.sessions"
+    # 门面端出来的就是子模块里那一个，不是又抄了一份。
+    assert facade.Clock is _records.Clock is Clock
+    assert facade.Live is _records.Live is Live
     for constant in (RUNNER_GONE_S, CLOCK_READ_S, TALKING_S):
         assert isinstance(constant, float)
     # 计时日志按这个 logger 名过滤（test_room_send_timing 就靠它）。
@@ -136,16 +149,43 @@ def test_every_method_a_piece_reaches_for_is_answered_by_the_facade():
     assert missing == set()
 
 
+def test_no_piece_calls_a_forwarded_method_by_its_bare_function_name():
+    """身子之间只走对象：在同一个文件里裸调那个函数名，替换和子类就拦不住了。
+
+    上面那条扫的是 ``svc.<名字>`` 这种属性访问，看不见裸调到同文件那份实现。
+    ``_room`` 就这么漏过一次（books 里五处裸调），而门面上那个转发因此没人走。
+    """
+    methods = set(_facade_methods())
+    bare = {
+        f"{piece}: {node.func.id}()"
+        for piece in PIECES
+        for node in ast.walk(_tree(piece))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in methods
+    }
+    assert bare == set()
+
+
 def test_every_piece_function_is_one_line_of_forwarding_on_the_class():
     """搬走的是身子，不是判断：类上那一句只许把调用交给它住的那个文件。"""
     methods = _facade_methods()
     given = _re_exported()
-    for name, homes in sorted(_piece_functions().items()):
+    for name, homes in sorted(_piece_names().items()):
         if name in given:
             # 门面照原样端出来的（``_home``），它本来就不是方法。
             continue
         assert name in methods, f"{name} lives in {homes[0]} and has no method"
         node = methods[name]
+        body = node.body
+        if (
+            body
+            and isinstance(body[0], ast.Expr)
+            and isinstance(body[0].value, ast.Constant)
+            and isinstance(body[0].value.value, str)
+        ):
+            body = body[1:]  # 一句文档不算身子
+        assert len(body) == 1, f"{name} is not one statement of forwarding"
         calls = {
             (inner.func.value.id, inner.func.attr)
             for inner in ast.walk(node)
@@ -166,5 +206,5 @@ def test_every_piece_function_is_one_line_of_forwarding_on_the_class():
 
 def test_no_piece_keeps_a_second_copy_of_a_name():
     """一个名字只有一份身子：两份就是谁归谁没说清。"""
-    twice = {name: who for name, who in _piece_functions().items() if len(who) > 1}
+    twice = {name: who for name, who in _piece_names().items() if len(who) > 1}
     assert twice == {}

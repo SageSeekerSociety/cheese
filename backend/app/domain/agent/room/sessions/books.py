@@ -68,7 +68,7 @@ def _room(
 async def _hear_receipt(svc: pkg.RoomSessions, receipt: InputReceipt) -> None:
     identity = receipt.identity
     await svc._hear(
-        _room(svc, identity.project_id, identity.conversation_id),
+        svc._room(identity.project_id, identity.conversation_id),
         Read(str(identity.work_id), Received(receipt)),
         required=True,
     )
@@ -76,7 +76,7 @@ async def _hear_receipt(svc: pkg.RoomSessions, receipt: InputReceipt) -> None:
 
 async def _hear_completion(svc: pkg.RoomSessions, completion: WorkCompletion) -> None:
     await svc._hear(
-        _room(svc, completion.project_id, completion.conversation_id),
+        svc._room(completion.project_id, completion.conversation_id),
         Read(str(completion.work_id), Completed(completion)),
         required=True,
     )
@@ -86,7 +86,7 @@ async def _hear_termination(
     svc: pkg.RoomSessions, termination: WorkTermination
 ) -> None:
     await svc._hear(
-        _room(svc, termination.project_id, termination.conversation_id),
+        svc._room(termination.project_id, termination.conversation_id),
         Read(str(termination.work_id), Terminated(termination)),
         required=True,
     )
@@ -222,7 +222,7 @@ async def _consume(
         await queue.put(event)
     else:
         await svc._hear(
-            _room(svc, project, topic),
+            svc._room(project, topic),
             Read(
                 str(work),
                 event,
@@ -246,5 +246,5 @@ async def _activity(svc: pkg.RoomSessions, project, seat: Seat, work, active):
         svc.clocks.pop(seat, None)
     if work not in svc.queues:
         await svc._hear(
-            _room(svc, project, seat[0], seat[1]), Read(str(work), Working(active))
+            svc._room(project, seat[0], seat[1]), Read(str(work), Working(active))
         )
