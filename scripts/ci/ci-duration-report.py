@@ -63,7 +63,7 @@ SKIP_NAMES = {
 # also has a smaller per-matrix cap (contract 5, pure 10, integration 15 min).
 TIMEOUTS = {
     "e2e / e2e": 25, "frontend / check": 15, "frontend / unit": 15,
-    "frontend / request-paths": 15, "backend / integration": 20,
+    "frontend / eslint": 15, "backend / integration": 20,
     "backend / pure": 20, "backend / contract": 20, "backend / static": 15,
     "backend / Backend coverage complete": 5, "guards / guards": 15,
     "remote / acceptance": 30, "remote / private-chat": 30, "remote / windows": 15,
