@@ -27,7 +27,7 @@ from app.domain.agent.device_provider import (
 )
 from app.domain.agent.environment import VM, Sandbox, SelfHosted, spec_of
 from app.domain.agent.environment_failures import tell_failed
-from app.domain.agent.harness.channel import mint_session_token
+from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
 from app.domain.agent.market import cloud_provisionable
@@ -1111,6 +1111,13 @@ async def _install(
                 return {
                     "unavailable": EXECUTOR_SETUP_FAILED.format(reason=exc.reason())
                 }
+            if isinstance(exc, ScreenSetupError):
+                # The machine answered, but could not say what it was asked
+                # (the project environment's state did not read there). Its
+                # sentence is written for the agent, and the next attempt asks
+                # again.
+                logger.warning("executor installation failed: %s", exc)
+                return {"unavailable": str(exc)}
             if isinstance(exc, DeviceOffline):
                 # The machine went away while its executor was being set up: the
                 # same answer as when it is away before setup starts (above).
