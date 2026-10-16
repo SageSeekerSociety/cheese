@@ -75,7 +75,7 @@ PROD_DEPLOY = (
 HIGH_RISK = (
     ("迁移", "backend/alembic/"),
     ("鉴权", "backend/app/auth/"),
-    ("鉴权", "backend/app/api/auth.py"),
+    ("鉴权", "backend/app/api/auth/"),
     ("鉴权", "backend/app/domain/identity/"),
     ("鉴权", "backend/app/domain/authz/"),
     ("鉴权", "cli/internal/auth/"),
@@ -624,7 +624,7 @@ def self_test():
     check("dev 部署是高风险不是正式部署", facts(files=[".github/workflows/deploy-dev.yml"]), "交总调度",
           "high_risk", "部署链")
     check("迁移", facts(files=["backend/alembic/versions/x.py"]), "交总调度", "high_risk", "迁移")
-    check("鉴权", facts(files=["backend/app/api/auth.py"]), "交总调度", "high_risk", "鉴权")
+    check("鉴权", facts(files=["backend/app/api/auth/resolver.py"]), "交总调度", "high_risk", "鉴权")
     check("用户可见文案", facts(files=["frontend/src/i18n/messages/en/x.ts"]), "交总调度", "high_risk", "文案")
     check("i18n 的代码不算文案", facts(files=["frontend/src/i18n/index.ts"]), "会采")
     # Each area the deploy check covers, named by a real path rather than read back from the tables.
@@ -648,7 +648,7 @@ def self_test():
     check("部署文件只报正式部署一次", facts(files=["deploy/deploy.sh"]), "交总调度", "prod_deploy")
     if [c for c, _ in judge(facts(files=["deploy/deploy.sh"]), "me")[1]] != ["prod_deploy"]:
         failures.append("正式部署的文件不再算一遍高风险")
-    check("前缀只到文件名为止", facts(files=["backend/app/api/auth.py/x", "scripts/redeploy.sh.d/x"]), "会采")
+    check("前缀不吃掉相邻路径", facts(files=["backend/app/api/auth.py/x", "scripts/redeploy.sh.d/x"]), "会采")
     check("名字相近但不是鉴权文件", facts(files=["backend/app/api/auth_extra/x.py", "deployment.md"]), "会采")
     # 采纳人与读失败
     check("验收人不是自己", facts(card=card(reviewer_handle="someone")), "交总调度", "not_reviewer", "someone")
@@ -669,7 +669,7 @@ def self_test():
              "conflicting": "合 main", "prod_deploy": "正式部署", "high_risk": "高风险"}
     if set(REASONS) != codes or not all(REASONS.values()) or any(w not in REASONS[c] for c, w in musts.items()):
         failures.append(f"原因码是固定的十二个、各有话术: got {sorted(REASONS)}")
-    mixed = facts(files=["backend/alembic/versions/x.py", "backend/app/api/auth.py"], ci="failure")
+    mixed = facts(files=["backend/alembic/versions/x.py", "backend/app/api/auth/resolver.py"], ci="failure")
     tail = line(row_of(mixed, *judge(mixed, "me"))).split("｜", 1)[1].split("；")
     if [t.split(":")[0] for t in tail] != ["ci_red", "high_risk"]:
         failures.append(f"文本行按 ；切开每段都以码开头: got {tail!r}")
