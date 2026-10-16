@@ -54,8 +54,8 @@ const ready = computed(() => !loading.value && !failure.value && count.value > 0
  *  但两条都建在 `ready` 上——这一页得先画出来，才有选区可谈、才知道选的是哪一版。
  *  所以转换在后台重跑（`loading` 还没落地）的那一下，两条都是假，选中一段退回那句
  *  不带版本的拼话。这不是「反正屏上那张就是读者看着的那张」：真发出去之前父级还会
- *  把身份整个再核一遍（`PanelPreviewView.canUsePageContext`），这里松一档只会选出
- *  一场白选。 */
+ *  把身份整个再核一遍（`usePreviewLocator` 走 `usePreviewPagePin` 的 `canUse`），这里
+ *  松一档只会选出一场白选。 */
 const canQuote = computed(() => ready.value && !!props.context && !problem.value && !props.rendererMissing)
 const canAskPage = computed(() => canQuote.value && !busy.value)
 const showRail = computed(() => ready.value && !presenting.value && (railOverride.value ?? !narrow.value))
