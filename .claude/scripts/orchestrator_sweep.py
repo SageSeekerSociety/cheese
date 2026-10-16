@@ -16,10 +16,11 @@ For every open, started task in the channel it reads platform facts and the PR's
                 (`cheese_ask`) nobody has answered, or a filed card whose next step is
                 the reviewer's. It needs no quiet minutes — the question is itself the
                 line's newest heartbeat, so judging it by --silent-min hides every fresh
-                question for the whole 40. The fallback of the classes: a line already
-                reported as something else (可采纳未采纳, 出队 — a card waiting on its
-                reviewer is both) keeps that one row, and a parked line is never also
-                长时间无动静. One fact, one line.
+                question for the whole 40. A line already carrying another class
+                (可采纳未采纳, 出队 — a card waiting on its reviewer is both) keeps that
+                one row instead, unless the parking is a real question (`awaiting_answer`):
+                no other class says "somebody was asked", so that one always gets its row.
+                A parked line is never also 长时间无动静. One fact, one line.
   红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
@@ -1053,16 +1054,20 @@ def sweep(tok, room, silent, skip, want_facts):
         # 掉的）。停在别人身上的线也不再补一行长时间无动静 —— 那不是停摆，球本来就在
         # 别人手上。
         #
-        # 这一轮已经为它报过别的类别，就不再报待回答：可采纳未采纳 / 出队 / 它们那一
-        # 行本来就把「在等谁」写在名字上（`waiting_of` 返回的正是行的 `waiting_on`），
-        # 而「可以合并、等着人点采纳」的卡按平台的说法就是 awaiting_review —— 不挡的
-        # 话每一张可采纳未采纳的卡都会跟着多出一行，同一件事说两遍。待回答是这一类的
-        # 兜底：这条线除了停在人身上没别的可说时才用它。
+        # 等验收人那一类不重复出：这一轮已经为它报过别的类别，就不再报待回答 ——
+        # 可采纳未采纳 / 出队 那一行本来就把「在等谁」写在名字上（`waiting_of` 返回的
+        # 正是行的 `waiting_on`），而「可以合并、等着人点采纳」的卡按平台的说法就是
+        # awaiting_review —— 不挡的话每一张可采纳未采纳的卡都会跟着多出一行，同一件
+        # 事说两遍。
+        #
+        # 真问出去的问题不挡：别的类别说不出「有人被问了、还没答」，挡掉它就是把
+        # #1620 那类漏看原样搬回来。一张卡可以既能合并、又刚问了人一句 —— 那是两件
+        # 事，出两行。
+        phrase = (t.get("presentation") or {}).get("phrase")
         if parked_on_a_person(t):
-            if not reported:
+            if phrase == "awaiting_answer" or not reported:
                 w = age(heartbeat)
-                add("待回答", awaiting_detail(w, t.get("waiting_on"),
-                                             (t.get("presentation") or {}).get("phrase"),
+                add("待回答", awaiting_detail(w, t.get("waiting_on"), phrase,
                                              pulse["last_message_at"],
                                              pulse["last_message"] or "（还没有消息）"), w)
         else:
@@ -1824,6 +1829,11 @@ def _self_test_sweep():
                     "timelineItems": {"nodes": [{"__typename": "MergedEvent", "createdAt": at(50)}]}}
     adoptable_accept = [{"created_at": at(10), "meta": {"event_type": "accept_ready"},
                          "content": "可以合并"}]
+    # 同一张卡上还能同时挂着一句刚问出去的话：短语被待回答压过（`awaiting_answer`
+    # 在平台上先于卡判定），等的是被问的那个人，而「可以合并」由 PR 的合并态单独
+    # 成立。两件事，出两行。
+    adoptable_asking = dict(adoptable, waiting_on="bob",
+                            presentation={"phrase": "awaiting_answer"})
 
     return [
         ("sweep：消息 60 分钟前、没有 event，报停摆", kinds(), ["长时间无动静"]),
@@ -1880,6 +1890,11 @@ def _self_test_sweep():
          [(r["kind"], r["waiting_on"]) for r in
           rows_of(row=adoptable, accept=adoptable_accept, pr=adoptable_pr)],
          [("可采纳未采纳", "wangchangxin")]),
+        # 但真问出去的一句不挡：能合并和「有人被问了、还没答」是两件事，两行都要。
+        ("sweep：可以合并的卡又刚问了人一句，两行都在（可采纳未采纳 + 待回答）",
+         [(r["kind"], r["waiting_on"]) for r in
+          rows_of(row=adoptable_asking, accept=adoptable_accept, pr=adoptable_pr)],
+         [("可采纳未采纳", "bob"), ("待回答", "bob")]),
     ]
 
 
