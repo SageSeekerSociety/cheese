@@ -262,3 +262,35 @@ async def _written_elsewhere(factory, project_id: uuid.UUID, content: str) -> No
             expected_version=1,
         )
         await session.commit()
+
+
+async def test_what_a_private_channel_learns_stays_out_of_the_shared_memory(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """Only the people in a private channel may read what is said there, and
+    everyone in the project reads the shared memory (#3830): an edit to `team/`
+    made in that channel never reaches the platform."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, _ = await _setup(factory)
+    async with factory() as session:
+        private = (
+            await TopicService(session).create(
+                project_id=project_id, title="私下", created_by="u", members_only=True
+            )
+        ).id
+        await session.commit()
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+
+    await ledger.sync(_seat(project_id, private))
+    assert (sessions.tree(private) / "team" / INDEX_NAME).read_text(
+        encoding="utf-8"
+    ) == _INDEX
+    (sessions.tree(private) / "team" / INDEX_NAME).write_text(
+        _INDEX + _ADDED, encoding="utf-8"
+    )
+    await ledger.sync(_seat(project_id, private))
+    await ledger.sync(_seat(project_id, private))
+
+    assert await _index(factory, project_id) == (_INDEX, 1)

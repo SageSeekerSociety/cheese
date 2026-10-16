@@ -12,6 +12,7 @@ import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import { deleteMemory, getProjectWeeklies, listMemory } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
+import { mayIn } from '../lib/projectPermissions'
 import { refRoute } from '../lib/refDirectory'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
@@ -72,6 +73,8 @@ interface DocsPayload {
   overviewId: string | null
   weeklies: Block[]
   memoryEntries: MemoryEntryOut[]
+  /** 项目共享的那几条只有能配置 AI 队友的人删得动；自己的那几条自己删（#3830）。 */
+  changesSharedMemory: boolean
 }
 
 // 一个 kind 一份缓存：三个 tab 是三份不同的文档，来回点不该各转一次圈。
@@ -97,6 +100,7 @@ const docs = useQuery(
         overviewId: null,
         weeklies: [],
         memoryEntries: [],
+        changesSharedMemory: mayIn(project, 'configure_agents'),
       }
       if (kind.value === 'charter' && overviewRead) {
         payload.overviewId = (await overviewRead).id
@@ -120,6 +124,7 @@ const error = computed(() => (docs.data.value ? null : docs.error.value))
 
 const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
+const mayDelete = (e: MemoryEntryOut) => e.scope === 'private' || !!data.value?.changesSharedMemory
 const errorMessage = computed<string | null>(() =>
   error.value ? error.value.message || t('project.docs.loadFailed') : null
 )
@@ -268,6 +273,7 @@ useCommands(() => {
               </div>
             </div>
             <BaseButton
+              v-if="mayDelete(e)"
               icon="mdi-delete-outline"
               kind="ghost"
               size="sm"
