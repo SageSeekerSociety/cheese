@@ -165,9 +165,9 @@ class GapRepository:
         }
 
     async def _unlimited_project_ids(self) -> list:
-        """不计量（unlimited）的项目：所属团队挂在不限量的方案上。判据与准入同一
-        处（`usage.payers` 的 `Terms`，准入在 `usage.ledger_queries`）——这里数的
-        是「方案不限量」，不是「额度用完了」。"""
+        """不计量（unlimited）的项目：所属团队挂在不限量的方案上。判据是准入用的
+        那一个（`Terms.unlimited`，在 `usage.payers`；准入在
+        `usage.ledger_queries`）——这里数的是「方案不限量」，不是「额度用完了」。"""
         projects = list((await self._session.execute(select(Project))).scalars())
         payers = await ledger.payers_for_projects(self._session, projects)
         balances = await ledger.Ledger(self._session).balances(payers)
