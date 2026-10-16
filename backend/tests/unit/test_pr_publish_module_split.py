@@ -128,29 +128,88 @@ def _globals_a_module_reads(source: str) -> set[str]:
 
 
 def _replaced_names_taken_from_elsewhere(source: str) -> set[str]:
-    """这一片里出现的、被测试替换的名字，减掉它从门面自己取的那几个。
+    """这一片里读到的、被测试替换的名字。
 
     取用不只「读模块全局」一种。函数体里写一句 `from <别的模块> import
     branch_head`，名字绑在局部，`& module_level` 那一关看不见它，可它读的同样是
-    别人那份 —— 测试在门面上换掉的那份照样落空。所以这里换一把尺子，量「这一片
-    **提到**了哪些被替换的名字」，只放过明确从门面取的：只有门面的属性才是测试换
-    得到的那个。
+    别人那份 —— 测试在门面上换掉的那份照样落空。所以这里换一把尺子：这一片里凡是
+    会读到那些名字的写法都算，包括 `as` 改名和 `<谁>.branch_head` 这种属性写法。
+
+    放过的只有「调用时才去门面取」的那两种：写在函数体里的 `from ...pr_publish
+    import X`（含 `as` 改名）到调用时才解析，`import ...pr_publish as p` 或
+    `from ..review import pr_publish` 之后按 `p.X` 取也是读门面那个属性，两者都跟
+    着替换走。**顶层的** `from ...pr_publish import X` 不在其列：它在导入那一刻就
+    把值抄了一份，替换改的是门面那份，抄走的这份纹丝不动。顶层那句还会绕出一圈
+    循环导入，别的闸门都不管 `app.domain.review` 内部的环。
+
+    自己绑的名字不算读别人那份：函数参数、局部赋值、循环和推导式的目标跟被替换的
+    名字重名时，读的是自己那个。
     """
+    replaced = set(REPLACED_BY_TESTS)
     tree = ast.parse(source)
+    module_level = {id(node) for node in tree.body}
+    package, _, facade_name = MODULE.rpartition(".")
+
+    # 绑到门面那个模块对象上的别名，按它们取属性就是读门面的属性。`import
+    # ...pr_publish as p`，或者 `from app.domain.review import pr_publish`（后面这句
+    # 绑的是模块对象本身，不是它里面的哪个名字）。
+    facade_aliases = {facade_name}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            facade_aliases |= {
+                alias.asname
+                for alias in node.names
+                if alias.name == MODULE and alias.asname
+            }
+        elif isinstance(node, ast.ImportFrom):
+            facade_aliases |= {
+                alias.asname or facade_name
+                for alias in node.names
+                if node.module == package and alias.name == facade_name
+            }
     from_facade = {
-        alias.asname or alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, ast.ImportFrom) and node.module == MODULE
-        for alias in node.names
-    }
+        child.attr
+        for child in ast.walk(tree)
+        if isinstance(child, ast.Attribute)
+        and isinstance(child.value, ast.Name)
+        and child.value.id in facade_aliases
+    } & replaced
+
+    # 写在函数体里的那几句到调用时才解析，放行；顶层那句抄的是值，照旧算漏点。
+    # `as` 改名时两个名字都算（原名的 alias.name 也在）。
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == MODULE
+            and id(node) not in module_level
+        ):
+            from_facade |= {alias.name for alias in node.names}
+            from_facade |= {
+                alias.asname for alias in node.names if alias.asname is not None
+            }
+
     mentioned = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
     mentioned |= {
-        alias.asname or alias.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for alias in node.names
+        node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
     }
-    return (mentioned & set(REPLACED_BY_TESTS)) - from_facade
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            mentioned |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.Import):
+            mentioned |= {alias.name.split(".")[-1] for alias in node.names}
+
+    own = {
+        arg.arg
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+        for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+    }
+    own |= {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    return (mentioned - from_facade - own) & replaced
 
 
 def test_every_name_the_tree_reaches_is_still_on_the_facade():
@@ -215,6 +274,14 @@ def test_the_names_tests_replace_are_read_from_this_module():
         f"{MODULE} 上换掉的：换了那边、这边照旧用自己那份，置换成空。"
         "把读它的身子搬回门面。"
     )
+    # 上面那句是规矩（谁读被替换的名字），跟着门面名字走。这一句是「按老名字取还
+    # 取得到」的**实例**，故意用最绕的一条：这三个函数确实搬去了旁边那一片，翻遍
+    # 门面也找不到谁提到它们的名字，只有按属性取才认得出是谁。
+    for name in ("_open_pr_of_task", "_pr_text", "sync_pr_text"):
+        assert getattr(facade, name).__module__ == SIBLING, (
+            f"{name} 不在 {SIBLING} 里，说明这具身子没搬走（或者搬错了地方）："
+            "这条实例断言就白钉了，规矩那条也跟着不再覆盖「按属性取」这种写法。"
+        )
 
     # 日志名是子系统的名字，不是哪个文件的名字：搬走的身子发出的记录要还落在
     # 同一条通道上，按模块名过滤日志的地方才不会断（github_pr 拆包时为同一件事
