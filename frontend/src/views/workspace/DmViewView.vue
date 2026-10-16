@@ -70,7 +70,7 @@ defineExpose({ panes, showFiles })
 </script>
 
 <template>
-  <div class="dm-view d-flex flex-column fill-height" style="min-width: 0">
+  <div class="dm-view d-flex flex-column fill-height" :class="{ 'dm-view--desktop': desktop }" style="min-width: 0">
     <v-alert v-if="error" type="error" density="comfortable" class="ma-3">
       {{ error }}
     </v-alert>
@@ -150,12 +150,12 @@ defineExpose({ panes, showFiles })
   flex: 1 1 auto;
 }
 
-/* 对话的页头和面板的页签栏并排：两条一样高，底下那条线连成一条。频道页没有这件事，
-   那里的页头横跨两栏。 */
-.dm-view {
-  --dm-head-h: 53px;
+/* 对话的页头和面板的页签栏并排，都和侧栏的头一样高（`--app-page-header-height`，频道页
+   的页头用的也是它），底下那条线连成一条。 */
+.dm-view--desktop {
+  --dm-head-h: var(--app-page-header-height);
 }
-.dm-view :deep(.pr-header) {
+.dm-view--desktop :deep(.pr-header) {
   box-sizing: border-box;
   height: var(--dm-head-h);
 }
@@ -165,7 +165,7 @@ defineExpose({ panes, showFiles })
   flex-direction: column;
   min-height: 0;
 }
-.dm-view :deep(.tabbar-host) {
+.dm-view--desktop :deep(.tabbar-host) {
   box-sizing: border-box;
   height: var(--dm-head-h);
 }
