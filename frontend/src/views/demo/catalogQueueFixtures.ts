@@ -167,6 +167,19 @@ export function queueDetailProps(
   }
 }
 
+/** 详情拆成左右两栏之后，两件各自吃自己那几样：还是从上面那一份整件的 props 里挑出来，
+ *  不另造一份形状（`item` 还是同一个 `feedback()`）。 */
+export function queueDetailSideProps(over: Parameters<typeof queueDetailProps>[0] = {}) {
+  const { item, triageOpen, statuses, candidates, search, searching } = queueDetailProps(over)
+  return { item, triageOpen, statuses, candidates, search, searching }
+}
+
+/** 右栏那几样。备注草稿也在这里给（它是 `v-model` 的一半，字攥在详情那一层手里）。 */
+export function queueDetailBodyProps(over: Parameters<typeof queueDetailProps>[0] = {}) {
+  const { item, loading, error, writeError } = queueDetailProps(over)
+  return { item, loading, error, writeError, noteDraft: '' }
+}
+
 /** 队列上那几行。`FeedbackCard` 是 `FeedbackDetail` 的子集（列表行只画卡片上那几格），
  *  所以这一份就是 `feedback()` 改几个字段 —— 不是另一种数据，不另造一份形状。 */
 export const QUEUE_CARDS: FeedbackCard[] = [
