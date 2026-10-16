@@ -306,13 +306,13 @@ async def refresh_stale_pr_snapshots(
 
     卡上的 `merge_state` 是一份**快照**，而前端那颗「采纳」按钮按它亮不亮
     (`TopicAcceptCard.vue` 的 `acceptBlockedTitle`)。快照平时只有两个时候
-    重算：轮询器 (`accept_pr_poll_interval_s`，默认 300s)，和点下采纳的那一
+    重算：轮询器 (`accept_pr_poll_interval_s`，默认 60s)，和点下采纳的那一
     刻。夹在两者之间来读的人只会读到陈旧的一份 —— 实测 CI 在 11:28Z 就全绿
     了，卡到 11:49Z 才写进 `clean`，中间二十来分钟界面上是「检查全绿、按钮
     点不动」；更短的一次是 12:06Z 卡上被写成 `unknown`（GitHub 那一刻还没算
-    完 mergeable），而此刻 `/pr-checks` 早已 `mergeable: true`，快照又冻了五
-    分钟。界面每 15s 来读一次，读到的却是同一份旧快照，**靠前端轮询自己收敛
-    不了**。
+    完 mergeable），而此刻 `/pr-checks` 早已 `mergeable: true`，快照又冻了一个
+    轮询周期（那会儿是 300s）。界面每 15s 来读一次，读到的却是同一份旧快照，
+    **靠前端轮询自己收敛不了**。
 
     所以给读这条路一个它自己的保证：快照比 `accept_pr_snapshot_floor_s` 还
     旧，就重算一次。地板是必须的 —— 读卡是热点，不能每个读者都触发一次外呼。

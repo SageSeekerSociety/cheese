@@ -652,7 +652,7 @@ class TestWhoseMove:
 
 _LOOKED = datetime(2026, 10, 12, 0, 0, tzinfo=UTC)
 #: 三个轮询间隔（`queries.CHECK_WATCH_TICKS` 乘 `accept_pr_poll_interval_s`）。
-_FRESH = timedelta(minutes=15)
+_FRESH = timedelta(minutes=3)
 
 
 def _mirror(**over: object) -> dict:
@@ -676,13 +676,13 @@ def _at(minutes: float) -> datetime:
 
 
 def test_a_fresh_mirror_saying_ci_runs_is_waiting_on_ci():
-    assert checks_running(_mirror(), now=_at(4), fresh_for=_FRESH)
+    assert checks_running(_mirror(), now=_at(1), fresh_for=_FRESH)
 
 
 def test_the_window_is_measured_from_when_the_poller_last_looked():
     """边界上是还在新鲜期内（`>` 不是 `>=`）：那正是轮询该写下一次的间隔。"""
-    assert checks_running(_mirror(), now=_at(15), fresh_for=_FRESH)
-    assert not checks_running(_mirror(), now=_at(15.1), fresh_for=_FRESH)
+    assert checks_running(_mirror(), now=_at(3), fresh_for=_FRESH)
+    assert not checks_running(_mirror(), now=_at(3.1), fresh_for=_FRESH)
 
 
 @pytest.mark.parametrize(
@@ -714,7 +714,7 @@ def test_the_window_is_measured_from_when_the_poller_last_looked():
     ],
 )
 def test_a_mirror_that_does_not_say_a_fresh_ci_is_running_is_not_waited_on(mirror):
-    assert not checks_running(mirror, now=_at(4), fresh_for=_FRESH)
+    assert not checks_running(mirror, now=_at(1), fresh_for=_FRESH)
 
 
 def test_a_naive_look_stamp_reads_as_utc():
@@ -722,7 +722,7 @@ def test_a_naive_look_stamp_reads_as_utc():
     时区的旧值时当作 UTC，不是当作读不懂 —— 读不懂就成了「没在等」。"""
     assert checks_running(
         _mirror(checked_at=_LOOKED.replace(tzinfo=None).isoformat()),
-        now=_at(4),
+        now=_at(1),
         fresh_for=_FRESH,
     )
 
@@ -737,6 +737,6 @@ def test_a_mirror_saying_both_ci_runs_and_a_check_is_red_is_still_waiting_on_ci(
                 {"kind": "ci_running", "checks": ["test"], "detail": ""},
             ]
         ),
-        now=_at(4),
+        now=_at(1),
         fresh_for=_FRESH,
     )

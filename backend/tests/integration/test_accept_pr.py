@@ -906,7 +906,7 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     队列里 PR 的 `mergeStateStatus` 被 GitHub 钉在 BLOCKED，判定重算没有意义，
     所以进队以后不再重算它，只由轮询每跳把 `checked_at` 推到此刻（`state`、
     `reasons` 一条不动）。`checked_at` 是「还在等 CI」这句话的有效期：冻在入队
-    那一刻，过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 15 分钟）就没人再当这张卡在
+    那一刻，过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 3 分钟）就没人再当这张卡在
     等 CI，环境释放判据把机器收掉 —— 而轮询其实一直在看，回头还要叫醒这条线重建
     环境、重读文档。队列里这段和普通路径是同一件事，就该挂同一根钟（1 小时）。
 
