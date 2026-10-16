@@ -102,23 +102,28 @@
     "presets": {
       "weekly": {
         "title": "Weekly report",
-        "goal": "Sum up what the channels finished last week on one page"
+        "goal": "Sum up what the channels finished last week on one page",
+        "note": "One block per channel: what got finished first, then what is still waiting. Only this week's work, no looking further back. The result goes in the channel's files."
       },
       "quiz": {
         "title": "Weekly quiz",
-        "goal": "Write a short quiz on what was covered this week"
+        "goal": "Write a short quiz on what was covered this week",
+        "note": "One file for the questions and one for the answers, both in the “Weekly quiz” folder in the channel. Ten questions at most, drawn from what came up in the channel and the library this week. The answer file says why for each one."
       },
       "daily": {
         "title": "Daily digest",
-        "goal": "Put today's decisions and loose ends from the channel on one page"
+        "goal": "Put today's decisions and loose ends from the channel on one page",
+        "note": "Two parts: what got decided, and what is still waiting. Say who decided each one, and who each waiting one is stuck on. On a quiet day, write one line saying so; don't pad it out."
       },
       "archive": {
         "title": "File it away",
-        "goal": "Move it to the right folder and write one line on what it is for"
+        "goal": "When a new file lands in the library, move it to the right folder and write one line on what it is for",
+        "note": "A folder per project; the one-line description goes at the top of the file. If it is unclear where a file belongs, leave it alone and ask in the channel."
       },
       "unit": {
         "title": "Unit summary",
-        "goal": "Sum up the key points of one learning task on one page"
+        "goal": "Sum up the key points of one learning task on one page",
+        "note": "Only what was really learned in this task: new concepts, how to use them, the snags hit. Check it against the task's existing library documents and don't repeat what is already there. The result goes in the task's deliverables."
       }
     }
   },

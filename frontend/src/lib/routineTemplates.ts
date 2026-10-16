@@ -48,12 +48,16 @@ export function routineWhenText(trigger: RoutineTrigger, spec: Record<string, un
   return t('routines.template.when.daily', { time })
 }
 
-/** 平台预置的五条：一眼看得懂什么时候跑、跑完交出什么。 */
+/** 平台预置的五条：一眼看得懂什么时候跑、跑完交出什么。
+ *
+ *  每套都带着一段「补充说明」，那是做法——列表上只摆名字、什么时候跑和一句目标是干什么的，
+ *  点开一套，做法才铺进表里给人看、给人改。 */
 export function presetTemplates(): RoutineTemplate[] {
   const said = (key: string) => ({
     id: `preset-${key}`,
     title: t(`routines.template.presets.${key}.title`),
     goal: t(`routines.template.presets.${key}.goal`),
+    note: t(`routines.template.presets.${key}.note`),
   })
   return [
     { ...said('weekly'), trigger: 'schedule', spec: { freq: 'weekly', time: '09:00', weekdays: [0] } },
