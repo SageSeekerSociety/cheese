@@ -69,12 +69,13 @@ if [ "$SELF_TEST" = 1 ]; then
 
   # The shape this guard exists to prevent: a scan that matched nothing because
   # there was nothing to scan reads exactly like a tree that is clean.
-  empty="$(mktemp -d)"
-  verdict "$empty"
+  # Under $tmp rather than a second mktemp: the trap takes this one back on the
+  # failure path too, and every case keeps reporting a path inside the fixture.
+  mkdir "$tmp/none"
+  verdict "$tmp/none"
   [ "$CODE" -ne 0 ] || self_fail "a tree with no .github/workflows must fail, not read as clean"
   says "does not exist" "the failure must say the directory was missing"
-  says "$empty/.github/workflows" "the failure must name the directory it could not find"
-  rm -rf "$empty"
+  says "$tmp/none/.github/workflows" "the failure must name the directory it could not find"
 
   # A file holding both: the guard has to pick the unpinned line out of it. One
   # that names the pinned line too gets switched off the first time it fires.
