@@ -73,12 +73,16 @@ def _validate(path: Path, pattern: object) -> None:
                 f"{path}: pattern {where!r} matches {field!r}, and a run only"
                 f" carries {sorted(MATCHED_FIELDS)}"
             )
-        if not isinstance(wanted, list) or not wanted or not all(
-            isinstance(value, str) and value.strip() for value in wanted
+        # A workflow path and an event name never carry whitespace, so a value
+        # that is blank or padded with some is a typo: matching is the exact
+        # `in` test below, so it would match no run and nothing would say so.
+        if not isinstance(wanted, list) or not wanted or any(
+            not isinstance(value, str) or not value or value != value.strip()
+            for value in wanted
         ):
             raise ValueError(
                 f"{path}: pattern {where!r} field {field!r} must be a non-empty"
-                " list of strings"
+                " list of strings, none of them blank or padded with whitespace"
             )
     symptoms = pattern["symptoms"]
     if not isinstance(symptoms, list) or not symptoms or not all(
