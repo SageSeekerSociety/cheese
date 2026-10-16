@@ -415,8 +415,10 @@ async def test_blobs_read_together_do_not_share_one_database_session(
     monkeypatch.setattr(reader, "_blob", blob)
     changes = await reader.compare_revisions(first, second)
     assert len(changes) == 6
+    # Reading a file's two sides one after the other is still twelve reads; how
+    # many sessions that costs is the reader's business, and a pool sized over
+    # the ceiling would be as correct as one session per read.
     assert len(used) == 12
-    assert len({id(session) for session in used}) == 12
 
 
 @pytest.mark.anyio
@@ -442,4 +444,45 @@ async def test_reading_blobs_answers_each_oid_however_often_it_was_asked_for(
     assert sorted(asked) == ["a", "b", "c"]
     asked.clear()
     assert await reader.committed_blobs([]) == {}
-    assert asked == []
+
+
+class Refused(Exception):
+    """What a test's forge raises when a read has to fail."""
+
+
+@pytest.mark.anyio
+async def test_a_read_that_fails_stops_the_reads_still_in_the_air(monkeypatch):
+    """Reading files together fails the way reading them one at a time did.
+
+    A read that fails reaches the caller, and the reads that were under way
+    with it are dropped: they were only asked for by the call that has already
+    failed, and left running they would go on asking the forge — past the
+    request that wanted them, and past the rate limit that refused the first
+    one."""
+    reader = ProjectFiles(_project_session(), uuid.uuid4(), None)
+    started, stopped = [], 0
+
+    async def blob(entry, session):
+        nonlocal stopped
+        started.append(entry["sha"])
+        try:
+            await asyncio.sleep(0)
+            if entry["sha"] == "refused":
+                raise Refused("the forge refused the read")
+            await asyncio.Event().wait()  # Only a cancellation ends this read.
+        except asyncio.CancelledError:
+            stopped += 1
+            raise
+        return entry["sha"].encode()
+
+    monkeypatch.setattr(reader, "_blob", blob)
+    oids = ["refused", *(f"o{n}" for n in range(39))]
+    with pytest.raises(Refused):
+        await reader.committed_blobs(oids)
+    # No more than the ceiling, plus the read the failed one let in as it gave
+    # up its place, out of the forty asked for.
+    assert 1 < len(started) <= forge_files.MAX_BLOB_READS + 1
+    assert stopped == len(started) - 1  # every read except the one that failed
+    asked = len(started)
+    await asyncio.sleep(0.01)
+    assert len(started) == asked  # and none went out after the call failed

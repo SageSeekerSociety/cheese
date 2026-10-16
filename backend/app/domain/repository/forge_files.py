@@ -315,7 +315,12 @@ class ProjectFiles:
         one's engine, not the module-level factory, which the test harness binds
         to another database (`review/services/polling.py` does the same).
         `MAX_BLOB_READS` of them are in the air at a time; the answer holds
-        every oid asked for, as reading them one by one did."""
+        every oid asked for, as reading them one by one did.
+
+        The reads are collected in the order they were asked for, so a failure
+        reaches the caller where reading one file after another would have put
+        it; the reads still in the air are then cancelled, rather than left
+        asking the forge after the call that wanted them has already failed."""
         unique = list(dict.fromkeys(oids))
         if not unique:
             return {}
@@ -326,13 +331,13 @@ class ProjectFiles:
             async with at_once, sessions() as session:
                 return await self._blob({"sha": oid}, session)
 
-        return dict(
-            zip(
-                unique,
-                await asyncio.gather(*(read(oid) for oid in unique)),
-                strict=True,
-            )
-        )
+        running = [asyncio.create_task(read(oid)) for oid in unique]
+        try:
+            return dict(zip(unique, [await task for task in running], strict=True))
+        finally:
+            for task in running:
+                task.cancel()
+            await asyncio.gather(*running, return_exceptions=True)
 
     async def compare_revisions(self, before: str, after: str) -> list[dict]:
         """Compare two delivered trees, never a moving branch or PR merge-base.
