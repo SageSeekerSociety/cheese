@@ -18,6 +18,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING
 
+from app.auth.audience import seats_only
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.agent.harness.prompt import task_section
@@ -213,7 +214,10 @@ async def prepare(
             ),
         )
         memory = await memory_index(
-            session, topic.project_id, speaker_handles=list(speakers)
+            session,
+            topic.project_id,
+            speaker_handles=list(speakers),
+            shared_read_only=seats_only(topic),
         )
         prep.memory.remember_turn(
             topic.id,

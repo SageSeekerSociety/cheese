@@ -13,6 +13,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import fitz
 from sqlalchemy import delete, func, literal, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -168,6 +169,44 @@ async def read_attachment_text(
         # 地址没错，是东西不在了。
         raise UnprocessableEntityError(say("libraryFileGone"))
     return bytes_text_payload(await _bytes_of(row), path)
+
+
+#: 一份 PDF 读成文字时最多读多少页、留多少字：读的是芝士，它要的是要求和要点，
+#: 不是整本书。
+PDF_TEXT_PAGES = 40
+PDF_TEXT_CHARS = 60_000
+
+
+def _pdf_text(data: bytes) -> str | None:
+    """PDF 里的文字层，一页一段；打不开、或者全是扫描图没有文字，是 None。"""
+    try:
+        with fitz.open(stream=data, filetype="pdf") as pdf:
+            pages = [
+                str(pdf[i].get_text()).strip()
+                for i in range(min(pdf.page_count, PDF_TEXT_PAGES))
+            ]
+            more = pdf.page_count > PDF_TEXT_PAGES
+    except Exception:  # noqa: BLE001 — a file that is not a readable PDF reads as binary
+        return None
+    text = "\n\n".join(page for page in pages if page)
+    if not text:
+        return None
+    if more or len(text) > PDF_TEXT_CHARS:
+        text = text[:PDF_TEXT_CHARS] + "\n\n（后面还有，没有读完）"
+    return text
+
+
+async def read_text(session: AsyncSession, project_id: uuid.UUID, name: str) -> dict:
+    """资料库里一份文件读成文本：文本文件照原样，PDF 取它的文字层；别的二进制文件
+    只回大小和版本。给芝士读资料用，读的人不必在哪个房间里。"""
+    row = await _current_or_404(session, project_id, name)
+    data = await _bytes_of(row)
+    payload = bytes_text_payload(data, f"library/{name}")
+    if payload["binary"] and name.lower().endswith(".pdf"):
+        text = await asyncio.to_thread(_pdf_text, data)
+        if text is not None:
+            payload = {**payload, "binary": False, "content": text}
+    return payload
 
 
 async def stored(

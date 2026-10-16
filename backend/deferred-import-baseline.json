@@ -1,6 +1,4 @@
 {
   "_comment": "Unannotated imports inside a function body under backend/app, per file. May only go down: a new file must have none. Annotate one with `# deferred-import: <reason>` (same line or the line above) or lift it to module level. Refresh with `uv run python scripts/check_deferred_imports.py --update` (shrink-only). The rule is in .claude/rules/architecture.md.",
-  "files": {
-    "app/core/storage.py": 2
-  }
+  "files": {}
 }

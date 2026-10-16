@@ -30,11 +30,12 @@ from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.adapters import project_team
 from app.domain.block.adapters import DecisionLine
-from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
     NotificationCreate,
     NotificationOut,
+    NotificationRow,
+    NotificationType,
     ResolveIn,
 )
 from app.domain.notification.services import ProjectNotificationService
@@ -51,11 +52,13 @@ def _options(body: NotificationCreate) -> list[str]:
     return [o for o in listed if isinstance(o, str) and o.strip()]
 
 
-def _dump(row: Notification) -> dict:
+def _dump(row: NotificationRow) -> dict:
     return NotificationOut.from_row(row).model_dump(mode="json")
 
 
-async def _acting_recipient(resolver: ActorResolver, notification: Notification) -> str:
+async def _acting_recipient(
+    resolver: ActorResolver, notification: NotificationRow
+) -> str:
     """能对这一条动手的那个验证过的调用者：它的收件人。
 
     并表之前还有第二档 —— 一条广播（没有收件人）任何验证过的调用者都能动。广播

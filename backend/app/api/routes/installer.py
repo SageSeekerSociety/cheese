@@ -4,7 +4,7 @@ Serves the `cheesehost` thin-client connector so a fresh user machine can join
 with one line — `curl -fsSL <origin>/connector/install.sh | sh`. The script
 detects the platform, downloads the matching binary, and prints the next step
 (`cheesehost auth login`). It carries no secrets and no business logic;
-enrollment still goes through the device flow (routes/connector.py), so a piped
+enrollment still goes through the device flow (routes/connector/devices.py), so a piped
 installer never grants access by itself.
 
 Binaries are built artifacts under backend/connector-dist/ (git-ignored; built

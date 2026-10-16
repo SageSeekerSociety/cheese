@@ -87,7 +87,16 @@ class MemoryIndex:
     warnings: list[str]
 
     def is_empty(self) -> bool:
-        return not any(section.text.strip() for section in self.sections)
+        return not self.warnings and not any(
+            section.text.strip() for section in self.sections
+        )
+
+
+#: What a private chat or private channel tells the agent about `team/`.
+SHARED_READ_ONLY = (
+    "这里是私聊或私密频道，`team/` 只读：在这里了解到的事写进说话那个人的 "
+    "`private/<handle>/`，写进 `team/` 的改动不会保存。"
+)
 
 
 def _owner(scope: MemoryFileScope, handle: str | None) -> str:
@@ -316,8 +325,13 @@ async def memory_index(
     project_id: uuid.UUID,
     *,
     speaker_handles: list[str],
+    shared_read_only: bool = False,
 ) -> MemoryIndex:
     """这一轮注入的 L1 索引：team 一份，本轮发言人一人一份。
+
+    ``shared_read_only``：私聊和私密频道里 team 只读（#3830）。在那里听到的话
+    只有在场的人能读，写进全项目共看的 team 就成了别人的后门，所以记忆对账不收
+    team 的改动（`memory_ledger`），这里把这件事说给 agent 听。
 
     **只读在场的这几个人。** 项目里的人可以很多，而每一轮要用的只是同席这几位
     ——这不是权限（private 记忆只有本人和管理员看得见，另有一道闸），是预算：
@@ -347,4 +361,6 @@ async def memory_index(
         sections.append(
             IndexSection(label=label, prefix=prefix_of(scope, owner), text=fitted)
         )
+    if shared_read_only:
+        warnings.append(SHARED_READ_ONLY)
     return MemoryIndex(sections=sections, warnings=warnings)

@@ -32,7 +32,14 @@ APP = Path(app.__file__).parent
 # business backend calling a hub that may be a RemoteDeviceHub.
 OWNER_ONLY = {
     APP / "device_connection_app.py",
-    APP / "api" / "routes" / "connector.py",
+    # The connector routes became a package (2026-10-16). The two files holding
+    # the owner's sockets are what needs skipping: nginx sends `/connector/agent`
+    # and the screen socket to the owner and the rest of `/connector/` to the
+    # business backend, where `connections.py` calls `device_hub.target`. Listing
+    # the whole package would put that call, and any other the HTTP handlers
+    # make, out of this guard's sight.
+    APP / "api" / "routes" / "connector" / "devices.py",
+    APP / "api" / "routes" / "connector" / "screen.py",
     APP / "domain" / "agent" / "device_hub" / "__init__.py",
     APP / "domain" / "agent" / "device_hub" / "calls.py",
     APP / "domain" / "agent" / "device_hub" / "inbound.py",

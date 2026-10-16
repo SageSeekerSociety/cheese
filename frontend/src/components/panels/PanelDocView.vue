@@ -30,6 +30,7 @@ import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { anchorComment } from '../../lib/docCommentSpots'
 import { exportMarkdown } from '../../lib/docSchema'
+import { draftWaiting, takeDraft } from '../../lib/overviewDraft'
 import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
@@ -339,6 +340,17 @@ const agentOptions = {
 const rewrite = useDocAgent({ ...agentOptions, scope: 'selection' })
 const docAgent = useDocAgent({ ...agentOptions, scope: 'document' })
 const canAskDocument = computed(() => !!props.agentHandle && !!props.askAgent)
+// 总览页上点了「让 AI 队友起草」，跳到了这一篇：编辑器在了、能问、能改，就由对整篇的
+// 那个 AI 队友接着起草（`lib/overviewDraft`）。
+watch(
+  [() => props.document?.id, () => surfaceRef.value?.editor, canAskDocument, () => props.editable],
+  ([id, editor, canAsk, editable]) => {
+    if (!id || !editor || !canAsk || !editable || !draftWaiting(id)) return
+    const note = takeDraft(id)
+    if (note !== null) docAgent.draft(note)
+  },
+  { immediate: true }
+)
 const suggestions = useDocSuggestions(() => surfaceRef.value?.editor ?? null)
 // 建议那一条：点顶栏上的「N 处建议」打开，从第一处看起。
 const suggestionsOpen = ref(false)

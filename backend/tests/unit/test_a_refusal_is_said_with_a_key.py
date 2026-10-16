@@ -256,7 +256,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/backend_log.py": 2,
     "app/api/routes/blocks.py": 3,
     "app/api/routes/comments.py": 3,
-    "app/api/routes/connector.py": 1,
+    "app/api/routes/connector/devices.py": 1,
     "app/api/routes/dashboard.py": 5,
     "app/api/routes/docs_site.py": 4,
     "app/api/routes/document_agent.py": 1,
@@ -346,7 +346,9 @@ _BASELINE: dict[str, int] = {
     "app/core/storage.py": 1,
     "app/device_connection_app.py": 8,
     "app/domain/agent/announce.py": 1,
-    "app/domain/agent/chat.py": 2,
+    # 2026-10: `chat.py` 按职责拆成门面加四块 mixin，它那两句英文句子跟着抛它们
+    # 的 `converse` 走去 chat_admission，chat.py 自己不再写英文句子。
+    "app/domain/agent/chat_admission.py": 2,
     # 2026-10: the checkout sweep left `room_task/checkouts.py` for
     # `agent/checkout_sweep.py`, carrying its one English sentence.
     "app/domain/agent/checkout_sweep.py": 1,
