@@ -56,7 +56,12 @@ from app.api.response import ok
 from app.api.topics_deps import _actor_in_place
 from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
-from app.core.errors import ConflictError, SystemBusyError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    SystemBusyError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import exception_text, say
 from app.domain.agent import execution
 from app.domain.documents.convert import (
@@ -234,7 +239,7 @@ async def decide_document_revisions(
         raise ValidationError(say("libraryOriginalReadOnly"))
     if library.is_message_attachment(clean):
         # 发进对话的原件同理：消息指着的就是它。
-        raise ValidationError(say("attachmentOriginalReadOnly"))
+        raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")

@@ -76,7 +76,7 @@ def _room_path(raw: str) -> str:
         raise ValidationError(say("libraryOriginalReadOnly"))
     if library.is_message_attachment(path):
         # 发进对话的那一份是原件：消息指着它，浏览器也按「这个地址的字节不会变」留着它。
-        raise ValidationError(say("attachmentOriginalReadOnly"))
+        raise UnprocessableEntityError(say("attachmentOriginalReadOnly"))
     return path
 
 
