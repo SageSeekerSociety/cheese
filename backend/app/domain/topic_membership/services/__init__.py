@@ -29,10 +29,15 @@ channel private; only someone who manages the project turns one back.
 # 发起方——同一笔债换了地方，不是新欠的。形状和 `app/domain/oauth/services/`、
 # `app/domain/topic/repositories/` 一样。
 #
+# **搬走的方法在类上留一行转发**，把 `self` 和自己的参数原样交给 `housekeeping.py`
+# 里接收者是 `svc` 的同名函数（跟 `app/domain/oauth/services/` 的 `tokens.py` /
+# `connections.py` 一个写法）。于是类上不再有任何判断，一条判据只有一处实现；跨块调用
+# 一律走 `svc.<name>(...)`，`patch.object(svc, "…")` 这类打在实例上的补丁仍然拦得住
+# 内部调用。
+#
 # **导入路径和一个名字都没变。** `from app.domain.topic_membership.services import
-# TopicMemberService` 取到的还是同一个对象：类是同族继承，不是一行行转发，方法体里
-# 的 `self.` 一格没动，所以调用点、子类的重载和打在类/实例上的 monkeypatch 全部
-# 照旧；`addressable_seat` 还在这儿，它建的就是门面这个类。
+# TopicMemberService` 取到的还是同一个类，方法还是那些名字和签名；`addressable_seat`
+# 还在这儿，它建的就是门面这个类。
 
 import uuid
 
@@ -64,13 +69,15 @@ from app.domain.topic.models import (
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.ports import ProjectTeam, SeatProject
 from app.domain.topic_membership.repositories import TopicMembershipRepository
+from app.domain.topic_membership.schemas import TopicMemberOut
 
-from .housekeeping import Housekeeping, _public
+from . import housekeeping
+from .housekeeping import _public
 
 __all__ = ["CHEESE_HANDLE", "TopicMemberService", "addressable_seat"]
 
 
-class TopicMemberService(Housekeeping):
+class TopicMemberService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TopicMembershipRepository(session)
@@ -108,6 +115,36 @@ class TopicMemberService(Housekeeping):
         if not await self.manages(topic, actor):
             raise ForbiddenError(say("channelManagerOnly"))
         return topic
+
+    async def seed(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        owner_handle: str | None,
+        agent_handle: str | None = None,
+    ) -> None:
+        return await housekeeping.seed(
+            self, topic_id, owner_handle=owner_handle, agent_handle=agent_handle
+        )
+
+    async def seed_private(
+        self, topic_id: uuid.UUID, *, owner_handle: str, peer_handle: str
+    ) -> None:
+        return await housekeeping.seed_private(
+            self, topic_id, owner_handle=owner_handle, peer_handle=peer_handle
+        )
+
+    async def private_seats(self, topic_id: uuid.UUID) -> tuple[str, str] | None:
+        return await housekeeping.private_seats(self, topic_id)
+
+    @staticmethod
+    def _is_agent_handle(handle: str) -> bool:
+        return housekeeping._is_agent_handle(handle)
+
+    async def _ensure_member(
+        self, topic_id: uuid.UUID, handle: str, *, role: TopicRole
+    ) -> None:
+        return await housekeeping._ensure_member(self, topic_id, handle, role=role)
 
     async def list_for_topic(
         self, topic_id: uuid.UUID
@@ -151,6 +188,18 @@ class TopicMemberService(Housekeeping):
             counts.update({t.id: everyone for t in roots})
         return counts
 
+    async def people_in(self, topic: Topic, *, team: ProjectTeam) -> list[str]:
+        return await housekeeping.people_in(self, topic, team=team)
+
+    async def seats(self, topic: Topic, *, team: ProjectTeam) -> list[TopicMemberOut]:
+        return await housekeeping.seats(self, topic, team=team)
+
+    async def reached(self, topic: Topic, handles: list[str]) -> list[str]:
+        return await housekeeping.reached(self, topic, handles)
+
+    async def people_of(self, topic_id: uuid.UUID, *, team: ProjectTeam) -> list[str]:
+        return await housekeeping.people_of(self, topic_id, team=team)
+
     async def project_people(
         self, project_id: uuid.UUID, *, team: ProjectTeam
     ) -> list[str]:
@@ -165,12 +214,35 @@ class TopicMemberService(Housekeeping):
             if not m.agent
         ]
 
+    async def joined_topic_ids(
+        self, topics: list[Topic], handle: str, *, team: ProjectTeam
+    ) -> set[uuid.UUID]:
+        return await housekeeping.joined_topic_ids(self, topics, handle, team=team)
+
+    async def seen(
+        self, topics: list[Topic], handle: str, *, team: ProjectTeam
+    ) -> list[Topic]:
+        return await housekeeping.seen(self, topics, handle, team=team)
+
+    async def joined_ids(
+        self, topic_ids: list[uuid.UUID], handle: str, *, team: ProjectTeam
+    ) -> set[uuid.UUID]:
+        return await housekeeping.joined_ids(self, topic_ids, handle, team=team)
+
+    async def on_project(
+        self, project_id: uuid.UUID, handle: str, *, team: ProjectTeam
+    ) -> bool:
+        return await housekeeping.on_project(self, project_id, handle, team=team)
+
     async def _channel(self, topic_id: uuid.UUID) -> Topic:
         """A channel people join and leave; a private room is not one."""
         topic = await self._topics.get(topic_id)
         if topic is None or not _public(topic):
             raise NotFoundError("Topic not found")
         return topic
+
+    async def may_speak(self, room: Topic, handle: str, *, team: ProjectTeam) -> bool:
+        return await housekeeping.may_speak(self, room, handle, team=team)
 
     async def join(self, topic_id: uuid.UUID, actor: str, *, team: ProjectTeam) -> None:
         """``actor`` joins a public channel of a project they are in. 综合 needs
@@ -193,6 +265,29 @@ class TopicMemberService(Housekeeping):
         if member is not None:
             await self._repo.delete(member)
 
+    async def take_in(self, topic_id: uuid.UUID, handle: str) -> None:
+        return await housekeeping.take_in(self, topic_id, handle)
+
+    async def owner_of(self, topic_id: uuid.UUID) -> str | None:
+        return await housekeeping.owner_of(self, topic_id)
+
+    async def topic_ids_for_member(
+        self, topic_ids: list[uuid.UUID], member_handle: str
+    ) -> set[uuid.UUID]:
+        return await housekeeping.topic_ids_for_member(self, topic_ids, member_handle)
+
+    async def agent_handles(self, topic_id: uuid.UUID) -> list[str]:
+        return await housekeeping.agent_handles(self, topic_id)
+
+    async def people_handles(self, topic_id: uuid.UUID) -> list[str]:
+        return await housekeeping.people_handles(self, topic_id)
+
+    async def holds_an_agent_seat(self, room: Topic, handle: str) -> bool:
+        return await housekeeping.holds_an_agent_seat(self, room, handle)
+
+    async def ensure_agent_seat(self, topic_id: uuid.UUID, handle: str) -> str:
+        return await housekeeping.ensure_agent_seat(self, topic_id, handle)
+
     async def _project_agent_seat(self, topic_id: uuid.UUID) -> str | None:
         """这间房所属项目的芝士，在名册上的那一行 handle。
 
@@ -207,6 +302,9 @@ class TopicMemberService(Housekeeping):
         if project is None or project.default_agent_instance_id is None:
             return None
         return agent_instance_handle(project.default_agent_instance_id)
+
+    async def migrate_shared_agent_seat(self, topic_id: uuid.UUID) -> None:
+        return await housekeeping.migrate_shared_agent_seat(self, topic_id)
 
     async def resolve_agent_handle(
         self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
@@ -241,6 +339,13 @@ class TopicMemberService(Housekeeping):
                 raise NotFoundError(say("projectHasNoCheese"))
             return own
         return own if own in handles else handles[0]
+
+    async def addressable_agent_handle(
+        self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
+    ) -> str | None:
+        return await housekeeping.addressable_agent_handle(
+            self, topic_id, room_id=room_id
+        )
 
     async def add(
         self,
@@ -311,6 +416,11 @@ class TopicMemberService(Housekeeping):
         ):
             raise NotFoundError("Topic not found")
         raise ForbiddenError(say("channelManagerOnly"))
+
+    async def outside(
+        self, room: Topic, handles: list[str], *, team: ProjectTeam
+    ) -> list[str]:
+        return await housekeeping.outside(self, room, handles, team=team)
 
     async def administers(self, topic: Topic, actor: str) -> bool:
         """May ``actor`` archive this channel or name who manages it without
@@ -453,6 +563,13 @@ class TopicMemberService(Housekeeping):
         if member is None:
             raise NotFoundError(say("topicMemberNotFound"))
         await self._repo.delete(member)
+
+    async def revoke_project_seats(
+        self, *, project_id: uuid.UUID, member_handle: str
+    ) -> list[uuid.UUID]:
+        return await housekeeping.revoke_project_seats(
+            self, project_id=project_id, member_handle=member_handle
+        )
 
 
 async def addressable_seat(session_factory, topic_id: uuid.UUID) -> str | None:
