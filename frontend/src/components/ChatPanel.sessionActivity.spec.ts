@@ -4,7 +4,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 const listTopicMembers = vi.fn()
@@ -29,6 +29,7 @@ import ChatPanel from './ChatPanel.vue'
 import i18n, { setLocale } from '@/i18n'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic: Topic = {
   id: 'session-activity-topic',
@@ -103,6 +104,8 @@ beforeEach(() => {
   listTopicMembers.mockResolvedValue({ data: [], total: 0 })
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('session activity', () => {
   it('reports working until every active work id finishes', async () => {

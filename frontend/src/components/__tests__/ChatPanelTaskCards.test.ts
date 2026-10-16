@@ -42,6 +42,7 @@ vi.mock('../../api', async () => {
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 let seq = 0
 /** 每个用例一个新房间 id —— 时间线窗口有个模块级缓存，共用 id 会串味。 */
@@ -166,6 +167,8 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('频道主线上的任务卡', () => {
   it('单独新建的任务，卡在说它开始的那一行，夹在前后两条消息之间', async () => {

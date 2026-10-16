@@ -16,6 +16,7 @@ import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
 import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 // 发出去的消息走 POST，这里把每一次的正文记下来——「@ 的是谁」最终就落在正文里。
 const sent = vi.hoisted(() => [] as { content: string }[])
@@ -122,6 +123,8 @@ beforeEach(() => {
 const settle = async () => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('AI 说的话署谁的名', () => {
   it('名册晚到时，已有消息里的点名也更新为显示名', async () => {

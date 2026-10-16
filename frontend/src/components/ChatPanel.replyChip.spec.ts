@@ -12,6 +12,7 @@ import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
 import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 let vuetify: ReturnType<typeof createVuetify>
@@ -103,6 +104,8 @@ async function replyThenSend(text: string, cancel: boolean) {
   view.unmount()
   return sent.find((f) => f.content === text)
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('输入框里的回复标签', () => {
   it('发出去的消息挂在回复的那一条下面', async () => {

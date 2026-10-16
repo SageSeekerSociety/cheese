@@ -9,7 +9,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 const listTopicMembers = vi.fn()
@@ -32,6 +32,7 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic = {
   id: 'room',
@@ -154,6 +155,8 @@ beforeEach(() => {
   listTopicMembers.mockResolvedValue({ data: roster, total: roster.length })
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('一间房里几位队友，各署各的名', () => {
   it('回复、正在处理、失败通知都署那一轮的队友', async () => {

@@ -5,7 +5,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
@@ -25,6 +25,7 @@ import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
 import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 async function flushPromises() {
   await vi.advanceTimersByTimeAsync(0)
@@ -115,6 +116,8 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('chat recovery after history errors', () => {
   it('reconnects after a socket closes and history temporarily returns 502', async () => {

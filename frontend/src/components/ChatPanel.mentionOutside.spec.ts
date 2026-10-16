@@ -54,6 +54,7 @@ vi.mock('@/api/messages', () => ({
 import ChatPanel from './ChatPanel.vue'
 
 import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -96,6 +97,8 @@ beforeEach(() => {
     }
   )
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('@ 了不在频道里的人', () => {
   it('发出去之后问要不要加进来，加的是这个频道', async () => {

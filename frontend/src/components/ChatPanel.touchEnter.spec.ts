@@ -13,12 +13,13 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n from '@/i18n'
 import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -86,6 +87,8 @@ async function afterEnter(box: HTMLElement, shiftKey = false): Promise<string> {
   await Promise.resolve()
   return composerText(box)
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('回车键在两种设备上的意思', () => {
   it('触摸屏：回车是换行', async () => {

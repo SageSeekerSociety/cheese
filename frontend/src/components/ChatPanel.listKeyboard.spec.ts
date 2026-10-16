@@ -42,6 +42,7 @@ import ChatPanel from './ChatPanel.vue'
 
 import { installShortcuts } from '@/commands/shortcuts'
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic: Topic = {
   id: 'room-keys',
@@ -151,6 +152,8 @@ async function mount() {
   const before = view.getByTestId('before')
   return { view, pane, row, composer, before }
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('一列消息只是一个 Tab 停靠点', () => {
   it('从输入框 Shift+Tab 一下停在最新一条上，再一下就出了这一列', async () => {

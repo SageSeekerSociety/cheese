@@ -14,12 +14,13 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -94,6 +95,8 @@ async function typeAt(container: Element, text: string) {
 function row(container: Element, text: string): Element | undefined {
   return Array.from(container.querySelectorAll('.mention-menu-item')).find((b) => b.textContent?.includes(text))
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('输入栏引用资料库里的文件', () => {
   it('刚打上 @ 的时候资料库是一行入口，文件不平铺进来', async () => {

@@ -7,7 +7,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { render } from '@testing-library/vue'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 const listTopicMembers = vi.fn()
@@ -32,6 +32,7 @@ import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import { fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic = {
   id: 'activity-topic',
@@ -104,6 +105,8 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
 afterEach(() => vi.useRealTimers())
+
+beforeAll(loadMarkdownReader)
 
 describe('who is busy in the room', () => {
   it('two teammates working are each named under the composer; one finishing drops only it', async () => {

@@ -105,6 +105,7 @@ vi.mock('../../api/messages', () => ({
 import ChatPanel from '../ChatPanel.vue'
 
 import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 function topic(id = 'topic-A'): Topic {
   return {
@@ -191,6 +192,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   sent.length = 0
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('对话栏自己的输入栏', () => {
   it('offers editable starter drafts in an empty project and sends only on confirmation', async () => {

@@ -17,6 +17,7 @@ import ChatPanel from './ChatPanel.vue'
 import i18n, { setLocale } from '@/i18n'
 import { loadComposerDraft, saveComposerDraft } from '@/lib/composerDrafts'
 import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -103,6 +104,8 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 // 落盘等的是打字停顿（800ms 的防抖），再加上那台机器自己的快慢：等的是「已经写下了」
 // 这件事本身，不是一个固定的时长——机器一忙，900ms 就不够了。上限只是把卡死变成失败。
 const STORED = { timeout: 10_000 }
+
+beforeAll(loadMarkdownReader)
 
 describe('输入框的内容属于它被打出来的那个话题', () => {
   it('切走再回来，草稿还在；切到别的话题，输入框是空的', async () => {
