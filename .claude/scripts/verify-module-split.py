@@ -1274,9 +1274,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
     if args.self_test:
-        # Only ever on its own: a run that reports 13 passing tests and exits 0
-        # is a green light for work that did not happen if a package name was
-        # mistaken for this flag.
+        # Only ever on its own: a run that reports the self-test green and
+        # exits 0 is a green light for work that did not happen if a package
+        # name was mistaken for this flag.
         if args.check_facade:
             parser.print_usage(sys.stderr)
             print(
