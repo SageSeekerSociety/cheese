@@ -210,7 +210,7 @@ class CloudHost(UuidPk, Timestamps, Base):
     )
     # Since when the pool sweep has found the enrolled host's connector away;
     # NULL while it is linked. Kept on the row, not in the hub's memory, so a
-    # backend restart does not start the count again (``services.LOST_AFTER``).
+    # backend restart does not start the count again (``reaper.LOST_AFTER``).
     offline_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
