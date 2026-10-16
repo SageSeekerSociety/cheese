@@ -304,7 +304,7 @@
     },
     "s4": {
       "name": "The other reading: web view",
-      "note": "A second way to read the same document, with elements carrying addressable ids (a sheet's /数据/B2) — the very ids used to change the file."
+      "note": "A second way to read the same document: the elements carry addressable ids, a sheet cell's address among them, and those ids are the ones used to change the file."
     }
   },
   "previewPanelImageStage": {
