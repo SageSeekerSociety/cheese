@@ -39,8 +39,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
-from functools import partial
 from pathlib import Path
 
 if sys.platform != "win32":
@@ -555,78 +553,15 @@ def serve(state):
     executor.db.close()
 
 
-def bridge(state, server, *, call=None):
-    if call is None:
-        call = partial(request, state)
-
-    output_lock = threading.Lock()
-    bridge_id = uuid.uuid4().hex
-
-    def handle(data):
-        if "id" not in data:
-            return
-        try:
-            method = data["method"]
-            params = data.get("params", {})
-            if method == "initialize":
-                result = {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "cheese-execution", "version": "0.1.0"},
-                }
-            elif method == "ping":
-                result = {}
-            elif method == "tools/call":
-                value = call(
-                    "invoke",
-                    {
-                        "id": f"mcp-{bridge_id}-{data['id']}",
-                        "server": server,
-                        "tool": params["name"],
-                        "args": params.get("arguments", {}),
-                        # Claude Code, the only bridge user, fires the hooks.
-                        "platform": True,
-                    },
-                )
-                result = value.get("value") or {
-                    "content": [{"type": "text", "text": value["error"]}],
-                    "isError": True,
-                }
-            else:
-                result = call(
-                    "mcp", {"server": server, "method": method, "params": params}
-                )
-            response = {"jsonrpc": "2.0", "id": data["id"], "result": result}
-        except Exception as exc:
-            response = {
-                "jsonrpc": "2.0",
-                "id": data["id"],
-                "error": {"code": -32000, "message": str(exc)},
-            }
-        with output_lock:
-            print(json.dumps(response), flush=True)
-
-    threads = []
-    for line in sys.stdin:
-        thread = threading.Thread(target=handle, args=(json.loads(line),))
-        thread.start()
-        threads.append(thread)
-    for thread in threads:
-        thread.join()
-
-
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["start", "serve", "bridge", "request", "stop"])
+    parser.add_argument("mode", choices=["start", "serve", "request", "stop"])
     parser.add_argument("--state", required=True, type=Path)
-    parser.add_argument("--server", default="native")
     args = parser.parse_args()
     state = args.state if args.state.match("/proc/self/fd/*") else args.state.resolve()
     if args.mode == "serve":
         serve(state)
-    elif args.mode == "bridge":
-        bridge(state, args.server)
     elif args.mode == "request":
         value = json.load(sys.stdin)
         print(json.dumps(request(state, value["method"], value.get("params"))))

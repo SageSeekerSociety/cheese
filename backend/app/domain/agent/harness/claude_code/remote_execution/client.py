@@ -34,6 +34,7 @@ from concurrent.futures import ThreadPoolExecutor
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 if __package__:
     from app.domain.agent.executor_transport import (
@@ -77,10 +78,18 @@ if __package__:
     from app.domain.agent.harness.claude_code.remote_execution.shell_stop import (
         deliver_stop,
     )
+    from app.domain.agent.harness.driven.mcp_gateway import (
+        PORT_ENV,
+        SECRET_ENV,
+        SECRET_HEADER,
+        STARTUP_S,
+        Gateway,
+    )
 else:
     # Source scripts find the shared module in agent/; deployed bundles ship
     # the same module beside this script, which remains first on sys.path.
     sys.path.append(str(Path(__file__).resolve().parents[3]))
+    sys.path.append(str(Path(__file__).resolve().parents[2] / "driven"))
     from executor_transport import (
         DEFERRED_WORKSPACE,
         MACHINE_OUT_OF_REACH,
@@ -100,6 +109,13 @@ else:
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     from context_service import serve
+    from mcp_gateway import (  # pyright: ignore[reportMissingImports] — ships beside
+        PORT_ENV,
+        SECRET_ENV,
+        SECRET_HEADER,
+        STARTUP_S,
+        Gateway,
+    )
     from namespace import enter
     from release import (
         EXECUTION_CONFIG,
@@ -426,16 +442,18 @@ def prepare(
             "args": [*helper[1:], "transport", str(target_path)],
         }
     }
-    # The machine's stdio servers, the type's and the remote ones share one
-    # bridge; `RemoteClient.call` sends each where it is served.
-    bridged = session_servers(target)
-    for name in bridged:
+    # The project's servers — the machine's commands, the type's and the remote
+    # ones — are Claude Code's own HTTP servers, all at this session's gateway
+    # (`with_gateway`), which sends each call where the server is served. The
+    # address and the secret are the gateway's, known only once it listens,
+    # so the file names them by the variables the launch sets.
+    for name in session_servers(target):
         if name == "native":
             raise ValueError("MCP server name native is reserved for file operations")
         servers[name] = {
-            "type": "stdio",
-            "command": helper[0],
-            "args": [*helper[1:], "bridge", str(target_path), name],
+            "type": "http",
+            "url": f"http://127.0.0.1:${{{PORT_ENV}}}/mcp/{quote(name, safe='')}",
+            "headers": {SECRET_HEADER: f"${{{SECRET_ENV}}}"},
         }
     (directory / "mcp.json").write_text(json.dumps({"mcpServers": servers}))
     env = {
@@ -452,6 +470,7 @@ def prepare(
         "ENABLE_TOOL_SEARCH": "false",
         EXECUTION_CONFIG: str(target_path),
         "CLAUDE_CODE_TMPDIR": str(temporary),
+        "MCP_TIMEOUT": str(STARTUP_S * 1000),
     }
     prefix = directory / "shell-prefix"
     local_commands = {
@@ -464,9 +483,6 @@ def prepare(
     local_commands.update(
         shlex.join([*helper, mode, str(target_path)])
         for mode in ("guard", "context", "checkpoint", "transport", "reply")
-    )
-    local_commands.update(
-        shlex.join([*helper, "bridge", str(target_path), name]) for name in bridged
     )
     # Match complete trusted commands; appended shell syntax takes the usual route.
     dispatch = (
@@ -767,27 +783,6 @@ def transport(config, target_path):
                             },
                         },
                         {
-                            "name": "project_tools",
-                            "description": (
-                                "Discover and call configured project MCP tools "
-                                "on the work machine. Omit server to discover; "
-                                "provide server to list tools; add name and "
-                                "arguments to call one. "
-                                "This acquires work equipment only when invoked."
-                            ),
-                            "inputSchema": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "session_id": {"type": "string"},
-                                    "server": {"type": "string"},
-                                    "name": {"type": "string"},
-                                    "arguments": {"type": "object"},
-                                },
-                                "required": ["id", "session_id"],
-                            },
-                        },
-                        {
                             "name": "permission",
                             "description": "Internal. Call Bash instead.",
                             "inputSchema": {"type": "object"},
@@ -834,14 +829,12 @@ def transport(config, target_path):
                     "invoke",
                     "permission",
                     "send_user_file",
-                    "project_tools",
                 ) and (tool not in cheese.PLATFORM_TOOLS):
                     raise ValueError("Unknown transport tool")
                 payload = request["params"]["arguments"]
                 # The arguments each of these takes, from the call's.
                 picked = {
                     "chat_send": ("content", "reply_to", "request_id"),
-                    "project_tools": ("server", "name", "arguments"),
                 }
                 if tool in picked:
                     payload = {
@@ -881,16 +874,7 @@ def transport(config, target_path):
                     with active_lock:
                         return request["id"] in cancelled
 
-                if tool == "project_tools":
-                    receipt = {
-                        "value": client.call(
-                            "project_tools",
-                            {**args, "id": payload["id"]},
-                            abandoned=abandoned,
-                            preparing=notice,
-                        )
-                    }
-                elif tool == "send_user_file":
+                if tool == "send_user_file":
                     receipt = deliver_send_user_file(
                         client, config, payload, args, invoke
                     )
@@ -995,6 +979,54 @@ def own_memory(config, call):
     return os.path.realpath(str(path)).startswith(memory)
 
 
+def gateway(config):
+    """Serve this session's MCP servers to its Claude Code (`mcp_gateway`).
+
+    Says where it listens on its first line, then lives as long as the process
+    that started it: the launch execs Claude Code in its place, so that is the
+    session, and a gateway outliving it would hold a port nobody reads."""
+    client = RemoteClient(config)
+    door = Gateway(client.call, lambda: session_servers(client.config))
+    door.start()
+    print(json.dumps({"port": door.port, "secret": door.secret}), flush=True)
+    parent = os.getppid()
+    while os.getppid() == parent:
+        time.sleep(1)
+    door.close()
+
+
+def start_gateway(target_path, env):
+    """Start the gateway the launch's `mcp.json` names: the launch's
+    environment with its address and secret, and its process (None for a
+    session with no project server). The process ends when its parent does."""
+    if not session_servers(json.loads(Path(target_path).read_text())):
+        return env, None
+    started = subprocess.Popen(
+        [sys.executable, str(Path(__file__).resolve()), "gateway", str(target_path)],
+        stdout=subprocess.PIPE,
+        env=env,
+    )
+    assert started.stdout is not None
+    line = started.stdout.readline()
+    started.stdout.close()
+    if not line:
+        started.wait()
+        # i18n-exempt: the launch's own failure, read in the runner's log
+        raise RuntimeError("The MCP gateway did not start")
+    where = json.loads(line)
+    return {
+        **env,
+        PORT_ENV: str(where["port"]),
+        SECRET_ENV: where["secret"],
+    }, started
+
+
+def with_gateway(target_path, env):
+    """The launch's environment, with its gateway started. The launch execs
+    Claude Code in this process's place, which so becomes the gateway's parent."""
+    return start_gateway(target_path, env)[0]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1002,7 +1034,7 @@ def main():
         choices=[
             "prepare",
             "launch",
-            "bridge",
+            "gateway",
             "guard",
             "context",
             "catch-up",
@@ -1031,20 +1063,8 @@ def main():
             # deferred-import: private scratch requires fcntl, absent on Windows
             from private import release
         release(config)
-    elif args.mode == "bridge":
-        # Remote servers and a type's own, whose definition rides each call.
-        remote = set(session_servers(config)) - set(config.get("mcp_servers", []))
-        if config.get("kind") == "device" or args.args[0] in remote:
-            if __package__:
-                # deferred-import: runtime loads POSIX primitives and hashes its source
-                from .runtime import bridge
-            else:
-                # deferred-import: runtime loads POSIX primitives and hashes its source
-                from runtime import bridge
-            bridge(None, args.args[0], call=RemoteClient(config).call)
-        else:
-            command = RemoteClient(config).command("bridge", args.args[0])
-            run_in_place(command)
+    elif args.mode == "gateway":
+        gateway(config)
     elif args.mode == "checkpoint":
         payload = json.load(sys.stdin)
         transcript = Path(payload["transcript_path"])
@@ -1100,7 +1120,10 @@ def main():
             workspace_override=os.environ["CHEESE_WORK"],
         )
         os.chdir(launch["cwd"])
-        run_in_place(launch["command"], dict(os.environ, **launch["env"]))
+        run_in_place(
+            launch["command"],
+            with_gateway(launch["execution"], dict(os.environ, **launch["env"])),
+        )
     elif args.mode == "context":
         sync_context(args.config)
     elif args.mode == "catch-up":
@@ -1117,7 +1140,7 @@ def main():
     elif args.mode == "prepare":
         print(json.dumps(prepare(args.args[0], config, extra_args=args.args[1:])))
     else:
-        env = dict(os.environ, **config["env"])
+        env = with_gateway(config["execution"], dict(os.environ, **config["env"]))
         os.chdir(config["cwd"])
         run_in_place(config["command"], env)
 

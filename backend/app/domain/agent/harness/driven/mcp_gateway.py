@@ -20,7 +20,8 @@ one of these, else the one all three clients share.
 
 The hooks a project sets on tool calls are the harness's to fire, around the
 tool call it makes here — so a tool call goes on with ``platform`` set, which
-tells the machine they have already been fired.
+tells the machine they have already been fired — unless the harness fires
+none of its own (``tool_call``).
 
 A shared session machine runs many sessions, each with a door of its own; the
 loopback is reachable by all of them, so each door takes only requests that
@@ -37,8 +38,18 @@ import uuid
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import unquote
 
 SECRET_HEADER = "X-Cheese-Gateway"
+#: The variables a harness's MCP configuration reads the gateway's port and
+#: secret from, set on its process: a secret on a command line would be read
+#: by every process on the shared machine.
+PORT_ENV = "CHEESE_MCP_PORT"
+SECRET_ENV = "CHEESE_MCP_SECRET"
+#: How long a harness waits for a server to answer its first list: a command's
+#: first start downloads its package (`npx`, `uvx`), and the room's machine may
+#: still be being prepared.
+STARTUP_S = 300
 #: The revisions whose handshake is ``initialize``, oldest first.
 REVISIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 #: Answered to a client asking for a revision not in ``REVISIONS``: the newest
@@ -48,18 +59,32 @@ SHARED_REVISION = "2025-06-18"
 MAX_BODY = 16 * 1024 * 1024
 
 Call = Callable[[str, dict], Any]
+#: A tool call, ``{"id", "server", "tool", "args"}`` to what ``invoke`` returns.
+ToolCall = Callable[[dict], dict]
 
 
 class Gateway:
     """``call`` is ``RemoteClient.call`` (or what stands in for it in a test);
     ``servers`` says which names are served right now, read on every request,
-    so a server added while the session runs is reachable without a restart."""
+    so a server added while the session runs is reachable without a restart.
 
-    def __init__(self, call: Call, servers: Callable[[], list[str]]) -> None:
+    ``tool_call`` makes a tool call; by default it goes on marked as already
+    hooked. A harness that fires no hooks of its own (Codex, whose every tool
+    is the platform's) passes one that has them run around the call."""
+
+    def __init__(
+        self,
+        call: Call,
+        servers: Callable[[], list[str]],
+        *,
+        tool_call: ToolCall | None = None,
+    ) -> None:
         self.call = call
         self.servers = servers
+        self.tool_call = tool_call or (
+            lambda params: call("invoke", {**params, "platform": True})
+        )
         self.secret = secrets.token_urlsafe(32)
-        self.calls = uuid.uuid4().hex
         self.server: ThreadingHTTPServer | None = None
 
     def start(self) -> int:
@@ -103,14 +128,14 @@ class Gateway:
         method = message.get("method")
         params = message.get("params") or {}
         try:
-            result = self._result(server, method, params, message["id"])
+            result = self._result(server, method, params)
         except _NoSuchMethod:
             return _error(message["id"], -32601, f"Method not found: {method}")
         except Exception as exc:
             return _error(message["id"], -32603, str(exc) or type(exc).__name__)
         return {"jsonrpc": "2.0", "id": message["id"], "result": result}
 
-    def _result(self, server: str, method: Any, params: dict, request_id: Any):
+    def _result(self, server: str, method: Any, params: dict):
         if method == "initialize":
             asked = params.get("protocolVersion")
             return {
@@ -126,15 +151,16 @@ class Gateway:
         if method not in ("tools/list", "tools/call"):
             raise _NoSuchMethod
         if method == "tools/call":
-            receipt = self.call(
-                "invoke",
+            receipt = self.tool_call(
                 {
-                    "id": f"mcp-{self.calls}-{request_id}",
+                    # Fresh for every call: a client numbers its requests
+                    # from the start again whenever it reconnects, and the
+                    # machine answers a repeated id with what it answered first.
+                    "id": f"mcp-{uuid.uuid4().hex}",
                     "server": server,
                     "tool": params.get("name"),
                     "args": params.get("arguments") or {},
-                    "platform": True,
-                },
+                }
             )
             # A call that did not happen — a hook said no, the machine is out of
             # reach, the server failed — is the tool's answer, not the
@@ -209,7 +235,8 @@ class _Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(given.encode(), self.owner.secret.encode()):
             self._send(401, None)
             return None
-        prefix, _, name = self.path.split("?", 1)[0].rpartition("/")
+        prefix, _, quoted = self.path.split("?", 1)[0].rpartition("/")
+        name = unquote(quoted)
         if prefix != "/mcp" or name not in self.owner.servers():
             self._send(404, None)
             return None

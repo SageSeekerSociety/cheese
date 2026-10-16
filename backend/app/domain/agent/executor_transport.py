@@ -717,10 +717,8 @@ class RemoteClient:
                 f"Chat publication failed; request_id={publication_id}: {exc}"
             ) from exc
 
-    def command(self, mode, server=None):
+    def command(self, mode):
         command = [*self.config["command"], mode, "--state", self.config["state"]]
-        if server:
-            command.extend(["--server", server])
         # SSH joins all arguments after the host with spaces. Quote the remote
         # command once, rather than letting workspace names become shell syntax.
         if self.config.get("ssh"):
@@ -861,10 +859,10 @@ class RemoteClient:
     def remote_call_with_hooks(self, call_id, server, tool, args, preparing=None):
         """A remote server's tool call with the project's PreToolUse and
         PostToolUse hooks around it, for a harness that does not fire them
-        itself (Codex; pi). Claude Code fires them itself, so its bridge calls
-        `call("invoke", …)` without this. The hooks run on the room's machine,
-        which is taken for it; a PreToolUse deny, or a machine out of reach,
-        means the call is not made. Returns what `call("invoke", …)` does."""
+        itself (Codex, at its gateway: `codex/tools.py`). The hooks run on the
+        room's machine, which is taken for it; a PreToolUse deny, or a machine
+        out of reach, means the call is not made. Returns what
+        `call("invoke", …)` does."""
         name = f"mcp__{server}__{tool}"
         before = self.control(
             {
@@ -939,22 +937,9 @@ class RemoteClient:
         if asked.get("server") in self.remote_servers():
             if method in {"invoke", "mcp"}:
                 return self.remote_mcp(method, asked)
-            if method == "project_tools":
-                if asked.get("name"):
-                    return self.remote_mcp(
-                        "invoke",
-                        {
-                            "server": asked["server"],
-                            "tool": asked["name"],
-                            "args": asked.get("arguments", {}),
-                        },
-                    )
-                return self.remote_mcp(
-                    "mcp", {"server": asked["server"], "method": "tools/list"}
-                )
         operation_deadline = time.monotonic() + 660
         if self.config.get("lease_path") and (
-            method in {"invoke", "mcp", "project_tools"}
+            method in {"invoke", "mcp", "take"}
             # Starting a command acquires hands; reading one that runs does not.
             or (
                 method == "control"
@@ -1024,6 +1009,10 @@ class RemoteClient:
                             else "The project's tool hooks now apply; issue it again."
                         )
                     )
+        if method == "take":
+            # Only the hands: whoever asked (pi's `Machine.take`) reads the
+            # project's instructions itself.
+            return {}
         if self.config.get("kind") == "deferred":
             operation = (params or {}).get("operation")
             if method == "context_fs" and operation == "tree":
@@ -1040,30 +1029,6 @@ class RemoteClient:
             raise MachineOutOfReach
         if self.config.get("kind") == "unavailable":
             raise MachineOutOfReach
-        if method == "project_tools":
-            params = params or {}
-            server = params.get("server")
-            if not server:
-                return {"servers": self.session_servers()}
-            if server not in [
-                *self.config.get("mcp_servers", []),
-                *self.agent_servers(),
-            ]:
-                raise ValueError("Unknown project MCP server")
-            tool = params.get("name")
-            method = "mcp"
-            params = {
-                "server": server,
-                "method": "tools/call" if tool else "tools/list",
-                "params": {"name": tool, "arguments": params.get("arguments", {})}
-                if tool
-                else {},
-                **(
-                    {"id": params["id"], "tool": f"mcp__{server}__{tool}"}
-                    if tool
-                    else {}
-                ),
-            }
         if (
             method in {"invoke", "mcp"}
             and params
