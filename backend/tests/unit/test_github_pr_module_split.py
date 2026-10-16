@@ -71,8 +71,7 @@ def _names_the_tree_reaches() -> tuple[dict[str, list[str]], dict[str, list[str]
         module_names = {
             alias.asname or alias.name
             for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom)
-            and node.module == "app.domain.review"
+            if isinstance(node, ast.ImportFrom) and node.module == "app.domain.review"
             for alias in node.names
             if alias.name == "github_pr"
         }
