@@ -216,6 +216,20 @@ _AN_ID_RE = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\b[0-9a-f]{12,}\b",
     re.IGNORECASE,
 )
+# What else varies between occurrences of one problem and so must not decide
+# whether it has been reported: a count, a duration, a port, an object's address.
+# "unable to reach the network for 3 ticks in a row" and "… for 34 ticks" are the
+# same outage, and keyed on the text they were 32 alerts in one afternoon
+# (2026-10-15), one per tick; an asyncpg connection's `at 0x7f…` made each
+# "Exception closing connection" a problem of its own. Only the key is
+# normalised; the alert still carries the text as logged.
+_A_VARYING_NUMBER_RE = re.compile(r"0x[0-9a-f]+|\d+", re.IGNORECASE)
+
+
+def _same_problem(text: str) -> str:
+    return _A_VARYING_NUMBER_RE.sub("N", _AN_ID_RE.sub("<id>", text))
+
+
 # Written onto an exception once it has been reported. One unhandled exception
 # is logged three times on the way out — the request middleware, the catch-all
 # handler, and uvicorn re-raising past both — and three alerts for one failure
@@ -372,9 +386,9 @@ class AlertOnError(logging.Handler):
         key = "|".join(
             [
                 record.name,
-                _AN_ID_RE.sub("<id>", title),
+                _same_problem(title),
                 kind,
-                _AN_ID_RE.sub("<id>", str(context.get("path", ""))),
+                _same_problem(str(context.get("path", ""))),
             ]
         )
         return title, lines, key
