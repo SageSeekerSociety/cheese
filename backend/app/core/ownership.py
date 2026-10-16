@@ -22,6 +22,8 @@ import asyncio
 import logging
 import os
 import signal
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -33,6 +35,8 @@ logger = logging.getLogger(__name__)
 # the bytes of "cheese" so a reader of `pg_locks` can tell whose it is.
 OWNER_LOCK = 0x636865657365
 
+_T = TypeVar("_T")
+
 
 class Ownership:
     """The one lock, on the one connection that holds it."""
@@ -42,7 +46,27 @@ class Ownership:
         self._retry_s = retry_s
         self._engine: AsyncEngine | None = None
         self._connection: AsyncConnection | None = None
+        self._statements = asyncio.Lock()
         self.held = False
+
+    async def _to_the_end(self, step: Callable[[], Awaitable[_T]]) -> _T:
+        """Run ``step`` on the lock's connection to its end, one at a time,
+        whoever stops waiting for it.
+
+        A statement cancelled midway makes SQLAlchemy invalidate its
+        connection, and that closes it — and lets the lock go there and then.
+        Handing over cancels the lock's watch first and lets the lock go
+        last, once the sessions are no longer read here (``main.hand_over``);
+        a watch cancelled mid-check gave the running work to the next backend
+        while this one still read it. Every step catches its own failures, so
+        one finished after its caller left leaves nothing unretrieved.
+        """
+
+        async def in_turn() -> _T:
+            async with self._statements:
+                return await step()
+
+        return await asyncio.shield(asyncio.ensure_future(in_turn()))
 
     async def _connect(self) -> AsyncConnection:
         if self._connection is None:
@@ -70,6 +94,9 @@ class Ownership:
             await engine.dispose()
 
     async def try_acquire(self) -> bool:
+        return await self._to_the_end(self._try_acquire)
+
+    async def _try_acquire(self) -> bool:
         try:
             connection = await self._connect()
             self.held = bool(
@@ -97,6 +124,9 @@ class Ownership:
 
     async def still_held(self) -> bool:
         """Is the lock still ours? Only a lost connection can take it away."""
+        return await self._to_the_end(self._still_held)
+
+    async def _still_held(self) -> bool:
         if not self.held or self._connection is None:
             return False
         try:
@@ -109,6 +139,9 @@ class Ownership:
             return False
 
     async def release(self) -> None:
+        await self._to_the_end(self._release)
+
+    async def _release(self) -> None:
         if self._connection is not None and self.held:
             try:
                 await self._connection.execute(

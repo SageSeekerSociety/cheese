@@ -117,6 +117,33 @@ async def test_a_backend_that_dies_hands_the_work_over_too(db_factory):
         await incoming.release()
 
 
+@pytest.mark.anyio
+async def test_a_watch_stopped_mid_check_keeps_the_work_until_it_is_let_go(
+    db_factory, caplog
+):
+    """Handing over stops the lock's watch first and lets the lock go last,
+    after this backend has stopped reading its sessions. A watch stopped while
+    it is checking the lock must not let it go early: the next backend would
+    take the running work while this one still reads it."""
+    outgoing, incoming = Ownership(_url(db_factory)), Ownership(_url(db_factory))
+    try:
+        assert await outgoing.try_acquire()
+        for _ in range(20):
+            check = asyncio.create_task(outgoing.still_held())
+            await asyncio.sleep(0)  # the check is on its way to the database
+            check.cancel()
+            await asyncio.gather(check, return_exceptions=True)
+            assert not await incoming.try_acquire(), "the lock went with the watch"
+
+        with caplog.at_level("ERROR", logger="app.core.ownership"):
+            await outgoing.release()
+        assert not [r for r in caplog.records if r.levelname == "ERROR"]
+        await asyncio.wait_for(incoming.acquire(), timeout=5)
+    finally:
+        await outgoing.release()
+        await incoming.release()
+
+
 class _Chat(ChatService):
     """Real admission and seat identity, with a scripted conversation."""
 
