@@ -77,14 +77,17 @@ if [ "$SELF_TEST" = 1 ]; then
   says "does not exist" "the failure must say the directory was missing"
   says "$tmp/none/.github/workflows" "the failure must name the directory it could not find"
 
-  # A file holding both: the guard has to pick the unpinned line out of it. One
-  # that names the pinned line too gets switched off the first time it fires.
-  printf 'jobs:\n  a:\n    steps:\n      - uses: actions/checkout@%s # v4\n      - uses: a/b@v1\n' \
+  # A file holding both, in the two shapes this repo writes a step: the pinned
+  # action as a list item, the unpinned one under a `name:` of its own. The
+  # second shape hangs on the `-?` in the scan staying optional — most of this
+  # repo's `uses:` lines are that shape, and losing it would leave them unread
+  # rather than reported, which is the silent half of what this guard is for.
+  printf 'jobs:\n  a:\n    steps:\n      - uses: actions/checkout@%s # v4\n      - name: Bad\n        uses: a/b@v1\n' \
     "$sha" > "$tmp/.github/workflows/w.yml"
   verdict "$tmp"
   [ "$CODE" -ne 0 ] || self_fail "an unpinned action beside a pinned one must fail"
   says "a/b@v1" "the report must name the action that is not pinned"
-  says "w.yml:5" "the report must point at the line to fix"
+  says "w.yml:6" "the report must point at the line to fix"
   case "$OUT" in
     *"checkout@$sha"*) self_fail "a pinned action must not be reported (got: $OUT)" ;;
   esac
