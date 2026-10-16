@@ -232,6 +232,9 @@ async def decide_document_revisions(
         # 他的文件，而且改的是所有房间都在引用的那一份。修订仍然读得出来（清单那一
         # 栏照常列），能做的只是不动它。
         raise ValidationError(say("libraryOriginalReadOnly"))
+    if library.is_message_attachment(clean):
+        # 发进对话的原件同理：消息指着的就是它。
+        raise ValidationError(say("attachmentOriginalReadOnly"))
     accept = _row_numbers(body.get("accept"), "accept")
     reject = _row_numbers(body.get("reject"), "reject")
     expected = str(body.get("version") or "")

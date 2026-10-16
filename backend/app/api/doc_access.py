@@ -74,9 +74,10 @@ async def reach(
         return Reached(doc, actor, place, task, resolver.credential_conversation())
     if doc.room_id is not None and doc.kept_at is None:
         place = await TopicService(db).place_or_404(doc.room_id)
-        actor = await resolver.resolve(
-            topic_id=place.conversation_id, project_id=place.project_id
-        )
+        # Not resolved against the room's own conversation: 芝士 working in one
+        # of the room's tasks or 支线 holds that conversation's credential, and
+        # the room is what decides who reads the document.
+        actor = await resolver.resolve(project_id=place.project_id)
         await resolver.authorize_topic(
             actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
         )

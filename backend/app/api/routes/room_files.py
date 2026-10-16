@@ -74,6 +74,9 @@ def _room_path(raw: str) -> str:
     path = clean_artifact_path(raw)
     if library.library_name(path) is not None:
         raise ValidationError(say("libraryOriginalReadOnly"))
+    if library.is_message_attachment(path):
+        # 发进对话的那一份是原件：消息指着它，浏览器也按「这个地址的字节不会变」留着它。
+        raise ValidationError(say("attachmentOriginalReadOnly"))
     return path
 
 
@@ -362,7 +365,8 @@ async def open_in_editor(
     """The signed config the browser opens the office editor with.
 
     When it cannot open, ``reason`` is a code (``not_configured``,
-    ``unsupported``, ``library_original``) that the screen words in its
+    ``unsupported``, ``library_original``, ``attachment_original``) that the
+    screen words in its
     reader's language (``work.room.fileEditor.unavailable.<code>``)."""
     place, actor = await _in_room(db, resolver, topic_id)
     clean = clean_artifact_path(path)
@@ -372,6 +376,8 @@ async def open_in_editor(
         return ok({"enabled": False, "reason": "unsupported"})
     if library.library_name(clean) is not None:
         return ok({"enabled": False, "reason": "library_original", "copyable": True})
+    if library.is_message_attachment(clean):
+        return ok({"enabled": False, "reason": "attachment_original", "copyable": True})
     version = await asyncio.to_thread(
         room_files.current_version,
         place.project_id,

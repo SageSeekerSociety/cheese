@@ -163,3 +163,14 @@ def test_only_a_person_saves_a_document_to_the_library(client):
 
     assert refused.status_code in (401, 403), refused.text
     assert doc not in _library_documents(client, pid, ALICE)
+
+
+def test_cheese_in_another_channel_cannot_read_a_private_channels_document(client):
+    pid = _project(client)
+    private = _channel(client, pid, private=True)
+    elsewhere = _channel(client, pid, private=False)
+    doc = _agent_writes(client, pid, private)
+
+    refused = client.get(f"/documents/{doc}", headers=_agent(client, pid, elsewhere))
+
+    assert refused.status_code in (403, 404), refused.text

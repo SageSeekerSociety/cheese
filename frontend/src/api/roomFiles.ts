@@ -290,7 +290,7 @@ export function copyIntoRoom(
 /** 打开编辑器要的那份签过名的配置。`enabled` 为假时 `reason` 是为什么打不开的码。 */
 export interface RoomFileEditorSession {
   enabled: boolean
-  reason?: 'not_configured' | 'unsupported' | 'library_original'
+  reason?: 'not_configured' | 'unsupported' | 'library_original' | 'attachment_original'
   copyable?: boolean
   editable?: boolean
   api_url?: string

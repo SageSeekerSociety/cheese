@@ -85,7 +85,7 @@ defineExpose({ panes, showFiles })
         @before-enter="emit('freeze-chat', $event)"
         @before-leave="emit('freeze-chat', $event)"
       >
-        <div v-if="desktop" v-show="!focusMode" class="col col-chat d-flex flex-column" :style="chatStyle">
+        <div v-if="desktop" v-show="!focusMode" class="col col-chat dm-view__chat" :style="chatStyle">
           <slot name="chat" />
         </div>
       </Transition>
@@ -159,6 +159,12 @@ defineExpose({ panes, showFiles })
   box-sizing: border-box;
   height: var(--dm-head-h);
 }
+/* 不用 d-flex：那是 `!important` 的 display，会压过 v-show。 */
+.dm-view__chat {
+  display: flex;
+  flex-direction: column;
+}
+
 .dm-view__body {
   display: flex;
   flex: 1 1 auto;
