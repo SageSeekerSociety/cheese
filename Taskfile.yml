@@ -105,10 +105,9 @@ tasks:
       - task: be:check
       - task: fe:check
 
-  # Architecture gates: import boundaries, browser storage, standalone scenes,
-  # shrinking scene debt, catalog coverage and file sizes. Scene debt and file
-  # sizes require an up-to-date origin/main; frontend checks require installed
-  # dependencies.
+  # Architecture gates: import boundaries, browser storage, standalone scenes and
+  # shrinking scene debt. Scenes and scene debt require an up-to-date
+  # origin/main; frontend checks require installed dependencies.
   boundaries:
     desc: Boundaries + storage + scenes + scene debt
     cmds:
@@ -131,7 +130,9 @@ tasks:
   guards:
     desc: Run the pre-commit checks over the whole tree (what CI runs)
     cmds:
-      - uvx pre-commit run --all-files
+      # The two fixers rewrite files rather than judge them, and CI does not run
+      # them either; over the whole tree they would reformat files nobody touched.
+      - SKIP=ruff-format,frontend-format uvx pre-commit run --all-files
 
   # Fast check before opening a PR: picks pre-commit hook IDs by the
   # merge-diff scope (same select() and path map as the Required CI gate), then
