@@ -373,16 +373,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- A selection made with Shift and the arrow keys is quoted as well as one made with the pointer. -->
-  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the clicks it catches are pins dropped on a page in pointing mode, a pointer gesture; the page text stays readable and quotable by keyboard -->
-  <div
-    ref="container"
-    class="pv"
-    :class="{ 'pv--pointing': pointing }"
-    @mouseup="onSelect"
-    @keyup.shift="onSelect"
-    @click="onPoint"
-  >
+  <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- pointer gestures over the pages: a click drops a pin in pointing mode and a mouse selection is quoted; neither has a keyboard counterpart yet -->
+  <div ref="container" class="pv" :class="{ 'pv--pointing': pointing }" @mouseup="onSelect" @click="onPoint">
     <div class="pv__tools">
       <BaseButton
         size="sm"

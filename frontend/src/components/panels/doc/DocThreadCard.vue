@@ -145,7 +145,7 @@ function onCard(e: MouseEvent) {
 </script>
 
 <template>
-  <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- a click anywhere on the card is the pointer's shortcut; the quote button does the same for the keyboard -->
+  <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- a click anywhere on the card selects its thread; the quote button does the same for the keyboard, and a thread with no placed quote has no keyboard counterpart yet -->
   <article
     class="doc-thread-card"
     :class="{ 'is-active': active, 'is-resolved': resolved }"
