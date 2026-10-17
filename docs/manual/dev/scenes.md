@@ -122,7 +122,7 @@ covers:
 
 加 `--write` 才落盘；只要「需要人来」那份清单非空，它一个字节都不写，也不覆盖已经存在的视图。写的是骨架：props 的名字和类型它认得出来，**哪些值该由页面传下来、这一页该不该拆，是产品决定**，工具只把机械的部分做掉。写完照旧跑上面三条命令，页面那半边（取数、路由、store）自己接着改。
 
-判据在 `frontend/scripts/scene-split-core.mjs`，样例页面盯着它：`pnpm run test:ratchet`。
+判据在 `frontend/scripts/scene-split-core.mjs`，样例页面盯着它：`node --test scripts/scene-split-core.test.mjs`（在 `frontend/` 下跑）。
 
 ### 没有基线可以更新 {#update-baseline}
 

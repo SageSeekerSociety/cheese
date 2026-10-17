@@ -19,7 +19,7 @@ covers:
 
 # 项目的 MCP 服务器 {#remote-mcp}
 
-项目的 MCP 服务器有三个来源：仓库主干上的 `.mcp.json`、项目设置里添加的远程服务器、队友类型自带的服务器。每个服务器要么是**远程的**（一个地址，平台拿着凭据去调），要么是**本地命令**（一条命令，在房间的机器上跑）。三种 harness 都用自己的 MCP 客户端，连到会话机上同一个网关；网关再把调用送到服务器所在的地方。
+项目的 MCP 服务器有三个来源：仓库主干上的 `.mcp.json`、项目设置里添加的服务器、队友类型自带的服务器。每个服务器要么是**远程的**（一个地址，平台拿着凭据去调），要么是**本地命令**（一条命令，在房间的机器上跑）。三种 harness 都用自己的 MCP 客户端，连到会话机上同一个网关；网关再把调用送到服务器所在的地方。
 
 > 讲：服务器清单怎么合、会话怎么连、调用往哪送、凭据和密钥放在哪、本地命令在成员电脑上要谁允许。不讲：平台自己的工具表怎么交给模型，见[平台工具与会话侧 MCP](/dev/mcp)；会话从哪来、为什么连接一个服务会重启空转的会话，见[会话与轮次](/dev/session)。
 
@@ -29,7 +29,7 @@ covers:
 
 读的是**主干上提交的那一份**，不读房间的 checkout：agent 能改自己的 checkout，从那里取一个 URL，就等于让它把一个已连接的名字指到自己挑的主机，再把项目的 token 送过去；从那里取一个 `${VAR}`，就等于让它点名要项目的任何一个密钥。结果按项目缓存 60 秒，设置页每次读最新的。取不到时 `Declared.problem` 是 `missing` / `invalid` / `unreadable`；`unreadable`（forge 挂了）保留上一次的答案，免得一次故障让空转的会话来回重启。
 
-在项目设置里添加的远程服务器存在 `project_mcp_servers`（`with_settings`）：名字和 `.mcp.json` 里的重了，以仓库的为准，设置里那条标成 `shadowed`、不生效。队友类型自带的服务器由 `with_types` 并进来，一个名字项目已经用了就归项目；几个类型声明同一个本地命令，列一次，标上每个声明它的类型（`local_types`）。
+在项目设置里添加的服务器由 `with_settings` 并进来：远程的存在 `project_mcp_servers`，本地命令存在 `project_mcp_commands`（`command` 按 shell 的写法拆成命令和 `args`，加上 `env`）。名字和 `.mcp.json` 里的重了，以仓库的为准，设置里那条标成 `shadowed`、不生效。项目里一个名字只能有一个来源：添加时名字已被任何来源用了就拒绝（`_name_free`）。队友类型自带的服务器由 `with_types` 并进来，一个名字项目已经用了就归项目；几个类型声明同一个本地命令，列一次，标上每个声明它的类型（`local_types`）。
 
 ## 远程服务器的状态 {#states}
 
@@ -65,10 +65,10 @@ covers:
 
 ## 本地命令：在哪跑，拿到什么，谁允许 {#local}
 
-本地命令由房间机器上的执行器按**它自己 checkout 里**的定义起（`bootstrap.process_servers()` 挑没有 `url` 的），队友类型自带的那条由 `RemoteClient` 随调用把定义带过去（`agent_mcp`）。平台在旁边管三件事（`remote_mcp/local.py`）：
+本地命令由房间机器上的执行器起：仓库里的那条按**它自己 checkout 里**的定义（`bootstrap.process_servers()` 挑没有 `url` 的）；设置里加的和队友类型自带的那条，定义写进执行目标的 `mcp_commands`（设置里加的同名时优先），由 `RemoteClient` 随调用带过去。平台在旁边管三件事（`remote_mcp/local.py`）：
 
-- **能拿到哪些密钥。** 一条命令第一次被用到时，`RemoteClient._local_start` 问 `POST {mcp_path}/{name}/start`，拿回 `values`：主干上**这个名字的定义**里出现的 `${VAR}` 中已经填了值的那几个；设置里加的远程服务器的请求头密钥（`CHEESE_MCP_*`）永远不给命令。值随调用交给执行器（`params.values`），执行器起进程时展开 `command`、`args`、`env`、`cwd` 里的 `${VAR}`；值不写进会话机上的任何文件。设置页明说：这个值在项目机器上，芝士读得到。
-- **在成员自己的电脑上，要电脑的主人允许。** 同一个请求还拿回 `allowed`：项目机器是成员的电脑（`mcp_machines.machine`，`Supply` 不是 `cloud`）时，是主人允许过的命令指纹；平台的机器上是 `None`，谁也不问。执行器起进程前对**它真要跑的那条定义**（`${VAR}` 不展开）算指纹（`runtime_calls.server_fingerprint`），不在清单上就不起，报错以 `MCP_APPROVAL_REQUIRED` 开头带上指纹和命令；`RemoteClient.local_outcome` 把它报成 `awaiting`，后端在 `project_mcp_approvals` 记一条，主人在「等你处理」里答（`POST /mcp/approvals/{id}`，只有设备主人能答）。允许过的同一条命令不再问，命令一改指纹就变，再问一次。所有答复的摘要写进执行目标（`mcp_decided`），所以一有答复，空转的会话会带着新清单重启。成员自己启动的 Claude Code（设备启动，没有 `mcp_path`）不问：那台电脑是他自己的，也是他自己开的会话。
+- **能拿到哪些密钥。** 一条命令第一次被用到时，`RemoteClient._local_start` 问 `POST {mcp_path}/{name}/start`，拿回 `values`：主干上（或设置里）**这个名字的定义**里出现的 `${VAR}` 中已经填了值的那几个；设置里加的远程服务器的请求头密钥（`CHEESE_MCP_*`）永远不给命令。值随调用交给执行器（`params.values`），执行器起进程时展开 `command`、`args`、`env`、`cwd` 里的 `${VAR}`；值不写进会话机上的任何文件。设置页明说：这个值在项目机器上，芝士读得到。
+- **在成员自己的电脑上，要电脑的主人允许。** 同一个请求还拿回 `allowed`：项目机器是成员的电脑（`mcp_machines.machine`，`Supply` 不是 `cloud`）时，是主人允许过的命令指纹；平台的机器上是 `None`，谁也不问。执行器起进程前对**它真要跑的那条定义**（`${VAR}` 不展开）算指纹（`runtime_calls.server_fingerprint`），不在清单上就不起，报错以 `MCP_APPROVAL_REQUIRED` 开头带上指纹和命令；`RemoteClient.local_outcome` 把它报成 `awaiting`，后端在 `project_mcp_approvals` 记一条，连同命令写在哪（`source`：仓库、设置、类型）和谁写的，主人在「等你处理」里答（`POST /mcp/approvals/{id}`，只有设备主人能答）。允许过的同一条命令不再问，命令一改指纹就变，再问一次。所有答复的摘要写进执行目标（`mcp_decided`），所以一有答复，空转的会话会带着新清单重启。成员自己启动的 Claude Code（设备启动，没有 `mcp_path`）不问：那台电脑是他自己的，也是他自己开的会话。
 - **上次运行得怎样。** 网关把每个服务器第一次列工具的结果报给 `POST {mcp_path}/{name}/run`：成功是 `running`，失败是 `failed` 带日志最后 12 行（执行器起进程失败时把 `mcp-<hash>.log` 的末尾接在报错后面），等主人是 `awaiting`；网关关门时把报过 `running` 的改回 `idle`。`running` 只信 12 小时（`RUNNING_FOR`）：一个和会话一起死掉的网关说不出它停了。存在 `project_mcp_runs`，设置页读它。
 
 平台在机器上放 Node 24（`node` / `npm` / `npx`）和 uv（`uv` / `uvx`），排在机器自己的 PATH 后面：成员电脑上已有的 node 照用（`toolchain.py`、`machine_launcher.py`）。Docker、Deno、Bun 不提供。
@@ -79,7 +79,7 @@ covers:
 
 `state` 是一份密封的 JSON，装着这次流程的全部，并在 `single_use_state` 里先占一个 jti；回调落在 `GET /api/mcp/oauth/callback`：先 `claim()` 那个 jti（只能用一次），再按 RFC 9207 核对 `iss`——指向别的授权服务器要拒，授权服务器声明了会带 `iss` 却没带也要拒——换 token 时带上 RFC 8707 的 `resource`。到期前 60 秒刷新；服务器回 401 就刷新一次再试；刷新被拒标 `needs_reconnect`。断开时尽力撤销。
 
-设置里添加和编辑远程服务器（`POST` / `PUT` / `DELETE /projects/{id}/mcp/servers…`）要「配置 AI 队友」的权限。改了地址或换了登录方式，已有的连接和请求头一并清掉（`_forget_credentials`），免得一个密钥被送到不是给它的主机。
+设置里添加和编辑服务器（`POST` / `PUT` / `DELETE /projects/{id}/mcp/servers…`，`kind` 是 `remote` 或 `command`）要「配置 AI 队友」的权限。改了一条命令，它在成员电脑上的指纹就变了，主人会被再问一次。改了地址或换了登录方式，已有的连接和请求头一并清掉（`_forget_credentials`），免得一个密钥被送到不是给它的主机。
 
 ## 凭据：放在哪，谁看得到 {#credentials}
 

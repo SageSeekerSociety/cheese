@@ -2,7 +2,7 @@
 
 A type declares its servers as a Claude Code subagent does (`mcpServers`), and
 the platform hands a session of a teammate of that type the inline stdio ones
-as definitions (`agent_mcp` in its execution target, or pi's launch). The
+as definitions (`mcp_commands` in its execution target, or pi's launch). The
 server runs on the room's machine, as the checkout's `.mcp.json` servers do,
 and the project's own hooks hold around its calls.
 
@@ -154,7 +154,7 @@ def test_codex_lists_and_calls_the_types_server_on_the_machine(
     from app.domain.agent.harness.codex.tools import RemoteTools
 
     executor, target, project = _machine(acceptance, tmp_path / "codex", monkeypatch)
-    own = {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+    own = {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
     # A teammate of another type, on the same machine, has no such server.
     assert "lint" not in RemoteTools(dict(target)).client.session_servers()
     gateway = RemoteTools(own).gateway()
@@ -190,11 +190,14 @@ def test_a_checkout_server_of_the_same_name_keeps_its_name(tmp_path):
     client = RemoteClient(
         {
             "mcp_servers": ["lint"],
-            "agent_mcp": {"lint": _definition(tmp_path), "own": _definition(tmp_path)},
+            "mcp_commands": {
+                "lint": _definition(tmp_path),
+                "own": _definition(tmp_path),
+            },
         }
     )
     assert client.session_servers() == ["lint", "own"]
-    assert client.agent_servers() == ["own"]
+    assert client.command_servers() == ["own"]
 
 
 def test_a_session_at_the_placeholder_lists_no_stdio_server():
@@ -207,7 +210,7 @@ def test_a_session_at_the_placeholder_lists_no_stdio_server():
         "kind": "deferred",
         "workspace": DEFERRED_WORKSPACE,
         "mcp_servers": [],
-        "agent_mcp": {"lint": {"command": "x"}},
+        "mcp_commands": {"lint": {"command": "x"}},
         "remote_mcp": {"path": "/topics/t/mcp", "servers": ["tracker"]},
     }
     assert RemoteClient(placeholder).session_servers() == ["tracker"]
@@ -247,7 +250,7 @@ def test_pi_runs_the_types_server_beside_the_checkouts(tmp_path, monkeypatch):
     async def session():
         with room_machine(tmp_path / "machine", checkout=work) as target:
             runner.machine = Machine(
-                {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+                {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
             )
             try:
                 await runner.open_servers()
@@ -321,7 +324,7 @@ def test_a_private_chats_scratch_runs_the_types_server(tmp_path):
     from app.domain.agent.harness.pi.runner import Runner
 
     target, work = _scratch(tmp_path / "scratch")
-    own = {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+    own = {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
     try:
         assert "lint" not in RemoteTools(dict(target)).client.session_servers()
         gateway = RemoteTools(own).gateway()
@@ -371,7 +374,7 @@ def test_claude_code_lists_and_calls_the_types_server_on_the_machine(
     release = acceptance.execution_release
     monkeypatch.setattr(release, "mount_state", lambda _path: release.MOUNT_LIVE)
     executor, target, project = _machine(acceptance, folder, monkeypatch)
-    target = {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+    target = {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
     home = folder / "home"
     (home / ".claude").mkdir(parents=True)
     launch = acceptance.client.prepare(
@@ -429,7 +432,7 @@ def test_two_pi_sessions_on_one_machine_each_get_their_own_answer(tmp_path):
         runner = Runner(tmp_path / name)
         runner.journal.remember("session_id", f"session-{name}")
         runner.machine = Machine(
-            {**target, "agent_mcp": {"lint": _definition(tmp_path)}}
+            {**target, "mcp_commands": {"lint": _definition(tmp_path)}}
         )
         try:
             await runner.open_servers()
