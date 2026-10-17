@@ -143,6 +143,42 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
         self.assertNotIn("values.spec.ts:", result.stderr)
         self.assertIn("基线项已过期或数量减少", result.stderr)
 
+    def test_sql_prose_paths_routes_and_diagnostics_keep_their_boundaries(self) -> None:
+        values = [
+            "select item, quantity from inventory before ordering more stock",
+            "select files from folder where size > 10 before upload",
+            "/home/cheese/My Documents/very long project name/final report.docx",
+            "/var/lib/cheese/some/very/long/directory/name/",
+            "?block=blk-1&mode=full&tab=settings&page=2",
+            "#/projects/p-1/topics/t-1/threads?tab=settings",
+            "SELECT it.id, it.email FROM items it WHERE it.deleted_at IS NULL",
+            "SELECT identifier FROM users WHERE status = %(status)s",
+            "SELECT identifier FROM users WHERE status = %s",
+            "select id from users where deleted_at is not null",
+            "Property 'title' does not exist on type 'Topic'.",
+            "Argument of type 'string' is not assignable to parameter of type 'number'.",
+            "Cannot find module './missing' or its corresponding type declarations.",
+            "No overload matches this call",
+            "Object literal may only specify known properties, and 'foo' does not exist in type 'Bar'.",
+            "Element implicitly has an 'any' type because expression of type 'string' can't be used to index type 'Foo'.",
+            "Module '\"./missing\"' has no exported member 'Thing'.",
+            "format('{0}/{1}/{2}', github.repository, github.ref_name, github.sha)",
+            "startsWith(github.ref, 'refs/heads/') && github.event_name == 'pull_request'",
+            "contains(fromJSON('[...]'), github.event_name)",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = "\n".join(f"assert value_{index} == {value!r}" for index, value in enumerate(values, 1))
+            self._write(root, "backend/tests/unit/test_boundaries.py", source)
+
+            result = self._run(root)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("test_boundaries.py:1:", result.stderr)
+        self.assertIn("test_boundaries.py:2:", result.stderr)
+        for line in range(3, len(values) + 1):
+            self.assertNotIn(f"test_boundaries.py:{line}:", result.stderr)
+
     def test_explicit_root_is_scanned_when_scanner_script_is_shallow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -82,6 +82,7 @@ PATH_VALUE_RE = re.compile(
     r"[\w.-]+\.(?:md|py|ts|tsx|js|jsx|cjs|mjs|json|txt|vue|docx))(?:\?[^\s]+)?",
     re.IGNORECASE,
 )
+ABSOLUTE_PATH_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?[\\/][^\r\n]*[\\/][^\r\n]*$")
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 COMMIT_TITLE_RE = re.compile(r"^(?:feat|fix|chore|docs|refactor|test|build|ci)(?:\([^)]*\))?: ", re.IGNORECASE)
 KEY_VALUE_RE = re.compile(r"\b[\w-]+=\S+")
@@ -89,7 +90,9 @@ IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
 STATUS_CODES_RE = re.compile(r"(?:HTTP\s*)?\d{3}(?:\s+\d{3})*\Z", re.IGNORECASE)
 WORKFLOW_EXPRESSION_RE = re.compile(
     r"(?:\$\{\{.*\}\}|(?:needs|steps|github|matrix|env|vars|inputs)\.[\w.-]+"
-    r"(?:\s*(?:==|!=|&&|\|\|).*)?)\Z",
+    r"(?:\s*(?:==|!=|&&|\|\|).*)?|"
+    r"(?:format|startsWith|endsWith|contains|fromJSON|toJSON|join|hashFiles|"
+    r"success|failure|always|cancelled)\s*\(.*\)(?:\s*(?:==|!=|&&|\|\|).*)?)\Z",
     re.IGNORECASE | re.DOTALL,
 )
 SHELL_COMMAND_RE = re.compile(
@@ -104,22 +107,25 @@ SQL_EXPRESSION_RE = re.compile(
     re.IGNORECASE,
 )
 SQL_QUERY_RE = re.compile(
-    r"(?:(?:SELECT|select)\b.*\b(?:FROM|from)\b.*"
-    r"(?:\b(?:JOIN|join)\b.*\b(?:ON|on)\b|\b(?:ORDER|order)\s+(?:BY|by)\b|"
-    r"\b(?:GROUP|group)\s+(?:BY|by)\b|\b(?:LIMIT|limit)\b|"
-    r"\b(?:IS|is)\s+(?:NOT\s+)?(?:NULL|null)\b|\b(?:IN|in)\s*\(|"
-    r"\w+\s*(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?))).*",
-    re.DOTALL,
+    r"(?:SELECT\b.*\bFROM\b.*"
+    r"(?:\bJOIN\b.*\bON\b|\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|"
+    r"\bIS\s+(?:NOT\s+)?NULL\b|\bIN\s*\(|"
+    r"\w+\s*(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|"
+    r":\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|"
+    r"[\w.]+(?:\([^)]*\))?))).*",
+    re.DOTALL | re.IGNORECASE,
 )
 SQL_WHERE_RE = re.compile(
-    r"(?:WHERE|where)\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|"
-    r"(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|:[\w]+|\?|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)).*",
-    re.DOTALL,
+    r"WHERE\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|"
+    r"(?:=|!=|<>|<=|>=|<|>)\s*(?:'[^']*'|\"[^\"]*\"|\$\d+|"
+    r":\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)).*",
+    re.DOTALL | re.IGNORECASE,
 )
-SQL_SELECT_PREFIX_RE = re.compile(r"(?:SELECT|select)\s+(.+?)\s+(?:FROM|from)\s+([\w.]+)", re.DOTALL)
+SQL_SELECT_PREFIX_RE = re.compile(r"SELECT\s+(.+?)\s+FROM\s+([\w.]+)", re.DOTALL | re.IGNORECASE)
 SQL_PROSE_WORD_RE = re.compile(
-    r"(?<![A-Za-z0-9_.])(?:the|an|this|that|these|those|because|please|you|your|we|they|it|"
-    r"should|could|will|must|continue)(?![A-Za-z0-9_.])",
+    r"(?<![A-Za-z0-9_.])(?:the|an|this|that|these|those|because|please|you|your|we|they|"
+    r"should|could|will|must|continue|continuing|before|after)"
+    r"(?![A-Za-z0-9_.])",
     re.IGNORECASE,
 )
 SQL_ARTICLE_PROSE_RE = re.compile(r"^\s*a\s+[A-Za-z]+\b", re.IGNORECASE)
@@ -130,7 +136,10 @@ TS_TYPE_DIAGNOSTIC_RE = re.compile(
 TS_DIAGNOSTIC_RE = re.compile(
     r"^(?:Property ['\"][^'\"]+['\"] does not exist on type ['\"][^'\"]+['\"]|"
     r"Argument of type ['\"][^'\"]+['\"] is not assignable to (?:parameter|argument) of type |"
-    r"Cannot find module ['\"][^'\"]+['\"]|No overload matches this call)",
+    r"Cannot find module ['\"][^'\"]+['\"]|No overload matches this call|"
+    r"Object literal may only specify known properties, and .+ does not exist in type .+|"
+    r"Element implicitly has an ['\"]any['\"] type because expression of type .+ can't be used to index type .+|"
+    r"Module .+ has no exported member .+)",
     re.IGNORECASE,
 )
 JS_ASSERTION_METHODS = {
@@ -177,15 +186,20 @@ def _test_files(root: Path) -> list[Path]:
 def _is_sql_value(value: str) -> bool:
     sql_text = re.sub(r"'[^']*'|\"[^\"]*\"", " ", value)
     sql_text = re.sub(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", " ", sql_text)
-    sql_text = re.sub(r"\b(?:FROM|from|JOIN|join)\s+([\w.]+)\s+[A-Za-z]\b", r"\1", sql_text)
+    sql_text = re.sub(r"\b(?:FROM|JOIN)\s+([\w.]+)\s+[A-Za-z_]\w*\b", r"\1", sql_text, flags=re.IGNORECASE)
     select = SQL_SELECT_PREFIX_RE.match(value)
     if select is not None:
         projection = select.group(1).strip()
         structured_projection = "," in projection or projection == "*"
+        remainder = value[select.end() :].strip()
+        simple_alias = re.fullmatch(r"(?:AS\s+)?[A-Za-z]\b", remainder, re.IGNORECASE)
         if (
             not SQL_PROSE_WORD_RE.search(sql_text)
             and not SQL_ARTICLE_PROSE_RE.match(projection)
-            and (SQL_QUERY_RE.fullmatch(value) or structured_projection)
+            and (
+                SQL_QUERY_RE.fullmatch(value)
+                or (structured_projection and (not remainder or simple_alias is not None))
+            )
         ):
             return True
     if SQL_WHERE_RE.fullmatch(value):
@@ -203,12 +217,20 @@ def _is_structured_key_value(value: str) -> bool:
     return len(WORD_RE.findall(remaining)) <= 2 * len(matches)
 
 
+def _is_route_value(value: str) -> bool:
+    return (value.startswith("?") and KEY_VALUE_RE.search(value) is not None) or (
+        value.startswith("#/") and not any(char.isspace() for char in value)
+    )
+
+
 def _is_explanatory_sentence(value: str) -> bool:
     value = " ".join(value.split())
     han_count = len(HAN_RE.findall(value))
     if (
         not value
         or PATH_VALUE_RE.fullmatch(value)
+        or ABSOLUTE_PATH_VALUE_RE.fullmatch(value)
+        or _is_route_value(value)
         or EMAIL_RE.fullmatch(value)
         or COMMIT_TITLE_RE.match(value)
         or _is_structured_key_value(value)
