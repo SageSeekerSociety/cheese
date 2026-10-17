@@ -240,15 +240,14 @@ def scan(paths: list[Path]) -> tuple[list[str], Counter[str], list[str]]:
 #: one converted: lower or delete its line here. The file is the list — adding
 #: to it goes through review, as ``test_legacy_error_ratchet.py`` puts it.
 _BASELINE: dict[str, int] = {
-    "app/api/auth/__init__.py": 5,
-    "app/api/auth/resolver.py": 9,
+    "app/api/auth/__init__.py": 4,
+    "app/api/auth/resolver.py": 8,
     "app/api/preview_host.py": 4,
     "app/api/preview_owner_internal.py": 8,
     "app/api/routes/addresses.py": 2,
     "app/api/routes/admin_run_records.py": 1,
     "app/api/routes/agent_control.py": 5,
     "app/api/routes/agent_credential.py": 1,
-    "app/api/routes/alerts.py": 1,
     "app/api/routes/answers.py": 8,
     "app/api/routes/assistant.py": 1,
     "app/api/routes/attachments.py": 4,
@@ -275,7 +274,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/notifications_flat.py": 5,
     "app/api/routes/notifications_live.py": 1,
     "app/api/routes/preview_sessions.py": 3,
-    "app/api/routes/project_channels.py": 2,
+    "app/api/routes/project_channels.py": 1,
     "app/api/routes/project_context.py": 1,
     "app/api/routes/project_export.py": 1,
     "app/api/routes/project_skills.py": 1,
@@ -305,10 +304,10 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/teams.py": 8,
     "app/api/routes/topic_members.py": 2,
     "app/api/routes/topics.py": 9,
-    "app/api/routes/topics_channel.py": 2,
+    "app/api/routes/topics_channel.py": 1,
     "app/api/routes/topics_compute.py": 2,
     "app/api/routes/topics_messages.py": 5,
-    "app/api/routes/topics_pins.py": 2,
+    "app/api/routes/topics_pins.py": 1,
     "app/api/routes/topics_preview.py": 1,
     "app/api/routes/topics_side_routes.py": 1,
     "app/api/routes/topics_threads.py": 2,
@@ -347,7 +346,6 @@ _BASELINE: dict[str, int] = {
     "app/domain/agent/announce.py": 1,
     # 2026-10: `chat.py` 按职责拆成门面加四块 mixin，它那两句英文句子跟着抛它们
     # 的 `converse` 走去 chat_admission，chat.py 自己不再写英文句子。
-    "app/domain/agent/chat_admission.py": 2,
     # 2026-10: the checkout sweep left `room_task/checkouts.py` for
     # `agent/checkout_sweep.py`, carrying its one English sentence.
     "app/domain/agent/checkout_sweep.py": 1,
@@ -508,7 +506,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/space/member_publishing_service.py": 6,
     "app/domain/space/review_service.py": 7,
     "app/domain/space/services.py": 59,
-    "app/domain/tag/services.py": 2,
+    "app/domain/tag/services.py": 1,
     "app/domain/task/access.py": 1,
     "app/domain/task/attachment_service.py": 10,
     "app/domain/task/inputs.py": 7,
