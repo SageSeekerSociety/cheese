@@ -55,7 +55,14 @@ def test_stopped_task_has_short_patrol_threshold(monkeypatch):
     assert rows[0]["waited_min"] == 5
 
 
+def test_delivering_task_uses_regular_quiet_threshold(monkeypatch):
+    event_meta = {"tool": "Bash", "output_bytes": 10}
+    rows = task_rows(monkeypatch, "awaiting_checks", event_meta)
+
+    assert rows == []
+
+
 def test_running_task_ignores_short_patrol_threshold(monkeypatch):
-    rows = task_rows(monkeypatch, "running", {"tool": "Bash"})
+    rows = task_rows(monkeypatch, "running", {"tool": "Bash", "output_bytes": 10})
 
     assert rows == []

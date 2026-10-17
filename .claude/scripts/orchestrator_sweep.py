@@ -32,8 +32,8 @@ For every open, started task in the channel it reads platform facts and the PR's
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
                 rounds), or for --stopped-min minutes (default 3) when the platform says
-                the turn stopped, unless the line is parked, accepted, or already classified.
-                A heartbeat is the newest of the line's last message, the last
+                `started`, unless the line is parked, accepted, or classified as 连续失败、出队
+                or 可采纳未采纳. A heartbeat is the newest of the line's last message, the last
                 event block its seat wrote (a command it ran) and, when the platform gives
                 it, the running turn's last output (`last_output_at` on the task row). A
                 command the seat started and that has not returned yet — its event block
@@ -1119,8 +1119,8 @@ def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None, stopped_mi
                                              pulse["last_message_at"],
                                              pulse["last_message"] or "（还没有消息）"), w)
         else:
-            stopped_turn = turn_running(t)
-            short_stall = (stopped_turn is False and card.get("status") != "accepted"
+            short_stall = (turn_running(t) is False and phrase == "started"
+                           and card.get("status") != "accepted"
                            and not reported.intersection({"连续失败", "出队", "可采纳未采纳"}))
             threshold = stopped_min if short_stall else silent
             w = stalled_for(now, heartbeat, threshold, running)
@@ -1243,9 +1243,10 @@ def review_cell(r):
     return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}{tier}"
 
 
-def render(rows, metrics, silent, now, room):
+def render(rows, metrics, silent, now, room, stopped_min=3):
     out = ["## 调度看板", "",
-           f"UTC {now:%Y-%m-%d %H:%M}｜信号阈值 {silent} 分钟｜{len(rows)} 条｜频道 {room[:8]}", ""]
+           f"UTC {now:%Y-%m-%d %H:%M}｜静默阈值 {silent} 分钟｜已停轮 {stopped_min} 分钟｜"
+           f"{len(rows)} 条｜频道 {room[:8]}", ""]
     if not rows:
         out.append("各线无待处理信号。")
     else:
@@ -1372,10 +1373,11 @@ def day_metrics(tok, room, day, idmap):
     }
 
 
-def board_json(rows, metrics, room, silent, skip, now):
+def board_json(rows, metrics, room, silent, skip, now, stopped_min=3):
     classes = {k: [{f: r[f] for f in ROW_FIELDS} for r in rows if r["kind"] == k] for k in CLASSES}
     return {"generated_at": now.isoformat(), "room": room, "signal_min": silent,
-            "skipped": sorted(skip), "classes": classes, "metrics": metrics}
+            "stopped_min": stopped_min, "skipped": sorted(skip),
+            "classes": classes, "metrics": metrics}
 
 
 def occurrences(hay, needle):
@@ -1841,13 +1843,19 @@ def _self_test_board():
         ("有信号时：表头、频道那行、每个待判 PR 那一段都在",
          [ln for ln in board([_self_row()]).split("\n")
           if ln.startswith(("UTC ", "| 类别", "### "))],
-         ["UTC 2026-10-13 05:00｜信号阈值 60 分钟｜1 条｜频道 12345678",
+         ["UTC 2026-10-13 05:00｜静默阈值 60 分钟｜已停轮 3 分钟｜1 条｜频道 12345678",
           "| 类别 | 任务 | 到哪一步 | CI | 独立审查 | 卡了 | 在等 |",
           "### 每个待判 PR"]),
         ("一条信号都没有时：不摆表格，只说一句",
          board([]),
-         "## 调度看板\n\nUTC 2026-10-13 05:00｜信号阈值 60 分钟｜0 条｜频道 12345678\n"
+         "## 调度看板\n\nUTC 2026-10-13 05:00｜静默阈值 60 分钟｜已停轮 3 分钟｜0 条｜频道 12345678\n"
          "\n各线无待处理信号。\n\n" + metrics_line(_SELF_TEST_METRICS)),
+        ("JSON 看板：同时带静默与停轮阈值",
+         (board_json([], _SELF_TEST_METRICS, "room", 60, set(),
+                     datetime(2026, 10, 13, 5, 0))["signal_min"],
+          board_json([], _SELF_TEST_METRICS, "room", 60, set(),
+                     datetime(2026, 10, 13, 5, 0))["stopped_min"]),
+         (60, 3)),
     ]
 
 
@@ -2006,6 +2014,8 @@ def _self_test_sweep():
          kinds(60, call, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
         ("sweep：started 停下 5 分钟，超过默认 stopped-min 3，立即报停摆",
          kinds(5, done, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
+        ("sweep：平台等检查的交付态 5 分钟没新消息，不触发 stopped-min",
+         kinds(5, done, row={"presentation": {"phrase": "awaiting_checks"}}), []),
         ("sweep：running 任务 5 分钟没消息，不受 stopped-min 影响",
          kinds(5, call, row={"presentation": {"phrase": "running"}}), []),
         ("sweep：本轮已归入连续失败时不触发 3 分钟停摆",
@@ -2472,18 +2482,19 @@ def main():
         apply_auto_accept(tok, rows, me)
     if as_json:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(json.dumps(board_json(rows, metrics, room, silent, skip, now), ensure_ascii=False, indent=2))
+        print(json.dumps(board_json(rows, metrics, room, silent, skip, now, stopped_min),
+                         ensure_ascii=False, indent=2))
         return
     if as_render:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(render(rows, metrics, silent, now, room))
+        print(render(rows, metrics, silent, now, room, stopped_min))
         return
     text(rows)
     if recover:
         recover_environment(tok, room, rows)
     if document:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(sync_doc(tok, document, render(rows, metrics, silent, now, room)))
+        print(sync_doc(tok, document, render(rows, metrics, silent, now, room, stopped_min)))
 
 
 if __name__ == "__main__":
