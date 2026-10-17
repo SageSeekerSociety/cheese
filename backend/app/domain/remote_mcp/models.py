@@ -84,7 +84,12 @@ class ProjectMcpServer(UuidPk, Timestamps, Base):
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_mcp_servers_project_id_projects",
+        ),
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(64))
     url: Mapped[str] = mapped_column(Text)
@@ -106,7 +111,12 @@ class ProjectMcpRun(UuidPk, Timestamps, Base):
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_mcp_runs_project_id_projects",
+        ),
+        index=True,
     )
     name: Mapped[str] = mapped_column(String(128))
     #: "running", "failed", "awaiting", "refused" or "idle".
@@ -132,10 +142,20 @@ class ProjectMcpApproval(UuidPk, Timestamps, Base):
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_project_mcp_approvals_project_id_projects",
+        ),
+        index=True,
     )
     device_id: Mapped[str] = mapped_column(
-        ForeignKey("device.device_id", ondelete="CASCADE"), index=True
+        ForeignKey(
+            "device.device_id",
+            ondelete="CASCADE",
+            name="fk_project_mcp_approvals_device_id_device",
+        ),
+        index=True,
     )
     #: The server's name, and the command line as written, for the owner to read.
     name: Mapped[str] = mapped_column(String(128))
