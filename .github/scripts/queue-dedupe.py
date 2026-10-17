@@ -10,14 +10,18 @@ commit the queue will never merge. queue-dedupe.yml runs this on every
 `merge_group` event to cancel them.
 
 A run is cancelled only when all of these hold: it is a Required CI run of event
-`merge_group`, still queued or in progress, its head branch is a queue branch of
+`merge_group`, not yet completed, its head branch is a queue branch of
 the same base and the same pull request number as this entry, its head sha is
 not this entry's, and it was created before this entry's own runs. The last one
-keeps a late-delivered event of an older entry from cancelling the newer one.
+keeps an older entry's job that starts late from cancelling the newer entry's
+run: both runs of one event are created together, so the newer entry's run is
+older than the late job's own. It relies on GitHub creating the runs of two
+events in the order of the events.
 
-Nothing here turns red: a ref it cannot read, an API call that fails or a run
-that finished before its cancel arrived is reported and the job exits 0. A
-missed cancel costs one superseded run, which is what happened before this.
+Nothing here turns red: a ref it cannot read, an API call that fails, a run
+object it cannot parse or a run that finished before its cancel arrived is
+reported and the job exits 0. A missed cancel costs one superseded run, which
+is what happened before this.
 """
 
 import json
@@ -28,7 +32,8 @@ import sys
 from datetime import datetime
 
 WORKFLOW_FILE = "required-ci.yml"
-ACTIVE_STATUSES = ("queued", "in_progress")
+ACTIVE_STATUSES = ("requested", "pending", "waiting", "queued", "in_progress")
+PER_PAGE = 100
 QUEUE_BRANCH = re.compile(
     r"^(?:refs/heads/)?gh-readonly-queue/(?P<base>.+)/pr-(?P<number>\d+)-(?P<base_sha>[0-9a-f]+)$"
 )
@@ -78,29 +83,36 @@ def gh_api(*args):
     return json.loads(out) if out.strip() else None
 
 
-def main():
-    repo = os.environ["GITHUB_REPOSITORY"]
-    head_ref = os.environ.get("HEAD_REF", "")
-    head_sha = os.environ.get("HEAD_SHA", "")
+def active_runs(api, repo):
+    """Every not-yet-completed merge_group run of Required CI, all pages."""
+    runs = []
+    for status in ACTIVE_STATUSES:
+        page_number = 1
+        while True:
+            page = api(
+                f"repos/{repo}/actions/workflows/{WORKFLOW_FILE}/runs"
+                f"?event=merge_group&status={status}"
+                f"&per_page={PER_PAGE}&page={page_number}"
+            )
+            batch = page["workflow_runs"]
+            runs.extend(batch)
+            if len(batch) < PER_PAGE:
+                break
+            page_number += 1
+    return runs
+
+
+def cancel_superseded(api, env):
+    """Cancel what this entry supersedes; returns the lines to print."""
+    head_ref = env.get("HEAD_REF", "")
+    head_sha = env.get("HEAD_SHA", "")
     entry = parse_queue_ref(head_ref)
     if entry is None or not head_sha:
-        print(f"Not a merge queue ref ({head_ref!r}, sha {head_sha!r}); nothing to cancel.")
-        return 0
+        return [f"Not a merge queue ref ({head_ref!r}, sha {head_sha!r}); nothing to cancel."]
     base, number = entry
-    try:
-        this_run = gh_api(f"repos/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}")
-        before = _created(this_run)
-        runs = []
-        for status in ACTIVE_STATUSES:
-            page = gh_api(
-                f"repos/{repo}/actions/workflows/{WORKFLOW_FILE}/runs"
-                f"?event=merge_group&status={status}&per_page=100"
-            )
-            runs.extend(page["workflow_runs"])
-    except (subprocess.CalledProcessError, KeyError, ValueError) as err:
-        detail = getattr(err, "stderr", "") or err
-        print(f"::warning::Could not list Required CI runs: {detail}")
-        return 0
+    repo = env["GITHUB_REPOSITORY"]
+    before = _created(api(f"repos/{repo}/actions/runs/{env['GITHUB_RUN_ID']}"))
+    runs = active_runs(api, repo)
     # This entry's own Required CI run is created by the same event; when it is
     # already listed and older than this job, it is the stricter cut-off.
     for run in runs:
@@ -108,19 +120,31 @@ def main():
             before = min(before, _created(run))
     victims = superseded_runs(runs, head_ref, head_sha, before)
     if not victims:
-        print(f"No superseded Required CI run for PR #{number} into {base}.")
-        return 0
+        return [f"No superseded Required CI run for PR #{number} into {base}."]
+    lines = []
     for run in victims:
         try:
-            gh_api("-X", "POST", f"repos/{repo}/actions/runs/{run['id']}/cancel")
+            api("-X", "POST", f"repos/{repo}/actions/runs/{run['id']}/cancel")
         except subprocess.CalledProcessError as err:
             # 409: the run finished between the list and the cancel.
-            print(f"::warning::Could not cancel run {run['id']}: {err.stderr.strip()}")
+            lines.append(f"::warning::Could not cancel run {run['id']}: {err.stderr}")
             continue
-        print(
+        lines.append(
             f"Cancelled Required CI run {run['id']} on {run['head_branch']} "
             f"({run['status']}), superseded by {head_sha[:8]}."
         )
+    return lines
+
+
+def main():
+    try:
+        lines = cancel_superseded(gh_api, os.environ)
+    # Whatever went wrong, a dedupe job must not fail the queue entry.
+    except Exception as err:
+        detail = getattr(err, "stderr", None) or repr(err)
+        lines = [f"::warning::Skipped cancelling superseded runs: {detail}"]
+    for line in lines:
+        print(line)
     return 0
 
 
