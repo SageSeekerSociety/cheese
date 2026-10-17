@@ -710,6 +710,68 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         )
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
+    def test_a_labelled_link_inside_an_unterminated_title_still_counts(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": '[a](other.md "oops [b](artifacts/kept.pdf)\n',
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_an_incomplete_escape_does_not_end_a_name(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "见 artifacts/kept.pdf%E6%8A 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_reference_definition_title_on_the_next_line_does_not_count(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": '[k]: other.md\n  "see artifacts/kept.pdf"\n',
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_an_escaped_quote_in_a_reference_definition_title_does_not_count(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": '[k]: other.md "a \\" artifacts/kept.pdf"\n',
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_bare_destination_without_a_label_still_names_a_bare_file(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "看 ](kept.pdf) 这里。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_forty_four_byte_characters_in_an_encoded_path_pass(self) -> None:
+        name = "🚀" * 40 + ".pdf"
+        encoded = "%F0%9F%9A%80" * 40 + ".pdf"
+        root = self._tree(
+            {
+                f"artifacts/{name}": b"%PDF-1.4",
+                "note.md": f"见 artifacts/{encoded} 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_an_executable_artifacts_file_cannot_be_judged(self) -> None:
+        root = self._tree({"note.md": "# 评审\n"})
+        artifacts = root / "docs" / "reviews" / "artifacts"
+        artifacts.write_bytes(b"not a directory")
+        artifacts.chmod(0o755)
+        self.addCleanup(artifacts.chmod, 0o644)
+        result = self._run(root)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
+
     def test_a_blockquoted_reference_definition_does_not_count(self) -> None:
         root = self._tree(
             {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "> [k]: kept.pdf\n"}

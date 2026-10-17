@@ -144,20 +144,20 @@ def _parse_destination(text: str, index: int) -> tuple[str | None, int]:
     return "".join(buffer), index
 
 
-def _parse_inline_link(text: str, index: int) -> tuple[str | None, int, bool]:
+def _parse_inline_link(text: str, index: int) -> tuple[str | None, int, str]:
     """Parse `](destination "title")` with index just after `](`.
 
-    Returns (path, end, ok). `end` is where the destination (and title, if any)
-    stopped; the caller hides that text from prose whether or not the link was
-    well formed. `ok` says whether a closing `)` was found.
+    Returns (path, end, status), where status is `ok`, `malformed` (no closing
+    parenthesis) or `title_open` (a title quote that never closes). `end` is
+    where the destination — and a well-formed title — stopped.
     """
     path, after = _parse_destination(text, index)
     if path is None:
-        return None, after, False
+        return None, after, "malformed"
     if "](" in path:
         # A destination cannot contain another link; treat the text as
         # malformed so the inner link is still scanned.
-        return path, after, False
+        return path, after, "malformed"
     length = len(text)
     index = after
     # A title may sit on the next line.
@@ -170,9 +170,7 @@ def _parse_inline_link(text: str, index: int) -> tuple[str | None, int, bool]:
             index += 2 if text[index] == "\\" else 1
         if index >= length:
             # The destination itself is well formed; only the title runs on.
-            # Take the destination and stop at the end of its line, so a
-            # `](path)` inside the broken title is not read as a link.
-            return path, _line_end(text, after), True
+            return path, after, "title_open"
         index += 1
         while index < length and text[index] in " \t\n":
             index += 1
@@ -181,13 +179,13 @@ def _parse_inline_link(text: str, index: int) -> tuple[str | None, int, bool]:
         while index < length and text[index] != ")":
             index += 2 if text[index] == "\\" else 1
         if index >= length:
-            return path, after, False
+            return path, after, "malformed"
         index += 1
         while index < length and text[index] in " \t\n":
             index += 1
     if index < length and text[index] == ")":
-        return path, index + 1, True
-    return path, after, False
+        return path, index + 1, "ok"
+    return path, after, "malformed"
 
 
 def _line_end(text: str, index: int) -> int:
@@ -196,16 +194,43 @@ def _line_end(text: str, index: int) -> int:
 
 
 def _reference_end(text: str, after: int) -> int:
-    """End of a reference definition's destination and optional title."""
+    """End of a reference definition's destination and optional title.
+
+    A title may sit on the next line and may contain escaped quotes, so it is
+    scanned rather than searched for; the title is part of the definition, not
+    prose that can cite an artifact.
+    """
     index = after
     while index < len(text) and text[index] in " \t":
         index += 1
+    if index < len(text) and text[index] == "\n":
+        index += 1
+        while index < len(text) and text[index] in " \t":
+            index += 1
     if index < len(text) and text[index] in "\"'(":
         closing = ")" if text[index] == "(" else text[index]
-        stop = text.find(closing, index + 1)
-        if stop >= 0 and stop < _line_end(text, index):
-            return stop + 1
+        index += 1
+        while index < len(text) and text[index] != closing:
+            index += 2 if text[index] == "\\" else 1
+        if index < len(text):
+            return index + 1
     return after
+
+
+def _has_link_label(text: str, found: int) -> bool:
+    """Whether the `](` at `found` closes a link label, not loose brackets."""
+    index = found - 1
+    while index >= 0:
+        char = text[index]
+        if char == "[":
+            return True
+        if char == "(" and index > 0 and text[index - 1] == "]":
+            # Reached the `](` of an earlier link first: no label for this one.
+            return False
+        if char == "\n" and index > 0 and text[index - 1] == "\n":
+            return False
+        index -= 1
+    return False
 
 
 def _link_spans(text: str):
@@ -219,16 +244,22 @@ def _link_spans(text: str):
         found = text.find("](", index)
         if found < 0:
             break
-        if text.rfind("[", 0, found) < 0:
+        if not _has_link_label(text, found):
             # `](path)` without an opening bracket is not a link.
             index = found + 2
             continue
-        path, end, ok = _parse_inline_link(text, found + 2)
-        if not ok:
+        path, end, status = _parse_inline_link(text, found + 2)
+        if status == "malformed":
             # Hide the malformed destination, then resume right after `](` so
             # a valid link inside it is still found. Prose after the
             # destination on the same line is left alone.
             yield "", found, max(end, found + 2)
+            index = found + 2
+            continue
+        if status == "title_open":
+            # Keep the destination and hide the broken title to the end of its
+            # line, rescanning inside for a label that is still a link.
+            yield path, found, _line_end(text, end)
             index = found + 2
             continue
         yield path, found, end
@@ -377,7 +408,11 @@ def _decoded_right_boundary_ok(text: str, index: int, *, canonical: bool) -> boo
         and text[index + 1] in HEX_DIGITS
         and text[index + 2] in HEX_DIGITS
     ):
-        return _right_boundary_text_ok(unquote(text[index : index + 12]), canonical=canonical)
+        tail = unquote(text[index : index + 12])
+        if not tail or tail[0] == "�":
+            # An incomplete escape (`%E6`) is not a name boundary.
+            return False
+        return _right_boundary_text_ok(tail, canonical=canonical)
     return _right_boundary_ok(text, index, canonical=canonical)
 
 
