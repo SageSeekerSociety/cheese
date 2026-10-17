@@ -1097,6 +1097,90 @@ WRAPPER_SIBLING = '''#!/usr/bin/env python3
 print("PASS: 旁置测试跑通了")
 '''
 
+
+#: The guard dispatches the other way: `if "--self-test" not in argv:` is the
+#: *scan* path, and its helper spawn is the scan's own business. Reading that
+#: body as the self-test side turns a biting guard into "unverified".
+PY_NEGATIVE_BRANCH_SCAN = '''#!/usr/bin/env python3
+"""The scan path shells out to helper.py; the self-test re-runs this file."""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def scan(argv):
+    subprocess.run([sys.executable, str(Path(__file__).with_name("helper.py"))], check=False)
+    problems = [path.name for path in sorted(Path(argv[1] if len(argv) > 1 else ".").rglob("*.bad"))]
+    for name in problems:
+        print(f"{name}: 修法：删掉它", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    if "--self-test" not in argv:
+        return scan(argv)
+    return self_test()
+
+
+def self_test():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1:
+            print("SELF-TEST FAIL: 没有以 1 报出 .bad", file=sys.stderr)
+            return 1
+    print("PASS: .bad 被报出")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+
+#: The same dispatch, with the hand-off after the branch instead of inside an
+#: `else`. The self-test still lives in `check`, so the copy cannot judge it.
+PY_ELSE_DELEGATION = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(argv):
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_else.py"))]
+    )
+
+
+def main(argv):
+    if "--self-test" not in argv:
+        return scan(argv)
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+ELSE_SIBLING = '''#!/usr/bin/env python3
+print("PASS: 旁置测试跑通了")
+'''
+
 #: The scan path shells out to `helper.py`; the self-test re-runs this very
 #: file, so mutating it reaches the process that judges. Only the self-test
 #: path decides whether a spawn makes the mutation unreachable.
@@ -1344,6 +1428,23 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         """
         code, guard, output = self._only(
             {"wrapper.py": PY_DELEGATES_THROUGH_WRAPPER}, {"test_wrapper.py": WRAPPER_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_a_negative_branch_is_the_scan_not_the_self_test(self) -> None:
+        """`if "--self-test" not in argv:` guards the scan; its helper is not a delegation."""
+        code, guard, output = self._only(
+            {"negsweep.py": PY_NEGATIVE_BRANCH_SCAN}, {"helper.py": HELPER_SCRIPT}
+        )
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_hand_off_after_a_negative_branch_is_still_unverified(self) -> None:
+        """The self-test is what runs when the branch is skipped, so it is on the path."""
+        code, guard, output = self._only(
+            {"elsedel.py": PY_ELSE_DELEGATION}, {"test_else.py": ELSE_SIBLING}
         )
         self.assertEqual(code, 2, output)
         self.assertEqual(guard["status"], "unverified", guard)

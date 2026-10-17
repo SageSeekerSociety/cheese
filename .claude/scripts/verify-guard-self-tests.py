@@ -370,9 +370,26 @@ def _mentions_string(node: ast.AST, needle: str) -> bool:
     )
 
 
+def _branch_runs_self_test(test: ast.AST) -> bool:
+    """True when this `if` branch is the one that runs for `--self-test`.
+
+    `if "--self-test" not in argv:` guards the *scan* path; the calls in its body
+    are the scan's own, and seeding them would put the scan's helper on the
+    self-test path.
+    """
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return not _branch_runs_self_test(test.operand)
+    for node in ast.walk(test):
+        if isinstance(node, ast.Compare) and _mentions_string(node, "--self-test"):
+            if any(isinstance(op, (ast.NotIn, ast.NotEq)) for op in node.ops):
+                return False
+            return True
+    return True
+
+
 def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
     """The nodes on the `--self-test` path: the self-test function, what it calls,
-    and the body of any `if "--self-test" …` branch.
+    and the side of any `if "--self-test" …` branch that runs for the self-test.
 
     A guard's normal scan may run another `.py` helper quite legitimately; only a
     spawn on the self-test path decides whether mutating this file reaches the
@@ -380,45 +397,68 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
     anything at all — `if "--self-test" in argv: return check()` — puts that
     helper on the path too, so the calls in the branch seed the walk exactly like
     the named self-test functions do.
+
+    A guard that dispatches the other way — `if "--self-test" not in argv: return
+    scan()` then `return check()` — keeps its self-test in the statements after
+    the branch, so those are on the path as well.
     """
-    functions = {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+    named: dict[str, list[ast.AST]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            named.setdefault(node.name, []).append(node)
+    parents: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
     branches = [
-        node
+        (node, _branch_runs_self_test(node.test))
         for node in ast.walk(tree)
         if isinstance(node, ast.If) and _mentions_string(node.test, "--self-test")
     ]
-    roots = {name for name in functions if name in _SELF_TEST_FUNCTIONS}
-    for branch in branches:
-        for statement in branch.body:
+    roots = [
+        node
+        for name in _SELF_TEST_FUNCTIONS
+        for node in named.get(name, [])
+    ]
+    sides: list[list[ast.stmt]] = []
+    for branch, for_self_test in branches:
+        sides.append(branch.body if for_self_test else branch.orelse)
+        if not for_self_test:
+            holder = parents.get(branch)
+            if isinstance(holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+                block = holder.body
+                sides.append(block[block.index(branch) + 1 :])
+    for side in sides:
+        for statement in side:
             for node in ast.walk(statement):
                 if (
                     isinstance(node, ast.Call)
                     and isinstance(node.func, ast.Name)
-                    and node.func.id in functions
+                    and node.func.id in named
                 ):
-                    roots.add(node.func.id)
-    reachable = set(roots)
+                    roots.extend(named[node.func.id])
+    reachable = {id(node): node for node in roots}
     queue = list(roots)
     while queue:
-        name = queue.pop()
-        for node in ast.walk(functions[name]):
+        current = queue.pop()
+        for node in ast.walk(current):
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
-                and node.func.id in functions
-                and node.func.id not in reachable
+                and node.func.id in named
             ):
-                reachable.add(node.func.id)
-                queue.append(node.func.id)
+                for callee in named[node.func.id]:
+                    if id(callee) not in reachable:
+                        reachable[id(callee)] = callee
+                        queue.append(callee)
     scoped: list[ast.AST] = []
-    for name in reachable:
-        scoped.extend(ast.walk(functions[name]))
-    for branch in branches:
-        scoped.extend(ast.walk(branch))
+    for node in reachable.values():
+        scoped.extend(ast.walk(node))
+    for branch, _ in branches:
+        scoped.extend(ast.walk(branch.test))
+    for side in sides:
+        for statement in side:
+            scoped.extend(ast.walk(statement))
     return scoped
 
 
@@ -1213,6 +1253,9 @@ def self_test() -> int:
         "delegating-guard.py": "unverified",
         "sibling-guard.py": "unverified",
         "variable-command-guard.py": "unverified",
+        "wrapper-guard.py": "unverified",
+        "negative-branch-guard.py": "ok",
+        "else-handoff-guard.py": "unverified",
     }
     failures = []
     for name, want in expected.items():
@@ -1738,6 +1781,118 @@ def self_test():
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
+    "wrapper-guard.py": '''#!/usr/bin/env python3
+"""`--self-test` hands off through `check`, a name that is not test-shaped.
+
+The scan path has a real failure signal of its own, so a verdict of "nothing
+to silence" cannot be what hides it: only following the branch into `check`
+tells the verifier this is a hand-off to a test file.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_wrapper.py"))]
+    )
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return check()
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "negative-branch-guard.py": '''#!/usr/bin/env python3
+"""`if "--self-test" not in argv:` guards the scan; its spawn is the scan's own.
+
+The self-test re-runs this file, so a silenced verdict reaches the process
+that judges it. Reading the branch body as the self-test side would call this
+guard "unverified" for a helper the self-test never runs.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def scan(argv):
+    subprocess.run([sys.executable, str(Path(__file__).with_name("helper.py"))], check=False)
+    problems = [path.name for path in sorted(Path(argv[1] if len(argv) > 1 else ".").rglob("*.bad"))]
+    for name in problems:
+        print(f"{name}: 修法：删掉它", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    if "--self-test" not in argv:
+        return scan(argv)
+    return self_test()
+
+
+def self_test():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1:
+            print("SELF-TEST FAIL: 没有以 1 报出 .bad", file=sys.stderr)
+            return 1
+    print("PASS: .bad 被报出")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "else-handoff-guard.py": '''#!/usr/bin/env python3
+"""The hand-off sits after the negative branch, not inside an `else`.
+
+The self-test still lives in `check`, so the copy cannot judge it; only the
+statements after the branch put `check` on the self-test path.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(argv):
+    return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_else.py"))]
+    )
+
+
+def main(argv):
+    if "--self-test" not in argv:
+        return scan(argv)
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
     "shell-unquoted-hint-guard.sh": '''#!/usr/bin/env bash
 # `echo … exit 1` prints words; the self-test only looks at that text.
 set -u
@@ -2234,6 +2389,14 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+''',
+    "test_else.py": '''#!/usr/bin/env python3
+"""The test file `else-handoff-guard.py --self-test` hands off to."""
+print("PASS: 旁置测试跑通了")
+''',
+    "test_wrapper.py": '''#!/usr/bin/env python3
+"""The test file `wrapper-guard.py --self-test` hands off to through `check`."""
+print("PASS: 旁置测试跑通了")
 ''',
     "test_sibling_guard.py": '''#!/usr/bin/env python3
 """The test file that stands in for `sibling-guard.py --self-test`."""
