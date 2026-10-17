@@ -383,6 +383,19 @@ def self_test():
         check("文案目录下的 .ts 是逻辑：要补增量审",
               increment(repo, "main", nonascii, loader),
               {"needs": True, "detail": "改了 frontend/src/i18n/messages/catalog.ts"})
+        # The other prefix. `docs/` exempted whatever was under it, so an increment that
+        # only edited the shell script the site's package.json runs read as 改文档 and went
+        # unread — a change to what the docs build executes, waved through as prose.
+        write("docs/site/gen/diagrams.sh", "#!/bin/sh\nnode cli.js\n")
+        script = commit("the diagram entry script")
+        check("docs 下的构建脚本是逻辑：要补增量审",
+              increment(repo, "main", loader, script),
+              {"needs": True, "detail": "改了 docs/site/gen/diagrams.sh"})
+        write("docs/design-system.md", "prose\n")
+        prose = commit("prose only")
+        check("docs 下只改散文：不用重审",
+              increment(repo, "main", script, prose),
+              {"needs": False, "detail": "只改了测试、文档或文案：docs/design-system.md"})
         # The base branch now changes the same file this branch changed, so the merge has to
         # be resolved by hand. That resolution is the author's code: a merge commit's own
         # diff-tree is empty, so only the tree it produced says what came in.
@@ -426,6 +439,12 @@ def self_test():
         ("frontend/src/i18n/messages/en/ask.json", True),
         ("backend/scripts/route_index.json", False),  # a .json that is not copy
         ("docs/site/build.mjs", False),  # a .mjs that is not a doc
+        # Under docs/, the exemption is prose only. `package.json` runs the diagram build,
+        # and the first code-extension list left its `.sh` — and every `.json` — exempt, so
+        # an increment changing what the docs build executes needed no review.
+        ("docs/site/gen/diagrams.sh", False),
+        ("docs/site/package.json", False),
+        ("docs/site/diagrams/turn.sequence.json", False),  # the generator reads it
         ("docs/design-system.md", True),
         ("AGENTS.md", True),
     ):

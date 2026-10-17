@@ -147,12 +147,16 @@ CONFIG = (
     "Taskfile.yml",
 )
 DOCS = (".claude/rules/", ".claude/skills/", ".claude/agents/", ".agents/", "docs/")
-#: Code that lives under `docs/`: the site's generator, its entry scripts, the evidence
-#: harnesses. The doc tier is for prose a person reads; these run at build time — the repo's
-#: own checkers read `docs/site/build.mjs` as build machinery — so a change to one is read
-#: like code. Only the `docs/` prefix is matched: the other DOCS entries hold rule and skill
-#: text, where a stray script is still documentation about how to do something.
-DOC_CODE = (".js", ".mjs", ".ts", ".py", ".css", ".vue")
+#: What under `docs/` is prose a person reads: the site's pages, plain text, tabular data and
+#: images. Everything else there is machinery a build or a checker reads or runs — the site
+#: generator (`.mjs`), its entry script (`.sh`), the npm and task files (`.json`, `.yml`), the
+#: diagram sources — so a change to one is read like code. A list of what stays doc rather
+#: than of what is code, because the code side is open-ended: the first list
+#: (`.js/.mjs/.ts/.py/.css/.vue`) still left the `.sh` that `docs/site/package.json` calls in
+#: the doc tier, and §4 stops re-reading that tier after a review. Only the `docs/` prefix is
+#: matched: the other DOCS entries hold rule and skill text, where a stray script is still
+#: documentation about how to do something.
+DOC_PROSE = (".md", ".html", ".txt", ".csv", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf")
 LOCKED = (
     "pnpm-lock.yaml",
     "package-lock.json",
@@ -229,15 +233,20 @@ def is_test(path):
 
 
 def is_doc(path):
-    """Whether this path is read as documentation. A `.md` always is. Under `docs/`, build
-    machinery is not: judging by the prefix alone put the site generator and its entry
-    scripts in the doc tier, which §4 also stops re-reading after a review — the same hole
-    as the copy prefix in ready.py, reached through a different door."""
+    """Whether this path is read as documentation. A `.md` always is. Under `docs/`, only the
+    formats a person reads are (DOC_PROSE): judging by the prefix alone put the site
+    generator and its entry scripts in the doc tier, which §4 also stops re-reading after a
+    review — the same hole as the copy prefix in ready.py, reached through a different
+    door. Naming the code extensions instead does not close it: the first such list missed
+    the `.sh` that runs the site's diagram build, which is why the list here is the one of
+    what stays doc."""
     if path.endswith(".md"):
         return True
     if not any(under(path, p) for p in DOCS):
         return False
-    return not (under(path, "docs/") and path.endswith(DOC_CODE))
+    if under(path, "docs/"):
+        return path.endswith(DOC_PROSE)
+    return True
 
 
 def tier_of_path(path):
@@ -571,9 +580,22 @@ def self_test():
         ("docs/site/src/arch.mjs", "B"),
         ("docs/site/gen/prompt.py", "B"),
         ("docs/evidence/preview-copy/rows-for-pdf.mjs", "B"),
+        # The code side of `docs/` is open-ended, so a list of code extensions leaves the
+        # next one out: `.sh` and `.yml` were missing, and `docs/site/package.json` runs
+        # `bash gen/diagrams.sh`. The rule is a list of prose formats instead, and every
+        # extension nobody listed — including one this table does not name — is code.
+        ("docs/site/gen/diagrams.sh", "B"),
+        ("docs/site/Taskfile.yml", "B"),
+        ("docs/site/package.json", "B"),
+        ("docs/site/diagrams/turn.sequence.json", "B"),  # read by the generator
+        ("docs/evidence/preview-copy/manifest.json", "B"),
         ("frontend/src/i18n/messages/zh-CN/ask.json", "A"),  # a message file still is copy
         ("docs/site/diagrams/overview.html", "E"),  # generated page, still prose
+        ("docs/evidence/ci-rounds-followup-2026-10-14.csv", "E"),  # tabular, a person reads it
         (".claude/rules/frontend.md", "E"),
+        # Only `docs/` gets the prose list. The same extension under a rule or skill tree is
+        # documentation about how to do something, not code the repo runs.
+        (".claude/skills/cheese/scripts/setup.sh", "E"),
     ):
         check(f"按路径定档：{path}", tier_of_path(path), want)
 
