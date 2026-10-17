@@ -86,9 +86,13 @@ ABSOLUTE_PATH_VALUE_RE = re.compile(r"^(?:[A-Za-z]:)?[\\/][^\r\n]*[\\/][^\r\n]*$
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 COMMIT_TITLE_RE = re.compile(r"^(?:feat|fix|chore|docs|refactor|test|build|ci)(?:\([^)]*\))?: ", re.IGNORECASE)
 KEY_VALUE_RE = re.compile(r"\b[\w-]+=\S+")
-STRUCTURED_ACTION_LABEL = r"(?:read|write|admin|export|create|update|delete|manage|execute|list|view|invite|approve|download|upload|deploy|access|run|edit|review|import|share)"
+STRUCTURED_ACTION_LABEL = (
+    r"(?:read|write|admin|export|create|update|delete|manage|execute|list|view|invite|approve|"
+    r"download|upload|deploy|access|run|edit|review|import|share)"
+)
 STRUCTURED_LABEL_LIST_RE = re.compile(
-    rf"^{STRUCTURED_ACTION_LABEL}:\s*[^,:]+(?:,\s*{STRUCTURED_ACTION_LABEL}:\s*[^,:]+)+$",
+    rf"^(?:{STRUCTURED_ACTION_LABEL}:\s*[^,:]+(?:,\s*{STRUCTURED_ACTION_LABEL}:\s*[^,:]+)+|"
+    rf"[\w-]+:\s*{STRUCTURED_ACTION_LABEL}(?:,\s*[\w-]+:\s*{STRUCTURED_ACTION_LABEL})+)$",
     re.IGNORECASE,
 )
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
@@ -154,7 +158,11 @@ SQL_PREDICATE_PATTERN = (
     rf"BETWEEN\s+{SQL_VALUE_PATTERN}\s+AND\s+{SQL_VALUE_PATTERN}|"
     rf"{SQL_JSON_OPERATOR_PATTERN}\s*{SQL_VALUE_PATTERN})"
 )
-SQL_RETURNING_ITEM_PATTERN = rf"(?:\*|{SQL_COLUMN_PATTERN}(?:\s*::\s*[\w.]+)?)"
+SQL_RETURNING_ITEM_PATTERN = (
+    rf"(?:\*|{SQL_COLUMN_PATTERN}(?:\.\*)?)"
+    rf"(?:\s*::\s*[\w.]+)?(?:\s+AS\s+[\w]+)?"
+    rf"(?:\s+IS\s+(?:NOT\s+)?NULL)?"
+)
 SQL_RETURNING_PATTERN = (
     rf"(?:\s+RETURNING\s+{SQL_RETURNING_ITEM_PATTERN}"
     rf"(?:\s*,\s*{SQL_RETURNING_ITEM_PATTERN})*)?"
@@ -188,6 +196,12 @@ SQL_JSON_QUERY_RE = re.compile(
 SQL_PROSE_WORD_RE = re.compile(
     r"(?<![A-Za-z0-9_.])(?:the|an|this|that|these|those|because|please|you|your|we|they|"
     r"should|could|will|must|continue|continuing|before|after)"
+    r"(?![A-Za-z0-9_.])",
+    re.IGNORECASE,
+)
+SQL_RETURNING_PROSE_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])(?:the|an|this|that|these|those|because|please|you|your|we|they|"
+    r"should|could|will|must|then|continue|continuing|for|to|with|of|and|but)"
     r"(?![A-Za-z0-9_.])",
     re.IGNORECASE,
 )
@@ -263,7 +277,8 @@ def _is_sql_value(value: str) -> bool:
         flags=re.IGNORECASE,
     )
     if SQL_UPDATE_RE.fullmatch(value) or SQL_DELETE_RE.fullmatch(value) or SQL_INSERT_RE.fullmatch(value):
-        return True
+        returning = re.search(r"\bRETURNING\b(.*)$", sql_text, re.IGNORECASE)
+        return returning is None or not SQL_RETURNING_PROSE_RE.search(returning.group(1))
     if SQL_PROSE_WORD_RE.search(sql_text):
         return False
     if SQL_WITH_QUERY_RE.fullmatch(sql_text) or SQL_JSON_QUERY_RE.fullmatch(value):

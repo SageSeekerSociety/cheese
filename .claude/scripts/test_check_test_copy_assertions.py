@@ -184,6 +184,7 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
             "flex items-center justify-between border-b border-slate-200 bg-white text-sm text-slate-600",
             "px-4 py-2 mb-2 mt-4 flex-1 items-center gap-2",
             "read: documents, write: documents, admin: members, export: all data",
+            "contents: write, issues: read, workflows: write, checks: read",
             "Property 'foo' is missing in type 'Bar' but required in type 'Baz'.",
             "Cannot assign to 'x' because it is a read-only property.",
             "Variable 'x' implicitly has an 'any' type.",
@@ -214,14 +215,19 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
                 "backend/tests/unit/test_sql_copy.py",
                 'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING the deleted row and then continue"\n'
                 'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING deleted rows for display"\n'
-                'assert text == "UPDATE logs SET status = $1 WHERE before < now() RETURNING id::text"\n',
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING id, the, deleted, row, and, then, continue"\n'
+                'assert text == "UPDATE logs SET status = $1 WHERE before < now() RETURNING id::text"\n'
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING tasks.*"\n'
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING id AS task_id"\n'
+                'assert text == "DELETE FROM tasks WHERE id = 1 RETURNING id IS NULL"\n',
             )
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("test_sql_copy.py:1", result.stderr)
-        self.assertIn("test_sql_copy.py:2", result.stderr)
-        self.assertNotIn("test_sql_copy.py:3", result.stderr)
+        for line in (1, 2, 3):
+            self.assertIn(f"test_sql_copy.py:{line}", result.stderr)
+        for line in (4, 5, 6, 7):
+            self.assertNotIn(f"test_sql_copy.py:{line}", result.stderr)
 
     def test_explicit_root_is_scanned_when_scanner_script_is_shallow(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
