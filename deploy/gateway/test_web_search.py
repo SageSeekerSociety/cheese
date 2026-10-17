@@ -140,6 +140,9 @@ async def main():
     rows = r.get_model_list(model_name="deepseek-flash")
     able = [d["litellm_params"]["api_key"] for d in rows if web_search.executes_web_search(d)]
     assert able == ["official"], able
+    # OpenAI's own search tool on /v1/responses is not Anthropic's: its stream
+    # is not held to having sent a server_tool_use block.
+    assert not web_search.forces_web_search({"tools": [{"type": "web_search_preview"}]})
 
     # A conversation is on an RUC key; its search goes to DeepSeek's API, and
     # comes back as it was sent, results included.

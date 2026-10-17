@@ -14,9 +14,9 @@ Two hooks, so it holds whichever model a session runs:
 - **Routing.** A request carrying a server web search tool is not sent to a
   deployment whose `model_info` says `supports_web_search: false`, the field
   LiteLLM's own filter reads (`router_utils.common_utils`), which only knows
-  OpenAI's tool types. If the router's list was already narrowed to such a
-  deployment (session affinity pins a conversation to one RUC key), the group's
-  other deployments are offered instead, cooldowns aside.
+  OpenAI's tool types. When none of the deployments the router offers can
+  search (the one that can is cooling down), the request goes on to one that
+  cannot, and the answer below says the search did not run.
 - **The answer.** A streamed answer to a request whose only tool is web search is held
   until a `server_tool_use` block starts, and then passed on as it came. An
   answer whose usage counts a search (`server_tool_use.web_search_requests`)
@@ -53,9 +53,13 @@ def not_run(model: object) -> str:
 
 
 def server_web_search(tools: object) -> str | None:
-    """The name of an Anthropic server web search tool among ``tools``, if any."""
+    """The name of an Anthropic server web search tool among ``tools``, if any.
+
+    Anthropic's types are dated (`web_search_20250305`); OpenAI's
+    `web_search_preview` on /v1/responses is not one, and its stream is not
+    Anthropic's to hold."""
     for tool in tools if isinstance(tools, list) else ():
-        if isinstance(tool, dict) and str(tool.get("type") or "").startswith("web_search_"):
+        if isinstance(tool, dict) and str(tool.get("type") or "").startswith("web_search_2"):
             return str(tool.get("name") or "web_search")
     return None
 
@@ -76,12 +80,6 @@ def forces_web_search(data: dict) -> bool:
 
 def executes_web_search(deployment: dict) -> bool:
     return (deployment.get("model_info") or {}).get("supports_web_search") is not False
-
-
-def _group(model: str) -> list[dict]:
-    from litellm.proxy.proxy_server import llm_router
-
-    return (llm_router.get_model_list(model_name=model) or []) if llm_router else []
 
 
 def _deployment_of(response: object) -> str:
@@ -125,12 +123,6 @@ class WebSearch(CustomLogger):
         if not server_web_search((request_kwargs or {}).get("tools")):
             return healthy_deployments
         able = [d for d in healthy_deployments if executes_web_search(d)]
-        if able:
-            return able
-        # Affinity may have narrowed the list to a deployment that cannot
-        # search; any of the group's that can is better than a silent answer.
-        # These skip the router's cooldown list, so a cooling one may be tried.
-        able = [d for d in _group(model) if executes_web_search(d)]
         return able or healthy_deployments
 
     async def async_post_call_streaming_iterator_hook(self, user_api_key_dict, response, request_data):
