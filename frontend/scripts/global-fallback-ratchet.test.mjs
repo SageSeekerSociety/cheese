@@ -524,16 +524,41 @@ describe('findGlobalFallbacks', () => {
       // The source may be written with an assertion around it, reached through
       // a binding of its own.
       "const base = { options: { props: ['open'] } } as const\nconst src = base\nconst { options } = src\nexport default options",
+      // A numeric key and a computed string key name the property they spell,
+      // and a nested pattern's own default applies when the source has none.
+      "const src = { 0: { props: ['open'] } }\nconst { 0: options } = src\nexport default options",
+      "const src = { options: { props: ['open'] } }\nconst { ['options']: options } = src\nexport default options",
+      "const src = {}\nconst { a: { options = { props: ['open'] } } = {} } = src\nexport default options",
+      // A nested pattern that does not bind the name must not swallow the
+      // property beside it that does.
+      "const src = { a: { b: 1 }, options: { props: ['open'] } }\nconst { a: { missing }, options } = src\nexport default options",
+      // The later of two properties of the same name is the one that counts:
+      // the spread comes after the empty one, so the export is the spread's.
+      "const base = { props: ['open'] }\nexport default { props: [], ...base }",
+      // A chain of aliases several hops long still ends at the object.
+      "const a = { props: ['open'] }\nconst b = a\nconst c = b\nconst d = c\nconst e = d\nexport default e",
       // A write runs when its function does, not where its text sits: an
       // assignment inside a function that never runs does not replace the
       // value, and a module-level declaration below the component still runs
       // before the component's `setup` is called.
       "const options = { props: ['open'] }\nfunction reset() { options = { props: [] } }\nvoid reset\nexport default options",
       "export default { setup() { return vm } }\nconst vm = { 'open': () => {} }",
+      // A function this file does call wrote the value before the export read
+      // it, whether it is an IIFE or a helper called by name.
+      "let options = { props: [] }\n;(() => { options = { props: ['open'] } })()\nexport default options",
+      "let options = { props: [] }\nfunction init() { options = { props: ['open'] } }\ninit()\nexport default options",
+      // An instance field initializer runs only when an instance is made.
+      "let options = { props: ['open'] }\nclass Holder { current = (options = { props: [] }) }\nexport default options",
+      // An arrow function is a function: a write inside one that is never
+      // called has not happened, and one whose `setup` is an arrow runs it.
+      "const options = { props: ['open'] }\nconst reset = () => { options = { props: [] } }\nvoid reset\nexport default options",
+      "export default { setup: () => vm }\nconst vm = { 'open': () => {} }",
       // Writes that may keep the value they already have, and copies that
       // carry every name the original had.
       "let options = { props: ['open'] }\noptions ??= { props: [] }\nexport default options",
+      "let options = null\noptions ??= { props: ['open'] }\nexport default options",
       "const options = { props: ['open'] }\noptions = { ...options }\nexport default options",
+      "const options = { props: [] }\noptions = { ...options, props: ['open'] }\nexport default options",
       "const options = { props: ['open'] }\noptions = Object.assign({}, options)\nexport default options",
       "const base = { props: ['open'] }\nexport default { ...base }",
       "const shared = { 'open': () => {} }\nexport default { methods: { ...shared } }",
@@ -602,6 +627,11 @@ describe('findGlobalFallbacks', () => {
       // The source has no such property at all, so the binding hands the
       // template nothing.
       destructured("const src = { props: ['open'] }", 'const { options } = src'),
+      // A computed key this cannot read is not the name being looked for: the
+      // source happens to spell the same word, and answering with that
+      // property reads a value the binding never took. The source's own
+      // `open` prop is what the template would hit if the rule answered.
+      destructured("const src = { props: [], name: { props: ['open'] } }", 'const { [name]: options } = src'),
     ]) {
       assert.deepEqual(
         found(code).map((hit) => [hit.name, hit.where]),
@@ -675,6 +705,57 @@ describe('findGlobalFallbacks', () => {
       found(exported("let options = { props: ['open'] }", 'export default options', 'options = { props: [] }')),
       [],
       'read a value assigned after the export'
+    )
+    // The export hands over `props: []` in each of these, and the test
+    // template calls `open`, so each is a fallback the rule has to report.
+    for (const [index, lines] of [
+      // A copy takes the properties of the object it copies, not the ones the
+      // binding held before.
+      [
+        "let options = { props: ['open'] }",
+        'const other = { props: [] }',
+        'options = { ...other }',
+        'export default options',
+      ],
+      [
+        "let options = { props: ['open'] }",
+        'const other = { props: [] }',
+        'options = Object.assign({}, other)',
+        'export default options',
+      ],
+      // The spread comes first, so the property written after it wins.
+      ["let options = { props: ['open'] }", 'options = { ...options, props: [] }', 'export default options'],
+      // A write in the read's own function runs later than a module-level
+      // one, whatever line each sits on.
+      [
+        "let vm = { 'open': () => {} }",
+        'export default { setup() { vm = { other: 1 }; return vm } }',
+        "vm = { 'open': () => {} }",
+      ],
+      // `&&=` keeps the left only when it is falsy; an object is not.
+      ["let options = { props: ['open'] }", 'options &&= { other: 1 }', 'export default options'],
+      // A helper called before the export replaces the value.
+      [
+        "let options = { props: ['open'] }",
+        'function init() { options = { props: [] } }',
+        'init()',
+        'export default options',
+      ],
+    ].entries()) {
+      assert.deepEqual(
+        found(exported(...lines)).map((hit) => [hit.name, hit.where]),
+        [['open', TEMPLATE]],
+        `read a value that is not the one handed over (case ${index}):\n${lines.join('\n')}`
+      )
+    }
+    // An object written after a spread replaces what the spread declared.
+    assert.deepEqual(
+      found(exported("const base = { props: ['open'] }", 'export default { ...base, props: [] }')).map((hit) => [
+        hit.name,
+        hit.where,
+      ]),
+      [['open', TEMPLATE]],
+      'kept a container a later property overrides'
     )
   })
 

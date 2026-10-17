@@ -336,45 +336,63 @@ function unassert(node) {
   return current
 }
 
+/**
+ * The properties an object expression spells, in order, with `{ ...x }` and
+ * `Object.assign(target, …)` expanded in place: the keys of the object it
+ * copies are the object's keys, and the properties written after a spread are
+ * the ones in the result. A later property of the same name replaces an
+ * earlier one, so a caller reading a name takes the last entry.
+ */
+function objectEntries(node, resolve, depth = 0, seen = new Set()) {
+  const value = unassert(node)
+  if (!value || depth > 8) return []
+  if (value.type === 'Identifier') return objectEntries(resolveValue(value, resolve), resolve, depth + 1, seen)
+  // `Object.assign(target, …)` writes every source into the target in order.
+  if (isObjectAssign(value)) {
+    return (value.arguments ?? []).flatMap((argument) => objectEntries(argument, resolve, depth + 1, seen))
+  }
+  if (value.type !== 'ObjectExpression' || seen.has(value)) return []
+  seen.add(value)
+  const entries = []
+  for (const property of value.properties ?? []) {
+    if (property.type === 'SpreadElement') {
+      entries.push(...objectEntries(resolveValue(property.argument, resolve), resolve, depth + 1, seen))
+      continue
+    }
+    if (property.type !== 'Property') continue
+    entries.push({
+      key: property.computed && property.key?.type !== 'Literal' ? undefined : propertyName(property.key),
+      quoted: property.key?.type === 'Literal' && typeof property.key.value === 'string',
+      value: property.value,
+    })
+  }
+  return entries
+}
+
 /** The names an object literal spells in quotes: `{ 'open': … }`, `{ ['open']: … }`. */
-function quotedKeys(node, resolve = () => undefined, seen = new Set()) {
-  const object = unassert(node)
-  if (object?.type !== 'ObjectExpression' || seen.has(object)) return []
-  seen.add(object)
-  return object.properties.flatMap((property) => {
-    // `{ ...options }` keeps every name the object it copies has.
-    // `resolveValue` records what it resolved in its own cycle set, so it gets
-    // a fresh one: sharing this set would make it look like a cycle and drop
-    // the object it just resolved.
-    if (property.type === 'SpreadElement') return quotedKeys(resolveValue(property.argument, resolve), resolve, seen)
-    return property.type === 'Property' && property.key?.type === 'Literal' && typeof property.key.value === 'string'
-      ? [property.key.value]
-      : []
-  })
+function quotedKeys(node, resolve = () => undefined) {
+  return objectEntries(node, resolve)
+    .filter((entry) => entry.quoted)
+    .map((entry) => entry.key)
 }
 
 /** The name a property is written under, quoted or not. */
 function propertyName(key) {
   if (key?.type === 'Identifier') return key.name
   if (key?.type === 'Literal' && typeof key.value === 'string') return key.value
+  if (key?.type === 'Literal' && typeof key.value === 'number') return String(key.value)
   return undefined
 }
 
-/**
- * Whether an expression copies an object that already exists — `{ ...x }` or
- * `Object.assign({}, x)`. The names it carries are the earlier value's, so a
- * binding assigned one keeps the value it had.
- */
-function copiesValue(node) {
-  if (node?.type === 'ObjectExpression') return node.properties?.some((entry) => entry.type === 'SpreadElement')
-  if (node?.type !== 'CallExpression') return false
-  const callee = node.callee
+/** `Object.assign(…)`, the other way of composing an object's properties. */
+function isObjectAssign(node) {
   return (
-    callee?.type === 'MemberExpression' &&
-    callee.object?.type === 'Identifier' &&
-    callee.object.name === 'Object' &&
-    callee.property?.type === 'Identifier' &&
-    callee.property.name === 'assign'
+    node?.type === 'CallExpression' &&
+    node.callee?.type === 'MemberExpression' &&
+    node.callee.object?.type === 'Identifier' &&
+    node.callee.object.name === 'Object' &&
+    node.callee.property?.type === 'Identifier' &&
+    node.callee.property.name === 'assign'
   )
 }
 
@@ -390,10 +408,15 @@ function copiesValue(node) {
  * statement lists gets every one of those wrong in one direction or the other.
  *
  * The value is the one the name holds at the point it is read: of everything
- * this file ever writes to the binding — the declaration's own initializer and
- * every later assignment — the last one written before the read. Taking the
- * initializer alone reads a value the name no longer holds, and taking the
- * last one in the file reads a value it does not hold yet.
+ * that has written the binding by then — the declaration's own initializer, an
+ * assignment that has run — the last one. Taking the initializer alone reads a
+ * value the name no longer holds, and taking the last one in the file reads a
+ * value it does not hold yet.
+ *
+ * When something runs is read off the code: a write in the same function as
+ * the read happens at its line; a write in a function the read sits inside has
+ * already happened; a write in an inner function happens where that function is
+ * called, and one nothing calls has not happened at all.
  *
  * Returns that value node, `null` when the name is bound to something whose
  * value this file does not spell (a parameter, an import, a function), and
@@ -401,30 +424,105 @@ function copiesValue(node) {
  */
 function bindingResolver(scopeManager) {
   const bindings = new Map()
-  for (const scope of scopeManager.scopes) {
-    for (const reference of scope.references) {
-      if (reference.identifier) bindings.set(reference.identifier, reference.resolved ?? null)
-    }
-  }
+  const functionVariables = new Map()
   const isFunction = (node) =>
     node?.type === 'FunctionDeclaration' ||
     node?.type === 'FunctionExpression' ||
     node?.type === 'ArrowFunctionExpression'
+  for (const scope of scopeManager.scopes) {
+    for (const reference of scope.references) {
+      if (reference.identifier) bindings.set(reference.identifier, reference.resolved ?? null)
+    }
+    // A function this file can call by name, to find the calls that run it.
+    for (const variable of scope.variables ?? []) {
+      for (const def of variable.defs ?? []) {
+        const node = def.type === 'FunctionName' ? def.node : def.node?.init
+        if (isFunction(node)) functionVariables.set(node, variable)
+      }
+    }
+  }
 
-  /** The functions a node sits in, innermost first; module level is empty. */
-  const functionsAround = (node) => {
+  /**
+   * The scopes a node runs in, innermost first: the functions it sits in, and
+   * an instance field's initializer, which runs only when an instance is made.
+   * Module level is empty.
+   */
+  const isDeferred = (node) => isFunction(node) || (node?.type === 'PropertyDefinition' && !node.static)
+
+  const scopesAround = (node) => {
     const around = []
     for (let current = node?.parent; current; current = current.parent) {
-      if (isFunction(current)) around.push(current)
+      if (isDeferred(current)) around.push(current)
     }
     return around
   }
 
-  /** Whether a write's functions are the read's own or one it runs inside. */
-  const before = (writeFunctions, readFunctions) => {
-    if (writeFunctions.length > readFunctions.length) return false
-    const offset = readFunctions.length - writeFunctions.length
-    return writeFunctions.every((fn, index) => fn === readFunctions[offset + index])
+  /** Whether a write's scopes are the read's own or ones the read runs inside. */
+  const before = (writeScopes, readScopes) => {
+    if (writeScopes.length > readScopes.length) return false
+    const offset = readScopes.length - writeScopes.length
+    return writeScopes.every((scope, index) => scope === readScopes[offset + index])
+  }
+
+  /** The call that runs a function handed to it directly: `(fn)()`, `fn?.()`. */
+  const directCall = (fn) => {
+    let node = fn
+    let parent = fn.parent
+    while (
+      parent &&
+      (parent.type === 'ChainExpression' ||
+        parent.type === 'TSAsExpression' ||
+        parent.type === 'TSSatisfiesExpression' ||
+        parent.type === 'TSNonNullExpression')
+    ) {
+      node = parent
+      parent = parent.parent
+    }
+    return parent?.type === 'CallExpression' && parent.callee === node ? parent : undefined
+  }
+
+  /** Every call in this file that runs a function by the name it is bound to. */
+  const invocations = (fn) => {
+    const direct = directCall(fn)
+    if (direct) return [direct]
+    const variable = functionVariables.get(fn)
+    if (!variable) return []
+    return (variable.references ?? [])
+      .map((reference) => reference.identifier)
+      .filter((identifier) => identifier?.parent?.type === 'CallExpression' && identifier.parent.callee === identifier)
+      .map((identifier) => identifier.parent)
+  }
+
+  /**
+   * Where a write inside a function actually happens: the call that enters the
+   * innermost function it sits in, and — when that call is itself inside a
+   * function — the call that enters that one. A function nothing calls leaves
+   * no site, so a write it holds has not happened by the time the read runs.
+   */
+  const executionSites = (node, seen = new Set()) => {
+    const scopes = scopesAround(node)
+    if (scopes.length === 0) return [{ scopes: [], at: node.range?.[0] ?? Number.NEGATIVE_INFINITY }]
+    const fn = scopes[0]
+    if (seen.has(fn)) return []
+    seen.add(fn)
+    return invocations(fn).flatMap((call) => executionSites(call, seen))
+  }
+
+  /** And the question a logical assignment asks of the value on its left. */
+  const isNullish = (node) =>
+    node === undefined || (node?.type === 'Literal' && (node.value === null || node.value === undefined))
+  const isFalsy = (node) => node?.type === 'Literal' && !node.value
+  const isTruthy = (node) => {
+    if (!node) return false
+    if (
+      node.type === 'ObjectExpression' ||
+      node.type === 'ArrayExpression' ||
+      node.type === 'FunctionExpression' ||
+      node.type === 'ArrowFunctionExpression'
+    ) {
+      return true
+    }
+    return node.type === 'Literal' && Boolean(node.value)
   }
 
   const valueOf = (identifier, depth = 0) => {
@@ -432,59 +530,76 @@ function bindingResolver(scopeManager) {
     const variable = bindings.get(identifier)
     if (!variable) return undefined
     const readAt = identifier.range?.[0] ?? Number.POSITIVE_INFINITY
-    const readFunctions = functionsAround(identifier)
+    const readScopes = scopesAround(identifier)
     let value
-    let writtenAt = Number.NEGATIVE_INFINITY
-    // A write that may not replace the value: `x ??= { … }` keeps the left
-    // when it is there, and `{ ...x }` copies it. Used only if nothing else
-    // gave a value.
-    let fallback = null
-    const written = (node) => {
-      if (!node) return
-      const at = node.range?.[0] ?? Number.NEGATIVE_INFINITY
-      const writeFunctions = functionsAround(node)
-      if (!before(writeFunctions, readFunctions)) return
-      // In the read's own function, source order is execution order. In a
-      // function the read runs inside — module level included — the write has
-      // already happened by the time that function is called, wherever it
-      // sits in the file.
-      if (writeFunctions.length === readFunctions.length && at >= readAt) return
-      if (at > writtenAt) {
+    let taken = null
+    const consider = (node, scopes, at) => {
+      // Same function: source order is execution order. An enclosing function
+      // runs this one, so its writes are in place whatever their position;
+      // a deeper function is the read's own code and runs later.
+      if (scopes.length === readScopes.length && !(at < readAt)) return
+      if (!taken || scopes.length > taken.length || (scopes.length === taken.length && at > taken.at)) {
+        taken = { length: scopes.length, at }
         value = node
-        writtenAt = at
       }
     }
-    const kept = (node) => {
-      if (node && !fallback) fallback = node
+    /** Where this write happens, if it happens before the read at all. */
+    const writeSite = (node) => {
+      if (!node) return null
+      // The write's own expression may contain the read (`x = { ...x }`); that
+      // read takes the value from before the write, not this one.
+      if (node.range && readAt >= node.range[0] && readAt <= node.range[1]) return null
+      const scopes = scopesAround(node)
+      if (before(scopes, readScopes)) {
+        const at = node.range?.[0] ?? Number.NEGATIVE_INFINITY
+        if (scopes.length === readScopes.length && at >= readAt) return null
+        return { scopes, at }
+      }
+      // A write in a function this file calls — an IIFE, a helper called from
+      // here — happens where that call is.
+      let best = null
+      for (const site of executionSites(node)) {
+        if (!before(site.scopes, readScopes)) continue
+        if (site.scopes.length === readScopes.length && site.at >= readAt) continue
+        if (!best || site.scopes.length > best.scopes.length || site.at > best.at) best = site
+      }
+      return best
+    }
+    const written = (node) => {
+      const site = writeSite(node)
+      if (site) consider(node, site.scopes, site.at)
     }
     for (const def of variable.defs ?? []) {
       if (def.type === 'Variable' && def.node?.init) written(declaredValue(def.node, variable.name, depth))
     }
     // `let options; options = { … }` — the value is assigned after the
     // declaration, and only an assignment to this binding counts.
+    let logical = null
     for (const reference of variable.references ?? []) {
       const parent = reference.identifier?.parent
       if (parent?.type !== 'AssignmentExpression' || parent.left !== reference.identifier) continue
-      const target = parent.right
-      // `{ ...options }` and `Object.assign({}, options)` copy what was there;
-      // the names they carry are the earlier value's, so it stays readable.
-      const copies = copiesValue(target)
-      if (copies || parent.operator !== '=') kept(target)
-      else written(target)
+      if (parent.operator === '=') written(parent.right)
+      else {
+        const site = writeSite(parent.right)
+        if (site && (!logical || site.scopes.length > logical.site.scopes.length || site.at > logical.site.at)) {
+          logical = { node: parent, site }
+        }
+      }
     }
-    return value ?? fallback
-  }
-
-  /**
-   * The object literal a node stands for, following bindings this file writes.
-   * Anything else (a call, an import, a parameter) has no shape to read here.
-   */
-  const objectValue = (node, depth) => {
-    let current = unassert(node)
-    for (let step = depth; step < 8 && current?.type === 'Identifier'; step += 1) {
-      current = unassert(valueOf(current, step + 1))
+    // `x ??= a` takes `a` only when the left is null or undefined, `x ||= a`
+    // when it is falsy, `x &&= a` when it is truthy.
+    const left = unassert(value)
+    const after =
+      !taken ||
+      logical?.site.scopes.length > taken.length ||
+      (logical?.site.scopes.length === taken.length && logical.site.at > taken.at)
+    if (logical && after) {
+      const target = logical.node.right
+      if (logical.node.operator === '??=' && isNullish(left)) value = target
+      if (logical.node.operator === '||=' && isFalsy(left)) value = target
+      if (logical.node.operator === '&&=' && isTruthy(left)) value = target
     }
-    return current?.type === 'ObjectExpression' ? current : undefined
+    return value ?? null
   }
 
   /**
@@ -511,26 +626,31 @@ function bindingResolver(scopeManager) {
    */
   const destructuredValue = (pattern, init, name, depth) => {
     if (pattern?.type !== 'ObjectPattern' || depth > 8) return undefined
-    const source = objectValue(init, depth + 1)
+    const entries = objectEntries(init, (node) => valueOf(node, depth + 1), depth + 1)
+    const last = (key) => entries.filter((entry) => entry.key === key).at(-1)
     for (const property of pattern.properties ?? []) {
-      // `{ [key]: options }` names a property this cannot know; a numeric key
-      // is not the name either.
-      if (property.type !== 'Property' || property.computed) continue
-      const key = propertyName(property.key)
+      if (property.type !== 'Property') continue
+      // `{ [key]: options }` names a property this cannot know; `{ ['options']:
+      // options }` and `{ 0: options }` name one it can.
+      const key = property.computed && property.key?.type !== 'Literal' ? undefined : propertyName(property.key)
+      if (key === undefined) continue
       const value = property.value
-      if (value?.type === 'ObjectPattern') {
-        const nested = source?.properties?.find(
-          (candidate) => candidate.type === 'Property' && propertyName(candidate.key) === key
-        )
-        const found = destructuredValue(value, nested?.value, name, depth + 1)
+      if (
+        value?.type === 'ObjectPattern' ||
+        (value?.type === 'AssignmentPattern' && value.left?.type === 'ObjectPattern')
+      ) {
+        const nested = value.type === 'AssignmentPattern' ? value.left : value
+        const matched = last(key)
+        // `{ a: { options } = {} }` uses the pattern's own default only when
+        // the source it is read from has no `a`.
+        const source = matched?.value ?? (value.type === 'AssignmentPattern' ? value.right : undefined)
+        const found = destructuredValue(nested, source, name, depth + 1)
         if (found !== undefined) return found
         continue
       }
       const bound = value?.type === 'AssignmentPattern' ? value.left?.name : value?.name
-      if (bound !== name || key === undefined) continue
-      const matched = source?.properties?.find(
-        (candidate) => candidate.type === 'Property' && propertyName(candidate.key) === key
-      )
+      if (bound !== name) continue
+      const matched = last(key)
       if (matched) return matched.value
       // `const { options = { … } } = src` falls back to the default.
       return value?.type === 'AssignmentPattern' ? value.right : null
@@ -564,6 +684,9 @@ function resolveValue(node, resolve, seen = new Set()) {
       continue
     }
     if (current.type === 'CallExpression') {
+      // `Object.assign(target, …)` builds the object from all its arguments;
+      // `objectEntries` reads it, so the call is its own value here.
+      if (isObjectAssign(current)) return current
       current = unassert((current.arguments ?? [])[0])
       continue
     }
@@ -587,7 +710,7 @@ function componentOptions(body, resolve) {
   const options = []
   const take = (node) => {
     const value = resolveValue(node, resolve)
-    if (value?.type === 'ObjectExpression') options.push(value)
+    if (value?.type === 'ObjectExpression' || isObjectAssign(value)) options.push(value)
   }
   for (const node of statements) {
     if (node.type === 'ExportDefaultDeclaration') take(node.declaration)
@@ -636,26 +759,24 @@ const OPTION_CONTAINERS = new Set(['props', 'methods', 'computed', 'inject'])
 
 /** The quoted names an options object declares to its template. */
 function collectOptions(options, into, resolve, seen) {
-  if (seen.has(options)) return
-  seen.add(options)
-  for (const property of options.properties) {
-    // `export default { ...base }` keeps every name the spread object has.
-    if (property.type === 'SpreadElement') {
-      const spread = resolveValue(property.argument, resolve)
-      if (spread?.type === 'ObjectExpression') collectOptions(spread, into, resolve, seen)
-      continue
-    }
-    if (property.type !== 'Property') continue
-    const name = propertyName(property.key)
-    if (name === undefined) continue
+  const object = unassert(options)
+  if (!object || seen.has(object)) return
+  seen.add(object)
+  // `export default { ...base }` keeps every name the spread object has, and a
+  // property written after the spread overrides it.
+  const fields = new Map()
+  for (const entry of objectEntries(object, resolve)) {
+    if (entry.key !== undefined) fields.set(entry.key, entry)
+  }
+  for (const [name, entry] of fields) {
     if (OPTION_CONTAINERS.has(name)) {
-      for (const declared of containerNames(property.value, resolve)) into.add(declared)
+      for (const declared of containerNames(entry.value, resolve)) into.add(declared)
     } else if (name === 'data' || name === 'setup') {
-      for (const declared of returnedNames(property.value, resolve)) into.add(declared)
+      for (const declared of returnedNames(entry.value, resolve)) into.add(declared)
     } else if (name === 'mixins' || name === 'extends') {
       // A mixin's props merge into this component's, so the template can call
       // them. A mixin is often a variable, so resolve each one first.
-      const value = resolveValue(property.value, resolve)
+      const value = resolveValue(entry.value, resolve)
       const mixins = value?.type === 'ArrayExpression' ? value.elements : [value]
       for (const mixin of mixins) {
         const resolved = resolveValue(mixin, resolve)
