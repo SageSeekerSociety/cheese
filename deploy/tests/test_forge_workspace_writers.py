@@ -37,6 +37,18 @@ class WorkspaceWritersTest(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 workspace_users(root / "workspaces", root / "missing-proc")
 
+    def test_missing_workspace_root_does_not_certify_no_writers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proc = root / "proc"
+            proc.mkdir()
+            with self.assertRaises(FileNotFoundError):
+                workspace_users(root / "missing-workspaces", proc)
+            not_a_directory = root / "not-a-directory"
+            not_a_directory.write_text("")
+            with self.assertRaises(FileNotFoundError):
+                workspace_users(not_a_directory, proc)
+
 
 if __name__ == "__main__":
     unittest.main()

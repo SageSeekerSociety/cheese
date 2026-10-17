@@ -7,6 +7,10 @@ import sys
 
 def workspace_users(root: Path, proc: Path = Path("/proc")) -> list[int]:
     root = root.resolve()
+    if not root.is_dir():
+        # An unmounted or mistyped root has no users to find, which must not
+        # read as "nobody is writing": the migration would start on a live tree.
+        raise FileNotFoundError(root)
     users = []
     for process in proc.iterdir():
         if not process.name.isdecimal() or int(process.name) == os.getpid():
@@ -22,7 +26,10 @@ def workspace_users(root: Path, proc: Path = Path("/proc")) -> list[int]:
 
 
 if __name__ == "__main__":
-    users = workspace_users(Path(sys.argv[1]))
+    try:
+        users = workspace_users(Path(sys.argv[1]))
+    except FileNotFoundError as error:
+        raise SystemExit(f"cannot check workspace users: {error}")
     if users:
         raise SystemExit(
             "Legacy workspace users remain: PIDs " + ", ".join(map(str, users))
