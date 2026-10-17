@@ -702,9 +702,16 @@ useCommands(() => [
 .member-row {
   cursor: pointer;
 }
-/* The name is a plain-text button (the keyboard's way to the profile); keep it reading like the text it was. */
+
+/* The name is a plain-text button (the keyboard's way to the profile). The raw-button
+   reset in style.css (`button:not(.v-btn)`, font and colour inherit) outranks `.t-title`,
+   so the title's size, weight and ink are restated here, where the scoped selector wins. */
 .member-name {
   min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  color: var(--ink);
   text-align: start;
 }
 

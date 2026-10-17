@@ -257,7 +257,7 @@ const activeDescendant = computed(() =>
   <Teleport to="body">
     <Transition name="palette">
       <div v-if="paletteOpen" class="palette-layer" :class="{ 'palette-layer--page': !mdAndUp }">
-        <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- clicking outside closes the palette; Escape does the same -->
+        <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- clicking outside closes the palette; Escape closes it too, once it has cleared the query, the action list or ask mode -->
         <div v-if="mdAndUp" class="palette-scrim" @click="close" />
         <div class="palette" role="dialog" aria-modal="true" :aria-label="t('navigation.palette.open')">
           <PaletteInput

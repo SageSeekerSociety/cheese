@@ -96,12 +96,12 @@ function moveTab(event: KeyboardEvent) {
         :key="item.id"
         type="button"
         role="tab"
-        @keydown="moveTab"
         class="uses-tab"
         :aria-selected="roleId === item.id"
         :tabindex="roleId === item.id ? 0 : -1"
         aria-controls="use-case-panel"
         @click="roleId = item.id"
+        @keydown="moveTab"
       >
         {{ item.label }}
       </button>
