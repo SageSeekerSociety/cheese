@@ -8,6 +8,7 @@
 #   - `stop --purge` stops an older server of ours before deleting its data;
 #   - a Redis of ours that is not the pinned Valkey is replaced when it has no
 #     other clients, and refused with the count when it has some;
+#   - `servers` starts both servers and installs no harness builds;
 #   - with CHEESEX_DEV_REDIS=fakeredis (what a host without cc falls back to)
 #     redis is the fakeredis server: started once, recognised as ours on the
 #     next start, and stopped by `stop`;
@@ -370,6 +371,26 @@ mv "$stub/lib/plpgsql.so.away" "$stub/lib/plpgsql.so"; mv "$stub/lib/plpgsql.dyl
 # 10. No Valkey to build: redis is fakeredis, a process of ours found again by
 #     its pid file. `uv` is a stand-in that runs a listener answering PING
 #     for that one command and defers to the real uv for the rest.
+
+# `servers` is for a stack that runs the app: both servers and where psql is,
+# and no harness builds, so a tool cache without them is not touched.
+d="$(new_data_dir servers)"; port="$(free_port)"; redis_port="$(free_port)"
+saved_tools="$tools"; tools="$sandbox/no-harness"
+dev_db "$d" "$port" servers
+tools="$saved_tools"
+check servers "servers succeeds" [ "$status" = 0 ]
+check servers "stdout carries only export lines" stdout_is_only_exports
+check servers "it says where psql is" grep -q "^export PG_BIN=" "$sandbox/out"
+check servers "no harness build is exported" bash -c '! grep -q CHEESE_TEST_ "$1"' _ "$sandbox/out"
+check servers "nothing was installed into the tool cache" [ ! -e "$sandbox/no-harness/harness" ]
+# From the pid file itself: `alive 0` is true (kill -0 0 is this shell's own group).
+pid_file_alive() { [ -s "$1" ] && kill -0 "$(head -1 "$1")" 2>/dev/null; }
+check servers "postgres is up" pid_file_alive "$d/pg17/postmaster.pid"
+# The Valkey stand-in records each server it starts in $state.
+check servers "redis is up" [ -e "$state/redis-$redis_port" ]
+dev_db "$d" "$port" stop
+unset redis_port
+
 cat >"$stub/fake_redis_server.py" <<'PY'
 import os, signal, socket, sys
 args = dict(zip(sys.argv[1::2], sys.argv[2::2]))
