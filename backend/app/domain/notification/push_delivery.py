@@ -107,6 +107,7 @@ async def drain_push_queue(sessions: SessionFactory) -> dict[str, int]:
     return await drain_channel(
         sessions,
         channel="push",
+        sender=send_push,
         batch_size=settings.notification_push_batch_size,
         max_attempts=max(1, settings.notification_push_max_retries),
     )
