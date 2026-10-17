@@ -65,27 +65,6 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Describe the box before the run
-        run: |
-          mkdir -p "$RUNNER_TEMP/probe"
-          {
-            echo "at=$(date -u +%FT%TZ)"
-            echo "host=$(hostname)"
-            echo "slot=${CHEESE_CI_SLOT:-0}"
-            echo "workers=${PROBE_WORKERS:-${CHEESE_CI_TEST_WORKERS:-auto}}"
-            echo "cores=$(nproc)"
-            lscpu 2>/dev/null | grep -E 'Model name|^CPU\(s\)' || true
-            free -m
-            cat /proc/swaps || echo "(no swap configured)"
-            df -h / "$RUNNER_TEMP" /tmp || true
-            echo "--- runner identities on this machine"
-            grep -h '"agentName"' "$HOME"/actions-runner*/.runner 2>/dev/null || true
-            echo "--- resident services"
-            docker ps --format '{{.Names}} {{.Status}}' || true
-            echo "--- kernel OOM kills before this run"
-            grep -E '^oom_kill ' /proc/vmstat || true
-          } | tee "$RUNNER_TEMP/probe/before.txt"
-
       # The same slot scoping as test.yml. The slot number comes from the
       # runner installation's own .env (provision.sh writes it), so two slots on
       # this box never share a Postgres database or a Valkey index block.
@@ -106,8 +85,31 @@ jobs:
           echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
           echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
 
+      # After the slot step, so the worker count it prints is the effective one
+      # rather than the runner's raw .env value.
+      - name: Describe the box before the run
+        run: |
+          mkdir -p "$RUNNER_TEMP/probe"
+          {
+            echo "at=$(date -u +%FT%TZ)"
+            echo "host=$(hostname)"
+            echo "slot=${CHEESE_CI_SLOT:-0}"
+            echo "workers=${CHEESE_CI_TEST_WORKERS}"
+            echo "cores=$(nproc)"
+            lscpu 2>/dev/null | grep -E 'Model name|^CPU\(s\)' || true
+            free -m
+            cat /proc/swaps || echo "(no swap configured)"
+            df -h / "$RUNNER_TEMP" /tmp || true
+            echo "--- runner identities on this machine"
+            grep -h '"agentName"' "$HOME"/actions-runner*/.runner 2>/dev/null || true
+            echo "--- resident services"
+            docker ps --format '{{.Names}} {{.Status}}' || true
+            echo "--- kernel OOM kills before this run"
+            grep -E '^oom_kill ' /proc/vmstat || true
+          } | tee "$RUNNER_TEMP/probe/before.txt"
+
       # Everything below is the integration shard's own work in test.yml,
-      # minus the two prerequisites that the pool must not acquire for this
+      # minus the two prerequisites that would provision the pool for this
       # probe: `ensure-apt.sh` (bubblewrap and friends) and the npm-installed
       # pinned harness binaries. Tests that need those fail at their own
       # prerequisite check; the resource profile is the measurement, so their

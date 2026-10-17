@@ -31,8 +31,8 @@ the pool as closely as the pool allows:
   databases; the tests' default capacity of 16 rejects the slot-1 block during
   collection, before any test runs.
 
-Two prerequisites from `test.yml` were deliberately not recreated, because the
-pool must not acquire software for this probe:
+Two prerequisites from `test.yml` were deliberately not recreated, so the probe
+does not provision the machines:
 
 - `ensure-apt.sh` (bubblewrap, iproute2, iptables, lsof, ripgrep, tmux, zsh).
   No integration case in this shard failed for a missing one.
@@ -41,6 +41,10 @@ pool must not acquire software for this probe:
   check: three `CHEESE_TEST_PI` setup errors and one `CHEESE_TEST_CLAUDE`
   failure. Their runner time is part of the measurement; their count is
   reported rather than hidden.
+
+The one tool the workflow does fetch is `uv`, through the same pinned
+`setup-uv` step `test.yml` uses. It lands in the runner's tool cache, not in
+the system, and the dependency environment is per-slot under `RUNNER_TEMP`.
 
 ## The box
 
@@ -63,7 +67,7 @@ The box had 1.45 GiB in use and 0.96 GiB of swap in use before the single run.
 
 | Configuration | Wall time (pytest) | Peak per-slot memory | Box memory low-water mark | Swap free at the low point | OOM kills |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| One slot, 4 workers | 7m23s (449.1 s) | 3.66 GiB | 1.15 GiB available | 3.12 GiB | 0 |
+| One slot, 4 workers | 7m23s (443.6 s) | 3.66 GiB | 1.15 GiB available | 3.12 GiB | 0 |
 | Both slots, 4 workers each | 10m20s / 10m03s | 2.93 / 2.40 GiB | 332 MiB available | 16–32 KB | 1 |
 | Both slots, 2 workers each | 12m51s / 12m47s | 2.24 / 2.43 GiB | 574 MiB available | 2.07 GiB | 0 |
 
@@ -76,7 +80,8 @@ resident Postgres, which is in a container of its own, and the other slot.
 ### One slot, four workers
 
 - `uv sync` 4.7 s (warm uv cache; 51.6 MB peak RSS), migrations 13.5 s
-  (144.2 MB), pytest 449.1 s.
+  (144.2 MB), pytest 443.6 s (the timed wrapper reports 449.1 s, which
+  includes starting the observer).
 - 1,193 cases assigned; 1,189 passed, 1 failed, 3 errors, 5 reruns. The four
   failures are the missing pinned builds above; one timing case in
   `tests/integration/test_ask_after_an_unheard_delivery.py` failed once and
@@ -96,7 +101,7 @@ resident Postgres, which is in a container of its own, and the other slot.
 Both jobs were pinned to the same box and started within the same second, so
 they occupied slots 0 and 1 together.
 
-- Pytest wall time 620.3 s and 603.2 s — 38% and 34% longer than the single
+- Pytest wall time 620.3 s and 603.2 s — 40% and 36% longer than the single
   slot. Four tests on slot 0 and two on slot 1 went over the integration
   layer's 30 s ceiling (42.8–53.7 s each) and were rerun.
 - `MemAvailable` bottomed at 339,668 KB (332 MiB) at 16:00:18Z. Swap free fell
@@ -126,8 +131,8 @@ This is the mitigation the four-worker result calls for: half the pytest
 workers per slot, everything else unchanged. Both jobs again occupied slots 0
 and 1 of box 1.
 
-- Pytest wall time 771.8 s and 776.8 s (12m51s and 12m47s) — 72% and 73% longer
-  than one slot at four workers, and 24–29% longer than the four-worker pair.
+- Pytest wall time 771.0 s and 767.9 s (12m51s and 12m47s) — 74% and 73% longer
+  than one slot at four workers, and 24–27% longer than the four-worker pair.
 - Both slots executed all 1,193 assigned cases: 1,189 passed, 1 failed, 3
   errors, 4 reruns each. No worker was lost, no `node down`, and no test went
   over the 30 s layer ceiling. The four failures are the missing pinned builds
@@ -156,7 +161,7 @@ What the two-slot configuration needs:
    reproduces the OOM in `docs/infrastructure.md`.
 2. **One shard per slot, at most two shards per box.** Each slot's cgroup peak
    was 2.24–2.43 GiB, and the resident Postgres held 1.46 GiB. The box's
-   `MemAvailable` low-water mark was 574 MiB and 2.07 GiB of swap was in use.
+   `MemAvailable` low-water mark was 574 MiB and 1.93 GiB of swap was in use.
 3. **Five shards still fit in one round.** The pool has three boxes, six slots,
    so the current five integration shards can run concurrently with one slot
    spare, each finishing in about 13 minutes.
@@ -200,7 +205,7 @@ report, the pytest log, the shard selection and `resources/` as an artifact.
   Proxmox disk; a second box could differ, and the disk is not measured here.
 - The runs were sequential on the same box. The two-worker pair started with
   1.06 GiB of swap already in use from the four-worker pair before it; its
-  peak (2.07 GiB) is still below the 4 GiB file, but a fresh box could show a
+  peak (1.93 GiB) is still below the 4 GiB file, but a fresh box could show a
   slightly different low-water mark.
 - The `uv` cache was warm (sync took 0.4–4.7 s). A cold cache adds wall time,
   not memory.
@@ -213,7 +218,7 @@ report, the pytest log, the shard selection and `resources/` as an artifact.
   summary line printed `oom_kill_delta=0`; the kill above is read from
   `dmesg` and from the raw `box-memory.log` samples (18 → 19). The workflow's
   helper is corrected in the delivered version.
-- `before.txt` printed the runner's `.env` worker count (`workers=4`). In the
-  two-worker runs the effective count is what the slot step wrote; the pytest
-  log shows it as `created: 2/2 workers`. The delivered workflow prints the
-  effective value.
+- In the probe runs, `before.txt` printed the runner's `.env` worker count
+  (`workers=4`); the two-worker runs' effective count is visible in the pytest
+  log as `created: 2/2 workers`. The delivered workflow scopes the slot before
+  describing the box, so it prints the effective value.
