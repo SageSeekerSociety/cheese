@@ -32,7 +32,8 @@ For every open, started task in the channel it reads platform facts and the PR's
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
                 rounds), or for --stopped-min minutes (default 3) when the platform says
-                `started`, unless the line is parked, accepted, or classified as 连续失败、出队
+                `started`, `bounced`, or `checks_failed`, unless the line is parked, accepted,
+                or classified as 连续失败、出队
                 or 可采纳未采纳. A heartbeat is the newest of the line's last message, the last
                 event block its seat wrote (a command it ran) and, when the platform gives
                 it, the running turn's last output (`last_output_at` on the task row). A
@@ -1119,7 +1120,8 @@ def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None, stopped_mi
                                              pulse["last_message_at"],
                                              pulse["last_message"] or "（还没有消息）"), w)
         else:
-            short_stall = (turn_running(t) is False and phrase == "started"
+            short_stall = (turn_running(t) is False
+                           and phrase in {"started", "bounced", "checks_failed"}
                            and card.get("status") != "accepted"
                            and not reported.intersection({"连续失败", "出队", "可采纳未采纳"}))
             threshold = stopped_min if short_stall else silent
@@ -2016,6 +2018,10 @@ def _self_test_sweep():
          kinds(5, done, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
         ("sweep：平台等检查的交付态 5 分钟没新消息，不触发 stopped-min",
          kinds(5, done, row={"presentation": {"phrase": "awaiting_checks"}}), []),
+        ("sweep：被退回、需要座位处理时 5 分钟报停摆",
+         kinds(5, done, row={"presentation": {"phrase": "bounced"}}), ["长时间无动静"]),
+        ("sweep：检查红需要座位修复时 5 分钟报停摆",
+         kinds(5, done, row={"presentation": {"phrase": "checks_failed"}}), ["长时间无动静"]),
         ("sweep：running 任务 5 分钟没消息，不受 stopped-min 影响",
          kinds(5, call, row={"presentation": {"phrase": "running"}}), []),
         ("sweep：本轮已归入连续失败时不触发 3 分钟停摆",

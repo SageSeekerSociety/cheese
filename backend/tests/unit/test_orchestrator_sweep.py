@@ -15,7 +15,7 @@ sweep = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sweep)
 
 
-def task_rows(monkeypatch, phrase, event_meta):
+def task_rows(monkeypatch, phrase, event_meta, event_minutes=5):
     now = datetime.now(UTC)
 
     def at(minutes):
@@ -36,7 +36,7 @@ def task_rows(monkeypatch, phrase, event_meta):
         },
         "author=system": {"data": []},
         "author=accept": {"data": []},
-        "kind=event": {"data": [{"created_at": at(5), "meta": event_meta}]},
+        "kind=event": {"data": [{"created_at": at(event_minutes), "meta": event_meta}]},
     }
     monkeypatch.setattr(
         sweep,
@@ -60,6 +60,20 @@ def test_delivering_task_uses_regular_quiet_threshold(monkeypatch):
     rows = task_rows(monkeypatch, "awaiting_checks", event_meta)
 
     assert rows == []
+    rows = task_rows(monkeypatch, "awaiting_checks", event_meta, event_minutes=40)
+
+    assert [row["kind"] for row in rows] == ["长时间无动静"]
+    assert rows[0]["waited_min"] == 40
+
+
+def test_owner_action_stopped_tasks_use_short_patrol_threshold(monkeypatch):
+    event_meta = {"tool": "Bash", "output_bytes": 10}
+
+    for phrase in ("bounced", "checks_failed"):
+        rows = task_rows(monkeypatch, phrase, event_meta)
+
+        assert [row["kind"] for row in rows] == ["长时间无动静"]
+        assert rows[0]["waited_min"] == 5
 
 
 def test_running_task_ignores_short_patrol_threshold(monkeypatch):
