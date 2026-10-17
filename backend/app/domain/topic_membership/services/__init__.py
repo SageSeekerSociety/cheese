@@ -43,6 +43,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.project_roles import may
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -57,7 +58,6 @@ from app.domain.identity.handles import (
     agent_instance_handle,
 )
 from app.domain.identity.services import IdentityService
-from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import Permission
 from app.domain.topic.models import (
     Topic,
@@ -67,6 +67,7 @@ from app.domain.topic.models import (
     TopicStatus,
 )
 from app.domain.topic.repositories import TopicRepository
+from app.domain.topic_membership import project_rows
 from app.domain.topic_membership.ports import ProjectTeam, SeatProject
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.schemas import TopicMemberOut
@@ -91,9 +92,6 @@ class TopicMemberService:
         """Does ``actor`` manage this channel: its creator, or someone who
         manages the project? A team always has an owner, so every channel has
         someone who can."""
-        # deferred-import: cycle membership.services -> topic_membership.services
-        from app.domain.membership.services import MemberService
-
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
         if topic.members_only and member is None:
             # Nobody manages a private channel they cannot see.
@@ -102,8 +100,8 @@ class TopicMemberService:
             member is not None and member.role == TopicRole.owner
         ) or await self.owner_of(topic.id) == actor:
             return True
-        return await MemberService(self._session).manages(
-            topic.project_id, actor, Permission.manage_channels
+        return await may(
+            self._session, topic.project_id, actor, Permission.manage_channels
         )
 
     async def require_manager(self, topic_id: uuid.UUID, actor: str) -> Topic:
@@ -164,11 +162,8 @@ class TopicMemberService:
         batch: whoever manages the project manages all of them."""
         if not topics:
             return set()
-        # deferred-import: cycle membership.services -> topic_membership.services
-        from app.domain.membership.services import MemberService
-
-        if await MemberService(self._session).manages(
-            topics[0].project_id, actor, Permission.manage_channels
+        if await may(
+            self._session, topics[0].project_id, actor, Permission.manage_channels
         ):
             return {t.id for t in topics}
         owned = await self._repo.topic_ids_for_member(
@@ -333,10 +328,12 @@ class TopicMemberService:
         topic = await self._topics.get(topic_id)
         if topic is None:
             return None
-        project = await ProjectRepository(self._session).get(topic.project_id)
-        if project is None or project.default_agent_instance_id is None:
+        default = await project_rows.default_agent_instance_id(
+            self._session, topic.project_id
+        )
+        if default is None:
             return None
-        return agent_instance_handle(project.default_agent_instance_id)
+        return agent_instance_handle(default)
 
     async def migrate_shared_agent_seat(self, topic_id: uuid.UUID) -> None:
         return await housekeeping.migrate_shared_agent_seat(self, topic_id)
@@ -461,16 +458,13 @@ class TopicMemberService:
         """May ``actor`` archive this channel or name who manages it without
         being in it: its owner, or whoever manages the project. Seeing what is
         said in a private channel still takes a seat (:meth:`manages`)."""
-        # deferred-import: cycle membership.services -> topic_membership.services
-        from app.domain.membership.services import MemberService
-
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
         if (
             member is not None and member.role == TopicRole.owner
         ) or await self.owner_of(topic.id) == actor:
             return True
-        return await MemberService(self._session).manages(
-            topic.project_id, actor, Permission.manage_channels
+        return await may(
+            self._session, topic.project_id, actor, Permission.manage_channels
         )
 
     async def require_administrator(self, topic_id: uuid.UUID, actor: str) -> Topic:
@@ -525,16 +519,13 @@ class TopicMemberService:
         """Whoever manages the project joins a private channel they are not in.
         Nobody else joins one: its people bring the others in. Returns whether
         they were seated now, so the caller says so in the channel."""
-        # deferred-import: cycle membership.services -> topic_membership.services
-        from app.domain.membership.services import MemberService
-
         topic = await self._channel(topic_id)
         if not topic.members_only:
             raise NotFoundError("Topic not found")
         if topic.status == TopicStatus.archived:
             raise ValidationError(say("channelArchivedNoJoin"))
-        if not await MemberService(self._session).manages(
-            topic.project_id, actor, Permission.manage_channels
+        if not await may(
+            self._session, topic.project_id, actor, Permission.manage_channels
         ):
             raise NotFoundError("Topic not found")
         if await self._repo.get(topic_id=topic_id, member_handle=actor) is not None:
@@ -555,9 +546,6 @@ class TopicMemberService:
         manages the project, as Slack leaves it to a workspace's owners and
         admins. 综合 is everyone in the project and is never private.
         """
-        # deferred-import: cycle membership.services -> topic_membership.services
-        from app.domain.membership.services import MemberService
-
         topic = await self._channel(topic_id)
         if topic.kind == TopicKind.root:
             raise ValidationError(say("channelGeneralNotPrivate"))
@@ -566,9 +554,9 @@ class TopicMemberService:
         if members_only:
             await self.require_manager(topic_id, actor)
             await self._ensure_member(topic_id, actor, role=TopicRole.member)
-        elif not await self.manages(topic, actor) or not await MemberService(
-            self._session
-        ).manages(topic.project_id, actor, Permission.manage_channels):
+        elif not await self.manages(topic, actor) or not await may(
+            self._session, topic.project_id, actor, Permission.manage_channels
+        ):
             raise ForbiddenError(say("channelPublicProjectManagerOnly"))
         topic.members_only = members_only
         await self._session.flush()
@@ -576,12 +564,7 @@ class TopicMemberService:
 
     async def may_open_channels(self, project_id: uuid.UUID, handle: str) -> bool:
         """Whether ``handle`` may open a new channel here (#3830)."""
-        # deferred-import: cycle membership.services -> topic_membership.services
-        from app.domain.membership.services import MemberService
-
-        return await MemberService(self._session).manages(
-            project_id, handle, Permission.create_channels
-        )
+        return await may(self._session, project_id, handle, Permission.create_channels)
 
     async def _on_project(
         self, project_id: uuid.UUID, handle: str, *, team: ProjectTeam
