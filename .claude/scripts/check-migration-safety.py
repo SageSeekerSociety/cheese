@@ -1050,7 +1050,9 @@ def main() -> int:
         print(f"PASS: no migrations added relative to {args.base}")
         return 0
 
-    migrations = {p: Path(p).read_text(encoding="utf-8") for p in paths if Path(p).is_file()}
+    # `utf-8-sig` drops a BOM: Python's file reader tolerates one, but `ast.parse`
+    # on the decoded text rejects U+FEFF, which would now block a valid migration.
+    migrations = {p: Path(p).read_text(encoding="utf-8-sig") for p in paths if Path(p).is_file()}
     findings = analyze(migrations, base_models)
     errors = [f for f in findings if f.is_error]
     for finding in findings:
@@ -1522,6 +1524,21 @@ def self_test() -> int:
         check("a migration that does not parse is refused", broken_run.returncode, 1)
         check("... and it is named", "[unparseable]" in broken_run.stdout, True)
         check("... and no verdict is printed", "PASS" in broken_run.stdout, False)
+
+        # A BOM is valid to Python's file reader; it must not read as unparseable.
+        (versions / "broken.py").unlink()
+        (versions / "bom.py").write_bytes(
+            b"\xef\xbb\xbf" + (_HEAD + "\ndef upgrade() -> None:\n    pass\n").encode(),
+        )
+        bom_run = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--base", "main"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+            env=lab_env,
+        )
+        check("a BOM-prefixed migration is read", bom_run.returncode, 0)
+        check("... and is not called unparseable", "unparseable" in bom_run.stdout, False)
     finally:
         shutil.rmtree(lab, ignore_errors=True)
 
