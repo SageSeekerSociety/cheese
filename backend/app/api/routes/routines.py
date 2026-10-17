@@ -308,7 +308,7 @@ async def list_routines(
     if topic is not None:
         place = await place_or_404(db, topic)
         if place.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         actor = await _viewer(db, resolver, project_id, place.room_id)
         rows = await RoutineService(db).list(project_id, topic_id=place.room_id)
     else:
@@ -328,7 +328,7 @@ async def create_routine(
     actor = await _viewer(db, resolver, place.project_id, topic_id)
     room = await TopicService(db).get(place.room_id)
     if room is None:
-        raise NotFoundError("Topic not found")
+        raise NotFoundError(say("topicNotFound"))
     await _own_agent_works_for(
         db,
         place.project_id,
