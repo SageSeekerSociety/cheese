@@ -34,6 +34,7 @@ BASELINE: dict[tuple[str, str], int] = {
     ("frontend/src/lib/adminPool.spec.ts", "4 张账号：1 张冷却中、1 张已停用、1 张状态未知，最早 14:20 恢复"): 1,
     ("frontend/src/lib/adminPool.spec.ts", "Cooling until 02:20 PM · 2 consecutive failures"): 1,
     ("frontend/src/views/tasks/composables/useAssistant.spec.ts", "Cheese can't answer right now. Try again later."): 1,
+    ("frontend/src/views/account/attemptWait.spec.ts", "Too many attempts. Try again in ${wait}."): 1,
 }
 
 SKIP_DIRS = {
@@ -47,7 +48,7 @@ SKIP_DIRS = {
     ".next",
     ".turbo",
 }
-TEST_SUFFIXES = {".py", ".js", ".jsx", ".mjs", ".ts", ".tsx", ".vue"}
+TEST_SUFFIXES = {".py", ".js", ".jsx", ".cjs", ".mjs", ".ts", ".tsx", ".cts", ".mts", ".vue"}
 TOKEN_RE = re.compile(
     r"(?P<space>\s+)|(?P<line_comment>//[^\n]*)|(?P<block_comment>/\*.*?\*/)|"
     r"(?P<string>`(?:\\.|[^`\\])*`|'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")|"
@@ -58,12 +59,26 @@ TOKEN_RE = re.compile(
 HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 PATH_RE = re.compile(
-    r"[/\\]|\b(?:https?|wss?)://|\b[\w.-]+\.(?:md|py|ts|tsx|js|jsx|json|txt)\b",
+    r"\b(?:https?|wss?)://|(?:^|[\s(\"'`])(?:\.\.?/|/)(?:[\w.-]+/)*[\w.-]+|"
+    r"(?:^|[\s(\"'`])[\w.-]+(?:/[\w.-]+){2,}|"
+    r"\b[\w.-]+\.(?:md|py|ts|tsx|js|jsx|cjs|mjs|json|txt|vue|docx)\b",
     re.IGNORECASE,
 )
 EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
 COMMIT_TITLE_RE = re.compile(r"^(?:feat|fix|chore|docs|refactor|test|build|ci)(?:\([^)]*\))?: ", re.IGNORECASE)
 KEY_VALUE_RE = re.compile(r"\b[\w-]+=\S+")
+IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
+STATUS_CODES_RE = re.compile(r"(?:HTTP\s*)?\d{3}(?:\s+\d{3})*\Z", re.IGNORECASE)
+SHELL_COMMAND_RE = re.compile(r"\b(?:git\s+(?:fetch|merge|checkout|switch|status|diff)\b|npm\b|pnpm\b|python3?\b|task\b)", re.IGNORECASE)
+JS_ASSERTION_METHODS = {
+    "toBe",
+    "toEqual",
+    "toStrictEqual",
+    "equal",
+    "strictEqual",
+    "deepEqual",
+    "deepStrictEqual",
+}
 
 
 def _test_files(root: Path) -> list[Path]:
@@ -100,6 +115,10 @@ def _is_explanatory_sentence(value: str) -> bool:
         or EMAIL_RE.search(value)
         or COMMIT_TITLE_RE.match(value)
         or KEY_VALUE_RE.search(value)
+        or SHELL_COMMAND_RE.search(value)
+        or value.startswith("<")
+        or IDENTIFIER_RE.fullmatch(value)
+        or STATUS_CODES_RE.fullmatch(value)
         or value.startswith(("Co-authored-by:", "::error::", "## "))
     ):
         return False
@@ -123,15 +142,22 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
         return []
     literals: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Compare):
-            continue
-        left = node.left
-        for operator, comparator in zip(node.ops, node.comparators):
-            if isinstance(operator, ast.Eq):
-                for candidate in (left, comparator):
-                    if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
-                        literals.append((candidate.lineno, candidate.value))
-            left = comparator
+        if isinstance(node, ast.Compare):
+            left = node.left
+            for operator, comparator in zip(node.ops, node.comparators):
+                if isinstance(operator, ast.Eq):
+                    for candidate in (left, comparator):
+                        if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
+                            literals.append((candidate.lineno, candidate.value))
+                left = comparator
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"assertEqual", "assertEquals"}
+        ):
+            for candidate in node.args[:2]:
+                if isinstance(candidate, ast.Constant) and isinstance(candidate.value, str):
+                    literals.append((candidate.lineno, candidate.value))
     return literals
 
 
@@ -143,11 +169,39 @@ def _decode_js_string(token: str) -> str:
         "\\t": "\t",
         "\\\\": "\\",
         "\\'": "'",
-        '\\"': '"',
+        '\\"': '\"',
     }
     for escaped, decoded in replacements.items():
         content = content.replace(escaped, decoded)
     return content
+
+
+def _is_js_string(token: str) -> bool:
+    return len(token) >= 2 and token[0] in {"'", '\"', "`"} and token[-1] == token[0]
+
+
+def _call_argument_strings(tokens: list[tuple[str, int]], open_index: int) -> list[tuple[int, str]]:
+    arguments: list[list[tuple[str, int]]] = [[]]
+    depth = 0
+    for token, line in tokens[open_index + 1 :]:
+        if token == ")" and depth == 0:
+            break
+        if token in {"(", "[", "{"}:
+            depth += 1
+        elif token in {")", "]", "}"}:
+            depth -= 1
+        if token == "," and depth == 0:
+            if len(arguments) == 2:
+                break
+            arguments.append([])
+        elif len(arguments) <= 2:
+            arguments[-1].append((token, line))
+    literals: list[tuple[int, str]] = []
+    for argument in arguments[:2]:
+        if len(argument) == 1 and _is_js_string(argument[0][0]):
+            token, line = argument[0]
+            literals.append((line, _decode_js_string(token)))
+    return literals
 
 
 def _javascript_literals(path: Path) -> list[tuple[int, str]]:
@@ -169,19 +223,19 @@ def _javascript_literals(path: Path) -> list[tuple[int, str]]:
         line += token.count("\n")
 
     literals: list[tuple[int, str]] = []
-    for index, (token, token_line) in enumerate(tokens):
-        if token in {"==", "==="} and index + 1 < len(tokens):
-            value = tokens[index + 1][0]
-            if value.startswith(("'", '"')):
-                literals.append((tokens[index + 1][1], _decode_js_string(value)))
-        if (
-            token == "."
-            and index + 3 < len(tokens)
-            and tokens[index + 1][0] == "toBe"
-            and tokens[index + 2][0] == "("
-            and tokens[index + 3][0].startswith(("'", '"'))
-        ):
-            literals.append((tokens[index + 3][1], _decode_js_string(tokens[index + 3][0])))
+    for index, (token, _) in enumerate(tokens):
+        if token in {"==", "==="}:
+            for candidate_index in (index - 1, index + 1):
+                if 0 <= candidate_index < len(tokens):
+                    candidate, candidate_line = tokens[candidate_index]
+                    if _is_js_string(candidate):
+                        literals.append((candidate_line, _decode_js_string(candidate)))
+        if token not in JS_ASSERTION_METHODS or index + 1 >= len(tokens) or tokens[index + 1][0] != "(":
+            continue
+        if index >= 3 and tokens[index - 1][0] == "." and tokens[index - 2][0] == "not":
+            continue
+        if index >= 1 and tokens[index - 1][0] == ".":
+            literals.extend(_call_argument_strings(tokens, index + 1))
     return literals
 
 
@@ -205,7 +259,6 @@ def check(root: Path) -> int:
         print(error, file=sys.stderr)
     if SCAN_ERRORS:
         return 1
-    counts = Counter((path, value) for path, _, value in findings)
     errors = 0
     allowed = Counter(BASELINE)
     for path, line, value in findings:
@@ -219,18 +272,23 @@ def check(root: Path) -> int:
             file=sys.stderr,
         )
         errors += 1
+    for (path, value), remaining in allowed.items():
+        if remaining:
+            print(f"基线项已过期或数量减少：{path}: {value!r}（缺少 {remaining} 次）", file=sys.stderr)
+            errors += remaining
     if errors:
-        print(f"测试文案断言守卫发现 {errors} 个新增问题", file=sys.stderr)
+        print(f"测试文案断言守卫发现 {errors} 个新增问题或失配基线项", file=sys.stderr)
         return 1
-    print(f"测试文案断言守卫通过（{sum(counts.values())} 个历史基线项已冻结）")
+    print(f"测试文案断言守卫通过（{sum(BASELINE.values())} 个精确历史基线项已冻结）")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
+    parser.add_argument("--root", type=Path)
     args = parser.parse_args()
-    return check(args.root.resolve())
+    root = args.root if args.root is not None else Path(__file__).resolve().parents[2]
+    return check(root.resolve())
 
 
 if __name__ == "__main__":
