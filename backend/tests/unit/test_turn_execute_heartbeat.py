@@ -190,16 +190,29 @@ async def test_the_runner_heartbeat_names_the_frame_and_its_work(tmp_path) -> No
     session.journal.close()
 
 
-def test_a_frame_survives_a_drain_and_ages_on_this_clock() -> None:
-    session = SessionRef(
-        project_id=uuid.uuid4(),
-        topic_id=uuid.uuid4(),
-        agent_handle="alice",
-        harness="claude_code",
-    )
+@pytest.mark.anyio
+async def test_every_read_path_keeps_the_heartbeat() -> None:
+    """The heartbeat is taken at the one public entry, not only at a helper:
+    an ordinary read, a held (asking) read, a hurried read and a read given
+    way to (cancelled from outside and re-read) all carry it. `drain` clears
+    `heard` at the start of every pass; the frame must survive that too."""
+    calls: list[dict] = []
+    held = asyncio.Event()
 
     async def call(method: str, params: dict) -> dict:
-        return {}
+        calls.append(dict(params))
+        if params.get("hold"):
+            held.set()
+            await asyncio.Event().wait()
+        return {
+            "heartbeat": {
+                "session_id": "session-1",
+                "work_id": f"turn-{len(calls)}",
+                "last_frame_kind": "assistant_block",
+                # The runner measured 4 s ago on its own monotonic clock.
+                "last_frame_age_s": 4.0,
+            }
+        }
 
     async def consume(*args, **kwargs) -> None:
         return None
@@ -207,26 +220,49 @@ def test_a_frame_survives_a_drain_and_ages_on_this_clock() -> None:
     async def activity(*args, **kwargs) -> None:
         return None
 
+    session = SessionRef(
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        agent_handle="alice",
+        harness="claude_code",
+    )
     subscription = Subscription(session, Path("/tmp"), call, consume, activity)
     try:
-        # The runner measured 4 s ago on its own monotonic clock.
-        subscription._heard_frame(
-            {
-                "heartbeat": {
-                    "session_id": "session-1",
-                    "work_id": "turn-1",
-                    "last_frame_kind": "assistant_block",
-                    "last_frame_age_s": 4.0,
-                }
-            }
-        )
-        # `drain` clears `heard` at the start of every pass; the frame must not
-        # go with it, or a quiet session's last frame would vanish.
+        # Ordinary: no wait to merge, answered at once.
+        await subscription.read("events", {"after": 0})
+        assert calls[-1] == {"after": 0}
+        assert subscription.frame()["work_id"] == "turn-1"
+
+        # Asking: the drain's wait and live mark are merged into the call.
+        subscription.asking = {"wait": 25, "live": "mark"}
+        await subscription.read("events", {"after": 0})
+        assert calls[-1] == {"after": 0, "wait": 25, "live": "mark"}
+        assert subscription.frame()["work_id"] == "turn-2"
+
+        # `drain` clears `heard` between passes; the frame stays.
         subscription.heard = {}
+        assert subscription.frame() is not None
+
+        # Hurried: an asking read that must not wait, read at once instead.
+        subscription.asking = {"wait": 25}
+        subscription.hurry = True
+        await subscription.read("events", {"after": 0})
+        assert calls[-1] == {"after": 0}
+        assert subscription.hurry is False
+        assert subscription.frame()["work_id"] == "turn-3"
+
+        # Given way (the `unpark` path): the held read is cancelled from
+        # outside and the same call is made again without the wait.
+        subscription.asking = {"wait": 25, "hold": True}
+        task = asyncio.ensure_future(subscription.read("events", {"after": 0}))
+        await asyncio.wait_for(held.wait(), 1)
+        assert subscription.parked is not None
+        subscription.parked.cancel()
+        await asyncio.wait_for(task, 1)
+        assert calls[-1] == {"after": 0}
+        assert subscription.frame()["work_id"] == f"turn-{len(calls)}"
 
         frame = subscription.frame()
-        assert frame is not None
-        assert frame["work_id"] == "turn-1"
         assert frame["last_frame_kind"] == "assistant_block"
         # The age grew by the time spent here; it was never recomputed by
         # subtracting another machine's monotonic from this one's.

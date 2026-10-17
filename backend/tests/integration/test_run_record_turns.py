@@ -347,6 +347,22 @@ def test_the_highest_count_of_the_batch_is_the_one_reported(client, platform_roo
     assert by_id[str(carried_nothing)]["prompt_attempts"] is None
 
 
+def test_a_window_with_no_turn_is_an_empty_page_not_a_crash(client, platform_room):
+    """A room that has run nothing yet gets an empty page, not a 500.
+
+    The last-frame pass reads the envelope's `turns`; an empty window has
+    `turns == []`, and reading it by truthiness (`[] or [envelope]`) would
+    hand the envelope itself to the per-turn pass — a dict with no `turn_id`
+    — and blow up on the very case where there is nothing to report.
+    """
+    _, room = platform_room
+
+    data = _turns(client, room, window="24h")
+
+    assert data["turns"] == []
+    assert data["total"] == 0
+
+
 def test_the_window_holds_rows_back_and_the_limit_only_pages(client, platform_room):
     project, room = platform_room
     now = datetime.now(UTC)
@@ -405,7 +421,7 @@ def _one_turn(client, topic: str, turn_id):
 def test_one_turn_answers_with_its_records_and_how_it_ended(client, platform_room):
     project, room = platform_room
     now = datetime.now(UTC)
-    (turn_id,) = _seed(
+    turn_id, other_turn = _seed(
         client,
         project,
         room,
@@ -423,7 +439,19 @@ def test_one_turn_answers_with_its_records_and_how_it_ended(client, platform_roo
                         "content": "这一轮没跑完",
                     },
                 ],
-            }
+            },
+            # Another turn in the SAME room, with records of its own: the
+            # drill-down must return this turn's rows only. Without the
+            # `turn_id` filter in `RunRecordRepository.of_turns`, these leak
+            # into the first turn's answer.
+            {
+                "started_at": now - timedelta(hours=4),
+                "stopped_at": now - timedelta(hours=3),
+                "records": [
+                    {"kind": "environment", "content": "别人那一轮"},
+                    {"kind": "retry", "content": "别人又一条"},
+                ],
+            },
         ],
     )
 
@@ -438,11 +466,16 @@ def test_one_turn_answers_with_its_records_and_how_it_ended(client, platform_roo
     assert data["prompt_attempts"] == 2
     assert data["stopped_at"] is not None
     # Only this turn's records, oldest first, and only the fields a reader
-    # needs to see what happened.
+    # needs to see what happened. `other_turn`'s two rows are in the same room
+    # and the same table and must not appear here.
     assert [(r["kind"], r["severity"], r["content"]) for r in data["records"]] == [
         ("queue", "info", "排队"),
         ("turn_failed", "error", "这一轮没跑完"),
     ]
+    assert all("别人" not in r["content"] for r in data["records"])
+    # And the other turn is answered with its own rows, not this turn's.
+    other = _one_turn(client, room, other_turn).json()["data"]
+    assert [r["content"] for r in other["records"]] == ["别人那一轮", "别人又一条"]
 
 
 def test_a_closed_turn_without_a_failure_event_is_unfinished(client, platform_room):

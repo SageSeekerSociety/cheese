@@ -191,6 +191,11 @@ def test_the_agent_reads_one_row_per_turn_with_its_failure(client, projects):
     assert "没记过失败" in by_turn[str(notice)]
     assert "还在跑" in by_turn[str(running)]
     assert "投喂 2 次" in by_turn[str(running)]
+    # The open turn's last frame is said on the line: this backend reads no
+    # session for it, so it reads 未知 — and never a fabricated 0 s. Dropping
+    # the suffix from `_turns_lines` must take this assertion red.
+    assert "最近帧 未知" in by_turn[str(running)]
+    assert "0s 前" not in by_turn[str(running)]
     assert str(clean) not in listed
     # 成功不写事件：这一行只能说明平台没为这一轮记过失败。
     assert "不是记了成功" in listed

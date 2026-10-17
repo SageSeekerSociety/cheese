@@ -62,7 +62,12 @@ def _add_frames(payload: dict[str, Any], *, host: Host, runner: Runner) -> None:
     A turn that neither knows keeps `None` ("unknown"): after a restart there
     is honestly no frame, and that is not age 0.
     """
-    turns = payload.get("turns") or [payload]
+    # Two shapes reach here: the window's envelope (`{"turns": [...]}`) and a
+    # single turn's row. Keyed on the field, not on truthiness: an empty window
+    # has `turns == []`, and `[] or ...` would fall through to the envelope
+    # itself — a dict with no `turn_id`, which raised on the open-turn filter
+    # and answered 500 for a room that has simply run nothing yet.
+    turns = payload["turns"] if "turns" in payload else [payload]
     open_turns = [turn for turn in turns if turn.get("stopped_at") is None]
     if not open_turns:
         return
@@ -144,7 +149,7 @@ async def run_records_turn(
     await _from_platform_room(db, resolver, topic)
     found = await turns.of_turn(db, turn_id)
     if found is None:
-        raise NotFoundError("No such turn")
+        raise NotFoundError()
     _add_frames(found, host=host, runner=runner)
     return ok(found)
 
