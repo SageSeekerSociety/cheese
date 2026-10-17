@@ -68,7 +68,6 @@ function rules(overrides: Partial<BranchProtection> = {}): BranchProtection {
     override_handles: null,
     approvals_required: 1,
     default_reviewer: '',
-    dispatch_seat: '',
     merge_method: 'squash',
     github_protection: { enforced: false, status: 'none' },
     ...overrides,
@@ -83,7 +82,13 @@ beforeEach(() => {
   route.query = {}
   goAuthorize.mockReturnValue(true)
   vi.mocked(api.getUpstream).mockResolvedValue({ url: null })
-  vi.mocked(api.getProject).mockResolvedValue({ id: 'p1', name: 'P', can_manage_members: false } as Project)
+  vi.mocked(api.getProject).mockResolvedValue({
+    id: 'p1',
+    name: 'P',
+    created_at: '',
+    my_role: 'member',
+    my_permissions: [],
+  } as Project)
   vi.mocked(api.setUpstream).mockResolvedValue({ url: null })
   vi.mocked(api.getForgeConnection).mockResolvedValue({
     kind: 'github_app',

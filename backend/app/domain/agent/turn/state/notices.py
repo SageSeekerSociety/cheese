@@ -6,6 +6,7 @@ from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
     classify_platform_failure,
+    is_request_refused,
 )
 from app.domain.notice_meta import (
     EVENT_TURN_FAILED,
@@ -74,6 +75,12 @@ def _turn_failure_notice(
         # succeed. Say what actually has to happen.
         line = say("turnFailedOutOfCredit")
         hint = say("turnFailedOutOfCreditHint")
+        retryable = False
+    elif is_request_refused(detail):
+        # The same conversation goes out again on a retry and is refused the
+        # same way, so a retry is not offered.
+        line = say("turnFailedService")
+        hint = say("turnFailedRequestRefusedHint")
         retryable = False
     else:
         first = detail.splitlines()[0].strip() if detail else ""

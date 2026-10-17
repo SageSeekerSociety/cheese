@@ -123,7 +123,10 @@ function balanceText(row: CreditTeamRow): string {
         <!-- 名字是打开这个团队的入口：键盘和读屏走它，整行点击是给指针的便利。 -->
         <button type="button" class="act__team" @click.stop="emit('open', row)">
           <span class="act__name" data-user-content>{{ teamTitle(row) }}</span>
-          <span class="act__meta t-meta-read">{{ teamMeta(row) }}</span>
+          <span class="act__meta t-meta-read"
+            >{{ teamMeta(row)
+            }}<span v-if="row.overseas_approved" class="act__badge">{{ t('credits.teams.overseas') }}</span></span
+          >
         </button>
       </td>
       <td :data-label="t('credits.teams.column.plan')">
@@ -207,5 +210,13 @@ function balanceText(row: CreditTeamRow): string {
 
 .act__num {
   text-align: right;
+}
+
+.act__badge {
+  margin-left: 8px;
+  padding: 0 6px;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
+  color: var(--text);
 }
 </style>

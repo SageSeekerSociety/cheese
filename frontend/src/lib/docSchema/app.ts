@@ -18,7 +18,7 @@ import type { JSONContent } from '@tiptap/core'
 
 import { mergeAttributes, Node } from '@tiptap/core'
 
-import { readContainer } from './blocks'
+import { readContainer } from './containers'
 
 const HEAD = /^([a-z0-9]{4,16})@([1-9]\d{0,5})(?:[ \t]+(.*))?$/
 

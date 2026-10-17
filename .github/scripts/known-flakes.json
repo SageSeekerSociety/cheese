@@ -1,0 +1,79 @@
+{
+  "about": "The patterns rerun-failed.py knows already, and the shortest handling for each. What the run object carries is the workflow path and the event — not the failed job names and not the log — so match names those two; different keys intersect and the values under one key are alternatives. rerun false means the run is not one a retry helps; true means a rerun is the standard response and the handling is printed with it. A pattern only ever explains a refusal or annotates a rerun: none of them widens what the five gates in rerun-failed.py already allow. Written 2026-10-16, moving these per-incident notes out of task histories.",
+  "patterns": [
+    {
+      "id": "dependabot-registry-502",
+      "title": "Dependabot 的 dynamic 运行：npm 注册表 502",
+      "match": { "event": ["dynamic"] },
+      "rerun": false,
+      "action": "不是本分支的代码问题，重跑助手也不收 dynamic 运行；核日志里的 502 与同批其他作业，写明依据关掉被它重开的任务。",
+      "symptoms": [
+        "对 registry.npmjs.org 的请求零星 502（如 /pluralize、/@inquirer），updater 以 private_source_authentication_failure 退出——那是够不到注册表时的报法，不是鉴权问题（2026-10-15 c111caeb / PR #3788）",
+        "同一次运行的另外几条 Dependabot 作业全绿"
+      ]
+    },
+    {
+      "id": "db-backup-freshness",
+      "title": "DB backup freshness check：只按 schedule 跑的运维检查",
+      "match": { "workflow": [".github/workflows/backup-freshness.yml"] },
+      "rerun": false,
+      "action": "不跟提交，重跑没有意义；核 run 历史里它是不是在无关提交上红同样几步，写明理由关掉被它重开的任务，不改代码。",
+      "symptoms": [
+        "步骤 7 uploads mirror: missing success marker (/home/nictheboy/backups/.last-uploads-mirror-success)",
+        "步骤 8 Prepare read-only R2 check dependencies：dev runner 上 python3 -m venv 失败，ensurepip 不可用、缺 python3.13-venv",
+        "步骤 9 因此 R2 freshness check failed: ModuleNotFoundError；2026-10-09 起每天在无关提交上红同样这三步"
+      ]
+    },
+    {
+      "id": "dev-health-probe",
+      "title": "box-uptime 的 dev-health：站点探活抖动",
+      "match": {
+        "workflow": [".github/workflows/box-uptime.yml"],
+        "event": ["schedule"]
+      },
+      "rerun": false,
+      "action": "合并不会触发它，只是那一小时正好落在合并提交上；看同一提交前后几轮的 box-uptime（同 SHA 上绿红都有即坐实），写明理由关掉任务，不改代码。",
+      "symptoms": [
+        "日志里 attempt N: 那两行——拿到 200 但耗时压线（2026-10-16 11:56 为 5176ms / 阈值 5000ms），或两次都 503、各约 15.6 秒"
+      ]
+    },
+    {
+      "id": "merge-group-synthetic-run",
+      "title": "合并队列的合成 CI（merge_group）红了",
+      "match": {
+        "workflow": [".github/workflows/required-ci.yml"],
+        "event": ["merge_group"]
+      },
+      "rerun": false,
+      "action": "重跑这遍没有意义（PR 已被移出队列）；先读 PR 的 state/mergedAt，别 push-fix 加提交——重新采纳让 PR 回队即可。自己的 run 红了也不等于没落地：更深的队列条目跑绿会把整段前缀一起落地。",
+      "symptoms": [
+        "remote / windows：t.TempDir RemoveAll cleanup 撞上还没退出的 ping 子进程占着日志文件（unlinkat: The process cannot access the file because it is being used by another process；测试体全过、红在收尾）",
+        "tests/integration/test_claude_session_records.py::test_a_message_after_a_dead_runner_gets_a_turn 的 orphaned 断言"
+      ]
+    },
+    {
+      "id": "required-ci-pull-request-intermittents",
+      "title": "Required CI 的 PR 运行：重跑失败 job 是标准处置",
+      "match": {
+        "workflow": [".github/workflows/required-ci.yml"],
+        "event": ["pull_request"]
+      },
+      "rerun": true,
+      "action": "重跑失败 job（上限 3 次）；同一个 head 上再红就按真实回归读日志，别当偶发收场。",
+      "symptoms": [
+        "backend / integration：tests/integration/test_a_last_step_lands_while_work_goes_on.py::test_a_message_sent_while_the_task_is_written_up_is_not_dropped[turn-waiting] 红在 assert 'closed' == 'open'，重跑就过",
+        "backend / integration：tests/integration/test_claude_session_records.py::test_a_message_after_a_dead_runner_gets_a_turn 的 orphaned 断言，--reruns 1 无效，重新采纳进队"
+      ]
+    },
+    {
+      "id": "rerun-workflow-red",
+      "title": "重跑助手自己的运行红了",
+      "match": { "workflow": [".github/workflows/rerun-failed.yml"] },
+      "rerun": false,
+      "action": "不是测试失败，是重跑助手按设计拒收了一个不该重跑的 run，或要重跑的 run 已经自己变绿；核合并提交上 CI required 是 success 后，写明依据关掉任务。",
+      "symptoms": [
+        "::error:: 那行写着理由：run <id> is queued/None, not a completed failure；is completed/success, not a completed failure；或 is on attempt 3; the limit is 3"
+      ]
+    }
+  ]
+}

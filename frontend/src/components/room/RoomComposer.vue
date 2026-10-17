@@ -13,13 +13,16 @@
 // 发送）、以及把拖进来的东西交给房间（#2143）。@ 补全的状态机在
 // `composables/useRoomMentionPicker.ts`，菜单、待发条和动作行各自是一件只管画的
 // 东西（`MentionMenu.vue` / `ComposerChipRow.vue` / `ComposerActions.vue`）。
+import type { RowRefs } from '@/composables/useChatComposer'
 import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { ChatAttachment, Topic } from '../../cx_types'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
+import { useComposerText } from '@/composables/useComposerText'
 import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
@@ -30,14 +33,13 @@ import {
   namesOnlyPeople,
   withAgentMention as addAgentMention,
 } from '../../lib/composerMentions'
-import { mentionSpans } from '../../lib/expandMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
-import { mentionWordKey } from '../../lib/mentionWordKeys'
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
 import ComposerChecklistDialog from './ComposerChecklistDialog.vue'
 import ComposerChipRow from './ComposerChipRow.vue'
+import ComposerEditor from './ComposerEditor.vue'
 import MentionMenu from './MentionMenu.vue'
 import ReminderDialog from './ReminderDialog.vue'
 
@@ -56,6 +58,8 @@ const props = defineProps<{
   mentionPool: MentionPoolEntry[]
   /** @ 得到的话题，用来把「@话题名」展开成 <#id>。 */
   topicList: Topic[]
+  /** 正文里的引用画成标签时写的名字（和时间线上同一份）。 */
+  refs: RowRefs
   /** 这个房间交给的那位 AI 队友。名册还没到时是 null，两个召唤入口都关着。 */
   agentSeat: { handle: string; label: string } | null
   agentName: string
@@ -91,6 +95,8 @@ const emit = defineEmits<{
 
 /** 正文。存在哪、谁清它、怎么跨刷新，全在房间那一层。 */
 const draft = defineModel<string>({ required: true })
+/** 光标在正文里的位置（第几个字符前面）。 */
+const caret = ref(draft.value.length)
 
 // 拖文件到输入栏 (spec §7.1)。只是把落区标出来，判断留给 usePendingAttachments。
 const dragOver = ref(false)
@@ -135,17 +141,14 @@ function onPaste(e: ClipboardEvent) {
   const raw = e.clipboardData?.getData('text/plain') ?? ''
   if (!isLongPaste(raw)) return
   e.preventDefault()
-  // 和原生粘贴一样：\r\n 归一成 \n（Windows 上复制来的文本带 \r）。
+  // 和平常的粘贴一样：\r\n 归一成 \n（Windows 上复制来的文本带 \r），光标落在刚贴进来的
+  // 那一段之后。贴之前选中的字被这一段换掉。
   const text = raw.replace(/\r\n?/g, '\n')
-  const at = e.target as HTMLTextAreaElement | null
-  const start = at?.selectionStart ?? draft.value.length
-  const end = at?.selectionEnd ?? start
-  draft.value = draft.value.slice(0, start) + text + draft.value.slice(end)
+  const start = caret.value
+  const selected = composerInput.value?.selectedLength() ?? 0
+  draft.value = draft.value.slice(0, start) + text + draft.value.slice(start + selected)
+  caret.value = start + text.length
   longPaste.value = { start, text }
-  // 光标落在刚贴进来的那一段之后，和原生粘贴的手感一致。
-  void nextTick(() => {
-    at?.setSelectionRange?.(start + text.length, start + text.length)
-  })
 }
 
 /** 忽略这条提议：正文一个字不动地留着。 */
@@ -171,14 +174,30 @@ function pasteAsAttachment(ext: 'txt' | 'md') {
   void nextTick(() => composerInput.value?.focus?.())
 }
 
-const composerInput = ref<{ focus?: () => void } | null>(null)
+const composerInput = ref<InstanceType<typeof ComposerEditor> | null>(null)
+const { beforeCaret } = useComposerText({
+  draft,
+  caret,
+  expand: (text) => expandMentions(text),
+  composing: () => !!composerInput.value?.composing(),
+})
+// 标签上写的名字。输入框里的 @ 发出去就会通知到人，所以画成通知过的那一种。
+const chipNames = computed<RefNames>(() => {
+  const mentionNames = { ...props.refs.mentionNames }
+  for (const m of props.mentionPool) mentionNames[m.handle] ??= m.label
+  if (props.agentSeat) mentionNames[props.agentSeat.handle] ??= props.agentSeat.label
+  const topicTitles = { ...props.refs.topicTitles }
+  for (const tp of props.topicList) topicTitles[tp.id] ??= tp.title
+  return { mentionNames, topicTitles, notified: true }
+})
 const { mdAndUp } = useDisplay()
 const mentionMenu = ref<InstanceType<typeof MentionMenu> | null>(null)
 
 // @ 补全那一整套（候选、两级菜单、资料库、高亮）在 composable 里；这里只把光标
 // 还给它，和把「挑中的是一份文件」转成往上发的那件事。
 const picker = useRoomMentionPicker({
-  draft,
+  draft: beforeCaret,
+  writeTokens: true,
   topic: () => props.topic,
   mentionPool: () => props.mentionPool,
   topicList: () => props.topicList,
@@ -284,7 +303,7 @@ function toggleSummon() {
   } else if (agent) {
     // 只摘掉第一处。正文里别处还提着它（「照 @芝士 说的改」）是在说事，不是在
     // 叫它，取消这一次召唤不该顺手把那句话也改了。
-    for (const pat of [`@${agent.label}`, `@${agent.handle}`]) {
+    for (const pat of [`<@${agent.handle}>`, `@${agent.label}`, `@${agent.handle}`]) {
       const at = draft.value.indexOf(pat)
       if (at < 0) continue
       const after = at + pat.length
@@ -315,19 +334,7 @@ const coarse = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none
 const enterSends = ref(!coarse?.matches)
 coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.value = !e.matches))
 
-// 按词跳/选/删时，`@某某` 算一个词。认的是发送时会展开成提及的那几种写法——和
-// `expandMentions` 同一份名单，所以「这算不算一个提及」在输入框里只有一个答案。
-function draftMentionSpans(text: string) {
-  const seat = props.agentSeat
-  return mentionSpans(
-    text,
-    seat ? [seat, ...props.mentionPool] : props.mentionPool,
-    props.topicList.filter((t) => t.kind !== 'root')
-  )
-}
-
 function onComposerKey(e: KeyboardEvent) {
-  mentionWordKey(e, draftMentionSpans)
   // 翻进资料库之后，Esc 是退回一级的那一步（而不是把整个菜单关掉——@ 还在正文里）。
   // ← 也是；`@` 后面什么都没打时的退格也是——那一下要是删掉了 `@`，整个菜单就没了，
   // 人只是想回上一级。输入法选字时这几个键是给输入法的。
@@ -358,9 +365,6 @@ function onComposerKey(e: KeyboardEvent) {
   if (e.key !== 'Enter' || e.shiftKey) return
   // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
   if (isImeKey(e)) return
-  // Only act on Enter from the focused composer textarea itself.
-  const t = e.target as HTMLElement | null
-  if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
   // ⌘/Ctrl+Enter = 发送并交给芝士，正文里一个 @ 都不用打。判断排在 @-菜单前面：
   // 打到一半的 @ 不该把这个已经说清楚的「交给它」变成一次选人。
   if ((e.metaKey || e.ctrlKey) && handOff.value) {
@@ -477,18 +481,14 @@ defineExpose({
       />
       <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
              半屏——而按钮的数量只会往上加。 -->
-      <v-textarea
+      <ComposerEditor
         ref="composerInput"
         v-model="draft"
-        autocomplete="off"
-        variant="plain"
-        rows="1"
-        auto-grow
-        max-rows="6"
-        hide-details
-        density="comfortable"
+        v-model:caret="caret"
         class="composer-input"
+        :names="chipNames"
         :placeholder="hint"
+        :label="hint"
         :title="keysTitle"
         @keydown="onComposerKey"
         @paste="onPaste"
@@ -598,28 +598,5 @@ defineExpose({
   border-color: var(--muted);
   box-shadow: inset 0 0 0 1px var(--muted);
   background: var(--fill);
-}
-.composer-input :deep(textarea) {
-  /* 和消息流同一档（§3.2）：打出来的字和发出去以后的字一样大。 */
-  font-size: 15px;
-  line-height: var(--lh-15-reading);
-  /* 多一行长高一行、发出去收回一行。auto-grow 的高度落在 min-height 上（Vuetify
-     经 --v-input-control-height 算出来），让它过渡过去，不跳。透明度那一条是
-     Vuetify 自己的，写在一起才不被盖掉。 */
-  transition:
-    min-height var(--dur-quick) var(--ease-standard),
-    opacity var(--dur-quick) var(--ease-standard);
-}
-/* Vuetify 给输入框留的顶部内边距是「浮动标签落下来时站的地方」：plain + comfortable
-   下是 15px 的 --v-input-padding-top 再加 3.5px，而底部只有 3px。这个输入框没有
-   标签，那 15px 就只剩一个效果——第一行字被顶到盒子中间，上下差了六倍。 */
-.composer-input :deep(.v-field) {
-  --v-input-padding-top: 0px;
-}
-/* 那道遮罩是给「文字从浮动标签底下滑过去」用的渐隐。没有标签就没有要遮的东西，
-   留着它只会把第一行字的上半截淡掉——尤其在内边距刚被收窄之后。 */
-.composer-input :deep(.v-field__input) {
-  -webkit-mask-image: none;
-  mask-image: none;
 }
 </style>

@@ -169,7 +169,6 @@ def test_a_delivery_lights_the_row_of_everyone_on_the_task_and_of_nobody_else(cl
                 "title": "做完的活",
                 "owner_handle": "alice",
                 "contributor_handles": ["carol"],
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
                 "accepted_at": datetime.now(UTC) - DELIVERED_AT,
             }
         ],
@@ -202,7 +201,6 @@ def test_opening_the_room_puts_out_the_delivery_for_that_person_only(client):
                 "title": "做完的活",
                 "owner_handle": "alice",
                 "contributor_handles": ["carol"],
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
                 "accepted_at": datetime.now(UTC) - DELIVERED_AT,
             }
         ],
@@ -235,7 +233,6 @@ def test_opening_the_task_itself_counts_as_having_seen_the_delivery(client):
                 "name": "delivered",
                 "title": "做完的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
                 "accepted_at": datetime.now(UTC) - DELIVERED_AT,
             }
         ],
@@ -397,7 +394,6 @@ def test_an_answer_inside_a_task_under_the_channel_does_not_light_that_row(clien
                 "title": "一件活",
                 "owner_handle": "alice",
                 "contributor_handles": ["bob"],
-                "started_at": datetime.now(UTC),
             }
         ],
     )
@@ -428,7 +424,6 @@ def test_a_room_breathes_while_a_task_under_it_rides_a_delivery(client):
                 "name": "riding",
                 "title": "在等检查的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC),
                 "card": {
                     "status": AcceptStatus.pending,
                     "note_code": NoteCode.waiting_merge_queue,
@@ -446,7 +441,6 @@ def test_a_room_breathes_while_a_task_under_it_rides_a_delivery(client):
                 "name": "waiting",
                 "title": "等我采纳的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC),
                 "card": {"status": AcceptStatus.pending},
             }
         ],
@@ -485,7 +479,6 @@ def test_a_running_turn_breathes_and_the_room_says_nothing_about_its_clock(clien
                 "name": "running",
                 "title": "在跑的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC),
                 "turn": True,
             }
         ],
@@ -546,7 +539,6 @@ def test_the_process_holding_the_turn_says_when_it_last_output(client):
                 "name": "running",
                 "title": "在跑的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC),
                 "turn": True,
             }
         ],
@@ -717,13 +709,11 @@ def test_a_failed_turn_lights_the_task_row_and_the_room_above_it(client):
                 "name": "broken",
                 "title": "停下来报错的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             },
             {
                 "name": "fine",
                 "title": "没事的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             },
         ],
     )
@@ -782,7 +772,6 @@ def test_the_member_speaking_again_clears_it(client):
                 "name": "task",
                 "title": "坏过又好了的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             }
         ],
     )
@@ -812,7 +801,6 @@ def test_a_newer_turn_starting_clears_it_even_without_a_word(client):
                 "name": "task",
                 "title": "重来过的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             }
         ],
     )
@@ -839,7 +827,6 @@ def test_another_members_output_does_not_clear_it(client):
                 "name": "task",
                 "title": "还坏着的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             }
         ],
     )
@@ -870,13 +857,11 @@ def test_one_task_recovering_does_not_clear_the_room_while_another_stands(client
                 "name": "healed",
                 "title": "修好的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             },
             {
                 "name": "broken",
                 "title": "还坏着的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             },
         ],
     )
@@ -908,7 +893,6 @@ def test_the_room_row_counts_from_the_earliest_of_its_own_line_and_its_tasks(cli
                 "name": "task",
                 "title": "更晚坏掉的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             }
         ],
     )
@@ -974,7 +958,6 @@ def test_a_closed_tasks_failure_lights_nothing(client):
                 "name": "closed",
                 "title": "已经关掉的活",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=3),
                 "status": TaskStatus.closed,
                 "closed_at": datetime.now(UTC) - timedelta(hours=1),
             }
@@ -1010,7 +993,6 @@ def test_the_project_task_list_carries_the_same_clock(client):
                 "name": "task",
                 "title": "丢掉全部任务时也看得到",
                 "owner_handle": "alice",
-                "started_at": datetime.now(UTC) - timedelta(hours=2),
             }
         ],
     )

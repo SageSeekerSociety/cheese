@@ -17,7 +17,6 @@ counting the report too would charge them twice (`turn/intake/completion.py`,
 `reported_usage`).
 """
 
-import asyncio
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -38,7 +37,6 @@ from app.domain.usage.ledger import Ledger, payer_for_project
 async def drain_dream_spend(
     sessions: async_sessionmaker,
     gateway: LlmGateway | None,
-    gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
@@ -58,7 +56,6 @@ async def drain_dream_spend(
             turn_id=turn_id,
         ),
         retry_after=(*TURN_RETRY_AFTER, LATE_S),
-        lock=gateway_lock,
     )
 
 

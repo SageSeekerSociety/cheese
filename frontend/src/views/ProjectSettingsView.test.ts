@@ -12,6 +12,7 @@ import { SudoCancelledError, withSudo } from '../utils/sudo'
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
 import { setLocale } from '@/i18n'
+import { PERMISSIONS } from '@/lib/projectPermissions'
 import { seedProjects } from '@/test/seedQueries'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))
@@ -46,6 +47,20 @@ vi.mock('vue-router', () => ({
   useRouter: () => router,
 }))
 
+/** 我在这个项目里坐哪、能做什么：后端在 `GET /projects/{id}` 上说（#3830）。 */
+function asRole(my_role: NonNullable<Project['my_role']>, my_permissions: string[]) {
+  vi.mocked(api.getProject).mockResolvedValue({ id: 'project', name: 'P', my_role, my_permissions } as Project)
+}
+const ALL = PERMISSIONS.map((p) => p.key)
+
+/** 设置目录里的各栏，按显示顺序。项目那一份读回来之前目录还不全，所以先等它读完。 */
+async function navEntries(element: HTMLElement): Promise<(string | undefined)[]> {
+  await vi.waitFor(() => expect(api.getProject).toHaveBeenCalled())
+  await new Promise((resolve) => setTimeout(resolve))
+  const nav = element.querySelector('nav[aria-label="项目设置"]')!
+  return Array.from(nav.querySelectorAll('.so__item'), (a) => a.textContent?.trim())
+}
+
 beforeEach(() => {
   vi.resetAllMocks()
   setLocale('zh-CN')
@@ -61,7 +76,7 @@ beforeEach(() => {
     agents: [],
     my_connections: [],
   })
-  vi.mocked(api.getProject).mockResolvedValue({ id: 'p1', name: 'P', can_manage_members: false } as Project)
+  asRole('member', [])
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.listProjectAgents).mockResolvedValue({ data: [], total: 0 })
   vi.mocked(api.getGithubConnection).mockResolvedValue({ connected: false })
@@ -93,13 +108,15 @@ async function openSettings(section?: string) {
 
 describe('project settings', () => {
   it.each([
-    ['alice', true],
-    ['bob', false],
-  ])('offers archiving only to the owner (owner=%s)', async (owner, offered) => {
-    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: owner }])
+    ['owner', true],
+    ['admin', false],
+    ['member', false],
+  ] as const)('offers archiving only to the owner (role=%s)', async (role, offered) => {
+    asRole(role, ALL)
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     const wrapper = await openSettings()
     try {
-      expect(wrapper.element.textContent?.includes('归档项目')).toBe(offered)
+      expect((await navEntries(wrapper.element)).includes('归档项目')).toBe(offered)
     } finally {
       wrapper.unmount()
     }
@@ -134,7 +151,6 @@ describe('project settings', () => {
       override_handles: null,
       approvals_required: 1,
       default_reviewer: '',
-      dispatch_seat: '',
       merge_method: 'squash',
       github_protection: { enforced, status: enforced ? 'enforced' : 'none' },
     })
@@ -256,23 +272,20 @@ describe('project settings', () => {
   })
 
   // 每一栏只放一类事：人一次只为一件事来（换队友 / 调机器 / 定合并规则 / 接仓库）。
-  it('lists the sections in order, with archiving last and only for the owner', async () => {
+  // 「角色和权限」人人看得到，排第一；「频道」「项目地址」各看各的权限；归档只给所有者。
+  const REST = ['AI 队友', '任务命名', '环境', '合并规则', '仓库与署名', 'MCP 服务器', '导出项目']
+  it.each([
+    ['owner', ALL, ['角色和权限', '频道', '项目地址', ...REST, '归档项目']],
+    ['admin', ALL, ['角色和权限', '频道', '项目地址', ...REST]],
+    ['member', [], ['角色和权限', ...REST]],
+    ['member', ['manage_channels'], ['角色和权限', '频道', ...REST]],
+    ['mentor', ['edit_settings'], ['角色和权限', '项目地址', ...REST]],
+  ] as const)('lists the sections a %s with %j may use, in order', async (role, permissions, expected) => {
+    asRole(role, [...permissions])
     seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     const wrapper = await openSettings()
     try {
-      const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
-      const entries = Array.from(nav.querySelectorAll('.so__item'), (a) => a.textContent?.trim())
-      // 「频道」只给管项目的人：这里的我不管。
-      expect(entries).toEqual([
-        'AI 队友',
-        '任务命名',
-        '环境',
-        '合并规则',
-        '仓库与署名',
-        'MCP 服务器',
-        '导出项目',
-        '归档项目',
-      ])
+      expect(await navEntries(wrapper.element)).toEqual(expected)
     } finally {
       wrapper.unmount()
     }
@@ -280,6 +293,7 @@ describe('project settings', () => {
 
   // 归档完不回首页：首页会把人带进上次待的另一个项目，像是归档没发生、又像跳错了地方。
   it('after archiving, says so and opens the archived projects, where this one now is', async () => {
+    asRole('owner', ALL)
     seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     vi.mocked(api.archiveProject).mockResolvedValue(undefined as never)
     const wrapper = await openSettings('archive')
@@ -295,20 +309,6 @@ describe('project settings', () => {
       await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith({ name: 'my-archived-projects' }))
       expect(api.archiveProject).toHaveBeenCalledWith('project')
       expect(toast.success).toHaveBeenCalledWith('已归档「毕业设计」')
-    } finally {
-      wrapper.unmount()
-    }
-  })
-
-  it('lists 频道 first for whoever manages the project', async () => {
-    vi.mocked(api.getProject).mockResolvedValue({ id: 'project', name: 'P', can_manage_members: true } as Project)
-    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
-    const wrapper = await openSettings()
-    try {
-      await vi.waitFor(() => {
-        const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
-        expect(nav.querySelector('.so__item')?.textContent?.trim()).toBe('频道')
-      })
     } finally {
       wrapper.unmount()
     }

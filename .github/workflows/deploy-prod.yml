@@ -113,6 +113,10 @@ jobs:
     # no protection rules, so the human gate stays where it is — in `gate`.
     environment: production
     runs-on: [self-hosted, cheese-prod]
+    # Read by the alert job below: the gate refusing is the one failure of the
+    # deploy job that is not a broken deploy.
+    outputs:
+      refused: ${{ steps.recheck.outputs.refused }}
     timeout-minutes: 30
     steps:
       # Deploy TOOLING (deploy-docker.sh + compose) always comes from the DEFAULT
@@ -122,6 +126,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Recheck validation after approval
+        id: recheck
         if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -154,3 +159,52 @@ jobs:
           else
             CHEESE_CENTRAL_SESSION_HOST=1 bash deploy/deploy-docker.sh "$SHA"
           fi
+
+  # A failed deploy tells the team's alert group (「Cheese 告警」), not only the
+  # Actions tab. Its own job on a hosted runner, because a runner that lost the
+  # server mid-deploy runs nothing more in the deploy job. Which outcomes page,
+  # and why each, is .github/scripts/deploy-alert.py; a skipped deploy job (a
+  # release gate that refused) never reaches it.
+  alert:
+    # gate for the release commit it resolved.
+    needs: [gate, deploy]
+    if: always() && (needs.deploy.result == 'failure' || needs.deploy.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Here rather than on a step: an `if:` cannot read the `secrets` context.
+    env:
+      WEBHOOK: ${{ secrets.FEISHU_ALERT_WEBHOOK }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Decide whether the deploy failed
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ENVIRONMENT: prod（cheese.ruc.edu.cn）
+          COMMIT: ${{ needs.gate.outputs.sha || inputs.ref }}
+          # The deploy job's own timeout-minutes, so a hang that used it all up pages.
+          TIMEOUT_MINUTES: '30'
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          # Validation that regressed while the release waited for approval
+          # leaves prod on the release it had; that is CI's news, not a broken
+          # deploy. The approval itself is in the gate job, so a denial never
+          # fails this one.
+          REFUSED: ${{ needs.deploy.outputs.refused }}
+        run: python3 .github/scripts/deploy-alert.py
+      - name: Tell the team the deploy failed
+        if: steps.decide.outputs.text != '' && env.WEBHOOK != ''
+        env:
+          TEXT: ${{ steps.decide.outputs.text }}
+        run: |
+          set -uo pipefail
+          # Never fail on the alert itself: the deploy's result is the finding.
+          curl -sS -m 15 -X POST "$WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n --arg t "$TEXT" '{msg_type:"text",content:{text:$t}}')" \
+            || echo "::warning::could not reach the alert webhook"

@@ -246,6 +246,19 @@ describe('记忆', () => {
     view.unmount()
   })
 
+  it('不能配置 AI 队友的人删得了自己的记忆，删不了项目记忆', async () => {
+    const view = show('memory', { memoryEntries: [one, shared], changesSharedMemory: false })
+    await waitFor(() => expect(view.getByText('喜欢用 pnpm')).toBeTruthy())
+
+    expect(view.container.querySelectorAll('.memory-card__del')).toHaveLength(1)
+    view.unmount()
+
+    const manager = show('memory', { memoryEntries: [one, shared], changesSharedMemory: true })
+    await waitFor(() => expect(manager.getByText('喜欢用 pnpm')).toBeTruthy())
+    expect(manager.container.querySelectorAll('.memory-card__del')).toHaveLength(2)
+    manager.unmount()
+  })
+
   it('说取消就不删，那条记忆还在', async () => {
     dialogMock.confirm.mockImplementation(() => ({ wait: async () => false }))
     const view = mountMemory()

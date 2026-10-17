@@ -24,9 +24,10 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.claude_code.journal import Journal
 from app.domain.agent.harness.claude_code.runner import Runner
 from app.domain.agent.harness.claude_code.subscription import Subscription
-from app.domain.block.models import AuthorType, Block, BlockKind, BlockReaction
+from app.domain.block.models import Block, BlockKind, BlockReaction
 from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.models import Delivery, NativeInput
+from app.domain.event_author import AuthorType
 from app.main import app
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
 

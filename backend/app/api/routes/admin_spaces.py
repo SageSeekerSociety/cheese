@@ -6,9 +6,10 @@ from pydantic import BaseModel
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.domain.space.review_service import SpaceReviewService
 
-router = APIRouter(prefix="/admin/spaces", tags=["admin"])
+router = APIRouter(prefix="/admin/spaces", tags=["admin"], dependencies=[ROUTE_DECIDES])
 
 
 class ReviewSpaceRequest(BaseModel):

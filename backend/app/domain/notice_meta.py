@@ -194,6 +194,11 @@ EVENT_MENTION_FUSED: Final = "mention_fused"
 #: 一个人在「改动」里改了任务目录里的一个文件 —— AI 队友手里的旧内容作废，下一次
 #: 动它之前要重读。
 EVENT_FILE_EDITED: Final = "file_edited"
+#: 有人改了一项成员能改的设置（`app/api/member_settings.py`），说在项目的综合里。
+#: `meta.setting` 是哪一项，`meta.from` / `meta.to` 是改前改后存下的值，`meta.by`
+#: 是改的人或 AI 队友；改的是一位 AI 队友的设置时，`meta.agent` 是它的 handle。
+#: 这一行就是这次改动的记录，没有另一张表。
+EVENT_SETTING_CHANGED: Final = "setting_changed"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -265,6 +270,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_MCP_NOT_CONNECTED,
         EVENT_MENTION_FUSED,
         EVENT_FILE_EDITED,
+        EVENT_SETTING_CHANGED,
     }
 )
 

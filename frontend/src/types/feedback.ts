@@ -1,13 +1,10 @@
-// 反馈中心一域的形状（平台级收件箱，`backend/app/api/routes/feedback.py`，不属于
-// 任何项目），从 `@/cx_types` 里整块搬来的一节：cx_types.ts 顶在自己的行数上限上，
-// 只能变短。名字照旧从 `@/cx_types` 转出去，所以引它的人一个都不用改。
-import type { ListPayload } from '@/cx_types'
-import type { components } from '../api/openapi'
-
-type Schemas = components['schemas']
-
 // ---- 反馈 (feedback) ----
 //
+// 这一节原来长在 `@/cx_types` 里，搬出来是因为那个文件顶在 frontend/src 的 1000 行
+// 上限上；`@/cx_types` 把它原样转出去，对外一个名字都没变，导入路径照旧写 `@/cx_types`。
+import type { components } from '../api/openapi'
+import type { ListPayload } from '../cx_types'
+
 // 平台级的收件箱（`backend/app/api/routes/feedback.py`），不属于任何项目。字段名
 // 与后端 schema 逐字对应 —— 不在这里发明第二个名字，那会让「这个字段到底是哪个」
 // 变成每次读前端代码都要回去查一遍的事。
@@ -27,6 +24,9 @@ type Schemas = components['schemas']
 //     `/avatars/default`，那会让没挑过头像的人共用一张脸。
 //   * 评论的 `reply_count` 是服务端数的整栋楼回复数，不是这一页带回来几条；
 //     「展开更多」靠它和手上条数比较。
+
+type Schemas = components['schemas']
+
 export type FeedbackKind = Schemas['FeedbackKind']
 /** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
 export type FeedbackStatus = Schemas['FeedbackStatus']

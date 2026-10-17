@@ -52,6 +52,7 @@ import type { Router } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
 import { t, unattendedPackIsLoading } from '@/i18n'
+import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
 import { prefetchingChunks } from '@/lib/routePrefetch'
 import { takeWaitingWorker } from '@/pwa'
 
@@ -79,14 +80,12 @@ function describes(reason: unknown): string {
  */
 export function reloadForNewBuild(reason: unknown, target?: string): boolean {
   if (!MISSING_CHUNK.test(describes(reason))) return false
-  try {
-    if (sessionStorage.getItem(RELOADED_KEY)) return false
-    sessionStorage.setItem(RELOADED_KEY, '1')
-  } catch {
-    // Private windows and blocked site data throw on both calls. Reloading
-    // without the guard beats leaving the tab dead: looping needs the failure
-    // to outlive the reload, and a deploy's does not.
-  }
+  // Private windows and blocked site data cannot keep the guard — the read
+  // comes back empty and the write does nothing. Reloading without it beats
+  // leaving the tab dead: looping needs the failure to outlive the reload, and
+  // a deploy's does not.
+  if (storageGet(RELOADED_KEY, 'session')) return false
+  storageSet(RELOADED_KEY, '1', 'session')
   void takeWaitingWorker({ check: true }).finally(() =>
     target === undefined ? window.location.reload() : window.location.assign(target)
   )
@@ -138,11 +137,8 @@ export function recoverNavigations(router: Router): void {
 }
 
 function clearStaleBuildGuard(): void {
-  try {
-    sessionStorage.removeItem(RELOADED_KEY)
-  } catch {
-    // Same stores that refuse the write above; nothing was written either.
-  }
+  // Same stores that refuse the write above; nothing was written either.
+  storageRemove(RELOADED_KEY, 'session')
 }
 
 /**

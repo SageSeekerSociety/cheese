@@ -19,6 +19,7 @@ from app.api.deps import (
     get_chat_service,
     get_work_runner,
 )
+from app.api.doc_access import require_role
 from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -30,6 +31,8 @@ from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService, project_refs_text
+from app.domain.agent.clone import fork_for as fork_transcript
+from app.domain.agent.harness import harness_for
 from app.domain.agent.liveness import (
     last_output_at,
     moving_topics,
@@ -41,11 +44,12 @@ from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.turn.intake.rewrite import text_as_sent
+from app.domain.agent_instance.adapters import project_team, room_teammate
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.asked import Awaited
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
     checklist_text,
@@ -54,14 +58,23 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import MemberWait, MemberWaits
 from app.domain.conversation.services import room_of, threads_of_rooms
-from app.domain.delivery.agent import redispatch_undelivered
+from app.domain.delivery.agent import (
+    dispatch_pending,
+    record_task_instruction,
+    redispatch_undelivered,
+)
+from app.domain.event_author import AuthorType
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project_permissions import Permission
+from app.domain.repository import service as workspace_paths
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
@@ -93,10 +106,7 @@ async def create_topic(
 ) -> dict:
     actor = await resolver.resolve(project_id=body.project_id)
     await resolver.authorize_project(actor, project_id=body.project_id)
-    if not await TopicMemberService(db).may_open_channels(
-        body.project_id, actor.handle
-    ):
-        raise ForbiddenError(say("channelCreateExternal"))
+    await require_role(db, actor, body.project_id, Permission.create_channels)
     # The creator becomes the topic's roster owner (fusion-design §3), and the
     # creator is whoever the credential names — nobody when there is none.
     topic = await TopicService(db).create(
@@ -108,7 +118,13 @@ async def create_topic(
         members_only=body.members_only,
     )
     service = TopicService(db)
-    relevance = await service.relevance_for_topics([topic], _viewer(actor))
+    relevance = await service.relevance_for_topics(
+        [topic],
+        _viewer(actor),
+        team=project_team,
+        cards=AcceptService(db),
+        decisions=ProjectNotificationService(db),
+    )
     managed = await TopicMemberService(db).managed_topic_ids([topic], actor.handle)
     response = ok(_topic_out(topic, set(), {}, relevance, managed_ids=managed))
     # The caller can configure or enter this room as soon as it gets the ID.
@@ -121,7 +137,8 @@ async def create_topic(
 def _viewer(actor: Actor) -> str | None:
     """The handle 与我的相关性 is computed against, or None for "no one".
 
-    An unidentified caller resolves to the ``anonymous`` actor (api/auth.py),
+    An unidentified caller resolves to the ``anonymous`` actor
+    (api/auth/resolver.py),
     which is a placeholder rather than a person: it is in no roster, on no
     card, and @-able by nobody. Handing it to the relevance query would have it
     honestly answer "unrelated to everything" — three round trips to learn what
@@ -131,7 +148,10 @@ def _viewer(actor: Actor) -> str | None:
 
 
 async def _awaiting_an_answer(
-    db: AsyncSession, room_ids: list[uuid.UUID]
+    db: AsyncSession,
+    room_ids: list[uuid.UUID],
+    *,
+    threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
 ) -> dict[uuid.UUID, Awaited]:
     """Which channels wait on an answer, and from whom: their own line's
     question, or one 芝士 asked in one of their tasks or 支线.
@@ -140,8 +160,13 @@ async def _awaiting_an_answer(
     走的是同一条规矩，`notification/repositories.decision_topic_ids`）：芝士在一条活
     里问的那道题，题落在那条活自己的线上，可这个频道也在等那个人回答。少了任务这一
     头，人就看得见「有一条待办」而侧栏一处都不亮。
+
+    ``threads``：调用方已经问过的那一份（`topics_signals.working_in_threads` 要的是
+    同一个答案）。这里会往上面叠任务，所以先拷一份，不动调用方那份。
     """
-    inner_rooms = await threads_of_rooms(db, room_ids)
+    inner_rooms = dict(
+        await threads_of_rooms(db, room_ids) if threads is None else threads
+    )
     inner_rooms.update(await TaskService(db).tasks_of_rooms(room_ids))
     found = await BlockRepository(db).awaiting_an_answer([*room_ids, *inner_rooms])
     return {
@@ -359,7 +384,13 @@ async def list_topics(
     # 它的 broker）正在跑的那些；一个进程按不住另一个进程手里的轮次，所以还要读一遍
     # 「哪一行还开着」（`agent.liveness.moving_topics`）。
     moving_ids = await moving_topics(db, [t.id for t in topics], running=running_ids)
-    relevance = await service.relevance_for_topics(topics, _viewer(actor))
+    relevance = await service.relevance_for_topics(
+        topics,
+        _viewer(actor),
+        team=project_team,
+        cards=AcceptService(db),
+        decisions=ProjectNotificationService(db),
+    )
     live = await topics_signals.live_cards(db, [t.id for t in topics])
     cards = topics_signals.own_cards(live)
     managed = (
@@ -367,20 +398,23 @@ async def list_topics(
         if actor.authenticated
         else set()
     )
+    # 这一页的房间支线，下面三处都要（见 `get_topic` 同一行），问一次。
+    room_threads = await threads_of_rooms(db, [t.id for t in topics])
     # 哪几个房间停在一个未回答的提问上（房间自己那条线）——一次查完。
-    asked = await _awaiting_an_answer(db, [t.id for t in topics])
+    asked = await _awaiting_an_answer(db, [t.id for t in topics], threads=room_threads)
     asks_me = _asks_me(asked, _viewer(actor))
-    # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
+    # 一次，给整页用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
     # 每个房间在等哪几位成员，一次查完。
     waits = await MemberWaits(db).for_rooms(
         [t.id for t in topics],
         now=now,
         stuck_rooms=topics_signals.stuck_on_checks(live),
+        threads=room_threads,
     )
     # 支线里在跑的轮次也是「在管这间房」，`waits` 里这些成员要去掉（一次查完）。
     threads_working = await topics_signals.working_in_threads(
-        db, broker, [t.id for t in topics]
+        db, broker, [t.id for t in topics], threads=room_threads
     )
     # 在跑的那几个各自「多久没有新输出了」——侧栏的红灯靠它（`silent_of`）。
     silent = silent_gaps(runner, [t.id for t in topics if t.id in moving_ids])
@@ -519,14 +553,24 @@ async def get_topic(
     Every OTHER endpoint returning a TopicOut leaves them at their default.
     """
     service = TopicService(db)
-    place = await service.place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     if place.task is not None:
         # A task is read as `GET /topics/{task}/task`.
         raise NotFoundError("Topic not found")
     topic = place.room
     actor = await _actor_in_place(resolver, place)
+    # 这三处的房间是同一批，问的也是同一件事：一次问完再传下去，别让它们各问一
+    # 遍（`_awaiting_an_answer`、`MemberWaits.for_rooms`、
+    # `topics_signals.working_in_threads`）。
+    room_threads = await threads_of_rooms(db, [topic.id])
     last_activity = await service.last_activity_for_topics([topic.id])
-    relevance = await service.relevance_for_topics([topic], _viewer(actor))
+    relevance = await service.relevance_for_topics(
+        [topic],
+        _viewer(actor),
+        team=project_team,
+        cards=AcceptService(db),
+        decisions=ProjectNotificationService(db),
+    )
     live = await topics_signals.live_cards(db, [topic.id])
     cards = topics_signals.own_cards(live)
     managed = (
@@ -534,13 +578,16 @@ async def get_topic(
         if actor.authenticated
         else set()
     )
-    asked = await _awaiting_an_answer(db, [topic.id])
+    asked = await _awaiting_an_answer(db, [topic.id], threads=room_threads)
     waits = await MemberWaits(db).for_rooms(
         [topic.id],
         now=datetime.now(UTC),
         stuck_rooms=topics_signals.stuck_on_checks(live),
+        threads=room_threads,
     )
-    threads_working = await topics_signals.working_in_threads(db, broker, [topic.id])
+    threads_working = await topics_signals.working_in_threads(
+        db, broker, [topic.id], threads=room_threads
+    )
     # 同 `list_topics`：这一行自己那条线上在跑的是 `running_ids`（`presentation`
     # 读它），连着名下的活和支线的那一份是 `moving_ids`（侧栏那盏呼吸绿读它）。
     running_ids = runner.running_topic_ids()
@@ -663,7 +710,7 @@ async def list_topic_blocks(
         after is not None or around is not None or stored_after is not None
     ):
         raise ValidationError(say("cursorNeedsLimit"))
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
 
@@ -834,7 +881,7 @@ async def read_chat_history(
     IDs for nested replies. Search is literal, case-insensitive substring
     matching over content, metadata and quoted document text.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     if before is not None and after is not None:
         raise ValidationError("Use before or after, not both")
@@ -892,7 +939,7 @@ async def read_chat_message(
     resolver: ActorResolverDep,
 ) -> dict:
     """Read one block of any kind, including a task-card comment or doc node."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
     also = await _opening_ids(db, place.conversation_id)
@@ -913,7 +960,7 @@ async def topic_usage(
     The room's whole bill, its tasks included: a task's sessions spend under
     the room as well as under the task.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     return ok(await UsageRepository(db).for_topic(place.room_id))
 
@@ -975,7 +1022,7 @@ async def topic_status(
     so it is empty after a restart and says `running` about a turn killed with
     the process. See ``TopicService.stall_signal``."""
     topics = TopicService(db)
-    place = await topics.place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     filed, _ = await AcceptService(db).list_for_topic(place.room_id)
     cards = [
@@ -984,7 +1031,7 @@ async def topic_status(
     credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
     stall = await topics.stall_signal(
-        topic_id,
+        place.room_id,
         live_turn=runner.live_work_for_topic(topic_id),
     )
     return ok(
@@ -1046,7 +1093,7 @@ async def get_topic_progress(
     task's, written by its own session — as of the last turn to touch it. Read
     on open: between turns there is no WS stream to carry it, and "做到哪了" has
     to be visible without summoning anyone."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     items, updated_at = await TopicService(db).get_progress(place.conversation_id)
     return ok(
@@ -1107,7 +1154,7 @@ async def write_topic_progress(
     is writing its task's list: stored under the task, pushed on the task's
     channel, and nothing posted in the room.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -1167,8 +1214,11 @@ async def write_topic_progress(
             notify_mentions=announce_edited_message,
             editor=actor.handle,
             content=text,
-            chat=chat,
-            runner=runner,
+            notify=chat,
+            dispatch=partial(
+                dispatch_pending, chat.session_factory, chat=chat, runner=runner
+            ),
+            record_instruction=record_task_instruction,
             checklist=checklist,
         )
         return ok({"items": items, "message_id": message["id"], "posted": False})
@@ -1217,15 +1267,16 @@ async def summon_agent(
     会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
+    await require_role(db, actor, place.project_id, Permission.ask_agent)
     # The conversation the button is in: a 支线's or a task's retry runs there.
-    if chat.has_running_turn(place.conversation_id):
+    if await chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
     if not await chat.has_unread_input(place.conversation_id):
         # 房间里没有待读的消息，不等于这一下没事可做：平台自己欠这个频道的输入
@@ -1283,7 +1334,7 @@ async def mint_webhook_token(
     into the room's timeline as any source, and rotating it locks out every
     token minted before. So minting takes the same door as writing to the room
     — project membership — rather than being handed to whoever knows the id."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         project_id=place.project_id, topic_id=place.conversation_id
     )
@@ -1323,14 +1374,18 @@ async def record_weekly(
 
     `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     report = (body.get("body") or "").strip()
     if not report:
         raise ValidationError(say("bodyRequired"))
     since, until = _weekly_window(body)
     report = await canonicalize_refs(
-        db, place.project_id, report, exclude_topic_id=place.room_id
+        db,
+        place.project_id,
+        report,
+        team=project_team,
+        exclude_topic_id=place.room_id,
     )
     # 重发幂等 (④)：一轮重新送达时，同一份正文是同一份
     # 周报，不能垒出第二行。轮次之外（人在界面上点）没有 continuation，也就没有
@@ -1383,7 +1438,7 @@ async def record_check_result(
     because its value IS the speed; one that quietly grew past the budget and
     got reported as "inconclusive" would rot into a second full CI.
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     if place.task is None:
         raise NotFoundError(say("taskNotFound"))
@@ -1428,7 +1483,13 @@ async def clone_topic_from(
         actor, project_id=source.project_id, topic_id=source_id
     )
     topic = await service.clone_from(
-        target_topic_id=topic_id, source_topic_id=source_id
+        target_topic_id=topic_id,
+        source_topic_id=source_id,
+        room_teammate=room_teammate,
+        fork=fork_transcript,
+        project_harness=harness_for,
+        paths=workspace_paths,
+        sessions=AgentSessionService(db),
     )
     await db.commit()
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))

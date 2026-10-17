@@ -614,19 +614,11 @@ class Room:
         self.launched = None
 
     def prepare(self, target, resume=None):
-        sync = {"type": "command", "command": "cheese sync-agents || true"}
-        hooks = [{"hooks": [sync]}]
         self.launched = client.prepare(
             self.layout.session,
             target,
             claude=self.binary,
-            base_settings={
-                "hooks": {
-                    **platform_hooks(self.layout.platform_log),
-                    "SessionStart": hooks,
-                    "UserPromptSubmit": hooks,
-                }
-            },
+            base_settings={"hooks": platform_hooks(self.layout.platform_log)},
             home_override=self.home,
             config_override=self.layout.config,
             # Where the runner puts it: after the bootstrap's own arguments,

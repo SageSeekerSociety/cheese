@@ -32,6 +32,7 @@ from app.domain.task.models import (
 )
 from app.domain.task.repositories import (
     TaskMembershipRepository,
+    TaskMentorRepository,
     TaskSubmissionRepository,
     TaskSubmissionSchemaRepository,
     TopicRepository,
@@ -39,6 +40,7 @@ from app.domain.task.repositories import (
 from app.domain.task.services import TaskMembershipService
 from app.domain.task.submission_state import claim_state
 from app.domain.team.models import Team
+from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -285,6 +287,38 @@ async def _enrich_task_models(
         }
         task_model["categoryId"] = category_id
 
+    # The mentors who join every claimer's project (#3830), with the name the
+    # claim notice says them by.
+    mentors_of = await TaskMentorRepository(db).for_tasks(task_ids)
+    mentor_users = (
+        await user_repo.get_by_handles(
+            [h for handles in mentors_of.values() for h in handles]
+        )
+        if mentors_of
+        else {}
+    )
+    mentor_profiles = (
+        await profile_repo.get_profiles_by_user_ids(
+            [u.id for u in mentor_users.values()]
+        )
+        if mentor_users
+        else {}
+    )
+    for task_model in task_models:
+        task_model["mentors"] = [
+            {
+                "handle": handle,
+                "nickname": (
+                    mentor_profiles[mentor_users[handle].id].nickname
+                    if handle in mentor_users
+                    and mentor_users[handle].id in mentor_profiles
+                    and mentor_profiles[mentor_users[handle].id].nickname
+                    else handle
+                ),
+            }
+            for handle in mentors_of.get(task_model["id"], [])
+        ]
+
     # Resolve accessDomainGroupIds from stored TaskAccessDomain rows. 整页一次取回，
     # 不按题各发两条 —— 一屏 20 道题就是 40 条查询。只有开了访问控制的题要问，
     # 答案按题归属（见仓储方法的注释）。
@@ -396,8 +430,6 @@ async def _enrich_task_user_state(
     # ship arrays of bare ids / `{id}` stubs, so the dialog rendered
     # "确定要让小队\"undefined\"退出该赛题吗？". Bulk-fetch real Team rows
     # for every team_id that shows up across the task list.
-    from app.domain.team.repositories import TeamRepository as _TeamRepo
-
     team_repo = _TeamRepo(session=db)
 
     by_id = {task.id: task for task in tasks}

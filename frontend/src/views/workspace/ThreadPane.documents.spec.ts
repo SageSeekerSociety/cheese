@@ -47,6 +47,11 @@ vi.mock('@/stores/workspace', () => ({
   }),
 }))
 vi.mock('@/api/threads', () => ({ getThread: vi.fn(async () => ({ root: null })) }))
+// 对话那一栏会问这段对话里有没有待存的技能提议：这里没有。
+vi.mock('@/api/projectSkills', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/projectSkills')>()),
+  listProjectSkills: vi.fn(async () => ({ data: [], total: 0 })),
+}))
 vi.mock('@/lib/libraryApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/libraryApi')>()),
   listProjectLibrary: vi.fn(async () => ({ data: [], next: null })),
@@ -221,18 +226,13 @@ async function mountThread(threadId: string, block: Block, start?: RouteLocation
   return { ...view, router, threadFullPath }
 }
 
-describe('支线里的资料库文档卡', () => {
-  it.each([
-    [DESKTOP, 'Release plan'],
-    [DESKTOP, '打开'],
-    [PHONE, 'Release plan'],
-    [PHONE, '打开'],
-  ])('%i 宽度点击 %s 进入对应文档页', async (width, label) => {
+describe('支线里的资料库文档那一行', () => {
+  it.each([DESKTOP, PHONE])('%i 宽度点那一行进入对应文档页', async (width) => {
     widthIs(width)
     const threadId = `document-thread-${sequence}`
     const view = await mountThread(threadId, documentCardBlock(threadId, ++sequence, []))
 
-    await fireEvent.click(await view.findByText(label, { exact: true }))
+    await fireEvent.click(await view.findByRole('button', { name: /Release plan/ }))
 
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('project-document'))
     expect(view.router.currentRoute.value.params).toEqual({ projectId: SLUG, docId: 'library-doc' })
@@ -247,7 +247,7 @@ describe('支线里的资料库文档卡', () => {
     ]
     const view = await mountThread(threadId, documentCardBlock(threadId, ++sequence, edits))
 
-    // 卡片上写的是「查看改动」，点它。
+    // 那一行末尾是「查看改动」，点它。
     await fireEvent.click(await view.findByRole('button', { name: /查看改动/ }))
 
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('project-document'))
@@ -255,11 +255,11 @@ describe('支线里的资料库文档卡', () => {
     await waitFor(() => expect(host.reviewEdits).toHaveLength(1))
     expect(host.reviewEdits[0]).toEqual({
       doc: 'library-doc',
-      request: { requester: '', edits } as DocReviewRequest,
+      request: { edits } as DocReviewRequest,
     })
   })
 
-  it.each([DESKTOP, PHONE])('%i 宽度点改过的卡片本身，打开文档，不进改动对比', async (width) => {
+  it.each([DESKTOP, PHONE])('%i 宽度点改过的那一行本身，打开文档，不进改动对比', async (width) => {
     widthIs(width)
     const threadId = `card-body-thread-${sequence}`
     const view = await mountThread(
@@ -267,7 +267,7 @@ describe('支线里的资料库文档卡', () => {
       documentCardBlock(threadId, ++sequence, [{ old: '旧条款', new: '新条款' }])
     )
 
-    await fireEvent.click(await view.findByText('Release plan', { exact: true }))
+    await fireEvent.click(await view.findByRole('button', { name: /Release plan/ }))
 
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('project-document'))
     await waitFor(() => expect(view.container.querySelector('[data-open-document="library-doc"]')).not.toBeNull())

@@ -35,10 +35,12 @@ import hashlib
 import json
 from pathlib import Path
 
+from app.core.config import settings
 from app.domain.agent import (
     environment_runner,
     forge_cli,
     machine_tunnel,
+    package_mirrors,
     preview_tunnel,
     toolchain,
 )
@@ -485,6 +487,12 @@ def launch_script(
     tunnel_up = CHEESE_TUNNEL_UP
     preview_up = CHEESE_PREVIEW_UP
     toolchain = toolchain_block()
+    # What this script itself downloads — the toolchain, and the project's own
+    # dependencies when `prepare` runs them — goes to a domestic mirror where one
+    # answers. The room's agent inherits a different environment, built on the
+    # machine by the executor (`bootstrap.prepared`), which applies the same
+    # policy there; this one is the launch's own share of it.
+    mirror_env = package_mirrors.shell(package_mirrors.configuration(settings))
     return f"""set -e
 # A session the platform capped runs in a systemd scope of its own, under that
 # cap (#1544). tmux puts each pane in a scope under the user manager, outside
@@ -567,6 +575,7 @@ if [ -n "$CS" ] && mkdir -p "$CS" 2>/dev/null; then
   export CHEESE_STORE="$CS"
   CSLIVE=1
 fi
+{mirror_env}
 export HOME="$CH" CHEESE_WORK="$CW"
 mkdir -p "$HOME" "$CHEESE_WORK"
 # Canonicalize to absolutes (resolve symlinks) so nothing depends on cwd —

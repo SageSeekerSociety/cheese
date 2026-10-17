@@ -14,6 +14,7 @@ from app.domain.agent import (
     environment_runner,
     forge_cli,
     machine_tunnel,
+    package_mirrors,
     preview_tunnel,
     toolchain,
 )
@@ -157,6 +158,11 @@ def payload_for(
         "resource": str(resource_id),
         "env": values,
         "environment": environment,
+        # Where this room's package downloads come from. The addresses travel
+        # here rather than through `env`, which is the *session's* environment:
+        # this is the platform's own policy for the machine, and the executor
+        # decides from it, on the machine, which mirrors answer (`bootstrap`).
+        "package_mirrors": package_mirrors.configuration(settings),
         # Carried as content, not as a release file: the agent's shell runs on
         # THIS machine, and the skill text it was handed names
         # `$CLAUDE_CONFIG_DIR/skills/...` — a path that only resolves here. The

@@ -24,9 +24,24 @@ const html = document.documentElement
 function post(message: object) {
   if (window.parent !== window) window.parent.postMessage({ ch: CHANNEL, ...message }, '*')
 }
+/** 「…后」, with the space Chinese puts between a number or a Latin letter
+ *  and a character. */
+export const after = (what: string) => `${what}${/[\w)]$/.test(what) ? ' ' : ''}后`
+
+/** What the platform's check is doing to the app as a reader would
+ *  (exercise.ts), so an error it brings out says what brought it out. */
+let doing: string | null = null
+export function acting(what: string | null) {
+  doing = what
+}
+/** How many times the app has failed, for whoever needs to know whether an
+ *  action of theirs made it fail. */
+export let failures = 0
 export function fail(message: string) {
-  console.error(message)
-  post({ type: 'error', message })
+  failures++
+  const said = doing ? `读者${after(doing)}出错：${message}` : message
+  console.error(said)
+  post({ type: 'error', message: said })
 }
 addEventListener('error', (e) => fail(e.message || String(e.error)))
 // An app checks the numbers its document states with console.assert. One that

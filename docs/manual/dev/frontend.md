@@ -199,7 +199,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 两边的键一一对应：`zh-CN` 的每个键在 `en` 里都有非空的英文，每个键都有源码引用，没有例外清单。缺译文就补上，没人用就删掉。语言名和切换标签是母语写法（每种语言里都是同一个字符串），所以它们根本不住在目录里，而是 `languages.ts` 的常量：于是「英文目录里出现 CJK 是正确的」这件事没有豁免可躲。
 
-目录之外，`pnpm run lint:i18n` 扫 `src/` 里写死的中文，一行也不放过；只有被比较、被解析或被存进数据的中文可以留下，并且要在同一行写 `// i18n-data: 理由`（模板里是 `<!-- i18n-data: 理由 -->`）。规则全文在 `docs/i18n.md` §4、§5。
+目录之外，`pnpm run lint:i18n` 扫 `src/` 里写死的中文，一行也不放过；只有被比较、被解析或被存进数据的中文可以留下，并且要在同一行写 `// i18n-data: 理由`（模板里是 `<!-- i18n-data: 理由 -->`）。模板 HTML 注释里的中文是唯一按基线棘轮算的一种（注释在生产构建里会被去掉，在 vitest 和 `vite dev` 里不会，带汉字的会撞上检查 DOM 的测试）：只拦新增，基线在 `frontend/i18n-comments-baseline.json`，清掉一些后跑 `pnpm run lint:i18n:update` 收紧。规则全文在 `docs/i18n.md` §4、§5。
 
 `fallbackLocale` 是 `zh-CN`：少一个 key 退化成可读的中文而不是原始 key；这个回退在运行时是**静默的**，保证不缺 key 的是 `catalog.spec.ts`。开发构建对每一次缺失和回退都告警。
 
@@ -211,10 +211,10 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 |---|---|---|
 | ESLint | `pnpm run lint`（`task fe:lint:check`） | 代码问题；故意不传 `--fix` —— 会重写工作区的闸门可以在它偷偷修好的违规上退出 0 |
 | 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算，这条非对称判据见 `frontend/scripts/import-boundary-ratchet-core.mjs`）；四条组件原则见 `.claude/rules/architecture.md` |
-| 浏览器存储 | `pnpm run lint:storage` | `src/` 里新增的直接读 `localStorage` / `sessionStorage`（含 `window.localStorage`、`window['localStorage']`、从 `window` 解构出来再用的写法）。它们会抛：Safari 无痕、配额满、根本没有浏览器上下文——一次抛在 `setup()` 里就连带整个渲染。唯一允许碰这两个全局的是 `src/lib/browserStorage.ts`（`storageGet` / `storageSet` / `storageRemove` / `storageGetJson` / `storageSetJson` / `storageGetStrings`，都不抛），规则与报文见 `frontend/scripts/browser-storage-ratchet-core.mjs`；测试文件、`src/test/**` 和该模块本身除外。`@vueuse/core` 的 `useStorage` 不算违规 |
+| 浏览器存储 | `pnpm run lint:storage` | `src/` 里新增的直接读 `localStorage` / `sessionStorage`（含 `window.localStorage`、`window['localStorage']`、从 `window` 解构出来再用的写法）。它们会抛：Safari 无痕、配额满、根本没有浏览器上下文——一次抛在 `setup()` 里就连带整个渲染。唯一允许碰这两个全局的是 `src/lib/browserStorage.ts`（`storageGet` / `storageSet` / `storageRemove` / `storageGetJson` / `storageSetJson` / `storageGetStrings` / `storageKeys` / `storageAvailable`，都不抛），规则与报文见 `frontend/scripts/browser-storage-ratchet-core.mjs`；测试文件、`src/test/**` 和该模块本身除外。`@vueuse/core` 的 `useStorage` 不算违规 |
 | 无障碍 | `pnpm run lint:a11y` | `src/**/*.vue` 模板里新增的 `eslint-plugin-vuejs-accessibility`（`flat/recommended`，配置在 `eslint.a11y.config.mjs`）违规：能点却没有键盘路径的元素、没绑名字的表单控件和 label、没有 alt 的图片、写错或缺必需属性的 ARIA。它只读静态模板，焦点顺序、对话框的焦点管理、对比度都看不到 |
 | 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
-| 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错；跑之前先由 `scripts/typecheck.mjs` 从 `backend/openapi.json` 生成 `src/api/openapi.d.ts` |
+| 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错；跑之前先由 `scripts/typecheck.mjs` 生成 `src/api/openapi.d.ts`，它给后端要一份现造的 OpenAPI 文档（`uv run python -m scripts.export_openapi --stdout`）再拿它生成。**两份都不进仓库**：文档 1.8MB、类型 1.4MB，每改一条路由两份一起重写，任何两个都动路由的分支就会在这儿撞车。代价是这个检查要后端的 Python 环境（uv、解释器、应用依赖），所以 `check` 作业现在也装后端依赖。进仓库的是同一份文档的一行摘要（`backend/openapi.sha256`）：路径表盯它决定前端套件跑不跑（原来盯的就是那份 1.8MB 文档，改动的提交集合一样），后端作业拿它跟现造的文档对账，对不上就红并让你重跑一次 `backend/` 里的生成器把它提交上来 |
 | 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的） |
 | 渲染对比度 | `pnpm --dir e2e exec playwright test contrast-ratchet` | 公开页（`/`、`/solutions`、`/download`）两个主题下**渲染出来**的每一段文字和每一个图标字形，新增的或变得比基线更差的对比度不足（正文 4.5:1，大字与图标字形 3:1），以及同一个选择器下量不出来的实例变多——一个 key 上既有能测的段落、又有压在渐变上的段落时，两边都记下来，不会因为前者过线就把后者丢掉。量的是画出来的东西，所以继承色、半透明叠色、`::before` 画的字形都算在内——这三样正是源码里看不出来的那部分，也是这道闸门立在 `fe-` 其他颜色闸门之外的原因（`.mjs` 头里写了为什么不用 axe-core）。规则、棘轮算法和报文在 `frontend/scripts/contrast-ratchet-core.mjs`，存量冻在 `frontend/contrast-baseline.json`。它跑在 e2e 那套里：量对比度要一个真浏览器，而 Playwright 在 `e2e/`，所以命令和更新方式（`CONTRAST_UPDATE=1` / `CONTRAST_FREEZE_NEW=1`）与其他棘轮不同，见 `e2e/tests/contrast-ratchet.spec.ts` |
 

@@ -5,6 +5,7 @@
   "cancel": "Cancel",
   "changed": "Changed {n} places",
   "dismiss": "Dismiss",
+  "draftLabel": "Draft the project goals",
   "failed": "{agent} couldn't answer. Try again later",
   "followUp": "Ask for more changes",
   "groupAsk": "Ask",

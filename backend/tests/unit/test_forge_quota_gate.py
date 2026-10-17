@@ -21,8 +21,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 from app.core import forge_quota
 from app.core.forge_http import forge_client
-from app.domain.agent.github_app import GitHubAppTokens
 from app.domain.project.forge import installation_serves_background
+from app.domain.project.github_app import GitHubAppTokens
 
 INSTALLATION = 152342238
 

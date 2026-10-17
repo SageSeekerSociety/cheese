@@ -18,7 +18,8 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent.models import AgentTurn
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
     post_project,
     room_agent_headers,

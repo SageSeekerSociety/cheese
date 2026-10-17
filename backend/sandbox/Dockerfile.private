@@ -14,6 +14,11 @@ RUN mkdir -p /etc/ssl/certs \
     && npm cache clean --force \
     && rm -rf /tmp && ln -s /work/.tmp /tmp
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py /opt/cheese/runtime.py
+# The parts of runtime.py, beside it: it loads them from its own directory.
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_core.py /opt/cheese/runtime_core.py
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py /opt/cheese/runtime_commands.py
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_context.py /opt/cheese/runtime_context.py
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_calls.py /opt/cheese/runtime_calls.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py /opt/cheese/mcp_process.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/private.py /opt/cheese/private.py
 # The egress proxy private chats reach the network through (see private.py).

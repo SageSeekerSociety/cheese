@@ -91,6 +91,7 @@ def _give_card_a_pr(client, card_id: str, number: int = 7) -> None:
 @pytest.mark.parametrize("kind", ["github_app", "forgejo"])
 def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch, kind):
     from app.domain.project import forge
+    from app.domain.review import forge_clients
 
     pid = _make_project(client)
     tid = _make_topic(client, pid)
@@ -134,12 +135,22 @@ def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch, kind):
     def wrong_provider(*args, **kwargs):
         raise AssertionError("Used a different forge than the project binding")
 
+    # 领令牌有两个消费者：搬到 `review.forge_clients` 的两个工厂从自己的命名空间
+    # 取这个名字，`project.forge` 里剩下的读法仍在原地取，所以两边都打桩。
     monkeypatch.setattr(forge, "tokens_for_project", AsyncMock(return_value=object()))
     monkeypatch.setattr(
-        forge, "GitHubPRClient", Provider if kind == "github_app" else wrong_provider
+        forge_clients, "tokens_for_project", AsyncMock(return_value=object())
+    )
+    # 造客户端的是 `review.forge_clients`，客户端类在它自己的命名空间里取。
+    monkeypatch.setattr(
+        forge_clients,
+        "GitHubPRClient",
+        Provider if kind == "github_app" else wrong_provider,
     )
     monkeypatch.setattr(
-        forge, "ForgejoPRClient", Provider if kind == "forgejo" else wrong_provider
+        forge_clients,
+        "ForgejoPRClient",
+        Provider if kind == "forgejo" else wrong_provider,
     )
     response = client.get(f"/topics/{tid}/pr-checks")
     assert response.status_code == 200

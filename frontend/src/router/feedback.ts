@@ -70,9 +70,12 @@ function statsRoute(path: string, name: string, kind: StatsKind, titleKey: strin
  * 是抽屉），内容区是 `AdminLayout`（门、全局键）里装的子页。所以 `/admin` 是一条带
  * `children` 的父路由。
  *
- * `/admin/feedback` 是队列的老地址，**留着**、渲染一个薄壳（`AdminFeedbackPage` →
- * `AdminQueuePage`）：老书签、老通知、别人贴在聊天里的链接都指到这里，重定向会把地址栏
- * 里那个旧地址悄悄换掉。`/admin/dashboard` 是拆成各页之前的看板，跳到平台总览。
+ * `/admin/feedback` 是队列的老地址，**留着** —— 它和 `/admin/queue` 指向同一个组件，
+ * 不重定向：老书签、老通知、别人贴在聊天里的链接都指到这里，重定向会把地址栏里那个
+ * 旧地址悄悄换掉，而人正在这一页上分诊时地址栏自己变一次是没必要的惊吓。**两条记录
+ * 各自写一份 `import()`，不要合成一条 `alias`**：别名不会替这条记录生成 name，而
+ * `AdminFeedback` 这个名字有别处在用（侧栏、守卫、测试）。
+ * `/admin/dashboard` 是拆成各页之前的看板，跳到平台总览。
  *
  * 看板原来的七屏各是一页（`statsRoute`），同一个容器 `AdminStatsPage` 按 `kind` 画其中
  * 一类；分在侧栏哪一组见 `@/lib/adminSections`。
@@ -212,11 +215,11 @@ export default [
         meta: { titleKey: 'navigation.admin.spaces', isFullPage: true },
       },
       {
-        // 老地址，见文件头。渲染的是同一个队列，所以标题也跟它一致 —— 顶栏上那行字
+        // 老地址，见文件头。指向的是同一个队列组件，所以标题也跟它一致 —— 顶栏上那行字
         // 不该因为用户是从哪个链接进来的而变。
         path: 'feedback',
         name: 'AdminFeedback',
-        component: () => import('@/views/feedback/AdminFeedbackPage.vue'),
+        component: () => import('@/views/admin/AdminQueuePage.vue'),
         meta: { titleKey: 'navigation.admin.queue', isFullPage: true },
       },
       {

@@ -34,7 +34,6 @@ function state(overrides: Partial<ProjectDefaultModel> = {}): ProjectDefaultMode
     model: null,
     subagent_model: null,
     deployment_default: 'sonnet',
-    can_manage: true,
     choices,
     ...overrides,
   }
@@ -139,13 +138,6 @@ it('shows a saved model that is no longer offered as unavailable and lets anothe
   await waitFor(() => expect(save.hasAttribute('disabled')).toBe(false))
   await fireEvent.click(save)
   expect(view.emitted('save')).toEqual([['deepseek-flash', null]])
-})
-
-it('is read-only for someone who cannot manage the project', async () => {
-  const view = mount(state({ can_manage: false }))
-  await view.findByRole('combobox', { name: '项目主模型' })
-  expect(view.queryByRole('button', { name: '保存' })).toBeNull()
-  expect(view.getByText('仅项目负责人可修改默认模型')).toBeTruthy()
 })
 
 it('shows the save receipt and the reason a save failed', async () => {

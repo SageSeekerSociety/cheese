@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.room_task.schemas import PresentationOut
+from app.domain.presentation_meta import PresentationOut
 from app.domain.topic.models import TopicKind, TopicStatus
 
 

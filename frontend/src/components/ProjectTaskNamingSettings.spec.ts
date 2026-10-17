@@ -18,7 +18,7 @@ import ProjectTaskNamingSettings from './ProjectTaskNamingSettings.vue'
 const UI = { plugins: [createVuetify({ components, directives })] }
 
 function naming(overrides: Partial<TaskNaming> = {}): TaskNaming {
-  return { mode: 'auto', available: true, can_manage: true, ...overrides }
+  return { mode: 'auto', available: true, ...overrides }
 }
 
 beforeEach(() => setLocale('zh-CN'))
@@ -43,13 +43,6 @@ describe('ProjectTaskNamingSettings', () => {
   it('marks the manual mode when that is what it reads', async () => {
     const view = mount({ state: naming({ mode: 'manual' }) })
     expect((await view.findByRole('radio', { name: /手动命名/ })).getAttribute('aria-checked')).toBe('true')
-  })
-
-  it('is read-only for someone who cannot manage the project', async () => {
-    const view = mount({ state: naming({ can_manage: false }) })
-    const manual = (await view.findByRole('radio', { name: /手动命名/ })) as HTMLButtonElement
-    expect(manual.disabled).toBe(true)
-    expect(view.getByText('仅项目管理员可修改')).toBeTruthy()
   })
 
   it('disables the radios while a save is on its way', async () => {

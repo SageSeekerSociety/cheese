@@ -1,0 +1,9 @@
+{
+  "empty": "No submissions yet",
+  "identity": "View as",
+  "individualIdentity": "Individual",
+  "pending": "(pending review)",
+  "rejected": "(rejected)",
+  "teamIdentity": "Team: {name}",
+  "unnamedTeam": "Unnamed team"
+}

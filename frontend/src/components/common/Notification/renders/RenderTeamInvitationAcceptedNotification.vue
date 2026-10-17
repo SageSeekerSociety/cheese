@@ -1,12 +1,12 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">
+    <div class="n-title">
       <i18n-t v-if="accepter" scope="global" keypath="notifications.TEAM_INVITATION_ACCEPTED.title" tag="span">
         <template #accepter><UserRef :handle="accepter.handle" :name="accepter.name" :project-id="null" /></template>
       </i18n-t>
       <template v-else>{{ title }}</template>
     </div>
-    <div class="text-body-2 text-medium-emphasis mt-1">{{ body }}</div>
+    <div class="n-sub">{{ body }}</div>
   </div>
 </template>
 
@@ -65,11 +65,6 @@ defineExpose({
 </script>
 
 <style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-
 .success-box {
   border-left: 3px solid var(--v-theme-success);
 }

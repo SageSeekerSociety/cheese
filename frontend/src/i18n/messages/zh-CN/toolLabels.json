@@ -72,7 +72,6 @@
   "cheeseMembers": "列出频道成员",
   "cheeseGhToken": "获取 GitHub 令牌",
   "cheeseStatus": "查看平台状态",
-  "cheeseSyncAgents": "刷新分身配置",
   "cheeseServe": "设置预览",
   "cheeseLibraryLs": "查看项目资料",
   "cheeseLibraryGet": "取用项目资料",

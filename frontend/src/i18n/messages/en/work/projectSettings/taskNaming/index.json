@@ -7,6 +7,5 @@
   "loadFailed": "Couldn't load task name settings",
   "manualDetail": "No automatic names. New tasks stay \"New task\" until someone renames them",
   "manualTitle": "Manual names",
-  "readOnly": "Only project admins can change this",
   "saveFailed": "Couldn't save task name settings"
 }

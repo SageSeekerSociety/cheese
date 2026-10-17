@@ -11,6 +11,7 @@ version (a change to the document's `@<version>`, made in the document) and
 ask 芝士 to change it.
 """
 
+import base64
 import uuid
 from typing import Literal
 
@@ -45,11 +46,26 @@ class AppVersionOut(BaseModel):
     note: str
     #: Who wrote it: always an AI teammate.
     author: str
-    #: The person whose request it answered, when there was one.
-    requested_by: str | None
     #: Whether the platform's browser ran it before it was kept.
     checked: bool
     created_at: str
+
+
+class AppSavedOut(AppVersionOut):
+    #: The pictures the platform's browser took of it, light, by width, as
+    #: base64 PNG: asked for by the AI teammate that wrote it, to look at what
+    #: it made before it moves on. Absent when not asked for or not checked.
+    pictures: dict[str, str] | None = None
+
+
+def _pictures(ran: check.Ran | None) -> dict[str, str]:
+    if ran is None:
+        return {}
+    return {
+        f"{width}": base64.b64encode(ran.shots[name]).decode("ascii")
+        for width in check.WIDTHS
+        if (name := f"{width}-light") in ran.shots
+    }
 
 
 class AppOut(BaseModel):
@@ -84,14 +100,14 @@ async def _snippet(
     return await reach(db, resolver, snippet.document_id, enforce=enforce), snippet
 
 
-def _writer(reached: Reached, resolver: ActorResolver) -> tuple[str, str | None]:
-    """Who the new version is by, and who asked for it: 芝士, and only 芝士 —
-    a person changes an app by asking it."""
+def _writer(reached: Reached, resolver: ActorResolver) -> str:
+    """Who the new version is by: 芝士, and only 芝士 — a person changes an app
+    by asking it. The version is the teammate's own, whoever asked."""
     delegation = resolver.delegation()
     if delegation is not None and delegation.agent is not None:
-        return delegation.agent, reached.actor.handle
+        return delegation.agent
     if reached.actor.via == "cheese":
-        return reached.actor.handle, None
+        return reached.actor.handle
     raise ForbiddenError(say("appAgentOnly"))
 
 
@@ -185,17 +201,21 @@ async def get_app_shot(
 
 @router.post(
     "/documents/{document_id}/apps",
-    response_model=Envelope[AppVersionOut],
+    response_model=Envelope[AppSavedOut],
     response_model_exclude_unset=True,
 )
 async def create_app(
-    document_id: uuid.UUID, body: AppCodeIn, db: DbSession, resolver: ActorResolverDep
+    document_id: uuid.UUID,
+    body: AppCodeIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    pictures: bool = Query(False, description="Also answer the pictures taken of it."),
 ) -> dict:
     """A new app of the document, at version 1. The document does not show it
     until a block names it: where it goes is the writer's to decide."""
     reached = await reach(db, resolver, document_id, enforce=True)
     await require_writable(db, reached)
-    author, requested_by = _writer(reached, resolver)
+    author = _writer(reached, resolver)
     ran = await _ran(db, body)
     snippets = Snippets(db)
     snippet = await snippets.create(reached.doc.id, author)
@@ -205,26 +225,32 @@ async def create_app(
         code=body.code,
         note=body.note,
         author=author,
-        requested_by=requested_by,
         ran=ran,
     )
     await db.commit()
-    return ok(Snippets.describe(snippet, version))
+    saved = Snippets.describe(snippet, version)
+    if pictures and (taken := _pictures(ran)):
+        saved["pictures"] = taken
+    return ok(saved)
 
 
 @router.post(
     "/apps/{key}/versions",
-    response_model=Envelope[AppVersionOut],
+    response_model=Envelope[AppSavedOut],
     response_model_exclude_unset=True,
 )
 async def add_app_version(
-    key: str, body: AppCodeIn, db: DbSession, resolver: ActorResolverDep
+    key: str,
+    body: AppCodeIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    pictures: bool = Query(False, description="Also answer the pictures taken of it."),
 ) -> dict:
     """The app's next version. The documents that show it keep the version
     they name until their `@<version>` is changed."""
     reached, snippet = await _snippet(db, resolver, key, enforce=True)
     await require_writable(db, reached)
-    author, requested_by = _writer(reached, resolver)
+    author = _writer(reached, resolver)
     project_id = reached.doc.project_id
     ran = await _ran(db, body)
     version = await Snippets(db).add_version(
@@ -233,8 +259,10 @@ async def add_app_version(
         code=body.code,
         note=body.note,
         author=author,
-        requested_by=requested_by,
         ran=ran,
     )
     await db.commit()
-    return ok(Snippets.describe(snippet, version))
+    saved = Snippets.describe(snippet, version)
+    if pictures and (taken := _pictures(ran)):
+        saved["pictures"] = taken
+    return ok(saved)

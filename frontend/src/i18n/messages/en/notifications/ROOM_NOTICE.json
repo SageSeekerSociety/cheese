@@ -1,0 +1,12 @@
+{
+  "body": "In \"{topicTitle}\"",
+  "outcome": {
+    "accepted": "accepted",
+    "archived": "closed with the room",
+    "rejected": "returned",
+    "voided": "voided"
+  },
+  "settled": "In \"{topicTitle}\" — {outcome}",
+  "settledUnknown": "settled",
+  "untitled": "A notice from the platform"
+}

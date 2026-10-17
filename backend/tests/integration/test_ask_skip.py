@@ -28,6 +28,7 @@ from tests.conftest import seed_user, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
+    mail,
     post_message,
     post_project,
     room_socket,
@@ -183,12 +184,7 @@ def test_skipping_settles_the_question_s_notice(client, stub_hooks, monkeypatch)
     question = _ask(client, stub_hooks, monkeypatch, room)
 
     def notice() -> dict:
-        r = client.get(
-            "/notifications",
-            params={"type": "CHEESE_QUESTION"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        (row,) = r.json()["data"]["notifications"]
+        (row,) = mail(client, token, "CHEESE_QUESTION")
         return row
 
     assert notice()["read"] is False
@@ -209,13 +205,7 @@ def _with_bob(client) -> tuple[str, str]:
 
 
 def _notified(client, handle) -> list[dict]:
-    r = client.get(
-        "/notifications",
-        params={"type": "CHEESE_QUESTION"},
-        headers={"Authorization": f"Bearer {_TOKENS[handle]}"},
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["notifications"]
+    return mail(client, _TOKENS[handle], "CHEESE_QUESTION")
 
 
 def test_the_agent_asks_the_people_it_names_and_each_is_waited_on(

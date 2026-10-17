@@ -26,10 +26,12 @@ _projects = table("projects", column("overview_document_id", Uuid))
 
 
 def project_own(project_id: uuid.UUID) -> ColumnElement[bool]:
-    """The project's own documents: not a task's living document and not the
-    project's goals. The library lists and searches these."""
+    """The project's own documents: not a task's living document, not the
+    project's goals, and not one that still belongs to the conversation 芝士
+    wrote it in. The library lists and searches these."""
     return and_(
         Document.project_id == project_id,
+        or_(Document.room_id.is_(None), Document.kept_at.is_not(None)),
         Document.id.not_in(
             select(_tasks.c.document_id).where(_tasks.c.document_id.is_not(None))
         ),
@@ -49,11 +51,26 @@ class DocumentRepository:
         return await self._session.get(Document, document_id)
 
     async def of_project(
-        self, project_id: uuid.UUID, *, after: Rank | None, limit: int
+        self,
+        project_id: uuid.UUID,
+        *,
+        after: Rank | None,
+        limit: int,
+        also_of_room: uuid.UUID | None = None,
     ) -> list[Document]:
         """The project's own documents, no task's, the latest changed first —
-        the order `app.core.rank` writes down, picking up after ``after``."""
-        query = select(Document).where(project_own(project_id))
+        the order `app.core.rank` writes down, picking up after ``after``.
+        ``also_of_room`` adds the ones that channel or private chat keeps."""
+        own = project_own(project_id)
+        if also_of_room is not None:
+            own = or_(
+                own,
+                and_(
+                    Document.project_id == project_id,
+                    Document.room_id == also_of_room,
+                ),
+            )
+        query = select(Document).where(own)
         if after is not None:
             query = query.where(
                 or_(
@@ -69,6 +86,16 @@ class DocumentRepository:
         )
         return list(rows)
 
+    async def of_room(self, room_id: uuid.UUID) -> list[Document]:
+        """The documents 芝士 wrote in this channel or private chat, saved to
+        the library or not, the newest first."""
+        rows = await self._session.scalars(
+            select(Document)
+            .where(Document.room_id == room_id)
+            .order_by(Document.created_at.desc(), Document.id)
+        )
+        return list(rows)
+
     async def create(
         self,
         *,
@@ -76,13 +103,27 @@ class DocumentRepository:
         title: str | None = None,
         author: str = "system",
         number: int | None = None,
+        room_id: uuid.UUID | None = None,
     ) -> Document:
-        """A new document in no room, empty (version 0): the project's own, or
-        one a task points at (which goes by the task's title)."""
-        doc = Document(project_id=project_id, title=title, author=author, number=number)
+        """A new document, empty (version 0): the project's own, one a task
+        points at (which goes by the task's title), or one written in the
+        conversation ``room_id`` and kept there."""
+        doc = Document(
+            project_id=project_id,
+            title=title,
+            author=author,
+            number=number,
+            room_id=room_id,
+        )
         self._session.add(doc)
         await self._session.flush()
         return doc
+
+    async def keep(self, doc: Document) -> None:
+        """Save it to the library: from now on it is the project's."""
+        if doc.kept_at is None:
+            doc.kept_at = datetime.now(UTC)
+            await self._session.flush()
 
     async def set_content(
         self, doc: Document, content: str, *, author: str | None, expected_version: int

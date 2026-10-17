@@ -2,8 +2,11 @@
 
 The platform's browser (browser-render's ``/inspect``) runs the shell with the
 code in it, at the width of a phone and of the document's column, light and
-dark. What it reports decides whether the code is kept: an app that throws,
-draws nothing or keeps growing goes back to whoever wrote it, with why. What it
+dark, and once uses it the way a reader would: every control to the ends of
+its range, every option, every button, every draggable point to its corners
+(the shell's ``exercise``). What it reports decides whether the code is kept:
+an app that throws, draws nothing or keeps growing, on opening or once used,
+or shows NaN, goes back to whoever wrote it, with why. What it
 draws is kept as the pictures a phone shows before the app runs, and its
 height is the room the document holds for it before it starts.
 
@@ -32,6 +35,8 @@ THEMES = ("light", "dark")
 APP_ELEMENT = "#cheese-app"
 #: Two runs of two widths each, and a browser that may be starting cold.
 CHECK_TIMEOUT_S = 90.0
+#: How the shell begins what it found by using the app (miniapp exercise.ts).
+USED_PREFIXES = ("读者", "打开时")
 
 
 @dataclass
@@ -91,6 +96,9 @@ async def run(code: str, shell: int) -> Ran | None:
         return None
     ran = Ran()
     for theme in THEMES:
+        # Used the way a reader would once, in the first theme: a second time
+        # in the other would find nothing new.
+        exercise = theme == THEMES[0]
         try:
             async with httpx.AsyncClient(timeout=CHECK_TIMEOUT_S) as client:
                 r = await client.post(
@@ -101,6 +109,7 @@ async def run(code: str, shell: int) -> Ran | None:
                         "color_scheme": theme,
                         "settle_seconds": 1.0,
                         "element": APP_ELEMENT,
+                        "exercise": exercise,
                     },
                 )
         except httpx.HTTPError as exc:
@@ -125,4 +134,11 @@ async def run(code: str, shell: int) -> Ran | None:
                 raise Refused(say("appDrewNothing"))
             ran.heights[view["width"]] = height
             ran.shots[f"{view['width']}-{theme}"] = base64.b64decode(view["png_b64"])
+            # What went wrong once the app was used: the shell says which
+            # action brought it out, ahead of anything the browser itself
+            # printed meanwhile. A renderer that cannot exercise says nothing.
+            after = view.get("exercise_errors") or []
+            if after:
+                said = [e for e in after if e.startswith(USED_PREFIXES)]
+                raise Refused((said or after)[0])
     return ran

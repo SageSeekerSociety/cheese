@@ -92,18 +92,3 @@ def _merge(target: CellSamples, source: CellSamples) -> None:
     target.input_tokens.extend(source.input_tokens)
     target.output_tokens.extend(source.output_tokens)
     target.order.extend(source.order)
-
-
-def collect_sequential(
-    endpoint: Endpoint,
-    cells,
-    samples_per_cell: int = DEFAULT_SAMPLES_PER_CELL,
-    seed: int = 20261005,
-    adapter: ReasoningAdapter | None = None,
-) -> dict[str, CellSamples]:
-    rng = random.Random(seed)
-    out = {cell: CellSamples() for cell in cells}
-    for cell in cells:
-        for _ in range(samples_per_cell):
-            _merge(out[cell], probe_once(endpoint, cell, rng, adapter))
-    return out

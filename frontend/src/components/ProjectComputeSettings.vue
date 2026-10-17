@@ -41,20 +41,14 @@ const agents = (count: number) => t('work.projectMachine.agents', { count })
       <SettingsRow data-testid="project-default" :label="t('work.projectMachine.defaultLabel')" width="list">
         <div class="default-row">
           <span class="default-name">{{ environmentName(state.default, state.devices, state.specs) }}</span>
-          <BaseButton
-            v-if="state.can_manage"
-            kind="secondary"
-            size="sm"
-            class="ml-auto"
-            :disabled="busy"
-            @click="emit('toggle')"
-            >{{ editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change') }}</BaseButton
-          >
+          <BaseButton kind="secondary" size="sm" class="ml-auto" :disabled="busy" @click="emit('toggle')">{{
+            editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change')
+          }}</BaseButton>
         </div>
       </SettingsRow>
       <p class="t-body c-muted mt-1 mb-2">{{ t('work.projectMachine.hint') }}</p>
       <EnvironmentPicker
-        v-if="editing && state.can_manage"
+        v-if="editing"
         class="mt-2"
         :current="state.default"
         :devices="state.devices"
@@ -97,7 +91,6 @@ const agents = (count: number) => t('work.projectMachine.agents', { count })
           </li>
         </ul>
       </div>
-      <p v-if="!state.can_manage" class="c-muted mt-3 mb-0">{{ t('work.projectMachine.managedBy') }}</p>
     </template>
   </div>
 </template>

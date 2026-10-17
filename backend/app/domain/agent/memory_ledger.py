@@ -28,6 +28,7 @@ from typing import Protocol
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.auth.audience import seats_only
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
@@ -118,7 +119,6 @@ class MemoryLedger:
         sessions: async_sessionmaker,
         compute: ComputePool,
         gateway: LlmGateway | None,
-        gateway_lock: asyncio.Lock,
         base_prompt: str,
         host: _MemoryHost,
         live: LiveWork,
@@ -126,7 +126,6 @@ class MemoryLedger:
         self._sessions = sessions
         self._compute = compute
         self._gateway = gateway
-        self._gateway_lock = gateway_lock
         self._base_prompt = base_prompt
         self._host = host
         self._live = live
@@ -215,6 +214,14 @@ class MemoryLedger:
                 return
             project_id = topic.project_id
             stored = await read_tree(db, project_id, scopes)
+        # What is said in a private chat or private channel stays with the people
+        # in it (#3830): its session reads the project's shared memory but does
+        # not write it.
+        collected = (
+            [s for s in scopes if s[0] is not MemoryFileScope.team]
+            if seats_only(topic)
+            else scopes
+        )
         answer = await self._compute.memory(session, {"scopes": stored.scopes})
         if answer is None:
             # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
@@ -238,7 +245,7 @@ class MemoryLedger:
                 project_id,
                 stored,
                 answer,
-                scopes=scopes,
+                scopes=collected,
                 updated_by=updated_by,
             )
             if change.is_empty() and not change.refused and not change.rejected:
@@ -247,7 +254,7 @@ class MemoryLedger:
                 return
             # 说给写它的那段对话：一间房里的任务是它自己的一段对话。
             await _say_memory_change(
-                db, project_id, change, scopes, writer_room=session.conversation_id
+                db, project_id, change, collected, writer_room=session.conversation_id
             )
             await db.commit()
 
@@ -429,7 +436,6 @@ class MemoryLedger:
         drained = await drain_dream_spend(
             self._sessions,
             self._gateway,
-            self._gateway_lock,
             project_id,
             root_topic_id,
             run_id,

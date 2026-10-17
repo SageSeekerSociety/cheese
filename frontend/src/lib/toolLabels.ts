@@ -95,7 +95,6 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_members: 'toolLabels.cheeseMembers',
   cheese_gh_token: 'toolLabels.cheeseGhToken',
   cheese_status: 'toolLabels.cheeseStatus',
-  cheese_sync_agents: 'toolLabels.cheeseSyncAgents',
   cheese_serve: 'toolLabels.cheeseServe',
   cheese_library_ls: 'toolLabels.cheeseLibraryLs',
   cheese_library_get: 'toolLabels.cheeseLibraryGet',

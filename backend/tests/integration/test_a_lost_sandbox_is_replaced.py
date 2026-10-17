@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.machine import services
+from app.domain.machine import reaper, services
 from tests.integration.test_sandbox_idle_stop import cloud as cloud
 from tests.integration.test_sandbox_idle_stop import (
     host_comes_up,
@@ -35,12 +35,17 @@ ROOM_LINE = (
 
 
 def _later(monkeypatch, by: timedelta) -> None:
+    """The pool's clock reads ``by`` later than now from here on. Its sweep
+    reads the clock from ``reaper`` and the rest of the pool from ``services``,
+    so both modules have to be moved forward."""
+
     class Later(datetime):
         @classmethod
         def now(cls, tz=None):
             return datetime.now(tz) + by
 
     monkeypatch.setattr(services, "datetime", Later)
+    monkeypatch.setattr(reaper, "datetime", Later)
 
 
 def _said(case, seat) -> list[str]:

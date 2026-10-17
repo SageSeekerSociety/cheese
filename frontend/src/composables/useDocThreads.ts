@@ -83,6 +83,7 @@ export function useDocThreads(document: () => string | null) {
       install(receipt)
       persist(null)
       state.errors[value.id] = ''
+      return receipt
     } catch (cause) {
       if (active(generation)) {
         state.errors[value.id] = cause instanceof Error ? cause.message : String(cause)
@@ -104,7 +105,7 @@ export function useDocThreads(document: () => string | null) {
       await refresh()
       return
     }
-    await execute({
+    return execute({
       id,
       action,
       body: {
@@ -116,8 +117,12 @@ export function useDocThreads(document: () => string | null) {
   }
   const actions: DocThreadActions = {
     reply: (id, content) => write(id, 'replies', content),
-    resolve: (id) => write(id, 'resolve'),
-    reopen: (id) => write(id, 'reopen'),
+    resolve: async (id) => {
+      await write(id, 'resolve')
+    },
+    reopen: async (id) => {
+      await write(id, 'reopen')
+    },
     recover: async (id) => {
       if (operation?.id === id) {
         const frozen = operation

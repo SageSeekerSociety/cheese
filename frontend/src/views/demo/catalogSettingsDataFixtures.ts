@@ -29,6 +29,8 @@ import { COMPUTE_DEVICES } from './catalogFixtures'
 export function computeState(over: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {
   return {
     default: { kind: 'sandbox', spec: 'standard' },
+    max_concurrent_turns: 20,
+    max_concurrent_turns_from: 'deployment',
     can_manage: true,
     devices: COMPUTE_DEVICES,
     specs: [
@@ -43,9 +45,9 @@ export function computeState(over: Partial<ProjectComputeConfigs> = {}): Project
   }
 }
 
-/** 任务命名那两档的现状。默认智能命名、能改、部署也支持。 */
+/** 任务命名那两档的现状。默认智能命名、部署也支持。 */
 export function taskNamingState(over: Partial<TaskNaming> = {}): TaskNaming {
-  return { mode: 'auto', available: true, can_manage: true, ...over }
+  return { mode: 'auto', available: true, ...over }
 }
 
 /** 一档模型可选值。默认允许、没有方案门槛、不带思考强度。 */
@@ -61,7 +63,6 @@ export function defaultModelState(over: Partial<ProjectDefaultModel> = {}): Proj
     model: null,
     subagent_model: null,
     deployment_default: 'sonnet',
-    can_manage: true,
     choices: [
       modelChoice({ id: 'sonnet', label: 'Claude Sonnet 5' }),
       modelChoice({ id: 'deepseek-flash', label: 'DeepSeek V4.1 Flash' }),

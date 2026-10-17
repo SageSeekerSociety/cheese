@@ -7,7 +7,13 @@ a room, that room gets a line with the document on it; a person's change does
 not.
 """
 
+import asyncio
+import uuid
+from datetime import UTC, datetime
+
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.announce import instance_of_seat
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.living_doc import collab
 from tests.integration.conftest import (
     open_task,
@@ -308,3 +314,42 @@ def test_a_tasks_document_is_the_tasks_not_the_librarys(client):
         f"/projects/{project}/documents/search", params={"q": "定价"}, headers=OWNER
     ).json()["data"]
     assert task_doc_id not in {d["id"] for d in found["library"]}
+
+
+def test_cheeses_change_to_a_document_is_a_step_of_its_running_turn(client):
+    """The room's line about the document belongs to the turn whose tool call
+    made the change; a running turn names the agent by its instance."""
+    [(room, project, agent)] = _setup(client)
+    turn_id = uuid.uuid4()
+
+    async def open_turn():
+        async with client.test_factory() as session:
+            instance = await instance_of_seat(session, uuid.UUID(project), seat)
+            await AgentTurnRepository(session).open(
+                turn_id=turn_id,
+                conversation_id=uuid.UUID(room),
+                continuation_id=uuid.uuid4(),
+                author="owner",
+                content="work",
+                is_resume=False,
+                resendable=True,
+                started_at=datetime.now(UTC),
+                agent_handle=instance.handle,
+            )
+            await session.commit()
+
+    made = _create(client, project, headers=agent, title="方案", content="三家")
+    [line] = _room_lines(client, room)
+    assert line["turn_id"] is None
+    seat = line["author"]
+
+    asyncio.run(open_turn())
+    edited = client.post(
+        f"/documents/{made['id']}/edits",
+        json={"edits": [{"old": "三家", "new": "四家"}], "mode": "direct"},
+        headers=agent,
+    )
+    assert edited.status_code == 200, edited.text
+    line = _room_lines(client, room)[-1]
+    assert line["author"] == seat
+    assert line["turn_id"] == str(turn_id)

@@ -26,11 +26,11 @@ const props = defineProps<{
   canCreate: boolean
 }>()
 const emit = defineEmits<{
-  (e: 'open', id: string): void
-  (e: 'join', id: string): void
-  (e: 'leave', id: string): void
-  (e: 'create', channel: { title: string; description: string; membersOnly: boolean }): void
-  (e: 'retry'): void
+  open: [id: string]
+  join: [id: string]
+  leave: [id: string]
+  create: [channel: { title: string; description: string; membersOnly: boolean }]
+  retry: []
 }>()
 const creatingOpen = defineModel<boolean>('creatingOpen', { default: false })
 

@@ -9,6 +9,7 @@ how often it turns; everything about WHAT a tick does is here and in the service
 it calls.
 """
 
+import asyncio
 import logging
 import uuid
 
@@ -16,17 +17,28 @@ import httpx
 from sqlalchemy import or_, select
 
 from app.core.sentences import say
-from app.domain.agent.chat import ChatService
-from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery_events import SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
     SEVERITY_INFO,
     WHO_PLATFORM,
     notice,
 )
+from app.domain.project.forge import (
+    background_quota,
+    quota_serves_background,
+)
 from app.domain.project.models import ProjectForge
 from app.domain.review import landing_watch, pr_publish
 from app.domain.review.models import AcceptCard
+from app.domain.review.ports import (
+    Announce,
+    Chat,
+    DispatchPending,
+    RecordInstruction,
+    SweepCheckouts,
+    TaskTeammate,
+)
 from app.domain.review.task_landing import delivery_landed
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
@@ -52,13 +64,30 @@ _transient_misses: dict[uuid.UUID, int] = {}
 UNCARDED_TASKS_PER_TICK = 10
 _uncarded_task_cursor: uuid.UUID | None = None
 
+# How many of a tick's PRs are carried at once. No card or task PR depends on
+# another — each opens its own session and talks to the forge on its own — so
+# walking them in file order made the tick cost the sum of every round trip,
+# every minute, while the clock that runs it never moved. Bounded rather than
+# unbounded because each one in flight holds a database connection out of the
+# pool the rest of the process shares.
+PRS_AT_ONCE = 6
 
-async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) -> dict:
+
+async def poll_open_prs(
+    chat: Chat,
+    announce: Announce,
+    project_id: uuid.UUID | None = None,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    task_teammate: TaskTeammate,
+) -> dict:
     """Reconcile returned batches and advance pending PR cards (#718) one step —
     mirror its merge state, send the events the 「谁的活」 table names, and merge
     an armed auto-merge card whose rules are satisfied
     (`AcceptService.advance_pr_card`). One DB transaction per card so one card's
-    failure can't roll back another's progress."""
+    failure can't roll back another's progress, and `PRS_AT_ONCE` of them
+    carried together so the tick is not the sum of every card's round trips."""
     # deferred-import: tests replace this name on app.domain.review.services
     from app.domain.review.services import AcceptService
 
@@ -67,44 +96,64 @@ async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) 
     # assembled — instead of being imported from `app.api.deps`, which is a
     # domain importing up into the API layer (`.importlinter`, C1).
     runner = chat.work_runner
-    checked = 0
-    errors: list[str] = []
     async with sessions() as session:
         # 孤儿卡修复 (2026-08-10): cards on ARCHIVED topics are deliberately NOT
         # in this list — driving them means using the approver's GitHub token on
         # work nobody tracks any more. 那条判据留在 review 领域里
         # （open_pr_card_ids），这里只管拿 id。
         card_ids = await AcceptService(session).open_pr_card_ids(project_id)
-    for card_id in card_ids:
-        async with sessions() as session:
-            try:
-                await AcceptService(session).advance_pr_card(
-                    card_id, chat_service=chat, runner=runner
-                )
-                await session.commit()
-                checked += 1
-                _transient_misses.pop(card_id, None)
-            except Exception as exc:  # noqa: BLE001 — one card must not stop the rest
-                await session.rollback()
-                errors.append(f"{card_id}: {exc}")
-                _report_card_failure(card_id, exc)
-                await _note_card_poll_crashed(chat, card_id, exc)
-    return {"cards_checked": checked, "errors": errors}
+    slots = asyncio.Semaphore(PRS_AT_ONCE)
+
+    async def advance(card_id: uuid.UUID) -> str | None:
+        """One card in its own session; returns the failure to report, if any."""
+        async with slots:
+            async with sessions() as session:
+                try:
+                    await AcceptService(
+                        session,
+                        announce=announce,
+                        settle_card=settle_card,
+                        record_instruction=record_instruction,
+                        task_teammate=task_teammate,
+                    ).advance_pr_card(card_id, chat_service=chat, runner=runner)
+                    await session.commit()
+                    _transient_misses.pop(card_id, None)
+                    return None
+                except Exception as exc:  # noqa: BLE001 — one card must not stop the rest
+                    await session.rollback()
+                    _report_card_failure(card_id, exc)
+                    await _note_card_poll_crashed(
+                        chat,
+                        announce,
+                        card_id,
+                        exc,
+                        settle_card=settle_card,
+                        record_instruction=record_instruction,
+                        task_teammate=task_teammate,
+                    )
+                    return f"{card_id}: {exc}"
+
+    # `gather` hands back one outcome per card in the order the cards were
+    # picked up, so the errors read the way they did when this was a loop.
+    failures = await asyncio.gather(*(advance(card_id) for card_id in card_ids))
+    return {
+        "cards_checked": sum(1 for failure in failures if failure is None),
+        "errors": [failure for failure in failures if failure is not None],
+    }
 
 
 async def poll_uncarded_task_prs(
-    chat: ChatService, project_id: uuid.UUID | None = None
+    chat: Chat,
+    announce: Announce,
+    project_id: uuid.UUID | None = None,
+    *,
+    record_instruction: RecordInstruction,
+    task_teammate: TaskTeammate,
 ) -> dict:
     """Record task PRs merged on the forge without an accept card."""
-    # deferred-import: tests replace this name on app.domain.agent.announce
-    from app.domain.agent.announce import announce
 
-    # deferred-import: tests replace this name on app.domain.project.forge
-    from app.domain.project.forge import (
-        background_quota,
-        proposal_client,
-        quota_serves_background,
-    )
+    # deferred-import: tests replace this name on app.domain.review.forge_clients
+    from app.domain.review.forge_clients import proposal_client
 
     global _uncarded_task_cursor
     sessions = chat.session_factory
@@ -148,83 +197,109 @@ async def poll_uncarded_task_prs(
     if project_id is None and task_ids:
         _uncarded_task_cursor = task_ids[-1]
 
-    checked = merged = 0
-    errors: list[str] = []
-    for task_id in task_ids:
+    slots = asyncio.Semaphore(PRS_AT_ONCE)
+
+    async def advance(task_id: uuid.UUID) -> tuple[bool, bool, str | None]:
+        """One task PR; returns (checked, merged, the failure to report)."""
+        checked = merged = False
         try:
-            async with sessions() as session:
-                task = await session.get(Task, task_id)
-                if task is None or task.pr_number is None:
-                    continue
-                number, project = task.pr_number, task.project_id
-                quota = await background_quota(project, session)
-                client = await proposal_client(project, session)
-            # Asked once the session is closed, so no connection waits on it.
-            if not await quota_serves_background(quota):
-                continue
-            if client is None:
-                continue
-            status = await client.pr_status(number)
-            checked += 1
-            if not status.merged:
-                continue
-            async with sessions() as session:
-                task = await session.get(Task, task_id, with_for_update=True)
-                if (
-                    task is None
-                    or task.pr_number != number
-                    or (task.status != TaskStatus.open and task.delivered_head)
-                    or task.closing_since is not None
-                ):
-                    continue
-                if await session.scalar(
-                    select(AcceptCard.id)
-                    .where(
-                        AcceptCard.task_id == task_id, AcceptCard.pr_number == number
+            async with slots:
+                async with sessions() as session:
+                    task = await session.get(Task, task_id)
+                    if task is None or task.pr_number is None:
+                        return checked, merged, None
+                    number, project = task.pr_number, task.project_id
+                    quota = await background_quota(project, session)
+                    client = await proposal_client(project, session)
+                # Asked once the session is closed, so no connection waits on it.
+                if not await quota_serves_background(quota):
+                    return checked, merged, None
+                if client is None:
+                    return checked, merged, None
+                status = await client.pr_status(number)
+                checked = True
+                if not status.merged:
+                    return checked, merged, None
+                async with sessions() as session:
+                    task = await session.get(Task, task_id, with_for_update=True)
+                    if (
+                        task is None
+                        or task.pr_number != number
+                        or (task.status != TaskStatus.open and task.delivered_head)
+                        or task.closing_since is not None
+                    ):
+                        return checked, merged, None
+                    if await session.scalar(
+                        select(AcceptCard.id)
+                        .where(
+                            AcceptCard.task_id == task_id,
+                            AcceptCard.pr_number == number,
+                        )
+                        .limit(1)
+                    ):
+                        return checked, merged, None
+                    topic = await session.get(Topic, task.room_id)
+                    if topic is None or topic.status == TopicStatus.archived:
+                        return checked, merged, None
+                    # Merged on the forge without a delivery: nothing said it was
+                    # a step, so the task is done.
+                    await delivery_landed(
+                        session,
+                        task,
+                        by=None,
+                        head=status.head_sha,
+                        pr_number=number,
+                        completes=True,
+                        handed_over=None,
+                        record_instruction=record_instruction,
+                        task_teammate=task_teammate,
                     )
-                    .limit(1)
-                ):
-                    continue
-                topic = await session.get(Topic, task.room_id)
-                if topic is None or topic.status == TopicStatus.archived:
-                    continue
-                # Merged on the forge without a delivery: nothing said it was a
-                # step, so the task is done.
-                await delivery_landed(
-                    session,
-                    task,
-                    by=None,
-                    head=status.head_sha,
-                    pr_number=number,
-                    completes=True,
-                    handed_over=None,
-                )
-                await announce(
-                    session,
-                    place_id=task.room_id,
-                    task_id=task.id,
-                    content=say("prMergedDelivered", pr=number),
-                    meta=notice(
-                        EVENT_ACCEPT_DONE,
-                        severity=SEVERITY_INFO,
-                        who=WHO_PLATFORM,
-                        detail=task.pr_url or "",
-                    ),
-                )
-                await session.commit()
-                merged += 1
+                    await announce(
+                        session,
+                        place_id=task.room_id,
+                        task_id=task.id,
+                        content=say("prMergedDelivered", pr=number),
+                        meta=notice(
+                            EVENT_ACCEPT_DONE,
+                            severity=SEVERITY_INFO,
+                            who=WHO_PLATFORM,
+                            detail=task.pr_url or "",
+                        ),
+                    )
+                    await session.commit()
+                    merged = True
         except Exception as exc:  # noqa: BLE001 — one PR must not block the rest
-            errors.append(f"{task_id}: {exc}")
             logger.warning(
                 "uncarded task PR poll failed for %s", task_id, exc_info=True
             )
-    return {"tasks_checked": checked, "tasks_merged": merged, "errors": errors}
+            return checked, merged, f"{task_id}: {exc}"
+        return checked, merged, None
+
+    outcomes = await asyncio.gather(*(advance(task_id) for task_id in task_ids))
+    return {
+        "tasks_checked": sum(1 for checked, _, _ in outcomes if checked),
+        "tasks_merged": sum(1 for _, merged, _ in outcomes if merged),
+        "errors": [failure for _, _, failure in outcomes if failure is not None],
+    }
 
 
-async def watch_landings(chat: ChatService) -> dict:
+async def watch_landings(
+    chat: Chat,
+    announce: Announce,
+    *,
+    record_instruction: RecordInstruction,
+    task_teammate: TaskTeammate,
+    machines: SweepCheckouts | None = None,
+) -> dict:
     """Merged task PRs, watched on the default branch for a while: the checks
     there and a deployment that includes them (`landing_watch`)."""
-    return await landing_watch.watch_landings(chat)
+    return await landing_watch.watch_landings(
+        chat,
+        announce,
+        record_instruction=record_instruction,
+        task_teammate=task_teammate,
+        machines=machines,
+    )
 
 
 def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:
@@ -255,7 +330,14 @@ def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:
 
 
 async def _note_card_poll_crashed(
-    chat: ChatService, card_id: uuid.UUID, exc: BaseException
+    chat: Chat,
+    announce: Announce,
+    card_id: uuid.UUID,
+    exc: BaseException,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    task_teammate: TaskTeammate,
 ) -> None:
     """Leave the crash on the card, in its own transaction.
 
@@ -274,13 +356,25 @@ async def _note_card_poll_crashed(
 
     try:
         async with chat.session_factory() as session:
-            await AcceptService(session).note_poll_crashed(card_id, exc)
+            await AcceptService(
+                session,
+                announce=announce,
+                settle_card=settle_card,
+                record_instruction=record_instruction,
+                task_teammate=task_teammate,
+            ).note_poll_crashed(card_id, exc)
             await session.commit()
     except Exception:  # noqa: BLE001 — never let the explanation kill the loop
         logger.exception("could not record poll failure on card %s", card_id)
 
 
-async def open_draft_prs(chat: ChatService) -> dict:
+async def open_draft_prs(
+    chat: Chat,
+    announce: Announce,
+    *,
+    dispatch_pending: DispatchPending,
+    record_instruction: RecordInstruction,
+) -> dict:
     """有东西就有 PR (#718 拍板①): give every batch with commits a draft PR,
     without waiting for anyone to file a card.
 
@@ -288,18 +382,39 @@ async def open_draft_prs(chat: ChatService) -> dict:
     live in `pr_publish.sweep_draft_prs`; this is only the clock.
     """
 
-    result = dict(await pr_publish.sweep_draft_prs(chat.session_factory))
-    await deliver_dependency_notices(chat)
+    result = dict(
+        await pr_publish.sweep_draft_prs(
+            chat.session_factory,
+            announce=announce,
+            record_instruction=record_instruction,
+        )
+    )
+    await deliver_dependency_notices(chat, dispatch_pending=dispatch_pending)
     return result
 
 
-async def deliver_dependency_notices(chat: ChatService) -> None:
-    """Dispatch committed task-parent intent through the delivery ledger."""
-    await dispatch_pending(chat.session_factory, chat=chat, runner=chat.work_runner)
+async def deliver_dependency_notices(
+    chat: Chat, *, dispatch_pending: DispatchPending
+) -> None:
+    """Dispatch committed task-parent intent through the delivery ledger.
+
+    ``dispatch_pending`` 是包好了会话工厂、房间服务和跑机器的那个零参调用
+    （`app.domain.review.ports.DispatchPending`）—— 这里只决定「现在放」。
+    """
+    await dispatch_pending()
 
 
 async def forge_repository_changed(
-    chat: ChatService, kind: str, repo: str, project_id: str | None = None
+    chat: Chat,
+    kind: str,
+    repo: str,
+    project_id: str | None = None,
+    *,
+    announce: Announce,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    dispatch_pending: DispatchPending,
+    task_teammate: TaskTeammate,
 ) -> None:
     """One repository moved — from a relayed forge event, or from a reconnect."""
 
@@ -312,6 +427,18 @@ async def forge_repository_changed(
     async with sessions() as session:
         projects = list(await session.scalars(query))
     for changed_project_id in projects:
-        await poll_open_prs(chat, changed_project_id)
-        await pr_publish.sweep_draft_prs(sessions, changed_project_id)
-    await deliver_dependency_notices(chat)
+        await poll_open_prs(
+            chat,
+            announce,
+            changed_project_id,
+            settle_card=settle_card,
+            record_instruction=record_instruction,
+            task_teammate=task_teammate,
+        )
+        await pr_publish.sweep_draft_prs(
+            sessions,
+            changed_project_id,
+            announce=announce,
+            record_instruction=record_instruction,
+        )
+    await deliver_dependency_notices(chat, dispatch_pending=dispatch_pending)

@@ -54,7 +54,6 @@
   },
   "agentDefaultName": "Cheese",
   "restore": {
-    "restoring": "Restoring your session…",
     "unreachable": "Can’t reach the server to confirm your sign-in",
     "unreachableHint": "It retries automatically when the network is back; you can also retry now.",
     "retry": "Retry",

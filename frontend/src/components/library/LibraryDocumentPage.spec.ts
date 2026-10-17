@@ -43,7 +43,7 @@ vi.mock('@/components/work/PanelDocHost.vue', async () => {
 
 import LibraryDocumentPage from './LibraryDocumentPage.vue'
 
-const review = (edits: { old: string; new: string }[]): DocReviewRequest => ({ requester: '林夏', edits })
+const review = (edits: { old: string; new: string }[]): DocReviewRequest => ({ edits })
 
 const doc = (id: string): PanelDocument => ({ id, projectId: 'p1', title: `标题 ${id}` })
 

@@ -118,13 +118,15 @@ async def test_a_thread_has_the_documents_tools_and_acts_for_the_asker(host, pla
     assert Tool("cheese_doc_get") in events
     first = fake.requests[0]
     # The document's own tools (its text and its mini-apps) and the project
-    # lookups; no machine is lent here, so none of pi's own.
+    # lookups; no machine is lent here, so none of pi's own. `cheese_doc_set`
+    # writes a blank document whole; the platform refuses it over written text.
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
         "cheese_app_get",
         "cheese_app_save",
         "cheese_attachment_read",
         "cheese_doc_edit",
         "cheese_doc_get",
+        "cheese_doc_set",
         "cheese_memory_read",
         "cheese_project_search",
     ]

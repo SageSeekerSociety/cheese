@@ -17,8 +17,11 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_broker
+from app.api.doc_edits import edit_turn
+from app.api.doc_mentions import tell_new_mentions
 from app.api.response import ok
 from app.domain.agent.chat import ChatService
+from app.domain.agent.mentions import MentionedOutside
 from app.domain.block.documents import (
     DocumentWriter,
     persisted_notice,
@@ -32,6 +35,7 @@ from app.domain.living_doc.models import Document
 from app.domain.living_doc.schemas import document_snapshot
 from app.domain.living_doc.services import DocumentJournal
 from app.domain.room_task import naming
+from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.doc_checks import living_doc_warnings
 
@@ -48,6 +52,11 @@ class Stored:
     #: The conversation whose living document this is — a task's, or an old
     #: room's; None for a document of the project's own.
     conversation_id: uuid.UUID | None = None
+    #: People the store's writer @-mentioned who cannot open the document:
+    #: told to that writer alone (``doc_mentions``).
+    outside: MentionedOutside | None = None
+    #: Who wrote the store, when ``outside`` is set.
+    writer: str | None = None
 
 
 def snapshot(doc: Document, operation_id: uuid.UUID | None) -> dict:
@@ -66,7 +75,6 @@ async def store(
     operation: dict | None,
     quiet: bool = False,
     suggestions: list[dict] | None = None,
-    requested_by: str | None = None,
     edits: list[dict] | None = None,
     suggested: bool = False,
     reason: str | None = None,
@@ -79,7 +87,7 @@ async def store(
     ``suggestions`` are the ones pending in the stored state, kept with it on
     every store. A ``suggested`` store proposed ``edits`` (each with its
     ``suggestion_id``) without changing the text: no version, only the line
-    that says so. ``requested_by`` is who an edit was made for.
+    that says so; a direct one's ``edits`` go on its line, for 「查看改动」.
     """
     journal = DocumentJournal(db)
     await journal.lock(doc.id)
@@ -108,9 +116,25 @@ async def store(
         # service sent still holds it, so keeping that state loses nothing.
         return Stored(answer=claim.receipt, conversation_id=conversation_id)
     writer = DocumentWriter(db, summarize_doc_change)
+    # An AI teammate's change is a step of its running turn there: the line
+    # about it carries that turn, so the conversation draws it inside the turn.
+    turn_id = (
+        await edit_turn(
+            db,
+            project_id=doc.project_id,
+            conversation_id=conversation_id,
+            actor=actors[0],
+        )
+        if conversation_id is not None and actors and not quiet
+        else None
+    )
     if suggested:
         notice = await writer.suggest(
-            doc, actor=actors[0], suggestion_ids=proposed, reason=reason
+            doc,
+            actor=actors[0],
+            suggestion_ids=proposed,
+            reason=reason,
+            turn_id=turn_id,
         )
         return Stored(
             answer=snapshot(doc, None),
@@ -122,16 +146,22 @@ async def store(
         return Stored(
             answer={"doc_version": doc.version}, conversation_id=conversation_id
         )
+    before = doc.content or ""
     recorded, notice = await writer.record(
         doc,
         content=content,
         actors=actors,
         operation_id=operation_id,
         quiet=quiet,
-        requested_by=requested_by,
         edits=edits,
+        turn_id=turn_id,
     )
     changed = recorded is not None
+    outside = (
+        await tell_new_mentions(db, doc, before=before, after=content, actors=actors)
+        if changed and not quiet
+        else None
+    )
     if claim is None or operation is None or operation_id is None:
         return Stored(
             answer=snapshot(doc, None),
@@ -139,6 +169,8 @@ async def store(
             changed=changed,
             merged=writer.notice_merged,
             conversation_id=conversation_id,
+            outside=outside,
+            writer=actors[0],
         )
     receipt = snapshot(doc, operation_id)
     await journal.finish(claim, receipt)
@@ -148,6 +180,8 @@ async def store(
         changed=changed,
         merged=writer.notice_merged,
         conversation_id=conversation_id,
+        outside=outside,
+        writer=actors[0],
     )
 
 
@@ -159,6 +193,17 @@ async def announce(doc: Document, stored: Stored, chat: ChatService) -> None:
         # everything derived from the stored version: comment anchors, the
         # last edit, the history.
         await collab.tell(doc.id, {"type": "state", "resource": "doc"})
+    if stored.outside is not None:
+        # Only the writer's editor shows it; everyone else's ignores a frame
+        # addressed to someone else.
+        await collab.tell(
+            doc.id,
+            {
+                "type": "mention_outside",
+                "to": stored.writer,
+                **stored.outside.as_json(),
+            },
+        )
     if stored.changed:
         # A task's document rewritten: a moment its direction may show.
         naming.nudge_document(doc.id)
@@ -203,8 +248,6 @@ async def tell_origin_room(
     nowhere else."""
     if conversation_id is None or await whose_document(db, doc) != (None, None):
         return
-    from app.domain.room_task.place import PlaceResolver
-
     place = await PlaceResolver(db).conversation(conversation_id)
     if place is None:
         return
@@ -218,6 +261,12 @@ async def tell_origin_room(
         created=created,
         edits=edits,
         suggested=suggested,
+        turn_id=await edit_turn(
+            db,
+            project_id=doc.project_id,
+            conversation_id=conversation_id,
+            actor=actor,
+        ),
     )
     await db.commit()
     await get_broker().publish(

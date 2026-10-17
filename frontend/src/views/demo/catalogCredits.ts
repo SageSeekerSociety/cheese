@@ -118,6 +118,7 @@ const TEAMS: CreditTeamPage = {
       plan_key: 'reserve',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: null, credits_used: 0 },
       packs: [],
+      overseas_approved: true,
     },
     {
       id: 2,
@@ -129,6 +130,7 @@ const TEAMS: CreditTeamPage = {
       plan_key: 'free',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 115 },
       packs: LAB_PACKS,
+      overseas_approved: false,
     },
     {
       id: 3,
@@ -140,6 +142,7 @@ const TEAMS: CreditTeamPage = {
       plan_key: 'free',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 46 },
       packs: [pack({ id: 'p4', credits_used: 46 })],
+      overseas_approved: false,
     },
     {
       id: 4,
@@ -151,6 +154,7 @@ const TEAMS: CreditTeamPage = {
       plan_key: 'free',
       period: { start: '2026-10-01T00:00:00+00:00', credits_total: null, credits_used: 0 },
       packs: [],
+      overseas_approved: false,
     },
   ],
   total: 4,
@@ -168,6 +172,7 @@ const LAB: CreditTeamDetail = {
   plan: FREE,
   period: { start: '2026-10-01T00:00:00+00:00', credits_total: 125, credits_used: 115 },
   packs: LAB_PACKS,
+  overseas_approved: false,
 }
 
 const HISTORY: CreditAudit[] = [

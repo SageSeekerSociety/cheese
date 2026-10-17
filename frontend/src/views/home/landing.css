@@ -777,17 +777,32 @@
 
 /* ---- Vision ---- */
 
+/* 光晕画在 ::before 上，不画在 .vision 自己的 background 上：这一段里的字正好
+   压在它上面，元素自己带背景图的话，「这几个字坐在什么底色上」就成了一张浏览器
+   读不出来的图，对比度只能整段记成「量不出来」。放到独立的一层画面不变，字下面
+   重新是一块算得出的颜色。用 isolation 把负 z-index 关在这一层里，别掉到页面
+   底色后面去。 */
 .vision {
   display: grid;
+  position: relative;
+  isolation: isolate;
   padding: 128px var(--gutter);
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 32px 64px;
+  align-items: end;
+}
+
+.vision::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
   background-image: radial-gradient(
     40% 45% at 80% 45%,
     color-mix(in srgb, var(--logo-primary) 8%, transparent),
     transparent 70%
   );
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-  gap: 32px 64px;
-  align-items: end;
+  content: '';
 }
 
 .vision-label {

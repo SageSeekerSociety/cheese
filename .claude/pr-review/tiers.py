@@ -3,11 +3,18 @@
 
     python3 .claude/pr-review/tiers.py --repo ROOT --base BASE --head HEAD
     python3 .claude/pr-review/tiers.py --repo ROOT --base BASE --head HEAD --letter
+    python3 .claude/pr-review/tiers.py --repo ROOT --base BASE --head HEAD --rules [--rev REV]
     python3 .claude/pr-review/tiers.py --self-test
 
 `.claude/scripts/pr-review.sh prepare` runs this, prints the block into REVIEW.md and
 keeps the letter for the card's first line (`render.py --tier`). The tiers and their
 criteria are 《总调度工作流 v2》 §4.
+
+`--rules` prints instead the rule files the change loads, one path per line, read from
+`--rev` (prepare passes the default branch): the `.claude/rules/*.md` whose `paths:`
+globs cover a changed file, and the AGENTS.md of each directory above one. prepare reads
+each of them there — never from the tree under review — so a change cannot edit the rules
+it is judged by, the same reason the method itself comes from the default branch.
 
 A change takes the highest tier any of its files falls in — the table below is ranked,
 A first. G is not in that ranking: a change is G only when EVERY file is mechanical, and
@@ -19,20 +26,40 @@ auto-accept on (its HIGH_RISK and PROD_DEPLOY): a change too risky to accept una
 must not be a lighter tier here either. `--self-test` fails when the two lists drift.
 """
 
+import fnmatch
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-#: The ranked table: (letter, name, what it covers, what to review, how deep). The criteria
-#: text is handed to the reviewer as-is; the doc's "who reviews" column is not here, because
-#: a seat running a lighter tier still decides how many subagents to spend on it.
+#: The ranked table: (letter, name, what it covers, what to review, how deep, topology).
+#: The criteria text is handed to the reviewer as-is; the doc's "who reviews" column is not
+#: here, because a seat running a lighter tier still decides how many subagents to spend on
+#: it — and the topology says how many, so that decision is the same one every time.
+#:
+#: A topology names stages, not seats: how many finders run over the change, how many
+#: refuters may be judging blocker and major candidates at once, and whether the claim
+#: axis gets a subagent of its own. The stages run one after another — the finders
+#: together, then the refuters, then the claim finder — so the most a tier has running at
+#: once is its largest stage and not their sum, which `max_in_flight` returns and the
+#: self-test holds under the environment's cap of 4 concurrent subagents. A refuter's
+#: count is a concurrency, not a budget: every blocker and major candidate gets judged,
+#: by the next refuter started as one returns.
+#:
+#: A refuter is spent only on a candidate that came back blocker or major, which is why
+#: the single-finder tiers still carry one: a change filed under the wrong tier must not
+#: also lose the independent verdict its serious findings are entitled to. `effort` is
+#: what the coordinator passes a subagent (low / medium / high). Neither here nor in
+#: prompt.md does a seat or a model name appear: which ones exist changes between
+#: sessions, and a review has to run on whatever the session it runs in has.
 TIERS = (
     (
         "A",
         "高风险",
         "迁移、鉴权、部署链、计量代理、用户可见文案",
         "可逆性、鉴权边界、影响面、回滚方式；文案看会不会改变用户已定的状态",
-        "两路找茬 + 逐条证伪；碰正式部署一律人定",
+        "两路找茬 + 只对 blocker/major 逐条证伪；碰正式部署一律人定",
+        {"finders": 2, "refuters": 2, "claim": 1, "effort": "high"},
     ),
     (
         "B",
@@ -40,6 +67,7 @@ TIERS = (
         "后端、前端逻辑，API，脚本",
         "做没做对需求、可达路径上的错行为、边界与并发、复杂度；每条问题带 文件:行",
         "两路全新上下文找茬，各自给结论，再逐条证伪只留站得住的",
+        {"finders": 2, "refuters": 2, "claim": 0, "effort": "high"},
     ),
     (
         "C",
@@ -47,6 +75,7 @@ TIERS = (
         "只改测试、夹具、守卫自测",
         "测试会不会咬人：一次变异必须红；断言两边是否同源",
         "一路，重点跑变异",
+        {"finders": 1, "refuters": 1, "claim": 0, "effort": "medium"},
     ),
     (
         "D",
@@ -54,6 +83,7 @@ TIERS = (
         "workflow、pre-commit、settings、路由表",
         "影响面、密钥有没有写进去、能不能回滚；与代码改动拆开",
         "一路，读全 diff",
+        {"finders": 1, "refuters": 1, "claim": 0, "effort": "medium"},
     ),
     (
         "E",
@@ -61,6 +91,7 @@ TIERS = (
         "AGENTS.md、.claude/rules、技能、README",
         "每句问「删掉会不会出错」；有没有已被 lint 或测试拦着的；引用的命令和路径存不存在",
         "一路，只读",
+        {"finders": 1, "refuters": 1, "claim": 0, "effort": "medium"},
     ),
 )
 MECHANICAL = (
@@ -69,6 +100,7 @@ MECHANICAL = (
     "纯注释、纯格式、lock、生成文件、干净 revert",
     "确认确实是机械的",
     "不审，CI 过即可",
+    {"finders": 0, "refuters": 0, "claim": 0, "effort": "low"},
 )
 
 #: 迁移、鉴权、部署链、用户可见文案，as (what, prefix) — identical to
@@ -76,7 +108,7 @@ MECHANICAL = (
 HIGH_RISK = (
     ("迁移", "backend/alembic/"),
     ("鉴权", "backend/app/auth/"),
-    ("鉴权", "backend/app/api/auth.py"),
+    ("鉴权", "backend/app/api/auth/"),
     ("鉴权", "backend/app/domain/identity/"),
     ("鉴权", "backend/app/domain/authz/"),
     ("鉴权", "cli/internal/auth/"),
@@ -99,6 +131,12 @@ PROD_DEPLOY = (
     "deploy/.env.prod.example",
     "deploy/compose/",
 )
+#: Where the `paths:`-scoped rules live, and the rev `--rules` reads them from when prepare
+#: passes no `--rev`: the same revision the method itself is read from, so neither can be
+#: edited by the change under review.
+RULES_DIR = ".claude/rules/"
+DEFAULT_REV = "origin/main"
+
 CONFIG = (
     ".github/",
     ".pre-commit-config.yaml",
@@ -163,11 +201,19 @@ def under(path, prefix):
 
 def is_test(path):
     name = path.rsplit("/", 1)[-1]
+    # This runs tests; it is not itself a test module.
+    claude_script_self_test = (
+        path.startswith(".claude/scripts/")
+        and path != ".claude/scripts/test-changed.py"
+        and name.endswith(".py")
+        and (name.startswith("test-") or name.endswith("-test.py"))
+    )
     return (
         name.endswith((".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx",
                        ".test.ts", ".test.tsx", ".test.js", ".test.jsx"))
         or (name.startswith("test_") and name.endswith(".py"))
         or name.endswith("_test.py")
+        or claude_script_self_test
         or "/tests/" in path
         or "/test/" in path
         or "__tests__/" in path
@@ -287,6 +333,92 @@ def clean_revert(repo, base, head, path):
     return bool(found and found.strip())
 
 
+def _exists(repo, rev, path):
+    """Whether `rev` holds `path`. `_git` cannot answer this: `git show` of an empty file
+    and of a missing one both come back as empty output."""
+    return subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-e", f"{rev}:{path}"], capture_output=True,
+    ).returncode == 0
+
+
+def paths_frontmatter(text):
+    """The globs in a rule file's `paths:` frontmatter. Both spellings are read — the block
+    one (`paths:` then one `- "glob"` per line) and the flow one (`paths: ["a", "b"]`), as
+    the rule files in this repo use the block one. An empty list means the file declares
+    none, which `rule_files` reads as applying to every change, not to none: a rule nobody
+    scoped is the one a reviewer is likeliest to miss."""
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return []
+    end = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), None)
+    if end is None:
+        return []
+    globs, collecting = [], False
+    for line in lines[1:end]:
+        # The list item is read before the key, because a block sequence may sit at column 0
+        # — `paths:` with the globs unindented is the same YAML as the indented spelling.
+        # Read as a key it is not `paths`, the globs are dropped, and an empty list makes
+        # the rule look unscoped, which injects it into every review there is.
+        if collecting and line.strip().startswith("-"):
+            globs.append(line.strip()[1:].strip().strip("'\""))
+            continue
+        if line.strip() and not line[:1].isspace():
+            collecting = False
+            key, _, rest = line.partition(":")
+            if key.strip() != "paths":
+                continue
+            rest = rest.strip()
+            if rest.startswith("["):
+                inner = rest[1:].rsplit("]", 1)[0]
+                return [g.strip().strip("'\"") for g in inner.split(",") if g.strip()]
+            collecting = True
+    return globs
+
+
+def rule_glob_match(path, glob):
+    """Whether a rule's `paths:` glob covers a changed file, with fnmatch — permissive on
+    purpose: fnmatch's `*` crosses "/", so `backend/app/**` and `backend/app/**/*.py` both
+    cover `backend/app/deep/x.py` and neither misses a file the author meant. Injecting a
+    rule that turns out not to apply costs the reviewer a few lines; missing one loses the
+    rule the change was written under, which is the whole point of injecting them."""
+    return fnmatch.fnmatchcase(path, glob)
+
+
+def rule_files(repo, rev, changed):
+    """The rule files a change loads, as repo-relative paths: each `.claude/rules/*.md` at
+    `rev` whose `paths:` globs cover a changed file, then the AGENTS.md of each directory
+    above one.
+
+    Read from `rev` — prepare passes the default branch — never from the tree under review,
+    so a change cannot rewrite the rules that judge it. A rev that lists no rule directory
+    (a shallow clone, a branch that does not exist) yields none rather than failing.
+
+    The repo's own AGENTS.md is left out: it is the root one, and the reviewer's session
+    already has it. The per-directory ones are what a reviewer reading one diff would
+    otherwise never open."""
+    listed = _git(repo, "ls-tree", "-r", "--name-only", rev, "--", RULES_DIR) or ""
+    rules = []
+    for name in sorted(n for n in listed.splitlines() if n.endswith(".md")):
+        text = _git(repo, "show", f"{rev}:{name}")
+        if text is None:
+            continue
+        globs = paths_frontmatter(text)
+        if globs and not any(rule_glob_match(p, g) for p in changed for g in globs):
+            continue
+        rules.append(name)
+
+    dirs = []
+    for path in changed:
+        parts = path.split("/")[:-1]
+        for depth in range(len(parts)):
+            parent = "/".join(parts[:depth + 1])
+            if parent and parent not in dirs:
+                dirs.append(parent)
+    agents = [f"{d}/AGENTS.md" for d in sorted(dirs, key=lambda d: (d.count("/"), d))
+              if _exists(repo, rev, f"{d}/AGENTS.md")]
+    return agents + rules
+
+
 def classify(repo, base, head):
     """(letter, detail) for the change `base`..`head` — the whole PR, so a delta review
     still reports the tier of what is being merged."""
@@ -323,15 +455,45 @@ def row(letter):
     return MECHANICAL if letter == "G" else next(t for t in TIERS if t[0] == letter)
 
 
+def topology(letter):
+    """The subagent topology of a tier: `finders`, `refuters`, `claim` and `effort`."""
+    return row(letter)[5]
+
+
+def max_in_flight(top):
+    """How many subagents one tier may have running at once. The stages run in order —
+    the finders together, then the refuters together, then the claim finder — so this is
+    the largest stage, not their sum, which is what the environment's cap of 4 concurrent
+    subagents counts."""
+    return max(top["finders"], top["refuters"], top["claim"])
+
+
+def topology_line(letter):
+    """The topology as one line of Chinese, for the `- 子代理拓扑：` bullet in REVIEW.md.
+    It names counts and effort, never a seat or a model: which of those a session has
+    changes between sessions, and a review must run on whatever it was handed."""
+    top = topology(letter)
+    if not top["finders"]:
+        return "不派分身"
+    parts = [f"{top['finders']} 路找茬"]
+    if top["refuters"]:
+        parts.append(f"最多 {top['refuters']} 路证伪（只对 blocker 或 major）")
+    if top["claim"]:
+        parts.append(f"{top['claim']} 路单查需求契约")
+    return (f"单轮最多 {max_in_flight(top)} 路并发："
+            + "，".join(parts) + f"；子代理 effort 用 {top['effort']}")
+
+
 def block(letter, detail):
-    """The markdown `prepare` puts in REVIEW.md: the tier, why this change is in it, and
-    the criteria of that tier as the doc words them."""
-    _, name, covers, criteria, depth = row(letter)
+    """The markdown `prepare` puts in REVIEW.md: the tier, why this change is in it, the
+    criteria of that tier as the doc words them, and the subagent topology to run it."""
+    _, name, covers, criteria, depth, _ = row(letter)
     head = f"**档位 {letter} {name}**（{covers}）"
     if letter == "G":
         head += "——免审，CI 过即可"
     return "\n".join((head, f"- 为什么会是这一档：{detail}",
-                      f"- 审什么：{criteria}", f"- 审多深：{depth}"))
+                      f"- 审什么：{criteria}", f"- 审多深：{depth}",
+                      f"- 子代理拓扑：{topology_line(letter)}"))
 
 
 def self_test():
@@ -359,6 +521,15 @@ def self_test():
         ("backend/tests/unit/test_pr_text_trailers.py", "C"),
         ("backend/test_x.py", "C"),  # test_ prefix
         ("backend/scripts/fusion_boot_test.py", "C"),  # _test.py suffix
+        (".claude/scripts/test-review.py", "C"),  # test- self-test
+        (".claude/scripts/review-test.py", "C"),  # -test.py self-test
+        (".claude/scripts/review.py", "B"),  # ordinary implementation script
+        (".claude/scripts/testing.py", "B"),  # not test- or -test.py
+        (".claude/scripts/latest.py", "B"),  # no hyphen before test.py
+        (".claude/scripts/test-changed.py", "B"),  # test runner, not a test module
+        (".claude/scripts/test-dev-db.sh", "B"),  # only Python test files match
+        (".claude/test-review.py", "B"),  # hyphen pattern is scoped to scripts/
+        ("scripts/test-review.py", "B"),  # hyphen pattern is scoped to .claude/scripts/
         ("backend/tests/conftest.py", "C"),  # /tests/ alone, no test name of its own
         ("docs/site/test/ask-walk.test.mjs", "C"),  # /test/ alone: not a .test.js suffix
         ("frontend/src/components/__tests__/acceptHarness.ts", "C"),  # __tests__/
@@ -375,6 +546,53 @@ def self_test():
     ):
         check(f"按路径定档：{path}", tier_of_path(path), want)
 
+    # The topology is what the tier actually spends, so it is checked as a table rather
+    # than through the sentence block() prints: a stage count that drifted would otherwise
+    # show up only as a review that quietly costs more, or reads less, than it did before.
+    check("A–E 每一档都带子代理拓扑", [len(t) for t in TIERS], [6] * 5)
+    check("G 档也带子代理拓扑", len(MECHANICAL), 6)
+    check("每档拓扑的字段名一样", [sorted(topology(l)) for l in "ABCDEG"],
+          [["claim", "effort", "finders", "refuters"]] * 6)
+    check("每档的子代理 effort 只有三档之一", [topology(l)["effort"] for l in "ABCDEG"],
+          ["high", "high", "medium", "medium", "medium", "low"])
+    check("单轮并发数不超过环境上限 4", [max_in_flight(topology(l)) for l in "ABCDEG"],
+          [2, 2, 1, 1, 1, 0])
+    check("G 档不派任何分身", topology("G"),
+          {"finders": 0, "refuters": 0, "claim": 0, "effort": "low"})
+    # A change filed under the wrong tier loses a finder, but it must not lose the
+    # independent verdict on its serious findings: every reviewing tier keeps a refuter.
+    check("A–E 每一档都留着证伪这一路", [topology(l)["refuters"] for l in "ABCDE"],
+          [2, 2, 1, 1, 1])
+    check("每一档的块里都写了拓扑", [("子代理拓扑" in block(l, "x")) for l in "ABCDEG"],
+          [True] * 6)
+    # What the line has to say, not the sentence saying it: the numbers are the tier's own
+    # topology numbers and the severities are the ones a refuter is spent on, so a rewording
+    # that keeps the rules keeps the test green, and a count that drifts does not.
+    check("拓扑行里的数字就是这一档拓扑的数字",
+          [(sorted({int(n) for n in re.findall(r"\d+", topology_line(l))}),
+            len(re.findall(r"\d+", topology_line(l)))) for l in "ABCDE"],
+          [([1, 2], 4), ([2], 3), ([1], 3), ([1], 3), ([1], 3)])
+    check("带证伪的档都在拓扑行里点名 blocker 和 major",
+          [all(s in topology_line(l) for s in ("blocker", "major")) for l in "ABCDE"], [True] * 5)
+    check("拓扑行报出这一档的 effort",
+          [topology(l)["effort"] in topology_line(l) for l in "ABCDE"], [True] * 5)
+    check("G 档的拓扑行说不派分身", "- 子代理拓扑：不派分身" in block("G", "x"), True)
+
+    check("块状 paths 前言读出来", paths_frontmatter('---\npaths:\n  - "backend/tests/**"\n---\n\n# 标题\n'),
+          ["backend/tests/**"])
+    check("行内 paths 前言读出来", paths_frontmatter('---\npaths: ["a/**", "b.ts"]\n---\n'),
+          ["a/**", "b.ts"])
+    check("顶格的块状 paths 前言也读出来",
+          paths_frontmatter('---\npaths:\n- "backend/tests/**"\n- "b.ts"\n---\n'),
+          ["backend/tests/**", "b.ts"])
+    check("没有前言的规则文件算没写 paths", paths_frontmatter("# 规矩\n"), [])
+    check("前言里没有 paths 也算没写", paths_frontmatter("---\ntype: rule\n---\n"), [])
+    check("paths 列表遇到下一个前言键就收住",
+          paths_frontmatter('---\npaths:\n  - "a/**"\ntype: rule\n  - "b/**"\n---\n'), ["a/**"])
+    check("fnmatch 的 * 会跨 /，深一层的文件也命中",
+          rule_glob_match("backend/app/domain/x.py", "backend/app/**"), True)
+    check("glob 外的文件不命中", rule_glob_match("frontend/src/a.ts", "backend/app/**"), False)
+
     with tempfile.TemporaryDirectory(prefix="tiers-test-") as tmp:
         repo = Path(tmp)
         for args in (("init", "-q", "-b", "main", str(repo)),):
@@ -390,6 +608,18 @@ def self_test():
         write("frontend/src/api/openapi.d.ts", "export type A = 1;\n")
         write("backend/app/auth/caller.py", "ok = True\n")
         write("backend/alembic/versions/v.py", "revision = 'v'\n")
+        # What `--rules` reads: the repo's own AGENTS.md files and paths-scoped rules. They
+        # sit in the base commit so the cases below can ask for them at a rev the change
+        # under review never touched.
+        write("AGENTS.md", "仓库规矩\n")
+        write("backend/AGENTS.md", "后端规矩\n")
+        write(".claude/rules/always.md", "# 没有 paths 的规矩\n")
+        write(".claude/rules/backend-tests.md",
+              '---\npaths:\n  - "backend/tests/**"\n---\n\n# 后端测试\n')
+        write(".claude/rules/frontend.md", '---\npaths: ["frontend/**"]\n---\n\n# 前端\n')
+        # The block sequence at column 0: the same YAML as the indented spelling above, and
+        # the one a rule parsed as unscoped would be injected for every change there is.
+        write(".claude/rules/elsewhere.md", '---\npaths:\n- "cli/**"\n---\n\n# 命令行\n')
         subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True,
                        capture_output=True)
@@ -491,6 +721,45 @@ def self_test():
         check("没有改到文件时是 G", classify(repo, base, base)[0], "G")
         check("读不到 range 时按 B", classify(repo, "deadbeef", base)[0], "B")
 
+        # What prepare injects: the rules a change loads, read at the rev it was given.
+        check("改到后端测试，注入后端的 AGENTS.md 和两条命中的规则",
+              rule_files(repo, base, ["backend/tests/unit/test_x.py", "frontend/src/a.ts"]),
+              ["backend/AGENTS.md", ".claude/rules/always.md",
+               ".claude/rules/backend-tests.md", ".claude/rules/frontend.md"])
+        check("只改后端源码，只剩 AGENTS.md 与没写 paths 的那条规则",
+              rule_files(repo, base, ["backend/app/domain/x.py"]),
+              ["backend/AGENTS.md", ".claude/rules/always.md"])
+        check("仓库根的 AGENTS.md 不注入", "AGENTS.md" in
+              rule_files(repo, base, ["backend/app/domain/x.py"]), False)
+        check("没注入根 AGENTS.md 是因为刻意跳过，不是它不在", _exists(repo, base, "AGENTS.md"),
+              True)
+        check("改到前端，注入前端那条规则", rule_files(repo, base, ["frontend/src/a.vue"]),
+              [".claude/rules/always.md", ".claude/rules/frontend.md"])
+        check("顶格写 paths 的规则在别的子树下不算没写 paths",
+              ".claude/rules/elsewhere.md" in rule_files(repo, base, ["backend/app/domain/x.py"]),
+              False)
+        check("顶格写 paths 的规则命中时照样注入",
+              ".claude/rules/elsewhere.md" in rule_files(repo, base, ["cli/main.py"]), True)
+        check("读不到 rev 时一条都不注入", rule_files(repo, "deadbeef", ["f.py"]), [])
+        # The rules come from the rev prepare passes, so a change that rewrites a rule
+        # cannot rewrite what its own review is handed. Here the PR points the frontend
+        # rule at backend paths: at its own head it no longer covers the file it changed,
+        # which is the reading prepare must never take.
+        rule_head = from_(base, {".claude/rules/frontend.md":
+                                 '---\npaths: ["backend/**"]\n---\n\n# 前端\n'})
+        check("按默认分支读：前端改动仍拿到前端规则",
+              ".claude/rules/frontend.md" in rule_files(repo, base, ["frontend/src/a.vue"]), True)
+        check("按这个改动自己的 head 读：规则被改动后就不命中了",
+              ".claude/rules/frontend.md" in rule_files(repo, rule_head, ["frontend/src/a.vue"]),
+              False)
+
+        check("参数不认识就报错，不当作没给",
+              main(["--repo", str(repo), "--base", base, "--head", base, "--rules", "--letter"]), 2)
+        check("值缺失也算参数错",
+              main(["--repo", str(repo), "--base", base, "--head"]), 2)
+        check("认不出来的开关也报错",
+              main(["--repo", str(repo), "--base", base, "--head", base, "--tier"]), 2)
+
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
         import orchestrator_autoaccept as aa
@@ -509,16 +778,44 @@ def self_test():
 
 
 def main(argv):
+    """Strict about its own arguments, unlike the `--flag value` pairing this once read:
+    that dict swallowed anything it did not know, so a copy of this file predating `--rules`
+    would have answered an unknown `--rules` with the tier block, which prepare would then
+    print into REVIEW.md as if it were the rule list."""
     if "--self-test" in argv:
         return self_test()
-    args = dict(zip((a for a in argv if a.startswith("--")),
-                    (a for a in argv if not a.startswith("--"))))
-    repo, base, head = args.get("--repo"), args.get("--base"), args.get("--head")
+    opts = {}
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("--repo", "--base", "--head", "--rev"):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+                print(f"{arg} 后面少一个值", file=sys.stderr)
+                return 2
+            opts[arg] = argv[i + 1]
+            i += 2
+        elif arg in ("--letter", "--rules"):
+            opts[arg] = True
+            i += 1
+        else:
+            print(f"不认识的参数：{arg}", file=sys.stderr)
+            return 2
+    if "--letter" in opts and "--rules" in opts:
+        print("--letter 和 --rules 只能给一个", file=sys.stderr)
+        return 2
+    repo, base, head = opts.get("--repo"), opts.get("--base"), opts.get("--head")
     if not (repo and base and head):
         print(__doc__, file=sys.stderr)
         return 2
+    if "--rules" in opts:
+        changed = paths_of(repo, "--no-renames", base, head)
+        if changed is None:
+            return 0
+        for name in rule_files(repo, opts.get("--rev") or DEFAULT_REV, changed):
+            print(name)
+        return 0
     letter, detail = classify(repo, base, head)
-    print(letter if "--letter" in argv else block(letter, detail))
+    print(letter if "--letter" in opts else block(letter, detail))
     return 0
 
 

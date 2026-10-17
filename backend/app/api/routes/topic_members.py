@@ -20,7 +20,8 @@ from app.api.topic_member_rows import roster_rows
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.project_feed import TOPICS, tell_project
-from app.domain.topic.services import TopicService
+from app.domain.agent_instance.adapters import project_team, seat_project
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.schemas import TopicMemberCreate, TopicMemberOut
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -33,7 +34,7 @@ async def list_topic_members(
 ) -> dict:
 
     # A task's id reaches its room's roster, files and documents.
-    topic = (await TopicService(db).place_or_404(topic_id)).room
+    topic = (await place_or_404(db, topic_id)).room
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
@@ -53,7 +54,11 @@ async def add_topic_member(
     if not who.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")
     member = await TopicMemberService(db).add(
-        topic_id=topic_id, handle=body.handle, actor=who.handle
+        topic_id=topic_id,
+        handle=body.handle,
+        actor=who.handle,
+        seat_project=seat_project,
+        team=project_team,
     )
     await db.commit()
     # A private channel appears in the list of whoever was brought in.

@@ -14,7 +14,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
@@ -24,12 +24,13 @@ from app.domain.device.models import DeviceProjectRow, DeviceRow, DeviceTeamRow
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import owner_reads, services
+from app.domain.machine import owner_reads, reaper, services
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
     MachineStatus,
+    SandboxHome,
     WarmMachine,
 )
 from app.domain.machine.services import (
@@ -221,7 +222,9 @@ def pool(client, monkeypatch):
 
 
 def _later(monkeypatch, by: timedelta) -> None:
-    """The pool's clock reads ``by`` later than now from here on."""
+    """The pool's clock reads ``by`` later than now from here on. Its sweep
+    reads the clock from ``reaper`` and the rest of the pool from ``services``,
+    so both modules have to be moved forward."""
 
     class Later(datetime):
         @classmethod
@@ -229,6 +232,7 @@ def _later(monkeypatch, by: timedelta) -> None:
             return datetime.now(tz) + by
 
     monkeypatch.setattr(services, "datetime", Later)
+    monkeypatch.setattr(reaper, "datetime", Later)
 
 
 def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]:
@@ -475,7 +479,14 @@ def test_an_idle_host_is_released_after_the_hold_and_not_before(pool):
     [alice] = pool.room("alice", 1)
     host_id = pool.place("alice", alice)
     pool.up(host_id)
-    pool.pool("leave", alice)
+
+    async def sandbox_destroyed():
+        # What the idle sweep does once it has destroyed the sandbox there.
+        async with pool.client.test_request_factory() as db:
+            await db.execute(delete(SandboxHome).where(SandboxHome.host_id == host_id))
+            await db.commit()
+
+    pool.run(sandbox_destroyed)
 
     pool.pool("maintain")
     host = pool.host(host_id)

@@ -39,16 +39,19 @@ import { useDesktopApp } from '@/composables/useDesktopApp'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 
 import i18n, { setLocale } from '@/i18n'
-import AccountService from '@/services/account'
 import { useFeedbackStore } from '@/stores/feedback'
 import { closeFirstPaint, holdFirstPaint, openFirstPaint, releaseFirstPaint } from '@/test/firstPaint'
 
 /** 挂一次，`meta` 与 `counts` 由调用方给的桩决定。
  *
+ *  登录态是**挂它的顶栏传进来的 prop**（这个组件在 `src/components/**` 下，不能自己去
+ *  读 `services/account`）：不写就是登录之后那个顶栏，绝大多数用例要的是这一种，
+ *  `loggedIn: false` 是登录页那一份。
+ *
  *  `hold` 是「挂上去的那一刻，这一次跳转还在路上」：门装上了、但没推。给「门开之前
- *  一次都不该问」那类用例；不写就是「首帧早画完了」，绝大多数用例要的是这一种。 */
+ *  一次都不该问」那类用例；不写就是「首帧早画完了」。 */
 async function mount(
-  props: { compact?: boolean } = {},
+  props: { compact?: boolean; loggedIn?: boolean } = {},
   opts: { admin?: boolean; platformAdmin?: boolean; unread?: number; hold?: boolean } = {}
 ) {
   getFeedbackMeta.mockResolvedValue({
@@ -75,7 +78,10 @@ async function mount(
   if (opts.hold) holdFirstPaint()
   else await openFirstPaint()
   const vuetify = createVuetify({ components, directives })
-  return render(HelpAndFeedbackMenu, { props, global: { plugins: [vuetify, router, createPinia(), i18n] } })
+  return render(HelpAndFeedbackMenu, {
+    props: { loggedIn: true, ...props },
+    global: { plugins: [vuetify, router, createPinia(), i18n] },
+  })
 }
 
 // 菜单是一个 `VOverlay`，而 happy-dom 没有 `visualViewport` —— 不补这一样，点开之后
@@ -100,9 +106,6 @@ beforeEach(() => {
   setLocale('zh-CN')
   getFeedbackMeta.mockReset()
   getFeedbackCounts.mockReset()
-  // 这一份只在登录之后的顶栏上出现，那两个接口也都要登录：登录态置真，否则它们
-  // 一次都不发（组件里那个 watch 要看登录态）。
-  AccountService._loggedIn.value = true
 })
 
 describe('帮助与反馈入口', () => {
@@ -241,7 +244,7 @@ describe('帮助与反馈，在桌面 app 里', () => {
   it('登出要重问一趟：上一个人的「管理后台」和未读点不能留在顶栏上', async () => {
     // 会话过期、或者另一个标签页登出时会落在这个状态：壳还在，人已经不是那个人了。
     // 这两个接口对匿名请求照样答 200，所以重问这一趟本身就能把两项清掉。
-    const { container } = await mount({}, { admin: true, unread: 4 })
+    const { container, rerender } = await mount({}, { admin: true, unread: 4 })
     const store = useFeedbackStore()
     await waitFor(() => expect(store.isAdmin).toBe(true))
     expect(store.counts.unread).toBe(4)
@@ -254,7 +257,8 @@ describe('帮助与反馈，在桌面 app 里', () => {
       kinds: ['bug'],
       hot_supports: 5,
     })
-    AccountService._loggedIn.value = false
+    // 登出是壳上的事，它把顶栏这一份的 prop 翻成假 —— 组件不再自己去读账号服务。
+    await rerender({ loggedIn: false })
 
     await waitFor(() => expect(store.isAdmin).toBe(false))
     await waitFor(() => expect(store.counts.unread).toBe(0))
@@ -267,9 +271,8 @@ describe('帮助与反馈，在桌面 app 里', () => {
 // 门开了 `painted` 再变一次又问一趟 —— 同一个回答问两遍，而第一遍还在首帧之前。
 describe('帮助与反馈：未登录那两趟也在门后面', () => {
   it('冷开就是未登录：门开之前一次都不问，门开了只问一趟', async () => {
-    AccountService._loggedIn.value = false
     closeFirstPaint()
-    const { container } = await mount({}, { hold: true })
+    const { container } = await mount({ loggedIn: false }, { hold: true })
     expect(container.querySelector('.help-entry')).not.toBeNull()
     expect(getFeedbackMeta).not.toHaveBeenCalled()
     expect(getFeedbackCounts).not.toHaveBeenCalled()

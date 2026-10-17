@@ -20,7 +20,6 @@ from app.domain.room_task.presentation import (
     Delivering,
     Done,
     NeedsYou,
-    NotStarted,
     RoomFacts,
     TaskFacts,
     room_presentation,
@@ -34,12 +33,11 @@ JUST_NOW = NOW - timedelta(minutes=1)
 
 
 def task(**kw) -> TaskFacts:
-    """A started task doing nothing at all, plus whatever the case is about."""
+    """An open task doing nothing at all, plus whatever the case is about."""
     base = {
         "status": TaskStatus.open,
         "accepted_at": None,
         "card": None,
-        "started": True,
     }
     return TaskFacts(**{**base, **kw})
 
@@ -68,25 +66,16 @@ def card(status: AcceptStatus, **kw) -> CardFacts:
 
 TASK_CASES = [
     # (名字, 事实, 列, 短语)
-    # 负责人还没点「开始」：还在讨论，芝士只聊、只写文档。
-    ("还在讨论", task(started=False), Column.not_started, NotStarted.discussing),
-    # 讨论时芝士在回话，也还是讨论：「运行中」说的是它在改项目。
+    # 芝士问了一个问题，下一步在人手上。
     (
-        "讨论中，芝士正在回话",
-        task(started=False, running=True),
-        Column.not_started,
-        NotStarted.discussing,
-    ),
-    # 讨论中芝士问了一个问题，下一步在人手上。
-    (
-        "讨论中，芝士在等回答",
-        task(started=False, awaiting_answer=True),
+        "芝士在等回答",
+        task(awaiting_answer=True),
         Column.needs_you,
         NeedsYou.awaiting_answer,
     ),
-    ("开始了，在跑", task(running=True), Column.building, Building.running),
-    # 开始了，此刻没有在跑的一轮，也还没递出改动。
-    ("开始了，停着", task(), Column.building, Building.started),
+    ("在跑", task(running=True), Column.building, Building.running),
+    # 此刻没有在跑的一轮，也还没递出改动。
+    ("停着", task(), Column.building, Building.started),
     # 递出去的那一版被退回，而没有一轮在改：停在人手上。
     (
         "改动被退回",
@@ -263,14 +252,13 @@ def test_a_thread_lands_in_one_column_with_one_phrase(facts, column, phrase):
 # —— 事实是从行上读出来的 ————————————————————————————————————————
 
 
-def test_being_started_is_read_off_the_row():
-    """「开始」从库里那一列读出来 —— 上面那张表测的是「给定事实算出哪一格」，它不会
-    发现这一位压根没接上，那样一来每个任务都会停在「讨论中」。"""
+def test_a_conclusion_is_read_off_the_row():
+    """结论从库里那一列读出来 —— 上面那张表测的是「给定事实算出哪一格」，它不会
+    发现这一位压根没接上。"""
     from app.domain.room_task.models import Task
     from app.domain.room_task.presentation import facts_for_task
 
-    assert facts_for_task(Task()).started is False
-    assert facts_for_task(Task(started_at=JUST_NOW)).started is True
+    assert facts_for_task(Task()).has_conclusion is False
     assert facts_for_task(Task(conclusion="查清了")).has_conclusion is True
 
 
@@ -341,13 +329,9 @@ def test_a_task_closed_on_its_last_accepted_step_reads_accepted():
 
 def test_a_task_that_goes_on_after_an_accepted_step_is_still_in_progress():
     """分步交付：前一步被采纳、任务还开着，它就还在做，不是「已采纳」。"""
-    running = task_presentation(
-        task(accepted_at=JUST_NOW, started=True, running=True), now=NOW
-    )
+    running = task_presentation(task(accepted_at=JUST_NOW, running=True), now=NOW)
     assert (running.column, running.phrase) == (Column.building, Building.running)
-    asked = task_presentation(
-        task(accepted_at=JUST_NOW, started=True, awaiting_answer=True), now=NOW
-    )
+    asked = task_presentation(task(accepted_at=JUST_NOW, awaiting_answer=True), now=NOW)
     assert asked.phrase == NeedsYou.awaiting_answer
 
 
@@ -481,14 +465,6 @@ def test_every_phrase_is_reachable():
 
     every = {p for phrases in COLUMN_PHRASES.values() for p in phrases}
     assert reached == every
-
-
-def test_a_task_not_started_shows_no_paperwork():
-    """还没开始的任务没有改动可审：即使有一张旧卡挂着，它也还在讨论。"""
-    shown = task_presentation(
-        task(started=False, card=card(AcceptStatus.pending)), now=NOW
-    )
-    assert (shown.column, shown.phrase) == (Column.not_started, NotStarted.discussing)
 
 
 def test_it_reads_nothing_but_the_facts_it_was_given():
@@ -625,8 +601,7 @@ def test_a_narrow_listed_room_folds_into_the_same_facts_as_the_orm_row():
         ),
         (task(card=card(AcceptStatus.pending, note_code=NoteCode.checks_failed)), True),
         (room(card=card(AcceptStatus.pending_gate)), True),
-        # 还没开工、在等人、做完了：都不算「正在往前走」。
-        (task(started=False), False),
+        # 停着、在等人、做完了：都不算「正在往前走」。
         (task(), False),
         (task(card=card(AcceptStatus.pending)), False),
         (task(card=card(AcceptStatus.rejected)), False),
@@ -641,8 +616,7 @@ def test_a_narrow_listed_room_folds_into_the_same_facts_as_the_orm_row():
         "等待 CI",
         "芝士在修检查",
         "房间在等闸门",
-        "还没开工",
-        "开始了但停着",
+        "停着",
         "等人采纳",
         "被退回",
         "交付完了",

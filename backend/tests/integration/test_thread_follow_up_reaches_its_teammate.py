@@ -19,7 +19,6 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.conftest import (
     StubChannel,
@@ -32,6 +31,7 @@ from tests.integration.conftest import (
     in_thread,
     post_message,
     post_project,
+    project_service,
     registered,
     room_agent_seat,
     room_socket,
@@ -109,7 +109,7 @@ class _Channel:
         async with self.factory() as session:
             await registered(session, "u")
             await registered(session, "bob")
-            project = await ProjectService(session).create(name="P", owner_handle="u")
+            project = await project_service(session).create(name="P", owner_handle="u")
             room = await TopicService(session).create(
                 project_id=project.id, title="讨论", created_by="u"
             )

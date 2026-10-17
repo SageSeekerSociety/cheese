@@ -16,7 +16,7 @@ covers:
 
 ## 额度从哪来 {#grants}
 
-额度以「算力额度」（credits）为单位，一笔一笔的额度包（`compute_grants` 表）只挂在团队上，不发给团队里的个人。准入、扣费和余额都走 `usage/ledger.py` 这一处。每个包记着：
+额度以「算力额度」（credits）为单位，一笔一笔的额度包（`compute_grants` 表）只挂在团队上，不发给团队里的个人。准入、扣费和余额都走 `usage/` 里的账本 `Ledger` 这一处：只读的一半在 `usage/ledger_queries.py`，写入和发放的一半在 `usage/ledger.py`；计划的时间窗口、费率、付款方和余额规则各在 `usage/windows.py`、`usage/rates.py`、`usage/payers.py`、`usage/balance.py`。每个包记着：
 
 - `source`：来源。方案按期发放（`plan_period`）、题目发给项目的定向额度（`task_earmark`）、购买（`purchase`）、管理员发放（`admin_grant`）。
 - `project_id`：有值时只给这个项目用。
@@ -41,6 +41,7 @@ covers:
 - **余额**：按时间窗口限额的方案，最满的那个窗口还能用多少，和其他额度包一起算进余额，所以项目网关 key 的预算上限照样能算出来。
 - **Reserve**（`unlimited`）：不拒绝、不发包、不扣包，用量照样记。
 - **模型档位**：网关模型的档位由管理员在模型管理页设（`cheese_tier`），订阅模型的档位写在 `_SUB_MODELS` 里。闸门（`domain/policy/gate.py`）对模型先看方案允许的档位，超出一律拒绝（「当前方案不能使用模型「…」。」），不变成提议；项目设置只能在方案范围内再收紧。机器的档位不受方案影响。模型选择（`GET /projects/{id}/default-model` 的 `choices`）给每个模型标出方案是否允许（`allowed`），不允许的标出排在最前、允许它的方案名（`requires_plan`，`usage/model_access.py`）；只算这个团队能挂的方案（个人团队不算只给团队的方案），没有就为空。方案还没有价格，顺序由管理员设的排序（`rank`）决定，只给管理员的方案排在最后。设为项目默认、分身默认或队友的模型时，方案不允许的一律拒绝。
+- **需开通的模型**：Claude、GPT、Gemini 这类模型（网关模型标 `cheese_overseas: true`，订阅的 Claude 模型一律算）只有平台管理员开通过的团队能用（`overseas_model_approvals`，一个团队一行）；开通一个人就是开通他的个人团队。没开通的团队在模型选择里看不到它们，设为默认或队友模型按「目录里没有」拒绝；已经绑在这种模型上的项目，闸门在轮次开始前拒绝（「模型「…」需要平台管理员为这个团队开通后才能使用。」）。档位规则照旧叠在上面。管理员在额度后台的团队详情里开关（`PUT /admin/teams/{id}/overseas-access`），每次写落 `credit_admin_audit`（`team.overseas`）；网关模型在模型管理页勾「需开通」。
 
 方案、团队挂哪个方案、给团队发额度都只能由平台管理员在 `/admin/plans`、`/admin/teams` 下操作，每一次写都记进 `credit_admin_audit`（谁、对什么、改前改后），`/admin/credits/audit` 和 `/admin/teams/{id}/history` 读它。管理员发的额度可以写一句原因，只有管理员看得到。
 

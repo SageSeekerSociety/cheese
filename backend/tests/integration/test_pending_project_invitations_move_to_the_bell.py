@@ -86,13 +86,35 @@ def _migrate(client) -> None:
 
 
 def _bell(client) -> list[dict]:
-    r = client.get(
-        "/notifications",
-        params={"type": "PROJECT_INVITE"},
-        headers=_bearer(seed_user(client, INVITEE)),
-    )
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["notifications"]
+    """The invitee's own mail rows of this kind, each read the way their browser
+    reads one notification. Not the feed: an invitation waits in 等你处理, and its
+    notice only calls the invitee back (``NotificationRepository._in_feed``)."""
+    headers = _bearer(seed_user(client, INVITEE))
+
+    async def ids() -> list[int]:
+        from sqlalchemy import select
+
+        from app.domain.user.repositories import UserRepository
+
+        async with client.test_factory() as session:
+            user = await UserRepository(session).get_by_username(INVITEE)
+            assert user is not None
+            rows = await session.scalars(
+                select(Notification.id).where(
+                    Notification.receiver_id == user.id,
+                    Notification.recipient_handle.is_(None),
+                    Notification.type == NotificationType.PROJECT_INVITE,
+                    Notification.deleted_at.is_(None),
+                )
+            )
+            return list(rows.all())
+
+    notices = []
+    for notification_id in asyncio.run(ids()):
+        r = client.get(f"/notifications/{notification_id}", headers=headers)
+        assert r.status_code == 200, r.text
+        notices.append(r.json()["data"]["notification"])
+    return notices
 
 
 def test_a_pending_invitation_reaches_the_bell_and_can_be_answered(client):

@@ -4,10 +4,18 @@
     uv run python -m scripts.route_index --emit  # the index as JSON lines
     uv run python -m scripts.route_index --check  # nothing provably shadowed
     uv run python -m scripts.route_index --check-annotations  # every route noted
+    uv run python -m scripts.route_index --all  # all three, one child, one import
+
+The three questions above are asked about the same collected inventory, and the
+collector cannot run without the application imported — the expensive part of
+each run. `--all` answers them in one child and delimits the three answers, so a
+caller that wants more than one pays for the import once. Each section carries
+the status code that command would have exited with on its own; the process
+exits 0 only when all of them did.
 
 The index this emits is NOT committed. It changes with every route, and as a
 tracked file 84 commits from 83 PRs touched it in the twelve days it existed; it
-is generated where it is judged instead (the frontend `request-paths` job, and the
+is generated where it is judged instead (the frontend `check` job, and the
 addressing contract suite). `--check` is the first-FULL guard (v6
 reading-boundary pilot): literal later routes have a unique URL, so an earlier
 FULL match proves that URL unreachable for the reported method. Parameterized
@@ -21,7 +29,7 @@ import argparse
 import json
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from itertools import islice, product
 from pathlib import Path
@@ -268,6 +276,100 @@ def checked_findings(records, frozen):
     ]
 
 
+def section_marker(name: str, status: int) -> str:
+    """The line that opens one `--all` section, carrying that section's status.
+
+    No payload line can be mistaken for it: the emit section prints JSON
+    objects and the other two print findings and summaries, none of which
+    start with `##`.
+    """
+    return f"## route-index section {name} status {status}"
+
+
+def print_sections(sections: Iterable[tuple[str, int, str]]) -> int:
+    """Print each section under its marker; 0 only when every status was 0.
+
+    Kept separate from the judgements it prints so the delimiting itself is
+    testable without importing the application.
+    """
+    worst = 0
+    for name, status, text in sections:
+        print(section_marker(name, status))
+        if text:
+            print(text)
+        worst = worst or status
+    return worst
+
+
+def _emit(records: list[RouteRecord], header: dict) -> tuple[int, str]:
+    """The index as JSON lines, under the profile header it was collected in."""
+    lines = [json.dumps({"settings_profile": header}, ensure_ascii=False)]
+    lines += [
+        json.dumps(
+            {
+                "index": record.index,
+                "protocol": record.protocol,
+                "path": record.path,
+                "methods": sorted(record.methods),
+                "endpoint": record.endpoint,
+                "name": record.name,
+            },
+            ensure_ascii=False,
+        )
+        for record in records
+    ]
+    return 0, "\n".join(lines)
+
+
+def _check(records: list[RouteRecord]) -> tuple[int, str]:
+    """The first-FULL guard: 1 as soon as one shadow is provable."""
+    from scripts.route_index_frozen import FROZEN
+
+    try:
+        findings = checked_findings(records, FROZEN)
+    except ValueError as exc:
+        return 1, str(exc)
+    lines = [
+        f"[{finding.kind}] {finding.later.protocol}/{finding.method} "
+        f"#{finding.earlier.index} {finding.earlier.path} "
+        f"({finding.earlier.endpoint}) shadows "
+        f"#{finding.later.index} {finding.later.path} "
+        f"({finding.later.endpoint}) — witness {finding.witness}"
+        for finding in findings
+    ]
+    bad = [finding for finding in findings if finding.kind == "unreachable"]
+    if bad:
+        lines.append(f"first-match guard: {len(bad)} provable shadow(s)")
+        return 1, "\n".join(lines)
+    lines.append(f"first-match guard: clean ({len(findings)} witness-only pairs)")
+    return 0, "\n".join(lines)
+
+
+def _annotations(records: list[RouteRecord], sidecar: str | None) -> tuple[int, str]:
+    """Annotation coverage: 1 when the sidecar is missing an address or is bad."""
+    from scripts.route_index_annotations import (
+        DEFAULT_SIDECAR,
+        check_annotation_coverage,
+    )
+
+    rows = [
+        {
+            "protocol": record.protocol,
+            "methods": sorted(record.methods),
+            "path": record.path,
+        }
+        for record in records
+    ]
+    try:
+        keys = check_annotation_coverage(rows, sidecar or DEFAULT_SIDECAR)
+    except ValueError as exc:
+        return 1, f"route annotations invalid: {exc}"
+    return 0, (
+        f"route annotations complete ({len(records)} registrations; "
+        f"{keys} annotated addresses)"
+    )
+
+
 def main() -> int:
     from scripts.route_index_profile import (
         in_profile_worker,
@@ -284,18 +386,24 @@ def main() -> int:
         return result.returncode
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    judgement = parser.add_mutually_exclusive_group()
+    judgement.add_argument(
         "--emit",
         action="store_true",
         help="print the profile header and index as JSON lines",
     )
-    parser.add_argument(
+    judgement.add_argument(
         "--check", action="store_true", help="run the first-match guard"
     )
-    parser.add_argument(
+    judgement.add_argument(
         "--check-annotations",
         action="store_true",
         help="verify every live route has its handwritten annotation",
+    )
+    judgement.add_argument(
+        "--all",
+        action="store_true",
+        help="run all three in this process, each under its own status marker",
     )
     parser.add_argument(
         "--annotations",
@@ -307,69 +415,25 @@ def main() -> int:
     from app.main import app
 
     records = collect(app)
+    if args.all:
+        return print_sections(
+            [
+                ("emit", *_emit(records, profile_header())),
+                ("check", *_check(records)),
+                ("check-annotations", *_annotations(records, args.annotations)),
+            ]
+        )
     if args.emit:
-        print(json.dumps({"settings_profile": profile_header()}, ensure_ascii=False))
-        for record in records:
-            print(
-                json.dumps(
-                    {
-                        "index": record.index,
-                        "protocol": record.protocol,
-                        "path": record.path,
-                        "methods": sorted(record.methods),
-                        "endpoint": record.endpoint,
-                        "name": record.name,
-                    },
-                    ensure_ascii=False,
-                )
-            )
+        print(_emit(records, profile_header())[1])
         return 0
     if args.check:
-        from scripts.route_index_frozen import FROZEN
-
-        try:
-            findings = checked_findings(records, FROZEN)
-        except ValueError as exc:
-            print(exc)
-            return 1
-        for finding in findings:
-            print(
-                f"[{finding.kind}] {finding.later.protocol}/{finding.method} "
-                f"#{finding.earlier.index} {finding.earlier.path} "
-                f"({finding.earlier.endpoint}) shadows "
-                f"#{finding.later.index} {finding.later.path} "
-                f"({finding.later.endpoint}) — witness {finding.witness}"
-            )
-        bad = [f for f in findings if f.kind == "unreachable"]
-        if bad:
-            print(f"first-match guard: {len(bad)} provable shadow(s)")
-            return 1
-        print(f"first-match guard: clean ({len(findings)} witness-only pairs)")
-        return 0
+        status, text = _check(records)
+        print(text)
+        return status
     if args.check_annotations:
-        from scripts.route_index_annotations import (
-            DEFAULT_SIDECAR,
-            check_annotation_coverage,
-        )
-
-        rows = [
-            {
-                "protocol": record.protocol,
-                "methods": sorted(record.methods),
-                "path": record.path,
-            }
-            for record in records
-        ]
-        try:
-            keys = check_annotation_coverage(rows, args.annotations or DEFAULT_SIDECAR)
-        except ValueError as exc:
-            print(f"route annotations invalid: {exc}")
-            return 1
-        print(
-            f"route annotations complete ({len(records)} registrations; "
-            f"{keys} annotated addresses)"
-        )
-        return 0
+        status, text = _annotations(records, args.annotations)
+        print(text)
+        return status
     parser.print_help()
     return 2
 

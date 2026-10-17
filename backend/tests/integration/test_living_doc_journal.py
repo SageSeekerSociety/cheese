@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.doc_store import store
 from app.core.errors import ConflictError
+from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.block.documents import DocumentWriter
 from app.domain.block.models import Block, BlockKind
 from app.domain.living_doc.models import (
@@ -16,12 +17,13 @@ from app.domain.living_doc.models import (
     DocumentOperation,
     DocumentVersion,
 )
+from app.domain.living_doc.overview import overview_document, seed_overview
 from app.domain.living_doc.services import DocumentJournal, Documents, content_hash
-from app.domain.project.services import ProjectService
+from app.domain.room_task.dispatch import create_task
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.doc_change import summarize_doc_change
-from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered, session_auth_headers
+from tests.integration.conftest import project_service, registered, session_auth_headers
 from tests.integration.test_docs import _topic
 from tests.support.living_doc import document_of
 
@@ -30,9 +32,13 @@ async def seed(factory):
     """A task, whose living document these tests write."""
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
-        task = await TopicService(session).create_task(
-            room_id=project.root_topic_id, created_by="alice"
+        project = await project_service(session).create(name="P", owner_handle="alice")
+        task = await create_task(
+            session,
+            room_id=project.root_topic_id,
+            created_by="alice",
+            seat_project=seat_project,
+            team=project_team,
         )
         await session.commit()
         return task.id
@@ -40,7 +46,7 @@ async def seed(factory):
 
 async def task_doc(session, task):
     """The task's document, made the way an editor's ticket makes it."""
-    place = await TopicService(session).place_or_404(task)
+    place = await place_or_404(session, task)
     return await Documents(session).get(
         await TaskService(session).ensure_document(place.task)
     )
@@ -262,16 +268,14 @@ async def test_platform_brief_seed_has_raw_history_without_contribution_event(
     factory = business_db_factory
     async with factory() as session:
         await registered(session, "alice")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         await session.commit()
     raw = "# 原稿\r\n😀"
     async with factory() as session:
-        projects = ProjectService(session)
-        await projects.seed_overview(await projects.get_or_404(project.id), raw)
+        await seed_overview(session, project.id, raw)
         await session.commit()
     async with factory() as session:
-        projects = ProjectService(session)
-        doc = await projects.overview_document(await projects.get_or_404(project.id))
+        doc = await overview_document(session, project.id)
         assert doc.content == raw
         versions = await DocumentJournal(session).history(doc.id)
         assert len(versions) == 1
@@ -375,7 +379,7 @@ async def test_independent_operation_claims_apply_once(business_db_factory, diff
         )
         assert sum((block.meta or {}).get("action") == "doc" for block in blocks) == 1
         doc = await task_doc(session, task)
-        assert len(await TopicService(session).doc_nodes(doc)) == 1
+        assert len(await Documents(session).nodes(doc)) == 1
 
 
 @pytest.mark.anyio

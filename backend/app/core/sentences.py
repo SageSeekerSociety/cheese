@@ -44,7 +44,7 @@ Anything done to a :class:`NoticeText` as a string (``+``, an f-string,
 result: that text is no longer the catalog's sentence.
 
 The templates are the frontend's catalogs, read from where they are written
-(``frontend/src/i18n/messages/<locale>/roomNotice.json``): there is one copy, so
+(``frontend/src/i18n/messages/<locale>/roomNotice/``): there is one copy, so
 what the room stores, what a screen renders and what a push says cannot say
 different things. The backend image carries those files at the same place
 relative to this module (``backend/Dockerfile``, the ``i18n`` build context).
@@ -54,10 +54,11 @@ A refusal is a sentence too. An error raised with ``say()`` as its message
 Chinese ``message`` in the error body (``error.i18n``, see
 ``app/core/errors.py``), and the browser shows it in its reader's language.
 Those sentences live in the catalog ``apiError``: they are shown in a toast or
-a form, not in a room. ``apiError`` is one flat key space split across
-``apiError/*.json`` — the shard's name says which backend module says the
-sentence and never appears in the key (``docs/i18n.md`` §2) — so a new refusal
-extends one file instead of the one every other change also edits. The two
+a form, not in a room. Both catalogs are one flat key space split across a
+shard directory (``apiError/*.json``, ``roomNotice/*.json``) — the shard's name
+says which backend module says the sentence and never appears in the key
+(``docs/i18n.md`` §2) — so a new refusal, or a new room line, extends one file
+instead of the one every other change also edits. The two
 catalogs share one key space, so a key names one sentence wherever it is said —
 an error's sentence can also end up in a room line.
 """
@@ -87,11 +88,11 @@ LOCALES: Final = ("zh-CN", "en")
 
 
 def _templates(locale: str, namespace: str) -> dict[str, str]:
-    """One namespace's templates: a file (``roomNotice.json``), or the shards
+    """One namespace's templates: a single file (``global.json``), or the shards
     under a directory merged back into the flat table they are
-    (``apiError/``). Where the shards split it is a file-layout question; the
-    key space is the one it always was. A key in two shards would silently drop
-    one of them, so it is an error here."""
+    (``roomNotice/``, ``apiError/``). Where the shards split it is a file-layout
+    question; the key space is the one it always was. A key in two shards would
+    silently drop one of them, so it is an error here."""
     path = CATALOG_DIR / locale / f"{namespace}.json"
     if path.is_file():
         return json.loads(path.read_text(encoding="utf-8"))

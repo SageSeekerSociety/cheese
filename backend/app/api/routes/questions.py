@@ -8,14 +8,14 @@ from app.auth.core import Action, AuthUserInfo, Resource
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
-from app.domain.discussion.models import DiscussableModelType
+from app.domain.delivery.ledger import deliver
 from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.repositories import (
     DiscussionReactionRepository,
     DiscussionRepository,
     ReactionTypeRepository,
 )
-from app.domain.discussion.services import DiscussionService
+from app.domain.discussion.services import DiscussableModelType, DiscussionService
 from app.domain.questions.repositories import (
     QuestionInvitationRepository,
     QuestionRepository,
@@ -51,6 +51,7 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
         repo=discussion_repo,
         reaction_service=reaction_service,
         session=db,
+        deliver=deliver,
     )
 
 
