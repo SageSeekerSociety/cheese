@@ -33,6 +33,7 @@ from app.api.task_teaching import (
     coerce_teaching,
     validate_task_teaching,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import may_teach_task
@@ -274,10 +275,7 @@ async def get_task(
     )
 
 
-@router.patch(
-    "/{taskId}",
-    summary="Update Task",
-)
+@router.patch("/{taskId}", summary="Update Task", dependencies=[ROUTE_DECIDES])
 async def patch_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
     payload: PatchTaskRequest,
@@ -702,6 +700,7 @@ async def get_tasks(
     "/{taskId}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete Task",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_task(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -739,6 +738,7 @@ async def delete_task(
     "/{taskId}/participants/{participantId}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete TaskMembership",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -773,6 +773,7 @@ async def delete_task_participant(
     "/{taskId}/participants",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete TaskMembership by member",
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_task_participant_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -808,6 +809,7 @@ async def delete_task_participant_by_member(
 @router.patch(
     "/{taskId}/participants",
     summary="Update TaskMembership by member",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_task_membership_by_member(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],

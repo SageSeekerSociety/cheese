@@ -23,6 +23,7 @@ from app.api.task_serialization import (
     _task_to_api_model,
     _uploaded_attachment_to_api,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.auth.space_access import may_publish_in_space
@@ -52,6 +53,7 @@ MAX_PDF_BYTES = 15 * 1024 * 1024
 @router.post(
     "/publish/from-pdf/preview",
     summary="Preview Task Drafts From PDF",
+    dependencies=[ROUTE_DECIDES],
 )
 async def preview_task_from_pdf(
     space_id: Annotated[int, Form(alias="spaceId")],
@@ -178,6 +180,7 @@ async def preview_task_from_pdf(
 @router.post(
     "/publish/from-pdf/confirm",
     summary="Confirm Publish Task Drafts From PDF",
+    dependencies=[ROUTE_DECIDES],
 )
 async def confirm_publish_task_from_pdf(
     payload: ConfirmTaskPublishFromPdfRequest,

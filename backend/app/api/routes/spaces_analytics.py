@@ -50,6 +50,7 @@ from app.api.space_deps import (
     require_reviewed_space,
 )
 from app.api.task_deps import get_task_submission_service
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.client_address import resolved_client_address
@@ -474,6 +475,7 @@ async def get_space_learning_queues(
 @router.post(
     "/{spaceId}/analytics/learning/outline",
     summary="Build Space Learning Outline",
+    dependencies=[ROUTE_DECIDES],
 )
 async def build_space_learning_outline(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],

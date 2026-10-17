@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import String, Uuid, column, select, table
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
@@ -19,23 +19,16 @@ from app.domain.block.models import (
     consumed_turn,
 )
 from app.domain.block.repositories import BlockRepository
+
+# The task a document is the living document of. A bare table: ``room_task``
+# depends on this domain. Shared with `editing.py`, which reads the same row.
+from app.domain.block.task_rows import _tasks  # re-exported for tests
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.living_doc.doc_tree import PARAGRAPH, markdown_to_nodes
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import DocumentJournal, Documents
-
-# The task a document is the living document of. A bare table: ``room_task``
-# depends on this domain.
-_tasks = table(
-    "tasks",
-    column("id", Uuid),
-    column("room_id", Uuid),
-    column("document_id", Uuid),
-    column("title", String),
-    column("title_source", String),
-)
 
 
 def _doc_edit_lines(content: str) -> list[str]:

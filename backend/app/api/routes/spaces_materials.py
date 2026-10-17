@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok
 from app.api.space_deps import require_reviewed_space
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -83,6 +84,7 @@ async def list_space_materials(
     "/{spaceId}/materials",
     summary="Upload Space Material",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def upload_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -114,6 +116,7 @@ async def upload_space_material(
 @router.patch(
     "/{spaceId}/materials/{materialId}",
     summary="Patch Space Material",
+    dependencies=[ROUTE_DECIDES],
 )
 async def patch_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -135,6 +138,7 @@ async def patch_space_material(
     "/{spaceId}/materials/{materialId}",
     summary="Delete Space Material",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_space_material(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
