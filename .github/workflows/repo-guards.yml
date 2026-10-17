@@ -67,6 +67,7 @@ jobs:
           python3 .claude/scripts/check-migration-safety.py --self-test
           python3 .claude/scripts/check-file-sizes.py --self-test
           python3 .claude/scripts/check-doc-references.py --self-test
+          python3 backend/tests/unit/test_check_review_artifacts.py
           python3 .claude/scripts/check-manual-anchors.py --self-test
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
@@ -270,6 +271,13 @@ jobs:
       # no network — 21 documents, paths matched in them, under a second.
       - name: Agent docs name paths and sections that exist
         run: uvx pre-commit run --all-files doc-references
+
+      # Same reason as the step above: no product suite reads the review
+      # artifacts, so without a named step here the hook would only guard a
+      # developer's commit. Reads a handful of Markdown notes and a directory
+      # listing — no database, no network, well under a second.
+      - name: Review artifacts are cited by a review note
+        run: uvx pre-commit run --all-files review-artifacts
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
       # does not create it. So does the HISTORY behind it, and that is the part
