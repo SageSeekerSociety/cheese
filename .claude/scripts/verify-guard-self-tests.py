@@ -109,7 +109,6 @@ import re
 import subprocess
 import sys
 import tempfile
-import unittest
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2040,7 +2039,8 @@ def allowance_problems(
 
 
 def report(
-    results: list[tuple[str, Path, Outcome, bool]], allowed: set[str] = set()
+    results: list[tuple[str, Path, Outcome, bool]],
+    allowed: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[int, int]:
     checked = [item for item in results if item[3]]
     skipped = [item for item in results if not item[3]]
