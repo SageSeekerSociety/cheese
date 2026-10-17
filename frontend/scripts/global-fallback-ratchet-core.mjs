@@ -351,13 +351,21 @@ function unassert(node) {
  * through it.
  *
  * The walk answers a node once and reuses the answer everywhere the node is
- * reached. The one thing an answer cannot express is a cycle: `const a =
- * { ...b }` with `const b = { ...a }` has no finite set of entries, and what
- * the walk reports for the node it met first is only true of the path that
- * met it. So a node whose expansion runs back into itself is answered
- * `{ done: false }` and not kept, and its parents do not keep theirs either.
- * Only a cycle can make a walk unfinished, and a cyclic object graph is not a
- * legal component, so this costs the legal case nothing.
+ * reached at the same depth. Depth is part of the answer only at the recursion
+ * bound: a node met past it is read only as far as the bound reached, and the
+ * same node met nearer the top must still be read to the end. Keeping one
+ * answer per (node, depth) is what lets both of them be kept — without the
+ * depth, the short answer is either wrong for the shallow route or has to be
+ * thrown away, and throwing it away makes every node above a deep branch
+ * answer again on every route through it.
+ *
+ * The one thing an answer cannot express is a cycle: `const a = { ...b }` with
+ * `const b = { ...a }` has no finite set of entries, and what the walk reports
+ * for the node it met first is only true of the path that met it. So a node
+ * whose expansion runs back into itself is answered `{ done: false }` and not
+ * kept, and its parents do not keep theirs either. Only a cycle can make a
+ * walk unfinished, and a cyclic object graph is not a legal component, so this
+ * costs the legal case nothing.
  */
 function objectEntries(node, resolve, depth = 0) {
   return [...expandEntries(node, resolve, depth, new Set(), new Map()).entries.values()]
@@ -366,6 +374,18 @@ function objectEntries(node, resolve, depth = 0) {
 const NO_ENTRIES = { entries: new Map(), done: true }
 /** An expansion that met a node already on its path: true of this path only. */
 const CUT_ENTRIES = { entries: new Map(), done: false }
+
+/** The answer kept for a node as it was read from one depth. */
+function keptEntries(memo, node, depth) {
+  return memo.get(node)?.get(depth)
+}
+
+/** Keeps an answer for a node along with the depth it is only true from. */
+function keepEntries(memo, node, depth, entries) {
+  let byDepth = memo.get(node)
+  if (!byDepth) memo.set(node, (byDepth = new Map()))
+  byDepth.set(depth, entries)
+}
 
 /**
  * Writes what a property says about a name, keeping the last word on it. A
@@ -377,14 +397,24 @@ function putEntry(entries, entry) {
   entries.set(entry.key, earlier?.quoted && !entry.quoted ? { ...entry, quoted: true } : entry)
 }
 
+/**
+ * How far down a chain of spreads the walk follows before it stops. One
+ * recursion per spread, so this is what keeps a chain of them from taking the
+ * whole check down with a stack overflow. Exported because it is also what the
+ * tests build their chain lengths from: a test that hard-codes a length one
+ * step under this bound stops exercising the bound the moment it moves.
+ */
+export const MAX_SPREAD_DEPTH = 512
+
 /** The work behind `objectEntries`; `done` says the whole node was walked. */
 function expandEntries(node, resolve, depth, seen, memo) {
-  // One recursion per spread followed. A chain of more spreads than this is a
-  // generated file, not a component, and reading the names under it is not
-  // worth a stack overflow that would take the whole check down with it. What
-  // is read here is not kept: a node met this deep has only been read in part,
-  // and the same node met near the top still has to be read to the end.
-  if (depth > 512) return CUT_ENTRIES
+  // One recursion per spread followed. A chain of more spreads than the bound
+  // is a generated file, not a component, and reading the names under it is
+  // not worth a stack overflow that would take the whole check down with it.
+  // The answer stops where the bound did, which is still an answer for a route
+  // that arrives this deep: it is kept under the depth it was read at, so a
+  // route that meets the same node nearer the top still reads it to the end.
+  if (depth > MAX_SPREAD_DEPTH) return NO_ENTRIES
   const value = unassert(node)
   if (!value) return NO_ENTRIES
   if (value.type === 'Identifier') {
@@ -408,9 +438,17 @@ function expandEntries(node, resolve, depth, seen, memo) {
   // `Object.assign(target, …)` writes every source into the target in order.
   // A call is a node like any other here: one this walk is inside is a cycle,
   // and one it has finished is answered the same way wherever it is met.
+  //
+  // The cycle check below is a backstop, not a route the walk has been seen to
+  // take: a call whose own argument points back at it is reached through the
+  // identifier that names it, and the check there meets the cycle first. It
+  // stays because what it prevents is not the truncation the depth bound
+  // already imposes — a cycle left to run out against the bound would come
+  // back claiming to be complete, and that answer would be kept for a route
+  // that met the same node from the top.
   if (isObjectAssign(value)) {
     if (seen.has(value)) return CUT_ENTRIES
-    const cached = memo.get(value)
+    const cached = keptEntries(memo, value, depth)
     if (cached) return { entries: cached, done: true }
     seen.add(value)
     const entries = new Map()
@@ -421,14 +459,14 @@ function expandEntries(node, resolve, depth, seen, memo) {
       done = done && part.done
     }
     seen.delete(value)
-    if (done) memo.set(value, entries)
+    if (done) keepEntries(memo, value, depth, entries)
     return { entries, done }
   }
   if (value.type !== 'ObjectExpression') return NO_ENTRIES
   // A search that is inside this node already: this route is the cycle.
   if (seen.has(value)) return CUT_ENTRIES
-  // A search that finished this node and kept the answer.
-  const cached = memo.get(value)
+  // A search that finished this node from this depth and kept the answer.
+  const cached = keptEntries(memo, value, depth)
   if (cached) return { entries: cached, done: true }
   seen.add(value)
   const entries = new Map()
@@ -450,7 +488,7 @@ function expandEntries(node, resolve, depth, seen, memo) {
     })
   }
   seen.delete(value)
-  if (done) memo.set(value, entries)
+  if (done) keepEntries(memo, value, depth, entries)
   return { entries, done }
 }
 

@@ -32,6 +32,7 @@ import {
   findGlobalFallbacks,
   formatGlobalFallbackReport,
   internalDeclarations,
+  MAX_SPREAD_DEPTH,
   SCRIPT,
   TEMPLATE,
   unboundCalls,
@@ -993,8 +994,12 @@ describe('findGlobalFallbacks', () => {
   // for every route that met it near the top: the two components below differ
   // only in which spread is written first, and both bind the prop.
   it('does not keep the half-read answer a deep route stops at', () => {
+    // The chain is measured off the walk's bound, not typed in: `m` has to sit
+    // exactly at the bound so its own child is the node that gets cut. A chain
+    // one link shorter than the bound would stop exercising the cut, and a
+    // hard-coded length leaves that failure invisible when the bound moves.
     const lines = ["const leaf = { props: ['open'] }", 'const m = { ...leaf }']
-    for (let i = 1; i <= 511; i += 1) lines.push(`const p${i} = { ...${i === 1 ? 'm' : `p${i - 1}`} }`)
+    for (let i = 1; i < MAX_SPREAD_DEPTH; i += 1) lines.push(`const p${i} = { ...${i === 1 ? 'm' : `p${i - 1}`} }`)
     const component = (exported) =>
       [
         '<script lang="ts">',
@@ -1007,6 +1012,73 @@ describe('findGlobalFallbacks', () => {
 
     assert.deepEqual(found(component('{ ...p511, ...m }')), [], 'kept what a route at the bound had read of `m`')
     assert.deepEqual(found(component('{ ...m, ...p511 }')), [], 'read `m` before the long route reached it')
+  })
+
+  // The answer to a node that was read only as far as the bound is worth
+  // keeping for the depth it was read at — and only for that depth. A walk
+  // that instead refuses to keep any ancestor of a truncated route still
+  // answers correctly, but on a wide graph with one deep branch it answers
+  // every route separately: 26 s on this 17 KB fixture, against 0.3 s here.
+  it('answers a wide graph once when one branch runs past the bound', () => {
+    const WIDTH = 8
+    // Five levels, not eight: the regression this guards against is eight
+    // times slower per level, and at the size of the test *above* it would run
+    // for hours before the assertion had the answer it needs.
+    const LEVELS = 5
+    // The same graph twice: once with a branch far past the bound, once
+    // without it. The only difference the branch may make is reading it once,
+    // so the assertion is a ratio — an absolute time would have to assume how
+    // fast the machine is, and the check runs on whichever one CI has.
+    const graph = (branch) => {
+      const lines = []
+      if (branch) {
+        lines.push('const d0 = { props: [] }')
+        for (let i = 1; i <= MAX_SPREAD_DEPTH + 16; i += 1) {
+          lines.push(`const d${i} = { ...${i === 1 ? 'd0' : `d${i - 1}`} }`)
+        }
+        // The wide graph's own base binds the name, so what the walk makes of
+        // the long branch cannot change the answer — only what it costs.
+        lines.push(`const l0_0 = { ...d${MAX_SPREAD_DEPTH + 16}, props: ['open'] }`)
+      } else {
+        lines.push("const l0_0 = { props: ['open'] }")
+      }
+      for (let i = 1; i < WIDTH; i += 1) lines.push(`const l0_${i} = l0_0`)
+      for (let level = 1; level <= LEVELS; level += 1) {
+        const sources = Array.from({ length: WIDTH }, (_, j) => `l${level - 1}_${j}`)
+        const spread = sources.map((source) => `...${source}`).join(', ')
+        for (let i = 0; i < WIDTH; i += 1) lines.push(`const l${level}_${i} = { ${spread} }`)
+      }
+      return [
+        '<script lang="ts">',
+        ...lines,
+        `export default l${LEVELS}_0`,
+        '</script>',
+        '<template><button @click="open()">x</button></template>',
+        '',
+      ].join('\n')
+    }
+    const timed = (code) => {
+      const started = Date.now()
+      const answered = found(code)
+      return { answered, elapsed: Date.now() - started }
+    }
+
+    const control = timed(graph(false))
+    const deep = timed(graph(true))
+
+    assert.deepEqual(control.answered, [], 'did not read the wide graph itself')
+    assert.deepEqual(deep.answered, [], 'read the wide graph past a branch the bound cut short')
+    // A walk that will not keep an ancestor of a truncated route answers each
+    // route through the graph again: measured at 26 s against 0.2 s here, so
+    // this ratio is far apart from both the cost of reading the branch once
+    // and the noise of a loaded machine. The flat term is the whole test's
+    // floor — the control graph's own 0.1 s — so a slow machine cannot make
+    // the ratio fail on it alone.
+    assert.ok(
+      deep.elapsed < control.elapsed * 10 + 2_000,
+      `read ${deep.elapsed} ms against ${control.elapsed} ms without the deep branch`
+    )
+    assert.ok(deep.elapsed < 30_000, `walked a legal 17 KB component in ${deep.elapsed} ms`)
   })
 
   // The value a name holds follows execution, and execution is not the order
