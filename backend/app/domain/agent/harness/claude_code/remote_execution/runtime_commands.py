@@ -172,6 +172,10 @@ def start_command(
             "read_at": time.monotonic(),
             "watched": watched,
         }
+        if sys.platform != "win32":
+            # Its own group, numbered by its pid (`start_new_session`): what an
+            # idle executor ends before it stops (`end_left_behind`).
+            self.groups.add(process.pid)
     self.log(command_id, "started", pid=process.pid, command=meta.get("command"))
     threading.Thread(
         target=self._wait_command, args=(command_id, process), daemon=True
@@ -191,6 +195,8 @@ def _wait_command(self, command_id, process):
                 temporary.replace(temporary.with_name("exit"))
         self.running.pop(command_id, None)
         self.collected[command_id] = time.time()
+        # A command that ran until now is work until now (`idle_stop`).
+        self.active_at = time.monotonic()
     with contextlib.suppress(OSError):
         self.log(command_id, "exited", exit_code=code)
 
@@ -283,6 +289,106 @@ def stop_command(self, command_id):
                 os.killpg(entry["process"].pid, signal.SIGKILL)
         self.log(command_id, "stopped")
     return meta
+
+
+def _group_alive(group):
+    try:
+        os.killpg(group, 0)
+    except (ProcessLookupError, PermissionError):
+        # Gone, or a group of somebody else's that took the number: not ours.
+        return False
+    return True
+
+
+def prune_groups(self):
+    """Forget the groups that have no process left. A group's number is not
+    handed out again while any process is in it, so a group still here is
+    still the one a command of ours started (`end_left_behind`)."""
+    with self.command_lock:
+        running = {entry["process"].pid for entry in self.running.values()}
+        self.groups = {g for g in self.groups if g in running or _group_alive(g)}
+
+
+def _preview_declared(self):
+    """Whether the room declared a dev server with `cheese serve` and its
+    preview helper is still up: the port file `cheese-preview-up` writes and
+    the pid it recorded (`machine_launcher.CHEESE_PREVIEW_UP`). A person may be
+    looking at it, so it is work, and neither it nor the server goes."""
+    platform = Path(self.env.get("HOME", "")) / ".cheese"
+    try:
+        port = (platform / "cheese-preview.port").read_text().strip()
+        pid = int((platform / "cheese-preview.pid").read_text().strip())
+    except (OSError, ValueError):
+        return False
+    if not port:
+        return False
+    if sys.platform == "win32":
+        # The pid is Git Bash's own there; a recorded helper is taken as up.
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+
+def end_left_behind(self):
+    """End every process still in a group a command of ours started: what
+    the agent detached and left running (`nohup … &`, a dev server), which
+    keeps nothing up (`machine.lifecycle`) and outlives the command that
+    started it. TERM, five seconds, then KILL.
+
+    What this cannot reach: a process that left its group — `setsid`, a
+    `setpgid`, a daemon that double-forks into a session of its own, a
+    background job of a shell running with job control (`set -m`). Nor, on
+    Windows, anything: a command there is not a POSIX group, and only the
+    executor itself stops."""
+    self.prune_groups()
+    with self.command_lock:
+        groups = sorted(self.groups)
+    if not groups:
+        return []
+    for number in (signal.SIGTERM, signal.SIGKILL):
+        for group in groups:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(group, number)
+        deadline = time.monotonic() + 5
+        left = groups
+        while left and time.monotonic() < deadline:
+            time.sleep(0.1)
+            left = [g for g in left if _group_alive(g)]
+        if not left:
+            break
+    return groups
+
+
+def idle_stop(self, idle_s):
+    """Whether this executor has sat idle for `idle_s` and is to stop now.
+
+    Idle is nothing of its own going on: no request in flight and none for
+    `idle_s` (a `ping` is a question about it, not work for it), no command
+    still running — a Bash sent to the background included — and no preview
+    the room declared (`_preview_declared`). Then it stops taking requests,
+    ends what its commands left behind (`end_left_behind`), and answers True
+    for `serve` to shut down."""
+    if _preview_declared(self):
+        self.active_at = time.monotonic()
+        return False
+    with self.admission_lock, self.command_lock:
+        if (
+            self.active_calls
+            or self.running
+            or time.monotonic() - self.active_at < idle_s
+        ):
+            return False
+        # From here on nothing is admitted (`dispatch`), so no command can
+        # start between this decision and the shutdown.
+        self.stopping = True
+    ended = self.end_left_behind()
+    self.log("service", "idle", idle_s=idle_s, ended_groups=ended)
+    return True
 
 
 def read_command(self, command_id, out_offset=0, err_offset=0, wait=0.0):
