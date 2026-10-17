@@ -1001,6 +1001,7 @@ routes:
   # app.api.routes.run_records
   - {protocol: "http", method: "GET", path: "/run-records", auth: "actor.topic", owner: "run_record"}
   - {protocol: "http", method: "GET", path: "/run-records/turns", auth: "actor.topic", owner: "run_record"}
+  - {protocol: "http", method: "GET", path: "/run-records/turns/{turn_id}", auth: "actor.topic", owner: "run_record"}
   - {protocol: "http", method: "GET", path: "/run-records/detail", auth: "actor.topic", owner: "run_record"}
   # app.api.routes.sandbox
   - {protocol: "http", method: "POST", path: "/sandbox/storage-sweep", auth: "sandbox.global", owner: "sandbox.maintenance"}
