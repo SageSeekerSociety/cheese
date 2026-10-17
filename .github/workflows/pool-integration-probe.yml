@@ -26,16 +26,6 @@ on:
         description: pytest workers per slot; empty means half the box's cores
         type: string
         default: ""
-  # TEMPORARY, and removed before this file is delivered: GitHub only offers
-  # `workflow_dispatch` for a workflow that is already on the default branch, so
-  # a workflow still under measurement cannot be dispatched from its branch.
-  # These probe branches exist only to start it during the measurement.
-  push:
-    branches:
-      - probe/integration-single
-      - probe/integration-pair
-      - probe/integration-pair-2w
-
 permissions:
   contents: read
 
@@ -46,19 +36,13 @@ defaults:
 jobs:
   shard:
     name: integration shard (replica ${{ matrix.replica }})
-    # Replica 1 is the single-slot baseline. Replica 2 runs only in pair mode:
-    # on a dispatch whose `pair` is true, or on the temporary pair branch. The
-    # choice is made here rather than in a job-level `if` because the matrix is
-    # not an available context there.
+    # Replica 1 is the single-slot baseline. Replica 2 runs only when `pair` is
+    # true. The choice is made here rather than in a job-level `if` because the
+    # matrix is not an available context there.
     strategy:
       fail-fast: false
       matrix:
-        replica: >-
-          ${{ fromJSON(((github.event_name == 'workflow_dispatch' && inputs.pair)
-                        || (github.event_name == 'push'
-                            && (github.ref_name == 'probe/integration-pair'
-                                || github.ref_name == 'probe/integration-pair-2w')))
-                       && '[1, 2]' || '[1]') }}
+        replica: ${{ fromJSON(inputs.pair && '[1, 2]' || '[1]') }}
 
     runs-on: [self-hosted, cheese-ci, cheese-ci-box-1]
     timeout-minutes: 75
@@ -75,12 +59,9 @@ jobs:
       # 16-database block per slot. The tests' default capacity is 16, which
       # would reject the slot-1 block at collection time before any test ran.
       CHEESEX_REDIS_DB_COUNT: "64"
-      # A dispatch input, or the temporary 2-worker pair branch, pins the
-      # workers; otherwise the slot step takes half the cores (see there).
-      PROBE_WORKERS: >-
-        ${{ inputs.workers
-            || (github.ref_name == 'probe/integration-pair-2w' && '2')
-            || '' }}
+      # A dispatch input pins the workers; otherwise the slot step takes half
+      # the cores (see there).
+      PROBE_WORKERS: ${{ inputs.workers || '' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -91,11 +72,11 @@ jobs:
             echo "at=$(date -u +%FT%TZ)"
             echo "host=$(hostname)"
             echo "slot=${CHEESE_CI_SLOT:-0}"
-            echo "workers=${CHEESE_CI_TEST_WORKERS:-auto}"
+            echo "workers=${PROBE_WORKERS:-${CHEESE_CI_TEST_WORKERS:-auto}}"
             echo "cores=$(nproc)"
             lscpu 2>/dev/null | grep -E 'Model name|^CPU\(s\)' || true
             free -m
-            swapon --show || echo "(no swap configured)"
+            cat /proc/swaps || echo "(no swap configured)"
             df -h / "$RUNNER_TEMP" /tmp || true
             echo "--- runner identities on this machine"
             grep -h '"agentName"' "$HOME"/actions-runner*/.runner 2>/dev/null || true
@@ -247,8 +228,8 @@ jobs:
                   f"swap_used_peak_kb={swap_total - swap_free}"
               )
               print(
-                  f"oom_kill_delta={last.get('oom_kill=', 0) - first.get('oom_kill=', 0)} "
-                  f"oom_kill_total={last.get('oom_kill=', 0)}"
+                  f"oom_kill_delta={last.get('oom_kill', 0) - first.get('oom_kill', 0)} "
+                  f"oom_kill_total={last.get('oom_kill', 0)}"
               )
 
 
