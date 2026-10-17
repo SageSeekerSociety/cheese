@@ -77,6 +77,7 @@ OWN = (
     "_started",
     "_wake",
     "_wait_for_memory",
+    "frame_snapshots",
     "read",
     "_pump",
     "_forget",

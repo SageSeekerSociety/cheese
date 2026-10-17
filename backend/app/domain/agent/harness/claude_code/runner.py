@@ -498,6 +498,17 @@ class Runner(runner.Runner[Journal]):
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
+        # The last frame read off the child's stdout, for the heartbeat the
+        # backend reads (`heartbeat`). None until a frame, and the work is the
+        # one in flight when THAT frame arrived — never `last_work`, so a
+        # finished turn cannot be reported as a live one.
+        self.last_frame_kind: str | None = None
+        #: Wall clock and monotonic clock of that frame. The monotonic one is
+        #: this machine's own; the age it yields is advanced by the backend on
+        #: its own clock after receipt (`driven.subscription`).
+        self.last_frame_at: float | None = None
+        self.last_frame_monotonic: float | None = None
+        self.last_frame_work: str | None = None
 
     capabilities = (runner.LONG_POLL, runner.LIVE)
 
@@ -684,6 +695,7 @@ class Runner(runner.Runner[Journal]):
             if not isinstance(record, dict):
                 continue
             self.ran = True
+            self._note_frame(record)
             kind = record.get("type")
             if kind == "control_response":
                 response = record.get("response") or {}
@@ -719,6 +731,50 @@ class Runner(runner.Runner[Journal]):
                 self.stream(record)
                 continue
             self.observe(record)
+
+    def _note_frame(self, record: dict) -> None:
+        """Remember the last frame read, before any branch decides its fate.
+
+        Every legal record counts, including the ones that are never journaled
+        (`keep_alive`, `thinking_tokens`, streamed deltas): a quiet session
+        that only emits keep-alives is still a session that is there. The work
+        is taken from the frame's own moment — a frame read while nothing is
+        in flight says "no work", so it cannot later be attributed to a work
+        that started afterwards.
+        """
+        subtype = record.get("subtype")
+        kind = record.get("type")
+        self.last_frame_kind = (
+            str(subtype if kind == "system" and subtype else kind)
+            if (subtype or kind)
+            else None
+        )
+        self.last_frame_at = time.time()
+        self.last_frame_monotonic = time.monotonic()
+        self.last_frame_work = self.work if self.working else None
+
+    def heartbeat(self) -> dict:
+        """The last frame read, and how long ago, for the backend's readout.
+
+        `work_id` is the work that frame belonged to, and only while that work
+        is still the one in flight. A frame read for a finished or replaced
+        work reports no work (`None`), rather than borrowing `last_work`: the
+        backend must not read an ended turn as a live one, and a work that has
+        started but produced no frame yet must not inherit the previous one's.
+        """
+        recorded = self.last_frame_work
+        work = recorded if self.working and recorded == self.work else None
+        age = (
+            None
+            if self.last_frame_monotonic is None
+            else round(time.monotonic() - self.last_frame_monotonic, 2)
+        )
+        return {
+            "session_id": self.session_id,
+            "work_id": work,
+            "last_frame_kind": self.last_frame_kind,
+            "last_frame_age_s": age,
+        }
 
     def stream(self, record: dict) -> None:
         """Show the block the session is writing as its deltas arrive.
@@ -1331,7 +1387,13 @@ class Runner(runner.Runner[Journal]):
         if method == "events":
             after = int(params.get("after", 0))
             news = await self.news_for(after, params)
-            return {"events": self.records(after), **news}
+            # Every answer carries the heartbeat, even one that did not wait
+            # (a drain with nothing to wait for) and one that has no news.
+            return {
+                "events": self.records(after),
+                "heartbeat": self.heartbeat(),
+                **news,
+            }
         if method in ("send", "steer"):
             return await self.send(
                 params["input_id"],
@@ -1372,5 +1434,6 @@ class Runner(runner.Runner[Journal]):
                 "alive": self.alive(),
                 "starting": self.starting(),
                 "capabilities": list(self.capabilities),
+                "heartbeat": self.heartbeat(),
             }
         raise ValueError(f"Unknown Claude Code session operation: {method}")
