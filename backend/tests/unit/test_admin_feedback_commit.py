@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.routes import admin_feedback
 from app.api.routes.admin_feedback import require_feedback_admin
@@ -39,7 +40,7 @@ from app.core import db
 async def test_admin_write_response_follows_commit(
     monkeypatch, commit_fails, method, path, body, service_method
 ):
-    class Session:
+    class Session(AsyncSession):
         committed = False
         rolled_back = False
 
