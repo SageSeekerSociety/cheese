@@ -14,8 +14,8 @@
 # 实现。它做的是跑平台自己的那条路，然后当场核对——要防的正是「没看就说存好了」。
 #
 # 用法：
-#   worktree-snapshot.sh save                 当前任务目录：同步并核对远端（默认）
-#   worktree-snapshot.sh restore [--task ID]  换机后接回来：恢复并核对
+#   worktree-snapshot.sh save                     当前任务目录：同步并核对远端（默认）
+#   worktree-snapshot.sh restore --task <任务 id> 换机后接回来：恢复并核对
 #
 # 退出码：
 #   0  核对通过
@@ -44,6 +44,8 @@ checked_out_branch() {
   git symbolic-ref --quiet --short HEAD 2>/dev/null
 }
 
+# 远端这条分支的顶端。取不到（连不上、凭据不能用）时 REMOTE_OK=no——这和
+# 「远端还没有这个提交」是两回事，该跑的命令也不同。
 remote_tip() {
   local out
   REMOTE_OK=yes
@@ -55,18 +57,42 @@ remote_tip() {
   REMOTE_TIP=$(printf '%s\n' "$out" | head -n 1 | cut -f1)
 }
 
+uuid_like() {
+  case $1 in
+    ????????-????-????-????-????????????) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# `cheese worktree` 只认完整 UUID。平台把任务目录建在 ~/.cheese/tasks/<uuid>，
+# 目录名就是它；不在那个位置时退回会话里的 CHEESE_TOPIC。分支名里那 8 位
+# （task/61525614）不是 id，拿它去恢复会被 CLI 当场拒掉。
+task_id_of() {
+  case $1 in
+    */.cheese/tasks/*) basename "$1" ;;
+    *) printf '%s' "${CHEESE_TOPIC:-}" ;;
+  esac
+}
+
 dirty_count() {
   git status --porcelain 2>/dev/null | wc -l | tr -d ' '
 }
 
-# 任务目录以外的、最近动过的文件。这些不在任何备份里。
+# $HOME 下最近动过、又不在任务目录里的文件。备份只覆盖任务目录，这些换机就没了。
+# 只看 $HOME：/tmp 是全机共用的，一次能扫出几百个别的进程留下的东西，列出来只会
+# 把真该提醒的那几条挤掉。缓存和依赖目录不列，它们本来也不该指望备份。
 list_outside() {
-  local root=$1 dir
-  for dir in "$HOME" ${TMPDIR:-} /tmp; do
-    [ -d "$dir" ] || continue
-    find "$dir" -mindepth 1 -maxdepth 3 \
-      \( -name '.*' -prune \) -o \
-      \( -type f -mmin -"$SINCE_MIN" -not -path "$root/*" -print \) 2>/dev/null || true
+  local root=$1 f
+  find "$HOME" -mindepth 1 -maxdepth 3 \
+    \( -name .cache -o -name .local -o -name .cheese -o -name .npm \
+       -o -name .cargo -o -name .rustup -o -name .nvm -o -name .venv \
+       -o -name node_modules -o -name .git \) -prune \
+    -o -type f -mmin -"$SINCE_MIN" -print 2>/dev/null |
+  while IFS= read -r f; do
+    case $f in
+      "$root"/*) continue ;;
+    esac
+    printf '%s\n' "$f"
   done | sort -u
 }
 
@@ -75,23 +101,33 @@ report_outside() {
   files=$(list_outside "$root")
   [ -n "$files" ] || return 0
   count=$(printf '%s\n' "$files" | wc -l | tr -d ' ')
-  printf '  这些在任务目录以外，备份不覆盖，换机后回不来（挪进任务目录提交，或 cheese show 摆出来）：\n'
-  printf '%s\n' "$files" | head -n "$MAX_LISTED" | sed 's/^/    /'
+  printf '  这些在 $HOME 里、任务目录以外，备份不覆盖，换机后回不来（挪进任务目录提交，或 cheese show 摆出来）：\n' >&2
+  printf '%s\n' "$files" | head -n "$MAX_LISTED" | sed 's/^/    /' >&2
   if [ "$count" -gt "$MAX_LISTED" ]; then
-    printf '    （%s 个里只列了前 %s 个）\n' "$count" "$MAX_LISTED"
+    printf '    （%s 个里只列了前 %s 个）\n' "$count" "$MAX_LISTED" >&2
   fi
 }
 
 shorts() {
-  [ -n "$1" ] && printf '%s' "${1:0:8}" || printf '（空）'
+  if [ -n "$1" ]; then printf '%s' "${1:0:8}"; else printf '（空）'; fi
 }
 
+# save 用：同步跑过了，远端却没有这个提交
 cannot_confirm() {
-  local branch=$1 task=$2 why=$3
+  local branch=$1 reentry=$2 why=$3
   printf '  没能确认远端有这个提交：%s\n' "$why" >&2
   printf '  远端现在是什么：git ls-remote origin refs/heads/%s\n' "$branch" >&2
   printf '  重试：cheese sync；远端比你新就先合目标分支再同步；还不行就报告具体故障，不要说已存好。\n' >&2
-  printf '  换机后接回来：cheese worktree %s（新环境里第一次建目录时恢复最近一次备份）\n' "$task" >&2
+  printf '  换机后接回来：%s（新环境里第一次建目录时恢复最近一次备份）\n' "$reentry" >&2
+  exit 3
+}
+
+# restore 用：接回来了，但和远端对不上
+restore_mismatch() {
+  local branch=$1 why=$2
+  printf '  接回来的状态和远端对不上：%s\n' "$why" >&2
+  printf '  远端现在是什么：git ls-remote origin refs/heads/%s\n' "$branch" >&2
+  printf '  先别在这个目录里接着改；把上面的输出原样报上来，说清没能确认恢复到了哪个提交。\n' >&2
   exit 3
 }
 
@@ -126,7 +162,12 @@ if [ "$sub" = save ]; then
     task/*) ;;
     *) die 2 "当前分支是 $branch，不是任务分支。任务目录里的分支叫 task/<任务 id>：cheese worktree <任务 id>" ;;
   esac
-  task_id=${branch#task/}
+  task_id=$(task_id_of "$root")
+  if uuid_like "$task_id"; then
+    reentry="cheese worktree $task_id"
+  else
+    reentry="cheese worktree <任务 id>（完整 id 见任务卡；也可以在任务目录里用 CHEESE_TOPIC 再跑一次）"
+  fi
 
   printf '%s: 同步 %s\n' "$PROG" "$branch"
   sync_out=$(cheese sync 2>&1) || {
@@ -138,16 +179,16 @@ if [ "$sub" = save ]; then
   head_sha=$(git rev-parse HEAD)
   remote_tip "$branch"
   if [ "$REMOTE_OK" != yes ]; then
-    cannot_confirm "$branch" "$task_id" "取不到远端 refs（连不上远端，或者凭据不能用）"
+    cannot_confirm "$branch" "$reentry" "取不到远端 refs（连不上远端，或者凭据不能用）"
   fi
   if [ -z "$REMOTE_TIP" ]; then
-    cannot_confirm "$branch" "$task_id" "远端 refs/heads/$branch 上还没有任何提交"
+    cannot_confirm "$branch" "$reentry" "远端 refs/heads/$branch 上还没有任何提交"
   elif [ "$REMOTE_TIP" != "$head_sha" ]; then
-    cannot_confirm "$branch" "$task_id" "远端是 $(shorts "$REMOTE_TIP")，本地 HEAD 是 $(shorts "$head_sha")"
+    cannot_confirm "$branch" "$reentry" "远端是 $(shorts "$REMOTE_TIP")，本地 HEAD 是 $(shorts "$head_sha")"
   fi
 
   printf '远端 refs/heads/%s 就是 %s\n' "$branch" "${head_sha:0:8}"
-  printf '换机后接回来：cheese worktree %s\n' "$task_id"
+  printf '换机后接回来：%s\n' "$reentry"
   report_outside "$root"
   exit 0
 fi
@@ -158,19 +199,22 @@ if [ -n "$task_opt" ]; then
 else
   branch=$(checked_out_branch) || branch=""
   case $branch in
-    task/*) task_id=${branch#task/} ;;
-    *) die 2 "没说是哪条任务。用 --task <任务 id>，或在任务目录里跑" ;;
+    task/*) task_id=$(task_id_of "$(git rev-parse --show-toplevel 2>/dev/null || true)") ;;
+    *) task_id=${CHEESE_TOPIC:-} ;;
   esac
+  [ -n "$task_id" ] ||
+    die 2 "没说是哪条任务。用 --task <任务 id>，或在任务目录里跑"
 fi
+uuid_like "$task_id" ||
+  die 2 "「$task_id」不是完整的任务 id；cheese worktree 只认完整 UUID。用 --task <任务 id> 再跑"
 
-printf '%s: cheese worktree %s\n' "$PROG" "$task_id"
-worktree_out=$(cheese worktree "$task_id" 2>&1) || {
-  printf '%s\n' "$worktree_out"
+printf '%s: cheese worktree %s\n' "$PROG" "$task_id" >&2
+worktree_out=$(cheese worktree "$task_id") ||
   die 1 "cheese worktree $task_id 失败（上面是它说的）"
-}
-  if [ -n "$worktree_out" ]; then printf '%s\n' "$worktree_out"; fi
+if [ -n "$worktree_out" ]; then printf '%s\n' "$worktree_out"; fi
 
-root=$(printf '%s\n' "$worktree_out" | grep '^/' | tail -n 1)
+# 输出里最后一行以 / 开头的是工作目录；awk 读不到也返回 0，不会在 set -e 下提前退出
+root=$(printf '%s\n' "$worktree_out" | awk '/^\// { p = $0 } END { if (p != "") print p }')
 [ -n "$root" ] && [ -d "$root" ] ||
   die 2 "没从 cheese worktree 的输出里认出工作目录在哪，它说的是上面那些"
 
@@ -179,12 +223,28 @@ branch=$(checked_out_branch) || die 2 "$root 里是分离头指针，接回来�
 head_sha=$(git rev-parse HEAD)
 remote_tip "$branch"
 [ "$REMOTE_OK" = yes ] ||
-  cannot_confirm "$branch" "$task_id" "取不到远端 refs（连不上远端，或者凭据不能用）"
-[ -n "$REMOTE_TIP" ] && [ "$REMOTE_TIP" = "$head_sha" ] ||
-  cannot_confirm "$branch" "$task_id" "远端是 $(shorts "$REMOTE_TIP")，本地 HEAD 是 $(shorts "$head_sha")"
+  restore_mismatch "$branch" "取不到远端 refs（连不上远端，或者凭据不能用）"
+[ -n "$REMOTE_TIP" ] ||
+  restore_mismatch "$branch" "远端 refs/heads/$branch 上还没有任何提交"
+
+# 恢复会把备份里没推上去的提交快进回分支，所以本地比远端多是正常的（脚本下面
+# 会把还差多少说清楚）；落后或者分叉才是有问题。
+ahead=0
+if [ "$REMOTE_TIP" = "$head_sha" ]; then
+  ahead=0
+elif git merge-base --is-ancestor "$REMOTE_TIP" "$head_sha" 2>/dev/null; then
+  ahead=$(git rev-list --count "$REMOTE_TIP..$head_sha")
+else
+  restore_mismatch "$branch" "远端是 $(shorts "$REMOTE_TIP")，本地 HEAD 是 $(shorts "$head_sha")，两者分叉或者本地落后"
+fi
 
 printf '工作目录 %s\n' "$root"
-printf '分支 %s，HEAD %s，与远端一致\n' "$branch" "${head_sha:0:8}"
+printf '分支 %s，HEAD %s\n' "$branch" "${head_sha:0:8}"
+if [ "$ahead" -gt 0 ]; then
+  printf '其中 %s 个提交还没推到远端（cheese sync 会推上去）\n' "$ahead"
+else
+  printf '与远端一致\n'
+fi
 printf '工作区有 %s 个文件是恢复回来的未提交改动\n' "$(dirty_count)"
 printf '回不来的：依赖与缓存、生成目录、任务目录以外的文件（含 /tmp）、当时在跑的进程。\n'
 exit 0
