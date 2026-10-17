@@ -8,6 +8,7 @@
 放在 `app/api/`（不属于任何领域）：它不认识头像也不认识管理员，只认识 HTTP。
 """
 
+import asyncio
 import hashlib
 import json
 from typing import Any
@@ -70,7 +71,51 @@ def etag_for_json(data: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def conditional_json(
+#: How many encoder chunks ``conditional_json`` writes between two yields to the
+#: event loop. The C encoder holds the GIL, so a worker thread does not help; what
+#: does is taking the pure-Python ``iterencode`` path and handing the loop back
+#: every so often. One stretch of 2,000 chunks is a few milliseconds, while one
+#: ``json.dumps`` of a 60,000-row envelope held the loop for about 227 ms (#1825,
+#: 2026-10-17).
+YIELD_EVERY_CHUNKS = 2000
+
+_CANONICAL_ENCODER = json.JSONEncoder(
+    sort_keys=True, ensure_ascii=False, separators=(",", ":")
+)
+
+
+async def _encode_yielding(data: Any) -> tuple[bytes, str]:
+    """The canonical body and its digest, yielding to the loop every
+    ``YIELD_EVERY_CHUNKS`` encoder chunks.
+
+    The body is ``json.dumps(data, sort_keys=True, ensure_ascii=False,
+    separators=(",", ":"))`` as UTF-8, byte for byte. Each stretch of chunks is
+    turned into bytes and fed to the hash before the yield, so the tail after the
+    last yield is one ``bytes.join`` — joining, encoding and hashing the whole body
+    in one go is itself about 100 ms on a 60,000-row (8 MB) list.
+
+    ``iterencode`` is slower than the C ``dumps`` (several times the wall time on a
+    big list); that is the price of never holding the loop for the whole encode.
+    With 20 requests in flight the tail goes from seconds to tens of milliseconds.
+    """
+    digest = hashlib.sha256()
+    pieces: list[bytes] = []
+    batch: list[str] = []
+    for chunk in _CANONICAL_ENCODER.iterencode(data):
+        batch.append(chunk)
+        if len(batch) >= YIELD_EVERY_CHUNKS:
+            piece = "".join(batch).encode("utf-8")
+            batch.clear()
+            digest.update(piece)
+            pieces.append(piece)
+            await asyncio.sleep(0)
+    piece = "".join(batch).encode("utf-8")
+    digest.update(piece)
+    pieces.append(piece)
+    return b"".join(pieces), digest.hexdigest()
+
+
+async def conditional_json(
     data: Any, if_none_match: str | None, *, cache_control: str = LIST_CACHE_CONTROL
 ) -> Response:
     """``data`` as a JSON response with its ETag, or a 304 when the client has it.
@@ -81,11 +126,12 @@ def conditional_json(
     (2026-10-08): about 200 of the 700 ms it took. The serialization is the
     canonical one ``etag_for_json`` describes, so equal content gives an equal
     tag however the payload was built.
+
+    The encode yields to the event loop as it goes (``_encode_yielding``): a 304
+    still needs the whole body to know its tag, so a large list used to stall
+    every other request for the full encode even when nothing was sent back.
     """
-    body = json.dumps(
-        data, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    ).encode("utf-8")
-    etag = hashlib.sha256(body).hexdigest()
+    body, etag = await _encode_yielding(data)
     headers = {"Cache-Control": cache_control, "ETag": f'"{etag}"'}
     if if_none_match and if_none_match_hits(if_none_match, etag):
         return Response(status_code=304, headers=headers)

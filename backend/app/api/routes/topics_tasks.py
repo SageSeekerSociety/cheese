@@ -176,7 +176,7 @@ async def list_room_tasks(
         branch=branch,
         latest=latest,
     )
-    return conditional_json(ok(page(items, len(items))), if_none_match)
+    return await conditional_json(ok(page(items, len(items))), if_none_match)
 
 
 @router.get("/{topic_id}/task")
