@@ -563,11 +563,11 @@ describe('findGlobalFallbacks', () => {
       // carry every name the original had.
       "let options = { props: ['open'] }\noptions ??= { props: [] }\nexport default options",
       "let options = null\noptions ??= { props: ['open'] }\nexport default options",
-      // A binding with no initializer holds `undefined`, which `||=` replaces;
-      // an object it already holds is truthy, which `||=` keeps.
+      // A binding with no initializer holds `undefined`, which `||=` replaces.
       "let options\noptions ||= { props: ['open'] }\nexport default options",
+      // A value it already holds can be truthy: `||=` keeps an object, and
+      // `&&=` replaces an arrow.
       "let options = { props: ['open'] }\noptions ||= { props: [] }\nexport default options",
-      // An arrow is truthy too, so `&&=` replaces it.
       "let options = () => 1\noptions &&= { props: ['open'] }\nexport default options",
       // The same object spread twice is not a cycle: the second spread puts
       // back what the property between them took away.
@@ -863,6 +863,50 @@ describe('findGlobalFallbacks', () => {
         `did not settle on the cycle:\n${script}`
       )
     }
+  })
+
+  // Spreading keeps the names it copies, and a name a later spread writes is
+  // the one that survives. Both facts have to hold for a graph that shares
+  // objects between many spreads, and that graph must not cost a multiple of
+  // its own size for each route through it: a first version of this walk
+  // answered every route and overflowed the stack on a legal 6 KB component.
+  it('reads a wide graph of spreads by the names it ends up with', () => {
+    const WIDTH = 8
+    const LEVELS = 8
+    const graph = (leaf) => {
+      const lines = []
+      for (let i = 0; i < WIDTH; i += 1) lines.push(`const l0_${i} = ${leaf}`)
+      for (let level = 1; level <= LEVELS; level += 1) {
+        const spread = Array.from({ length: WIDTH }, (_, j) => `...l${level - 1}_${j}`).join(', ')
+        for (let i = 0; i < WIDTH; i += 1) lines.push(`const l${level}_${i} = { ${spread} }`)
+      }
+      return lines
+    }
+    const component = (script) =>
+      [
+        '<script lang="ts">',
+        ...script,
+        'void defineComponent',
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+
+    assert.deepEqual(
+      found(component([...graph("{ props: ['open'] }"), 'export default { ...l8_0, props: [] }'])).map((hit) => [
+        hit.name,
+        hit.where,
+      ]),
+      [['open', TEMPLATE]],
+      'kept the earlier spread for the entry a later property replaces'
+    )
+    assert.deepEqual(
+      found(component([...graph('{ props: [] }'), "export default { ...l8_0, props: ['open'] }"])),
+      [],
+      'lost the prop a later property puts back'
+    )
   })
 
   // The value a name holds follows execution, and execution is not the order

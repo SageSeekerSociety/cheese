@@ -343,35 +343,101 @@ function unassert(node) {
  * the ones in the result. A later property of the same name replaces an
  * earlier one, so a caller reading a name takes the last entry.
  */
-function objectEntries(node, resolve, depth = 0, seen = new Set()) {
+/**
+ * The properties an object literal spells, one entry per name.
+ *
+ * A node's table is keyed by name and a later write replaces an earlier one,
+ * because that is how the object reads: `{ ...a, props: [] }` has the spread's
+ * `props` and not `a`'s, and every caller here wants the entry that survives.
+ * Keying by name is also what keeps a graph of spreads small: the entries a
+ * shared object adds do not grow when a dozen objects all spread it, so the
+ * answer is bounded by the names the file spells and not by the routes
+ * through it.
+ *
+ * The walk answers a node once and reuses the answer everywhere the node is
+ * reached. The one thing an answer cannot express is a cycle: `const a =
+ * { ...b }` with `const b = { ...a }` has no finite set of entries, and what
+ * the walk reports for the node it met first is only true of the path that
+ * met it. So a node whose expansion runs back into itself is answered
+ * `{ done: false }` and not kept, and its parents do not keep theirs either.
+ * Only a cycle can make a walk unfinished, and a cyclic object graph is not a
+ * legal component, so this costs the legal case nothing.
+ */
+function objectEntries(node, resolve, depth = 0) {
+  return [...expandEntries(node, resolve, depth, new Set(), new Map()).entries.values()]
+}
+
+const NO_ENTRIES = { entries: new Map(), done: true }
+/** An expansion that met a node already on its path: true of this path only. */
+const CUT_ENTRIES = { entries: new Map(), done: false }
+
+/**
+ * Writes what a property says about a name, keeping the last word on it. A
+ * name spelled in quotes anywhere counts as quoted: "was this name written as
+ * a string literal" is asked by `quotedKeys`, and one spelling of it answers.
+ */
+function putEntry(entries, entry) {
+  const earlier = entries.get(entry.key)
+  entries.set(entry.key, earlier?.quoted && !entry.quoted ? { ...entry, quoted: true } : entry)
+}
+
+/** The work behind `objectEntries`; `done` says the whole node was walked. */
+function expandEntries(node, resolve, depth, seen, memo) {
   const value = unassert(node)
-  if (!value || depth > 8) return []
-  if (value.type === 'Identifier') return objectEntries(resolveValue(value, resolve), resolve, depth + 1, seen)
+  if (!value) return NO_ENTRIES
+  if (value.type === 'Identifier') {
+    const target = resolveValue(value, resolve)
+    if (!target || seen.has(target)) return CUT_ENTRIES
+    // The identifier itself is not on the path — only the node it names is,
+    // and the branch below adds that. An alias chain (`const a = b`) has both
+    // of them on the path, because both name the object being walked.
+    if (target.type === 'Identifier') {
+      seen.add(target)
+      const through = expandEntries(target, resolve, depth + 1, seen, memo)
+      seen.delete(target)
+      return through
+    }
+    return expandEntries(target, resolve, depth + 1, seen, memo)
+  }
   // `Object.assign(target, …)` writes every source into the target in order.
   if (isObjectAssign(value)) {
-    return (value.arguments ?? []).flatMap((argument) => objectEntries(argument, resolve, depth + 1, seen))
+    const entries = new Map()
+    let done = true
+    for (const argument of value.arguments ?? []) {
+      const part = expandEntries(argument, resolve, depth + 1, seen, memo)
+      for (const entry of part.entries.values()) putEntry(entries, entry)
+      done = done && part.done
+    }
+    return { entries, done }
   }
-  if (value.type !== 'ObjectExpression' || seen.has(value)) return []
-  // `seen` is the objects on the path being expanded, not every object met so
-  // far: `{ ...a, props: [], ...a }` spreads the same object twice and the
-  // second one restores what the middle property took away, so it is not a
-  // cycle and must be expanded again.
+  if (value.type !== 'ObjectExpression') return NO_ENTRIES
+  // A search that is inside this node already: this route is the cycle.
+  if (seen.has(value)) return CUT_ENTRIES
+  // A search that finished this node and kept the answer.
+  const cached = memo.get(value)
+  if (cached) return { entries: cached, done: true }
   seen.add(value)
-  const entries = []
+  const entries = new Map()
+  let done = true
   for (const property of value.properties ?? []) {
     if (property.type === 'SpreadElement') {
-      entries.push(...objectEntries(resolveValue(property.argument, resolve), resolve, depth + 1, seen))
+      const part = expandEntries(resolveValue(property.argument, resolve), resolve, depth + 1, seen, memo)
+      for (const entry of part.entries.values()) putEntry(entries, entry)
+      done = done && part.done
       continue
     }
     if (property.type !== 'Property') continue
-    entries.push({
-      key: property.computed && property.key?.type !== 'Literal' ? undefined : propertyName(property.key),
+    const key = property.computed && property.key?.type !== 'Literal' ? undefined : propertyName(property.key)
+    const value = property.value
+    putEntry(entries, {
+      key,
       quoted: property.key?.type === 'Literal' && typeof property.key.value === 'string',
-      value: property.value,
+      value,
     })
   }
   seen.delete(value)
-  return entries
+  if (done) memo.set(value, entries)
+  return { entries, done }
 }
 
 /** The names an object literal spells in quotes: `{ 'open': … }`, `{ ['open']: … }`. */
@@ -522,6 +588,16 @@ function bindingResolver(scopeManager) {
   const invocationSites = (scope) => (scope.type === 'PropertyDefinition' ? constructions(scope) : invocations(scope))
 
   /**
+   * Where a call has finished running: its own end, not its start. The
+   * arguments are evaluated first — `new Holder(options = …)` writes
+   * `options` before the instance's fields run — and the body runs after them.
+   */
+  const siteAt = (node) =>
+    node?.type === 'CallExpression' || node?.type === 'NewExpression'
+      ? node.range?.[1] ?? Number.NEGATIVE_INFINITY
+      : node?.range?.[0] ?? Number.NEGATIVE_INFINITY
+
+  /**
    * Where a write inside a function actually happens: the call that enters the
    * innermost function it sits in, and — when that call is itself inside a
    * function — the call that enters that one. An instance field runs when an
@@ -531,7 +607,7 @@ function bindingResolver(scopeManager) {
    */
   const executionSites = (node, seen = new Set()) => {
     const scopes = scopesAround(node)
-    if (scopes.length === 0) return [{ scopes: [], at: node.range?.[0] ?? Number.NEGATIVE_INFINITY }]
+    if (scopes.length === 0) return [{ scopes: [], at: siteAt(node) }]
     const fn = scopes[0]
     if (seen.has(fn)) return []
     seen.add(fn)
@@ -541,27 +617,32 @@ function bindingResolver(scopeManager) {
   /**
    * The calls that enter each function the read sits in, innermost first: the
    * call into the innermost one sits inside the next one out, so a write in
-   * that outer function is only in place when it is above the call. Empty when
-   * this file does not make exactly one such call, and then the read's own
-   * position is the only order there is.
+   * that outer function is only in place when it is above the call. A function
+   * this file calls more than once is entered at the last of them, which is
+   * the entry that leaves the name at the value the export hands over. Empty
+   * when this file never calls one, and then the read's own position is the
+   * only order there is.
    */
   const entryChain = (node) => {
     const scopes = scopesAround(node)
     const chain = []
     for (let index = 0; index < scopes.length; index += 1) {
       const calls = invocationSites(scopes[index])
-      if (calls.length !== 1) return []
-      chain.push({ scopes: scopes.slice(index + 1), at: calls[0].range?.[0] ?? Number.NEGATIVE_INFINITY })
+      if (calls.length === 0) return []
+      chain.push({ scopes: scopes.slice(index + 1), at: Math.max(...calls.map(siteAt)) })
     }
     return chain
   }
 
   /** And the question a logical assignment asks of the value on its left. */
+  // `undefined` is a value here, however it is written: the name, or the
+  // absence of any initializer this file can see.
+  const isUndefined = (node) => node === undefined || (node.type === 'Identifier' && node.name === 'undefined')
   const isNullish = (node) =>
-    node === undefined || (node?.type === 'Literal' && (node.value === null || node.value === undefined))
-  // A binding with no initializer this file can see holds `undefined`, which is
-  // falsy: `let options; options ||= { … }` does assign.
-  const isFalsy = (node) => node === undefined || (node?.type === 'Literal' && !node.value)
+    isUndefined(node) || (node?.type === 'Literal' && (node.value === null || node.value === undefined))
+  // An uninitialised binding is falsy, so `let options; options ||= { … }` does
+  // assign — and so does `let options = undefined; options ||= { … }`.
+  const isFalsy = (node) => isUndefined(node) || (node?.type === 'Literal' && !node.value)
   const isTruthy = (node) => {
     if (!node) return false
     if (
