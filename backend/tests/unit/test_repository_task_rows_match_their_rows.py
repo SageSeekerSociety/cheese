@@ -103,7 +103,8 @@ async def test_the_two_reads_build_their_statements() -> None:
             "而这一档清的正是它。"
         )
         assert any(
-            table is task_rows._tasks for table in find_tables(statement)  # type: ignore[arg-type]
+            table is task_rows._tasks
+            for table in find_tables(statement)  # type: ignore[arg-type]
         ), "这两条读法不再从 task_rows 里那份裸表取行了"
 
 
