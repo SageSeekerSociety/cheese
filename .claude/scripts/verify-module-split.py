@@ -1553,12 +1553,12 @@ class ModuleFileReads(ast.NodeVisitor):
     # direction this check errs in, since a false report fails a split that
     # broke nothing, while a miss leaves the reader as it was before.
     def visit_For(self, node: ast.For | ast.AsyncFor) -> None:
-        # The target is bound to an item, and the loop body may bind it to
-        # something else again — an import inside the loop, say. Neither is
-        # the module it may have been before, so the old binding is not put
-        # back: a loop over an empty iterable leaves the module bound, and
-        # that read is then missed rather than guessed at. Everything else
-        # bound in the body stays bound, as Python leaves it.
+        # The target holds an item, or whatever the body last bound it to.
+        # Neither can be told from the module statically, so the name stops
+        # being treated as the module: a loop over the module itself, or over
+        # an empty iterable, has a read below missed rather than guessed at.
+        # Everything else bound in the body stays bound, and `else` runs in
+        # that same environment.
         self.visit(node.iter)
         self._shadow(_target_names(node.target))
         for statement in node.body + node.orelse:
