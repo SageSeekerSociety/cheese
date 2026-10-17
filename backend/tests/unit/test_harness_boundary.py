@@ -56,6 +56,11 @@ def _reached_past(package: str = PKG) -> list[str]:
                     for alias in node.names
                     if alias.name.startswith(package + ".")
                 ]
+                found += [
+                    f"{module} → {package} (as a module object)"
+                    for alias in node.names
+                    if alias.name == package
+                ]
             elif isinstance(node, ast.ImportFrom):
                 base = node.module or ""
                 if node.level:

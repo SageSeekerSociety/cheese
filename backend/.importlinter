@@ -9,7 +9,7 @@
 # file states the whole shape once, in the tool that reads the import graph.
 #
 # RUN IT
-#     cd backend && uv run lint-imports          the nine contracts on their own,
+#     cd backend && uv run lint-imports          the ten contracts on their own,
 #                                                exit 0/1. This file writes no
 #                                                exemptions, so this is the raw
 #                                                graph, not the verdict — every
