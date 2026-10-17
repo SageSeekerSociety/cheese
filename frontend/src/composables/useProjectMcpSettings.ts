@@ -86,7 +86,9 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
   }
 
   async function connect(server: McpServer) {
-    // 连上的是一个账号，项目里所有人都会通过 AI 队友用它：点下去之前说清楚。
+    // 连上的是一个账号，项目里所有人都会通过 AI 队友用它：点下去之前说清楚。确认框开着
+    // 的时候换了项目，答的就不是这个项目的了：记下问的是哪个项目，回来对一下。
+    const project = projectId()
     const confirmed = await dialog
       .confirm(t('work.mcp.confirm.connectBody', { name: server.name, agent: agentName() }), {
         title: t('work.mcp.confirm.connectTitle', { name: server.name }),
@@ -94,11 +96,11 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
       })
       .wait()
       .catch(() => false)
-    if (!confirmed) return
+    if (!confirmed || projectId() !== project) return
     const current = ++actionGeneration
     busy.value = server.name
     try {
-      const { authorization_url } = await connectMcpServer(projectId(), server.name)
+      const { authorization_url } = await connectMcpServer(project, server.name)
       if (current === actionGeneration && goAuthorize(authorization_url)) busy.value = ''
     } catch (e) {
       if (current === actionGeneration) {
@@ -174,6 +176,7 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
   }
 
   async function remove(server: McpServer) {
+    const project = projectId()
     const confirmed = await dialog
       .confirm(t('work.mcp.confirm.removeBody', { agent: agentName() }), {
         title: t('work.mcp.confirm.removeTitle', { name: server.name }),
@@ -182,11 +185,11 @@ export function useProjectMcpSettings(projectId: () => string, options: UseProje
       })
       .wait()
       .catch(() => false)
-    if (!confirmed) return
+    if (!confirmed || projectId() !== project) return
     const current = ++actionGeneration
     busy.value = server.name
     try {
-      await removeMcpServer(projectId(), server.name)
+      await removeMcpServer(project, server.name)
       if (current === actionGeneration) await load()
     } catch (e) {
       if (current === actionGeneration) fail(e, t('work.mcp.removeFailed'))

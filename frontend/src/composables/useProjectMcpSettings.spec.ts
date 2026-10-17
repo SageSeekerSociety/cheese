@@ -31,10 +31,10 @@ vi.mock('@/lib/desktopApp', async (importOriginal) => {
 })
 
 // The confirm in front of connecting: answered as each test says.
-const confirmed = vi.hoisted(() => ({ answer: true }))
+const confirmed = vi.hoisted(() => ({ answer: true, later: null as Promise<boolean> | null }))
 vi.mock('@/plugins/dialog', () => ({
   useDialog: () => ({
-    confirm: () => ({ wait: () => Promise.resolve(confirmed.answer) }),
+    confirm: () => ({ wait: () => confirmed.later ?? Promise.resolve(confirmed.answer) }),
   }),
 }))
 
@@ -127,6 +127,21 @@ describe('useProjectMcpSettings', () => {
     expect(connectMcpServer).not.toHaveBeenCalled()
     expect(goAuthorize).not.toHaveBeenCalled()
     confirmed.answer = true
+  })
+
+  it('a confirm answered after switching projects connects nothing', async () => {
+    const project = ref('a')
+    let answer!: (yes: boolean) => void
+    confirmed.later = new Promise<boolean>((resolve) => (answer = resolve))
+    const { state } = await host(() => project.value)
+    await tick()
+    const asking = state.connect(tracker)
+    project.value = 'b'
+    answer(true)
+    await asking
+    confirmed.later = null
+    expect(connectMcpServer).not.toHaveBeenCalled()
+    expect(goAuthorize).not.toHaveBeenCalled()
   })
 
   it('disconnecting reloads the list', async () => {
