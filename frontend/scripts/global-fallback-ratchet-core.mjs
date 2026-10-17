@@ -356,7 +356,7 @@ function propertyName(key) {
 
 /**
  * Reads an identifier as the value this file gives its binding, through the
- * bindings eslint-scope built for the same parse.
+ * bindings the parser's scope manager built for the same parse.
  *
  * Whether a name means the module's variable or a local one is a question
  * about scope, and scope is exactly what the parser already answered: a
@@ -365,10 +365,15 @@ function propertyName(key) {
  * member that is reachable only as `NS.member` — reading declarations out of
  * statement lists gets every one of those wrong in one direction or the other.
  *
- * Returns the initializer when the binding has one written here, `null` when
- * the name is bound to something whose value this file does not spell (a
- * parameter, an import, a function), and `undefined` when the identifier
- * resolves to no binding at all.
+ * The value is the one the name holds at the point it is read: of everything
+ * this file ever writes to the binding — the declaration's own initializer and
+ * every later assignment — the last one written before the read. Taking the
+ * initializer alone reads a value the name no longer holds, and taking the
+ * last one in the file reads a value it does not hold yet.
+ *
+ * Returns that value node, `null` when the name is bound to something whose
+ * value this file does not spell (a parameter, an import, a function), and
+ * `undefined` when the identifier resolves to no binding at all.
  */
 function bindingResolver(scopeManager) {
   const bindings = new Map()
@@ -377,20 +382,73 @@ function bindingResolver(scopeManager) {
       if (reference.identifier) bindings.set(reference.identifier, reference.resolved ?? null)
     }
   }
-  return (identifier) => {
+  const valueOf = (identifier, depth = 0) => {
+    if (depth > 4) return null
     const variable = bindings.get(identifier)
     if (!variable) return undefined
+    const readAt = identifier.range?.[0] ?? Number.POSITIVE_INFINITY
+    let value
+    let writtenAt = Number.NEGATIVE_INFINITY
+    const written = (node) => {
+      const at = node?.range?.[0] ?? Number.NEGATIVE_INFINITY
+      if (node && at < readAt && at > writtenAt) {
+        value = node
+        writtenAt = at
+      }
+    }
     for (const def of variable.defs ?? []) {
-      if (def.type === 'Variable' && def.node?.init) return def.node.init
+      if (def.type === 'Variable' && def.node?.init) written(declaredValue(def.node, variable.name, depth))
     }
     // `let options; options = { … }` — the value is assigned after the
     // declaration, and only an assignment to this binding counts.
     for (const reference of variable.references ?? []) {
       const parent = reference.identifier?.parent
-      if (parent?.type === 'AssignmentExpression' && parent.left === reference.identifier) return parent.right
+      if (parent?.type === 'AssignmentExpression' && parent.left === reference.identifier) written(parent.right)
     }
-    return null
+    return value ?? null
   }
+
+  /**
+   * The object literal a node stands for, following bindings this file writes.
+   * Anything else (a call, an import, a parameter) has no shape to read here.
+   */
+  const objectValue = (node, depth) => {
+    let current = unassert(node)
+    for (let step = depth; step < 4 && current?.type === 'Identifier'; step += 1) {
+      current = unassert(valueOf(current, step + 1))
+    }
+    return current?.type === 'ObjectExpression' ? current : undefined
+  }
+
+  /**
+   * The value a declarator gives one of the names it declares.
+   *
+   * `const options = …` gives the initializer itself. `const { options } =
+   * src` gives `src.options`, so the property is read out of the object `src`
+   * stands for; handing back `src` would answer with another object's keys and
+   * hide the very call this rule looks for. When that object is not written
+   * here there is no value to read, and `null` says so.
+   */
+  const declaredValue = (declarator, name, depth) => {
+    const init = declarator.init
+    if (!init) return null
+    if (declarator.id?.type === 'Identifier') return init
+    if (declarator.id?.type !== 'ObjectPattern') return null
+    const binding = declarator.id.properties?.find(
+      (candidate) =>
+        candidate.type === 'Property' &&
+        (candidate.value?.type === 'Identifier' ? candidate.value.name : propertyName(candidate.key)) === name
+    )
+    if (!binding) return null
+    const key = propertyName(binding.key)
+    const source = objectValue(init, depth + 1)
+    const property = source?.properties?.find(
+      (candidate) => candidate.type === 'Property' && propertyName(candidate.key) === key
+    )
+    return property?.value ?? null
+  }
+
+  return (identifier) => valueOf(identifier)
 }
 
 /**

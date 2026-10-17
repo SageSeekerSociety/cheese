@@ -509,6 +509,15 @@ describe('findGlobalFallbacks', () => {
       // an assignment after the declaration.
       "const options = { props: ['open'] }\nexport { options as default }",
       "let options\noptions = { props: ['open'] }\nexport default options",
+      // The value the name holds when it is read, not the one it started with
+      // and not the one it ends with.
+      "let options = {}\noptions = { props: ['open'] }\nexport default options",
+      "let options\noptions = { props: [] }\noptions = { props: ['open'] }\nexport default options",
+      "export default { setup() { let vm = {}; vm = { 'open': () => {} }; return vm } }",
+      // A destructured binding takes the property it names, not the object it
+      // was destructured out of.
+      "const src = { options: { props: ['open'] }, props: [] }\nconst { options } = src\nexport default options",
+      "const src = { options: { props: ['open'] } }\nconst { options: config } = src\nexport default config",
     ]) {
       assert.deepEqual(found(component(script)), [], `reported options that reach the template:\n${script}`)
     }
@@ -550,6 +559,38 @@ describe('findGlobalFallbacks', () => {
     )
   })
 
+  // The opposite of the cases above: a destructured binding must not be read
+  // as the object it came out of. The source here *does* have an `open` prop,
+  // so answering with the source object would hide the call.
+  it('does not read a source object as the value destructured out of it', () => {
+    const destructured = (source, pattern) =>
+      [
+        '<script lang="ts">',
+        source,
+        pattern,
+        'export default options',
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+    for (const code of [
+      // The source has an `open` prop of its own, and the binding does not
+      // take it.
+      destructured("const src = { props: ['open'], options: { props: [] } }", 'const { options } = src'),
+      // The source has no such property at all, so the binding hands the
+      // template nothing.
+      destructured("const src = { props: ['open'] }", 'const { options } = src'),
+    ]) {
+      assert.deepEqual(
+        found(code).map((hit) => [hit.name, hit.where]),
+        [['open', TEMPLATE]],
+        `read the source object instead of the property:\n${code}`
+      )
+    }
+  })
+
   // A local shadows the module's name from the moment it is declared, even
   // before it has a value. A `setup` that returns such a local hands the
   // template whatever that local ends up holding, not what a module-level
@@ -587,6 +628,24 @@ describe('findGlobalFallbacks', () => {
 
   // A namespace hands its members out as `NS.member`; the name is not a
   // module-level binding, and `export default options` cannot name it.
+  // Everything the module hands over, not the name as it stands at the end:
+  // `export default options` hands over what `options` holds there, even if
+  // an assignment near the bottom would read the property more loosely.
+  it('reads the value a name holds where it is handed over', () => {
+    const script = [
+      '<script lang="ts">',
+      "let options = { props: ['open'] }",
+      'export default options',
+      'options = { props: [] }',
+      '</script>',
+      '<template>',
+      '  <button @click="open()">x</button>',
+      '</template>',
+      '',
+    ].join('\n')
+    assert.deepEqual(found(script), [], 'read a value assigned after the export')
+  })
+
   it('does not read a namespace member as a module binding', () => {
     const code = [
       '<script lang="ts">',
