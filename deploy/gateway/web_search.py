@@ -18,8 +18,12 @@ Two hooks, so it holds whichever model a session runs:
   deployment (session affinity pins a conversation to one RUC key), the group's
   other deployments are offered instead, cooldowns aside.
 - **The answer.** A streamed answer to a request whose only tool is web search is held
-  until a `server_tool_use` block starts, and then passed on as it came. If the
-  stream ends without one, the client gets a single Anthropic `error` event in
+  until a `server_tool_use` block starts, and then passed on as it came. An
+  answer whose usage counts a search (`server_tool_use.web_search_requests`)
+  also searched: LiteLLM's translation for a provider of another protocol
+  (Gemini's Google Search grounding) runs the search upstream and reports it
+  only there, never as a block. If the
+  stream ends with neither, the client gets a single Anthropic `error` event in
   its place, before any of the answer, so Claude Code reports it as an API
   error with this text rather than as "the search was cut off". An upstream's
   own error passes through untouched. Each such answer is logged as a warning
@@ -36,7 +40,7 @@ from fastapi import HTTPException
 from litellm._logging import verbose_proxy_logger
 from litellm.integrations.custom_logger import CustomLogger
 
-_SERVER_TOOL_USE = re.compile(rb'"type"\s*:\s*"server_tool_use"')
+_SEARCHED = re.compile(rb'"type"\s*:\s*"server_tool_use"|"web_search_requests"\s*:\s*[1-9]')
 _ERROR_EVENT = re.compile(rb'(^|\n)event:\s*error\b|"type"\s*:\s*"error"')
 
 
@@ -85,6 +89,10 @@ def _deployment_of(response: object) -> str:
     which `/model/info` lists against the row in config.yaml."""
     hidden = getattr(response, "_hidden_params", None) or {}
     return f"{hidden.get('litellm_model_name', 'unknown')} id={hidden.get('model_id', 'unknown')}"
+
+
+def _field(value: object, name: str) -> object:
+    return value.get(name) if isinstance(value, dict) else getattr(value, name, None)
 
 
 def _as_bytes(chunk: object) -> bytes:
@@ -138,7 +146,7 @@ class WebSearch(CustomLogger):
                 continue
             held.append(chunk)
             seen += _as_bytes(chunk)
-            if _SERVER_TOOL_USE.search(seen) or _ERROR_EVENT.search(seen):
+            if _SEARCHED.search(seen) or _ERROR_EVENT.search(seen):
                 for kept in held:
                     yield kept
                 held = None
@@ -149,10 +157,12 @@ class WebSearch(CustomLogger):
     async def async_post_call_success_hook(self, data, user_api_key_dict, response):
         if not forces_web_search(data):
             return response
-        content = response.get("content") if isinstance(response, dict) else getattr(response, "content", None)
-        if isinstance(content, list) and not any(
-            (block.get("type") if isinstance(block, dict) else getattr(block, "type", None)) == "server_tool_use"
-            for block in content
+        content = _field(response, "content")
+        searches = _field(_field(_field(response, "usage"), "server_tool_use"), "web_search_requests")
+        if (
+            isinstance(content, list)
+            and not any(_field(block, "type") == "server_tool_use" for block in content)
+            and not (isinstance(searches, int) and searches > 0)
         ):
             _record(data, response)
             raise HTTPException(status_code=400, detail=not_run(data.get("model")))

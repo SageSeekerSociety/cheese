@@ -182,8 +182,10 @@ answers with the model's text alone, which Claude Code shows the agent as a
 search that found nothing. So a deployment that cannot search says
 `supports_web_search: false` under `model_info`, a request whose tools include
 web search is not routed to it (`web_search.py`, registered the same way), and
-an answer to a search-only request that comes back without a `server_tool_use`
-block reaches the client as an error, logged as `cheese web_search not run`
+an answer to a search-only request that comes back with neither a
+`server_tool_use` block nor a search counted in its usage (how LiteLLM reports
+a search it translated, such as Gemini's grounding) reaches the client as an
+error, logged as `cheese web_search not run`
 with the model group and deployment. Mark a new deployment only after
 measuring it.
 

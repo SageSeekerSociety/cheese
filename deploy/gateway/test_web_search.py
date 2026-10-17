@@ -24,7 +24,11 @@ from cheese_web_search import handler
 
 RUC_BASE = "os.environ/RUC_DEEPSEEK_API_BASE"
 SEEN: list[str] = []
-STATE = {"official": "search"}
+STATE = {"official": "search", "ruc": "text"}
+# How LiteLLM's translation answers when another protocol's provider ran the
+# search (Gemini's Google Search grounding): text, with the search counted only
+# in usage.
+COUNTED = {"server_tool_use": {"web_search_requests": 1}}
 
 
 def sse(events):
@@ -69,10 +73,12 @@ class Upstream(BaseHTTPRequestHandler):
         elif who == "official" and body.get("tools"):
             payload = message(SEARCHED, {"server_tool_use": {"web_search_requests": 1}})
         else:
-            payload = message(UNSEARCHED if body.get("tools") else [{"type": "text", "text": who}])
+            counted = COUNTED if (body.get("tools") and STATE["ruc"] == "counted") else None
+            payload = message(UNSEARCHED if body.get("tools") else [{"type": "text", "text": who}], counted)
         if not body.get("stream"):
             blocks = SEARCHED if (who == "official" and body.get("tools")) else UNSEARCHED
-            data = json.dumps({"id": "m", "type": "message", "role": "assistant", "model": "m", "content": blocks, "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1}}).encode()
+            counted = COUNTED if (who != "official" and STATE["ruc"] == "counted") else {}
+            data = json.dumps({"id": "m", "type": "message", "role": "assistant", "model": "m", "content": blocks, "stop_reason": "end_turn", "usage": {"input_tokens": 1, "output_tokens": 1, **counted}}).encode()
             ctype = "application/json"
         else:
             data, ctype = payload, "text/event-stream"
@@ -178,6 +184,15 @@ async def main():
         assert exc.status_code == 400 and exc.detail == web_search.not_run("deepseek-flash"), exc
     else:
         raise AssertionError("an answer without a search was let through")
+
+    # An answer that ran the search but carries it only in usage, as a
+    # translated provider's does, passes as it came, streamed or not.
+    STATE["ruc"] = "counted"
+    who, body, _ = await ask(only_ruc, "conversation-7", **SEARCH)
+    assert b"event: error" not in body and b"I'll search" in body, body
+    who, response, request = await ask(only_ruc, "conversation-7", stream=False, **SEARCH)
+    assert await handler.async_post_call_success_hook(request, None, response) is response
+    STATE["ruc"] = "text"
 
     # An upstream's own error reaches the client as it was, not as ours.
     proxy_server.llm_router = r
