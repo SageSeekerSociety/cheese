@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.email import is_placeholder_email
-from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile, UserTeammateRemark
@@ -200,7 +200,7 @@ async def set_teammate_remark(
     """
     target = target_handle.strip()
     if not target or viewer_handle == target:
-        raise ValidationError(say("remarkNotYourOwn"))
+        raise UnprocessableEntityError(say("remarkNotYourOwn"))
     cleaned = (remark or "").strip()
     if not cleaned:
         await session.execute(
@@ -212,9 +212,9 @@ async def set_teammate_remark(
         await session.flush()
         return None
     if "\x00" in cleaned or "\n" in cleaned or "\r" in cleaned:
-        raise ValidationError(say("remarkControlChars"))
+        raise UnprocessableEntityError(say("remarkControlChars"))
     if len(cleaned) > REMARK_MAX_LENGTH:
-        raise ValidationError(say("remarkTooLong", max=REMARK_MAX_LENGTH))
+        raise UnprocessableEntityError(say("remarkTooLong", max=REMARK_MAX_LENGTH))
 
     existing = await session.scalar(
         select(UserTeammateRemark).where(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError
 from app.domain.user.services import (
     REMARK_MAX_LENGTH,
     remark_for_handle,
@@ -14,7 +14,7 @@ from app.domain.user.services import (
 
 
 async def test_set_teammate_remark_rejects_self() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(UnprocessableEntityError):
         await set_teammate_remark(
             None,  # type: ignore[arg-type]
             viewer_handle="alice",
@@ -25,7 +25,7 @@ async def test_set_teammate_remark_rejects_self() -> None:
 
 async def test_set_teammate_remark_rejects_too_long() -> None:
     too_long = "备" * (REMARK_MAX_LENGTH + 1)
-    with pytest.raises(ValidationError):
+    with pytest.raises(UnprocessableEntityError):
         await set_teammate_remark(
             None,  # type: ignore[arg-type]
             viewer_handle="alice",
@@ -35,7 +35,7 @@ async def test_set_teammate_remark_rejects_too_long() -> None:
 
 
 async def test_set_teammate_remark_rejects_control_chars() -> None:
-    with pytest.raises(ValidationError):
+    with pytest.raises(UnprocessableEntityError):
         await set_teammate_remark(
             None,  # type: ignore[arg-type]
             viewer_handle="alice",
