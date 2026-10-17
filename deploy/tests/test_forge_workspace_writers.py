@@ -2,13 +2,14 @@
 
 from pathlib import Path
 import runpy
+import subprocess
+import sys
 import tempfile
 import unittest
 
 
-workspace_users = runpy.run_path(
-    str(Path(__file__).resolve().parents[1] / "check-forge-workspace-writers.py")
-)["workspace_users"]
+SCRIPT = Path(__file__).resolve().parents[1] / "check-forge-workspace-writers.py"
+workspace_users = runpy.run_path(str(SCRIPT))["workspace_users"]
 
 
 class WorkspaceWritersTest(unittest.TestCase):
@@ -36,6 +37,24 @@ class WorkspaceWritersTest(unittest.TestCase):
             root = Path(directory)
             with self.assertRaises(FileNotFoundError):
                 workspace_users(root / "workspaces", root / "missing-proc")
+
+    def test_missing_workspace_root_does_not_certify_no_writers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            not_a_directory = root / "not-a-directory"
+            not_a_directory.write_text("")
+            for target in (root / "missing-workspaces", not_a_directory):
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), str(target)],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(
+                    result.returncode,
+                    0,
+                    "a root that is not a directory must not certify no "
+                    f"writers; stdout={result.stdout!r}",
+                )
 
 
 if __name__ == "__main__":

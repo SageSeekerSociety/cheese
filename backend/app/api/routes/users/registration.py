@@ -1,7 +1,5 @@
 """注册与注册邮箱验证码。"""
 
-import re
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -29,6 +27,7 @@ from app.api.users_deps import (
 )
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+from app.core.email import EMAIL_FORMAT
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -81,8 +80,7 @@ async def send_register_email_code(
         except ValueError as exc:
             raise _invite_code_error(exc) from exc
 
-    email_regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-    if not re.match(email_regex, email):
+    if not EMAIL_FORMAT.match(email):
         raise UnprocessableEntityError("Invalid email address format")
 
     client = resolved_client_address(request)

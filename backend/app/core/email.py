@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Sequence
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -8,6 +9,12 @@ import aiosmtplib
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# The shape of an address the platform accepts, wherever it judges one. One
+# compiled object, imported: a copy that drifts lets one entrance accept an
+# address another refuses, and the person is locked out of the account they
+# made.
+EMAIL_FORMAT = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 
 # Domains the platform once wrote into accounts that had no address of their
 # own. Nothing can receive mail there, and an account holding one has no

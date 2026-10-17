@@ -95,11 +95,54 @@ async function menuOf(view: Awaited<ReturnType<typeof mount>>, name: string): Pr
   return Array.from(document.querySelectorAll('.v-overlay--active .v-list-item-title')).map((n) => n.textContent ?? '')
 }
 
-it('综合没有归档，管着的频道有', async () => {
-  const view = await mount()
+it('综合没有归档，管着的频道在无进行中任务时有归档、有任务时没有', async () => {
+  channels = [
+    entry('general', { general: true, manager: null, can_administer: false }),
+    entry('design', { open_tasks: 0 }),
+    entry('busy', { open_tasks: 1 }),
+    entry('secret', { members_only: true, joined: false, visible: false, can_manage: false, manager: 'carol' }),
+  ]
+  const view = render(ProjectChannelSettings, {
+    props: {
+      projectId: 'p',
+      members: [
+        { user_handle: 'alice', name: 'Alice', agent: false },
+        { user_handle: 'bob', name: 'Bob', agent: false },
+      ] as never,
+      load,
+      stepIn,
+      handOver,
+    },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await vi.waitFor(() => expect(view.getAllByTestId('channel-admin-row')).toHaveLength(4))
   expect(await menuOf(view, 'general')).not.toContain(t('work.projectSettings.channels.archive'))
   cleanup()
-  expect(await menuOf(await mount(), 'design')).toContain(t('work.projectSettings.channels.archive'))
+  const view2 = render(ProjectChannelSettings, {
+    props: {
+      projectId: 'p',
+      members: [] as never,
+      load,
+      stepIn,
+      handOver,
+    },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await vi.waitFor(() => expect(view2.getAllByTestId('channel-admin-row')).toHaveLength(4))
+  expect(await menuOf(view2, 'design')).toContain(t('work.projectSettings.channels.archive'))
+  cleanup()
+  const view3 = render(ProjectChannelSettings, {
+    props: {
+      projectId: 'p',
+      members: [] as never,
+      load,
+      stepIn,
+      handOver,
+    },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await vi.waitFor(() => expect(view3.getAllByTestId('channel-admin-row')).toHaveLength(4))
+  expect(await menuOf(view3, 'busy')).not.toContain(t('work.projectSettings.channels.archive'))
 })
 
 it('不在里面的私密频道只能加入、换管理者、归档，不能改名', async () => {

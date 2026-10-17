@@ -83,6 +83,7 @@ RELEASE_FILES = core.RELEASE_FILES
 CONTROL_INSPECT = commands.SHELL_INSPECT
 NATIVE_TOOLS = core.NATIVE_TOOLS
 COMMAND_ABANDONED_S = core.COMMAND_ABANDONED_S
+OUTPUT_KEPT_S = core.OUTPUT_KEPT_S
 EXECUTOR_IDLE_EXIT_S = core.EXECUTOR_IDLE_EXIT_S
 EXECUTOR_IDLE_CHECK_S = core.EXECUTOR_IDLE_CHECK_S
 STOP_SIGNALS = core.STOP_SIGNALS
@@ -155,8 +156,9 @@ class Executor:
         self.collected, self.snapshot = {}, None
         self.snapshot_lock, self.cli_lock = threading.Lock(), threading.Lock()
         self.clients = {}
-        # Agent types' servers, by name: their definitions come with the calls.
-        self.agent_specs = {}
+        # Commands added in project settings and agent types' own, by name:
+        # their definitions come with the calls.
+        self.handed_specs = {}
         # What the session's gateway hands with a local server's calls
         # (`RemoteClient._local_start`): the values of the project secrets its
         # definition names, and — on a member's computer — the fingerprints of
@@ -310,7 +312,8 @@ class Executor:
                 except (OSError, ValueError):
                     continue
                 last = max(finished, self.collected.get(record.name, 0))
-                if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
+                kept = OUTPUT_KEPT_S if meta.get("kept") else COMMAND_ABANDONED_S
+                if meta.get("watched") and time.time() - last > kept:
                     shutil.rmtree(record, ignore_errors=True)
 
     def bash(self, args, key=None):
@@ -343,7 +346,7 @@ class Executor:
 
     def dispatch(self, method, params):
         if isinstance(params, dict) and isinstance(params.get("spec"), dict):
-            self.agent_specs[params["server"]] = params["spec"]
+            self.handed_specs[params["server"]] = params["spec"]
         if isinstance(params, dict) and isinstance(params.get("values"), dict):
             self.server_values[params["server"]] = params["values"]
         if isinstance(params, dict) and "allowed" in params:

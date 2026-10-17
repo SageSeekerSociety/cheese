@@ -67,6 +67,7 @@ if __package__:
         platform_tool_names,
         take_view,
         touch_skills,
+        write_claude_state,
     )
     from app.domain.agent.harness.claude_code.remote_execution.send_user_file import (
         deliver_send_user_file,
@@ -128,6 +129,7 @@ else:
         platform_tool_names,
         take_view,
         touch_skills,
+        write_claude_state,
     )
     from send_user_file import deliver_send_user_file
     from shell_prefix import run_in_place, shell
@@ -421,20 +423,7 @@ def prepare(
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
-    gates = {
-        "hasCompletedOnboarding": True,
-        "autoUpdates": False,
-        "bypassPermissionsModeAccepted": True,
-        "projects": {
-            seen: {
-                "hasTrustDialogAccepted": True,
-                "hasCompletedProjectOnboarding": True,
-            }
-        },
-    }
-    gate_file = config / ".claude.json"
-    previous = json.loads(gate_file.read_text()) if gate_file.exists() else {}
-    gate_file.write_text(json.dumps({**previous, **gates}))
+    write_claude_state(config, seen)
     servers = {
         "native": {
             "type": "stdio",

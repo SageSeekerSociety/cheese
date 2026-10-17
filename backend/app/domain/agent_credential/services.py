@@ -25,6 +25,7 @@ from app.core.sandbox_auth import (
     project_agent_claims,
 )
 from app.core.sentences import say
+from app.core.work_context import parse_work_id
 from app.domain.conversation.services import room_of
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.models import Project
@@ -172,20 +173,13 @@ class ProjectAgentCredentialService:
         names none is a request it cannot speak for.
         """
         if project_id is not None:
-            return _as_uuid(project_id)
+            return parse_work_id(project_id)
         if topic_id is None:
             return None
-        parsed = _as_uuid(topic_id)
+        parsed = parse_work_id(topic_id)
         if parsed is None:
             return None
         # A task or a 支线 is a conversation inside a room: its project is
         # its room's.
         topic = await self._topics.get(await room_of(self._session, parsed))
         return topic.project_id if topic is not None else None
-
-
-def _as_uuid(value: str) -> uuid.UUID | None:
-    try:
-        return uuid.UUID(value)
-    except ValueError:
-        return None

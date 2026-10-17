@@ -1,5 +1,6 @@
 """A project's local MCP servers: a command each, run on the room's machine —
-the repository's `.mcp.json` ones and its teammates' types'.
+the repository's `.mcp.json` ones, those added in its settings, and its
+teammates' types'.
 
 The platform does not run them, the machine's executor does, from its own
 checkout's definition. What the platform keeps is what a person needs around
@@ -41,6 +42,7 @@ from app.domain.agent_type.library import AgentTypeDef
 from app.domain.remote_mcp.declared import Declared, LocalServer
 from app.domain.remote_mcp.models import (
     ProjectMcpApproval,
+    ProjectMcpCommand,
     ProjectMcpRun,
     ProjectMcpSecret,
 )
@@ -71,6 +73,27 @@ class Machine:
     owner: str
     #: A member's own computer, rather than one of the platform's.
     member: bool
+
+
+def added_server(row: ProjectMcpCommand) -> LocalServer:
+    """The server a command added in settings is."""
+    return LocalServer(
+        name=row.name,
+        command=row.command,
+        args=tuple(str(a) for a in row.args or []),
+        env={str(k): str(v) for k, v in (row.env or {}).items()},
+    )
+
+
+def spec(server: LocalServer) -> dict:
+    """A local server's definition as `.mcp.json` writes it, which is what the
+    room's machine is handed to start it."""
+    found: dict = {"command": server.command}
+    if server.args:
+        found["args"] = list(server.args)
+    if server.env:
+        found["env"] = dict(server.env)
+    return found
 
 
 def handed(name: str) -> bool:
@@ -116,15 +139,25 @@ def rows(
     runs_by_name: dict[str, ProjectMcpRun],
     owners: dict[str, str],
     secret_rows: dict[str, ProjectMcpSecret],
+    added: dict[str, ProjectMcpCommand],
 ) -> list[dict]:
     """The settings page's row for each local server, in the remote rows'
-    shape (``settings_view``)."""
+    shape (``settings_view``). A command added in settings whose name the
+    repository's `.mcp.json` also uses is listed too, as shadowed."""
     titles = {agent_type.name: agent_type.title for agent_type in types}
+    shadowed = [
+        added_server(row) for name, row in added.items() if name in found.shadowed
+    ]
     out = []
-    for server in found.local:
+    for server in [*found.local, *shadowed]:
         names = variables(server)
         missing = [n for n in server.variables() if handed(n) and n not in secret_rows]
         declaring = found.local_types.get(server.name)
+        row = (
+            added.get(server.name)
+            if server.name in found.added or server in shadowed
+            else None
+        )
         out.append(
             {
                 "name": server.name,
@@ -134,10 +167,18 @@ def rows(
                 "auth": "headers",
                 "status": "missing_values" if missing else "ready",
                 "run": run_view(runs_by_name.get(server.name), owners),
-                "added": None,
-                "shadowed": False,
+                "added": {
+                    "by": row.added_by,
+                    "at": row.created_at.isoformat(),
+                    "url": None,
+                    "header": None,
+                    "env": dict(server.env),
+                }
+                if row is not None
+                else None,
+                "shadowed": server in shadowed,
                 "declared_by": None
-                if not declaring
+                if not declaring or row is not None
                 else [{"name": n, "title": titles.get(n, n)} for n in declaring],
                 "authorized_by": None,
                 "authorized_at": None,
@@ -204,6 +245,7 @@ async def report(
     machine: Machine | None,
     fingerprint: str | None = None,
     command: str | None = None,
+    source: str = "repository",
     author: str | None = None,
 ) -> str:
     """Keep what a gateway said about one of the project's local servers, and
@@ -231,6 +273,7 @@ async def report(
                     name=name,
                     command=(command or "")[:4000],
                     fingerprint=fingerprint,
+                    source=source,
                     author=author,
                 )
             )

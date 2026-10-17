@@ -96,7 +96,9 @@ class TopicMemberService:
         if topic.members_only and member is None:
             # Nobody manages a private channel they cannot see.
             return False
-        if member is not None and member.role == TopicRole.owner:
+        if (
+            member is not None and member.role == TopicRole.owner
+        ) or await self.owner_of(topic.id) == actor:
             return True
         return await may(
             self._session, topic.project_id, actor, Permission.manage_channels
@@ -164,9 +166,37 @@ class TopicMemberService:
             self._session, topics[0].project_id, actor, Permission.manage_channels
         ):
             return {t.id for t in topics}
-        return await self._repo.topic_ids_for_member(
+        owned = await self._repo.topic_ids_for_member(
             [t.id for t in topics], actor, roles=frozenset({TopicRole.owner})
         )
+        if not self._is_agent_handle(actor):
+            candidates = [
+                t
+                for t in topics
+                if t.id not in owned
+                and _public(t)
+                and t.kind != TopicKind.root
+                and t.created_by == actor
+            ]
+            if candidates:
+                has_owner = await self._repo.topics_with_owner(
+                    [t.id for t in candidates]
+                )
+                private_ids = [
+                    t.id for t in candidates if t.id not in has_owner and t.members_only
+                ]
+                seated_private = (
+                    await self._repo.topic_ids_for_member(private_ids, actor)
+                    if private_ids
+                    else set()
+                )
+                owned = owned | {
+                    t.id
+                    for t in candidates
+                    if t.id not in has_owner
+                    and (not t.members_only or t.id in seated_private)
+                }
+        return owned
 
     async def seat_counts(
         self, topics: list[Topic], *, team: ProjectTeam
@@ -249,7 +279,12 @@ class TopicMemberService:
             raise ValidationError(say("channelArchivedNoJoin"))
         if not await self._on_project(topic.project_id, actor, team=team):
             raise ForbiddenError(say("topicAddProjectMembersOnly"))
-        await self._ensure_member(topic_id, actor, role=TopicRole.member)
+        role = (
+            TopicRole.owner
+            if await self.owner_of(topic_id) == actor
+            else TopicRole.member
+        )
+        await self._ensure_member(topic_id, actor, role=role)
 
     async def leave(self, topic_id: uuid.UUID, actor: str) -> None:
         """``actor`` leaves a channel. Nobody leaves 综合: it is the project."""
@@ -424,7 +459,9 @@ class TopicMemberService:
         being in it: its owner, or whoever manages the project. Seeing what is
         said in a private channel still takes a seat (:meth:`manages`)."""
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
-        if member is not None and member.role == TopicRole.owner:
+        if (
+            member is not None and member.role == TopicRole.owner
+        ) or await self.owner_of(topic.id) == actor:
             return True
         return await may(
             self._session, topic.project_id, actor, Permission.manage_channels

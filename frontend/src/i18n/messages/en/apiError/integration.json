@@ -96,7 +96,7 @@
   "mcpServerUsesHeaderKey": "This server is authorized with a key in the request headers and doesn't need connecting",
   "mcpTokenRequestRefused": "The authorization server refused the token request: {error}",
   "mcpValueRequired": "The value can't be empty",
-  "mcpVariableNotUsed": "The project's .mcp.json doesn't use this variable",
+  "mcpVariableNotUsed": "None of the project's MCP servers uses this variable",
   "nounMailServer": "mail server",
   "nounMcpServer": "MCP server",
   "repoTakenHidden": "The repository {repo} is already connected to another project you can't see, and a repository can be connected to only one project. Choose another repository, or ask a member of that project to invite you.",
@@ -108,5 +108,8 @@
   "mcpServerNotAdded": "This server was not added in project settings",
   "mcpServerNameTaken": "The project already has a server named {name}",
   "mcpApprovalNotFound": "This run request no longer exists",
-  "mcpApprovalOwnerOnly": "Only the owner of this device can decide"
+  "mcpApprovalOwnerOnly": "Only the owner of this device can decide",
+  "mcpCommandInvalid": "This command could not be parsed",
+  "mcpEnvNameInvalid": "Environment variable names use only letters, digits and underscores, and do not start with a digit",
+  "mcpServerUrlRequired": "The address cannot be empty"
 }
