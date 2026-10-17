@@ -16,10 +16,9 @@ from app.domain.agent.compute import ComputePool
 from app.domain.block.models import Block, BlockKind
 from app.domain.memory.files import MEMORY_ROOT, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
-from app.domain.project.services import ProjectService
 from app.domain.usage.repositories import UsageRepository
 from tests.conftest import StubChannel
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.support.run_records import records_of
 
 SECRET = "only-bob-knows"
@@ -86,7 +85,7 @@ async def _dream_and_listen(client, tmp_path) -> tuple[dict, list[str]]:
     async with factory() as session:
         await registered(session, "alice")
         await registered(session, "bob")
-        project = await ProjectService(session).create(name="P", owner_handle="alice")
+        project = await project_service(session).create(name="P", owner_handle="alice")
         project.settings = {
             **(project.settings or {}),
             "memory_dream": {"threshold_output_tokens": 1},

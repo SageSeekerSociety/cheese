@@ -7,7 +7,8 @@ chip 指的是这一份资料，它换了个名字，还是它。
 import asyncio
 import uuid
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.library import records as library_records
 from tests.integration.conftest import post_project, session_auth_headers
 

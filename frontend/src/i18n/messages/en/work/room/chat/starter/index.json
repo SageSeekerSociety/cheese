@@ -1,0 +1,14 @@
+{
+  "build": "Build a web page or small tool",
+  "buildHint": "Open the preview when it is done",
+  "buildText": "Build a web page for me and send me the preview link when it is done. Show me the page structure first, and start once I confirm. What I want to build is: ",
+  "plan": "Break down a goal and split the work",
+  "planHint": "Good for team projects",
+  "planText": "Break my goal into tasks I can act on, with a suggested split of the work and a schedule. Show me how you would break it down first. My goal is: ",
+  "research": "Research a topic into a report",
+  "researchHint": "With sources, ready to download",
+  "researchText": "Look up the material for me, cite your sources, and write it up as a report. Show me the outline first, and write it in full once I confirm. What I want to understand is: ",
+  "tidy": "Tidy up or rewrite a document",
+  "tidyHint": "Slides, papers, reports, spreadsheets",
+  "tidyText": "Tidy up or rewrite the attached material for me. Show me how you plan to change it first, and start once I confirm. What I want is: "
+}

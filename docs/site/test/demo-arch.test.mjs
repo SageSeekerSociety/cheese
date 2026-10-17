@@ -16,11 +16,11 @@
 // docs/site/package.json is a build tool, not a package). Nothing else is mocked:
 // the modules under test are the ones in src/, imported by path.
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { scratchDir } from './scratch.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -48,7 +48,7 @@ try {
 }
 
 // ---------- the page under test ----------
-const out = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'docs-arch-'))
+const out = process.env.OUT || scratchDir('docs-arch-')
 if (!process.env.OUT) {
   execFileSync(process.execPath, ['build.mjs'], { cwd: SITE, env: { ...process.env, OUT: out }, stdio: ['ignore', 'ignore', 'inherit'] })
 } else if (!fs.existsSync(path.join(out, 'dev/llm.html'))) {

@@ -1,0 +1,8 @@
+{
+  "separator": " · ",
+  "stalled": "No new output for {span}",
+  "typingMany": "Several people are typing…",
+  "typingOne": "{name} is typing…",
+  "typingTwo": "{first} and {second} are typing…",
+  "working": "{name} is working…"
+}

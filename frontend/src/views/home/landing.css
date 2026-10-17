@@ -394,7 +394,9 @@
   flex-direction: column;
   justify-content: center;
   gap: 16px;
-  color: var(--faint);
+  /* 没轮到的几段仍然是人会读的正文，按 AA 的 4.5:1 取 --muted；--faint 只作装饰，
+     见 docs/design-system.md §2.6。 */
+  color: var(--muted);
   transition: color var(--dur-base) var(--ease-standard);
 }
 
@@ -413,7 +415,7 @@
   font-size: clamp(32px, 3.2vw, 48px);
   font-weight: 700;
   line-height: 1.2;
-  color: var(--faint);
+  color: var(--muted);
   transition: color var(--dur-base) var(--ease-standard);
 }
 
@@ -483,7 +485,7 @@
 .resources-terms {
   font-size: 13px;
   line-height: var(--lh-13);
-  color: var(--faint);
+  color: var(--muted);
   grid-column: 1 / -1;
 }
 
@@ -584,7 +586,7 @@
   width: 24px;
   font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--faint);
+  color: var(--muted);
   content: counter(role-step);
 }
 
@@ -750,7 +752,7 @@
 .solution-flow li::before {
   font-family: var(--font-mono);
   font-size: 13px;
-  color: var(--faint);
+  color: var(--muted);
   content: '0' counter(flow);
 }
 
@@ -775,17 +777,32 @@
 
 /* ---- Vision ---- */
 
+/* 光晕画在 ::before 上，不画在 .vision 自己的 background 上：这一段里的字正好
+   压在它上面，元素自己带背景图的话，「这几个字坐在什么底色上」就成了一张浏览器
+   读不出来的图，对比度只能整段记成「量不出来」。放到独立的一层画面不变，字下面
+   重新是一块算得出的颜色。用 isolation 把负 z-index 关在这一层里，别掉到页面
+   底色后面去。 */
 .vision {
   display: grid;
+  position: relative;
+  isolation: isolate;
   padding: 128px var(--gutter);
+  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+  gap: 32px 64px;
+  align-items: end;
+}
+
+.vision::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
   background-image: radial-gradient(
     40% 45% at 80% 45%,
     color-mix(in srgb, var(--logo-primary) 8%, transparent),
     transparent 70%
   );
-  grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-  gap: 32px 64px;
-  align-items: end;
+  content: '';
 }
 
 .vision-label {

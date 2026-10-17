@@ -16,8 +16,9 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent import gateway_catalog
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION
+from app.domain.agent_instance.configuration import catalog
 from app.domain.room_task import presentation
-from app.domain.room_task.binding import catalog, resolve
+from app.domain.room_task.binding import resolve
 from app.domain.room_task.models import Task
 
 

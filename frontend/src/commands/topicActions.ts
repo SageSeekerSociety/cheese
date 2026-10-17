@@ -77,16 +77,17 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
         query: { channel: topic.id },
       }),
   })
-  // 文件：这个频道自己的东西都在那一页上——贴进来的图、芝士交付的文档、定时任务交回
-  // 的结果。看是随时能看的，归档了也在，所以不问状态。
+  // 文件：这个频道里的文件都在右侧面板的「文件」那一格——发进来的附件、芝士交付的和
+  // 写的、定时任务交回的。看是随时能看的，归档了也在，所以不问状态。
   actions.push({
     id: 'topic.files',
     title: t('work.room.menu.files'),
     icon: 'mdi-folder-outline',
     run: () =>
       void router.push({
-        name: 'workspace-channel-files',
+        name: 'workspace-topic',
         params: { projectId: topic.project_id, topicId: topic.id },
+        query: { tab: 'files' },
       }),
   })
   // 「综合」是项目本身：人人都在，退不出去，也不能改名、归档。

@@ -1,0 +1,8 @@
+{
+  "toast": {
+    "approveFailed": "Couldn’t approve the request. Try again later",
+    "approved": "Request approved",
+    "rejectFailed": "Couldn’t reject the request. Try again later",
+    "rejected": "Request rejected"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "addDomain": "Add domain",
+  "confirmDelete": "Delete the domain group {name}?",
+  "createGroup": "Create a domain group",
+  "deleteGroup": "Delete domain group",
+  "domainPlaceholder": "e.g. example.com",
+  "domains": "Domains",
+  "editGroup": "Edit domain group",
+  "groupDescription": "Description",
+  "groupName": "Name",
+  "invalidDomain": "Enter a valid domain",
+  "nameRequired": "Enter a domain group name",
+  "noGroups": "No domain groups yet"
+}

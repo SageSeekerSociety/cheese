@@ -1,0 +1,11 @@
+{
+  "backToList": "返回文件列表",
+  "confirmBody": "《{name}》目前只有这里的 {people} 人可以查看。保存到资料库后，项目中的 {projectPeople} 人都可以查看。",
+  "confirmTitle": "保存到资料库",
+  "empty": "暂无文件",
+  "folderCount": "{n} 份文件",
+  "inLibrary": "已在资料库",
+  "keep": "保存到资料库",
+  "keepFailed": "保存到资料库失败",
+  "loadFailed": "无法读取这段对话的文件"
+}

@@ -34,10 +34,24 @@ const settle = async () => {
 /** 每个用例都要一份干净的模块状态：默认头像 id 是进程内共享的一次性缓存。 */
 async function freshUserMenu() {
   vi.resetModules()
+  // 默认头像那一行的 id 排在首帧这道门后面（`@/test/firstPaint`），测试里没人推门就得推一下。
+  const { openFirstPaint } = await import('@/test/firstPaint')
   const { useUserMenu } = await import('../useUserMenu')
   const menu = useUserMenu()
+  await openFirstPaint()
   await settle()
   return menu
+}
+
+/** 同上，但门先攥在手里不推：给「首帧之前一次都不该问」那类用例。 */
+async function freshUserMenuHeld() {
+  vi.resetModules()
+  const { holdFirstPaint, releaseFirstPaint } = await import('@/test/firstPaint')
+  const { useUserMenu } = await import('../useUserMenu')
+  holdFirstPaint()
+  const menu = useUserMenu()
+  await settle()
+  return { menu, releaseFirstPaint }
 }
 
 beforeEach(() => {
@@ -96,5 +110,16 @@ describe('我的头像', () => {
     user.value = null
     const menu = await freshUserMenu()
     expect(menu.avatar.value).toBeNull()
+  })
+
+  it('首帧之前不问「哪一行是默认头像」，门开了才问', async () => {
+    user.value = { id: 7, nickname: '爱丽丝', avatarId: 4242 }
+    const { releaseFirstPaint } = await freshUserMenuHeld()
+
+    expect(getDefaultAvatarId).not.toHaveBeenCalled()
+
+    await releaseFirstPaint()
+    await settle()
+    expect(getDefaultAvatarId).toHaveBeenCalledTimes(1)
   })
 })

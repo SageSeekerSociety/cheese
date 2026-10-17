@@ -393,9 +393,13 @@ def _fake_upstream(tmp_path):
         "    *) shift ;;\n"
         "  esac\n"
         "done\n"
-        f'printf "%s\\n" "$url" >> "{log}"\n'
         'tool="${url%/*}"; tool="${tool%/*}"; tool="${tool##*/}"\n'
         f'[ -f "{served}/$tool" ] || exit 22\n'
+        # Only what this fixture serves is logged. The launcher asks a curl
+        # about more than the toolchain — whether a package mirror answers is a
+        # HEAD to it — and a log of every invocation would read a room's mirror
+        # probe as the toolchain having been fetched again.
+        f'printf "%s\\n" "$url" >> "{log}"\n'
         f'cp "{served}/$tool" "$out"\n'
     )
     curl.chmod(0o755)

@@ -35,6 +35,7 @@ import { PAGE_SIZE } from '../lib/blockPaging'
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const TOPIC = {
   id: 't-paging',
@@ -207,6 +208,7 @@ const shown = (container: Element) =>
 const olderLoader = (container: Element) => container.querySelector('[data-testid="chat-older-loader"]')
 
 function scrollToTop(pane: HTMLElement, m: Metrics) {
+  pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
   m.scrollTop = 0
   pane.dispatchEvent(new Event('scroll'))
 }
@@ -217,6 +219,8 @@ function beforeCalls(): string[] {
     .filter((o) => o?.before)
     .map((o) => o.before!)
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('往回翻历史', () => {
   it('打开时只读最近一页，上面还有更早的就说出来', async () => {
@@ -256,6 +260,7 @@ describe('往回翻历史', () => {
     listBlocks.mockImplementationOnce(async () => gate.promise)
     // A flick: the loader fires near the top, and the pane keeps gliding up
     // while the page is on its way.
+    pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
     m.scrollTop = 120
     pane.dispatchEvent(new Event('scroll'))
     await flush()

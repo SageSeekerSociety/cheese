@@ -8,7 +8,6 @@ vi.mock('@/api', async () => ({
   getBranchProtection: vi.fn(),
   setBranchProtection: vi.fn(),
   listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
-  listProjectAgents: vi.fn().mockResolvedValue({ data: [] }),
 }))
 
 import { useBranchProtection } from './useBranchProtection'
@@ -23,7 +22,6 @@ const rules = (over: Partial<BranchProtectionRules> = {}): BranchProtection => (
   override_handles: null,
   approvals_required: 1,
   default_reviewer: '',
-  dispatch_seat: '',
   merge_method: 'squash',
   github_protection: { enforced: false, status: 'none' },
   ...over,

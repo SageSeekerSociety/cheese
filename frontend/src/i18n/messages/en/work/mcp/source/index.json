@@ -1,0 +1,4 @@
+{
+  "project": "From the project's {file}",
+  "types": "Declared by the {types} type | Declared by the {types} types"
+}

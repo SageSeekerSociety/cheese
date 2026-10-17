@@ -13,9 +13,9 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent import execution
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.memory.keywords import match_content, query_terms
+from app.domain.memory.ports import ExecutorCall
 from app.domain.topic.models import Topic
 
 logger = logging.getLogger("cheesex.memory")
@@ -93,7 +93,12 @@ _NOTHING_TO_SEARCH = frozenset({"no-checkout", "no-device"})
 
 
 def agent_checkout_search(
-    session: AsyncSession, room: Topic, agent_handle: str, harness: str
+    session: AsyncSession,
+    room: Topic,
+    agent_handle: str,
+    harness: str,
+    *,
+    call: ExecutorCall,
 ) -> CheckoutSearch:
     """在**这位 agent 自己**的检出目录里检索。
 
@@ -113,6 +118,10 @@ def agent_checkout_search(
     **但是要说出来。**这一路上「repo 里确实没写」和「这次没查成」在返回值里长得
     一模一样，而 P35 的验收正是靠这条判据——它在某台机器上从此一条都不拦，外面一
     个信号都没有的话，没有人会发现。所以每一次没查成都留一行日志，带上是哪一种。
+
+    那一次调用的形状由调用方递进来（``call``）：够到那台机器要过
+    ``app.domain.agent.execution``，第 5 层，本包在第 4 层，够不着
+    （`docs/manual/dev/architecture.md`）。
     """
 
     def nothing_came_back(reason: str) -> list[dict]:
@@ -138,7 +147,7 @@ def agent_checkout_search(
                 return nothing_came_back("no-device")
             # 记一条记忆等不起一台慢机器：查不成就存下来，见 docstring。
             async with asyncio.timeout(_SEARCH_TIMEOUT_S):
-                result = await execution.call(target, "repo_search", {"terms": terms})
+                result = await call(target, "repo_search", {"terms": terms})
         except Exception as exc:  # noqa: BLE001 — 查不成是一种答案，不是失败的写入
             logger.warning(
                 "repo_search did not run for room=%s agent=%s: %s",

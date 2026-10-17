@@ -45,7 +45,7 @@ class AcceptCardCreate(BaseModel):
     # 这一项产物是什么东西、给谁的 —— 一句话，清单上跟着名字一起显示，下一次交付
     # 靠它判断「我做出来的是不是它的新一版」。新声明一项时必填，沿用一项时可给可
     # 不给（给了就以新的为准）：写对了的那句话说的是这样东西本身，交一版新的不会
-    # 让它变得不对。长度和「别抄改动标题」由 project/artifacts.py 的 clean_about
+    # 让它变得不对。长度和「别抄改动标题」由 deliverables/artifacts.py 的 clean_about
     # 挡，不在这里 —— 同一个理由，那里答得出为什么。
     about: str | None = None
     # 这一版交出去的是什么 (#1085 结论五)：`deliver` 是工作目录里那一份（建卡时落

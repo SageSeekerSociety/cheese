@@ -14,11 +14,13 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { composerText, fillComposer } from '@/test/composerInput'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 
@@ -84,15 +86,17 @@ function composer() {
 }
 
 async function typeAt(container: Element, text: string) {
-  const box = container.querySelector('textarea')!
-  await fireEvent.update(box, text)
+  const box = container.querySelector<HTMLElement>('.ProseMirror')!
+  await fillComposer(box, text)
   await flush()
-  return box as HTMLTextAreaElement
+  return box as HTMLElement
 }
 
 function row(container: Element, text: string): Element | undefined {
   return Array.from(container.querySelectorAll('.mention-menu-item')).find((b) => b.textContent?.includes(text))
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('输入栏引用资料库里的文件', () => {
   it('刚打上 @ 的时候资料库是一行入口，文件不平铺进来', async () => {
@@ -121,7 +125,7 @@ describe('输入栏引用资料库里的文件', () => {
     // 图片排在文件后面——找资料的人多半在找文档。
     expect(menu.textContent!.indexOf('预算表.xlsx')).toBeLessThan(menu.textContent!.indexOf('现场照片.png'))
 
-    await fireEvent.keyDown(c.querySelector('textarea')!, { key: 'Escape' })
+    await fireEvent.keyDown(c.querySelector<HTMLElement>('.ProseMirror')!, { key: 'Escape' })
     await flush()
     expect(c.querySelector('.mention-menu')!.textContent).not.toContain('预算表.xlsx')
   })
@@ -154,7 +158,7 @@ describe('输入栏引用资料库里的文件', () => {
     expect(attach[0].body?.get('library_path')).toBe('预算表.xlsx')
 
     // 正文只剩人写的那句话，文件在待发条里。
-    expect(box.value).toBe('看看 ')
+    expect(composerText(box)).toBe('看看 ')
     expect(c.querySelector('.chip-list')?.textContent).toContain('预算表.xlsx')
   })
 
@@ -169,7 +173,7 @@ describe('输入栏引用资料库里的文件', () => {
 
     const c = composer()
     await flush()
-    expect(c.querySelector('textarea')?.value).toBe('@')
+    expect(composerText(c.querySelector<HTMLElement>('.ProseMirror')!)).toBe('@')
     expect(c.querySelector('.mention-menu')?.textContent).toContain('3 份文件')
   })
 })

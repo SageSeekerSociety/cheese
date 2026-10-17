@@ -1,0 +1,11 @@
+{
+  "choose": "Choose a team to take part in this challenge",
+  "emptyNoTeam": "You may need to create or join a team to take part in this challenge",
+  "emptyRealName": "Make sure everyone on your team has verified their real name, or create a new team",
+  "emptyTitle": "No eligible teams",
+  "memberStatus": "Member verification",
+  "notEligible": "Not eligible",
+  "realNameText": "This challenge requires real names; only teams whose members have all verified can take part",
+  "realNameTitle": "Real-name requirement",
+  "title": "Choose a team"
+}

@@ -1,6 +1,6 @@
 /**
  * `panels/doc/` 这一册的后一半：AI 队友那几张卡、建议条与建议卡、评审条与评审卡、讨论卡、
- * 评论、评论面板、正文面，一格一格摆出来。
+ * 评论、评论面板、正文面和它里面的正文列，一格一格摆出来。
  *
  * 和 `catalogPanelsDocPartA.ts` 一起构成这一册；两份都由 `catalogPanelsDoc.ts` 合并成
  * `DOC_PANEL_ENTRIES`。样例数据在 `catalogPanelsDocFixtures.ts`。
@@ -8,8 +8,10 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
+  demoProseEditor,
   DOC_AGENT,
   DOC_AGENT_HANDLE,
+  DOC_MARKDOWN,
   DOC_MENTION_NAMES,
   DOC_PERSON,
   DOC_PERSON_HANDLE,
@@ -27,6 +29,7 @@ import DocAgentBox from '@/components/panels/doc/DocAgentBox.vue'
 import DocAgentResult from '@/components/panels/doc/DocAgentResult.vue'
 import DocCommentPanel from '@/components/panels/doc/DocCommentPanel.vue'
 import DocComments from '@/components/panels/doc/DocComments.vue'
+import DocProse from '@/components/panels/doc/DocProse.vue'
 import DocReviewCard from '@/components/panels/doc/DocReviewCard.vue'
 import DocReviewStrip from '@/components/panels/doc/DocReviewStrip.vue'
 import DocSuggestionCard from '@/components/panels/doc/DocSuggestionCard.vue'
@@ -302,8 +305,8 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocReviewStrip.s1.note')
         },
-        props: { agentName: DOC_AGENT, requester: DOC_PERSON, count: 3 },
-        expect: '王长鑫让芝士改的 3 处',
+        props: { agentName: DOC_AGENT, count: 3 },
+        expect: '芝士改的 3 处',
       },
       {
         get name() {
@@ -312,7 +315,7 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
         get note() {
           return t('catalog.panelDocReviewStrip.s2.note')
         },
-        props: { agentName: DOC_AGENT, requester: DOC_PERSON, count: 0 },
+        props: { agentName: DOC_AGENT, count: 0 },
         expect: '都已还原',
       },
     ],
@@ -598,6 +601,48 @@ export const DOC_PANEL_ENTRIES_B: CatalogEntry[] = [
           pulse: () => {},
         },
         expectSelector: '.doc-skel',
+      },
+    ],
+  },
+  {
+    id: 'panel-doc-prose',
+    title: 'DocProse · 正文列',
+    get about() {
+      return t('catalog.panelDocProse.about')
+    },
+    file: 'src/components/panels/doc/DocProse.vue',
+    component: DocProse,
+    needs: T,
+    states: [
+      {
+        get name() {
+          return t('catalog.panelDocProse.s1.name')
+        },
+        get note() {
+          return t('catalog.panelDocProse.s1.note')
+        },
+        props: { editor: demoProseEditor(DOC_MARKDOWN), loading: false, keyFocus: false, placeholder: '' },
+        expect: '上线过程',
+      },
+      {
+        get name() {
+          return t('catalog.panelDocProse.s2.name')
+        },
+        get note() {
+          return t('catalog.panelDocProse.s2.note')
+        },
+        props: { editor: demoProseEditor(), loading: false, keyFocus: false, placeholder: '' },
+        expectSelector: 'br.ProseMirror-trailingBreak',
+      },
+      {
+        get name() {
+          return t('catalog.panelDocProse.s3.name')
+        },
+        get note() {
+          return t('catalog.panelDocProse.s3.note')
+        },
+        props: { editor: demoProseEditor(DOC_MARKDOWN), loading: false, keyFocus: true, placeholder: '' },
+        expectSelector: '.doc-editor--keyfocus',
       },
     ],
   },

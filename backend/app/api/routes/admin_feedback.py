@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, Query
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError
 from app.domain.authz import policy
 from app.domain.feedback import services as feedback_services
@@ -38,7 +39,9 @@ from app.domain.feedback.schemas import (
 )
 from app.domain.identity.services import IdentityService
 
-router = APIRouter(prefix="/admin/feedback", tags=["feedback"])
+router = APIRouter(
+    prefix="/admin/feedback", tags=["feedback"], dependencies=[ROUTE_DECIDES]
+)
 
 
 class FeedbackAdminCounts(FeedbackCounts):

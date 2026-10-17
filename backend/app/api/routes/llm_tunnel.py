@@ -30,6 +30,10 @@ directly. Two consequences worth stating: the meter's rules cannot be weakened
 by adding a transport, and this endpoint cannot become a way to reach anything
 else on the box, because the only address it ever dials is the configured
 listener.
+
+The two pumps and the activity clock they share with `routes/forge_token.py`
+live in `app.api.ws_pipe`; what stays here is this route's own policy — which
+listener it dials, and how long it may stay quiet.
 """
 
 import asyncio
@@ -38,6 +42,7 @@ import time
 
 from fastapi import APIRouter, Header, Query, WebSocket, WebSocketDisconnect
 
+from app.api.ws_pipe import _Activity, _pump_tcp_to_ws, _pump_ws_to_tcp
 from app.core.config import settings
 from app.core.sandbox_auth import scoped_token_claims
 
@@ -48,9 +53,6 @@ logger = logging.getLogger("cheesex.llm_tunnel")
 # scope only against WebSocket routes, so an HTTP `/{path:path}` never sees this
 # handshake regardless of which module registers first.
 router = APIRouter(prefix="/llm", tags=["llm"])
-
-# One read; the pipe is latency-sensitive and a turn's frames are small.
-_CHUNK = 65536
 
 # How long to wait for the listener to answer. Short: it is a process on this
 # same box, so anything slow means it is down, and a caller left hanging cannot
@@ -69,37 +71,6 @@ _IDLE_CHECK_S = 5.0
 
 def _listener() -> tuple[str, int]:
     return settings.subscription_proxy_host, settings.subscription_proxy_connect_port
-
-
-class _Activity:
-    def __init__(self) -> None:
-        self.last = time.monotonic()
-
-    def touch(self) -> None:
-        self.last = time.monotonic()
-
-
-async def _pump_ws_to_tcp(
-    ws: WebSocket, writer: asyncio.StreamWriter, activity: _Activity | None = None
-) -> None:
-    while True:
-        data = await ws.receive_bytes()
-        if activity is not None:
-            activity.touch()
-        writer.write(data)
-        await writer.drain()
-
-
-async def _pump_tcp_to_ws(
-    reader: asyncio.StreamReader, ws: WebSocket, activity: _Activity | None = None
-) -> None:
-    while True:
-        data = await reader.read(_CHUNK)
-        if not data:
-            return  # listener closed; ending this side ends the pair
-        if activity is not None:
-            activity.touch()
-        await ws.send_bytes(data)
 
 
 async def _until_idle(activity: _Activity, idle_s: float, check_s: float) -> None:

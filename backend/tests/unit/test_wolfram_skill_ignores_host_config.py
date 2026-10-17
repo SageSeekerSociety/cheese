@@ -12,7 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.domain.agent.skills import _NATIVE_SKILL_SRC
+from app.domain.skill_library import _NATIVE_SKILL_SRC
 
 SCRIPT = _NATIVE_SKILL_SRC / "wolfram" / "scripts" / "wolfram_mcp.py"
 ELSEWHERE = "http://127.0.0.1:9/mcp"

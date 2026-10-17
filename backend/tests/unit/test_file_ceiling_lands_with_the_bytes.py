@@ -1,6 +1,7 @@
 """一个文件多大为止，判在**字节落地的那一层**，不在上传那一层的门口。
 
-上限只有一个数（``service.MAX_FILE_BYTES``，默认 10MB），落地只有三处：房间文件走
+上限只有一条规则（``service.max_bytes_for``：视频 ``MAX_VIDEO_BYTES``，别的
+``MAX_FILE_BYTES``，默认 10MB），落地只有三处：房间文件走
 ``service.write_room_file``，资料库走 ``records._put``（``add`` 和 ``replace`` 都从
 这里过），房间文件的每一版历史走 ``service.write_revision_blob`` —— 历史读得回来，
 所以它和房间文件本身是同一道上限。所以调用方漏判也好、绕开网关直连后端端口也好
@@ -266,7 +267,7 @@ async def test_an_avatar_under_the_ceiling_gets_all_the_way_through(
             avatar=_upload(content), auth_user=None, service=_AvatarService()
         )
 
-        assert result["code"] == 201
+        assert result["code"] == 200
         assert (tmp_path / "7").read_bytes() == content
 
 

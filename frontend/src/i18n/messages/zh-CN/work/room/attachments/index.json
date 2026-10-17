@@ -1,0 +1,11 @@
+{
+  "addFailed": "添加文件失败",
+  "fileSnippet": "[文件]",
+  "imageSnippet": "[图片]",
+  "pastedName": "粘贴的图片-{time}",
+  "pastedTextName": "粘贴的文字-{time}",
+  "retry": "重试上传 {name}",
+  "sendBlocked": "有附件上传失败，重试或移除后再发送",
+  "tooLarge": "{name} 超过 {mb}MB，无法上传",
+  "tooMany": "每条消息最多添加 9 个附件"
+}

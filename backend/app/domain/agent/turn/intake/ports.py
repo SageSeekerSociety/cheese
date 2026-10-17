@@ -11,8 +11,8 @@ from typing import NotRequired, Protocol, TypedDict, Unpack
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.addressing import Addressed
 from app.domain.agent.turn.state.live import LiveWork
-from app.domain.delivery.addressing import Addressed
 from app.domain.delivery.input_identity import InputReconciliationPending
 
 
@@ -37,7 +37,7 @@ class MessageService(Protocol):
 
     live: LiveWork
 
-    def has_running_turn(
+    async def has_running_turn(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
     ) -> bool: ...
 
@@ -73,6 +73,10 @@ class MessageService(Protocol):
         *,
         recipient_handle: str | None = None,
         owes_reply: bool = True,
+    ) -> bool | InputReconciliationPending | None: ...
+
+    async def join_running_turn(
+        self, delivery_id: uuid.UUID, attempt_id: uuid.UUID
     ) -> bool | InputReconciliationPending | None: ...
 
     def converse(

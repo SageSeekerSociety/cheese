@@ -1,7 +1,8 @@
 """Block routes — editing a message, emoji reactions (Slack semantics), and
-taking back an answer to a question asked with quick replies."""
+skipping a question asked with quick replies or taking back an answer to one."""
 
 import uuid
+from functools import partial
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -15,7 +16,7 @@ from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
-from app.domain.agent.ask import withdraw
+from app.domain.agent.ask import skip, withdraw
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
@@ -24,7 +25,7 @@ from app.domain.block.editing import edit_message
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut, ReactionToggleIn
 from app.domain.conversation.services import room_of
-from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.agent import dispatch_pending, record_task_instruction
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
 
@@ -35,9 +36,9 @@ class MessageEditIn(BaseModel):
 
 
 class WithdrawnAnswer(BaseModel):
-    """撤回一道题的回答，回的是这道题撤回之后的样子。
+    """跳过一道题、或撤回对它的回答（跳过），回的是这道题改完之后的样子。
 
-    和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+    和 `block_updated` 那条实时帧带的是同一份东西，发起的页面拿它直接替换这道题，
     不必再取一次。"""
 
     id: str
@@ -78,8 +79,11 @@ async def edit_block(
         notify_mentions=announce_edited_message,
         editor=actor.handle,
         content=body.content,
-        chat=chat,
-        runner=runner,
+        notify=chat,
+        dispatch=partial(
+            dispatch_pending, chat.session_factory, chat=chat, runner=runner
+        ),
+        record_instruction=record_task_instruction,
     )
     return ok(payload)
 
@@ -133,6 +137,31 @@ async def toggle_reaction(
     return ok({"toggled": "added" if added else "removed", "reactions": reactions})
 
 
+@router.post(
+    "/{block_id}/skip",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(WithdrawnAnswer),
+)
+async def skip_question(
+    block_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+) -> dict:
+    """Skip a question asked with quick replies: you will not answer it.
+
+    Only someone who may answer it can (`block.asked.may_answer`, the rule an
+    answer by option or in words is held to); anyone else is refused, and so
+    is a question that already has its answer. Nothing is said in the room.
+    The question stops waiting, as an answer would make it: it leaves that
+    person's 待你回答 list, and its notice is settled. The agent that asked
+    runs another turn told that the question was skipped, so it stops waiting
+    for an answer that is not coming. ``DELETE /blocks/{block_id}/answer`` undoes it."""
+    return await _respond(block_id, db, resolver, broker, chat, runner, act=skip)
+
+
 @router.delete(
     "/{block_id}/answer",
     dependencies=[ROUTE_DECIDES],
@@ -146,8 +175,9 @@ async def withdraw_answer(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
-    """Take back your own answer to a question asked with quick replies, so the
-    question is unanswered again and its options come back for everyone.
+    """Take back your own answer to a question asked with quick replies, or
+    your skip of it, so the question is unanswered again and its options come
+    back for everyone.
 
     ``block_id`` is the question, not the answer: an answer is an ordinary
     message, and what is withdrawn is the line it left on the question
@@ -158,6 +188,12 @@ async def withdraw_answer(
     Whoever was watching gets the question as a `block_updated` frame, and the
     agent that asked it runs another turn, because the turn it had been going
     on was decided on an answer that no longer counts."""
+    return await _respond(block_id, db, resolver, broker, chat, runner, act=withdraw)
+
+
+async def _respond(block_id, db, resolver, broker, chat, runner, *, act) -> dict:
+    """Run ``act`` (`agent.ask.skip` / `withdraw`) as the caller on the question
+    ``block_id``, then show the room the question and run the asking agent."""
     repo = BlockRepository(db)
     question = await repo.get(block_id)
     if question is None:
@@ -176,7 +212,7 @@ async def withdraw_answer(
     # to take back: refuse it as what it is rather than as the wrong person.
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("signInRequired"))
-    await withdraw(
+    await act(
         db,
         block=question,
         project_id=question.project_id,
@@ -191,7 +227,7 @@ async def withdraw_answer(
     await broker.publish(
         str(question.conversation_id), {"type": "block_updated", "block": payload}
     )
-    # The asking agent's turn is recorded with the withdrawal (`agent.ask`);
-    # this is what runs it.
+    # The asking agent's turn is recorded with the change (`agent.ask`); this
+    # is what runs it.
     await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return ok(payload)

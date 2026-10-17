@@ -16,19 +16,20 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import update
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.block.queries import turn_starts
 from app.domain.block.repositories import BlockRepository
-from app.domain.project.services import ProjectService
+from app.domain.event_author import AuthorType
 from app.domain.topic.services import TopicService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.subscription_ingest import ingest_once
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 
 async def _seed(factory) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topic = await TopicService(session).create(
             project_id=project.id, title="T", created_by="u"
         )
@@ -141,7 +142,7 @@ async def test_proxy_lines_collapse_into_the_turn_that_was_running(
         ]
     log.write_text("".join(lines))
 
-    result = await ingest_once(business_db_factory, log)
+    result = await ingest_once(business_db_factory, log, turn_starts=turn_starts)
     assert result["landed"] == 42
 
     async with business_db_factory() as session:
@@ -164,7 +165,7 @@ async def test_traffic_outside_any_known_turn_is_not_folded_into_one(
         + _proxy_line(pid, tid, ts=1_786_000_060.0)
     )
 
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
@@ -186,7 +187,7 @@ async def test_traffic_long_after_the_last_turn_is_not_glued_onto_it(
         + _proxy_line(pid, tid, ts=(started + timedelta(days=1)).timestamp())
     )
 
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)
@@ -215,7 +216,7 @@ async def test_subscription_tokens_are_reported_as_unpriced_never_as_zero_cost(
         )
     )
 
-    await ingest_once(business_db_factory, log)
+    await ingest_once(business_db_factory, log, turn_starts=turn_starts)
 
     async with business_db_factory() as session:
         agg = await UsageRepository(session).for_topic(tid)

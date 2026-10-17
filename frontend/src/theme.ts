@@ -24,6 +24,8 @@
 import { computed, onScopeDispose, readonly, ref, watch } from 'vue'
 import { useTheme } from 'vuetify'
 
+import { storageGet, storageSet } from '@/lib/browserStorage'
+
 export type ThemePreference = 'system' | 'light' | 'dark'
 export type ResolvedTheme = 'light' | 'dark'
 
@@ -43,11 +45,11 @@ const META_THEME_COLOR: Record<ResolvedTheme, string> = {
 const DARK_QUERY = '(prefers-color-scheme: dark)'
 
 /**
- * Every DOM/storage access below is guarded. This module is imported by
+ * Every DOM access below is guarded. This module is imported by
  * plugins/vuetify.ts, which vitest loads in environments where `matchMedia` is
- * absent (jsdom does not implement it) and where `localStorage` can throw
- * outright (Safari private mode). A theme helper must never be the reason a
- * test file or a page fails to load.
+ * absent (jsdom does not implement it). Storage goes through
+ * `lib/browserStorage`, which never throws. A theme helper must never be the
+ * reason a test file or a page fails to load.
  */
 function mediaQuery(): MediaQueryList | null {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null
@@ -64,21 +66,14 @@ export function systemPrefersDark(): boolean {
 }
 
 export function readStoredPreference(): ThemePreference {
-  try {
-    const raw = localStorage.getItem(THEME_STORAGE_KEY)
-    if (raw === 'light' || raw === 'dark' || raw === 'system') return raw
-  } catch {
-    // storage unavailable — fall through to the default
-  }
+  const raw = storageGet(THEME_STORAGE_KEY)
+  if (raw === 'light' || raw === 'dark' || raw === 'system') return raw
   return 'system'
 }
 
 function writeStoredPreference(preference: ThemePreference): void {
-  try {
-    localStorage.setItem(THEME_STORAGE_KEY, preference)
-  } catch {
-    // storage unavailable — the choice just does not survive a reload
-  }
+  // A write that fails (private mode, full quota) just does not survive a reload.
+  storageSet(THEME_STORAGE_KEY, preference)
 }
 
 export function resolvePreference(preference: ThemePreference): ResolvedTheme {

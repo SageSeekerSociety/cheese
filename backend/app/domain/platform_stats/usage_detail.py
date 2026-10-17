@@ -28,7 +28,8 @@ from typing import Any
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.models import Block
+from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
 from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage, call_count
 from app.domain.user.models import User, UserProfile

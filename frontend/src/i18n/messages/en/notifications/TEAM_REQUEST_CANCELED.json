@@ -1,0 +1,5 @@
+{
+  "body": "Canceled the request to join \"{team}\"",
+  "title": "{canceler} canceled the join request",
+  "title_anonymous": "Join request canceled"
+}

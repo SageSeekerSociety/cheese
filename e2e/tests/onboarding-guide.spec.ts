@@ -53,7 +53,7 @@ test("a new account is guided into its first project", async ({ page }) => {
   await page.getByRole("button", { name: "建好项目" }).click();
 
   await expect(page).toHaveURL(/\/projects\/.+\/channels\//, { timeout: 30_000 });
-  await expect(page.getByRole("textbox").last()).toHaveValue(/先给我看提纲/);
+  await expect(page.locator(".composer-input .ProseMirror").first()).toContainText(/先给我看提纲/);
   // The guide carries on in the project, one step at a time, and can be skipped.
   await expect(page.getByText("1/10")).toBeVisible();
   await page.getByRole("button", { name: "跳过导览" }).click();

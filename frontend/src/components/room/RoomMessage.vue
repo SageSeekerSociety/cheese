@@ -10,6 +10,7 @@
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
 
@@ -23,7 +24,7 @@ import {
   replySnippet,
 } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
-import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
+import { toldByMessage } from '../../lib/refChip'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 import AttachmentVideo from '../AttachmentVideo.vue'
@@ -63,7 +64,7 @@ const props = defineProps<{
   external?: boolean
   time: string
   /** handle→昵称 / 话题 id→标题，正文里的 token 靠它渲染成可点的 chip。 */
-  refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  refs: RefNames
   /** 自己的 handle，用来标出哪些表情是自己点的。 */
   viewer: string
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
@@ -83,14 +84,13 @@ const props = defineProps<{
    */
   outgoing?: { error?: string; failed: boolean } | null
   /**
-   * 正在改这条自己发过的消息：正文换成输入框，里面先放着 `editText`。
+   * 正在改这条自己发过的消息：正文换成输入框，里面先放着原文。
    * `saving` 是保存请求还在路上。
    *
    * 这一行同时挂上 `im-row--editing`（见 room-row.css）：编辑时要抬掉这一行的
    * containment，否则 @ 候选菜单弹不出这一行，人只看得见贴着框沿的一条。
    */
   editing?: boolean
-  editText?: string
   saving?: boolean
   /** 这一行在频道主线上、我能在那里说话：文件的 ⋯ 里能置顶到频道。 */
   pinnable?: boolean
@@ -100,6 +100,11 @@ const props = defineProps<{
   mentionPool?: MentionPoolEntry[]
   /** 编辑框自己 @ 得到的话题，和发消息那个输入区同一份表。 */
   topicList?: Topic[]
+  /**
+   * 人发的长消息也收起。支线和任务里的对话给它：人在那里贴需求、报错、长文，一条就
+   * 占满一栏。频道主线和私聊不给，那里只收队友的回复。
+   */
+  foldPlain?: boolean
 }>()
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
@@ -116,7 +121,7 @@ const itemLabel = computed(() =>
   t('work.room.chat.messageLabel', {
     name: props.authorName,
     time: props.time,
-    text: replySnippet(props.block, props.refs, 140),
+    text: replySnippet(props.block, told.value, 140),
   })
 )
 
@@ -125,8 +130,10 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
   (e: 'ask-reply', block: Block, text: string): void
-  /** 自己在那道题上的回答要撤回。 */
+  /** 自己在那道题上的回答（或跳过）要撤回。 */
   (e: 'ask-withdraw', block: Block): void
+  /** 这道题不回答，跳过。 */
+  (e: 'ask-skip', block: Block): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -147,6 +154,10 @@ const fileBlock = computed(() => props.block.kind === 'attachment' || props.bloc
 
 // 作者改过它：正文后面标一句「已编辑」。
 const edited = computed(() => !!props.block.meta?.edited_at)
+/** 从资料库里挑来附上的那一份本来就在资料库里，不再给「保存到资料库」。 */
+function inLibrary(path: string): boolean {
+  return path.startsWith('library/')
+}
 
 // 队友的步骤清单：照结构画，不照正文画。
 const checklist = computed(() => {
@@ -155,11 +166,11 @@ const checklist = computed(() => {
 })
 
 // ---- 长回复收起 ----
-// 一条很长的队友回复收成一段高度，底下给一颗「展开 / 收起」。判据、量高和状态都在
-// composables/useMessageFold：支线顶部那条初始消息用的是同一份。还没落库的那条
-// （正在写、正在送）不收——它的正文每帧都在长。
+// 一条很长的队友回复收成一段高度，底下给一颗「展开 / 收起」；`foldPlain` 时人发的
+// 长消息也一样收。判据、量高和状态都在 composables/useMessageFold：支线顶部那条初始
+// 消息用的是同一份。还没落库的那条（正在写、正在送）不收——它的正文每帧都在长。
 const foldEl = ref<HTMLElement | null>(null)
-const canFold = computed(() => !props.outgoing && !props.editing)
+const canFold = computed(() => (props.isAgent || !!props.foldPlain) && !props.outgoing && !props.editing)
 const {
   foldable,
   expanded,
@@ -172,9 +183,10 @@ const {
   computed(() => [props.block.content, props.editing] as const)
 )
 
-function renderPlain(text: string): string {
-  return renderPlainWith(text, props.refs)
-}
+// A message's `<@handle>` went through the mention path when it was sent or
+// edited, so each one told its person (drawn as the @chip), unless a
+// members-only channel could not reach them.
+const told = computed(() => toldByMessage(props.refs))
 </script>
 
 <template>
@@ -292,7 +304,9 @@ function renderPlain(text: string): string {
           :name="artifactName(block)"
           :can-open="block.kind === 'artifact'"
           :can-download="block.kind === 'attachment'"
-          :can-keep="block.kind === 'artifact' && !!topicId"
+          :can-keep="
+            (block.kind === 'artifact' || (block.kind === 'attachment' && !inLibrary(block.content))) && !!topicId
+          "
           :pinnable="pinnable"
           :pinned="pinned"
           @open="emit('open-file', block.content)"
@@ -304,8 +318,9 @@ function renderPlain(text: string): string {
       </div>
       <MessageEditor
         v-else-if="editing"
-        :text="editText ?? block.content"
+        :text="block.content"
         :saving="!!saving"
+        :refs="refs"
         :mention-pool="mentionPool"
         :topic-list="topicList"
         @save="emit('save-edit', $event)"
@@ -320,19 +335,37 @@ function renderPlain(text: string): string {
         :editable="mine && !outgoing"
         @change="emit('checklist', block, $event)"
       />
-      <template v-else-if="isAgent">
-        <!-- 还没落库的那条（正在写、正在送）不带「复制」：它的代码块还在长。 -->
+      <!-- 芝士问的一道题：题目本身就是卡片的标题，和选项、末行的输入框收在同一张卡里，
+           不再是上一条消息的最后一段。卡片页头写谁问的；这一条是一串的第一条时，名字
+           那一行就在卡片正上方，页头不再说一遍名字（「问你」而不是「芝士 问你」）。 -->
+      <AskQuickReplies
+        v-else-if="askOptions(block)"
+        :block="block"
+        :asker="runStart ? undefined : authorName"
+        :names="refs.mentionNames"
+        :closed="askClosed"
+        :viewer="viewer"
+        @reply="emit('ask-reply', block, $event)"
+        @withdraw="emit('ask-withdraw', block)"
+        @skip="emit('ask-skip', block)"
+      >
+        <MarkdownView class="im-text md-content" :source="block.content" as="chat" :names="told" />
+      </AskQuickReplies>
+      <template v-else>
         <div
           ref="foldEl"
           class="fold"
           :class="{ 'fold-clamped': clamped }"
           :style="clamped ? { maxHeight: `${foldPx}px` } : undefined"
         >
+          <!-- 人说的话和芝士的一样按 Markdown 画：输入框里写成代码的，发出去也是代码。
+               单个回车照样是换行（as="chat"）。还没落库的那条（正在写、正在送）不带
+               「复制」：它的代码块还在长。 -->
           <MarkdownView
             class="im-text md-content"
             :source="block.content"
             as="chat"
-            :names="refs"
+            :names="told"
             :copy-code="!outgoing"
           />
           <!-- Fade at the cut edge, so a folded reply reads as "there is more" rather than "it ends here". -->
@@ -350,14 +383,6 @@ function renderPlain(text: string): string {
         </button>
         <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
-      <!-- 现场尊重原文: human text renders verbatim — newlines and
-         spacing preserved (pre-wrap), no markdown reflow. 「已编辑」接在最后
-         一个字后面，不另起一行。 -->
-      <div v-else class="im-text im-text--verbatim">
-        <span v-html="renderPlain(block.content)" /><span v-if="edited" class="im-edited">{{
-          t('work.room.message.edited')
-        }}</span>
-      </div>
       <MessageQuote v-if="block.meta?.quoted_context" :quote="block.meta.quoted_context" />
       <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
         <span class="outbox-fail__text">{{
@@ -368,15 +393,6 @@ function renderPlain(text: string): string {
           {{ t('work.room.outbox.edit') }}
         </button>
       </div>
-      <AskQuickReplies
-        v-if="askOptions(block)"
-        :block="block"
-        :names="refs.mentionNames"
-        :closed="askClosed"
-        :viewer="viewer"
-        @reply="emit('ask-reply', block, $event)"
-        @withdraw="emit('ask-withdraw', block)"
-      />
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
       <TransitionGroup v-if="block.reactions?.length" tag="div" name="rx" class="rx-row">
@@ -473,18 +489,11 @@ function renderPlain(text: string): string {
   background: var(--fill);
   border-color: var(--faint);
 }
-/* 现场尊重原文: exactly what the human typed, line breaks included. */
-.im-text--verbatim {
-  white-space: pre-wrap;
-}
 /* 「已编辑」：元信息那一档的字，跟在正文后面。 */
 .im-edited {
   font-size: 12px;
   line-height: var(--lh-12);
   color: var(--faint);
-}
-.im-text--verbatim .im-edited {
-  margin-left: 6px;
 }
 /* 芝士摆出来的一份东西。正文平铺之后，这一栏里描边的块只剩它——所以那道边就是
    「这不是一句话，是一个可以打开的东西」。 */
@@ -527,6 +536,9 @@ function renderPlain(text: string): string {
   white-space: nowrap;
 }
 .im-artifact__kind {
+  /* 文件类型（「网页」「文档」）是读者要看的字，不是装饰：它挂在 .t-meta 上，
+     那档的 --faint 浅色下只有 4.33:1，够不到 4.5:1（docs/design-system.md §2.6）。 */
+  color: var(--muted);
   text-align: left;
 }
 .im-artifact__go {

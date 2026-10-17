@@ -1,0 +1,10 @@
+{
+  "adminAddWhom": "Choose who to add",
+  "adminAgentCannotAdmin": "{handle} is an agent, and agents can't take admin actions",
+  "adminAlreadyRootAdmin": "{handle} is a root admin in the deployment config and doesn't need to be added here",
+  "adminNoSuchAccount": "There's no account with the handle {handle} on the platform",
+  "adminRootAdminCannotRemove": "{handle} is a root admin in the deployment config and can't be removed here. Changing the config needs server access",
+  "featureStatsNotFound": "There is no stats page for this feature: {feature}",
+  "platformAdminRequired": "Only platform admins can do this",
+  "runRecordsPlatformRoomsOnly": "Run records can be read only from the project that holds the platform's code repository; this channel's project is not that one"
+}

@@ -3,7 +3,6 @@
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
-from urllib.parse import urlsplit
 
 from fastapi import (
     APIRouter,
@@ -18,6 +17,7 @@ from app.api.deps import (
     get_passkey_service,
     get_user_auth_service,
 )
+from app.api.response import ok
 from app.api.routes.users._common import (
     _EMAIL_FORMAT,
     _PENDING_2FA_SCOPE,
@@ -29,13 +29,14 @@ from app.api.routes.users._common import (
     _email_code_unavailable,
     _issue_2fa_pending_token,
     _too_many_from_client,
-    _trusted_device,
+    _trusted_device_id,
     logger,
 )
 from app.api.users_deps import (
     _SUDO_TICKET_SCOPE,
     REFRESH_COOKIE,
     _clear_refresh_cookie,
+    _require_same_origin,
     _set_refresh_cookie,
     challenge_from_credential,
     issue_session,
@@ -90,37 +91,6 @@ from app.domain.user.verification_service import (
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
-
-
-def _origin_of(url: str) -> str:
-    parts = urlsplit(url)
-    return f"{parts.scheme}://{parts.netloc}".lower()
-
-
-def _require_same_origin(request: Request) -> None:
-    """Refuse a refresh or sign-out that another site had the browser send.
-
-    SameSite=Lax keeps the cookie off a cross-site POST, but not off one from
-    a sibling subdomain, and older browsers do not apply it at all. Modern
-    browsers say where a request came from in Sec-Fetch-Site; older ones at
-    least send Origin on a POST. A request with neither did not come from a
-    browser, so it carries no cookie it did not mean to, and passes.
-    """
-    site = request.headers.get("sec-fetch-site")
-    if site is not None:
-        if site != "same-origin":
-            raise ForbiddenError("Cross-site request refused")
-        return
-    origin = request.headers.get("origin")
-    if origin is None:
-        return
-    trusted = {
-        _origin_of(settings.frontend_url),
-        *map(_origin_of, settings.cors_origins),
-    }
-    same_host = urlsplit(origin).netloc == request.headers.get("host")
-    if not same_host and _origin_of(origin) not in trusted:
-        raise ForbiddenError("Cross-site request refused")
 
 
 async def _spend_2fa_attempt(
@@ -399,22 +369,23 @@ async def user_login(
 
         totp_service = TOTPService(session)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
-        trust = (
-            await _trusted_device(request, session, user.id) if requires_2fa else None
+        trust_id = (
+            await _trusted_device_id(request, session, user.id)
+            if requires_2fa
+            else None
         )
 
-        if requires_2fa and trust is None:
+        if requires_2fa and trust_id is None:
             if not totp_code:
                 # tempToken lets the client finish via POST /auth/verify-2fa.
-                return {
-                    "code": 200,
-                    "message": "2FA required",
-                    "data": {
+                return ok(
+                    {
                         "requires2FA": True,
                         "userId": user.id,
                         "tempToken": await _issue_2fa_pending_token(user.id),
                     },
-                }
+                    "2FA required",
+                )
             # This inline branch checks a TOTP code without ever minting a
             # ticket, so the single-use ticket does nothing for it — without
             # its own budget it stays exactly the oracle #357 describes.
@@ -431,8 +402,8 @@ async def user_login(
             session,
             user_id=user.id,
             handle=user.username,
-            login_method="totp" if requires_2fa and trust is None else "password",
-            trust_device_id=trust.id if trust else None,
+            login_method="totp" if requires_2fa and trust_id is None else "password",
+            trust_device_id=trust_id,
         )
 
         user_dto = await auth_service.build_user_dto(
@@ -440,16 +411,15 @@ async def user_login(
             profile=profile,
             viewer_id=user.id,
         )
-        return {
-            "code": 201,
-            "message": "Login successfully.",
-            "data": {
+        return ok(
+            {
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
                 "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
-        }
+            "Login successfully.",
+        )
     finally:
         await redis.aclose()
 
@@ -549,22 +519,21 @@ async def verify_2fa_login(
             profile=profile,
             viewer_id=user.id,
         )
-        return {
-            "code": 201,
-            "message": (
-                "Login successfully. Note: This backup code has expired. "
-                "Please generate a new backup code for future use."
-                if used_backup_code
-                else "Login successfully."
-            ),
-            "data": {
+        return ok(
+            {
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
                 "usedBackupCode": used_backup_code,
                 "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
-        }
+            (
+                "Login successfully. Note: This backup code has expired. "
+                "Please generate a new backup code for future use."
+                if used_backup_code
+                else "Login successfully."
+            ),
+        )
     finally:
         await redis.aclose()
 
@@ -572,10 +541,9 @@ async def verify_2fa_login(
 # The sign-in code request answers with this one body whatever the address:
 # known, unknown or a placeholder. Anything that differed would tell the
 # caller whether an account uses that address.
-_SIGN_IN_CODE_REQUESTED = {
-    "code": 200,
-    "message": "If an account uses this email, a sign-in code has been sent.",
-}
+_SIGN_IN_CODE_REQUESTED = ok(
+    None, "If an account uses this email, a sign-in code has been sent."
+)
 
 
 def _invalid_email_code() -> AuthenticationRequiredError:
@@ -671,19 +639,18 @@ async def verify_sign_in_code(
     if user is None or is_placeholder_email(user.email):
         raise _invalid_email_code()
 
-    trust = None
+    trust_id = None
     if await TOTPService(session).is_2fa_enabled(user.id):
-        trust = await _trusted_device(request, session, user.id)
-        if trust is None:
-            return {
-                "code": 200,
-                "message": "2FA required",
-                "data": {
+        trust_id = await _trusted_device_id(request, session, user.id)
+        if trust_id is None:
+            return ok(
+                {
                     "requires2FA": True,
                     "userId": user.id,
                     "tempToken": await _issue_2fa_pending_token(user.id),
                 },
-            }
+                "2FA required",
+            )
 
     try:
         user, profile = await auth_service.get_user_with_profile(user.id)
@@ -697,23 +664,22 @@ async def verify_sign_in_code(
         user_id=user.id,
         handle=user.username,
         login_method="email_code",
-        trust_device_id=trust.id if trust else None,
+        trust_device_id=trust_id,
     )
     user_dto = await auth_service.build_user_dto(
         user=user,
         profile=profile,
         viewer_id=user.id,
     )
-    return {
-        "code": 201,
-        "message": "Login successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
             "accessToken": access_token,
             "requires2FA": False,
             "passkeyEnrollment": await _passkey_enrollment(user.id, session),
         },
-    }
+        "Login successfully.",
+    )
 
 
 @router.post(
@@ -757,14 +723,13 @@ async def refresh_access_token(
         profile=profile,
         viewer_id=user.id,
     )
-    return {
-        "code": 201,
-        "message": "Refresh token successfully.",
-        "data": {
+    return ok(
+        {
             "accessToken": access_token,
             "user": user_dto,
         },
-    }
+        "Refresh token successfully.",
+    )
 
 
 @router.post(
@@ -786,10 +751,7 @@ async def user_logout(
     if refresh_token:
         await SessionService(session).end(refresh_token)
     _clear_refresh_cookie(response)
-    return {
-        "code": 201,
-        "message": "Logout successfully.",
-    }
+    return ok(None, "Logout successfully.")
 
 
 @router.post(
@@ -829,7 +791,7 @@ async def sudo_auth(
             data["sudoTicket"] = await _issue_sudo_ticket(
                 auth_user.user_id, payload.purpose
             )
-        return {"code": 200, "message": message, "data": data}
+        return ok(data, message)
 
     async def verified(message: str, **extra: Any) -> dict:
         if current is not None:

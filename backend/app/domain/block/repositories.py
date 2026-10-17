@@ -1,92 +1,78 @@
-"""Block data access."""
+"""Block data access. 写入与单块小读；分页、历史、问答和表情分到了同包的四个模块。
+
+每一块住在哪儿，看那句话问的是什么：
+
+- `paging.py` —— 一条对话的时间线怎么切片读（`list_for_topic` / `page_for_topic` /
+  `count_for_topic` / `holds` / `count_messages`），连同它们共用的 `BlockPage` 与
+  `_narrow()`。
+- `history.py` —— 时间线上的定点小读（`turn_history` / `latest_for_topic` /
+  `messages_before` / `last_messages` / `between`）。
+- `awaiting.py` —— 哪几段对话停在一个未回答的提问上，以及一条回话答了哪几道题。
+- `reactions.py` —— 表情（Slack 语义的增删与聚合读数）。
+
+剩下的是写入（`add` / `mark_consumed` / `restate` …）和单块小读（`get` / `has_*` /
+`latest_artifact` / `shown_in_room` …）。
+
+拆开的理由是文件体积（这个文件拆分前 1199 行），不是分层：`BlockRepository` 继承那四个
+模块的基类，方法签名、SQL 与 MRO 行为都没变 —— 被搬走的方法在 `git diff` 里是整段搬迁，
+不是改写。
+
+`BlockPage` 原来定义在本模块，现在定义在 `paging.py`，在这里再导出一次 —— 仓库内外按
+`from app.domain.block.repositories import BlockPage` 取它。按**类对象**打的 monkeypatch
+也照旧（`test_block_paging.py` 的 `reactions_for_blocks`、
+`scripts/perf-awaiting-me/measure_awaiting_me.py` 的 `awaiting_answer_blocks`）：它们先
+拿到 `BlockRepository` 再取属性，方法从哪个基类来不影响。
+"""
 
 import uuid
 from collections.abc import Collection
-from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, overload
 
 from sqlalchemy import (
-    DateTime,
     Text,
-    Uuid,
-    and_,
-    any_,
     bindparam,
     cast,
-    column,
-    func,
-    or_,
     select,
-    table,
     text,
-    true,
-    tuple_,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
-from app.domain.block.authorship import is_participant, participant_blocks
+from app.domain.block.authorship import is_participant
+from app.domain.block.awaiting import AwaitingQueries
+from app.domain.block.history import HistoryQueries
 from app.domain.block.indexed_rows import (
     COALESCED_ROWS,
     EID,
-    QUESTION_ROWS,
-    SHOWN_ROWS,
 )
 from app.domain.block.models import (
-    AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
     CONSUMED_TURN_META_KEY,
     EDITED_AT_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
     PROMPTED_TURN_META_KEY,
-    AuthorType,
     Block,
     BlockKind,
-    BlockReaction,
     prompt_attempts,
 )
-from app.domain.conversation.services import of_room
+
+# `BlockPage` 原来定义在本模块，拆分后定义在 `paging.py`。这条 import 不是「顺手
+# 拿来用」，是把公开路径留在原地：仓库内外按 `from app.domain.block.repositories
+# import BlockPage` 取它。所以 F401 在这里是故意的。
+from app.domain.block.paging import BlockPage, PagingQueries  # noqa: F401
+from app.domain.block.reactions import Reactions
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
-# When a task's owner pressed 「开始」. A bare table: ``room_task`` depends on
-# this domain.
-_tasks = table(
-    "tasks", column("id", Uuid), column("started_at", DateTime(timezone=True))
-)
 
-
-@dataclass(frozen=True)
-class BlockPage:
-    """A chronological window; has_more follows the requested cursor direction."""
-
-    items: list[Block]
-    has_more: bool
-
-
-def _narrow(
-    stmt,
-    *,
-    kinds: Collection[BlockKind] | None = None,
-    author: str | None = None,
-    shown: bool | None = None,
+class BlockRepository(
+    AwaitingQueries,
+    HistoryQueries,
+    PagingQueries,
+    Reactions,
 ):
-    """A conversation read narrowed the way `GET /topics/{id}/blocks` filters:
-    to some kinds, to one author, and to what the room shows (`shown=True`) or
-    keeps out of it (`False`). `SHOWN_ROWS` goes in as its literal text, so a
-    shown read can use `ix_blocks_shown`."""
-    if kinds is not None:
-        stmt = stmt.where(Block.kind.in_(list(kinds)))
-    if author is not None:
-        stmt = stmt.where(Block.author == author)
-    if shown is not None:
-        stmt = stmt.where(SHOWN_ROWS if shown else text(f"NOT ({SHOWN_ROWS.text})"))
-    return stmt
-
-
-class BlockRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
 
@@ -183,15 +169,6 @@ class BlockRepository:
             return []
         stmt = select(Block).where(Block.id.in_(list(block_ids)))
         return list((await self._session.scalars(stmt)).all())
-
-    async def contents(self, block_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
-        """{block id: 正文} —— 一次查完。"""
-        if not block_ids:
-            return {}
-        rows = await self._session.execute(
-            select(Block.id, Block.content).where(Block.id.in_(block_ids))
-        )
-        return {block_id: content or "" for block_id, content in rows.all()}
 
     async def client_delivery(
         self, conversation_id: uuid.UUID, *, author: str, client_id: str
@@ -497,554 +474,6 @@ class BlockRepository:
         )
         return {row for row in (await self._session.scalars(stmt)).all() if row}
 
-    async def awaiting_an_answer(
-        self, conversation_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, str | None]:
-        """这些对话里，哪几段停在一个未回答的提问上，各自在等谁 —— 一次查完。
-
-        判据是 #1084 定的那一条：**最近一条提问消息没有作答记录**。不需要新增
-        存储，因为回答本来就记在提问那一块上（`meta.answer_log`，答过它的每一句
-        回话）。取「最近一条」而不是「有没有任何一条」：已回答的旧提问不该让这段
-        对话长期停留在待处理。任务的负责人点了「开始」，在那之前问的题也不再算：
-        开始就是他说这件事讨论够了。
-
-        等谁也记在那一块上（`meta.asked`，提问那一刻写下的）。None 是「这道题指不
-        到具体的人」。只关心停没停的调用方照样拿它做 `in`。走 `ix_blocks_questions`。
-        """
-        return await self._awaiting_an_answer(conversation_ids)
-
-    async def awaiting_answer_blocks(self, conversation_ids):
-        """Return addressed person and exact question for each waiting
-        conversation."""
-        return await self._awaiting_an_answer(conversation_ids, with_blocks=True)
-
-    @overload
-    async def _awaiting_an_answer(
-        self,
-        place_ids: list[uuid.UUID],
-        with_blocks: Literal[False] = False,
-    ) -> dict[uuid.UUID, str | None]: ...
-
-    @overload
-    async def _awaiting_an_answer(
-        self,
-        place_ids: list[uuid.UUID],
-        with_blocks: Literal[True],
-    ) -> dict[uuid.UUID, tuple[str | None, uuid.UUID]]: ...
-
-    async def _awaiting_an_answer(self, place_ids: list[uuid.UUID], with_blocks=False):
-        if not place_ids:
-            return {}
-        place_column = Block.conversation_id
-        # `in_()` 会把这一串 id 摊成同样多个绑定参数，每执行一次都要重新拼一遍
-        # SQL（一屏「待我处理」要拿七百来个对话来问，量出来光这一步就 8~9 毫秒）。
-        # 收成一个数组参数之后语句只编译一次，后面每次都由驱动直接复用；和
-        # `room_task/repositories.py` 的 `_uuids` 是同一个写法。
-        among = any_(bindparam(None, list(place_ids), type_=ARRAY(Uuid)))
-        # 每段只取最近一题（#1084 的原语义）。
-        latest = (
-            select(place_column, Block.meta, Block.created_at, Block.author, Block.id)
-            .where(
-                place_column == among,
-                # 和 `ix_blocks_questions` 的谓词是同一个对象，规划器才认得出
-                # 能用那个部分索引。
-                QUESTION_ROWS,
-            )
-            .order_by(place_column, Block.created_at.desc())
-            .distinct(place_column)
-        )
-        selected = {}
-        rows = []
-        for place_id, meta, at, asker, block_id in (
-            await self._session.execute(latest)
-        ).all():
-            if place_id is None:
-                continue
-            meta = meta or {}
-            if meta.get("answer_log") or meta.get("answered"):
-                # Two answered marks live side by side: `answer_log` holds every
-                # reply that answered it, `answered` the two-key shape a
-                # person's historical question still carries (the migration
-                # leaves those rows alone — see `e5a1c7d3b284`).
-                continue
-            rows.append((place_id, meta, at, asker, block_id))
-        if not rows:
-            return {}
-        # 「开始」 is the owner saying the task is discussed enough: what was asked
-        # in it before then no longer holds it, so a started task reads 已开始 /
-        # 运行中 rather than 待回答 until a question is asked after it.
-        asked_places = any_(
-            bindparam(None, [place_id for place_id, *_ in rows], type_=ARRAY(Uuid))
-        )
-        started: dict[uuid.UUID, datetime] = {
-            task_id: at
-            for task_id, at in (
-                await self._session.execute(
-                    select(_tasks.c.id, _tasks.c.started_at).where(
-                        _tasks.c.id == asked_places,
-                        _tasks.c.started_at.is_not(None),
-                    )
-                )
-            ).all()
-        }
-        rows = [
-            row for row in rows if row[0] not in started or row[2] > started[row[0]]
-        ]
-        if not rows:
-            return {}
-        # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
-        # （题上没记是谁，就任何一个人）在这里说过话，这道题就不再挂在他身上。
-        still_asked = any_(
-            bindparam(None, [place_id for place_id, *_ in rows], type_=ARRAY(Uuid))
-        )
-        spoke = (
-            select(place_column, Block.author, func.max(Block.created_at))
-            .where(
-                place_column == still_asked,
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-                ~agent_handle_column(Block.author),
-            )
-            .group_by(place_column, Block.author)
-        )
-        last_said: dict[uuid.UUID, dict[str, datetime]] = {}
-        for place_id, author, at in (await self._session.execute(spoke)).all():
-            last_said.setdefault(place_id, {})[author] = at
-        # 芝士问完，自己又在同一条线上接着说了一句 —— 那道题它自己已经绕过去了，
-        # 不该继续挂在被问的人身上 (#2046：芝士问完没等回答就自己做完、又发了几句
-        # 进展，房间却一直停在「待回答」，直到人真去点一下才灭)。人问的题不适用：
-        # 人问完再补一句，不等于他不用答了。所以这里只认**提问那条消息的作者**，
-        # 且他本人是芝士 —— 别的席位上有人说话，是那名参与者的发言，不是这道题的
-        # 提问者收回了它。
-        agent_spoke = (
-            select(place_column, Block.author, func.max(Block.created_at))
-            .where(
-                place_column == still_asked,
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-                agent_handle_column(Block.author),
-            )
-            .group_by(place_column, Block.author)
-        )
-        said_by_agent: dict[uuid.UUID, dict[str, datetime]] = {}
-        for place_id, author, at in (await self._session.execute(agent_spoke)).all():
-            said_by_agent.setdefault(place_id, {})[author] = at
-        waiting: dict[uuid.UUID, str | None] = {}
-        for place_id, meta, asked_at, asker, block_id in rows:
-            asked = meta.get("asked")
-            said = last_said.get(place_id, {})
-            if asked:
-                times = [said[asked]] if asked in said else []
-            else:
-                times = list(said.values())
-            if any(at > asked_at for at in times):
-                continue
-            if looks_like_agent_handle(asker):
-                own = said_by_agent.get(place_id, {}).get(asker)
-                if own is not None and own > asked_at:
-                    continue
-            waiting[place_id] = asked
-            selected[place_id] = block_id
-        if with_blocks:
-            return {place: (asked, selected[place]) for place, asked in waiting.items()}
-        return waiting
-
-    async def questions_a_reply_answers(
-        self, reply: Block, *, first_word_only: bool = True
-    ) -> list[Block]:
-        """The questions a person's ``reply`` answers, locked for the caller to
-        record the answer on.
-
-        A reply to a question (`reply_to` — what clicking one of its options
-        sends) answers that question, but only while it is unanswered: a
-        question takes one answer, so a reply to one already answered records
-        nothing. A reply to any other message answers nothing.
-
-        A message that replies to nothing answers the open questions in its
-        conversation that wait on its author — asked of him, or of nobody in
-        particular — and that nobody has answered yet, but only when it is his
-        first word since they were asked: what he says after that is talk, not
-        his answer. It is the same reading as `_awaiting_an_answer`'s "spoke
-        after it was asked". ``first_word_only=False`` drops that last
-        condition, for a message the caller knows is addressed to an asker.
-        Whom it names is the caller's to weigh.
-        """
-        place = (Block.conversation_id == reply.conversation_id,)
-        if reply.reply_to is not None:
-            parent = await self._session.scalar(
-                select(Block)
-                .where(Block.id == reply.reply_to, *place, QUESTION_ROWS)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-            if parent is None:
-                return []
-            # 一道题只收一个回答：点选项那条路（`reply_to` 指过来的就是它）也拦下已
-            # 经答过的题，否则第二个人再点一下就又记一条。判据和下面那条路、和
-            # `_awaiting_an_answer` 一致：`answer_log` 非空即已答过；`answered` 是
-            # 旧行上的同义标记。
-            meta = parent.meta or {}
-            if meta.get("answer_log") or meta.get("answered"):
-                return []
-            return [parent]
-        spoke_before = (
-            select(func.max(Block.created_at))
-            .where(
-                *place,
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-                Block.author == reply.author,
-                Block.id != reply.id,
-            )
-            .scalar_subquery()
-        )
-        stmt = (
-            select(Block)
-            .where(
-                *place,
-                QUESTION_ROWS,
-                or_(
-                    Block.meta["asked"].as_string() == reply.author,
-                    Block.meta["asked"].as_string().is_(None),
-                ),
-                Block.meta["answered"].as_string().is_(None),
-                Block.id != reply.id,
-                Block.created_at <= reply.created_at,
-                or_(spoke_before.is_(None), Block.created_at > spoke_before)
-                if first_word_only
-                else true(),
-            )
-            .order_by(Block.created_at, Block.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        # `answer_log` 为空（还没有人答）没有作答的含义，所以按真值判断，不能按键
-        # 在不在 —— 和 `_awaiting_an_answer` 的判据一致。
-        return [
-            block
-            for block in (await self._session.scalars(stmt)).all()
-            if not (block.meta or {}).get("answer_log")
-        ]
-
-    async def list_for_topic(
-        self,
-        conversation_id: uuid.UUID,
-        *,
-        kinds: Collection[BlockKind] | None = None,
-        author: str | None = None,
-        shown: bool | None = None,
-    ) -> list[Block]:
-        """Timeline view: blocks of a topic, oldest first (spec §5), narrowed
-        as `_narrow` says.
-
-        Excludes doc_node tree blocks and inline comments — those belong to the
-        document view, not the conversation timeline.
-
-        Ties on created_at break by id, the same total order `page_for_topic`
-        walks — otherwise the full view and the paged view could disagree about
-        the order of blocks stamped in the same instant.
-        """
-        stmt = select(Block).where(Block.conversation_id == conversation_id)
-        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
-        stmt = stmt.order_by(Block.created_at, Block.id)
-        return list((await self._session.scalars(stmt)).all())
-
-    async def turn_history(self, conversation_id: uuid.UUID) -> list[Block]:
-        """Inputs awaiting consumption and the latest AI message, their watermark.
-
-        Inputs, not the timeline: a room's events are mostly for people to read,
-        and only the ones whose author wrote a sentence for 芝士 are addressed to
-        it. Those are selected by carrying that sentence, the same way a human
-        input is selected by being one — not by their kind, which says who can
-        see them rather than who they are for.
-        """
-        place = (Block.conversation_id == conversation_id,)
-        latest_ai = (
-            select(Block.id)
-            .where(
-                *place,
-                agent_handle_column(Block.author),
-                Block.kind == BlockKind.message,
-            )
-            .order_by(Block.created_at.desc(), Block.id.desc())
-            .limit(1)
-            .scalar_subquery()
-        )
-        # The latest AI message remains the watermark for untracked legacy
-        # inputs. Explicitly pending inputs can precede it and must survive.
-        stmt = (
-            select(Block)
-            .where(
-                *place,
-                or_(
-                    Block.id == latest_ai,
-                    and_(
-                        participant_blocks(),
-                        Block.kind.in_((BlockKind.message, BlockKind.attachment)),
-                        Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
-                        # 没有戳的块有两种：还没被读过的（带 null 标记），和记账
-                        # 存在之前写下的（什么也不带）。第二种只有靠上面那条水位
-                        # 线才判得了，而水位线本身就是最后一条芝士的消息 —— 一条
-                        # 芝士签名的老消息永远在它之前，取回来也只是被丢掉。房间
-                        # 的历史只增不减，所以在这里挡掉，不是在 Python 里。
-                        or_(
-                            cast(Block.meta, JSONB).has_key(CONSUMED_TURN_META_KEY),
-                            ~agent_handle_column(Block.author),
-                        ),
-                    ),
-                    and_(
-                        Block.meta[AGENT_NOTICE_META_KEY].as_string().is_not(None),
-                        Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
-                    ),
-                ),
-            )
-            .order_by(Block.created_at, Block.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def latest_for_topic(self, conversation_id: uuid.UUID) -> Block | None:
-        """The newest block in the topic's timeline, or None for an empty topic.
-
-        Same total order and same exclusions as `list_for_topic`, so "the last
-        thing in the topic" means here exactly what the reader sees at the
-        bottom of the conversation — which is what makes a stall verdict built
-        on it checkable by hand.
-        """
-        stmt = (
-            select(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-            )
-            .order_by(Block.created_at.desc(), Block.id.desc())
-            .limit(1)
-        )
-        return (await self._session.scalars(stmt)).first()
-
-    async def messages_before(
-        self, conversation_id: uuid.UUID, at: datetime, *, limit: int
-    ) -> list[Block]:
-        """The ``limit`` messages said in the conversation just before ``at``,
-        oldest first: what was being talked about then."""
-        stmt = (
-            select(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-                Block.kind == BlockKind.message,
-                Block.created_at < at,
-            )
-            .order_by(Block.created_at.desc(), Block.id.desc())
-            .limit(limit)
-        )
-        return list(reversed(list((await self._session.scalars(stmt)).all())))
-
-    async def last_messages(
-        self, conversation_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, Block]:
-        """The last message said in each of these conversations, keyed by it;
-        a conversation nothing was said in is missing."""
-        if not conversation_ids:
-            return {}
-        ranked = (
-            select(
-                Block.id,
-                func.row_number()
-                .over(
-                    partition_by=Block.conversation_id,
-                    order_by=(Block.created_at.desc(), Block.id.desc()),
-                )
-                .label("rank"),
-            )
-            .where(
-                Block.conversation_id.in_(conversation_ids),
-                Block.kind == BlockKind.message,
-            )
-            .subquery()
-        )
-        rows = await self._session.scalars(
-            select(Block)
-            .join(ranked, ranked.c.id == Block.id)
-            .where(ranked.c.rank == 1)
-        )
-        return {block.conversation_id: block for block in rows}
-
-    async def between(
-        self, conversation_id: uuid.UUID, since: datetime, until: datetime
-    ) -> list[Block]:
-        """Everything in the conversation from ``since`` to ``until``, both
-        included, oldest first: messages, the files sent with them and the lines
-        the platform wrote among them."""
-        stmt = (
-            select(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-                Block.created_at >= since,
-                Block.created_at <= until,
-            )
-            .order_by(Block.created_at, Block.id)
-        )
-        return list((await self._session.scalars(stmt)).all())
-
-    async def page_for_topic(
-        self,
-        conversation_id: uuid.UUID,
-        *,
-        limit: int,
-        before: Block | None = None,
-        kinds: Collection[BlockKind] | None = None,
-        after: Block | None = None,
-        query: str | None = None,
-        reply_to: uuid.UUID | None = None,
-        author: str | None = None,
-        whole_room: uuid.UUID | None = None,
-        also: Collection[uuid.UUID] = (),
-        shown: bool | None = None,
-        stored_after: int | None = None,
-    ) -> BlockPage:
-        """The newest `limit` blocks, or a page before/after a cursor.
-
-        ``stored_after`` reads the blocks stored after the one numbered so
-        (`Block.seq`), in the order they were stored: what a page that holds
-        everything up to that number has not seen. Not the same as ``after``,
-        which goes by date: a block dated before the cursor but stored after it
-        is in this page and not in that one.
-
-        ``whole_room`` reads every conversation of that room instead of one —
-        its main line, its 支线 and its tasks — for a search that has to find
-        what was settled somewhere else in the channel.
-
-        ``also`` adds blocks stored under another conversation, so a 支线's
-        reading starts with the message it hangs under and the files sent with
-        it: they stay in the main line and they are the 支线's own first input.
-        A ``whole_room`` read already covers those blocks, and ignores it.
-
-        An after cursor reads the oldest newer records first, so catching up
-        through multiple pages cannot skip intervening messages. Explicit kinds
-        include document-view records; otherwise the timeline exclusions apply.
-
-        Cursor, not offset, because chat grows at the tail while you read it: an
-        offset window slides every time a message lands, so page 2 re-serves or
-        skips rows. A cursor anchored on a real block is immune to tail inserts.
-
-        The order key is the (created_at, id) pair, not created_at alone —
-        created_at is stamped in Python, so a burst of streamed blocks can share
-        a timestamp and single-column ordering wouldn't be a total order (the
-        cursor could then skip or repeat the tied rows).
-        """
-        if whole_room is not None:
-            scope = of_room(Block.conversation_id, whole_room)
-        elif also:
-            scope = or_(
-                Block.conversation_id == conversation_id,
-                Block.id.in_(list(also)),
-            )
-        else:
-            scope = Block.conversation_id == conversation_id
-        stmt = select(Block).where(scope)
-        # 现场 wants events and nothing else; narrowing HERE rather than in the
-        # caller is the difference between paging and pretending to — filtering
-        # a page after the fact returns fewer rows than asked for and reports
-        # has_more against the wrong set.
-        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
-        if query:
-            # Literal matching: a pasted log containing % or _ is not SQL syntax.
-            pattern = (
-                "%"
-                + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                + "%"
-            )
-            stmt = stmt.where(
-                or_(
-                    Block.content.ilike(pattern, escape="\\"),
-                    # JSONB renders stored Unicode escapes as searchable text.
-                    cast(cast(Block.meta, JSONB), Text).ilike(pattern, escape="\\"),
-                )
-            )
-        if reply_to is not None:
-            stmt = stmt.where(Block.reply_to == reply_to)
-        if before is not None:
-            # Row-value comparison: `(created_at, id) < (:ts, :id)` in one go,
-            # so the cursor test matches the ORDER BY key exactly. There is no
-            # composite index on (conversation_id, created_at, id) today — the
-            # conversation_id index narrows to one conversation's rows and
-            # Postgres sorts those (a few thousand at worst). Paging's win is the
-            # payload, not the scan.
-            stmt = stmt.where(
-                tuple_(Block.created_at, Block.id) < (before.created_at, before.id)
-            )
-        if after is not None:
-            stmt = stmt.where(
-                tuple_(Block.created_at, Block.id) > (after.created_at, after.id)
-            )
-        if stored_after is not None:
-            stmt = stmt.where(Block.seq > stored_after)
-        # One row past the window tells us whether more blocks remain, without
-        # a second COUNT query.
-        if stored_after is not None:
-            order: tuple = (Block.seq,)
-        elif after is not None:
-            order = (Block.created_at, Block.id)
-        else:
-            order = (Block.created_at.desc(), Block.id.desc())
-        stmt = stmt.order_by(*order).limit(limit + 1)
-        rows = list((await self._session.scalars(stmt)).all())
-        has_more = len(rows) > limit
-        rows = rows[:limit]
-        if after is None and stored_after is None:
-            rows.reverse()  # callers render oldest-first, same as list_for_topic
-        return BlockPage(items=rows, has_more=has_more)
-
-    async def count_for_topic(
-        self,
-        conversation_id: uuid.UUID,
-        *,
-        kinds: Collection[BlockKind] | None = None,
-        author: str | None = None,
-        shown: bool | None = None,
-    ) -> int:
-        stmt = (
-            select(func.count())
-            .select_from(Block)
-            .where(Block.conversation_id == conversation_id)
-        )
-        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
-        return int((await self._session.scalar(stmt)) or 0)
-
-    async def holds(
-        self,
-        block: Block,
-        *,
-        kinds: Collection[BlockKind] | None = None,
-        author: str | None = None,
-        shown: bool | None = None,
-    ) -> bool:
-        """Whether ``block`` is one a read narrowed this way would return."""
-        stmt = _narrow(
-            select(Block.id).where(Block.id == block.id),
-            kinds=kinds,
-            author=author,
-            shown=shown,
-        )
-        return (await self._session.scalar(stmt)) is not None
-
-    async def count_messages(
-        self,
-        conversation_id: uuid.UUID,
-        *,
-        excluding: Collection[uuid.UUID] = (),
-    ) -> int:
-        """Chat messages in one conversation, leaving out ``excluding``."""
-        stmt = (
-            select(func.count())
-            .select_from(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-                Block.kind == BlockKind.message,
-            )
-        )
-        if excluding:
-            stmt = stmt.where(Block.id.not_in(list(excluding)))
-        return int((await self._session.scalar(stmt)) or 0)
-
     async def latest_artifact(self, conversation_id: uuid.UUID) -> Block | None:
         """The topic's current preview (spec §9.1): the most recent artifact block
         芝士 pointed at. Newest wins — re-running `cheese show` repoints it."""
@@ -1081,76 +510,6 @@ class BlockRepository:
             seen.add(block.content)
             newest_first.append(block)
         return newest_first
-
-    # ---- Emoji reactions (Slack semantics) ----
-
-    async def _get_reaction(
-        self, block_id: uuid.UUID, emoji: str, author: str
-    ) -> BlockReaction | None:
-        stmt = select(BlockReaction).where(
-            BlockReaction.block_id == block_id,
-            BlockReaction.emoji == emoji,
-            BlockReaction.author == author,
-        )
-        return (await self._session.scalars(stmt)).first()
-
-    async def toggle_reaction(
-        self, block_id: uuid.UUID, emoji: str, author: str
-    ) -> bool:
-        """Slack-style toggle: add the (emoji, author) reaction, or remove it if
-        it already exists. Returns True when added, False when removed."""
-        existing = await self._get_reaction(block_id, emoji, author)
-        if existing is not None:
-            await self._session.delete(existing)
-            await self._session.flush()
-            return False
-        self._session.add(BlockReaction(block_id=block_id, emoji=emoji, author=author))
-        await self._session.flush()
-        return True
-
-    async def add_reaction_if_absent(
-        self, block_id: uuid.UUID, emoji: str, author: str
-    ) -> bool:
-        """Idempotent add (never removes) — for platform receipts like 芝士's 👀
-        on the message that summoned it. Returns True when a row was created."""
-        if await self._get_reaction(block_id, emoji, author) is not None:
-            return False
-        self._session.add(BlockReaction(block_id=block_id, emoji=emoji, author=author))
-        await self._session.flush()
-        return True
-
-    async def reactions_for_blocks(
-        self, block_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, list[dict]]:
-        """Aggregated reactions for many blocks in ONE query (no N+1):
-        block_id → [{"emoji", "count", "authors"}], groups ordered by the emoji's
-        first appearance on the block, authors by reaction time (Slack)."""
-        if not block_ids:
-            return {}
-        # One array parameter, not an IN list: the whole timeline of a busy room
-        # is tens of thousands of ids, and asyncpg refuses more than 32767 bound
-        # values in one statement.
-        among = any_(bindparam(None, list(block_ids), type_=ARRAY(Uuid)))
-        stmt = (
-            select(BlockReaction)
-            .where(BlockReaction.block_id == among)
-            .order_by(BlockReaction.created_at, BlockReaction.id)
-        )
-        rows = (await self._session.scalars(stmt)).all()
-        grouped: dict[uuid.UUID, dict[str, dict]] = {}
-        for r in rows:
-            per_block = grouped.setdefault(r.block_id, {})
-            agg = per_block.setdefault(
-                r.emoji, {"emoji": r.emoji, "count": 0, "authors": []}
-            )
-            agg["count"] += 1
-            agg["authors"].append(r.author)
-        return {bid: list(per.values()) for bid, per in grouped.items()}
-
-    async def reactions_for_block(self, block_id: uuid.UUID) -> list[dict]:
-        """Aggregated reactions of one block (same shape as the batch form)."""
-        agg = await self.reactions_for_blocks([block_id])
-        return agg.get(block_id, [])
 
     async def list_by_kind_for_project(
         self, project_id: uuid.UUID, kind: BlockKind

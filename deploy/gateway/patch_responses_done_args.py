@@ -11,6 +11,9 @@ validation (Read without file_path, Bash without command). Measured on dev
 The patch emits the full arguments as one input_json_delta when a function-call
 block closes without having received any delta. Blocks that did get deltas are
 left alone, so arguments are never sent twice.
+
+Upstream: BerriAI/litellm#45348 (fix proposed in #45356). Delete this patch once
+the pinned image includes that fix.
 """
 
 import hashlib
@@ -22,7 +25,7 @@ path = Path(
 source = path.read_bytes()
 # The file as `patch_responses_stream_errors.py` leaves it, which runs first.
 assert hashlib.sha256(source).hexdigest() == (
-    "c2f6eea1cdc7200b6786215cee3772c452308f6d6f6b045aef557d0653ebb006"
+    "9e1c080be36a428b24df401c8b8df76c8b9e10af69b61e233c2f194014830ba6"
 ), "Review the upstream Responses-to-Messages stream adapter and patch_responses_stream_errors.py before updating this patch"
 
 
@@ -93,6 +96,7 @@ replace(
     b"            block_idx = self._item_id_to_block_index.get(item_id, -1) if item_id else self._current_block_index\n"
     b"            if block_idx < 0:\n"
     b"                return\n"
+    b"            self._open_text_blocks.discard(block_idx)\n"
     b"            self._chunk_queue.append(\n"
     b"                {\n"
     b"                    \"type\": \"content_block_stop\",\n",
@@ -101,6 +105,7 @@ replace(
     b"                return\n"
     b"            if self._field(item, \"type\") == \"function_call\":\n"
     b"                self._supply_arguments(block_idx, self._field(item, \"arguments\"))\n"
+    b"            self._open_text_blocks.discard(block_idx)\n"
     b"            self._chunk_queue.append(\n"
     b"                {\n"
     b"                    \"type\": \"content_block_stop\",\n",

@@ -1,0 +1,31 @@
+{
+  "action": {
+    "addPasskey": "add a passkey",
+    "changePassword": "change your password",
+    "deletePasskey": "delete a passkey",
+    "deleteRealName": "delete your real-name information",
+    "disableTOTP": "turn off two-step verification",
+    "generateBackupCodes": "generate new backup codes",
+    "initTOTP": "turn on two-step verification",
+    "unbindOAuthConnection": "unlink a connected account",
+    "updateRealName": "change your real-name information",
+    "viewRealName": "view your full real-name information"
+  },
+  "emailCodeUnavailable": "Two-step verification is on for this account. Use another way.",
+  "failed": "Could not confirm. Try again.",
+  "ledeFor": "Before you {action}, you need to confirm your identity",
+  "method": {
+    "emailCode": "Get a code by email",
+    "password": "Enter your password",
+    "totp": "Enter a code from your authenticator app"
+  },
+  "noMethod": "No way to confirm your identity is set up",
+  "otherMethods": "Other ways",
+  "passkey": "Confirm with a passkey",
+  "passkeyCanceled": "Passkey confirmation was canceled",
+  "passwordRequired": "Password is required",
+  "sendEmailCode": "Email me a code",
+  "sendFailed": "Couldn't send the code. Try again.",
+  "submit": "Confirm",
+  "title": "Confirm it’s you"
+}

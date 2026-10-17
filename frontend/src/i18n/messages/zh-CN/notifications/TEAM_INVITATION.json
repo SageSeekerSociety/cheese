@@ -1,0 +1,8 @@
+{
+  "toast": {
+    "acceptFailed": "接受邀请失败，请稍后再试",
+    "accepted": "已接受邀请",
+    "declineFailed": "拒绝邀请失败，请稍后再试",
+    "declined": "已拒绝邀请"
+  }
+}

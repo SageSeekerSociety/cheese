@@ -5,6 +5,7 @@ import type { ListPayload, RoomTask } from '../cx_types'
 
 import { rememberNumbered } from '../lib/addresses'
 
+import { changesAwaiting } from './awaitingChanged'
 import { readSince, request } from './http'
 
 // 手上有了一件任务，就记下它的地址：点开它时，地址守卫（`lib/addresses`
@@ -115,23 +116,17 @@ export function createRoomTask(roomId: string, title?: string): Promise<RoomTask
   })
 }
 
-/** 开始：负责人确认讨论清楚了。审阅人由后端按档定，先是负责人自己。 */
-export function startTask(taskId: string): Promise<RoomTask> {
-  return request<RoomTask>(`${taskPath(taskId)}/start`, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  })
-}
-
 /** 转交：换负责人，或换做它的 AI 队友。 */
 export function updateTask(
   taskId: string,
   change: { owner_handle?: string; agent_handle?: string | null; contributor_handles?: string[] }
 ): Promise<RoomTask> {
-  return request<RoomTask>(`${taskPath(taskId)}/task`, {
-    method: 'PATCH',
-    body: JSON.stringify(change),
-  })
+  return changesAwaiting(
+    request<RoomTask>(`${taskPath(taskId)}/task`, {
+      method: 'PATCH',
+      body: JSON.stringify(change),
+    })
+  )
 }
 
 /** 给任务改名。人起的名字平台之后不再改。 */
@@ -144,31 +139,17 @@ export function renameTask(taskId: string, title: string): Promise<RoomTask> {
 
 /** 关闭任务。带结论是做完了，不带是不做了。 */
 export function closeTask(taskId: string, conclusion?: string): Promise<RoomTask> {
-  return request<RoomTask>(`${taskPath(taskId)}/close`, {
-    method: 'POST',
-    body: JSON.stringify(conclusion ? { conclusion } : {}),
-  })
+  return changesAwaiting(
+    request<RoomTask>(`${taskPath(taskId)}/close`, {
+      method: 'POST',
+      body: JSON.stringify(conclusion ? { conclusion } : {}),
+    })
+  )
 }
 
 /** 重新打开一件关了的任务。交付过的从项目最新的代码接着做。 */
 export function reopenTask(taskId: string): Promise<RoomTask> {
-  return request<RoomTask>(`${taskPath(taskId)}/reopen`, { method: 'POST' })
-}
-
-export interface DocumentComparison {
-  before: { version: number; content: string }
-  after: { version: number; content: string }
-}
-
-/** 文档的两个版本，并排读。`after` 不给就是当前版本；版本 0 是什么都还没写。 */
-export function compareDocumentVersions(
-  documentId: string,
-  before: number,
-  after?: number
-): Promise<DocumentComparison> {
-  const q = new URLSearchParams({ before: String(before) })
-  if (after != null) q.set('after', String(after))
-  return request<DocumentComparison>(`/documents/${encodeURIComponent(documentId)}/compare?${q.toString()}`)
+  return changesAwaiting(request<RoomTask>(`${taskPath(taskId)}/reopen`, { method: 'POST' }))
 }
 
 /** 任务从哪来：转出它的讨论，和讨论里用到的材料。 */
@@ -176,7 +157,7 @@ export function getTaskRelated(taskId: string): Promise<import('../types/taskOri
   return request(`${taskPath(taskId)}/related`)
 }
 
-/** 第一轮整理文档失败后，把那条指令再交给 AI 队友一次。 */
+/** 第一轮失败后，把那条指令再交给 AI 队友一次。 */
 export function retryTaskOpening(taskId: string): Promise<{ opening: string }> {
   return request(`${taskPath(taskId)}/opening`, { method: 'POST' })
 }

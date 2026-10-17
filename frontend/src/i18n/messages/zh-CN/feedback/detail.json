@@ -1,0 +1,56 @@
+{
+  "action": {
+    "share": "分享",
+    "support": "支持这个反馈",
+    "supported": "已支持"
+  },
+  "aside": {
+    "comments": "评论数",
+    "progress": "进展",
+    "source": "来源",
+    "supports": "支持人数",
+    "topic": "由某个频道里的对话发现"
+  },
+  "back": "反馈中心",
+  "claim": {
+    "claim": "领取",
+    "nobody": "还没人领取",
+    "release": "放弃",
+    "title": "处理人"
+  },
+  "comments": {
+    "desc": "还没有人回复。",
+    "title": "暂无评论"
+  },
+  "commentsLabel": "评论 {n}",
+  "composer": {
+    "open": "写下你的评论…",
+    "placeholder": "补充你遇到的情况，或者说明为什么这个改动对你重要",
+    "submit": "发表评论"
+  },
+  "context": "现场",
+  "copied": "链接已复制",
+  "delete": {
+    "ask": "删掉这条反馈？",
+    "askWithComments": "删掉这条反馈，连同它下面的 {n} 条评论一起？",
+    "cancel": "取消",
+    "confirm": "确认删除",
+    "label": "删除"
+  },
+  "error": {
+    "desc": "检查网络后重试。",
+    "title": "详情加载失败"
+  },
+  "evidence": "证据",
+  "expectation": "期望方案",
+  "missing": {
+    "desc": "它可能已被删除，也可能只有提交它的人、平台管理员、以及提出它时在那个频道里的人能看到。",
+    "title": "这条反馈不存在"
+  },
+  "missingBack": "回到反馈中心",
+  "problem": "问题描述",
+  "repro": "复现步骤",
+  "submittedBy": "由 {handle} 提交",
+  "whatHappened": "发生了什么",
+  "why": "为什么需要"
+}

@@ -1,0 +1,6 @@
+{
+  "hint": "保存地址后，再点下方的「连接 GitHub 仓库」。连接后代码和 PR 都留在这个仓库",
+  "placeholder": "https://github.com/组织或用户名/仓库名",
+  "save": "保存",
+  "title": "GitHub 仓库地址"
+}

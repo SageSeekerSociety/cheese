@@ -1,0 +1,17 @@
+{
+  "add": "Add",
+  "addPlaceholder": "Add a member…",
+  "agentBadge": "AI teammate",
+  "allIn": "Every project member and teammate is already in this channel",
+  "count": "1 member | {count} members",
+  "creator": "Manager",
+  "empty": "No members",
+  "failed": "Something went wrong",
+  "listSeparator": ", ",
+  "loadFailed": "Couldn't load members",
+  "managerHint": "Change it in the project's channel table",
+  "mentionLoadFailed": "Couldn't load the member list, so {'@'} suggestions may be incomplete",
+  "readOnly": "Only people in the channel can add members",
+  "remove": "Remove from channel",
+  "title": "Channel members"
+}

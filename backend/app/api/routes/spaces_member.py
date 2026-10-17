@@ -21,6 +21,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
+from app.api.response import ok
 from app.api.space_deps import (
     _ensure_space_visible,
     get_space_member_publishing_service,
@@ -75,4 +76,4 @@ async def get_space_me_published_tasks(
         sort_by=sortBy,
         sort_order=sortOrder,
     )
-    return {"code": 200, "message": "OK", "data": {"tasks": items}}
+    return ok({"tasks": items})

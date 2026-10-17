@@ -18,7 +18,7 @@ const source = {
 
 beforeEach(() => {
   setLocale('en')
-  mediaUrl.mockResolvedValue('blob:screen')
+  mediaUrl.mockResolvedValue('/api/topics/topic-a/attachments/raw?path=library%2Fscreen.mp4')
 })
 
 afterEach(() => {
@@ -57,8 +57,7 @@ describe('AttachmentVideo', () => {
     expect(mediaUrl).toHaveBeenCalledTimes(2)
   })
 
-  it('releases URLs on replacement, stale completion and unmount', async () => {
-    const revoke = vi.spyOn(URL, 'revokeObjectURL')
+  it('does not show the previous video once the attachment changes', async () => {
     let finish!: (url: string) => void
     mediaUrl.mockImplementationOnce(
       () =>
@@ -72,18 +71,27 @@ describe('AttachmentVideo', () => {
     })
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     await view.rerender({ topicId: 'topic-a', path: 'library/new.mp4' })
-    finish('blob:stale')
-    await waitFor(() => expect(revoke).toHaveBeenCalledWith('blob:stale'))
+    finish('/api/old')
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open video' })).toBeTruthy())
     expect(document.querySelector('video')).toBeNull()
+  })
+
+  it('gives a portrait recording a portrait box, not a 16:9 one', async () => {
+    render(AttachmentVideo, {
+      props: { topicId: 'topic-a', path: 'library/IMG_0001.MOV' },
+      global: { plugins: [createVuetify()], provide: { [ATTACHMENT_SOURCE as symbol]: source } },
+    })
     await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
     await waitFor(() => expect(document.querySelector('video')).toBeTruthy())
-    await view.rerender({ topicId: 'topic-a', path: 'library/next.mp4' })
-    expect(revoke).toHaveBeenCalledWith('blob:screen')
-    await fireEvent.click(screen.getByRole('button', { name: 'Open video' }))
-    await waitFor(() => expect(document.querySelector('video')).toBeTruthy())
-    view.unmount()
-    expect(revoke.mock.calls.filter(([url]) => url === 'blob:screen')).toHaveLength(2)
-    revoke.mockRestore()
+    const video = document.querySelector('video')!
+    // An iPhone screen recording: 1179 × 2556.
+    Object.defineProperty(video, 'videoWidth', { value: 1179 })
+    Object.defineProperty(video, 'videoHeight', { value: 2556 })
+    await fireEvent(video, new Event('loadedmetadata'))
+
+    const ratio = Number(video.style.getPropertyValue('--video-ratio'))
+    expect(ratio).toBeCloseTo(1179 / 2556, 4)
+    expect(ratio).toBeLessThan(1)
   })
 
   it('keeps a download action when the browser cannot play it', async () => {

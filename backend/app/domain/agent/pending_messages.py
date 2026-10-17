@@ -5,19 +5,20 @@ import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
+from app.domain.addressing import Event, Hand, address
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.platform_notices import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
-from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.models import Block, consumed_turn
-from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.block.queries import DEFERRED_INPUT, queued_messages
+from app.domain.delivery.agent import redispatch_undelivered
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
+from app.domain.notice_meta import EVENT_DELIVERY_FALLBACK, EVENT_TURN_QUEUED
 from app.domain.run_record.models import RunRecord
 from app.domain.thread.services import answered_in
 
-DEFERRED_INPUT = "deferred_native_input"
 _runner = None
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ async def finish_work(chat, completion, settle):
         )
         await session.commit()
     nudge_messages(chat, completion.conversation_id)
+    wake_held_deliveries(chat, completion.conversation_id, completion.recipient_handle)
 
 
 async def finish_work_termination(chat, termination, settle):
@@ -64,6 +66,45 @@ async def finish_work_termination(chat, termination, settle):
         )
         await session.commit()
     nudge_messages(chat, termination.conversation_id)
+    wake_held_deliveries(
+        chat, termination.conversation_id, termination.recipient_handle
+    )
+
+
+def wake_held_deliveries(chat, conversation_id, recipient_handle):
+    """Send, in the background, what the platform owes the seat that just freed.
+
+    A delivery tried while its seat still held an earlier work went back to
+    the ledger with a backoff (``delivery.agent.run_attempt``) — the same
+    refusal that defers a person's message, which ``nudge_messages`` wakes on
+    this same ending. Left to its backoff, it waited up to five minutes past
+    the moment it was waiting for, and an agent working in long turns kept
+    taking new work in that gap until the delivery was given up.
+    """
+    runner = _runner
+    if runner is None or not runner.owns_sessions or not runner.accepting_turns:
+        # The periodic dispatch still picks it up when its backoff runs out.
+        return
+
+    async def wake():
+        try:
+            await redispatch_undelivered(
+                chat.session_factory,
+                conversation_id=conversation_id,
+                chat=chat,
+                runner=runner,
+                recipient_handle=recipient_handle,
+            )
+        except Exception:
+            logger.exception(
+                "held delivery wake failed topic=%s seat=%s",
+                conversation_id,
+                recipient_handle,
+            )
+
+    task = asyncio.create_task(wake(), name=f"held-deliveries:{conversation_id}")
+    runner._tasks.add(task)
+    task.add_done_callback(runner._tasks.discard)
 
 
 async def defer_message(session, block_id):
@@ -115,23 +156,6 @@ def nudge_messages(chat, topic_id, runner=None):
     task.add_done_callback(runner._tasks.discard)
 
 
-def queued_messages(since, topic_id=None):
-    """Messages that named an agent and have not had their turn: recent, or
-    held back on purpose (`defer_message`). Filtered by the literal predicate of
-    `ix_blocks_queued_messages`, so a scan on a clock reads that index and not
-    the whole table (`indexed_rows`)."""
-    query = select(Block).where(
-        QUEUED_MESSAGE_ROWS,
-        or_(
-            Block.created_at >= since,
-            Block.meta[DEFERRED_INPUT].as_boolean().is_(True),
-        ),
-    )
-    if topic_id is not None:
-        query = query.where(Block.conversation_id == topic_id)
-    return query.order_by(Block.created_at, Block.id)
-
-
 async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
     """``topic_id`` is a conversation: a room, a task or a 支线, whose
     messages are the blocks carrying its id.
@@ -156,13 +180,10 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
         begun = set(
             await session.scalars(select(AgentTurn.id).where(AgentTurn.id.in_(ids)))
         )
-        busy = {}
-        for conversation, handle in await session.execute(
-            select(AgentTurn.conversation_id, AgentTurn.agent_handle).where(
-                AgentTurn.stopped_at.is_(None)
-            )
-        ):
-            busy.setdefault(conversation, set()).add(handle)
+        # 一趟读全项目的开着的轮次：这个扫描是跨进程的，判据只能是库里那一行，
+        # 不是本进程的内存缓存。这一读法与 `ChatService.has_running_turn` 共用同一
+        # 个 `AgentTurnRepository` 方法，别处不许再抄一份近似查询。
+        busy = await AgentTurnRepository(session).open_turn_seats()
         # Anything the turn left behind says it began, in the conversation or
         # in its run records, but a queue it is waiting in.
         answered = {
@@ -199,7 +220,7 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             if None in running or handle in running:
                 skipped.append((block, "turn_open_in_db"))
                 continue
-            if chat.has_running_turn(*key):
+            if await chat.has_running_turn(*key):
                 skipped.append((block, "turn_running_in_process"))
                 continue
             seated = await conversation_seat(session, conversation, handle)
@@ -234,11 +255,13 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             )
     started = 0
     for (room, handle), block in seats.items():
+        if await chat.has_running_turn(room, handle):
+            continue
         # No await between this final reservation check and scheduling. Other
         # scans may have selected the same row while this one awaited the DB.
         if not runner.owns_sessions or not runner.accepting_turns:
             break
-        if runner.turn_pending(block.id) or chat.has_running_turn(room, handle):
+        if runner.turn_pending(block.id):
             continue
         recipient = (block.meta or {}).get("agent_recipient") or {}
         runner._receive_message(

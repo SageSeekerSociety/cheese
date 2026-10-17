@@ -355,8 +355,8 @@ def test_no_report_past_the_turn_ceiling_fails_and_a_late_report_still_lands(cli
 
 
 def test_a_turn_the_room_says_failed_fails_the_run_with_its_reason(client):
-    from app.domain.block.authorship import AuthorType
     from app.domain.block.models import Block, BlockKind
+    from app.domain.event_author import AuthorType
 
     room = _room(client, _project(client))
     routine = _weekly(client, room, headers=PERSON).json()["data"]
@@ -506,8 +506,8 @@ def test_only_the_executing_teammate_reports_and_nobody_outside_the_room_reads(c
 
 def test_a_turn_that_never_started_says_why(client):
     """The machine was not there: the run fails now, with the room's own reason."""
-    from app.domain.block.authorship import AuthorType
     from app.domain.block.models import Block, BlockKind
+    from app.domain.event_author import AuthorType
 
     room = _room(client, _project(client))
     routine = _weekly(client, room, headers=PERSON).json()["data"]

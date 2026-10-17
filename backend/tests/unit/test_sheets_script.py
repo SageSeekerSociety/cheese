@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.skills import _NATIVE_SKILL_SRC
+from app.domain.skill_library import _NATIVE_SKILL_SRC
 
 SHEETS = _NATIVE_SKILL_SRC / "documents" / "scripts" / "sheets.py"
 

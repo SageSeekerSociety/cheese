@@ -1,4 +1,4 @@
-/** 任务页头：只有负责人能开始、能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
+/** 任务页头：只有负责人能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { TopicEnvironment } from '@/types/compute'
@@ -33,10 +33,9 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     title_source: 'human',
     status: 'open',
     owner_handle: 'alice',
-    started_at: null,
     created_at: '2026-10-05T00:00:00Z',
     updated_at: '2026-10-05T00:00:00Z',
-    presentation: { column: 'not_started', phrase: 'discussing' },
+    presentation: { column: 'needs_you', phrase: 'awaiting_review' },
     ...over,
   } as RoomTask
 }
@@ -75,8 +74,7 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
-function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, startError: string | null = null) {
-  const start = vi.fn(async () => {})
+function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
   const setAgent = vi.fn(async () => true)
@@ -92,10 +90,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
       agents,
       machine: MACHINE,
       machineError: false,
-      starting: false,
-      startError,
       actionError: null,
-      start,
       close: async () => true,
       reopen,
       handOver: async () => true,
@@ -108,7 +103,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
     },
     global: { plugins: [vuetify] },
   })
-  return { ...view, start, loadMachine, setCollaborators, setAgent, rename, reopen }
+  return { ...view, loadMachine, setCollaborators, setAgent, rename, reopen }
 }
 
 function stubViewport() {
@@ -153,43 +148,21 @@ beforeEach(() => {
 })
 
 describe('任务页头', () => {
-  // 页头那一句和频道里的卡、全部任务、总览说同一件事：在等的是看的人，就写「待你开始」。
-  it('等的是看的人：写「待你开始」，等的是别人：写「讨论中」', () => {
+  // 页头那一句和频道里的卡、全部任务、总览说同一件事：在等的是看的人，就写「待你审阅」。
+  it('等的是看的人：写「待你审阅」，等的是别人：写「等人审阅」', () => {
     me = 'alice'
     const mine = mount({ waiting_on: 'alice' })
-    expect(mine.getByTestId('task-phrase').textContent).toBe('待你开始')
+    expect(mine.getByTestId('task-phrase').textContent).toBe('待你审阅')
     mine.unmount()
 
     const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
-    expect(theirs.getByTestId('task-phrase').textContent).toBe('讨论中')
+    expect(theirs.getByTestId('task-phrase').textContent).toBe('等人审阅')
   })
 
-  it('负责人点「开始」就开始', async () => {
-    const { container, start } = mount()
-    const button = container.querySelector('[data-testid="task-start"]')
-    expect(button).not.toBeNull()
-    await fireEvent.click(button!)
-    expect(start).toHaveBeenCalled()
-  })
-
-  it('开始之后不再有「开始」', () => {
-    const { container } = mount({ started_at: '2026-10-05T01:00:00Z', started_by: 'alice' })
-    expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
-  })
-
-  it('不做这件事的人：不能开始，也没有更多操作', () => {
+  it('不做这件事的人：没有更多操作', () => {
     me = 'bob'
     const { container } = mount()
-    expect(container.querySelector('[data-testid="task-start"]')).toBeNull()
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
-  })
-
-  it('开始被拒：只把原因说出来，不再让人在提示里挑审阅人', () => {
-    const { container, start } = mount({}, PEOPLE, AGENTS, '需要指定由谁审阅，或在项目设置中设置默认审阅的人')
-    const notice = container.querySelector('[role="alert"]')!
-    expect(notice.textContent).toContain('需要指定由谁审阅')
-    expect(notice.querySelector('select')).toBeNull()
-    expect(start).not.toHaveBeenCalled()
   })
 
   it('负责人在任务信息里看得到每条会话的环境，也能更换', async () => {

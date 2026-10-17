@@ -5,8 +5,13 @@ import { once } from "node:events";
 import { closeSync, openSync } from "node:fs";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import { api, apiToken, apiLogin, openFirstProject, projectIdOf } from "./helpers";
-
+import {
+  api,
+  apiToken,
+  apiLogin,
+  openFirstProject,
+  projectIdOf,
+} from "./helpers";
 
 /** 一间空房间。每条用例一间，互不干扰。 */
 async function freshRoom(page: Page, title: string) {
@@ -30,7 +35,9 @@ test.describe("房间里的任务", () => {
     await openFirstProject(page);
   });
 
-  test("任务出现在房间总览里，点一下就进它自己的页面", async ({ page }) => {
+  test("任务出现在房间总览里，点一下在右半边打开，整页打开进它自己的页面", async ({
+    page,
+  }) => {
     const projectId = await projectIdOf(page);
     const stamp = Date.now();
     const roomId = await freshRoom(page, `派活 ${stamp}`);
@@ -47,16 +54,23 @@ test.describe("房间里的任务", () => {
     await expect(progress.getByText(`第一件事 ${stamp}`)).toBeVisible();
     await expect(progress.getByText(`第二件事 ${stamp}`)).toBeVisible();
 
-    // 点条目就去这个任务的页面 —— 总览里的一行必须是个入口，不然它只是一张表。
+    // 总览里的一行必须是个入口，不然它只是一张表：任务和支线一样在频道页右半边
+    // 打开，页头写着它的标题。
     await progress.getByText(`第一件事 ${stamp}`).click();
+    await expect(page).toHaveURL(new RegExp(`/threads/${first.id}(\\?|$)`));
+    const pane = page.getByTestId("thread-pane");
+    await expect(pane.getByRole("heading", { level: 2 })).toHaveText(
+      `第一件事 ${stamp}`,
+    );
+    // 「整页打开」进它自己的页面。
+    await pane.getByTestId("thread-open-page").click();
     await expect(page).toHaveURL(new RegExp(`/tasks/${first.number}(\\?|$)`));
-    // 进来的是这个任务：页头写着它的标题。
     await expect(page.locator(".task-header__title")).toHaveText(
       `第一件事 ${stamp}`,
     );
   });
 
-  test("侧栏的项目菜单里打开项目总览，别的频道里的任务也在上面", async ({
+  test("侧栏项目名下的那一行里打开项目总览，别的频道里的任务也在上面", async ({
     page,
   }) => {
     const projectId = await projectIdOf(page);
@@ -65,13 +79,12 @@ test.describe("房间里的任务", () => {
     await dispatch(page, roomId, `跨房间的活 ${stamp}`);
 
     // 从一个频道里出发，走侧栏找到它，而不是直接敲地址：这一条要钉的一半正是
-    // 「找得到」。总览不在项目名下那一行（2026-10-12 清单第 9 条把它挪走了），
-    // 它在点项目名弹出的菜单里。
+    // 「找得到」。总览就摆在项目名下面那一行的第一格（2026-10-13 用户定，见
+    // .claude/rules/project-sidebar.md），点它进去 —— 它不在项目名菜单里了。
     await page.goto(`/projects/${projectId}/topics/${roomId}`);
-    await page.getByRole('button', { name: '项目菜单', exact: true }).click();
     await page
-      .locator('.v-overlay-container')
-      .getByText('总览', { exact: true })
+      .locator('[aria-label="项目页面"] .pinned-row')
+      .getByText("总览", { exact: true })
       .click();
     await expect(page).toHaveURL(/\/projects\/[^/]+\/overview/);
 
@@ -102,10 +115,13 @@ test.describe("房间里的任务", () => {
     const gate = new Promise<void>((resolve) => (release = resolve));
     // 只按住接口那一次：页面自己的地址也是 /projects/{id}/tasks，按住它页面就打不开。
     // 按路径认，不管查询串：页面读的是还在进行的那些（`?status=open`）。
-    await page.route((url) => url.pathname === `/api/projects/${projectId}/tasks`, async (route) => {
-      await gate;
-      await route.continue();
-    });
+    await page.route(
+      (url) => url.pathname === `/api/projects/${projectId}/tasks`,
+      async (route) => {
+        await gate;
+        await route.continue();
+      },
+    );
 
     const chips = page.locator(".tasks__chips button");
     try {

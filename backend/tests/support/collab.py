@@ -162,7 +162,6 @@ class FakeCollab:
                     "content": text,
                     "actors": [body["actor"]],
                     "suggestions": pending,
-                    "requested_by": body.get("requested_by"),
                     "edits": applied,
                     "suggested": suggest,
                     "reason": body.get("reason"),

@@ -1,0 +1,215 @@
+{
+  "note": "snapshot 2026-10-15: for 30 successful Required CI merge_group runs, the pull request that was queued (pr), the base its pull_request run was tested against (base), its head (head), and the commit the queue itself built (mg_head) with its first parent (mg_parent). 'base' and 'mg_parent' are the pull_request and merge_group bases; they are equal exactly when the queue built on the base the PR run had.",
+  "rows": [
+    {
+      "pr": 3822,
+      "base": "a8f1241bf2be9eaf790b65d499851823c01cb6de",
+      "head": "5b1fb95bd6df2cc1cbaa91945fb815f06bbd429a",
+      "mg_head": "3e8eb44c70fe2a57ce3eefdfa2e13728cb612dcd",
+      "mg_parent": "0efc9439329d086ae113fa05c2e72262ca550982"
+    },
+    {
+      "pr": 3787,
+      "base": "04ffa47ff18338ecaa290f35ab340cfd409ae5a8",
+      "head": "53f5a8e8f59444c31aaa05785e0aa7acc47733a6",
+      "mg_head": "0efc9439329d086ae113fa05c2e72262ca550982",
+      "mg_parent": "8bc955b94bd272c7ecf7eb26ab951158ad7d323a"
+    },
+    {
+      "pr": 3821,
+      "base": "2b4f19e38d62a4f230a9bd9464abaaa08c61b8d4",
+      "head": "f40b16bd7920f3e8357a6e232269039d870428dc",
+      "mg_head": "8bc955b94bd272c7ecf7eb26ab951158ad7d323a",
+      "mg_parent": "2f90a53c4dbd1417ef8ebdbac5d5b09da71d7432"
+    },
+    {
+      "pr": 3825,
+      "base": "462d77900a675878dc3a03e321cc48a00d62e20f",
+      "head": "017eadcb64a01d8710f74abe1fd56aab0e3a11b0",
+      "mg_head": "2f90a53c4dbd1417ef8ebdbac5d5b09da71d7432",
+      "mg_parent": "24cc2bde1edc1f8239627a17e0c22e81b83e5a8d"
+    },
+    {
+      "pr": 3823,
+      "base": "a8f1241bf2be9eaf790b65d499851823c01cb6de",
+      "head": "41180dcbf1195dadd5f95b71f7ba706648dd0f38",
+      "mg_head": "24cc2bde1edc1f8239627a17e0c22e81b83e5a8d",
+      "mg_parent": "40df3b07970fe8dceaf85b8779ec47c90c321fe5"
+    },
+    {
+      "pr": 3819,
+      "base": "b48559b0444b40f3e10cc986c462e3dd835d5e63",
+      "head": "af19e9ec6e86b544013c84b61ceef2264b478285",
+      "mg_head": "40df3b07970fe8dceaf85b8779ec47c90c321fe5",
+      "mg_parent": "462d77900a675878dc3a03e321cc48a00d62e20f"
+    },
+    {
+      "pr": 3820,
+      "base": "b48559b0444b40f3e10cc986c462e3dd835d5e63",
+      "head": "537e51dfd0a4f36fa7fb01beb4cf3f8afbc32d4c",
+      "mg_head": "462d77900a675878dc3a03e321cc48a00d62e20f",
+      "mg_parent": "04ffa47ff18338ecaa290f35ab340cfd409ae5a8"
+    },
+    {
+      "pr": 3811,
+      "base": "d8218c0712f8ce4453c07cc0be2658dfb6904922",
+      "head": "f1d981e1ad06d22a89da029950a7ea547f560f7e",
+      "mg_head": "04ffa47ff18338ecaa290f35ab340cfd409ae5a8",
+      "mg_parent": "ebd0683ec88f4bbf15efc2254fd4c508845a08c8"
+    },
+    {
+      "pr": 3816,
+      "base": "8cdf0fb35e480dee02ca26cea999ef9ba739d923",
+      "head": "8efdf6ac697947f687c0a2edb52225806f96ebce",
+      "mg_head": "ebd0683ec88f4bbf15efc2254fd4c508845a08c8",
+      "mg_parent": "a8f1241bf2be9eaf790b65d499851823c01cb6de"
+    },
+    {
+      "pr": 3812,
+      "base": "6edfbbe6de0d22e4950bc083a298caa768175738",
+      "head": "b4c47282a5abd9317481619cb7210e08b904a341",
+      "mg_head": "a8f1241bf2be9eaf790b65d499851823c01cb6de",
+      "mg_parent": "2b4f19e38d62a4f230a9bd9464abaaa08c61b8d4"
+    },
+    {
+      "pr": 3808,
+      "base": "face554e392c503e1b9bb25a61457f6756c29dd4",
+      "head": "9a68577cc2ca49fe1b4cceb10297cd789788a904",
+      "mg_head": "2b4f19e38d62a4f230a9bd9464abaaa08c61b8d4",
+      "mg_parent": "b48559b0444b40f3e10cc986c462e3dd835d5e63"
+    },
+    {
+      "pr": 3818,
+      "base": "8cdf0fb35e480dee02ca26cea999ef9ba739d923",
+      "head": "8a917e0ba967154611522a1b4ff15cf024af0126",
+      "mg_head": "b48559b0444b40f3e10cc986c462e3dd835d5e63",
+      "mg_parent": "67698af4a620b185d6011a14730076f7cbd9150f"
+    },
+    {
+      "pr": 3810,
+      "base": "6edfbbe6de0d22e4950bc083a298caa768175738",
+      "head": "585b48193c19af4aa45146d418e3f021822bb7b0",
+      "mg_head": "67698af4a620b185d6011a14730076f7cbd9150f",
+      "mg_parent": "8cdf0fb35e480dee02ca26cea999ef9ba739d923"
+    },
+    {
+      "pr": 3815,
+      "base": "0d6c0d0b7e755e057794da98707c453d92feacfd",
+      "head": "060a58c75876a5572ab634388270472a0c3d244a",
+      "mg_head": "8cdf0fb35e480dee02ca26cea999ef9ba739d923",
+      "mg_parent": "a2db9d9229a67a5596d2f493db14c761afbde697"
+    },
+    {
+      "pr": 3809,
+      "base": "6edfbbe6de0d22e4950bc083a298caa768175738",
+      "head": "77b3b5ed229d39d13a6958cdaf217a5127e1209b",
+      "mg_head": "a2db9d9229a67a5596d2f493db14c761afbde697",
+      "mg_parent": "d0db6741117de012a71f0dd81160b22b457dd63e"
+    },
+    {
+      "pr": 3805,
+      "base": "c111caeb482a79d44ce65053928665f5efb09553",
+      "head": "6a343cead61d33f4e1b35d552bb3eb348112f2f9",
+      "mg_head": "d0db6741117de012a71f0dd81160b22b457dd63e",
+      "mg_parent": "a3698e4f24f328c0e816ef04e816b26c55f82a73"
+    },
+    {
+      "pr": 3798,
+      "base": "52a1278bccb32e21a1c4d25495784ed1500713aa",
+      "head": "f06303d5222a5a552528c412953896236976c5cc",
+      "mg_head": "a3698e4f24f328c0e816ef04e816b26c55f82a73",
+      "mg_parent": "0d6c0d0b7e755e057794da98707c453d92feacfd"
+    },
+    {
+      "pr": 3814,
+      "base": "d8218c0712f8ce4453c07cc0be2658dfb6904922",
+      "head": "2772930fc41f41a84ae640df247b9849b7c00be2",
+      "mg_head": "0d6c0d0b7e755e057794da98707c453d92feacfd",
+      "mg_parent": "44adf55b3c02731e0c32cab9ba84fc8b21f8e940"
+    },
+    {
+      "pr": 3813,
+      "base": "6edfbbe6de0d22e4950bc083a298caa768175738",
+      "head": "69ae0136e8226f18d2223741caa3336656e5eb33",
+      "mg_head": "44adf55b3c02731e0c32cab9ba84fc8b21f8e940",
+      "mg_parent": "2557d7b3343fd4190c0c3c5695bd387765deb538"
+    },
+    {
+      "pr": 3803,
+      "base": "c111caeb482a79d44ce65053928665f5efb09553",
+      "head": "c04a60ae2bd33b2c15eb5438081a018076abd339",
+      "mg_head": "2557d7b3343fd4190c0c3c5695bd387765deb538",
+      "mg_parent": "d8218c0712f8ce4453c07cc0be2658dfb6904922"
+    },
+    {
+      "pr": 3801,
+      "base": "52a1278bccb32e21a1c4d25495784ed1500713aa",
+      "head": "9ea2c037047e85fe339dbba577037fe5656aa001",
+      "mg_head": "d8218c0712f8ce4453c07cc0be2658dfb6904922",
+      "mg_parent": "88aac07602999bef93d1722cc8a7a9f5a591c2fd"
+    },
+    {
+      "pr": 3781,
+      "base": "face554e392c503e1b9bb25a61457f6756c29dd4",
+      "head": "bf6e59ab4cbe7121654de5996312098d7157e201",
+      "mg_head": "88aac07602999bef93d1722cc8a7a9f5a591c2fd",
+      "mg_parent": "6edfbbe6de0d22e4950bc083a298caa768175738"
+    },
+    {
+      "pr": 3807,
+      "base": "d376a2d89111eb241eb6be2e2f92fb11dafdc919",
+      "head": "b12f6a97cf7f0d24d64aff51937895617d714b7c",
+      "mg_head": "6edfbbe6de0d22e4950bc083a298caa768175738",
+      "mg_parent": "face554e392c503e1b9bb25a61457f6756c29dd4"
+    },
+    {
+      "pr": 3800,
+      "base": "c111caeb482a79d44ce65053928665f5efb09553",
+      "head": "c3fc57147d1ecfeb4655053204b0ffbd586c7711",
+      "mg_head": "face554e392c503e1b9bb25a61457f6756c29dd4",
+      "mg_parent": "d376a2d89111eb241eb6be2e2f92fb11dafdc919"
+    },
+    {
+      "pr": 3799,
+      "base": "52a1278bccb32e21a1c4d25495784ed1500713aa",
+      "head": "87e2a2474bd90702ad3305adde31e13f8379b876",
+      "mg_head": "d376a2d89111eb241eb6be2e2f92fb11dafdc919",
+      "mg_parent": "be1f7dbbf14b9bbd74ca6997d0f51fc49b7e0648"
+    },
+    {
+      "pr": 3761,
+      "base": "c111caeb482a79d44ce65053928665f5efb09553",
+      "head": "37378a1bb9e364aefa1653994921028b51d3d313",
+      "mg_head": "be1f7dbbf14b9bbd74ca6997d0f51fc49b7e0648",
+      "mg_parent": "cac8af8bc995e6fa7a50b3c8efc6984a96c94fed"
+    },
+    {
+      "pr": 3802,
+      "base": "c111caeb482a79d44ce65053928665f5efb09553",
+      "head": "9beb8121bd51775d6cf1700489351d995d76ccf6",
+      "mg_head": "cac8af8bc995e6fa7a50b3c8efc6984a96c94fed",
+      "mg_parent": "c111caeb482a79d44ce65053928665f5efb09553"
+    },
+    {
+      "pr": 3788,
+      "base": "2657b707642a81d46463ecc06425d85267a6e3c0",
+      "head": "e08a343518626c76026530de7f4cb817c8bba7d5",
+      "mg_head": "c111caeb482a79d44ce65053928665f5efb09553",
+      "mg_parent": "27d4a1ecc867c027b8f3bc263fe703492f152cd9"
+    },
+    {
+      "pr": 3760,
+      "base": "52a1278bccb32e21a1c4d25495784ed1500713aa",
+      "head": "4ef19b8b1d8c0ca11a2222a977b526050f41d3bc",
+      "mg_head": "27d4a1ecc867c027b8f3bc263fe703492f152cd9",
+      "mg_parent": "cab30dbed15c9702eceb92ea8358354ce521eac6"
+    },
+    {
+      "pr": 3754,
+      "base": "52a1278bccb32e21a1c4d25495784ed1500713aa",
+      "head": "a823953a2a4b3233329237b69f161f37acc995ff",
+      "mg_head": "cab30dbed15c9702eceb92ea8358354ce521eac6",
+      "mg_parent": "b9e1a19edc76586832b6a2477253487ee5d3a1e8"
+    }
+  ]
+}
