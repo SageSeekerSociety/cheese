@@ -303,7 +303,7 @@ class Monitor:
     async def _say(self, text: str) -> None:
         try:
             await self.owner.tell(text)
-        except Exception as error:  # noqa: BLE001 — the watch goes on
+        except Exception as error:  # the watch goes on
             print(f"[cheese] monitor {self.task} untold: {error!r}", file=sys.stderr)
 
     def _event(self, body: str) -> str:
@@ -411,7 +411,7 @@ class Monitor:
                             "wait": min(READ_WAIT_S, left),
                         },
                     )
-                except Exception as error:  # noqa: BLE001 — the machine may come back
+                except Exception as error:  # the machine may come back
                     print(
                         f"[cheese] monitor {self.task} unread: {error!r}",
                         file=sys.stderr,

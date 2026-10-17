@@ -503,7 +503,7 @@ class RemoteTools:
             text = self.platform.run_platform_tool(tool, arguments, host)
         except MachineOutOfReach:
             text, success = MACHINE_OUT_OF_REACH, False
-        except Exception as exc:  # noqa: BLE001 — the agent reads the reason
+        except Exception as exc:  # the agent reads the reason
             text, success = failure_text(exc), False
         else:
             success = True
@@ -595,7 +595,7 @@ class RemoteTools:
                 success = True
             except MachineOutOfReach:
                 text, success = MACHINE_OUT_OF_REACH, False
-            except Exception as exc:  # noqa: BLE001 — the agent reads the reason
+            except Exception as exc:  # the agent reads the reason
                 text, success = failure_text(exc), False
         return {
             "success": success,
