@@ -33,13 +33,15 @@ class VerifyBriefPathsTests(unittest.TestCase):
         (self.root / "src/overlap.py").write_text("present\n", encoding="utf-8")
         (self.root / "docs/说明.md").write_text("present\n", encoding="utf-8")
         (self.root / "docs/config.md").write_text("present\n", encoding="utf-8")
+        (self.root / "docs/v9.9").write_text("present\n", encoding="utf-8")
         (self.root / "public/logo.png").write_text("present\n", encoding="utf-8")
         (self.root / "public/logo.avif").write_text("present\n", encoding="utf-8")
+        (self.root / "logo.avif").write_text("present\n", encoding="utf-8")
         (self.root / "README.md").write_text("readme\n", encoding="utf-8")
         (self.root / "后台管理布局统一-方案B.pdf").write_text("present\n", encoding="utf-8")
         (self.root / "Makefile").write_text("all:\n\ttrue\n", encoding="utf-8")
         self.git(
-            "add", "src", "docs", "public", "README.md", "Makefile",
+            "add", "src", "docs", "public", "logo.avif", "README.md", "Makefile",
             "后台管理布局统一-方案B.pdf",
         )
         self.git("commit", "-qm", "initial")
@@ -208,15 +210,36 @@ class VerifyBriefPathsTests(unittest.TestCase):
         self.assertIn("Makefile", errors)
 
     def test_root_filename_with_extension_is_not_truncated(self):
-        result, output, errors = self.run_tool("Update README.md\n")
+        for brief in ("Update README.md\n", "Update README.md中的引用。\n"):
+            with self.subTest(brief=brief):
+                result, output, errors = self.run_tool(brief)
+                self.assertEqual(result, 0, errors)
+                self.assertIn("verified 1 brief path", output)
+                result, _, errors = self.run_tool(
+                    brief, "--in-flight-actual", "README.md"
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("overlaps in-flight", errors)
+                self.assertIn("README.md", errors)
+                self.assertNotIn("README\n", errors)
+
+    def test_root_version_labels_are_not_paths(self):
+        for brief in ("Update V1.2 API\n", "Update PR.123 description\n"):
+            with self.subTest(brief=brief):
+                result, output, errors = self.run_tool(brief)
+                self.assertEqual(result, 0, errors)
+                self.assertIn("verified 0 brief path", output)
+
+    def test_root_unknown_extension_is_checked(self):
+        result, output, errors = self.run_tool("更新 logo.avif中的引用。\n")
         self.assertEqual(result, 0, errors)
         self.assertIn("verified 1 brief path", output)
         result, _, errors = self.run_tool(
-            "Update README.md\n", "--in-flight-actual", "README.md"
+            "更新 logo.avif中的引用。\n", "--in-flight-actual", "logo.avif"
         )
         self.assertEqual(result, 1)
         self.assertIn("overlaps in-flight", errors)
-        self.assertIn("README.md", errors)
+        self.assertIn("logo.avif", errors)
 
     def test_unknown_extension_is_trimmed_before_chinese_prose(self):
         for path in ("public/logo.png", "public/logo.avif"):
@@ -232,30 +255,81 @@ class VerifyBriefPathsTests(unittest.TestCase):
                 self.assertIn("overlaps in-flight", errors)
                 self.assertIn(path, errors)
 
+    def test_version_segments_are_not_trimmed_as_extensions(self):
+        for path in ("docs/v9.9说明", "docs/方案.v2说明"):
+            with self.subTest(path=path):
+                brief = f"新建 {path}\n"
+                result, output, errors = self.run_tool(brief)
+                self.assertEqual(result, 0, errors)
+                self.assertIn("verified 1 brief path", output)
+                result, _, errors = self.run_tool(
+                    brief, "--in-flight-actual", path
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("overlaps in-flight", errors)
+                self.assertIn(path, errors)
+
     def test_new_marker_extracts_untracked_extensionless_path(self):
         result, output, errors = self.run_tool("新建 Dockerfile\n")
         self.assertEqual(result, 0, errors)
         self.assertIn("verified 1 brief path", output)
 
-    def test_new_marker_is_local_and_supports_path_lists(self):
+    def test_new_marker_punctuation_keeps_the_path_visible(self):
+        cases = (
+            ("新建文件：src/overlap.py\n", "src/overlap.py"),
+            ("新建文件:docs/config.md\n", "docs/config.md"),
+            ("新增接口、docs/config.md\n", "docs/config.md"),
+            ("新建文件（docs/config.md）\n", "docs/config.md"),
+        )
+        for brief, path in cases:
+            with self.subTest(brief=brief):
+                result, _, errors = self.run_tool(
+                    brief, "--in-flight-actual", path
+                )
+                self.assertEqual(result, 1)
+                self.assertIn("marked new but already exists", errors)
+                self.assertIn("overlaps in-flight", errors)
+                self.assertIn(path, errors)
+                self.assertNotIn("文件：", errors)
+
+    def test_new_marker_is_local_and_supports_descriptors(self):
         for brief in (
             "新增 API src/new-api.py\n",
             "新增接口 docs/new-api.md\n",
+            "新增接口docs/new-api.md\n",
             "新建文件 docs/new.md\n",
             "新增 两个文件 src/new-c.py\n",
             "新建 文件 Dockerfile\n",
+            "新增了缓存层，修改 src/existing.py\n",
         ):
             with self.subTest(brief=brief):
                 result, output, errors = self.run_tool(brief)
                 self.assertEqual(result, 0, errors)
                 self.assertIn("verified 1 brief path", output)
 
+    def test_counted_new_file_list_marks_both_paths(self):
         result, output, errors = self.run_tool(
-            "新增 2 个文件 src/new-a.py, 新建 src/new-b.py\n"
+            "新增 2 个文件 src/new-a.py, src/new-b.py\n"
         )
         self.assertEqual(result, 0, errors)
         self.assertIn("verified 2 brief path", output)
 
+    def test_chinese_counted_new_file_list_marks_both_paths(self):
+        result, output, errors = self.run_tool(
+            "新增 两个文件 src/new-a.py、src/new-b.py\n"
+        )
+        self.assertEqual(result, 0, errors)
+        self.assertIn("verified 2 brief path", output)
+
+    def test_counted_new_file_list_rejects_existing_item(self):
+        result, _, errors = self.run_tool(
+            "新增 2 个文件 src/new-a.py, src/existing.py\n"
+        )
+        self.assertEqual(result, 1)
+        self.assertIn("marked new but already exists", errors)
+        self.assertIn("src/existing.py", errors)
+
+    def test_explicit_new_markers_do_not_bleed_between_list_items(self):
         result, output, errors = self.run_tool(
             "新建 docs/new-a.md, 新建 docs/new-b.md；修改 docs/config.md\n"
         )
@@ -267,10 +341,6 @@ class VerifyBriefPathsTests(unittest.TestCase):
         )
         self.assertEqual(result, 0, errors)
         self.assertIn("verified 2 brief path", output)
-
-        result, output, errors = self.run_tool("新增了缓存层，修改 src/existing.py\n")
-        self.assertEqual(result, 0, errors)
-        self.assertIn("verified 1 brief path", output)
 
     def test_new_marker_for_existing_path_is_red(self):
         result, _, errors = self.run_tool("新建 src/existing.py\n")
