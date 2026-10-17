@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session, SessionTransaction
 from sqlalchemy.pool import NullPool, QueuePool
 
 from app.core.config import settings
+from app.core.sentences import say
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +278,7 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
             ):
                 raise HTTPException(
                     status_code=503,
-                    detail="Database lock unavailable; retry shortly",
+                    detail=say("systemBusy"),
                     headers={"Retry-After": "1"},
                 ) from exc
             raise

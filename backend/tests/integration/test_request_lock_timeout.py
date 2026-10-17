@@ -101,6 +101,7 @@ async def test_a_room_lock_wait_returns_503_within_twenty_seconds_and_releases_t
                 assert 14 <= elapsed < 20, elapsed
                 assert int(response.headers["Retry-After"]) > 0
                 assert response.json()["code"] == 503
+                assert response.json()["error"]["i18n"]["key"] == "systemBusy"
                 assert db.pool_status(request_engine)["checked_out"] == 0
                 # The holder is STILL locked; unrelated work can use the slot.
                 other = await asyncio.wait_for(http.get("/read"), timeout=1)
