@@ -234,6 +234,8 @@ RUN_RECORDS_DESCRIPTION = (
     "给 `turns` 读另一个问题：这一窗口里一共起了多少轮、其中多少轮留下了终态失败事件"
     "——一种事一行的读法答不出「一共跑了多少轮」。没有失败事件的轮次读成空，那是平台"
     "没为它记过，不是记了成功。只读。"
+    "给 `turn_id`（完整轮次号）就读这一轮：它怎么了、落下了哪些运行记录；还没结束的"
+    "轮次还会说会话最近一帧是什么、多久以前 —— 不知道就是不知道，不是 0。"
     "只有做这个平台本身的项目读得到，别的项目会被拒。"
 )
 
@@ -924,6 +926,10 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "一轮一行：这一窗口里跑过的轮次、各自留下什么终态"
                     "失败事件（空 = 平台没记过，不是成功）、这一轮的提示被投了几次",
                 },
+                "turn_id": _text(
+                    "完整的一轮号；给了就读这一轮（它怎么了、落下了哪些运行记录、"
+                    "还没结束时最近一帧是什么），忽略 window"
+                ),
                 "limit": {
                     "type": "integer",
                     "description": "只跟 turns 一起用：最多回几行，默认 200，最多 500",
@@ -1630,6 +1636,13 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {"method": "GET", "path": "/feedback?" + urllib.parse.urlencode(params)}
     if tool == "cheese_run_records":
         params = {"topic": topic, **_given(args, "window")}
+        if args.get("turn_id"):
+            ref = urllib.parse.quote(str(args["turn_id"]).strip(), safe="")
+            return {
+                "method": "GET",
+                "path": f"/run-records/turns/{ref}?"
+                + urllib.parse.urlencode({"topic": topic}),
+            }
         if args.get("turns"):
             params.update(_given(args, "limit"))
             return {
@@ -2010,7 +2023,7 @@ def _doc_get(args: dict, host) -> str:
     host.doc_versions[document["CHEESE_DOCUMENT"]] = version
     if not doc.get("content"):
         return "这份文档还是空的；cheese_doc_set 会写下第一版。"
-    lines = [doc["content"]]
+    lines = _doc_links(document["CHEESE_DOCUMENT"], host) + [doc["content"]]
     pending = doc.get("pending_suggestions") or []
     if pending:
         # 建议还不是正文：上面读到的是没有它们的文本。列出来，免得再提一遍。
@@ -2110,6 +2123,54 @@ def _made_canvases(answer: dict) -> list[str]:
 #: How much of one canvas `cheese_doc_get` shows after the document; the rest
 #: is a `cheese_canvas_get` away.
 _DOC_CANVAS_CHARS = 6000
+
+
+def _doc_links(document: str, host) -> list[str]:
+    """Which documents this one links to and which documents and conversations
+    link to it, by title, ahead of its text: what is around it, for reading
+    only the one that matters. Nothing when there are none, or when the
+    platform could not say."""
+    try:
+        found = host.request({"method": "GET", "path": f"/documents/{document}/links"})
+    except Exception:  # noqa: BLE001 — the document reads without its links
+        return []
+    data = found.get("data") or {}
+
+    def doc_name(row: dict) -> str:
+        title = row.get("title") or "无标题"
+        if row.get("number"):
+            return f"文档 {row['number']}《{title}》"
+        return f"《{title}》（<#{row['id']}>）"
+
+    def place_name(row: dict) -> str:
+        where = row["conversation"]
+        if where["kind"] == "room":
+            name = f"#{where['title']}"
+        elif where["kind"] == "task":
+            name = f"任务「{where['title']}」"
+        else:
+            name = f"支线「{where['title']}」"
+        return f"{name}（{row.get('count', 1)} 条）"
+
+    to = [doc_name(r) for r in data.get("links_to") or []]
+    by_docs = [
+        doc_name(r) for r in data.get("linked_from") or [] if r["kind"] == "document"
+    ]
+    by_talk = [
+        place_name(r)
+        for r in data.get("linked_from") or []
+        if r["kind"] == "conversation"
+    ]
+    if not (to or by_docs or by_talk):
+        return []
+    lines = ["--- 链接（只有标题；要读哪份用 cheese_doc_get(document=编号)）"]
+    if to:
+        lines.append("它引用的文档：" + "、".join(to))
+    if by_docs:
+        lines.append("引用它的文档：" + "、".join(by_docs))
+    if by_talk:
+        lines.append("引用它的对话：" + "、".join(by_talk))
+    return [*lines, "---", ""]
 
 
 def _doc_canvases(document: str, host) -> list[str]:
@@ -2644,6 +2705,8 @@ def _run_records(args: dict, host) -> str:
             raise PlatformToolError(f"没读到：{why.rstrip('。')}。") from exc
         raise
     body = data.get("data") or {}
+    if args.get("turn_id"):
+        return _turn_lines(body)
     if args.get("turns"):
         return _turns_lines(body)
     if args.get("key") and args.get("kind"):
@@ -2704,8 +2767,55 @@ def _turns_lines(body: dict) -> str:
         )
         if turn.get("prompt_attempts") is not None:
             line += f"  投喂 {turn['prompt_attempts']} 次"
+        line += _frame_suffix(turn)
         lines.append(line)
     lines.append("没有失败事件的轮次是平台没为它记过，不是记了成功。")
+    return "\n".join(lines)
+
+
+def _frame_suffix(turn: dict) -> str:
+    """最近一帧的种类和年龄；不知道就说不知道，不说 0。
+
+    只补在还没结束的轮次上：一个已经关掉的轮次最近有没有帧是历史，不是活着的
+    证据（`api/routes/run_records.py` 的 `_add_frames`）。
+    """
+    kind = turn.get("last_frame_kind")
+    age = turn.get("last_frame_age_s")
+    if kind is None or age is None:
+        return "  最近帧 未知"
+    return f"  最近帧 {kind}，{age}s 前"
+
+
+def _turn_lines(turn: dict) -> str:
+    """一轮的下钻：它怎么了，最近一帧，和它落下的运行记录。"""
+    if turn.get("failure_event"):
+        became = f"失败 {turn['failure_event']}"
+    elif turn.get("status") == "unfinished":
+        became = "没记过失败（不等于成功）"
+    else:
+        became = turn.get("status") or "未知"
+    lines = [
+        f"{turn.get('turn_id')}  起 {turn.get('started_at')}  "
+        f"止 {turn.get('stopped_at') or '—'}  {became}",
+        f"对话 {turn.get('conversation_id') or '—'}",
+        "投喂 "
+        + (
+            f"{turn['prompt_attempts']} 次"
+            if turn.get("prompt_attempts") is not None
+            else "未知"
+        ),
+    ]
+    lines[0] += _frame_suffix(turn)
+    records = turn.get("records") or []
+    if not records:
+        lines.append("这一轮没有落下运行记录。")
+        return "\n".join(lines)
+    lines.append(f"运行记录 {len(records)} 条：")
+    for record in records:
+        lines.append(
+            f"  [{record.get('kind')}] {record.get('content')}"
+            f"  {record.get('at')}"
+        )
     return "\n".join(lines)
 
 

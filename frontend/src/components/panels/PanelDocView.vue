@@ -5,6 +5,7 @@
 // composables/usePanelDoc.ts 里（#2143）。正文编辑器本身在 doc/DocSurface.vue：这里画出
 // 它的位置，把取来的东西递下去，把底下发上来的动作接住。正文不经过这里：编辑器直接绑
 // 在协同文档（`session`）上，没有一个「保存」要这一层去管。
+import type { DocBacklink } from '../../api/docLinks'
 import type { DocConnection, DocPeer, DocSession } from '../../composables/useDocCollab'
 import type { SendDocComment } from '../../composables/useDocCommentDraft'
 import type { useMentionOutside } from '../../composables/useMentionOutside'
@@ -15,6 +16,7 @@ import type { DocAgentListener, DocAgentRequest } from '../../lib/docAgent'
 import type { CommentSpot } from '../../lib/docCommentSpots'
 import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
+import type { LinkableDocument } from '../../lib/docMentionMenu'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
 import type { CanvasData } from '../../types/canvas'
@@ -33,6 +35,7 @@ import { exportMarkdown } from '../../lib/docSchema'
 import { draftWaiting, takeDraft } from '../../lib/overviewDraft'
 import { topicTitle } from '../../lib/topicState'
 
+import DocBacklinks from './doc/DocBacklinks.vue'
 import DocCommentPanel from './doc/DocCommentPanel.vue'
 import DocEditLayer from './doc/DocEditLayer.vue'
 import DocFindBar from './doc/DocFindBar.vue'
@@ -69,6 +72,10 @@ const props = withDefaults(
     fetchNotifiedMentions?: () => void
     /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
+    /** 打 # 时能引用的文档。 */
+    documentList?: LinkableDocument[]
+    /** 引用了这份文档的地方，画在正文末尾。 */
+    backlinks?: DocBacklink[]
     /** 画在一整页里（项目文档的项目目标）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
     /** 任务的实况文档：界面上不给它固定标题，正文自己说。 */
@@ -147,6 +154,8 @@ const props = withDefaults(
     notifiedMentions: () => [],
     fetchNotifiedMentions: undefined,
     topicList: () => [],
+    documentList: () => [],
+    backlinks: () => [],
     bare: false,
     untitled: false,
     barTo: undefined,
@@ -173,7 +182,7 @@ const props = withDefaults(
 )
 
 const emit = defineEmits<{
-  'open-topic': [topicId: string]
+  'open-topic': [topicId: string, blockId?: string]
   'mention-click': [handle: string]
   'open-file': [path: string]
   /** 资料库文档的标题改成了这样。 */
@@ -209,7 +218,9 @@ const titleDraft = ref(props.document?.title ?? '')
 const titleEditing = ref(false)
 watch(
   () => [props.document?.id, props.document?.title] as const,
-  ([id, name], [beforeId]) => {
+  ([id, name], [beforeId, beforeName]) => {
+    // 外层每次重画都递来一个新的 document 对象：编号和名字都没变就不是「文档改名了」。
+    if (id === beforeId && name === beforeName) return
     if (id !== beforeId || !titleEditing.value) titleDraft.value = name ?? ''
   }
 )
@@ -591,6 +602,8 @@ defineExpose({
                 :placeholder="document ? t('work.room.doc.emptyPlaceholderLibrary') : ''"
                 :topic-id="topic?.id ?? null"
                 :topic-list="topicList"
+                :document-list="documentList"
+                :document-id="document?.id ?? null"
                 :mention-names="mentionNames"
                 :mention-people="mentionPeople"
                 :notified-mentions="notifiedMentions"
@@ -623,6 +636,11 @@ defineExpose({
                 :suggestion-reasons="suggestionReasons"
                 :mention-names="mentionNames"
                 @open-thread="locateComment"
+              />
+              <DocBacklinks
+                :items="backlinks"
+                :names="agentHandle ? { ...mentionNames, [agentHandle]: agentName } : mentionNames"
+                @open="(id: string, block?: string) => emit('open-topic', id, block)"
               />
             </div>
           </div>

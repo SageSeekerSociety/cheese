@@ -12,6 +12,9 @@ import * as directives from 'vuetify/directives'
 import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+// 文档的链接那一侧（#3827）：打开文档时问一次被引用、打 # 时问一次能引用的文档。这里不关心。
+vi.mock('@/api/docLinks', () => ({ getDocumentBacklinks: async () => ({ links_to: [], linked_from: [] }) }))
+vi.mock('@/lib/linkableDocuments', () => ({ linkableDocuments: async () => [] }))
 vi.mock('../../api/docThreads', () => ({
   listDocThreads: async () => ({ data: [], total: 0 }),
   writeDocThread: async () => ({}),

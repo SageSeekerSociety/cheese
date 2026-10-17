@@ -44,7 +44,7 @@ from sqlalchemy.orm import Mapped
 
 from app.core.errors import ValidationError
 from app.domain.addressing import Hand
-from app.domain.review.notes import NoteCode, NoteLevel, note_level
+from app.domain.review_note_codes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
 
 # `Task` 是这一层唯一还**按类**标进签名的 ORM 行 —— **暂留**，不是读模型。项目 rail

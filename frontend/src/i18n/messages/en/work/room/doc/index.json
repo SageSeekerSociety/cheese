@@ -59,5 +59,10 @@
   "titlePlaceholder": "Title",
   "undo": "Undo",
   "untitled": "Untitled doc",
-  "you": "you"
+  "you": "you",
+  "backlinks": {
+    "title": "Linked from",
+    "edited": "Edited by {name} {when}",
+    "count": "{count} messages"
+  }
 }
