@@ -11,7 +11,6 @@ import time
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / ".claude" / "scripts" / "check-review-artifacts.py"
 ORPHAN = 1
@@ -120,9 +119,8 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         self.assertEqual(self._run(root).returncode, 0)
 
     def test_a_path_glued_to_chinese_prose_passes(self) -> None:
-        root = self._tree(
-            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "详见artifacts/kept.pdf这一份。\n"}
-        )
+        note = "详见artifacts/kept.pdf这一份。\n"
+        root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4", "note.md": note})
         self.assertEqual(self._run(root).returncode, 0)
 
     def test_artifact_in_a_subdirectory_is_matched_by_full_path(self) -> None:
@@ -273,9 +271,8 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_backslash_separated_prose_path_is_not_a_citation(self) -> None:
-        root = self._tree(
-            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "见 old\\kept.pdf 这一份。\n"}
-        )
+        note = "见 old\\kept.pdf 这一份。\n"
+        root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4", "note.md": note})
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_bare_name_glued_to_chinese_is_not_a_citation(self) -> None:
@@ -286,9 +283,8 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_path_prefix_is_not_a_citation(self) -> None:
-        root = self._tree(
-            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "见 myartifacts/kept.pdf 这里。\n"}
-        )
+        note = "见 myartifacts/kept.pdf 这里。\n"
+        root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4", "note.md": note})
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_parent_relative_path_passes(self) -> None:
@@ -455,9 +451,8 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         self.assertEqual(self._run(root).returncode, 0)
 
     def test_a_link_with_a_trailing_ellipsis_does_not_count(self) -> None:
-        root = self._tree(
-            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "[产物](artifacts/kept.pdf...)\n"}
-        )
+        note = "[产物](artifacts/kept.pdf...)\n"
+        root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4", "note.md": note})
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_plus_joined_longer_name_is_not_a_citation(self) -> None:
@@ -560,7 +555,7 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         )
         self.assertEqual(self._run(root).returncode, 0)
 
-    def test_a_destination_that_starts_another_link_still_finds_the_inner_one(self) -> None:
+    def test_a_destination_starting_another_link_still_finds_the_inner(self) -> None:
         root = self._tree(
             {
                 "artifacts/kept.pdf": b"%PDF-1.4",
@@ -737,7 +732,7 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         )
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
-    def test_an_escaped_quote_in_a_reference_definition_title_does_not_count(self) -> None:
+    def test_an_escaped_quote_in_a_reference_title_does_not_count(self) -> None:
         root = self._tree(
             {
                 "artifacts/kept.pdf": b"%PDF-1.4",
@@ -810,9 +805,8 @@ class ReviewArtifactGuardTests(unittest.TestCase):
     def test_an_unreadable_artifacts_directory_cannot_be_judged(self) -> None:
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             self.skipTest("root can read a mode-000 directory")
-        root = self._tree(
-            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "[产物](artifacts/kept.pdf)\n"}
-        )
+        note = "[产物](artifacts/kept.pdf)\n"
+        root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4", "note.md": note})
         artifacts = root / "docs" / "reviews" / "artifacts"
         artifacts.chmod(0)
         self.addCleanup(artifacts.chmod, 0o755)
@@ -830,9 +824,8 @@ class ReviewArtifactGuardTests(unittest.TestCase):
     def test_an_unreadable_note_cannot_be_judged(self) -> None:
         if hasattr(os, "geteuid") and os.geteuid() == 0:
             self.skipTest("root can read a mode-000 file")
-        root = self._tree(
-            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "[产物](artifacts/kept.pdf)\n"}
-        )
+        text = "[产物](artifacts/kept.pdf)\n"
+        root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4", "note.md": text})
         note = root / "docs" / "reviews" / "note.md"
         note.chmod(0)
         self.addCleanup(note.chmod, 0o644)
