@@ -9,7 +9,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).with_name("check-test-copy-assertions.py")
 BASELINE_PATH = "backend/tests/integration/test_domain_error_language.py"
 BASELINE_COPY = "The source channel hasn't run yet (there's no session to clone)"
@@ -27,13 +26,15 @@ class TestCopyAssertionGuardTests(unittest.TestCase):
             self._write(
                 root,
                 "backend/tests/unit/test_copy.py",
-                f'assert actual == "{LONG_COPY}"\nself.assertEqual(actual, "{LONG_COPY}")\n',
+                f'assert actual == "{LONG_COPY}"\nassert "{LONG_COPY}" == actual\n'
+                f'self.assertEqual(actual, "{LONG_COPY}")\n',
             )
             self._write(
                 root,
                 "frontend/src/copy.spec.ts",
                 f'expect(actual).toBe("{LONG_COPY}")\nexpect(actual).toEqual(`{LONG_COPY}`)\n'
-                f'assert.equal(actual, "{LONG_COPY}")\n"{LONG_COPY}" === actual\n',
+                f'assert.equal(actual, "{LONG_COPY}")\n"{LONG_COPY}" === actual\n'
+                f'actual === "{LONG_COPY}"\nexpect(actual).toHaveProperty("message", "{LONG_COPY}")\n',
             )
             self._write(
                 root,
@@ -44,12 +45,10 @@ class TestCopyAssertionGuardTests(unittest.TestCase):
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("backend/tests/unit/test_copy.py:1", result.stderr)
-        self.assertIn("backend/tests/unit/test_copy.py:2", result.stderr)
-        self.assertIn("frontend/src/copy.spec.ts:1", result.stderr)
-        self.assertIn("frontend/src/copy.spec.ts:2", result.stderr)
-        self.assertIn("frontend/src/copy.spec.ts:3", result.stderr)
-        self.assertIn("frontend/src/copy.spec.ts:4", result.stderr)
+        for line in (1, 2, 3):
+            self.assertIn(f"backend/tests/unit/test_copy.py:{line}", result.stderr)
+        for line in (1, 2, 3, 4, 5, 6):
+            self.assertIn(f"frontend/src/copy.spec.ts:{line}", result.stderr)
         self.assertIn("backend/tests/unit/test_copy.cjs:1", result.stderr)
         self.assertIn("Python 用 `in`", result.stderr)
         self.assertIn("Vitest 用 `toContain`", result.stderr)
@@ -170,6 +169,25 @@ expect(actual).not.toBe("This explanatory sentence should be checked by its impo
             "format('{0}/{1}/{2}', github.repository, github.ref_name, github.sha)",
             "startsWith(github.ref, 'refs/heads/') && github.event_name == 'pull_request'",
             "contains(fromJSON('[...]'), github.event_name)",
+            "(github.event_name == 'push' && github.ref == 'refs/heads/main')",
+            "WITH recent AS (SELECT id FROM events WHERE status = 'open') SELECT id FROM recent ORDER BY id",
+            "INSERT INTO tasks (id, title) VALUES (1, 'x') RETURNING id",
+            "UPDATE tasks SET title = 'x' WHERE id = 1 RETURNING id",
+            "DELETE FROM tasks WHERE id = 1 RETURNING id",
+            "INSERT INTO tasks (id, title) VALUES (1, 'x') ON CONFLICT (id) DO UPDATE SET title = 'y' RETURNING id",
+            "SELECT id FROM events WHERE payload @> '{\"kind\": \"x\"}'::jsonb",
+            "SELECT id FROM events WHERE payload->>'eventType' = $1",
+            "SELECT id FROM tasks UNION ALL SELECT id FROM archive",
+            "api/v1/projects/:projectId/topics/:topicId/messages",
+            "flex items-center justify-between border-b border-slate-200 bg-white text-sm text-slate-600",
+            "Property 'foo' is missing in type 'Bar' but required in type 'Baz'.",
+            "Cannot assign to 'x' because it is a read-only property.",
+            "Variable 'x' implicitly has an 'any' type.",
+            "This comparison appears to be unintentional because the types 'A' and 'B' have no overlap.",
+            "Operator '+' cannot be applied to types 'string' and 'number'.",
+            "step 2「二」: panel is changes, but no step declares changes",
+            "step 3「三」: panel is preview, but no step declares preview",
+            "step 4「四」: changes has no files",
         ]
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -225,14 +243,18 @@ assert actual == "Type a message to continue and then press Enter to send it."
 assert actual == "Type 'Save' does not work in this browser, choose another option to continue"
 assert actual == "The deployment failed because the gateway could not reach the upstream.\\nPlease retry after the environment has started."
 assert actual == "deleted_at IS NULL AND completion_status IN ({})"
+assert actual == "登录状态已失效，请重新登录后再发言"
+assert actual == "Upload failed: the file is too large: remove it, then try again"
+assert actual == "step one failed, please retry after the environment starts"
 ''',
             )
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17):
+        for line in (*range(2, 18), 20, 21):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
         self.assertNotIn("test_copy.py:18", result.stderr)
+        self.assertNotIn("test_copy.py:19", result.stderr)
 
     def test_python_fstrings_and_wrapped_vitest_arguments_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -301,7 +323,19 @@ expect(actual).toBe(mapping["{LONG_COPY}"]);
         self.assertNotIn("links.spec.ts:", result.stderr)
 
     def test_additional_test_roots_are_scanned(self) -> None:
-        roots = (".github/scripts", "backend/scripts", "deploy/gateway", "deploy/tests", "docs/site/test")
+        roots = (
+            ".claude/scripts",
+            ".github/scripts",
+            "backend/scripts",
+            "backend/tests",
+            "deploy/gateway",
+            "deploy/tests",
+            "docs/site",
+            "frontend",
+            "desktop",
+            "e2e",
+            "scripts",
+        )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             for scan_root in roots:
@@ -311,6 +345,55 @@ expect(actual).toBe(mapping["{LONG_COPY}"]);
         self.assertNotEqual(result.returncode, 0, result.stdout)
         for scan_root in roots:
             self.assertIn(f"{scan_root}/test_copy.py:1", result.stderr)
+
+    def test_all_test_filename_patterns_are_scanned(self) -> None:
+        paths = (
+            "backend/tests/unit/test_copy.py",
+            "backend/tests/unit/copy_test.py",
+            "frontend/src/copy.test.ts",
+            "frontend/src/copy.spec.ts",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in paths:
+                self._write(root, path, f'assert actual == "{LONG_COPY}"')
+            result = self._run(root)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        for path in paths:
+            self.assertIn(f"{path}:1", result.stderr)
+
+    def test_utf8_bom_sources_are_scanned(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write(root, "backend/tests/unit/test_copy.py", f"﻿assert actual == '{LONG_COPY}'")
+            self._write(root, "frontend/src/copy.spec.ts", f"﻿expect(actual).toBe('{LONG_COPY}')")
+            result = self._run(root)
+
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("backend/tests/unit/test_copy.py:1", result.stderr)
+        self.assertIn("frontend/src/copy.spec.ts:1", result.stderr)
+        self.assertNotIn("无法扫描测试文件", result.stderr)
+
+    def test_scan_errors_fail_the_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write(root, "backend/tests/unit/test_invalid.py", 'assert actual == "')
+            result = self._run(root)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("无法扫描测试文件", result.stderr)
+        self.assertIn("test_invalid.py", result.stderr)
+
+    def test_default_invocation_uses_the_repository_root(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     @staticmethod
     def _write(root: Path, relative_path: str, content: str) -> None:

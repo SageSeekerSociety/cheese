@@ -11,7 +11,6 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-
 # Existing assertions are allowed only at this exact path/text and count.
 SCAN_ERRORS: list[str] = []
 BASELINE: dict[tuple[str, str], int] = {
@@ -51,6 +50,7 @@ BASELINE: dict[tuple[str, str], int] = {
     ("frontend/src/components/account/SudoDialog.spec.ts", "Enter a code from your authenticator app"): 4,
     ("backend/tests/unit/test_observe_ci_resources.py", "hand the run to CI when the local box is shared"): 1,
     ("deploy/tests/test_pr_watch_deploy.py", "Require images and tests for the same commit"): 1,
+    ("frontend/src/lib/adminPool.spec.ts", "2 accounts: 1 cooling, 1 disabled — earliest recovery 02:20 PM"): 1,
 }
 
 SKIP_DIRS = {
@@ -76,9 +76,9 @@ HAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 WORD_RE = re.compile(r"[A-Za-z0-9]+(?:['’-][A-Za-z0-9]+)*")
 PATH_VALUE_RE = re.compile(
     r"(?:https?|wss?)://[^\s]+|"
-    r"(?:(?:[A-Za-z]:)?[\\/][\w.%+${}-]+(?:[\\/][\w.%+${}-]+)*|"
-    r"\.{1,2}[\\/][\w.%+${}-]+(?:[\\/][\w.%+${}-]+)*|"
-    r"[\w.%+${}-]+(?:[\\/][\w.%+${}-]+)+|"
+    r"(?:(?:[A-Za-z]:)?[\\/][\w.%+${}:-]+(?:[\\/][\w.%+${}:-]+)*|"
+    r"\.{1,2}[\\/][\w.%+${}:-]+(?:[\\/][\w.%+${}:-]+)*|"
+    r"[\w.%+${}:-]+(?:[\\/][\w.%+${}:-]+)+|"
     r"[\w.-]+\.(?:md|py|ts|tsx|js|jsx|cjs|mjs|json|txt|vue|docx))(?:\?[^\s]+)?",
     re.IGNORECASE,
 )
@@ -88,11 +88,23 @@ COMMIT_TITLE_RE = re.compile(r"^(?:feat|fix|chore|docs|refactor|test|build|ci)(?
 KEY_VALUE_RE = re.compile(r"\b[\w-]+=\S+")
 IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
 STATUS_CODES_RE = re.compile(r"(?:HTTP\s*)?\d{3}(?:\s+\d{3})*\Z", re.IGNORECASE)
+STEP_DIAGNOSTIC_RE = re.compile(
+    r"^step\s+\d+[^:]*:\s+(?:panel is [\w-]+, but no step declares [\w-]+|changes has no files)$",
+    re.IGNORECASE,
+)
+UTILITY_CLASS_TOKEN_RE = re.compile(r"[\w:[\].#%/-]+\Z")
+UTILITY_CLASS_PREFIXES = (
+    "items-", "justify-", "border-", "bg-", "text-", "p-", "m-", "w-", "h-", "gap-",
+    "space-", "rounded-", "shadow-", "font-", "leading-", "max-w-", "min-w-", "overflow-",
+    "cursor-", "transition-", "opacity-", "z-", "top-", "left-", "right-", "bottom-",
+)
+UTILITY_CLASS_SINGLETONS = {"flex", "grid", "block", "hidden", "inline", "absolute", "relative", "fixed", "sticky", "truncate", "sr-only"}
 WORKFLOW_EXPRESSION_RE = re.compile(
-    r"(?:\$\{\{.*\}\}|(?:needs|steps|github|matrix|env|vars|inputs)\.[\w.-]+"
+    r"(?:\$\{\{.*\}\}|\(*\s*!?\s*(?:"
+    r"(?:needs|steps|github|matrix|env|vars|inputs)\.[\w.-]+"
     r"(?:\s*(?:==|!=|&&|\|\|).*)?|"
     r"(?:format|startsWith|endsWith|contains|fromJSON|toJSON|join|hashFiles|"
-    r"success|failure|always|cancelled)\s*\(.*\)(?:\s*(?:==|!=|&&|\|\|).*)?)\Z",
+    r"success|failure|always|cancelled)\s*\(.*\)(?:\s*(?:==|!=|&&|\|\|).*)?)\s*\)*)\Z",
     re.IGNORECASE | re.DOTALL,
 )
 SHELL_COMMAND_RE = re.compile(
@@ -125,23 +137,41 @@ SQL_WHERE_RE = re.compile(
     r":\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)).*",
     re.DOTALL | re.IGNORECASE,
 )
-SQL_VALUE_PATTERN = r"(?:'[^']*'|\"[^\"]*\"|\$\d+|:\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)"
+SQL_VALUE_PATTERN = r"(?:'[^']*'|\"[^\"]*\"|\$\d+|:\w+|\?|%\([^)]+\)s|%s|[-+]?\d+(?:\.\d+)?|[\w.]+(?:\([^)]*\))?)(?:\s*::\s*[\w.]+)?"
+SQL_COLUMN_PATTERN = r"[\w.]+(?:\s*(?:->>|->|#>>|#>)\s*(?:'[^']*'|\"[^\"]*\"|[\w.]+))*"
+SQL_JSON_OPERATOR_PATTERN = r"(?:@>|<@|\?\||\?&|\?|=|!=|<>|<=|>=|<|>)"
 SQL_PREDICATE_PATTERN = (
     rf"(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|LIKE\s+{SQL_VALUE_PATTERN}|"
     rf"BETWEEN\s+{SQL_VALUE_PATTERN}\s+AND\s+{SQL_VALUE_PATTERN}|"
-    rf"(?:=|!=|<>|<=|>=|<|>)\s*{SQL_VALUE_PATTERN})"
+    rf"{SQL_JSON_OPERATOR_PATTERN}\s*{SQL_VALUE_PATTERN})"
 )
+SQL_RETURNING_PATTERN = r"(?:\s+RETURNING\s+[\w.* ,]+)?"
 SQL_UPDATE_RE = re.compile(
     rf"UPDATE\s+[\w.]+\s+SET\s+[\w.]+\s*=\s*{SQL_VALUE_PATTERN}"
-    rf"(?:\s*,\s*[\w.]+\s*=\s*{SQL_VALUE_PATTERN})*\s+WHERE\s+[\w.]+\s*{SQL_PREDICATE_PATTERN}",
+    rf"(?:\s*,\s*[\w.]+\s*=\s*{SQL_VALUE_PATTERN})*\s+WHERE\s+{SQL_COLUMN_PATTERN}\s*{SQL_PREDICATE_PATTERN}"
+    rf"{SQL_RETURNING_PATTERN}",
     re.IGNORECASE,
 )
-SQL_DELETE_RE = re.compile(rf"DELETE\s+FROM\s+[\w.]+\s+WHERE\s+[\w.]+\s*{SQL_PREDICATE_PATTERN}", re.IGNORECASE)
+SQL_DELETE_RE = re.compile(
+    rf"DELETE\s+FROM\s+[\w.]+\s+WHERE\s+{SQL_COLUMN_PATTERN}\s*{SQL_PREDICATE_PATTERN}{SQL_RETURNING_PATTERN}",
+    re.IGNORECASE,
+)
 SQL_INSERT_RE = re.compile(
-    r"INSERT\s+INTO\s+[\w.]+\s*\([^)]*\)\s*VALUES\s*\([^)]*\)(?:\s*,\s*\([^)]*\))*",
+    rf"INSERT\s+INTO\s+[\w.]+\s*\([^)]*\)\s*VALUES\s*\([^)]*\)(?:\s*,\s*\([^)]*\))*"
+    rf"(?:\s+ON\s+CONFLICT(?:\s*\([^)]*\))?\s+DO\s+(?:NOTHING|UPDATE\s+SET\s+[\w.]+\s*=\s*{SQL_VALUE_PATTERN}(?:\s*,\s*[\w.]+\s*=\s*{SQL_VALUE_PATTERN})*))?"
+    rf"{SQL_RETURNING_PATTERN}",
     re.IGNORECASE,
 )
 SQL_SELECT_PREFIX_RE = re.compile(r"SELECT\s+(.+?)\s+FROM\s+([\w.]+)", re.DOTALL | re.IGNORECASE)
+SQL_WITH_QUERY_RE = re.compile(
+    r"WITH\s+(?:RECURSIVE\s+)?[\w.]+\s+AS\s*\(.*\)\s*(?:SELECT|INSERT|UPDATE|DELETE)\b.*",
+    re.DOTALL | re.IGNORECASE,
+)
+SQL_SET_OPERATION_RE = re.compile(r"\b(?:UNION(?:\s+ALL)?|INTERSECT|EXCEPT)\s+SELECT\b", re.IGNORECASE)
+SQL_JSON_QUERY_RE = re.compile(
+    rf"SELECT\b.*\bFROM\b.*\bWHERE\s+{SQL_COLUMN_PATTERN}\s*{SQL_JSON_OPERATOR_PATTERN}\s*{SQL_VALUE_PATTERN}",
+    re.DOTALL | re.IGNORECASE,
+)
 SQL_PROSE_WORD_RE = re.compile(
     r"(?<![A-Za-z0-9_.])(?:the|an|this|that|these|those|because|please|you|your|we|they|"
     r"should|could|will|must|continue|continuing|before|after)"
@@ -155,7 +185,12 @@ TS_TYPE_DIAGNOSTIC_RE = re.compile(
 )
 TS_DIAGNOSTIC_RE = re.compile(
     r"^(?:Property ['\"][^'\"]+['\"] does not exist on type ['\"][^'\"]+['\"]|"
+    r"Property ['\"][^'\"]+['\"] is missing in type .+ but required in type .+|"
     r"Argument of type ['\"][^'\"]+['\"] is not assignable to (?:parameter|argument) of type |"
+    r"Cannot assign to ['\"][^'\"]+['\"] because it is a read-only property|"
+    r"Variable ['\"][^'\"]+['\"] implicitly has an ['\"]any['\"] type|"
+    r"This comparison appears to be unintentional because .+|"
+    r"Operator ['\"][^'\"]+['\"] cannot be applied to types .+|"
     r"Cannot find module ['\"][^'\"]+['\"]|No overload matches this call|"
     r"Object literal may only specify known properties, and .+ does not exist in type .+|"
     r"Element implicitly has an ['\"]any['\"] type because expression of type .+ can't be used to index type .+|"
@@ -166,6 +201,7 @@ JS_ASSERTION_METHODS = {
     "toBe",
     "toEqual",
     "toStrictEqual",
+    "toHaveProperty",
     "equal",
     "strictEqual",
     "deepEqual",
@@ -208,25 +244,34 @@ def _is_sql_value(value: str) -> bool:
         return True
     sql_text = re.sub(r"'[^']*'|\"[^\"]*\"", " ", value)
     sql_text = re.sub(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", " ", sql_text)
-    sql_text = re.sub(r"\b(?:FROM|JOIN)\s+([\w.]+)\s+[A-Za-z_]\w*\b", r"\1", sql_text, flags=re.IGNORECASE)
+    sql_text = re.sub(
+        r"\b(?:FROM|JOIN)\s+([\w.]+)\s+"
+        r"(?!(?:UNION|INTERSECT|EXCEPT|WHERE|ORDER|GROUP|LIMIT|OFFSET|HAVING|RETURNING|ON|JOIN|LEFT|RIGHT|FULL|INNER|CROSS)\b)[A-Za-z_]\w*\b",
+        r"\1",
+        sql_text,
+        flags=re.IGNORECASE,
+    )
+    if SQL_PROSE_WORD_RE.search(sql_text):
+        return False
+    if SQL_WITH_QUERY_RE.fullmatch(sql_text) or SQL_JSON_QUERY_RE.fullmatch(value):
+        return True
     select = SQL_SELECT_PREFIX_RE.match(value)
     if select is not None:
         projection = select.group(1).strip()
         structured_projection = "," in projection or projection == "*"
         remainder = value[select.end() :].strip()
         simple_alias = re.fullmatch(r"(?:AS\s+)?[A-Za-z]\b", remainder, re.IGNORECASE)
+        if SQL_SET_OPERATION_RE.search(sql_text):
+            return True
         if (
-            not SQL_PROSE_WORD_RE.search(sql_text)
-            and not SQL_ARTICLE_PROSE_RE.match(projection)
+            not SQL_ARTICLE_PROSE_RE.match(projection)
             and (
                 SQL_QUERY_RE.fullmatch(value)
                 or (structured_projection and (not remainder or simple_alias is not None))
             )
         ):
             return True
-    if SQL_WHERE_RE.fullmatch(value):
-        return not SQL_PROSE_WORD_RE.search(sql_text)
-    return False
+    return bool(SQL_WHERE_RE.fullmatch(value))
 
 
 def _is_structured_key_value(value: str) -> bool:
@@ -245,6 +290,16 @@ def _is_route_value(value: str) -> bool:
     )
 
 
+def _is_utility_class_list(value: str) -> bool:
+    tokens = value.split()
+    if len(tokens) < 5 or not all(UTILITY_CLASS_TOKEN_RE.fullmatch(token) for token in tokens):
+        return False
+    recognized = sum(
+        token in UTILITY_CLASS_SINGLETONS or token.startswith(UTILITY_CLASS_PREFIXES) for token in tokens
+    )
+    return recognized >= max(3, (len(tokens) * 3 + 3) // 4)
+
+
 def _is_explanatory_sentence(value: str) -> bool:
     value = " ".join(value.split())
     han_count = len(HAN_RE.findall(value))
@@ -253,15 +308,22 @@ def _is_explanatory_sentence(value: str) -> bool:
         or PATH_VALUE_RE.fullmatch(value)
         or ABSOLUTE_PATH_VALUE_RE.fullmatch(value)
         or _is_route_value(value)
+        or _is_utility_class_list(value)
         or EMAIL_RE.fullmatch(value)
         or COMMIT_TITLE_RE.match(value)
         or _is_structured_key_value(value)
         or SHELL_COMMAND_RE.search(value)
         or WORKFLOW_EXPRESSION_RE.fullmatch(value)
-        or value.startswith(("<", ":::" , "import ", "src/", "backend/", "frontend/", "deploy/", "可递：", "missing:", "since="))
+        or value.startswith(
+            (
+                "<", ":::", "import ", "src/", "backend/", "frontend/", "deploy/", "可递：",
+                "missing:", "since=", "Co-authored-by:", "::error::", "## ",
+            )
+        )
         or value.count("|") >= 2
         or ":::" in value
-        or value.startswith("step ")
+        or STEP_DIAGNOSTIC_RE.fullmatch(value)
+        or re.fullmatch(r"step\s+[A-Za-z0-9_.:-]+", value, re.IGNORECASE)
         or SQL_EXPRESSION_RE.fullmatch(value)
         or _is_sql_value(value)
         or TS_TYPE_DIAGNOSTIC_RE.match(value)
@@ -269,18 +331,12 @@ def _is_explanatory_sentence(value: str) -> bool:
         or (EMAIL_RE.search(value) and not han_count and len(WORD_RE.findall(value)) < 9)
         or IDENTIFIER_RE.fullmatch(value)
         or STATUS_CODES_RE.fullmatch(value)
-        or value.startswith(("Co-authored-by:", "::error::", "## "))
     ):
         return False
     if han_count >= 18:
         return True
     words = WORD_RE.findall(value)
-    if len(value) < 40 or len(words) < 7:
-        return False
-    # Permission/capability lists and similar structured values are not prose.
-    if value.count(":") >= 2 and value.count(",") >= 1:
-        return False
-    return True
+    return len(value) >= 40 and len(words) >= 7
 
 
 def _python_string_value(node: ast.expr) -> str | None:
@@ -299,7 +355,7 @@ def _python_string_value(node: ast.expr) -> str | None:
 
 def _python_literals(path: Path) -> list[tuple[int, str]]:
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     except (OSError, SyntaxError, UnicodeError) as exc:
         SCAN_ERRORS.append(f"{path}: 无法扫描测试文件: {exc}")
         return []
@@ -307,9 +363,13 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare):
             left = node.left
+            seen_candidates: set[int] = set()
             for operator, comparator in zip(node.ops, node.comparators):
                 if isinstance(operator, ast.Eq):
                     for candidate in (left, comparator):
+                        if id(candidate) in seen_candidates:
+                            continue
+                        seen_candidates.add(id(candidate))
                         value = _python_string_value(candidate)
                         if value is not None:
                             literals.append((candidate.lineno, value))
@@ -365,10 +425,9 @@ def _call_argument_strings(tokens: list[tuple[str, int]], open_index: int) -> li
     literals: list[tuple[int, str]] = []
     for argument in arguments[:2]:
         while argument:
-            if argument[-2:]:
-                if [token for token, _ in argument[-2:]] == ["as", "const"]:
-                    argument = argument[:-2]
-                    continue
+            if [token for token, _ in argument[-2:]] == ["as", "const"]:
+                argument = argument[:-2]
+                continue
             if len(argument) >= 2 and argument[0][0] == "(" and argument[-1][0] == ")":
                 nesting = 0
                 wraps_all = True
@@ -470,7 +529,7 @@ def _javascript_tokens(source: str) -> list[tuple[str, int]]:
 
 def _javascript_literals(path: Path) -> list[tuple[int, str]]:
     try:
-        source = path.read_text(encoding="utf-8")
+        source = path.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeError) as exc:
         SCAN_ERRORS.append(f"{path}: 无法扫描测试文件: {exc}")
         return []
