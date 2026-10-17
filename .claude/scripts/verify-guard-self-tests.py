@@ -28,13 +28,28 @@ directory — same directory so the guard still resolves its siblings and its re
 root through `__file__`, a distinct dot-prefixed name so no existing file is
 touched — and the copy is removed in a `finally`. A Python guard is silenced by
 AST-guided edits to the statements *inside functions* other than `self_test()`
-and the `__main__` block: every collector call (`findings.append(…)`,
-`lines.extend(…)`) becomes `None`, `return <non-zero int>` becomes `return 0`,
-`sys.exit(<non-zero>)` becomes `sys.exit(0)`. The entry point is left alone on
-purpose: silencing it would stop the self-test from running at all, which reads
-as red without the self-test having noticed anything. A shell guard gets a
-`return 0` at the top of each `name() {` function, which is how its rules stop
-firing.
+and the `__main__` block, and only to the statements that *emit* a failure: a
+`return` of a non-zero code becomes `return 0` — an int, a tuple whose first
+element is the code (`return 1, lines, record`), or a conditional
+(`return 0 if verdict.ok else 1`) — and `sys.exit(<non-zero>)` /
+`raise SystemExit(<non-zero>)` become their zero form. Collectors
+(`findings.append(…)`, `lines.extend(…)`) are deliberately left alone: nulling
+one also breaks the guard's own scan, so the self-test goes red because a *clean*
+fixture of its own broke, not because the failure signal was taken away — a red
+that proves nothing, and the tool would bless a self-test that never looks at a
+violation. The entry point is left alone on purpose: silencing it would stop the
+self-test from running at all, which reads as red without the self-test having
+noticed anything. A shell guard gets a `return 0` at the top of each `name() {`
+rule function, which is how its rules stop firing; the whole file from
+`if … SELF_TEST …; then` onward is left untouched, so its own `self_fail` helper
+still reports the red.
+
+A copy that goes green on a *silenced* guard is reported as a finding — unless
+the guard hands the work to another script file (a literal `.py` name that is
+not its own, or a spawn under a self-test condition), because there the mutation
+never reaches the process that judges. A guard that only re-runs *itself*
+(`Path(__file__)`) is judged normally: the copy is what runs, so the mutation
+travels with it.
 
 WHAT CANNOT BE JUDGED, and is reported as UNVERIFIED rather than as a pass: a
 guard whose self-test lives in a sibling `test_<stem>.py`, or whose `--self-test`
@@ -86,16 +101,23 @@ HINTS = {
         "自测在当前树上没有打印 PASS 或退出了非 0；先把它修绿，再谈咬合力。"
     ),
     "self-test-does-not-bite": (
-        "把守卫的收集器调用和非 0 退出静音之后，自测仍然绿着——它没有在看守卫报不报违规。"
-        "让它喂进一个故意违规的夹具，断言守卫真的以非 0 退出码报错并印出修法。"
+        "把守卫的失败信号（非 0 的 return、sys.exit、SystemExit）静音之后，自测仍然绿着——"
+        "它没有在看守卫报不报违规。让它喂进一个故意违规的夹具，断言守卫真的以非 0 退出码报错并印出修法。"
     ),
     "unverified": (
         "这次判不了（原因见 detail），不要当成通过。"
     ),
 }
 
+#: The `subprocess` entry points that start another program.
+_SUBPROCESS_CALLS = frozenset({"run", "call", "check_call", "check_output", "Popen"})
+
 #: A shell function definition, at the start of a line: `name() {`.
 _SHELL_FUNC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{\s*$")
+
+#: The line that opens a shell guard's self-test block; everything from here on
+#: belongs to the self-test itself and is left as it is.
+_SHELL_SELF_TEST_RE = re.compile(r"^\s*if\b.*\bSELF_TEST\b.*;\s*then\b")
 
 
 @dataclass
@@ -190,8 +212,20 @@ def _main_block_lines(tree: ast.Module, source: str) -> set[int]:
     return lines
 
 
+def _spawn_target(node: ast.AST) -> bool:
+    """Is this expression a `subprocess.*` / `os.exec*` call that starts a program?"""
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return False
+    target = node.func.value
+    if not isinstance(target, ast.Name):
+        return False
+    return (target.id == "subprocess" and node.func.attr in _SUBPROCESS_CALLS) or (
+        target.id == "os" and node.func.attr.startswith("exec")
+    )
+
+
 def delegated_self_test(tree: ast.Module, source: str) -> bool:
-    """Does the `--self-test` path hand off to another program?
+    """Does the `--self-test` path hand off to another program, under a test flag?
 
     A guard that answers `--self-test` by running a sibling test file judges
     itself in a *different* process, reading the real file rather than the copy
@@ -203,16 +237,99 @@ def delegated_self_test(tree: ast.Module, source: str) -> bool:
         test_source = ast.get_source_segment(source, node.test) or ""
         if "self_test" not in test_source and "self-test" not in test_source:
             continue
-        for inner in ast.walk(node):
-            if not isinstance(inner, ast.Call) or not isinstance(inner.func, ast.Attribute):
-                continue
-            target = inner.func.value
-            if isinstance(target, ast.Name) and (
-                (target.id == "subprocess" and inner.func.attr in {"run", "call", "check_call", "check_output", "Popen"})
-                or (target.id == "os" and inner.func.attr.startswith("exec"))
-            ):
-                return True
+        if any(_spawn_target(inner) for inner in ast.walk(node)):
+            return True
     return False
+
+
+def spawns_foreign_file(tree: ast.Module, own_name: str) -> bool:
+    """Does the guard run another script file, rather than re-running itself?
+
+    A guard that spawns `Path(__file__)` re-runs the copy this tool silences, so
+    the mutation travels into the child and the self-test still sees it. One that
+    names a different `.py` — a sibling test file, `unittest discover -p …` —
+    runs the real script in a fresh process where the mutation does not exist, so
+    its green says nothing. Only the file *name* is compared; the path around it
+    makes no difference to which file Python loads.
+    """
+    for node in ast.walk(tree):
+        if not _spawn_target(node):
+            continue
+        for inner in ast.walk(node):
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+                if inner.value.endswith(".py") and Path(inner.value).name != own_name:
+                    return True
+    return False
+
+
+def _exit_code_names(tree: ast.Module) -> set[str]:
+    """Names assigned a non-zero integer at module level: `EXIT_CANNOT_JUDGE = 2`.
+
+    Guards name their exit codes as often as they spell them, and `return
+    EXIT_CANNOT_JUDGE` is the same failure signal as `return 2`.
+    """
+    names: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and _nonzero_code(node.value):
+            names.update(target.id for target in node.targets if isinstance(target, ast.Name))
+    return names
+
+
+def _nonzero_code(node: ast.AST, names: frozenset[str] = frozenset()) -> bool:
+    """Is this a non-zero integer code — spelled out, or one of the module's names?"""
+    if isinstance(node, ast.Name) and node.id in names:
+        return True
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, int)
+        and not isinstance(node.value, bool)
+        and node.value != 0
+    )
+
+
+def _is_zero(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value == 0
+
+
+def _code_span(value: ast.AST, names: frozenset[str]) -> tuple[int, int] | None:
+    """The span to overwrite with `0` when a `return` carries a failure code.
+
+    The whole value for a bare `return 1`, and only the code itself for shapes
+    that answer something else as well — a tuple like `return 1, lines, record`
+    (many guards return the code beside their findings) or a conditional like
+    `return 0 if verdict.ok else 1` — so the copy stays a working guard that
+    simply never reports a failure.
+    """
+    if _nonzero_code(value, names):
+        return (value.col_offset, value.end_col_offset)
+    if isinstance(value, ast.Tuple) and value.elts and _nonzero_code(value.elts[0], names):
+        head = value.elts[0]
+        return (head.col_offset, head.end_col_offset)
+    if isinstance(value, ast.IfExp):
+        branches = (value.body, value.orelse)
+        if all(_nonzero_code(branch, names) or _is_zero(branch) for branch in branches):
+            return (value.col_offset, value.end_col_offset)
+    return None
+
+
+def _exit_arg_span(call: ast.AST) -> tuple[int, int] | None:
+    """The argument of a `sys.exit(x)` / `SystemExit(x)` that is not already 0."""
+    if not isinstance(call, ast.Call) or not call.args:
+        return None
+    func = call.func
+    is_sys_exit = (
+        isinstance(func, ast.Attribute)
+        and func.attr == "exit"
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "sys"
+    )
+    is_system_exit = isinstance(func, ast.Name) and func.id == "SystemExit"
+    if not (is_sys_exit or is_system_exit):
+        return None
+    arg = call.args[0]
+    if _is_zero(arg):
+        return None
+    return (arg.col_offset, arg.end_col_offset)
 
 
 def _python_edits(tree: ast.Module, source: str, skip: set[int]) -> dict[int, list[tuple[int, int, bytes]]]:
@@ -221,13 +338,15 @@ def _python_edits(tree: ast.Module, source: str, skip: set[int]) -> dict[int, li
     Only single-line nodes inside a function are rewritten — module level set-up
     is left working, so a copy that dies did so while running, not on import —
     and an outer node chosen for replacement stops the walk so a nested call is
-    not also rewritten.
+    not also rewritten. What gets rewritten is only where the guard *emits* its
+    verdict: `return`s of a non-zero code and non-zero `sys.exit`/`SystemExit`.
     """
     edits: dict[int, list[tuple[int, int, bytes]]] = {}
     skipped = skip | _main_block_lines(tree, source)
+    codes = frozenset(_exit_code_names(tree))
 
-    def record(node: ast.AST, replacement: bytes) -> None:
-        edits.setdefault(node.lineno, []).append((node.col_offset, node.end_col_offset, replacement))
+    def record(node: ast.AST, span: tuple[int, int]) -> None:
+        edits.setdefault(node.lineno, []).append((span[0], span[1], b"0"))
 
     def visit(node: ast.AST, in_function: bool) -> None:
         single = (
@@ -238,30 +357,20 @@ def _python_edits(tree: ast.Module, source: str, skip: set[int]) -> dict[int, li
         )
         if single and in_function:
             if isinstance(node, ast.Call):
-                func = node.func
-                if isinstance(func, ast.Attribute) and func.attr in {"append", "add", "extend"}:
-                    record(node, b"None")
+                span = _exit_arg_span(node)
+                if span is not None:
+                    record(node, span)
                     return
-                if (
-                    isinstance(func, ast.Attribute)
-                    and func.attr == "exit"
-                    and isinstance(func.value, ast.Name)
-                    and func.value.id == "sys"
-                    and node.args
-                ):
-                    arg = node.args[0]
-                    if not (isinstance(arg, ast.Constant) and arg.value == 0):
-                        record(node, b"sys.exit(0)")
-                        return
-            if (
-                isinstance(node, ast.Return)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, int)
-                and not isinstance(node.value.value, bool)
-                and node.value.value != 0
-            ):
-                record(node, b"return 0")
-                return
+            if isinstance(node, ast.Raise):
+                span = _exit_arg_span(node.exc) if node.exc is not None else None
+                if span is not None:
+                    record(node, span)
+                    return
+            if isinstance(node, ast.Return) and node.value is not None:
+                span = _code_span(node.value, codes)
+                if span is not None:
+                    record(node, span)
+                    return
         enters = isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         for child in ast.iter_child_nodes(node):
             visit(child, in_function or enters)
@@ -278,7 +387,7 @@ def mutate_python(source: str) -> tuple[str | None, str]:
         return None, f"守卫无法解析：{exc}"
     edits = _python_edits(tree, source, _self_test_lines(tree))
     if not edits:
-        return None, "没有找到可以静音的失败信号（函数里既没有收集器调用，也没有非 0 的 return）"
+        return None, "没有找到可以静音的失败信号（函数里没有非 0 的 return、sys.exit 或 SystemExit）"
     raw = source.encode("utf-8").splitlines(keepends=True)
     count = 0
     for lineno in sorted(edits):
@@ -302,17 +411,26 @@ def mutate_python(source: str) -> tuple[str | None, str]:
 
 
 def mutate_shell(source: str) -> tuple[str | None, str]:
-    """A copy of a shell guard whose rule functions return clean immediately."""
+    """A copy of a shell guard whose rule functions return clean immediately.
+
+    Only the rule functions are silenced: the file is left as it is from the line
+    that opens the self-test block onward, so the guard's own `self_fail` helper
+    and its fixture set-up still run and can notice that the rules went quiet.
+    """
+    lines = source.splitlines(keepends=True)
+    limit = next(
+        (index for index, line in enumerate(lines) if _SHELL_SELF_TEST_RE.match(line)),
+        len(lines),
+    )
     out: list[str] = []
     count = 0
-    for line in source.splitlines(keepends=True):
+    for index, line in enumerate(lines):
         out.append(line)
-        if _SHELL_FUNC_RE.match(line.rstrip("\n")):
-            indent = line[: len(line) - len(line.lstrip())]
-            out.append(f"{indent}  return 0\n")
+        if index < limit and _SHELL_FUNC_RE.match(line.rstrip("\n")):
+            out.append("  return 0\n")
             count += 1
     if count == 0:
-        return None, "没有找到可以静音的函数（没有形如 `name() {` 的行）"
+        return None, "自测块之前没有可以静音的函数（没有形如 `name() {` 的行）"
     return "".join(out), ""
 
 
@@ -368,7 +486,7 @@ def check_guard(guard: Guard, root: Path, timeout: float) -> Outcome:
             tree = ast.parse(source)
         except SyntaxError as exc:
             return Outcome("unverified", f"守卫无法解析：{exc}")
-        if delegated_self_test(tree, source):
+        if delegated_self_test(tree, source) or spawns_foreign_file(tree, guard.path.name):
             return Outcome(
                 "unverified",
                 "自测在旁边的测试文件里（--self-test 起的是另一个进程，读的是真文件）；"
@@ -460,10 +578,16 @@ def self_test() -> int:
         results = {path.name: outcome for _, path, outcome, _ in evaluate(config, root, 60.0)}
     expected = {
         "biting-guard.py": "ok",
+        "tuple-return-guard.py": "ok",
+        "named-exit-guard.py": "ok",
+        "shell-biting-guard.sh": "ok",
         "fake-green-guard.py": "self-test-does-not-bite",
+        "shell-fake-green-guard.sh": "self-test-does-not-bite",
+        "clean-only-self-test-guard.py": "self-test-does-not-bite",
         "no-self-test-guard.py": "missing-self-test",
         "not-green-guard.py": "self-test-not-green",
         "delegating-guard.py": "unverified",
+        "sibling-guard.py": "unverified",
     }
     failures = []
     for name, want in expected.items():
@@ -477,25 +601,25 @@ def self_test() -> int:
     if failures:
         return 1
     print(
-        "PASS: verify-guard-self-tests self-test（有咬合力的自测通过、空转假绿被检出、"
-        "缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
+        "PASS: verify-guard-self-tests self-test（失败信号的每种写法都判得出咬合力、"
+        "只查干净夹具的假绿被检出、空转假绿被检出、缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
     )
     return 0
 
 
-#: Guards for the self-test: one of each verdict the engine must tell apart.
+#: Guards for the self-test: one of each verdict, and one of each shape the
+#: failure signal takes (a conditional return, a tuple return, a named code).
 SYNTHETIC_GUARDS = {
     "biting-guard.py": '''#!/usr/bin/env python3
 """A guard whose --self-test proves it fires on a deliberate violation."""
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
 def violations_in(root):
-    problems = []
-    for path in sorted(Path(root).rglob("*.bad")):
-        problems.append(path.name)
-    return problems
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
 
 
 def main(argv):
@@ -504,24 +628,143 @@ def main(argv):
     problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
     for name in problems:
         print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
-    return 1 if problems else 0
+    return 0 if not problems else 1
 
 
 def self_test():
-    import tempfile
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
         (root / "x.bad").write_text("", encoding="utf-8")
-        found = violations_in(root)
-        if found != ["x.bad"]:
-            print(f"SELF-TEST FAIL: 本该报出 x.bad，得到 {found}", file=sys.stderr)
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)], capture_output=True, text=True
+        )
+        if done.returncode != 1 or "修法" not in done.stderr:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad 并给出修法，得到 {done.returncode}", file=sys.stderr)
             return 1
-    print("PASS: 合成守卫自测（.bad 文件被报出）")
+    print("PASS: 合成守卫自测（.bad 文件被报出并给了修法）")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
+''',
+    "tuple-return-guard.py": '''#!/usr/bin/env python3
+"""A guard whose failure comes back as the first element of a tuple."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def report(root):
+    problems = violations_in(root)
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    if problems:
+        return 1, problems
+    return 0, []
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    code, _ = report(Path(argv[1]) if len(argv) > 1 else Path("."))
+    return code
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)], capture_output=True, text=True
+        )
+        if done.returncode != 1:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: 合成 tuple 守卫自测（.bad 文件被报出）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "named-exit-guard.py": '''#!/usr/bin/env python3
+"""A guard that reports through a named constant and a SystemExit raise."""
+import sys
+from pathlib import Path
+
+EXIT_FOUND = 1
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def report(root):
+    problems = violations_in(root)
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    if problems:
+        raise SystemExit(EXIT_FOUND)
+    sys.exit(0)
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    report(Path(argv[1]) if len(argv) > 1 else Path("."))
+    return 0
+
+
+def self_test():
+    import subprocess
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)], capture_output=True, text=True
+        )
+        if done.returncode != 1:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: 合成命名退出码守卫自测（.bad 文件被报出）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "shell-biting-guard.sh": '''#!/usr/bin/env bash
+# A shell guard whose --self-test proves it fires on a deliberate violation.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  local root="$1" bad
+  bad="$(find "$root" -name '*.bad' -print 2>/dev/null || true)"
+  [ -z "$bad" ] && return 0
+  echo "$bad: 修法：删掉这些文件" >&2
+  return 1
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  self_fail() { echo "SELF-TEST FAIL: $*" >&2; exit 1; }
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  scan "$tmp" && self_fail "一个 .bad 文件必须报错"
+  echo "PASS: 合成 shell 守卫自测（.bad 文件被报出）"
+  exit 0
+fi
+
+scan "${1:-.}"
 ''',
     "fake-green-guard.py": '''#!/usr/bin/env python3
 """A guard whose --self-test prints PASS and checks nothing."""
@@ -530,10 +773,7 @@ from pathlib import Path
 
 
 def violations_in(root):
-    problems = []
-    for path in sorted(Path(root).rglob("*.bad")):
-        problems.append(path.name)
-    return problems
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
 
 
 def main(argv):
@@ -541,6 +781,78 @@ def main(argv):
         print("PASS: 合成假绿守卫自测")
         return 0
     return 1 if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")) else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "shell-fake-green-guard.sh": '''#!/usr/bin/env bash
+# A shell guard whose --self-test prints PASS and checks nothing.
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+scan() {
+  local root="$1" bad
+  bad="$(find "$root" -name '*.bad' -print 2>/dev/null || true)"
+  [ -z "$bad" ] && return 0
+  echo "$bad: 修法：删掉这些文件" >&2
+  return 1
+}
+
+if [ "$SELF_TEST" = 1 ]; then
+  echo "PASS: 合成假绿 shell 守卫自测"
+  exit 0
+fi
+
+scan "${1:-.}"
+''',
+    "clean-only-self-test-guard.py": '''#!/usr/bin/env python3
+"""A guard whose --self-test only ever checks that a clean scan comes back.
+
+This is the shape a broad "null the collector" mutation used to bless. Nulling
+`found.append(...)` empties the scan, so the clean assertion goes red and the
+guard looks like it noticed something — though the self-test never feeds in a
+violation at all.
+"""
+import sys
+from pathlib import Path
+
+
+def scan(root):
+    found = []
+    for path in sorted(Path(root).rglob("*.md")):
+        found.append(path)
+    return found
+
+
+def judge(root):
+    found = scan(root)
+    if not found:
+        print("什么都没扫到 — 这本身就是失败", file=sys.stderr)
+        return 1
+    bad = [path.name for path in found if "bad" in path.name]
+    return 1 if bad else 0
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    return judge(Path(argv[1]) if len(argv) > 1 else Path("."))
+
+
+def self_test():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "ok.md").write_text("", encoding="utf-8")
+        found = [path.name for path in scan(root)]
+        if found != ["ok.md"]:
+            print(f"SELF-TEST FAIL: 干净夹具里该扫到 ok.md，得到 {found}", file=sys.stderr)
+            return 1
+    print("PASS: 合成只查干净夹具的守卫自测")
+    return 0
 
 
 if __name__ == "__main__":
@@ -581,15 +893,30 @@ from pathlib import Path
 
 
 def violations_in(root):
-    problems = []
-    for path in sorted(Path(root).rglob("*.bad")):
-        problems.append(path.name)
-    return problems
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
 
 
 def main(argv):
     if "--self-test" in argv:
         return subprocess.call([sys.executable, str(Path(__file__).with_name("test_delegating_guard.py"))])
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "sibling-guard.py": '''#!/usr/bin/env python3
+"""A guard with no inline self-test: its check lives in a sibling test file."""
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def main(argv):
     problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
     return 1 if problems else 0
 
@@ -631,6 +958,28 @@ def main():
 if __name__ == "__main__":
     raise SystemExit(main())
 ''',
+    "test_sibling_guard.py": '''#!/usr/bin/env python3
+"""The test file that stands in for `sibling-guard.py --self-test`."""
+import importlib.util
+import tempfile
+import unittest
+from pathlib import Path
+
+spec = importlib.util.spec_from_file_location("sibling_guard", Path(__file__).with_name("sibling-guard.py"))
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+class SiblingGuardTest(unittest.TestCase):
+    def test_reports_a_bad_file(self):
+        with tempfile.TemporaryDirectory() as raw:
+            Path(raw, "x.bad").write_text("", encoding="utf-8")
+            self.assertEqual(module.violations_in(Path(raw)), ["x.bad"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+''',
 }
 
 
@@ -642,9 +991,10 @@ def write_synthetic_repo(root: Path) -> Path:
         (scripts / name).write_text(source, encoding="utf-8")
     lines = ["repos:", "  - repo: local", "    hooks:"]
     for name in SYNTHETIC_GUARDS:
+        interpreter = "python3" if name.endswith(".py") else "bash"
         lines += [
-            f"      - id: {name[:-3]}",
-            f"        entry: python3 {(GUARD_DIR / name).as_posix()}",
+            f"      - id: {Path(name).stem}",
+            f"        entry: {interpreter} {(GUARD_DIR / name).as_posix()}",
             "        language: system",
         ]
     config = root / CONFIG_NAME
