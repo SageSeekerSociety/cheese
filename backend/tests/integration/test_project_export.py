@@ -273,6 +273,21 @@ def test_export_batches_keep_versions_numbering_hidden_rooms_and_node_order(
                         deliverable_url=f"https://example.invalid/{name}",
                     )
                 )
+            other = ProjectArtifact(
+                project_id=data["pid"], name="Other", about="Second artifact"
+            )
+            db.add(other)
+            await db.flush()
+            db.add(
+                AcceptCard(
+                    topic_id=data["room"],
+                    reviewer_handle="export-owner",
+                    artifact_id=other.id,
+                    status=AcceptStatus.accepted,
+                    deliverable_kind=DeliverableKind.link,
+                    deliverable_url="https://example.invalid/other",
+                )
+            )
             db.add_all(
                 [
                     DocumentNode(
@@ -295,20 +310,21 @@ def test_export_batches_keep_versions_numbering_hidden_rooms_and_node_order(
     with tarfile.open(fileobj=io.BytesIO(response.content)) as archive:
         archive.extractall(offline, filter="data")
     catalog = json.loads((offline / "artifacts.json").read_text())
-    versions = catalog[0]["versions"]
-    assert [v["number"] for v in versions] == [1, 2]
+    by_name = {row["name"]: row for row in catalog}
+    assert [v["number"] for v in by_name["Report"]["versions"]] == [1, 2]
+    assert [v["number"] for v in by_name["Other"]["versions"]] == [1]
 
     async def versions_without_the_hidden_room():
         async with client.test_factory() as db:
-            artifact_id = uuid.UUID(catalog[0]["id"])
-            found = await _versions_of(db, [artifact_id], {hidden_room})
-            return found[artifact_id]
+            ids = [uuid.UUID(by_name[n]["id"]) for n in ("Report", "Other")]
+            return await _versions_of(db, ids, {hidden_room}), ids
 
-    kept = asyncio.run(versions_without_the_hidden_room())
-    assert [(v.number, v.room_id == hidden_room) for v in kept] == [
+    kept, (report_id, other_id) = asyncio.run(versions_without_the_hidden_room())
+    assert [(v.number, v.room_id == hidden_room) for v in kept[report_id]] == [
         (1, False),
         (2, False),
     ]
+    assert [v.number for v in kept[other_id]] == [1]
     rows = json.loads((offline / "documents.json").read_text())
     nodes = [r["content"] for r in rows if r["struct_parent"] == str(data["doc"])]
     assert nodes == ["earlier", "later"]
