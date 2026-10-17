@@ -25,7 +25,8 @@ Usage:
     check-migration-fork.py --self-test
 
 Exit 0 the chain is intact, 1 it would fork (or a re-chain was refused), 2 the
-base could not be read, so nothing was judged.
+base could not be read or this tree holds no revisions at all, so nothing was
+judged.
 """
 
 import argparse
@@ -54,11 +55,11 @@ MERGE_ADVICE = (
 )
 
 # Exit 2 is this directory's "could not judge" (check-file-sizes.py, test-changed.py
-# and the ratchets all use it). A guard that could not read its comparison base has
-# judged no tree at all, so exiting 0 there is indistinguishable from a tree it read
-# and cleared — and it is the one failure this file exists to prevent. Distinct from
-# 1, which means the tree was read and refused, so a caller can tell "could not
-# answer" from "answered no".
+# and the ratchets all use it). A guard that could not read its comparison base — or
+# a tree with no revisions in it — has judged nothing at all, so exiting 0 there is
+# indistinguishable from a tree it read and cleared, and it is the one failure this
+# file exists to prevent. Distinct from 1, which means the tree was read and refused,
+# so a caller can tell "could not answer" from "answered no".
 EXIT_CANNOT_JUDGE = 2
 
 
@@ -74,6 +75,25 @@ def cannot_judge(base: str) -> int:
         file=sys.stderr,
     )
     print("Fetch it first (`git fetch`), or name another --base.", file=sys.stderr)
+    return EXIT_CANNOT_JUDGE
+
+
+def cannot_judge_tree(versions_dir: str) -> int:
+    """Refuse to answer when ``versions_dir`` yields no revisions at all.
+
+    An empty graph from ``collect(None, ...)`` is not "a chain with no fork". It is
+    a ``--versions-dir`` that does not exist, an empty one, a checkout without the
+    migrations, or files none of which declares a ``revision`` — and the union with
+    the base is then the base's own graph, which has exactly one head, so this used
+    to print the same PASS as a branch it had read. Reported on stderr with the same
+    code as an unreadable ``--base``: nothing was judged.
+    """
+    print(
+        f"cannot judge: no migration revisions under {versions_dir}, so this tree has "
+        "no chain to check.",
+        file=sys.stderr,
+    )
+    print("Check --versions-dir, or that this checkout has the migrations.", file=sys.stderr)
     return EXIT_CANNOT_JUDGE
 
 
@@ -400,6 +420,12 @@ def main() -> int:
         return cannot_judge(args.base)
 
     branch_graph = collect(None, args.versions_dir)
+    # An unreadable tree gets the same answer as an unreadable base. `collect(None,
+    # ...)` returns {} for a missing directory just as quietly as for an empty one,
+    # and the union below would then be the base's graph alone — one head, a PASS,
+    # and no indication that this side was never read.
+    if not branch_graph:
+        return cannot_judge_tree(args.versions_dir)
 
     # --- HEAD sentinel -----------------------------------------------------
     # The chain's tip, duplicated into ONE shared file (backend/alembic/HEAD).
@@ -738,6 +764,32 @@ def self_test() -> int:
                 EXIT_CANNOT_JUDGE,
             )
             check(f"... and {label} prints no verdict", "PASS" in unavailable.stdout, False)
+
+        # A tree with no revisions in it is not a clean tree either. `collect(None,
+        # ...)` returns {} for a --versions-dir that is missing just as quietly as
+        # for one that is empty, and the union is then the base's own graph — one
+        # head — which used to print the same PASS as a branch that was read. The
+        # base is readable in both cases here, so a 2 can only come from the tree,
+        # and the message has to name the tree rather than the base.
+        (alembic / "versions-empty").mkdir()
+        for label, versions_dir in (
+            ("an empty versions directory", "backend/alembic/versions-empty"),
+            ("a versions directory that does not exist", "backend/alembic/versions-missing"),
+        ):
+            unreadable_tree = subprocess.run(
+                [sys.executable, str(script), "--base", "main", "--versions-dir", versions_dir],
+                cwd=lab,
+                capture_output=True,
+                text=True,
+                env=lab_env,
+            )
+            check(f"the check refuses {label}", unreadable_tree.returncode, EXIT_CANNOT_JUDGE)
+            check(f"... and {label} prints no verdict", "PASS" in unreadable_tree.stdout, False)
+            check(
+                f"... and {label} is blamed on the tree, not the base",
+                "no migration revisions under" in unreadable_tree.stderr,
+                True,
+            )
     finally:
         shutil.rmtree(lab, ignore_errors=True)
 
@@ -748,7 +800,7 @@ def self_test() -> int:
     print(
         "PASS: check-migration-fork self-test (parser variants, merge parents, head "
         "detection, re-chain splice, re-chain decisions, the re-chain itself, and the "
-        "refusal of a --base it cannot read)"
+        "refusal of a --base it cannot read or a tree with no revisions in it)"
     )
     return 0
 
