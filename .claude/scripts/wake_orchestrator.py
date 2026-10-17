@@ -66,8 +66,12 @@ import sys
 import urllib.error
 import uuid
 
-import platform_api
-from platform_api import USER, call, login, unwrap
+# The client sits beside this file; a caller that loads the script by file location
+# does not get its directory on sys.path, so name it here.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import platform_api  # noqa: E402
+from platform_api import USER, call, login, unwrap  # noqa: E402
 
 #: #1343, the dispatcher's own task. Overridable to rehearse against a scratch topic.
 TARGET = os.environ.get("OKCHEESE_DISPATCHER", "998a4d26-a7d7-4313-b3f5-b22304182d5d")

@@ -26,7 +26,12 @@ import os
 import sys
 import urllib.error
 
-from platform_api import USER, call, login, unwrap
+# The client sits beside this file. Running the script puts this directory on sys.path;
+# a caller that loads the script by file location does not, so name it here, as the
+# other scripts with a sibling import do.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from platform_api import USER, call, login, unwrap  # noqa: E402
 
 WINDOWS = ("24h", "7d", "30d")
 
