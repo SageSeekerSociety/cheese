@@ -1066,6 +1066,402 @@ export function usePanel(config: Ref<{ value: string }>) {
   assert.match(composed.output, /1 checked/)
 })
 
+test('a call that lands on a scope property makes the value after it a field', (t) => {
+  // `toValue(s.topic)` unwraps the ref `topic`, so the `.value` written after it
+  // names a field of the object the ref holds. Reading it as another unwrap drops
+  // the field (a false positive); reading it the other way lets the ref stand in for
+  // the field (a false negative). The landing depth must survive the container
+  // unwrap `const s = toValue(scope)` that happened earlier on the same chain.
+  const script = `import { ref, watch } from 'vue'
+
+const topic = ref({ value: '' })
+const loading = ref(false)
+watch(() => topic.value.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topic = ref({ value: '' })
+const { loading } = usePanel({ topic })`
+  const composableSource = `import { ref, toValue, watch, type Ref } from 'vue'
+
+export function usePanel(scope: { topic: Ref<{ value: string }> }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  watch(() => toValue(s.topic).value, () => { loading.value = false })
+  return { loading }
+}`
+  const carried = split(t, { script, head, composableSource }).run()
+  assert.equal(carried.status, 0, carried.output)
+  assert.match(carried.output, /1 checked/)
+
+  // The same composable must not stand in for a watch on the ref itself.
+  const shallow = `import { ref, watch } from 'vue'
+
+const topic = ref({ value: '' })
+const loading = ref(false)
+watch(() => topic.value, () => { loading.value = false })`
+  const lost = split(t, { script: shallow, head, composableSource }).run()
+  assert.equal(lost.status, 1, lost.output)
+  assert.match(lost.output, /topic\.value/)
+})
+
+test('a call that landed on a getter property counts even under another call', (t) => {
+  // `toValue(scope.config)` calls the getter and hands back whatever it returns.
+  // Wrapping that result in a second `toValue` does not move the landing depth, so
+  // the property was still invoked and a carried watch must not read as lost.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel({ config: () => props.config })`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { config: () => { value: string } }) {
+  const loading = ref(false)
+  const c = toValue(scope.config)
+  watch(() => toValue(c.value), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 0, composed.output)
+  assert.match(composed.output, /1 checked/)
+})
+
+test('a call that landed on a scope property is remembered through an alias', (t) => {
+  // `const r = toValue(scope.rewrite)` calls the getter at depth 1. A later call on
+  // a field of `r` must not overwrite that landing depth, or the property reads as
+  // never invoked and a carried watch is reported as lost.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ rewrite: { phase: { value: string } } }>()
+const loading = ref(false)
+watch(() => props.rewrite.phase.value, () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ rewrite: { phase: { value: string } } }>()
+const { loading } = usePanel({ rewrite: () => props.rewrite })`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { rewrite: () => { phase: { value: string } } }) {
+  const loading = ref(false)
+  const r = toValue(scope.rewrite)
+  watch(() => toValue(r.phase).value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 0, composed.output)
+  assert.match(composed.output, /1 checked/)
+})
+
+test('a destructured parameter handed as a getter is not read as a ref', (t) => {
+  // The parameter is destructured, so the local name is the property itself. A call
+  // site that hands a getter leaves the composable with the function: `.value` off
+  // it tracks nothing, and the base watch on the ref is lost. A transparent call on
+  // the binding reaches the value the getter returns.
+  const script = `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel({ topicId: () => topicId.value })`
+  const bare = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, watch } from 'vue'
+
+export function usePanel({ topicId }: { topicId: () => string }) {
+  const loading = ref(false)
+  watch(() => topicId.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(bare.status, 1, bare.output)
+  assert.match(bare.output, /topicId\.value/)
+
+  const called = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel({ topicId }: { topicId: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(topicId), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(called.status, 0, called.output)
+  assert.match(called.output, /1 checked/)
+})
+
+test('a getter written as a function expression is read like an arrow', (t) => {
+  // `{ topicId: function () { return topicId.value } }` hands over a getter just as
+  // an arrow does; reading it as a ref would let the lost watch pass.
+  const script = `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel({ topicId: function () { return topicId.value } })`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  watch(() => s.topicId.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 1, composed.output)
+  assert.match(composed.output, /topicId\.value/)
+})
+
+test('one call site handing a ref does not decide what a getter means', (t) => {
+  // Two components call the same composable; only the changed one is judged. Its
+  // getter must not be turned into a ref by the other component's call site.
+  const script = `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel({ topicId: () => topicId.value })`
+  const other = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const otherId = ref('')
+const { loading } = usePanel({ topicId: otherId })`
+  const composed = `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  watch(() => s.topicId.value, () => { loading.value = false })
+  return { loading }
+}`
+  const mixed = split(t, { script, head, composableSource: composed })
+  mixed.write('frontend/src/components/Other.vue', sfc(other))
+  const result = mixed.run()
+  assert.equal(result.status, 1, result.output)
+  assert.match(result.output, /topicId\.value/)
+})
+
+test('a destructured parameter keeps the field a toValue result names', (t) => {
+  // `const { value } = toValue(config)` on a destructured parameter takes a field of
+  // the value the call handed back; the name is that field, not a lost local.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { computed } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel({ config: computed(() => props.config) })`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch, type ComputedRef } from 'vue'
+
+export function usePanel({ config }: { config: ComputedRef<{ value: string }> }) {
+  const loading = ref(false)
+  const { value } = toValue(config)
+  watch(() => value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 0, composed.output)
+  assert.match(composed.output, /1 checked/)
+})
+
+test('destructuring a toValue result of an unwrapped container keeps the ref', (t) => {
+  // `const { value } = toValue(s.config)` unwraps the ref `config` and takes a field
+  // of the object it holds; a watch on the ref itself is not the same source.
+  const script = `import { ref, watch } from 'vue'
+
+const config = ref({ value: '' })
+const loading = ref(false)
+watch(() => config.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const config = ref({ value: '' })
+const { loading } = usePanel(() => ({ config }))`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch, type Ref } from 'vue'
+
+export function usePanel(scope: () => { config: Ref<{ value: string }> }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  const { value } = toValue(s.config)
+  watch(() => value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 1, composed.output)
+  assert.match(composed.output, /config\.value/)
+})
+
+test('a weakened depth or getter reading loses the verdict', (t) => {
+  // Each case pairs a fixture with one edit that removes exactly one decision: the
+  // per-depth landing set, the getter drop, the destructured-parameter getter, and
+  // reading a function expression as a getter. The edit must change the verdict;
+  // otherwise that decision is not what the verdict rests on.
+  const cases = [
+    {
+      name: 'any landing counts, not the depth the walk stands on',
+      anchor: '  if (unwrapped?.has(consumed)) return segments',
+      replacement: '  if (unwrapped?.size && Math.min(...unwrapped) === consumed) return segments',
+      fixture: {
+        script: `import { ref, watch } from 'vue'
+
+const topic = ref({ value: '' })
+const loading = ref(false)
+watch(() => topic.value.value, () => { loading.value = false })`,
+        head: `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topic = ref({ value: '' })
+const { loading } = usePanel({ topic })`,
+        composableSource: `import { ref, toValue, watch, type Ref } from 'vue'
+
+export function usePanel(scope: { topic: Ref<{ value: string }> }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  watch(() => toValue(s.topic).value, () => { loading.value = false })
+  return { loading }
+}`,
+      },
+      expected: 0,
+      weakened: 1,
+    },
+    {
+      name: 'the getter keys are not dropped',
+      anchor: '      const keys = invoked ? mapped : without(mapped, ctx.scopePropGetter?.get(head))',
+      replacement: '      const keys = mapped',
+      fixture: {
+        script: `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`,
+        head: `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel({ topicId: () => topicId.value })`,
+        composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  watch(() => s.topicId.value, () => { loading.value = false })
+  return { loading }
+}`,
+      },
+      expected: 1,
+      weakened: 0,
+    },
+    {
+      name: 'a destructured parameter ignores the getter it was handed',
+      anchor: '    const keys = unwrapped?.has(0) ? binding.keys : without(binding.keys, binding.getterKeys)',
+      replacement: '    const keys = binding.keys',
+      fixture: {
+        script: `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`,
+        head: `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel({ topicId: () => topicId.value })`,
+        composableSource: `import { ref, watch } from 'vue'
+
+export function usePanel({ topicId }: { topicId: () => string }) {
+  const loading = ref(false)
+  watch(() => topicId.value, () => { loading.value = false })
+  return { loading }
+}`,
+      },
+      expected: 1,
+      weakened: 0,
+    },
+    {
+      name: 'a function expression is not read as a getter',
+      anchor: '                const getter = ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)',
+      replacement: '                const getter = ts.isArrowFunction(initializer)',
+      fixture: {
+        script: `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`,
+        head: `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel({ topicId: function () { return topicId.value } })`,
+        composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  const loading = ref(false)
+  const s = toValue(scope)
+  watch(() => s.topicId.value, () => { loading.value = false })
+  return { loading }
+}`,
+      },
+      expected: 1,
+      weakened: 0,
+    },
+  ]
+  for (const expected of cases) {
+    const fixtureRun = split(t, expected.fixture)
+    const before = fixtureRun.run()
+    assert.equal(before.status, expected.expected, `${expected.name}: baseline\n${before.output}`)
+
+    const mutated = mutatedGuard(t, expected.anchor, expected.replacement)
+    const result = spawnSync(process.execPath, [mutated, '--repo', fixtureRun.repo, '--base', fixtureRun.base], {
+      env,
+      encoding: 'utf8',
+      cwd: os.tmpdir(),
+    })
+    const shaped = { status: result.status, output: result.stdout + result.stderr }
+    assert.equal(
+      shaped.status,
+      expected.weakened,
+      `${expected.name}: the weakened guard must lose the verdict\n${shaped.output}`
+    )
+  }
+})
+
 test('a local ref destructured into the composable keeps its unwrap', (t) => {
   const script = `import { ref, watch } from 'vue'
 

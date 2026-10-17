@@ -88,18 +88,14 @@ function memberPath(node, ctx = {}) {
       const value = getter ? unwrap(argument.body) : argument
       const inner = memberPath(value, ctx)
       // `toValue(config).value` names a field: the call already unwrapped one level.
-      // What it unwrapped is the path it was given, so the depth is recorded and not
-      // just a flag: `toValue(source).topicId.value` unwrapped the scope container,
-      // not `topicId`, and the ref in `topicId` still unwraps. A getter writes its
-      // accesses inside the callback, where they unwrap as usual
-      // (`computed(() => x.value)` watches x), so its path keeps its own reading.
-      // `unwrappedAt` is the earliest argument end of a transparent call on the
-      // chain, i.e. where fields start; `argEnd` stays the last call's own argument
-      // end, so a property can tell whether a call ended on it.
+      // What it unwrapped is the path it was given, so every call's argument end is
+      // recorded, not just a flag or a single depth: `toValue(source).topicId.value`
+      // unwrapped the scope container, not `topicId`, and the ref in `topicId` still
+      // unwraps; `toValue(s.topic).value` unwrapped `topic`, so its `.value` is a
+      // field. A getter writes its accesses inside the callback, where they unwrap as
+      // usual (`computed(() => x.value)` watches x), so its path keeps its own reading.
       if (inner && !getter) {
-        const end = inner.path.length
-        if (inner.unwrappedAt === undefined || end < inner.unwrappedAt) inner.unwrappedAt = end
-        inner.argEnd = end
+        inner.unwrapped = new Set(inner.unwrapped ?? []).add(inner.path.length)
       }
       return inner
     }
@@ -111,8 +107,7 @@ function memberPath(node, ctx = {}) {
       return {
         root: alias.root,
         path: [...alias.path],
-        unwrappedAt: alias.unwrappedAt,
-        argEnd: alias.argEnd,
+        unwrapped: new Set(alias.unwrapped ?? []),
       }
     return { root: node.text, path: [] }
   }
@@ -145,7 +140,7 @@ function collectAliases(root, ctx) {
       else if (
         member &&
         ts.isObjectBindingPattern(node.name) &&
-        (member.root === 'props' || member.root === ctx.scopeParam)
+        (member.root === 'props' || member.root === ctx.scopeParam || ctx.bindings?.has(member.root))
       ) {
         for (const element of node.name.elements) {
           if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue
@@ -154,8 +149,7 @@ function collectAliases(root, ctx) {
             bind(element.name.text, {
               root: member.root,
               path: [...member.path, key],
-              unwrappedAt: member.unwrappedAt,
-              argEnd: member.argEnd,
+              unwrapped: new Set(member.unwrapped ?? []),
             })
         }
       }
@@ -190,30 +184,39 @@ function propertyName(node) {
 // parameter a call site handed a ref — is at the value already, so every `.value`
 // written there names a field. A `$local.` key names a local's value the same way the
 // component writes it.
-function refSegments(segments, asRef, unwrappedAt, consumed = 0) {
-  // `unwrappedAt` is how far a transparent call unwrapped the chain. A walk that has
-  // consumed exactly that many segments is at the value the call returned: every
-  // further `.value` names a field, not an unwrap. Before that depth the chain is
-  // read as written — a container may have been unwrapped while the property on it
-  // is still whatever its call site handed over.
-  if (typeof unwrappedAt === 'number' && unwrappedAt - consumed === 0) return segments
+function refSegments(segments, asRef, unwrapped, consumed = 0) {
+  // `unwrapped` holds the argument length of every transparent call on the chain. A
+  // walk that has consumed exactly that many segments stands on the value the call
+  // returned: every further `.value` names a field, not an unwrap. At any other depth
+  // the chain is read as written — a container may have been unwrapped while the
+  // property on it is still whatever its call site handed over.
+  if (unwrapped?.has(consumed)) return segments
   if (!asRef || segments[0] !== 'value') return segments
   return segments.slice(1)
 }
 
-function mapSegments(keys, segments, unwrappedAt, consumed = 0) {
+function mapSegments(keys, segments, unwrapped, consumed = 0) {
   const out = new Set()
   for (const key of keys) {
-    const parts = refSegments(segments, key.startsWith('$local.'), unwrappedAt, consumed)
+    const parts = refSegments(segments, key.startsWith('$local.'), unwrapped, consumed)
     out.add(parts.length ? `${key}.${parts.join('.')}` : key)
   }
+  return out
+}
+
+// The keys a call site actually handed over as the value itself: a key handed as a
+// getter stands for the property only when a transparent call landed on it.
+function without(keys, drop) {
+  if (!keys || !drop?.size) return keys
+  const out = new Set()
+  for (const key of keys) if (!drop.has(key)) out.add(key)
   return out
 }
 
 function memberKeys(node, ctx) {
   const member = memberPath(node, ctx)
   if (!member) return null
-  const { root, unwrappedAt, argEnd } = member
+  const { root, unwrapped } = member
   // Both sides of the split must spell the same path for `props.config` and
   // `props.config.value` to stay apart: a prop path keeps its segments as written.
   const path = [...member.path]
@@ -225,11 +228,13 @@ function memberKeys(node, ctx) {
       const mapped = ctx.scopeProps?.get(head)
       // A property the call sites hand over as a getter is a function here: reading
       // it without a transparent call that ends on it (`toValue(scope.x)`) yields the
-      // function, and nothing watched through it. `head` is this call's own segment,
-      // so an unwrap recorded at its depth belongs to it.
-      const invoked = argEnd === 1
-      if (mapped && !(ctx.scopePropGetter?.get(head) && !invoked)) {
-        for (const key of mapSegments(mapped, rest, unwrappedAt, 1)) out.add(key)
+      // function, and nothing watched through it. Only the keys handed over as getters
+      // are dropped that way, so a ref another call site passes is still read as
+      // written. Any call that landed on `head` (depth 1) reaches the property's value.
+      const invoked = unwrapped?.has(1)
+      const keys = invoked ? mapped : without(mapped, ctx.scopePropGetter?.get(head))
+      if (keys?.size) {
+        for (const key of mapSegments(keys, rest, unwrapped, 1)) out.add(key)
       }
       // The props object itself was handed over: the segments are prop names.
       if (ctx.scopeWholeProps) out.add(path.join('.'))
@@ -237,16 +242,24 @@ function memberKeys(node, ctx) {
       out.add('props')
     }
     for (const [key, asRef] of ctx.scopeValue ?? []) {
-      const parts = refSegments(path, asRef, unwrappedAt)
+      const parts = refSegments(path, asRef, unwrapped)
       out.add(parts.length ? `${key}.${parts.join('.')}` : key)
     }
     if (out.size) return out
     return new Set([path.length ? `$scope.${path.join('.')}` : '$scope'])
   }
-  if (ctx.bindings?.has(root)) return mapSegments(ctx.bindings.get(root), path, unwrappedAt)
+  const binding = ctx.bindings?.get(root)
+  if (binding) {
+    // A destructured parameter is the property itself: a call that landed on it
+    // (`toValue(x)`) reaches its value, while a bare read only does when the call
+    // site handed a ref rather than a getter. When no key survives, nothing is
+    // watched through it, and the local namespace must not stand in for it.
+    const keys = unwrapped?.has(0) ? binding.keys : without(binding.keys, binding.getterKeys)
+    return mapSegments(keys ?? new Set(), path, unwrapped)
+  }
   // Local names get their own namespace: a ref called `topicId` must not stand in
   // for a lost `props.topicId` watch.
-  const parts = refSegments(path, true, unwrappedAt)
+  const parts = refSegments(path, true, unwrapped)
   return new Set([parts.length ? `$local.${root}.${parts.join('.')}` : `$local.${root}`])
 }
 
@@ -514,10 +527,17 @@ function scopeContext(found, callSites) {
         const source = element.propertyName ? propertyName(element.propertyName) : element.name.text
         if (source === null) continue
         const mapped = callSites.scopeProps?.get(source)
-        if (mapped) ctx.bindings.set(element.name.text, mapped)
+        if (mapped) {
+          ctx.bindings.set(element.name.text, {
+            keys: mapped,
+            getterKeys: callSites.scopePropGetter?.get(source) ?? new Set(),
+          })
+        }
         // A call site that hands over the whole props object destructures the prop
         // itself, so the local name is the prop path.
-        else if (callSites.scopeWholeProps) ctx.bindings.set(element.name.text, new Set([source]))
+        else if (callSites.scopeWholeProps) {
+          ctx.bindings.set(element.name.text, { keys: new Set([source]), getterKeys: new Set() })
+        }
       }
     }
   }
@@ -539,18 +559,21 @@ function isRefArgument(node) {
 
 function callSiteMappings(vueFiles, fnName, readHead) {
   const scopeProps = new Map()
-  // Property -> whether every call site hands it as a function (a getter). The
-  // composable only reaches such a property's value through a call.
+  // Property -> the keys handed over as a function (a getter). The composable only
+  // reaches such a key's value through a call; each call site is recorded on its own
+  // so one caller's ref does not decide what another caller's getter means.
   const scopePropGetter = new Map()
   const scopeValue = new Map()
   let scopeWholeProps = false
   const add = (key, keys, getter) => {
     if (!scopeProps.has(key)) {
       scopeProps.set(key, new Set())
-      scopePropGetter.set(key, true)
+      scopePropGetter.set(key, new Set())
     }
-    if (!getter) scopePropGetter.set(key, false)
-    for (const value of keys) scopeProps.get(key).add(value)
+    for (const value of keys) {
+      scopeProps.get(key).add(value)
+      if (getter) scopePropGetter.get(key).add(value)
+    }
   }
   for (const file of vueFiles) {
     let source
