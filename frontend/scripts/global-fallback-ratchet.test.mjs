@@ -1015,6 +1015,43 @@ describe('findGlobalFallbacks', () => {
     assert.deepEqual(found(component(`{ ...m, ...p${last} }`)), [], 'read `m` before the long route reached it')
   })
 
+  // `Object.assign` and object spreads are read by separate code, and each
+  // decides for itself whether the answer it holds is safe to keep. The same
+  // bound is reached through a chain of assignments, and the short answer kept
+  // there must not stand in for the full one a shallower route still needs.
+  it('does not keep the half-read answer a deep chain of assignments stops at', () => {
+    // A link of this chain costs two levels, not one: the walk names the next
+    // call through an identifier, then steps into the call. So `m`'s own
+    // answer sits at the bound — and its one child past it — at half the
+    // length that puts a chain of spreads there. Measured off the bound for
+    // the same reason as the test above.
+    const lines = ["const leaf = { props: ['open'] }", 'const m = Object.assign({}, leaf)']
+    for (let i = 1; i < MAX_SPREAD_DEPTH / 2; i += 1) {
+      lines.push(`const p${i} = Object.assign({}, ${i === 1 ? 'm' : `p${i - 1}`})`)
+    }
+    const component = (exported) =>
+      [
+        '<script lang="ts">',
+        ...lines,
+        `export default ${exported}`,
+        '</script>',
+        '<template><button @click="open()">x</button></template>',
+        '',
+      ].join('\n')
+
+    const last = MAX_SPREAD_DEPTH / 2 - 1
+    assert.deepEqual(
+      found(component(`Object.assign({}, p${last}, m)`)),
+      [],
+      'kept what a route at the bound had read of `m` through an assignment'
+    )
+    assert.deepEqual(
+      found(component(`Object.assign({}, m, p${last})`)),
+      [],
+      'read `m` before the long assignment route reached it'
+    )
+  })
+
   // The answer to a node that was read only as far as the bound is worth
   // keeping for the depth it was read at — and only for that depth. A walk
   // that instead refuses to keep any ancestor of a truncated route still
