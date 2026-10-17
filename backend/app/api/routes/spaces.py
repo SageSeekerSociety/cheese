@@ -26,6 +26,7 @@ from app.api.space_payloads import (
     _invite_codes_to_api_models,
     _space_to_api_model,
 )
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import (
@@ -336,6 +337,7 @@ async def get_spaces(
     "",
     summary="Create Space",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_space(
     payload: CreateSpaceRequest,
@@ -394,10 +396,7 @@ async def create_space(
     )
 
 
-@router.patch(
-    "/{spaceId}",
-    summary="Update Space",
-)
+@router.patch("/{spaceId}", summary="Update Space", dependencies=[ROUTE_DECIDES])
 async def patch_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: PatchSpaceRequest,
@@ -445,6 +444,7 @@ async def patch_space(
     "/{spaceId}",
     summary="Delete Space",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -456,8 +456,7 @@ async def delete_space(
 
 
 @router.post(
-    "/join",
-    summary="Join a Space with an invite code",
+    "/join", summary="Join a Space with an invite code", dependencies=[ROUTE_DECIDES]
 )
 async def join_space(
     payload: JoinSpaceRequest,
@@ -503,6 +502,7 @@ async def list_space_members(
     "/{spaceId}/members",
     summary="Add Space Member",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def add_space_member(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -537,6 +537,7 @@ async def add_space_member(
     "/{spaceId}/members/{userId}",
     summary="Remove Space Member",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_space_member(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
@@ -558,6 +559,7 @@ async def delete_space_member(
     "/{spaceId}/leave",
     summary="Leave a Space",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def leave_space(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
