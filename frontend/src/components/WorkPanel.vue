@@ -98,6 +98,9 @@ const props = withDefaults(
     // keeps the panel mountable without a router, which is how its four suites
     // exercise it. An unknown or absent value leaves the choice here.
     tab?: string
+    // 一句话里那个规则名字链接（`?routine=`）指名的那一条：切到「例行事务」那一格之
+    // 后，那一格选中它、展开它、滚到它跟前。地址同样是 TopicView 的，这一栏只往下传。
+    routineId?: string | null
     // 采纳卡处在哪一段（还没答 = undefined）。Only used, with `working`, to pick
     // which tab a topic OPENS on, and only when the address named none — after
     // that it is the reader's choice.
@@ -270,6 +273,17 @@ watch(
     ensureFileFromUrl(asked)
     if (asked && asked !== active.value) active.value = asked
   }
+)
+
+// 地址里点名了某条规则（`?routine=`）：那一格得先开着，才轮得到它自己去选中。地址一
+// 般连 `tab=routines` 一起带，这里兜的是只剩 `routine` 的链接——不用问人、也不丢东西。
+watch(
+  () => props.routineId,
+  (id) => {
+    // 任务页上没有这一格：走错门就别硬切。
+    if (id && !props.taskId && active.value !== 'routines') active.value = 'routines'
+  },
+  { immediate: true }
 )
 
 // A tab mounts the first time it is selected and then stays mounted — which is
@@ -817,6 +831,7 @@ defineExpose({
             :topic-id="topicId"
             :project-id="projectId"
             :room-title="topic?.title ?? ''"
+            :routine-id="routineId ?? null"
             :refresh-tick="refreshTick"
             @open-file="openFile"
           />

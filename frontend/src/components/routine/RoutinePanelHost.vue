@@ -10,8 +10,10 @@
 //
 // 取数都接在这里，画的那一半只收结果——panels/ 下的每个 SFC 都是场景棘轮里的「场景」，
 // 新场景必须第一天就是 A 档，所以取数一滴都不能漏到 `PanelRoutines.vue` 里去。
-import type { RoutineInput } from '@/lib/routine'
+import type { Routine, RoutineInput } from '@/lib/routine'
 import type { RoutineTemplateInput } from '@/lib/routineTemplates'
+
+import { nextTick, ref, watch } from 'vue'
 
 import { useRoutineList } from '@/composables/useRoutineList'
 import { useRoutineTemplates } from '@/composables/useRoutineTemplates'
@@ -19,6 +21,7 @@ import { useRoutineTemplates } from '@/composables/useRoutineTemplates'
 import PanelRoutines from '../panels/PanelRoutines.vue'
 
 import { t } from '@/i18n'
+import { focusRow } from '@/lib/focusRow'
 
 const props = withDefaults(
   defineProps<{
@@ -28,8 +31,10 @@ const props = withDefaults(
     roomTitle?: string
     // 一轮结束由工作面板加一：芝士可能刚在房间里起草了一条规则，名单要跟上。
     refreshTick?: number
+    /** 一句提到这条规则的话里，那名字的链接（`?routine=`）指着的那一条。 */
+    routineId?: string | null
   }>(),
-  { roomTitle: '', refreshTick: 0 }
+  { roomTitle: '', refreshTick: 0, routineId: null }
 )
 
 const emit = defineEmits<{
@@ -96,6 +101,37 @@ async function onSubmit(payload: { room: string; body: RoutineInput; keepAsTempl
   if (!saved || !payload.keepAsTemplate) return
   if (!(await addTemplate(payload.body))) error.value = t('routines.template.saveFailed')
 }
+
+/**
+ * 有人点了一句提到这条规则的话里那个名字（`?routine=<id>`）：这一格选中它、展开它最
+ * 近三次、滚到它跟前亮一下。
+ *
+ * 名单可能还在路上——人是从一条旧消息点进来的。所以等它回来再落：`routines` 每读一
+ * 次都换一个数组，那个 watch 会重来，落到了一条就不再动（一轮结束加 tick 也会重读，
+ * 不能每读一次又滚一下）。那一条不在名单里（已经删了）就什么都不做：从旧消息点过来，
+ * 指不到是常态。
+ */
+const pointed = ref<string | null>(null)
+
+async function pointAt(row: Routine) {
+  closeForm()
+  closeRecords()
+  await toggleRuns(row, true)
+  await nextTick()
+  void focusRow(`[data-routine="${CSS.escape(row.id)}"]`)
+}
+
+watch(
+  [() => props.routineId, routines],
+  ([id, rows]) => {
+    if (!id || pointed.value === id) return
+    const row = rows.find((r) => r.id === id)
+    if (!row) return
+    pointed.value = id
+    void pointAt(row)
+  },
+  { immediate: true }
+)
 
 </script>
 

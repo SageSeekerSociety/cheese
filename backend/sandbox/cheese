@@ -957,7 +957,7 @@ PLATFORM_TOOLS = ToolTable(
             "为当前频道建一条例行事务（到点让这个频道的队友开工一轮）。"
             "**存下就在跑**：没有人再点一次确认，所以你建之前先把配置说清楚，"
             "建完自己说一句它已经开跑了、什么时候跑第一次，话里带上返回的那个"
-            "链接（就是规则的名字，点开是例行事那页上这一条）。",
+            "链接（就是规则的名字，点开还是这个频道，右栏那一格开在这一条上）。",
             {
                 "title": _text("规则名字，一句话；不写就取目标的第一句"),
                 "instructions": _text("目标：到点要做的事，写清做什么、交出什么"),
@@ -3116,9 +3116,12 @@ def _say_routine_draft(args, data, env) -> str:
     first = f"，第一次在 {data['next_run_at']}" if data.get("next_run_at") else ""
     title = data.get("title") or args.get("title") or ""
     project = data.get("project_id") or env.get("CHEESE_PROJECT") or ""
+    # 点开是**这个频道**：右栏切到「例行事务」，这一条展开着。不去项目那一页 —— 规则
+    # 长在这个房间里，人刚在这里说的事就在眼前做完，别把人带到别处去认路。
+    room = data.get("topic_id") or ""
     name = (
-        f"[{title}](/projects/{project}/routines?routine={data.get('id')})"
-        if project and data.get("id")
+        f"[{title}](/projects/{project}/channels/{room}?tab=routines&routine={data.get('id')})"
+        if project and room and data.get("id")
         else f"「{title}」"
     )
     return (
@@ -3127,9 +3130,9 @@ def _say_routine_draft(args, data, env) -> str:
         f"{first}\n"
         f"（id={data.get('id')}，你自己后面调用要用，别写给用户。）\n"
         "现在你自己说一句告诉用户建好了：把那上面的名字原样带上 —— 它是这条规则的"
-        "标题，点开就是这个项目「例行事务」页上展开着的那一条。像平常说话那样说清楚"
-        "建了什么、什么时候第一次跑就够了；别说是链接、别写 id、也别把这段说明抄过去。"
-        "他要改或不要，在那页上改。"
+        "标题，点开就是这个频道右边「例行事务」那一格上展开着的那一条。像平常说话那样"
+        "说清楚建了什么、什么时候第一次跑就够了；别说是链接、别写 id、也别把这段说明"
+        "抄过去。他要改或不要，就在那一格上改。"
     )
 
 

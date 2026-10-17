@@ -30,6 +30,7 @@ import RoutinePanelHost from './RoutinePanelHost.vue'
 const {
   createRoutine,
   createRoutineTemplate,
+  getRoutine,
   listProjectRoutines,
   listRoutineTemplates,
   updateRoutine,
@@ -133,6 +134,26 @@ describe('房间右侧的「例行事务」', () => {
     vi.mocked(listProjectRoutines).mockResolvedValue({ data: [], total: 0 })
     const { findByText } = mount()
     await findByText('还没有例行事务')
+  })
+
+  it('一句话里那个名字点名了这一条（?routine=）：这一格开在它上面', async () => {
+    vi.mocked(getRoutine).mockResolvedValue({ ...live, runs: [] })
+    const { findByText } = render(RoutinePanelHost, {
+      props: { topicId: 'room-1', projectId: 'p1', routineId: 'live-1' },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await findByText('这个房间的日报')
+    // 选中它、展开它最近三次 —— 和人在行上点一下是同一件事。
+    await waitFor(() => expect(getRoutine).toHaveBeenCalledWith('live-1'))
+  })
+
+  it('点名的那一条已经删了：什么都不开，也不报错', async () => {
+    const { findByText } = render(RoutinePanelHost, {
+      props: { topicId: 'room-1', projectId: 'p1', routineId: 'gone-1' },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await findByText('这个房间的日报')
+    expect(getRoutine).not.toHaveBeenCalled()
   })
 
   it('删不掉的那一条：⋯ 里没有删除，别的动作还在', async () => {

@@ -76,6 +76,7 @@ const {
   unreadOnOpen,
   panelTab,
   onPanelTab,
+  panelRoutineId,
   focusBlock,
   threadFocusBlock,
   backToRoom,
@@ -422,6 +423,7 @@ void openPlace()
             :site-turns="siteTurns"
             :topic-list="store.topics"
             :tab="panelTab"
+            :routine-id="panelRoutineId"
             :card-phase="cardPhase"
             :with-chat="!mdAndUp"
             :compact="panelFloat || !panelOpen"
