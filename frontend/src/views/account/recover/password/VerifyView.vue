@@ -15,7 +15,14 @@
     <v-form @submit.prevent="submit">
       <!-- The account's name rides along, hidden, so a password manager files
            the new password under the right account. -->
-      <input type="text" name="username" autocomplete="username" :value="username" hidden />
+      <input
+        type="text"
+        name="username"
+        autocomplete="username"
+        :value="username"
+        hidden
+        :aria-label="t('account.field.username')"
+      />
 
       <AccountField :label="t('account.field.newPassword')" input-id="reset-password">
         <PasswordField

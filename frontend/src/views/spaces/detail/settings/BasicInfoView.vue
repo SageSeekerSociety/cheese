@@ -16,6 +16,7 @@
           class="avatar-field__input"
           type="file"
           accept="image/jpeg,image/png,image/webp,image/gif"
+          :aria-label="t('spaces.settings.basic.changeAvatar')"
           @change="onAvatarPicked"
         />
       </div>

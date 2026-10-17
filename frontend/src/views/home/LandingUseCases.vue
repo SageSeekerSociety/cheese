@@ -68,7 +68,9 @@ const role = computed(() => roles.value.find((item) => item.id === roleId.value)
 function moveTab(event: KeyboardEvent) {
   const keys = ['ArrowRight', 'ArrowLeft', 'Home', 'End']
   if (!keys.includes(event.key)) return
-  const tabs = Array.from((event.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+  // The handler sits on each tab; its siblings are the tablist's tabs.
+  const list = (event.currentTarget as HTMLElement).parentElement
+  const tabs = Array.from(list?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [])
   const index = tabs.indexOf(event.target as HTMLButtonElement)
   if (index === -1) return
   event.preventDefault()
@@ -87,13 +89,14 @@ function moveTab(event: KeyboardEvent) {
 <template>
   <section id="use-cases" class="uses" aria-labelledby="use-cases-title">
     <h2 id="use-cases-title" class="uses-title">{{ t('publicSite.useCases.title') }}</h2>
-    <div class="uses-tabs" role="tablist" :aria-label="t('publicSite.useCases.tabsLabel')" @keydown="moveTab">
+    <div class="uses-tabs" role="tablist" :aria-label="t('publicSite.useCases.tabsLabel')">
       <button
         v-for="item in roles"
         :id="`use-case-${item.id}`"
         :key="item.id"
         type="button"
         role="tab"
+        @keydown="moveTab"
         class="uses-tab"
         :aria-selected="roleId === item.id"
         :tabindex="roleId === item.id ? 0 : -1"

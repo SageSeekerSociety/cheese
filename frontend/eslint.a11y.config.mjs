@@ -24,6 +24,15 @@ export default [
   ...base,
   ...a11y.configs['flat/recommended'],
   {
+    rules: {
+      // HTML associates a label with its control either by wrapping it or by
+      // `for`; either one gives the control its name. The plugin's default
+      // demands both, which no label pointing `for` at a Vuetify field can meet,
+      // since the field's <input> is not a child of the label.
+      'vuejs-accessibility/label-has-for': ['error', { required: { some: ['nesting', 'id'] } }],
+    },
+  },
+  {
     // An unused `eslint-disable` is the main lint's business and it already
     // reports it. Here it would arrive as a message with no rule id, which the
     // ratchet treats as "could not judge this file".
