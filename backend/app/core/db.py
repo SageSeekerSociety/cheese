@@ -256,10 +256,11 @@ def _set_request_lock_timeout(
         return
     # Transaction-local, including transactions opened after an explicit commit
     # or release_read_session(). Background sessions and migrations opt out.
-    # PostgreSQL duration syntax, e.g. DB_REQUEST_LOCK_TIMEOUT=15s.
+    # PostgreSQL duration syntax, e.g. DB_REQUEST_LOCK_TIMEOUT=5s. The default
+    # must expire before work-lease's 10-second answer budget.
     connection.execute(
         text("SELECT set_config('lock_timeout', :value, true)"),
-        {"value": os.getenv("DB_REQUEST_LOCK_TIMEOUT", "15s")},
+        {"value": os.getenv("DB_REQUEST_LOCK_TIMEOUT", "5s")},
     )
 
 

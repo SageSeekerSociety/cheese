@@ -22,9 +22,7 @@ from tests.integration.conftest import a_team
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("configured", "expected"), [(None, "15s"), ("750ms", "750ms")]
-)
+@pytest.mark.parametrize(("configured", "expected"), [(None, "5s"), ("750ms", "750ms")])
 async def test_each_request_transaction_has_its_timeout_but_background_does_not(
     production_app_engine, monkeypatch, configured, expected
 ):
@@ -62,7 +60,7 @@ async def test_each_request_transaction_has_its_timeout_but_background_does_not(
 
 
 @pytest.mark.anyio
-async def test_a_room_lock_wait_returns_503_within_twenty_seconds_and_releases_the_pool(
+async def test_a_room_lock_wait_returns_503_within_ten_seconds_and_releases_the_pool(
     production_app_engine, monkeypatch
 ):
     monkeypatch.delenv("DB_REQUEST_LOCK_TIMEOUT", raising=False)
@@ -107,10 +105,10 @@ async def test_a_room_lock_wait_returns_503_within_twenty_seconds_and_releases_t
                 transport=ASGITransport(app=test_app), base_url="http://test"
             ) as http:
                 started = time.monotonic()
-                response = await asyncio.wait_for(http.get("/lock"), timeout=20)
+                response = await asyncio.wait_for(http.get("/lock"), timeout=10)
                 elapsed = time.monotonic() - started
                 assert response.status_code == 503, response.text
-                assert 14 <= elapsed < 20, elapsed
+                assert 4 <= elapsed < 10, elapsed
                 assert int(response.headers["Retry-After"]) > 0
                 assert response.json()["code"] == 503
                 assert response.json()["error"]["i18n"]["key"] == "systemBusy"

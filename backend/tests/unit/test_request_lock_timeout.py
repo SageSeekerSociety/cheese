@@ -31,7 +31,7 @@ def test_request_lock_timeout_reads_configuration(monkeypatch, configured):
     db._set_request_lock_timeout(Mock(), SimpleNamespace(nested=False), connection)
 
     _, parameters = connection.execute.call_args.args
-    assert parameters["value"] == (configured or "15s")
+    assert parameters["value"] == (configured or "5s")
 
 
 @pytest.fixture

@@ -245,10 +245,6 @@ def subscription_model_listings() -> list[PoolListing]:
     ]
 
 
-def subscription_model_default() -> str:
-    return next(mid for (mid, _l, _d, _a, dflt, _t) in _SUB_MODELS if dflt)
-
-
 def subscription_model_alias(mid: str | None) -> str:
     """The explicit Claude model identifier for a saved selection; unknown ids fail."""
     for m, _l, _d, alias, _dflt, _t in _SUB_MODELS:

@@ -13,18 +13,19 @@ password is changed or reset; when 2FA is turned off or set up again; and
 when the device it was last used on is signed out from the device list.
 """
 
-import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InternalServerError
 from app.core.sentences import say
+from app.domain.common import _now
 from app.domain.user.models import UserTrustedDevice
+from app.domain.user.tokens import digest_token
 
 TRUST_DAYS = 30
 
@@ -33,14 +34,6 @@ TRUST_DAYS = 30
 class Granted:
     token: str
     expires_at: datetime
-
-
-def _digest(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 def _live(now: datetime) -> tuple:
@@ -73,7 +66,7 @@ class TrustedDeviceService:
             await self._db.execute(
                 update(UserTrustedDevice)
                 .where(
-                    UserTrustedDevice.token_hash == _digest(replacing),
+                    UserTrustedDevice.token_hash == digest_token(replacing),
                     UserTrustedDevice.revoked_at.is_(None),
                 )
                 .values(revoked_at=now)
@@ -82,7 +75,7 @@ class TrustedDeviceService:
         row = UserTrustedDevice(
             id=uuid.uuid4(),
             user_id=user_id,
-            token_hash=_digest(token),
+            token_hash=digest_token(token),
             expires_at=now + timedelta(days=TRUST_DAYS),
             last_used_at=now,
             session_id=session_id,
@@ -98,7 +91,7 @@ class TrustedDeviceService:
             return None
         return await self._db.scalar(
             select(UserTrustedDevice).where(
-                UserTrustedDevice.token_hash == _digest(token),
+                UserTrustedDevice.token_hash == digest_token(token),
                 UserTrustedDevice.user_id == user_id,
                 *_live(_now()),
             )
