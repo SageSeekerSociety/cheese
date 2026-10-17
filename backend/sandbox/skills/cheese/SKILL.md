@@ -89,7 +89,7 @@ description: 在知是里交付工作时使用：创建任务、在任务里准�
 
 | 命令 | 用途 |
 |---|---|
-| `cheese worktree <任务 id>` | 准备或找回任务的工作目录，输出路径。进去之后 `cheese sync` 和 `cheese push-fix` 会自己认出是哪条任务 |
+| `cheese worktree <任务 id>` | 准备或找回任务的工作目录，输出路径。进去之后 `cheese sync` 和 `cheese push-fix` 会自己认出是哪条任务。依赖文件和环境配置没变、装好的依赖目录还在时不重装；要重装加 `--prepare` |
 | `cheese checkout` | 在 `~/.cheese/checkout` 准备项目默认分支的代码，输出路径；支线里看代码用它，这里的改动留不下 |
 | `cheese sync [--task <任务 id>] [--all]` | 推送任务的提交，并备份还没提交的文件；`--all` 同步这台机器上这个频道的全部任务目录 |
 | `cheese push-fix [--task <任务 id>] [--drop-dependency]` | 把任务的新提交推到它现有的 PR 并刷新验收卡；`--drop-dependency` 见上面「撤掉对父任务的依赖」 |
