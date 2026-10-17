@@ -1767,12 +1767,11 @@ PY_HANDLER_RETURN_RAISED = PY_HANDLER_RETURN_INSIDE.replace(
 #: `1 == LIMIT` is false, so the flag takes the hand-off — but `LIMIT` cannot be
 #: read. Guessing the self-test side would drop that hand-off.
 PY_NEGATED_COUNT = '''#!/usr/bin/env python3
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-LIMIT = int(os.environ.get("LIMIT", "1"))
+LIMIT = len("--self-test") - 10
 
 
 def violations_in(root):
@@ -1796,12 +1795,11 @@ if __name__ == "__main__":
 '''
 
 PY_UNREADABLE_BODY_HANDOFF = '''#!/usr/bin/env python3
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-LIMIT = int(os.environ.get("LIMIT", "1"))
+LIMIT = len("--self-test") - 10
 
 
 def violations_in(root):
@@ -1824,14 +1822,75 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
+#: The statements after the self-test branch sit inside a gate the command line
+#: proves false. What follows the branch there — the `try` and the handler that
+#: hands off to the sibling — must not be read as reachable.
+PY_FALSE_GATE_TAIL = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 2:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The handler sits under a gate the command line proves false (`guard.py
+#: --self-test` has two words), so it never runs. Its hand-off must not be put
+#: on the path: doing so would hide the real finding that this self-test never
+#: fails.
+PY_PROVEN_FALSE_GATE = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 2:
+        try:
+            if "--self-test" in argv:
+                sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 PY_UNREADABLE_COUNT = '''#!/usr/bin/env python3
-import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-LIMIT = int(os.environ.get("LIMIT", "0"))
+LIMIT = len("--self-test") - 11
 
 
 def violations_in(root):
@@ -2559,6 +2618,24 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 2, output)
         self.assertEqual(guard["status"], "unverified", guard)
         self.assertIn("测试文件", guard["detail"])
+
+    def test_a_tail_behind_a_provably_false_gate_is_not_on_the_path(self) -> None:
+        """A false outer gate rules out the whole block, handler included."""
+        code, guard, output = self._only(
+            {"falsetail.py": PY_FALSE_GATE_TAIL},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_handler_behind_a_provably_false_gate_is_not_on_the_path(self) -> None:
+        """`len(argv) > 2` is false for the self-test, so its handler never runs."""
+        code, guard, output = self._only(
+            {"falsegate.py": PY_PROVEN_FALSE_GATE},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
 
     def test_an_exit_in_an_elif_body_reaches_the_handler(self) -> None:
         """The `elif` body is what runs here, and its exit lands in the handler."""

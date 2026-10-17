@@ -605,6 +605,28 @@ def _branch_is_proven_reached(branch: ast.AST, parents: dict[ast.AST, ast.AST]) 
             return False
 
 
+def _statement_may_run(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+    """False only when an enclosing statement provably does not run.
+
+    `_branch_is_proven_reached` answers a stricter question: it is False for a
+    gate this invocation does not settle and for a gate that settles against
+    the statement alike. For collecting a handler those differ: a loop body, a
+    `match` case, an `except` body or an unsettled `if` may all run, and only a
+    test that settles against the statement rules it out.
+    """
+    while True:
+        holder = parents.get(node)
+        if holder is None or isinstance(
+            holder, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.Module)
+        ):
+            return True
+        if isinstance(holder, ast.If):
+            value = _settled(holder.test)
+            if value is not _UNKNOWN and bool(value) != (node in holder.body):
+                return False
+        node = holder
+
+
 def _exception_name(node: ast.AST) -> str | None:
     """The name an `except` clause says, whether spelled `X` or `mod.X`."""
     if isinstance(node, ast.Name):
@@ -821,6 +843,11 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
     path: only when every enclosing statement provably runs for this invocation
     (an `if` whose test on `--self-test`'s argv is true, a `try` body, a `with`)
     is the return final for it.
+
+    `_statement_may_run` answers the weaker question the climb needs when it
+    collects a handler: a block may run unless an enclosing test provably rules
+    it out. A gate that settles against the branch takes the whole block off the
+    path, handler included, so reading a spawn out of it would invent one.
     """
     named: dict[str, list[ast.AST]] = {}
     for node in ast.walk(tree):
@@ -859,17 +886,21 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
             if for_self_test is None
             else [branch.body if for_self_test else branch.orelse]
         )
+        # A branch a settled gate rules out runs neither its own body nor what
+        # follows it: nothing inside it is on the self-test's path, and reading
+        # a spawn out of it would hide a finding. `_statement_may_run` answers
+        # exactly that, and stays True for a block that merely may run.
+        branch_runs = _statement_may_run(branch, parents)
         for side in taken:
+            if not branch_runs:
+                break
             sides.append(side)
             # An exit caught by an enclosing `except` continues inside the
             # handler, so that body is on the path even when the handler ends
             # by returning. While it is unsettled whether the side runs, the
             # handler may still be entered, so collect it: `unverified` is the
             # honest verdict there, and inventing a finding is not.
-            if (
-                side
-                and (landed := _caught_handler_body(side[-1], parents)) is not None
-            ):
+            if side and (landed := _caught_handler_body(side[-1], parents)) is not None:
                 sides.append(landed)
         side = taken[0]
         if trusted and side and _abandons_the_run(side[-1], parents):
@@ -884,14 +915,14 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
             if block is None:
                 break
             tail = block[block.index(node) + 1 :]
-            sides.append(tail)
-            # Same reading as above: an unsettled block may run, and its
-            # handler may be entered, so collect it rather than miss a spawn.
-            if (
-                tail
-                and (landed := _caught_handler_body(tail[-1], parents)) is not None
-            ):
-                sides.append(landed)
+            # Same reading as above, per level: an unsettled block may run, and
+            # its handler may be entered, so collect it rather than miss a
+            # spawn; a block a settled gate rules out runs neither the branch
+            # nor anything after it in the same block.
+            if _statement_may_run(node, parents):
+                sides.append(tail)
+                if tail and (landed := _caught_handler_body(tail[-1], parents)) is not None:
+                    sides.append(landed)
             if trusted and tail and _abandons_the_run(tail[-1], parents):
                 # The self-test leaves inside a block that provably runs, so
                 # nothing further out can be on its path; collecting it would
@@ -1758,6 +1789,8 @@ def self_test() -> int:
         "unreadable-count-guard.py": "unverified",
         "negated-count-guard.py": "unverified",
         "unreadable-body-handoff-guard.py": "unverified",
+        "proven-false-gate-guard.py": "self-test-does-not-bite",
+        "false-gate-tail-guard.py": "self-test-does-not-bite",
         "elif-exit-handler-guard.py": "unverified",
         "sys-argv-branch-guard.py": "self-test-does-not-bite",
         "gated-handler-arm-guard.py": "unverified",
@@ -1784,7 +1817,8 @@ def self_test() -> int:
         "自测分支调到的普通函数也会跟下去；计数为零的分支是扫描侧、elif 之后照样跟下去；"
         "控制词后面的判定算判定、return 之后的死代码不算；分支落在循环体里不算离开、"
         "被捕获的 raise 不算离开、sys.exit 才算；分支落在 else、match case 里照样跟下去，"
-        "落在 with、finally 和已定的条件里才算离开；被 except SystemExit 吞掉的退出不算离开、"
+        "落在 with、finally 和已定的条件里才算离开；条件判为假时，分支和它后面的处理器都不在路上；"
+        "被 except SystemExit 吞掉的退出不算离开、"
         "处理器再抛出才算；带注解的模块常量也读得出；读的是本函数里的局部常量；"
         "退出落进处理器时处理器的 return 也在路上；裸的 exit 调用同样算离开；"
         "只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、缺自测与没变绿各自报出、"
@@ -3666,6 +3700,75 @@ def main(argv):
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
+    "false-gate-tail-guard.py": '''#!/usr/bin/env python3
+"""The statements after the self-test branch sit behind a gate the argv proves false.
+
+`len(argv) > 2` is false for the self-test's own command line, so the `try`
+after the branch never runs — and neither does the `except` handler that hands
+off to the sibling. Collecting that handler anyway puts a spawn on a path the
+self-test never takes and hides the finding that this guard prints PASS without
+measuring anything.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 2:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "proven-false-gate-guard.py": '''#!/usr/bin/env python3
+"""The handler that spawns a sibling sits behind a gate the argv proves false.
+
+`len(argv) > 2` is false for the self-test's own command line
+(`guard.py --self-test`), so the `sys.exit(1)` under it never runs, and neither
+does the `except SystemExit` handler that hands off to the sibling. Collecting
+that handler anyway puts a spawn on a path the self-test never takes and hides
+the finding that this guard prints PASS without measuring anything.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) > 2:
+        try:
+            if "--self-test" in argv:
+                sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
     "negated-count-guard.py": '''#!/usr/bin/env python3
 """The count is negated against a `LIMIT` whose value cannot be read.
 
@@ -3673,12 +3776,11 @@ if __name__ == "__main__":
 hand-off at the sibling test. Reading the negation as if it had settled takes
 the branch body for the self-test side and calls that hand-off toothless.
 """
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-LIMIT = int(os.environ.get("LIMIT", "1"))
+LIMIT = len("--self-test") - 10
 
 
 def violations_in(root):
@@ -3708,12 +3810,11 @@ body that hands the self-test to the sibling must stay on the path even though
 the fall-through below it is the scan. Dropping the body leaves only the scan
 and calls the guard toothless.
 """
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-LIMIT = int(os.environ.get("LIMIT", "1"))
+LIMIT = len("--self-test") - 10
 
 
 def violations_in(root):
@@ -3742,12 +3843,11 @@ if __name__ == "__main__":
 the hand-off at the sibling test. Guessing that the self-test side is the
 branch body stops the walk there and calls that hand-off toothless.
 """
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-LIMIT = int(os.environ.get("LIMIT", "0"))
+LIMIT = len("--self-test") - 11
 
 
 def violations_in(root):
