@@ -15,11 +15,13 @@ file.
 
 Directives are read from the ``COMMENT`` tokens ``tokenize`` yields, so a
 ``"# noqa: BLE001"`` inside a string literal is not a directive. Every spelling
-ruff accepts is read: a clause anywhere in a comment (``## noqa: X``,
-``# type: ignore  # noqa: X``), a space before the colon, the file-level
-``# ruff: noqa: X``, and codes separated by commas, whitespace, or both. A
-trailing explanation is not part of the code list. A bare ``# noqa`` with no
-rule list suppresses everything and is never inert; it is not counted.
+ruff reads is read: a clause anywhere in a comment (``## noqa: X``,
+``# type: ignore  # noqa: X``), whitespace before either colon, the file-level
+``# ruff: noqa: X``, codes separated by commas, whitespace, or both, and an
+empty item where a code would be (``# noqa: ,BLE001``), which ruff warns about
+and then reads. A trailing explanation is not part of the code list. A bare
+``# noqa`` with no rule list suppresses everything and is never inert; it is
+not counted.
 
 A selector that names a group (``E``, ``BLE``) enables every rule in that
 group; one that names a single rule (``A003``) enables only that one, and
@@ -30,9 +32,8 @@ from the resolved set, so a directive naming an ignored rule is inert as well.
 
 Two limits: ``per-file-ignores`` is not modelled (none of them covers
 ``app/`` today), and neither are partial prefixes such as ``E5``. A code-shaped
-word in an explanation (``# noqa: E501, HTTP2 support``) is read as a code;
-ruff drops codes it does not know, so such a line is counted here and not
-reported by RUF100.
+word that starts the list is read as a code; ruff drops codes it does not know,
+so such a line is counted here and not reported by RUF100.
 
 ``ruff check --extend-select RUF100 backend/app`` agrees on the tree this
 baseline was measured on: its ``non-enabled:`` diagnostics are exactly the
@@ -53,24 +54,28 @@ _APP = BACKEND_ROOT / "app"
 #: A ``noqa`` clause, wherever it sits in a comment: ruff reads the whole
 #: comment, so a second hash inside it (a doubled-hash prefix, or a trailing
 #: ``type: ignore`` comment) does not end the search. The optional ``ruff:``
-#: prefix is the file-level form. ``sep`` is the colon that introduces a rule
-#: list — whitespace may sit on either side of it — and its absence is the
+#: prefix is the file-level form, and either colon may have whitespace before
+#: it. ``sep`` is the colon that introduces a rule list; its absence is the
 #: bare directive that suppresses everything.
 _NOQA = re.compile(
-    r"#\s*(?:ruff:\s*)?noqa\b\s*(?P<sep>:\s*)?(?P<codes>[^#]*)",
+    r"#\s*(?:ruff\s*:\s*)?noqa\b\s*(?P<sep>:\s*)?(?P<codes>[^#]*)",
     re.IGNORECASE,
 )
-#: One rule code: ``BLE001``. Codes are separated by commas, whitespace, or
-#: both; a trailing explanation contributes none of its words, because the list
-#: ends at the first thing that is not a code.
-_CODE = re.compile(r"[A-Z][A-Z0-9]+")
+#: One rule code: ``BLE001``. The clause is a comma-separated list, so a code
+#: sits at the head of it or right after a comma or whitespace — an empty item
+#: (`,,BLE001`) leaves a separator where a code would be. Anything else ends
+#: the list, which is what keeps a trailing explanation out of the count.
+_CODE = re.compile(r"[A-Z][A-Z0-9]*\d")
 _SEPARATOR = re.compile(r"[\s,]+")
 
 
 def _listed_codes(clause: str) -> list[str]:
-    """The codes at the head of a directive clause, in order."""
+    """The codes the clause names, in order."""
     codes: list[str] = []
-    pos = 0
+    # A list may open with a separator: ruff warns about the missing code and
+    # reads the rest, so a comma before the first code still names it.
+    separator = _SEPARATOR.match(clause)
+    pos = separator.end() if separator else 0
     while (match := _CODE.match(clause, pos)) is not None:
         codes.append(match.group())
         pos = match.end()
@@ -381,11 +386,13 @@ def test_every_spelling_ruff_accepts_is_read(tmp_path: Path) -> None:
         "import abc  # noqa: F401,BLE001\n"
         "x = 1  # noqa: F401 -- os is re-exported\n"
         "y = 2  # ruff: noqa: F401\n"
-        "z = 3  # noqa: BLE001 — surface failures (spec H4)\n",
+        "z = 3  # noqa: BLE001 — surface failures (spec H4)\n"
+        "q = 4  # noqa: ,BLE001\n"
+        "w = 5  # ruff : noqa: , F401\n",
         encoding="utf-8",
     )
     # H4 is prose, not a rule: the code list ends at the first non-code word.
-    assert _directives(sample) == Counter({"F401": 7, "BLE001": 3})
+    assert _directives(sample) == Counter({"F401": 8, "BLE001": 4})
 
 
 def test_a_selector_covers_its_own_group_not_a_spelled_prefix() -> None:
