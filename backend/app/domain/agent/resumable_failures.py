@@ -156,7 +156,9 @@ _AMOUNT = (
     r"(\d+(?:\.\d+)?)\s*(ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\b"
 )
 _RETRY_AFTER = re.compile(
-    r"retry[-_ ]?after\W{0,3}(\d+(?:\.\d+)?)\s*(ms|s|seconds?)?\b", re.I
+    r"retry[-_ ]?after\W{0,3}(\d+(?:\.\d+)?)"
+    r"\s*(ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)?\b",
+    re.I,
 )
 _TRY_AGAIN_IN = re.compile(rf"try again in\s+((?:{_AMOUNT}[\s,]*(?:and\s+)?)+)", re.I)
 

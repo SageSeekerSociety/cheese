@@ -26,7 +26,9 @@ from app.domain.agent.turn_resume import RESUME_NOTE, after_failure, hand_due
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notification.models import NotificationType
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, stub_compute
@@ -49,12 +51,14 @@ COOLING = (
 
 
 class Seat(StubChannel):
-    """The agent's session: its first turn fails with ``failure``, every later
-    one ends normally. Records each input it is handed."""
+    """The agent's session: its first ``failing`` turns fail with ``failure``,
+    every later one ends normally. Records each input it is handed."""
 
     def __init__(self, failure: str):
         super().__init__()
         self.failure = failure
+        #: How many of its first turns fail.
+        self.failing = 1
         self.handed: list[str] = []
         self.handed_one = asyncio.Event()
 
@@ -62,7 +66,7 @@ class Seat(StubChannel):
         self.handed.append(prompt)
         self.starts(topic_id, agent=agent)
         self.acknowledges(topic_id, prompt, agent=agent)
-        if len(self.handed) == 1:
+        if len(self.handed) <= self.failing:
             self.record(
                 topic_id,
                 agent=agent,
@@ -103,13 +107,16 @@ async def _resumes(factory, conversation) -> list[TurnResume]:
         )
 
 
-async def _owed_resumes(factory, conversation) -> list[TurnResume]:
+async def _owed_resumes(
+    factory, conversation, *, expected: bool = True
+) -> list[TurnResume]:
     """The resumes owed once the failure has landed. Scheduling follows the
-    failure card in the same step, so a moment after the card is long enough."""
+    failure card in the same step: where one is expected, wait for it as long
+    as for anything else; where none is, a moment after the card is enough."""
     async with asyncio.timeout(HANG_S):
         while not await _failure_card(factory, conversation):
             await asyncio.sleep(0.05)
-    for _ in range(20):
+    for _ in range(HANG_S * 10 if expected else 20):
         if rows := await _resumes(factory, conversation):
             return rows
         await asyncio.sleep(0.1)
@@ -117,14 +124,21 @@ async def _owed_resumes(factory, conversation) -> list[TurnResume]:
 
 
 async def _failure_card(factory, conversation) -> bool:
+    return await _failure_cards(factory, conversation) > 0
+
+
+async def _failure_cards(factory, conversation) -> int:
     async with factory() as session:
-        found = await session.scalar(
-            select(Block.id).where(
-                Block.conversation_id == conversation,
-                Block.meta["event_type"].as_string() == "turn_failed",
+        return len(
+            list(
+                await session.scalars(
+                    select(Block.id).where(
+                        Block.conversation_id == conversation,
+                        Block.meta["event_type"].as_string() == "turn_failed",
+                    )
+                )
             )
         )
-    return found is not None
 
 
 async def _first_turn_fails(factory, tmp_path, failure: str):
@@ -190,7 +204,7 @@ async def test_a_refused_request_is_not_resumed(business_db_factory, tmp_path):
     )
     try:
         # Sending the same conversation again is refused the same way.
-        assert await _owed_resumes(factory, conversation) == []
+        assert await _owed_resumes(factory, conversation, expected=False) == []
         later = datetime.now(UTC) + timedelta(days=1)
         assert await hand_due(factory, now=later) == 0
         assert await dispatch_pending(factory, chat=chat, runner=runner) == 0
@@ -219,6 +233,84 @@ async def test_a_person_speaking_takes_the_turn_back(business_db_factory, tmp_pa
         assert len(screen.handed) == 1
         [dropped] = await _resumes(factory, conversation)
         assert dropped.dropped_reason == "person_spoke"
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_seat_that_fails_again_after_being_woken_still_resumes(
+    business_db_factory, tmp_path
+):
+    """A person wakes the seat before its resume is due, and that turn is cut
+    short the same way. The latest failure is the one owed a resume."""
+    factory = business_db_factory
+    conversation, seat, screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, RATE_LIMITED
+    )
+    screen.failing = 2
+    try:
+        assert await _owed_resumes(factory, conversation)
+        await runner.receive_message(
+            chat, conversation, author="u", content=f"<@{seat}> try again please"
+        )
+        await asyncio.wait_for(screen.handed_one.wait(), HANG_S)
+        screen.handed_one.clear()
+        await runner.drain(timeout_s=10)
+        async with asyncio.timeout(HANG_S):
+            while await _failure_cards(factory, conversation) < 2:
+                await asyncio.sleep(0.05)
+        await asyncio.sleep(1)  # scheduling follows the card in the same step
+
+        # Long after any backoff the second failure could have asked for.
+        later = datetime.now(UTC) + timedelta(hours=2)
+        assert await hand_due(factory, now=later) == 1, "the second failure was left"
+        assert await dispatch_pending(factory, chat=chat, runner=runner) == 1
+        await asyncio.wait_for(screen.handed_one.wait(), HANG_S)
+        assert len(screen.handed) == 3
+        assert str(RESUME_NOTE) in screen.handed[-1]
+    finally:
+        await runner.drain(timeout_s=10)
+        await chat.stop_listening(timeout_s=2)
+
+
+@pytest.mark.anyio
+async def test_a_seat_something_else_woke_is_not_resumed_again(
+    business_db_factory, tmp_path
+):
+    """An instruction for the seat runs a turn before its resume is due, and
+    that turn goes fine. The seat is working again: no second "go on"."""
+    factory = business_db_factory
+    conversation, seat, screen, runner, chat = await _first_turn_fails(
+        factory, tmp_path, RATE_LIMITED
+    )
+    try:
+        [owed] = await _owed_resumes(factory, conversation)
+        async with factory() as session:
+            stamp = datetime.now(UTC)
+            session.add(
+                Delivery(
+                    event_id=uuid.uuid4(),
+                    recipient_handle=owed.recipient_handle,
+                    agent_instance_id=owed.agent_instance_id,
+                    conversation_id=conversation,
+                    dedup_key=f"{uuid.uuid4()}:woken",
+                    type=NotificationType.ROOM_NOTICE.value,
+                    payload={"content": "check the open pull requests"},
+                    event_at=stamp,
+                    recorded_at=stamp,
+                )
+            )
+            await session.commit()
+        assert await dispatch_pending(factory, chat=chat, runner=runner) == 1
+        await asyncio.wait_for(screen.handed_one.wait(), HANG_S)
+        screen.handed_one.clear()
+        await runner.drain(timeout_s=10)
+        assert len(screen.handed) == 2
+
+        assert await hand_due(factory, now=owed.due_at + timedelta(seconds=1)) == 0
+        assert await dispatch_pending(factory, chat=chat, runner=runner) == 0
+        assert len(screen.handed) == 2
     finally:
         await runner.drain(timeout_s=10)
         await chat.stop_listening(timeout_s=2)
@@ -256,7 +348,7 @@ async def test_a_failing_seat_is_owed_one_resume_and_stops_after_its_streak(
 
     now = datetime.now(UTC)
     first = await fail(now)
-    # A second failure while the first resume waits keeps the first.
+    # A second failure while the first resume waits is still one owed resume.
     assert (await fail(now + timedelta(seconds=5))).id == first.id
     assert len(await _resumes(factory, conversation)) == 1
 

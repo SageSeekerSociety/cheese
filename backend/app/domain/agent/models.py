@@ -185,20 +185,24 @@ class TurnResume(UuidPk, Base):
     __tablename__ = "turn_resumes"
     __table_args__ = (
         # One owed resume per seat and conversation, whichever process or
-        # failure asks: a second failure while one waits keeps the first.
+        # failure asks: a second failure while one waits moves that row.
         Index(
-            "uq_turn_resumes_owed",
+            "uq_turn_resumes_conversation_id_recipient_handle",
             "conversation_id",
             "recipient_handle",
             unique=True,
             postgresql_where=text("handed_at IS NULL AND dropped_at IS NULL"),
         ),
         Index(
-            "ix_turn_resumes_due",
+            "ix_turn_resumes_due_at",
             "due_at",
             postgresql_where=text("handed_at IS NULL AND dropped_at IS NULL"),
         ),
-        Index("ix_turn_resumes_seat", "conversation_id", "recipient_handle"),
+        Index(
+            "ix_turn_resumes_conversation_id_recipient_handle",
+            "conversation_id",
+            "recipient_handle",
+        ),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(Uuid)

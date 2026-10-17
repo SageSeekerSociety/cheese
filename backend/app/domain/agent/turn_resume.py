@@ -16,7 +16,8 @@ it stopped" is all it needs to be told.
 Why it cannot storm:
 
 - **One owed resume per seat and conversation.** A partial unique index on the
-  table; a second failure while one waits keeps the first.
+  table. A second failure while one waits (something woke the seat in the
+  meantime) moves that one row onto itself rather than adding another.
 - **A streak has a cap.** Each resume in a row waits longer and the streak stops
   after `Policy.attempts`; the row that would have exceeded it is written as
   dropped, so the record says why the seat was left alone. A resumed turn that
@@ -144,11 +145,33 @@ async def after_failure(
             )
         )
         if owed is not None:
+            # Something woke the seat before its resume was due (a person, a
+            # teammate, a delivery), and that turn failed too. The row now
+            # speaks for this failure: left measuring from the earlier one,
+            # the wake-up itself would drop it when due (`_no_longer_applies`)
+            # and the latest failure would get no resume at all. A person's
+            # word in between starts the streak again, as it does below.
+            spoke = await _person_spoke(session, conversation_id, owed.failed_at)
+            attempt = 1 if spoke else owed.attempt
+            wait, dropped = _wait(found, attempt, now)
+            owed.failed_turn_id = failed_turn_id
+            owed.reason = found.kind
+            owed.said = str(scrub_secrets(result.text or ""))[:_SAID_MAX]
+            owed.attempt = attempt
+            owed.failed_at = now
+            owed.due_at = now + timedelta(seconds=wait or 0)
+            if dropped:
+                owed.dropped_at = now
+                owed.dropped_reason = dropped
+            await session.commit()
             logger.info(
-                "turn resume: %s in %s already owed one (due %s); keeping it",
+                "turn resume: %s in %s failed again before its resume (%s); "
+                "now due %s, attempt %s",
                 seat,
                 conversation_id,
+                found.kind,
                 owed.due_at.isoformat(),
+                attempt,
             )
             return owed
         attempt = await _streak(session, conversation_id, seat, now) + 1
@@ -335,7 +358,10 @@ async def _no_longer_applies(session: AsyncSession, row: TurnResume) -> str | No
         select(AgentTurn.id)
         .where(
             AgentTurn.conversation_id == row.conversation_id,
-            AgentTurn.agent_handle == row.recipient_handle,
+            # A turn row names the agent by its handle in the project (the
+            # key its session is kept under) or, on some paths (the orphan
+            # re-send), by the seat; either may be there (`ask.py` reads both).
+            AgentTurn.agent_handle.in_((instance.handle, row.recipient_handle)),
             AgentTurn.started_at > row.failed_at,
         )
         .limit(1)

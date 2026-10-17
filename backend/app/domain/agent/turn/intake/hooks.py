@@ -437,9 +437,11 @@ class HookEvents:
                         topic_id,
                         turn_id,
                         event,
+                        # Only the seat that failed: the room's last speaker
+                        # is a guess, and with several seats a guess wakes the
+                        # wrong agent. Not resuming is the safer miss.
                         seat=event.agent_handle
-                        or (state.acting_agent if state is not None else None)
-                        or live.room_session_agents.get(topic_id),
+                        or (state.acting_agent if state is not None else None),
                         route=state.route if state is not None else None,
                     )
             elif event.text.strip():

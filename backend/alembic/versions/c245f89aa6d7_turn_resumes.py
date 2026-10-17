@@ -43,27 +43,31 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        "uq_turn_resumes_owed",
+        "uq_turn_resumes_conversation_id_recipient_handle",
         "turn_resumes",
         ["conversation_id", "recipient_handle"],
         unique=True,
         postgresql_where=sa.text(_OWED),
     )
     op.create_index(
-        "ix_turn_resumes_due",
+        "ix_turn_resumes_due_at",
         "turn_resumes",
         ["due_at"],
         postgresql_where=sa.text(_OWED),
     )
     op.create_index(
-        "ix_turn_resumes_seat",
+        "ix_turn_resumes_conversation_id_recipient_handle",
         "turn_resumes",
         ["conversation_id", "recipient_handle"],
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_turn_resumes_seat", table_name="turn_resumes")
-    op.drop_index("ix_turn_resumes_due", table_name="turn_resumes")
-    op.drop_index("uq_turn_resumes_owed", table_name="turn_resumes")
+    op.drop_index(
+        "ix_turn_resumes_conversation_id_recipient_handle", table_name="turn_resumes"
+    )
+    op.drop_index("ix_turn_resumes_due_at", table_name="turn_resumes")
+    op.drop_index(
+        "uq_turn_resumes_conversation_id_recipient_handle", table_name="turn_resumes"
+    )
     op.drop_table("turn_resumes")

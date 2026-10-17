@@ -112,6 +112,10 @@ def test_a_status_the_session_reported_decides_without_the_words():
 def test_a_wait_the_service_names_is_the_wait():
     found = classify("API Error: 429 rate limited, retry-after: 42")
     assert found.kind == RATE_LIMITED and found.wait_s == 42
+    minutes = classify(
+        "API Error: 429 Too Many Requests. Please retry after 5 minutes."
+    )
+    assert minutes.kind == RATE_LIMITED and minutes.wait_s == 5 * 60
     quota = classify(
         "You've hit your usage limit. Upgrade to Pro or try again in 2 days "
         "3 hours 5 minutes."
