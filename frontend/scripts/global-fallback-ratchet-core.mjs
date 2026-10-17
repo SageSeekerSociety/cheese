@@ -54,16 +54,17 @@
 // `rowTo(task)` in TasksView.vue, each a function prop of the component's own
 // `defineProps<{ … }>()`.
 //
-// What a string may be is a name in a place that declares one: a property key,
-// or an entry in a list of prop names. Every other literal in the script would
+// What a string may be is a name in a place that declares one: a prop key, or
+// an entry in a list of prop names. Every other literal in the script would
 // qualify too, and labels, i18n values and event lists all spell these names —
 // a call that binds nothing reads as bound whenever some string in the file
 // happens to spell it, and the rule answers "clean" to exactly the call it
 // exists to find. Excluding those costs nothing on today's tree — 0 findings
-// either way, measured. `stringBindings` reads the quoted keys and the two
-// list forms (`defineProps(['open'])`, and the Options API `props: ['open']`);
-// an unquoted key was already a mention, as every identifier is. What stays
-// loose is a name merely mentioned.
+// either way, measured. `stringBindings` reads the two places a string can be
+// one: the argument of the props macro, as a list (`defineProps(['open'])`) or
+// as an object with quoted keys, and the same two forms in the Options API's
+// `props:` option. An unquoted key was already a mention, as every identifier
+// is. What stays loose is a name merely mentioned.
 //
 // Note on which files are read: the two halves are one DSL read twice, so the
 // module and component globs, and the ignored spec files, are declared here
@@ -239,11 +240,13 @@ export function internalDeclarations(code) {
     }
   }
 
-  // A namespace body is not read. `TeamsApi.create` is reached as a member of
-  // the exported namespace, never as a bare name, so no template call can land
-  // on one — while reading them in lists every exported member of the eleven
-  // `src/api` namespaces as a name the module "keeps to itself", which is the
-  // opposite of true and would name an inapplicable repair.
+  // A namespace body is not read, and nothing in one is indexed. From another
+  // module a member is reached as `TeamsApi.create` — bare only inside the
+  // namespace's own body, where no template can be — so no bare call can land
+  // on one, exported or not. Reading the bodies listed every member of the
+  // eleven `src/api` namespaces as a name its module "keeps to itself", which
+  // is the opposite of what `export namespace` means and named a repair that
+  // would not apply.
   for (const node of walk(ast, (visited) => visited.type === 'TSModuleDeclaration')) {
     internal.push(...declaredNames(node))
   }
@@ -319,18 +322,6 @@ function scriptMentions(body) {
   return names
 }
 
-/**
- * The names a string may still stand for, and only in the places that declare
- * one: a property key (`{ 'open': Function }`, `{ ['open']: Function }`), the
- * array form of the props macro (`defineProps(['open'])`), and the Options API
- * spelling of the same thing (`props: ['open']`). `scriptMentions` already
- * counts the unquoted key and the type form, whose keys are identifiers.
- *
- * A string anywhere else is not a declaration. `defineEmits(['open'])` names
- * an event — you cannot call an event — and a label, an i18n key or a value in
- * a lookup table only happens to spell the name. Counting those would hide
- * exactly the call this rule is for.
- */
 /** What a TypeScript assertion wraps: `['open'] as const` is still an array. */
 function unassert(node) {
   let current = node
@@ -345,35 +336,80 @@ function unassert(node) {
   return current
 }
 
+/** The names an object literal spells in quotes: `{ 'open': … }`, `{ ['open']: … }`. */
+function quotedKeys(node) {
+  const object = unassert(node)
+  if (object?.type !== 'ObjectExpression') return []
+  return object.properties.flatMap((property) =>
+    property.type === 'Property' && property.key?.type === 'Literal' && typeof property.key.value === 'string'
+      ? [property.key.value]
+      : []
+  )
+}
+
+/**
+ * Whether this is the `props` option of a component's options object — either
+ * the default export, or the argument of the two macros that take one.
+ *
+ * The position matters: `{ props: ['open'] }` anywhere else is an ordinary
+ * object, and an ordinary object's key names nothing the template can call.
+ * Reading every `props` key in the file made `const cfg = { props: ['open'] }`
+ * bind `open` and answer "clean" to a call that binds nothing.
+ */
+function isOptionsProps(node) {
+  const key = node.key
+  const name = key?.type === 'Identifier' ? key.name : key?.type === 'Literal' ? key.value : undefined
+  if (name !== 'props') return false
+  const options = node.parent?.parent
+  return (
+    options?.type === 'ExportDefaultDeclaration' ||
+    (options?.type === 'CallExpression' &&
+      options.callee?.type === 'Identifier' &&
+      (options.callee.name === 'defineOptions' || options.callee.name === 'defineComponent'))
+  )
+}
+
+/**
+ * The names a string may still stand for, and only where one is declared: the
+ * argument of the props macro, in either of its runtime forms (a list of names,
+ * or an object whose keys are the names), and the Options API `props:` option
+ * spelled the same two ways. `scriptMentions` already counts the unquoted key
+ * and the type form, whose keys are identifiers.
+ *
+ * A string anywhere else is not a declaration. `defineEmits(['open'])` names
+ * an event — you cannot call an event — and a label, an i18n key, a key in a
+ * lookup table or the source side of a quoted destructuring pattern only
+ * happens to spell the name. Counting those would hide exactly the call this
+ * rule is for.
+ */
 function stringBindings(body) {
   const names = new Set()
-  const addStrings = (node) => {
-    const array = unassert(node)
-    if (array?.type !== 'ArrayExpression') return
-    for (const element of array.elements) {
-      if (element?.type === 'Literal' && typeof element.value === 'string') names.add(element.value)
+  const addDeclared = (node) => {
+    const argument = unassert(node)
+    if (argument?.type === 'ArrayExpression') {
+      for (const element of argument.elements) {
+        if (element?.type === 'Literal' && typeof element.value === 'string') names.add(element.value)
+      }
+      return
     }
+    for (const name of quotedKeys(argument)) names.add(name)
   }
   for (const node of walk(body)) {
-    if (node.type === 'Property' && node.key?.type === 'Literal' && typeof node.key.value === 'string') {
-      names.add(node.key.value)
+    if (node.type === 'Property') {
       // `props: ['open']` — the Options API declares its names this way.
-      if (node.key.value === 'props') addStrings(node.value)
-      continue
-    }
-    if (node.type === 'Property' && node.key?.type === 'Identifier' && node.key.name === 'props') {
-      addStrings(node.value)
+      if (isOptionsProps(node)) addDeclared(node.value)
       continue
     }
     if (node.type !== 'CallExpression' || node.callee?.type !== 'Identifier') continue
     const [first] = node.arguments ?? []
-    if (node.callee.name === 'defineProps') addStrings(first)
+    if (node.callee.name === 'defineProps') addDeclared(first)
     // `defineModel('open')` declares a prop named `open` (and the emit beside
     // it), so the template's `open()` reaches that prop and is bound. The
     // alternative spelling, `defineModel()`, names the model after the
     // variable it is assigned to, which `scriptMentions` already counts.
-    if (node.callee.name === 'defineModel' && first?.type === 'Literal' && typeof first.value === 'string') {
-      names.add(first.value)
+    if (node.callee.name === 'defineModel') {
+      const name = unassert(first)
+      if (name?.type === 'Literal' && typeof name.value === 'string') names.add(name.value)
     }
   }
   return names

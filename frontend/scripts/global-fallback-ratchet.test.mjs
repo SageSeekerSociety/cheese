@@ -426,24 +426,37 @@ describe('findGlobalFallbacks', () => {
         '',
       ].join('\n')
     assert.deepEqual(found(component("props: ['open']")), [])
+    assert.deepEqual(found(component("props: { 'open': Function }")), [])
     assert.deepEqual(found(component('props: { open: Function }')), [])
     assert.deepEqual(found(component('methods: { open() {} }')), [])
   })
 
   // An emit's name is not a binding: the template emits through `emit(...)`,
-  // never by calling the name. Counting it would answer "clean" to exactly the
-  // call this rule was written to find.
+  // never by calling the name. Neither is a string that merely sits somewhere
+  // in the script — a quoted key in a lookup table names the table's entry, a
+  // quoted key in a destructuring pattern names the property being read, and a
+  // `props` key outside a component's options names an ordinary object's
+  // field. Counting any of them answers "clean" to exactly the call this rule
+  // was written to find.
   it('does not let an emit name or any other string bind the call', () => {
     const code = [
       '<script setup lang="ts">',
       "const emit = defineEmits(['open'])",
+      "const emitObject = defineEmits({ 'open': null })",
       "const label = 'open'",
       "const route = { name: 'open' }",
       "const list = ['open']",
+      "const labels = { 'open': '打开' }",
+      "const cfg = { props: ['open'] }",
+      "const { 'open': renamed } = route",
       'void emit',
+      'void emitObject',
       'void label',
       'void route',
       'void list',
+      'void labels',
+      'void cfg',
+      'void renamed',
       '</script>',
       '<template>',
       '  <button @click="open()">x</button>',
@@ -460,17 +473,22 @@ describe('findGlobalFallbacks', () => {
   // A model, unlike an emit, *is* a prop: `defineModel('open')` compiles to a
   // prop named `open`, so the template's `open()` reaches it and is bound.
   it('counts the name a model is declared under', () => {
-    const code = [
-      '<script setup lang="ts">',
+    for (const declaration of [
       "const modelValue = defineModel('open')",
-      'void modelValue',
-      '</script>',
-      '<template>',
-      '  <button @click="open()">x</button>',
-      '</template>',
-      '',
-    ].join('\n')
-    assert.deepEqual(found(code), [])
+      "const modelValue = defineModel('open' as const)",
+    ]) {
+      const code = [
+        '<script setup lang="ts">',
+        declaration,
+        'void modelValue',
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+      assert.deepEqual(found(code), [], `reported a prop this declaration binds:\n${declaration}`)
+    }
   })
 
   it('leaves a v-for alias alone even when a module keeps that name', () => {
