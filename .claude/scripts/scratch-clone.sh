@@ -22,7 +22,7 @@ import urllib.parse
 import urllib.request
 
 script = Path(sys.argv[1]).resolve()
-parser = argparse.ArgumentParser(description="Clone with checked, path-scoped Git credentials.")
+parser = argparse.ArgumentParser(prog=script.name, description="Clone with checked, path-scoped Git credentials.")
 parser.add_argument("--source", default=str(script.parent.parent.parent), metavar="WORKTREE")
 parser.add_argument("--helper", help="explicit Git credential helper instead of inherited helpers")
 parser.add_argument("--repo", help="OWNER/REPO on the source origin's host (default: origin)")
@@ -40,21 +40,22 @@ def fail(message):
 
 # Do not inherit tracing or repository/config overrides into a fresh clone.
 env = {k: v for k, v in os.environ.items()
-       if not k.startswith(("GIT_TRACE", "GIT_CONFIG_"))
+       if not k.startswith(("GIT_TRACE", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
        and k not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE",
-                     "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CURL_VERBOSE"}}
+                     "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CURL_VERBOSE",
+                     "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}}
 env.update(GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="/bin/false")
 
 
-def git(*command, cwd=source, input=None, isolated=False):
+def git(*command, cwd=source, input=None, isolated=False, timeout=60):
     run_env = dict(env)
     if isolated:
         run_env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
     try:
         return subprocess.run(["git", *command], cwd=cwd, env=run_env, input=input,
-                              text=True, capture_output=True, timeout=60, check=False)
+                              text=True, capture_output=True, timeout=timeout, check=False)
     except (OSError, subprocess.TimeoutExpired):
-        fail("Git could not complete within 60s; check the source worktree and connectivity.")
+        fail(f"Git could not complete within {timeout}s; check the source worktree and connectivity.")
 
 
 if not source.is_dir() or git("rev-parse", "--show-toplevel").returncode:
@@ -66,7 +67,11 @@ if not destination.parent.is_dir():
 origin = git("config", "--get", "remote.origin.url")
 if origin.returncode:
     fail("source has no origin; set it with git -C WORKTREE remote add origin HTTPS_URL.")
-url = urllib.parse.urlsplit(origin.stdout.strip())
+try:
+    url = urllib.parse.urlsplit(origin.stdout.strip())
+    _ = url.port  # Validate the port before consulting a credential helper.
+except ValueError:
+    fail("invalid origin URL; use git -C WORKTREE remote set-url origin HTTPS_URL.")
 # Plain HTTP is restricted to literal loopback addresses for local Git servers.
 local_http = url.scheme == "http" and url.hostname in {"127.0.0.1", "::1"}
 if (url.scheme != "https" and not local_http) or not url.hostname or url.username or url.password or url.query or url.fragment:
@@ -143,7 +148,8 @@ if not valid:
 # Discard the token before cloning; Git asks the inherited helper when needed.
 del fields, credential, authorization, request
 clone_options = [part for key, value in settings for part in ("--config", f"{key}={value}")]
-result = git("clone", *clone_options, "--", remote, str(destination), cwd=destination.parent, isolated=True)
+result = git("clone", *clone_options, "--", remote, str(destination),
+             cwd=destination.parent, isolated=True, timeout=600)
 if result.returncode:
     fail("clone failed after discovery; check connectivity and helper availability. "
          "Inspect the destination before retrying; no existing files were removed.")
