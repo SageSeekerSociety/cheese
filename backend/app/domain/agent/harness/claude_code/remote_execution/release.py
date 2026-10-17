@@ -374,8 +374,11 @@ def allow_native_tools(settings: dict, platform_tools: list[str]) -> None:
 # with `sleep N; tail` instead (2.1.282, measured on the central host: 0 flags
 # fetched; seeding this one entry offers Monitor and the build keeps it across
 # restarts). Monitor's command goes through the shell prefix like Bash, so it
-# runs on the executor. The flag name belongs to the pinned build: when the pin
-# moves, `headless_contract.py`'s `remotemonitor` says whether it still holds.
+# runs on the executor. The same flag also makes Bash refuse a foreground
+# command that starts with `sleep` of 25 s or more and point at Monitor
+# (2.1.299), which is the waiting it replaces. The flag name and both effects
+# belong to the pinned build: when the pin moves, `headless_contract.py`'s
+# `remotemonitor` says whether they still hold.
 SEEDED_FLAGS = {"tengu_amber_sentinel": True}
 
 

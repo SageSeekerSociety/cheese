@@ -196,6 +196,30 @@ def remotemonitor(binary, root):
             on_executor and all(got.values()),
             json.dumps({"on_executor": on_executor, **got}),
         )
+        # The same flag makes Bash refuse a foreground command that starts
+        # with a long `sleep` (25 s or more on 2.1.299) and name Monitor
+        # instead. Built by printf, so the refusal quoting the command cannot
+        # match it.
+        mark = session.user(
+            do(
+                "Bash",
+                command="sleep 30; printf 'SLE%s\\n' PT_RAN",
+                description="contract long sleep",
+            )
+        )
+        _, result = session.wait(
+            lambda event: any(
+                block.get("type") == "tool_result" for block in blocks(event)
+            ),
+            60,
+            mark,
+        )
+        said = json.dumps(blocks(result) if result else [])
+        yield (
+            "the seeded flag refuses a long leading sleep and names Monitor",
+            "Blocked" in said and "Monitor" in said and "SLEPT_RAN" not in said,
+            said[:300],
+        )
     finally:
         stop_remote(session)
 
