@@ -383,6 +383,139 @@ def test_finds_the_message(session, topic):
         )
         self.assertEqual(findings, [])
 
+    def test_a_helper_that_asks_for_a_slice_is_not_a_reader(self) -> None:
+        # `_messages` hands `kind="message"` on to the reader below it, so what
+        # it returns is the test's own slice. Judging it by what the callee
+        # returns, instead of by what this call asked for, reports a repaired
+        # test — and the call site is where the narrowing is written.
+        findings = self._dump(
+            """
+def _history(client, conversation_id, **params):
+    return client.get(
+        f"/topics/{conversation_id}/history", params=params
+    ).json()["data"]
+
+
+def _messages(client, conversation_id):
+    return _history(client, conversation_id, kind="message")
+
+
+def test_counts_the_messages(client, topic):
+    assert len(_messages(client, topic)) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_a_helper_run_through_asyncio_is_still_a_reader(self) -> None:
+        # `asyncio.run(read())` returns what `read` returned, and the envelope
+        # key is peeled off after that. Both layers used to hide the read.
+        self._assert_rejected(
+            """
+import asyncio
+
+
+def _blocks(client, conversation_id):
+    async def read():
+        return (await client.get(f"/topics/{conversation_id}/history")).json()
+
+    return asyncio.run(read())["data"]
+
+
+def test_takes_the_first_block(client, topic):
+    assert _blocks(client, topic)[0]["id"]
+""",
+            kind="index",
+            repair="按位置取块",
+        )
+
+    def test_a_json_key_the_guard_does_not_know_still_narrows(self) -> None:
+        # `meta["tool"]` is not one of the keys this file lists, but it is
+        # still a key of `Block.meta`: only tool calls come back.
+        findings = self._dump(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_counts_the_tasks(session, topic):
+    rows = session.scalars(
+        select(Block).where(
+            Block.conversation_id == topic,
+            Block.meta["tool"].as_string() == "Task",
+        )
+    ).all()
+    assert len(rows) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_leaving_the_event_slice_out_narrows_the_query(self) -> None:
+        # `kind != "event"` names the events only to exclude them: no
+        # announcement joins what this reads.
+        findings = self._dump(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_counts_the_non_events(session, topic):
+    rows = session.scalars(
+        select(Block).where(Block.conversation_id == topic, Block.kind != "event")
+    ).all()
+    assert len(rows) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
+    def test_a_query_run_through_execute_is_still_the_conversation(self) -> None:
+        # `session.execute(q).scalars()` is the same rows as `session.scalars(q)`.
+        self._assert_rejected(
+            """
+from sqlalchemy import select
+from backend.models import Block
+
+
+def test_counts_the_blocks(session, topic):
+    rows = session.execute(
+        select(Block).where(Block.conversation_id == topic)
+    ).scalars().all()
+    assert len(rows) == 2
+""",
+            kind="length",
+            repair="钉死了这段对话里有几个块",
+        )
+
+    def test_a_helper_inside_a_test_class_is_a_reader(self) -> None:
+        # The definition-order fix has to reach helpers written inside a test
+        # class, not only the module-level ones.
+        self._assert_rejected(
+            """
+class TestChat:
+    def test_takes_the_first_block(self, client, topic):
+        def _fetch():
+            return client.get(f"/topics/{topic}/history").json()["data"]
+
+        def _read():
+            return _fetch()
+
+        rows = _read()
+        assert rows[0]["id"]
+""",
+            kind="index",
+            repair="按位置取块",
+        )
+
+    def test_a_lambda_parameter_shadows_the_conversation(self) -> None:
+        # `lambda rows: …` takes its own `rows`; the outer read is not it.
+        findings = self._dump(
+            """
+def test_sorts_the_numbers(client, topic):
+    rows = _history(client, topic)["data"]
+    assert (lambda rows: rows[0])([1, 2]) == 1
+"""
+        )
+        self.assertEqual(findings, [])
+
     def test_a_test_file_that_will_not_parse_is_not_a_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

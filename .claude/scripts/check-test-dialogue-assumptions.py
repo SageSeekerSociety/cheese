@@ -312,7 +312,15 @@ def _callee(node: ast.Call) -> str | None:
     return None
 
 
+#: Comparisons that EXCLUDE the event slice. `Block.kind != "event"` names
+#: the events only to leave them out, and a test that leaves them out is
+#: narrow enough: no announcement joins what it reads.
+EVENT_EXCLUSIONS = ("!=", "notin_", "is_not")
+
+
 def _narrows_to_events(expression: str) -> bool:
+    if any(marker in expression for marker in EVENT_EXCLUSIONS):
+        return False
     return any(marker in expression for marker in EVENT_MARKERS)
 
 
@@ -365,7 +373,11 @@ def _narrowing_column(node: ast.AST) -> bool:
     if isinstance(node, ast.Subscript):
         key = node.slice
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            return key.value in ROW_KEYS
+            # `Block.meta["tool"]`: the JSON key names the slice, and when it
+            # is a key this file does not know, the column it is read off
+            # (`meta`) still does. `b["id"]` has no such column and stays a
+            # plain subscript.
+            return key.value in ROW_KEYS or _narrowing_column(node.value)
         return _narrowing_column(node.value)
     if isinstance(node, ast.Call):
         return _narrowing_column(node.func)
@@ -402,7 +414,8 @@ def _query_narrows(node: ast.Call) -> bool:
     for keyword in keywords:
         # `filter_by(kind="event")` names the same slice as `.where(…)` does,
         # and the event slice is not narrowing: announcements land there.
-        if keyword.arg in NARROWING and not _narrows_to_events(
+        # Any row key counts — `filter_by(content=…)` says which block too.
+        if keyword.arg in ROW_KEYS and not _narrows_to_events(
             ast.unparse(keyword.value)
         ):
             return True
@@ -535,9 +548,7 @@ class _Readers:
         local = {**scope, **_nested_functions(func)}
         readers = self.names(local)
         held = _held_names(func, readers)
-        return any(
-            self._returns(ret, held, readers, local) for ret in _own_returns(func)
-        )
+        return any(self._returns(ret, held, readers) for ret in _own_returns(func))
 
     def settle(self) -> None:
         """Re-ask every "no" until no answer turns into a "yes".
@@ -565,31 +576,20 @@ class _Readers:
         ret: ast.Return,
         held: set[str],
         readers: frozenset[str],
-        local: dict[str, ast.AST],
     ) -> bool:
+        """Whether this return hands back the conversation's blocks.
+
+        What is returned is what decides, so `return _fetch()` is judged by
+        what `_fetch` returns — resolved through the scope, whichever order
+        the two are written in. A call site that asks for a slice
+        (`_fetch(kind="message")`) is not the whole conversation, and
+        `bool(…)` or `len(…)` is not the blocks at all; both are left to
+        `_derives_from_conversation`, which says so.
+        """
         value = ret.value
         if value is None:
             return False
-        if _derives_from_conversation(value, held, readers):
-            return True
-        # `asyncio.run(read())`: the value comes from a reader defined inside
-        # this very function, so the definition beside it is what decides.
-        # Only the calls that BUILD the returned value are followed, and only
-        # through arguments handed on unchanged. A reader called deeper inside
-        # — in a comprehension's filter, say — was narrowed before it was
-        # returned, which `_derives_from_conversation` has already judged.
-        if isinstance(value, ast.Await):
-            value = value.value
-        if not isinstance(value, ast.Call):
-            return False
-        handed_on = [value, *(arg for arg in value.args if isinstance(arg, ast.Call))]
-        for call in handed_on:
-            if not isinstance(call.func, ast.Name):
-                continue
-            inner = local.get(call.func.id)
-            if inner is not None and self.is_reader(inner, local):
-                return True
-        return False
+        return _derives_from_conversation(value, held, readers)
 
 
 # --------------------------------------------------------------------------- #
@@ -655,9 +655,21 @@ def _derives_from_conversation(node: ast.AST, held: set[str], readers: set[str])
             return not narrowed and not _query_narrows(node)
         if isinstance(node.func, ast.Attribute) and node.func.attr in SESSION_CALLS:
             # `session.scalars(q)` hands back the rows the query selects.
+            # `db.execute(q).scalars()` is the same rows, with the query one
+            # call further down the chain.
             return any(
                 _derives_from_conversation(arg, held, readers) for arg in node.args
-            )
+            ) or _derives_from_conversation(node.func.value, held, readers)
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "run"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "asyncio"
+            and node.args
+        ):
+            # `asyncio.run(read())` runs the helper and hands its return value
+            # back unchanged — the same blocks, one event loop later.
+            return _derives_from_conversation(node.args[0], held, readers)
         if (
             isinstance(node.func, ast.Name)
             and node.func.id in BUILTIN_WRAPPERS
@@ -704,6 +716,28 @@ def _derives_from_conversation(node: ast.AST, held: set[str], readers: set[str])
     return False
 
 
+def _without_params(args: ast.arguments | None, names: set[str]) -> set[str]:
+    """`names` with the parameters of this signature removed.
+
+    A parameter of the same name shadows what the enclosing scope held, for a
+    `def` and for a `lambda` alike: inside `lambda rows: rows[0]`, `rows` is
+    the argument, not the conversation read two lines up.
+    """
+    held = set(names)
+    if isinstance(args, ast.arguments):
+        groups = (
+            args.posonlyargs,
+            args.args,
+            args.kwonlyargs,
+            [args.vararg, args.kwarg],
+        )
+        for group in groups:
+            for arg in group:
+                if arg is not None:
+                    held.discard(arg.arg)
+    return held
+
+
 def _held_names(
     func: ast.AST, readers: set[str], inherited: set[str] | None = None
 ) -> set[str]:
@@ -719,15 +753,9 @@ def _held_names(
     [1, 2]` — ends it here too. Unioning the inherited set in afterwards would
     keep the outer conversation held under a name the inner function reuses.
     """
-    held: set[str] = set(inherited) if inherited else set()
     # A parameter of the same name shadows the outer conversation just as a
     # rebinding does; the signature is not part of `_own_nodes`.
-    args = getattr(func, "args", None)
-    if isinstance(args, ast.arguments):
-        for group in (args.posonlyargs, args.args, args.kwonlyargs, [args.vararg, args.kwarg]):
-            for arg in group:
-                if arg is not None:
-                    held.discard(arg.arg)
+    held: set[str] = _without_params(getattr(func, "args", None), inherited or set())
     for node in _own_nodes(func):
         targets: list[ast.AST] = []
         if isinstance(node, ast.Assign):
@@ -904,10 +932,18 @@ def _scopes(
 
     # Answer every definition before judging any of them: a helper defined
     # later in the file is classified just as carefully as one defined earlier,
-    # and `settle` then settles the helpers that delegate to each other.
+    # and `settle` then settles the helpers that delegate to each other. Every
+    # function is asked, not only the module-level ones — a helper written
+    # inside a test method has the same definition-order problem.
     # `names()` skips `test_*` definitions, so they are asked directly.
-    for func in _nested_functions(tree).values():
-        engine.is_reader(func, module_scope)
+    def collect(node: ast.AST, scope: dict[str, ast.AST]) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = {**scope, **_nested_functions(node)}
+            engine.is_reader(node, scope)
+        for child in ast.iter_child_nodes(node):
+            collect(child, scope)
+
+    collect(tree, module_scope)
     engine.settle()
 
     def walk(node: ast.AST, inherited: set[str], scope: dict[str, ast.AST]):
@@ -917,7 +953,9 @@ def _scopes(
             readers = engine.names(scope)
             held = _held_names(node, readers, inherited)
             yield node, held, readers
-        elif isinstance(node, (ast.Module, ast.Lambda)):
+        elif isinstance(node, ast.Lambda):
+            yield node, _without_params(node.args, held), engine.names(scope)
+        elif isinstance(node, ast.Module):
             yield node, held, engine.names(scope)
         for child in ast.iter_child_nodes(node):
             yield from walk(child, held, scope)
