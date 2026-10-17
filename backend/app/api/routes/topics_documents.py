@@ -51,6 +51,7 @@ from typing import Literal
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.doc_access import require_role
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.topics_deps import _actor_in_place
@@ -85,6 +86,7 @@ from app.domain.library import service as library
 from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import clean_artifact_path
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
@@ -230,6 +232,8 @@ async def decide_document_revisions(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
+    # Deciding a change writes the file back: a person's role has to change files.
+    await require_role(db, actor, topic.project_id, Permission.edit_content)
     topic_id = topic.id
     clean = clean_artifact_path(body.get("path") or "")
     if library.library_name(clean) is not None:
