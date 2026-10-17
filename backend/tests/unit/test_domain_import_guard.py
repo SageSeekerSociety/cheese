@@ -255,9 +255,10 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # --- room_task ---
         # 任务是一条从房间里长出来的活，它落户时房间里要说的那两句（开一条支线的
         # 标题、这里开了一条活）由本包写。`block` 没有 service 层，只有 repository，
-        # 和上面 thread、topic 那两条同形。2026-10-16 这批函数从 `topic.services`
-        # 搬来时发起方换了名字，被摸的 module 一个没多 —— 同一笔债挪了发起方
-        # （`topic.services` 那条仍在，它自己还写别的话）。
+        # 和上面 thread 那条同形。2026-10-16 这批函数从 `topic.services` 搬来时
+        # 发起方换了名字，被摸的 module 一个没多 —— 同一笔债挪了发起方。挪过来
+        # 的这一半要按 id 取一行、再写一句，而 `block` 没有 service 层可让，所以
+        # 入账；留在 `topic.services` 名下的那一半同一天还掉了，见下面 topic 段。
         ("app.domain.room_task.dispatch", "app.domain.block.repositories"),
         # --- space ---
         ("app.domain.space.analytics_service", "app.domain.task.repositories"),
@@ -280,7 +281,10 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # block 领域没有 service 层。
         ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
-        ("app.domain.topic.services", "app.domain.block.repositories"),
+        # `app.domain.topic.services → app.domain.block.repositories` 是 2026-10-16
+        # 还掉的：本包要写一句平台的话走 `topic/ports.py` 的 `PlatformLine`，读每条
+        # 房间最后说的那一句走本包的裸表（`repositories/latest.py`），两条路都不再
+        # 摸 `block` 的 repository。
         # 2026-10-16：`topic_membership/services.py` 变成了包（门面在 `__init__.py`，
         # 名册与席位那一半在 `housekeeping.py`）。这两条边本来就在，发起方是门面的
         # 入口文件；守卫按文件路径取名，包的入口就是 `…services.__init__`。跟搬走的

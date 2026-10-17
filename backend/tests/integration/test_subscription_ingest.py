@@ -14,9 +14,9 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.domain.block.models import AuthorType
 from app.domain.block.queries import turn_starts
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from app.domain.usage import pricing

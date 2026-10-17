@@ -19,8 +19,8 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent_instance.adapters import project_team
-from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.feedback import claims as feedback_claims
 from app.domain.notice_meta import (
     EVENT_ROUTINE_PROPOSED,

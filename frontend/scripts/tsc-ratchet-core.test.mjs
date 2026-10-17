@@ -2,11 +2,13 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { compare, formatReport, parseTscDiagnostics, parseTscOutput, tightenedBaseline } from './tsc-ratchet-core.mjs'
+import * as tsc from './tsc-ratchet-core.mjs'
+
+const { compare, formatReport, parseTscDiagnostics, parseTscOutput, tightenedBaseline } = tsc
 
 const SAMPLE = `
 src/views/spaces/detail/PublishTask.vue(50,3): error TS2322: Type 'x' is not assignable.
@@ -219,4 +221,167 @@ test('CLI failures show the TS code, location and full explanation in both outpu
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+function judgeMissingNames(text, files, missingNames = {}) {
+  return tsc.compareTsc(files, parseTscOutput(text), parseTscDiagnostics(text), missingNames)
+}
+
+test('a split cannot trade an assignment error for a missing type import at flat totals', () => {
+  const text = "src/FooSub.ts(1,20): error TS2304: Cannot find name 'PropType'."
+  const result = judgeMissingNames(text, { 'src/Foo.vue': 1 })
+  assert.equal(result.currentTotal, result.baselineTotal)
+  assert.equal(result.ok, false)
+  assert.deepEqual(result.missingNameRegressions, [{ file: 'src/FooSub.ts', code: 'TS2304', base: 0, now: 1 }])
+  const report = formatReport(result, parseTscDiagnostics(text))
+  assert.match(report, /missing type\/value import after split/)
+  assert.ok(report.includes("import type { PropType } from 'vue'"))
+  assert.match(report, /task ci:fast/)
+})
+
+for (const code of ['TS2304', 'TS2552']) {
+  test(`${code} cannot spend an existing file's unrelated error allowance`, () => {
+    const text = `src/Foo.ts(1,20): error ${code}: Cannot find name 'PropType'.${code === 'TS2552' ? " Did you mean 'propType'?" : ''}`
+    const result = judgeMissingNames(text, { 'src/Foo.ts': 1 })
+    assert.equal(result.currentTotal, result.baselineTotal)
+    assert.deepEqual(result.regressions, [])
+    assert.equal(result.ok, false)
+    assert.equal(result.missingNameRegressions[0].code, code)
+    assert.ok(formatReport(result, parseTscDiagnostics(text)).includes("import type { PropType } from 'vue'"))
+  })
+}
+
+test('existing per-code allowances survive and only tighten, independently of total errors', () => {
+  const files = { 'a.ts': 4, 'b.ts': 7 }
+  const frozen = { TS2304: { 'a.ts': 3, 'b.ts': 5 }, TS2552: { 'a.ts': 1, 'b.ts': 2 } }
+  const output = [
+    'a.ts(1,1): error TS2304: missing',
+    'a.ts(2,1): error TS2304: missing',
+    'a.ts(3,1): error TS2322: incompatible',
+    'a.ts(4,1): error TS2345: incompatible',
+  ].join('\n')
+  const result = judgeMissingNames(output, files, frozen)
+  assert.equal(result.ok, true)
+  assert.deepEqual(result.nextMissingNames, { TS2304: { 'a.ts': 2 }, TS2552: {} })
+  assert.ok(result.missingNameImprovements.some((entry) => entry.file === 'a.ts' && entry.code === 'TS2304'))
+  const newName = output.replace('TS2345', 'TS2552')
+  assert.equal(judgeMissingNames(newName, files, result.nextMissingNames).ok, false)
+  // Paying down TS2304 never creates TS2552 allowance, nor the reverse.
+  assert.equal(judgeMissingNames('a.ts(1,1): error TS2552:', { 'a.ts': 1 }, { TS2304: { 'a.ts': 1 } }).ok, false)
+  assert.equal(judgeMissingNames('a.ts(1,1): error TS2304:', { 'a.ts': 1 }, { TS2552: { 'a.ts': 1 } }).ok, false)
+})
+
+test('a split file cannot inherit even a stale missing-name sub-baseline entry', () => {
+  const result = judgeMissingNames('new.ts(1,1): error TS2304:', { 'old.ts': 1 }, { TS2304: { 'new.ts': 1 } })
+  assert.equal(result.ok, false)
+  assert.equal(result.missingNameRegressions[0].base, 0)
+  assert.deepEqual(result.nextMissingNames, { TS2304: {}, TS2552: {} })
+})
+
+// Run the shipped entry point, so a rule disconnected from the CLI cannot pass.
+// The temp project lives under frontend for its real Vue type import to resolve.
+function withMissingNameProject(check) {
+  const root = fileURLToPath(new URL('../', import.meta.url))
+  const dir = mkdtempSync(join(root, '.tsc-missing-name-'))
+  const project = join(dir, 'tsconfig.json')
+  const baseline = join(dir, 'baseline.json')
+  const source = join(dir, 'FooSub.ts')
+  const file = relative(root, source).replaceAll('\\', '/')
+  writeFileSync(
+    project,
+    JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        skipLibCheck: true,
+        types: [],
+        moduleResolution: 'node',
+        target: 'ES2022',
+      },
+      files: ['FooSub.ts'],
+    })
+  )
+  const cli = fileURLToPath(new URL('./tsc-ratchet.mjs', import.meta.url))
+  function run(...args) {
+    const result = spawnSync(process.execPath, [cli, '--project', project, '--baseline', baseline, ...args], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    })
+    assert.ifError(result.error)
+    return result
+  }
+  try {
+    check({ baseline, source, file, run })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test('CLI rejects a missing import at flat totals in text, JSON and update modes', () => {
+  withMissingNameProject(({ baseline, source, file, run }) => {
+    const frozen = JSON.stringify({ files: { [file]: 1 }, missingNames: { TS2304: {}, TS2552: {} } })
+    writeFileSync(baseline, frozen)
+    writeFileSync(source, "export const value: number = 'wrong'\n")
+    assert.equal(run().status, 0, 'the pre-existing assignment error is within its allowance')
+    writeFileSync(source, 'export type Value = PropType<string>\n')
+    for (const args of [[], ['--json'], ['--update']]) {
+      const result = run(...args)
+      assert.equal(result.status, 1, result.stdout + result.stderr)
+      const report = args.length ? result.stderr : result.stdout
+      assert.match(report, /missing type\/value import after split/)
+      assert.ok(report.includes("import type { PropType } from 'vue'"))
+      if (args.includes('--json')) {
+        assert.equal(result.stdout.trim().split('\n').length, 1)
+        assert.equal(JSON.parse(result.stdout).status, 'fail')
+      }
+      assert.equal(readFileSync(baseline, 'utf8'), frozen, 'a failed check/update must leave the baseline alone')
+    }
+    writeFileSync(source, "import type { PropType } from 'vue'\nexport type Value = PropType<string>\n")
+    const fixed = run()
+    assert.equal(fixed.status, 0, fixed.stdout + fixed.stderr)
+  })
+})
+
+test('CLI never freezes a new split-file missing import through update', () => {
+  withMissingNameProject(({ baseline, source, file, run }) => {
+    const frozen = JSON.stringify({ files: { [file.replace('FooSub.ts', 'Foo.vue')]: 1 } })
+    writeFileSync(baseline, frozen)
+    writeFileSync(source, 'export type Value = PropType<string>\n')
+    const result = run('--update')
+    assert.equal(result.status, 1, result.stdout + result.stderr)
+    assert.ok(result.stderr.includes("import type { PropType } from 'vue'"))
+    assert.equal(readFileSync(baseline, 'utf8'), frozen)
+  })
+})
+
+test('CLI preserves both missing-name budgets on update and keeps a paid-down code at zero', () => {
+  withMissingNameProject(({ baseline, source, file, run }) => {
+    writeFileSync(
+      baseline,
+      JSON.stringify({
+        files: { [file]: 3 },
+        missingNames: { TS2304: { [file]: 2 }, TS2552: { [file]: 1 } },
+      })
+    )
+    writeFileSync(source, 'export const count = 1\nexport type Value = PropType<string>\nexport const other = coutn\n')
+    const update = run('--update')
+    assert.equal(update.status, 0, update.stdout + update.stderr)
+    assert.deepEqual(JSON.parse(readFileSync(baseline, 'utf8')).missingNames, {
+      TS2304: { [file]: 1 },
+      TS2552: { [file]: 1 },
+    })
+    assert.equal(run().status, 0, 'a fresh run reads the per-code budgets just persisted')
+    writeFileSync(
+      source,
+      "export const count = 1\nexport type Value = PropType<string>\nexport const other: number = 'wrong'\n"
+    )
+    assert.equal(run('--update').status, 0)
+    const paidDown = readFileSync(baseline, 'utf8')
+    assert.deepEqual(JSON.parse(paidDown).missingNames, { TS2304: { [file]: 1 }, TS2552: {} })
+    writeFileSync(source, 'export const count = 1\nexport type Value = PropType<string>\nexport const other = coutn\n')
+    const regression = run()
+    assert.equal(regression.status, 1, regression.stdout + regression.stderr)
+    assert.match(regression.stdout, /TS2552/)
+    assert.equal(readFileSync(baseline, 'utf8'), paidDown)
+  })
 })

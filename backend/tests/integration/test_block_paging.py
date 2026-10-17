@@ -14,8 +14,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import post_project, session_auth_headers
 

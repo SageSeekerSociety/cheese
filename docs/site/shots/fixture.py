@@ -29,7 +29,8 @@ import app.models  # noqa: E402,F401 — every table
 from sqlalchemy import delete, select, update  # noqa: E402
 
 from app.core.db import async_session_factory  # noqa: E402
-from app.domain.block.models import AuthorType, Block, BlockKind  # noqa: E402
+from app.domain.block.models import Block, BlockKind  # noqa: E402
+from app.domain.event_author import AuthorType  # noqa: E402
 from app.domain.library.service import library_root  # noqa: E402
 from app.domain.project.models import Project  # noqa: E402
 from app.domain.review.models import AcceptCard, AcceptStatus  # noqa: E402

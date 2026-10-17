@@ -17,7 +17,8 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
     post_message,
     post_project,

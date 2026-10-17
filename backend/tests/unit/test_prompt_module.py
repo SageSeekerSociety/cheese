@@ -24,9 +24,9 @@ from app.domain.agent.turn.state import inputs
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CONSUMED_TURN_META_KEY,
-    AuthorType,
     BlockKind,
 )
+from app.domain.event_author import AuthorType
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.notice_meta import (
     EVENT_CONTEXT_COMPACT,

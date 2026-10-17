@@ -26,8 +26,9 @@ from sqlalchemy import select, text, update
 
 from app.core.errors import UpstreamUnavailableError
 from app.domain.agent.models import AgentTurn
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.models import Delivery
+from app.domain.event_author import AuthorType
 from app.domain.project import forge
 from app.domain.room_task.closing import CLOSES_TASK
 from tests.delivery import delivery_headers, delivery_task_id

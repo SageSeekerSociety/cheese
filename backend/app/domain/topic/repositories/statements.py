@@ -1,9 +1,15 @@
 """这几块共用的 SQL 词汇 —— 从 `repositories.py` 拆出来的。
 
-两张裸表（`_tasks`、`_threads`）是别的领域的行，这一包只取要用的列；一组判据
-（`_mentions`、`_mentions_everyone`、`_muted_now`、`_seated`、`readable_by`）和两个
-派生表达式（`_last_activity`、`_order_by`）都只写一遍，读、写、角标三边共用，免得
-同一句 `WHERE` 在几个模块里各答一次、各自漂移。
+三张裸表（`_tasks`、`_threads`、`_blocks`）是别的领域的行，这一包只取要用的列；一组
+判据（`_mentions`、`_mentions_everyone`、`_muted_now`、`_seated`、`readable_by`）
+和两个派生表达式（`_last_activity`、`_order_by`）都只写一遍，读、写、角标三边共用，
+免得同一句 `WHERE` 在几个模块里各答一次、各自漂移。
+
+`_blocks` 是 2026-10-16 加进来的：`block` 在第 4 层、本包在第 2 层，而未读数、
+「回复了我」、房间最后一条这三处读的都是那张表的列。规则和上面两张一样 —— 谁的
+账号被依赖，谁就不反向够回来，要用的人把 `WHERE` 用到的列逐字声明出来。**只有读
+法走这条路**：写一条块（`BlockRepository.add`）带着轮次记账、句子键和实时投递，
+仍然由 `block` 提供、在门口递进来（`topic/ports.py` 的 `PlatformLine`）。
 
 `seen_by` 是对外的那一个，`app.domain.topic.repositories` 的 `__init__.py` 再导出。
 """
@@ -14,6 +20,8 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
+    DateTime,
     String,
     Uuid,
     and_,
@@ -31,7 +39,6 @@ from sqlalchemy.sql.elements import (
     UnaryExpression,
 )
 
-from app.domain.block.models import Block
 from app.domain.topic.models import (
     NotifyLevel,
     Topic,
@@ -63,6 +70,36 @@ _threads = table(
 )
 
 
+# 房间和活的时间线。A bare table: `block` is layer 4, this package is layer 2.
+# 只声明这几条判据用到的列（`_last_activity`、`_mentions`、`replied.py`、
+# `unread.py`、`latest.py`）。
+_blocks = table(
+    "blocks",
+    column("id", Uuid),
+    column("conversation_id", Uuid),
+    column("seq", BigInteger),
+    column("kind", String(16)),
+    column("author", String(128)),
+    column("author_type", String(16)),
+    column("reply_to", Uuid),
+    column("meta", JSON),
+    column("refs", JSON),
+    column("created_at", DateTime(timezone=True)),
+)
+
+
+# `blocks.kind` / `blocks.author_type` 存的是短字符串（`Enum(native_enum=False)`，
+# 成员名就是值）。`author_type` 那一档不在这里：`replied.py` 和 `unread.py` 直接
+# import 第 1 层的 `app.domain.event_author` —— 判这一列的判据要求按枚举成员读
+# （`tests/unit/test_author_type_two_values.py`），抄成字符串正是它要防的东西，而
+# 本包够不到第 4 层的那个枚举。`kind` 没有这条要求，本包也看不见
+# `block.models.BlockKind`，三个名字在这里逐字写下来 —— 改一个字，这里和
+# `block/models.py` 就各说一份，和上面三张表的列名同一条规矩。
+KIND_MESSAGE = "message"
+KIND_ARTIFACT = "artifact"
+KIND_EVENT = "event"
+
+
 def _muted_now() -> ColumnElement[bool]:
     """The read-state row says 静音 and the mute has not run out."""
     return and_(
@@ -75,13 +112,13 @@ def _muted_now() -> ColumnElement[bool]:
 
 
 def _mentions(handle: str) -> ColumnElement[bool]:
-    return cast(Block.refs, JSONB).contains([f"user:{handle}"])
+    return cast(_blocks.c.refs, JSONB).contains([f"user:{handle}"])
 
 
 def _mentions_everyone() -> ColumnElement[bool]:
     return or_(
-        cast(Block.refs, JSONB).contains(["user:all"]),
-        cast(Block.refs, JSONB).contains(["user:here"]),
+        cast(_blocks.c.refs, JSONB).contains(["user:all"]),
+        cast(_blocks.c.refs, JSONB).contains(["user:here"]),
     )
 
 
@@ -110,14 +147,14 @@ def _last_activity() -> ColumnElement[datetime]:
     # answers from its last entry; an OR across the two would read every block
     # of the room. GREATEST skips a NULL.
     own = (
-        select(func.max(Block.created_at))
-        .where(Block.conversation_id == Topic.id)
+        select(func.max(_blocks.c.created_at))
+        .where(_blocks.c.conversation_id == Topic.id)
         .correlate(Topic)
         .scalar_subquery()
     )
     in_tasks = (
-        select(func.max(Block.created_at))
-        .join(_tasks, _tasks.c.id == Block.conversation_id)
+        select(func.max(_blocks.c.created_at))
+        .join(_tasks, _tasks.c.id == _blocks.c.conversation_id)
         .where(_tasks.c.room_id == Topic.id)
         .correlate(Topic)
         .scalar_subquery()
