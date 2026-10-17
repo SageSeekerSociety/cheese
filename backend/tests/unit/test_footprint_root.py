@@ -44,6 +44,7 @@ from app.domain.agent.place import (
     launcher_path,
     session_platform_dirs,
 )
+from app.domain.machine import sandbox_home
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 SANDBOX_CLI = REPOSITORY / "backend/sandbox/cheese"
@@ -84,6 +85,8 @@ def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
     sandbox whose names never resolve."""
     assert resource_cleanup.SANDBOX_HOST == bootstrap.SANDBOX_HOST
     assert environment_runner.SANDBOX_CGROUP == sandbox_host.CGROUP.name
+    # The machines page reads each sandbox's memory from the same cgroups.
+    assert sandbox_home.SANDBOX_CGROUPS == sandbox_host.CGROUP
     assert bootstrap.RESOLV_CONFS == sandbox_host.RESOLV_CONFS
     assert confinement.SITE_ADDRESS == sandbox_host.SITE_ADDRESS
 

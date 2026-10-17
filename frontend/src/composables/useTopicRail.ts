@@ -203,6 +203,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
         moving: topic.moving === true,
         unseenDelivery: topic.unseen_delivery === true,
         lastOutputAt: topic.last_output_at,
+        incompleteSince: topic.incomplete_since,
       },
       clock.value
     )
@@ -219,6 +220,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
         moving: task.moving === true,
         unseenDelivery: task.unseen_delivery === true,
         lastOutputAt: task.last_output_at,
+        incompleteSince: task.incomplete_since,
       },
       clock.value
     )
@@ -400,7 +402,12 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     if (!row.collapsed) return t('work.sidebar.collapse')
     if (row.hiddenStalled) return t('work.sidebar.expandStalled')
     const hidden = row.hiddenLight
-    if (hidden?.kind === 'red') return t('work.sidebar.expandQuiet')
+    if (hidden?.kind === 'red') {
+      // 两种红是两件事：收起来的一堆里最亮的那盏红，可能说的是「在跑却没动静」，
+      // 也可能是「停下报错没人接手」。开关说的是**里面**有什么，别把已经停下的说成
+      // 还在跑（`RowLight.why` 记着是哪一件，见 `lib/roomLight.ts`）。
+      return t(hidden.why === 'unfinished' ? 'work.sidebar.expandStopped' : 'work.sidebar.expandQuiet')
+    }
     if (hidden?.kind === 'yellow') return t('work.sidebar.expandAwaits')
     if (hidden?.kind === 'green') {
       return t(hidden.breathe ? 'work.sidebar.expandWorking' : 'work.sidebar.expandDelivered')
