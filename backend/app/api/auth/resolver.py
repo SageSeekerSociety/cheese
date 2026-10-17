@@ -362,6 +362,18 @@ class ActorResolver:
         if self._screen_token:
             screen = resolve_screen_actor(device_hub, self._screen_token)
             if screen is not None:
+                # The screen runs for one project, and acts as its agent there
+                # only. A request naming another one is out of its scope, the
+                # same answer a project credential for another project gets.
+                target = project_id or (
+                    await self.project_of_topic(topic_id) if topic_id else None
+                )
+                if screen.project_id is not None and target not in (
+                    None,
+                    screen.project_id,
+                ):
+                    _log.info("screen_scope_violation", got=str(screen.project_id))
+                    raise ForbiddenError(say("credentialOtherProject"))
                 return Actor(
                     handle=screen.agent_handle,
                     user_id=screen.agent_user_id,
