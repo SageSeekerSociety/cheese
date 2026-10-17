@@ -49,11 +49,7 @@ def test_no_other_module_spells_the_pattern_out() -> None:
     offenders = {
         path.relative_to(APP_ROOT).as_posix(): lines
         for path in sorted(APP_ROOT.rglob("*.py"))
-        # An address pattern cannot name an address without an "@"; skip the
-        # rest of the tree rather than parsing it.
-        if path != HOME
-        and "@" in (text := path.read_text())
-        and (lines := spelled_out(text))
+        if path != HOME and (lines := spelled_out(path.read_text()))
     }
     assert offenders == {}, (
         "Import EMAIL_FORMAT from app.core.email instead of compiling the "
