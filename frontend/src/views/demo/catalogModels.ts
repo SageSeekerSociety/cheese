@@ -13,6 +13,7 @@
  * 确认框，看其中任何一段都得先起假后端、把整页拉起来；拆开以后每一件只吃 props，于是
  * 每一件都能单独摆在预览站里看。数据见 `catalogModelsFixtures.ts`。
  */
+import type { SourceRow } from '@/lib/adminModels'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
@@ -31,7 +32,11 @@ import AdminModelsBudgets from '@/components/admin/models/AdminModelsBudgets.vue
 import AdminModelsConfirmDialog from '@/components/admin/models/AdminModelsConfirmDialog.vue'
 import AdminModelsFlash from '@/components/admin/models/AdminModelsFlash.vue'
 import AdminModelsHeader from '@/components/admin/models/AdminModelsHeader.vue'
+import AdminModelSources from '@/components/admin/models/AdminModelSources.vue'
 import AdminModelsTable from '@/components/admin/models/AdminModelsTable.vue'
+import AdminSourceFields from '@/components/admin/models/AdminSourceFields.vue'
+import AdminSourceFormDialog from '@/components/admin/models/AdminSourceFormDialog.vue'
+import { draftFromSource, emptySourceDraft } from '@/lib/adminSources'
 
 /** 页头、表、额度、那条横条：Vuetify + 词条就够了（这几件不指路、不读 store）。 */
 const UI: CatalogNeed[] = ['vuetify', 'i18n']
@@ -41,6 +46,35 @@ const DOWN = '读不到网关的模型清单。确认网关在运行，然后重
 
 /** 服务端原话的样子（接口失败时那一格显示的就是它，页面不另写一句「加载失败」）。 */
 const BOOM = 'connect ECONNREFUSED 10.0.0.4:4000'
+
+/** kimi-k3 的两条线路：OpenCode Go（运行时加的，排在前面）和 config.yaml 里的官方 API。 */
+const GO_SOURCE: SourceRow = {
+  source_id: 'go-1',
+  origin: 'runtime',
+  blocked: false,
+  order: 1,
+  protocol: 'openai-chat',
+  upstream_model: 'kimi-k3',
+  upstream_raw: 'hosted_vllm/kimi-k3',
+  host: 'opencode.ai',
+  prices: { input: 1e-6, output: 4e-6 },
+  free: false,
+  priced: true,
+  header_names: ['user-agent'],
+  session_header: 'x-opencode-session',
+}
+const OFFICIAL_SOURCE: SourceRow = {
+  ...GO_SOURCE,
+  source_id: 'cfg-1',
+  origin: 'config',
+  order: 2,
+  protocol: 'anthropic',
+  upstream_raw: 'anthropic/kimi-k3',
+  host: 'api.moonshot.cn',
+  prices: { input: 2.8e-6, output: 1.4e-5 },
+  header_names: [],
+  session_header: null,
+}
 
 export const MODELS_ENTRIES: CatalogEntry[] = [
   {
@@ -261,6 +295,80 @@ export const MODELS_ENTRIES: CatalogEntry[] = [
           busy: true,
         },
         expect: '删除模型',
+      },
+    ],
+  },
+  {
+    id: 'admin-model-sources',
+    title: 'AdminModelSources',
+    about: '详情抽屉里的「线路」：一个模型按什么先后试哪几条上游。',
+    file: 'src/components/admin/models/AdminModelSources.vue',
+    component: AdminModelSources,
+    needs: UI,
+    states: [
+      {
+        name: '一条运行时、一条 config',
+        note: '顺序就是网关试它们的顺序。config 的那条照样列出来但只读；「测试」灰着，等一致性测试套件。',
+        props: { sources: [GO_SOURCE, OFFICIAL_SOURCE] },
+        expect: 'opencode.ai',
+      },
+      {
+        name: '免费、已停用',
+        note: '免费线路不画单价（它的价就是 0，不是没定价）；停用的标红，同模型别的线路照常可用。',
+        props: { sources: [{ ...GO_SOURCE, free: true, blocked: true, prices: { input: 0, output: 0 } }] },
+        expect: 'opencode.ai',
+      },
+    ],
+  },
+  {
+    id: 'admin-source-fields',
+    title: 'AdminSourceFields',
+    about: '一条线路的那组字段：新建模型的第一条线路和「添加 / 编辑线路」共用。',
+    file: 'src/components/admin/models/AdminSourceFields.vue',
+    component: AdminSourceFields,
+    needs: UI,
+    states: [
+      {
+        name: '新线路',
+        note: '协议、上游名、地址、密钥、优先级、免费、单价、请求头、会话头。',
+        props: { modelValue: emptySourceDraft(2) },
+        expect: '静态请求头',
+      },
+      {
+        name: '编辑已有线路',
+        note: '密钥、地址全文和请求头的值服务端都不下发：前两样留空即「不动」，请求头要点「重新设置」才进入编辑。',
+        props: { modelValue: draftFromSource(GO_SOURCE), editing: true },
+        expect: '重新设置请求头',
+      },
+    ],
+  },
+  {
+    id: 'admin-source-form-dialog',
+    title: 'AdminSourceFormDialog',
+    about: '添加 / 编辑一条线路的框。模型的展示元数据不在这里：服务端从已有线路抄。',
+    file: 'src/components/admin/models/AdminSourceFormDialog.vue',
+    component: AdminSourceFormDialog,
+    needs: UI,
+    layout: true,
+    teleport: true,
+    states: [
+      {
+        name: '添加线路',
+        note: '默认优先级排在现有线路之后，作兜底；填到最前要明确勾「让它成为首选」。',
+        props: { modelValue: true, mode: 'add', modelName: 'kimi-k3', siblings: [GO_SOURCE, OFFICIAL_SOURCE] },
+        expect: '给 kimi-k3 添加线路',
+      },
+      {
+        name: '提交被拒',
+        note: '失败不关框，服务端原话留在框里。',
+        props: {
+          modelValue: true,
+          mode: 'edit',
+          modelName: 'kimi-k3',
+          seed: GO_SOURCE,
+          error: '请求头 Authorization 不能按线路设置',
+        },
+        expect: '请求头 Authorization 不能按线路设置',
       },
     ],
   },

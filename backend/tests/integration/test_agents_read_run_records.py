@@ -12,7 +12,8 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent.models import AgentTurn
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.run_record.models import RunRecord
 from tests.integration.conftest import (
     post_project,

@@ -322,7 +322,7 @@ async def test_new_backend_restores_screens_and_observes_later_connections(
 
 @pytest.mark.anyio
 async def test_remote_online_callback_runs_full_business_recovery(monkeypatch) -> None:
-    from app.api.routes.connector import recover_business_state
+    from app.api.routes.connector.devices import recover_business_state
 
     monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
     device_hub._devices.clear()
@@ -706,3 +706,23 @@ async def test_a_call_nobody_came_back_for_does_not_report_a_lost_exception(
 
     assert lost == []
     await device_hub.detach_device("machine", connector)
+
+
+async def test_a_draining_owner_does_not_report_healthy(monkeypatch) -> None:
+    # An owner left draining refuses every call; a release that took its health
+    # check at face value would keep it instead of replacing it.
+    monkeypatch.setattr(settings, "device_connection_secret", "test-owner-secret")
+    monkeypatch.setattr(device_connection_app, "_release_draining", False)
+    monkeypatch.setattr(device_connection_app, "_active_rpc_calls", 0)
+    device_hub._devices.clear()
+    device_connection_app._executor_calls.clear()
+    transport = httpx.ASGITransport(app=device_connection_app.app)
+    headers = {"X-Device-Connection-Secret": "test-owner-secret"}
+    async with httpx.AsyncClient(
+        base_url="http://owner", transport=transport, headers=headers
+    ) as client:
+        assert (await client.get("/healthz")).status_code == 200
+        await client.post("/internal/device-connection/release-drain")
+        assert (await client.get("/healthz")).status_code == 503
+        await client.post("/internal/device-connection/release-resume")
+        assert (await client.get("/healthz")).status_code == 200

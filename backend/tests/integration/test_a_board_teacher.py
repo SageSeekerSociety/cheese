@@ -4,11 +4,12 @@
 ``space_admin_relation`` 里的一行，建版的人是 OWNER）。于是有三件事必须是真的，
 本文件逐条按浏览器会收到的状态码来断：
 
-1. **管理员读得到成员项目里的对话**（``app.auth.project_access`` 的第五条主张）；
+1. **管理员不凭这个身份读成员的项目**：被题目点名为导师、学生领题时同意了的，才
+   作为导师进到领题开出的项目里，读得到、改不了（#3830）；
 2. **管理员打得了分**（评审四个接口）；
 3. **板里的人都发得了题，但上板要所有者或管理员点头**（谁都能出题、管理员审核）；
 4. **成员导不出参与者花名册**（明文个人信息，403 而不是空 CSV）；
-5. **撤掉管理员，下一次请求就必须读不到** —— 判据每次现查，没有缓存。
+5. **把导师移出项目，下一次请求就必须读不到** —— 判据每次现查，没有缓存。
 
 判据全部收敛在 ``app.auth.space_access``；这里测的是它的可观测后果，不看实现。
 """
@@ -22,7 +23,6 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
-    post_project,
     unique_int,
 )
 
@@ -82,12 +82,18 @@ def _make_member(
 
 
 def _publish(
-    api_client: TestClient, board: dict, *, name: str, token: str | None = None
+    api_client: TestClient,
+    board: dict,
+    *,
+    name: str,
+    token: str | None = None,
+    mentors: list[str] | None = None,
 ):
     """往这块板里发一道题，把响应如实交回调用方 —— 谁发得成由各自的用例断言。"""
     return api_client.post(
         "/tasks",
         json={
+            "mentors": mentors or [],
             "name": name,
             "intro": "题",
             "description": '{"type":"doc","content":[]}',
@@ -103,14 +109,21 @@ def _publish(
     )
 
 
-def _create_task(api_client: TestClient, board: dict, *, name: str) -> int:
-    resp = _publish(api_client, board, name=name)
+def _create_task(
+    api_client: TestClient,
+    board: dict,
+    *,
+    name: str,
+    mentors: list[str] | None = None,
+) -> int:
+    resp = _publish(api_client, board, name=name, mentors=mentors)
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["task"]["id"]
 
 
-def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) -> None:
-    """``user`` 领了这道题：题目过审、人进了这门课，再领题。用题目建项目要先领题。"""
+def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) -> str:
+    """``user`` 领了这道题：题目过审、人进了这门课，再领题（同意题目点名的导师）。
+    返回领题开出的那个项目。"""
     approved = api_client.patch(
         f"/tasks/{task_id}",
         json={"approved": "APPROVED"},
@@ -124,52 +137,103 @@ def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) 
     )
     assert joined.status_code in (201, 409), joined.text
     claimed = api_client.post(
-        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
+        f"/tasks/{task_id}/participations/user",
+        json={"agreeMentors": True},
+        headers=_auth(token),
     )
     assert claimed.status_code in (200, 201), claimed.text
+    return claimed.json()["data"]["project"]["id"]
 
 
-# --- 1. 管理员读得到成员项目里的对话 -------------------------------------------
+# --- 1. 导师读得到成员项目里的对话，单是管理员读不到 ---------------------------
 
 
-def test_a_board_admin_reads_the_conversations_of_its_students_projects(
-    api_client: TestClient, user_client: UserCreator
-):
-    """项目归成员所有、成员开的；管理员不在名册上、不在小队里。他进来的凭据是
-    「这门课的管理员」——``Project.external_task_id`` → ``Task.space_id`` →
-    ``SpaceAdminRelation``。"""
+def _mentored_project(api_client: TestClient, user_client: UserCreator) -> dict:
+    """一块板、一位管理员被这道题点名为导师、另一位管理员没被点名，一个学生领了题。"""
     board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="这门课的题")
-
     teacher = user_client.create_user()
     teacher_token = _login(user_client, api_client, teacher)
     assert _make_admin(api_client, board, teacher.user_id).status_code == 201
-
+    bystander = user_client.create_user()
+    bystander_token = _login(user_client, api_client, bystander)
+    assert _make_admin(api_client, board, bystander.user_id).status_code == 201
+    task_id = _create_task(
+        api_client, board, name="这门课的题", mentors=[teacher.username]
+    )
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
-    _claim(api_client, board, task_id, student, student_token)
-    project = post_project(
-        api_client,
-        json={
-            "name": "成员的项目",
-            "external_task_id": task_id,
-        },
-        headers=_auth(student_token),
-        owner=student.username,
-    )
-    assert project.status_code == 200, project.text
-    pid = project.json()["data"]["id"]
+    pid = _claim(api_client, board, task_id, student, student_token)
+    return {
+        "board": board,
+        "pid": pid,
+        "teacher": teacher,
+        "teacher_token": teacher_token,
+        "bystander_token": bystander_token,
+        "student_token": student_token,
+    }
 
-    assert (
-        api_client.get(f"/projects/{pid}", headers=_auth(teacher_token)).status_code
-        == 200
-    )
+
+def test_a_mentor_reads_the_conversations_of_its_students_projects(
+    api_client: TestClient, user_client: UserCreator
+):
+    """项目归学生所有；导师是题目点名、学生领题时同意了的那位，他读得到项目和
+    里面的对话。"""
+    m = _mentored_project(api_client, user_client)
+    pid, token = m["pid"], m["teacher_token"]
+
+    assert api_client.get(f"/projects/{pid}", headers=_auth(token)).status_code == 200
     assert (
         api_client.get(
-            "/topics", params={"project_id": pid}, headers=_auth(teacher_token)
+            "/topics", params={"project_id": pid}, headers=_auth(token)
         ).status_code
         == 200
     )
+
+
+def test_a_board_admin_who_is_not_a_mentor_does_not_read_the_project(
+    api_client: TestClient, user_client: UserCreator
+):
+    """管理这门课不等于进得了每个学生的项目：没被点名为导师的管理员读不到。"""
+    m = _mentored_project(api_client, user_client)
+    pid, token = m["pid"], m["bystander_token"]
+
+    assert api_client.get(f"/projects/{pid}", headers=_auth(token)).status_code == 403
+    assert (
+        api_client.get(
+            "/topics", params={"project_id": pid}, headers=_auth(token)
+        ).status_code
+        == 403
+    )
+
+
+def test_a_mentor_reads_a_students_project_but_does_not_change_it(
+    api_client: TestClient, user_client: UserCreator
+):
+    """导师看得见学生的项目，但项目里的文档、记忆是学生自己的：他不新建、不改。"""
+    m = _mentored_project(api_client, user_client)
+    pid, teacher_token = m["pid"], m["teacher_token"]
+
+    listed = api_client.get(f"/projects/{pid}/documents", headers=_auth(teacher_token))
+    made = api_client.post(
+        f"/projects/{pid}/documents",
+        json={"title": "老师写的"},
+        headers=_auth(teacher_token),
+    )
+    remembered = api_client.put(
+        "/memory/files",
+        json={
+            "project_id": pid,
+            "scope": "team",
+            "path": "teacher-note.md",
+            "content": "---\nname: teacher-note\ndescription: 老师的话\n"
+            "type: feedback\n---\n\n照老师说的做。\n",
+        },
+        headers=_auth(teacher_token),
+    )
+
+    assert listed.status_code == 200, listed.text
+    assert made.status_code == 403
+    assert remembered.status_code == 403
 
 
 def test_a_plain_member_of_the_board_is_not_a_teacher(
@@ -188,17 +252,7 @@ def test_a_plain_member_of_the_board_is_not_a_teacher(
 
     student = user_client.create_user()
     student_token = _login(user_client, api_client, student)
-    _claim(api_client, board, task_id, student, student_token)
-    project = post_project(
-        api_client,
-        json={
-            "name": "成员的项目",
-            "external_task_id": task_id,
-        },
-        headers=_auth(student_token),
-        owner=student.username,
-    )
-    pid = project.json()["data"]["id"]
+    pid = _claim(api_client, board, task_id, student, student_token)
 
     # 另一个成员：是这块板里的成员（成员），但没有任何管理权。
     peer = user_client.create_user()
@@ -210,47 +264,23 @@ def test_a_plain_member_of_the_board_is_not_a_teacher(
     )
 
 
-def test_removing_a_board_admin_shuts_the_door_immediately(
+def test_removing_a_mentor_shuts_the_door_immediately(
     api_client: TestClient, user_client: UserCreator
 ):
-    """撤权立刻生效：同一个 URL、同样的参数，中间只多了一次管理员关系的软删。
+    """撤权立刻生效：同一个 URL、同样的参数，中间只多了一次学生把导师移出项目。
     读路径上任何形式的缓存都会在这里留下撤权前的那一次 200。"""
-    board = _new_board(user_client, api_client)
-    task_id = _create_task(api_client, board, name="这门课的题")
+    m = _mentored_project(api_client, user_client)
+    pid, token = m["pid"], m["teacher_token"]
 
-    teacher = user_client.create_user()
-    teacher_token = _login(user_client, api_client, teacher)
-    assert _make_admin(api_client, board, teacher.user_id).status_code == 201
-
-    student = user_client.create_user()
-    student_token = _login(user_client, api_client, student)
-    _claim(api_client, board, task_id, student, student_token)
-    project = post_project(
-        api_client,
-        json={
-            "name": "成员的项目",
-            "external_task_id": task_id,
-        },
-        headers=_auth(student_token),
-        owner=student.username,
-    )
-    pid = project.json()["data"]["id"]
-
-    assert (
-        api_client.get(f"/projects/{pid}", headers=_auth(teacher_token)).status_code
-        == 200
-    )
+    assert api_client.get(f"/projects/{pid}", headers=_auth(token)).status_code == 200
 
     removed = api_client.delete(
-        f"/spaces/{board['space_id']}/managers/{teacher.user_id}",
-        headers=_auth(board["creator_token"]),
+        f"/projects/{pid}/members/{m['teacher'].username}",
+        headers=_auth(m["student_token"]),
     )
-    assert removed.status_code == 204, removed.text
+    assert removed.status_code == 200, removed.text
 
-    assert (
-        api_client.get(f"/projects/{pid}", headers=_auth(teacher_token)).status_code
-        == 403
-    )
+    assert api_client.get(f"/projects/{pid}", headers=_auth(token)).status_code == 403
 
 
 # --- 2. 管理员打得了分 ---------------------------------------------------------
@@ -607,3 +637,57 @@ def test_the_analytics_surface_is_for_the_teacher(
             headers=_auth(board["creator_token"]),
         )
         assert resp.status_code == 200, (suffix, resp.status_code, resp.text)
+
+
+# --- 导师要领题的人同意，也只能是这门课的人 -------------------------------------
+
+
+def test_a_task_with_mentors_is_not_claimed_without_agreeing_to_them(
+    api_client: TestClient, user_client: UserCreator
+):
+    """领题的人不同意导师加入项目，这道题就领不了；同意了才领得到。"""
+    board = _new_board(user_client, api_client)
+    teacher = user_client.create_user()
+    assert _make_admin(api_client, board, teacher.user_id).status_code == 201
+    task_id = _create_task(
+        api_client, board, name="有导师的题", mentors=[teacher.username]
+    )
+    student = user_client.create_user()
+    token = _login(user_client, api_client, student)
+    assert (
+        api_client.patch(
+            f"/tasks/{task_id}",
+            json={"approved": "APPROVED"},
+            headers=_auth(board["creator_token"]),
+        ).status_code
+        == 200
+    )
+    api_client.post(
+        f"/spaces/{board['space_id']}/members",
+        json={"userId": student.user_id},
+        headers=_auth(board["creator_token"]),
+    )
+
+    refused = api_client.post(
+        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
+    )
+    assert refused.status_code == 400, refused.text
+
+    claimed = api_client.post(
+        f"/tasks/{task_id}/participations/user",
+        json={"agreeMentors": True},
+        headers=_auth(token),
+    )
+    assert claimed.status_code in (200, 201), claimed.text
+
+
+def test_only_the_publisher_or_a_space_admin_is_a_mentor(
+    api_client: TestClient, user_client: UserCreator
+):
+    """导师会读学生的项目，所以只能是出题人自己或这门课的管理员。"""
+    board = _new_board(user_client, api_client)
+    stranger = user_client.create_user()
+
+    refused = _publish(api_client, board, name="题", mentors=[stranger.username])
+
+    assert refused.status_code == 400, refused.text

@@ -125,16 +125,14 @@ async def read_page(
         raise ValueError(say("docsNotAPage", page=page))
     if slug.startswith("dev/") and not dev:
         raise DevDocsForbidden(slug)
-    base = _docs_base()
-    headers = (
-        {"Cookie": f"{access.cookie_name()}={access.internal_pass()}"}
-        if slug.startswith("dev/")
-        else {}
-    )
+    url = f"{_docs_base()}/{slug}.md"
+    headers = site.read_headers(url)
+    if slug.startswith("dev/"):
+        headers["Cookie"] = f"{access.cookie_name()}={access.internal_pass()}"
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(10.0), transport=transport
     ) as client:
-        r = await client.get(f"{base}/{slug}.md", headers=headers)
+        r = await client.get(url, headers=headers)
     if r.status_code == 404 or "markdown" not in r.headers.get("content-type", ""):
         return None
     r.raise_for_status()

@@ -8,6 +8,11 @@ gives them (``Plan.rank``), with a plan anyone can be put on before an
 administrator's own.
 Only plans the team could be put on count: a personal team is never told it
 needs a plan only shared teams may have.
+
+An overseas model (Claude, GPT, Gemini) also needs the team approved by a
+platform administrator (``OverseasModelApproval``), whatever its plan allows.
+A team without that approval is not shown such a model at all (``offered``):
+it is not something the team could get by changing plan.
 """
 
 from dataclasses import dataclass
@@ -17,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.team.services import team_service
 from app.domain.usage.ledger import team_terms
-from app.domain.usage.models import Plan
+from app.domain.usage.models import OverseasModelApproval, Plan
 
 
 def _fits(plan: Plan, *, personal: bool) -> bool:
@@ -42,26 +47,40 @@ class ModelAccess:
     allowed_tiers: frozenset[str] | None
     #: The plans the team could be put on, cheapest first.
     plans: tuple[Plan, ...]
+    #: Whether an administrator has approved the team for overseas models.
+    overseas_approved: bool = False
 
-    def allows(self, tier: str) -> bool:
+    def allows_tier(self, tier: str) -> bool:
         return self.allowed_tiers is None or tier in self.allowed_tiers
+
+    def shows(self, choice: dict) -> bool:
+        """Is ``choice`` (a ``model_choices`` entry) shown to the team at all."""
+        return self.overseas_approved or not choice.get("overseas")
+
+    def allows(self, choice: dict) -> bool:
+        """May the team use ``choice``."""
+        return self.shows(choice) and self.allows_tier(choice.get("tier", ""))
 
     def minimum_plan(self, tier: str) -> str | None:
         """The name of the cheapest plan that allows ``tier``; None when the
         team's own plan does, or when no plan it could be on does."""
-        if self.allows(tier):
+        if self.allows_tier(tier):
             return None
         return next((p.name for p in self.plans if _allows(p, tier)), None)
 
     def mark(self, choice: dict) -> dict:
         """``choice`` (a ``model_choices`` entry), with whether the plan allows
         it and, when not, the plan that would."""
-        tier = choice.get("tier", "")
         return {
             **choice,
-            "allowed": self.allows(tier),
-            "requires_plan": self.minimum_plan(tier),
+            "allowed": self.allows(choice),
+            "requires_plan": self.minimum_plan(choice.get("tier", "")),
         }
+
+    def offered(self, choices: list[dict]) -> list[dict]:
+        """``choices`` as the team's picker lists them: marked, and without the
+        ones it is not shown."""
+        return [self.mark(choice) for choice in choices if self.shows(choice)]
 
 
 async def model_access(session: AsyncSession, team_id: int) -> ModelAccess:
@@ -73,4 +92,13 @@ async def model_access(session: AsyncSession, team_id: int) -> ModelAccess:
         (p for p in rows.scalars() if _fits(p, personal=personal)), key=_cheapness
     )
     terms = await team_terms(session, team_id)
-    return ModelAccess(allowed_tiers=terms.model_tiers, plans=tuple(plans))
+    return ModelAccess(
+        allowed_tiers=terms.model_tiers,
+        plans=tuple(plans),
+        overseas_approved=await overseas_approved(session, team_id),
+    )
+
+
+async def overseas_approved(session: AsyncSession, team_id: int) -> bool:
+    """Has an administrator approved the team for overseas models."""
+    return await session.get(OverseasModelApproval, team_id) is not None

@@ -5,6 +5,8 @@
 //   node scripts/tsc-ratchet.mjs --update   rewrite the baseline downward
 //   node scripts/tsc-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
+// Failures print full diagnostics for regressed files (to stderr with --json).
+//
 // `--project <tsconfig>` and `--baseline <file>` judge another project against
 // another baseline. They exist so ratchet-report.test.mjs can run this script
 // on a one-file fixture instead of type-checking the whole tree a second time.
@@ -17,7 +19,13 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
-import { compare, formatReport, parseTscDiagnostics, parseTscOutput, tightenedBaseline } from './tsc-ratchet-core.mjs'
+import {
+  compareTsc,
+  formatReport,
+  parseTscDiagnostics,
+  parseTscOutput,
+  tightenedBaseline,
+} from './tsc-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -41,7 +49,7 @@ const ID = 'vue-tsc'
 const LOCAL_BIN = resolve(ROOT, 'node_modules/.bin/vue-tsc')
 const BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : 'vue-tsc'
 
-const run = spawnSync(BIN, ['--noEmit', ...(project ? ['-p', project] : [])], {
+const run = spawnSync(BIN, ['--noEmit', '--pretty', 'false', ...(project ? ['-p', project] : [])], {
   cwd: ROOT,
   encoding: 'utf8',
   shell: process.platform === 'win32',
@@ -74,9 +82,16 @@ if (run.status !== 0 && currentTotal === 0) {
   cannotJudge({ id: ID }, 'vue-tsc failed without reporting any diagnostic')
 }
 
-const baseline = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')).files ?? {} : {}
+const frozen = existsSync(BASELINE) ? JSON.parse(readFileSync(BASELINE, 'utf8')) : {}
+const baseline = frozen.files ?? {}
+const result = compareTsc(baseline, current, diagnostics, frozen.missingNames)
 
 if (update) {
+  // Updating must not bless a missing import using an unrelated error's budget.
+  if (result.missingNameRegressions.length) {
+    console.error(formatReport(result, diagnostics))
+    process.exit(1)
+  }
   const next = tightenedBaseline(baseline, current)
   writeFileSync(
     BASELINE,
@@ -86,6 +101,7 @@ if (update) {
           'Frozen vue-tsc errors. The ratchet blocks any NEW error; these are ' +
           'pre-existing and may only go down. Regenerate with `pnpm run typecheck:update`.',
         files: next,
+        missingNames: result.nextMissingNames,
       },
       null,
       2
@@ -95,8 +111,6 @@ if (update) {
   console.log(`baseline updated: ${total} error(s) across ${Object.keys(next).length} file(s)`)
   process.exit(0)
 }
-
-const result = compare(baseline, current)
 
 if (asJson) {
   // Per-file counts, the shape the board groups by. The human report is not on

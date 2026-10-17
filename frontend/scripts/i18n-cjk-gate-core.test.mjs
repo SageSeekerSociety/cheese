@@ -2,10 +2,13 @@
 // `node --test` from `pnpm run test:ratchet` in CI.
 //
 // These are written against the failure modes that would make the gate either
-// useless or hated: it must not count Chinese in comments (the tree is full of
-// Chinese prose), it must not miss a string because of an apostrophe inside a
-// regex, and its one exemption — an `i18n-data:` annotation on the line — must
-// not be usable without saying why.
+// useless or hated: it must not count Chinese prose in `//` and `/* */`
+// comments (the tree is full of it), it must not miss a string because of an
+// apostrophe inside a regex, and its one exemption — an `i18n-data:` annotation
+// on the line — must not be usable without saying why. Chinese in a template's
+// HTML comments is a finding of its own: counted (see the ratchet half below),
+// because vitest and `vite dev` keep the comment in the DOM the no-Chinese
+// specs read.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
@@ -13,10 +16,14 @@ import {
   annotationOn,
   checkSource,
   CJK,
+  commentCounts,
+  compare,
+  formatCommentReport,
   formatReport,
   scanSource,
   scanTree,
   shouldScan,
+  splitFindings,
 } from './i18n-cjk-gate-core.mjs'
 
 test("the character class matches the catalog gate's", () => {
@@ -285,7 +292,7 @@ const b = '确定' // i18n-data: still data
   )
 })
 
-test('checkSource: Chinese in comments is ignored, annotation or not', () => {
+test('checkSource: a Chinese HTML comment in a template is a finding of its own', () => {
   const vue = `<template>
   <!-- 这是注释，不是文案 -->
   <div>OK</div>
@@ -296,7 +303,225 @@ test('checkSource: Chinese in comments is ignored, annotation or not', () => {
 console.error('加载失败')
 </script>
 `
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'comment' }]
+  )
+})
+
+test('checkSource: every line of a multi-line comment that carries Han is counted', () => {
+  const vue = `<template>
+  <!--
+    第一行说明
+    第二行说明
+  -->
+  <div>OK</div>
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [
+      { line: 3, problem: 'comment' },
+      { line: 4, problem: 'comment' },
+    ]
+  )
+})
+
+test('checkSource: a Chinese comment that never reaches the DOM is not one', () => {
+  // `<script>`, `<style>`, and the file around the blocks are not the rendered
+  // markup, so a Chinese comment there is prose nobody sees — and the tree is
+  // full of it.
+  const vue = `<script setup lang="ts">
+// 中文注释
+const a = 1
+</script>
+
+<!-- 块外的中文注释 -->
+<template>
+  <div>OK</div>
+</template>
+
+<style>
+/* 样式里的中文 */
+</style>
+`
   assert.deepEqual(checkSource('src/a.vue', vue), { problems: [], annotated: [] })
+  assert.deepEqual(checkSource('src/a.ts', '// 中文注释\nconst a = 1\n'), { problems: [], annotated: [] })
+})
+
+test('checkSource: an i18n-data comment is exempt, Chinese reason and all', () => {
+  const vue = `<template>
+  <code>【PDF · 第 N 页】</code> <!-- i18n-data: 写进题目简介的固定标记，原样展示 -->
+</template>
+`
+  assert.deepEqual(checkSource('src/a.vue', vue), { problems: [], annotated: [2] })
+})
+
+test('checkSource: an annotation does not cover an unrelated Chinese comment on its line', () => {
+  // The reason after `i18n-data:` is usually Chinese prose, so that comment has
+  // to be exempt — which is also why the exemption cannot be allowed to cover a
+  // second, ordinary comment beside it.
+  const vue = `<template>
+  <span>中</span> <!-- i18n-data: collation anchor --> <!-- 顺带一句说明 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'comment' }]
+  )
+})
+
+test('checkSource: an annotation beside a Chinese comment has nothing to excuse', () => {
+  // The comment is prose, never the Chinese an annotation covers, so the
+  // annotation is stale. Reporting the comment instead would count the line and
+  // let the annotation stand, ready to exempt whatever copy lands there next.
+  const vue = `<template>
+  <div>{{ t('global.ok') }}</div> <!-- i18n-data: collation anchor --> <!-- 顺带一句说明 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'stale' }]
+  )
+})
+
+test('checkSource: an i18n-data comment whose reason wraps is still exempt', () => {
+  // `annotationOn` reads one line, where the marker is recognizable before the
+  // `-->` arrives; the whole comment has to be read the same way, or a reason
+  // written over two lines turns its own comment into a finding.
+  const vue = `<template>
+  <code>【PDF · 第 N 页】</code> <!-- i18n-data: 写进题目简介的固定标记，
+  原样展示 -->
+</template>
+`
+  assert.deepEqual(checkSource('src/a.vue', vue), { problems: [], annotated: [2] })
+})
+
+test('checkSource: a Chinese comment that merely quotes the marker is not exempt', () => {
+  // The inner `<!--` is text, not a second comment, so the marker is not at an
+  // opener and the comment is counted like any other.
+  const vue = `<template>
+  <!-- 写法参照 <!-- i18n-data: 理由 的样子 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'comment' }]
+  )
+})
+
+test('checkSource: the marker on the line after the opener is not an annotation', () => {
+  // The exemption asks the whole comment, and it has to ask it the way the
+  // line reader does: a marker the comment merely carries on a later line
+  // exempts nothing, or a Chinese comment walks out of the count unannounced.
+  const vue = `<template>
+  <!--
+  i18n-data: whatever
+  这是一句中文说明
+  -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 4, problem: 'comment' }]
+  )
+})
+
+test('checkSource: a template line reads markup annotations, never code ones', () => {
+  // `//` is text in a template, so a comment whose prose mentions the code
+  // marker is prose — not an annotation, and so not a stale one either.
+  const vue = `<template>
+  <!-- 脚本里用 // i18n-data: 理由 标注 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'comment' }]
+  )
+})
+
+test('checkSource: copy beside a comment that quotes the marker is still copy', () => {
+  // Reading the quoted marker as an annotation would exempt the copy on this
+  // line and report nothing at all.
+  const vue = `<template>
+  <div>确定</div> <!-- see <!-- i18n-data: reason -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'copy' }]
+  )
+})
+
+test('checkSource: a reason that only begins on the next line is no reason', () => {
+  // The marker and the reason have to share the opener's line: a reason that
+  // starts after it leaves the annotation saying nothing, which is what
+  // `no-reason` is for. Unlike a reason that starts on the marker's line and
+  // continues below it, which the whole comment is read to cover.
+  const vue = `<template>
+  <code>【PDF · 第 N 页】</code> <!-- i18n-data:
+  写进题目简介的固定标记 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'no-reason' }]
+  )
+})
+
+test('checkSource: unannotated copy beside a comment reports the copy, then the comment', () => {
+  const vue = `<template>
+  <div>确定</div> <!-- 确认按钮 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', vue).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'copy' }]
+  )
+  // Fixing the copy is what turns the comment into the finding: one line, one
+  // problem, and the comment is the next one.
+  const fixed = `<template>
+  <div>{{ t('global.ok') }}</div> <!-- 确认按钮 -->
+</template>
+`
+  assert.deepEqual(
+    checkSource('src/a.vue', fixed).problems.map(({ line, problem }) => ({ line, problem })),
+    [{ line: 2, problem: 'comment' }]
+  )
+})
+
+test('splitFindings: copy is refused, comments are counted', () => {
+  const result = scanTree([
+    { path: 'src/a.vue', text: '<template>\n  <!-- 说明 -->\n  <div>确定</div>\n</template>\n' },
+    { path: 'src/b.vue', text: '<template>\n  <!-- 说明 -->\n  <div>OK</div>\n</template>\n' },
+  ])
+  const { hard, comments } = splitFindings(result.problems)
+  assert.deepEqual(Object.keys(hard), ['src/a.vue'], 'the copy line is the refusal')
+  assert.deepEqual(
+    hard['src/a.vue'].map(({ line, problem }) => ({ line, problem })),
+    [{ line: 3, problem: 'copy' }]
+  )
+  assert.deepEqual(Object.keys(comments), ['src/a.vue', 'src/b.vue'], 'every commented file is counted')
+  assert.deepEqual(commentCounts(comments), { 'src/a.vue': 1, 'src/b.vue': 1 })
+})
+
+test('formatCommentReport: a new comment is blocked and says what to do about it', () => {
+  const comments = { 'src/a.vue': [{ line: 2, problem: 'comment', text: '<!-- 说明 -->' }] }
+  const blocked = formatCommentReport(compare({}, commentCounts(comments)), comments)
+  assert.match(blocked, /New Chinese in an HTML comment \(this is what the ratchet blocks\):/)
+  assert.match(blocked, /src\/a\.vue: 0 -> 1/)
+  assert.match(blocked, /src\/a\.vue:2: \[Chinese in an HTML comment\] <!-- 说明 -->/)
+  assert.match(blocked, /vite dev/)
+  assert.match(blocked, /lint:i18n:update/)
+  assert.match(blocked, /Chinese HTML comments: 1 line\(s\), baseline allows 0/)
+
+  const frozen = formatCommentReport(compare({ 'src/a.vue': 1 }, commentCounts(comments)), comments)
+  assert.doesNotMatch(frozen, /ratchet blocks/, 'a frozen count is not a failure')
+  assert.match(frozen, /Chinese HTML comments: 1 line\(s\), baseline allows 1/)
+
+  const paid = formatCommentReport(compare({ 'src/a.vue': 3 }, commentCounts(comments)), comments)
+  assert.match(paid, /tighten the baseline/)
+  assert.match(paid, /src\/a\.vue: 3 -> 1/)
 })
 
 test('annotationOn: the marker must open the comment, so prose mentioning it is not one', () => {
@@ -320,7 +545,7 @@ test('scanTree: out-of-scope files are not read, clean files are not listed', ()
 
 test('formatReport: a clean run says so, a failure shows each line and what to do', () => {
   const clean = formatReport(scanTree([{ path: 'src/c.ts', text: "const a = '阿' // i18n-data: anchor\n" }]))
-  assert.match(clean, /No hardcoded Chinese in src\/\. 1 line\(s\) carry an i18n-data annotation\./)
+  assert.match(clean, /No Chinese copy in src\/\. 1 line\(s\) carry an i18n-data annotation\./)
 
   const bad = formatReport(
     scanTree([

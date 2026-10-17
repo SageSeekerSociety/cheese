@@ -20,7 +20,6 @@ import { useProjectTaskNamingSettings } from './useProjectTaskNamingSettings'
 const naming = (overrides: Record<string, unknown> = {}) => ({
   mode: 'auto',
   available: true,
-  can_manage: true,
   ...overrides,
 })
 
@@ -66,14 +65,6 @@ describe('useProjectTaskNamingSettings', () => {
     const { state } = host()
     await tick()
     await state.choose('auto')
-    expect(setTaskNaming).not.toHaveBeenCalled()
-  })
-
-  it('does not save for someone who cannot manage the project', async () => {
-    getTaskNaming.mockResolvedValue(naming({ can_manage: false }))
-    const { state } = host()
-    await tick()
-    await state.choose('manual')
     expect(setTaskNaming).not.toHaveBeenCalled()
   })
 

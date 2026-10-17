@@ -141,7 +141,7 @@ const last = computed(() => {
   width: 100%;
   max-width: 480px;
   margin-top: 6px;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border: 0;
   border-radius: var(--radius-md);
   background: var(--fill);

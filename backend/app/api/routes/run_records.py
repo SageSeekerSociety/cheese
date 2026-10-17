@@ -17,9 +17,9 @@ from app.api.response import ok, typed_response
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.feedback.claims import is_platform_project
+from app.domain.room_task.place import place_or_404
 from app.domain.run_record import admin, turns
 from app.domain.run_record.turns import TurnListOut
-from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/run-records", tags=["run-records"])
 
@@ -30,7 +30,7 @@ async def _from_platform_room(
     db: DbSession, resolver: ActorResolverDep, topic: uuid.UUID
 ) -> None:
     """The caller is in this room, and the room's project works on the platform."""
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     who = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

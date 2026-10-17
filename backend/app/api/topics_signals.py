@@ -15,7 +15,7 @@
 """
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +30,11 @@ from app.domain.room_task import presentation
 
 
 async def working_in_threads(
-    db: AsyncSession, broker: InProcessBroker, room_ids: list[uuid.UUID]
+    db: AsyncSession,
+    broker: InProcessBroker,
+    room_ids: list[uuid.UUID],
+    *,
+    threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
 ) -> dict[uuid.UUID, set[str]]:
     """{房间: 正在它的某条支线里干活的队友} —— 一次查完一个项目。
 
@@ -39,10 +43,15 @@ async def working_in_threads(
     主线之外那一半，用来把 `waits` 里已经在处理的成员去掉（`_topic_out`）。哪条支线
     属于哪个房间以数据库为准，不是 broker 记的那份：broker 只在一条支线里装过轮次时
     才认得它（`RoomActivity.note_thread`）。
+
+    ``threads`` 是调用方已经问过的那一份（`threads_of_rooms`）：一页里问它的不止这一
+    处（`waits._last_said`、`topics._awaiting_an_answer` 也要），同一批房间问三遍是
+    同一张表读三趟。给了就用给的。
     """
     if not room_ids:
         return {}
-    threads = await threads_of_rooms(db, room_ids)
+    if threads is None:
+        threads = await threads_of_rooms(db, room_ids)
     return broker.activity.working_in(
         {str(thread_id): room_id for thread_id, room_id in threads.items()}
     )

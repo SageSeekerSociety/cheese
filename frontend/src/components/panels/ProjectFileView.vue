@@ -44,8 +44,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'open-task', taskId: string): void
-  (e: 'download'): void
+  'open-task': [taskId: string]
+  download: []
 }>()
 
 const { mdAndUp } = useDisplay()

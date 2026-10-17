@@ -9,7 +9,7 @@ import uuid
 
 import pytest
 
-from app.domain.block.about import EventAbout, Landing, landing
+from app.domain.event_about import EventAbout, Landing, landing
 
 PROJECT = uuid.uuid4()
 ROOM = uuid.uuid4()

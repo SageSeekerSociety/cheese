@@ -8,6 +8,8 @@
 该找谁。
 """
 
+import pytest
+
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
     MODEL_LIMIT_REACHED_CODE,
@@ -171,3 +173,33 @@ def test_a_turn_the_provider_throttled_says_so():
         None,
     )
     assert line != say("turnFailedService")
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # The shape of the refusal that ended a conversation for good: an image
+        # in it that does not decode, refused through the model gateway.
+        "API Error: 400 litellm.BadRequestError: DeepseekException - "
+        '{"error":{"message":"messages.138.content.0.tool_result.image[0]: You '
+        'have uploaded an unsupported image.","type":"invalid_request_error"}}',
+        'API Error: 400 {"type":"error","error":{"type":"invalid_request_error",'
+        '"message":"Could not process image"}}',
+    ],
+)
+def test_a_request_refused_as_invalid_is_not_offered_again(said):
+    """The model's API refused the request as invalid. A retry sends the same
+    conversation and is refused the same way, so the card does not offer one —
+    whichever provider refused it — and the service's words stay behind it."""
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    _, meta = _turn_failure_notice(said, None)
+    assert not meta.get("retryable")
+    assert said in meta["detail"]
+
+
+def test_a_failure_the_platform_cannot_place_still_offers_a_retry():
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    _, meta = _turn_failure_notice("upstream connect error before headers", None)
+    assert meta.get("retryable") is True

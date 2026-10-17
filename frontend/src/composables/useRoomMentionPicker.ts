@@ -43,6 +43,8 @@ export interface MentionItem {
   kind: 'member' | 'topic' | 'broadcast' | 'file' | 'category'
   /** 挑中之后写在 `@` 后面的那串字（一个 handle / 名字 / token）。 */
   insert: string
+  /** 挑中之后写进正文的引用（`<@handle>`、`<#id>`），画出来是一枚标签。文件、分类没有。 */
+  token?: string
   /** 第二行：人的 `@handle`、话题的状态、群播的说明。 */
   sub: string
   agent: boolean
@@ -66,6 +68,7 @@ const broadcastItems = (): MentionItem[] => [
     label: t('work.room.mention.all'),
     kind: 'broadcast',
     insert: 'all',
+    token: '<@all>',
     sub: t('work.room.mention.allSub'),
     agent: false,
   },
@@ -73,6 +76,7 @@ const broadcastItems = (): MentionItem[] => [
     label: t('work.room.mention.here'),
     kind: 'broadcast',
     insert: 'here',
+    token: '<@here>',
     sub: t('work.room.mention.hereSub'),
     agent: false,
   },
@@ -84,8 +88,11 @@ const PICKER_IMAGE_SUFFIXES = new Set([...IMAGE_SUFFIXES, 'gif', 'webp'])
 /** 一次从资料库取几份候选；菜单里最多摆 12 份，图片和文件分两组，多取一些。 */
 const LIBRARY_PICKS = 24
 
+/** 正文末尾一个打到一半的 `@`。`<@zhangsan>` 里的那个 `@` 是一枚标签，不算。 */
+const PARTIAL = /(?<!<)@([^\s@<>]*)$/
+
 export interface MentionPickerDeps {
-  /** 正文。挑中一项之后由这里改它。 */
+  /** 光标前面那一截正文：看它的末尾，挑中一项之后改的也是它。 */
   draft: Ref<string>
   topic: () => Topic | null
   mentionPool: () => MentionPoolEntry[]
@@ -103,6 +110,11 @@ export interface MentionPickerDeps {
   listLibrary?: (projectId: string, query: string, limit: number) => Promise<LibraryFile[]>
   /** 用键盘换高亮之后把那一项滚进视野（菜单自己有高度上限、自己滚）。 */
   scrollActiveIntoView: () => void
+  /** 候选里有没有 @所有人 / @在线的人。不填是有；文档评论没有「这个频道的所有人」可叫。 */
+  broadcast?: boolean
+  /** 挑中之后写引用（`<@handle>`）而不是名字：画得出标签的输入框才这样写，纯文本框里
+   *  它只是一串尖括号。 */
+  writeTokens?: boolean
 }
 
 export function useRoomMentionPicker(deps: MentionPickerDeps) {
@@ -111,7 +123,7 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
   // Mirrors TopicView's composer so the root-topic and 私聊 composers get the
   // same picker.
   const query = computed(() => {
-    const m = deps.draft.value.match(/@([^\s@]*)$/)
+    const m = deps.draft.value.match(PARTIAL)
     return m ? m[1] : null
   })
 
@@ -196,12 +208,14 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     if (q === null) return []
     const ql = q.toLowerCase()
     if (level.value === 'library') return libraryItems(ql).slice(0, 12)
-    const broadcast = broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
+    const broadcast =
+      deps.broadcast === false ? [] : broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
     const named: MentionItem[] = [
       ...deps.mentionPool().map((m) => ({
         label: m.label,
         kind: 'member' as const,
         insert: m.label,
+        token: `<@${m.handle}>`,
         sub: m.handle,
         agent: m.agent,
         external: !!m.external,
@@ -217,6 +231,7 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
           label: tp.title,
           kind: 'topic' as const,
           insert: tp.title,
+          token: `<#${tp.id}>`,
           sub: tp.status === 'archived' ? t('work.room.mention.archived') : t('work.room.mention.inProgress'),
           agent: false,
         })),
@@ -261,12 +276,13 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     if (item.kind === 'file') {
       // 文件不是一个能 @ 的人：挑中它是把它附在这条消息上，所以那个 @ 连同半个
       // 名字都从正文里拿掉，文件去待发条里待着。
-      deps.draft.value = deps.draft.value.replace(/@([^\s@]*)$/, '')
+      deps.draft.value = deps.draft.value.replace(PARTIAL, '')
       deps.onAddLibraryFile?.(item.insert)
       void nextTick(deps.focus)
       return
     }
-    deps.draft.value = deps.draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
+    const written = deps.writeTokens && item.token ? item.token : `@${item.insert}`
+    deps.draft.value = deps.draft.value.replace(PARTIAL, () => `${written} `)
     // 挑完一个人，正是你要接着往下打字的时刻。鼠标点菜单会把焦点带到那颗按钮上，
     // 键盘挑则让整块菜单从 DOM 里消失——两条路都可能把光标从输入框里带走，而「@
     // 完人还要再点一次输入框」是这个面板最烦人的地方。

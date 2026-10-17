@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The public pages. The placeholder becomes the requesting host's origin in nginx.conf's
+     /sitemap.xml location, so okcheese.com and okcheese.cn each list their own. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<url><loc>__ORIGIN__/</loc></url>
+<url><loc>__ORIGIN__/about</loc></url>
+<url><loc>__ORIGIN__/solutions</loc></url>
+<url><loc>__ORIGIN__/download</loc></url>
+<url><loc>__ORIGIN__/legal/terms</loc></url>
+<url><loc>__ORIGIN__/legal/privacy</loc></url>
+</urlset>

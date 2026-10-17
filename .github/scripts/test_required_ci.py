@@ -104,6 +104,10 @@ class RequiredCITest(unittest.TestCase):
             "scripts/remote_execution/equivalence.py",
             "scripts/remote_execution/custom_mcp.py",
             "backend/app/domain/agent/harness/claude_code/remote_execution/runtime.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime_core.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime_context.py",
+            "backend/app/domain/agent/harness/claude_code/remote_execution/runtime_calls.py",
             "backend/app/domain/agent/project_hooks.py",
             "backend/sandbox/cheese",
             ".github/workflows/mcp-equivalence.yml",
@@ -171,6 +175,30 @@ class RequiredCITest(unittest.TestCase):
         selected = gate.select(["backend/app/api/rooms.py"])
         self.assertTrue(selected["backend"] and selected["e2e"])
         self.assertFalse(selected["frontend"])
+
+    def test_the_catalogs_the_backend_reads_select_backend(self):
+        # The backend reads these three at import time (sentences.py), so a
+        # change to any of them has to run the backend suite. roomNotice and
+        # apiError are each split across a shard directory now: the patterns
+        # have to reach inside them, and the frontend-only namespaces must not
+        # drag backend along.
+        for path in (
+            "frontend/src/i18n/messages/zh-CN/roomNotice/agent.json",
+            "frontend/src/i18n/messages/en/roomNotice/agent.json",
+            "frontend/src/i18n/messages/zh-CN/global.json",
+            "frontend/src/i18n/messages/zh-CN/apiError/usage.json",
+            "frontend/src/i18n/messages/en/apiError/usage.json",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["backend"])
+        for path in (
+            "frontend/src/i18n/messages/zh-CN/work/room/doc/index.json",
+            "frontend/src/i18n/messages/zh-CN/account/index.json",
+        ):
+            with self.subTest(path=path):
+                selected = gate.select([path])
+                self.assertTrue(selected["frontend"])
+                self.assertFalse(selected["backend"])
 
     def test_frontend_ratchet_scripts_run_the_frontend_suite(self):
         # lint:catalog and lint:scenes run these scripts against the real tree
@@ -262,6 +290,90 @@ class RequiredCITest(unittest.TestCase):
     def test_clean_evidence_helper_runs_its_e2e_consumer(self):
         selected = gate.select([".github/scripts/ci-test-evidence.py"])
         self.assertTrue(selected["e2e"])
+
+    def test_e2e_runs_only_what_its_own_job_executes(self):
+        # e2e.yml starts the app from backend/app, migrates with alembic, seeds
+        # the fusion demo, and drives the app through the browser. Two places
+        # outside app/ and alembic/ are executed by that job and by nobody else:
+        # `backend/tests/forgejo/**` — the backend suite passes
+        # `--ignore=tests/forgejo` (test.yml), so e2e is where those run — and
+        # the seed script the job names. A rule that dropped them would skip the
+        # Playwright shards on a change to the forge fixture they exercise.
+        for path in (
+            "backend/app/api/rooms.py",
+            "backend/alembic/versions/abc123_add_column.py",
+            "backend/alembic.ini",
+            "backend/tests/forgejo/test_pull_ci.py",
+            "backend/tests/forgejo/pull-ci.sh",
+            "backend/scripts/seed_fusion_demo.py",
+            "backend/sandbox/cheese",
+            "backend/pyproject.toml",
+            "backend/uv.lock",
+            "backend/.python-version",
+            "frontend/src/main.ts",
+            "e2e/tests/login.spec.ts",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["e2e"])
+
+    def test_a_change_that_only_its_other_suites_read_skips_the_browser(self):
+        # These are files e2e never executes: unit and integration tests, the
+        # repository's check scripts, and the import-linter contract. Running
+        # five Playwright shards for a change none of them can see is what this
+        # rule stops doing — and the linters that DO read them stay selected.
+        for path in (
+            "backend/tests/unit/test_runtime.py",
+            "backend/tests/integration/test_archive_retires_storage.py",
+            "backend/tests/conftest.py",
+            "backend/scripts/check_boundaries.py",
+            "backend/scripts/test_gateway_conformance.py",
+            "backend/.importlinter",
+            "backend/deferred-import-baseline.json",
+        ):
+            with self.subTest(path=path):
+                selected = gate.select([path])
+                self.assertFalse(selected["e2e"])
+                self.assertTrue(selected["backend"] and selected["guards"])
+
+    def test_a_remote_change_selects_what_its_jobs_execute(self):
+        # remote-execution.yml builds backend/sandbox/Dockerfile.private, runs a
+        # pytest selection whose files load tests/conftest.py (and, through it,
+        # tests/isolation.py and tests/support/*), and names two scripts on the
+        # command line. Anything under one of those roots has to select it —
+        # including alembic.ini, which conftest's `python -m alembic upgrade`
+        # reads from backend/ when a DB-backed test builds its schema.
+        for path in (
+            "backend/app/domain/agent/executor_transport.py",
+            "backend/alembic/env.py",
+            "backend/alembic.ini",
+            "backend/sandbox/Dockerfile.private",
+            "backend/tests/conftest.py",
+            "backend/tests/support/processes.py",
+            "backend/tests/unit/test_private_chat.py",
+            "backend/tests/integration/test_llm_proxy.py",
+            "backend/scripts/assert_suite_ran.py",
+            "backend/scripts/device_connection_lifecycle_acceptance.py",
+            "backend/pyproject.toml",
+            "backend/uv.lock",
+            "backend/.python-version",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(gate.select([path])["remote"])
+
+    def test_a_change_no_remote_job_executes_skips_the_acceptance(self):
+        # The two jobs do not run the repository's check scripts: a change to
+        # one of them alters no file the acceptance launches.
+        for path in (
+            "backend/scripts/check_boundaries.py",
+            "backend/scripts/gateway_conformance.py",
+            "backend/scripts/seat_throughput.py",
+            "backend/.importlinter",
+            "backend/deferred-import-baseline.json",
+        ):
+            with self.subTest(path=path):
+                selected = gate.select([path])
+                self.assertFalse(selected["remote"])
+                self.assertTrue(selected["backend"] and selected["guards"])
 
     def needs(self):
         """A happy-path ``toJSON(needs)`` for a non-draft (FULL) run.

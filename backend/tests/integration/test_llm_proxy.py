@@ -31,7 +31,7 @@ def test_admission_releases_its_database_connection_before_gateway_key(
     project_id = _make_project(client)
     checked_out = []
 
-    async def gateway_key(self, project_id):
+    async def gateway_key(self, project_id, *, dream=False):
         status = pool_status(client.test_app_engine)
         assert status is not None
         checked_out.append(status["checked_out"])
@@ -54,7 +54,7 @@ def test_only_the_metering_proxy_is_handed_the_gateway_key(client, monkeypatch):
     goes to a caller that also presents the proxy's own credential."""
     from app.domain.agent.chat import ChatService
 
-    async def gateway_key(self, project_id):
+    async def gateway_key(self, project_id, *, dream=False):
         return "project-key"
 
     monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
@@ -135,7 +135,7 @@ def _pool(monkeypatch):
 
 @pytest.fixture
 def _project_key(monkeypatch):
-    async def fake_key(self, project_id):  # noqa: ANN001
+    async def fake_key(self, project_id, *, dream=False):  # noqa: ANN001
         return "sk-virtual-for-" + str(project_id)[:8]
 
     monkeypatch.setattr(
@@ -202,7 +202,7 @@ def test_no_pool_configured_is_refused(client, monkeypatch, _project_key):
 def test_no_project_key_refuses_rather_than_using_pool_credentials(
     client, _pool, monkeypatch
 ):
-    async def no_key(self, project_id):  # noqa: ANN001
+    async def no_key(self, project_id, *, dream=False):  # noqa: ANN001
         return None
 
     monkeypatch.setattr("app.domain.agent.chat.ChatService.project_gateway_key", no_key)
@@ -492,3 +492,93 @@ async def test_admission_refuses_by_name_when_it_cannot_resolve_a_model(
     # the user of a project whose catalogue serves nothing is told their quota
     # ran out — and sent to top up an account that is fine.
     assert body["reason_kind"] == "binding"
+
+
+def _open_dream(client, pid: str, *, age=None) -> None:
+    """A memory consolidation of ``pid`` running now, or started ``age`` ago."""
+    from datetime import UTC, datetime
+
+    from app.domain.memory import dream
+
+    async def run():
+        async with client.test_factory() as session:
+            await dream.open_run(
+                session,
+                uuid.UUID(pid),
+                tokens_at_start=1,
+                now=datetime.now(UTC) - age if age else None,
+            )
+            await session.commit()
+
+    client.portal.call(run)
+
+
+def test_a_call_from_the_overview_while_the_project_dreams_is_the_dreams(
+    client, monkeypatch
+):
+    """While a dream runs it holds the overview room, so a call made there is
+    the dream's: it runs on the project's dream key and the metering proxy is
+    told its kind. A call from any other room is a room turn, on the room key,
+    and so is one from the overview once the run is past its claim."""
+    from datetime import timedelta
+
+    from app.domain.agent.chat import ChatService
+    from app.domain.memory import dream
+
+    async def gateway_key(self, project_id, *, dream=False):
+        return "dream-key" if dream else "room-key"
+
+    monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    pid, root = project["id"], project["root_topic_id"]
+    other = client.post(
+        "/topics", json={"project_id": pid, "title": "别的房间"}
+    ).json()["data"]["id"]
+
+    def admitted(topic):
+        token = mint_scoped_token(project_id=pid, topic_id=topic)
+        return client.post(
+            "/llm/admission",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Cheese-Token": SANDBOX_TOKEN,
+            },
+        ).json()["data"]["supply"]
+
+    before = admitted(root)
+    assert (before.get("kind"), before["key"]) == (None, "room-key")
+
+    _open_dream(client, pid, age=dream.CLAIM_TTL + timedelta(minutes=1))
+    stale = admitted(root)
+    assert (stale.get("kind"), stale["key"]) == (None, "room-key")
+
+    _open_dream(client, pid)
+    overview, elsewhere = admitted(root), admitted(other)
+    assert (overview["kind"], overview["key"]) == (dream.DREAM_KIND, "dream-key")
+    assert (elsewhere.get("kind"), elsewhere["key"]) == (None, "room-key")
+
+
+def test_a_machine_call_from_the_overview_while_the_project_dreams_uses_the_dream_key(
+    client, _pool, monkeypatch
+):
+    """Codex and pi reach the gateway through this route, not through the
+    metering proxy: the same rule picks the key here."""
+    from app.domain.agent.chat import ChatService
+
+    async def gateway_key(self, project_id, *, dream=False):
+        return "dream-key" if dream else "room-key"
+
+    monkeypatch.setattr(ChatService, "project_gateway_key", gateway_key)
+    project = post_project(client, json={"name": "P"}).json()["data"]
+    pid, root = project["id"], project["root_topic_id"]
+    _open_dream(client, pid)
+    token = mint_scoped_token(project_id=pid, topic_id=root)
+
+    r = client.post(
+        "/llm/v1/messages",
+        headers={"Authorization": f"Bearer {token}", "anthropic-version": "2023-06-01"},
+        content=b'{"model":"m","messages":[]}',
+    )
+
+    assert r.status_code == 200
+    assert _FakeClient.seen["headers"]["authorization"] == "Bearer dream-key"

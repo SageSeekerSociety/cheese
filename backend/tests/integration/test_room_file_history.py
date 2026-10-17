@@ -250,13 +250,13 @@ def test_a_link_token_is_bound_to_its_file(client):
 def test_a_library_original_is_copied_into_the_room_before_editing(client):
     project, room = _room(client)
     up = client.post(
-        f"/topics/{room}/attachments",
+        f"/projects/{project}/library",
         files={
             "file": ("模板.docx", b"the user's template", "application/octet-stream")
         },
     )
     assert up.status_code == 200, up.text
-    library_path = up.json()["data"]["path"]
+    library_path = f"library/{up.json()['data']['path']}"
 
     closed = client.get(
         f"/topics/{room}/files/editor", params={"path": library_path}
@@ -279,6 +279,31 @@ def test_a_library_original_is_copied_into_the_room_before_editing(client):
     assert (
         client.get(f"/topics/{room}/files/raw", params={"path": library_path}).content
         == b"the user's template"
+    )
+
+
+def test_a_file_sent_in_the_conversation_is_not_edited_in_place(client):
+    """发进对话的那一份是原件：消息指着它。要改先复制一份，原件不动。"""
+    project, room = _room(client)
+    sent = client.post(
+        f"/topics/{room}/attachments",
+        files={"file": ("合同.docx", b"the sent original", "application/octet-stream")},
+    )
+    assert sent.status_code == 200, sent.text
+    path = sent.json()["data"]["path"]
+
+    closed = client.get(f"/topics/{room}/files/editor", params={"path": path}).json()[
+        "data"
+    ]
+    assert closed["enabled"] is False and closed["copyable"] is True
+
+    copied = client.post(
+        f"/topics/{room}/files/copy", json={"source": path, "path": "合同 修改.docx"}
+    )
+    assert copied.status_code == 200, copied.text
+    assert (
+        client.get(f"/topics/{room}/files/raw", params={"path": path}).content
+        == b"the sent original"
     )
 
 

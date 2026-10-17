@@ -1,0 +1,15 @@
+{
+  "advance": "{step}：{status}",
+  "compose": "发清单",
+  "newTitle": "新清单",
+  "post": "发送",
+  "saveFailed": "清单保存失败",
+  "statusCompleted": "已完成",
+  "statusInProgress": "进行中",
+  "statusPending": "未开始",
+  "stepTooLong": "每步最多 {max} 字",
+  "stepsHint": "一行一步",
+  "stepsLabel": "步骤",
+  "tooManySteps": "最多 {max} 步",
+  "updatedAt": "清单更新于 {time}"
+}

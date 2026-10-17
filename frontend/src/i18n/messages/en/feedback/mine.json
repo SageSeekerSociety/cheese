@@ -1,0 +1,13 @@
+{
+  "back": "Back to feedback center",
+  "empty": {
+    "action": "File one",
+    "title": "You haven't filed any feedback, and none is assigned to you"
+  },
+  "foot": "Finished feedback (fixed, shipped, won't fix) stays in the list but no longer accepts support; private items are visible only to you, platform admins, and the people who were in the channel where it was filed.",
+  "lede": "Feedback I filed, feedback I filed on behalf of an AI teammate, and feedback assigned to me.",
+  "ledeRest": "Other people's feedback isn't here — search for it in the feedback center.",
+  "submit": "Submit feedback",
+  "title": "My feedback",
+  "total": "{n} in total."
+}

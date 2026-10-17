@@ -267,7 +267,7 @@ async def test_an_avatar_under_the_ceiling_gets_all_the_way_through(
             avatar=_upload(content), auth_user=None, service=_AvatarService()
         )
 
-        assert result["code"] == 201
+        assert result["code"] == 200
         assert (tmp_path / "7").read_bytes() == content
 
 

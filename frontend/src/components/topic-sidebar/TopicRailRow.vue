@@ -478,8 +478,6 @@ function onMenuToggle(open: boolean) {
   transform: translateY(-50%);
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 2px 3px;
   opacity: 0;
   pointer-events: none;
   /* 有意为之的浮动工具条（Linear 手法）：白底+细边+微影，
@@ -491,12 +489,15 @@ function onMenuToggle(open: boolean) {
   transition: opacity var(--dur-quick) var(--ease-standard);
   color: var(--muted);
 }
-/* 工具条里的那颗 ⋯ 要有自己的悬停反馈——否则不像能按的东西。
-   舒适可点，但必须小于行高（~36px）：25px 按钮 + 16px 图标，稳稳落在行内。 */
+/* 工具条里的那颗 ⋯ 要有自己的悬停反馈——否则不像能按的东西。这颗按钮就是整条白底的
+   内芯：内边距收掉、让它撑满，白底上就没有一圈「看着是它、点着不算」的边，悬停的灰
+   也铺满整块。留 3px 内边距时点到那圈上什么都不发生，灰只在中间铺一小块方片
+   （2026-10-13 lz123y 报的）。外面那 1px 描边不吃点击。
+   舒适可点，但必须小于行高（~36px）：29px 按钮 + 16px 图标，稳稳落在行内。 */
 .row-actions :deep(.v-btn) {
-  width: 25px;
-  height: 25px;
-  border-radius: var(--radius-sm);
+  width: 31px;
+  height: 29px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
 }
 .row-actions :deep(.v-btn .v-icon) {

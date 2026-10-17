@@ -1,9 +1,10 @@
 """Accept card data access."""
 
 import uuid
+from collections.abc import Collection
 from datetime import datetime
 
-from sqlalchemy import Uuid, and_, any_, bindparam, delete, func, or_, select
+from sqlalchemy import Row, Uuid, and_, any_, bindparam, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -180,6 +181,61 @@ class AcceptCardRepository:
             if card.task_id is not None:
                 latest[card.task_id] = card
         return latest
+
+    async def listed(
+        self,
+        *,
+        room_ids: Collection[uuid.UUID],
+        task_ids: Collection[uuid.UUID],
+        open_statuses: tuple[AcceptStatus, ...],
+    ) -> list[Row]:
+        """The columns a list reads of the cards it shows, in ONE query: every
+        card on these tasks, and the undecided cards these rooms filed for
+        **themselves** (`task_id` NULL), oldest first.
+
+        Two questions on one table, asked together: a list shows what each of
+        its tasks rides on (the newest card wins, as in `latest_by_task`) and
+        whether a room's own card waits on someone (open statuses only). Asked
+        apart they read the table twice and bring back every open card of every
+        task in the room only to throw it away. Columns, not entities: the
+        caller folds them into `queries.RailCard`, a value with no session.
+        """
+        rooms, tasks = list(room_ids), list(task_ids)
+        if not rooms and not tasks:
+            return []
+        # 两串 id 各收成一个数组参数：「待我处理」一问就是几百条活，`in_()` 会把它们
+        # 摊成同样多个绑定参数、每执行一次重拼一遍 SQL。
+        in_rooms = any_(bindparam(None, rooms, type_=ARRAY(Uuid)))
+        on_tasks = any_(bindparam(None, tasks, type_=ARRAY(Uuid)))
+        stmt = (
+            select(
+                AcceptCard.id,
+                AcceptCard.topic_id,
+                AcceptCard.task_id,
+                AcceptCard.reviewer_handle,
+                AcceptCard.status,
+                AcceptCard.note_code,
+                AcceptCard.merge_state,
+                AcceptCard.decided_by,
+                AcceptCard.auto_merge_armed_by,
+                AcceptCard.pr_number,
+                AcceptCard.pr_url,
+                AcceptCard.change_subject,
+                AcceptCard.note,
+            )
+            .where(
+                or_(
+                    and_(
+                        AcceptCard.topic_id == in_rooms,
+                        AcceptCard.task_id.is_(None),
+                        AcceptCard.status.in_(open_statuses),
+                    ),
+                    AcceptCard.task_id == on_tasks,
+                )
+            )
+            .order_by(AcceptCard.created_at, AcceptCard.id)
+        )
+        return list((await self._session.execute(stmt)).all())
 
     async def list_recent_for_places(
         self,

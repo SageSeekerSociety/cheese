@@ -24,6 +24,7 @@ from app import device_connection_app
 from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.device_failures import DeviceCallError
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
@@ -993,11 +994,13 @@ async def test_a_room_with_two_live_teammates_lists_them_and_reads_the_one_named
 
 class CenterHub(FakeHub):
     """The session host, a connector whose screens run a Claude Code runner,
-    and the room's machine, connected while ``machine_up``."""
+    and the room's machine, connected while ``machine_up``, its executor
+    answering while ``executor_up``."""
 
     def __init__(self) -> None:
         super().__init__()
         self.machine_up = True
+        self.executor_up = True
         self.machine_asked = 0
 
     def is_online(self, device_id: str) -> bool:
@@ -1009,6 +1012,11 @@ class CenterHub(FakeHub):
         self.machine_asked += 1
         if not self.machine_up:
             raise TimeoutError("the machine does not answer")
+        if not self.executor_up:
+            raise DeviceCallError(
+                "dial unix /tmp/cheese-execution-1000-0.sock: "
+                "connect: no such file or directory"
+            )
         return {"workspace": "/home/machine", "mcp_servers": []}
 
 
@@ -1226,6 +1234,31 @@ async def test_a_session_started_while_its_machine_is_away_starts_at_the_placeho
         assert started.sid != first.sid
         target, claims, _ = launched(hub, started)
         assert target["workspace"] == "/unavailable-project"
+        assert claims["lease"]
+
+    client.portal.call(exercise)
+
+
+@pytest.mark.anyio
+async def test_a_session_whose_executor_stopped_while_idle_starts_on_its_machine(
+    client, room, monkeypatch
+):
+    """An executor that sat idle stops itself, and its machine says so when
+    asked. A session started then starts on the machine, whose hands it takes
+    at launch, which starts the executor again: not at the placeholder, where
+    it would have none of the project's MCP servers, skills or hooks."""
+    project, topic = room
+    hub, turn = center_room(client, monkeypatch)
+
+    async def exercise():
+        first = await turn(project, topic)
+        await lease_machine(client.test_request_factory, topic, "/home/machine/p")
+        hub.executor_up = False
+        hub.ping = {"alive": False}
+        started = await turn(project, topic)
+        assert started.sid != first.sid
+        target, claims, _ = launched(hub, started)
+        assert target["workspace"] == "/home/machine/p"
         assert claims["lease"]
 
     client.portal.call(exercise)

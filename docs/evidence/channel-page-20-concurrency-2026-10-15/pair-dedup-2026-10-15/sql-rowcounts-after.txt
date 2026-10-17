@@ -1,0 +1,14 @@
+ids {"project": "81d88117-e1a3-40d4-b97d-1e3103904714", "room": "026c457c-db2d-46cb-9e1e-99bc9e3ee329", "task": "1c1fa696-8b85-4ded-8074-a16dcd8c651c"} rounds=1 loadavg=128.43 92.46 87.98 208/9315 37843
+== awaiting-me (reference) (200, 27539 B) 12 statements ==
+   rows=   621 x  1  SELECT topics.id FROM topics WHERE topics.project_id IN ($3::UUID, $4::UUID, $5:
+   rows=   178 x  1  SELECT anon_1.place_id, anon_1.meta, anon_1.created_at, anon_1.author, anon_1.id
+   rows=   118 x  1  SELECT tasks.id, tasks.room_id, tasks.status = $1 AS underway, tasks.reporter_ha
+   rows=   118 x  1  SELECT tasks.id, tasks.project_id, tasks.room_id, tasks.title, tasks.title_sourc
+   rows=    87 x  1  SELECT topics.id, topics.project_id, topics.title, topics.status, topics.accepte
+   rows=    71 x  1  SELECT accept_cards.id, accept_cards.topic_id, accept_cards.task_id, accept_card
+   rows=    13 x  1  SELECT projects.name, projects.slug, projects.owner_handle, projects.team_id, pr
+   rows=    12 x  1  SELECT notification.id, notification.receiver_id, notification.recipient_handle,
+   rows=     6 x  1  SELECT anon_1.place, said_since.author, said_since.at FROM unnest($1::UUID[], $2
+   rows=     0 x  1  SELECT "user".id, "user".username, "user".email, "user".email_domain, "user".has
+   rows=     0 x  1  SELECT threads.id, threads.room_id FROM threads WHERE threads.room_id = ANY ($1:
+   rows=     0 x  1  SELECT agent_turns.conversation_id FROM agent_turns WHERE agent_turns.conversati

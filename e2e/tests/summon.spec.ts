@@ -15,7 +15,7 @@ async function openFirstTopic(page: Page) {
   // vite 要现编，第一次进来可以慢到几十秒（见 playwright.config.ts 的 timeout
   // 注释）。少了这一步，冷启动时报的是「输入框找不到」，看着像选择器写错了。
   await page.getByTestId('chat-scroll').waitFor({ timeout: 30_000 });
-  const composer = page.locator('.composer-input textarea').first();
+  const composer = page.locator('.composer-input .ProseMirror').first();
   // 输入框要等这个话题的 WS 连上才可用。
   await expect(composer).toBeEnabled({ timeout: 20_000 });
   // 房间名册到了，「交给」按钮才开（名册没到时写进正文的 @ 会指错人，见最后一条）。
@@ -55,12 +55,12 @@ test.describe('把消息交给芝士', () => {
     await expect(button).toHaveAttribute('aria-pressed', 'false');
 
     await button.click();
-    await expect(composer).toHaveValue(new RegExp(`@${escapeRe(agent)}`));
+    await expect(composer.locator('.mention')).toHaveText(new RegExp(`@${escapeRe(agent)}`));
     await expect(button).toHaveAttribute('aria-pressed', 'true');
 
     // 再点一下要把正文恢复原样——按钮不存自己的状态，取消只能是把那几个字删掉。
     await button.click();
-    await expect(composer).toHaveValue('这条先不交给它');
+    await expect(composer).toHaveText('这条先不交给它');
     await expect(button).toHaveAttribute('aria-pressed', 'false');
 
     // 反过来：一个字都没点，光是正文里出现了那个 @，按钮就该亮。
@@ -143,7 +143,7 @@ test.describe('把消息交给芝士', () => {
     });
 
     await page.goto(`/projects/${project.id}/topics/${topic.id}`);
-    const composer = page.locator('.composer-input textarea').first();
+    const composer = page.locator('.composer-input .ProseMirror').first();
     await expect(composer).toBeEnabled({ timeout: 30_000 });
 
     const button = page.locator('.summon-btn');
@@ -189,7 +189,7 @@ test.describe('把消息交给芝士', () => {
 
     await page.setViewportSize({ width: 375, height: 780 });
     await page.goto(`/projects/${project.id}/topics/${topics[0].id}`);
-    const composer = page.locator('.composer-input textarea').first();
+    const composer = page.locator('.composer-input .ProseMirror').first();
     await expect(composer).toBeEnabled({ timeout: 30_000 });
 
     const button = page.locator('.summon-btn');
@@ -217,6 +217,7 @@ test.describe('把消息交给芝士', () => {
     // 收窄之后照样是那颗按钮：点一下，@ 还是进正文。
     await composer.fill('这条是说给人听的');
     await button.click();
-    await expect(composer).toHaveValue(/^@.+ 这条是说给人听的$/);
+    // 看到的是名字标签加这句话（藏起来的那串 <@handle> 不算看到的字）。
+    await expect(composer).toHaveText(new RegExp(`^@${escapeRe(agent)} 这条是说给人听的$`), { useInnerText: true });
   });
 });

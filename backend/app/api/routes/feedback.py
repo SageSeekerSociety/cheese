@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import Deleted, Page, ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, BadRequestError
 from app.core.sentences import say
 from app.domain.admin.services import AdminService
@@ -59,9 +60,9 @@ from app.domain.feedback.schemas import (
 )
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
-router = APIRouter(prefix="/feedback", tags=["feedback"])
+router = APIRouter(prefix="/feedback", tags=["feedback"], dependencies=[ROUTE_DECIDES])
 
 
 # Response shapes these routes build by hand (``{**page(...), "counts": ...}``),
@@ -156,7 +157,7 @@ async def _in_room(
     """
     if topic is None:
         return await resolver.resolve(), None
-    place = await TopicService(db).place_or_404(topic)
+    place = await place_or_404(db, topic)
     who = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

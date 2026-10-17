@@ -11,8 +11,7 @@
 
 这是整件事的核心，不是给现有状态换个分组：
 
-- `not_started` 未开始 —— 任务还在讨论，负责人还没点「开始」。
-- `building` 进行中 —— 开始了，还没递出交付。
+- `building` 进行中 —— 在做，还没递出交付。
 - `delivering` 检查中 —— 下一步在**平台/芝士**手上。
 - `needs_you` 待处理 —— 下一步在**人**手上。
 - `done` 已关闭 —— 任务关了：最后一步已采纳，或没交付就关了。
@@ -44,15 +43,18 @@ from typing import Any, Protocol
 from sqlalchemy.orm import Mapped
 
 from app.core.errors import ValidationError
+from app.domain.addressing import Hand
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
 
-# `Task` 是这一层唯一还拿在手里的 ORM 行 —— **暂留**，不是读模型。方案 v6 的第一期
-# 只给 block / review 开了窄读出口；项目 rail 的 Task 暂交给 task_liveness、
-# facts_for_task 和 TaskOut.model_validate。本模块的 card_model 也读取 Task 的绑定
-# 属性，计算卡面的模型名；facts_for_task 和 card_model 都只读属性、不顺着行查库。
-# 等 room_task 有自己的窄读输出，再替换这份 ORM 边界。房间那一行 (`Topic`) 不按类
-# 标进签名 —— 只看它被读到的几位 (`TopicSignals`)，和卡一样是结构契约。
+# `Task` 是这一层唯一还**按类**标进签名的 ORM 行 —— **暂留**，不是读模型。项目 rail
+# 的 Task 暂交给 task_liveness、card_model 和 TaskOut.model_validate：card_model 读
+# 的是这条活绑了什么模型（`Task.model` / `Task.effort`），标 `Task` 才读得出来。
+# `facts_for_task` 不在此列：`room_task` 已经有了自己的窄读输出
+# （`repositories.ListedTask`），所以那一格走结构契约（`TaskSignals` / `TaskRow`），
+# 和卡那一格（`CardSignals` / `CardRow`）一样。房间那一格也一样：`topic` 窄读出口
+# 交出来的纯值走 `TopicSignals`，`Topic` 那一行走 `TopicRow` —— 各只看它被读到的
+# 那几位。
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import TopicStatus
 
@@ -113,12 +115,83 @@ class CardRow(Protocol):
     auto_merge_armed_by: Mapped[str | None]
 
 
-class TopicSignals(Protocol):
-    """一个房间**行**能被折成 `RoomFacts` 的几位 —— `facts_for_room` 只读这三位。
+class TaskSignals(Protocol):
+    """一条活能被折成 `TaskFacts` 的四位 —— **窄读出口交出来的纯值**那一份契约。
 
-    `facts_for_room` 的两个调用方手上都是 ORM 那一行（`Topic`），所以和 `CardRow`
-    一样按模型的原样声明 `Mapped[...]`，pyright 才比得过。`status` 同样收成
-    `Mapped[Any]`：`TopicStatus` 的名字在 `topic.models` 里，而这一层只读它做词比较
+    和 `CardSignals` 同一条理由、同一份写法：`facts_for_task` 的两个调用方，领域内
+    的人手上是 `Task` 那一行（ORM 行），HTTP 路由手上是 `room_task` 窄读出口交出来
+    的纯值（`room_task.repositories.ListedTask`）——正在跑的进程和外部命令读一屏活
+    读的是状态、人、日期，整行里的交付记录、环境、检查输出那些正文它们一个字不读。
+    ORM 行的属性是 `Mapped` 描述符、纯值的属性是普通标量，所以在 pyright 那里是
+    **两份**契约：这里是纯值那一份，那一行走 `TaskRow`。
+
+    声明成 property 是有意的（同 `CardSignals`）：pyright 对只读属性按协变比对，
+    所以 `ListedTask` 上的普通字段也接得住。
+
+    四位正好是 `facts_for_task` 读的那四位，多一个就多一条「对方必须记得改」的
+    绳子，少一个那一格就折不出来。
+    """
+
+    @property
+    def status(self) -> Any: ...
+
+    @property
+    def accepted_at(self) -> datetime | None: ...
+
+    @property
+    def conclusion(self) -> str | None: ...
+
+    @property
+    def closing_since(self) -> datetime | None: ...
+
+
+class TaskRow(Protocol):
+    """`Task` 那一行的形状 —— **ORM 行**那一份契约，按模型的原样声明 `Mapped`。
+
+    同 `CardRow`：pyright 拿 `Task` 的类成员来比协议的类成员时，属性是 `Mapped`
+    描述符，普通的 `status: str` 接不住它。`status` 同样收成 `Mapped[Any]` ——
+    `TaskStatus` 的名字在 `room_task.models` 里，这一层只把它 `str()` 成词。
+    """
+
+    status: Mapped[Any]
+    accepted_at: Mapped[datetime | None]
+    conclusion: Mapped[str | None]
+    closing_since: Mapped[datetime | None]
+
+
+class TopicSignals(Protocol):
+    """一个房间**摆上清单**能被折成 `RoomFacts` 的三位 —— **纯值**那一份契约。
+
+    和 `CardSignals` / `TaskSignals` 同一条理由、同一份写法：`facts_for_room` 的两个
+    调用方，领域内的人手上是 `Topic` 那一行（ORM 行），HTTP 路由手上是 `topic` 窄读
+    出口交出来的纯值（`topic.repositories.ListedRoom`）——「待我处理」把几百个频道收窄
+    到真正要摆的那几个之后，读的是标题、状态、日期这几位，整行里的环境文档和简介它
+    一个字不读。ORM 行的属性是 `Mapped` 描述符、纯值的属性是普通标量，所以在 pyright
+    那里是**两份**契约：这里是纯值那一份，那一行走 `TopicRow`。
+
+    声明成 property 是有意的（同 `CardSignals`）：pyright 对只读属性按协变比对，
+    所以 `ListedRoom` 上的普通字段也接得住。
+
+    三位正好是 `facts_for_room` 读的那三位，多一个就多一条「对方必须记得改」的绳子，
+    少一个那一格就折不出来。
+    """
+
+    @property
+    def id(self) -> uuid.UUID: ...
+
+    @property
+    def status(self) -> Any: ...
+
+    @property
+    def accepted_at(self) -> datetime | None: ...
+
+
+class TopicRow(Protocol):
+    """`Topic` 那一行的形状 —— **ORM 行**那一份契约，按模型的原样声明 `Mapped`。
+
+    同 `CardRow`：pyright 拿 `Topic` 的类成员来比协议的类成员时，属性是 `Mapped`
+    描述符，普通的 `status: str` 接不住它。`status` 同样收成 `Mapped[Any]`：
+    `TopicStatus` 的名字在 `topic.models` 里，而这一层只读它做词比较
     （`room_presentation` 里 `facts.status == TopicStatus.archived`），不必把那一列
     的枚举类型拖进来。
     """
@@ -131,7 +204,6 @@ class TopicSignals(Protocol):
 class Column(enum.StrEnum):
     """看板的列。判据是「该谁动」，见模块开头。"""
 
-    not_started = "not_started"
     building = "building"
     delivering = "delivering"
     needs_you = "needs_you"
@@ -139,17 +211,33 @@ class Column(enum.StrEnum):
     archived = "archived"
 
 
-class NotStarted(enum.StrEnum):
-    """任务才有：还在讨论，负责人还没点「开始」。"""
+#: 看板的列 → 下一步在谁手上。**封闭表**：`Column` 多一档而这里没跟上，查表当场抛
+#: `KeyError`，而不是让新的一列悄悄落进「不通知任何人」那一档。住在这里而不是
+#: `app/domain/addressing.py`：表的主键是看板的列，只有这里知道每一列是什么意思；
+#: `Hand` 是那份判据（第 1 层）的词，从下面拿。
+_HAND_OF_COLUMN: dict[Column, Hand] = {
+    Column.building: Hand.platform,
+    Column.delivering: Hand.platform,
+    Column.needs_you: Hand.participant,
+    Column.done: Hand.platform,
+    Column.archived: Hand.platform,
+}
 
-    discussing = "discussing"
+
+def hand_of(column: Column) -> Hand:
+    """看板上这一格的下一步在谁手上。
+
+    看板的列回答的本来就是「该谁动」（见模块开头），所以这里不是第二次判断，是把
+    同一个答案翻译成投递那一侧的词（`app/domain/addressing.py`）。
+    """
+    return _HAND_OF_COLUMN[column]
 
 
 class Building(enum.StrEnum):
-    """开始了，还没递出交付。"""
+    """在做，还没递出交付。"""
 
     running = "running"
-    #: 任务才有：开始了，此刻没有在跑的一轮，也还没递出交付。
+    #: 任务才有：此刻没有在跑的一轮，也还没递出交付。
     started = "started"
     #: 房间才有：这一轮说完了，在等下一句话。
     idle = "idle"
@@ -196,11 +284,10 @@ class Archived(enum.StrEnum):
 #: 短语的值是码，不是字：卡面上那句话由读者的屏幕按他选的语言画
 #: （前端词条 `work.board.phrase.<码>`）。一个看板同时被说不同语言的人看，所以
 #: 后端说「是哪一句」，不替任何人挑语言。
-Phrase = NotStarted | Building | Delivering | NeedsYou | Done | Archived
+Phrase = Building | Delivering | NeedsYou | Done | Archived
 
 #: 短语 → 它属于哪一列。**唯一**一处把两者关联起来的地方。
 _COLUMN_OF: dict[type[enum.StrEnum], Column] = {
-    NotStarted: Column.not_started,
     Building: Column.building,
     Delivering: Column.delivering,
     NeedsYou: Column.needs_you,
@@ -261,8 +348,6 @@ class TaskFacts:
     status: str
     accepted_at: datetime | None
     card: CardFacts | None
-    #: 负责人点过「开始」（`Task.started_at`）。
-    started: bool = False
     #: 任务自己的会话此刻有一轮在跑 —— 跑轮次的进程当下的事实，从外面喂进来。
     running: bool = False
     #: 关闭时留下过结论（`Task.conclusion`）。
@@ -313,18 +398,26 @@ def facts_for_card(card: CardSignals | CardRow | None) -> CardFacts | None:
 
 
 def facts_for_task(
-    task: Task,
+    task: TaskSignals | TaskRow,
     card: CardSignals | CardRow | None = None,
     *,
     running: bool = False,
     awaiting_answer: bool = False,
 ) -> TaskFacts:
-    """把一行 `Task`（加上它的卡）折成这层要读的事实。"""
+    """把一行活（加上它的卡）折成这层要读的事实。
+
+    收两种形状是因为活有两处来源：领域内的人手上是 `Task` 那一行，HTTP 路由手上是
+    `room_task` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查
+    一行。这一层只读 `status` / `accepted_at` / `conclusion` / `closing_since`
+    四个属性 —— `TaskSignals` 和 `TaskRow` 各声明一次这四位，两个调用
+    点上都由 pyright 比对，所以两种形状折出来的 `TaskFacts` 一模一样。卡和房间那两对
+    另有单元测试逐位对过（`tests/unit/test_presentation.py`），这一对没有；窄读那几列
+    真的带得回来，押在 `room_task.repositories.listed_by_ids` 的列清单上。
+    """
     return TaskFacts(
         status=str(task.status),
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
-        started=task.started_at is not None,
         running=running,
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
@@ -333,12 +426,20 @@ def facts_for_task(
 
 
 def facts_for_room(
-    topic: TopicSignals,
+    topic: TopicSignals | TopicRow,
     running_ids: set[uuid.UUID],
     card: CardSignals | CardRow | None = None,
     *,
     awaiting_answer: bool = False,
 ) -> RoomFacts:
+    """把一个房间折成这层要读的事实。
+
+    收两种形状是因为房间有两处来源：领域内的人手上是 `Topic` 那一行，HTTP 路由手上是
+    `topic` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查一行。这一
+    层只读 `id` / `status` / `accepted_at` 三位（`TopicSignals` / `TopicRow`），两种
+    形状都长得出来，所以折出来的 `RoomFacts` 一模一样（`tests/unit/test_presentation.py`
+    钉住了）。
+    """
     return RoomFacts(
         status=str(topic.status),
         running=topic.id in running_ids,
@@ -581,8 +682,6 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         return _show(Done.completed if facts.has_conclusion else Done.closed)
     if facts.awaiting_answer:
         return _show(NeedsYou.awaiting_answer)
-    if not facts.started:
-        return _show(NotStarted.discussing)
     if facts.running:
         return _show(Building.running)
     if facts.card is not None:
@@ -591,18 +690,17 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
             return shown
         # 退回、闸门判红：卡结算了，球交回给芝士去改。此刻没有一轮在改（`running`
         # 在上面已经答过），也没有新卡递上来，这件事就停在了负责人手上 —— 侧栏把它
-        # 标成没人处理，这里不能还说「已开始」。
+        # 标成没人处理，这里不能还说「进行中」。
         if facts.card.status in _BOUNCED_TO_AGENT:
             return _show(NeedsYou.bounced)
     return _show(Building.started)
 
 
-#: 负责人自己要动手的那几格（「需要我处理」的负责人那一条）：芝士把任务文档写好了
-#: 等他点「开始」，检查红了芝士清不掉，被退回之后没人接着改。只是任务开着、在等别人
-#: 审阅或回答，都不算 —— 那是别人手上的事。
+#: 负责人自己要动手的那几格（「需要我处理」的负责人那一条）：检查红了芝士清不掉，
+#: 被退回之后没人接着改。只是任务开着、在等别人审阅或回答，都不算 —— 那是别人手上
+#: 的事。
 _OWNER_ACTS_ON = frozenset(
     {
-        NotStarted.discussing.value,
         NeedsYou.checks_failed.value,
         NeedsYou.bounced.value,
     }
@@ -610,10 +708,7 @@ _OWNER_ACTS_ON = frozenset(
 
 
 def owner_acts_on(shown: Presentation, *, running: bool) -> bool:
-    """这一格的下一步是不是在负责人手上。
-
-    「讨论中」还在跑的那一段是芝士在写任务文档初稿，写完之前没有东西可以开始。
-    """
+    """这一格的下一步是不是在负责人手上。还有一轮在跑时不是：芝士还在动。"""
     if running:
         return False
     return shown.phrase in _OWNER_ACTS_ON
@@ -622,19 +717,15 @@ def owner_acts_on(shown: Presentation, *, running: bool) -> bool:
 def waiting_on(
     shown: Presentation,
     *,
-    running: bool,
-    owner: str | None,
     reviewer: str | None,
     asked: str | None,
 ) -> str | None:
-    """这一格在等哪一个人：卡面上写「待 某某 审阅」「待 某某 回答」「待 某某 开始」
-    的那个某某。不是在等一个具体的人就是 None。"""
+    """这一格在等哪一个人：卡面上写「待 某某 审阅」「待 某某 回答」的那个某某。
+    不是在等一个具体的人就是 None —— 一道题问了几个人、问了所有人，就不是。"""
     if shown.phrase == NeedsYou.awaiting_review.value:
         return reviewer
     if shown.phrase == NeedsYou.awaiting_answer.value:
         return asked
-    if shown.phrase == NotStarted.discussing.value and not running:
-        return owner
     return None
 
 

@@ -63,14 +63,14 @@ describe('reviewing the changes someone asked for', () => {
     await waitFor(() => expect(panel.value).toBeTruthy())
     await waitFor(() => expect(document.querySelector('.doc-prose')?.textContent).toContain('五百万'))
 
-    panel.value!.reviewEdits({ requester: '李老师', edits: EDITS })
-    await screen.findByText(t('work.room.docReview.title', { requester: '李老师', agent: '芝士', n: 2 }))
+    panel.value!.reviewEdits({ edits: EDITS })
+    await screen.findByText(t('work.room.docReview.title', { agent: '芝士', n: 2 }))
 
     await fireEvent.click(await screen.findByRole('button', { name: t('work.room.docReview.restore') }))
     expect(applyDocEdits).toHaveBeenCalledWith([{ old: EDITS[0].new, new: EDITS[0].old }])
     expect(exportMarkdown(doc)).toContain('一千万')
 
-    await screen.findByText(t('work.room.docReview.title', { requester: '李老师', agent: '芝士', n: 1 }))
+    await screen.findByText(t('work.room.docReview.title', { agent: '芝士', n: 1 }))
   })
 
   it('counts a change whose new text was edited away as restored', async () => {
@@ -78,9 +78,9 @@ describe('reviewing the changes someone asked for', () => {
     await waitFor(() => expect(document.querySelector('.doc-prose')?.textContent).toContain('五百万'))
     writeMarkdown(doc, `${EDITS[0].old}\n\n${EDITS[1].old}`)
 
-    panel.value!.reviewEdits({ requester: '李老师', edits: EDITS })
+    panel.value!.reviewEdits({ edits: EDITS })
 
-    await screen.findByText(t('work.room.docReview.allRestored', { requester: '李老师', agent: '芝士' }))
+    await screen.findByText(t('work.room.docReview.allRestored', { agent: '芝士' }))
     expect(screen.queryByRole('button', { name: t('work.room.docReview.restore') })).toBeNull()
   })
 })

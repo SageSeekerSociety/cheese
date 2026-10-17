@@ -7,7 +7,7 @@ close a loop through the harness packages.
 
 import uuid
 
-from app.core.config import settings
+from app.core.turn_ceiling import max_concurrent_turns_for
 from app.domain.agent_instance.own import owned_instance
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import PlaceResolver
@@ -27,9 +27,9 @@ async def work_policy(
             return None
         topic = place.room
         project = await ProjectRepository(session).get(topic.project_id)
-        # A member's own coding agent is paid by its owner's own login and
-        # runs on their machine: the project's credits and the session host's
-        # memory are not what admits it.
+        # A member's own coding agent is paid by its owner's own account: the
+        # project's credits are not what admits it, and neither is the session
+        # host's memory while it runs on its owner's machine.
         owned = (
             await owned_instance(session, agent_instance_id)
             if agent_instance_id is not None
@@ -43,10 +43,7 @@ async def work_policy(
             )
         )
     project_settings = project.settings if project else None
-    max_concurrent = settings.max_concurrent_turns
-    override = (project_settings or {}).get("max_concurrent_turns")
-    if isinstance(override, int) and override > 0:
-        max_concurrent = override
+    max_concurrent = max_concurrent_turns_for(project_settings)
     # The backend the turn will run on, chosen by the call the turn makes. Every
     # harness runs its session on the session host and reaches the room's
     # machine from there; a turn with no backend here starts no session at all.
@@ -57,5 +54,6 @@ async def work_policy(
         # Why the project's credits refuse a turn now (a sentence the room
         # shows), or None when they admit it.
         "credits_exhausted": refused.message if refused is not None else None,
-        "on_session_host": provider is not None and owned is None,
+        # One on a connection its owner's account holds runs there too.
+        "on_session_host": provider is not None and (owned is None or owned.on_account),
     }

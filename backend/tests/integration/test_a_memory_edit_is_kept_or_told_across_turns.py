@@ -12,7 +12,6 @@ agent 在某一间房里改 `team/MEMORY.md`，回合结束时对一次账，下
 览里那位 agent 什么都没写过。
 """
 
-import asyncio
 import os
 import uuid
 from pathlib import Path
@@ -27,9 +26,8 @@ from app.domain.block.models import agent_notice
 from app.domain.block.repositories import BlockRepository
 from app.domain.memory.files import INDEX_NAME, MemoryFileScope
 from app.domain.memory.files_store import MemoryFileStore
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio
 
@@ -70,7 +68,7 @@ async def _setup(factory) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
     """一个项目、它的总览、另一间房；team 的索引里已经有一行。"""
     async with factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         room = await TopicService(session).create(
             project_id=project.id, title="排查", created_by="u"
         )
@@ -102,7 +100,6 @@ def _ledger(factory, sessions: _Session) -> MemoryLedger:
         sessions=factory,
         compute=sessions,  # type: ignore[arg-type]
         gateway=None,
-        gateway_lock=asyncio.Lock(),
         base_prompt="",
         host=None,  # type: ignore[arg-type]
         live=LiveWork(),
@@ -265,3 +262,35 @@ async def _written_elsewhere(factory, project_id: uuid.UUID, content: str) -> No
             expected_version=1,
         )
         await session.commit()
+
+
+async def test_what_a_private_channel_learns_stays_out_of_the_shared_memory(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """Only the people in a private channel may read what is said there, and
+    everyone in the project reads the shared memory (#3830): an edit to `team/`
+    made in that channel never reaches the platform."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = business_db_factory
+    project_id, _, _ = await _setup(factory)
+    async with factory() as session:
+        private = (
+            await TopicService(session).create(
+                project_id=project_id, title="私下", created_by="u", members_only=True
+            )
+        ).id
+        await session.commit()
+    sessions = _Session(tmp_path)
+    ledger = _ledger(factory, sessions)
+
+    await ledger.sync(_seat(project_id, private))
+    assert (sessions.tree(private) / "team" / INDEX_NAME).read_text(
+        encoding="utf-8"
+    ) == _INDEX
+    (sessions.tree(private) / "team" / INDEX_NAME).write_text(
+        _INDEX + _ADDED, encoding="utf-8"
+    )
+    await ledger.sync(_seat(project_id, private))
+    await ledger.sync(_seat(project_id, private))
+
+    assert await _index(factory, project_id) == (_INDEX, 1)

@@ -26,6 +26,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.identity.actor import Actor
@@ -35,9 +36,9 @@ from app.domain.living_doc.schemas import document_row
 from app.domain.membership.roster import roster
 from app.domain.project.models import ProjectArtifact
 from app.domain.room_task.models import Task
+from app.domain.room_task.place import place_or_404
 from app.domain.search import bm25
 from app.domain.topic.models import Topic
-from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.services import faces_by_handle
 
@@ -118,7 +119,7 @@ async def _readable_rooms(
 ) -> tuple[dict[uuid.UUID, Topic], int]:
     """The rooms this caller may read, and how many others were left out."""
     if topic is not None:
-        place = await TopicService(db).place_or_404(topic)
+        place = await place_or_404(db, topic)
         if place.project_id != project_id:
             raise NotFoundError("Topic not found")
         actor = await resolver.resolve(project_id=project_id, topic_id=topic)
@@ -354,7 +355,7 @@ async def _name_authors(
     # A teammate's account keeps the nickname it was created with, so its
     # current name comes from the roster, under either of its handles.
     teammates: dict[str, tuple[str, str | None]] = {}
-    for member in await roster(db, project_id):
+    for member in await roster(db, project_id, team=project_team):
         if member.instance_handle is not None:
             named = (member.name, member.name_source)
             teammates[member.handle] = named

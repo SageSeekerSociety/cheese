@@ -1,0 +1,13 @@
+{
+  "access_denied": "The connecting person's project access or GitHub account link is no longer valid. Have the project owner or a lead reconnect their GitHub account and try again",
+  "forge_conflict": "This project's code is hosted on the platform and can't be switched to a GitHub repository",
+  "github_error": "Couldn't verify your GitHub repository access. Reconnect your GitHub account, make sure it can reach the install and repository, then try again",
+  "internal_error": "Something went wrong on the platform and the connection didn't take effect. Try again, and send feedback if it keeps failing",
+  "invalid_state": "The install link has expired or been used. Come back to this page and choose Connect GitHub repository again",
+  "missing_installation_id": "GitHub didn't return an installation ID, so the install didn't take effect. Try again",
+  "no_accessible_repos": "This install didn't grant any repositories. Select at least one on GitHub's install page",
+  "project_not_found": "This project can't be found; it may have just been deleted",
+  "repository_selection_required": "This install can reach several repositories. Save the target under GitHub repository URL on this page first, then connect",
+  "repository_write_required": "Your GitHub account can't write to this repository. Have a project owner or lead with write access connect it",
+  "upstream_not_accessible": "This install doesn't grant the project's upstream repository, or your GitHub account can't access it. Check the repository URL and the install, then try again"
+}

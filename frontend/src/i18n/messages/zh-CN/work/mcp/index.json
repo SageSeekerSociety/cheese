@@ -1,0 +1,15 @@
+{
+  "connectFailed": "连接失败",
+  "connectFailedNamed": "连接 {name} 失败",
+  "connectFailedWith": "连接 {name} 失败：{reason}",
+  "connectedNotice": "{name} 已连接",
+  "disconnectFailed": "断开失败",
+  "empty": "暂无远程 MCP 服务器",
+  "hint": "上游服务看到的是授权人的账号，建议用机器人或服务账号授权",
+  "listSeparator": "、",
+  "loadFailed": "读取 MCP 服务器失败",
+  "saveFailed": "保存失败",
+  "title": "MCP 服务器",
+  "valueSet": "已填写",
+  "valueSetBy": "由 {name} 设置，{when}"
+}

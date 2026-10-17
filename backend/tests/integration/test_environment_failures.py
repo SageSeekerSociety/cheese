@@ -17,10 +17,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from app.api.deps import get_chat_service
+from app.domain import environment_diagnosis
 from app.domain.agent.environment_failures import tell_failed
 from app.domain.block.models import Block
-from app.domain.project import environment_diagnosis
-from app.domain.project.environment_diagnosis import Diagnosis, parse
+from app.domain.environment_diagnosis import Diagnosis, parse
 from app.domain.topic.models import Topic
 from tests.integration.test_project_environment import project, room
 from tests.support.threads import thread_in
@@ -122,7 +122,7 @@ def test_looking_at_a_failure_answers_about_it_and_changes_nothing(client, monke
     _failed_in_a_thread(client, room_id)
     seen: dict = {}
 
-    async def fake(session, *, config, failure, transport=None):
+    async def fake(session, *, project_id, topic_id, config, failure, transport=None):
         seen["log"] = failure["log"]
         return Diagnosis(
             reason="Node 版本太旧",

@@ -13,8 +13,13 @@ from pydantic import BaseModel, Field
 from app.domain.notification.models import (
     Notification,
     NotificationLevel,
-    NotificationType,
 )
+from app.domain.notification.models import (
+    NotificationType as NotificationType,
+)
+
+# 服务返回给路由、供收件人校验和序列化使用的行类型。
+type NotificationRow = Notification
 
 #: 项目收件箱写得进来的那几种。人对人的那些（回帖、入队申请、审批结果）不从这条
 #: 路进来 —— 它们由各自的调用点经投递账本写入。
@@ -64,7 +69,7 @@ class NotificationOut(BaseModel):
     created_at: datetime
 
     @classmethod
-    def from_row(cls, row: Notification) -> "NotificationOut":
+    def from_row(cls, row: NotificationRow) -> "NotificationOut":
         return cls(
             id=row.id,
             project_id=row.project_id,

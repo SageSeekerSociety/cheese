@@ -62,6 +62,27 @@ describe("平台工具", () => {
     socket.close();
   });
 
+  it("工具带回的图片跟在文字后面交给模型", async () => {
+    // A mini-app's save hands back the pictures the platform took of it, for
+    // the model to look at what it made.
+    const socket = await runner(() => ({
+      result: {
+        status: 0,
+        stdout: "已保存",
+        stderr: "",
+        images: [{ data: "d2lkZQ==", mimeType: "image/png" }],
+      },
+    }));
+    const { pi } = await load({ socket: socket.address });
+
+    const answer = await pi.call("cheese_doc_get", {});
+    assert.deepEqual(answer.content, [
+      { type: "text", text: "已保存" },
+      { type: "image", data: "d2lkZQ==", mimeType: "image/png" },
+    ]);
+    socket.close();
+  });
+
   it("命令失败时带回它自己说的话", async () => {
     // Only the half this file owns: what the CLI wrote on stderr is what the
     // model gets to read. That a non-zero status is `isError` is the fixture

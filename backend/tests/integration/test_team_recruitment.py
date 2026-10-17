@@ -95,7 +95,7 @@ class TestTeamRecruitment:
         )
         assert resp.status_code == 201
         data = resp.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         post = data["data"]["post"]
         assert post["title"] == "Looking for developers"
         assert post["content"] == "We need Python developers to join!"

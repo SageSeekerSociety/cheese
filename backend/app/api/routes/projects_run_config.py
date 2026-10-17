@@ -60,21 +60,33 @@ the same prefix and tags, is all it takes.
 import uuid
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
+from app.api.member_settings import change_project_settings, member_setting_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    ForbiddenError,
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
+from app.core.turn_ceiling import (
+    TURN_CEILING_MAX,
+    TURN_CEILING_MIN,
+    max_concurrent_turns_for,
+    project_max_concurrent_turns,
+)
 from app.domain.agent.environment import (
     default_environment,
     dump,
     parse,
     project_default,
 )
-from app.domain.agent_instance.configuration import model_choices, project_pool
+from app.domain.agent_instance.configuration import model_choices
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.environments import check_allowed, offered_specs
@@ -83,6 +95,7 @@ from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.project.schemas import ProjectDefaultModelUpdate
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.usage.model_access import ModelAccess
 from app.domain.usage.services import UsageService
 
@@ -95,8 +108,9 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 def _default_model_state(project_settings: dict | None, access: ModelAccess) -> dict:
 
     # Each model says whether the team's plan allows it and, when not, which
-    # plan would; the picker shows that plan and does not offer the model.
-    choices = [access.mark(c) for c in model_choices(project_settings)]
+    # plan would; the picker shows that plan and does not offer the model. A
+    # model that needs an administrator's approval the team lacks is not listed.
+    choices = access.offered(model_choices(project_settings))
     chosen = (project_settings or {}).get("default_model")
     # The saved name goes back as saved, even when it has left the catalog: turns
     # refuse it (binding.resolve) rather than fall back to the deployment default,
@@ -111,10 +125,6 @@ def _default_model_state(project_settings: dict | None, access: ModelAccess) -> 
             (c["id"] for c in deployment_choices if c["default"]), None
         ),
         "choices": choices,
-        # 发现层（sync-agents）按池过滤目录：与准入同源的 project_pool,别让
-        # 每个读目录的人自己从默认项反推（零默认的目录推不出来）。
-        "pool": project_pool(project_settings),
-        "can_manage": False,  # 由路由层按权限填
     }
 
 
@@ -128,13 +138,7 @@ async def get_default_model(
     if project is None:
         raise NotFoundError("Project not found")
     access = await UsageService(db).model_access(project.team_id)
-    state = _default_model_state(project.settings, access)
-    try:
-        await MemberService(db).require_manager(project_id, actor)
-        state["can_manage"] = True
-    except ForbiddenError:
-        state["can_manage"] = False
-    return ok(state)
+    return ok(_default_model_state(project.settings, access))
 
 
 @router.put("/{project_id}/default-model")
@@ -144,12 +148,10 @@ async def save_default_model(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。"""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    """设/清项目默认模型。设一个目录里没有的名字直接拒，不静默换池（I27）。
+    项目里的人和 AI 队友都能改，方案不允许的模型照样拒（``member_settings``）。"""
+    actor = await member_setting_actor(resolver, project_id)
+    project = await ProjectService(db).get_or_404(project_id)
 
     access = await UsageService(db).model_access(project.team_id)
     valid = {c["id"]: c for c in model_choices(project.settings)}
@@ -164,19 +166,32 @@ async def save_default_model(
         chosen = getattr(body, field)
         if chosen is None:
             remove.append(key)
-        elif chosen not in valid:
+        elif chosen not in valid or not access.shows(valid[chosen]):
             raise ValidationError(say("modelUnavailableNamed", model=repr(chosen)))
-        elif not access.allows(valid[chosen]["tier"]):
+        elif not access.allows(valid[chosen]):
             raise ValidationError(say("modelNotInPlan", label=valid[chosen]["label"]))
         else:
             patch[key] = chosen
-    settings = await service.merge_settings(project, patch, remove=remove)
-    state = _default_model_state(settings, access)
-    state["can_manage"] = True
-    return ok(state)
+    settings = await change_project_settings(
+        db, project, patch, remove=remove, by=actor.handle
+    )
+    return ok(_default_model_state(settings, access))
 
 
 # --- Execution environment: what a new agent in this project gets ---
+
+
+def _turn_ceiling(project_settings: dict | None) -> dict:
+    """How many of this project's turns may run at once, and where that number
+    came from — ``project`` when the project chose one, ``deployment`` when it
+    follows the deployment default. The same shape as a conversation's
+    environment (``default`` + ``default_from``), because it is the same
+    question about a different limit."""
+    own = project_max_concurrent_turns(project_settings)
+    return {
+        "max_concurrent_turns": max_concurrent_turns_for(project_settings),
+        "max_concurrent_turns_from": "deployment" if own is None else "project",
+    }
 
 
 @router.get("/{project_id}/compute-configs")
@@ -185,7 +200,7 @@ async def get_compute_configs(
 ) -> dict:
     """The environment a new agent in this project gets, where its agents
     are now, the sandbox specs it is offered and the people's computers it
-    has."""
+    has, and how many of its turns may run at once."""
     # deferred-import: tests replace this name on app.domain.agent.device_hub
     from app.domain.agent.device_hub import device_hub
 
@@ -194,9 +209,12 @@ async def get_compute_configs(
     project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    # Whether this caller may move the agents already on a device elsewhere
+    # (``list_device_sessions``), which stays a manager's. The default itself
+    # is anyone's in the project.
     can_manage = True
     try:
-        await MemberService(db).require_manager(project_id, actor)
+        await MemberService(db).require(project_id, actor, Permission.edit_settings)
     except ForbiddenError:
         can_manage = False
     devices = [
@@ -210,6 +228,7 @@ async def get_compute_configs(
     return ok(
         {
             "default": dump(project_default(project.settings) or default_environment()),
+            **_turn_ceiling(project.settings),
             "can_manage": can_manage,
             "devices": [
                 {
@@ -251,7 +270,7 @@ async def list_device_sessions(
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     listed, hidden = [], 0
     for topic, session in await device_sessions(db, project_id, device_id):
         try:
@@ -266,7 +285,15 @@ async def list_device_sessions(
 
 
 class ComputeConfigsIn(BaseModel):
-    default: dict
+    """Either half of the config, so a caller can move one without the other:
+    omitted fields stay as they are. ``max_concurrent_turns: null`` clears the
+    project's own ceiling, so the project follows the deployment default
+    again."""
+
+    default: dict | None = None
+    # ``strict``: a JSON ``true`` is an ``int`` in Python, and taking it as one
+    # throttles the project to a single turn at a time. A number stays a number.
+    max_concurrent_turns: int | None = Field(default=None, strict=True)
 
 
 @router.put("/{project_id}/compute-configs", dependencies=[ROUTE_DECIDES])
@@ -276,21 +303,42 @@ async def save_compute_configs(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """What a new agent in this project gets. A manager's choice; nobody
-    already working moves."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    service = ProjectService(db)
-    project = await service.get(project_id)
+    """What a new agent in this project gets, and how many of its turns may run
+    at once. Anyone in the project may choose either (``member_settings``);
+    nobody already working moves."""
+    actor = await member_setting_actor(resolver, project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    await MemberService(db).require_manager(project_id, actor)
-    environment = parse(body.default)
-    await check_allowed(db, project, environment, actor)
-    await service.merge_settings(
-        project, {"execution_environment": environment.model_dump()}
+    patch: dict[str, object] = {}
+    remove: list[str] = []
+    if "default" in body.model_fields_set and body.default is not None:
+        environment = parse(body.default)
+        await check_allowed(db, project, environment, actor)
+        patch["execution_environment"] = environment.model_dump()
+    if "max_concurrent_turns" in body.model_fields_set:
+        ceiling = body.max_concurrent_turns
+        if ceiling is None:
+            remove.append("max_concurrent_turns")
+        elif not TURN_CEILING_MIN <= ceiling <= TURN_CEILING_MAX:
+            raise UnprocessableEntityError(
+                say(
+                    "maxConcurrentTurnsInvalid",
+                    min=TURN_CEILING_MIN,
+                    max=TURN_CEILING_MAX,
+                )
+            )
+        else:
+            patch["max_concurrent_turns"] = ceiling
+    settings_now = await change_project_settings(
+        db, project, patch, remove=remove, by=actor.handle
     )
-    return ok({"default": dump(environment)})
+    return ok(
+        {
+            "default": dump(project_default(settings_now) or default_environment()),
+            **_turn_ceiling(settings_now),
+        }
+    )
 
 
 # --- 档位策略 (结论 3 后半 / 40 后半): 哪几档可以自己发生，超档怎么办 -----
@@ -334,7 +382,7 @@ async def set_tier_policy(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    await MemberService(db).require(project_id, actor, Permission.edit_settings)
     service = ProjectService(db)
     project = await service.get_or_404(project_id)
     patch: dict[str, object] = {}

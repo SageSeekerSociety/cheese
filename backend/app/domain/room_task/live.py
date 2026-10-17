@@ -27,7 +27,7 @@ conversation are told when it flushed
 Both frames name the ROOM: the sidebar's row is the room's, and a task id is not
 an address (`GET /topics/{task}` answers 404). A rollback tells nobody. A bulk
 `update(Task)` is not seen here; the one that renames a task tells the pages
-itself (`naming._publish`).
+itself (`naming._tell_pages`).
 """
 
 from __future__ import annotations

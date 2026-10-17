@@ -276,6 +276,38 @@ async def test_an_own_agents_session_does_not_start_on_a_kind_the_project_refuse
     assert "Claude 订阅" in str(refused.value), "the room is told which kind"
 
 
+async def test_an_own_agents_session_does_not_start_on_a_service_not_listed(
+    client,
+):
+    # Bob's laptop calls a model service; the project allows only another one.
+    own = await _own_session(client, environment_on="alice")
+    async with client.test_factory() as db:
+        login = await db.get(DeviceClaudeLoginRow, own.bobs_laptop)
+        login.auth_method, login.model = "model_service", "kimi-k2"
+        login.service_host = "api.moonshot.cn"
+        project = await db.get(Project, own.project_id)
+        project.settings = {
+            **(project.settings or {}),
+            "allow_own_agents": True,
+            "own_agent_service_hosts": ["api.deepseek.com"],
+        }
+        await db.commit()
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+
+    with pytest.raises(ScreenSetupError) as refused:
+        client.portal.call(
+            lambda: channel.precheck(
+                SessionRef(
+                    own.project_id, own.topic_id, own.handle, harness="claude-code"
+                ),
+                needs_place=False,
+            )
+        )
+    assert "api.moonshot.cn" in str(refused.value), "the room is told which"
+
+
 async def test_another_members_machine_is_never_an_own_agents_session_host(client):
     # Alice's computer is online, logged in to Claude Code, and the very one
     # the conversation's tools run on; Bob's laptop is away.

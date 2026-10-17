@@ -7,14 +7,6 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
-    EVENT_API_RETRY,
-    EVENT_CONTEXT_COMPACT,
-    EVENT_DEVICE_WAITING,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.agent.prompt import _compaction_notice
 from app.domain.agent.run_records import record_now, restate_now
 from app.domain.agent.service import (
@@ -22,6 +14,14 @@ from app.domain.agent.service import (
     AgentRetrying,
 )
 from app.domain.agent.turn.state.live import LiveWork
+from app.domain.notice_meta import (
+    EVENT_API_RETRY,
+    EVENT_CONTEXT_COMPACT,
+    EVENT_DEVICE_WAITING,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.room_task.place import PlaceResolver
 from app.domain.run_record import service as run_records
 

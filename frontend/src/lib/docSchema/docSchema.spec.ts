@@ -187,6 +187,38 @@ describe('round-trip corpus', () => {
     )
   })
 
+  // Someone types `a|b` into a cell, in code or not: the cell's Markdown must
+  // read back as that one cell saying exactly that, with no backslash added.
+  it('table cell holding a pipe, in code and in text', () => {
+    const cell = (content: JSONContent[]) => ({ type: 'tableCell', content: [{ type: 'paragraph', content }] })
+    const head = (text: string) => ({
+      type: 'tableHeader',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+    })
+    editor.commands.setContent({
+      type: 'doc',
+      content: [
+        {
+          type: 'table',
+          content: [
+            { type: 'tableRow', content: [head('写法'), head('说明')] },
+            {
+              type: 'tableRow',
+              content: [
+                cell([{ type: 'text', text: 'a|b', marks: [{ type: 'code' }] }]),
+                cell([{ type: 'text', text: '或 x|y、x\\|y' }]),
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const before = editor.getJSON()
+    const md = serializeDoc(editor)
+    editor.commands.setContent(md, { contentType: 'markdown' })
+    expect(editor.getJSON()).toEqual(before)
+  })
+
   it('table with alignment markers', () => {
     expectClean('| 左对齐 | 居中 | 右对齐 |\n| :--- | :---: | ---: |\n| a | b | c |')
   })

@@ -37,7 +37,10 @@ def alerts(monkeypatch) -> _Alerts:
     box = _Alerts()
     monkeypatch.setattr(settings, "feishu_alert_webhook", "https://alerts.test/hook")
     monkeypatch.setattr(alerting, "_post", box.post)
-    monkeypatch.setattr(alerting, "repeated", alerting._Repeats())
+    monkeypatch.setattr(
+        alerting, "REPEAT_KEY_PREFIX", f"cheese:alert:test:{uuid.uuid4().hex}:"
+    )
+    monkeypatch.setattr(alerting, "_asked", {})
     monkeypatch.setattr(alerting, "budget", alerting._Budget())
     return box
 

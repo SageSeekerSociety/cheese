@@ -226,8 +226,8 @@ describe('答过这道题的每一句', () => {
       })
     )
     expect(answers).toEqual([
-      { by: 'alice', text: 'a' },
-      { by: 'bob', text: '都不要' },
+      { by: 'alice', text: 'a', skipped: false },
+      { by: 'bob', text: '都不要', skipped: false },
     ])
   })
 
@@ -238,6 +238,6 @@ describe('答过这道题的每一句', () => {
           answer_log: [{ v: 1, kind: 'reject', option: null, note: null, by: 'u', at: null, client_op_id: 'x' }],
         })
       )
-    ).toEqual([{ by: 'u', text: '以上都不是' }])
+    ).toEqual([{ by: 'u', text: '以上都不是', skipped: false }])
   })
 })

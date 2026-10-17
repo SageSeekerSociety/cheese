@@ -162,6 +162,54 @@ def test_rates_read_both_places_litellm_keeps_them() -> None:
     assert "half" not in rates
 
 
+def test_a_model_declared_free_costs_nothing_and_is_not_unpriced() -> None:
+    """声明免费（`cheese_free` 加两边写明的 0）的模型是有价的：价钱是零，
+    它的 token 不算进「这个数没算全」。没有标记的 0 仍是没价。"""
+    zero = {"input_cost_per_token": 0.0, "output_cost_per_token": 0.0}
+    payload = {
+        "data": [
+            {
+                "model_name": "free",
+                "litellm_params": zero,
+                "model_info": {"cheese_free": True},
+            },
+            {"model_name": "bare-zero", "litellm_params": zero},
+        ]
+    }
+    rates = pricing._rates_from_info(payload)
+    assert tuple(rates["free"]) == (0.0, 0.0, 0.0, 0.0, 0.0)
+    assert "bare-zero" not in rates
+
+
+def test_a_free_row_beside_a_paid_one_does_not_make_the_model_free() -> None:
+    """一个模型挂了付费的 config 行，又在管理页加了一条免费行（/model/info 把库里
+    的行排在后面）：照付费价收，不能因为多了一条免费供给就整个模型按零计。
+    几条付费行价不同时取每项最高的那个。"""
+    zero = {"input_cost_per_token": 0.0, "output_cost_per_token": 0.0}
+    paid = {"input_cost_per_token": 0.000002, "output_cost_per_token": 0.00001}
+    payload = {
+        "data": [
+            {"model_name": "kimi", "litellm_params": paid},
+            {
+                "model_name": "kimi",
+                "litellm_params": zero,
+                "model_info": {"cheese_free": True, "db_model": True},
+            },
+            {"model_name": "two-paid", "litellm_params": paid},
+            {
+                "model_name": "two-paid",
+                "litellm_params": {
+                    "input_cost_per_token": 0.000001,
+                    "output_cost_per_token": 0.00002,
+                },
+            },
+        ]
+    }
+    rates = pricing._rates_from_info(payload)
+    assert rates["kimi"][:2] == (0.000002, 0.00001)
+    assert rates["two-paid"][:2] == (0.000002, 0.00002)
+
+
 def test_a_cached_token_with_no_price_of_its_own_costs_a_full_input_token() -> None:
     """网关没给缓存价的模型，缓存命中的 token 按输入价算：没写价不等于免费。
     给了缓存价（哪怕是 0）就按给的算。"""

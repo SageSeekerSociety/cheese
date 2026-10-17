@@ -58,6 +58,7 @@ def private_workspace(client):
     ).json()["data"]
     pid = project["id"]
     join_project_team(client, pid, "bob")
+    join_project_team(client, pid, "carol")
     private = client.get(
         f"/projects/{pid}/private-chat",
         params={"user_handle": "alice", "peer_handle": "carol"},

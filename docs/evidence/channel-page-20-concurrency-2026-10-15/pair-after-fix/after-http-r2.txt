@@ -1,0 +1,9 @@
+host loadavg: 51.16 59.31 65.73 14/9164 75386
+== Leg 2: true HTTP, 20 keep-alive connections, 7 batches ==
+channel detail             burst(20) wall  1447.7 cpu  1000.0 (69.1%) worst  1438.6      1.8KiB
+channel blocks             burst(20) wall   547.5 cpu   420.0 (76.7%) worst   539.6     20.1KiB
+channel members            burst(20) wall   365.3 cpu   270.0 (73.9%) worst   357.6      0.1KiB
+channel pins               burst(20) wall   325.6 cpu   240.0 (73.7%) worst   317.5      0.0KiB
+channel threads            burst(20) wall   338.5 cpu   240.0 (70.9%) worst   332.0      0.0KiB
+project task list          burst(20) wall   778.3 cpu   600.0 (77.1%) worst   768.2     84.7KiB
+awaiting-me (reference)    burst(20) wall   976.7 cpu   780.0 (79.9%) worst   969.1     24.7KiB

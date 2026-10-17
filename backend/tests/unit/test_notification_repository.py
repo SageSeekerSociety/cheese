@@ -114,15 +114,6 @@ class TestNotificationRepository:
         assert list(result) == []
 
     @pytest.mark.anyio
-    async def test_list_for_user_with_type_filter(self):
-        session = _mock_session()
-        session.execute.return_value = _mock_scalars([])
-        repo = NotificationRepository(session)
-
-        result = await repo.list_for_user(10, limit=20, type_=NotificationType.REACTION)
-        assert list(result) == []
-
-    @pytest.mark.anyio
     async def test_list_for_user_with_read_filter(self):
         session = _mock_session()
         session.execute.return_value = _mock_scalars([])
@@ -189,9 +180,7 @@ class TestNotificationRepository:
         session.execute.return_value = _mock_scalar_one(3)
         repo = NotificationRepository(session)
 
-        result = await repo.count_for_user(
-            10, type_=NotificationType.MENTION, read=False
-        )
+        result = await repo.count_for_user(10, read=False)
         assert result == 3
 
     @pytest.mark.anyio

@@ -16,7 +16,7 @@ covers:
 
 ## 额度从哪来 {#grants}
 
-额度以「算力额度」（credits）为单位，一笔一笔的额度包（`compute_grants` 表）只挂在团队上，不发给团队里的个人。准入、扣费和余额都走 `usage/ledger.py` 这一处。每个包记着：
+额度以「算力额度」（credits）为单位，一笔一笔的额度包（`compute_grants` 表）只挂在团队上，不发给团队里的个人。准入、扣费和余额都走 `usage/` 里的账本 `Ledger` 这一处：只读的一半在 `usage/ledger_queries.py`，写入和发放的一半在 `usage/ledger.py`；计划的时间窗口、费率、付款方和余额规则各在 `usage/windows.py`、`usage/rates.py`、`usage/payers.py`、`usage/balance.py`。每个包记着：
 
 - `source`：来源。方案按期发放（`plan_period`）、题目发给项目的定向额度（`task_earmark`）、购买（`purchase`）、管理员发放（`admin_grant`）。
 - `project_id`：有值时只给这个项目用。
@@ -41,6 +41,7 @@ covers:
 - **余额**：按时间窗口限额的方案，最满的那个窗口还能用多少，和其他额度包一起算进余额，所以项目网关 key 的预算上限照样能算出来。
 - **Reserve**（`unlimited`）：不拒绝、不发包、不扣包，用量照样记。
 - **模型档位**：网关模型的档位由管理员在模型管理页设（`cheese_tier`），订阅模型的档位写在 `_SUB_MODELS` 里。闸门（`domain/policy/gate.py`）对模型先看方案允许的档位，超出一律拒绝（「当前方案不能使用模型「…」。」），不变成提议；项目设置只能在方案范围内再收紧。机器的档位不受方案影响。模型选择（`GET /projects/{id}/default-model` 的 `choices`）给每个模型标出方案是否允许（`allowed`），不允许的标出排在最前、允许它的方案名（`requires_plan`，`usage/model_access.py`）；只算这个团队能挂的方案（个人团队不算只给团队的方案），没有就为空。方案还没有价格，顺序由管理员设的排序（`rank`）决定，只给管理员的方案排在最后。设为项目默认、分身默认或队友的模型时，方案不允许的一律拒绝。
+- **需开通的模型**：Claude、GPT、Gemini 这类模型（网关模型标 `cheese_overseas: true`，订阅的 Claude 模型一律算）只有平台管理员开通过的团队能用（`overseas_model_approvals`，一个团队一行）；开通一个人就是开通他的个人团队。没开通的团队在模型选择里看不到它们，设为默认或队友模型按「目录里没有」拒绝；已经绑在这种模型上的项目，闸门在轮次开始前拒绝（「模型「…」需要平台管理员为这个团队开通后才能使用。」）。档位规则照旧叠在上面。管理员在额度后台的团队详情里开关（`PUT /admin/teams/{id}/overseas-access`），每次写落 `credit_admin_audit`（`team.overseas`）；网关模型在模型管理页勾「需开通」。
 
 方案、团队挂哪个方案、给团队发额度都只能由平台管理员在 `/admin/plans`、`/admin/teams` 下操作，每一次写都记进 `credit_admin_audit`（谁、对什么、改前改后），`/admin/credits/audit` 和 `/admin/teams/{id}/history` 读它。管理员发的额度可以写一句原因，只有管理员看得到。
 
@@ -54,12 +55,16 @@ covers:
 - 题目页的芝士不自己算：每个人有一把自己的网关虚拟 key，芝士的每次模型调用都走它，而且只在这个人的一个问题正在回答时才放行。每次提问后读这把 key 上新增的花费（和项目 key 一样按天、按模型读累计差值，只消费一次），直接按网关算出的美元扣（[个人芝士](/dev/assistant#ask)）。
 - 每次调用写一行 `resource_usage`：`project_id` 为空，`user_id` 是发起的人。平台看板的项目额度燃尽不算方案包。
 
-## 平台自己发起的调用 {#platform}
+## 平台替项目发起的调用 {#platform}
 
-任务命名、旧记忆搬迁和记忆整理（dream）是平台自己要做的事，不扣任何团队或个人的额度。每次调用由 `Ledger.record_platform` 写一行 `resource_usage`：`team_id`、`user_id` 为空，`credits` 为 0，`kind` 写明是哪件事（`topic_naming`、`memory_migration`、`memory_dream`）。团队和个人的用量页、时间窗口和余额都按 `team_id` 读，所以这些行不会算到任何人头上，平台看板的总量里照常计入。
+任务命名、旧记忆搬迁、环境准备失败时的「让芝士看看」和记忆整理（dream）都是平台为某个项目做的事，和项目里的其他调用一样记到项目上、扣项目所在团队的额度，团队的用量页把它们算进「协作」。每一行带 `project_id` 和团队，`kind` 写明是哪件事（`topic_naming`、`memory_migration`、`environment_diagnosis`、`memory_dream`）。
 
-- 任务命名和旧记忆搬迁不在任何项目里，`project_id` 也为空，各走一把自带预算的网关 key，`cost_usd` 取网关在响应头里给的价格。
-- 记忆整理在项目里跑，行上保留 `project_id`，整理的触发阈值靠它和 `kind` 把整理自己的花费剔掉。它不用项目付钱的那把网关 key，而是项目的第二把 key（`project.settings["llm_gateway_platform_key"]`，不设预算）；一轮结束后单独结算这把 key 的新增花费（检查点在 `llm_gateway_platform_usage_ckpt`），所以整理的花费不会混进项目的 key、被下一轮对话结算到团队头上。走订阅的整理没有这把 key，它的用量由计量代理按项目记到团队上；订阅只开给 Reserve 团队，不扣额度。
+- 任务命名、旧记忆搬迁和「让芝士看看」各走平台的一把服务 key（各带一份平台设的预算），`cost_usd` 取网关在响应头里给的价格，由 `Ledger.record_project_call` 按项目的付款方写一行并扣额度。
+- 记忆整理是总览房间的一轮会话，整理期间它一直占着总览的轮次锁，所以这段时间里从总览发出的模型调用都是整理的。准入逐个调用认出它们（`llm_proxy._dreams`：调用的凭证指向总览，且项目有一次正在跑、没超过 `CLAIM_TTL` 的整理）：
+  - 走网关的，准入交给它项目的第二把 key（`project.settings["llm_gateway_dream_key"]`，同样由项目付费、同样带项目的预算），一轮结束后当场按 `memory_dream` 结算这把 key 的新增花费（读不到时 20 秒后再读一次）。房间的轮次只结算第一把 key，所以整理期间结束的对话拿不走整理的花费；什么都没收到时写一行 `memory_dream:unmetered`，说明这一轮跑过。
+  - 走订阅的，准入在回答里带上 `supply.kind = "memory_dream"`，计量代理把它写在 `usage.jsonl` 那一行的 `kind` 上，收取时按它记账（`subscription_ingest.LINE_KINDS`，名单外的一律按 `chat`）。
+  - 计量代理按（项目、话题、凭证）缓存准入的回答 30 秒（`CHEESE_ADMISSION_CACHE_S`），所以整理开始和结束前后最多这么久的调用沿用上一个回答。走 `/llm` 转发的 Codex 和 pi 每次都问，没有这段。
+  - 会话自报的用量不计，否则同一批调用会被网关或计量代理和自报各算一次。整理的触发阈值按 `kind` 把整理自己的花费剔掉。
 
 ## 三处计量 {#metering}
 
@@ -67,7 +72,7 @@ covers:
 |---|---|---|
 | 网关路 | LiteLLM 逐次记在项目虚拟 key 上 | 主 API 读取 LiteLLM 按 key、按天、按模型记的累计值（`/user/daily/activity`），只消费差值，每笔只消费一次。一次收取每个模型写一行，行上的 `calls` 是这段时间里这个模型答了几次（`successful_requests` 的差值），所以看板上的调用次数是 `calls` 之和，不是行数 |
 | 订阅路 | 计量代理每个 `/v1/messages` 响应写一行 `usage.jsonl` | 主 API 定时把新行收进 `resource_usage`，和检查点在同一个事务里推进，只收一次（`subscription_ingest.py`） |
-| 成员自己的 Claude Code | 会话在每轮结束时自报（stream-json `result` 的 `usage`、`total_cost_usd`） | 一轮结束时写一行，`route` 是 `own`，额度记 0：用的是主人自己的登录，项目不付钱（`chat._close_hook_work`） |
+| 成员自己的 Claude Code | 会话在每轮结束时自报（stream-json `result` 的 `usage`、`total_cost_usd`） | 一轮结束时写一行，`route` 是 `own`，额度记 0：用的是主人自己的登录或账号里保存的 key，项目不付钱（`chat._close_hook_work`） |
 
 前两条路只在流量经过的地方计量：Claude Code 每轮自报的用量在这两条路上不算，算了就是同一轮扣两次。成员自己的 Claude Code 的请求两处都不经过，它的自报是唯一的记录，只记不扣。
 

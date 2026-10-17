@@ -19,6 +19,15 @@ vi.mock('vuetify-sonner', () => ({
   },
 }))
 
+// 没人在等的语言包是不是正取着：真实现由 `@/i18n` 报出来（`unattendedPackIsLoading`），
+// 这里照给一个，用例自己开关。用真的大概要等一次真的取包，时间不由用例定（那份包大，
+// 取完多久说不准）。
+const unattendedPack = vi.hoisted(() => ({ loading: false }))
+vi.mock('@/i18n', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/i18n')>()),
+  unattendedPackIsLoading: () => unattendedPack.loading,
+}))
+
 let reload: ReturnType<typeof vi.fn>
 let assign: ReturnType<typeof vi.fn>
 let order: string[]
@@ -251,5 +260,33 @@ describe('网络不好：整页加载过一次，要的页面还是取不到', (
     await second.push('/b').catch(() => {})
     await vi.waitFor(() => expect(assign).toHaveBeenCalledTimes(2))
     expect(notices).toHaveLength(0)
+  })
+})
+
+/**
+ * 没人在等的语言包又不一样（开机那一次，账号上那条语言跟过来的那一次）：都在任何一次
+ * 导航之外，而每一轮打开过的页面都会把「这一趟刷过了」的闸清掉——服务器一直不给这一块，
+ * 拿整页刷新去救就会一轮一轮刷下去。它们取的这段时间里全局监听不管（`i18n/index.ts` 的
+ * `unattendedPackIsLoading`）：这两份包各有自己的落点（退回入口那一门／留在原来那一门），
+ * 页面留在手上就好。是哪一条路取的无所谓，全局监听看的就是这一个开关。
+ */
+describe('没人在等的语言包还在取的时候', () => {
+  async function missingDialog() {
+    fakeBrowser({ newVersionOnServer: false })
+    await app()
+    await goneChunk('Dialog')().catch(() => {})
+  }
+
+  it('页面里别处按需加载的代码块缺了：不刷新', async () => {
+    unattendedPack.loading = true
+    await missingDialog()
+    await settled()
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('取完之后照旧：刷新这一页', async () => {
+    unattendedPack.loading = false
+    await missingDialog()
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
   })
 })
