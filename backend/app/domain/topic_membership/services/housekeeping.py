@@ -51,8 +51,12 @@ def _public(topic: Topic) -> bool:
 async def _ensure_member(
     svc: pkg.TopicMemberService, topic_id: uuid.UUID, handle: str, *, role: TopicRole
 ) -> None:
-    if await svc._repo.get(topic_id=topic_id, member_handle=handle) is None:
+    existing = await svc._repo.get(topic_id=topic_id, member_handle=handle)
+    if existing is None:
         await svc._repo.add(topic_id=topic_id, member_handle=handle, role=role)
+    elif role == TopicRole.owner and existing.role != TopicRole.owner:
+        existing.role = TopicRole.owner
+        await svc._session.flush()
 
 
 def _is_agent_handle(handle: str) -> bool:
@@ -250,24 +254,36 @@ async def owner_of(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> str | No
     """The human this room belongs to — its ``owner`` member, or None. 综合
     seats nobody by name, so it has none.
 
-    The roster is the ONLY place that answer is reliably recorded.
-    ``Topic.created_by`` is not: 芝士 opening a channel creates it under its
-    own ``cheese-<hex12>`` handle. Seeding already walked the ladder that
-    finds the real human (:meth:`seed` skips 芝士 as owner), so this just
-    reads what that ladder wrote.
+    The roster is checked first so a channel handed over to another manager
+    reports that manager. When no ``owner`` row is present (for instance after
+    the creator left the channel), a non-root channel created by a human falls
+    back to ``Topic.created_by`` unless it is a private channel they are no
+    longer in.
 
     Cheap and unauthorized on purpose: attribution paths (who a PR and its
     commits belong to) call it on every merge, and they are read-only.
     """
+    members = await svc._repo.list_for_topic(topic_id)
     member = next(
-        (
-            m
-            for m in await svc._repo.list_for_topic(topic_id)
-            if m.role == TopicRole.owner
-        ),
+        (m for m in members if m.role == TopicRole.owner),
         None,
     )
-    return member.member_handle if member is not None else None
+    if member is not None:
+        return member.member_handle
+    topic = await svc._topics.get(topic_id)
+    if (
+        topic is not None
+        and _public(topic)
+        and topic.kind != TopicKind.root
+        and topic.created_by
+        and not svc._is_agent_handle(topic.created_by)
+        and (
+            not topic.members_only
+            or any(m.member_handle == topic.created_by for m in members)
+        )
+    ):
+        return topic.created_by
+    return None
 
 
 async def people_handles(svc: pkg.TopicMemberService, topic_id: uuid.UUID) -> list[str]:
@@ -374,9 +390,24 @@ async def seats(
 ) -> list[TopicMemberOut]:
     """Everyone in this channel, the way its member list shows them: its
     seated rows, and for 综合 everyone in the project besides."""
+    rows = await svc._repo.list_for_topic(topic.id)
+    has_owner = any(m.role == TopicRole.owner for m in rows)
+    creator = (
+        topic.created_by
+        if not has_owner
+        and _public(topic)
+        and topic.kind != TopicKind.root
+        and topic.created_by
+        and not svc._is_agent_handle(topic.created_by)
+        else None
+    )
     seats = [
-        TopicMemberOut.model_validate(m)
-        for m in await svc._repo.list_for_topic(topic.id)
+        TopicMemberOut(
+            topic_id=m.topic_id,
+            member_handle=m.member_handle,
+            role=TopicRole.owner if m.member_handle == creator else m.role,
+        )
+        for m in rows
     ]
     if topic.kind == TopicKind.root:
         seated = {m.member_handle for m in seats}
@@ -449,7 +480,10 @@ async def take_in(
         return
     if svc._is_agent_handle(handle):
         return
-    await svc._ensure_member(topic_id, handle, role=TopicRole.member)
+    role = (
+        TopicRole.owner if await svc.owner_of(topic_id) == handle else TopicRole.member
+    )
+    await svc._ensure_member(topic_id, handle, role=role)
 
 
 async def topic_ids_for_member(

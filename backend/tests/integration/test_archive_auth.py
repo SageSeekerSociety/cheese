@@ -84,6 +84,45 @@ def test_archive_requires_manager_and_records_actual_actor(client):
     assert events_saying(topic, "恢复活跃") == []
 
 
+def test_creator_can_still_archive_channel_after_leaving_and_rejoining(client):
+    project = post_project(client, json={"name": "P"}, owner="owner").json()["data"]
+    join_project_team(client, project["id"], "creator")
+    room = client.post(
+        "/topics",
+        json={"project_id": project["id"], "title": "测试频道"},
+        headers=session_auth_headers("creator"),
+    ).json()["data"]
+    topic = room["id"]
+
+    # 创建者先退出再重新加入频道，没有进行中的任务时仍能归档该频道
+    assert (
+        client.delete(
+            f"/topics/{topic}/members/me",
+            headers=session_auth_headers("creator"),
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/topics/{topic}/members/me",
+            headers=session_auth_headers("creator"),
+        ).status_code
+        == 200
+    )
+    fetched = client.get(
+        f"/topics/{topic}",
+        headers=session_auth_headers("creator"),
+    ).json()["data"]
+    assert fetched["can_manage"] is True
+
+    archived = client.post(
+        f"/topics/{topic}/archive",
+        json={},
+        headers=session_auth_headers("creator"),
+    )
+    assert archived.status_code == 200, archived.text
+
+
 def test_scoped_agent_cannot_trigger_global_cleanup(client):
     from app.core.sandbox_auth import mint_scoped_token
 
