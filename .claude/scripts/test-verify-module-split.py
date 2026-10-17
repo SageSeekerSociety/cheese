@@ -2083,6 +2083,24 @@ import importlib.util
 SPEC = importlib.util.spec_from_file_location("app.foo", "vendor/foo.py")
 '''
 
+SQUASH_SPEC_KEYWORD = '''\
+import importlib.util
+
+from app import foo
+
+SPEC = importlib.util.spec_from_file_location(
+    name="app.foo", location=foo.__file__
+)
+'''
+
+SQUASH_SPEC_ORIGIN_READER = '''\
+from pathlib import Path
+
+from app import foo
+
+SOURCE = Path(foo.__spec__.origin).read_text()
+'''
+
 SQUASH_IMPORT_MODULE_READER = '''\
 import importlib
 from pathlib import Path
@@ -2114,6 +2132,38 @@ from pathlib import Path
 from .. import foo
 
 SOURCE = Path(foo.__file__).read_text()
+'''
+
+SQUASH_REBOUND_IN_WITH = '''\
+from pathlib import Path
+
+from app import bar, foo
+
+with open("x") as handle:
+    foo = bar
+
+SOURCE = Path(foo.__file__).read_text()
+'''
+
+SQUASH_LOOP_IMPORT = '''\
+from pathlib import Path
+
+for name in ("foo",):
+    import app.foo as mod
+
+SOURCE = Path(mod.__file__).read_text()
+'''
+
+SQUASH_EXPRESSION_SHADOW = '''\
+from pathlib import Path
+
+from app import foo
+
+
+def read_first(items, other):
+    by_lambda = (lambda foo: foo.__file__)(other)
+    by_comprehension = [foo.__file__ for foo in items]
+    return by_lambda, by_comprehension
 '''
 
 SQUASH_SHADOWED_READER = '''\
@@ -2245,7 +2295,25 @@ class WholeFileReadTests(unittest.TestCase):
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("模块文件路径已改指: app.foo", result.stdout)
-        self.assertIn("location 取自该模块", result.stdout)
+        self.assertIn("__spec__.origin 现在是包的 __init__.py", result.stdout)
+
+    def test_a_spec_loaded_through_the_location_keyword_is_blocked(self) -> None:
+        """`location=` is the same argument by another name."""
+        fixture = SquashFixture(self.root, SQUASH_SPEC_KEYWORD)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
+
+    def test_reading_the_spec_origin_is_blocked(self) -> None:
+        """`mod.__spec__.origin` answers the same question as `mod.__file__`
+        and is not spelled `__file__`, so it needs a rule of its own."""
+        fixture = SquashFixture(self.root, SQUASH_SPEC_ORIGIN_READER)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
+        self.assertIn("__spec__.origin", result.stdout)
 
     def test_a_spec_loaded_from_a_literal_location_still_passes(self) -> None:
         """The location, not the module name, decides which file is loaded: a
@@ -2299,6 +2367,32 @@ class WholeFileReadTests(unittest.TestCase):
         """A parameter or loop variable that happens to be called `foo` holds
         something else; reporting it would fail a split that broke nothing."""
         fixture = SquashFixture(self.root, SQUASH_SHADOWED_READER)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("模块文件路径已改指", result.stdout)
+
+    def test_a_rebinding_inside_a_with_stays_bound(self) -> None:
+        """`with` opens no scope: `foo = bar` in the body is still `bar` after
+        it, so the read below is not the split module's file."""
+        fixture = SquashFixture(self.root, SQUASH_REBOUND_IN_WITH)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("模块文件路径已改指", result.stdout)
+
+    def test_an_import_inside_a_loop_is_seen_after_it(self) -> None:
+        """`for` opens no scope either: the module imported in the body is
+        still bound below, and its file read is the break."""
+        fixture = SquashFixture(self.root, SQUASH_LOOP_IMPORT)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
+
+    def test_a_lambda_or_comprehension_target_shadows_the_module(self) -> None:
+        """Both bind their own name for their own expression only."""
+        fixture = SquashFixture(self.root, SQUASH_EXPRESSION_SHADOW)
         fixture.split()
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
