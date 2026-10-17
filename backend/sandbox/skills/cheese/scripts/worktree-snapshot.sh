@@ -173,8 +173,8 @@ read_set_aside() {
 }
 
 # 这次同步有没有东西可存：工作区干净、HEAD 也已经在远端分支上时没有。平台自己
-# 的 turn-end 同步会跳过这种检出（backend/sandbox/cheese 的 _has_work_to_sync），
-# 只有这里显式跑的 sync 才会照样做一份新的备份。
+# 的 turn-end 同步会跳过这种检出（backend/sandbox/cheese 的 _has_work_to_sync）；
+# 显式的 `cheese sync` 和 `push-fix` 里的那一步不经过这个判断，仍会照样备份。
 nothing_to_sync() {
   local branch pushed status
   # 读不出工作区状态时要当成「有东西要存」：平台的 _has_work_to_sync 也是这么保守
@@ -182,7 +182,13 @@ nothing_to_sync() {
   status=$(git status --porcelain 2>/dev/null) || return 1
   [ -z "$status" ] || return 1
   branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return 1
-  pushed=$(git rev-parse --verify -q "refs/remotes/origin/$branch") || return 1
+  # 本地跟踪 ref 没了不等于没推过：直接问远端。远端也没有这条分支，才是真的有
+  # 提交要推；问不到就不下结论，按有东西要存处理。
+  pushed=$(git rev-parse --verify -q "refs/remotes/origin/$branch") || {
+    pushed=$(git ls-remote --heads origin "refs/heads/$branch" 2>/dev/null | cut -f1) ||
+      return 1
+    [ -n "$pushed" ] || return 1
+  }
   git merge-base --is-ancestor HEAD "$pushed" 2>/dev/null
 }
 

@@ -781,6 +781,28 @@ def test_save_treats_an_unreadable_status_as_work_to_save(machine: Machine) -> N
     assert "要自己取" in out
 
 
+def test_save_asks_the_remote_when_the_tracking_ref_is_gone(
+    machine: Machine,
+) -> None:
+    """本地跟踪 ref 被删掉时，不能当成有东西要推：分支其实已经在远端上。"""
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    machine.wipe()
+    refused(
+        machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1"),
+        3,
+        ".cheese/recovered",
+    )
+    git("update-ref", "-d", f"refs/remotes/origin/{BRANCH}", cwd=machine.worktree)
+    mark = machine.tmp / "sync-ran"
+
+    result = machine.run("save", FAKE_SYNC_MARK=str(mark))
+
+    refused(result, 3, ".cheese/recovered", "顶掉")
+    assert not mark.exists(), "远端已经有这个提交，不该同步"
+    assert "换机后接回来" not in result.stdout
+
+
 def test_restore_still_refuses_after_a_set_aside_the_run_before(
     machine: Machine,
 ) -> None:
