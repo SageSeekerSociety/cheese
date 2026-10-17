@@ -128,18 +128,26 @@ test.describe('sidebar channel row geometry', () => {
   test.describe('400px touch page', () => {
     test.use({ viewport: { width: 400, height: 844 }, hasTouch: true, isMobile: true });
 
-    test('more is present without hover and both controls have separate hittable 44px targets', async ({ page }) => {
-      const row = await catalogRow(page, 8);
+    // State 15: page form with a real subtree and a collapsed yellow task block.
+    test('subtree and task controls each have separate hittable 44px targets', async ({ page }) => {
+      const row = await catalogRow(page, 15);
+      const subtree = row.locator('.subtree-toggle');
       const arrow = row.locator('.task-fold__btn');
       const title = row.locator('.topic-title');
       const light = row.locator('.row-light');
       const more = row.locator('.row-actions__btn');
       await expect(row.locator('.row-actions')).toHaveCSS('opacity', '1');
       await expect(light).toHaveCount(1);
+      await expect(light).toHaveClass(/row-light--yellow/);
+      await expect(subtree).toHaveCount(1);
+      // The subtree is expanded here; only the task block is collapsed.
+      await expect(subtree).toHaveAttribute('aria-expanded', 'true');
       await expect(arrow).toHaveAttribute('aria-expanded', 'false');
-      const boxes = await Promise.all([arrow, title, light, more].map(boxOf));
-      expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x + 0.5);
-      for (const target of [boxes[0], boxes[3]]) {
+      const boxes = await Promise.all([subtree, arrow, title, light, more].map(boxOf));
+      for (const leading of [boxes[0], boxes[1]]) {
+        expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
+      }
+      for (const target of [boxes[0], boxes[1], boxes[4]]) {
         expect(target.width).toBeGreaterThanOrEqual(44);
         expect(target.height).toBeGreaterThanOrEqual(44);
         expect(target.x).toBeGreaterThanOrEqual(0);
@@ -148,7 +156,7 @@ test.describe('sidebar channel row geometry', () => {
       for (let i = 0; i < boxes.length; i++) {
         for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
       }
-      for (const target of [arrow, more]) {
+      for (const target of [subtree, arrow, more]) {
         await expectHitSurface(target);
         // Catalog props are controlled: observe the actual browser-delivered
         // click rather than expecting an unhandled emit to update the fixture.
@@ -158,8 +166,8 @@ test.describe('sidebar channel row geometry', () => {
         await target.tap();
         await expect(target).toHaveAttribute('data-layout-clicked', 'true');
       }
-      expectStationary(boxes[1], await boxOf(title));
-      expectStationary(boxes[2], await boxOf(light));
+      expectStationary(boxes[2], await boxOf(title));
+      expectStationary(boxes[3], await boxOf(light));
     });
   });
 
@@ -216,6 +224,47 @@ test.describe('sidebar channel row geometry', () => {
       for (const target of [arrow, more]) await expectHitSurface(target);
       // A public channel with tasks gets no redundant #; the task arrow is the only mark.
       await expect(row.locator('.row-glyph')).toHaveCount(0);
+    });
+
+    // State 11 is a channel with both controls, expanded and lightless: measure the
+    // controls, not a light, and do not assume the task arrow is collapsed.
+    test('both fold controls keep separate 44px targets when the row is expanded', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+
+      const row = await catalogRow(page, 11);
+      await narrowFrame(page);
+      expect(await page.evaluate(() => matchMedia('(hover: none)').matches)).toBe(true);
+      expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+      await expect(row).not.toHaveClass(/rail-channel-page/);
+
+      const subtree = row.locator('.subtree-toggle');
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const more = row.locator('.row-actions__btn');
+      await expect(row.locator('.row-actions')).toHaveCSS('opacity', '1');
+      await expect(subtree).toHaveCount(1);
+      await expect(arrow).toHaveCount(1);
+      await expect(subtree).toHaveAttribute('aria-expanded', 'true');
+      await expect(arrow).toHaveAttribute('aria-expanded', 'true');
+
+      const boxes = await Promise.all([subtree, arrow, title, more].map(boxOf));
+      for (const leading of [boxes[0], boxes[1]]) {
+        expect(leading.x + leading.width).toBeLessThanOrEqual(boxes[2].x + 0.5);
+      }
+      for (const target of [boxes[0], boxes[1], boxes[3]]) {
+        expect(target.width).toBeGreaterThanOrEqual(44);
+        expect(target.height).toBeGreaterThanOrEqual(44);
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [subtree, arrow, more]) await expectHitSurface(target);
     });
   });
 
@@ -291,40 +340,56 @@ test.describe('sidebar channel row geometry', () => {
   });
 
   // 任务行和「展开其余」那一行是同一块里的两种行：同一个深度上，字必须从同一个 x
-  // 开始。桌面宽度和触屏（hover:none 的真实媒体查询）各量一遍。
-  for (const mode of ['desktop', 'touch'] as const) {
-    test(`task and "more" rows share one left edge at each depth (${mode})`, async ({ page }) => {
-      await page.setViewportSize({ width: 1280, height: 800 });
-      if (mode === 'touch') {
-        const cdp = await page.context().newCDPSession(page);
-        await cdp.send('Emulation.setEmulatedMedia', {
-          features: [
-            { name: 'hover', value: 'none' },
-            { name: 'pointer', value: 'coarse' },
-          ],
-        });
-      }
+  // 开始。桌面走普通 context；触屏走真实 hasTouch 上下文，并显式确认两条媒体查询
+  // 都成立，而不是只发一次 CDP 就假定它生效。
+  async function expectTaskMoreAligned(page: Page, mode: string) {
+    for (const depth of [0, 1]) {
+      // Catalog: more-tasks-row 0=depth0, 2=depth1; task-row 0=depth0, 1=depth1.
+      await catalogFrame(page, 'topic-rail-more-tasks-row', depth === 0 ? 0 : 2);
+      await narrowFrame(page);
+      const more = page.locator('.frame-page .rail-more__label');
+      await expect(more).toHaveCount(1);
+      const moreX = (await boxOf(more)).x;
 
-      for (const depth of [0, 1]) {
-        // Catalog: more-tasks-row 0=depth0, 2=depth1; task-row 0=depth0, 1=depth1.
-        await catalogFrame(page, 'topic-rail-more-tasks-row', depth === 0 ? 0 : 2);
-        await narrowFrame(page);
-        const more = page.locator('.frame-page .rail-more__label');
-        await expect(more).toHaveCount(1);
-        const moreX = (await boxOf(more)).x;
+      await catalogFrame(page, 'topic-rail-task-row', depth);
+      await narrowFrame(page);
+      const task = page.locator('.frame-page .rail-task__title');
+      await expect(task).toHaveCount(1);
+      const taskX = (await boxOf(task)).x;
 
-        await catalogFrame(page, 'topic-rail-task-row', depth);
-        await narrowFrame(page);
-        const task = page.locator('.frame-page .rail-task__title');
-        await expect(task).toHaveCount(1);
-        const taskX = (await boxOf(task)).x;
-
-        expect(Math.abs(moreX - taskX), `depth ${depth} (${mode}): more=${moreX}, task=${taskX}`).toBeLessThanOrEqual(
-          0.5
-        );
-      }
-    });
+      expect(Math.abs(moreX - taskX), `depth ${depth} (${mode}): more=${moreX}, task=${taskX}`).toBeLessThanOrEqual(
+        0.5
+      );
+    }
   }
+
+  test('task and "more" rows share one left edge at each depth (desktop)', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expectTaskMoreAligned(page, 'desktop');
+  });
+
+  test.describe('task/more left edge (touch context)', () => {
+    test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true, isMobile: false });
+
+    test('task and "more" rows share one left edge at each depth (touch)', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+      expect(
+        await page.evaluate(() => matchMedia('(hover: none)').matches),
+        'touch context must really expose hover:none'
+      ).toBe(true);
+      expect(
+        await page.evaluate(() => matchMedia('(pointer: coarse)').matches),
+        'touch context must really expose pointer:coarse'
+      ).toBe(true);
+      await expectTaskMoreAligned(page, 'touch');
+    });
+  });
 });
 
 // 表单字段的几何不变量。

@@ -238,6 +238,19 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         }),
         expectSelector: '.mdi-lock-outline',
       },
+      {
+        name: '手机：两个独立折叠入口',
+        note: '子频道和任务各有独立的触屏落点，按钮之间不互相覆盖。',
+        props: rowProps({
+          row: { ...RAIL_ROWS.working, hasChildren: true, collapsed: false },
+          page: true,
+          selected: true,
+          taskCount: 5,
+          tasksCollapsed: true,
+          taskLight: { kind: 'yellow', breathe: false },
+        }),
+        expectSelector: '.subtree-toggle',
+      },
     ],
   },
   {
@@ -442,8 +455,18 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       selected: false,
     },
     states: [
-      { name: '频道下面的任务', props: { depth: 0 }, expect: '频道行任务' },
-      { name: '子频道下面的任务', props: { depth: 1 }, expect: '频道行任务' },
+      {
+        name: '频道下面的任务',
+        note: '与同频道展开入口保持相同的文字缩进。',
+        props: { depth: 0 },
+        expect: '频道行任务',
+      },
+      {
+        name: '子频道下面的任务',
+        note: '跟随子频道层级缩进，文字与展开入口对齐。',
+        props: { depth: 1 },
+        expect: '频道行任务',
+      },
     ],
   },
   {

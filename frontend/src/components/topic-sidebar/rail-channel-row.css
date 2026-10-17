@@ -59,7 +59,7 @@
 
 .rail-channel-page .row-actions,
 .rail-channel-page .row-actions .v-btn,
-.rail-channel-page .row-slot {
+.rail-channel.rail-channel-page .row-slot {
   width: 44px;
   min-height: 44px;
 }
@@ -85,7 +85,7 @@
 
   .rail-channel .row-actions,
   .rail-channel .row-actions .v-btn,
-  .rail-channel .row-slot {
+  .rail-channel .row-leading .row-slot {
     width: 44px;
     min-height: 44px;
   }
