@@ -7,7 +7,9 @@ Start an isolated Forgejo before running `scripts.seed_fusion_demo`, not just
 Postgres and migrations: the seeder creates hosted repositories for the demo
 projects. Follow `.github/workflows/e2e.yml`'s ordering and the helper
 `backend/tests/forgejo/start.sh`; a missing hosting configuration prevents the
-seed from completing before browser tests begin.
+seed from completing before browser tests begin. (`--without-repository` seeds
+projects with no repository, for `task dev:sandbox`; the e2e specs need the
+repositories.)
 
 For parallel local runs, choose an available Docker context and distinct
 `FORGEJO_TEST_PROJECT`, `FORGEJO_TEST_PORT`, `FORGEJO_TEST_S3_PORT` and

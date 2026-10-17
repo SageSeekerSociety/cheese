@@ -133,7 +133,13 @@ def test_rejected_topic_stays_active(client):
     assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
-def test_reject_of_closed_task_reports_reason_without_waking_worker(client, stub_hooks):
+def test_reject_of_closed_task_is_refused_because_the_card_is_gone(client, stub_hooks):
+    """关任务已经把未结算的卡收掉了，退回不再有意义，也不该为此醒一轮。
+
+    这条测试原本断言一张已关任务的卡还能被退回（200）。那是卡能比活活得久的
+    行为；现在关任务时卡跟着作废（`review.archive.close_cards_for_closed_task`），
+    和归档同一条路，于是退回落在 ``reviewEndedNoReturn`` 上。
+    """
     pid = _project(client)
     tid = _topic(client, pid)
     cid = _card(client, tid)
@@ -145,13 +151,27 @@ def test_reject_of_closed_task_reports_reason_without_waking_worker(client, stub
     )
     assert closed.status_code == 200, closed.text
     before = stub_hooks.last_prompt
+
     response = _reject(client, cid, note="Needs a replacement task")
-    assert response.status_code == 200, response.text
+
+    assert response.status_code == 422, response.text
+    assert "审阅已结束" in response.text
     wait_work_idle()
+    # 卡已经收掉，没有「退回」这件事，也就没有一轮工作被叫起来。
     assert stub_hooks.last_prompt == before
     notices = [
         b
         for b in _blocks(client, tid)
         if (b.get("meta") or {}).get("event_type") == "card_rejected"
     ]
-    assert notices[-1]["meta"]["detail"] == "Needs a replacement task"
+    assert notices == []
+
+    async def card_status():
+        from app.domain.review.models import AcceptCard
+
+        async with client.test_factory() as session:
+            card = await session.get(AcceptCard, uuid.UUID(cid))
+            assert card is not None
+            return card.status
+
+    assert asyncio.run(card_status()).value == "revoked"

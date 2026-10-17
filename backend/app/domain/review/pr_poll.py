@@ -29,7 +29,7 @@ from app.domain.project.forge import (
     quota_serves_background,
 )
 from app.domain.project.models import ProjectForge
-from app.domain.review import landing_watch, pr_publish
+from app.domain.review import archive, landing_watch, pr_publish
 from app.domain.review.models import AcceptCard
 from app.domain.review.ports import (
     Announce,
@@ -97,6 +97,13 @@ async def poll_open_prs(
     # domain importing up into the API layer (`.importlinter`, C1).
     runner = chat.work_runner
     async with sessions() as session:
+        # 孤儿卡修复的第二道锁，换到关掉的活上：一条活已经结束，它名下的卡
+        # 不再有人跟。关任务的那条路当场收；这里兜住别的关法，和修复之前就停
+        # 在 pending 上的那些行。
+        await archive.close_cards_for_closed_tasks(
+            session, settle_card=settle_card, project_id=project_id
+        )
+        await session.commit()
         # 孤儿卡修复 (2026-08-10): cards on ARCHIVED topics are deliberately NOT
         # in this list — driving them means using the approver's GitHub token on
         # work nobody tracks any more. 那条判据留在 review 领域里

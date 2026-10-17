@@ -63,6 +63,7 @@ tmp_frontend.log
 # 云机预热日志），没有任何一份属于版本库——这条不是只挡今天删掉的那一份。
 # 守卫：backend/tests/unit/test_repo_root_hygiene.py。
 /*.zip
+/*-prototype.html
 /logs/
 
 # ---- Tooling / local agent config ----

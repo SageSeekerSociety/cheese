@@ -106,6 +106,19 @@ task e2e:test:headed         # with visible browser
 
 Everything runs natively — `uv run` for backend, `pnpm` for frontend, Docker for infrastructure only.
 
+### Without Docker
+
+```bash
+task dev:sandbox             # or: node e2e/dev-stack.mjs
+```
+
+The whole stack on loopback with no Docker and no external service: the
+servers e2e starts (stub model gateway, backend, collaboration service, Vite dev
+server on :3000), on Postgres and Redis from `.claude/scripts/dev-db.sh`. It is
+for looking at a change in a browser on a machine without Docker, an agent's
+sandbox included; what it leaves out and what it needs are in
+[`docs/testing-without-docker.md`](docs/testing-without-docker.md).
+
 ### Windows
 
 Install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (`wsl --install`, reboot), then work inside WSL — same as Linux.
