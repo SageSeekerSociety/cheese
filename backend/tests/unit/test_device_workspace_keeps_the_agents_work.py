@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent import environment_runner, resource_cleanup
+from app.domain.backend_log import TASK_BACKUP_FAILED
 from app.domain.project.environment import EnvironmentConfig
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox/cheese"
@@ -1216,6 +1217,7 @@ def test_a_closed_tasks_failed_backup_leaves_the_room_notice_to_the_platform(
         cli._sync_all_tasks()
 
     assert _told_the_room(home) == []
+    assert closed in json.dumps(_told_operators(home))
 
 
 def test_a_backup_leaves_out_generated_and_oversized_untracked_files_and_says_so(
@@ -1319,7 +1321,9 @@ def test_a_backup_that_fails_still_delivers_the_commits(device):
     assert git(remote, "rev-parse", tasks[task]["branch"]) == head
     assert _told_the_room(home) == []
     (told,) = _told_operators(home)
+    assert told["exc_type"] == TASK_BACKUP_FAILED
     assert told["where"] == "cheese sync:backup"
+    assert head not in told["message"]  # one failure, one fingerprint
     assert "snapshot failed step=backup" in _sync_log(cli, task)
 
 
@@ -1419,14 +1423,22 @@ def test_a_lasting_push_failure_is_told_once_until_it_changes(device):
             cli._sync_task(task)
     assert len(_told_the_room(home)) == 1
 
+    # The PR joins the merge queue: a different failure, told.
+    tasks[task]["merge_queued_pr"] = 17
+    _commit(work, "queued.txt", "work\n")
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+    assert len(_told_the_room(home)) == 2
+    del tasks[task]["merge_queued_pr"]
+
     reject.unlink()
     cli._sync_task(task)
     _reject_pushes(remote)
     _commit(work, "again.txt", "work\n")
     with pytest.raises(RuntimeError):
         cli._sync_task(task)
-    first, second = _told_the_room(home)
-    assert second == first
+    first, _queued, third = _told_the_room(home)
+    assert third == first
 
 
 def test_a_lasting_push_failure_is_told_again_after_a_while(device, monkeypatch):
