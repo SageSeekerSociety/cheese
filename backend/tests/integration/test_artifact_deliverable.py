@@ -697,19 +697,12 @@ def test_each_version_names_its_room_only_to_readers_of_that_room(client):
     ],
 )
 def test_file_and_link_deliveries_succeed_and_accept_without_branch_commits_or_pr(
-    client, monkeypatch, declared
+    client, declared
 ):
     """独立文件与链接交付不要求任务分支有 Git 提交，也不必开或合 PR。"""
-    from app.domain.repository import forge_files
-
-    monkeypatch.setattr(
-        forge_files.ProjectFiles,
-        "comparison",
-        lambda self: asyncio.sleep(0, result=None),
-    )
     project_id = _project(client)
     room_id = _room(client, project_id)
-    task = delivery_task(client, room_id)
+    task = delivery_task(client, room_id, commit=False)
     _place(client, task)
     files = declared.get("files") or {}
     for name, content in files.items():

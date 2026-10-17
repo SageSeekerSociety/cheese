@@ -252,7 +252,7 @@ async def create_card(
         status=AcceptStatus.pending,
         change_subject=subject,
         change_body=change_body or None,
-        delivered_task_ids=[task.id],
+        delivered_task_ids=[task.id] if has_branch_changes else [],
         artifact_id=declared.id,
         # 和上面那个「要不要声明产物」问的是同一句话，所以答案从同一个地方来：
         # 两处各算一次的话，有一天它们会对不上，而对不上的那一天没有任何报错。
@@ -666,6 +666,7 @@ async def _render(
         }
     elif caps.reports_checks and (
         card.pr_number is not None
+        or bool(card.delivered_task_ids)
         or card.deliverable_kind not in (DeliverableKind.file, DeliverableKind.link)
     ):
         mirror = card.merge_state if isinstance(card.merge_state, dict) else None

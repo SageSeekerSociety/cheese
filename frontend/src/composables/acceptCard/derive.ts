@@ -53,7 +53,10 @@ export function useAcceptCardDerive(host: AcceptCardDeriveHost) {
   const needsPr = computed(() => {
     const card = pendingCard.value
     if (!card || !card.forge.hosts_proposals || card.pr_number !== null) return false
-    return card.deliverable?.kind !== 'file' && card.deliverable?.kind !== 'link'
+    if (card.deliverable?.kind === 'file' || card.deliverable?.kind === 'link') {
+      return card.merge_state.state === 'unknown'
+    }
+    return true
   })
   const mergeReasons = computed<MergeReason[]>(() => {
     const card = pendingCard.value

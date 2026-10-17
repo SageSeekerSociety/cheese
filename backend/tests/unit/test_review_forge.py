@@ -130,6 +130,7 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
         id=uuid.uuid4(),
         topic_id=topic_id,
         task_id=uuid.uuid4(),
+        delivered_task_ids=[],
         reviewer_handle="alice",
         focus="审阅文件",
         change_subject="docs: deliver artifact",
@@ -174,18 +175,24 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
     ]
     assert rendered["merge_state"]["head_sha"] is None
 
-    # _accept_github skips PR publication/merge and settles via _accept_discussion
+    # _accept_github skips PR publication/merge and settles via real _accept_discussion
     published = AsyncMock()
-    accepted_discussion = AsyncMock(return_value=card)
     service._publish_pr_for_accept = published
-    service._accept_discussion = accepted_discussion
+    service._repo = SimpleNamespace(add_approval=AsyncMock())
+    service._settle_the_card = AsyncMock()
+    service._stamp_delivery = AsyncMock()
+    service._mark_task_merged = AsyncMock(return_value=True)
+    service._session = SimpleNamespace(
+        flush=AsyncMock(), refresh=AsyncMock(), get=AsyncMock(return_value=None)
+    )
     topic = SimpleNamespace(id=card.topic_id, project_id=_pid())
     got = await service._accept_github(card, topic, "alice", seen_head=None)
     assert got is card
+    assert card.status == AcceptStatus.accepted
+    assert card.decided_by == "alice"
     published.assert_not_awaited()
-    accepted_discussion.assert_awaited_once_with(card, topic, "alice")
 
-    # open_pr_for_card returns None without opening a PR when pr_number is None
+    # open_pr_for_card returns None when delivered_task_ids is empty
     monkeypatch.setattr(
         pr_publish,
         "proposal_client",
@@ -203,3 +210,37 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
         project_id=_pid(),
     )
     assert opened is None
+
+    # A file/link card that DOES carry branch commits (delivered_task_ids non-empty)
+    # still requires and publishes a PR instead of accepting without merging.
+    card_with_commits = SimpleNamespace(
+        **{
+            **card.__dict__,
+            "status": AcceptStatus.pending,
+            "decided_by": None,
+            "decided_at": None,
+            "delivered_task_ids": [str(card.task_id)],
+        }
+    )
+    rendered_with_commits = await cards._render(
+        service,
+        card_with_commits,
+        approvals={},
+        trees={},
+        rooms={topic_id: SimpleNamespace(id=topic_id, project_id=project_id)},
+        projects={project_id: None},
+        forges={(project_id, ""): forge},
+        hidden={},
+        summaries={},
+    )
+    assert rendered_with_commits["merge_state"]["state"] == "unknown"
+    assert rendered_with_commits["merge_state"]["who"] == "platform"
+    assert (
+        rendered_with_commits["merge_state"]["reasons"][0]["detail"]
+        == "PR 尚未创建，检查状态未知"
+    )
+    service._stop_accept_no_branch = AsyncMock(side_effect=ValidationError("no branch"))
+    with pytest.raises(ValidationError, match="no branch"):
+        await service._accept_github(card_with_commits, topic, "alice", seen_head=None)
+    published.assert_awaited_once_with(card_with_commits, topic)
+    assert card_with_commits.status == AcceptStatus.pending

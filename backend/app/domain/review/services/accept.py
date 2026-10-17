@@ -127,9 +127,14 @@ async def _accept_github(
     seen_head: str | None,
 ) -> AcceptCard:
     """GitHub proposals never fall back to a local merge after a failure."""
-    if card.pr_number is None and card.deliverable_kind in (
-        DeliverableKind.file,
-        DeliverableKind.link,
+    if (
+        card.pr_number is None
+        and not card.delivered_task_ids
+        and card.deliverable_kind
+        in (
+            DeliverableKind.file,
+            DeliverableKind.link,
+        )
     ):
         return await self._accept_discussion(card, topic, decided_by)
     if card.pr_number is None:

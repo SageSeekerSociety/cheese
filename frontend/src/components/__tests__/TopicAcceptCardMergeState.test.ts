@@ -205,11 +205,14 @@ describe('合的是人看到的那个 commit', () => {
     expect(acceptCard).toHaveBeenCalledWith(pending.id, expect.any(String), null)
   })
 
-  it('交独立文件或链接且无 PR 的卡直接显示采纳而非创建 PR', async () => {
+  it.each(['file', 'link'] as const)('交独立文件或链接（%s）且无分支改动的卡直接显示采纳而非创建 PR', async (kind) => {
     const pending = githubCard({
       pr_number: null,
       pr_url: null,
-      deliverable: { kind: 'file', filename: '报告.pdf', url: null },
+      deliverable:
+        kind === 'file'
+          ? { kind: 'file', filename: '报告.pdf', url: null }
+          : { kind: 'link', filename: null, url: 'https://example.com/demo' },
       merge_state: mergeState({
         state: 'clean',
         who: 'human',
@@ -226,6 +229,26 @@ describe('合的是人看到的那个 commit', () => {
     await fireEvent.click(btn)
     await flush()
     expect(acceptCard).toHaveBeenCalledWith(pending.id, expect.any(String), null)
+  })
+
+  it.each(['file', 'link'] as const)('带分支改动但尚未创建 PR 的文件或链接卡（%s）仍提供创建 PR', async (kind) => {
+    const pending = githubCard({
+      pr_number: null,
+      pr_url: null,
+      deliverable:
+        kind === 'file'
+          ? { kind: 'file', filename: '报告.pdf', url: null }
+          : { kind: 'link', filename: null, url: 'https://example.com/demo' },
+      merge_state: mergeState({
+        state: 'unknown',
+        who: 'platform',
+        reasons: [{ kind: 'no_signal', checks: [], detail: 'PR 尚未创建，检查状态未知' }],
+      }),
+    })
+    const { container, getByRole } = await mountWith([pending])
+    const create = getByRole('button', { name: '创建 PR' }) as HTMLButtonElement
+    expect(create.disabled).toBe(false)
+    expect(Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.trim() === '采纳')).toBe(false)
   })
 
   it('采纳带上卡面渲染时的那个 head sha', async () => {

@@ -203,9 +203,14 @@ async def open_pr_for_card(
     card = await AcceptCardRepository(session).get(card_id)
     if card is None or card.task_id is None:
         return None
-    if card.pr_number is None and card.deliverable_kind in (
-        DeliverableKind.file,
-        DeliverableKind.link,
+    if (
+        card.pr_number is None
+        and not card.delivered_task_ids
+        and card.deliverable_kind
+        in (
+            DeliverableKind.file,
+            DeliverableKind.link,
+        )
     ):
         return None
     task = await TaskService(session).require_in_room(topic_id, card.task_id)
