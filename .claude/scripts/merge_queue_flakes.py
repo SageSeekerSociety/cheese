@@ -294,14 +294,17 @@ def same_sha_green(runs: list[Run], reds: list[Run]) -> dict[str, int]:
     换了 workflow 就不是同一批检查，它绿不证明这条用例当时绿。返回空 = 没坐实，
     调用方见了空必须按真故障读 —— 只见过红的偶发，和一条真回归在这份数据里没有
     区别。
+
+    workflow 空的运行一律不算：`--jq` 挑窄了的离线样本会缺这个字段，而空串当成
+    同一条 workflow 会把不相干的运行归到一处，坐实就成了假的。判不了就不判。
     """
     green_by_key: dict[tuple[str, str], int] = {}
     for run in runs:
-        if run.conclusion in GREEN_RUN and run.subject:
+        if run.conclusion in GREEN_RUN and run.subject and run.workflow:
             green_by_key.setdefault((run.workflow, run.subject), run.id)
     confirmed: dict[str, int] = {}
     for run in reds:
-        if not run.subject:
+        if not run.subject or not run.workflow:
             continue
         green_id = green_by_key.get((run.workflow, run.subject))
         if green_id is not None:
@@ -332,13 +335,25 @@ def judge_known_flakes(runs: list[Run]) -> dict:
                 if all(seen.id != run.id for seen in bucket):
                     bucket.append(run)
 
+    #: 判据的 key 是 (workflow, 入场名)。运行级那道闸要用同一对 key 逐轮核，
+    #: 不能按用例桶汇：同一条用例在入场 A 上绿过，不说明入场 B 的那一轮也绿过；
+    #: 同一入场在另一条 workflow 上绿过，也不说明这条 workflow 绿过。按桶汇会把
+    #: 从未绿过的轮次一起放进来，给它「别 push-fix、重新采纳」的处置 —— 那正是
+    #: 这条档案要拦的误读。
+    green_keys = {
+        (run.workflow, run.subject)
+        for run in runs
+        if run.conclusion in GREEN_RUN and run.subject and run.workflow
+    }
+
     case_rows = []
     evidenced: set[int] = set()
     for (flake_id, node), reds in matches.items():
         flake = _KNOWN_BY_ID[flake_id]
         greens = same_sha_green(runs, reds)
-        if greens:
-            evidenced.update(run.id for run in reds)
+        evidenced.update(
+            run.id for run in reds if (run.workflow, run.subject) in green_keys
+        )
         case_rows.append(
             {
                 "flake": flake_id,
@@ -557,23 +572,16 @@ def _unique(payloads: list[dict]) -> list[dict]:
 def _run_fields(raw: dict) -> dict:
     """gh 的运行对象 → Run 那几个来源字段。
 
-    `head_sha`/`head_branch`/`event` 缺就留空串，不编：判据拿空提交号当「证不出来」，
-    走未坐实那一侧，这是安全的方向。
-
-    `workflow` 不留空 —— 判据拿它当「同一条 workflow」那一半 key，空串会让不相干的
-    运行全部归到一处，坐实就成了假的，这跟其余几个字段是反方向。所以宁可当场报错：
-    `path` 和 `name` 都没有，说明取数那一步被改窄了，这时候出的榜整段不可信。
+    样本是 `--jq` 挑过字段抓下来的话，这几个可能缺；缺就留空串，不编。空值一律
+    「证不出来」，走未坐实那一侧，这是安全的方向 —— 判据那边逐字段守住了：空提交号
+    和空入场名不参与比对，`same_sha_green` 也不认 workflow 为空的运行，所以留空不会
+    把不相干的运行归到一处、凑出一次假的坐实。这里不报错，是因为窄样本仍能出两张
+    排行榜，没必要为判据那一半的输入把整张榜毙掉。
     """
-    workflow = raw.get("path") or raw.get("name")
-    if not workflow:
-        raise RuntimeError(
-            f"运行 {raw.get('id')} 没有 path/name，取不到 workflow；"
-            "取数那一步挑字段挑窄了，整张榜不可信，先修取数"
-        )
     return {
         "head_sha": raw.get("head_sha") or "",
         "head_branch": raw.get("head_branch") or "",
-        "workflow": workflow,
+        "workflow": raw.get("path") or raw.get("name") or "",
         "event": raw.get("event") or "",
     }
 
@@ -873,13 +881,13 @@ def _self_test_flake_criterion() -> None:
     ) -> Run:
         log = f"2026-10-16T08:12:41.1140393Z FAILED {node} - {signature}\n"
         extra.setdefault("event", "pull_request")
+        extra.setdefault("workflow", required_ci)
         return Run(
             run_id,
             "failure",
             "2026-10-16T08:00:00Z",
             [Job(job_id, "failure", log)],
             head_sha=sha,
-            workflow=required_ci,
             **extra,
         )
 
@@ -981,6 +989,90 @@ def _self_test_flake_criterion() -> None:
     )
     assert judged["runs"][0]["runs"] == [5], judged["runs"]
 
+    # 证据要逐轮核，不能按用例桶汇：同一条用例在入场 A 上红绿都有，不等于入场 B
+    # 的那一轮也坐实过。这里 B 只红过一次、从没绿过，运行级只许列 A 那一轮。
+    # 按桶汇（把桶里所有红运行都记成有证据）会把 21 一起放进来。
+    same_node_other_entry = [
+        failed(
+            20,
+            62,
+            "5" * 40,
+            planner,
+            "AssertionError: assert 'GroupAggregate' not in plan",
+            head_branch=f"gh-readonly-queue/main/pr-4020-{head}",
+            event="merge_group",
+        ),
+        Run(
+            21,
+            "success",
+            "2026-10-16T09:30:00Z",
+            head_sha="6" * 40,
+            head_branch=f"gh-readonly-queue/main/pr-4020-{head}",
+            workflow=required_ci,
+            event="merge_group",
+        ),
+        failed(
+            22,
+            63,
+            "7" * 40,
+            planner,
+            "AssertionError: assert 'GroupAggregate' not in plan",
+            head_branch=f"gh-readonly-queue/main/pr-4021-{head}",
+            event="merge_group",
+        ),
+    ]
+    entry_rows = judge_known_flakes(same_node_other_entry)["runs"]
+    assert [row["runs"] for row in entry_rows] == [[20]], entry_rows
+
+    # 同一入场但另一条 workflow 上的绿也不算：判据的 key 里那一半不能丢。
+    other_workflow = [
+        failed(
+            23,
+            64,
+            "8" * 40,
+            planner,
+            "AssertionError: assert 'GroupAggregate' not in plan",
+            head_branch=f"gh-readonly-queue/main/pr-4022-{head}",
+            event="merge_group",
+        ),
+        Run(
+            24,
+            "success",
+            "2026-10-16T09:40:00Z",
+            head_sha="9" * 40,
+            head_branch=f"gh-readonly-queue/main/pr-4022-{head}",
+            workflow=frontend,
+            event="merge_group",
+        ),
+    ]
+    assert judge_known_flakes(other_workflow)["runs"] == []
+    # workflow 取不到的运行同样不许坐实 —— 空串当成同一条 workflow，会把不相干的
+    # 轮次归到一处。这条守的是 `_run_fields` 留空之后判据那一侧的分寸。
+    no_workflow = [
+        failed(
+            25,
+            65,
+            "a" * 40,
+            planner,
+            "AssertionError: assert 'GroupAggregate' not in plan",
+            workflow="",
+            head_branch=f"gh-readonly-queue/main/pr-4023-{head}",
+            event="merge_group",
+        ),
+        Run(
+            26,
+            "success",
+            "2026-10-16T09:50:00Z",
+            head_sha="b" * 40,
+            head_branch=f"gh-readonly-queue/main/pr-4023-{head}",
+            workflow="",
+            event="merge_group",
+        ),
+    ]
+    no_wf = judge_known_flakes(no_workflow)
+    assert no_wf["cases"][0]["verdict"] == "unproven", no_wf["cases"]
+    assert no_wf["runs"] == [], no_wf["runs"]
+
     # 不在档案里的用例不许被认领。
     assert known_flake_for_case("tests/b.py::test_other", "AssertionError: x") is None
     # 用例对上、签名对不上，是同一个用例的另一种红：借旧档案溜走就是漏一条真故障。
@@ -995,19 +1087,15 @@ def _self_test_flake_criterion() -> None:
         assert fragment in text, text
 
     def judged_with(criterion, sample: list[Run] | None = None) -> dict:
-        """换掉判据再判一遍，整份判定都交回来 —— 证明下面每份样本区分得开。
+        """换掉判据再判一遍 —— 用来证明下面每份样本都真的区分得开。
 
-        两段都要：用例级看 `cases`，运行级那一行也吃同一条判据（它只列坐实过的
-        轮次），只交 cases 就验不到运行级那道闸。
+        只交用例级：运行级那道闸已经按自己的样本直接断过了，不再经过这里。
         """
         real = same_sha_green
         globals()["same_sha_green"] = criterion
         try:
-            by_flake = {}
-            payload = judge_known_flakes(sample if sample is not None else runs)
-            by_flake["cases"] = {row["flake"]: row for row in payload["cases"]}
-            by_flake["runs"] = payload["runs"]
-            return by_flake
+            judged_again = judge_known_flakes(sample if sample is not None else runs)
+            return {row["flake"]: row for row in judged_again["cases"]}
         finally:
             globals()["same_sha_green"] = real
 
@@ -1061,7 +1149,7 @@ def _self_test_flake_criterion() -> None:
         (merge_commit, runs, "indexed-rows-planner-assertion"),
         (base_sha_only, siblings, "indexed-rows-planner-assertion"),
     ):
-        mutated = judged_with(criterion, sample)["cases"][flake_id]["verdict"]
+        mutated = judged_with(criterion, sample)[flake_id]["verdict"]
         plain = {
             row["flake"]: row for row in judge_known_flakes(sample)["cases"]
         }[flake_id]["verdict"]
