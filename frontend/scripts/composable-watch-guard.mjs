@@ -18,11 +18,13 @@
 // site maps `x: () => props.x`, or passes the scope as `() => ({ x: props.x })`; a
 // composable taking the value itself (`fn(() => props.x)`) matches `toValue(x)`; refs,
 // `computed(() => props.x)` and local aliases (`const s = toValue(scope)`) are
-// unwrapped, and array sources are compared element by element. A ref's `.value` is dropped, but a prop or scope
-// property literally named `value` is kept. Keys rooted outside props and the scope
-// live under `$local.`, so a local ref never stands in for a lost prop. A renamed or
-// restructured source can be reported even though it survived; waive that one with
-// --allow.
+// unwrapped, and array sources are compared element by element. A ref's `.value` is
+// dropped where the root is a ref (a local, a destructured binding, or a parameter
+// that is the value itself); a prop or scope path is kept as written, so `props.x` and
+// `props.x.value` do not stand in for each other. Keys rooted outside props and the
+// scope live under `$local.`, so a local ref never stands in for a lost prop. A
+// renamed or restructured source can be reported even though it survived; waive that
+// one with --allow.
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -153,14 +155,12 @@ function memberKeys(node, ctx) {
   const member = memberPath(node, ctx)
   if (!member) return null
   const { root } = member
-  // `.value` unwraps a ref, except in the two positions where it names a value that
-  // happens to be called `value`: the first segment of `props` (`props.value`) and the
-  // first segment of a scope property the call site maps (`scope.value`). Deeper
-  // segments are refs held inside a prop (`props.rewrite.phase.value`).
-  const scopeValueHead = root === ctx.scopeParam && (ctx.scopeProps?.has('value') || ctx.scopeWholeProps === true)
-  const segments = member.path.filter(
-    (segment, index) => segment !== 'value' || ((root === 'props' || scopeValueHead) && index === 0)
-  )
+  // `.value` unwraps a ref only where the root is one: a local, a destructured
+  // binding, or a parameter that is the value itself (`fn(topicId)`, watched as
+  // `sid.value`). `props` and a scope object hold plain values, so their segments are
+  // kept as written: `props.config` and `props.config.value` watch different things.
+  const keepsValue = root === 'props' || (root === ctx.scopeParam && !ctx.scopeValue?.size)
+  const segments = keepsValue ? [...member.path] : member.path.filter((segment) => segment !== 'value')
   if (root === 'props') return new Set([segments.length ? segments.join('.') : 'props'])
   if (ctx.scopeParam && root === ctx.scopeParam) {
     if (!segments.length) {

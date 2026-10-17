@@ -538,6 +538,72 @@ export function usePanel(scope: { rewrite: () => { phase: { value: string } } })
   assert.equal(carried.status, 0, carried.output)
 })
 
+test('does not let a prop object stand in for the value field it watches', (t) => {
+  // `props.config` is an object and `props.config.value` is one field of it. Watching
+  // the object is not watching the field, so the port must keep the `.value` too.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel({ config: () => props.config })`
+  const carried = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { config: () => { value: string } }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.config).value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { config: () => { value: string } }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.config), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /config\.value/)
+})
+
+test('a ref nested in a prop needs the same path on both sides', (t) => {
+  // `props.state.value.topicId` and `props.state.topicId` are different sources.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ state: { value: { topicId: string } } }>()
+const loading = ref(false)
+watch(() => props.state.value.topicId, () => { loading.value = false })`
+  const head = (source) => `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ state: { value: { topicId: string } } }>()
+const { loading } = usePanel({ topicId: () => ${source} })`
+  const composableSource = `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.topicId), () => { loading.value = false })
+  return { loading }
+}`
+  const carried = split(t, { script, head: head('props.state.value.topicId'), composableSource }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, { script, head: head('props.state.topicId'), composableSource }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /state\.value\.topicId/)
+})
+
 test('follows a prop destructured into a local before watching it', (t) => {
   const script = `import { ref, watch } from 'vue'
 
