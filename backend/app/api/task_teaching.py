@@ -9,12 +9,14 @@ materials（引用校验）,所以它按 `ensure_teaching_references` 交代的�
 自己写的**原始覆盖**，不是解析后的赢家；写的是**整份替换**，不是深合。
 """
 
+from functools import partial
+
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.doc_access import ensure_team_documents
 from app.api.space_payloads import TeachingRequest, teaching_to_api
 from app.core.errors import BadRequestError
-from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService
 from app.domain.space.services import ensure_teaching_references
 from app.domain.task.models import Task
@@ -59,7 +61,7 @@ def coerce_teaching(raw: object) -> dict | None:
 async def validate_task_teaching(
     db: AsyncSession, *, teaching: dict | None, actor_user_id: int
 ) -> None:
-    """Refuse a 题目's 指导 that names a 知识 or 课件 nobody can resolve.
+    """Refuse a 题目's 指导 that names a document or 课件 nobody can resolve.
 
     The very check the 项目集 form and the 空间默认 run (`ensure_teaching_references`)
     — a 题目 is one more level of the same config, not a second kind of it, so it
@@ -70,7 +72,7 @@ async def validate_task_teaching(
     if teaching is None:
         return
     await ensure_teaching_references(
-        knowledge_service=KnowledgeService.for_lookup(db),
+        document_check=partial(ensure_team_documents, db),
         material_service=MaterialService.for_lookup(db),
         session=db,
         teaching=teaching,

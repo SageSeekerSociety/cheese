@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 // The payload domains' failure and edge evidence (questions / answers / legal /
-// attachments / knowledges, the happy paths of which live in
+// attachments, the happy paths of which live in
 // `payloadDomainsContract.spec.ts`). For each domain the new payload stack is
 // driven through the same refusal, edge page, lost network and empty-payload
 // cases, and the sentence a real consumer would surface is checked.
 //
 // The consumers read `.message` (getErrorMessage / axiosErrorMessage /
 // `error.message` — e.g. useQuestionInvitations, usePendingConsent,
-// useAttachmentUploads, useTeamKnowledge), which the stack sets to the server's
+// useAttachmentUploads), which the stack sets to the server's
 // own sentence, so a swallowed refusal must not change it.
 import { http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
@@ -43,7 +43,6 @@ beforeAll(async () => {
     answers: (await import('./answers')).AnswersApi as unknown as Namespace,
     legal: (await import('./legal')).LegalApi as unknown as Namespace,
     attachments: (await import('./attachments')).AttachmentsApi as unknown as Namespace,
-    knowledges: (await import('./knowledges')).KnowledgesApi as unknown as Namespace,
   }
 })
 
@@ -86,14 +85,6 @@ const domains: Domain[] = [
     method: 'get',
     readPath: '/attachments/9',
     read: (api) => api.detail(9),
-  },
-  {
-    label: 'knowledges',
-    origin: newer,
-    method: 'get',
-    readPath: '/knowledge/9',
-    read: (api) => api.getDetail(9),
-    command: { method: 'delete', path: '/knowledge/9', call: (api) => api.deleteKnowledge(9) },
   },
 ]
 
@@ -170,89 +161,5 @@ describe('domain: structured refusals keep their meaning', () => {
     const api = modules[domain.label]!
     const error = await command.call(api).catch((failure) => failure)
     expect(error).toBeInstanceOf(Error)
-  })
-})
-
-describe('knowledges: authentication edge cases', () => {
-  // knowledges rides the newer origin; this section pins its 401 contract
-  // (bearer, refresh-and-retry, redirect, give-up). The primary-origin domains
-  // share one transport and their auth evidence lives in
-  // `spacesFailureContract.spec.ts`.
-  const payload = { knowledge: { id: 9 } }
-
-  it('sends no bearer for a logged-out or empty-token caller', async () => {
-    for (const [loggedIn, accessToken] of [
-      [false, 'contract-token'],
-      [true, ''],
-    ] as const) {
-      auth.loggedIn = loggedIn
-      auth.accessToken = accessToken
-      server.use(
-        http.get(`${newer}/knowledge/9`, ({ request }) => {
-          expect(request.headers.get('authorization')).toBeNull()
-          return HttpResponse.json(envelope(payload))
-        })
-      )
-      expect(await modules.knowledges!.getDetail!(9)).toEqual(payload)
-    }
-  })
-
-  it('refreshes once and retries with the returned token', async () => {
-    server.resetHandlers()
-    auth.accessToken = 'contract-token'
-    refresh.mockReset().mockImplementation(async () => {
-      auth.accessToken = 'refreshed-token'
-      return { kind: 'ok', token: 'refreshed-token' }
-    })
-    const authorization: (string | null)[] = []
-    server.use(
-      http.get(`${newer}/knowledge/9`, ({ request }) => {
-        authorization.push(request.headers.get('authorization'))
-        if (authorization.length === 1) return new HttpResponse(null, { status: 401 })
-        return HttpResponse.json(envelope(payload))
-      })
-    )
-    expect(await modules.knowledges!.getDetail!(9)).toEqual(payload)
-    expect(authorization).toEqual(['Bearer contract-token', 'Bearer refreshed-token'])
-    expect(refresh).toHaveBeenCalledOnce()
-  })
-
-  // A renewal the server turns down is not retried, and this layer does not take
-  // the person to a sign-in itself: `lib/session.ts` announces it and
-  // `services/account.ts` drops the session and navigates, for both stacks
-  // (`account.sessionOver.spec.ts`).
-  it('does not retry a rejected renewal, and does not navigate to a sign-in itself', async () => {
-    server.resetHandlers()
-    let requests = 0
-    server.use(
-      http.get(`${newer}/knowledge/9`, () => {
-        requests++
-        return new HttpResponse(null, { status: 401 })
-      })
-    )
-    refresh.mockReset().mockResolvedValue({ kind: 'rejected' })
-    replace.mockReset()
-    await expect(modules.knowledges!.getDetail!(9)).rejects.toBeInstanceOf(Error)
-    expect(requests).toBe(1)
-    expect(replace).not.toHaveBeenCalled()
-  })
-
-  it('stops after a refreshed request is still unauthorized', async () => {
-    server.resetHandlers()
-    let requests = 0
-    server.use(
-      http.get(`${newer}/knowledge/9`, () => {
-        requests++
-        return new HttpResponse(null, { status: 401 })
-      })
-    )
-    refresh.mockReset().mockImplementation(async () => {
-      auth.accessToken = 'refreshed-token'
-      return { kind: 'ok', token: 'refreshed-token' }
-    })
-    const error = await modules.knowledges!.getDetail!(9).catch((failure) => failure)
-    expect(error).toBeInstanceOf(Error)
-    expect(requests).toBe(2)
-    expect(refresh).toHaveBeenCalledOnce()
   })
 })

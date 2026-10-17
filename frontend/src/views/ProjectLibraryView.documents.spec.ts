@@ -84,6 +84,7 @@ beforeAll(() => {
 function doc(id: string, title: string, updated: string, extra: Partial<ProjectDocument> = {}): ProjectDocument {
   return {
     id,
+    team_id: 1,
     project_id: 'p1',
     kind: 'doc',
     title,

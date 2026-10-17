@@ -127,6 +127,15 @@ async def _shown_title(session: AsyncSession, doc: Document) -> str | None:
     return row.title
 
 
+def _project_of(doc: Document) -> uuid.UUID:
+    """The project of a document a conversation shows: a channel's, a task's or
+    one 芝士 made there. A team's own document is in no conversation (#3774)."""
+    if doc.project_id is None:
+        # i18n-exempt: an invariant, never shown to a person
+        raise ValueError("A team's own document is in no conversation")
+    return doc.project_id
+
+
 class DocumentWriter:
     def __init__(self, session: AsyncSession, summarize: Callable[[str, str], str]):
         self._session = session
@@ -171,7 +180,6 @@ class DocumentWriter:
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
         room_id, task_id = await whose_document(self._session, doc)
-        project_id = doc.project_id
         self.notice_merged = False
         author = actors[0]
         journal = DocumentJournal(self._session)
@@ -210,7 +218,7 @@ class DocumentWriter:
             return doc, None
         landed = landing(
             EventAbout.task if task_id is not None else EventAbout.room,
-            project_id=project_id,
+            project_id=_project_of(doc),
             room_id=room_id,
             task_id=task_id,
         )
@@ -343,7 +351,7 @@ class DocumentWriter:
             return None
         landed = landing(
             EventAbout.task if task_id is not None else EventAbout.room,
-            project_id=doc.project_id,
+            project_id=_project_of(doc),
             room_id=room_id,
             task_id=task_id,
         )
@@ -435,11 +443,11 @@ async def tell_room_of_document(
     extended the last one."""
     blocks = BlockRepository(session)
     landed = (
-        landing(EventAbout.thread, project_id=doc.project_id, thread_id=thread_id)
+        landing(EventAbout.thread, project_id=_project_of(doc), thread_id=thread_id)
         if thread_id is not None
         else landing(
             EventAbout.task if task_id is not None else EventAbout.room,
-            project_id=doc.project_id,
+            project_id=_project_of(doc),
             room_id=room_id,
             task_id=task_id,
         )

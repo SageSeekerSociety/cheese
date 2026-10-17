@@ -1,13 +1,13 @@
-"""`teaching.knowledgeIds` / `materialIds` 指向谁的 —— 写入侧那一半。
+"""`teaching.documentIds` / `materialIds` 指向谁的 —— 写入侧那一半。
 
-读取侧 (`KnowledgeService.get_many`) 故意不做成员校验，它记的理由是「a teacher
-can only point at entries they could already see」。那句话描述的是**写入侧**应该
-保证的前提，而写入侧从前没有保证：一个题目板的所有者可以把自己的 `teaching` 指向
-**别的团队**的知识，那道题里 agent 的开场上下文随后就带上了别人团队的名字与描述。
+读取侧 (`teaching.for_project`) 不做成员校验：一门课点了名的团队文档，课下项目的
+AI 队友就读得到（#3774）。所以**写入侧**必须保证老师只能点自己读得到的：一个题目板
+的所有者不能把 `teaching` 指向**别的团队**的文档，否则那道题里的 agent 就读到了别人
+团队的东西。
 
-这里按浏览器会收到的状态码逐条断：引用别人的知识 → 4xx 且没落库；引用自己的知识
-→ 200 且 `for_project()` 读得到名字；对照 —— 同一条知识直接读仍是 403。另外两条
-把「指向不存在的 id 要明说是哪个字段」和「课件没有归属、不需要成员校验」钉住。
+这里按浏览器会收到的状态码逐条断：引用别人团队的文档 → 4xx 且没落库；引用自己团队
+的文档 → 200 且 `for_project()` 读得到标题；对照 —— 同一份文档直接读仍是 403。另外
+两条把「指向不存在的 id 要明说是哪个字段」和「课件没有归属、不需要成员校验」钉住。
 
 登录接口按用户名限速，所以每个用户都用 `user_client.create_user()` 现造，不碰真
 种子账号。
@@ -36,7 +36,7 @@ EMPTY_TEACHING = {
     "allowedTopics": [],
     "avoidInCode": [],
     "materialIds": [],
-    "knowledgeIds": [],
+    "documentIds": [],
 }
 
 
@@ -74,10 +74,10 @@ def _new_board(user_client: UserCreator, api_client: TestClient) -> dict:
     }
 
 
-def _team_with_knowledge(
+def _team_with_document(
     api_client: TestClient, *, owner, token: str, name: str
 ) -> dict:
-    """一个团队 + 里面一条知识，团队的所有者由调用方指定。
+    """一个团队 + 里面一份团队文档，团队的所有者由调用方指定。
 
     `teamId` 必须落在一个调用方（也就是写入 `teaching` 的那个人）确实是成员的
     团队上，否则连写入侧都不该放行 —— 这正是被测的那条判据。
@@ -96,27 +96,16 @@ def _team_with_knowledge(
     assert team.status_code == 201, team.text
     team_id = team.json()["data"]["team"]["id"]
 
-    entry = api_client.post(
-        "/knowledge",
-        json={
-            "name": name,
-            "description": "别人团队里的机密",
-            "type": "TEXT",
-            "content": {"text": "内部资料"},
-            "teamId": team_id,
-            "projectId": None,
-            "discussionId": None,
-            "labels": [],
-        },
-        headers=_auth(token),
+    doc = api_client.post(
+        f"/teams/{team_id}/documents", json={"title": name}, headers=_auth(token)
     )
-    assert entry.status_code == 201, entry.text
+    assert doc.status_code == 200, doc.text
     return {
         "owner": owner,
         "token": token,
         "team_id": team_id,
-        "knowledge_id": entry.json()["data"]["knowledge"]["id"],
-        "knowledge_name": name,
+        "document_id": doc.json()["data"]["id"],
+        "document_title": name,
     }
 
 
@@ -125,7 +114,7 @@ def _patch_teaching(
     board: dict,
     token: str,
     *,
-    knowledge_ids: list[int] | None = None,
+    document_ids: list[str] | None = None,
     material_ids: list[int] | None = None,
 ):
     return api_client.patch(
@@ -133,7 +122,7 @@ def _patch_teaching(
         json={
             "teaching": {
                 "materialIds": material_ids or [],
-                "knowledgeIds": knowledge_ids or [],
+                "documentIds": document_ids or [],
             }
         },
         headers=_auth(token),
@@ -246,48 +235,43 @@ def _seed_material(portal, session, *, uploader_id: int, name: str) -> int:
     return holder["id"]
 
 
-def test_referencing_another_teams_knowledge_is_refused(
+def test_referencing_another_teams_document_is_refused(
     api_client: TestClient, user_client: UserCreator
 ):
-    """(a)+(c)：板主引用别的团队的知识 → 4xx 且 `teaching` 没变；同一条知识他
-    直接读也还是 403。
-
-    这正是从前能落库的那一步：`PATCH` 返回 200，`knowledge_ids` 里躺着别人团队
-    的 id，读取侧随后把它交到那道题里 agent 的开场上下文。
-    """
+    """(a)+(c)：板主引用别的团队的文档 → 4xx 且 `teaching` 没变；同一份文档他
+    直接读也还是 403。"""
     board = _new_board(user_client, api_client)  # 乙：板的所有者，不是 T 的成员
     stranger = user_client.create_user()
     stranger_token = _login(user_client, api_client, stranger)
-    foreign = _team_with_knowledge(
+    foreign = _team_with_document(
         api_client,
         owner=stranger,
         token=stranger_token,
         name=f"SECRET-{unique_int(10000000, 99999999)}",
     )
 
-    # 对照 (c)：他对这条知识本来就读不到。
+    # 对照 (c)：他对这份文档本来就读不到。
     peek = api_client.get(
-        f"/knowledge/{foreign['knowledge_id']}", headers=_auth(board["token"])
+        f"/documents/{foreign['document_id']}", headers=_auth(board["token"])
     )
     assert peek.status_code == 403, peek.text
-    assert "not a member of the team" in peek.text
 
     denied = _patch_teaching(
-        api_client, board, board["token"], knowledge_ids=[foreign["knowledge_id"]]
+        api_client, board, board["token"], document_ids=[foreign["document_id"]]
     )
     assert 400 <= denied.status_code < 500, denied.text
     # 被拒之后，存着的配置一个字都没动。
     assert _teaching_of(api_client, board, board["token"]) == EMPTY_TEACHING
 
 
-def test_referencing_my_own_knowledge_sticks_and_reaches_the_course(
+def test_referencing_my_own_teams_document_sticks_and_reaches_the_course(
     api_client: TestClient, user_client: UserCreator, db_session, _portal
 ):
-    """(b)：引用自己团队的知识 → 200，`knowledge_ids` 落库，`for_project()`
-    读得到名字与描述 —— 修复之后正路仍然走得通。"""
+    """(b)：引用自己团队的文档 → 200，`document_ids` 落库，`for_project()`
+    读得到标题 —— 正路走得通。"""
     board = _new_board(user_client, api_client)
-    # 知识的团队就是板主自己的团队 —— 他确实是成员。
-    mine = _team_with_knowledge(
+    # 文档的团队就是板主自己的团队 —— 他确实是成员。
+    mine = _team_with_document(
         api_client,
         owner=board["creator"],
         token=board["token"],
@@ -295,11 +279,11 @@ def test_referencing_my_own_knowledge_sticks_and_reaches_the_course(
     )
 
     ok = _patch_teaching(
-        api_client, board, board["token"], knowledge_ids=[mine["knowledge_id"]]
+        api_client, board, board["token"], document_ids=[mine["document_id"]]
     )
     assert ok.status_code == 200, ok.text
-    assert _teaching_of(api_client, board, board["token"])["knowledgeIds"] == [
-        mine["knowledge_id"]
+    assert _teaching_of(api_client, board, board["token"])["documentIds"] == [
+        mine["document_id"]
     ]
 
     task_id = _publish_task(api_client, board, name="这门课的题")
@@ -307,15 +291,14 @@ def test_referencing_my_own_knowledge_sticks_and_reaches_the_course(
 
     context = _for_project(_portal, db_session, project_id)
     assert context is not None
-    assert [k["id"] for k in context.knowledge] == [mine["knowledge_id"]]
-    assert [k["name"] for k in context.knowledge] == [mine["knowledge_name"]]
-    assert context.knowledge[0]["description"] == "别人团队里的机密"
+    assert [d["id"] for d in context.documents] == [mine["document_id"]]
+    assert [d["title"] for d in context.documents] == [mine["document_title"]]
 
 
-def test_a_missing_knowledge_id_is_named_not_dropped(
+def test_a_missing_document_id_is_named_not_dropped(
     api_client: TestClient, user_client: UserCreator
 ):
-    """指向不存在的知识 → 4xx，且指出是 `knowledgeIds` 这个字段，而不是静默丢。
+    """指向不存在的文档 → 4xx，且指出是 `documentIds` 这个字段，而不是静默丢。
 
     写入侧的取向与 `Teaching.from_json` 相反：那边丢坏字段是「不能因为一个字段
     拼错就让二十道题全挂」；这里有人正看着表单，可以被告知哪个字段错了。
@@ -323,10 +306,10 @@ def test_a_missing_knowledge_id_is_named_not_dropped(
     board = _new_board(user_client, api_client)
 
     denied = _patch_teaching(
-        api_client, board, board["token"], knowledge_ids=[999_999_999]
+        api_client, board, board["token"], document_ids=[str(uuid.uuid4())]
     )
     assert denied.status_code == 400, denied.text
-    assert denied.json()["error"]["data"]["field"] == "knowledgeIds"
+    assert denied.json()["error"]["data"]["field"] == "documentIds"
     assert _teaching_of(api_client, board, board["token"]) == EMPTY_TEACHING
 
 
@@ -368,7 +351,7 @@ def test_someone_elses_material_is_allowed_because_material_has_no_owner(
 def test_the_other_teaching_fields_are_untouched(
     api_client: TestClient, user_client: UserCreator, db_session, _portal
 ):
-    """回归：新增的引用校验只碰 `materialIds` / `knowledgeIds`，
+    """回归：新增的引用校验只碰 `materialIds` / `documentIds`，
     `systemPrompt` / `currentWeek` / `allowedTopics` / `avoidInCode` 照旧落库、
     照旧进这一轮的开场上下文。"""
     board = _new_board(user_client, api_client)
@@ -378,7 +361,7 @@ def test_the_other_teaching_fields_are_untouched(
         "allowedTopics": ["循环"],
         "avoidInCode": ["递归"],
         "materialIds": [],
-        "knowledgeIds": [],
+        "documentIds": [],
     }
     resp = api_client.patch(
         f"/spaces/{board['space_id']}/categories/{board['category_id']}",
