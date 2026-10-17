@@ -661,6 +661,35 @@ def _turn_started(client, conversation_id: str, *, ago, author="alice"):
     return at
 
 
+def _turn_opened(client, conversation_id: str, *, ago, delivered: bool, stopped=False):
+    """开了一轮：一行 `agent_turns`，`delivered` 说 prompt 有没有送到会话。
+
+    `open_turn` 先把行落下来，传输接住才写 `delivered_at`；`delivered=False` 正是
+    两步之间进程死掉的那一态 —— 会话从没听过这个 prompt。`stopped=True` 是清扫 /
+    `retire_failed` 之后：行只关不删，会一直留着。
+    """
+    at = datetime.now(UTC) - ago
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=uuid.UUID(conversation_id),
+                    continuation_id=uuid.uuid4(),
+                    author="alice",
+                    content="接着干",
+                    started_at=at,
+                    delivered_at=at if delivered else None,
+                    stopped_at=at + timedelta(seconds=1) if stopped else None,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_add())
+    return at
+
+
 def _broke(
     client,
     project_id: str,
@@ -809,6 +838,106 @@ def test_a_newer_turn_starting_clears_it_even_without_a_word(client):
 
     _turn_started(client, ids["task"], ago=timedelta(minutes=1))
 
+    row = _room_row(client, project, room, "alice")
+    assert row["incomplete_since"] is None
+    assert _task_row(row, ids["task"])["incomplete_since"] is None
+
+
+def test_an_undelivered_turn_does_not_clear_the_old_failure(client):
+    """行落下了、prompt 却没送到会话 —— 没人接手，旧失败继续亮着。
+
+    `open_turn` 在传输接受之前就写 `agent_turns`；进程随后死掉时这一行会留着，
+    但会话从没听过它，它不是「又开了一轮在干」：不清掉红灯，也不带来新的红灯。
+    两个列表（侧栏与「全部任务」）读的是同一份事实。
+    """
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "没送到所以还没人接手的活",
+                "owner_handle": "alice",
+            }
+        ],
+    )
+    at = _broke(client, project, ids["task"], ago=timedelta(minutes=9))
+
+    _turn_opened(client, ids["task"], ago=timedelta(minutes=1), delivered=False)
+
+    row = _room_row(client, project, room, "alice")
+    task = _task_row(row, ids["task"])
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+    assert abs(_incomplete(task) - at) < timedelta(seconds=1)
+    # 没送到的一轮不在「在跑」里，也没有输出：没有绿或安静红来顶替。
+    assert task["moving"] is False
+
+    listed = client.get(
+        f"/projects/{project}/tasks", headers=session_auth_headers("alice")
+    )
+    assert listed.status_code == 200, listed.text
+    assert abs(_incomplete(_project_task_row(listed, ids["task"])) - at) < timedelta(
+        seconds=1
+    )
+
+
+def test_a_swept_undelivered_turn_does_not_clear_it_either(client):
+    """清扫把那一行关掉（只 close/warn，不删行）—— 关掉不等于有人接手。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "崩溃后被清扫过的活",
+                "owner_handle": "alice",
+            }
+        ],
+    )
+    at = _broke(client, project, ids["task"], ago=timedelta(minutes=9))
+
+    _turn_opened(
+        client,
+        ids["task"],
+        ago=timedelta(minutes=1),
+        delivered=False,
+        stopped=True,
+    )
+
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+    assert abs(_incomplete(_task_row(row, ids["task"])) - at) < timedelta(seconds=1)
+
+
+def test_only_a_turn_that_reached_the_session_clears_it(client):
+    """同一件活：先有一轮没送到（红灯不动），送到之后才算接手（红灯清掉）。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "先没送到、后送到了的活",
+                "owner_handle": "alice",
+            }
+        ],
+    )
+    at = _broke(client, project, ids["task"], ago=timedelta(minutes=9))
+
+    _turn_opened(client, ids["task"], ago=timedelta(minutes=2), delivered=False)
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(_task_row(row, ids["task"])) - at) < timedelta(seconds=1)
+
+    _turn_opened(client, ids["task"], ago=timedelta(seconds=30), delivered=True)
     row = _room_row(client, project, room, "alice")
     assert row["incomplete_since"] is None
     assert _task_row(row, ids["task"])["incomplete_since"] is None

@@ -69,14 +69,15 @@ FAILED = "failed"
 #: Run records on the machine side: a turn waiting for the machine it runs on.
 MACHINE_RECORDS = ("device_waiting",)
 
-# 「这个对话里有没有新一轮开始了」：只取 conversation_id 和 started_at 两列，一张
-# 裸表。整张 `AgentTurn` 属于 agent 域，这里要的只是它的那个瞬间 —— 用裸表是为了
-# 不去 import 那个模型（`agent/liveness.py` 读 `threads` 也是这个形状），block
-# 域不必因此多一条跨域依赖。
+# 「这个对话里有没有新一轮开始了」：取 conversation_id、started_at 和 delivered_at
+# 三列，一张裸表。整张 `AgentTurn` 属于 agent 域，这里要的只是它的那个瞬间 —— 用
+# 裸表是为了不去 import 那个模型（`agent/liveness.py` 读 `threads` 也是这个形状），
+# block 域不必因此多一条跨域依赖。
 _TURNS = table(
     "agent_turns",
     column("conversation_id", Uuid),
     column("started_at", DateTime(timezone=True)),
+    column("delivered_at", DateTime(timezone=True)),
 )
 
 
@@ -191,10 +192,17 @@ class MemberWaits:
 
         - the member whose turn it was speaks there again — a retry that worked,
           or the next turn answering normally; or
-        - a newer turn starts there — the row is being worked on again, and it is
-          behind the failure whether or not that next turn itself succeeds (a
-          retry that goes quiet, or one that fails in turn, is a *new* failure
-          with its own clock, not the old one still counting).
+        - a newer turn, whose prompt actually reached the session
+          (`delivered_at` is set), starts there — the row is being worked on
+          again, and it is behind the failure whether or not that next turn
+          itself succeeds (a retry that goes quiet, or one that fails in turn,
+          is a *new* failure with its own clock, not the old one still counting).
+
+        A turn whose prompt was never delivered (`delivered_at` NULL: the boot
+        opened the row, the transport never took the write, the process died
+        before any sweep closed it) is *not* working on anything — nothing has
+        heard the prompt — so it clears nothing: the old failure stays red and
+        no new one replaces it. Only a delivered turn ends the old clock.
 
         Taking the earliest unresolved failure is what lets the sidebar count
         from the moment the row broke and stay red across a retry that failed
@@ -253,11 +261,16 @@ class MemberWaits:
         unit_of: Mapping[uuid.UUID, uuid.UUID],
         since: datetime,
     ) -> dict[uuid.UUID, datetime]:
-        """{row: the newest turn start in it} since the earliest failure.
+        """{row: the newest delivered turn start in it} since the earliest failure.
 
-        只读 `agent_turns` 的 conversation_id 与 started_at：一轮开没开始过记在这
-        一行里，失败事件不记它。取每行最新的一次开始 —— 只要有一次晚于某条失败，
-        那条失败就已经被这行「重新开始」盖过。"""
+        只读 `agent_turns` 的 conversation_id、started_at 与 delivered_at：一轮开没
+        开始过记在这一行里，失败事件不记它。取每行最新的一次开始 —— 只要有一次晚于
+        某条失败，那条失败就已经被这行「重新开始」盖过。
+
+        `delivered_at` 为空的那一行不算：`open_turn` 在传输接受之前就把行落下了，
+        传输没接住、进程随后死掉（清扫只 close/warn，不删行）时，这一行会一直留着
+        —— 但会话从没听过那个 prompt，它没在干活，也就没盖过任何失败。别的「在跑」
+        判据（`liveness.running_tasks`、`moving_topics`）同样要求 delivered_at。"""
         stmt = (
             select(
                 _TURNS.c.conversation_id,
@@ -266,6 +279,7 @@ class MemberWaits:
             .where(
                 _among(_TURNS.c.conversation_id, conversation_ids, Uuid),
                 _TURNS.c.started_at >= since,
+                _TURNS.c.delivered_at.is_not(None),
             )
             .group_by(_TURNS.c.conversation_id)
         )
