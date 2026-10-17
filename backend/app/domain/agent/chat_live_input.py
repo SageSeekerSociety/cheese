@@ -28,13 +28,18 @@ from app.domain.agent.input_registration import input_registrar
 from app.domain.agent.prompt import live_inputs, model_images
 from app.domain.agent.turn.state import authority
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
+from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
     InputReconciliationPending,
     InputRegistrar,
 )
+from app.domain.delivery.mention import BY_PERSON
+from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
+from app.domain.notification.models import NotificationType
+from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import TopicStatus
@@ -267,6 +272,96 @@ class LiveInput:
         except Exception:  # noqa: BLE001 — a failed notice must not fail the write
             logger.exception(
                 "platform notice into running turn failed (topic=%s)", topic_id
+            )
+            return False
+
+    async def join_running_turn(
+        self, delivery_id: uuid.UUID, attempt_id: uuid.UUID
+    ) -> bool | InputReconciliationPending | None:
+        """Hand a ledger delivery to the turn its seat is already running in
+        that conversation, the way a person's mid-turn message is handed.
+
+        A seat runs one turn at a time, so a delivery that waits for its own
+        turn waits for that one to end — for hours behind a long one, and on
+        dev it was given up after half an hour for 369 of 420 in the 15 days
+        to 2026-10-16. Joined, it is read at the turn's next tool boundary.
+
+        ``None``: there is no such turn, or this delivery takes a turn of its
+        own — a finished task's write-up, which the close keys on by its
+        attempt's turn (`room_task.closing`). The caller starts one as before.
+        ``False``: there is one and the input did not reach it; nothing was
+        sent (`receipts.withdraw_input` puts the attempt back to ``claimed``),
+        so the attempt is refused and retried like any other. ``True``: the
+        session's transport took it. Only the session's echo of it settles
+        the delivery (`receipts.record_receipt`), as for any input; until then
+        it is not sent again. ``InputReconciliationPending``: the outcome is
+        unknown, which is never permission to send it again (`delivery.agent`).
+
+        The input is registered under this delivery's attempt and fenced
+        (``fence_delivery``): an attempt a newer notice replaced, or that lost
+        its lease, is refused before anything is sent. A platform instruction
+        is read when the turn gets to it and does not move the turn's
+        foreground work aside; a person's @ does, and is owed an answer, as
+        their own message would be.
+        """
+        async with self._sessions() as session:
+            row = await session.get(Delivery, delivery_id)
+        if (
+            row is None
+            or row.attempt_id != attempt_id
+            or row.conversation_id is None
+            or (row.payload or {}).get(CLOSES_TASK)
+        ):
+            return None
+        seat = row.recipient_handle
+        matched = await authority.consuming_turn(
+            self.live,
+            self._sessions,
+            row.conversation_id,
+            lambda state: seat in (state.agent_instance_handle, state.acting_agent),
+            strict=True,
+        )
+        if matched is None:
+            return None
+        consuming_turn_id, state = matched
+        content = str((row.payload or {}).get("content") or "")
+        by_person = (row.payload or {}).get("eventType") == BY_PERSON
+        line = (
+            publication_prompt(strip_platform_notice(content))
+            if row.type == NotificationType.MENTION.value
+            else platform_prompt(content)
+        )
+        registrar = self._input_registrar(
+            InputEffects(delivery_id=delivery_id, attempt_id=attempt_id),
+            fence_delivery=True,
+        )
+        seat_agent = (
+            (state.agent_instance_handle or state.acting_agent) if state else seat
+        )
+        try:
+            return bool(
+                await self._compute.steer(
+                    row.conversation_id,
+                    line,
+                    register_input=registrar,
+                    expected_work_id=consuming_turn_id,
+                    agent_handle=seat_agent,
+                    owes_reply=by_person,
+                )
+            )
+        except DeliveryTargetChanged:
+            raise
+        except InputOutcomeUnconfirmed as exc:
+            logger.exception(
+                "delivery into running turn requires reconciliation "
+                "(delivery=%s, input=%s)",
+                delivery_id,
+                exc.identity.input_id,
+            )
+            return InputReconciliationPending(exc.identity, exc.accepted)
+        except Exception:  # noqa: BLE001 — refused and retried, never dropped
+            logger.exception(
+                "delivery into running turn failed (delivery=%s)", delivery_id
             )
             return False
 
