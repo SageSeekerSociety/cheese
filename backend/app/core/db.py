@@ -11,15 +11,17 @@ from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 import greenlet
+from fastapi import HTTPException
 from sqlalchemy import event, text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, SessionTransaction
 from sqlalchemy.pool import NullPool, QueuePool
 
 from app.core.config import settings
@@ -246,14 +248,38 @@ def apply_migration_timeouts(connection: Connection) -> None:
     )
 
 
+def _set_request_lock_timeout(
+    session: Session, transaction: SessionTransaction, connection: Connection
+) -> None:
+    if transaction.nested:
+        return
+    # Transaction-local, including transactions opened after an explicit commit
+    # or release_read_session(). Background sessions and migrations opt out.
+    # PostgreSQL duration syntax, e.g. DB_REQUEST_LOCK_TIMEOUT=15s.
+    connection.execute(
+        text("SELECT set_config('lock_timeout', :value, true)"),
+        {"value": os.getenv("DB_REQUEST_LOCK_TIMEOUT", "15s")},
+    )
+
+
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """FastAPI dependency yielding a transactional session."""
     async with async_session_factory() as session:
+        event.listen(session.sync_session, "after_begin", _set_request_lock_timeout)
         try:
             yield session
             await session.commit()
-        except Exception:
+        except Exception as exc:
             await session.rollback()
+            if (
+                isinstance(exc, DBAPIError)
+                and getattr(exc.orig, "sqlstate", None) == "55P03"
+            ):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Database lock unavailable; retry shortly",
+                    headers={"Retry-After": "1"},
+                ) from exc
             raise
 
 
