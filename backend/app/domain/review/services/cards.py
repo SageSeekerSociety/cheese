@@ -189,9 +189,7 @@ async def create_card(
         self._session, task.project_id, task.id
     ).comparison()
     has_branch_changes = bool(
-        comparison
-        and comparison.get("total_commits")
-        and comparison.get("files") != []
+        comparison and comparison.get("total_commits") and comparison.get("files") != []
     )
     # A commit that changes no file delivers nothing either: accepting it would
     # merge an empty commit into the base and call that a delivery. Work whose
@@ -668,8 +666,7 @@ async def _render(
         }
     elif caps.reports_checks and (
         card.pr_number is not None
-        or card.deliverable_kind
-        not in (DeliverableKind.file, DeliverableKind.link)
+        or card.deliverable_kind not in (DeliverableKind.file, DeliverableKind.link)
     ):
         mirror = card.merge_state if isinstance(card.merge_state, dict) else None
         data["merge_state"] = mirror or {

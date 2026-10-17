@@ -121,9 +121,7 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
     from app.domain.review.models import AcceptStatus, DeliverableKind
     from app.domain.review.services import AcceptService, cards
 
-    deliverable_kind = (
-        DeliverableKind.file if kind == "file" else DeliverableKind.link
-    )
+    deliverable_kind = DeliverableKind.file if kind == "file" else DeliverableKind.link
     project_id = _pid()
     topic_id = uuid.uuid4()
     service = object.__new__(AcceptService)
@@ -205,4 +203,3 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
         project_id=_pid(),
     )
     assert opened is None
-

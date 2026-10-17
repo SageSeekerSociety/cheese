@@ -684,7 +684,10 @@ def test_each_version_names_its_room_only_to_readers_of_that_room(client):
     "declared",
     [
         pytest.param(
-            {"files": {"out/报告.pdf": "无分支提交的独立文件\n"}, "deliver": "out/报告.pdf"},
+            {
+                "files": {"out/报告.pdf": "无分支提交的独立文件\n"},
+                "deliver": "out/报告.pdf",
+            },
             id="file",
         ),
         pytest.param(
@@ -739,4 +742,3 @@ def test_file_and_link_deliveries_succeed_and_accept_without_branch_commits_or_p
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["data"]["status"] == "accepted"
-
