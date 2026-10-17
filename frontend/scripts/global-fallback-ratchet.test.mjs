@@ -1010,8 +1010,9 @@ describe('findGlobalFallbacks', () => {
         '',
       ].join('\n')
 
-    assert.deepEqual(found(component('{ ...p511, ...m }')), [], 'kept what a route at the bound had read of `m`')
-    assert.deepEqual(found(component('{ ...m, ...p511 }')), [], 'read `m` before the long route reached it')
+    const last = MAX_SPREAD_DEPTH - 1
+    assert.deepEqual(found(component(`{ ...p${last}, ...m }`)), [], 'kept what a route at the bound had read of `m`')
+    assert.deepEqual(found(component(`{ ...m, ...p${last} }`)), [], 'read `m` before the long route reached it')
   })
 
   // The answer to a node that was read only as far as the bound is worth
@@ -1071,9 +1072,8 @@ describe('findGlobalFallbacks', () => {
     // A walk that will not keep an ancestor of a truncated route answers each
     // route through the graph again: measured at 26 s against 0.2 s here, so
     // this ratio is far apart from both the cost of reading the branch once
-    // and the noise of a loaded machine. The flat term is the whole test's
-    // floor — the control graph's own 0.1 s — so a slow machine cannot make
-    // the ratio fail on it alone.
+    // and the noise of a loaded machine. The flat 2 s absorbs the control
+    // graph's own jitter, so a busy machine cannot fail the ratio alone.
     assert.ok(
       deep.elapsed < control.elapsed * 10 + 2_000,
       `read ${deep.elapsed} ms against ${control.elapsed} ms without the deep branch`
