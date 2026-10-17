@@ -88,13 +88,11 @@ jobs:
       # to its peers, and a later edit that drops either line still leaves the
       # question asked.
       #
-      # check-seam-tests.py is deliberately NOT here, and neither is its
-      # self-test in the collection below: the guard is red on the tree at
-      # origin/main — two split tests use the shape its hint would have them
-      # rewrite away, and one of them walks into a ClassDef on purpose — so a
-      # step here would fail on every commit until those tests are rewritten.
-      # check-guard-wired.py names it in ON_DEMAND with that reason, and that
-      # entry goes red the moment this line comes back.
+      # check-seam-tests.py is deliberately NOT given a step of its own: #4082
+      # rewrote the two split tests it used to reject, so the guard is green and
+      # out of ON_DEMAND, and its self-test is now collected by the CI helper
+      # tests step below — a lane that asserts the tree is clean, which is the
+      # same question a step here would ask, minus a second process.
       - name: i18n lists and every guard is wired
         run: |
           python3 .claude/scripts/check-i18n-lists.py

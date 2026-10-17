@@ -36,8 +36,8 @@ which self-test repo-guards runs does not wire anything. Neither does a hook's
 `files:` or `exclude:` pattern in .pre-commit-config.yaml: naming a guard there
 decides when that hook runs, not whether anything starts the guard.
 
-A guard that no lane CAN run is named in ON_DEMAND with the reason: one reads a
-refactor rather than the tree, one is red wherever it runs. The list checks
+A guard that no lane CAN run is named in ON_DEMAND with the reason: the one
+there reads a refactor rather than the tree. The list checks
 itself three ways — a script that is gone, one that has since been wired, and
 one that exits 0 on this tree are each a failure — so it cannot quietly become
 the place the next unwired guard is forgotten. The third is read from a run of
@@ -91,19 +91,10 @@ ON_DEMAND: dict[str, str] = {
         "has neither an install for nor the budget for; wiring it belongs in "
         "frontend.yml's check job, where the install is, as a decision of its own"
     ),
-    "check-seam-tests.py": (
-        "red on the tree it would judge: two split tests under backend/tests/unit "
-        "hit the recursive-class-methods pattern for reasons the hint's rewrite "
-        "would break — one walks into a ClassDef on purpose to find a method by "
-        "name, the other wants the file's own bindings, not the top level's. "
-        "Wiring it before those two are rewritten is a lane that can only fail; "
-        "the run belongs with that rewrite, and test_check_seam_tests.py asserts "
-        "the tree is clean, so it is red too"
-    ),
 }
 
-#: How long an excused guard gets to prove it is still red. Both entries here
-#: answer in under a second; the limit exists so that a guard which hangs fails
+#: How long an excused guard gets to prove it is still red. The entry here
+#: answers in under a second; the limit exists so that a guard which hangs fails
 #: this check instead of hanging repo-guards.yml, the only job that runs it.
 EXCUSE_TIMEOUT = 60
 
