@@ -98,14 +98,18 @@ function assertReportsLost(result) {
   assert.match(result.output, /waive: --allow 'frontend\/src\/components\/Panel\.vue:topicId'/)
 }
 
-function mutatedGuard(t) {
+const EQUIVALENT_ANCHOR = 'const isEquivalent = (available, lost) => available.has(lost)'
+const ALLOW_ANCHOR =
+  'const isWaived = (allows, file, key) => allows.includes(`${file}:${key}`) || allows.includes(`${file}:*`)'
+
+function mutatedGuard(
+  t,
+  anchor = EQUIVALENT_ANCHOR,
+  replacement = 'const isEquivalent = (available, lost) => available.size > 0 || available.has(lost)'
+) {
   const source = fs.readFileSync(guard, 'utf8')
-  const anchor = 'const isEquivalent = (available, lost) => available.has(lost)'
   assert.ok(source.includes(anchor), 'the mutation anchor moved; update composable-watch-guard.test.mjs')
-  const mutated = source.replace(
-    anchor,
-    'const isEquivalent = (available, lost) => available.size > 0 || available.has(lost)'
-  )
+  const mutated = source.replace(anchor, replacement)
   const file = path.join(
     path.dirname(guard),
     `.composable-watch-guard.mutated-${process.pid}-${mutatedGuard.seq++}.mjs`
@@ -278,6 +282,205 @@ test('exempts only the source named with --allow', (t) => {
   assert.equal(waived.status, 0, waived.output)
   const wildcard = run('--allow', `${component}:*`)
   assert.equal(wildcard.status, 0, wildcard.output)
+})
+
+test('a wrong --allow does not waive a different source', (t) => {
+  const { run } = split(t, { composableSource: droppedComposable })
+  const wrongKey = run('--allow', `${component}:other`)
+  assert.equal(wrongKey.status, 1, wrongKey.output)
+  const wrongFile = run('--allow', 'frontend/src/components/Other.vue:*')
+  assert.equal(wrongFile.status, 1, wrongFile.output)
+})
+
+test('an injected over-broad --allow makes the exemption contract go red', (t) => {
+  const fixtureRun = split(t, { composableSource: droppedComposable })
+  const mutantCases = [
+    {
+      allow: 'frontend/src/components/Other.vue:*',
+      replacement:
+        'const isWaived = (allows, file, key) => allows.includes(`${file}:${key}`) || allows.some((entry) => entry.endsWith(":*"))',
+    },
+    {
+      allow: `${component}:other`,
+      replacement:
+        'const isWaived = (allows, file, key) => allows.some((entry) => entry === `${file}:${key}` || entry.startsWith(`${file}:`))',
+    },
+  ]
+  for (const { allow, replacement } of mutantCases) {
+    const baseline = fixtureRun.run('--allow', allow)
+    assert.equal(baseline.status, 1, baseline.output)
+
+    const mutated = mutatedGuard(t, ALLOW_ANCHOR, replacement)
+    const result = spawnSync(
+      process.execPath,
+      [mutated, '--repo', fixtureRun.repo, '--base', fixtureRun.base, '--allow', allow],
+      { env, encoding: 'utf8', cwd: os.tmpdir() }
+    )
+    const shaped = { status: result.status, output: result.stdout + result.stderr }
+    assert.equal(shaped.status, 0, 'the mutant must waive the wrong allow, otherwise the mutation proved nothing')
+    assert.throws(() => assert.equal(shaped.status, 1), 'the contract must reject the over-broad waiver')
+  }
+})
+
+test('keeps a prop literally named value', (t) => {
+  // TipTapViewer and RollingNumber both watch `props.value`; the split passes it as
+  // `{ value: () => props.value }`, so `.value` must not be read as a ref unwrap.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ value: string }>()
+const loading = ref(false)
+watch(() => props.value, () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ value: string }>()
+const { loading } = usePanel({ value: () => props.value })`
+  const carried = `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { value: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.value), () => { loading.value = false })
+  return { loading }
+}`
+  const kept = split(t, { script, head, composableSource: carried }).run()
+  assert.equal(kept.status, 0, kept.output)
+
+  const dropped = split(t, { script, head, composableSource: droppedComposable }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /waive: --allow 'frontend\/src\/components\/Panel\.vue:value'/)
+})
+
+test('a local ref with the same name as a lost prop does not stand in for it', (t) => {
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+const topicId = ref('')
+const loading = ref(false)
+watch(() => props.topicId, () => { loading.value = false })
+watch(topicId, () => { loading.value = false })`
+  const head = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+const topicId = ref('')
+const loading = ref(false)
+watch(topicId, () => { loading.value = false })`
+  const result = split(t, { script, head }).run()
+  assert.equal(result.status, 1, result.output)
+  assert.match(result.output, /props\.topicId/)
+})
+
+test('another component the same change touched may carry the watcher', (t) => {
+  const head = `import { ref } from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+const loading = ref(false)`
+  const fixtureRun = split(t, { head, composableSource: undefined })
+  fixtureRun.write(
+    'frontend/src/components/Peer.vue',
+    sfc(`import { watch } from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+watch(() => props.topicId, () => {})`)
+  )
+  const result = fixtureRun.run()
+  assert.equal(result.status, 0, result.output)
+})
+
+test('recognizes renamed, namespace, and vue-demi imports', (t) => {
+  const scripts = [
+    `import { ref, watch as w } from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+const loading = ref(false)
+w(() => props.topicId, () => { loading.value = false })`,
+    `import { ref } from 'vue'
+import * as Vue from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+const loading = ref(false)
+Vue.watch(() => props.topicId, () => { loading.value = false })`,
+    `import { ref, watch } from 'vue-demi'
+
+const props = defineProps<{ topicId: string }>()
+const loading = ref(false)
+watch(() => props.topicId, () => { loading.value = false })`,
+  ]
+  for (const script of scripts) {
+    const result = split(t, { script, composableSource: droppedComposable }).run()
+    assert.equal(result.status, 1, result.output)
+    assert.match(result.output, /props\.topicId/)
+  }
+})
+
+test('matches the scope shapes a call site can pass', (t) => {
+  const destructured = split(t, {
+    head: `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ topicId: string; other: string }>()
+const { loading } = usePanel({ topicId: () => props.topicId, other: () => props.other })`,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel({ topicId: tid }: { topicId: () => string; other: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(tid), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(destructured.status, 0, destructured.output)
+
+  const whole = split(t, {
+    head: `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ topicId: string; other: string }>()
+const { loading } = usePanel(props)`,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: string; other: string }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.topicId), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(whole.status, 0, whole.output)
+})
+
+test('--composable names a target that did not change', (t) => {
+  const target = 'frontend/src/lib/panel-helper.ts'
+  const fixtureRun = split(t, { head: panelHead, composableSource: undefined })
+  fixtureRun.write(
+    target,
+    `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string; other: () => string }) {
+  const loading = ref(false)
+  watch(() => toValue(scope.topicId), () => { loading.value = false })
+  return { loading }
+}`
+  )
+  const result = fixtureRun.run('--composable', target)
+  assert.equal(result.status, 0, result.output)
+})
+
+test('auto-detects a changed useX.ts outside composables/', (t) => {
+  const target = 'frontend/src/lib/usePanelHelper.ts'
+  const fixtureRun = split(t, {
+    head: `import { usePanelHelper } from '@/lib/usePanelHelper'
+
+const props = defineProps<{ topicId: string; other: string }>()
+const { loading } = usePanelHelper({ topicId: () => props.topicId, other: () => props.other })`,
+    composableSource: undefined,
+  })
+  fixtureRun.write(
+    target,
+    `import { ref, toValue, watch } from 'vue'
+
+export const usePanelHelper = (scope: { topicId: () => string; other: () => string }) => {
+  const loading = ref(false)
+  watch(() => toValue(scope.topicId), () => { loading.value = false })
+  return { loading }
+}`
+  )
+  const result = fixtureRun.run()
+  assert.equal(result.status, 0, result.output)
 })
 
 test('reports a watchEffect whose body the split dropped', (t) => {

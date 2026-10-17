@@ -17,9 +17,12 @@
 // canonicalized to prop paths. `props.x` and `toValue(scope.x)` match when the call
 // site maps `x: () => props.x`, or passes the scope as `() => ({ x: props.x })`; a
 // composable taking the value itself (`fn(() => props.x)`) matches `toValue(x)`; refs
-// and local aliases (`const s = toValue(scope)`) are unwrapped, `.value` is dropped,
-// and array sources are compared element by element. A renamed or restructured
-// source can be reported even though it survived; waive that one with --allow.
+// and local aliases (`const s = toValue(scope)`) are unwrapped, and array sources are
+// compared element by element. A ref's `.value` is dropped, but a prop or scope
+// property literally named `value` is kept. Keys rooted outside props and the scope
+// live under `$local.`, so a local ref never stands in for a lost prop. A renamed or
+// restructured source can be reported even though it survived; waive that one with
+// --allow.
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -131,8 +134,14 @@ function propertyName(node) {
 function memberKeys(node, ctx) {
   const member = memberPath(node, ctx)
   if (!member) return null
-  const segments = member.path.filter((segment) => segment !== 'value')
   const { root } = member
+  // `.value` unwraps a ref. It never unwraps `props` (props are plain values) or the
+  // first segment of the scope (that segment names a scope property), so a prop or
+  // scope property named `value` keeps its name.
+  const scopeRoot = root === ctx.scopeParam || ctx.bindings?.has(root)
+  const segments = member.path.filter(
+    (segment, index) => segment !== 'value' || root === 'props' || (scopeRoot && index === 0)
+  )
   if (root === 'props') return new Set([segments.length ? segments.join('.') : 'props'])
   if (ctx.scopeParam && root === ctx.scopeParam) {
     if (!segments.length) {
@@ -150,7 +159,9 @@ function memberKeys(node, ctx) {
     const mapped = ctx.bindings.get(root)
     return new Set([...mapped].map((key) => (segments.length ? `${key}.${segments.join('.')}` : key)))
   }
-  return new Set([segments.length ? `${root}.${segments.join('.')}` : root])
+  // Local names get their own namespace: a ref called `topicId` must not stand in
+  // for a lost `props.topicId` watch.
+  return new Set([segments.length ? `$local.${root}.${segments.join('.')}` : `$local.${root}`])
 }
 
 function canonicalFunction(node, ctx) {
@@ -591,7 +602,7 @@ function check(options) {
     for (const item of items) {
       checked++
       if (isEquivalent(available, item.key)) continue
-      if (options.allows.includes(`${file}:${item.key}`) || options.allows.includes(`${file}:*`)) continue
+      if (isWaived(options.allows, file, item.key)) continue
       findings.push({ file, ...item })
     }
   }
@@ -603,6 +614,11 @@ function check(options) {
 // keep the line verbatim.
 // MUTATION ANCHOR — composable-watch-guard.test.mjs replaces this line.
 const isEquivalent = (available, lost) => available.has(lost)
+
+// The --allow waiver. Anchored like the comparison: the self-test swaps it for
+// copies that ignore the file or the key and asserts the wrong waivers stop passing.
+// MUTATION ANCHOR (allow) — composable-watch-guard.test.mjs replaces this line.
+const isWaived = (allows, file, key) => allows.includes(`${file}:${key}`) || allows.includes(`${file}:*`)
 
 function scopeNameFor(key) {
   return key
@@ -617,6 +633,9 @@ function fixFor(finding) {
   }
   if (finding.key.startsWith('$scope.')) {
     return `fix: the composable watches \`${finding.key.slice(7)}\`, but no call site maps it to a parent value; pass it through the scope and add a test that fails without that watch.`
+  }
+  if (finding.key.startsWith('$local.')) {
+    return `fix: the watcher tracked a value local to the component (\`${finding.key.slice(7)}\`), not a prop; carry it with the code, pass that value into the composable, and add a test that fails without that watch.`
   }
   const scopeName = scopeNameFor(finding.key)
   return `fix: carry the watcher into the composable, e.g. watch(() => toValue(scope.${scopeName}), ...) with \`${scopeName}: () => props.${finding.key}\` at the call site (or watch(() => toValue(<param>), ...) when the parameter is the value); add a test that fails without that watch.`
