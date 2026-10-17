@@ -54,7 +54,7 @@ function didNotify(handle: string, names: RefNames): boolean {
   return typeof n === 'function' ? n(handle) : n === true
 }
 
-type TopicRefShown = { text: string; missing: boolean }
+type TopicRefShown = { text: string; missing: boolean; document?: boolean; unreadable?: boolean }
 
 /** What a `<#id>` reads as. One that names nothing says so: it never borrows a
  *  name, and a reader is not sent into a channel that is not there. */
@@ -64,6 +64,10 @@ function topicRef(id: string, names: RefNames): TopicRefShown {
   const found = lookupRef(id)
   if (found === 'missing') return { text: `#${t('work.room.chat.refMissing')}`, missing: true }
   if (found === undefined) return { text: '#…', missing: false }
+  // 无权查看的东西不露标题：只说它在，你看不了。
+  if (found.kind === 'unreadable') return { text: t('work.room.chat.refUnreadable'), missing: true, unreadable: true }
+  if (found.kind === 'document')
+    return { text: found.title || t('work.room.doc.untitled'), missing: false, document: true }
   if (found.kind === 'thread')
     return { text: `#${t('work.room.chat.refThread', { title: found.title })}`, missing: false }
   return { text: `#${found.title}`, missing: false }
@@ -92,10 +96,19 @@ export function refChip(
     if (shown.missing) {
       // 没有去处：不是按钮，不进 Tab 顺序，点了也没有父级会接（没有 data-topic）。
       el.classList.add('ref-missing')
-      el.title = t('work.room.chat.refMissingHint')
+      el.title = t(shown.unreadable ? 'work.room.chat.refUnreadableHint' : 'work.room.chat.refMissingHint')
       return el
     }
     el.dataset.topic = id
+    if (shown.document) {
+      // 一份文档：和文件一样是图标 + 标题，不带 #。点了照样走 data-topic，去处由 refRoute 认。
+      el.classList.remove('topic-ref')
+      el.classList.add('file-ref', 'doc-ref')
+      const icon = document.createElement('i')
+      icon.className = 'mdi mdi-file-document-outline file-ref__icon'
+      icon.setAttribute('aria-hidden', 'true')
+      el.replaceChildren(icon, document.createTextNode(shown.text))
+    }
   } else if (kind === '@') {
     el.dataset.handle = id
     const hoverTitle = names.mentionTitles?.[id]

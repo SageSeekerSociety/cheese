@@ -1,7 +1,7 @@
 ---
 title: 前端结构
 kind: 参考
-summary: 两个入口、组件预览站和它的收录闸、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求、i18n 债务表和八道质量闸。
+summary: 两个入口、组件预览站和它的收录闸、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求、i18n 债务表和九道质量闸。
 covers:
   - frontend/src/main.ts
   - frontend/src/demo-main.ts
@@ -213,6 +213,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 | 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算，这条非对称判据见 `frontend/scripts/import-boundary-ratchet-core.mjs`）；四条组件原则见 `.claude/rules/architecture.md` |
 | 浏览器存储 | `pnpm run lint:storage` | `src/` 里新增的直接读 `localStorage` / `sessionStorage`（含 `window.localStorage`、`window['localStorage']`、从 `window` 解构出来再用的写法）。它们会抛：Safari 无痕、配额满、根本没有浏览器上下文——一次抛在 `setup()` 里就连带整个渲染。唯一允许碰这两个全局的是 `src/lib/browserStorage.ts`（`storageGet` / `storageSet` / `storageRemove` / `storageGetJson` / `storageSetJson` / `storageGetStrings` / `storageKeys` / `storageAvailable`，都不抛），规则与报文见 `frontend/scripts/browser-storage-ratchet-core.mjs`；测试文件、`src/test/**` 和该模块本身除外。`@vueuse/core` 的 `useStorage` 不算违规 |
 | 无障碍 | `pnpm run lint:a11y` | `src/**/*.vue` 模板里新增的 `eslint-plugin-vuejs-accessibility`（`flat/recommended`，配置在 `eslint.a11y.config.mjs`）违规：能点却没有键盘路径的元素、没绑名字的表单控件和 label、没有 alt 的图片、写错或缺必需属性的 ARIA。它只读静态模板，焦点顺序、对话框的焦点管理、对比度都看不到 |
+| 全局回退 | `pnpm run lint:global-fallback` | 组件里对某个名字的裸调用（`foo()`），而树的某个模块自己声明了同一个名字却没把它交出去——两半都读：`<script setup>` 里落的全局引用，以及模板里的调用。模板里的名字不在任何作用域里，`eslint` 的配置又注入了浏览器全局、TS 侧由 `lib.dom` 声明同名成员，所以别的闸门一个都看不见。2026-10-16 #1618 拆 `DesignImage.vue` 时 `blur()` 就是这样没导出、落到 `window.blur` 里一声不响。规则与报文在 `frontend/scripts/global-fallback-ratchet-core.mjs`、`frontend/scripts/check-global-fallback-ratchet.mjs`。**不是棘轮**：落地那天全树 752 个组件、957 个模块 0 命中，没有存量可冻，也就没有 `--update` |
 | 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
 | 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错；跑之前先由 `scripts/typecheck.mjs` 生成 `src/api/openapi.d.ts`，它给后端要一份现造的 OpenAPI 文档（`uv run python -m scripts.export_openapi --stdout`）再拿它生成。**两份都不进仓库**：文档 1.8MB、类型 1.4MB，每改一条路由两份一起重写，任何两个都动路由的分支就会在这儿撞车。代价是这个检查要后端的 Python 环境（uv、解释器、应用依赖），所以 `check` 作业现在也装后端依赖。进仓库的是同一份文档的一行摘要（`backend/openapi.sha256`）：路径表盯它决定前端套件跑不跑（原来盯的就是那份 1.8MB 文档，改动的提交集合一样），后端作业拿它跟现造的文档对账，对不上就红并让你重跑一次 `backend/` 里的生成器把它提交上来 |
 | 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的）。要跑几分钟，本地只在改了 `scripts/`、`eslint*.config.mjs` 或某份 `*-baseline.json` 时跑，而且只跑对应的那个文件（`node --test scripts/<名字>.test.mjs`）；`task ci:fast` 不选它。CI 在每次前端改动上跑全套，其中几份也读树里别的文件（`src/` 里的 `mdi-` 图标名、`index.html`、`demo.html`、`nginx.conf`、`src/styles/fonts.css`、`src/views/demo/`、`tsconfig.app.json`），所以普通改动也可能在 CI 上让它变红 |

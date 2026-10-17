@@ -388,6 +388,8 @@ export function docBundle(
     ...over,
   }
   return {
+    linkable: ref([]),
+    backlinks: ref([]),
     session: shallowRef(v.session),
     connection: ref(v.connection),
     outdated: ref(false),

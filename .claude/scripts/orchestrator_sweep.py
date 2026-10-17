@@ -12,7 +12,7 @@ A generic provider 502 does not qualify without work-machine/environment context
 
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
-      [--silent-min 40] [--skip 1443,1405] [--json | --render | --sync-doc <document id> | --recover-environment] \
+      [--silent-min 40] [--stopped-min 3] [--skip 1443,1405] [--json | --render | --sync-doc <document id> | --recover-environment] \
       [--auto-accept-check | --auto-accept]
   python3 .claude/scripts/orchestrator_sweep.py --self-test   (offline: no token, no network, no gh)
 
@@ -31,7 +31,10 @@ For every open, started task in the channel it reads platform facts and the PR's
   红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
   长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
-                rounds). A heartbeat is the newest of the line's last message, the last
+                rounds), or for --stopped-min minutes (default 3) when the platform says
+                `started`, `bounced`, or `checks_failed`, unless the line is parked, accepted,
+                or classified as 连续失败、出队
+                or 可采纳未采纳. A heartbeat is the newest of the line's last message, the last
                 event block its seat wrote (a command it ran) and, when the platform gives
                 it, the running turn's last output (`last_output_at` on the task row). A
                 command the seat started and that has not returned yet — its event block
@@ -971,7 +974,7 @@ def pulse_detail(waited, last_event, last_msg_at, last_msg_brief, last_output=No
             + f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
 
 
-def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None):
+def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None, stopped_min=3):
     """The rows the text list prints, each also carrying the board's fields. GitHub
     facts are read only for tasks that have a PR: for the pending ones always, and for
     the rest only when `want_facts`, which is set by the flags that show the board — so
@@ -1117,7 +1120,12 @@ def sweep(tok, room, silent, skip, want_facts, adopt=None, only=None):
                                              pulse["last_message_at"],
                                              pulse["last_message"] or "（还没有消息）"), w)
         else:
-            w = stalled_for(now, heartbeat, silent, running)
+            short_stall = (turn_running(t) is False
+                           and phrase in {"started", "bounced", "checks_failed"}
+                           and card.get("status") != "accepted"
+                           and not reported.intersection({"连续失败", "出队", "可采纳未采纳"}))
+            threshold = stopped_min if short_stall else silent
+            w = stalled_for(now, heartbeat, threshold, running)
             if w is not None:
                 add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
                                             pulse["last_message"] or "（还没有消息）",
@@ -1237,9 +1245,10 @@ def review_cell(r):
     return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}{tier}"
 
 
-def render(rows, metrics, silent, now, room):
+def render(rows, metrics, silent, now, room, stopped_min=3):
     out = ["## 调度看板", "",
-           f"UTC {now:%Y-%m-%d %H:%M}｜信号阈值 {silent} 分钟｜{len(rows)} 条｜频道 {room[:8]}", ""]
+           f"UTC {now:%Y-%m-%d %H:%M}｜静默阈值 {silent} 分钟｜已停轮 {stopped_min} 分钟｜"
+           f"{len(rows)} 条｜频道 {room[:8]}", ""]
     if not rows:
         out.append("各线无待处理信号。")
     else:
@@ -1366,10 +1375,11 @@ def day_metrics(tok, room, day, idmap):
     }
 
 
-def board_json(rows, metrics, room, silent, skip, now):
+def board_json(rows, metrics, room, silent, skip, now, stopped_min=3):
     classes = {k: [{f: r[f] for f in ROW_FIELDS} for r in rows if r["kind"] == k] for k in CLASSES}
     return {"generated_at": now.isoformat(), "room": room, "signal_min": silent,
-            "skipped": sorted(skip), "classes": classes, "metrics": metrics}
+            "stopped_min": stopped_min, "skipped": sorted(skip),
+            "classes": classes, "metrics": metrics}
 
 
 def occurrences(hay, needle):
@@ -1835,13 +1845,19 @@ def _self_test_board():
         ("有信号时：表头、频道那行、每个待判 PR 那一段都在",
          [ln for ln in board([_self_row()]).split("\n")
           if ln.startswith(("UTC ", "| 类别", "### "))],
-         ["UTC 2026-10-13 05:00｜信号阈值 60 分钟｜1 条｜频道 12345678",
+         ["UTC 2026-10-13 05:00｜静默阈值 60 分钟｜已停轮 3 分钟｜1 条｜频道 12345678",
           "| 类别 | 任务 | 到哪一步 | CI | 独立审查 | 卡了 | 在等 |",
           "### 每个待判 PR"]),
         ("一条信号都没有时：不摆表格，只说一句",
          board([]),
-         "## 调度看板\n\nUTC 2026-10-13 05:00｜信号阈值 60 分钟｜0 条｜频道 12345678\n"
+         "## 调度看板\n\nUTC 2026-10-13 05:00｜静默阈值 60 分钟｜已停轮 3 分钟｜0 条｜频道 12345678\n"
          "\n各线无待处理信号。\n\n" + metrics_line(_SELF_TEST_METRICS)),
+        ("JSON 看板：同时带静默与停轮阈值",
+         (board_json([], _SELF_TEST_METRICS, "room", 60, set(),
+                     datetime(2026, 10, 13, 5, 0))["signal_min"],
+          board_json([], _SELF_TEST_METRICS, "room", 60, set(),
+                     datetime(2026, 10, 13, 5, 0))["stopped_min"]),
+         (60, 3)),
     ]
 
 
@@ -1998,6 +2014,19 @@ def _self_test_sweep():
          kinds(60, call, sysev("platform_error", 50)), ["长时间无动静"]),
         ("sweep：命令没返回、任务行说这一轮没在跑，块已经返回了，报停摆",
          kinds(60, call, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
+        ("sweep：started 停下 5 分钟，超过默认 stopped-min 3，立即报停摆",
+         kinds(5, done, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
+        ("sweep：平台等检查的交付态 5 分钟没新消息，不触发 stopped-min",
+         kinds(5, done, row={"presentation": {"phrase": "awaiting_checks"}}), []),
+        ("sweep：被退回、需要座位处理时 5 分钟报停摆",
+         kinds(5, done, row={"presentation": {"phrase": "bounced"}}), ["长时间无动静"]),
+        ("sweep：检查红需要座位修复时 5 分钟报停摆",
+         kinds(5, done, row={"presentation": {"phrase": "checks_failed"}}), ["长时间无动静"]),
+        ("sweep：running 任务 5 分钟没消息，不受 stopped-min 影响",
+         kinds(5, call, row={"presentation": {"phrase": "running"}}), []),
+        ("sweep：本轮已归入连续失败时不触发 3 分钟停摆",
+         kinds(5, done, system=sysev("turn_failed", 4) + sysev("turn_failed", 3),
+               row={"presentation": {"phrase": "started"}}), ["连续失败"]),
         ("sweep：任务行说结算中（被采纳的那一条还要跑一轮写总结），同样没返回的块算在跑，不报",
          kinds(60, call, row={"presentation": {"phrase": "accepted"}}), []),
         ("sweep：任务行说待回答（这一轮可能还在跑），报待回答，块没返回就不再报停摆",
@@ -2432,6 +2461,7 @@ def main():
         return self_test()
     room = argv[1]
     silent = int(value_of(argv, "--silent-min") or 40)
+    stopped_min = int(value_of(argv, "--stopped-min") or 3)
     skip = set((value_of(argv, "--skip") or "").split(",")) - {""}
     as_json = "--json" in argv
     as_render = "--render" in argv
@@ -2452,23 +2482,25 @@ def main():
     tok = login()
     me = os.environ["OKCHEESE_USER"] if judge else None
     now = datetime.now(timezone.utc)
-    rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document), adopt=me)
+    rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document),
+                        adopt=me, stopped_min=stopped_min)
     if auto_accept:
         apply_auto_accept(tok, rows, me)
     if as_json:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(json.dumps(board_json(rows, metrics, room, silent, skip, now), ensure_ascii=False, indent=2))
+        print(json.dumps(board_json(rows, metrics, room, silent, skip, now, stopped_min),
+                         ensure_ascii=False, indent=2))
         return
     if as_render:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(render(rows, metrics, silent, now, room))
+        print(render(rows, metrics, silent, now, room, stopped_min))
         return
     text(rows)
     if recover:
         recover_environment(tok, room, rows)
     if document:
         metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
-        print(sync_doc(tok, document, render(rows, metrics, silent, now, room)))
+        print(sync_doc(tok, document, render(rows, metrics, silent, now, room, stopped_min)))
 
 
 if __name__ == "__main__":

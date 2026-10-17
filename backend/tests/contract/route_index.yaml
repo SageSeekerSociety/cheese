@@ -758,6 +758,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/documents", auth: "project.documents", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/overview", auth: "project.documents", owner: "living_doc"}
   - {protocol: "http", method: "GET", path: "/documents/{document_id}/about", auth: "document.reader", owner: "living_doc"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/links", auth: "document.reader", owner: "living_doc"}
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/keep", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "PATCH", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}
   - {protocol: "http", method: "DELETE", path: "/documents/{document_id}", auth: "document.own", owner: "living_doc"}

@@ -291,10 +291,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 两半没关系——两条读的 repository 都还在门面里（`__init__` 建它们）。
         (
             "app.domain.topic_membership.services.__init__",
-            "app.domain.project.repositories",
-        ),
-        (
-            "app.domain.topic_membership.services.__init__",
             "app.domain.topic.repositories",
         ),
         # --- webhook / workspace ---

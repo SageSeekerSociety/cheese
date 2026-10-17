@@ -31,6 +31,7 @@ import { refusalText } from '../lib/noticeText'
 import { myHandle } from '../me'
 
 import { useDocCollab } from './useDocCollab'
+import { useDocLinks } from './useDocLinks'
 import { useMentionOutside } from './useMentionOutside'
 
 import { t } from '@/i18n'
@@ -318,11 +319,19 @@ export function usePanelDoc(props: PanelDocProps) {
     if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
   })
 
+  const links = useDocLinks({
+    projectId: () => props.document?.projectId ?? props.topic?.project_id ?? null,
+    documentId: () => documentId.value,
+  })
+
   onBeforeUnmount(() => {
     disposed = true
   })
 
   return {
+    // 文档之间的链接：打 # 能引用的，和引用了它的地方
+    linkable: links.linkable,
+    backlinks: links.backlinks,
     // 协同文档
     session: collab.session,
     connection: collab.connection,

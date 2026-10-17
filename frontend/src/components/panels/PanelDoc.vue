@@ -77,7 +77,8 @@ const props = withDefaults(
 // open-file: a <&path> chip was clicked — WorkPanel switches to the
 // 改动 tab and opens it there (the ONE cross-tab wire, and the only one).
 const emit = defineEmits<{
-  (e: 'open-topic', topicId: string): void
+  /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
+  (e: 'open-topic', topicId: string, blockId?: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
   /** 资料库文档的标题变了（自己改的，或者别人改的）。 */
@@ -194,6 +195,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :deleted="doc.deleted.value"
     :activity-tick="props.activityTick"
     :topic-list="props.topicList"
+    :document-list="doc.linkable.value"
+    :backlinks="doc.backlinks.value"
     :agent-name="props.agentName"
     :agent-handle="props.agentHandle"
     :mention-names="people.names.value"
@@ -237,7 +240,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :mention-outside="outsidePrompt"
     @mention-outside-add="doc.mentionOutside.add"
     @mention-outside-dismiss="doc.mentionOutside.dismiss"
-    @open-topic="emit('open-topic', $event)"
+    @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
     @rename="rename"

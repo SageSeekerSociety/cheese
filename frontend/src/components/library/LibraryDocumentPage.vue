@@ -29,7 +29,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'titled', title: string): void
   (e: 'delete'): void
-  (e: 'open-topic', topicId: string): void
+  /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
+  (e: 'open-topic', topicId: string, blockId?: string): void
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -69,7 +70,7 @@ watch(
       :topic-list="topicList"
       @titled="emit('titled', $event)"
       @delete="emit('delete')"
-      @open-topic="emit('open-topic', $event)"
+      @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
     />
     <div v-else-if="!error" class="d-flex justify-center py-10">
       <v-progress-circular indeterminate color="primary" />

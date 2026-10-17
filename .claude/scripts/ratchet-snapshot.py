@@ -17,8 +17,9 @@ missing, it timed out, or it decided this tree was not its business — is
 `not_collected` with the reason. A zero would read as "measured, nothing wrong",
 which is the one thing this arrangement exists to prevent.
 
-The exit code is not a verdict. This runs after a merge, and a snapshot is
-wanted even when a check is red, so the run exits 0 whenever it wrote one.
+The exit code is not a verdict. This runs on main, not on a pull request, and a
+snapshot is wanted even when a check is red, so the run exits 0 whenever it
+wrote one.
 
 A run that could not collect still leaves a file: the snapshot, or a record
 saying the collection failed and why. A series with a hole in it cannot tell a
@@ -944,8 +945,8 @@ def main() -> int:
         + (f", failing: {', '.join(failed)}" if failed else ""),
         file=sys.stderr,
     )
-    # The snapshot is wanted even when a check is red — it is written after a
-    # merge, when "red" has to be recorded rather than acted on.
+    # The snapshot is wanted even when a check is red — it is written on main,
+    # when "red" has to be recorded rather than acted on.
     return 0
 
 
