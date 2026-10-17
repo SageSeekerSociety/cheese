@@ -429,6 +429,15 @@ def t_repo_override(server):
     check("repo override: exit 0", r.returncode == 0, r.stderr.strip()[-160:])
     check("repo override: cloned owner/other",
           (dest / "other.txt").is_file() and not (dest / "hello.txt").exists())
+    for suffix in ("", ".git"):
+        label = "override-scoped" + ("-git" if suffix else "-bare")
+        target = f"http://{server.host}/owner/other.git"
+        r, dest = clone_case(server, label, ("writer", "write-token"),
+                             origin=f"http://{server.host}/owner/source{suffix}",
+                             source_config=[["--add", f"credential.{target}.helper", GOOD]],
+                             extra_args=("--repo", "owner/other"))
+        check(f"{label}: target-scoped helper works", r.returncode == 0, r.stderr.strip()[-160:])
+        check(f"{label}: target content cloned", (dest / "other.txt").is_file())
     fail_case(server, "repo-ghost", extra_args=("--repo", "owner/ghost"), http=404)
 
 

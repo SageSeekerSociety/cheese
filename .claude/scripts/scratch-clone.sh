@@ -79,8 +79,8 @@ if (url.scheme != "https" and not local_http) or not url.hostname or url.usernam
 repo = args.repo if args.repo is not None else url.path.removeprefix("/").removesuffix(".git")
 if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repo) or repo.split("/")[1] in {".", ".."} or repo.endswith(".git"):
     fail("repository path must be OWNER/REPO without .git; rerun with --repo OWNER/REPO.")
-# Preserve the origin's suffix convention so URL-scoped helpers still match.
-path = repo + (".git" if url.path.endswith(".git") else "")
+# Default cloning preserves origin scopes; --repo always names OWNER/REPO.git.
+path = repo + (".git" if args.repo is not None or url.path.endswith(".git") else "")
 remote = f"{url.scheme}://{url.netloc}/{path}"
 
 # Keep order, empty resets, and URL-specific entries: Git, not this script,
