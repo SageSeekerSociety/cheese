@@ -1,0 +1,6 @@
+{
+  "lede": "These settings apply to this computer only",
+  "openAtLogin": "Open at login",
+  "openAtLoginHint": "Runs in the background after you log in, so it can let you know when something needs you",
+  "saveFailed": "Couldn't save"
+}

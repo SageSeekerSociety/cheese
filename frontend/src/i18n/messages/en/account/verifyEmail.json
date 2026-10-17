@@ -1,0 +1,15 @@
+{
+  "accountCreated": "Account created",
+  "changeEmail": "Use another address",
+  "codeInvalid": "The code is 6 digits",
+  "failed": "Couldn't verify. Please try again.",
+  "noCode": "Didn't get a code?",
+  "passwordAgain": "Enter the password you set when you registered",
+  "resend": "Resend",
+  "resendFailed": "Couldn't send the code. Please try again later.",
+  "resendIn": "Resend in {seconds}s",
+  "resent": "Code sent again",
+  "sentTo": "We sent a code to {email}",
+  "submit": "Finish",
+  "title": "Verify your email"
+}

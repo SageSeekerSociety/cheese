@@ -19,11 +19,12 @@ vi.mock('@/api', async () => {
     ...actual,
     getProjectDefaultModel: vi.fn().mockResolvedValue({ choices: [{ id: 'm1', label: 'Model one' }] }),
     archiveProject: vi.fn(),
-    setProjectOwner: vi.fn(),
-    listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
-    lookupUser: vi.fn().mockResolvedValue({ handle: 'bob', name: 'Bob', avatar_id: null }),
+    offerTransfer: vi.fn(),
+    listProjectMembers: vi.fn().mockResolvedValue({
+      data: [{ user_handle: 'bob', name: 'Bob', source: 'team', role: 'member', agent: false }],
+    }),
     listTopics: vi.fn().mockResolvedValue({ data: [{ id: 'room-1', title: 'Report room', status: 'active' }] }),
-    getProject: vi.fn().mockResolvedValue({ id: 'p1', can_manage_members: true }),
+    getProject: vi.fn().mockResolvedValue({ id: 'p1', my_role: 'admin', my_permissions: ['edit_settings'] }),
   }
 })
 vi.mock('@/api/projectSkills', () => {
@@ -71,7 +72,12 @@ vi.mock('@/api/projectSkills', () => {
   }
 })
 vi.mock('@/stores/workspace', () => ({
-  useWorkspaceStore: () => ({ refreshProjects: vi.fn(), refreshMembers: vi.fn(), projects: [] }),
+  // p1 is in alice's own name, so the transfer dialog also says where the project goes.
+  useWorkspaceStore: () => ({
+    refreshProjects: vi.fn(),
+    refreshMembers: vi.fn(),
+    projects: [{ id: 'p1', name: 'Thesis', team_handle: 'alice', owner_handle: 'alice' }],
+  }),
 }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 vi.mock('vue-router', async () => ({
@@ -171,17 +177,16 @@ describe('English settings copy', () => {
     expectNoChinese()
   })
 
-  it('the transfer dialog, through to handing the project outside the team', async () => {
-    render(TransferProjectDialog as unknown as Component, {
-      props: { modelValue: true, projectId: 'p1' },
+  it('the transfer dialog, with someone picked to take over a personal project', async () => {
+    // The dialog reads the roster as it opens, so mount it closed and then open it.
+    const { rerender } = render(TransferProjectDialog as unknown as Component, {
+      props: { modelValue: false, projectId: 'p1' },
       ...mountOpts(),
     })
-    await screen.findByText('No members can take it over')
-    await fireEvent.update(screen.getByLabelText('Full username or email'), 'bob')
-    await fireEvent.click(await screen.findByText('Bob', {}, { timeout: 2000 }))
-    await screen.findByText(/The whole project moves to/)
-    await fireEvent.click(screen.getByRole('button', { name: 'Transfer' }))
-    await screen.findByRole('button', { name: 'Confirm transfer' })
+    await rerender({ modelValue: true, projectId: 'p1' })
+    await fireEvent.click(await screen.findByText('Bob'))
+    await screen.findByText(/moves to their name/)
+    expect(screen.getByRole('button', { name: 'Send transfer' })).toBeTruthy()
     expectNoChinese()
   })
 

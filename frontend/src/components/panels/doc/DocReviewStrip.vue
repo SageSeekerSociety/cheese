@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 「查看改动」打开文档时正文上方那一条：谁让 AI 队友改的、还有几处在，上一处 / 下一处，
-// 收起。
+// 「查看改动」打开文档时正文上方那一条：AI 队友改的还有几处在，上一处 / 下一处，收起。
 import CheeseAvatar from '../../CheeseAvatar.vue'
 
 import DocEditButton from './DocEditButton.vue'
@@ -9,7 +8,6 @@ import { t } from '@/i18n'
 
 defineProps<{
   agentName: string
-  requester: string
   /** 新文还在正文里的那几处。 */
   count: number
 }>()
@@ -24,12 +22,8 @@ const emit = defineEmits<{
     <CheeseAvatar :size="18" :name="agentName" />
     <span class="doc-review-strip__text">{{
       count > 0
-        ? requester
-          ? t('work.room.docReview.title', { requester, agent: agentName, n: count })
-          : t('work.room.docReview.titleOwn', { agent: agentName, n: count })
-        : requester
-          ? t('work.room.docReview.allRestored', { requester, agent: agentName })
-          : t('work.room.docReview.allRestoredOwn', { agent: agentName })
+        ? t('work.room.docReview.title', { agent: agentName, n: count })
+        : t('work.room.docReview.allRestored', { agent: agentName })
     }}</span>
     <template v-if="count > 0">
       <button

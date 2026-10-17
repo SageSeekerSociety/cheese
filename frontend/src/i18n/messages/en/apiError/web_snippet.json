@@ -1,0 +1,9 @@
+{
+  "appAgentOnly": "Only the AI teammate writes a mini-app's code",
+  "appCodeTooLarge": "The mini-app's code is over {limit} KB; something that size belongs in the project as a website",
+  "appDrewNothing": "The page is empty after running: what it rendered has no height",
+  "appNotFound": "This mini-app doesn't exist",
+  "appRunFailed": "The mini-app failed when it ran and was not saved: {why}",
+  "appShotMissing": "This version has no picture at this width",
+  "appVersionNotFound": "This mini-app has no version {version}"
+}

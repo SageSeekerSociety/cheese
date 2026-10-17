@@ -37,7 +37,7 @@ module (C2 freezes `app.api.routes.projects -> app.domain.*.models`, and no
 import of that shape is in it) and no *repository* module (the ratchet in
 `tests/unit/test_domain_import_guard.py` freezes four repository pairs against
 `app.api.routes.projects`; all four stay, because the handlers that read those
-repositories stay too). `app.domain.project.artifacts`, `...preview.office`,
+repositories stay too). `app.domain.deliverables.artifacts`, `...preview.office`,
 `...library.service`, `...documents.compare` and `...repository.forge_files` are
 modules and services, not repositories, so importing them here adds nothing to
 either ratchet and `.importlinter` is untouched.
@@ -71,11 +71,12 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.deliverables import artifacts
 from app.domain.documents.compare import compare as office_compare
 from app.domain.library import service as library
 from app.domain.preview import office
-from app.domain.project import artifacts
 from app.domain.project.services import ProjectService
+from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.textfile import compare_bytes
 
@@ -142,7 +143,8 @@ async def read_artifact(
                 else None
             ),
             "versions": [
-                artifacts.version_payload(project_id, v, rooms) for v in history
+                artifacts.version_payload(project_id, v, rooms, file_store=library)
+                for v in history
             ],
         }
     )
@@ -270,7 +272,9 @@ async def _artifact_keeper(
     「这个名字对不对」正是要人判断的那部分。"""
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.require_verified_caller(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
+    await resolver.authorize_project(
+        actor, project_id=project_id, permission=Permission.edit_content
+    )
     return await channels_unseen(db, resolver, actor, project_id)
 
 

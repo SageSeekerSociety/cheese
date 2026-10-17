@@ -1,0 +1,10 @@
+{
+  "back": "Back",
+  "create": "Create project",
+  "intro": "Name the AI teammate for “{project}”",
+  "more": "You can add more teammates after the project is created",
+  "name": "Teammate name",
+  "next": "Next",
+  "random": "Random name",
+  "title": "Your project's AI teammate"
+}

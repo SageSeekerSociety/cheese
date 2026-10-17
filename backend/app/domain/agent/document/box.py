@@ -21,8 +21,9 @@ or put its answer into a comment thread.
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import ForbiddenError, ValidationError
 from app.core.redis import get_redis_client
 from app.core.sentences import error_frame, exception_text, say
+from app.domain import project_material
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import question, session
 from app.domain.agent.document.question import Asked
@@ -53,6 +55,11 @@ class Preset:
     scope: str
     instruction: str
 
+
+#: 起草项目总览（`draft`）的要求，长，放在旁边的 Markdown 里。
+_DRAFT_OVERVIEW = (Path(__file__).parent / "draft_overview.md").read_text(
+    encoding="utf-8"
+)
 
 PRESETS: dict[str, Preset] = {
     "polish": Preset(
@@ -115,6 +122,10 @@ PRESETS: dict[str, Preset] = {
         "说法、和项目记忆或最近的对话对不上的过时说法、含糊到会被理解错的句子。每条引用"
         "原文、说明问题。不提风格偏好。没有问题就说没有。",
     ),
+    # 只对还空着的项目总览（route 那一头挡着别的文档）。总览的定义在
+    # `project/overview.py` 和每段对话开头那一节（`harness/opening.py`）：三件事、
+    # 1500 字以内；这里照它写，不另起一套。
+    "draft": Preset("edit", "document", _DRAFT_OVERVIEW),
     "structure": Preset(
         "ask",
         "document",
@@ -211,6 +222,17 @@ async def stop(
 # --- one question --------------------------------------------------------------
 
 
+async def _draft_material(db: AsyncSession, project_id: uuid.UUID) -> list[str]:
+    """起草项目总览时多给的：和「现状」同一份项目材料，加资料库里有哪些文件。"""
+    found = await project_material.gather(db, project_id)
+    names = await project_material.library_names(db, project_id)
+    listed = "\n".join(f"- library/{name}" for name in names) or "（空）"
+    return [
+        f"<项目材料>\n{found.text}\n</项目材料>",
+        f"<资料库里的文件>\n{listed}\n</资料库里的文件>",
+    ]
+
+
 def _question(
     around: question.Surroundings,
     *,
@@ -218,6 +240,7 @@ def _question(
     text: str,
     selection: Selection | None,
     may_edit: bool,
+    material: Sequence[str] = (),
 ) -> str:
     parts: list[str] = []
     if selection is not None:
@@ -225,8 +248,11 @@ def _question(
             f"<选中的文字>\n{selection.text}\n</选中的文字>",
             *around.around(selection.marked(), "选中的文字所在的段落"),
         ]
-    parts += [around.document(), *around.conversation()]
+    parts += [around.document(), *around.conversation(), *material]
     asked = preset.instruction if preset is not None else f"提问人说：{text}"
+    if preset is not None and text.strip():
+        # 一个预设也可以带上提问人自己的话（起草时的补充说明）：它是这次的依据之一。
+        asked += f"\n\n<提问人的补充>\n{text.strip()}\n</提问人的补充>"
     if not may_edit:
         rule = "这次只回答，不要改文档。"
     elif selection is not None:
@@ -294,7 +320,12 @@ async def ask(
     try:
         async with factory() as db:
             await question.admit(db, asked.project_id, bound)
-            around = await question.surroundings(db, asked, seat=bound.agent_handle)
+            around = await question.surroundings(
+                db, asked, seat=bound.agent_handle, asker=asker
+            )
+            material = (
+                await _draft_material(db, asked.project_id) if preset == "draft" else []
+            )
     except ValidationError as exc:
         # Refused before anything was asked: the refusal is what the box says.
         await slot.release()
@@ -305,7 +336,12 @@ async def ask(
         await slot.release()
         raise
     prompt = _question(
-        around, preset=chosen, text=text, selection=selection, may_edit=allowed
+        around,
+        preset=chosen,
+        text=text,
+        selection=selection,
+        may_edit=allowed,
+        material=material,
     )
 
     async def said() -> Prompt:

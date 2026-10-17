@@ -4,26 +4,33 @@
 its lines are in the version now under review. Writing, editing and deleting a
 draft are a person's acts; 芝士 answers comments by what it reports when it
 hands the task over again, not through these routes.
+
+The rows the `GET` answers with are `app.api.review_comment_rows`, not this
+module's: a task's room snapshot embeds the same ones and is not a route, so the
+builder lives under `app.api` where both may ask for it (C4
+`routes-independent`).
 """
 
 import uuid
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
+from app.api.review_comment_rows import review_comment_rows
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
+from app.domain.project_permissions import Permission
 from app.domain.review import document_compare
 from app.domain.review.comments import ReviewCommentService, describe
 from app.domain.review.schemas import ReviewCommentEdit, ReviewCommentIn
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(prefix="", tags=["review-comments"], dependencies=[ROUTE_DECIDES])
 
@@ -140,16 +147,6 @@ async def list_review_comments(
     return ok(await review_comment_rows(db, task, actor.handle or ""))
 
 
-async def review_comment_rows(db: AsyncSession, task, viewer: str) -> dict:
-    """A task's review comments as `viewer` reads them; also the
-    `review_comments` of a task's room snapshot. The caller has authorised the
-    reader."""
-    svc = ReviewCommentService(db)
-    rows = await svc.comments(task.id, viewer)
-    anchor = await svc.anchors(task, rows)
-    return {"comments": [describe(row, anchor) for row in rows]}
-
-
 @router.get(
     "/topics/{task_id}/review-comparison", **typed_response(ReviewComparisonOut)
 )
@@ -167,8 +164,9 @@ async def review_comparison(
 async def write_review_comment(
     task_id: uuid.UUID, body: ReviewCommentIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    _place, actor, task = await task_conversation(db, resolver, task_id)
+    place, actor, task = await task_conversation(db, resolver, task_id)
     author = _person(actor)
+    await require_role(db, actor, place.project_id, Permission.comment)
     comment = await ReviewCommentService(db).write(
         task.id,
         author,
@@ -192,7 +190,7 @@ async def _draft_actor(
     task_id = await ReviewCommentService(db).task_of(comment_id)
     if task_id is None:
         raise NotFoundError(say("reviewCommentNotFound"))
-    place = await TopicService(db).place_or_404(task_id)
+    place = await place_or_404(db, task_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )

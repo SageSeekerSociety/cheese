@@ -10,48 +10,26 @@
 //
 // 组件那一半拿到的每一样东西都是这里算好的：连「来源标题写什么字」这类字符串也在
 // 这里，因为它们的判据（活还在不在跑、文件是不是只读）全是取数那一边的事实。
-import type { FileSource, RoomTask, WorkspaceFile } from '../cx_types'
-import type { FileDiff } from '../lib/diff'
-import type { MergeConflict, OfficeComparison } from '../types/reviewComment'
+//
+// 这一份是组合根：任务与来源、谁在转圈、什么时候读，都在这里；四块各自成篇的取数
+// 拆在 `panelChanges/` 下 —— 工作树差异、打开的那一份文件、文档的字节与修订、和
+// 上一版的比较。返回的那一包和拆之前一模一样，组件与单测都不用动。
+import type { FileSource, RoomTask } from '../cx_types'
+import type { PanelChangesProps } from './panelChanges/types'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import {
-  ApiError,
-  downloadFile,
-  getForgeConnection,
-  getGitDiff,
-  listFiles,
-  listRoomTasks,
-  readFile,
-  workspaceFileRawUrl,
-  writeFile,
-} from '../api'
-import { reviewComparison } from '../api/reviewComments'
+import { getForgeConnection, listRoomTasks } from '../api'
 import { phraseLabel } from '../lib/board'
-import { parseDiffLines, splitDiffByFile } from '../lib/diff'
-import { useDocumentBytes } from '../lib/documentBytes'
-import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
-import { placeKind } from '../lib/reviewPlace'
 
-import { useDocumentRevisions } from './useDocumentRevisions'
-import { useTopicMemory } from './useTopicMemory'
+import { usePanelDocument } from './panelChanges/documentPane'
+import { usePanelFilePane } from './panelChanges/filePane'
+import { usePanelGitChanges } from './panelChanges/gitChanges'
+import { usePanelOfficeCompare } from './panelChanges/officeCompare'
 
 import { t } from '@/i18n'
 
-export interface PanelChangesProps {
-  topicId: string | null
-  projectId: string | null
-  /** 这一格看的那件任务。 */
-  taskId: string | null
-  readOnly?: boolean
-  /** This tab is the one on screen. Loads happen on the rising edge, exactly
-   *  like opening the old drawer did. */
-  active?: boolean
-  /** Bumped by WorkPanel when a turn ends — the moment 芝士's commits and its
-   *  working tree actually changed. Silent re-fetch, never a spinner. */
-  refreshTick?: number
-}
+export type { PanelChangesProps } from './panelChanges/types'
 
 /** 「改动」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelChanges(props: PanelChangesProps) {
@@ -60,7 +38,6 @@ export function usePanelChanges(props: PanelChangesProps) {
   const taskLoadError = ref<string | null>(null)
   const tasksLoaded = ref(false)
   let sourceEpoch = 0
-  let fileRequest = 0
   let taskRequest = 0
   const currentTask = computed(() => (taskRow.value?.id === selectedTask.value ? taskRow.value : undefined))
   // 任务结束了，它的文件就只读——跟在状态后面说。
@@ -105,10 +82,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     }
   }
 
-  // 打开的文件看哪一面：它的 diff，还是可编辑的全文。
-  type FileView = 'diff' | 'edit'
-  const fileView = ref<FileView>('diff')
-
   const loading = ref(false)
   // 有几个读还在路上（这件任务、diff、文件列表）。哪一个先回来都不算完：转圈要等最后
   // 一个，不然先回来的那个把它关掉，剩下的还没到，面板就先说一句「暂无改动」。
@@ -130,499 +103,52 @@ export function usePanelChanges(props: PanelChangesProps) {
   const errorMsg = ref<string | null>(null)
   // 见 checkRepo。
   const noRepo = ref(false)
-  async function downloadOpenFile() {
-    if (!openRawUrl.value || !openPath.value) return
-    try {
-      await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.downloadFailed')
-    }
-  }
 
-  // ---- Git: the working-tree diff ----
-  // 提交记录不在这里读：审阅看的是改了什么，提交是过程记录。
-  const gitDiff = ref<string>('')
-
-  async function loadGit(opts: { silent?: boolean } = {}) {
-    const tid = props.topicId
-    const task = selectedTask.value
-    const pid = props.projectId
-    const epoch = sourceEpoch
-    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value || noWorkYet.value) return
-    const done = opts.silent ? null : startLoad()
-    if (opts.silent) refreshing.value = true
-    errorMsg.value = null
-    try {
-      const diff = await getGitDiff(pid, tid, task, fileSource.value)
-      // Guard against a source switch mid-flight.
-      if (selectedTask.value !== task || sourceEpoch !== epoch) return
-      gitDiff.value = diff.diff
-    } catch (e) {
-      // 后台那一下没取到，就留着上次取到的：下一次再取，不拿一句报错把整块顶掉。
-      if (sourceEpoch === epoch && !opts.silent) {
-        errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
-      }
-    } finally {
-      done?.()
-      if (selectedTask.value === task && sourceEpoch === epoch) refreshing.value = false
-    }
-  }
-
-  // 一份 diff，切成每个文件一段。树上的 +N −M、点开文件看的那一段，都读这里 ——
-  // 不再多要一次请求，也不会出现「树说改了、diff 里没有」这种两边不一致。
-  const fileDiffs = computed<FileDiff[]>(() => splitDiffByFile(gitDiff.value))
-  const diffByPath = computed(() => new Map(fileDiffs.value.map((f) => [f.path, f])))
-
-  // ---- 文件: a two-pane browser — the tree stays visible on the left, the opened
-  // file loads on the right: its diff, or the editable text (save = 人改文件
-  // 即指令). ----
-  const files = ref<WorkspaceFile[]>([])
-  const openPath = ref<string | null>(null)
-  const fileDraft = ref<string>('')
-  const fileSaved = ref<string>('') // last loaded/saved content, for the dirty flag
-  const fileSaving = ref(false)
-  // 横条上关于「这一份文件」的那半（路径、差异/编辑、保存）只在文件区真的摆出来时才有。
-  const fileToolReady = computed(() => !sourceUnavailable.value && !noRepo.value && !loading.value && !errorMsg.value)
-  const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
-  // Version of the open file as it was read; echoed back on save so a write that
-  // lost a race to 芝士 is rejected instead of silently erasing their edits.
-  const fileVersion = ref<string | null>(null)
-  // Files that must not be edited as text: binary (a text round-trip destroys
-  // them) or too large to send. They open read-only, with no 保存 button.
-  const fileBinary = ref(false)
-  const fileTooLarge = ref(false)
-  const fileBytes = ref(0)
-  const fileEditable = ref(false)
-  const fileReadOnly = computed(
-    () =>
-      props.readOnly ||
-      fileSource.value === 'committed' ||
-      !fileEditable.value ||
-      currentTask.value?.status !== 'open' ||
-      // 待审阅时不直接改：审的这一版会在审的过程中变掉。想改的地方写成修改建议。
-      currentTask.value?.card?.status === 'pending' ||
-      fileBinary.value ||
-      fileTooLarge.value ||
-      openIsImage.value
-  )
-  // Drafts belong to a source and path, including the version they were edited from.
-  // They outlive this panel (it is rebuilt for every topic): an unsaved edit left in
-  // one topic's file is still there when the reader comes back to it.
-  const { drafts, lastFiles } = useTopicMemory()
-  function sourceKey() {
-    return `${selectedTask.value}:${fileSource.value}`
-  }
-  function draftKey(path: string) {
-    return `${sourceKey()}:${path}`
-  }
-  function keepDraft() {
-    if (!openPath.value) return
-    lastFiles.set(sourceKey(), openPath.value)
-    if (fileDirty.value) {
-      drafts.set(draftKey(openPath.value), {
-        content: fileDraft.value,
-        saved: fileSaved.value,
-        version: fileVersion.value,
-      })
-    } else {
-      drafts.delete(draftKey(openPath.value))
-    }
-  }
-  function warnBeforeUnload(event: BeforeUnloadEvent) {
-    if (!fileDirty.value && !drafts.size) return
-    event.preventDefault()
-    event.returnValue = ''
-  }
-  window.addEventListener('beforeunload', warnBeforeUnload)
-  onBeforeUnmount(() => {
-    window.removeEventListener('beforeunload', warnBeforeUnload)
-    keepDraft()
+  const gitChanges = usePanelGitChanges({
+    props,
+    task: selectedTask,
+    source: fileSource,
+    sourceUnavailable,
+    noRepo,
+    noWorkYet,
+    refreshing,
+    errorMsg,
+    epoch: () => sourceEpoch,
+    startLoad,
   })
 
-  // Set when the backend rejected a save as a conflict. Nobody wins by default —
-  // the human sees it and picks.
-  const fileConflict = ref(false)
+  const pane = usePanelFilePane({
+    props,
+    task: selectedTask,
+    currentTask,
+    source: fileSource,
+    fileDiffs: gitChanges.fileDiffs,
+    diffByPath: gitChanges.diffByPath,
+    loading,
+    sourceUnavailable,
+    noRepo,
+    noWorkYet,
+    errorMsg,
+    epoch: () => sourceEpoch,
+    startLoad,
+  })
 
-  // 文件树: 「这一支碰过哪些文件、工作区里现在还有哪些」在这里定，折成一层层文件夹
-  // 那件事在 lib/changesTree.ts（纯函数，没有组件）。
-  // 改动清单是一份要逐个看完的清单，文件夹默认都开着；收起的那几个记在这里。
-  const collapsedDirs = ref(new Set<string>())
-  function toggleDir(path: string) {
-    const next = new Set(collapsedDirs.value)
-    if (next.has(path)) next.delete(path)
-    else next.add(path)
-    collapsedDirs.value = next
-  }
-  // 定位: when a file is opened by path (e.g. clicking a <&path> chip in chat or
-  // the doc), reopen every ancestor folder so the tree shows where it lives. 树
-  // 自己负责把那一行滚进视野——那是画的事，它听 revealTick。
-  const revealTick = ref(0)
-  function revealInTree(path: string) {
-    const parts = path.split('/')
-    if (parts.length > 1) {
-      const next = new Set(collapsedDirs.value)
-      let prefix = ''
-      for (const part of parts.slice(0, -1)) {
-        prefix = prefix ? `${prefix}/${part}` : part
-        next.delete(prefix)
-      }
-      collapsedDirs.value = next
-    }
-    revealTick.value += 1
-  }
-  // 树上列的是这一支改到的文件。改动清单里可能有工作区已经没有的文件（这一支删掉了
-  // 它）——那也是要审阅的一条，所以清单按 diff 列，不按工作区。
-  const treeFiles = computed<WorkspaceFile[]>(
-    () =>
-      fileDiffs.value.map((d) => ({
-        path: d.path,
-        bytes: files.value.find((f) => f.path === d.path)?.bytes ?? 0,
-      })) as WorkspaceFile[]
-  )
-
-  /** The open file's own diff, or null when this topic did not touch it. */
-  const openDiff = computed<FileDiff | null>(() =>
-    openPath.value ? diffByPath.value.get(openPath.value) ?? null : null
-  )
-  const openDiffLines = computed(() => (openDiff.value ? parseDiffLines(openDiff.value.body) : []))
-  // 差异 is the default face of a changed file — reviewing is what this tab is
-  // for — but a file with no diff has only one face, so the toggle is not offered.
-  const effectiveView = computed<FileView>(() => (openDiff.value ? fileView.value : 'edit'))
-
-  const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif'])
-  function isImagePath(path: string): boolean {
-    return IMAGE_EXT.has(path.split('.').pop()?.toLowerCase() ?? '')
-  }
-  const openIsImage = computed(() => !!openPath.value && isImagePath(openPath.value))
-
-  // ---- 文档: 这一版画出来，外加它自己带的修订 ----
-  // 一份 .docx 的差异是一句「二进制文件不同」——按文件类型分派渲染器之前，这一格对一
-  // 份交付的文档能说的只有这句话。现在它画出这一版的页面，再把文件里的修订逐条列出
-  // 来：那才是「这一版比上一版改了什么」在一份 Word 文档里的真实形态。
-  const openIsDocument = computed(() => !!openPath.value && needsDocumentView(openPath.value))
-  const openDocumentType = computed(() => (openPath.value ? DOCUMENT_TYPES[suffixOf(openPath.value)] ?? null : null))
-  /** 修订只长在 .docx 上：其余文档（一张 PDF、一页幻灯片）没有「修订」这回事。 */
-  const revisionPath = computed(() => (openPath.value && suffixOf(openPath.value) === 'docx' ? openPath.value : null))
-  // 处理完一处修订，文件就变了，而字节是按版本缓存的——这里打一下让它重取。
-  const docNonce = ref(0)
-  const {
-    bytes: docBytes,
-    loading: docLoading,
-    error: docError,
-    rendererMissing: docRendererMissing,
-  } = useDocumentBytes({
+  const doc = usePanelDocument({
     topicId: () => props.topicId,
-    path: () => openPath.value,
-    version: () => fileVersion.value,
-    task: () => selectedTask.value,
-    source: () => fileSource.value,
-    nonce: () => docNonce.value,
-    enabled: () => openIsDocument.value,
-  })
-
-  async function onRevisionDecided() {
-    const path = openPath.value
-    docNonce.value += 1
-    // 文件的版本变了，树上那几个数字也跟着变：两边都重读，别让读者对着旧数字看。
-    if (path) await selectFile(path)
-    void loadGit({ silent: true })
-  }
-
-  // 这一份 .docx 的修订：清单、只读怎么判、处理完干什么，都在那一份里。处理完这条活
-  // 的文件就变了（`onRevisionDecided`）—— 这一格除了那一处，还要把树上的数字重读。
-  const revs = useDocumentRevisions(
-    {
-      topicId: () => props.topicId,
-      path: () => revisionPath.value,
-      version: () => fileVersion.value,
-      task: () => selectedTask.value,
-      source: () => fileSource.value,
-      // 待审阅时修订只看不改：接受或拒绝会改动审的这一版。哪一处不要，写一条批注。
-      readOnly: () =>
-        props.readOnly === true ||
-        currentTask.value?.status !== 'open' ||
-        currentTask.value?.card?.status === 'pending',
+    path: pane.openPath,
+    version: pane.fileVersion,
+    task: selectedTask,
+    source: fileSource,
+    readOnly: () =>
+      props.readOnly === true || currentTask.value?.status !== 'open' || currentTask.value?.card?.status === 'pending',
+    // 处理完一处修订：这份文件变了，树上的数字和 diff 都要重读。
+    onChanged: async (path) => {
+      if (path) await pane.selectFile(path)
+      void gitChanges.loadGit({ silent: true })
     },
-    { onDecided: () => void onRevisionDecided() }
-  )
-
-  // 任务里的 Word、表格、幻灯片能和上一版比：第一次交付比任务开始时的版本，被退回
-  // 过的比退回时那一版（`backend/app/domain/review/document_compare.py`）。
-  const canCompare = computed(() => !!selectedTask.value && !!openPath.value && placeKind(openPath.value) !== 'line')
-  const comparing = ref(false)
-  const comparison = ref<OfficeComparison | null>(null)
-  const comparisonLoading = ref(false)
-  const comparisonError = ref('')
-  let comparisonSeq = 0
-  watch(openPath, () => {
-    comparing.value = false
-    comparison.value = null
   })
-  async function toggleCompare() {
-    comparing.value = !comparing.value
-    const task = selectedTask.value
-    const path = openPath.value
-    if (!comparing.value || !task || !path) return
-    const mine = ++comparisonSeq
-    comparisonLoading.value = true
-    comparisonError.value = ''
-    try {
-      const res = await reviewComparison(task, path)
-      if (mine === comparisonSeq) comparison.value = res.comparison
-    } catch (e) {
-      if (mine === comparisonSeq)
-        comparisonError.value = e instanceof Error ? e.message : t('work.room.review.compareUnavailable')
-    } finally {
-      if (mine === comparisonSeq) comparisonLoading.value = false
-    }
-  }
 
-  // Raw bytes of the open file: what <img> renders for an image, and what the
-  // download button hands over for anything else that can't be shown as text.
-  const openRawUrl = computed(() =>
-    openPath.value && props.projectId
-      ? workspaceFileRawUrl(
-          props.projectId,
-          openPath.value,
-          props.topicId ?? undefined,
-          selectedTask.value,
-          fileSource.value
-        )
-      : ''
-  )
-
-  // 文件 state is per-source. openPath/fileDraft describe a file in the CURRENT
-  // source's worktree, so switching source must drop them: carrying them over meant
-  // the next 保存 wrote one worktree's draft into another's tree, at the same path.
-  function resetFilePanel() {
-    files.value = []
-    openPath.value = null
-    fileDraft.value = ''
-    fileSaved.value = ''
-    fileVersion.value = null
-    fileBinary.value = false
-    fileTooLarge.value = false
-    fileBytes.value = 0
-    fileEditable.value = false
-    fileConflict.value = false
-    collapsedDirs.value = new Set()
-  }
-
-  // A directed open asked for by a <&path> chip. Whoever reaches loadFiles first
-  // consumes it, so the listing can never auto-select the first file over the one
-  // the reader actually clicked.
-  let pendingOpen: string | null = null
-
-  // 上一次指名要开的文件没在这份清单里。`openFile` 拿它给调用者回话：文件不在这一支
-  // 的工作副本里，该换个地方开它（工作面板退到「项目当前版本」那一格）。
-  let openMissed = false
-
-  // Two callers can ask for the listing in the same tick — `openFile` asks
-  // directly, and coming on screen makes the activation watcher ask too. Letting
-  // both run raced: whichever finished second re-ran the "nothing is open, select
-  // the first file" branch and stole the file the reader had actually clicked.
-  let filesInFlight: Promise<void> | null = null
-  function loadFiles(opts: { silent?: boolean } = {}): Promise<void> {
-    if (filesInFlight) return filesInFlight
-    const p = doLoadFiles(opts).finally(() => {
-      if (filesInFlight === p) filesInFlight = null
-    })
-    filesInFlight = p
-    return p
-  }
-
-  async function doLoadFiles(opts: { silent?: boolean } = {}) {
-    const tid = props.topicId
-    const task = selectedTask.value
-    const pid = props.projectId
-    const epoch = sourceEpoch
-    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value || noWorkYet.value) return
-    const done = opts.silent ? null : startLoad()
-    if (!opts.silent) errorMsg.value = null
-    try {
-      const listed = (await listFiles(pid, tid, task, fileSource.value)).data
-      // Guard against a source switch mid-flight — without it the previous source's
-      // listing repopulates the panel.
-      if (selectedTask.value !== task || sourceEpoch !== epoch) return
-      files.value = listed
-      const want = pendingOpen
-      if (want) {
-        // 这个来源里没有这个文件时不要去读它：读回来的是一句后端的英文错误，它会把
-        // 整块面板顶掉，而读者只是点了一枚 chip。记下这一笔，让调用者去别的地方开它
-        // （工作面板退到「项目当前版本」那一格），列表留在原地。
-        if (!listed.some((f) => f.path === want)) {
-          pendingOpen = null
-          openMissed = true
-          return
-        }
-        // Keep the directed path reserved while its read is in flight, so a
-        // later diff/list response cannot start an automatic first-file read.
-        await selectFile(want)
-        if (sourceEpoch === epoch) pendingOpen = null
-        return
-      }
-      // 打开的那一份不在这个来源里了：回到全部改动那一面，而不是对着一份读不到的文件。
-      if (openPath.value && !listed.some((f) => f.path === openPath.value)) openPath.value = null
-    } catch (e) {
-      if (sourceEpoch !== epoch || opts.silent) return
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
-    } finally {
-      done?.()
-    }
-  }
-
-  // 回到全部改动那一面。没保存的修改照常暂存，回到这个文件还在。
-  function closeFile() {
-    keepDraft()
-    fileRequest += 1
-    openPath.value = null
-    fileConflict.value = false
-  }
-
-  async function selectFile(path: string) {
-    keepDraft()
-    const request = ++fileRequest
-    const epoch = sourceEpoch
-    const pid = props.projectId
-    const tid = props.topicId
-    const task = selectedTask.value
-    if (!pid) return
-    errorMsg.value = null
-    fileConflict.value = false
-    // Each file opens on its diff — that is what a review surface is for. Files
-    // this topic never touched have no diff and open on their text.
-    fileView.value = 'diff'
-    const listed = files.value.find((f) => f.path === path)?.bytes ?? 0
-    // Images render as images — Monaco would show mangled bytes.
-    if (isImagePath(path)) {
-      openPath.value = path
-      fileDraft.value = ''
-      fileSaved.value = ''
-      fileVersion.value = null
-      fileBinary.value = false
-      fileTooLarge.value = false
-      fileBytes.value = listed
-      revealInTree(path)
-      return
-    }
-    try {
-      const f = await readFile(pid, path, tid ?? undefined, task, fileSource.value)
-      // A source switch mid-flight must not land the previous source's file — and
-      // its draft — in the panel.
-      if (selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
-      openPath.value = path
-      // Binary and oversized files arrive with no content: they open read-only,
-      // so the draft stays empty and there is nothing to write back.
-      fileDraft.value = f.content ?? ''
-      fileSaved.value = f.content ?? ''
-      fileVersion.value = f.version
-      fileBinary.value = f.binary
-      fileTooLarge.value = f.too_large
-      fileBytes.value = f.bytes ?? listed
-      fileEditable.value = f.editable !== false && f.source !== 'committed'
-      const draft = drafts.get(draftKey(path))
-      if (draft && !f.binary && !f.too_large) {
-        fileDraft.value = draft.content
-        fileSaved.value = draft.saved
-        fileVersion.value = draft.version
-        fileView.value = 'edit'
-        fileConflict.value = f.version !== draft.version
-      }
-      revealInTree(path)
-    } catch (e) {
-      if (selectedTask.value !== task || sourceEpoch !== epoch || fileRequest !== request) return
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.readFileFailed')
-    }
-  }
-
-  // 存的时候和芝士这段时间的修改重叠了：三方的那几段，逐处选一个版本再存。
-  const fileMerge = ref<MergeConflict | null>(null)
-
-  // Every save carries the version on which the user's decision was based, and the
-  // text it named: the backend merges the two edits against it when the file moved on.
-  async function writeOpenFile(expected: string | null, base: string = fileSaved.value) {
-    const pid = props.projectId
-    const tid = props.topicId
-    const task = selectedTask.value
-    const path = openPath.value
-    if (!pid || !path || !selectedTask.value || fileReadOnly.value || !fileDirty.value || fileSaving.value) return
-    const draft = fileDraft.value
-    const key = draftKey(path)
-    const epoch = sourceEpoch
-    fileSaving.value = true
-    errorMsg.value = null
-    try {
-      const res = await writeFile(pid, path, draft, tid ?? undefined, expected, task, base)
-      if (drafts.get(key)?.content === draft) drafts.delete(key)
-      // The answer is only about the file that was open in the topic that was
-      // open — anything else finished after a switch and must be dropped.
-      if (selectedTask.value !== task || openPath.value !== path || sourceEpoch !== epoch) return
-      // 合并过的话，存下去的是两边改动合起来的那一份：编辑器里换成它。
-      const saved = res.merged && typeof res.content === 'string' ? res.content : draft
-      fileSaved.value = saved
-      if (saved !== draft) fileDraft.value = saved
-      fileVersion.value = res.version
-      fileConflict.value = false
-      fileMerge.value = null
-    } catch (e) {
-      if (selectedTask.value !== task || openPath.value !== path || sourceEpoch !== epoch) return
-      const merge = e instanceof ApiError ? (e.data as MergeConflict | undefined) : undefined
-      if (e instanceof ApiError && e.status === 409 && merge?.regions) {
-        // Both edited the same lines: pick a version for each, then save over theirs.
-        fileMerge.value = merge
-      } else if (e instanceof ApiError && e.status === 409) {
-        // 芝士 wrote this file since it was read. Neither side wins by default:
-        // show the conflict and let the human reload or overwrite on purpose.
-        fileConflict.value = true
-      } else {
-        errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.saveFailed')
-      }
-    } finally {
-      if (selectedTask.value === task && sourceEpoch === epoch) fileSaving.value = false
-    }
-  }
-
-  function saveFile() {
-    void writeOpenFile(fileVersion.value)
-  }
-
-  // 逐处选完：存的是选出来的那一份，基于芝士那一版。
-  function resolveMerge(content: string) {
-    const merge = fileMerge.value
-    if (!merge) return
-    fileDraft.value = content
-    void writeOpenFile(merge.version, merge.base)
-  }
-  function cancelMerge() {
-    fileMerge.value = null
-  }
-
-  // 冲突后的两条出路,都由人点：丢掉自己的改动看最新的，或者明知有冲突仍然覆盖。
-  async function overwriteFile() {
-    const pid = props.projectId
-    const tid = props.topicId
-    const task = selectedTask.value
-    const path = openPath.value
-    const epoch = sourceEpoch
-    if (!pid || !path || fileReadOnly.value) return
-    try {
-      const current = await readFile(pid, path, tid, task, 'live')
-      if (epoch !== sourceEpoch || openPath.value !== path) return
-      await writeOpenFile(current.version)
-    } catch (error) {
-      if (epoch === sourceEpoch)
-        errorMsg.value = error instanceof Error ? error.message : t('work.room.changes.readFileFailed')
-    }
-  }
-
-  function reloadOpenFile() {
-    const path = openPath.value
-    if (path) {
-      drafts.delete(draftKey(path))
-      fileDraft.value = fileSaved.value
-      void selectFile(path)
-    }
-  }
+  const compare = usePanelOfficeCompare({ task: selectedTask, path: pane.openPath })
 
   // ---- Loading policy: the surface loads when it comes on screen, the same rule
   // the drawer used ("opening the tool loads it"). One surface now, so both halves
@@ -635,8 +161,8 @@ export function usePanelChanges(props: PanelChangesProps) {
       if (taskLoadError.value) return
       void checkRepo()
       if (noRepo.value) return
-      void loadGit(opts)
-      void loadFiles(opts)
+      void gitChanges.loadGit(opts)
+      void pane.loadFiles(opts)
     } finally {
       done?.()
     }
@@ -697,7 +223,7 @@ export function usePanelChanges(props: PanelChangesProps) {
         // Commits and the diff only. The listing changes when a turn writes
         // files, which the turn-boundary tick already covers — putting it on the
         // timer would be a third request every 20 seconds buying nothing.
-        void loadGit({ silent: true })
+        void gitChanges.loadGit({ silent: true })
       }, REFRESH_MS)
     },
     { immediate: true }
@@ -706,33 +232,28 @@ export function usePanelChanges(props: PanelChangesProps) {
 
   function clearSource() {
     sourceEpoch += 1
-    fileRequest += 1
-    filesInFlight = null
-    pendingOpen = null
-    openMissed = false
-    fileSaving.value = false
+    pane.resetSource()
     inFlight = 0
     loading.value = false
-    gitDiff.value = ''
+    gitChanges.clearGitDiff()
     errorMsg.value = null
-    resetFilePanel()
   }
 
   async function selectVersion(source: FileSource) {
     if (fileSource.value === source) return
-    const path = openPath.value
-    keepDraft()
+    const path = pane.openPath.value
+    pane.keepDraft()
     clearSource()
     requestedSource.value = source
-    pendingOpen = path ?? lastFiles.get(sourceKey()) ?? null
-    await Promise.all([loadGit(), loadFiles()])
+    pane.setPendingOpen(path ?? pane.lastFileForSource())
+    await Promise.all([gitChanges.loadGit(), pane.loadFiles()])
   }
 
   watch(
     () => props.taskId,
     (next, was) => {
       if (next === was) return
-      keepDraft()
+      pane.keepDraft()
       clearSource()
       taskRow.value = undefined
       requestedSource.value = null
@@ -750,11 +271,11 @@ export function usePanelChanges(props: PanelChangesProps) {
   // 任务就点不开。
   async function openFile(path: string): Promise<boolean> {
     if (!tasksLoaded.value) await loadTasks()
-    keepDraft()
+    pane.keepDraft()
     clearSource()
-    pendingOpen = path
-    await Promise.all([loadGit(), loadFiles()])
-    return !openMissed
+    pane.setPendingOpen(path)
+    await Promise.all([gitChanges.loadGit(), pane.loadFiles()])
+    return pane.hasOpenFileFound()
   }
 
   return {
@@ -764,66 +285,66 @@ export function usePanelChanges(props: PanelChangesProps) {
     sourceStatus,
     sourceUnavailable,
     fileSource,
-    fileToolReady,
+    fileToolReady: pane.fileToolReady,
     loading,
     refreshing,
     errorMsg,
     noRepo,
-    fileDiffs,
-    diffByPath,
-    treeFiles,
+    fileDiffs: gitChanges.fileDiffs,
+    diffByPath: gitChanges.diffByPath,
+    treeFiles: pane.treeFiles,
     // 「打开其他文件」从这里挑：这个来源里的全部文件。
-    allFiles: files,
-    openPath,
-    fileDraft,
-    fileSaved,
-    fileSaving,
-    fileDirty,
-    fileVersion,
-    fileBinary,
-    fileTooLarge,
-    fileBytes,
-    fileReadOnly,
-    fileConflict,
-    openDiff,
-    openDiffLines,
-    effectiveView,
-    fileView,
-    openIsImage,
-    openIsDocument,
-    openDocumentType,
-    revisionPath,
-    openRawUrl,
-    collapsedDirs,
-    revealTick,
-    draftCount: computed(() => drafts.size),
-    docBytes,
-    docLoading,
-    docError,
-    docRendererMissing,
+    allFiles: pane.files,
+    openPath: pane.openPath,
+    fileDraft: pane.fileDraft,
+    fileSaved: pane.fileSaved,
+    fileSaving: pane.fileSaving,
+    fileDirty: pane.fileDirty,
+    fileVersion: pane.fileVersion,
+    fileBinary: pane.fileBinary,
+    fileTooLarge: pane.fileTooLarge,
+    fileBytes: pane.fileBytes,
+    fileReadOnly: pane.fileReadOnly,
+    fileConflict: pane.fileConflict,
+    openDiff: pane.openDiff,
+    openDiffLines: pane.openDiffLines,
+    effectiveView: pane.effectiveView,
+    fileView: pane.fileView,
+    openIsImage: pane.openIsImage,
+    openIsDocument: doc.openIsDocument,
+    openDocumentType: doc.openDocumentType,
+    revisionPath: doc.revisionPath,
+    openRawUrl: pane.openRawUrl,
+    collapsedDirs: pane.collapsedDirs,
+    revealTick: pane.revealTick,
+    draftCount: pane.draftCount,
+    docBytes: doc.docBytes,
+    docLoading: doc.docLoading,
+    docError: doc.docError,
+    docRendererMissing: doc.docRendererMissing,
     // 这一份 .docx 的修订（`useDocumentRevisions.ts`）
-    revs,
-    canCompare,
-    comparing,
-    comparison,
-    comparisonLoading,
-    comparisonError,
-    toggleCompare,
+    revs: doc.revs,
+    canCompare: compare.canCompare,
+    comparing: compare.comparing,
+    comparison: compare.comparison,
+    comparisonLoading: compare.comparisonLoading,
+    comparisonError: compare.comparisonError,
+    toggleCompare: compare.toggleCompare,
     // 动作
     loadAll,
-    selectFile,
-    closeFile,
+    selectFile: pane.selectFile,
+    closeFile: pane.closeFile,
     selectVersion,
     openFile,
-    toggleDir,
-    downloadOpenFile,
-    saveFile,
-    overwriteFile,
-    fileMerge,
-    resolveMerge,
-    cancelMerge,
-    reloadOpenFile,
-    onRevisionDecided,
+    toggleDir: pane.toggleDir,
+    downloadOpenFile: pane.downloadOpenFile,
+    saveFile: pane.saveFile,
+    overwriteFile: pane.overwriteFile,
+    fileMerge: pane.fileMerge,
+    resolveMerge: pane.resolveMerge,
+    cancelMerge: pane.cancelMerge,
+    reloadOpenFile: pane.reloadOpenFile,
+    onRevisionDecided: doc.onRevisionDecided,
   }
 }
 

@@ -1,0 +1,8 @@
+{
+  "wakeWatchStalled": "Missed beat: {beat} went quiet for {minutes} minutes",
+  "wakeWatchCatchUp": "Missed-beat catch-up, from the platform-side observer: {beat} went quiet for {minutes} minutes",
+  "wakeWatchCatchUpHow": "Follow the library's \"{title}\" and restart the timer and the watchdog.",
+  "wakeWatchBeatTimer": "the dispatcher timer",
+  "wakeWatchBeatWatchdog": "the watchdog heartbeat",
+  "labelWakeWatchDetail": "How this was judged"
+}

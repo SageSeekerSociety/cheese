@@ -147,7 +147,7 @@ block_ref）、改文档=下指令、人验收才算数——同源 spec。
 后端已删除（2026-08-19）——它是「起一个子进程、流式读完、退出」那一种形状，而拿着迭代器的
 人就拥有那一轮，平台里每一件打捞机器都是从这条性质长出来的。留下的是可以重连的那一种：
 会话机上的 runner 握着 headless `claude -p` 的管道、把记录写进日志，后端从游标读、崩溃后
-`recover` 重新找到它（`agent/room/sessions.py`）。
+`recover` 重新找到它（`agent/room/sessions/`）。
 
 - **组合替代继承**：会话核心（`agent/session_host/`）起会话、送输入、读记录，各 harness 只给一个
   驱动；房间的一轮流程住在 `RoomSessions` 里，它**持有**核心和一条 channel（决定会话放在哪、

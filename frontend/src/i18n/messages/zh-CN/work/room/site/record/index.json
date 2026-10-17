@@ -1,0 +1,9 @@
+{
+  "compact": "整理",
+  "delivery": "投递",
+  "environment": "环境",
+  "memory": "记忆",
+  "queue": "排队",
+  "retry": "重试",
+  "wakeWatch": "补跳"
+}

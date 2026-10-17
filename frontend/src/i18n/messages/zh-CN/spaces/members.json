@@ -1,0 +1,31 @@
+{
+  "columns": {
+    "joinedVia": "加入方式",
+    "member": "成员",
+    "role": "角色"
+  },
+  "confirmRevoke": "取消 {name} 的管理员身份？",
+  "confirmTransfer": "把所有者转让给 {name}？转让后你会成为管理员。",
+  "count": "共 {n} 人",
+  "createdSpace": "创建者",
+  "empty": "暂无成员",
+  "invite": "邀请成员",
+  "inviteCodes": "邀请码",
+  "inviteDomainGroups": "邮箱域名组",
+  "loadMembersFailed": "加载成员失败",
+  "makeAdmin": "设为管理员",
+  "revoke": "取消管理员",
+  "role": {
+    "admin": "管理员",
+    "adminHint": "审核题目、看数据、管分类与邀请",
+    "member": "成员",
+    "memberHint": "做题目、看公告",
+    "owner": "所有者",
+    "ownerHint": "全部权限，含成员角色"
+  },
+  "search": "搜索名字或用户名",
+  "title": "成员",
+  "transfer": "转让所有者",
+  "unknown": "未知",
+  "you": "（你）"
+}

@@ -18,6 +18,7 @@ import uuid
 import pytest
 
 from tests.conftest import seed_user, wait_work_idle
+from tests.integration.conftest import mail
 from tests.integration.test_accept_pr import (
     _accept,
     _approve,
@@ -74,13 +75,7 @@ def _events(client, topic_id: str, event_type: str) -> list[dict]:
 
 
 def _notices(client, token: str, event_type: str | None = None) -> list[dict]:
-    r = client.get(
-        "/notifications",
-        params={"type": "ROOM_NOTICE"},
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert r.status_code == 200, r.text
-    rows = r.json()["data"]["notifications"]
+    rows = mail(client, token, "ROOM_NOTICE")
     if event_type is None:
         return rows
     return [

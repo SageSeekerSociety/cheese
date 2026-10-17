@@ -6,6 +6,8 @@ import { ref } from 'vue'
 import { attachLibraryFile, uploadAttachment } from '../api'
 import { t } from '../i18n'
 
+import { videoMimeOf } from './fileKind'
+
 const MAX_PENDING = 9
 
 /** One entry in the composer's strip. While a file is still going up it is
@@ -36,8 +38,6 @@ export interface PendingAttachment extends ChatAttachment {
   name?: string
   /** The picked File, kept on a failed slot so 重试 uploads the same bytes. */
   file?: File
-  /** Where it came from, so a retried clipboard paste stays a clipboard paste. */
-  origin?: 'file' | 'clipboard'
 }
 
 /** What `File.type` alone cannot give back: the extension to write on a name we
@@ -96,6 +96,16 @@ export function uploaded(items: readonly PendingAttachment[]): ChatAttachment[] 
   return items.filter((a) => !a.uploading && !a.error).map(({ path, mime }) => ({ path, mime }))
 }
 
+/** The backend's ceilings (`MAX_FILE_BYTES` / `MAX_VIDEO_BYTES` in
+ *  app/domain/library/service.py): a video gets room for a phone recording,
+ *  everything else 10 MB. Judged by the name the backend judges it by. */
+const MAX_FILE_MB = 10
+const MAX_VIDEO_MB = 200
+
+function uploadLimitMb(file: File): number {
+  return videoMimeOf(file.name) ? MAX_VIDEO_MB : MAX_FILE_MB
+}
+
 let placeholderSeq = 0
 
 export function usePendingAttachments(
@@ -112,7 +122,7 @@ export function usePendingAttachments(
 
   /** Put this file where the slot is, or mark that slot failed and keep it.
    *  Used both on the first try and on 重试: one upload, one place it lands. */
-  async function uploadInto(slot: PendingAttachment, file: File, origin: 'file' | 'clipboard') {
+  async function uploadInto(slot: PendingAttachment, file: File) {
     const topicId = getTopicId()
     if (!topicId) {
       drop(slot)
@@ -123,7 +133,7 @@ export function usePendingAttachments(
     slot.progress = 0
     let attachment: ChatAttachment
     try {
-      attachment = await uploadAttachment(topicId, file, origin, (fraction) => {
+      attachment = await uploadAttachment(topicId, file, (fraction) => {
         // Only while the slot is still on its way: once it lands it is replaced
         // by the finished attachment, and a late event must not resurrect it.
         if (slot.uploading) slot.progress = fraction
@@ -147,7 +157,7 @@ export function usePendingAttachments(
     if (at >= 0) pending.value.splice(at, 1, attachment)
   }
 
-  async function addFiles(files: Iterable<File>, origin: 'file' | 'clipboard' = 'file') {
+  async function addFiles(files: Iterable<File>) {
     const topicId = getTopicId()
     if (!topicId) return
     const all = [...files]
@@ -159,8 +169,9 @@ export function usePendingAttachments(
           onError?.(t('work.room.attachments.tooMany'))
           break
         }
-        if (f.size > 10 * 1024 * 1024) {
-          onError?.(t('work.room.attachments.tooLarge', { name: f.name }))
+        const limitMb = uploadLimitMb(f)
+        if (f.size > limitMb * 1024 * 1024) {
+          onError?.(t('work.room.attachments.tooLarge', { name: f.name, mb: limitMb }))
           continue
         }
         // Take the slot BEFORE the upload, so the strip has a frame to draw
@@ -171,10 +182,9 @@ export function usePendingAttachments(
           uploading: true,
           name: f.name,
           file: f,
-          origin,
         }
         pending.value.push(slot)
-        await uploadInto(slot, f, origin)
+        await uploadInto(slot, f)
       }
     } finally {
       uploading.value = false
@@ -187,7 +197,7 @@ export function usePendingAttachments(
     if (!slot || slot.uploading || !slot.error || !slot.file) return
     uploading.value = true
     try {
-      await uploadInto(slot, slot.file, slot.origin ?? 'file')
+      await uploadInto(slot, slot.file)
     } finally {
       uploading.value = false
     }
@@ -246,7 +256,7 @@ export function usePendingAttachments(
     }
     if (files.length) {
       e.preventDefault()
-      void addFiles(files, 'clipboard')
+      void addFiles(files)
     }
   }
 

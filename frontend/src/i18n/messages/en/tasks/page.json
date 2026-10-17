@@ -1,0 +1,33 @@
+{
+  "claim": {
+    "claim": "Claim this challenge",
+    "notApproved": "Can be claimed once approved",
+    "pending": "Claim awaiting approval",
+    "rejected": "Claim declined"
+  },
+  "dateFormat": "MMM D",
+  "delete": "Delete",
+  "edit": "Edit",
+  "publishedBy": "Published by {name} on {date}",
+  "rejectReason": "Not approved: {reason}",
+  "reviewTitle": "Submissions from {name}",
+  "state": {
+    "closed": "Closed",
+    "full": "Full",
+    "notStarted": "Not started",
+    "open": "Open",
+    "pending": "Pending review",
+    "rejected": "Not approved"
+  },
+  "submit": {
+    "again": "Submit a new version",
+    "first": "Submit"
+  },
+  "tabs": {
+    "brief": "Brief",
+    "data": "Data",
+    "label": "Challenge sections",
+    "mine": "My submissions",
+    "roster": "Participants"
+  }
+}

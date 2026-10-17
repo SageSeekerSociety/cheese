@@ -1,0 +1,8 @@
+{
+  "toast": {
+    "acceptFailed": "Couldn't accept the transfer",
+    "accepted": "Transfer accepted; the project is yours",
+    "declineFailed": "Couldn't decline the transfer",
+    "declined": "Transfer declined"
+  }
+}

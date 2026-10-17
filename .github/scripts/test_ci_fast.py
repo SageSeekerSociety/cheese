@@ -8,9 +8,10 @@ that mirrors the implementation cannot catch the implementation being wrong.
 
 Stub hooks are `language: system` entries in the fixture's own
 .pre-commit-config.yaml: the command table still comes from a config file,
-and pre-commit is the real scheduler. Set CI_FAST_PRECOMMIT to a pre-commit
-invocation available on the machine (CI provides it via uv — `uvx pre-commit`
-— in every workflow whose discover picks this file up).
+and pre-commit is the real scheduler. CI_FAST_PRECOMMIT overrides which
+pre-commit the runs below use; when it is not set this file picks one the
+machine can actually run (see `precommit_command`), rather than naming a
+binary that may not be installed and reporting every hook as blocked.
 """
 
 import json
@@ -32,15 +33,39 @@ ALL_HOOKS = [
     "ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork",
     "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet",
     "repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references",
-    "pyright", "frontend-typecheck",
+    "pyright", "frontend-typecheck", "openapi-document",
 ]
 BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
+# Selected by the pre-push entry point ALONE, on top of FAST_HOOKS — a plain
+# `task ci:fast` run and Required CI's draft job do not run these. Kept in step
+# with `PRE_PUSH_HOOKS` in ci-fast.py.
+PRE_PUSH_HOOKS = {"openapi-document"}
 FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"}
 GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
+# Hooks that judge against the merge base, so they are the ones that must report
+# not-run — never a pass — when there is no base or the caller names another one.
+# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py, minus `file-size`, which
+# is one of the guard hooks this file tracks separately.
+BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 
 
 def git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+
+
+def precommit_command():
+    """What CI_FAST_PRECOMMIT should say on the machine running this file.
+
+    The value has to name something that runs here, or the suite reports the
+    machine instead of the change: a bare `pre-commit` on a checkout without
+    pre-commit installed makes every hook come back `pre-commit unavailable:
+    blocked` and turns the run red for no reason at all. Both workflows pass
+    `uvx pre-commit`, which resolves on a machine that has only uv; a checkout
+    that does have pre-commit on PATH may as well use it directly.
+
+    Only the default: a caller's own CI_FAST_PRECOMMIT still wins.
+    """
+    return "pre-commit" if shutil.which("pre-commit") else "uvx pre-commit"
 
 
 def _cores():
@@ -111,7 +136,7 @@ class CiFastTest(unittest.TestCase):
 
     def run_ci_fast(self, *extra, env_extra=None):
         env = dict(self.env)
-        env.setdefault("CI_FAST_PRECOMMIT", "pre-commit")
+        env.setdefault("CI_FAST_PRECOMMIT", precommit_command())
         if env_extra:
             env.update(env_extra)
         return subprocess.run(
@@ -186,12 +211,14 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(rep["status"], "unknown")
         self.assertTrue(rep["fallback"])
         # everything ran except the checks that themselves need the merge base
-        self.assertTrue((BACKEND_HOOKS - {"migration-fork"}) | FRONTEND_HOOKS <= self.ran_hooks())
+        self.assertTrue((BACKEND_HOOKS | FRONTEND_HOOKS) - BASE_JUDGING_HOOKS <= self.ran_hooks())
         self.assertNotIn("file-size", self.ran_hooks())
-        self.assertNotIn("migration-fork", self.ran_hooks())
+        for hook in BASE_JUDGING_HOOKS:
+            self.assertNotIn(hook, self.ran_hooks())
         skipped = {n["id"] for n in rep["not_run"]}
         self.assertIn("file-size", skipped)
-        self.assertIn("migration-fork", skipped)
+        for hook in BASE_JUDGING_HOOKS:
+            self.assertIn(hook, skipped)
 
     # --- a custom --base cannot be honored by the base-judging hooks (they
     # --- always judge origin/main), so the run must NOT pass — exit 2
@@ -272,6 +299,447 @@ class CiFastTest(unittest.TestCase):
         self.assertNotIn("scene-ratchet", results)
         not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
         self.assertIn("无相关文件", not_run["scene-ratchet"])
+
+    # --- a base-judging hook whose own `files:` matches nothing changed must
+    # --- still be named as not run when there is no base: the widened selector
+    # --- that runs everything must not promote it to have-run, and the reason
+    # --- must name the base, which is the thing that could not be checked
+    def test_base_judging_hook_with_no_files_is_still_not_run(self):
+        self.write_hooks(extra_entries="""      - id: scene-ratchet
+        name: scene-ratchet filtered stub
+        entry: bash -c 'echo scene-ratchet >> .ci-fast-ran'
+        language: system
+        files: '\\.xyz$'
+""", omit={"scene-ratchet"})
+        self.commit_file("frontend/src/x.ts")  # no refs/remotes/origin/main
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertEqual(self.report()["status"], "unknown")
+        self.assertTrue(self.report()["fallback"])
+        self.assertNotIn("scene-ratchet", self.ran_hooks())
+        not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
+        self.assertIn("merge base", not_run["scene-ratchet"])
+        self.assertNotIn("无相关文件", not_run["scene-ratchet"])
+
+    # --- the pre-push entry point (the platform's task-worktree hook calls
+    # --- this): the three hooks that spawn the node toolchain leave the
+    # --- selection and are NAMED as not run, so a report that could not judge
+    # --- lint never reads as a pass that covered it
+    def test_pre_push_leaves_out_the_node_hooks_and_says_so(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        ran = self.ran_hooks()
+        self.assertFalse({"eslint", "stylelint", "boundary-check-frontend"} & ran)
+        self.assertTrue({"scene-ratchet", "catalog-ratchet"} <= ran)  # the rest of the tier
+        not_run = {item["id"]: item["reason"] for item in self.report()["not_run"]}
+        for hook_id in ("eslint", "stylelint", "boundary-check-frontend"):
+            self.assertIn(hook_id, not_run)
+            self.assertIn("node toolchain", not_run[hook_id])
+        self.assertTrue(self.report()["pre_push"])
+        self.assertIn("未执行 eslint", proc.stdout)
+
+    # --- and each of those names the command that runs it by hand: the reader
+    # --- did not ask for this report and is about to push either way, so a
+    # --- "not run" with no way to run it is a dead end
+    def test_pre_push_names_how_to_run_what_it_left_out(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        for hook_id in ("eslint", "stylelint", "boundary-check-frontend"):
+            self.assertRegex(proc.stdout, rf"推前没跑 {hook_id}.*run {hook_id} --all-files --hook-stage manual")
+
+    # --- what DID fail is reproduced too, and the script's own exit code still
+    # --- reports the failure — only the hook swallows it, and that is the
+    # --- hook's decision (a refused push is a commit the platform never got)
+    def test_pre_push_reproduces_failures_and_keeps_exit_1(self):
+        self.write_hooks(failing={"ruff"})
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("只报告，不挡推送", proc.stdout)
+        self.assertRegex(proc.stdout, r"复现 ruff（fail）.*run ruff --all-files --hook-stage manual")
+        self.assertEqual(self.report()["exit"], 1)
+
+    # --- the hooks and the tool have to run on one interpreter. `uvx` builds
+    # --- its tool venv around an interpreter of its own and puts that venv's
+    # --- bin first on the hooks' PATH, so a `language: system` hook whose
+    # --- entry says `python3` lands on it: measured 2026-10-12, 3.9.25 there
+    # --- against the 3.13.5 running the script, and `migration-fork` (3.10+
+    # --- annotations) reported fail on every backend-scoped push while the
+    # --- reproduce line it printed repeated that same machine quirk. The
+    # --- default command carries the pin, and the line the reader is told to
+    # --- run is asserted to be a prefix of the argv that ran.
+    def test_pre_push_pins_the_interpreter_the_hooks_run_under(self):
+        self.write_hooks(failing={"ruff"})
+        self.make_base_and_head("backend/app/x.py")
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        log = self.tmp / "uvx-argv"
+        uvx = tools / "uvx"
+        uvx.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$(basename "$0") $*" >> {shlex.quote(str(log))}\n'
+            'case "$*" in\n'
+            '  *--version*) echo "pre-commit 4.7.0"; exit 0 ;;\n'
+            'esac\n'
+            "exit 1\n"
+        )
+        uvx.chmod(0o755)
+        env = {k: v for k, v in self.env.items() if k != "CI_FAST_PRECOMMIT"}
+        env["PATH"] = str(tools) + os.pathsep + self.env["PATH"]
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--tier", "static", "--pre-push"],
+            cwd=self.repo, capture_output=True, text=True, env=env, timeout=120,
+        )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        spawned = log.read_text().splitlines()
+        pinned = f"uvx --python {sys.executable} pre-commit"
+        self.assertTrue(spawned, proc.stdout + proc.stderr)
+        for line in spawned:
+            self.assertTrue(line.startswith(pinned), line)
+        printed = re.search(r"复现 ruff（fail）: (.*)", proc.stdout)
+        self.assertIsNotNone(printed, proc.stdout)
+        ran_ruff = [line for line in spawned if line.startswith(pinned + " run ruff ")]
+        self.assertTrue(ran_ruff, spawned)
+        self.assertTrue(ran_ruff[-1].startswith(printed.group(1)),
+                        f"printed {printed.group(1)!r} ran {ran_ruff[-1]!r}")
+
+    # --- and the preflight follows what the run will spawn, not the raw scope:
+    # --- with the three node hooks out of the selection, a frontend-scoped
+    # --- push from a checkout that never ran `task fe:install` is judged by
+    # --- the guards and the two python ratchets instead of reporting blocked
+    # --- with nothing run. Without the flag the same checkout still blocks,
+    # --- because those three are selected again.
+    def test_pre_push_static_judges_without_node_modules(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        shutil.rmtree(self.repo / "frontend/node_modules")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        ran = self.ran_hooks()
+        self.assertTrue({"scene-ratchet", "catalog-ratchet"} <= ran)
+        self.assertIn("file-size", ran)
+        self.assertNotIn("blocked", proc.stdout)
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 3, proc.stdout)
+        self.assertIn("node_modules", proc.stdout)
+
+    # --- the footer names a pre-commit hook only for something that is one.
+    # --- `commit-title` is invoked directly and the plan's checks are run by
+    # --- this tool itself, so `pre-commit run commit-title` for those answers
+    # --- "No hook with id ..." (reported 2026-10-12): they name the command
+    # --- that ran, or the input they were missing.
+    def test_pre_push_does_not_dress_plan_checks_as_hooks(self):
+        self.write_hooks(failing={"ruff"})
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--tier", "quick", "--pre-push",
+                                "--pull-request", str(self.tmp / "absent.json"),
+                                env_extra=self.quick_tools())
+        self.assertRegex(proc.stdout, r"复现 ruff（fail）: .*run ruff --all-files --hook-stage manual")
+        self.assertIn("复现 commit-title", proc.stdout)
+        self.assertIn("cannot read --pull-request", proc.stdout)
+        self.assertNotRegex(proc.stdout, r"复现 commit-title.*pre-commit run")
+        # --- the plan's rows are the other branch of `reproduce` — the one
+        # --- with a command of its own — so `commit-title` alone would leave a
+        # --- regression there green. `backend-pure` runs in this very run, and
+        # --- its line has to say where to run it: from the repository root the
+        # --- argv cannot find its runner (reported 2026-10-12).
+        self.assertIn("复现 backend-pure", proc.stdout)
+        self.assertNotRegex(proc.stdout, r"复现 backend-pure.*pre-commit run")
+        self.assertRegex(proc.stdout, r"复现 backend-pure（[^）]*）: cd \S*/backend && .*pytest")
+
+    # --- leaving the node hooks out of the run is not a licence to lose them
+    # --- from the config: the drift check reads the whole set before the
+    # --- filter, so a config that no longer defines one is still unknown
+    def test_pre_push_still_catches_config_drift(self):
+        self.write_hooks(omit={"eslint"})
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("eslint", proc.stdout)
+        self.assertEqual(self.report()["status"], "unknown")
+
+    # --- the checks the entry point adds on top of the tier: a Required CI
+    # --- step a first push can be the first to break, which a work machine can
+    # --- still run. Added to the flag's selection only — `task ci:fast` and
+    # --- CI's draft tier read FAST_HOOKS, and neither should pay for it
+    def test_pre_push_adds_the_backend_checks_the_tier_does_not(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(PRE_PUSH_HOOKS <= self.ran_hooks())
+
+    def test_without_pre_push_the_added_checks_do_not_run(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertFalse(PRE_PUSH_HOOKS & self.ran_hooks())
+
+    # --- and they follow the scope like every other hook: a frontend-only push
+    # --- does not build the backend's API document
+    def test_pre_push_added_checks_follow_the_backend_scope(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertFalse(PRE_PUSH_HOOKS & self.ran_hooks())
+
+    # --- a plain run is untouched: the node hooks are selected and executed
+    # --- exactly as before (the narrowing belongs to the flag, not the tool)
+    def test_without_pre_push_the_node_hooks_still_run(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertTrue({"eslint", "stylelint", "boundary-check-frontend"} <= self.ran_hooks())
+        self.assertFalse(self.report()["pre_push"])
+
+    # --- the spawn and the printed line read CI_FAST_PRECOMMIT at two
+    # --- separate sites, and both workflows set it. The test above strips it,
+    # --- so it covers only the default branch: with the variable set, a
+    # --- footer that fell back to the default invocation would print a line
+    # --- the run never used and stay green.
+    def test_pre_push_prints_the_pre_commit_it_spawned_with_ci_fast_precommit(self):
+        self.write_hooks(failing={"ruff"})
+        self.make_base_and_head("backend/app/x.py")
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        log = self.tmp / "uvx-argv"
+        uvx = tools / "uvx"
+        uvx.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$(basename "$0") $*" >> {shlex.quote(str(log))}\n'
+            'case "$*" in\n'
+            '  *--version*) echo "pre-commit 4.7.0"; exit 0 ;;\n'
+            'esac\n'
+            "exit 1\n"
+        )
+        uvx.chmod(0o755)
+        proc = self.run_ci_fast(
+            "--pre-push",
+            env_extra={"PATH": str(tools) + os.pathsep + self.env["PATH"],
+                       "CI_FAST_PRECOMMIT": "uvx pre-commit"},
+        )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        printed = re.search(r"复现 ruff（fail）: (.*)", proc.stdout)
+        self.assertIsNotNone(printed, proc.stdout)
+        self.assertTrue(printed.group(1).startswith("uvx pre-commit run ruff"),
+                        f"printed {printed.group(1)!r}, but CI_FAST_PRECOMMIT says uvx pre-commit")
+        ran_ruff = [line for line in log.read_text().splitlines() if " run ruff " in line]
+        self.assertTrue(ran_ruff, proc.stdout)
+        self.assertTrue(ran_ruff[-1].startswith(printed.group(1)),
+                        f"printed {printed.group(1)!r} ran {ran_ruff[-1]!r}")
+
+    # --- `--types` adds `frontend-typecheck`, the one node hook the pre-push
+    # --- filter does not drop, so a static pre-push run that asked for types
+    # --- still needs frontend/node_modules. Asking the selection rather than
+    # --- the flag is what keeps this blocked instead of passing with the check
+    # --- it selected never run.
+    def test_pre_push_with_types_still_gates_on_node_modules(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        shutil.rmtree(self.repo / "frontend/node_modules")
+        proc = self.run_ci_fast("--pre-push", "--types")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("node_modules", proc.stdout)
+
+    # --- the tier is the other half of the same question, and the only run
+    # --- where it is the whole answer: off the static tier the pre-push filter
+    # --- still drops the three node hooks, so the selection can say nothing
+    # --- about node while the tier's own remaining checks still type-check the
+    # --- frontend. Blocked for the missing dependency, not red by a toolchain
+    # --- that was never installed.
+    def test_pre_push_off_the_static_tier_still_gates_on_node_modules(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        shutil.rmtree(self.repo / "frontend/node_modules")
+        # `run_ci_fast` writes `--tier static` first and the last one wins.
+        proc = self.run_ci_fast("--tier", "quick", "--pre-push")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("node_modules", proc.stdout)
+
+    # --- a config that is not text is a blocked run with a sentence, not a
+    # --- traceback: `UnicodeDecodeError` is a `ValueError`, so the `except
+    # --- OSError` that reads like it covers an unreadable file does not, and
+    # --- the footer raised out of the handler that was already reporting the
+    # --- verdict (reported 2026-10-12).
+    def test_pre_push_reports_an_unreadable_config_as_blocked(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        (self.repo / ".pre-commit-config.yaml").write_bytes(
+            b"repos: []\n# raw 0x80 follows: \x80\n"
+        )
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("cannot read .pre-commit-config.yaml", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertEqual(self.report()["status"], "blocked")
+
+    # --- the entry point is documented as runnable by hand, so the guard that
+    # --- sends it away from outside a work tree has to actually fire: `cd ""`
+    # --- returns 0 in dash and in bash, so testing `cd`'s status is not
+    # --- testing that a directory was found, and the report would run against
+    # --- the caller's directory while still exiting 0.
+    def test_the_entry_point_stays_out_of_the_way_outside_a_work_tree(self):
+        """Nothing runs when there is no work tree to check.
+
+        Pins the behaviour, not either guard on its own: deleting the
+        assignment's `|| exit 0` alone leaves this green, because the
+        `[ -n "$root" ]` line under it answers the same state.
+        """
+        entry = SCRIPT.parents[2] / ".cheese/pre-push"
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        marker = self.tmp / "ran-ci-fast"
+        python = tools / "python3"
+        python.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\nexit 0\n")
+        python.chmod(0o755)
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        proc = subprocess.run(
+            [str(entry)], cwd=elsewhere, capture_output=True, text=True, timeout=60,
+            env={"PATH": str(tools) + os.pathsep + self.env["PATH"]},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(marker.exists(), "the report ran outside a work tree")
+
+    # --- a delivery push has no terminal: only what went wrong is worth a file
+    def test_the_entry_point_leaves_a_report_only_from_a_run_that_failed(self):
+        """The platform reads this file back and shows it in the room.
+
+        On a delivery push the script's stdout goes to a pipe nobody reads, so
+        the caller asks for the report by name instead. Only a run that did not
+        pass writes it: a passing run has nothing to act on, and a room told
+        about one would be told to look for a problem that is not there.
+
+        The stub also records what it was asked to run, because the argv is the
+        entry point's whole job: `--pre-push` is the flag that drops the three
+        node-toolchain hooks, and `--tier static` is what the report calls the
+        draft tier's scope. A stub that ignores its arguments would not notice
+        the day either one changed.
+        """
+        entry = SCRIPT.parents[2] / ".cheese/pre-push"
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        work = self.tmp / "work"
+        work.mkdir()
+        git(work, "init", "-b", "main")
+        report = self.tmp / "report.txt"
+        argv = self.tmp / "argv"
+        env = {
+            "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+            "CI_FAST_PRE_PUSH_REPORT": str(report),
+        }
+        python = tools / "python3"
+        python.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv))}\n"
+            "echo 'ruff 报了一个错'\n"
+            "exit 0\n"
+        )
+        python.chmod(0o755)
+
+        passed = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env=env,
+        )
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertIn("ruff 报了一个错", passed.stdout)
+        self.assertFalse(
+            report.exists(), "a passing run left a report for the room"
+        )
+        self.assertEqual(
+            argv.read_text().splitlines(),
+            [".github/scripts/ci-fast.py", "--tier", "static", "--pre-push"],
+            "the entry point ran something other than the draft tier's checks",
+        )
+
+        python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 1\n")
+        failed = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env=env,
+        )
+        self.assertEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.assertEqual(report.read_text(), "ruff 报了一个错\n")
+
+    # --- the other half of "a report, not a gate": nobody asked for a report,
+    # --- so the run has a reader and the status is what it is worth. The
+    # --- documented way to use this by hand is to link it into your own
+    # --- `.git/hooks/pre-push`, where git honours what it returns; the
+    # --- platform's own push asks for the report by name, which is what caps
+    # --- it at 0 above.
+    def test_the_entry_point_hands_a_direct_run_the_checks_status(self):
+        """Run by hand this is a hook; asked for a report, it is a report.
+
+        `--pre-push`'s own promise (`ci-fast.md`: the exit code is unchanged,
+        1 for a real failure, 2/3 for unknown/blocked) is a promise about the
+        checks, and the direct run is where a caller reads it.
+        """
+        entry = SCRIPT.parents[2] / ".cheese/pre-push"
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        work = self.tmp / "work"
+        work.mkdir()
+        git(work, "init", "-b", "main")
+        python = tools / "python3"
+        env = {"PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+
+        python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 0\n")
+        python.chmod(0o755)
+        passing = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env=env,
+        )
+        self.assertEqual(passing.returncode, 0, passing.stdout + passing.stderr)
+
+        python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 1\n")
+        failing = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env=env,
+        )
+        self.assertEqual(failing.returncode, 1, failing.stdout + failing.stderr)
+        self.assertIn("ruff 报了一个错", failing.stdout)
+
+    # --- the wall clock the header and `docs/workflows.md` both advertise, and
+    # --- the one thing the tier's own budgets cannot cover: a machine that
+    # --- cannot reach pre-commit's index hangs before any check starts. On the
+    # --- delivery path that hang would eat the budget the push shares with the
+    # --- hook, so the kill has to arrive long before it.
+    def test_the_entry_point_cuts_a_run_that_outlasts_its_wall_clock(self):
+        """A hung check must not become a hung push.
+
+        The stub replaces itself with `sleep`, so the `TERM` the wall clock
+        sends lands on the process the pipe is waiting for and the run really
+        ends there — a shell that kept a grandchild alive would hold the
+        command substitution open for the whole sleep.
+        """
+        entry = SCRIPT.parents[2] / ".cheese/pre-push"
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        work = self.tmp / "work"
+        work.mkdir()
+        git(work, "init", "-b", "main")
+        python = tools / "python3"
+        python.write_text("#!/bin/sh\nexec sleep 30\n")
+        python.chmod(0o755)
+        started = time.monotonic()
+        proc = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env={
+                "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                "CI_FAST_PRE_PUSH_REPORT": str(self.tmp / "report.txt"),
+                "CI_FAST_PRE_PUSH_TIMEOUT": "1",
+            },
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertLess(
+            time.monotonic() - started, 15, "the wall clock did not fire"
+        )
 
     # --- an unknown path widens the scope; it must not shrink to guards-only
     def test_unknown_path_widens_scope(self):
@@ -442,7 +910,7 @@ class CiFastTest(unittest.TestCase):
         proc = subprocess.run(
             [sys.executable, str(SCRIPT), "--tier", "static"],
             cwd=worktree, capture_output=True, text=True,
-            env={**self.env, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", "pre-commit")},
+            env={**self.env, "CI_FAST_PRECOMMIT": os.environ.get("CI_FAST_PRECOMMIT", precommit_command())},
             timeout=120,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -682,10 +1150,10 @@ sys.exit(0)
         self.assertTrue(any(r["id"] == "backend-pure" for r in report["ran"]))
 
     def test_shared_i18n_catalog_needs_no_local_widening(self):
-        # roomNotice.json already sets backend scope in the shared map, so the
-        # local guard must not claim it did anything.
+        # a roomNotice shard already sets backend scope in the shared map, so
+        # the local guard must not claim it did anything.
         self.write_hooks()
-        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice.json")
+        self.make_base_and_head("frontend/src/i18n/messages/zh/roomNotice/agent.json")
         env = self.quick_tools()
         proc = self.run_ci_fast("--tier", "quick", "--title", "feat: shared catalog", env_extra=env)
         report = self.report()
@@ -826,7 +1294,7 @@ sys.exit(0)
         # (slow) stub hook, so nothing here is stubbed away.
         self.write_hooks(slow={"file-size"})
         self.make_base_and_head("frontend/src/probe.ts")
-        subprocess.run([*shlex.split(self.env.get("CI_FAST_PRECOMMIT", "pre-commit")), "--version"],
+        subprocess.run([*shlex.split(self.env.get("CI_FAST_PRECOMMIT", precommit_command())), "--version"],
                        cwd=self.repo, capture_output=True, env=self.env, timeout=120)
         proc = self.run_ci_fast("--budget", "8", "--timeout", "30")
         self.assertEqual(proc.returncode, 2, proc.stdout)
@@ -1230,15 +1698,17 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_types_only_input_widens_types_not_the_test_run(self):
-        # A backend route change regenerates openapi.json and the types-only
-        # src/api/openapi.d.ts. Nothing in frontend/src reads the document at
-        # runtime, so the suite would be checking nothing new; the type check is
-        # what has to widen.
+        # A backend route change carries the frontend suite with it through the
+        # digest of the rebuilt document and the regenerated, types-only
+        # src/api/openapi.d.ts. Nothing in frontend/src reads either at runtime,
+        # so the suite would be checking nothing new; the type check is what has
+        # to widen.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
         self.put("frontend/src/use.ts", "export const x = 1\n")
         plan, omissions = test_plan(
-            self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts", "frontend/src/use.ts"],
+            self.root, ["backend/openapi.sha256", "frontend/src/api/openapi.d.ts",
+                        "frontend/src/use.ts"],
             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")
@@ -1246,9 +1716,10 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(unit["evidence"]["roots"], ["src/use.ts"])
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
         self.assertEqual(omissions, [])
-        # Alone, the regenerated declaration runs no test at all — that is a
+        # Alone, the digest and the declaration run no test at all — that is a
         # stated omission, not a suite-wide run and not an unknown.
-        plan, omissions = test_plan(self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts"],
+        plan, omissions = test_plan(self.root, ["backend/openapi.sha256",
+                                                "frontend/src/api/openapi.d.ts"],
                                     {"frontend": True}, self.root)
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
@@ -1320,24 +1791,33 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_scope_is_the_paths_the_map_routed_there(self):
-        # The path map routes backend/openapi.json into frontend scope, so a
+        # The path map routes the document's digest into frontend scope, so a
         # backend change enters this branch through it. Read from the whole
         # change, its own .py files counted as frontend runtime content and the
         # suite ran in full for a document no test can load.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
-        changed = ["backend/app/api/projects.py", "backend/openapi.json",
+        changed = ["backend/app/api/projects.py", "backend/openapi.sha256",
                    "frontend/src/api/openapi.d.ts"]
         plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root,
-                                    frontend_scope=["backend/openapi.json",
+                                    frontend_scope=["backend/openapi.sha256",
                                                     "frontend/src/api/openapi.d.ts"])
         self.assertEqual([o["id"] for o in omissions], ["frontend-unit"])
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
-        # With no scope from the caller the whole change is read, as before.
+        # With no scope from the caller the whole change is read, and a .py file
+        # beside the digest is not something this branch knows how to rule out:
+        # it runs in full. The path map is what keeps that from happening, and
+        # this is the answer when it has not spoken.
         plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root)
         self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
                          "full")
+        # A frontend source file beside them is still content.
+        self.put("frontend/src/use.ts", "export const x = 1\n")
+        plan, _ = test_plan(self.root, changed + ["frontend/src/use.ts"],
+                            {"frontend": True}, self.root)
+        self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
+                         "related")
 
     def test_read_off_disk_specs_matches_the_specs_that_read_the_tree(self):
         # The tuple is written by hand, and a stale entry is filtered out of
@@ -1368,10 +1848,10 @@ class SelectionEvidenceTest(unittest.TestCase):
         # reads the stylesheet off disk. The suite is what answers for the
         # edit. A deletion with no surviving root is the same case.
         from ci_fast_checks import test_plan
-        self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
-        self.put("frontend/scene-baseline.json", "{}\n")
-        for changed in (["frontend/src/i18n/messages/en/tasks.json"],
-                        ["frontend/scene-baseline.json"],
+        self.put("frontend/src/i18n/messages/en/tasks/artifactComparison.json", "{}\n")
+        self.put("frontend/catalog-baseline.json", "{}\n")
+        for changed in (["frontend/src/i18n/messages/en/tasks/artifactComparison.json"],
+                        ["frontend/catalog-baseline.json"],
                         ["frontend/src/styles/docBlocks.css"],
                         ["frontend/src/gone.ts"]):
             plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)
@@ -1396,9 +1876,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         # specs' subject, and they run beside it in the same tier.
         from ci_fast_checks import test_plan
         self.put("frontend/src/views/Index.vue", "<template><p>x</p></template>")
-        self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
+        self.put("frontend/src/i18n/messages/en/tasks/artifactComparison.json", "{}\n")
         plan, omissions = test_plan(
-            self.root, ["frontend/src/views/Index.vue", "frontend/src/i18n/messages/en/tasks.json"],
+            self.root, ["frontend/src/views/Index.vue", "frontend/src/i18n/messages/en/tasks/artifactComparison.json"],
             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")

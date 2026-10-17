@@ -122,7 +122,7 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.routes import connector
+    from app.api.routes.connector import devices
     from app.core.db import get_db
 
     hub = DeviceHub()
@@ -135,10 +135,10 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
             )
             recovered.extend(inventory)
 
-    async def last_step_of_recovery(sessions, *, device_id):
+    async def last_step_of_recovery(sessions, *, device_id, **_kwargs):
         await hub._device(device_id).send({"t": "recovery.finished"})
 
-    monkeypatch.setattr(connector, "device_hub", hub)
+    monkeypatch.setattr(devices, "device_hub", hub)
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
     monkeypatch.setattr(
         "app.domain.room_cleanup.retire.sweep_retired_storage", AsyncMock()
@@ -148,10 +148,10 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
         last_step_of_recovery,
     )
     app = FastAPI()
-    app.include_router(connector.router)
+    app.include_router(devices.router)
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
     monkeypatch.setattr(
-        connector.owner_reads,
+        devices.owner_reads,
         "device_for_token",
         AsyncMock(return_value=SimpleNamespace(device_id="dev", name="fixture")),
     )
@@ -176,21 +176,21 @@ def test_connection_owner_attaches_without_running_business_recovery(monkeypatch
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from app.api.routes import connector
+    from app.api.routes.connector import devices
     from app.core.db import get_db
 
     hub = DeviceHub()
-    monkeypatch.setattr(connector, "device_hub", hub)
-    monkeypatch.setattr(connector.settings, "device_connection_owner", True)
+    monkeypatch.setattr(devices, "device_hub", hub)
+    monkeypatch.setattr(devices.settings, "device_connection_owner", True)
     monkeypatch.setattr(
         "app.api.deps.get_chat_service",
         lambda: (_ for _ in ()).throw(AssertionError("owner ran ChatService")),
     )
     app = FastAPI()
-    app.include_router(connector.router)
+    app.include_router(devices.router)
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
     monkeypatch.setattr(
-        connector.owner_reads,
+        devices.owner_reads,
         "device_for_token",
         AsyncMock(return_value=SimpleNamespace(device_id="dev", name="fixture")),
     )
@@ -869,16 +869,16 @@ def _socket_app(monkeypatch, hub):
 
     from fastapi import FastAPI
 
-    from app.api.routes import connector
+    from app.api.routes.connector import devices
     from app.core.db import get_db
 
-    monkeypatch.setattr(connector, "device_hub", hub)
-    monkeypatch.setattr(connector.settings, "device_connection_owner", True)
+    monkeypatch.setattr(devices, "device_hub", hub)
+    monkeypatch.setattr(devices.settings, "device_connection_owner", True)
     app = FastAPI()
-    app.include_router(connector.router)
+    app.include_router(devices.router)
     app.dependency_overrides[get_db] = lambda: SimpleNamespace(commit=AsyncMock())
     monkeypatch.setattr(
-        connector.owner_reads,
+        devices.owner_reads,
         "device_for_token",
         AsyncMock(return_value=SimpleNamespace(device_id="dev", name="fixture")),
     )

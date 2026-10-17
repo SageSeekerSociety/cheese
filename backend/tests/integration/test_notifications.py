@@ -114,6 +114,7 @@ def test_list_newest_first_and_filters(client):
         kind="decision_request",
         title="第二条",
         target_handle="bob",
+        payload={"options": ["A", "B"]},
     )
     _one(
         client,
@@ -287,6 +288,7 @@ def test_inbox_carries_decisions_accepts_and_change_alerts(client):
         kind="decision_request",
         title="拍板",
         target_handle="alice",
+        payload={"options": ["随便", "都行"]},
     )
     _one(
         client,
@@ -407,6 +409,30 @@ def test_resolve_records_choice_and_posts_block(client):
         headers=session_auth_headers("user-1"),
     )
     assert bad.status_code == 422
+
+
+def test_a_decision_request_without_options_is_refused(client):
+    """拍板就是从选项里选一个。一条不带选项的决策请求在待办页上一个按钮都没有，
+    收件人永远清不掉它 —— 所以它在写入时就被拒，什么都不落下。"""
+    pid = _create_project(client)
+    for payload in (
+        {},
+        {"options": []},
+        {"options": ["只有一个"]},
+        {"options": ["", " "]},
+    ):
+        r = client.post(
+            f"/projects/{pid}/alerts",
+            json={
+                "level": "strong",
+                "kind": "decision_request",
+                "title": "要不要做",
+                "target_handle": "user-1",
+                "payload": payload,
+            },
+        )
+        assert r.status_code == 422, (payload, r.text)
+    assert _inbox_titles(client, pid, "user-1") == []
 
 
 def test_mark_read_flips_read(client):

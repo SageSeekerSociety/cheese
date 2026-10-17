@@ -18,6 +18,14 @@ say which files have an allowance; check there before copying a neighbour. After
 a change, `frontend-design` (a skill) walks the whole checklist including the
 parts no gate can see.
 
+## 沙箱里不要跑全树检查
+
+**不要在沙箱里跑全树 `pnpm run typecheck` / `node scripts/typecheck.mjs` / `vue-tsc` / `pnpm run build`，也不要跑不带文件参数的 `pnpm exec vitest run`——会被 3 GiB 内存上限杀掉。只跑你改的单个测试文件，或从仓库根跑 `task ci:fast`。**
+
+`pnpm run lint` 和 `pnpm run lint:style` 轻量，到哪都能跑；`pnpm exec vitest run
+--dir src` 这类整目录跑法、`pnpm run build` 和 `pnpm run typecheck` 都吃内存，
+能不能跑取决于这台机器有多大。
+
 ## The product has a dark theme. Every colour you write must survive it.
 
 - **Never a colour literal in CSS, and never a Vuetify palette NAME** — the two
@@ -36,9 +44,14 @@ parts no gate can see.
     BACKGROUND is itself theme-invariant, the ink on it must be too. The default
     avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
     OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
-    its `#fff` text is correct and "fixing" it to a token breaks it.
-- The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary)
-  > `--faint` (meta). Pick by how important the information is, not by how it looks.
+    its ink is a token that is the same in both themes too: `--avatar-ink`
+    (the value lives in style.css; the ratchets ban the hex). A theme-following
+    token there — `--ink`, `on-surface` — is what breaks it.
+- The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary).
+  Pick by how important the information is, not by how it looks. `--faint` is not a
+  text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
+  3:1 graphics floor but never reaches 4.5:1, so text a reader reads goes to `--muted`
+  (§2.6 对比度).
 - The frame (rail, sidebars, top bar) is `--canvas`; the content pane is one
   `--surface`, so content groups by spacing and `--line`, not by white cards on
   grey. Cards get a `--line` border and **no shadow** — `--shadow-1` and
@@ -48,7 +61,8 @@ parts no gate can see.
   the BACKGROUND. Same shape for `--ok` and `--accent`. Using the mark colour for
   text is the single most common defect and fails contrast in light theme (§1.5).
 - Amber (`--accent`) is reserved for the main action of an area, unread markers,
-  the current nav position, and the brand mark (§1.6). A page may have several
+  the current nav position, the brand mark, and an @ that notified someone
+  (§1.6). A page may have several
   areas, but a group of sibling buttons has only one amber button. Not avatars,
   not status chips, not ordinary icons — ~95% of any screen is neutral.
 
@@ -153,7 +167,16 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
 
 - **Never hardcode a user-visible string** — not in a template, not in a script,
   not as a `title` / `label` / `placeholder`. Put it in
-  `frontend/src/i18n/messages/<locale>/<namespace>.json` and call `t()`.
+  `frontend/src/i18n/messages/<locale>/<namespace>.json` and call `t()`. A big
+  namespace is split into files whose path is the key path, `index.json` holding
+  the keys of that level itself: `work.room.doc.x` lives in
+  `frontend/src/i18n/messages/zh-CN/work/room/doc/index.json`. Two are flat —
+  `apiError` and `roomNotice`, whose keys the backend writes out itself — so their
+  directory is split by the backend module that says the sentence and the shard's
+  name is not part of the key:
+  `frontend/src/i18n/messages/zh-CN/apiError/usage.json` is the key `creditsMonthFull`,
+  and `frontend/src/i18n/messages/zh-CN/roomNotice/usage.json` is the key
+  `creditsRefused`.
 - **Key names are `namespace.component.role`** (`account.signIn.submit`), never an
   English sentence or a fragment of one: a sentence-shaped key means rewording
   the Chinese forces renaming the key, and the translation goes with it.
@@ -167,7 +190,9 @@ Full rules: [`docs/i18n.md`](../../docs/i18n.md). What bites on turn one:
   reason fails.
 - The gate is two commands, seconds each, runs anywhere: `pnpm exec vitest run
   --dir src/i18n` and `pnpm run lint:i18n` (Chinese typed into `src/` outside the
-  catalog, none allowed except annotated data lines).
+  catalog, none allowed except annotated data lines; a Chinese HTML comment in a
+  template is counted against `frontend/i18n-comments-baseline.json`, which only
+  goes down — `pnpm run lint:i18n:update` after removing some).
 
 ## The two ratchets
 
@@ -201,8 +226,3 @@ Do not raise a baseline to make a gate green; baselines only go down.
 **Never add `--fix` to a gate script.** It rewrites the checkout and can exit 0
 on a violation it silently repaired — the writing forms are `lint:style:fix` and
 `lint:fix`, kept separate from the checking forms on purpose.
-
-## 哪些检查在小机器上跑不动
-
-`pnpm exec vitest run --dir src`、`pnpm run lint`、`pnpm run lint:style` 轻量,
-到哪都能跑。`pnpm run build` 和 `pnpm run typecheck` 吃内存,能不能跑取决于这台机器有多大。

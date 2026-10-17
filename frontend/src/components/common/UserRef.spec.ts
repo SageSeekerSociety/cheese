@@ -20,27 +20,28 @@ function mount(props: Record<string, unknown>, onNavigate?: () => void) {
 }
 
 describe('UserRef：只凭 props 画一个人名', () => {
-  it('没有 store、没有路由也能画：@名字 加全局 .mention 样式', () => {
-    const { getByText } = mount({ handle: 'alice', name: '爱丽丝', to: TO })
-    const chip = getByText('@爱丽丝')
-    expect(chip.className).toBe('mention')
+  it('没有 store、没有路由也能画：只是名字，不是那颗说「通知到了」的 @chip', () => {
+    const { getByText, container } = mount({ handle: 'alice', name: '爱丽丝', to: TO })
+    const chip = getByText('爱丽丝')
+    expect(chip.textContent).toBe('爱丽丝')
+    expect(container.querySelector('.mention')).toBeNull()
     expect(chip.dataset.handle).toBe('alice')
   })
 
   it('不传名字就画 handle', () => {
     const { getByText } = mount({ handle: 'alice' })
-    expect(getByText('@alice').textContent).toBe('@alice')
+    expect(getByText('alice').textContent).toBe('alice')
   })
 
   it('没有 handle、也没有名字就什么都不画', () => {
     const { container } = mount({})
-    expect(container.querySelector('.mention')).toBeNull()
+    expect(container.textContent).toBe('')
   })
 
   it('有 to：是可点的链接（role=link + 能聚焦），点一下发 navigate', async () => {
     const onNavigate = vi.fn()
     const { getByText } = mount({ handle: 'alice', name: '爱丽丝', to: TO }, onNavigate)
-    const chip = getByText('@爱丽丝')
+    const chip = getByText('爱丽丝')
     expect(chip.getAttribute('role')).toBe('link')
     expect(chip.getAttribute('tabindex')).toBe('0')
     await fireEvent.click(chip)
@@ -50,26 +51,24 @@ describe('UserRef：只凭 props 画一个人名', () => {
   it('聚焦后回车同样发 navigate', async () => {
     const onNavigate = vi.fn()
     const { getByText } = mount({ handle: 'alice', name: '爱丽丝', to: TO }, onNavigate)
-    await fireEvent.keyDown(getByText('@爱丽丝'), { key: 'Enter' })
+    await fireEvent.keyDown(getByText('爱丽丝'), { key: 'Enter' })
     expect(onNavigate).toHaveBeenCalledTimes(1)
   })
 
-  it('没有 to：照样是 @名字，但不是链接，点了也不发 navigate', async () => {
+  it('没有 to：照样是名字，但不是链接，点了也不发 navigate', async () => {
     const onNavigate = vi.fn()
     const { getByText } = mount({ handle: 'alice', name: '爱丽丝' }, onNavigate)
-    const chip = getByText('@爱丽丝')
+    const chip = getByText('爱丽丝')
     expect(chip.getAttribute('role')).toBeNull()
     expect(chip.getAttribute('tabindex')).toBeNull()
-    expect(chip.className).toBe('mention mention--static')
     await fireEvent.click(chip)
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
   it('没有 handle（只知道名字）：画得出来，但没有去处', () => {
     const { getByText } = mount({ name: '爱丽丝' })
-    const chip = getByText('@爱丽丝')
+    const chip = getByText('爱丽丝')
     expect(chip.getAttribute('role')).toBeNull()
-    expect(chip.className).toBe('mention mention--static')
   })
 
   it('点人名不会同时触发所在那一行自己的点击', async () => {
@@ -79,7 +78,7 @@ describe('UserRef：只凭 props 画一个人名', () => {
       render: () => h('div', { onClick: onRow }, [h(UserRef, { handle: 'alice', name: '爱丽丝', to: TO, onNavigate })]),
     })
     const { getByText } = render(Row)
-    await fireEvent.click(getByText('@爱丽丝'))
+    await fireEvent.click(getByText('爱丽丝'))
     expect(onNavigate).toHaveBeenCalledTimes(1)
     expect(onRow).not.toHaveBeenCalled()
   })

@@ -129,17 +129,47 @@ def main() -> None:
         if item.get("model_info", {}).get("cheese_selectable") is True
     ]
     assert offered, "No model is marked cheese_selectable; agent settings would be bare"
+    free = set()
     for deployment in offered:
         name = deployment["model_name"]
         # Router pricing is registered under the deployment id, including custom
         # models that do not appear in LiteLLM's built-in provider catalog.
         info = litellm.model_cost[deployment["model_info"]["id"]]
+        if deployment["model_info"].get("cheese_free") is True:
+            for field in ("input_cost_per_token", "output_cost_per_token"):
+                assert info.get(field) == 0, f"{name}: cheese_free but {field} is not 0"
+            free.add(name)
+            continue
         assert info["input_cost_per_token"] > 0, (
             f"{name}: input tokens must remain billable"
         )
         assert info["output_cost_per_token"] > 0, (
             f"{name}: output tokens must remain billable"
         )
+    # A free upstream is the one zero allowed, and only written out: a zero
+    # LiteLLM fills in for a missing price is the dead brake. Read from the file,
+    # because the router has already turned `false` into 0.0, and `false` is
+    # not a price (type(), not isinstance: False == 0).
+    for entry in config["model_list"]:
+        info = entry.get("model_info") or {}
+        if info.get("cheese_free") is not True:
+            continue
+        declared = {**info, **entry["litellm_params"]}
+        for field in ("input_cost_per_token", "output_cost_per_token"):
+            written = declared.get(field)
+            assert type(written) in (int, float) and written == 0, (
+                f"{entry['model_name']}: cheese_free needs {field} written as 0"
+            )
+    # Per-deployment upstream headers (upstream_headers.py) are text, so
+    # nothing but a header name and value can reach the upstream.
+    for entry in config["model_list"]:
+        info = entry.get("model_info") or {}
+        static = info.get("cheese_upstream_headers", {})
+        assert isinstance(static, dict) and all(
+            isinstance(k, str) and isinstance(v, str) for k, v in static.items()
+        ), (entry["model_name"], static)
+        session = info.get("cheese_session_header", "")
+        assert isinstance(session, str), (entry["model_name"], session)
     # Price-only entries carry the prices of the Claude models the platform's
     # subscription serves; the backend reads them back through /model/info to
     # bill that traffic. They must never route, and must carry every price,
@@ -288,7 +318,8 @@ def main() -> None:
         f"deepseek-flash listed at {deepseek_input} input tokens; "
         "Kimi/MiMo image and tool history preserved; "
         "Kimi buffered/streamed cache costs verified; "
-        f"{len(offered)} offered model(s) billable on both directions; "
+        f"{len(offered) - len(free)} offered model(s) billable on both directions, "
+        f"{len(free)} declared free; "
         f"{len(price_only)} price-only model(s) refused and fully priced"
     )
 

@@ -6,30 +6,75 @@ with the project and the conversation that was open. It belongs to no
 conversation — the people in a room are not who reads the platform's own
 errors.
 
-Guard rails live here, not in the route: a render-loop error can fire hundreds
-of times a second, so intake is deduped (same fingerprint within a window
-collapses to one record) and rate-limited per project. In-memory state
-matches the platform's single-process reality (same assumption as the
-per-topic chat locks).
+The guard rails against a render loop live here, not in the route: a bad error
+can fire hundreds of times a second, so intake is deduped (same fingerprint
+within a window collapses to one record) and rate-limited per project.
+In-memory state matches the platform's single-process reality (same assumption
+as the per-topic chat locks). Whether the project exists is not one of these:
+this module is in the bottom layer and reads no project table, so the route
+asks the project domain before the batch gets here.
 """
 
 import hashlib
+import ipaddress
+import re
 import time
 import uuid
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import alerting
-from app.core.errors import NotFoundError
-from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
 from app.domain.conversation.models import Conversation
-from app.domain.project.models import Project
+from app.domain.notice_meta import SEVERITY_ERROR, WHO_HUMAN
 from app.domain.run_record.service import keep as keep_record
 
 DEDUP_WINDOW_S = 600.0
 MAX_BLOCKS_PER_WINDOW = 30  # per project
 _SEEN_PRUNE_AT = 512
+
+
+# A tab still running the previous build asks for a chunk the deploy removed.
+# The page already recovers from that by itself — `frontend/src/services/
+# staleBuild.ts` reloads it on these same messages (keep the two in step) — and
+# what still arrives here is the sibling imports of the route it was loading,
+# rejected while the reload was under way: 29 + 5 alerts in two weeks, none of
+# which anyone could act on. Kept as run records, not alerted.
+_STALE_BUILD_RE = re.compile(
+    r"Failed to fetch dynamically imported module|error loading dynamically "
+    r"imported module|Importing a module script failed|Unable to preload CSS",
+    re.IGNORECASE,
+)
+
+
+def _from_a_dev_server(origin: str | None) -> bool:
+    """Whether the page that reported was served by someone's local or preview
+    dev server (``http://localhost:5317``, ``http://127.0.0.1:3000``) whose API
+    proxy points at this backend. Its errors are that developer's, of code that
+    may never ship; they are kept, but not alerted to everyone. Not a desktop
+    client: Tauri's origins (``tauri://localhost``, ``http://tauri.localhost``)
+    are a user's app and still alert."""
+    if not origin:
+        return False
+    try:
+        parts = urlsplit(origin.strip().lower())
+        host = parts.hostname or ""
+    except ValueError:  # an Origin no browser sends ("http://[::1"): not a dev server
+        return False
+    if parts.scheme not in ("http", "https"):
+        return False
+    if host == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
+def worth_alerting(err: "FrontendErrorIn", origin: str | None) -> bool:
+    return not (_from_a_dev_server(origin) or _STALE_BUILD_RE.search(err.message))
 
 
 class FrontendErrorIn(BaseModel):
@@ -109,15 +154,18 @@ def event_meta(err: FrontendErrorIn) -> dict:
     return meta
 
 
-async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
+async def record(
+    db: AsyncSession, body: FrontendErrorBatchIn, *, origin: str | None = None
+) -> dict:
     """Admit the batch and keep the survivors. A dropped duplicate still counts
-    as received: the reporting client never retries."""
+    as received: the reporting client never retries.
+
+    The caller has already answered whether the project exists — a batch for a
+    project that does not exist is refused with a 404 before it reaches here.
+    """
     conversation = await db.get(Conversation, body.topic_id) if body.topic_id else None
     if conversation is not None and conversation.project_id != body.project_id:
         conversation = None
-    project = await db.get(Project, body.project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
     accepted = 0
     for err in body.errors:
         if not intake.admit(str(body.project_id), fingerprint(err)):
@@ -127,7 +175,7 @@ async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
             meta["conversation"] = str(conversation.id)
         await keep_record(
             db,
-            project_id=project.id,
+            project_id=body.project_id,
             conversation_id=None,
             content=event_content(err),
             meta=meta,
@@ -136,12 +184,14 @@ async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
         # Only here: `admit` returned True, so this fingerprint is one nobody has
         # seen in the dedup window. Every repeat of it is already excluded above,
         # which is what keeps a render loop from becoming a thousand alerts.
+        if not worth_alerting(err, origin):
+            continue
         alerting.send(
             f"前端报错：{err.message}",
             [
                 f"页面：{err.page or '未知'}",
                 f"位置：{err.source or '未知'}",
-                f"项目：{project.id}",
+                f"项目：{body.project_id}",
             ],
         )
     return {"accepted": accepted, "dropped": len(body.errors) - accepted}

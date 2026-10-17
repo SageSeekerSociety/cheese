@@ -25,13 +25,14 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import listing, say
 from app.core.storage import StorageBackend, get_storage_backend
-from app.domain.agent.skills import (
+from app.domain.project_skill import blobs
+from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
+from app.domain.skill_library import (
     RESERVED_SKILL_NAMES,
     SKILL_FILE_SUFFIXES,
     native_skill_files,
+    project_skills_root,
 )
-from app.domain.project_skill import blobs
-from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{1,47}$")
 MAX_FILE_BYTES = 200_000
@@ -49,7 +50,15 @@ def _now() -> datetime:
 
 
 def mirror_root(project_id: uuid.UUID | str) -> Path:
-    return Path(settings.workspace_root) / ".project-skills" / str(project_id)
+    """Where this project's confirmed skills are mirrored.
+
+    The convention itself lives one layer down, in
+    `skill_library.project_skills_root`, because
+    `repository.service.session_dir` copies this directory into a session
+    directory and cannot reach this package. This name stays: it is what this
+    module's own callers and tests patch.
+    """
+    return project_skills_root(project_id)
 
 
 def _plain(raw: str) -> bool:

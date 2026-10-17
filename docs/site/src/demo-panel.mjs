@@ -62,8 +62,9 @@ const KINDS = {
   // The acceptance item: a one-line row (`title`, `status`, `button`) or the
   // opened card (`ok`, `who`, `note`, `actions`).
   card: { need: [], text: ['title', 'note', 'pressing'], ui: ['status', 'button', 'ok', 'who'], list: ['files', 'actions'] },
-  // A task hanging under the message it came from: name, owner, status.
-  task: { need: ['title'], text: ['title', 'who'], ui: ['owner', 'status'], list: [] },
+  // A task hanging under the message it came from: name, owner, status. A 支线
+  // that became the task keeps its line under the name: `replies`, `last`.
+  task: { need: ['title'], text: ['title', 'who', 'last'], ui: ['owner', 'status', 'replies'], list: [] },
   // The bar above the composer while a delivery waits: 「待你审阅」 and its buttons.
   review: { need: ['text', 'actions'], text: ['pressing'], ui: ['text'], list: ['actions'] },
   // The 「这次交付」 card in the 「改动」 tab.
@@ -189,8 +190,11 @@ function partHtml(p, cfg) {
       const open = p.ok || p.who || p.note || files || actions
       return `<div class="dp-card${open ? ' dp-card-open' : ''}"${a}>${p.ok ? `<div class="dp-card-ok">${ic('check')}${esc(p.ok)}</div>` : ''}${p.who ? `<div class="dp-card-who">${esc(p.who)}</div>` : ''}${p.note ? `<p class="dp-card-note">${esc(p.note)}</p>` : ''}${files ? `<ul class="dp-files">${files}</ul>` : ''}${actions ? `<div class="dp-actions">${actions}</div>` : ''}${row}</div>`
     }
-    case 'task':
-      return `<div class="dp-task"${a}>${ic('check')}<b>${esc(p.title)}</b>${p.owner ? `<span class="dp-task-owner">${esc(p.owner)}</span>` : ''}${p.status ? `<span class="dp-task-status">${esc(p.status)}</span>` : ''}</div>`
+    case 'task': {
+      const head = `${ic('check')}<b>${esc(p.title)}</b>${p.owner ? `<span class="dp-task-owner">${esc(p.owner)}</span>` : ''}${p.status ? `<span class="dp-task-status">${esc(p.status)}</span>` : ''}`
+      if (!p.replies) return `<div class="dp-task"${a}>${head}</div>`
+      return `<div class="dp-thread"${a}><div class="dp-task dp-task-head">${head}</div><div class="dp-thread-top"><span class="dp-thread-n">${esc(p.replies)}</span></div>${p.last ? `<p class="dp-thread-last">${esc(p.last)}</p>` : ''}</div>`
+    }
     case 'review': {
       const last = p.actions.length - 1
       return `<div class="dp-review"${a}><span class="dp-review-dot" aria-hidden="true"></span><b>${esc(p.text)}</b><span class="dp-review-go">${p.actions.map((x, i) => button(x, p, i === last ? 'dp-btn dp-btn-primary' : 'dp-btn')).join('')}</span></div>`
@@ -257,7 +261,7 @@ function partText(p) {
     case 'strip': return `「${p.text}」${p.label ? `，「${p.label}」` : ''}`
     case 'doc': return `文档：${p.headings.join('、')}`
     case 'tabs': return `右侧切到「${p.active}」`
-    case 'task': return `消息下方出现任务「${p.title}」${p.owner ? `，${p.owner}` : ''}${p.status ? `，「${p.status}」` : ''}`
+    case 'task': return `消息下方出现任务「${p.title}」${p.owner ? `，${p.owner}` : ''}${p.status ? `，「${p.status}」` : ''}${p.replies ? `，下面是「${p.replies}」${p.last ? `：${p.last}` : ''}` : ''}`
     case 'review': return `输入框上方：「${p.text}」，按钮 ${p.actions.map((x) => `「${x}」`).join('')}`
     case 'delivery': return `「${p.label}」：${p.title}${p.ok ? `，「${p.ok}」` : ''}${p.items ? `；${p.focus ? `${p.focus}：` : ''}${p.items.join('；')}` : ''}`
     case 'files': return `改动的文件：${p.files.join('、')}`

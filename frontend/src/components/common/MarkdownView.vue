@@ -5,14 +5,16 @@
 // 消息里和在文档里长得一样。点名、话题、文件的 chip 只画不接：点击由外层按 data
 // 属性委派，和原来一样。
 //
-// 读法连着 tiptap、ProseMirror 和整套块，首屏不等它：第一次画的时候才加载，
-// 加载好之前这块是空的。
+// 读法连着 tiptap、ProseMirror 和整套块，首屏不等它：第一次画的时候才加载。
+// 加载好之前，对话里的一条（as="chat"）先照原文画出来：空着的话，读法一到每条消息
+// 一齐撑高，整列往下跳。别处（文档、文件）加载好之前是空的。
 import type { ReadAs } from '@/lib/docRead'
 import type { RefNames } from '@/lib/refChip'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { refsVersion } from '@/lib/refDirectory'
+import { renderPlain } from '@/lib/renderMessage'
 
 type Reader = typeof import('@/components/panels/doc/blocks/reader')
 let reader: Reader | null = null
@@ -35,11 +37,17 @@ const props = withDefaults(
 )
 
 const host = ref<HTMLElement | null>(null)
+
+/** 读法还没到时的那一份：原文，换行照留，引用画成 chip。 */
+function plainFirst(source: string, names: RefNames | undefined): string {
+  return `<div class="md-plain-first">${renderPlain(source, names ?? { mentionNames: {}, topicTitles: {} })}</div>`
+}
 let stop: (() => void) | null = null
 let gone = false
 
 function draw() {
   if (!reader) {
+    if (host.value && props.as === 'chat') host.value.innerHTML = plainFirst(props.source, props.names)
     void loadReader().then(() => gone || draw())
     return
   }
@@ -67,3 +75,9 @@ defineExpose({ el: host })
        off-screen (see styles/docBlocks.css). -->
   <div ref="host" class="md-reader" />
 </template>
+
+<style scoped>
+.md-reader :deep(.md-plain-first) {
+  white-space: pre-wrap;
+}
+</style>

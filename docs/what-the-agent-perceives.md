@@ -91,6 +91,6 @@
 ## 相关
 
 - `backend/app/domain/agent/chat.py` — `notify_running_turn`（唯一的平台→芝士通道）与它的标记机制
-- `backend/app/domain/agent/platform_notices.py` — 三十三种事件的定义
+- `backend/app/domain/notice_meta.py` — 三十三种事件的定义（2026-10-13 从 `agent/platform_notices.py` 搬到第 1 层）
 - `backend/sandbox/skills/cheese/SKILL.md` — 今天用一段说明文字代替「让它看得见」
 - [退掉 jj 的历史设计](https://github.com/SageSeekerSociety/cheese/blob/b47ad9850/docs/plans/2026-08-27-retire-jj-design.md)

@@ -33,10 +33,7 @@ from app.domain.notification.entity_resolvers import (
     TeamMembershipApplicationEntityResolver,
     UserEntityResolver,
 )
-from app.domain.notification.services import (
-    NotificationQueryService,
-    notification_types_of,
-)
+from app.domain.notification.services import NotificationQueryService
 from app.domain.project.services import ProjectService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
@@ -109,21 +106,6 @@ def _read_service(db: AsyncSession) -> NotificationQueryService:
     return NotificationQueryService.from_session(db, resolvers=resolvers)
 
 
-def _parse_type(type_: str | None):
-    """``?type=`` 收一到多种，逗号分开（``type=MENTION,REPLY``）。
-
-    界面上「动态」按事由分档（需我处理 / 仅通知 / 系统提醒），每一档是若干种通知，
-    所以筛一档就是筛一组类型。分页的游标和 total 都由服务端算，客户端拿到一页再自己
-    过滤会让「还有没有下一页」对不上。参数名和形状没变（还是一个字符串），所以对外的
-    接口描述不动。解析本身在领域层（``notification_types_of``，那里才 import
-    ``notification.models``）。
-    """
-    try:
-        return notification_types_of(type_)
-    except ValueError as exc:
-        raise BadRequestError(f"Unknown notification type: {exc}") from None
-
-
 async def _dump(service: NotificationQueryService, notification) -> dict:
     dto: NotificationDTO = await service.build_notification_dto(notification)
     return _asdict(dto)
@@ -162,11 +144,12 @@ async def list_notifications(
     db: DbSession,
     pageSize: Annotated[int, Query(ge=1, le=100)] = 20,
     pageStart: str | None = None,
-    type: str | None = None,
     read: bool | None = None,
 ) -> dict:
+    """The activity feed: what happened, newest first. A notification calling
+    the person to act on something is not in it — that thing is listed in
+    ``/awaiting-me`` while it waits (``NotificationRepository._in_feed``)."""
     service = _read_service(db)
-    notification_types = _parse_type(type)
     cursor = _decode_cursor(pageStart) if pageStart else None
     cursor_created_at, cursor_id = cursor if cursor else (None, None)
 
@@ -176,14 +159,11 @@ async def list_notifications(
         limit=pageSize + 1,
         cursor_created_at=cursor_created_at,
         cursor_id=cursor_id,
-        type_=notification_types,
         read=read,
     )
     has_more = len(rows) > pageSize
     content = list(rows[:pageSize])
-    total = await service.count_notifications_for_current_user(
-        user.user_id, type_=notification_types, read=read
-    )
+    total = await service.count_notifications_for_current_user(user.user_id, read=read)
 
     # 整页一次解析实体：逐条 _dump 会让每条通知各发一轮解析查询（一屏最多 100
     # 条就是 100 倍往返），而它们手上的外键本来就可以合并成每类实体一次查。

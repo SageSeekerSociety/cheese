@@ -105,11 +105,11 @@ it('switches the selected agents one by one and says what happened to each', asy
   })
   const { emitted } = await open()
   expect(await dialog().findByText('定价')).toBeTruthy()
-  // 行里的队友是一颗 @chip，和对话里 @ 到它的那颗一样。
+  // 行里的队友只是提到：名字引用，不带 @（@ 只留给真的通知到的那一处）。
   const metas = Array.from(document.querySelectorAll('.bs-meta')).map((el) =>
     el.textContent?.replace(/\s+/g, ' ').trim()
   )
-  expect(metas.some((m) => /^@助手b · 最近活动 .* · 正在运行任务$/.test(m ?? ''))).toBe(true)
+  expect(metas.some((m) => /^助手b · 最近活动 .* · 正在运行任务$/.test(m ?? ''))).toBe(true)
   expect(dialog().getByText('另有 2 个 agent 在你打不开的频道里')).toBeTruthy()
   expect(dialog().getByRole('button', { name: '推送并更换' }).hasAttribute('disabled')).toBe(true)
 

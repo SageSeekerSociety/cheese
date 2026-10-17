@@ -57,7 +57,7 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
   }
 
   async function save(choice: Environment) {
-    if (!state.value?.can_manage || busy.value) return
+    if (!state.value || busy.value) return
     const current = ++actionGeneration
     busy.value = true
     error.value = ''
@@ -76,7 +76,7 @@ export function useProjectComputeSettings(projectId: () => string, options: UseP
     }
   }
 
-  /** 「更换 / 收起」：展开或收起那份表单。不能管项目的人没有这颗按钮。 */
+  /** 「更换 / 收起」：展开或收起那份表单。 */
   function toggleEditing() {
     editing.value = !editing.value
   }

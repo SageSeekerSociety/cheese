@@ -7,7 +7,7 @@ import type { DeviceSession } from '../types/deviceSessions'
 
 import { computed, ref, watch } from 'vue'
 
-import { listDeviceSessions, setSessionEnvironment } from '../api'
+import { useDeviceSessionSwitch } from '../composables/useDeviceSessionSwitch'
 import { t } from '../i18n'
 import { teammateName } from '../lib/agentNames'
 import { environmentName } from '../lib/environment'
@@ -31,10 +31,19 @@ const emit = defineEmits<{ changed: [] }>()
 type Outcome = { state: 'done' | 'failed'; message: string }
 
 const open = ref(false)
-const loading = ref(false)
-const loadError = ref('')
-const sessions = ref<DeviceSession[]>([])
-const hidden = ref(0)
+// 会话列表和「换一条」那一下都在这里，组件只画和接线
+// （`.claude/rules/architecture.md`：`src/components/**` 不碰 API 层）。
+const {
+  sessions,
+  hidden,
+  loading,
+  error: loadError,
+  load,
+  switchSession,
+} = useDeviceSessionSwitch(
+  () => props.projectId,
+  () => props.device.device_id
+)
 const selected = ref<string[]>([])
 const target = ref('')
 const running = ref(false)
@@ -72,30 +81,14 @@ const allSelected = computed(
 )
 
 const sessionRoom = (s: DeviceSession) => s.task_title ?? topicTitle({ title: s.topic_title })
-// 会话所在的那段对话：房间自己的，或者某个任务的。
-const conversationOf = (s: DeviceSession) => s.task_id ?? s.topic_id
 
 function toggleAll() {
   selected.value = allSelected.value ? [] : selectable.value.map((s) => s.id)
 }
 
-async function load() {
-  loading.value = true
-  loadError.value = ''
-  try {
-    const result = await listDeviceSessions(props.projectId, props.device.device_id)
-    sessions.value = result.sessions
-    hidden.value = result.hidden
-  } catch (cause) {
-    loadError.value = cause instanceof Error ? cause.message : t('work.bulkSwitch.loadFailed')
-  } finally {
-    loading.value = false
-  }
-}
-
 async function switchOne(session: DeviceSession, env: Environment) {
   try {
-    await setSessionEnvironment(conversationOf(session), session.id, env, { ifIdle: true })
+    await switchSession(session, env)
     outcomes.value[session.id] = { state: 'done', message: t('work.bulkSwitch.done') }
     selected.value = selected.value.filter((id) => id !== session.id)
     moved.value = true

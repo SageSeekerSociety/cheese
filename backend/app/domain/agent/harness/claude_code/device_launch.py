@@ -36,14 +36,21 @@ from app.domain.agent.harness.launch import ExecutorLaunch, MachineLaunch, Machi
 from app.domain.agent.place import (
     CLAUDE_LOGIN_DIR,
     MODEL_SERVICE_FILE,
+    OWN_MODEL,
+    OWN_MODEL_AUTH,
+    OWN_MODEL_BASE_URL,
+    OWN_MODEL_KEY,
     SEATS_DIR,
     footprint_root,
     seat_name,
 )
-from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
 from app.domain.project_skill.service import (
     project_skill_names,
     publish_session_skill_bundle,
+)
+from app.domain.skill_library import (
+    SKILLS_SHIPPED_BEFORE_THE_LIST,
+    shipped_skill_names,
 )
 
 # --- the version this session is pinned to ----------------------------------
@@ -69,8 +76,8 @@ from app.domain.project_skill.service import (
 # ``scripts/remote_execution/package.json`` 和它的 lock 也装一个固定版本，那份没
 # 有守卫：对不上时 ``remote_execution/client.py`` 的版本闸门在 CI 里当场拒掉，
 # 红得见。
-CLAUDE_PINNED_VERSION = "2.1.282"
-CLAUDE_MIN_VERSION = "2.1.282"
+CLAUDE_PINNED_VERSION = "2.1.299"
+CLAUDE_MIN_VERSION = "2.1.299"
 
 # What every session carries as its Claude login. It authenticates nothing; the
 # metering proxy replaces it with the platform's credential, or answers for it
@@ -200,6 +207,7 @@ def launch_holes(
     launch_name: str = "",
     seat: str = "",
     own_login: bool = False,
+    own_key: bool = False,
 ) -> MachineLaunch:
     """Claude Code's half of a device launch: the four holes, and its own env.
 
@@ -210,6 +218,11 @@ def launch_holes(
     that one as its credential store; nothing of the metering proxy's — its
     CA, its placeholder, the WebFetch transport fix made for its route — is
     put on the owner's machine.
+
+    ``own_key``: a member's own Claude Code on a connection its owner's
+    account holds, on the session host. It calls the model with the address,
+    key and model its session was started with (`place.OWN_MODEL_*`) and
+    nothing of the metering proxy's either; no login is read.
 
     The platform half is ``machine_launcher``; nothing below belongs to it. It
     reads a few env vars the screen is created with: ``CHEESE_HOME`` (isolated
@@ -264,7 +277,7 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     webfetch_transport = Path(__file__).with_name("webfetch_transport.cjs").read_text()
     webfetch_block = (
         ""
-        if own_login
+        if own_login or own_key
         else f"""cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
 {webfetch_transport}CHEESE_WEBFETCH
 WEBFETCH_PRELOAD="$CLAUDE_CONFIG_DIR/webfetch_transport.cjs"
@@ -437,6 +450,22 @@ if [ ! -e "$CLAUDE_CONFIG_DIR/projects" ]; then
   esac
 fi
 export DISABLE_AUTOUPDATER=1
+# The project's models as subagent definitions (`gateway_usage.model_agents`),
+# written before claude starts: it reads its agents directory once, at start.
+# The seat's directory is the platform's, so every `model-*.md` is ours to
+# replace, and a session with none (a member's own login) is left with none.
+python3 - "$CLAUDE_CONFIG_DIR/agents" <<'CHEESE_MODEL_AGENTS'
+import glob, json, os, sys
+agents = sys.argv[1]
+for stale in glob.glob(os.path.join(agents, "model-*.md")):
+    os.remove(stale)
+wanted = json.loads(os.environ.get("CHEESE_MODEL_AGENTS") or "{{}}")
+if wanted:
+    os.makedirs(agents, exist_ok=True)
+for name, content in wanted.items():
+    with open(os.path.join(agents, name), "w", encoding="utf-8") as out:
+        out.write(content)
+CHEESE_MODEL_AGENTS
 {webfetch_block}{skill_setup}
 {ca_block}
 # This seat's own directory, and everything below that belongs to one session
@@ -591,7 +620,9 @@ CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" 
     configure, prepare = holes(system_prompt, helper_sources)
     launch = MachineLaunch(
         configure=configure,
-        credentials=_OWN_LOGIN_CREDENTIALS
+        credentials=_OWN_KEY_CREDENTIALS
+        if own_key
+        else _OWN_LOGIN_CREDENTIALS
         if own_login
         else f"""\
 # A session never holds a Claude credential. It boots on a placeholder that
@@ -687,6 +718,33 @@ export CHEESE_OWN_LOGIN=1
 cheese_launch_phase credentials_selected
 """
 
+# A member's own Claude Code on a connection its owner's account holds, on the
+# session host: it calls that connection's address with its key — an Anthropic
+# key as `ANTHROPIC_API_KEY`, a model service's as `ANTHROPIC_AUTH_TOKEN` — and,
+# for a model service, its model everywhere Claude Code names one, as above. No
+# login is read and no placeholder set, so nothing the platform holds can stand
+# in for the key. The variables the session was started with are removed once
+# read, so nothing else the launch starts finds them under those names.
+_OWN_KEY_CREDENTIALS = f"""\
+unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+export ANTHROPIC_BASE_URL="${OWN_MODEL_BASE_URL}"
+if [ "${OWN_MODEL_AUTH}" = bearer ]; then
+  export ANTHROPIC_AUTH_TOKEN="${OWN_MODEL_KEY}"
+else
+  export ANTHROPIC_API_KEY="${OWN_MODEL_KEY}"
+fi
+if [ -n "${{{OWN_MODEL}:-}}" ]; then
+  for name in ANTHROPIC_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL \\
+      ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL \\
+      CLAUDE_CODE_SUBAGENT_MODEL; do
+    export "$name=${OWN_MODEL}"
+  done
+fi
+unset {OWN_MODEL_BASE_URL} {OWN_MODEL_KEY} {OWN_MODEL_AUTH} {OWN_MODEL}
+export CHEESE_OWN_LOGIN=1
+cheese_launch_phase credentials_selected
+"""
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ClaudeLaunch:
@@ -752,6 +810,7 @@ def on_machine(
         # on its next turn instead of being handed a room-mate's files.
         seat=seat_name(place.seat or place.agent_handle),
         own_login=place.own_login,
+        own_key=place.own_key,
     )
 
 

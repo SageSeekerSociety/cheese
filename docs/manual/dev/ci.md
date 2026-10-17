@@ -32,13 +32,13 @@ covers:
 | deploy | `deploy-scripts-test.yml` | 部署脚本的测试 |
 | harness | `harness-contract.yml` | 骨架请求契约 |
 | mcp | `mcp-contract.yml` | Claude Code 构建契约 |
-| equivalence | `mcp-equivalence.yml` | 房间里的远程 Bash 和机器上直接跑的 Claude Code 行为一致（`equivalence.py`），每种运行方式、每种 shell 各一个 job |
+| equivalence | `mcp-equivalence.yml` | 房间里的远程 Bash 和机器上直接跑的 Claude Code 行为一致（`equivalence.py`），每种运行方式覆盖一次，每种 shell 两个 job（各跑一组运行方式） |
 | remote | `remote-execution.yml` | 远端执行验收 |
 | cifast | `ci-fast.yml` | `ci:fast` 本地快检的黑盒测试，驱动真实 pre-commit |
 
 最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）。改到这套检查本身时，所有套件都会跑。两个档各有一个聚合 job：`required`（`name: CI required`）跑完整档，`required-draft`（`name: CI required (draft quick)`）跑快检档，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
 
-**草稿 PR 只跑快检档**：`pull_request` 的 payload 里 `draft` 为 `true` 时，只跑一个内联 job（`ci-fast.py --tier quick --budget 1200 --memory-mib 9216 --pull-request "$RUNNER_TEMP/pull.json"`，那之前先 `gh api .../pulls/N` 把 PR 的 JSON 写成文件），所有套件跳过，由 `required-draft` 聚合，名字是 `CI required (draft quick)`——和分支保护要求的 `CI required` 不同名，所以草稿的绿不可能是正式门禁的绿（完整档那个 job 在草稿上显示 skipped，GitHub 把 skipped 当已满足，但草稿合不了，平台自己也把 skipped 当没跑）。选中范围与本地 quick 档一致，边界按 runner 给（本地默认 180s / 3072 MiB 是开发机自己的限制，用它会让带前端改动的草稿全红；详见 `.github/scripts/ci-fast.md`）。这个档不判自己没有的东西：草稿的占位标题（`WIP: <任务标题>`）不查，需要固定版 Claude Code / Codex / pi 的测试记未执行，Redis 由这个 job 自带（和完整档同一个 valkey 镜像和端口）。所以只有真的判出失败（退出码 1）才让草稿变红，预算耗尽、读不出东西（2/3）只打警告并把逐条未判项写进步骤摘要（2/3 指 `ci-fast.py` 那份报告里的判定，不是 shell 拿到的数字：报告说 unknown/blocked 才走警告，没留下报告的退出码，比如 argparse 拒绝参数留下的 2，照旧判红）——绿不等于全判过了，摘要才是全部信息。草稿转正式（`ready_for_review`）会重跑一次**完整** run，`merge_group` 永远是完整档；事件读不出、`draft` 缺失一律按完整档处理（fail closed）。档位判定在 `required-ci.py` 的 `tier_for`。让草稿进入验收不需要手动先转正式：平台递卡本身就会把还开着的 draft PR 转正式（`pr_publish.py` 递卡时调 `mark_ready_for_review`），从而触发完整的 `CI required`；采纳要等同一 head 上完整的 `CI required` 变绿，草稿快检的绿不算。
+**草稿 PR 只跑快检档**：`pull_request` 的 payload 里 `draft` 为 `true` 时，只跑一个内联 job（`ci-fast.py --tier quick --budget 1200 --memory-mib 9216 --pull-request "$RUNNER_TEMP/pull.json"`，那之前先 `gh api .../pulls/N` 把 PR 的 JSON 写成文件），所有套件跳过，由 `required-draft` 聚合，名字是 `CI required (draft quick)`——和分支保护要求的 `CI required` 不同名，所以草稿的绿不可能是正式门禁的绿（完整档那个 job 在草稿上显示 skipped，GitHub 把 skipped 当已满足，但草稿合不了，平台自己也把 skipped 当没跑）。选中范围与本地 quick 档一致，边界按 runner 给（本地 quick 默认按可用 CPU 给 180–720s，内存默认 3072 MiB；环境变量 `CI_FAST_BUDGET_SECONDS` 与显式 `--budget` 可覆盖时间预算。草稿 job 显式传入的 1200s 不变；详见 `.github/scripts/ci-fast.md`）。这个档不判自己没有的东西：草稿的占位标题（`WIP: <任务标题>`）不查，需要固定版 Claude Code / Codex / pi 的测试记未执行，Redis 由这个 job 自带（和完整档同一个 valkey 镜像和端口）。所以让草稿变红的只有两种：`ci-fast.py` 的报告判出真的失败（退出码 1），和一次根本没留下报告就结束的退出；预算耗尽、读不出东西（2/3）只打警告并把逐条未判项写进步骤摘要（2/3 指 `ci-fast.py` 那份报告里的判定，不是 shell 拿到的数字：报告说 unknown/blocked 才走警告，没留下报告的退出码，比如 argparse 拒绝参数留下的 2，照旧判红）——绿不等于全判过了，摘要才是全部信息。草稿转正式（`ready_for_review`）会重跑一次**完整** run，`merge_group` 永远是完整档；事件读不出、`draft` 缺失一律按完整档处理（fail closed）。档位判定在 `required-ci.py` 的 `tier_for`。让草稿进入验收不需要手动先转正式：平台递卡本身就会把还开着的 draft PR 转正式（`pr_publish.py` 递卡时调 `mark_ready_for_review`），从而触发完整的 `CI required`；采纳要等同一 head 上完整的 `CI required` 变绿，草稿快检的绿不算。
 
 这样做的好处：分支保护里只有一个名字，加减套件不用改仓库设置；只改文档不会触发后端测试，改了后端也不可能漏跑。
 
@@ -85,7 +85,7 @@ scenarios:
 
 ## 哪些跑在托管 runner，哪些跑在自己的机器上 {#runners}
 
-`Required CI` 选中的套件都跑在 GitHub 托管的 runner 上，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。后端测试的 pure、contract、integration 三层和前端的 check、unit 两个 job 用 `ubuntu-24.04-arm`，其余用 `ubuntu-latest`：arm64 机器是 4 个真实核心，x64 机器是 2 核超线程、CPU 代际不固定，这几个 job 在 arm64 上更快或者持平，耗时也更稳定。生产是 x64，所以 prod 发版（`deploy-prod.yml`）会在 `ubuntu-latest` 上对发版的 commit 再跑一遍完整后端测试，通过并经人批准后才部署。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个仓库实际不受它约束：2026-09-30 到 10-01 的一天里同时在跑的托管 job 最多 61 个，合并队列的 job 等 runner 的 90 分位是 0.1 分钟。
+`Required CI` 选中的套件都跑在 GitHub 托管的 runner 上，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。后端测试的 pure、contract、integration 三层和前端的 eslint、check、unit 三个 job 用 `ubuntu-24.04-arm`，其余用 `ubuntu-latest`：arm64 机器是 4 个真实核心，x64 机器是 2 核超线程、CPU 代际不固定，这几个 job 在 arm64 上更快或者持平，耗时也更稳定。生产是 x64，所以 prod 发版（`deploy-prod.yml`）会在 `ubuntu-latest` 上对发版的 commit 再跑一遍完整后端测试，通过并经人批准后才部署。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个仓库实际不受它约束：2026-09-30 到 10-01 的一天里同时在跑的托管 job 最多 61 个，合并队列的 job 等 runner 的 90 分位是 0.1 分钟。
 
 自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上只跑本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
 

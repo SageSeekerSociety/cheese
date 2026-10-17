@@ -1,0 +1,13 @@
+{
+  "confirmPasswordRequired": "Confirm your password",
+  "displayName": "Use letters, numbers, underscores, or Chinese characters",
+  "displayNameRequired": "Display name is required",
+  "emailHint": "A school or work email is recommended. Some challenges are open only to specific email domains.",
+  "emailInvalid": "Invalid email address",
+  "passwordHint": "At least 8 characters, with a letter, a number, and a special character",
+  "passwordInvalid": "Use at least 8 characters, with a letter, a number, and a special character",
+  "passwordRequired": "Password is required",
+  "passwordsDoNotMatch": "Passwords do not match",
+  "username": "Use 4–32 letters, numbers, underscores, or hyphens",
+  "usernameRequired": "Username is required"
+}

@@ -27,9 +27,24 @@ set -euo pipefail
 # a server that is up but fails those queries; and macOS's
 # dirhelper deletes files under $TMPDIR that are older than three days, every
 # night at 03:35, data files of a running cluster included.
-DATA_DIR="${CHEESEX_DEV_DB_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-db}"
-SERVER_HOME="${CHEESEX_DEV_SERVER_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-servers}"
+log() { printf '%s\n' "$*" >&2; }
+die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
+
 PG_PORT="${CHEESEX_DEV_PG_PORT:-5433}"
+if [ -n "${CHEESEX_DEV_DB_DIR:-}" ]; then
+    DATA_DIR="$CHEESEX_DEV_DB_DIR"
+else
+    DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-db"
+    socket_path="$DATA_DIR/pg17/.s.PGSQL.$PG_PORT"
+    socket_path_bytes="$(LC_ALL=C printf '%s' "$socket_path" | wc -c | tr -d '[:space:]')"
+    # macOS sun_path is 104 bytes; keep the full Postgres socket path below it
+    # on both macOS and Linux, including room for its terminating NUL byte.
+    if [ "$socket_path_bytes" -gt 100 ]; then
+        DATA_DIR="/tmp/cheesex-dev-db-$(id -u)"
+        log "default data directory is too deep; using $DATA_DIR"
+    fi
+fi
+SERVER_HOME="${CHEESEX_DEV_SERVER_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-servers}"
 REDIS_PORT="${CHEESEX_DEV_REDIS_PORT:-6379}"
 TOOL_CACHE="${CHEESEX_DEV_TOOL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cheesex-dev-db}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -52,9 +67,6 @@ REDIS_DIR="$DATA_DIR/redis"
 PG_LOG="$DATA_DIR/pg.log"
 REDIS_LOG="$DATA_DIR/redis.log"
 REDIS_PID="$DATA_DIR/redis.pid"
-
-log() { printf '%s\n' "$*" >&2; }
-die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
 
 # The Postgres build must ship contrib: the migrations run
 # `CREATE EXTENSION pg_trgm`, which a core-only build (such as the `pgserver`

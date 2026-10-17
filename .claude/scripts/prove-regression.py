@@ -30,10 +30,36 @@ worktree is removed afterwards unless you pass --keep.
   python3 .claude/scripts/prove-regression.py backend/tests/unit/test_x.py::test_y \
       --without <revision without the fix>
 
+  python3 .claude/scripts/prove-regression.py --auto
+
+The two halves are the same in both forms; --auto derives the pair instead of
+asking you to type it, because the typed pair is the step authors skip. Its
+"without the fix" revision is the merge base with origin/main — the fork point,
+not the tip, so mainline commits that landed after the branch forked cannot fail
+the test for a reason the fix never touched — and its targets are the test files
+this branch added or changed, working tree and untracked files included, since a
+regression test is usually still uncommitted when its author runs this. Support
+files it changed alongside them (shared fixtures under backend/tests and
+frontend/src/test) travel into the worktree with them; the implementation files
+are the fix itself and stay in the working tree, because copying one into the
+worktree would carry the fix into the half that must not have it. For that same
+reason a test whose subject is a changed support file — a new shared fixture and
+the test asserting on it — cannot be proven this way, and it reads as NOT
+PROVEN; the carried files are named in the output so that reads as the rule and
+not as a surprise. Every target
+runs against one worktree, and the branch's verdict is the worst of the targets'
+verdicts. --auto names no runner, so a target whose layout it does not know is
+refused as usual; --command is allowed only when the branch changed a single
+test file, because one command is one run and with two targets it would answer
+for one of them twice — which is the escape hatch for a test whose subject is a
+file that did not exist at the merge base, since that one is refused on the
+inferred runner. A node id with --auto is refused: that is the other form.
+
 The first run must fail and the second must pass. Exit 0 proven, 1 not proven,
 2 could not judge — the last for a node id that does not resolve, a revision that
-is not a commit here, a layout this script has no runner for, a --copy file that
-is missing or that would land outside the worktree, a runner that is not on PATH,
+is not a commit here, a branch whose changes hold no test file, a layout this
+script has no runner for, a --copy file that
+is missing, unreadable or would land outside the worktree, a runner that is not on PATH,
 an inferred run that did not end in a verdict or that collected no test, a
 command that exited 127 without ever running. If your test is not one of the two layouts below, say how to run it
 with --command; the script will not guess a runner it does not know, because a
@@ -44,8 +70,10 @@ are results. Each runner is asked for its version before either half is read, an
 the run itself is read only when it ends in 0 or 1. Anything else is refused,
 whatever the number. That asymmetry is the point: the codes a runner uses when
 the test never ran are its own to choose, and pytest spreads them over a range —
-2 for a collection error, 4 for a node id that collected nothing, 5 for a run
-that collected nothing at all — so a table of them would always be one short.
+2 for a collection error the file alone names, 4 for a `::name` it found no
+collector for (the code a name that is not there and a module this half cannot
+import both give that form), 5 for a run that collected nothing at all — so a
+table of them would always be one short.
 Vitest chooses differently: 1 is a failing test *and* a spec it could not load,
 so there the code is not a verdict on its own either, and the vitest half is
 judged only when the run also wrote a report counting the tests it collected
@@ -71,6 +99,7 @@ The runners it infers are the two this repository uses: pytest over `backend/`
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shutil
@@ -91,6 +120,48 @@ SOURCE_ROOTS = ("backend", "frontend")
 #: Every worktree this script makes is named this plus `<sha12>-<pid>` under the
 #: temp dir, which is how a later run recognises one a killed run left behind.
 WORKTREE_PREFIX = "prove-regression-"
+
+#: What `--auto` compares the branch against when the caller names no revision:
+#: the mainline the pull request is merged into. The merge base with it is the
+#: revision that does not carry the fix, and it is derived rather than typed so
+#: that the pair of arguments AGENTS.md asks for is not the step people skip.
+AUTO_BASE = "origin/main"
+
+#: The trees the two inferred runners collect tests from: `backend/tests` is
+#: pytest's `testpaths`, `frontend/src` is where vitest's default include glob
+#: reaches. `frontend/scripts` and `frontend/collab` match that glob and are
+#: excluded by the vitest config (`node:test` and the collab service's own
+#: config run them), so they are outside these trees and not candidates.
+AUTO_TEST_TREES = ("backend/tests/", "frontend/src/")
+
+#: A frontend test's extension, as vitest's default include glob spells it:
+#: `**/*.{test,spec}.?(c|m)[jt]s?(x)`. The marker is part of the *stem*, so the
+#: extension test alone does not make `setup.ts` a spec, and `x.spec.d.ts` — a
+#: type declaration whose stem ends in `.spec.d` — is not one either.
+AUTO_SPEC_SUFFIXES = (
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mts",
+    ".cts",
+    ".mjs",
+    ".cjs",
+)
+
+#: Trees whose changed files travel into the "without the fix" half without
+#: being tests, as `(prefix, suffixes)`: a conftest, a support module, a shared
+#: fake. A new test that imports one of these is a test that cannot be collected
+#: in the worktree without it, which the inferred runner refuses rather than
+#: judges — so this is what makes `--auto` work on the ordinary fix that also
+#: adds a helper. Only source code: the harness configuration beside it
+#: (`quarantine.txt`, `module_durations.json`, `slow_tests.txt`) decides what
+#: gets collected at all, and the "without" half is supposed to run the base
+#: revision's harness, not the branch's.
+AUTO_SUPPORT_TREES = (
+    ("backend/tests/", (".py",)),
+    ("frontend/src/test/", (".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts")),
+)
 
 TEST_SUFFIXES = (
     ".py",
@@ -118,10 +189,11 @@ CANNOT_RUN = 127
 #: What an inferred runner exits when the test passed and when it failed.
 #: Everything else is a run that did not reach a verdict, and is refused rather
 #: than judged. For pytest these two are exactly the verdicts: its codes are a
-#: range as wide as its failure modes — 2 "interrupted" (a collection error, a
-#: module the test imports that this half does not have), 3 an internal error, 4
-#: "found no collectors" for a `::name` that is not there, 5 nothing collected —
-#: and `uv` passes them through, so a table of them would always be one short.
+#: range as wide as its failure modes — 2 "interrupted" (a collection error, but
+#: only when the node id names the file alone), 3 an internal error, 4 "found no
+#: collectors" for a `::name` (the code whether the name is absent or the module
+#: it names cannot be imported in this half), 5 nothing collected — and `uv`
+#: passes them through, so a table of them would always be one short.
 #: Vitest chooses differently: 1 is a failing test *and* a spec it could not
 #: load, a transform error, a run that found no test file at all, so there the
 #: code alone is not a verdict and the half is judged only when it also wrote a
@@ -247,8 +319,15 @@ def runner_for(node: str, relative: str) -> tuple[list[str], str, bool] | None:
 
 
 def report_path(tag: str) -> Path:
-    """A path for one half's report, before anything has written it."""
-    fd, name = tempfile.mkstemp(prefix=f"{WORKTREE_PREFIX}{tag}-", suffix=".json")
+    """A path for one half's report, before anything has written it.
+
+    The name carries this run's pid, the way a worktree's does, so that a run
+    killed before its `finally` could unlink leaves a report a later run can
+    tell from a live one's — `reclaim_stale` collects them by the same rule.
+    """
+    fd, name = tempfile.mkstemp(
+        prefix=f"{WORKTREE_PREFIX}{tag}-{os.getpid()}-", suffix=".json"
+    )
     os.close(fd)
     path = Path(name)
     # Nothing wrote it yet, and a file left from an earlier run would be read as
@@ -327,6 +406,143 @@ def resolve_rev(root: Path, rev: str) -> str:
     return done.stdout.strip()
 
 
+def merge_base(root: Path, rev: str) -> str:
+    """The commit this branch and `rev` last shared, or "could not judge" (exit 2).
+
+    Passing `rev` itself to `--without` would be wrong in the direction that
+    matters: work merged into the mainline *after* this branch forked is in
+    `origin/main` and not in the branch, so the "without" half would drop code
+    the fix never touched and the test could fail there for that reason. The
+    merge base carries neither side's later work.
+    """
+    done = git("merge-base", rev, "HEAD", cwd=root)
+    base = done.stdout.strip()
+    if done.returncode or not base:
+        print(
+            f"prove-regression: no merge base between {rev} and HEAD "
+            "(is the branch unrelated, or the ref not fetched?)",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return base
+
+
+def changed_against(root: Path, base: str) -> list[str]:
+    """Repo-relative paths this branch has changed since `base`, committed or not.
+
+    `--no-renames` for the reason ci-fast's change collector gives: this reads
+    the list for membership, and a rename reported as `old -> new` would put a
+    path with an arrow in it into the copy set. The working tree is included
+    because a regression test is usually still uncommitted when its author runs
+    this — a branch-only diff would make `--auto` refuse the very moment it is
+    most wanted.
+    """
+    done = git(
+        "diff",
+        "--name-only",
+        "--no-renames",
+        base,
+        "--",
+        cwd=root,
+    )
+    if done.returncode:
+        print(
+            f"prove-regression: could not diff against {base}: {done.stderr.strip()}",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    tracked = [line.strip() for line in done.stdout.splitlines() if line.strip()]
+    others = git("ls-files", "--others", "--exclude-standard", cwd=root)
+    untracked = [line.strip() for line in others.stdout.splitlines() if line.strip()]
+    # Sorted and deduplicated: the same path can be both modified and named by
+    # the untracked listing (a file staged then edited again), and the plan a
+    # caller reads should not depend on the order git happened to print.
+    return sorted({*tracked, *untracked})
+
+
+def is_test_file(relative: str) -> bool:
+    """Whether one of the two inferred runners would collect this file.
+
+    Mirrors the two runners' own rules rather than a shared guess: pytest's
+    default `python_files = test_*.py` under its `testpaths`, and vitest's
+    default include glob under `frontend/src`. A path outside both trees is not
+    a test whatever it is called — `frontend/scripts/a11y-ratchet.test.mjs`
+    matches vitest's glob and is excluded by the config, so picking it would aim
+    the whole check at a file the inferred runner never sees.
+    """
+    if relative.startswith("backend/tests/"):
+        return Path(relative).name.startswith("test_") and relative.endswith(".py")
+    if relative.startswith("frontend/src/"):
+        name = Path(relative).name
+        for suffix in AUTO_SPEC_SUFFIXES:
+            if name.endswith(suffix):
+                stem = name[: -len(suffix)]
+                return stem.endswith(".test") or stem.endswith(".spec")
+        return False
+    return False
+
+
+def auto_targets(root: Path, base: str) -> tuple[list[str], list[str]]:
+    """The branch's new/changed tests, and the support files they travel with.
+
+    Both halves of the pair AGENTS.md asks for are inferred from the branch, and
+    both are *refusals* when empty rather than an empty judgement: no test file
+    in what the branch changed is "there is nothing here to prove", and no test
+    path in `AUTO_TEST_TREES` means the branch changed no test at all — the case
+    of a fix that was never given a regression test, which is exactly what the
+    tool exists to notice. An inferred runner on an empty node is not a verdict
+    either way, so saying so is the only honest exit.
+
+    Support files are only what the test halves copy: a changed `.py` under
+    `backend/tests/` that is not itself a `test_*.py`, and a changed `.ts` under
+    `frontend/src/test/`. Copying them is what lets a new test that imports a new
+    fixture be judged at all; without it the worktree half fails to collect and
+    the run is refused, which is the honest answer for a *dependency* the caller
+    did not name but a nuisance for one `--auto` can work out itself.
+    """
+    changed = changed_against(root, base)
+    tests = [path for path in changed if is_test_file(path)]
+    if not tests:
+        outside = [path for path in changed if path.startswith(AUTO_TEST_TREES)]
+        if outside:
+            print(
+                "prove-regression: --auto found no test file among what this "
+                f"branch changed ({len(outside)} file(s) under "
+                f"{', '.join(AUTO_TEST_TREES)} but none named as a test). Name "
+                "the one you mean.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"prove-regression: --auto found no changed test under "
+                f"{' or '.join(AUTO_TEST_TREES)}; there is no regression test "
+                "here to prove. Name a node id instead, or add the test.",
+                file=sys.stderr,
+            )
+        raise SystemExit(2)
+    support = [
+        path
+        for path in changed
+        if path not in tests
+        and any(
+            path.startswith(prefix) and path.endswith(suffixes)
+            for prefix, suffixes in AUTO_SUPPORT_TREES
+        )
+    ]
+    return tests, support
+
+
+def unique(paths: list[str]) -> list[str]:
+    """The same list with repeats dropped, first-seen order kept.
+
+    Two node ids in one file — `test_x.py::test_a` and `::test_b` — name the
+    same file, and so does a `--copy` the caller also spelled out as a target.
+    Copying it twice is not wrong, only pointless, and the report of what was
+    carried is easier to read without the repeats.
+    """
+    return list(dict.fromkeys(paths))
+
+
 def remove_worktree(root: Path, tree: Path) -> None:
     git("worktree", "remove", "--force", str(tree), cwd=root)
     shutil.rmtree(tree, ignore_errors=True)
@@ -342,32 +558,126 @@ def _alive(pid: int) -> bool:
     return True
 
 
+def _pid_like(field: str) -> bool:
+    """Whether a name field is a process number this machine could have handed out.
+
+    Not `str.isdigit`, which is True for characters `int` refuses ('²' among
+    them), and not any all-digit run either: a field too large for `os.kill`
+    raises OverflowError out of it. Either would come out of the reclaim rule,
+    and a reclaim rule that raises ends the run on a traceback at exit 1 — the
+    code for NOT PROVEN — when nothing has been judged. A name in the shared
+    temp directory that merely looks like this tool's is not this tool's, so the
+    answer to a field like that is to leave it alone.
+    """
+    return field.isascii() and field.isdigit() and int(field) < 2**31
+
+
 def reclaim_stale(root: Path) -> None:
-    """Clear worktrees earlier runs left behind.
+    """Clear worktrees and reports earlier runs left behind.
 
     A run killed outright — SIGKILL, an OOM kill, a reboot — cannot clean up
     after itself, and nothing else ever will: without this, `git worktree list`
-    accumulates dead checkouts. The path carries the pid that made it, so a
-    later run can usually tell whether the process that owns it is still going —
-    a concurrent run's worktree is left alone, and so is this one, whose pid is
-    the caller's. `prune` drops the registrations whose directory is already
-    gone, which is the state a reboot out of /tmp leaves.
+    accumulates dead checkouts and the temp directory accumulates one report per
+    interrupted frontend half. Each carries the pid that made it, so a later run
+    can usually tell whether the process that owns it is still going — a
+    concurrent run's worktree is left alone, and so is this one, whose pid is
+    the caller's, and the same for its report. `prune` drops the registrations
+    whose directory is already gone, which is the state a reboot out of /tmp
+    leaves.
 
     The pid alone is not enough, because it is recycled: once a dead run's
     number belongs to some unrelated process, liveness reads the leftover as
     live and holds it. Nothing here lasts a day, so anything older than
     STALE_AFTER is taken as dead whatever its number says.
+
+    This runs before the halves do, on every run, so it is total by
+    construction: it reads the shared temp directory and a registration list
+    that other people's processes write to, and anything it cannot make sense of
+    is left where it is. A refusal here would be exit 1 — NOT PROVEN — from a
+    run that judged nothing.
+
+    What it removes it has to be sure of, and the name is not enough to be sure
+    of: a registration is a directory whose name somebody else chose. Two are
+    therefore held back whatever they are called — the repository's own
+    checkout, and the tree this run is standing in.
     """
     git("worktree", "prune", cwd=root)
     now = time.time()
-    for here in _worktrees(root):
+    # `git worktree list` reports every registration of the repository, the main
+    # working tree first, and `remove_worktree` deletes what it is handed: `git
+    # worktree remove --force` refuses a main tree and leaves the registration,
+    # but the `rmtree` behind it takes the directory anyway. The first entry is
+    # therefore the repository's own checkout, which no run ever abandoned, and
+    # the tree this run is standing in is where a second run starts when the
+    # author goes back to a `--keep`ed worktree — sweeping that one unlinks the
+    # directory the process is running in, and the run then ends on a
+    # FileNotFoundError at exit 1, the code for NOT PROVEN, having judged
+    # nothing. Both are held back before the name is even looked at.
+    standing_in = root.resolve()
+    for position, here in enumerate(_worktrees(root)):
         path = Path(here)
+        if position == 0 or standing_in.is_relative_to(path.resolve()):
+            continue
         if not path.name.startswith(WORKTREE_PREFIX):
             continue
         pid = path.name.rsplit("-", 1)[-1]
-        if pid.isdigit() and _alive(int(pid)) and not _older_than(path, now):
+        if _pid_like(pid) and _alive(int(pid)) and not _older_than(path, now):
             continue
         remove_worktree(root, path)
+    for leftover in _stale_reports(now):
+        try:
+            leftover.unlink(missing_ok=True)
+        except OSError:
+            # Someone else's file in a sticky /tmp, or a directory that
+            # appeared where a report was. Not ours to remove, and not a
+            # reason to fail.
+            continue
+
+
+def _stale_reports(now: float) -> list[Path]:
+    """Report files a killed run left in the temp directory.
+
+    A report is written by the runner, registered nowhere, and unlinked only by
+    `check`'s `finally`, which a signal does not run — so without a sweep every
+    interrupted frontend half adds one. Its name is `<tag>-<pid>-<random>.json`
+    under the worktree prefix, so the rule that decides a worktree is the same
+    one that decides a report: a concurrent run's is fresh and its owner is
+    alive; everything else is litter.
+
+    Anything the rule cannot read as one of this tool's reports is left where it
+    is — a name that is not the shape, a field that is not a pid, a temp
+    directory that has gone. This runs on every run, before either half, and a
+    raise here would be exit 1, the code for NOT PROVEN, out of a run that
+    judged nothing; the temp directory belongs to every process on the machine,
+    so a name it cannot read is the ordinary case, not the exceptional one.
+    """
+    stale: list[Path] = []
+    try:
+        entries = list(Path(tempfile.gettempdir()).iterdir())
+    except OSError:
+        # The shared temp directory is gone from under us, or is not readable.
+        # Nothing to collect, and the sweep is not the place to say so.
+        return stale
+    for entry in entries:
+        name = entry.name
+        if not name.startswith(WORKTREE_PREFIX) or not name.endswith(".json"):
+            continue
+        parts = name[len(WORKTREE_PREFIX) : -len(".json")].split("-")
+        if len(parts) != 3 or not _pid_like(parts[1]):
+            continue
+        try:
+            if not entry.is_file():
+                continue
+        except OSError:
+            continue
+        pid = int(parts[1])
+        # The rule the worktree loop uses, and the reason it is the same rule:
+        # this run's own pid is alive, so its reports are kept; a killed run's
+        # is not; a recycled one is settled by the age.
+        if _alive(pid) and not _older_than(entry, now):
+            continue
+        stale.append(entry)
+    return stale
 
 
 def _older_than(path: Path, now: float) -> bool:
@@ -402,8 +712,9 @@ def without_fix(root: Path, sha: str, tree: Path, copies: list[str], keep: bool)
     """Check `sha` out into `tree` and put the test file there too.
 
     `tree` is what the caller registered for cleanup before calling this, so a
-    failure here — a --copy path that is not a file, a directory it cannot write
-    — cannot leave the worktree behind. It runs no test.
+    failure here — a --copy path that is not a file or that cannot be read, a
+    directory it cannot write — cannot leave the worktree behind. It runs no
+    test.
     """
     # A worktree whose directory was cleared away (a reboot emptied /tmp) still
     # holds a registration, and that alone makes the next add fail.
@@ -422,9 +733,32 @@ def without_fix(root: Path, sha: str, tree: Path, copies: list[str], keep: bool)
         if not source.is_file():
             print(f"prove-regression: --copy {relative} is not a file", file=sys.stderr)
             raise SystemExit(2)
+        if not os.access(source, os.R_OK):
+            # A regular file the caller cannot read passes `is_file`, a
+            # stat-level test, and first fails when the copy opens it: a
+            # PermissionError out of `shutil`, past every handler here, which
+            # ends the program at exit 1 — the code for NOT PROVEN. A directory
+            # and a dangling symlink are refused above; an unreadable file is
+            # the third kind of source the comparison cannot be set up from, so
+            # it is refused here too, before the copy, and as "could not judge".
+            print(
+                f"prove-regression: --copy {relative} is not readable",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         destination = destination_for(relative, tree)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            # What `os.access` cannot answer for — a race, an ACL it did not
+            # read, a destination under a directory it cannot write — would
+            # otherwise escape the same way, so it lands on the same refusal.
+            print(
+                f"prove-regression: --copy {relative} could not be copied ({exc})",
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
     note = sha[:12] + (f", reusing {', '.join(linked)}" if linked else "")
     if keep:
         note += f", left at {tree} (the next run removes it)"
@@ -486,8 +820,10 @@ def run(
         raise SystemExit(2)
     if probe is not None and done.returncode not in FAILURE_CODES:
         # An inferred runner ended somewhere other than a pass or a failure, so
-        # the test did not reach a verdict: pytest's 2 is a collection error, its
-        # 4 is a `::name` that collected nothing, its 5 is nothing collected at
+        # the test did not reach a verdict: pytest's 2 is a collection error when
+        # the node id names the file alone, its 4 is a `::name` it found no
+        # collector for — the code a name that is not there and a module this
+        # half cannot import both give that form — its 5 is nothing collected at
         # all, 3 is an error inside pytest, and vitest's 254 is a binary it could
         # not load. Nothing was asserted, so a red half here would credit the fix
         # with a failure that was the run's, and a before half that only could
@@ -543,31 +879,107 @@ def judge(before: int, after: int, node: str) -> int:
 
 
 def check(root: Path, args: argparse.Namespace) -> int:
-    _, relative = locate(args.node, root)
-    copies = [*args.copy, relative]
-    reports: list[Path | None] = [None, None]
-    if args.command:
-        # An explicit command runs at the repository root in both trees, so it
-        # can reach whatever it needs without this script guessing a runner.
-        argv: list[str] = ["sh", "-c", args.command]
-        subdir = ""
+    if args.auto and args.node is not None:
+        # Silently preferring one of the two would answer a question the caller
+        # did not ask: --auto is "prove everything this branch changed", and a
+        # node id is "prove this one".
+        print(
+            "prove-regression: --auto takes the node ids off the branch's changed "
+            "test files; drop the one you named",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.auto and args.node is None:
+        print(
+            "prove-regression: name the node id to prove, or pass --auto to prove "
+            "every test file this branch changed",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.auto and args.without is None:
+        # --auto is the one case that knows its own "without" revision; a node
+        # id on its own does not, and guessing one would be a comparison against
+        # whatever the guess happened to be.
+        print(
+            "prove-regression: --without is required with a node id — it names the "
+            "revision that does not carry the fix",
+            file=sys.stderr,
+        )
+        return 2
+    copies = list(args.copy)
+    if args.auto:
+        rev = args.without or AUTO_BASE
+        # The merge base, not the tip of the base branch: work that landed there
+        # after this branch forked is not part of the fix, and a before half
+        # checked out at the tip could fail the test for a reason the fix never
+        # touched — which would read as PROVEN.
+        sha = merge_base(root, rev)
+        nodes, support = auto_targets(root, sha)
+        copies.extend(support)
+        print(
+            f"--auto: comparing against {rev}, merge base {sha[:12]} — "
+            f"{len(nodes)} changed test file(s), {len(support)} carried support file(s)"
+        )
+        for node in nodes:
+            print(f"  target {node}")
+        for path in support:
+            # Named, not counted: a support file carried into both halves is one
+            # the reader has to know about to read a NOT PROVEN below. A test
+            # whose subject lives under the test tree — a new shared fixture and
+            # the test that asserts on it — travels with its own subject, and
+            # "already passes without the fix" is what that comparison honestly
+            # gives. Nothing in the file says which of the two it is.
+            print(f"  carried {path}")
     else:
-        inferred = runner_for(args.node, relative)
-        if inferred is None:
-            print(
-                f"prove-regression: no runner for {relative} — this script knows "
-                "pytest over backend/ and vitest over frontend/. Pass --command to "
-                "say how to run it.",
-                file=sys.stderr,
+        # Refused above in the same breath as --auto, so a node id is here.
+        assert args.node is not None
+        sha = resolve_rev(root, args.without)
+        nodes = [args.node]
+    label = args.without or AUTO_BASE
+    if args.auto and args.command and len(nodes) > 1:
+        # A command is one run of whatever it names, so under --auto it answers
+        # for the target it happens to run and says nothing about the others —
+        # the same answer N times, wearing N targets' worth of authority. With
+        # one target it is the "say how to run this one" escape hatch, and with
+        # more the caller has to name the node the command runs.
+        print(
+            f"prove-regression: --auto found {len(nodes)} changed test files and "
+            "--command names a single run of one of them; name that node id "
+            "along with the command, or drop --command",
+            file=sys.stderr,
+        )
+        return 2
+
+    plans: list[tuple[str, list[str], str, list[Path | None]]] = []
+    for node in nodes:
+        _, relative = locate(node, root)
+        copies.append(relative)
+        if args.command:
+            # An explicit command runs at the repository root in both trees, so it
+            # can reach whatever it needs without this script guessing a runner.
+            argv: list[str] = ["sh", "-c", args.command]
+            subdir = ""
+            reports: list[Path | None] = [None, None]
+        else:
+            inferred = runner_for(node, relative)
+            if inferred is None:
+                print(
+                    f"prove-regression: no runner for {relative} — this script knows "
+                    "pytest over backend/ and vitest over frontend/. Pass --command to "
+                    "say how to run it.",
+                    file=sys.stderr,
+                )
+                return 2
+            argv, subdir, wants_report = inferred
+            # One per half: a single path would be overwritten before it was read,
+            # and each half's answer is about that half's tree. The paths are the
+            # same for every target because the targets run one after another —
+            # each half is read before the next target starts.
+            reports = (
+                [report_path("before"), report_path("after")] if wants_report else [None, None]
             )
-            return 2
-        argv, subdir, wants_report = inferred
-        # One per half: a single path would be overwritten before it was read,
-        # and each half's answer is about that half's tree.
-        if wants_report:
-            reports = [report_path("before"), report_path("after")]
-    probe = runner_probe(argv)
-    sha = resolve_rev(root, args.without)
+        plans.append((node, argv, subdir, reports))
+
     reclaim_stale(root)
     trees: list[Path] = []
     tree = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}{sha[:12]}-{os.getpid()}"
@@ -575,16 +987,30 @@ def check(root: Path, args: argparse.Namespace) -> int:
     # here on, has to remove it, and the `finally` can only remove what it knows.
     trees.append(tree)
     try:
-        note = without_fix(root, sha, tree, copies, args.keep)
-        print(f"without the fix ({args.without} → {note})")
-        before = run(argv, tree / subdir if subdir else tree, probe, reports[0])
-        print("with the fix (working tree)")
-        after = run(argv, root / subdir if subdir else root, probe, reports[1])
-        return judge(before, after, args.node)
+        # One tree for every target, holding the union of what they need. The
+        # tree is the expensive half of this script, and a support file two
+        # targets share has to be there once either way.
+        note = without_fix(root, sha, tree, unique(copies), args.keep)
+        print(f"without the fix ({label} → {note})")
+        verdicts = []
+        for node, argv, subdir, reports in plans:
+            probe = runner_probe(argv)
+            if len(plans) > 1:
+                print(f"\n{node}")
+            before = run(argv, tree / subdir if subdir else tree, probe, reports[0])
+            print("with the fix (working tree)")
+            after = run(argv, root / subdir if subdir else root, probe, reports[1])
+            verdicts.append(judge(before, after, node))
+        # One test that does not guard the change is the thing the caller has to
+        # act on, whatever the others said: 1 wins over 0. (A half that could not
+        # be judged never reaches here — it exits 2 from `run` and the run stops,
+        # which is the same answer for the branch: not established.)
+        return max(verdicts)
     finally:
-        for report in reports:
-            if report is not None:
-                report.unlink(missing_ok=True)
+        for _, _, _, reports in plans:
+            for report in reports:
+                if report is not None:
+                    report.unlink(missing_ok=True)
         if not args.keep:
             for path in trees:
                 remove_worktree(root, path)
@@ -599,6 +1025,20 @@ class _Tally:
         self.total += 1
         self.bad += not ok
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+
+
+def _self_test_exit(tally: _Tally) -> int:
+    """The only place a bad count becomes a non-zero exit for `--self-test`.
+
+    Built into the tail of `self_test` it would be reached only by the real run,
+    which is green — so nothing held the conversion the repo-guards step reads.
+    Pulled out, a case can hand it a tally that is bad on purpose.
+    """
+    if tally.bad:
+        print(f"self-test: {tally.bad} of {tally.total} cases FAILED")
+        return 1
+    print(f"self-test: all {tally.total} cases passed")
+    return 0
 
 
 def self_test() -> int:
@@ -630,6 +1070,15 @@ def self_test() -> int:
         except ValueError:
             ok = True
         tally.case(f"{bad!r} is rejected as not a test file", ok)
+    # Listed literally rather than read from TEST_SUFFIXES: a case that iterated
+    # the constant would stay green with the constant trimmed to one entry,
+    # which is the mutation it is here to catch.
+    for suffix in (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue"):
+        try:
+            named = test_path_of(f"src/a{suffix}")
+        except ValueError:
+            named = None
+        tally.case(f"{suffix} names a test file", named == f"src/a{suffix}")
 
     for before, after, want, label in (
         (1, 0, 0, "red without, green with is PROVEN"),
@@ -640,6 +1089,33 @@ def self_test() -> int:
         with sink:
             got = judge(before, after, "node")
         tally.case(label, got == want)
+
+    # What --auto counts as a test file: the runners' own rules, not a guess.
+    # pytest collects `test_*.py` under `tests` (its `python_files` and
+    # `testpaths`), so a `*_test.py` and a conftest are fixtures, not targets;
+    # vitest's include glob puts the marker in the stem, so `setup.ts` and a
+    # `x.spec.d.ts` declaration are not targets either. Listed literally rather
+    # than read from the constants: a case that iterated them would stay green
+    # with one trimmed, which is the mutation it is here to catch.
+    for relative, want in (
+        ("backend/tests/unit/test_value.py", True),
+        ("backend/tests/unit/value_test.py", False),
+        ("backend/tests/conftest.py", False),
+        ("backend/app/impl.py", False),
+        ("frontend/src/a.spec.ts", True),
+        ("frontend/src/components/a.test.tsx", True),
+        ("frontend/src/a.spec.mjs", True),
+        ("frontend/src/test/setup.ts", False),
+        ("frontend/src/a.spec.d.ts", False),
+        ("frontend/src/a.mjs", False),
+        ("frontend/collab/a.spec.ts", False),
+        ("frontend/scripts/a.test.mjs", False),
+        ("docs/topics/anything.md", False),
+    ):
+        tally.case(
+            f"--auto {'counts' if want else 'does not count'} {relative} as a test",
+            is_test_file(relative) is want,
+        )
 
     argv, subdir, wants_report = runner_for(
         "backend/tests/unit/test_x.py::test_y", "backend/tests/unit/test_x.py"
@@ -678,6 +1154,24 @@ def self_test() -> int:
             f"{relative} has no inferred runner",
             runner_for(relative, relative) is None,
         )
+    # The probe is what tells a runner that could not load its test from one
+    # that ran and failed, so its shape matters: the layout's own runner, asked
+    # for the version of the package it drives — and nothing for a --command,
+    # whose caller owns whether it can start.
+    tally.case(
+        "the pytest layout's probe asks pytest for its version",
+        runner_probe(["uv", "run", "--no-sync", "pytest", "tests/x.py::t", "-q"])
+        == ["uv", "run", "--no-sync", "pytest", "--version"],
+    )
+    tally.case(
+        "the vitest layout's probe asks vitest for its version",
+        runner_probe(["pnpm", "exec", "vitest", "run", "src/a.spec.ts"])
+        == ["pnpm", "exec", "vitest", "--version"],
+    )
+    tally.case(
+        "a --command is given no probe",
+        runner_probe(["sh", "-c", "pytest -q"]) is None,
+    )
 
     # What vitest's report says about a half, which is the only thing that turns
     # its exit 1 into a verdict. A report that is missing, unreadable or shaped
@@ -691,6 +1185,10 @@ def self_test() -> int:
             "no test collected": '{"numTotalTests": 0, "numFailedTestSuites": 1}',
             "not an object": "[1, 2]",
             "no count at all": '{"success": false}',
+            # A count that is not a whole number is not a count of tests, and
+            # reading it as one is how a report the runner wrote for another
+            # reason gets counted as the test having run.
+            "a count that is not a whole number": '{"numTotalTests": 1.0}',
             "not json": "Tests  no tests\n",
         }
         for label, body in shapes.items():
@@ -705,9 +1203,16 @@ def self_test() -> int:
             not report_ran(holder / "absent.json"),
         )
         made = report_path("case")
+        # The pid in the name is what lets a later run tell this run's report
+        # from one a killed run left, and the sweep turns on it; nothing else
+        # reads it, so a name carrying any live pid satisfies every other case.
+        fields = made.name[len(WORKTREE_PREFIX) : -len(".json")].split("-")
         tally.case(
-            "a report path is reserved but not created",
-            not made.exists() and made.parent == Path(tempfile.gettempdir()),
+            "a report path is reserved but not created, and names this run's pid",
+            not made.exists()
+            and made.parent == Path(tempfile.gettempdir())
+            and fields[0] == "case"
+            and fields[1] == str(os.getpid()),
         )
         made.unlink(missing_ok=True)
 
@@ -743,6 +1248,35 @@ def self_test() -> int:
         tally.case(
             "a worktree's own dependency directory is replaced, not merged",
             (stale / "backend" / ".venv").is_symlink(),
+        )
+
+        # All four, not only the one this fixture happens to have: a tree that
+        # installed `node_modules` or `.venv` at the repository root gets those
+        # linked too, and a DEPENDENCY_DIRS trimmed to one entry would still
+        # pass every case above.
+        full = holder / "full"
+        for relative in (
+            "backend/.venv",
+            "frontend/node_modules",
+            "node_modules",
+            ".venv",
+        ):
+            (full / relative).mkdir(parents=True)
+        every = holder / "every"
+        every.mkdir()
+        linked_all = relink_dependencies(full, every)
+        # The list it hands back is what the --keep note quotes, and linking is
+        # what the halves run on; a case that reads only the list stays green
+        # while three of the four directories are never linked at all.
+        tally.case(
+            "all four dependency directories are linked, not just backend/.venv",
+            linked_all
+            == ["backend/.venv", "frontend/node_modules", "node_modules", ".venv"]
+            and all(
+                (every / relative).is_symlink()
+                and (every / relative).resolve() == (full / relative).resolve()
+                for relative in linked_all
+            ),
         )
 
     with tempfile.TemporaryDirectory() as scratch:
@@ -917,6 +1451,12 @@ def self_test() -> int:
             and left is not None
             and text_of(left / "ran.marker") == "yes",
         )
+        # The note is what says the worktree was left on purpose: without it
+        # --keep reads as an ordinary run that happened to leave a directory.
+        tally.case(
+            "end to end: --keep says where the worktree was left",
+            "left at" in kept.stdout and "the next run removes it" in kept.stdout,
+        )
         if left is not None:
             subprocess.run(
                 ["git", "worktree", "remove", "--force", str(left)],
@@ -935,11 +1475,78 @@ def self_test() -> int:
         )
         # Checked before any later run gets the chance to reclaim it, so this is
         # the failing path itself leaving the worktree behind and not a cleanup
-        # that happened to run first.
+        # that happened to run first. The message is part of what is asserted:
+        # the guard below refuses an unreadable source with the same exit code,
+        # so without it this case passes with the not-a-file refusal deleted —
+        # which is what happened when the readability check was added above it.
+        refused = prove(without, runs, copy="nope.py")
         tally.case(
-            "end to end: a --copy path that is not a file is not judged",
-            prove(without, runs, copy="nope.py").returncode == 2
+            "end to end: a --copy path that is not a file is not judged, and says which",
+            refused.returncode == 2
+            and "is not a file" in refused.stderr
             and _extra_worktrees(repo) == [],
+        )
+        # The third kind of --copy source that cannot set the comparison up, and
+        # the one `is_file` passes: a regular file the caller cannot read, where
+        # the copy is what fails and a PermissionError out of it ends the program
+        # at exit 1, the code for NOT PROVEN. Refused before the copy instead.
+        secret = repo / "secret.py"
+        secret.write_text("x = 1\n", encoding="utf-8")
+        secret.chmod(0)
+        # A uid that can read a mode-000 file — root — has nothing to refuse
+        # here, so the guard is only exercised where there is one to exercise.
+        readable_anyway = os.access(secret, os.R_OK)
+        try:
+            unreadable = prove(without, runs, copy="secret.py")
+        finally:
+            secret.chmod(0o644)
+        secret.unlink()
+        tally.case(
+            "end to end: an unreadable --copy source is not judged",
+            readable_anyway
+            or (
+                unreadable.returncode == 2
+                and "is not readable" in unreadable.stderr
+                and "NOT PROVEN" not in unreadable.stdout
+            ),
+        )
+        # The guards above refuse what can be seen coming. This is the copy
+        # failing for a reason no test can answer — a race, an ACL, a filesystem
+        # that will not take the write — which is why the copy is wrapped at all:
+        # an OSError out of it is the uncaught error that ends the run at exit 1,
+        # the code for NOT PROVEN. No source the fixture can build passes both
+        # guards and then fails to copy, so the failure is forced instead.
+        copy_tree = Path(scratch) / "copy-fails"
+        remove_worktree(repo, copy_tree)
+        shutil.rmtree(copy_tree, ignore_errors=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(copy_tree), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        real_copy2 = shutil.copy2
+
+        def refuse_copy(*_args: object, **_kwargs: object) -> None:
+            raise OSError("forced")
+
+        shutil.copy2 = refuse_copy
+        try:
+            with _Captured() as said:
+                try:
+                    without_fix(repo, without, copy_tree, ["test_app.py"], False)
+                    code = 0
+                except SystemExit as exc:
+                    code = exc.code
+                except OSError:
+                    code = -1
+        finally:
+            shutil.copy2 = real_copy2
+            remove_worktree(repo, copy_tree)
+        tally.case(
+            "a copy that fails for any other reason is refused, not raised",
+            code == 2 and "could not be copied" in said.err.getvalue(),
         )
         # Refusing is only half the fix; the caller has to be told what to pass
         # instead, or the next thing they try is the same guess this avoids.
@@ -953,22 +1560,31 @@ def self_test() -> int:
         # the program subprocess could not start, and the shell that could not
         # find what --command named. Judging either would put a verdict on a test
         # that never ran.
-        for argv, label in (
-            (["prove-regression-no-such-program-xyz"], "a runner that is not on PATH"),
-            (
-                ["sh", "-c", "prove-regression-no-such-command-xyz"],
-                "a --command whose program does not exist",
-            ),
-        ):
-            with _Muffle():
-                try:
-                    run(argv, repo)
-                    code = 0
-                except SystemExit as exc:
-                    code = exc.code
-                except OSError:
-                    code = -1
-            tally.case(f"{label} is not judged", code == 2)
+        with _Captured() as said:
+            try:
+                run(["prove-regression-no-such-program-xyz"], repo)
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+            except OSError:
+                code = -1
+        # The message matters as much as the code: this refusal is the one the
+        # caller sees instead of a traceback, and it has to name the program.
+        tally.case(
+            "a runner that is not on PATH is not judged, and is named",
+            code == 2
+            and "prove-regression-no-such-program-xyz is not on PATH"
+            in said.err.getvalue(),
+        )
+        with _Muffle():
+            try:
+                run(["sh", "-c", "prove-regression-no-such-command-xyz"], repo)
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+            except OSError:
+                code = -1
+        tally.case("a --command whose program does not exist is not judged", code == 2)
         tally.case(
             "end to end: a --command that never ran is not judged",
             prove(without, "prove-regression-no-such-command-xyz").returncode == 2,
@@ -1036,12 +1652,13 @@ def self_test() -> int:
         # stand in for: the runner starts — `--version` answers 0 — and the run
         # ends somewhere other than a pass or a failure. Every such code is
         # refused rather than the ones someone happened to see, because they are
-        # a range: pytest exits 2 for a collection error (a module the test
-        # imports that this half does not have), 3 for an error inside pytest, 4
-        # for a `::name` that collected nothing, 5 for nothing collected at all,
-        # and `uv` passes each through — so a table of them is one short as soon
-        # as the test file grows an import or the node id grows a name, which is
-        # the shape the PR's own example took. A verdict here would be about the
+        # a range: pytest exits 2 for a collection error named by the file alone,
+        # 4 for a `::name` it found no collector for — the code a missing name
+        # and a module this half cannot import both give that form — 3 for an
+        # error inside pytest, 5 for nothing collected at all, and `uv` passes
+        # each through — so a table of them is one short as soon as the test file
+        # grows an import or the node id grows a name, which is the shape the
+        # PR's own example took. A verdict here would be about the
         # run, not the test. The shim answers 0 for the probe, so the probe
         # cannot be what refuses it.
         for code in (2, 3, 4, 5):
@@ -1117,6 +1734,12 @@ def self_test() -> int:
             body = (
                 "#!/bin/sh\n"
                 'case "$*" in *--version*) exit 0;; esac\n'
+                # Real vitest writes the json report because the command asked
+                # for a json reporter. A shim that wrote one regardless stayed
+                # green with VITEST_REPORT_FLAGS emptied, which is the flag it is
+                # here to hold: without one it writes nothing, as vitest would,
+                # and the half is refused for having collected no test.
+                'case "$*" in *--reporter=json*) : ;; *) exit 0;; esac\n'
                 'for a in "$@"; do case "$a" in --outputFile=*) '
                 'out="${a#--outputFile=}";; esac; done\n'
             ) + tail
@@ -1187,17 +1810,23 @@ def self_test() -> int:
         )
         # The probe runs once per half, in that half's own directory, so a runner
         # that answers in one tree and not the other is refused on the side that
-        # cannot. This shim reads the tree it was pointed at — the worktree is the
-        # commit without the fix, whose app.py still says 1 — so the before half
-        # runs and goes red while the after half's probe refuses. Dropping the
-        # probe from that second call would let the run happen, and `run` would
-        # refuse it with its own message, so asserting *this* message is what
-        # pins the probe rather than the check that follows it.
+        # cannot. This shim reads the tree it was pointed at and answers the
+        # `--version` probe only there — the worktree is the commit without the
+        # fix, whose app.py still says 1 — so the before half runs and goes red
+        # while the after half's own probe refuses. Dropping the probe from that
+        # second call would let the run happen and `run` would refuse it with its
+        # own message, so asserting *this* message is what pins the probe rather
+        # than the check that follows it.
         split = Path(scratch) / "split-shims"
         split.mkdir()
         (split / "uv").write_text(
             "#!/bin/sh\n"
-            'if grep -q "value = 2" ../app.py 2>/dev/null; then exit 2; fi\n'
+            'case "$*" in\n'
+            "  *--version*)\n"
+            '    if grep -q "value = 2" ../app.py 2>/dev/null; then exit 2; fi\n'
+            "    exit 0\n"
+            "    ;;\n"
+            "esac\n"
             "exit 1\n",
             encoding="utf-8",
         )
@@ -1218,7 +1847,7 @@ def self_test() -> int:
         # reaches it: those shims exist, so the program subprocess hands them
         # runs. Without it a runner that is not on PATH raises instead of saying
         # so, and the caller gets a traceback where "could not judge" belongs.
-        with _Muffle():
+        with _Captured() as said:
             try:
                 cannot_start(["prove-regression-no-such-program-xyz", "--version"], repo)
                 code = 0
@@ -1226,7 +1855,12 @@ def self_test() -> int:
                 code = exc.code
             except OSError:
                 code = -1
-        tally.case("a probe whose runner is not on PATH is refused too", code == 2)
+        tally.case(
+            "a probe whose runner is not on PATH is refused too, and is named",
+            code == 2
+            and "prove-regression-no-such-program-xyz is not on PATH"
+            in said.err.getvalue(),
+        )
 
         # The bookkeeping that decides whether a worktree is registered has to
         # compare real paths: `git worktree add` resolves a symlink before it
@@ -1268,6 +1902,13 @@ def self_test() -> int:
             red_with.returncode == 1
             and "does not pass with the fix" in red_with.stdout,
         )
+        # What a NOT PROVEN exit tells the caller to do next. main() prints the
+        # hint on that code and on no other, so this reads it where the caller
+        # would, instead of trusting that the print is still there.
+        tally.case(
+            "end to end: a NOT PROVEN run prints how to fix the comparison",
+            "修法" in green_without.stdout and FIX_HINT in red_with.stdout,
+        )
         tally.case(
             "end to end: an unknown revision cannot be judged",
             prove("no-such-rev", runs).returncode == 2,
@@ -1285,6 +1926,25 @@ def self_test() -> int:
                 code = exc.code
         tally.case("an unknown revision is refused before any worktree is made", code == 2)
 
+        # A revision that resolves but is not a commit — a tree, or a tag that
+        # points at one. `^{commit}` is what refuses it, before `worktree add` is
+        # handed a sha it could never check out.
+        tree_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=str(repo),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        with _Muffle():
+            try:
+                resolve_rev(repo, tree_sha)
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+        tally.case("a revision that is not a commit is refused", code == 2)
+
         # A run killed mid-flight cannot clean up after itself; the next run has
         # to, or `git worktree list` only grows. A concurrent run's worktree has
         # a live pid in its name and is not litter.
@@ -1292,8 +1952,18 @@ def self_test() -> int:
         # `plant` makes a worktree, proves it is really registered — so a case
         # cannot pass off a git that never made one — and ages it by hand rather
         # than by sleeping.
+        #
+        # The name carries this run's own scratch directory in the middle, the
+        # way the escape case above does, because the temp directory is every
+        # process's on the machine: under a fixed name two concurrent self-tests
+        # create and remove each other's worktree, and the `worktree add` below
+        # is `check=True`, so the race the loser loses is a traceback at exit 1
+        # — the code for NOT PROVEN — out of a run that judged nothing. The pid
+        # stays the last field, which is the one field `reclaim_stale` reads.
         def plant(pid: int, age: float = 0.0) -> Path:
-            path = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}0deada0deada-{pid}"
+            path = Path(tempfile.gettempdir()) / (
+                f"{WORKTREE_PREFIX}0deada0deada-{Path(scratch).name}-{pid}"
+            )
             # Whatever a previous run of this case left, so the case cannot pass
             # or fail on /tmp's history rather than on reclaim_stale.
             git("worktree", "remove", "--force", str(path), cwd=repo)
@@ -1314,13 +1984,25 @@ def self_test() -> int:
         def gone(path: Path) -> bool:
             return not path.exists() and not _registered(repo, path)
 
-        # A pid that could exist and does not, found rather than assumed: the
-        # self-test must not rest on 999999 being free on this machine. Nothing
-        # is forked between the probe and the use, so it stays free.
-        free = 999_999
-        while _alive(free):
-            free += 1
-        dead = plant(free)
+        def unused_pid() -> int:
+            """A pid that is dead whenever it is read, and cannot become live.
+
+            One past the largest number this kernel hands out, because a number
+            found from below is one a later subprocess can be given: between a
+            plant and the sweep that judges it this case forks dozens of them,
+            which is what the probe that used to stand here assumed away. Above
+            `pid_max` the kernel never allocates the number, so `_alive` reads
+            it as gone whenever the sweep asks.
+            """
+            try:
+                top = int(
+                    Path("/proc/sys/kernel/pid_max").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                top = 999_999
+            return min(top + 1, 2**31 - 1)
+
+        dead = plant(unused_pid())
         live = plant(os.getpid())
         # A pid that is alive and belongs to something else entirely — what a
         # dead run's number looks like after the kernel hands it out again. Only
@@ -1347,9 +2029,521 @@ def self_test() -> int:
             other.kill()
             other.wait()
 
+        # The loop reads its pid out of the name too, and the same field can be
+        # one `int` or `os.kill` will not take — `'²'.isdigit()` is true, and an
+        # all-digit field can be past what `os.kill` accepts. A registration like
+        # that is this tool's own litter whatever its pid says, so it is removed,
+        # and either way the sweep must not raise: a raise here is exit 1, NOT
+        # PROVEN, out of a run that judged nothing.
+        #
+        # Named after this run's own scratch directory, like `plant` above, so
+        # that two concurrent self-tests are not building the same directory:
+        # the token goes in the middle, and the suffix — the field the rule
+        # reads — stays last.
+        odd = []
+        for suffix in ("²", "99999999999"):
+            path = Path(tempfile.gettempdir()) / (
+                f"{WORKTREE_PREFIX}odd-{Path(scratch).name}-{suffix}"
+            )
+            git("worktree", "remove", "--force", str(path), cwd=repo)
+            shutil.rmtree(path, ignore_errors=True)
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "--detach", str(path), "HEAD"],
+                cwd=str(repo),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+            odd.append(path)
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        # Read before the test-side cleanup below, which would otherwise make
+        # this true whatever the sweep did — and the title says reclaimed, so a
+        # sweep that merely declined to raise on these names has not done it.
+        gone = [not _registered(repo, path) for path in odd]
+        for path in odd:
+            remove_worktree(repo, path)
+        tally.case(
+            "a worktree whose name is not a pid is reclaimed, not raised on",
+            swept and all(gone),
+        )
+
+        # A registration is a directory whose name somebody else chose, and the
+        # loop has nothing but that name to go on. `git worktree list` reports
+        # every registration of the repository — the main working tree first —
+        # and `remove_worktree` deletes what it is handed: `git worktree remove
+        # --force` refuses a main tree and leaves the registration behind, but
+        # the `rmtree` after it takes the directory anyway. So a repository that
+        # lives in a directory named with the prefix loses its own checkout to a
+        # run started from one of its worktrees. A repository of its own, since
+        # deleting the fixture the rest of the suite stands on would fail every
+        # case after this one instead of this one.
+        danger = Path(scratch) / f"{WORKTREE_PREFIX}danger"
+        beside = Path(scratch) / "beside"
+        danger.mkdir()
+        (danger / "app.py").write_text("value = 1\n", encoding="utf-8")
+        for args in (
+            ("init", "-q"),
+            ("add", "app.py"),
+            ("commit", "-q", "-m", "one"),
+            ("worktree", "add", "-q", "--detach", str(beside), "HEAD"),
+        ):
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *args],
+                cwd=str(danger),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+        try:
+            with _Muffle():
+                reclaim_stale(beside)
+            swept = True
+        except Exception:
+            swept = False
+        tally.case(
+            "the repository's own checkout is not reclaimed, whatever it is called",
+            swept and danger.exists() and _registered(beside, danger),
+        )
+
+        # The tree the run is standing in is the other one no name can make
+        # litter, nor is any directory above it — a worktree can be registered
+        # inside another one. `--keep` prints where the worktree was left, and
+        # going back there to start the next run is the ordinary way to use it:
+        # sweeping that tree unlinks the directory the process is running in,
+        # and the run then ends on a FileNotFoundError at exit 1, the code for
+        # NOT PROVEN, having judged nothing.
+        outer = plant(unused_pid())
+        inner = outer / "inner"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(inner), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        try:
+            with _Muffle():
+                reclaim_stale(inner)
+            swept = True
+        except Exception:
+            swept = False
+        tally.case(
+            "the tree this run stands in is not reclaimed, nor the one above it",
+            swept and inner.exists() and outer.exists(),
+        )
+        remove_worktree(repo, inner)
+        remove_worktree(repo, outer)
+
+        # The prefix is what keeps the loop off every other registration of the
+        # repository. `repo` itself is held back by its position and the two
+        # trees above by where the run stands, but a worktree a person made —
+        # `my-feature` — is neither, and its last field is not a pid, so without
+        # the prefix it goes straight to `remove_worktree` and the directory and
+        # the registration both go. Aged past the window by hand, so freshness
+        # is not what keeps it: with the prefix gone the last field is what the
+        # rule is left with, and there is no pid there either.
+        human = Path(scratch) / "my-feature"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(human), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        when = time.time() - STALE_AFTER - 60
+        os.utime(human, (when, when))
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        tally.case(
+            "a registration that is not this tool's is left where it is",
+            swept and human.exists() and _registered(repo, human),
+        )
+        remove_worktree(repo, human)
+
+        # The number the reclaim rule turns on. An hour would take a worktree
+        # out from under a run that is still using it, so the boundary is where
+        # the value shows; only the age can settle a recycled pid, which is what
+        # the case above rests on.
+        aged = Path(scratch) / "aged"
+        aged.mkdir()
+        moment = time.time()
+        for age, stale in ((23 * 60 * 60, False), (25 * 60 * 60, True)):
+            when = moment - age
+            os.utime(aged, (when, when))
+            tally.case(
+                f"a leftover {age // 3600}h old is stale: {stale}",
+                _older_than(aged, moment) is stale,
+            )
+
+        # `prune` is what clears a registration whose directory is gone, and it
+        # is the only thing that does: the loop above reaches only names that
+        # carry this tool's prefix, so a registration under any other name — the
+        # state a reboot out of /tmp leaves another tool's worktree in — is
+        # dropped by nothing else.
+        stray = Path(tempfile.gettempdir()) / f"some-other-tool-{os.getpid()}"
+        git("worktree", "remove", "--force", str(stray), cwd=repo)
+        shutil.rmtree(stray, ignore_errors=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(stray), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        shutil.rmtree(stray)
+        with _Muffle():
+            reclaim_stale(repo)
+        tally.case(
+            "prune drops a registration whose directory is already gone",
+            not _registered(repo, stray),
+        )
+
+        # A report is not a worktree, so `git worktree list` never shows it and
+        # the sweep over the temp directory is the only thing that collects a
+        # killed run's half. Its name carries the pid for exactly this: the
+        # report of a live run is not litter. The third field carries this run's
+        # own scratch directory, which the rule never reads, so a concurrent
+        # self-test writing the same file cannot put it back between this run's
+        # sweep and the look that follows.
+        leaked = (
+            Path(tempfile.gettempdir())
+            / f"{WORKTREE_PREFIX}before-{unused_pid()}-{Path(scratch).name}.json"
+        )
+        leaked.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        mine = report_path("after")
+        mine.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        with _Muffle():
+            reclaim_stale(repo)
+        tally.case(
+            "a report whose run is gone is reclaimed; a live run's is left alone",
+            not leaked.exists() and mine.exists(),
+        )
+        mine.unlink(missing_ok=True)
+
+        # The sweep reads the shared temp directory, which is every process's on
+        # the machine, so a name that only looks like this tool's has to be left
+        # where it is rather than read as a pid: `'²'.isdigit()` is true and
+        # `int` refuses it, and an all-digit field can be past what `os.kill`
+        # takes. Either one raises out of the sweep, and a raise here is exit 1
+        # — the code for NOT PROVEN — out of a run that judged nothing.
+        #
+        # The third field carries this run's own scratch directory, so that two
+        # concurrent self-tests are not writing the same file — the field the
+        # rule reads is the one the odd number goes in, and that stays second.
+        # Under a fixed name the run that reads the file after the other one
+        # unlinked it fails on that race rather than on the sweep.
+        odd = []
+        for name in (
+            f"{WORKTREE_PREFIX}before-99999999999-{Path(scratch).name}.json",
+            f"{WORKTREE_PREFIX}before-²-{Path(scratch).name}.json",
+        ):
+            path = Path(tempfile.gettempdir()) / name
+            path.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            odd.append(path)
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            left = [path.exists() for path in odd]
+            for path in odd:
+                path.unlink(missing_ok=True)
+        tally.case(
+            "a name that is not this tool's report does not stop the sweep",
+            swept and all(left),
+        )
+
+        # The prefix is what keeps the sweep off what belongs to nobody here.
+        # The temp directory is every process's on the machine, and the guard is
+        # not a formality: with it gone the slice that strips the prefix takes
+        # its seventeen characters off whatever name it is handed instead, so a
+        # neighbour's name that stands junk where the prefix should be — this
+        # one carries nineteen characters of it — still ends up with the three
+        # fields the rule reads past the cut, and the sweep reads it as a
+        # report of its own and unlinks it. Aged, with a pid that is gone, so
+        # neither the age nor the owner is what keeps it. The junk stands where
+        # the prefix would; the third field carries this run's own scratch
+        # directory, a field the rule never reads, so that two concurrent
+        # self-tests are not writing and unlinking the same file.
+        neighbour = Path(tempfile.gettempdir()) / (
+            "0123456789abcdefghi"
+            + f"before-{unused_pid()}-{Path(scratch).name}"
+            + ".json"
+        )
+        neighbour.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        when = time.time() - STALE_AFTER - 60
+        os.utime(neighbour, (when, when))
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            kept = neighbour.exists()
+            neighbour.unlink(missing_ok=True)
+        tally.case(
+            "a name outside this tool's prefix is left where it is",
+            swept and kept,
+        )
+
+        # The two guards that decide the name's shape at all: the report suffix
+        # and the three fields. Each is load-bearing and neither implies the
+        # other — without the suffix guard a `.txt` neighbour still slices into
+        # three fields, and without the field-count guard a fourth field still
+        # leaves the pid in the middle where the rule reads it. So each gets a
+        # name only it rejects, aged and carrying this run's pid, which is what
+        # puts it one glint away from being collected.
+        shaped = []
+        for name in (
+            f"{WORKTREE_PREFIX}before-{os.getpid()}-aaaa.txt",
+            f"{WORKTREE_PREFIX}before-{os.getpid()}-aa-bb.json",
+        ):
+            path = Path(tempfile.gettempdir()) / name
+            path.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            when = time.time() - STALE_AFTER - 60
+            os.utime(path, (when, when))
+            shaped.append(path)
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            left = [path.exists() for path in shaped]
+            for path in shaped:
+                path.unlink(missing_ok=True)
+        tally.case(
+            "a name of the wrong shape is left where it is",
+            swept and all(left),
+        )
+
+        # Looking at an entry can fail on its own — the file removed between the
+        # listing and the look, a mount that stops answering. The sweep is not
+        # the place to say so, and an entry it could not read is not one it has
+        # read as litter. The entry has to be one the rule would otherwise
+        # collect, or "left where it is" says nothing about the look: this run's
+        # own fresh report is left alone whatever the guard does. Through a temp
+        # directory of this case's own, because an entry the rule wants removed
+        # in the shared one is what a concurrently running copy of this suite
+        # wants removed too.
+        was_temp = tempfile.tempdir
+        tempfile.tempdir = str(Path(scratch) / "unreadable-temp")
+        Path(tempfile.tempdir).mkdir()
+        try:
+            unreadable = (
+                Path(tempfile.tempdir)
+                / f"{WORKTREE_PREFIX}before-{unused_pid()}-aaaa.json"
+            )
+            unreadable.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            when = time.time() - STALE_AFTER - 60
+            os.utime(unreadable, (when, when))
+            real_is_file = Path.is_file
+
+            def refuse_is_file(self: Path, *args: object, **kwargs: object) -> bool:
+                if self.name == unreadable.name:
+                    raise OSError("forced")
+                return real_is_file(self, *args, **kwargs)
+
+            Path.is_file = refuse_is_file  # type: ignore[method-assign]
+            try:
+                with _Muffle():
+                    reclaim_stale(repo)
+                swept = True
+            except Exception:
+                swept = False
+            finally:
+                Path.is_file = real_is_file  # type: ignore[method-assign]
+                kept = unreadable.exists()
+                unreadable.unlink(missing_ok=True)
+        finally:
+            tempfile.tempdir = was_temp
+        tally.case(
+            "an entry the sweep cannot look at is left where it is, not raised on",
+            swept and kept,
+        )
+
+        # And the removal itself can be refused — a sticky /tmp where the file
+        # belongs to someone else, a directory that appeared where a report was.
+        # Left where it is, and the sweep goes on: a raise here is exit 1, NOT
+        # PROVEN, out of a run that judged nothing. Through a temp directory of
+        # this case's own: the report has to be one the sweep wants removed, so
+        # it is aged, and an aged report in the shared temp directory is one a
+        # concurrently running copy of this suite wants removed too — the case
+        # would then fail on the competition rather than on the guard.
+        was_temp = tempfile.tempdir
+        tempfile.tempdir = str(Path(scratch) / "unremovable-temp")
+        Path(tempfile.tempdir).mkdir()
+        try:
+            stuck = report_path("after")
+            stuck.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            when = time.time() - STALE_AFTER - 60
+            os.utime(stuck, (when, when))
+            real_unlink = Path.unlink
+
+            def refuse_unlink(self: Path, *args: object, **kwargs: object) -> None:
+                if self.name == stuck.name:
+                    raise OSError("forced")
+                return real_unlink(self, *args, **kwargs)
+
+            Path.unlink = refuse_unlink  # type: ignore[method-assign]
+            try:
+                with _Muffle():
+                    reclaim_stale(repo)
+                swept = True
+            except Exception:
+                swept = False
+            finally:
+                Path.unlink = real_unlink  # type: ignore[method-assign]
+                kept = stuck.exists()
+                stuck.unlink(missing_ok=True)
+        finally:
+            tempfile.tempdir = was_temp
+        tally.case(
+            "a report that cannot be removed is left where it is, not raised on",
+            swept and kept,
+        )
+
+        # And the temp directory itself can be swept out from under a run — a
+        # container's /tmp, a cleaner, a machine that is being torn down. There
+        # is nothing to collect then, which is not a reason to fail.
+        was = tempfile.tempdir
+        tempfile.tempdir = str(Path(scratch) / "no-such-temp-directory")
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            tempfile.tempdir = was
+        tally.case("a temp directory that is gone does not stop the sweep", swept)
+
+        # The sweep reclaims a name shape, and `report_path` is the only writer
+        # of that shape: a case that writes the leaked name by hand leaves the
+        # two free to drift apart, so the sweep would go on collecting nothing
+        # with every case still green. Aged past the limit, because the pid in
+        # the name is this run's and only the age takes it.
+        # In a temp directory of its own, so that what removed it can only be
+        # this call: in the shared one a concurrent copy of this suite would
+        # also remove an aged report whose name is its own writer's, and the
+        # case would pass without this sweep having done anything.
+        was_temp = tempfile.tempdir
+        tempfile.tempdir = str(Path(scratch) / "aged-temp")
+        Path(tempfile.tempdir).mkdir()
+        try:
+            aged_report = report_path("after")
+            aged_report.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            when = time.time() - STALE_AFTER - 60
+            os.utime(aged_report, (when, when))
+            with _Muffle():
+                reclaim_stale(repo)
+            reclaimed = not aged_report.exists()
+        finally:
+            tempfile.tempdir = was_temp
+        tally.case(
+            "a report report_path wrote is reclaimed once it ages out",
+            reclaimed,
+        )
+
+        # A registration whose directory was cleared away — the same reboot out
+        # of /tmp — makes the next `worktree add` fail with "missing but already
+        # registered", so the add is preceded by a remove. The checkout has to
+        # survive a state the fixture above never reaches.
+        # Named after this run's own scratch directory, like `plant` above: the
+        # pid stays the last field, in the position the reclaim rule reads, and
+        # two concurrent self-tests no longer build the same directory here.
+        stranded = (
+            Path(tempfile.gettempdir())
+            / f"{WORKTREE_PREFIX}stranded-{Path(scratch).name}-{unused_pid()}"
+        )
+        git("worktree", "remove", "--force", str(stranded), cwd=repo)
+        shutil.rmtree(stranded, ignore_errors=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(stranded), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        shutil.rmtree(stranded)
+        with _Muffle():
+            try:
+                without_fix(repo, without, stranded, ["test_app.py"], False)
+                ok = (
+                    text_of(stranded / "app.py") == "value = 1\n"
+                    and text_of(stranded / "test_app.py") is not None
+                )
+            except SystemExit:
+                ok = False
+        tally.case(
+            "a stranded registration does not stop the without-the-fix checkout",
+            ok,
+        )
+        remove_worktree(repo, stranded)
+
+        # The relink is what makes the two halves run under the same interpreter
+        # and the same packages, and it is a call inside `without_fix`. The
+        # fixture installs nothing, so without a case of its own the call can be
+        # dropped while every other case still passes, leaving each half to find
+        # its own — which is the state the tool exists to rule out.
+        deps = repo / "backend" / ".venv"
+        deps.mkdir(parents=True, exist_ok=True)
+        (deps / "marker").write_text("x", encoding="utf-8")
+        link_tree = Path(scratch) / "relink-tree"
+        remove_worktree(repo, link_tree)
+        shutil.rmtree(link_tree, ignore_errors=True)
+        try:
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "--detach", str(link_tree), "HEAD"],
+                cwd=str(repo),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+            with _Muffle():
+                try:
+                    without_fix(repo, without, link_tree, ["test_app.py"], False)
+                    linked_in = (link_tree / "backend" / ".venv" / "marker").is_file()
+                except SystemExit:
+                    linked_in = False
+        finally:
+            remove_worktree(repo, link_tree)
+            shutil.rmtree(deps, ignore_errors=True)
+        tally.case(
+            "the without-the-fix checkout gets the repository's dependency directories",
+            linked_in,
+        )
+
+        def relative_of(node: str) -> str | None:
+            """`locate`'s answer, or None where it refuses — a case about which
+            root a node id is found under has to read as a FAIL, not crash the
+            suite, when the root it names is gone."""
+            with _Muffle():
+                try:
+                    return locate(node, repo)[1]
+                except SystemExit:
+                    return None
+
         tally.case(
             "a node id that is not repo-relative is found under backend/",
-            locate("tests/test_app.py", repo)[1] == "backend/tests/test_app.py",
+            relative_of("tests/test_app.py") == "backend/tests/test_app.py",
+        )
+        tally.case(
+            "a node id that is not repo-relative is found under frontend/",
+            relative_of("src/a.spec.ts") == "frontend/src/a.spec.ts",
         )
 
         # The child is run from a directory outside the fixture. Where that
@@ -1385,11 +2579,350 @@ def self_test() -> int:
             and "run this from inside the repository" not in inside.stderr,
         )
 
-    if tally.bad:
-        print(f"self-test: {tally.bad} of {tally.total} cases FAILED")
-        return 1
-    print(f"self-test: all {tally.total} cases passed")
-    return 0
+        # --auto decides two things the typed form is told: which revision is
+        # "without the fix", and which files are the tests to prove. Both live
+        # only in what it then runs, so the cases below watch the halves. A fix
+        # carried into the before half and a test that never fails without the
+        # fix produce the same answer, which is why the "not carried" half of
+        # the copy rule is checked by looking in the kept worktree rather than
+        # by the verdict.
+        auto_repo = Path(scratch) / "auto"
+        auto_repo.mkdir()
+
+        def ga(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *args],
+                cwd=str(auto_repo),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+
+        def rev_parse(rev: str) -> str:
+            return subprocess.run(
+                ["git", "rev-parse", rev],
+                cwd=str(auto_repo),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+
+        ga("init", "-q")
+        (auto_repo / "impl.py").write_text("value = 1\n", encoding="utf-8")
+        (auto_repo / "backend" / "tests" / "support").mkdir(parents=True)
+        (auto_repo / "backend" / "tests" / "support" / "shared.py").write_text(
+            "factor = 1\n", encoding="utf-8"
+        )
+        ga("add", "impl.py", "backend/tests/support/shared.py")
+        ga("commit", "-q", "-m", "base")
+        fork = rev_parse("HEAD")
+        # Mainline moves on after this branch forked, and what it carries is a
+        # value that would make the new test pass. A run that checked the before
+        # half out at origin/main's tip would find it green and answer NOT
+        # PROVEN; one that derives the merge base finds the fork point. That is
+        # the whole reason the revision is derived, and it is what the exit 0
+        # below is reading — the ref is left pointing here for the rest of the
+        # block on purpose.
+        (auto_repo / "impl.py").write_text("value = 2\n", encoding="utf-8")
+        ga("add", "impl.py")
+        ga("commit", "-q", "-m", "mainline")
+        tip = rev_parse("HEAD")
+        ga("update-ref", "refs/remotes/origin/main", tip)
+        # Back to the fork point: the fix in this fixture is the working tree,
+        # not a commit, which is the state an author runs this tool in.
+        ga("reset", "-q", "--hard", fork)
+
+        (auto_repo / "impl.py").write_text("value = 2\n", encoding="utf-8")
+        (auto_repo / "backend" / "tests" / "support" / "shared.py").write_text(
+            "factor = 2\n", encoding="utf-8"
+        )
+        (auto_repo / "backend" / "tests" / "unit").mkdir(parents=True)
+        auto_test = auto_repo / "backend" / "tests" / "unit" / "test_value.py"
+        auto_test.write_text(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "HERE = Path(__file__).resolve()\n"
+            "sys.path.insert(0, str(HERE.parents[3]))\n"
+            "sys.path.insert(0, str(HERE.parents[1]))\n"
+            "import impl\n"
+            "from support import shared\n"
+            "raise SystemExit(0 if (impl.value, shared.factor) == (2, 2) else 1)\n",
+            encoding="utf-8",
+        )
+        # Changed files that must not travel: a support file the changed test
+        # imports, and a data file under the same tree that is not source code.
+        (auto_repo / "frontend" / "src" / "test").mkdir(parents=True)
+        (auto_repo / "frontend" / "src" / "test" / "fakes.ts").write_text(
+            "export const fake = 2\n", encoding="utf-8"
+        )
+        (auto_repo / "backend" / "tests" / "quarantine.txt").write_text(
+            "not source\n", encoding="utf-8"
+        )
+
+        auto_shims = Path(scratch) / "auto-shims"
+        auto_shims.mkdir()
+        uv_shim = auto_shims / "uv"
+        uv_shim.write_text(
+            "#!/bin/sh\n"
+            # Answered the way a real `uv` answers it, so the probe does not
+            # become a run of its own.
+            'case "$*" in *--version*) exit 0;; esac\n'
+            'for a in "$@"; do\n'
+            '  case "$a" in\n'
+            f'    *.py) exec "{sys.executable}" "$a";;\n'
+            "  esac\n"
+            "done\n"
+            "exit 127\n",
+            encoding="utf-8",
+        )
+        uv_shim.chmod(0o755)
+        auto_path = f"{auto_shims}{os.pathsep}{env.get('PATH', '')}"
+
+        def auto_run(*extra: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--auto", *extra],
+                cwd=str(auto_repo),
+                env={**env, "PATH": auto_path},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        tally.case(
+            "of a changed test file, a changed fixture, a changed implementation file "
+            "and an unchanged one, --auto takes the test and the fixture",
+            auto_targets(auto_repo, fork)
+            == (
+                ["backend/tests/unit/test_value.py"],
+                ["backend/tests/support/shared.py", "frontend/src/test/fakes.ts"],
+            ),
+        )
+        tally.case(
+            "the revision --auto compares against is the merge base, not the "
+            "tip of the base branch",
+            merge_base(auto_repo, AUTO_BASE) == fork and tip != fork,
+        )
+        # The verdict alone cannot say the implementation file stayed behind —
+        # a carried fix and a proven test both read as green twice — so this is
+        # the case that holds the rule's other half.
+        proven = auto_run()
+        tally.case(
+            "end to end: --auto proves the branch's changed test file",
+            proven.returncode == 0
+            and "PROVEN: backend/tests/unit/test_value.py" in proven.stdout
+            and fork[:12] in proven.stdout,
+        )
+        # A support file is copied into both halves, so it is named: a test whose
+        # subject is one of those is compared against its own copy and answers
+        # NOT PROVEN whatever it does, and the reader has to be able to see that
+        # from the output rather than reconstruct it from the copy rule.
+        tally.case(
+            "end to end: --auto names the files it carried into both halves",
+            "carried backend/tests/support/shared.py" in proven.stdout
+            and "carried frontend/src/test/fakes.ts" in proven.stdout,
+        )
+        kept_auto = auto_run("--keep")
+        auto_trees = [
+            Path(p) for p in _worktrees(auto_repo) if Path(p).resolve() != auto_repo.resolve()
+        ]
+        left_auto = auto_trees[0] if auto_trees else None
+        tally.case(
+            "end to end: --auto carries the new test and the changed fixture into "
+            "the worktree, and leaves the fix outside it",
+            kept_auto.returncode == 0
+            and left_auto is not None
+            and text_of(left_auto / "backend" / "tests" / "unit" / "test_value.py")
+            == auto_test.read_text(encoding="utf-8")
+            and text_of(left_auto / "backend" / "tests" / "support" / "shared.py")
+            == "factor = 2\n"
+            and text_of(left_auto / "impl.py") == "value = 1\n",
+        )
+        if left_auto is not None:
+            remove_worktree(auto_repo, left_auto)
+        tally.case(
+            "end to end: --auto takes the node ids off the branch, not the caller",
+            auto_run("backend/tests/unit/test_value.py").returncode == 2,
+        )
+        one_command = auto_run("--command", "sh -c true")
+        tally.case(
+            "end to end: --auto with --command and one target runs that command, "
+            "and the caller's command owns the verdict",
+            one_command.returncode == 1
+            and "PROVEN: backend/tests/unit/test_value.py" not in one_command.stdout
+            and "--command" not in one_command.stderr,
+        )
+        named_alone = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "backend/tests/unit/test_value.py",
+            ],
+            cwd=str(auto_repo),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        tally.case(
+            "end to end: a node id without --without is not judged",
+            named_alone.returncode == 2 and "--without" in named_alone.stderr,
+        )
+        # One target that guards the change and one that passes either way: the
+        # branch's answer is the worst of them, and both lines have to be there
+        # — a run that stopped at the first target would print one.
+        (auto_repo / "backend" / "tests" / "unit" / "test_always.py").write_text(
+            "raise SystemExit(0)\n", encoding="utf-8"
+        )
+        both = auto_run()
+        tally.case(
+            "end to end: --auto judges every target and answers with the worst",
+            both.returncode == 1
+            and "2 changed test file(s)" in both.stdout
+            and "PROVEN: backend/tests/unit/test_value.py" in both.stdout
+            # The unguarded target is judged first (the targets are the sorted
+            # changed paths) and says nothing about which test it was, so the
+            # order of the two lines is what says both were judged: a run that
+            # stopped at the first target would have no PROVEN line at all.
+            and both.stdout.index("NOT PROVEN") < both.stdout.index("PROVEN: backend/"),
+        )
+        # The same command with more than one target would answer for whichever
+        # one it happens to run and be read as the branch's verdict, so it is
+        # refused once there is more than one to answer for.
+        many_commands = auto_run("--command", "sh -c true")
+        tally.case(
+            "end to end: --auto with --command and two targets is not judged",
+            many_commands.returncode == 2
+            and "names a single run" in many_commands.stderr,
+        )
+
+        # A branch whose changes hold no test has nothing to prove, and the two
+        # ways of having none give different advice: add the test, or name the
+        # one meant. Both are exit 2 — an empty selection wearing a green exit
+        # code is the trap this refuses.
+        plain = Path(scratch) / "plain"
+        (plain / "backend" / "tests").mkdir(parents=True)
+
+        def gp(*args: str) -> None:
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *args],
+                cwd=str(plain),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+
+        gp("init", "-q")
+        (plain / "impl.py").write_text("value = 1\n", encoding="utf-8")
+        gp("add", "impl.py")
+        gp("commit", "-q", "-m", "base")
+        subprocess.run(
+            ["git", "update-ref", "refs/remotes/origin/main", "HEAD"],
+            cwd=str(plain),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+
+        def auto_here() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--auto"],
+                cwd=str(plain),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        (plain / "impl.py").write_text("value = 2\n", encoding="utf-8")
+        (plain / "notes.md").write_text("why\n", encoding="utf-8")
+        no_test = auto_here()
+        tally.case(
+            "end to end: a branch whose changes hold no test file is not judged",
+            no_test.returncode == 2
+            and "no changed test under" in no_test.stderr
+            and "NOT PROVEN" not in no_test.stdout,
+        )
+        (plain / "backend" / "tests" / "helpers.py").write_text(
+            "def helper():\n    return 1\n", encoding="utf-8"
+        )
+        named_wrong = auto_here()
+        tally.case(
+            "end to end: a changed file under a test tree that is not named as one "
+            "is refused, and says so",
+            named_wrong.returncode == 2
+            and "none named as a test" in named_wrong.stderr,
+        )
+
+    # The line the repo-guards step reads is the process's exit code, so the
+    # conversion from a bad count to it is proven the way the gate reads it: a
+    # child run forced to fail a case, not this process reporting on itself.
+    # In the child the real suite runs, so the count is one it produced, and a
+    # case genuinely failing is what makes it red — the mutation at the end of
+    # the suite has to answer for. The child is told not to recurse: its own
+    # `self_test` would otherwise reach this line and spawn another.
+    if os.environ.get("PROVE_REGRESSION_EXIT_CODE_CHILD") != "1":
+        child_note = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('pr', sys.argv[1])\n"
+            "pr = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(pr)\n"
+            # One failing case, not two: the conversion that matters is the one
+            # for a single failure, and with two the child cannot tell a
+            # threshold of one from a threshold of two. The constant reddens
+            # exactly one row of `judge`'s table, and the count is read out of
+            # the summary so that a `>` in the conversion reddens this case
+            # instead of leaving the suite green.
+            "pr.judge = lambda before, after, node: 1\n"
+            "raise SystemExit(pr.self_test())\n"
+        )
+        broken = subprocess.run(
+            [sys.executable, "-c", child_note, str(Path(__file__).resolve())],
+            env={**os.environ, "PROVE_REGRESSION_EXIT_CODE_CHILD": "1"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        tail = broken.stdout.splitlines()[-1] if broken.stdout.splitlines() else ""
+        # Both halves: the code the gate reads, and the summary a person reads.
+        # A build that prints FAIL and exits 0 is the thing being ruled out.
+        # The count is held against the FAIL lines as well, and that is what
+        # makes the conversion's threshold observable: one failing case has to
+        # be enough, and a conversion that fires only above one prints the same
+        # `all ... passed` a green suite prints. Counting what the child printed
+        # rather than pinning a number keeps the case off how many of its cases
+        # the patch happens to redden.
+        failed = sum(
+            line.strip().startswith("FAIL") for line in broken.stdout.splitlines()
+        )
+        tally.case(
+            "a genuinely failing case makes the whole suite exit non-zero",
+            broken.returncode == 1
+            and failed >= 1
+            and f"{failed} of" in tail
+            and "FAILED" in tail,
+        )
+    return _self_test_exit(tally)
+
+
+class _Captured:
+    """Keep what a refusal said, where `_Muffle` throws it away.
+
+    A case about a refusal's message cannot read it through `_Muffle`, which is
+    why this exists; the two are not interchangeable. This swaps `sys.stdout`
+    and `sys.stderr`, which is all a refusal raised in this process needs — it
+    fails before it starts a runner, so nothing reaches a file descriptor. A
+    refusal printed by a child shell still needs `_Muffle`'s descriptors.
+    """
+
+    def __enter__(self) -> "_Captured":
+        self._saved = sys.stdout, sys.stderr
+        self.out, self.err = io.StringIO(), io.StringIO()
+        sys.stdout, sys.stderr = self.out, self.err
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        sys.stdout, sys.stderr = self._saved
 
 
 class _Muffle:
@@ -1455,12 +2988,21 @@ def main() -> int:
         prog="prove-regression.py",
         description="Run a node id without a fix and with it; the first must fail.",
     )
-    parser.add_argument("node", help="the test node id, e.g. tests/unit/x.py::test_y")
+    parser.add_argument(
+        "node",
+        nargs="?",
+        help="the test node id, e.g. tests/unit/x.py::test_y",
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="prove every test file this branch changed, against its merge base",
+    )
     parser.add_argument(
         "--without",
-        required=True,
         metavar="REV",
-        help="a revision that does not carry the fix",
+        help="a revision that does not carry the fix; required with a node id, "
+        f"and with --auto it replaces the {AUTO_BASE} merge base",
     )
     parser.add_argument(
         "--copy",

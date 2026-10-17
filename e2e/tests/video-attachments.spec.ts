@@ -10,7 +10,7 @@ test('a video selected from the album uploads, persists and plays only on reques
   const rows = await openFirstProject(page);
   await rows.first().click();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.composer-input textarea').first()).toBeEnabled({ timeout: 15_000 });
+  await expect(page.locator('.composer-input .ProseMirror').first()).toBeEnabled({ timeout: 15_000 });
 
   // A real, small VP8 recording exercises decode without a binary fixture or
   // depending on the codec of somebody's phone recording.
@@ -107,7 +107,7 @@ for (const [suffix, mimeType] of [['avi', 'video/x-msvideo'], ['mkv', 'video/x-m
     const rows = await openFirstProject(page);
     await rows.first().click();
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.locator('.composer-input textarea').first()).toBeEnabled({ timeout: 15_000 });
+    await expect(page.locator('.composer-input .ProseMirror').first()).toBeEnabled({ timeout: 15_000 });
 
     // Content is deliberately not a playable recording: this scenario checks
     // MIME-based classification and byte-for-byte download, not codec support.

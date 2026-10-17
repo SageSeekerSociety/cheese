@@ -1,0 +1,8 @@
+{
+  "concurrent": "A new project runs at most {count} AI tasks at a time by default; the rest wait in a queue",
+  "detail": "Resource limits",
+  "failed": "Could not load resource limits",
+  "loading": "Loading resource limits…",
+  "projects": "Projects: no limit is set",
+  "retry": "Retry"
+}

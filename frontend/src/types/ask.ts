@@ -3,8 +3,10 @@ export interface AskBlockMeta {
   //
   // 题就是一条普通消息，选项是它的快捷回复（`block/questions.py`）。
   options?: AskOption[]
-  /** 在等谁答：发起那一轮的人。指不到人的时候是 null，谁回都算。 */
-  asked?: string | null
+  /** 问了谁：芝士点名的人（问所有人时是频道里当时的每个人）。空是没点名，谁回都算。 */
+  asked?: string[]
+  /** 问的是频道里所有人。 */
+  asked_all?: boolean
   /** 答过它的每一句话，按先后。 */
   answer_log?: AskAnswerEntry[]
 }
@@ -15,13 +17,14 @@ export interface AskOption {
   explain?: string
 }
 
-/** 答过这道题的一句话：点了它的一个选项（`option`），或者他自己说的（`note`）。 */
+/** 答过这道题的一句话：点了它的一个选项（`option`），或者他自己说的（`note`）；
+ *  `skipped` 是被问的人跳过了它，不带选项也不带话，`reply_id` 为 null。 */
 export interface AskAnswerEntry {
-  kind: 'option' | 'note' | 'reject'
+  kind: 'option' | 'note' | 'reject' | 'skipped'
   option: string | null
   note: string | null
   by: string
   at: string | null
   /** 那句回话本身（房间里的一条消息）。 */
-  reply_id?: string
+  reply_id?: string | null
 }

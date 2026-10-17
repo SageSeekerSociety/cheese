@@ -1,0 +1,13 @@
+/*
+ * 改动面板里的滚动层：取不到改动的那几格（PanelChangesView 自己画的），和全部改动
+ * 那一面（ChangesAllView）都要用它。
+ *
+ * 这两处现在各在一个组件里，`<style scoped>` 的选择器只落得进自己这一份模板，所以
+ * 它只能有一份、两边各引一次：同一个做法见 `../room/room-row.css`。
+ */
+.changes-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}

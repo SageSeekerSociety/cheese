@@ -5,8 +5,6 @@ export interface DocVersion {
   content: string
   /** Who made the change: a person, or the AI teammate. */
   actor: string
-  /** The person who asked the AI teammate for the change, when one did. */
-  requested_by: string | null
   created_at: string
 }
 

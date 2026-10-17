@@ -45,8 +45,24 @@ ROOT = Path(__file__).resolve().parents[3]
 AGENT = ROOT / "backend" / "app" / "domain" / "agent"
 MEMORY_PKG = ROOT / "backend" / "app" / "domain" / "memory"
 PROMPT_PY = AGENT / "harness" / "prompt.py"
+#: `prompt.py` is the rule half and the façade over the rest; the opening
+#: snapshot, the platform's own lines and the per-turn input lines live beside
+#: it, and it imports them at import time. They are stdlib-only and carry no
+#: `app.*` import of their own, so they load for real — registered under the
+#: names `prompt.py` asks for, the way `skills.py` above is. A stub would leave
+#: `prompt.py` importing nothing and every sample would come back empty.
+PROMPT_SIBLINGS = [
+    AGENT / "harness" / name for name in ("notices.py", "opening.py", "lines.py")
+]
 SKILLS_PY = AGENT / "skills.py"
-SKILL_DIR = AGENT / "skill_library"
+
+#: The loaded siblings by stem, for the one thing the run has to reach past the
+#: façade for: `build_session_opening` is defined in `opening.py` and calls the
+#: `fit_doc_to_budget` in *its* globals, so a spy put on `prompt.py`'s
+#: re-export would never be called (see `run_exec`).
+SIBLINGS: dict[str, types.ModuleType] = {}
+#: The guides, and what a session is shipped of them (`app.domain.skill_library`).
+SKILL_LIBRARY = AGENT.parent / "skill_library"
 INSTRUCTIONS_PY = MEMORY_PKG / "instructions.py"
 
 #: ``build_system_prompt``'s first two arguments are positional; the samples
@@ -131,28 +147,47 @@ def load_module(path: Path, name: str):
 def load_prompt_module():
     finder = _StubFinder()
     sys.meta_path.insert(0, finder)
-    # ``skills.py`` is stdlib-only and ``prompt.py`` reads its text at import
-    # (the living-document section), so the real one is put where that import
-    # looks before the stub would answer it.
+    # Modules that are stdlib-only, put where an import will find the real one
+    # before the stub answers it: ``skills.py`` and the library it reads
+    # (``prompt.py`` reads their text at import — the living-document section),
+    # ``instructions.py`` (the memory block is *text*, and a stand-in makes the
+    # whole real run worthless — 「真跑这条路不可信」), and ``prompt.py``'s own
+    # siblings below.
     sys.modules["app.domain.agent.skills"] = load_skills_module()
+    sys.modules["app.domain.memory.instructions"] = load_module(
+        INSTRUCTIONS_PY, "cheese_memory_reference"
+    )
+    for path in PROMPT_SIBLINGS:
+        SIBLINGS[path.stem] = load_module(
+            path, f"cheese_harness_{path.stem}_reference"
+        )
+        sys.modules[f"app.domain.agent.harness.{path.stem}"] = SIBLINGS[path.stem]
     try:
         module = load_module(PROMPT_PY, "cheese_prompt_reference")
     finally:
         sys.meta_path.remove(finder)
-        sys.modules.pop("app.domain.agent.skills", None)
-    # ``instructions.py`` is stdlib-only like ``skills.py``, so it loads for real
-    # and its two names are put back on ``prompt.py``: that import goes through
-    # the stub, and the memory block is the *text* of this module — left as a
-    # stand-in the whole real run is worthless ("真跑这条路不可信").
-    memory = load_module(INSTRUCTIONS_PY, "cheese_memory_reference")
-    module.MEMORY_INSTRUCTIONS = memory.MEMORY_INSTRUCTIONS
-    module.memory_block = memory.memory_block
+        for name in (
+            "app.domain.agent.skills",
+            "app.domain.skill_library",
+            "app.domain.memory.instructions",
+        ):
+            sys.modules.pop(name, None)
+        for path in PROMPT_SIBLINGS:
+            sys.modules.pop(f"app.domain.agent.harness.{path.stem}", None)
     return module
 
 
+def load_skill_library():
+    """The library is stdlib-only, so it loads for real — the guides the page
+    prints are then the very files a room's session receives."""
+    return load_module(SKILL_LIBRARY / "__init__.py", "app.domain.skill_library")
+
+
 def load_skills_module():
-    """``skills.py`` is stdlib-only, so it loads for real — the chat guide the
-    samples pass is then the very text a room's session receives."""
+    """``skills.py`` is stdlib-only apart from the library above, so this loads
+    for real too — the chat guide the samples pass is then the very text a
+    room's session receives."""
+    sys.modules["app.domain.skill_library"] = load_skill_library()
     return load_module(SKILLS_PY, "cheese_skill_reference")
 
 
@@ -559,34 +594,48 @@ def contribution_blocks(text: str) -> list[str]:
     return [text]
 
 
+def source_files() -> list[Path]:
+    """Every file whose module-level constants the page lists: the rule half and
+    the three modules it re-exports."""
+    return [PROMPT_PY, *PROMPT_SIBLINGS]
+
+
 def constants_of(module) -> list[dict]:
-    """Module-level constants of prompt.py: name, kind, line, value."""
-    source = PROMPT_PY.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    lines = source.splitlines()
+    """Module-level constants of the prompt's own source: name, kind, value, and
+    the file and line it is written on, for the link to it.
+
+    All four files are read, not just ``prompt.py``: half of what the page has a
+    row for — the two document budgets, the reply-quote cap — is written in one
+    of the modules ``prompt.py`` re-exports, and reading the façade alone would
+    silently drop those rows. The value still comes off the imported module, so
+    the page cannot drift from what a session really gets."""
     out = []
-    for node in tree.body:
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-            continue
-        target = node.targets[0]
-        if not isinstance(target, ast.Name) or not target.id.isupper():
-            continue
-        try:
-            value = getattr(module, target.id)
-        except AttributeError:
-            value = _literal(node.value)
-        kind = "int" if isinstance(value, int) and not isinstance(value, bool) else "str" if isinstance(value, str) else None
-        if kind is None:
-            continue
-        out.append(
-            {
-                "name": target.id,
-                "kind": kind,
-                "line": target.lineno,
-                "value": value,
-                "comment": comment_above(lines, target.lineno),
-            }
-        )
+    for path in source_files():
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        for node in ast.parse(source).body:
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if not isinstance(target, ast.Name) or not target.id.isupper():
+                continue
+            try:
+                value = getattr(module, target.id)
+            except AttributeError:
+                value = _literal(node.value)
+            kind = "int" if isinstance(value, int) and not isinstance(value, bool) else "str" if isinstance(value, str) else None
+            if kind is None:
+                continue
+            out.append(
+                {
+                    "name": target.id,
+                    "kind": kind,
+                    "file": str(path.relative_to(ROOT)),
+                    "line": target.lineno,
+                    "value": value,
+                    "comment": comment_above(lines, target.lineno),
+                }
+            )
     return out
 
 
@@ -623,23 +672,26 @@ def assemble(module, kwargs: dict) -> str:
 
 def run_exec(module, samples) -> dict:
     results, failed = {}, []
+    # Where `fit_doc_to_budget` is looked up: the module that calls it, which is
+    # the one that defines the caller — not the façade that re-exports both.
+    owner = SIBLINGS.get("opening", module)
     for sample in samples:
         calls: list = []
-        real = module.fit_doc_to_budget
+        real = owner.fit_doc_to_budget
 
         def spy(text, budget, *, full_read_hint, _real=real, _calls=calls):
             out = _real(text, budget, full_read_hint=full_read_hint)
             _calls.append((budget, out))
             return out
 
-        module.fit_doc_to_budget = spy
+        owner.fit_doc_to_budget = spy
         try:
             text = assemble(module, sample["kwargs"])
         except Exception as exc:  # noqa: BLE001 — one sample failing costs that sample
             failed.append({"name": sample["name"], "error": f"{type(exc).__name__}: {exc}"})
             continue
         finally:
-            module.fit_doc_to_budget = real
+            owner.fit_doc_to_budget = real
         results[sample["name"]] = {"text": text, "calls": calls}
 
     if "最小" not in results:
@@ -879,12 +931,19 @@ def run_ast(reason: str) -> dict:
     appends: list[tuple] = []
     _walk_parts(function.body, [], appends)
 
+    # The four files, not just `prompt.py`: the two document budgets and the
+    # reply-quote cap are written in the modules it re-exports, and this path
+    # has no imported module to read their values off, so a façade-only scan
+    # would quietly drop those rows from the reference page.
     constants = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id.isupper():
-            value = _literal(node.value)
-            if isinstance(value, (str, int)) and not isinstance(value, bool):
-                constants[node.targets[0].id] = {"name": node.targets[0].id, "kind": "int" if isinstance(value, int) else "str", "line": node.targets[0].lineno, "value": value, "comment": comment_above(lines, node.targets[0].lineno)}
+    for path in source_files():
+        source = path.read_text(encoding="utf-8")
+        lines = source.splitlines()
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id.isupper():
+                value = _literal(node.value)
+                if isinstance(value, (str, int)) and not isinstance(value, bool):
+                    constants[node.targets[0].id] = {"name": node.targets[0].id, "kind": "int" if isinstance(value, int) else "str", "file": str(path.relative_to(ROOT)), "line": node.targets[0].lineno, "value": value, "comment": comment_above(lines, node.targets[0].lineno)}
 
     blocks = []
     for node, conditions in appends:
@@ -931,18 +990,18 @@ def run_ast(reason: str) -> dict:
 # --------------------------------------------------------------------------
 def read_library() -> dict:
     """Every file in the library: frontmatter and body, parsed the way
-    `skills.py` parses them, so the library and the loader cannot disagree."""
+    `skill_library` parses them, so the library and the reader cannot disagree."""
     try:
-        parse = load_skills_module()._parse
+        parse = load_skill_library().parse_frontmatter
     except Exception:
         parse = _fallback_parse
 
     files = []
-    for path in sorted(SKILL_DIR.glob("*.md")):
+    for path in sorted(SKILL_LIBRARY.glob("*.md")):
         meta, body = parse(path)
         files.append(
             {
-                "file": f"backend/app/domain/agent/skill_library/{path.name}",
+                "file": f"backend/app/domain/skill_library/{path.name}",
                 "name": meta.get("name", path.stem),
                 "title": meta.get("title", path.stem),
                 "description": meta.get("description", ""),
@@ -950,7 +1009,7 @@ def read_library() -> dict:
                 "chars": len(body),
             }
         )
-    return {"dir": "backend/app/domain/agent/skill_library", "files": files}
+    return {"dir": "backend/app/domain/skill_library", "files": files}
 
 
 def chat_guide(library: dict) -> str:

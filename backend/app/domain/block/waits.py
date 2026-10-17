@@ -107,6 +107,7 @@ class MemberWaits:
         *,
         now: datetime,
         stuck_rooms: Mapping[uuid.UUID, StuckCard] | None = None,
+        threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
     ) -> dict[uuid.UUID, list[MemberWait]]:
         """{room: the members it is waiting on} — every room in one go.
 
@@ -114,11 +115,14 @@ class MemberWaits:
         already known to be broken; the others are only taking long); among the
         rest the earliest wait decides, because whoever has waited longest
         decides when the mark comes on.
+
+        ``threads``: 这些房间的支线，调用方已经问过的那一份（见
+        `topics_signals.working_in_threads`）。没给就自己问。
         """
         if not topic_ids:
             return {}
         since = now - REPLY_LOOKBACK
-        spoke = await self._last_said(topic_ids, since)
+        spoke = await self._last_said(topic_ids, since, threads)
         waits: dict[tuple[uuid.UUID, str | None], MemberWait] = {}
 
         def keep(room: uuid.UUID, wait: MemberWait) -> None:
@@ -150,7 +154,10 @@ class MemberWaits:
         return out
 
     async def _last_said(
-        self, topic_ids: list[uuid.UUID], since: datetime
+        self,
+        topic_ids: list[uuid.UUID],
+        since: datetime,
+        threads: Mapping[uuid.UUID, uuid.UUID] | None = None,
     ) -> dict[tuple[uuid.UUID, str], datetime]:
         """{(room, agent): when it last said something of the room's own} — the
         room's main line and its 支线.
@@ -161,7 +168,8 @@ class MemberWaits:
         board of its own with a card of its own, and what is said on one is not
         the room's own doings.
         """
-        threads = await threads_of_rooms(self._session, topic_ids)
+        if threads is None:
+            threads = await threads_of_rooms(self._session, topic_ids)
         # 筛选条件用字面量（`indexed_rows.LAST_SAID_ROWS`），和部分索引的谓词逐字
         # 相同 —— ORM 那版把 `kind`、`author_type`、署名前缀都绑成参数，缓存下来的
         # 通用计划看不见它们，就证不出这条查询蕴含索引的 WHERE，索引被绕过（实测）。

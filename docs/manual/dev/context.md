@@ -4,8 +4,9 @@ kind: 概念
 summary: 芝士的会话开场时拿到哪些上下文、按什么顺序、各占多少预算，会话接着跑时怎么补上变化，平台怎么区分人话、平台指令和外部内容，以及不同场景下有什么不同。
 covers:
   - backend/app/domain/agent/harness/prompt.py
+  - backend/app/domain/agent/harness/opening.py
   - backend/app/domain/agent/skills.py
-  - backend/app/domain/agent/skill_library/
+  - backend/app/domain/skill_library/
   - backend/sandbox/skills/cheese/SKILL.md
 ---
 
@@ -17,7 +18,7 @@ covers:
 
 ## 系统提示词由什么组成 {#system}
 
-一个新会话开场时，芝士读到两样东西（都在 `backend/app/domain/agent/harness/prompt.py`）：
+一个新会话开场时，芝士读到两样东西（都在 `backend/app/domain/agent/harness/` 下，`prompt.py` 是每会话不变的那一半，`opening.py` 是开场快照那一半）：
 
 - **系统提示词**（`build_system_prompt`）：只有规矩。骨架在进程启动时读它，进程空闲退出后用 `--resume` 接着原来的对话重新拉起时再读一次，所以它在一个会话里必须一字不变：变了，从变的那个字往后、连同整段对话历史，前缀缓存全部作废。
 - **开场快照**（`build_session_opening`）：项目现在的样子，放在新会话第一条消息的前面。它是对话历史的一部分，会跟着历史一起被缓存。

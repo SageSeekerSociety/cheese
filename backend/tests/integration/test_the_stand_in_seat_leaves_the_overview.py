@@ -23,10 +23,9 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 
 from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
-from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 from tests.integration.migration_replay import (
     block_author,
     database_at,
@@ -113,7 +112,7 @@ def test_migrating_a_shared_seat_does_not_re_seat_the_stand_in(db_session, _port
     async def run():
         members = TopicMemberService(db_session)
         await registered(db_session, "owner")
-        project = await ProjectService(db_session).create(
+        project = await project_service(db_session).create(
             owner_handle="owner",
             name="Shared seat on the overview",
             forge_kind="github_app",
@@ -145,7 +144,7 @@ def test_a_room_whose_last_agent_was_the_shared_seat_gets_the_projects_cheese(
     async def run():
         members = TopicMemberService(db_session)
         await registered(db_session, "owner")
-        project = await ProjectService(db_session).create(
+        project = await project_service(db_session).create(
             owner_handle="owner", name="Legacy room", forge_kind="github_app"
         )
         room = await TopicService(db_session).create(

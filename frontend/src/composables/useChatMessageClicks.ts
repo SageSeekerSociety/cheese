@@ -27,7 +27,7 @@ export function useChatMessageClicks(deps: {
       deps.reactionPickerFor.value = null
     }
     if (deps.touchOnly.value && target) deps.toggleTime(target)
-    const el = target?.closest('.mention, .im-person') as HTMLElement | null
+    const el = target?.closest('.mention, .name-ref, .im-person') as HTMLElement | null
     if (!el) return
     // 在动的那个头像：它此刻在干的事在「现场」，点它就去那里。
     if (el.dataset.site !== undefined) deps.emit('open-resource', 'site')

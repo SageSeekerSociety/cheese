@@ -1,0 +1,6 @@
+{
+  "edit": "Edit",
+  "editHint": "Put it back in the message box",
+  "failed": "Not sent: {reason}",
+  "undelivered": "Not delivered"
+}

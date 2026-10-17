@@ -10,11 +10,13 @@ this file.
 """
 
 import asyncio
+import gc
 import importlib
 import logging
 import pkgutil
 import signal
 import time
+import uuid
 
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
@@ -27,11 +29,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
 from app.api.admin_deps import PlatformAdminDep
+from app.api.deps import get_consumptions, get_llm_gateway, get_ownership
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
+from app.core.db import async_session_factory
 from app.core.errors import register_exception_handlers
+from app.core.forge_http import reuse_forge_connections
+from app.core.job_runs import JobRuns
+from app.core.loop_lag import watch_loop_lag
 from app.core.metrics import active_requests, registry
+from app.core.net_io import watch_api_io, watch_net_io
 from app.core.obs import (
     ResponseIntegrityAudit,
     bind_context,
@@ -39,13 +47,29 @@ from app.core.obs import (
     configure_logging,
     get_logger,
 )
+from app.core.ownership import keep_holding
 from app.core.request_limits import RequestLimits
 from app.core.route_mounting import FAILED_ROUTE_MODULES
+from app.core.storage import reuse_s3_connections
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
+from app.domain.agent import gateway_catalog
+from app.domain.agent.device_hub import DeviceOffline, device_hub
+from app.domain.agent.preview_owner import reuse_preview_owner_connections
+from app.domain.agent_instance.repositories import AgentInstanceRepository
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.services import IdentityService
+from app.domain.machine.microcloud import reuse_connections
+from app.domain.machine.runner import (
+    CloudPoolSweeper,
+    ComputeMeterSweeper,
+    SandboxSweeper,
+)
+from app.domain.machine.session_work import checkpoint_room
 from app.domain.review.periodic import sweep_abandoned_gates
+from app.domain.room_cleanup.retire import sweep_retired_storage
 from app.periodic_jobs import gate_nudge_factory, periodic_jobs
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -55,6 +79,14 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    # Move the startup heap (modules, routers, settings, the pool) out of the
+    # collector's scan set once, so every later gen-0/1 pass stops re-walking
+    # it. Nothing reachable at boot can become garbage, so this changes neither
+    # semantics nor peak memory — only how much the collector re-reads.
+    # `scripts/perf-awaiting-me/probe_concurrency.py` measures the effect on the
+    # 20-concurrency burst.
+    gc.freeze()
+
     # Schema is managed by Alembic migrations.
     # Orphan sweep: resume turns the previous process left behind (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
@@ -66,12 +98,17 @@ async def lifespan(application: FastAPI):
     # the root now (`Settings.sandbox_signing_secret` derives a stable secret
     # from jwt_secret), and there is nothing left to warn about here.
 
+    # The test doubles for the chat service and the work runner are installed on
+    # `app.api.deps`, so these two are read there each time they are used.
+    # deferred-import: tests patch these names on app.api.deps
     from app.api.deps import get_chat_service, get_work_runner
-    from app.domain.agent.device_hub import DeviceOffline, device_hub
 
     hub_runtime: Any = device_hub
     if hasattr(hub_runtime, "start"):
-        from app.api.routes.connector import recover_business_state
+        # `_discover_routers` tolerates a route module that fails to import. At
+        # module scope this import would instead stop the whole process starting.
+        # deferred-import: startup - a route module must stay skippable
+        from app.api.routes.connector.devices import recover_business_state
 
         await hub_runtime.start()
         hub_runtime.set_online_callback(recover_business_state)
@@ -79,9 +116,6 @@ async def lifespan(application: FastAPI):
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
     # the belt-and-suspenders path for a fresh DB or a redeploy. Never blocks boot.
     try:
-        from app.core.db import async_session_factory
-        from app.domain.identity.services import IdentityService
-
         async with async_session_factory() as session:
             await IdentityService(session).ensure_agent_user()
             await session.commit()
@@ -97,9 +131,6 @@ async def lifespan(application: FastAPI):
     # the seat's handle without the user row behind it, which this supplies.
     # Idempotent, and never blocks boot for the same reason as the seed above.
     try:
-        from app.domain.agent_instance.repositories import AgentInstanceRepository
-        from app.domain.agent_instance.services import AgentInstanceService
-
         async with async_session_factory() as session:
             service = AgentInstanceService(session)
             for instance in await AgentInstanceRepository(session).list_all():
@@ -140,18 +171,6 @@ async def lifespan(application: FastAPI):
                 "the app root. Drop the /api from the box .env."
             ),
         )
-
-    from app.api.deps import get_ownership
-    from app.core.db import async_session_factory
-    from app.core.job_runs import JobRuns
-    from app.core.ownership import keep_holding
-    from app.domain.machine.runner import (
-        CloudPoolSweeper,
-        ComputeMeterSweeper,
-        SandboxSweeper,
-    )
-    from app.domain.machine.session_work import checkpoint_room
-    from app.domain.room_cleanup.retire import sweep_retired_storage
 
     # The running work — sessions to listen to, turns to watch, sweeps on a
     # clock — belongs to one backend process at a time (`app.core.ownership`).
@@ -304,11 +323,43 @@ async def lifespan(application: FastAPI):
             name="cleanup startup recovery",
         )
         if settings.forge_event_relay_url:
-            from app.domain.review.events import listen
+            # The relay's collaborators: wired here, not at module level, so a
+            # deployment that runs no relay pays nothing for them.
+            from app.domain.agent.announce import (  # deferred-import: startup cost
+                announce,
+            )
+
+            # deferred-import: startup cost
+            from app.domain.agent_instance.adapters import task_teammate
+            from app.domain.delivery.agent import (  # deferred-import: startup cost
+                dispatch_pending,
+                record_task_instruction,
+            )
+            from app.domain.delivery.ledger import (  # deferred-import: startup cost
+                settle_card,
+            )
+            from app.domain.review.events import (  # deferred-import: startup cost
+                listen,
+            )
+
+            chat = get_chat_service()
+
+            async def pump_pending() -> object:
+                return await dispatch_pending(
+                    chat.session_factory, chat=chat, runner=chat.work_runner
+                )
 
             forge_events.append(
                 asyncio.create_task(
-                    listen(get_chat_service(), async_session_factory),
+                    listen(
+                        chat,
+                        async_session_factory,
+                        announce,
+                        settle_card=settle_card,
+                        record_instruction=record_task_instruction,
+                        dispatch_pending=pump_pending,
+                        task_teammate=task_teammate,
+                    ),
                     name="forge events",
                 )
             )
@@ -327,8 +378,6 @@ async def lifespan(application: FastAPI):
     # one's lease, not by the one that owns the running work: this process
     # takes up the ones nobody reads from its start, and on its way out gives
     # its own up first, for the next process to take at once.
-    from app.api.deps import get_consumptions
-
     reading_questions = asyncio.create_task(
         get_consumptions().run(), name="questions nobody reads"
     )
@@ -343,9 +392,6 @@ async def lifespan(application: FastAPI):
     # reported as a stall of the requests it never delayed.
     application.openapi()
 
-    from app.core.loop_lag import watch_loop_lag
-    from app.core.net_io import watch_api_io, watch_net_io
-
     background.spawn(watch_loop_lag(), name="event loop lag")
     # 网卡吞吐与本进程 HTTP 字节数。两者都是**进程内存**里的速率环（见
     # `core/net_io.py` 的模块 docstring：上行含计量代理到 LLM 的出向流量，
@@ -356,18 +402,10 @@ async def lifespan(application: FastAPI):
     # What the platform pool offers is the gateway's answer, kept warm here so
     # that asking for it never becomes a network call on the path that starts a
     # turn. Until the first pass lands the catalogue serves its floor.
-    from app.api.deps import get_llm_gateway
-    from app.domain.agent import gateway_catalog
-
     background.spawn(
         gateway_catalog.keep_fresh(get_llm_gateway()),
         name="gateway model catalogue",
     )
-
-    from app.core.forge_http import reuse_forge_connections
-    from app.core.storage import reuse_s3_connections
-    from app.domain.agent.preview_owner import reuse_preview_owner_connections
-    from app.domain.machine.microcloud import reuse_connections
 
     async def hand_over() -> None:
         # Hand the running work to the next process, in the order that lets
@@ -631,10 +669,7 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     """Correlation + timing for every request: bind request_id (respecting an
     incoming X-Request-ID) to the async context, echo it back, log the duration.
     contextvars are task-local, so concurrent requests never bleed ids."""
-    import time
-    import uuid as _uuid
-
-    rid = request.headers.get("x-request-id") or _uuid.uuid4().hex[:12]
+    rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:12]
     bind_context(req=rid)
     # 也在 scope 上留一份：报错上报那一层在这个中间件**外面**，轮到它时这里的
     # `clear_context("req")` 已经跑过了，contextvar 读不到；scope 上的 state 活得比
@@ -832,7 +867,13 @@ from app.domain.site.hosting import SiteHostMiddleware  # noqa: E402
 
 app.add_middleware(SiteHostMiddleware, platform=app)
 
+# Outside the site host, which refuses every label of the domain but a project's.
+from app.api.app_shell_host import AppShellHostMiddleware  # noqa: E402
+
+app.add_middleware(AppShellHostMiddleware, platform=app)
+
 from app.api.preview_host import PreviewHostMiddleware  # noqa: E402
+from app.api.response import ok  # noqa: E402
 
 app.add_middleware(PreviewHostMiddleware, platform=app)
 
@@ -849,27 +890,27 @@ async def debug_turns(_admin: PlatformAdminDep) -> dict:
     Platform admins only: a summary names the room, the person who started the
     turn and why it failed. The evals harness reads it too, signed in as an
     admin of its own throwaway backend."""
+    # deferred-import: tests patch this name on app.api.deps
     from app.api.deps import get_work_runner
 
-    return {"code": 200, "message": "ok", "data": get_work_runner().recent_work()}
+    return ok(get_work_runner().recent_work())
 
 
 @app.get("/health")
 async def health() -> dict:
+    # deferred-import: tests patch this name on app.api.deps
     from app.api.deps import get_work_runner
 
     # active_turns lets a redeploy drain: wait until no agent turn is in flight
     # before restarting, so a deploy never kills 芝士 mid-work. version rides
     # along so a deploy check can confirm the running build in one call.
-    return {
-        "code": 200,
-        "message": "ok",
-        "data": {
+    return ok(
+        {
             "status": "healthy",
             "active_turns": get_work_runner().active_work_count(),
             "version": settings.app_version,
-        },
-    }
+        }
+    )
 
 
 @app.get("/version")
@@ -881,16 +922,14 @@ async def app_version() -> dict:
     the commit the image was built from, older than `sha` when the release
     reused an unchanged image."""
     sha = settings.released_commit
-    return {
-        "code": 200,
-        "message": "ok",
-        "data": {
+    return ok(
+        {
             "sha": sha,
             "short": sha[:7] if sha and sha != "dev" else sha,
             "build": settings.app_version,
             "badge": settings.show_version_badge,
-        },
-    }
+        }
+    )
 
 
 # Last, once every route is mounted: refuse to start with a write route that

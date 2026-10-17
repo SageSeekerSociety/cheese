@@ -43,14 +43,16 @@ def _task_from_discussion(client):
     thread = client.post(
         f"/blocks/{root['id']}/thread", headers=session_auth_headers("alice")
     ).json()["data"]["id"]
-    post_message(
+    reply = post_message(
         client,
         thread,
         "alice",
         {"content": "还有一张 <&uploads/wechat.png>，同一张 <&uploads/white.png>"},
     )
+    # A reply in the 支线 becomes a task of its own, which starts from the
+    # discussion it was said in.
     r = client.post(
-        f"/blocks/{root['id']}/upgrade", headers=session_auth_headers("alice")
+        f"/blocks/{reply['id']}/upgrade", headers=session_auth_headers("alice")
     )
     assert r.status_code == 200, r.text
     return channel, thread, root, r.json()["data"]["id"]

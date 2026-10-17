@@ -18,6 +18,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 from fastapi.testclient import TestClient
 
+# Assemble the app up front: this file drives the app stack, and conftest now does
+# that only for `client`/`python_client` (the layer ceiling counts wall clock).
+import app.main  # noqa: F401
 from app.domain.fetch import addresses, guard, service
 
 PAGE = "<html><body><article>" + "一段正文。" * 400 + "</article></body></html>"

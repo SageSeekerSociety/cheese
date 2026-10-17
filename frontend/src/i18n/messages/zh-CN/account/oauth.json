@@ -1,0 +1,70 @@
+{
+  "app": {
+    "backLede": "如果知是 app 没有自动打开，点击下方按钮。之后可以关闭此页面。",
+    "backTitle": "回到知是 app",
+    "cancel": "取消",
+    "confirm": "继续",
+    "confirmLede": "将以 {name}（{handle}）的身份登录知是 app。如果不是你刚才在 app 里发起的，点击取消。",
+    "confirmTitle": "登录知是 app",
+    "expired": "这次登录已失效，重新登录",
+    "handOffFailed": "无法把这次登录交给知是 app，在 app 中重新登录",
+    "open": "打开知是",
+    "switchAccount": "换个账号"
+  },
+  "complete": {
+    "bind": "关联已有账号",
+    "bindSubmit": "关联并登录",
+    "create": "创建新账号",
+    "emailBelongsToAccount": "该邮箱已被现有账号使用",
+    "lede": "你已通过 {provider} 验证身份。可以创建一个新账号，或关联到已有的账号",
+    "pageTitle": "OAuth 账户选择",
+    "setPassword": "同时设置密码",
+    "setPasswordHint": "设置后也可以用用户名和密码登录",
+    "title": "欢迎，{name}",
+    "unavailable": "无法继续登录"
+  },
+  "error": {
+    "alreadyLinked": "该第三方账号已关联其他账号",
+    "bindingFailed": "关联失败，稍后重试",
+    "consentRequired": "阅读并同意用户协议和隐私政策后再创建账号",
+    "creationFailed": "账号创建失败，稍后重试",
+    "emailTaken": "该邮箱已被注册",
+    "emailUnverified": "先验证邮箱",
+    "invalidCredentials": "用户名或密码错误",
+    "invalidInviteCode": "邀请码无效或已失效",
+    "invalidNickname": "显示名称不符合要求",
+    "invalidPassword": "密码错误",
+    "inviteCodeRequired": "填写邀请码",
+    "retry": "重新使用 {provider} 登录",
+    "sessionExpired": "登录已过期，重新开始",
+    "title": "登录失败",
+    "tooManyAttempts": "尝试次数过多，稍后重试",
+    "usernameReserved": "该用户名为平台保留，换一个",
+    "usernameTaken": "该用户名已被使用",
+    "verificationFailed": "身份验证失败，稍后重试"
+  },
+  "provider": {
+    "ruc": "微人大",
+    "wechat": "微信",
+    "weibo": "微博"
+  },
+  "success": {
+    "done": "登录成功",
+    "doneLede": "正在跳转",
+    "failed": "登录失败，稍后重试",
+    "incomplete": "登录信息不完整，重新登录",
+    "linked": "已关联 {provider} 账号",
+    "processing": "正在登录",
+    "processingLede": "正在完成 {provider} 登录",
+    "signedIn": "已使用 {provider} 登录"
+  },
+  "verify": {
+    "failed": "验证失败，稍后重试",
+    "incomplete": "验证信息不完整，重新登录",
+    "lede": "输入 {email} 对应账号的密码，以关联第三方账号",
+    "passwordRequired": "填写密码",
+    "submit": "验证并关联",
+    "title": "关联账号",
+    "wrongPassword": "密码错误，重新输入"
+  }
+}

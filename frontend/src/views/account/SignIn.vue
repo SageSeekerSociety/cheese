@@ -48,6 +48,7 @@ import SignInView from './SignInView.vue'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
+import { storageGetJson, storageSet, storageSetJson } from '@/lib/browserStorage'
 import { forgetOAuthRedirect, postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -70,12 +71,8 @@ const initialUsername = typeof route.query.username === 'string' ? route.query.u
 // otherwise arrive late and push the fields down under the cursor.
 const PROVIDERS_KEY = 'cheese.oauthProviders'
 function cachedProviders(): OAuthProvider[] {
-  try {
-    const list = JSON.parse(localStorage.getItem(PROVIDERS_KEY) ?? '[]')
-    return Array.isArray(list) ? list : []
-  } catch {
-    return []
-  }
+  const list = storageGetJson<unknown>(PROVIDERS_KEY)
+  return Array.isArray(list) ? (list as OAuthProvider[]) : []
 }
 const oAuthProviders = ref<OAuthProvider[]>(cachedProviders())
 
@@ -218,11 +215,8 @@ const fetchOAuthProviders = async () => {
   try {
     const data = await UserAuthApi.getOAuthProviders()
     oAuthProviders.value = data.providers
-    try {
-      localStorage.setItem(PROVIDERS_KEY, JSON.stringify(data.providers))
-    } catch {
-      // storage unavailable — the next visit asks again
-    }
+    // A write that does not land is fine: the next visit asks again.
+    storageSetJson(PROVIDERS_KEY, data.providers)
   } catch (error) {
     console.error('获取 OAuth 提供商失败:', error)
   }
@@ -234,7 +228,7 @@ const handleOAuthLogin = (providerId: string) => {
   try {
     // 生成随机 state 参数用于防止 CSRF 攻击，存下来供回来时核对
     const state = crypto.randomUUID()
-    localStorage.setItem('oauth_state', state)
+    storageSet('oauth_state', state)
     stashOAuthRedirect(postLoginTarget(route.query))
     UserAuthApi.redirectToOAuthLogin(providerId, state)
   } catch {

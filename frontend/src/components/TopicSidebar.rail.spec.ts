@@ -17,6 +17,9 @@ import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { screenHeader } from '@/composables/useScreenHeader'
+
+import ScreenHeaderTitle from './common/Navigation/ScreenHeaderTitle.vue'
 import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale } from '@/i18n'
@@ -64,22 +67,24 @@ const router = createRouter({
 
 // v-navigation-drawer 必须活在一个 v-layout 里，否则 Vuetify 直接抛
 // "Could not find injected layout"——所以挂一个最小宿主把它包起来。
+// Reads the declared header in its own render, after the sidebar beside it has set up.
+const BarTitle = defineComponent({
+  setup: () => () => h(ScreenHeaderTitle, { header: screenHeader.value, fallback: '' }),
+})
+
 const Host = defineComponent({
   props: { inner: { type: Object, required: true } },
   setup(props) {
-    return () => h(VLayout, null, { default: () => [h(Sidebar, props.inner as Record<string, unknown>)] })
+    // ScreenHeaderTitle stands in for the phone top bar: in page form the project row
+    // is the bar's content, declared by the sidebar (useScreenHeader).
+    return () =>
+      h(VLayout, null, {
+        default: () => [h(Sidebar, props.inner as Record<string, unknown>), h(BarTitle)],
+      })
   },
 })
 
 function mount(inner: Record<string, unknown> = {}, pinia = createPinia()) {
-  // 整页形态下项目头那一行填进顶栏那一格（Teleport 到 #app-bar-slot，真实环境里
-  // 由 MobileAppBar 画）。落点不存在时 Teleport 会在卸载时炸，所以这里把它摆出来
-  // ——和 v-navigation-drawer 必须有 v-layout 是同一类前置条件。
-  if (!document.getElementById('app-bar-slot')) {
-    const slot = document.createElement('div')
-    slot.id = 'app-bar-slot'
-    document.body.appendChild(slot)
-  }
   const vuetify = createVuetify({ components, directives })
   return render(Host, {
     props: {
@@ -148,10 +153,10 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('项目名下面只有资料库，综合是频道分组里的第一个频道', () => {
+  it('项目名下面是总览和资料库，综合是频道分组里的第一个频道', () => {
     const { container } = mount()
-    // 总览和其余的页都在点项目名弹出的菜单里（.claude/rules/project-sidebar.md）。
-    expect(titlesIn(container, '[aria-label="项目页面"] .pinned-row')).toEqual(['资料库'])
+    // 其余的页都在点项目名弹出的菜单里（.claude/rules/project-sidebar.md）。
+    expect(titlesIn(container, '[aria-label="项目页面"] .pinned-row')).toEqual(['总览', '资料库'])
     // 综合排在「频道」标题下面，和别的频道同一组。
     const heading = container.querySelector('.side-subhead')!
     const general = container.querySelector('[data-row-actions="root"]')!
@@ -484,6 +489,23 @@ describe('C5 行操作', () => {
     expect(onSelectTopic).not.toHaveBeenCalled()
   })
 
+  // 「综合」是频道分组里的第一个频道，行尾那颗 ⋯ 和别的频道行是同一颗。它自己的
+  // 那几项（新建任务、全部任务、文件）以前只在右键里摸得到，看着像这一行没有操作。
+  it('综合那一行的行尾也有那颗 ⋯，点开是它自己那几项', async () => {
+    const { container } = mount()
+    const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
+    if (!row) throw new Error('没有找到「综合」那一行')
+    const more = row.querySelector('.row-actions .v-btn')
+    if (!more) throw new Error('「综合」那一行的行尾没有那颗 ⋯')
+    await fireEvent.click(more as HTMLElement)
+    await vi.waitFor(() => {
+      const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
+        n.textContent?.trim()
+      )
+      expect(items).toEqual(expect.arrayContaining(['新建任务', '全部任务', '文件']))
+    })
+  })
+
   it('排序菜单已经不在侧栏里', () => {
     const { container } = mount()
     const buttons = Array.from(container.querySelectorAll('.v-btn')) as HTMLElement[]
@@ -508,6 +530,8 @@ describe('C6 等你的那一盏黄灯', () => {
         presentation: { column: 'needs_you', phrase: 'awaiting_review' },
       },
       { ...topic('busy', 'root'), presentation: { column: 'building', phrase: 'running' } },
+      // 有人回复了我、我还没处理：说「有事等你」的第二件事，画的是同一盏灯。
+      { ...topic('answered', 'root'), replied_to_me: true },
     ]
   }
   function rowOf(container: Element, title: string): HTMLElement {
@@ -528,6 +552,13 @@ describe('C6 等你的那一盏黄灯', () => {
     expect(rowOf(container, 'busy').querySelector('.row-light')).toBeNull()
   })
 
+  it('有人回复了我、我还没处理，画的也是这同一盏灯', () => {
+    const { container } = mount({ topics: rooms() })
+    const row = rowOf(container, 'answered').querySelector('.row-light--yellow')
+    expect(row).not.toBeNull()
+    expect(row?.getAttribute('title')).toBe('有事等你')
+  })
+
   it('看板状态不再以任何记号出现在标题里', () => {
     const { container } = mount({ topics: rooms() })
     for (const title of ['mine', 'theirs', 'busy']) {
@@ -544,6 +575,13 @@ describe('整页形态', () => {
     const { container } = mount({ page: true })
     expect(container.querySelector('.v-navigation-drawer')).toBeNull()
     expect(container.querySelector('.rail-resizer')).toBeNull()
+  })
+
+  // 整页形态没有行的 hover，那里的操作是长按一行升起的面板，所以这颗 ⋯ 一个都不画
+  // ——「综合」那一行也一样，不能只有它留一颗手指摸不到的按钮。
+  it('行尾不画那颗 ⋯，综合那一行也不画', () => {
+    const { container } = mount({ page: true })
+    expect(container.querySelectorAll('.row-actions').length).toBe(0)
   })
 
   it('装的东西和抽屉形态一样', () => {

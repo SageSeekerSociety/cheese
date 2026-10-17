@@ -8,11 +8,11 @@
 是一条永远没人打开的记录。
 
 所以这一叉只回答「怎么送到」，不回答「谁该收到」—— 后者是
-`delivery/addressing.py` 那一份判据，对人和 agent 是同一句话。
+`addressing.py` 那一份判据，对人和 agent 是同一句话。
 
 ## agent 那一档送什么
 
-事件已经落在它关于的那个东西上（`block/about.py` 的 `landing()`），agent 在自己的
+事件已经落在它关于的那个东西上（`event_about.py` 的 `landing()`），agent 在自己的
 房间里读得到。所以 `turn` 这一档在投递侧是**不写站内信**：往 agent 的收件箱里塞一
 行，写的是一条谁都不会打开的记录，而房间里那一行它本来就会读到。
 

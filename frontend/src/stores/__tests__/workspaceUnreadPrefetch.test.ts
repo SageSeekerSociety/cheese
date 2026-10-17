@@ -29,12 +29,16 @@ vi.mock('@/api', () => ({
   upgradeBlock: vi.fn(),
 }))
 
-import { getTopicUnread, listBlocks } from '@/api'
+import { getPrivateUnread, getTopicUnread, listBlocks } from '@/api'
 import { setCachedWindow } from '@/query/blocks'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { closeFirstPaint, openFirstPaint } from '@/test/firstPaint'
 
 /** 打开项目（刷新页面后第一次进来），等第一次读完。 */
 async function opened() {
+  // 未读那几笔排在首帧之后（`lib/afterFirstPaint.ts`）：单测里没人画首帧，得先把那道门
+  // 推开，否则它们一次都不发。
+  await openFirstPaint()
   const store = useWorkspaceStore()
   store.openProject('p1')
   await flush()
@@ -56,6 +60,40 @@ describe('未读轮询的后台预取', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.mocked(listBlocks).mockClear()
+  })
+
+  it('首帧之前不读未读：门开了才读', async () => {
+    unread({ t1: 2 })
+    // 这个文件里别的用例已经把门推开过，而门是全站一份状态、开着就一直开着（`@/test/firstPaint`）。
+    closeFirstPaint()
+    const store = useWorkspaceStore()
+    store.openProject('p1')
+    await flush()
+
+    expect(vi.mocked(getTopicUnread)).not.toHaveBeenCalled()
+    expect(store.unreadMap.t1).toBeUndefined()
+
+    await openFirstPaint()
+    await flush()
+
+    expect(vi.mocked(getTopicUnread)).toHaveBeenCalled()
+    expect(store.unreadMap.t1?.count).toBe(2)
+  })
+
+  it('私聊未读也等首帧：门开之前一笔不发，门开了只发一趟', async () => {
+    // 同一道门上挂着三样（`stores/workspace.ts` 的 topic unread / private unread / notify
+    // levels），上面那条只钉了第一样。这一样单独一条 query，拆掉它上面照样绿。
+    closeFirstPaint()
+    const store = useWorkspaceStore()
+    store.openProject('p1')
+    await flush()
+
+    expect(vi.mocked(getPrivateUnread)).not.toHaveBeenCalled()
+
+    await openFirstPaint()
+    await flush()
+
+    expect(vi.mocked(getPrivateUnread)).toHaveBeenCalledTimes(1)
   })
 
   it('刷新页面时不会为每个有未读的话题各发一个请求', async () => {

@@ -6,7 +6,7 @@ import io
 import pytest
 
 from app.domain.agent import pr_creation
-from app.domain.agent.harness.claude_code.remote_execution import client
+from app.domain.agent.harness.claude_code.remote_execution import shell_prefix
 from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.pi import hooks
 
@@ -65,13 +65,13 @@ def test_unbalanced_quotes_fall_back_to_the_plain_spelling():
 
 
 def test_claude_code_shell_prefix_refuses_before_reaching_the_machine(capsys):
-    # The build's own wrapping of a Bash command (`client._SNAPSHOT` / `_CWD_FILE`).
+    # The build's own wrapping of a Bash command (`shell_prefix._SNAPSHOT` / `_CWD_FILE`).
     command = (
         "source /tmp/snap.sh 2>/dev/null || true && eval 'gh pr create --fill'"
         " < /dev/null && pwd -P >| /tmp/claude-1-cwd"
     )
     # No target is needed: the refusal comes before anything is sent.
-    assert client.run_on_the_machine({}, command) == 1
+    assert shell_prefix.run_on_the_machine({}, command) == 1
     assert capsys.readouterr().err.strip() == pr_creation.REFUSAL
 
 

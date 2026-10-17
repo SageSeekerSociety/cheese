@@ -10,6 +10,7 @@ import { queryOptions } from '@tanstack/vue-query'
 import { getPreview, getProgress, getTask, getTopicEnvironment, listRoomTasks, listTopicMembers } from '@/api'
 import { listPins } from '@/api/pins'
 import { getThread, listThreads } from '@/api/threads'
+import { prefetchNewestBlocks } from '@/query/blocks'
 import { queryClient, refreshQueries } from '@/query/client'
 import { keys } from '@/query/keys'
 import { fromSnapshot } from '@/query/snapshot'
@@ -67,7 +68,10 @@ export function threadQuery(threadId: string) {
 }
 
 /** 缓存里拼得出来的这一条支线：任何一份对话窗口里，那一块消息带着它的支线
- *  （`GET /topics/{id}/blocks` 在一行上带着 `thread`）。没看过是 undefined。 */
+ *  （`GET /topics/{id}/blocks` 在一行上带着 `thread`）。窗口里没有那块消息（它早已翻出
+ *  最新那一段，从频道概览的支线列表点开），就用列表里那一行带着的开局消息——只在它是
+ *  一条完整的消息时：列表里那一句被截过的话是预览，当成整条消息画出来就是说错了。
+ *  都没有是 undefined。 */
 export function listedThread(threadId: string): Thread | undefined {
   for (const [, data] of queryClient.getQueriesData<unknown>({ predicate: holdsBlocks })) {
     const block = blocksIn(data).find((held) => held.thread?.id === threadId)
@@ -82,7 +86,51 @@ export function listedThread(threadId: string): Thread | undefined {
       }
     }
   }
+  for (const [, rows] of queryClient.getQueriesData<ThreadRow[]>({ predicate: holdsThreadRows })) {
+    const row = Array.isArray(rows) ? rows.find((held) => held.id === threadId) : undefined
+    const root = row?.root
+    if (!row || !root || !root.author_type || root.kind !== 'message' || root.truncated !== false) continue
+    return {
+      id: row.id,
+      room_id: row.room_id,
+      root_block_id: row.root_block_id,
+      reply_count: row.reply_count,
+      last_reply_at: row.last_reply_at,
+      root: {
+        id: row.root_block_id,
+        conversation_id: row.room_id,
+        kind: root.kind,
+        author_type: root.author_type,
+        author: root.author,
+        content: root.content,
+        created_at: root.created_at,
+        meta: root.checklist ? { checklist: root.checklist } : null,
+      } as Block,
+    }
+  }
   return undefined
+}
+
+// 正在预热的那一条支线。指针一次只停在一行上，同一时刻只热一条：上一条还没回来就不再
+// 起新的，免得划过一列支线留下一串请求。
+let warmingThread: Promise<void> | null = null
+
+/**
+ * 指针停在一条支线的入口上（主线消息下面那一行）：把点开后要等的两样先取回缓存——
+ * 支线本身连它挂着的那条消息（页头），和支线里最新那一页回复。手上那份还新鲜就不取。
+ * 只写缓存，失败不说（`lib/routePrefetch` 的纪律）。
+ */
+export function prefetchThread(threadId: string): Promise<void> {
+  if (warmingThread) return warmingThread
+  warmingThread = Promise.all([
+    queryClient.prefetchQuery(threadQuery(threadId)),
+    prefetchNewestBlocks(threadId).catch(() => {}),
+  ])
+    .then(() => {})
+    .finally(() => {
+      warmingThread = null
+    })
+  return warmingThread
 }
 
 export function roomProgressQuery(roomId: string) {
@@ -179,6 +227,10 @@ function holdsTasks(query: { queryKey: readonly unknown[] }): boolean {
 
 function holdsBlocks(query: { queryKey: readonly unknown[] }): boolean {
   return query.queryKey.includes('blocks')
+}
+
+function holdsThreadRows(query: { queryKey: readonly unknown[] }): boolean {
+  return query.queryKey.length === 3 && query.queryKey[0] === 'room' && query.queryKey[2] === 'threads'
 }
 
 function blocksIn(data: unknown): Block[] {

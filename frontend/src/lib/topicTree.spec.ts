@@ -171,11 +171,16 @@ describe('展开状态的持久化', () => {
     expect(localStorage.getItem('cheesex.topicExpanded.v2:p1')).toBeNull()
   })
 
-  it('存坏了就回到默认的收起态', () => {
+  it('存坏了就回到默认的收起态，读不出来的删掉，形状不对的留着', () => {
     localStorage.setItem('cheesex.topicExpanded.v2:p1', '{broken')
     expect([...loadExpandedTopics('p1')]).toEqual([])
+    // 解析不了的记录没有可留的信息，读的时候顺手清掉，免得每次都白解析一遍。
+    expect(localStorage.getItem('cheesex.topicExpanded.v2:p1')).toBeNull()
+
     localStorage.setItem('cheesex.topicExpanded.v2:p1', '{"not":"an array"}')
     expect([...loadExpandedTopics('p1')]).toEqual([])
+    // 形状不对的记录不是这个模块能判断的：留着不动，别把调用方可能认得的数据删了。
+    expect(localStorage.getItem('cheesex.topicExpanded.v2:p1')).toBe('{"not":"an array"}')
   })
 
   it('不读旧那把键 —— 它存的是收起来的 id，含义正好相反', () => {

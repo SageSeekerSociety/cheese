@@ -53,7 +53,7 @@ test.describe('Topics and chat', () => {
     // 进项目落在项目总览，所以这里要显式打开一个话题。用已有的那个而不是新建一个：
     // 建话题由上面那条覆盖，这一条钉的是输入框到 WS 那条发送路径本身。
     await rows.first().click();
-    const composer = page.locator('.composer-input textarea').first();
+    const composer = page.locator('.composer-input .ProseMirror').first();
     await expect(composer).toBeEnabled({ timeout: 15_000 }); // enabled only once the topic's WS connects
 
     const message = `e2e message ${Date.now()}`;
@@ -73,7 +73,7 @@ test.describe('Topics and chat', () => {
     });
     const rows = await openFirstProject(page);
     await rows.first().click();
-    const composer = page.locator('.composer-input textarea').first();
+    const composer = page.locator('.composer-input .ProseMirror').first();
     await expect(composer).toBeEnabled({ timeout: 15_000 });
     const pane = page.getByTestId('chat-scroll');
 

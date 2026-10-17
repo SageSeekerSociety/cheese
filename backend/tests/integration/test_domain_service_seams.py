@@ -27,7 +27,7 @@ from app.domain.space.models import Space
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User
-from tests.integration.conftest import registered
+from tests.integration.conftest import project_service, registered
 
 pytestmark = pytest.mark.anyio
 
@@ -59,7 +59,7 @@ async def test_project_service_get_finds_project_and_returns_none_for_unknown(
 ):
     async with business_db_factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         await session.commit()
         pid = project.id
 
@@ -94,7 +94,7 @@ async def test_open_pr_card_ids_lists_only_pending_cards_riding_a_pr(
 ):
     async with business_db_factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         t_open = await topics.create(project_id=project.id, title="A", created_by="u")
         t_other = await topics.create(project_id=project.id, title="B", created_by="u")
@@ -121,7 +121,7 @@ async def test_open_pr_card_ids_skips_cards_on_archived_topics(business_db_facto
     """
     async with business_db_factory() as session:
         await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
+        project = await project_service(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         t_live = await topics.create(
             project_id=project.id, title="活着", created_by="u"

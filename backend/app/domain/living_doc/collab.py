@@ -194,7 +194,6 @@ async def edit(
     *,
     edits: list[dict],
     actor: str,
-    requested_by: str | None = None,
     mode: str = "direct",
     reason: str | None = None,
     editor_is_agent: bool = False,
@@ -208,11 +207,11 @@ async def edit(
     accept. Nothing is applied unless every edit can be: a refusal says which
     edit and why (UnprocessableEntityError for one the writer has to restate,
     ConflictError for one blocked by the document's state), ``data.index``
-    counting from 0. ``requested_by`` is the person the change was made for.
-    ``editor_is_agent`` and ``agent_authors`` let an agent seat's edit land on
-    text an agent's pending suggestion covers — dropping that suggestion —
-    while a person's suggestion still refuses (``suggested``); the caller
-    judges both (see ``app.api.doc_edits``). Returns
+    counting from 0. ``editor_is_agent`` and ``agent_authors`` let an agent
+    seat's edit land on text an agent's pending suggestion covers — dropping
+    that suggestion — while a person's suggestion still refuses
+    (``suggested``); the caller
+    judges both (``edit_doc_passages``). Returns
     ``{"stored": <the store's answer>, "edits": [...]}``, each edit carrying
     its ``suggestion_id`` in suggest mode.
     """
@@ -229,7 +228,6 @@ async def edit(
                 json={
                     "edits": edits,
                     "actor": actor,
-                    "requested_by": requested_by,
                     "mode": mode,
                     "reason": reason,
                     "editor_is_agent": editor_is_agent,

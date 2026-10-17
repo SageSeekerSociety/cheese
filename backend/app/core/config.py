@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.sandbox_config import SandboxSettings
+
 # The gateway mounts this whole app under `/api` and strips that one segment
 # (`proxy_pass http://backend:8081/`), so a backend route is bare while the URL
 # the browser used is `/api` + that route. Anything the BROWSER will resolve
@@ -58,7 +60,11 @@ def parse_data_encryption_keys(value: str) -> tuple[bytes, ...]:
     return tuple(keys)
 
 
-class Settings(BaseSettings):
+class Settings(BaseSettings, SandboxSettings):
+    # The base class above is the sandbox's own settings and the package
+    # mirrors a room fetches through (`core/sandbox_config`); they are a base
+    # class rather than sections below because this module is at the size cap
+    # it is held to and that section stands alone.
     # `validate_by_name` exists for exactly one field, `platform_admin_handles`:
     # it carries a `validation_alias` (so the deploy keeps working through the
     # env-name change), and in pydantic a field with an alias is otherwise
@@ -115,10 +121,31 @@ class Settings(BaseSettings):
     db_pool_size: int = 20
     db_max_overflow: int = 15
     db_pool_timeout_s: float = 30.0
+    # How many uvicorn worker processes this container runs. The two numbers
+    # above are the CONTAINER's budget and the workers share it; the image
+    # passes this same variable to uvicorn's `--workers` (see the split below).
+    backend_workers: int = 1
     # Hand out a connection only after checking it is still alive: a pooled
     # asyncpg connection that the database (or anything in between) closed while
     # idle otherwise fails the first statement of whoever checks it out next.
     db_pool_pre_ping: bool = True
+
+    def db_connections_per_worker(self) -> tuple[int, int]:
+        """One worker's share of this container's pool budget: (size, overflow).
+
+        Together the workers hold what one process held before — the owner-lock
+        connection each of them keeps outside its pool (`core.ownership`)
+        included — so the arithmetic in
+        `tests/unit/test_db_pool_fits_the_server.py` still describes the
+        container. At 1 it is exactly `db_pool_size` and `db_max_overflow`.
+        """
+        # The budget holds up to (db_pool_size + db_max_overflow + 1) // 2
+        # workers — 18 at the defaults, a share down to one pooled connection
+        # plus the lock. Past that the box has to raise `db_pool_size`.
+        workers = max(1, self.backend_workers)
+        budget = max(0, (self.db_pool_size + self.db_max_overflow + 1) // workers - 1)
+        pool_size = max(1, min(self.db_pool_size // workers, budget))
+        return pool_size, max(0, budget - pool_size)
 
     # --- Migration timeouts (#356) ---
     # Bound how long a migration waits on a lock / runs, applied by alembic's
@@ -285,7 +312,7 @@ class Settings(BaseSettings):
     # session needs: a turn that would start one waits until the host has that
     # much available.
     agent_session_memory_max_mb: int = 3072
-    private_chat_executor_image: str = "cheese-private-executor:2.1.282"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.299"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也
@@ -314,6 +341,12 @@ class Settings(BaseSettings):
     # browser process tree cleanly. Measured, one shared instance served six
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
+    # Where the frontend serves the mini-app shell it builds (`frontend/miniapp/`),
+    # as reached from here: `<this>/v1/index.html` is shell 1. The content
+    # domain's `apps.` host answers with it, and a new mini-app is run in it
+    # once before it is kept (`app/domain/web_snippet/check.py`). Unset, no
+    # mini-app runs anywhere and new ones are kept unchecked.
+    miniapp_shell_url: str | None = None
     # A DNS-over-HTTPS resolver (JSON API), asked only on a machine whose own DNS
     # answers every name with a fake-IP placeholder (198.18.0.0/15): fetch has
     # to see the real address to know it is public. See domain/fetch/guard.py.
@@ -415,6 +448,9 @@ class Settings(BaseSettings):
     environment_diagnosis_model: str = "deepseek-flash"
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
+    # 项目总览上的「现状」：读项目材料写几句现状的那一问（用项目自己的模型）。
+    # 大项目要想一两分钟。
+    project_situation_timeout_seconds: float = 240.0
     # A named task is re-judged no sooner than this, and at most this often a
     # day: a title is how people find a task again, so it moves rarely.
     topic_naming_follow_interval_seconds: int = 1800
@@ -577,15 +613,6 @@ class Settings(BaseSettings):
     # document drafted with no tool call in between.
     agent_no_progress_s: float = 1800.0
 
-    # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
-    # to mount over the image's baked copy — but nothing kept that checkout in
-    # sync with the backend, so boxes served agents a months-old CLI. The CLI is
-    # now staged per-topic from the backend's own copy (ws.session_dir →
-    # bin/cheese), which is host-visible and fresh by construction. Kept only so
-    # a box that still sets it gets the loud startup warning in main.lifespan
-    # instead of silence; delete once no deployment sets it.
-    sandbox_shim_host_dir: str = ""
-
     # --- Subscription compute through the metering proxy ---
     # A turn on the subscription does NOT go through the LLM gateway: there is no
     # per-call API key to meter, and re-originating the request from our own HTTP
@@ -689,6 +716,39 @@ class Settings(BaseSettings):
     cloud_sandbox_swap_mb: int = Field(default=0, ge=0)
     cloud_sandbox_cpus: int = Field(default=2, ge=1, le=1024)
     cloud_sandbox_pids: int = Field(default=4096, ge=16)
+    # Disk. A sandbox's home — its checkout, its dependencies, its /tmp — is on
+    # the disk of the machine it runs on, shared with every other sandbox there
+    # and, on a person's computer, with everything of theirs. Every machine
+    # holding a sandbox has its free bytes and inodes read this often
+    # (`machine/disk_guard.py`); below these shares free, of either, it takes
+    # no new sandbox and its heaviest sandbox is stopped. The shares are the
+    # defaults of Kubernetes' `nodefs.available` and `nodefs.inodesFree`.
+    # Inodes are their own floor: on 2026-10-14 a dev host ran out of them
+    # with 15 GB still free.
+    sandbox_disk_check_s: int = Field(default=60, ge=10, le=3600)
+    sandbox_disk_free_floor: float = Field(default=0.10, ge=0, le=0.9)
+    sandbox_inodes_free_floor: float = Field(default=0.05, ge=0, le=0.9)
+    # What each home holds is read by walking every file in it: about 13 s on a
+    # dev host holding 880 thousand inodes (2026-10-14), so a walk every check
+    # would keep the disk busy a fifth of the time. It is walked this often, and
+    # at once whenever a check finds the disk below a floor, so an eviction
+    # still picks the sandbox holding the most.
+    sandbox_disk_walk_s: int = Field(default=300, ge=10, le=86400)
+    # What one sandbox is expected to take of a host's disk, for how many a
+    # host runs at once (`models.capacity`), after `cloud_host_disk_reserve_gb`
+    # for the host itself and its projects' package stores. Measured on dev,
+    # 2026-10-14: a sandbox with one task's checkout and its dependencies held
+    # 1.5–2.3 GB and 95–130 thousand inodes; one project's package store held
+    # 6.5 GB.
+    cloud_sandbox_disk_gb: int = Field(default=4, ge=1)
+    cloud_host_disk_reserve_gb: int = Field(default=10, ge=0)
+    # What one sandbox on a platform host may hold, however much room the rest
+    # of the disk has (`disk_guard`): a sandbox over it is stopped before it
+    # can fill the host for the others. About five times the measurement
+    # above. Not on a person's computer, whose disk is theirs to fill; there
+    # only the floors above apply.
+    cloud_sandbox_disk_budget_gb: int = Field(default=12, ge=1)
+    cloud_sandbox_inode_budget: int = Field(default=600_000, ge=1000)
     # An operator's SSH public key, authorised on every machine the platform
     # opens, next to the one-shot bootstrap key. That key is erased the moment
     # enrollment succeeds, so without this nobody can read a Cloud machine's
@@ -720,10 +780,12 @@ class Settings(BaseSettings):
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
     # The most hosts the pool holds at once. It
     # protects the MicroCloud cluster; a session that finds the pool full is told
-    # capacity is tight and to try later. Ten hosts' disks written full are
-    # 400 GB, within what 119pve's shared thin pool had free (464 GB, 2026-10-06);
-    # twenty would not be.
-    cloud_pool_max_hosts: int = Field(default=10, ge=1, le=500)
+    # capacity is tight and to try later. Thirty hosts are a hundred and twenty
+    # sandbox slots, and their disks written full are 1.2 TB: the cluster's
+    # shared thin pool is what has to hold them, so this rises only with the
+    # storage behind it. (At ten, whose 400 GB did fit, the pool had 464 GB
+    # free — 2026-10-06.)
+    cloud_pool_max_hosts: int = Field(default=30, ge=1, le=500)
     # --- Whole cloud VMs: one session, one whole virtual machine (#2320) ---
     # The offering a session that asks for a whole machine gets its VM from
     # (Docker, KVM, kernel modules, root). 0 = this deployment does not offer
@@ -762,22 +824,9 @@ class Settings(BaseSettings):
     machine_enroll_interval_seconds: int = 10
 
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
-    # Base URL the in-container `cheese` CLI calls back to (host → backend).
-    # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
-    # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
-    # #370 step 2 the platform routes are bare — `{base}/projects/…`.
-    #
-    # A box whose .env still carries the old `…/api` value keeps working:
-    # `agent_api_base()` strips one trailing `/api` and the boot warning names
-    # the box so it can be cleaned up. Silently 404ing every `cheese` call would
-    # look exactly like an agent that decided not to use its tools.
-    sandbox_api_base: str = "http://host.docker.internal:8099"
-    # Shared secret the sandbox `cheese` CLI sends (X-Cheese-Token) so the
-    # cheese write-API isn't open on the bind address. Empty → derived from
-    # `jwt_secret` (see `sandbox_signing_secret`); pin it to rotate the two
-    # independently, or to share one secret across multiple backend hosts.
-    sandbox_token: str = ""
-
+    # The sandbox's own settings — the callback base, the token, the retired
+    # shim directory — and the package mirrors a room fetches through are the
+    # base class (`core/sandbox_config`); the methods below read them there.
     @property
     def sandbox_signing_secret(self) -> str:
         """The HMAC secret behind every scoped sandbox token.
@@ -837,20 +886,26 @@ class Settings(BaseSettings):
 
     # Project-level concurrency ceiling: at most this many agent turns run at
     # once per project; turns beyond it queue (visible as a system event).
-    # Overridable per project via project.settings["max_concurrent_turns"].
+    # A project that wants another number sets its own in
+    # project.settings["max_concurrent_turns"]; ``app.core.turn_ceiling`` reads
+    # it, and PUT /projects/{project_id}/compute-configs is what writes it.
     #
     # The number comes from the room side. A room runs up to
     # `MAX_RESIDENT_TASKS_PER_ROOM` threads and its own line is not one of them,
     # so a saturated room is five turns, and a project normally has more than
     # one room working. At 2, a single busy room queued three of its own threads
-    # behind itself while the rest of the project waited on top of that.
+    # behind itself while the rest of the project waited on top of that. At 16,
+    # a project running sixteen or more task lines at once queued work of its
+    # own behind the ceiling. 20 lifts that, stopping short of 32: one jump was
+    # thought to fall hard on the small machines, so the default moves in steps
+    # and the projects that need more say so themselves.
     #
     # This is the ONLY concurrency gate in the system: nothing limits how many
     # turns land on ONE machine. So this number also decides what a single
     # self-hosted laptop can be asked to run at once, which is not what it is
     # named for and not a limit anybody chose. Raise this and that exposure
     # rises with it, until a per-machine gate exists.
-    max_concurrent_turns: int = 16
+    max_concurrent_turns: int = 20
 
     # Snapshotted into each archival operation, never restarted by deployment.
     topic_archive_cleanup_delay_s: int = Field(default=300, ge=0)
@@ -948,8 +1003,11 @@ class Settings(BaseSettings):
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
-    # workflow it triggers after merge.
-    accept_pr_poll_interval_s: int = 300
+    # workflow it triggers after merge. This is the clock every card's merge
+    # state is mirrored on, so it is also how late a green or merged PR reaches
+    # its card; `review/queries.CHECK_WATCH_TICKS` counts 「还在等 CI」 off three
+    # of these.
+    accept_pr_poll_interval_s: int = 60
     # 卡面上的合并态是快照，而采纳按钮按它亮不亮。读卡这条路也会重算一次陈旧的
     # 快照 (`AcceptService.refresh_stale_pr_snapshots`)，否则界面每 15s 来读一
     # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是
@@ -986,10 +1044,14 @@ class Settings(BaseSettings):
     #: 报警，但同一个问题一小时只报一条。
     delivery_overdue_check_interval_s: int = 600
     task_deadline_sweep_interval_s: int = 900
-    #: 挂过外站题号的题多久回外站看一遍（`domain/external_problem/periodic.py`）。
-    #: 一天一次是有意的：那边是个校内的老站点，抓的是老师本人的账号，抓得太勤会被
-    #: 封号 —— 老师随时可以自己点「同步」，这一趟只负责「他没点，但学生昨晚做了」。
-    external_problem_sync_interval_s: int = 86400
+    #: 叫醒链的两拍（#1343 的定时器、看门狗的心跳）多久核一遍
+    #: （`domain/wake_watch/`，只跑在平台自己那一侧）。比拍的周期密得多就行 ——
+    #: 判停摆的线是 60 分钟，它只决定「多久发现」。0 关闭。
+    wake_watch_interval_s: int = 300
+    #: 判到停摆之后，要不要真的点 #1343 那条线上的座位补一跳
+    #: （`domain/wake_watch/catchup.py`）。关掉就是影子期：只判、只记，判据一个字
+    #: 不变 —— 判据在真实数据上核过之后才默认打开。
+    wake_watch_catchup: bool = True
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having
@@ -1080,14 +1142,6 @@ class Settings(BaseSettings):
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"
     )
-    # The draft models whose deployment accepts image content blocks. A PDF page
-    # with no text layer (a scan) is rendered to a PNG and sent to the model only
-    # when `task_draft_model` is named here. These models are text models by
-    # default, and an image sent to one that cannot read it is a wasted, billed
-    # call — so the fallback is opt-in per model, not inferred. Deployment env
-    # name TASK_DRAFT_VISION_MODELS carries a JSON array (pydantic-settings
-    # parsing for a set/list field).
-    task_draft_vision_models: set[str] = {"deepseek-flash"}
 
     email_from_address: str = Field(default="", alias="EMAIL_FROM_ADDRESS")
     email_smtp_host: str = Field(default="", alias="EMAIL_SMTP_HOST")

@@ -40,6 +40,7 @@ vi.mock('../../api/checklist', () => ({
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic: Topic = {
   id: 'room-1',
@@ -117,6 +118,8 @@ async function mount() {
 function row(container: Element, id: string): HTMLElement {
   return container.querySelector<HTMLElement>(`[data-mid="${id}"]`)!
 }
+
+beforeAll(loadMarkdownReader)
 
 describe('自己的清单', () => {
   it('点一步的记号，存进去的是改过之后的整份，指名这一张', async () => {

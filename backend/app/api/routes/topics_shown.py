@@ -13,13 +13,16 @@ of them in the project's 资料库), plus the two names only these three read --
 `_reject_unreachable_app` and `_PREVIEW_ATTACH_WAIT_S`, the grace window it gives a
 machine's tunnel.
 
-Where the shared names went. The four room-file rules -- `ARTIFACT_MIME`,
-`MAX_ARTIFACT_BYTES`, `artifact_kind_for` and `clean_artifact_path` -- now live in
-`app.domain.project.room_files`, their own group there, and `record_shown` became
+Where the shared names went. Three of the four room-file rules -- `ARTIFACT_MIME`,
+`artifact_kind_for` and `clean_artifact_path` -- live in
+`app.domain.project.room_files`, their own group there; the ceiling they are read
+against, `library.MAX_ARTIFACT_BYTES`, lives with the bytes in
+`app.domain.library.service`, where the number is written down once (the project
+package hands that module in rather than importing it). `record_shown` became
 `add_shown_block` in `app.domain.block.shown` (it writes the block; the broadcast
 stays with each caller, so a caller keeps its own order and its own commit). The
 source read (`_source_bytes`) and the binding check (`_bind_source_task`) went to
-their own homes -- `app.api.routes.topics_file_sources.source_bytes` (API read
+their own homes -- `app.api.topics_file_sources.source_bytes` (API read
 orchestration) and `TaskService.require_source_in_room` in `app.domain.room_task`,
 which is a rule about a task, not about HTTP. None of them is read from topics.py
 any more.
@@ -50,6 +53,7 @@ same prefix and tags, is all it takes.
 import base64
 import binascii
 import uuid
+from datetime import datetime
 from pathlib import PurePosixPath
 
 from fastapi import APIRouter
@@ -62,17 +66,21 @@ from app.api.topics_deps import BlockRepository, _actor_in_place
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
+from app.domain.agent.announce import announce
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
-from app.domain.block.shown import add_shown_block
+from app.domain.block.shown import add_shown_block, repeat_of_latest_shown
+from app.domain.library import records as library_records
+from app.domain.library import service as library
+from app.domain.preview import office
 from app.domain.project import room_files
 from app.domain.project.room_files import (
     ARTIFACT_MIME,
-    MAX_ARTIFACT_BYTES,
     artifact_kind_for,
     clean_artifact_path,
 )
-from app.domain.topic.services import TopicService
+from app.domain.project_permissions import Permission
+from app.domain.room_task.place import place_or_404
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -115,9 +123,9 @@ def _page_assets(body: dict, entry: str) -> list[tuple[str, bytes]]:
             data = base64.b64decode(item["content_b64"], validate=True)
         except (ValueError, binascii.Error) as exc:
             raise UnprocessableEntityError(say("contentB64Invalid")) from exc
-        if len(data) > MAX_ARTIFACT_BYTES:
+        if len(data) > library.MAX_ARTIFACT_BYTES:
             raise UnprocessableEntityError(
-                say("artifactTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+                say("artifactTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
         assets.append((path, data))
     return assets
@@ -174,7 +182,7 @@ async def show_in_room(
     摆出来的东西留在房间里：它是这一轮做的，谁要拿走就拿走，不因此成为项目的产物
     （那要人按一下「保存到项目」）。最后摆的那一样同时是这个房间的当前预览。
     任务的会话摆的是那个任务的：进任务的列表、成为任务的预览；文件仍存在房间里。"""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await _actor_in_place(resolver, place)
     # The teammate that showed it, when a teammate did. A room may seat several,
     # and for an app the author is also WHICH app: each teammate serves from its
@@ -204,6 +212,9 @@ async def show_in_room(
             )
         )
     assets: list[tuple[str, bytes]] = []
+    #: When this call last changed what the card shows: the page or any file it
+    #: loads. None when nothing was sent, so there is nothing to compare.
+    saved_at: datetime | None = None
     if as_ != "app" and ("content" in body or "content_b64" in body):
         # A remote machine's file is not in the backend worktree until published.
         # Office files and PDFs are not text, so they travel base64-encoded; a
@@ -223,9 +234,9 @@ async def show_in_room(
             if not isinstance(content, str):
                 raise ValidationError(say("contentMustBeText"))
             raw = content.encode()
-        if len(raw) > MAX_ARTIFACT_BYTES:
+        if len(raw) > library.MAX_ARTIFACT_BYTES:
             raise ValidationError(
-                say("artifactTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
+                say("artifactTooLarge", mb=library.MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
         assets = _page_assets(body, path)
     if as_ != "app" and ("content" in body or "content_b64" in body):
@@ -234,7 +245,7 @@ async def show_in_room(
         # of somebody's newer save into a 409.
         base = body.get("base_version")
         note = body.get("note")
-        await room_files.save_room_file(
+        revision = await room_files.save_room_file(
             db,
             project_id=place.project_id,
             room_id=place.room_id,
@@ -245,12 +256,15 @@ async def show_in_room(
             source="ai" if actor.via == "cheese" else "upload",
             note=note if isinstance(note, str) else None,
             base_version=base if isinstance(base, str) and base else None,
+            warm_preview=office.prewarm,
+            file_store=library,
         )
+        saved_at = revision.created_at
         for asset_path, data in assets:
             # After the page itself, so a refused page (409) writes nothing. Written
             # as the machine has them, with no `base_version`: these are the
             # page's own files as it was made, and nobody pulled them to edit.
-            await room_files.save_room_file(
+            asset = await room_files.save_room_file(
                 db,
                 project_id=place.project_id,
                 room_id=place.room_id,
@@ -259,7 +273,22 @@ async def show_in_room(
                 author=author if actor.via == "cheese" else actor.handle,
                 author_kind="agent" if actor.via == "cheese" else "human",
                 source="ai" if actor.via == "cheese" else "upload",
+                warm_preview=office.prewarm,
+                file_store=library,
             )
+            saved_at = max(saved_at, asset.created_at)
+    if saved_at is not None:
+        # The same unchanged file shown again moments later: the card is already
+        # in the conversation, and a second identical one is only noise.
+        repeat = await repeat_of_latest_shown(
+            db,
+            conversation_id=place.conversation_id,
+            path=path,
+            mime=mime,
+            file_saved_at=saved_at,
+        )
+        if repeat is not None:
+            return ok({**repeat.model_dump(mode="json"), "already_shown": True})
     block = await add_shown_block(
         db,
         project_id=place.project_id,
@@ -285,7 +314,7 @@ async def list_shown(
 
     一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
     部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
     shown = await BlockRepository(db).shown_in_room(place.conversation_id)
     items = [
@@ -311,9 +340,11 @@ async def save_shown_to_library(
 
     一轮里铸出来的凭据在 `authorize_project` 那里只读得进来，所以 芝士 摆得出东西，
     却留不下它：这份东西以后还用不用得上，是人的判断。"""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.require_verified_caller(project_id=place.project_id)
-    await resolver.authorize_project(actor, project_id=place.project_id)
+    await resolver.authorize_project(
+        actor, project_id=place.project_id, permission=Permission.edit_content
+    )
     # The file is the room's: only someone the room lets in copies it out.
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
@@ -325,6 +356,9 @@ async def save_shown_to_library(
         path=clean_artifact_path(str(body.get("path") or "")),
         by=actor.handle,
         said_in=place.inner_id,
+        announce=announce,
+        file_store=library,
+        library_files=library_records,
     )
     await db.commit()
     return ok({"name": name})

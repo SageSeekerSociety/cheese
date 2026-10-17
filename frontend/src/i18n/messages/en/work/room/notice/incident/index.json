@@ -1,0 +1,7 @@
+{
+  "cleaning": "Cleaning up automatically",
+  "needsAdmin": "Needs an admin",
+  "recovering": "Recovering",
+  "retryable": "Can retry",
+  "title": "Environment temporarily unavailable"
+}

@@ -25,12 +25,12 @@ domain's `ApplicationStatus`, and a route module may not import that model
 directly (`routes-touch-no-models` in `.importlinter`), so the domain
 parses its own vocabulary.
 
-The application-to-JSON shape stays in `routes/teams.py`, which grows a small
-public facade for it: `application_to_api_model` and `load_application_maps` are
-what the team-facing routes there and these personal ones both answer with, so
-the shape keeps one home instead of a copy per caller. That adds nothing to a
-boundary -- both callers are under `app.api.routes` (C1), and the two helpers
-touch repositories, never models (C2).
+The application-to-JSON shape does not stay in `routes/teams.py`: it moved to
+`app/api/teams_deps.py`, which this module and the team-facing routes there both
+import. `application_to_api_model` and `load_application_maps` are what those
+routes and these personal ones both answer with, so the shape keeps one home
+instead of a copy per caller -- and a route module does not import another one
+(C4 `routes-independent`), which rules `routes/teams.py` out as that home.
 
 Ordering. This module sorts after `users.py` (`.` < `_`), so its router mounts
 after that file's, and the six paths keep their relative order among themselves.
@@ -47,10 +47,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 
-from app.api.routes.teams import application_to_api_model, load_application_maps
+from app.api.response import ok
+from app.api.teams_deps import application_to_api_model, load_application_maps
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
+from app.domain.delivery.ledger import deliver
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
@@ -67,8 +69,10 @@ async def get_team_membership_service(
 ) -> TeamMembershipService:
     team_repo = TeamRepository(session=db)
     app_repo = TeamMembershipApplicationRepository(session=db)
+    # The membership events go to the delivery ledger, one layer above `team`,
+    # so the composition root hands the write in (``Deliver``).
     return TeamMembershipService(
-        session=db, team_repo=team_repo, application_repo=app_repo
+        session=db, team_repo=team_repo, application_repo=app_repo, deliver=deliver
     )
 
 
@@ -168,14 +172,12 @@ async def list_my_team_requests(
         )
         for app in apps
     ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "requests": items,
             "page": page,
-        },
-    }
+        }
+    )
 
 
 @router.get(
@@ -210,11 +212,9 @@ async def list_my_team_invitations(
         )
         for app in apps
     ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "invitations": items,
             "page": page,
-        },
-    }
+        }
+    )

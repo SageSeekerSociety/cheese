@@ -18,9 +18,9 @@ export interface TopicStateBadge {
 export function topicStateBadge(status?: string | null): TopicStateBadge {
   if (status === 'archived') return { label: t('work.topicState.archived'), cls: 'pr-state--merged' }
   if (status === 'draft') return { label: t('work.topicState.draft'), cls: 'pr-state--draft' }
-  // 支线只有 open / closed 两个状态，和房间那三个不是一套词。closed 是「这件活
-  // 做完了」——不是归档（支线不归档），所以既不能落到 archived，也不能不管它掉进
-  // 「进行中」，那会把一条已经收工的支线说成还在跑。
+  // 支线只有 open / closed 两个状态，和房间那三个不是一套词。closed 是「已关闭」，
+  // 不是「已完成」（关掉不等于交付被采纳）；也不是归档（支线不归档），所以既不能落到
+  // archived，也不能不管它掉进「进行中」，那会把一条已经关掉的支线说成还在跑。
   if (status === 'closed') return { label: t('work.topicState.done'), cls: 'pr-state--merged' }
   return { label: t('work.topicState.open'), cls: 'pr-state--open' }
 }

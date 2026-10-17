@@ -1,0 +1,8 @@
+{
+  "archive": "Archive channel",
+  "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived",
+  "created": "Created",
+  "members": "Members",
+  "membersOpen": "View members",
+  "open": "Details of “{name}”"
+}

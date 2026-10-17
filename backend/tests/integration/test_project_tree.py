@@ -4,7 +4,8 @@ import asyncio
 import uuid
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 
@@ -71,18 +72,20 @@ def test_upgrade_block_to_topic(client, stub_hooks):
     # Whoever upgraded the message owns the task it became.
     assert new_topic["owner_handle"] == "owner"
 
-    # The upgraded message IS the task statement: the task's agent is handed it
-    # to draft the task's document from.
-    assert "我们要不要单独做一个数据清洗的模块" in stub_hooks.told
+    # The message's 支线 became the task: its conversation hangs under it.
+    thread = client.get(
+        f"/topics/{new_topic['id']}/thread", headers=session_auth_headers("owner")
+    ).json()["data"]
+    assert thread["root_block_id"] == block_id
 
-    # The same message can become another task, and neither adds a line to
-    # the channel's main line: each shows under the message.
+    # Turning it again is the same task, and neither adds a line to the
+    # channel's main line: the task shows under the message.
     before = len(client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"])
     r2 = client.post(
         f"/blocks/{block_id}/upgrade", headers=session_auth_headers("owner")
     )
     assert r2.status_code == 200
-    assert r2.json()["data"]["id"] != new_topic["id"]
+    assert r2.json()["data"]["id"] == new_topic["id"]
     assert r2.json()["data"]["upgraded_from_block_id"] == block_id
     _wait_work_idle()
     after = client.get(f"/topics/{topic['id']}/blocks").json()["data"]["data"]

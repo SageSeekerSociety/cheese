@@ -152,8 +152,9 @@ def _set_collaborators(client, task_id: str, owner: str, handles: list[str]) -> 
 
 def _seed_agent_line(client, project_id: str, task_id: str) -> None:
     """The AI teammate says something in the task."""
-    from app.domain.block.models import AuthorType, BlockKind
+    from app.domain.block.models import BlockKind
     from app.domain.block.repositories import BlockRepository
+    from app.domain.event_author import AuthorType
 
     async def seed() -> None:
         async with client.test_factory() as session:

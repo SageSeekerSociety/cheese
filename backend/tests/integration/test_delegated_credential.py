@@ -182,7 +182,7 @@ def test_an_edit_is_the_agents_at_the_askers_request_and_noted_under_the_answer(
     latest = client.get(
         f"{_path(client, task)}/history", headers=session_auth_headers("alice")
     ).json()["data"]["versions"][-1]
-    assert latest["actor"] == seat and latest["requested_by"] == "bob"
+    assert latest["actor"] == seat and "requested_by" not in latest
 
     async def noted() -> list[dict]:
         redis = from_url(settings.redis_url)

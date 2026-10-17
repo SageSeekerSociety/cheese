@@ -282,16 +282,3 @@ def verify(
         seat=seat,
         wire_error=completion.error,
     )
-
-
-def verify_all(
-    endpoints: list[Endpoint],
-    references: dict[str, Reference],
-    **kwargs,
-) -> list[dict]:
-    return [
-        verify(
-            endpoint, endpoint.model, references.get(endpoint.model), **kwargs
-        ).to_json()
-        for endpoint in endpoints
-    ]

@@ -19,6 +19,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI, Request
 
+from app.api import preview_relay
 from app.api.routes import app_preview as route
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import preview_tunnel as wire
@@ -178,13 +179,13 @@ def _wait_for(predicate, label):
 def _relay(port_file, monkeypatch):
     topic = uuid.uuid4()
     seat = "transport-fixture"
-    monkeypatch.setattr(route, "preview_hub", PreviewHub())
+    monkeypatch.setattr(preview_relay, "preview_hub", PreviewHub())
     application = FastAPI()
     application.include_router(route.tunnel_router)
 
     @application.api_route("/{path:path}", methods=["GET", "HEAD"])
     async def viewer(request: Request):
-        return await route.relay_http(topic, seat, request)
+        return await preview_relay.relay_http(topic, seat, request)
 
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))

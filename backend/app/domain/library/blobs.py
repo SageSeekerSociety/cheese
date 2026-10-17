@@ -14,6 +14,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
+from app.domain.library import service
 
 LOCAL = "local"
 
@@ -36,13 +37,13 @@ class LocalBlobs:
             raise UnprocessableEntityError("blob key escapes the workspace")
         return target
 
-    def put(self, key: str, data: bytes) -> None:
+    def put(self, key: str, data: service.Content) -> None:
         """写下一份新字节。先写到旁边再换过去，读的人不会读到半份。"""
         target = self._path(key)
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = target.with_name(f".{target.name}.{uuid.uuid4().hex}")
         try:
-            staging.write_bytes(data)
+            service.write_content(staging, data)
             staging.replace(target)
         finally:
             # 写了一半的那一份（磁盘写满之类）留在存储里没人要：键是记录那一行的 id，
@@ -50,11 +51,15 @@ class LocalBlobs:
             # 就没有东西，`missing_ok` 让成功那一趟什么也不做。
             staging.unlink(missing_ok=True)
 
-    def get(self, key: str) -> bytes:
+    def file(self, key: str) -> Path:
+        """这把键的字节在磁盘上的位置，给按段读的人（视频拖进度条）用。"""
         target = self._path(key)
         if not target.is_file():
             raise NotFoundError(say("libraryFileNotFound"))
-        return target.read_bytes()
+        return target
+
+    def get(self, key: str) -> bytes:
+        return self.file(key).read_bytes()
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)

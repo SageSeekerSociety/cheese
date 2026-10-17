@@ -123,7 +123,7 @@ beforeEach(() => {
   updateAgentType.mockReset().mockResolvedValue(CUSTOM_TYPE)
   createAgentType.mockReset()
   setProjectDefaultAgent.mockReset().mockResolvedValue({})
-  getProjectDefaultModel.mockReset().mockResolvedValue({ choices: CHOICES, can_manage: true })
+  getProjectDefaultModel.mockReset().mockResolvedValue({ choices: CHOICES })
 })
 
 async function chooseModel(name: string) {
@@ -265,14 +265,6 @@ describe('高级设置', () => {
         expect.objectContaining({ configuration: expect.objectContaining({ compact_percent: 80 }) })
       )
     )
-  })
-
-  it('不是负责人时只读，并说明谁能改', async () => {
-    getProjectDefaultModel.mockResolvedValue({ choices: CHOICES, can_manage: false })
-    mountDialog(null)
-    await openAdvanced()
-    expect(await screen.findByText('只有项目所有者或团队管理员能改高级设置')).toBeTruthy()
-    expect((screen.getByLabelText(/自己设定何时整理/) as HTMLInputElement).disabled).toBe(true)
   })
 })
 

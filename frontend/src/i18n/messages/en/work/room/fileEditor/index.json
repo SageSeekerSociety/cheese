@@ -1,0 +1,20 @@
+{
+  "changedBy": "{who} just saved this file (version {seq})",
+  "changedNote": ": {note}",
+  "close": "Close",
+  "copyFailed": "Couldn't copy",
+  "copyName": "Save in the channel as",
+  "editorError": "The editor ran into an error",
+  "history": "History",
+  "loadNew": "Load the new version",
+  "makeCopy": "Make a copy to edit",
+  "notLoaded": "The editor didn't load",
+  "openFailed": "Couldn't open the editor",
+  "originalKept": "The original stays in the library unchanged.",
+  "readOnly": "Read-only (this format can only be viewed)",
+  "savedAs": "Saved as version {seq}",
+  "serviceUnreachable": "Couldn't reach the editor service. Try again later",
+  "someone": "Someone",
+  "staleNote": "You're looking at the content from before that change. Loading the new version discards your unsaved changes here; if you save first, your changes are kept as a separate copy and nothing is overwritten.",
+  "unsaved": "Unsaved changes"
+}
