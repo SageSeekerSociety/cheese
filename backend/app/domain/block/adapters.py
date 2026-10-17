@@ -10,15 +10,37 @@
 本模块不 commit —— 那一笔和调用方自己那几行在同一个事务里，由调用方收尾。
 """
 
+import asyncio
 import uuid
+from collections.abc import Sequence
 
+from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
+
+_BLOCK_LIST_ADAPTER = TypeAdapter(list[BlockOut])
+
+
+async def dump_blocks_json(blocks: Sequence[Block], chunk: int = 500) -> list[dict]:
+    """Validate and dump a sequence of blocks to JSON-mode dicts in chunks,
+    yielding to the event loop (`await asyncio.sleep(0)`) between chunks so a
+    multi-thousand-block page does not monopolize the loop."""
+    step = max(chunk, 1)
+    items = blocks if isinstance(blocks, (list, tuple)) else list(blocks)
+    if not items:
+        return []
+    out: list[dict] = []
+    for i in range(0, len(items), step):
+        if i > 0:
+            await asyncio.sleep(0)
+        validated = _BLOCK_LIST_ADAPTER.validate_python(items[i : i + step])
+        out.extend(_BLOCK_LIST_ADAPTER.dump_python(validated, mode="json"))
+    return out
 
 
 class DecisionLine:
