@@ -1,7 +1,7 @@
-"""收藏回答和成员列表：一页 10 行与一页 50 行发出的 SQL 一样多。
+"""收藏回答和成员列表不再逐行查作者档案 / 账号。
 
-这两条接口原来在循环里逐条查档案 / 账号，页大小一调大就线性多出往返。判据数的是
-真发出去的语句（`before_cursor_execute`），不是代码里有没有 for 循环。
+收藏回答数全部语句：一页 10 行和 50 行一样多。成员列表只数账号表：每行一次的
+`get_by_id` 没了，逐人的统计聚合（`build_user_dto`）不在这次范围。
 """
 
 import asyncio
@@ -10,9 +10,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import event
 
-from app.common.auth import create_access_token
 from app.domain.answers.models import Answer, AnswerFavorite
 from app.domain.user.models import User, UserProfile
+from app.domain.user.repositories import UserRepository
+from tests.conftest import seed_user
 
 
 def _count_statements(client):
@@ -27,18 +28,15 @@ def _count_statements(client):
     return statements, lambda: event.remove(engine, "before_cursor_execute", record)
 
 
-def _seed(client, *, people: int) -> tuple[int, dict[str, str]]:
-    """``people`` 个带档案的人，各写一条回答；另一个人把这 ``people`` 条全收藏了。"""
+def _seed(client, *, people: int) -> int:
+    """给 ``favorite-reader`` 建 ``people`` 个带档案的作者，各写一条回答，再全收藏。"""
 
-    async def _seed_rows() -> tuple[int, str]:
+    async def _seed_rows() -> int:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
+            repo = UserRepository(session)
+            reader = await repo.get_by_username("favorite-reader")
+            assert reader is not None
             now = datetime.now(UTC)
-            reader = User(
-                username="favorite-reader",
-                email="favorite-reader@example.com",
-                created_at=now,
-                updated_at=now,
-            )
             authors = [
                 User(
                     username=f"person-{i:03d}",
@@ -48,7 +46,7 @@ def _seed(client, *, people: int) -> tuple[int, dict[str, str]]:
                 )
                 for i in range(people)
             ]
-            session.add_all([reader, *authors])
+            session.add_all(authors)
             await session.flush()
             session.add_all(
                 [
@@ -82,15 +80,15 @@ def _seed(client, *, people: int) -> tuple[int, dict[str, str]]:
                 ]
             )
             await session.commit()
-            return reader.id, reader.username
+            return reader.id
 
-    reader_id, handle = asyncio.run(_seed_rows())
-    token = create_access_token(reader_id, handle=handle)
-    return reader_id, {"Authorization": f"Bearer {token}"}
+    return asyncio.run(_seed_rows())
 
 
-def test_these_lists_do_not_query_per_row(client):
-    reader_id, headers = _seed(client, people=50)
+def test_neither_list_reads_its_people_table_once_per_row(client):
+    token = seed_user(client, "favorite-reader")
+    headers = {"Authorization": f"Bearer {token}"}
+    reader_id = _seed(client, people=50)
 
     def favorite_cost(page_size: int) -> tuple[int, int, list[dict]]:
         statements, stop = _count_statements(client)
