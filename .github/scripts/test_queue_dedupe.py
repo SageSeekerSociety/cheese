@@ -104,13 +104,26 @@ ENV = {
 class FakeApi:
     """GitHub as `gh api` would answer: listed runs, and the cancels asked for."""
 
-    def __init__(self, runs, fail_cancel=(), fail_list=False):
+    def __init__(self, runs, fail_cancel=(), fail_list=False, entry_sha=NEW_SHA,
+                 number=4097):
         self.runs = runs
+        self.number = number
+        self.entry_sha = entry_sha
         self.fail_cancel = set(fail_cancel)
         self.fail_list = fail_list
         self.cancelled = []
 
     def __call__(self, *args):
+        if args[0] == "graphql":
+            # The exact call GitHub accepts: Int typing for the number, the
+            # repo split into owner and name, the full oid.
+            _, _, query, *variables = args
+            assert query.startswith("query=") and "headCommit { oid }" in query
+            assert variables == [
+                "-f", "owner=o", "-f", "name=r", "-F", f"number={self.number}"
+            ], variables
+            entry = {"headCommit": {"oid": self.entry_sha}} if self.entry_sha else None
+            return {"data": {"repository": {"pullRequest": {"mergeQueueEntry": entry}}}}
         path = args[-1]
         if args[:2] == ("-X", "POST"):
             run_id = int(path.split("/")[-2])
@@ -141,6 +154,31 @@ class CancelTests(unittest.TestCase):
         ])
         dedupe.cancel_superseded(api, ENV)
         self.assertEqual(api.cancelled, [1])
+
+    def test_a_late_event_of_the_old_entry_does_not_cancel_the_new_one(self):
+        # The queue now holds NEW_SHA; the event for OLD_SHA arrived late, so
+        # its runs (and this job) were created after the new entry's run.
+        api = FakeApi(
+            [
+                run(2, f"gh-readonly-queue/main/pr-4097-{NEW_SHA}", NEW_SHA, minute=40),
+                run(1, old_branch(), OLD_SHA, minute=50),
+            ],
+            entry_sha=NEW_SHA,
+        )
+        late = {**ENV, "HEAD_REF": f"refs/heads/{old_branch()}", "HEAD_SHA": OLD_SHA}
+        dedupe.cancel_superseded(api, late)
+        self.assertEqual(api.cancelled, [])
+
+    def test_the_entry_is_looked_up_for_this_events_pr(self):
+        api = FakeApi([run(1, old_branch(4098), OLD_SHA)], number=4098)
+        env = {**ENV, "HEAD_REF": f"gh-readonly-queue/main/pr-4098-{NEW_SHA}"}
+        dedupe.cancel_superseded(api, env)
+        self.assertEqual(api.cancelled, [1])
+
+    def test_nothing_is_cancelled_when_the_pr_has_left_the_queue(self):
+        api = FakeApi([run(1, old_branch(), OLD_SHA)], entry_sha=None)
+        dedupe.cancel_superseded(api, ENV)
+        self.assertEqual(api.cancelled, [])
 
     def test_a_run_newer_than_this_entrys_required_ci_run_is_left_alone(self):
         # This job started late; the other run came from a later queue rebuild.
