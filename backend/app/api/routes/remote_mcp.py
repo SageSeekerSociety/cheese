@@ -1,4 +1,5 @@
-"""Remote MCP servers: project settings, the OAuth callback, and the session proxy.
+"""Project MCP servers: settings (remote ones and commands), the OAuth callback,
+and the session proxy.
 
 Any project member may connect, disconnect or set a value — the connection is
 the project's, and the same standing applies to everyone. No route here returns
@@ -130,11 +131,27 @@ async def disconnect(
 
 
 class ServerIn(BaseModel):
+    """A server added in settings: remote (``url``, and how it signs in) or a
+    command, run on the room's machine (``command``, and its environment)."""
+
     name: str = Field(min_length=1, max_length=64)
-    url: str = Field(min_length=1, max_length=2048)
-    auth: str = Field(pattern="^(oauth|headers)$")
+    kind: str = Field(default="remote", pattern="^(remote|command)$")
+    url: str | None = Field(default=None, min_length=1, max_length=2048)
+    auth: str = Field(default="oauth", pattern="^(oauth|headers)$")
     header: str | None = Field(default=None, max_length=128)
     value: str | None = Field(default=None, max_length=8192)
+    command: str | None = Field(default=None, min_length=1, max_length=4000)
+    env: dict[str, str] = Field(default_factory=dict, max_length=64)
+
+    def remote_url(self) -> str:
+        if self.url is None:
+            raise UnprocessableEntityError(say("mcpServerUrlRequired"))
+        return self.url
+
+    def command_line(self) -> str:
+        if self.command is None:
+            raise UnprocessableEntityError(say("mcpCommandInvalid"))
+        return self.command
 
 
 class ServerChanged(BaseModel):
@@ -151,13 +168,24 @@ class ServerChanged(BaseModel):
 async def add_server(
     project_id: uuid.UUID, body: ServerIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Add a remote server in project settings, beside the repository's."""
+    """Add a server in project settings, beside the repository's."""
     handle = await manager(db, project_id, resolver)
+    if body.kind == "command":
+        await service.add_command(
+            db,
+            project_id,
+            name=body.name,
+            line=body.command_line(),
+            env=body.env,
+            handle=handle,
+            project_types=project_types,
+        )
+        return ok({"name": body.name})
     await service.add_server(
         db,
         project_id,
         name=body.name,
-        url=body.url,
+        url=body.remote_url(),
         header_name=body.header if body.auth == "headers" else None,
         header_value=body.value if body.auth == "headers" else None,
         handle=handle,
@@ -179,11 +207,16 @@ async def update_server(
     resolver: ActorResolverDep,
 ) -> dict:
     handle = await manager(db, project_id, resolver)
+    if body.kind == "command":
+        await service.update_command(
+            db, project_id, name=name, line=body.command_line(), env=body.env
+        )
+        return ok({"name": name})
     await service.update_server(
         db,
         project_id,
         name=name,
-        url=body.url,
+        url=body.remote_url(),
         header_name=body.header if body.auth == "headers" else None,
         header_value=body.value if body.auth == "headers" else None,
         handle=handle,

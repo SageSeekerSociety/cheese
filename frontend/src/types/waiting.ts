@@ -76,7 +76,9 @@ export interface WaitingRun {
   command: string
   /** 我的哪台设备。 */
   device: string
-  /** 最近一次改了 .mcp.json 里这一条的人；读不出来是 null。 */
+  /** 命令写在哪：仓库的 .mcp.json、项目设置，或队友类型。 */
+  source: 'repository' | 'settings' | 'type'
+  /** 谁写的：.mcp.json 是最近改它的人，项目设置是添加它的成员；读不出来是 null。 */
   author: WaitingFace | null
   at: string
 }

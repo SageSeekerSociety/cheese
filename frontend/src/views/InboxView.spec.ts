@@ -442,6 +442,7 @@ describe('等你允许在自己电脑上运行的命令', () => {
     server: 'zotero',
     command: 'uvx zotero-mcp',
     device: 'MacBook Pro',
+    source: 'repository',
     author: null,
     at: '2026-10-07T10:00:00Z',
   }
