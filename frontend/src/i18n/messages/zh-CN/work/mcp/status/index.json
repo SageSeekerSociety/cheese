@@ -1,8 +1,14 @@
 {
   "connected": "已连接",
-  "connectedBy": "已连接（由 {name} 授权，{when}）",
   "disconnected": "未连接",
   "missingValues": "需要填写 {names}",
   "needsReconnect": "需要重新连接",
-  "ready": "已就绪"
+  "ready": "已就绪",
+  "shadowed": "不生效：仓库里有同名服务器",
+  "idle": "未启动",
+  "running": "运行中",
+  "failed": "启动失败",
+  "awaiting": "等 {name} 允许",
+  "refused": "{name} 没有允许",
+  "authorizedBy": "由 {name} 授权，{when}"
 }

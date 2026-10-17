@@ -105,6 +105,36 @@ class Assembler:
                         call_id=item["id"],
                     )
                 ]
+            # A project server's tool, which Codex's own MCP client calls (at
+            # the session's gateway): named in the trail as every harness
+            # names one, `mcp__<server>__<tool>`.
+            if item["type"] == "mcpToolCall" and method == "item/started":
+                return [
+                    AgentToolUse(
+                        f"mcp__{item['server']}__{item['tool']}",
+                        item.get("arguments") or {},
+                        eid=eid,
+                        call_id=item["id"],
+                    )
+                ]
+            if item["type"] == "mcpToolCall":
+                result = item.get("result") or {}
+                said = "\n".join(
+                    part.get("text", "")
+                    for part in result.get("content") or []
+                    if isinstance(part, dict) and part.get("type") == "text"
+                )
+                error = (item.get("error") or {}).get("message", "")
+                steps = []
+                if item.get("status") == "failed" or error:
+                    steps.append(
+                        AgentStepFailed(
+                            call_id=item["id"], text=step_error(error or said)
+                        )
+                    )
+                if said.strip():
+                    steps.append(AgentStepOutput(call_id=item["id"], text=said))
+                return steps
             if item["type"] == "dynamicToolCall":
                 said = "\n".join(
                     part.get("text", "")

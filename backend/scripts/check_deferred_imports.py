@@ -7,8 +7,10 @@
     cd backend && uv run python scripts/check_deferred_imports.py --update --freeze-new
     cd backend && uv run python scripts/check_deferred_imports.py --json
 
-    0 = no file has more unexplained deferred imports than its baseline allows
-    1 = a file grew one (or `--update` was asked to freeze growth)
+    0 = no file has more unexplained deferred imports than its baseline allows,
+        and every reason that names a module names one the import comes from
+    1 = a file grew one, a reason names a module the import does not come from,
+        or `--update` was asked to freeze growth
     2 = could not judge (no app/, no or malformed baseline, a file that does
         not parse) — never a pass
 
@@ -24,6 +26,16 @@ above it:
 Typical reasons: breaking an import cycle, an optional dependency, start-up
 cost, a test double that patches the attribute on its home module. Annotated
 imports are not limited; every run lists them so a reviewer can see them.
+
+A REASON THAT NAMES A MODULE IS CHECKED. The test-double reasons say where the
+patched name lives — `tests replace this name on app.core.db`,
+`tests patch probe_engine on app.core.db`, or the shorter `tests patch
+app.core.db`. The module they name has to be one the annotated statement itself
+brings in: its `from` module, or that module plus one of the imported names
+(`app.core.db.probe_engine`). A name that moves leaves the sentence pointing at
+the old module while the import still passes; this rule is what goes red then.
+A relative import's absolute module cannot be read off the line, so a reason on
+one is not judged.
 
 Unannotated ones are frozen per file in `deferred-import-baseline.json`: a file
 that is not in it must have none, and a file that is may only go down.
@@ -85,6 +97,17 @@ REASON_LIMIT = 2000
 #: `# deferred-import: <reason>`; an empty reason is not a reason.
 MARKER_RE = re.compile(r"#\s*deferred-import:\s*(?P<reason>\S.*?)\s*$")
 
+#: A reason that says where a test double patches a name. The module it names
+#: is checked against the statement it annotates; the dotted shape keeps an
+#: English word after "on" from reading as a module.
+NAMED_TEST_HOME_RES = (
+    re.compile(
+        r"tests (?:replace|patch)\b[^\n]*?\bon "
+        r"(?P<home>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\b"
+    ),
+    re.compile(r"^tests patch (?P<home>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)$"),
+)
+
 BASELINE_COMMENT = (
     "Unannotated imports inside a function body under backend/app, per file. "
     "May only go down: a new file must have none. Annotate one with "
@@ -111,6 +134,10 @@ class DeferredImport:
     statement: str
     #: The text after `# deferred-import:`, or None when unannotated.
     reason: str | None
+    #: The absolute modules this statement brings in, as a reason may name them:
+    #: the `from` module and `module.imported` for each name. Empty when that
+    #: cannot be read off the line (a relative import).
+    homes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -137,6 +164,18 @@ class Scan:
     def total(self) -> int:
         return sum(len(items) for items in self.imports.values())
 
+    def mistargeted(self) -> list[tuple[str, DeferredImport, str]]:
+        """(path, import, the module its reason names) for every reason that
+        names a module the statement does not come from. A statement with no
+        absolute homes on the line (a relative import) is not judged."""
+        wrong: list[tuple[str, DeferredImport, str]] = []
+        for path, items in sorted(self.imports.items()):
+            for item in items:
+                named = named_module(item.reason)
+                if named is not None and item.homes and named not in item.homes:
+                    wrong.append((path, item, named))
+        return wrong
+
 
 def _reason(lines: list[str], node: ast.stmt) -> str | None:
     """The annotation on any line of the statement, or on the line above it."""
@@ -154,6 +193,29 @@ def _reason(lines: list[str], node: ast.stmt) -> str | None:
     return None
 
 
+def named_module(reason: str | None) -> str | None:
+    """The module a reason says a test double patches a name on, if it says."""
+    if reason is None:
+        return None
+    for pattern in NAMED_TEST_HOME_RES:
+        match = pattern.search(reason)
+        if match:
+            return match.group("home")
+    return None
+
+
+def _homes(node: ast.Import | ast.ImportFrom) -> tuple[str, ...]:
+    """Absolute modules a statement brings in, in the spellings a reason uses:
+    the `from` module (`app.core.db`) and `module.name` for each imported name
+    (`app.core.db.probe_engine`). `import a.b` offers `a.b`; a relative import
+    offers nothing, since its absolute module is not on the line."""
+    if isinstance(node, ast.Import):
+        return tuple(alias.name for alias in node.names)
+    if node.level or not node.module:
+        return ()
+    return (node.module, *(f"{node.module}.{alias.name}" for alias in node.names))
+
+
 def deferred_imports_in(source: str) -> list[DeferredImport]:
     """Every import statement lexically inside a function body, once each.
 
@@ -167,7 +229,11 @@ def deferred_imports_in(source: str) -> list[DeferredImport]:
         for child in ast.iter_child_nodes(node):
             if in_function and isinstance(child, ast.Import | ast.ImportFrom):
                 first = lines[child.lineno - 1].strip()
-                found.append(DeferredImport(child.lineno, first, _reason(lines, child)))
+                found.append(
+                    DeferredImport(
+                        child.lineno, first, _reason(lines, child), _homes(child)
+                    )
+                )
             walk(
                 child,
                 in_function
@@ -339,6 +405,23 @@ def _print_annotated(result: Scan) -> None:
         print(f"  {path}:{item.line}  {item.reason}")
 
 
+def _print_mistargeted(wrong: list[tuple[str, DeferredImport, str]]) -> None:
+    print(
+        f"\nFAIL: {len(wrong)} reason(s) name a module the import does not come "
+        "from (the name moved, the sentence did not):"
+    )
+    for path, item, named in wrong:
+        print(
+            f"  {path}:{item.line}: reason says {named}; "
+            f"this line imports {', '.join(item.homes)}"
+        )
+        print(f"    {item.statement}")
+    print(
+        "\nName the module this line imports from, or that module plus the "
+        "imported name (`app.core.db.probe_engine`)."
+    )
+
+
 def check(root: Path, baseline_path: Path) -> int:
     """The gate. Under --json the report goes to stderr and stdout carries
     only the record, so a collector parsing stdout reads one line.
@@ -372,6 +455,9 @@ def _report(
     }
 
     _print_annotated(result)
+    wrong = result.mistargeted()
+    if wrong:
+        _print_mistargeted(wrong)
     if stale:
         print(
             f"\nwarning: {len(stale)} baseline entr{'y' if len(stale) == 1 else 'ies'} "
@@ -393,6 +479,9 @@ def _report(
         print(f"\n{UPDATE_HINT}")
         return BROKEN, _record(False, actual, frozen, stale)
 
+    if wrong:
+        return BROKEN, _record(False, actual, frozen, stale)
+
     print(
         f"\nPASS: deferred imports held ({sum(actual.values())} unannotated in "
         f"{len(actual)} files, baseline {sum(frozen.values())}; "
@@ -406,6 +495,12 @@ def update(root: Path, baseline_path: Path, freeze_new: bool) -> int:
         baseline_path.write_text(render_baseline({}), encoding="utf-8")
         print(f"created an empty {baseline_path.name} to freeze into")
     result, frozen = _judge(root, baseline_path)
+    wrong = result.mistargeted()
+    if wrong:
+        # The baseline records counts of unannotated imports; a reason that
+        # names the wrong module is not a count and `--update` cannot clear it.
+        _print_mistargeted(wrong)
+        return BROKEN
     actual = result.unannotated()
 
     added = {
@@ -510,6 +605,36 @@ _ANNOTATED = (
     "    )\n"
     "    return thing\n"
 )
+_NAMED_HOME_OK = (
+    "def f():\n"
+    "    # deferred-import: tests replace this name on app.b.thing\n"
+    "    from app.b import thing\n"
+    "    return thing\n"
+)
+_NAMED_HOME_ON_MODULE = (
+    "def f():\n"
+    "    # deferred-import: tests patch probe on app.b\n"
+    "    from app.b import probe\n"
+    "    return probe\n"
+)
+_NAMED_HOME_BARE = (
+    "def f():\n"
+    "    # deferred-import: tests patch app.b\n"
+    "    from app.b import probe\n"
+    "    return probe\n"
+)
+_NAMED_HOME_STALE = (
+    "def f():\n"
+    "    # deferred-import: tests replace this name on app.moved.thing\n"
+    "    from app.b import thing\n"
+    "    return thing\n"
+)
+_NAMED_HOME_RELATIVE = (
+    "def f():\n"
+    "    # deferred-import: tests replace this name on app.b.thing\n"
+    "    from .b import thing\n"
+    "    return thing\n"
+)
 _EMPTY_REASON = "def f():\n    import json  # deferred-import:\n    return json\n"
 _TWO = "def f():\n    import json\n    import re\n    return json, re\n"
 
@@ -612,6 +737,32 @@ def self_test() -> int:
             if not ok:
                 failures.append(f"counts {key}: got {counted[key]!r}, want {value!r}")
 
+        # The module a reason names, in each wording the tree uses.
+        named = {
+            "this name": named_module("tests replace this name on app.b.thing"),
+            "these names": named_module("tests patch these names on app.core.db"),
+            "a name": named_module("tests replace a name on app.core.db"),
+            "patched name": named_module("tests patch probe_engine on app.core.db"),
+            "bare module": named_module("tests patch app.core.db"),
+            "no module": named_module("breaks the cycle app.a -> app.b"),
+        }
+        want_named = {
+            "this name": "app.b.thing",
+            "these names": "app.core.db",
+            "a name": "app.core.db",
+            "patched name": "app.core.db",
+            "bare module": "app.core.db",
+            "no module": None,
+        }
+        for key, value in want_named.items():
+            got = named[key]
+            ok = got == value
+            print(f"  [{'ok' if ok else 'FAIL'}] names the module ({key}): {got!r}")
+            if not ok:
+                failures.append(
+                    f"names the module ({key}): got {got!r}, want {value!r}"
+                )
+
         expect("a clean tree passes", _invoke(_plant(tmp, {}, {})), OK, "PASS")
         expect(
             "a new file with a deferred import fails",
@@ -645,6 +796,38 @@ def self_test() -> int:
             "an annotation with no reason is not one",
             _invoke(_plant(tmp, {"app/e.py": _EMPTY_REASON}, {})),
             BROKEN,
+        )
+        expect(
+            "a reason naming an imported name on the from module passes",
+            _invoke(_plant(tmp, {"app/h.py": _NAMED_HOME_OK}, {})),
+            OK,
+        )
+        expect(
+            "a reason naming the from module passes",
+            _invoke(_plant(tmp, {"app/h.py": _NAMED_HOME_ON_MODULE}, {})),
+            OK,
+        )
+        expect(
+            "a bare `tests patch <module>` naming the from module passes",
+            _invoke(_plant(tmp, {"app/h.py": _NAMED_HOME_BARE}, {})),
+            OK,
+        )
+        expect(
+            "a reason naming the old module fails",
+            _invoke(_plant(tmp, {"app/h.py": _NAMED_HOME_STALE}, {})),
+            BROKEN,
+            "reason says app.moved.thing",
+        )
+        expect(
+            "a reason on a relative import is not judged",
+            _invoke(_plant(tmp, {"app/h.py": _NAMED_HOME_RELATIVE}, {})),
+            OK,
+        )
+        expect(
+            "--update refuses a reason naming the old module",
+            _invoke(_plant(tmp, {"app/h.py": _NAMED_HOME_STALE}, {}), "--update"),
+            BROKEN,
+            "reason says app.moved.thing",
         )
         expect(
             "a frozen file may not grow",
@@ -795,8 +978,9 @@ def self_test() -> int:
     print(
         "PASS: check_deferred_imports self-test (a new or grown deferred import "
         "fires, nested functions count once, TYPE_CHECKING and annotated imports "
-        "do not count, a stale baseline only warns, --update only shrinks, "
-        "--json prints one record that agrees with the exit code)"
+        "do not count, a reason naming the old module fires, a stale baseline "
+        "only warns, --update only shrinks, --json prints one record that agrees "
+        "with the exit code)"
     )
     return OK
 

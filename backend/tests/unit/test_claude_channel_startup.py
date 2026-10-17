@@ -27,7 +27,7 @@ from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.harness.channel import Placement
 from app.domain.agent.harness.claude_code.bundle import build
 from app.domain.agent.harness.driven.runner import socket_path
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host import claude_code as claude_driver
 from app.domain.agent.session_host.contract import StartRefused

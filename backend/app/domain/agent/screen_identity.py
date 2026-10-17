@@ -14,7 +14,7 @@ import uuid
 
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent import machine_launcher
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.agent.place import footprint_root
 
 

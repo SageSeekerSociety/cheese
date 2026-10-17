@@ -7,6 +7,16 @@ from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.turn.state.execution import ExecutionState
 
 
+def _since_last_sign(frame_s: float | None, alive_s: float | None) -> float | None:
+    """两道心跳里较新的那一个：多久之前最后一次有动静。
+
+    两样各自都可以说「不知道」（None），此时另一个说了算；两样都不知道就是
+    None ——「不知道」不当成很新，也不当成停了，读的人自己决定那时画什么。
+    """
+    gaps = [gap for gap in (frame_s, alive_s) if gap is not None]
+    return round(min(gaps), 1) if gaps else None
+
+
 class WorkStatus:
     def __init__(self, broker: InProcessBroker, state: ExecutionState) -> None:
         self._broker = broker
@@ -98,7 +108,13 @@ class WorkStatus:
 
     def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
         """The turn THIS process is actually executing for `topic_id`, with how
-        long since it last published a frame — or None if nobody is running one.
+        long since it last showed a sign of life — or None if nobody is running
+        one.
+
+        「有动静」有两样，取较新的那个：房间里落下了一帧（`idle_for_s`），或者
+        读这一轮的那一路收到了 runner 的一声应答（`alive_for_s`，`note_alive`）。
+        后者在长思考、跑长命令、等机器起来的时候一直在，而前者一帧都没有 —— 只数
+        帧才是红灯误亮的原因。两样都旧，才是真的没人应了。
 
         This is the heartbeat half of the stall verdict (see
         `TopicService.stall_signal`), and deliberately not `topic_work()`:
@@ -112,7 +128,9 @@ class WorkStatus:
         if activity is not None:
             return {
                 "turn_id": activity["turn_id"],
-                "silent_for_s": activity["idle_for_s"],
+                "silent_for_s": _since_last_sign(
+                    activity["idle_for_s"], activity.get("alive_for_s")
+                ),
             }
         now = time.monotonic()
         for turn_id, live_topic in self.state.live_topics.items():

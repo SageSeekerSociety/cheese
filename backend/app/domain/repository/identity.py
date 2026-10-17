@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.repository import task_rows
 
 if TYPE_CHECKING:
     from app.domain.topic.models import Topic
@@ -167,13 +168,13 @@ async def requester_handle(
 
 
 async def _thread(session: Any, task_id: uuid.UUID):
-    """The thread row, or None if it cannot be read. Never raises, same rule as
-    `_roster_owner`: attribution must not be why a PR fails to open."""
-    try:
-        # deferred-import: tests replace this name on app.domain.room_task.services
-        from app.domain.room_task.services import TaskService
+    """The task's row, or None if it cannot be read. Never raises, same rule as
+    `_roster_owner`: attribution must not be why a PR fails to open.
 
-        return await TaskService(session).get(task_id)
+    A plain column read (`repository.task_rows`): `room_task` is a layer above
+    this package, and this one needs the row, not that domain's behaviour."""
+    try:
+        return await task_rows.one(session, task_id)
     except Exception:  # noqa: BLE001 — attribution never fails its caller
         logger.info("could not read thread %s", task_id, exc_info=True)
         return None
@@ -224,9 +225,6 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
     ]
     if not declared:
         return ()
-    # deferred-import: tests replace this name on app.domain.room_task.services
-    from app.domain.room_task.services import TaskService
-
     return tuple(
         WorkItem(
             task.id,
@@ -234,7 +232,7 @@ async def work_items(session: Any, card: Any) -> tuple[WorkItem, ...]:
             getattr(task, "reporter_handle", None),
             tuple(getattr(task, "contributor_handles", None) or ()),
         )
-        for task in await TaskService(session).list_by_ids(declared)
+        for task in await task_rows.many(session, declared)
     )
 
 

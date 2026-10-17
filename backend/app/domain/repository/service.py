@@ -21,7 +21,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.skill_library import RESERVED_SKILL_NAMES
+from app.domain.skill_library import RESERVED_SKILL_NAMES, project_skills_root
 
 logger = logging.getLogger("cheesex.repository")
 
@@ -330,12 +330,13 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
 
 
 def _sync_project_skills(skills_dst: Path, project_id: uuid.UUID) -> None:
-    """The project's confirmed skills beside the platform's; deleted ones go."""
+    """The project's confirmed skills beside the platform's; deleted ones go.
 
-    # deferred-import: tests replace this name on app.domain.project_skill.service
-    from app.domain.project_skill.service import mirror_root
+    Where that directory is is a path convention, not a query, and it lives one
+    layer down (`skill_library.project_skills_root`) — `project_skill` is a
+    layer above this package and only writes it."""
 
-    source = mirror_root(project_id)
+    source = project_skills_root(project_id)
     shipped = sorted(p.name for p in source.iterdir()) if source.is_dir() else []
     manifest = skills_dst / ".cheese-project-skills.json"
     try:

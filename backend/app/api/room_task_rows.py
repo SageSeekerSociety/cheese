@@ -280,10 +280,11 @@ async def project_task_rows(
         )
         last_activity = said_at or task.created_at
         is_running = task.id in running
-        # 在跑的那一轮上一次有输出是什么时候（取整到分钟）。和话题清单那一头同一个
-        # 来源、同一个形状（`agent.liveness.last_output_at`），侧栏两处的红灯同一条
-        # 判据。None = 此刻没有在跑的一轮，或者这个进程说不了（那种「不知道」不当成
-        # 「很新」用，读的人自己决定，这里也不编一个）。
+        # 在跑的那一轮上一次有动静是什么时候（取整到分钟）：落了帧，或者读它的那
+        # 一路收到 runner 的应答。和话题清单那一头同一个来源、同一个形状
+        # （`agent.liveness.last_output_at`），侧栏两处的红灯同一条判据。None = 此刻
+        # 没有在跑的一轮，或者这个进程说不了（那种「不知道」不当成「很新」用，读的
+        # 人自己决定，这里也不编一个）。
         quiet_at = (
             None if silent_of is None else last_output_at(silent_of(task.id), now)
         )
