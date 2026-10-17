@@ -24,6 +24,7 @@ from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.conversation.services import of_room
 from app.domain.identity.handles import recipient_seat
 from app.domain.thread.models import Thread
+from app.domain.topic.models import not_a_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 
 # The channel a message is in. A bare table: ``topic`` and ``room_task`` resolve
@@ -48,7 +49,7 @@ async def _main_line_room(session: AsyncSession, block: Block):
     return (
         await session.execute(
             select(_rooms.c.id, _rooms.c.status).where(
-                _rooms.c.id == block.conversation_id, _rooms.c.is_private.is_(False)
+                _rooms.c.id == block.conversation_id, not_a_private_chat(_rooms.c)
             )
         )
     ).first()

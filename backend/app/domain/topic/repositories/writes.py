@@ -14,7 +14,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import case, func, select
 from sqlalchemy.sql import Select
 
-from app.domain.topic.models import Topic, TopicKind, TopicMembership
+from app.domain.topic.models import (
+    Topic,
+    TopicKind,
+    TopicMembership,
+    new_private_chat,
+    private_chat,
+)
 
 if TYPE_CHECKING:
     from app.domain.topic import repositories as pkg
@@ -131,7 +137,7 @@ async def get_or_create_private(
         select(Topic)
         .where(
             Topic.project_id == project_id,
-            Topic.is_private.is_(True),
+            private_chat(),
             Topic.id.in_(seats(owner)),
             Topic.id.in_(seats(peer)),
         )
@@ -140,13 +146,12 @@ async def get_or_create_private(
     existing = (await repo._session.scalars(stmt)).first()
     if existing is not None:
         return existing
-    topic = Topic(
+    topic = new_private_chat(
         project_id=project_id,
         environment=environment,
         title=title,
         kind=TopicKind.topic,
         created_by=owner,
-        is_private=True,
     )
     repo._session.add(topic)
     await repo._session.flush()

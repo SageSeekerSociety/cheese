@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.adapters import project_team
 from app.domain.membership.roster import roster_rows
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, is_private_chat
 from app.domain.user.about import about_by_handles
 from app.domain.user.services import timezones_by_handles
 
@@ -32,7 +32,7 @@ def _is_dm(topic: Topic) -> bool:
     就可以广播出去。两个问题分开问，是因为它们答错的后果不同：答不出「对面是
     谁」，退路是项目默认的芝士；答错「这间房有没有名册」，正文就出了房间。
     """
-    return topic.is_private
+    return is_private_chat(topic)
 
 
 async def room_roster(

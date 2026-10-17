@@ -23,7 +23,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.memory.models import agent_project_scope_id
 from app.domain.memory.scopes import MemoryScope
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, is_private_chat
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.services import UsageService
 
@@ -172,7 +172,7 @@ class AgentInstanceService:
         and one whose roster is no longer two seats, return None and are
         answered by the project's default, as they always were.
         """
-        if not topic.is_private:
+        if not is_private_chat(topic):
             return None
         seats = await TopicMemberService(self._session).private_seats(topic.id)
         if seats is None:

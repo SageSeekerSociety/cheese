@@ -24,15 +24,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import outsiders_reading
 from app.domain.identity.services import IdentityService
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, is_private_chat
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 
 def seats_only(topic: Topic | None) -> bool:
     """Whether only the room's own seats may read it: a private chat (the one
-    place the access rules read that flag), or a private channel."""
-    return bool(topic and (topic.is_private or topic.members_only))
+    place the access rules ask), or a private channel."""
+    return bool(topic and (is_private_chat(topic) or topic.members_only))
 
 
 async def _people_seated(session: AsyncSession, room_id: uuid.UUID) -> set[str]:

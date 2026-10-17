@@ -745,13 +745,13 @@ class ActorResolver:
         to somebody this answers yes about).
 
         The rule is not restated here. The handle is swapped on the actor and the
-        door's own method answers, which keeps the one read of ``is_private``
-        where it is (``seats_only``; ``tests/unit/test_is_private_read_points.py``
-        is a ratchet: a
-        second read point is a second declaration of the same fact, and two
-        declarations drift). What is taken as given is the credential half only —
-        a handle in a body presents nothing, and this asks whether the room would
-        admit them if it did.
+        door's own method answers, which keeps the access rules' one question of
+        whether a room is a private chat where it is (``seats_only``;
+        ``tests/unit/test_is_private_read_points.py`` allows no read of the flag
+        outside ``topic/models.py``: a second read point is a second declaration
+        of the same fact, and two declarations drift). What is taken as given is
+        the credential half only — a handle in a body presents nothing, and this
+        asks whether the room would admit them if it did.
         """
         if not actor.authenticated:
             return False
