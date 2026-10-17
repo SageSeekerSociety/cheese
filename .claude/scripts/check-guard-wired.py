@@ -24,15 +24,17 @@ collects `test_*.py` from `.claude/scripts`: `test_check_x.py` beside
 `check-x.py` is that guard's self-test by convention, and it is started on every
 push. Before that collection this was the shape of the whole problem — all three
 guards the round-24 diagnosis found were named by their own self-tests and by
-nothing else, which is why "a sibling test exists" is not on its own a lane. Two
-things make it one: the collection runs the file, and the file runs the guard
-against the repository rather than only against fixtures. The naming pairing is
-the part this can check; the second is a convention the guard cannot see and the
-reviewer has to.
+nothing else, which is why "a sibling test exists" is not on its own a lane.
+Three things make it one: the collection runs the file, the file names the
+guard, and it runs the guard against the repository rather than only against
+fixtures. The first two this can check; the third is a convention the guard
+cannot see and the reviewer has to.
 
 Comments do not count. Each line is stripped of a `#` that starts it or follows
 whitespace before the search, so the paragraph in frontend.yml that explains
-which self-test repo-guards runs does not wire anything.
+which self-test repo-guards runs does not wire anything. Neither does a hook's
+`files:` or `exclude:` pattern in .pre-commit-config.yaml: naming a guard there
+decides when that hook runs, not whether anything starts the guard.
 
 A guard that no lane CAN run is named in ON_DEMAND with the reason: one reads a
 refactor rather than the tree, one is red wherever it runs. The list is
@@ -98,6 +100,11 @@ ON_DEMAND: dict[str, str] = {
 #: is not one.
 COMMENT = re.compile(r"(?:(?<=\s)|^)#.*$")
 
+#: A hook's `files:` or `exclude:` pattern names a guard to decide when the
+#: hook runs; naming it there does not start it. Dropped before matching, on
+#: the one wiring file whose lines are hooks.
+FILTER = re.compile(r"^\s*(?:-\s*)?(?:files|exclude):")
+
 
 class CannotJudge(Exception):
     """A tree this check needs is missing or unreadable."""
@@ -122,11 +129,17 @@ def wiring(root: Path) -> dict[str, str]:
     """Every wiring file's runnable text, by path relative to the tree."""
     paths = [root / name for name in WIRING_FILES]
     paths += [path for pattern in WIRING_GLOBS for path in sorted(root.glob(pattern))]
-    found = {
-        str(path.relative_to(root)): runs(path.read_text(encoding="utf-8", errors="replace"))
-        for path in paths
-        if path.is_file()
-    }
+    found: dict[str, str] = {}
+    for path in paths:
+        if not path.is_file():
+            continue
+        where = str(path.relative_to(root))
+        text = runs(path.read_text(encoding="utf-8", errors="replace"))
+        if where == ".pre-commit-config.yaml":
+            text = "\n".join(
+                line for line in text.splitlines() if not FILTER.match(line)
+            )
+        found[where] = text
     if not found:
         raise CannotJudge(
             "no wiring file found (looked for "
@@ -147,14 +160,17 @@ def wired_in(script: str, wiring_files: dict[str, str]) -> list[str]:
     return [path for path, text in sorted(wiring_files.items()) if pattern.search(text)]
 
 
-def self_tests(root: Path) -> dict[str, str]:
-    """Sibling self-tests by stem, as paths relative to the tree.
+def self_tests(root: Path) -> dict[str, tuple[str, str]]:
+    """Sibling self-tests by stem: their path from the tree root, and their text.
 
     Only the underscore form: repo-guards.yml collects `test_*.py`, so a
     `test-check-x.py` beside a guard is started by nothing and is not a lane.
     """
     return {
-        path.stem: str(path.relative_to(root))
+        path.stem: (
+            str(path.relative_to(root)),
+            runs(path.read_text(encoding="utf-8", errors="replace")),
+        )
         for path in sorted((root / SCRIPTS_DIR).glob("test_*.py"))
     }
 
@@ -165,7 +181,7 @@ def self_test_stem(script: str) -> str:
 
 
 def lanes(
-    script: str, wiring_files: dict[str, str], tests: dict[str, str]
+    script: str, wiring_files: dict[str, str], tests: dict[str, tuple[str, str]]
 ) -> list[str]:
     """Everything that starts this guard, as paths relative to the tree.
 
@@ -175,10 +191,17 @@ def lanes(
     `test_*.py` under `.claude/scripts` except the ones ON_DEMAND derives — a
     guard with no lane has no lane for its self-test either, which is why an
     excused guard is judged on its wiring files alone.
+
+    The sibling only counts when its own text names the guard: a file that
+    never mentions it cannot be starting it, and a stub named after the guard
+    would otherwise read as a lane over a guard nothing runs. Whether the
+    mention really runs the guard against the tree, rather than only against
+    fixtures, is still the reviewer's to check.
     """
     found = wired_in(script, wiring_files)
-    if script not in ON_DEMAND and (sibling := tests.get(self_test_stem(script))):
-        found.append(sibling)
+    sibling = tests.get(self_test_stem(script))
+    if script not in ON_DEMAND and sibling and names(script).search(sibling[1]):
+        found.append(sibling[0])
     return found
 
 

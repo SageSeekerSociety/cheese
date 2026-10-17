@@ -7,9 +7,13 @@ Three things are asserted, in the order they matter:
   the guard exists for, and pinning it here is what keeps the next unwired
   guard from landing quietly the way #4005, #4010 and #4019 did;
 * a guard nothing names is reported, with the sentence that says where to put
-  it — naming it in a workflow or in .pre-commit-config.yaml clears it, so does
-  a sibling self-test the CI collection runs, naming it in a comment does not,
-  and an excuse that is spent or stale is reported rather than honoured;
+  it — naming it in a workflow, a Taskfile task, .cheese/pre-push or
+  .pre-commit-config.yaml clears it, and a .sh guard is discovered like a .py
+  one, so does
+  a sibling self-test the CI collection runs that names the guard; a comment, a
+  hook's `files:` pattern, a sibling that never mentions the guard and the
+  hyphen-named sibling the collection does not glob do not, and an excuse that
+  is spent or stale is reported rather than honoured;
 * the report bites. A copy of the guard with discovery neutered stays green on
   the same tree, so the red the real guard prints is the finding and not the
   fixture — the one thing a tree-shaped assertion cannot tell you by itself.
@@ -71,7 +75,9 @@ def fixture(
         for name in EXCUSED:
             (scripts / name).write_text("# excused\n", encoding="utf-8")
         if self_test is not None:
-            (scripts / self_test).write_text("import unittest\n", encoding="utf-8")
+            (scripts / self_test).write_text(
+                'GUARD = "check-unwired.py"\n', encoding="utf-8"
+            )
         if workflow is not None:
             path = root / ".github/workflows/repo-guards.yml"
             path.parent.mkdir(parents=True)
@@ -81,8 +87,14 @@ def fixture(
         yield root
 
 
-def mutant(script: Path) -> Path:
-    """A copy of the guard with `unwired` finding nothing — exempt everything."""
+def mutant(script: Path, directory: Path) -> Path:
+    """A copy of the guard with `unwired` finding nothing — exempt everything.
+
+    Written into `directory`, never beside the guard: the copy's name matches
+    check-*.py, so a leftover in .claude/scripts would be judged by the guard
+    itself as an unwired guard, and a self-test that litters the tree it judges
+    is one SIGKILL away from a confusing red on the next run.
+    """
     source = script.read_text(encoding="utf-8")
     broken = source.replace(
         "if script not in ON_DEMAND and not lanes(script, wiring_files, tests)",
@@ -90,16 +102,12 @@ def mutant(script: Path) -> Path:
     )
     if broken == source:
         raise AssertionError("the mutation did not apply: the finding loop moved")
-    target = script.with_name("check-guard-wired.mutant.py")
+    target = directory / "check-guard-wired-mutant.py"
     target.write_text(broken, encoding="utf-8")
     return target
 
 
 class GuardWiringTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.addCleanup(
-            lambda: (GUARD.with_name("check-guard-wired.mutant.py")).unlink(missing_ok=True)
-        )
 
     def test_the_repository_wires_every_guard(self) -> None:
         result = run(REPO)
@@ -142,6 +150,57 @@ class GuardWiringTests(unittest.TestCase):
         with fixture(self_test="test_check_unwired.py") as root:
             result = run(root)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_sibling_that_never_names_the_guard_is_not_a_lane(self) -> None:
+        """A stub with the right name cannot be starting the guard."""
+        with fixture(self_test="test_check_unwired.py") as root:
+            (root / ".claude/scripts/test_check_unwired.py").write_text(
+                "import unittest\n", encoding="utf-8"
+            )
+            result = run(root)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(".claude/scripts/check-unwired.py: nothing runs it", result.stderr)
+
+    def test_a_shell_guard_nothing_names_is_reported(self) -> None:
+        """Guards are .py and .sh; dropping the .sh half of discovery must not stay green."""
+        ok = "      - run: python3 .claude/scripts/check-unwired.py\n"
+        with fixture(workflow=ok) as root:
+            (root / ".claude/scripts/check-shell.sh").write_text(
+                "#!/bin/sh\n", encoding="utf-8"
+            )
+            result = run(root)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(".claude/scripts/check-shell.sh: nothing runs it", result.stderr)
+
+    def test_a_taskfile_mention_is_a_wiring(self) -> None:
+        with fixture(workflow=None) as root:
+            (root / "Taskfile.yml").write_text(
+                "tasks:\n  guards:\n    cmds:\n"
+                "      - python3 .claude/scripts/check-unwired.py\n",
+                encoding="utf-8",
+            )
+            result = run(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_pre_push_hook_mention_is_a_wiring(self) -> None:
+        with fixture(workflow=None) as root:
+            hook = root / ".cheese/pre-push"
+            hook.parent.mkdir()
+            hook.write_text("python3 .claude/scripts/check-unwired.py\n", encoding="utf-8")
+            result = run(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_pre_commit_files_pattern_is_not_a_wiring(self) -> None:
+        """`files:` decides when a hook runs; it does not start a guard."""
+        hook = (
+            "repos:\n  - repo: local\n    hooks:\n      - id: other\n"
+            "        entry: python3 other.py\n"
+            "        files: .claude/scripts/check-unwired.py\n"
+        )
+        with fixture(workflow=None, precommit=hook) as root:
+            result = run(root)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(".claude/scripts/check-unwired.py: nothing runs it", result.stderr)
 
     def test_a_hyphen_named_sibling_is_not_a_lane(self) -> None:
         """The collection globs `test_*.py`, so this file is started by nothing."""
@@ -190,9 +249,9 @@ class GuardWiringTests(unittest.TestCase):
 
     def test_the_report_bites_a_copy_that_reports_nothing_stays_green(self) -> None:
         """With discovery neutered the same tree passes, so the red was the finding."""
-        with fixture() as root:
+        with fixture() as root, tempfile.TemporaryDirectory() as scratch:
             self.assertEqual(run(root).returncode, 1)
-            result = run(root, mutant(GUARD))
+            result = run(root, mutant(GUARD, Path(scratch)))
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
