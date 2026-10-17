@@ -188,14 +188,15 @@ async def create_card(
     comparison = await ProjectFiles(
         self._session, task.project_id, task.id
     ).comparison()
+    has_branch_changes = bool(
+        comparison
+        and comparison.get("total_commits")
+        and comparison.get("files") != []
+    )
     # A commit that changes no file delivers nothing either: accepting it would
     # merge an empty commit into the base and call that a delivery. Work whose
     # result does not land on the base ends by closing the task instead.
-    if (
-        not comparison
-        or not comparison.get("total_commits")
-        or comparison.get("files") == []
-    ):
+    if hands_over_repository and not has_branch_changes:
         raise ValidationError(
             say("taskBranchNothingToDeliver", branch=task.branch_name)
         )
@@ -276,7 +277,8 @@ async def create_card(
             snapshot[0],
             snapshot[1],
         )
-    card.pr_number, card.pr_url = task.pr_number, task.pr_url
+    if has_branch_changes:
+        card.pr_number, card.pr_url = task.pr_number, task.pr_url
     await self._announce_filed(topic, card, task)
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
@@ -664,7 +666,11 @@ async def _render(
             "checked_at": None,
             "since": None,
         }
-    elif caps.reports_checks:
+    elif caps.reports_checks and (
+        card.pr_number is not None
+        or card.deliverable_kind
+        not in (DeliverableKind.file, DeliverableKind.link)
+    ):
         mirror = card.merge_state if isinstance(card.merge_state, dict) else None
         data["merge_state"] = mirror or {
             "state": "unknown",

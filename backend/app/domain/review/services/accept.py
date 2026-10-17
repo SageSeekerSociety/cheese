@@ -24,6 +24,7 @@ from app.domain.review.merge_state import MergeVerdict, Who, whose_move
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
+    DeliverableKind,
 )
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
@@ -126,6 +127,11 @@ async def _accept_github(
     seen_head: str | None,
 ) -> AcceptCard:
     """GitHub proposals never fall back to a local merge after a failure."""
+    if card.pr_number is None and card.deliverable_kind in (
+        DeliverableKind.file,
+        DeliverableKind.link,
+    ):
+        return await self._accept_discussion(card, topic, decided_by)
     if card.pr_number is None:
         await self._publish_pr_for_accept(card, topic)
         if card.pr_number is not None:

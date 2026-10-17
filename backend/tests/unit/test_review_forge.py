@@ -107,3 +107,102 @@ async def test_proposal_cannot_cross_to_a_different_forge():
             session=_session("forgejo", "forge.invalid"),
             proposal_url="https://github.com/acme/widgets/pull/42",
         )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("kind", ["file", "link"])
+async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
+    monkeypatch, kind
+) -> None:
+    """Standalone file/link cards with no branch commits do not open or merge a PR."""
+    from datetime import UTC, datetime
+
+    from app.domain.review import pr_publish
+    from app.domain.review.models import AcceptStatus, DeliverableKind
+    from app.domain.review.services import AcceptService, cards
+
+    deliverable_kind = (
+        DeliverableKind.file if kind == "file" else DeliverableKind.link
+    )
+    project_id = _pid()
+    topic_id = uuid.uuid4()
+    service = object.__new__(AcceptService)
+    service._session = _session()
+    card = SimpleNamespace(
+        id=uuid.uuid4(),
+        topic_id=topic_id,
+        task_id=uuid.uuid4(),
+        reviewer_handle="alice",
+        focus="审阅文件",
+        change_subject="docs: deliver artifact",
+        change_body=None,
+        status=AcceptStatus.pending,
+        decided_by=None,
+        decided_at=None,
+        note="",
+        note_code=None,
+        note_level=None,
+        created_at=datetime.now(UTC),
+        gate_passed_at=None,
+        gate_output="",
+        pr_number=None,
+        pr_url=None,
+        pr_head_sha=None,
+        merge_state=None,
+        auto_merge_armed_by=None,
+        auto_merge_armed_at=None,
+        artifact_id=None,
+        deliverable_kind=deliverable_kind,
+        deliverable_name="报告.pdf" if kind == "file" else None,
+        deliverable_url="https://example.com/demo" if kind == "link" else None,
+        completes_task=True,
+    )
+    forge = await forge_mod.resolve(project_id=project_id, session=_session())
+    rendered = await cards._render(
+        service,
+        card,
+        approvals={},
+        trees={},
+        rooms={topic_id: SimpleNamespace(id=topic_id, project_id=project_id)},
+        projects={project_id: None},
+        forges={(project_id, ""): forge},
+        hidden={},
+        summaries={},
+    )
+    assert rendered["merge_state"]["state"] == "clean"
+    assert rendered["merge_state"]["who"] == "human"
+    assert rendered["merge_state"]["reasons"] == [
+        {"kind": "no_obstacle", "checks": [], "detail": "可以合并"}
+    ]
+    assert rendered["merge_state"]["head_sha"] is None
+
+    # _accept_github skips PR publication/merge and settles via _accept_discussion
+    published = AsyncMock()
+    accepted_discussion = AsyncMock(return_value=card)
+    service._publish_pr_for_accept = published
+    service._accept_discussion = accepted_discussion
+    topic = SimpleNamespace(id=card.topic_id, project_id=_pid())
+    got = await service._accept_github(card, topic, "alice", seen_head=None)
+    assert got is card
+    published.assert_not_awaited()
+    accepted_discussion.assert_awaited_once_with(card, topic, "alice")
+
+    # open_pr_for_card returns None without opening a PR when pr_number is None
+    monkeypatch.setattr(
+        pr_publish,
+        "proposal_client",
+        AsyncMock(return_value=SimpleNamespace(open_pr=AsyncMock())),
+    )
+    monkeypatch.setattr(
+        pr_publish,
+        "AcceptCardRepository",
+        lambda _s: SimpleNamespace(get=AsyncMock(return_value=card)),
+    )
+    opened = await pr_publish.open_pr_for_card(
+        _session(),
+        card_id=card.id,
+        topic_id=card.topic_id,
+        project_id=_pid(),
+    )
+    assert opened is None
+

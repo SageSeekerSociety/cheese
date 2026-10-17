@@ -678,3 +678,65 @@ def test_each_version_names_its_room_only_to_readers_of_that_room(client):
 
     asyncio.run(make_private())
     assert as_bob()["room"] is None, "a private room's name reached a non-member"
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        pytest.param(
+            {"files": {"out/报告.pdf": "无分支提交的独立文件\n"}, "deliver": "out/报告.pdf"},
+            id="file",
+        ),
+        pytest.param(
+            {"deliver_url": "https://example.com/standalone"},
+            id="link",
+        ),
+    ],
+)
+def test_file_and_link_deliveries_succeed_and_accept_without_branch_commits_or_pr(
+    client, monkeypatch, declared
+):
+    """独立文件与链接交付不要求任务分支有 Git 提交，也不必开或合 PR。"""
+    from app.domain.repository import forge_files
+
+    monkeypatch.setattr(
+        forge_files.ProjectFiles,
+        "comparison",
+        lambda self: asyncio.sleep(0, result=None),
+    )
+    project_id = _project(client)
+    room_id = _room(client, project_id)
+    task = delivery_task(client, room_id)
+    _place(client, task)
+    files = declared.get("files") or {}
+    for name, content in files.items():
+        path = client.test_machine_home / ".cheese/tasks" / str(task.id) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    payload = {k: v for k, v in declared.items() if k != "files"}
+    response = client.post(
+        f"/topics/{task.id}/accept-card",
+        headers=delivery_headers(client, room_id),
+        json={
+            "change_subject": "docs(report): deliver without repository commits",
+            "reviewer_handle": "alice",
+            "new_artifact": "独立产物",
+            "about": "不进代码仓库的独立交付物",
+            **payload,
+        },
+    )
+    assert response.status_code == 200, response.text
+    card = response.json()["data"]
+    assert card["pr_number"] is None
+    assert card["merge_state"]["state"] == "clean"
+    assert card["merge_state"]["who"] == "human"
+    assert card["merge_state"]["head_sha"] is None
+
+    accepted = client.post(
+        f"/accept-cards/{card['id']}/accept",
+        json={"decided_by": "alice", "head_sha": None},
+        headers=session_auth_headers("alice"),
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["data"]["status"] == "accepted"
+

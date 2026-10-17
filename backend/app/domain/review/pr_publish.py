@@ -71,7 +71,7 @@ from app.domain.project.forge import (
 from app.domain.repository import identity
 from app.domain.review import archive, pr_text
 from app.domain.review.forge_clients import proposal_client, status_client
-from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
 from app.domain.review.ports import Announce, RecordInstruction
 from app.domain.review.pr_publish_payload import (
     DRAFT_TITLE_PREFIX as DRAFT_TITLE_PREFIX,
@@ -202,6 +202,11 @@ async def open_pr_for_card(
 
     card = await AcceptCardRepository(session).get(card_id)
     if card is None or card.task_id is None:
+        return None
+    if card.pr_number is None and card.deliverable_kind in (
+        DeliverableKind.file,
+        DeliverableKind.link,
+    ):
         return None
     task = await TaskService(session).require_in_room(topic_id, card.task_id)
     if not task.branch_name or not await branch_head(
