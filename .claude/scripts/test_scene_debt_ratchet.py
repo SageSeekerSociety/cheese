@@ -66,7 +66,7 @@ request()
         self.assertEqual(result.returncode, rc, result.stdout + result.stderr)
         return result
 
-    def test_each_source_file_is_read_once_per_run(self) -> None:
+    def test_the_ratchet_reads_each_source_once_per_run(self) -> None:
         # The scan reads every production file to hand to the node scanner;
         # judging the scenes must reuse those texts, not read the pages again.
         # Only this script's own reads count: the scene grader reads files too,
@@ -84,7 +84,8 @@ request()
         with mock.patch.object(Path, "read_text", counting_read_text):
             debt.collect(self.root)
 
-        self.assertIn(self.root / "frontend/src/views/P.vue", reads)
+        # collect() resolves its root, so the recorded keys are resolved paths.
+        self.assertIn(self.root.resolve() / "frontend/src/views/P.vue", reads)
         self.assertEqual(
             {path: count for path, count in reads.items() if count > 1}, {}
         )
