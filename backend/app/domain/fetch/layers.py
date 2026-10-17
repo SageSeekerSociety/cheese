@@ -86,10 +86,12 @@ _TEXT_APPLICATION_TYPES = ("json", "javascript", "ecmascript", "yaml", "toml")
 def _is_markdown(content_type: str) -> bool:
     """Text a model reads as it comes: markdown and every other ``text/`` type
     that is not a page (plain text, CSV, CSS, source code), and the application
-    types above. Only HTML and XML go through the converter."""
-    kind = content_type.split(";", 1)[0].strip()
+    types above. Only HTML and XML go through the converter. An event stream is
+    not text to read: it never ends, and its heartbeats keep the read timeout
+    from firing."""
+    kind = content_type.split(";", 1)[0].strip().lower()
     if kind.startswith("text/"):
-        return "html" not in kind and "xml" not in kind
+        return not any(t in kind for t in ("html", "xml", "event-stream"))
     return "markdown" in kind or any(t in kind for t in _TEXT_APPLICATION_TYPES)
 
 

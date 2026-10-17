@@ -592,3 +592,20 @@ async def test_a_text_file_that_is_not_a_page_is_read_not_skipped_as_binary(
     got = await layers.rung_plain_http("https://files.example.org/data")
 
     assert got.ok and "A paper,2018" in got.text, got.note
+
+
+async def test_an_event_stream_is_not_read_as_text(monkeypatch):
+    """A server-sent-events endpoint never ends and its heartbeats keep the read
+    timeout from firing: reading it as a page would hold the fetch forever."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b": ping\n\n", headers={"content-type": "text/event-stream"}
+        )
+
+    _serve(monkeypatch, handler)
+
+    got = await layers.rung_plain_http("https://api.example.org/sse")
+
+    assert not got.ok and got.note.startswith("binary"), got.note
