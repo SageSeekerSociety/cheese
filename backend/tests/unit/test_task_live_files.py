@@ -216,12 +216,13 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
     monkeypatch, tmp_path
 ):
     from app.core.errors import NotFoundError
-    from app.domain.repository import forge_files
+    from app.domain.repository import forge_files, task_rows
 
     task = SimpleNamespace(
         id=uuid.uuid4(),
         room_id=uuid.uuid4(),
-        status=forge_files.TaskStatus.open,
+        # 这一行是 `tasks` 表上的那一列，按表里的短码给。
+        status=task_rows.STATUS_OPEN,
         base_branch="main",
         branch_name="task/new",
         closing_since=None,
