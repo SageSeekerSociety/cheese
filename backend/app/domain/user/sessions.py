@@ -25,18 +25,19 @@ it. If the abandoned token turns up later, somebody did receive it, the chain
 has two holders, and the session ends.
 """
 
-import hashlib
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.common import _now
 from app.domain.user.models import User, UserSession
+from app.domain.user.tokens import digest_token
 
 
 class RevokeReason(StrEnum):
@@ -63,14 +64,6 @@ class Refreshed:
     # concurrent refresh: the caller already holds the successor, so there is
     # nothing new to hand out.
     refresh_token: str | None
-
-
-def _digest(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _now() -> datetime:
-    return datetime.now(UTC)
 
 
 # How long a sign-in, once it has proved a credential, may get sudo tickets
@@ -103,7 +96,7 @@ class SessionService:
         row = UserSession(
             id=uuid.uuid4(),
             user_id=user_id,
-            current_hash=_digest(token),
+            current_hash=digest_token(token),
             login_method=login_method,
             two_factor_skipped=two_factor_skipped,
             user_agent=user_agent[:1024],
@@ -128,7 +121,7 @@ class SessionService:
         ``abandoned_hash`` was received after all, by someone, and the
         session ends.
         """
-        presented = _digest(token)
+        presented = digest_token(token)
         now = _now()
         successor = secrets.token_urlsafe(32)
         rotated = (
@@ -142,7 +135,7 @@ class SessionService:
                 )
                 .values(
                     previous_hash=UserSession.current_hash,
-                    current_hash=_digest(successor),
+                    current_hash=digest_token(successor),
                     rotated_at=now,
                     last_used_at=now,
                 )
@@ -174,7 +167,7 @@ class SessionService:
                     )
                     .values(
                         abandoned_hash=UserSession.current_hash,
-                        current_hash=_digest(successor),
+                        current_hash=digest_token(successor),
                         rotated_at=now,
                         last_used_at=now,
                     )
@@ -199,7 +192,7 @@ class SessionService:
 
     async def end(self, token: str) -> None:
         """Sign out the session this refresh token belongs to, if any."""
-        presented = _digest(token)
+        presented = digest_token(token)
         await self._db.execute(
             update(UserSession)
             .where(
