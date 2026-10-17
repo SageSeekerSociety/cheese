@@ -72,6 +72,7 @@ jobs:
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
           python3 .claude/scripts/catalog-ratchet.py --self-test
+          python3 .claude/scripts/verify-guard-self-tests.py --self-test
           python3 .claude/scripts/check-guard-wired.py --self-test
 
       # Two tree guards the pre-commit list does not carry. A hook in
@@ -246,6 +247,17 @@ jobs:
           result = unittest.TextTestRunner().run(suite)
           raise SystemExit(0 if result.wasSuccessful() else 1)
           PYEOF
+
+      # The step above runs each guard's --self-test and trusts the result.
+      # This one checks that trust: a guard whose self-test always prints PASS
+      # is green on every tree, and that is the failure mode the guards exist
+      # to prevent. It silences a copy of each guard and requires its self-test
+      # to go red. It runs through pre-commit like the tree guards below, so a
+      # developer's commit and this job run the same hook with the same
+      # allowance (scene-debt-ratchet.py, whose self-test judges the guard in
+      # another process; see the hook's comment).
+      - name: Guard self-tests bite
+        run: uvx pre-commit run --all-files guard-self-tests
 
       # Run through pre-commit rather than calling the scripts directly, so
       # this job and a developer's commit are the same list by construction.

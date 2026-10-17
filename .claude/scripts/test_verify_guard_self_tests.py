@@ -3932,6 +3932,77 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("PASS", result.stdout)
 
+    # --- the allowance, which has to be a claim and not a waiver -----------
+    #
+    # `--allow-unverified NAME` exists for a guard whose self-test judges it in
+    # another process, where this tool can only report `unverified`. The point
+    # of these cases is that the flag stays narrow: it tolerates that one
+    # status, for a guard the run really judged, and it goes stale out loud.
+
+    def _allow(self, guards: dict[str, str], extra: dict[str, str], *allowed: str):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            config = _build(root, guards, extra)
+            result = _run(root, config, "--json", *allowed)
+        return result
+
+    def test_an_unverified_guard_is_a_finding_without_the_allowance(self) -> None:
+        """The baseline the flag is measured against: exit 2, not a pass."""
+        result = self._allow(
+            {"delegating.py": DELEGATING}, {"test_delegating.py": DELEGATING_SIBLING}
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse(json.loads(result.stdout)["guards"][0]["allowed"])
+
+    def test_an_allowed_unverified_guard_is_reported_and_not_counted(self) -> None:
+        """Allowed by name: still printed as unverified, but exit 0."""
+        result = self._allow(
+            {"delegating.py": DELEGATING},
+            {"test_delegating.py": DELEGATING_SIBLING},
+            "--allow-unverified",
+            "delegating.py",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        guard = json.loads(result.stdout)["guards"][0]
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertTrue(guard["allowed"], guard)
+
+    def test_the_human_report_marks_an_allowed_run_rather_than_hiding_it(self) -> None:
+        """`unverified` is still printed; the allowance is visible on the line."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            config = _build(
+                root, {"delegating.py": DELEGATING}, {"test_delegating.py": DELEGATING_SIBLING}
+            )
+            result = _run(
+                root, config, "--allow-unverified", "delegating.py"
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("UNVERIFIED (allowed)", result.stdout)
+
+    def test_an_allowance_for_a_guard_that_is_verified_now_is_reported(self) -> None:
+        """A fixed guard leaves its excuse behind; that stale entry is a finding."""
+        result = self._allow(
+            {"biting.py": BITING}, {}, "--allow-unverified", "biting.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("verified now", result.stdout + result.stderr)
+
+    def test_an_allowance_for_a_guard_the_run_never_judged_is_reported(self) -> None:
+        result = self._allow(
+            {"biting.py": BITING}, {}, "--allow-unverified", "gone.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("no guard of that name was judged", result.stdout + result.stderr)
+
+    def test_an_allowance_never_waives_a_finding(self) -> None:
+        """The statuses this tool exists to raise are not a judgement it may waive."""
+        result = self._allow(
+            {"fake.py": FAKE_GREEN}, {}, "--allow-unverified", "fake.py"
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("not a judgement this flag may waive", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

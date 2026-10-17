@@ -402,3 +402,28 @@ repos:
         language: system
         pass_filenames: false
         files: ^(backend/app/|frontend/src/|\.claude/scripts/check-file-sizes\.py)
+
+      # The guards' own --self-test is checked, not just run: a self-test that
+      # always prints PASS looks identical to one that works whenever the tree
+      # is clean, and the Guards self-test step trusts every guard because its
+      # --self-test proves it still fires. This one silences a copy of each
+      # guard and requires the self-test to go red, which is the property a
+      # self-test has no other way to prove.
+      #
+      # scene-debt-ratchet.py is allowed by name, not waived: its --self-test
+      # hands the judgement to a sibling test in another process, so silencing
+      # the copy cannot reach it and the run is unverified rather than green.
+      # The allowance is checked — naming a guard that is verified now, or one
+      # with a finding, is itself a failure — and a finding is never waived.
+      #
+      # Scoped to the guard tree and the file that says which guards there are:
+      # this runs every guard's self-test twice (about two minutes on the work
+      # machine), which is not a price a commit that cannot have changed a
+      # guard should pay. CI runs it against all files, as it does for every
+      # hook here.
+      - id: guard-self-tests
+        name: every guard's self-test goes red when the guard is silenced
+        entry: python3 .claude/scripts/verify-guard-self-tests.py --allow-unverified scene-debt-ratchet.py
+        language: system
+        pass_filenames: false
+        files: ^(\.claude/scripts/|\.pre-commit-config\.yaml$)

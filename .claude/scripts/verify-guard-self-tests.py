@@ -80,9 +80,23 @@ inline `--self-test` that judges the guard in its own process to be checked.
     python3 .claude/scripts/verify-guard-self-tests.py --guard check-file-sizes.py
     python3 .claude/scripts/verify-guard-self-tests.py --json
     python3 .claude/scripts/verify-guard-self-tests.py --self-test
+    python3 .claude/scripts/verify-guard-self-tests.py \
+        --allow-unverified scene-debt-ratchet.py
 
-Exit code: 0 every guard in scope is covered and biting; 1 at least one finding;
-2 nothing to report but something could not be judged.
+AN ALLOWED EXCUSE IS A CLAIM THIS TOOL CHECKS. `--allow-unverified NAME` is
+for a guard whose self-test hands its judgement to another process, which the
+silencing pass cannot reach: the run is a real `unverified`, not a pass, and it
+is tolerated by name only. The allowance is validated like every other claim
+here — naming a guard the run did not judge, a guard that is verified now, or
+a guard with a finding, is itself a finding, so a stale or overbroad excuse
+cannot outlive its reason. What it may not do is excuse `missing-self-test`,
+`self-test-not-green` or `self-test-does-not-bite`: those are the failures this
+tool exists to raise, and a flag that waives them would be the empty check.
+
+Exit code: 0 every guard in scope is covered and biting (an allowed
+`unverified` is reported, not counted); 1 at least one finding, including a
+spent or unknown allowance; 2 nothing to report but something could not be
+judged.
 """
 
 from __future__ import annotations
@@ -95,6 +109,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import unittest
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1993,7 +2008,40 @@ def evaluate(
     return results
 
 
-def report(results: list[tuple[str, Path, Outcome, bool]]) -> tuple[int, int]:
+def allowance_problems(
+    results: list[tuple[str, Path, Outcome, bool]], allowed: set[str]
+) -> list[str]:
+    """Every way an `--allow-unverified` entry fails to be a true excuse.
+
+    The flag names a guard whose run is `unverified` for a reason this tool
+    cannot see past. Naming one it did not judge, one that is verified now, or
+    one with a finding is a problem rather than a waiver: an excuse that stays
+    after its reason is gone is how a list of exceptions becomes the place the
+    next real failure hides.
+    """
+    judged = {path.name: outcome for _, path, outcome, in_scope in results if in_scope}
+    problems: list[str] = []
+    for name in sorted(allowed):
+        outcome = judged.get(name)
+        if outcome is None:
+            problems.append(
+                f"--allow-unverified names {name}, but no guard of that name was judged: delete it"
+            )
+        elif outcome.status == "ok":
+            problems.append(
+                f"--allow-unverified excuses {name}, but it is verified now: delete the entry"
+            )
+        elif outcome.status in FINDING_STATUSES:
+            problems.append(
+                f"--allow-unverified excuses {name}, but that is a finding "
+                f"({outcome.status}), not a judgement this flag may waive"
+            )
+    return problems
+
+
+def report(
+    results: list[tuple[str, Path, Outcome, bool]], allowed: set[str] = set()
+) -> tuple[int, int]:
     checked = [item for item in results if item[3]]
     skipped = [item for item in results if not item[3]]
     if not checked:
@@ -2003,17 +2051,72 @@ def report(results: list[tuple[str, Path, Outcome, bool]]) -> tuple[int, int]:
     findings = 0
     unverified = 0
     for _hook, path, outcome, _ in checked:
-        label = outcome.status.upper()
+        excused = outcome.status == "unverified" and path.name in allowed
+        label = "UNVERIFIED (allowed)" if excused else outcome.status.upper()
         print(f"{label:<22} {path.name:<{width}}  {outcome.detail}")
         if outcome.status in FINDING_STATUSES:
             findings += 1
             print(f"  {'':<20} 修法：{HINTS[outcome.status]}")
-        elif outcome.status == "unverified":
+        elif outcome.status == "unverified" and not excused:
             unverified += 1
     if skipped:
         print(f"（另有 {len(skipped)} 个本地钩子的脚本不在 .claude/scripts 下，未核验：{', '.join(path.name for _, path, _, _ in skipped)}）")
     print(f"共 {len(checked)} 个守卫：有发现 {findings} 个，判不了 {unverified} 个")
     return findings, unverified
+
+
+def flags_a_fake_green_self_test() -> None:
+    """Exit 1 unless a fake-green self-test still comes back as a finding.
+
+    This guard is itself one of the guards `--self-test` judges, so it owes the
+    property it asks of every other guard: silencing its own failure signals has
+    to take the self-test down. The expectation table in `self_test()` reads
+    `evaluate` directly, so a silenced `main` — the value that becomes the exit
+    status — leaves every row green. This asks the question that reaches it:
+    run this guard on a tree whose only guard has a self-test that always prints
+    PASS, and require exit 1. The run is a subprocess of this file, so under
+    verification it is the silencing *copy* that answers, and its `return 1`
+    comes back as 0.
+    """
+    with tempfile.TemporaryDirectory(prefix="verify-guard-self-tests-probe-") as raw:
+        root = Path(raw)
+        scripts = root / GUARD_DIR
+        scripts.mkdir(parents=True)
+        fake = scripts / "fake-green-guard.py"
+        fake.write_text(SYNTHETIC_GUARDS[fake.name], encoding="utf-8")
+        config = root / CONFIG_NAME
+        config.write_text(
+            "repos:\n  - repo: local\n    hooks:\n"
+            f"      - id: {fake.stem}\n"
+            f"        entry: python3 {(GUARD_DIR / fake.name).as_posix()}\n"
+            "        language: system\n",
+            encoding="utf-8",
+        )
+        try:
+            done = subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--root",
+                    str(root),
+                    "--config",
+                    str(config),
+                ],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=DEFAULT_TIMEOUT,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"SELF-TEST FAIL: 假绿探针跑不起来：{exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+    if done.returncode != 1:
+        print(
+            "SELF-TEST FAIL: 一个自测永远印 PASS 的守卫应当以 1 报出，"
+            f"得到 {done.returncode}：{_tail(done.stdout, done.stderr)}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 
 def self_test() -> int:
@@ -2094,6 +2197,10 @@ def self_test() -> int:
         "bare-exit-guard.py": "self-test-does-not-bite",
     }
     failures = []
+    try:
+        flags_a_fake_green_self_test()
+    except SystemExit as exc:
+        failures.append(f"假绿探针没有通过（退出码 {exc.code}）")
     for name, want in expected.items():
         got = results.get(name)
         if got is None:
@@ -4714,6 +4821,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT, help="单个自测的秒数上限")
     parser.add_argument("--json", action="store_true", help="按 JSON 输出，供机器读")
     parser.add_argument("--self-test", action="store_true", help="证明核验器本身能区分真假自测")
+    parser.add_argument(
+        "--allow-unverified",
+        action="append",
+        default=[],
+        metavar="SCRIPT",
+        help="按名字容忍一个判不了的守卫（只认 unverified，不认发现），可重复；条目会自检",
+    )
     args = parser.parse_args(argv)
 
     if args.self_test:
@@ -4721,14 +4835,25 @@ def main(argv: list[str] | None = None) -> int:
 
     root = args.root.resolve()
     config = (args.config or (root / CONFIG_NAME)).resolve()
+    allowed = set(args.allow_unverified)
     results = evaluate(config, root, args.timeout, set(args.guard) or None)
+    excuses = allowance_problems(results, allowed)
+    if excuses:
+        for problem in excuses:
+            print(problem, file=sys.stderr)
 
     if args.json:
         print(
             json.dumps(
                 {
                     "guards": [
-                        {"hook": hook, "script": path.name, "status": outcome.status, "detail": outcome.detail}
+                        {
+                            "hook": hook,
+                            "script": path.name,
+                            "status": outcome.status,
+                            "detail": outcome.detail,
+                            "allowed": outcome.status == "unverified" and path.name in allowed,
+                        }
                         for hook, path, outcome, _ in results
                     ]
                 },
@@ -4741,9 +4866,14 @@ def main(argv: list[str] | None = None) -> int:
             unverified = 1
         else:
             findings = sum(1 for item in in_scope if item[2].status in FINDING_STATUSES)
-            unverified = sum(1 for item in in_scope if item[2].status == "unverified")
+            unverified = sum(
+                1
+                for item in in_scope
+                if item[2].status == "unverified" and item[1].name not in allowed
+            )
     else:
-        findings, unverified = report(results)
+        findings, unverified = report(results, allowed)
+    findings += len(excuses)
     if findings:
         return 1
     if unverified:
