@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -506,6 +507,148 @@ class ReviewArtifactGuardTests(unittest.TestCase):
             }
         )
         self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_bare_name_glued_to_chinese_on_the_right_is_not_a_citation(self) -> None:
+        # `报告.pdf验收` may be a longer Chinese filename, like the left side.
+        root = self._tree(
+            {"artifacts/报告.pdf": b"%PDF-1.4", "note.md": "见 报告.pdf验收 这一份。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_an_encoded_bare_name_glued_to_chinese_is_not_a_citation(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/报告.pdf": b"%PDF-1.4",
+                "note.md": "见 %E6%8A%A5%E5%91%8A.pdf多 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_path_under_another_directory_is_not_a_citation(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[另外](other/artifacts/kept.pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_prose_path_under_another_directory_is_not_a_citation(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "见 other/artifacts/kept.pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_an_external_url_is_not_a_citation(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[线上](https://example.com/artifacts/kept.pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_malformed_link_does_not_swallow_the_next_link(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[a]( [b](artifacts/kept.pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_destination_that_starts_another_link_still_finds_the_inner_one(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[x]( [y](artifacts/kept.pdf))\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_path_after_a_footnote_label_counts(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[^1]: 见 artifacts/kept.pdf\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_an_unclosed_angled_destination_does_not_leak_into_prose(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "[x](<kept.pdf\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_bare_name_before_an_ellipsis_is_not_a_citation(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "见 kept.pdf… 这一份。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_link_title_containing_a_link_does_not_cite_it(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "artifacts/other.pdf": b"%PDF-1.4",
+                "note.md": '[a](artifacts/kept.pdf "see ](artifacts/other.pdf)")\n',
+            }
+        )
+        result = self._run(root)
+        self.assertEqual(result.returncode, ORPHAN, result.stderr)
+        self.assertIn("other.pdf", result.stderr)
+
+    def test_a_prose_repository_relative_path_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "见 docs/reviews/artifacts/kept.pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_note_full_of_percent_signs_is_checked_quickly(self) -> None:
+        start = time.monotonic()
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "%2G!" * 50000 + "\n[产物](artifacts/kept.pdf)\n",
+            }
+        )
+        result = self._run(root)
+        elapsed = time.monotonic() - start
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertLess(elapsed, 10.0)
+
+    def test_a_broken_symlink_artifacts_directory_cannot_be_judged(self) -> None:
+        root = self._tree({"note.md": "# 评审\n"})
+        (root / "docs" / "reviews" / "artifacts").symlink_to(
+            root / "docs" / "reviews" / "missing"
+        )
+        result = self._run(root)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
+
+    def test_a_broken_symlink_inside_artifacts_does_not_stop_the_check(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[产物](artifacts/kept.pdf)\n",
+            }
+        )
+        (root / "docs" / "reviews" / "artifacts" / "broken.md").symlink_to(
+            root / "docs" / "reviews" / "artifacts" / "missing.md"
+        )
+        result = self._run(root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_a_missing_artifacts_directory_cannot_be_judged(self) -> None:
+        root = self._tree({"note.md": "# 评审\n"})
+        result = self._run(root)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
 
     def test_a_broken_symlink_note_cannot_be_judged(self) -> None:
         root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4"})

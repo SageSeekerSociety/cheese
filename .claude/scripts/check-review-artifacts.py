@@ -19,9 +19,13 @@ What counts as a citation:
     (including `<artifacts/2026 review.pdf>`, balanced parentheses, backslash
     escapes and a title after the destination), reference definitions and
     HTML `href` attributes. A fragment or query (`#page=2`, `?raw=1`) is not
-    part of the name. A destination that is just `kept.pdf` does not count: it
-    resolves beside the note, not inside `artifacts/`;
-  * the literal path `artifacts/<name>` in prose;
+    part of the name. The destination must be `artifacts/<name>`, a path
+    relative to it (`../artifacts/<name>`, `./artifacts/<name>`), or
+    `docs/reviews/artifacts/<name>`. A destination that is just `kept.pdf`
+    does not count: it resolves beside the note, not inside `artifacts/`.
+    Neither does one with another directory in front (`other/artifacts/…`) or
+    an external URL (`https://host/artifacts/…`);
+  * the literal path `artifacts/<name>` in prose, under the same prefix rules;
   * a bare `<name>` in prose, when it stands on its own — delimited by spaces
     or punctuation. A bare name glued to Chinese prose (`详见kept.pdf`) is not
     counted, because no rule can tell it apart from a longer Chinese filename
@@ -41,9 +45,10 @@ keeps `review.pdf` from being satisfied by `trial-review.pdf`,
 `v1+fix.pdf` or `artifacts/run-42/detail.pdf` — all different artifacts. Names
 containing spaces, parentheses, `+` or a literal `%` are matched literally.
 
-Cannot judge is not a pass: a missing `docs/reviews/` directory or a note that
-cannot be read exits 2 and says so, because a directory move must not turn this
-guard into a green no-op.
+Cannot judge is not a pass: a missing `docs/reviews/` or `docs/reviews/artifacts/`
+directory, a broken symlink where either should be, or a note that cannot be
+read exits 2 and says so, because a directory move must not turn this guard
+into a green no-op.
 
 Usage: check-review-artifacts.py             check the tree
        check-review-artifacts.py --root DIR  check another tree (tests)
@@ -74,6 +79,11 @@ DOC_SUFFIXES = (".md",)
 NAME_CONTINUATION = frozenset(
     ascii_letters + digits + "_-." + "%+~@" + "％＋／＼～＠"
 )
+
+#: Characters that mean "this name was cut short", not "the name ends here".
+ELLIPSIS = frozenset("…‥")
+
+HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 
 #: Backslash escapes resolve in prose as well as in link destinations.
 ESCAPED_PUNCTUATION = re.compile(r"\\([%s])" % re.escape(punctuation))
@@ -134,15 +144,23 @@ def _parse_destination(text: str, index: int) -> tuple[str | None, int]:
     return "".join(buffer), index
 
 
-def _parse_inline_link(text: str, index: int) -> tuple[str | None, int | None]:
-    """Parse `](destination "title")` with index just after `](`."""
+def _parse_inline_link(text: str, index: int) -> tuple[str | None, int, bool]:
+    """Parse `](destination "title")` with index just after `](`.
+
+    Returns (path, end, ok). `end` is where the destination (and title, if any)
+    stopped; the caller hides that text from prose whether or not the link was
+    well formed. `ok` says whether a closing `)` was found.
+    """
     path, after = _parse_destination(text, index)
     if path is None:
-        return None, None
+        return None, after, False
+    if "](" in path:
+        # A destination cannot contain another link; treat the text as
+        # malformed so the inner link is still scanned.
+        return path, after, False
     length = len(text)
     index = after
-    # A title may sit on the next line, and a malformed link must still hide
-    # its destination: otherwise `[x](kept.pdf` becomes a prose mention.
+    # A title may sit on the next line.
     while index < length and text[index] in " \t\n":
         index += 1
     if index < length and text[index] in "\"'":
@@ -151,7 +169,7 @@ def _parse_inline_link(text: str, index: int) -> tuple[str | None, int | None]:
         while index < length and text[index] != quote:
             index += 2 if text[index] == "\\" else 1
         if index >= length:
-            return path, after
+            return path, after, False
         index += 1
         while index < length and text[index] in " \t\n":
             index += 1
@@ -160,33 +178,47 @@ def _parse_inline_link(text: str, index: int) -> tuple[str | None, int | None]:
         while index < length and text[index] != ")":
             index += 2 if text[index] == "\\" else 1
         if index >= length:
-            return path, after
+            return path, after, False
         index += 1
         while index < length and text[index] in " \t\n":
             index += 1
     if index < length and text[index] == ")":
-        return path, index + 1
-    return path, after
+        return path, index + 1, True
+    return path, after, False
+
+
+def _line_end(text: str, index: int) -> int:
+    newline = text.find("\n", index)
+    return len(text) if newline < 0 else newline
 
 
 def _link_spans(text: str):
-    """Yield (path, start, end) for every link destination in a document."""
+    """Yield (path, start, end) for every link destination in a document.
+
+    Malformed links yield an empty path with the span that must stay hidden
+    from prose, so `[x](kept.pdf` cannot pass as a prose mention.
+    """
     index = 0
     while True:
         found = text.find("](", index)
         if found < 0:
             break
-        path, end = _parse_inline_link(text, found + 2)
-        if path is None or end is None:
+        path, end, ok = _parse_inline_link(text, found + 2)
+        if not ok:
+            # Hide the rest of the line — but resume right after `](`, so a
+            # valid link later on that line is still found. The hidden span
+            # only removes prose; link destinations are read separately.
+            yield "", found, _line_end(text, found + 2)
             index = found + 2
             continue
         yield path, found, end
         index = end
 
     for match in REF_DEFINITION.finditer(text):
-        path, _ = _parse_destination(text, match.start(1))
-        if path is not None:
-            yield path, match.start(), match.end()
+        path, after = _parse_destination(text, match.start(1))
+        # Hide the label and the destination only: the rest of the line may be
+        # prose naming an artifact (`[^1]: 见 artifacts/kept.pdf`).
+        yield path or "", match.start(), max(after, match.start(1))
 
     for match in HTML_HREF.finditer(text):
         path = match.group(1) or match.group(2) or match.group(3) or ""
@@ -201,10 +233,12 @@ def _destination_path(destination: str) -> str:
     return value.replace("\\", "/")
 
 
-def _without_link_destinations(text: str) -> str:
+def _without_link_destinations(text: str, spans=None) -> str:
     out = []
     last = 0
-    for _, start, end in sorted(_link_spans(text), key=lambda span: span[1]):
+    if spans is None:
+        spans = _link_spans(text)
+    for _, start, end in sorted(spans, key=lambda span: span[1]):
         if start < last:
             last = max(last, end)
             continue
@@ -224,15 +258,40 @@ def _normalized(value: str, *, decode: bool = True) -> str:
     return value
 
 
+def _relative_prefix(value: str) -> str:
+    """Drop leading `.`/`..` segments from a path."""
+    parts = [part for part in value.split("/") if part]
+    while parts and parts[0] in (".", ".."):
+        parts.pop(0)
+    return "/".join(parts)
+
+
 def path_names_artifact(value: str, relative: str) -> bool:
     """Whether a link destination resolves to `relative` under the artifacts dir."""
     canonical = f"{ARTIFACTS_DIRNAME}/{relative}"
+    reviews_relative = f"{REVIEWS_DIR.as_posix()}/{canonical}"
+    raw = value.strip()
+    if "://" in raw or raw.startswith("//"):
+        # An external URL whose path happens to end like a local one.
+        return False
     # Percent-decoding is what matches `2026%20review.pdf`; keeping the raw
     # form is what matches a filename that literally contains `%20`.
     for candidate in (_normalized(value), _normalized(value, decode=False)):
-        if candidate == canonical or candidate.endswith(f"/{canonical}"):
+        candidate = _relative_prefix(candidate)
+        if candidate in (canonical, reviews_relative):
             return True
     return False
+
+
+def _prefix_before_separator_ok(text: str, separator: int) -> bool:
+    """Whether the path in front of a `/` is one of the accepted prefixes."""
+    start = separator
+    while start > 0 and (
+        text[start - 1] in NAME_CONTINUATION or text[start - 1] in "/\\"
+    ):
+        start -= 1
+    prefix = _relative_prefix(text[start:separator].replace("\\", "/"))
+    return prefix in ("", REVIEWS_DIR.as_posix())
 
 
 def _left_boundary_ok(text: str, index: int, *, canonical: bool) -> bool:
@@ -243,7 +302,11 @@ def _left_boundary_ok(text: str, index: int, *, canonical: bool) -> bool:
         # `artifacts/` gives the match its shape, so Chinese prose may run
         # straight into it (`详见artifacts/kept.pdf`); only an ASCII filename
         # character means this is the tail of a longer path (`myartifacts/…`).
-        return previous not in NAME_CONTINUATION
+        if previous in NAME_CONTINUATION:
+            return False
+        if previous in "/\\":
+            return _prefix_before_separator_ok(text, index - 1)
+        return True
     # A bare name must stand alone: no filename character of any script and no
     # path separator (`artifacts/run-42/detail.pdf` is not a citation of
     # `detail.pdf`, `详见kept.pdf` is ambiguous with a Chinese filename).
@@ -254,21 +317,29 @@ def _left_boundary_ok(text: str, index: int, *, canonical: bool) -> bool:
     )
 
 
-def _right_boundary_ok(text: str, end: int) -> bool:
+def _right_boundary_ok(text: str, end: int, *, canonical: bool) -> bool:
     if end >= len(text):
         return True
     following = text[end]
-    if following not in NAME_CONTINUATION and following not in "/\\":
-        return True
-    # A full stop that ends the sentence, rather than one that starts another
-    # extension: `kept.pdf.` is a citation, `kept.pdf.bak` is not.
-    return following == "." and (
-        end + 1 >= len(text)
-        or (
-            text[end + 1] not in NAME_CONTINUATION
-            and text[end + 1] not in "/\\"
+    if following in ELLIPSIS:
+        # `kept.pdf…` is a name cut short, not the name itself.
+        return False
+    if following in NAME_CONTINUATION or following in "/\\":
+        # A full stop that ends the sentence, rather than one that starts
+        # another extension: `kept.pdf.` is a citation, `kept.pdf.bak` is not.
+        if following != ".":
+            return False
+        if end + 1 >= len(text):
+            return True
+        after_period = text[end + 1]
+        return (
+            after_period not in NAME_CONTINUATION
+            and after_period not in "/\\"
+            and (canonical or not after_period.isalnum())
         )
-    )
+    # A bare name glued to a word of another script (`报告.pdf验收`) is
+    # ambiguous with a longer name; the `artifacts/` form is not.
+    return canonical or not following.isalnum()
 
 
 def _contains(text: str, candidate: str, *, canonical: bool) -> bool:
@@ -277,69 +348,108 @@ def _contains(text: str, candidate: str, *, canonical: bool) -> bool:
         index = text.find(candidate, start)
         if index < 0:
             return False
-        if _left_boundary_ok(text, index, canonical=canonical) and _right_boundary_ok(
-            text, index + len(candidate)
-        ):
+        if _left_boundary_ok(
+            text, index, canonical=canonical
+        ) and _right_boundary_ok(text, index + len(candidate), canonical=canonical):
             return True
         start = index + 1
 
 
-def _decoded_prefix_matches(text: str, start: int, target: str) -> bool:
-    """Whether a percent-encoded prefix starting at `start` decodes to `target`."""
-    # A decoded character costs at most a few bytes when written as `%XX`, so
-    # a longer prefix cannot decode to this target.
-    limit = min(len(text), start + 12 * len(target) + 12)
-    end = start
-    while end < limit and not text[end].isspace():
-        end += 1
-    for stop in range(start + 1, end + 1):
-        raw = text[start:stop]
-        if "%" not in raw:
-            continue
-        if unquote(raw) == target and _right_boundary_ok(text, stop):
-            return True
+def _decoded_prefix_matches(
+    text: str, start: int, target: str, *, canonical: bool
+) -> bool:
+    """Whether a percent-encoded prefix starting at `start` decodes to `target`.
+
+    Decoding is incremental: the prefix grows one character at a time, and the
+    scan stops at the first character that cannot match the target. Anything
+    else is quadratic on a note full of stray `%`.
+    """
+    # A decoded character costs at most nine raw characters when written as
+    # three `%XX` escapes (one UTF-8 byte in this repository's names).
+    limit = min(len(text), start + 9 * len(target) + 12)
+    decoded: list[str] = []
+    pending = bytearray()
+    index = start
+
+    def prefix_text() -> str:
+        return "".join(decoded)
+
+    while index < limit:
+        char = text[index]
+        if (
+            char == "%"
+            and index + 2 < len(text)
+            and text[index + 1] in HEX_DIGITS
+            and text[index + 2] in HEX_DIGITS
+        ):
+            pending.append(int(text[index + 1 : index + 3], 16))
+            index += 3
+        else:
+            if pending:
+                decoded.extend(bytes(pending).decode("utf-8", "replace"))
+                pending.clear()
+            decoded.append(char)
+            index += 1
+        if pending:
+            try:
+                decoded.extend(bytes(pending).decode("utf-8"))
+            except UnicodeDecodeError:
+                # The prefix ends inside a byte sequence; keep reading.
+                continue
+            pending.clear()
+        prefix = prefix_text()
+        if len(prefix) > len(target) or not target.startswith(prefix):
+            return False
+        if len(prefix) == len(target):
+            return _right_boundary_ok(text, index, canonical=canonical)
     return False
 
 
 def _percent_encoded_citation(prose: str, relative: str) -> bool:
     """Whether the prose percent-encodes a path naming the artifact."""
     canonical = f"{ARTIFACTS_DIRNAME}/{relative}"
-    prefix = f"{ARTIFACTS_DIRNAME}/"
     index = 0
     while True:
-        found = prose.find(prefix, index)
+        found = prose.find(f"{ARTIFACTS_DIRNAME}/", index)
         if found < 0:
             break
-        if _left_boundary_ok(prose, found, canonical=True) and _decoded_prefix_matches(
-            prose, found, canonical
-        ):
+        if _left_boundary_ok(
+            prose, found, canonical=True
+        ) and _decoded_prefix_matches(prose, found, canonical, canonical=True):
             return True
         index = found + 1
 
+    # A bare name may start before an escape (`2026%20review.pdf`), so check
+    # every run of filename characters that contains one — once per run, not
+    # once per `%`.
     index = 0
-    while True:
-        found = prose.find("%", index)
-        if found < 0:
-            break
-        # The name may start before the escape (`2026%20review.pdf`), so walk
-        # back to the start of the word and decode from there.
-        start = found
-        while start > 0 and prose[start - 1] in NAME_CONTINUATION:
-            start -= 1
-        if _left_boundary_ok(prose, start, canonical=False) and _decoded_prefix_matches(
-            prose, start, relative
+    length = len(prose)
+    while index < length:
+        if prose[index] not in NAME_CONTINUATION:
+            index += 1
+            continue
+        start = index
+        encoded = False
+        while index < length and prose[index] in NAME_CONTINUATION:
+            if prose[index] == "%":
+                encoded = True
+            index += 1
+        if (
+            encoded
+            and _left_boundary_ok(prose, start, canonical=False)
+            and _decoded_prefix_matches(prose, start, relative, canonical=False)
         ):
             return True
-        index = found + 1
     return False
 
 
 def names_artifact(text: str, relative: str) -> bool:
     """Whether one note names `relative`, a path under the artifacts dir."""
-    for path, _, _ in _link_spans(text):
+    spans = list(_link_spans(text))
+    for path, _, _ in spans:
         if path_names_artifact(_destination_path(path), relative):
             return True
-    prose = _without_link_destinations(text)
+    prose = _without_link_destinations(text, spans)
     unescaped = ESCAPED_PUNCTUATION.sub(r"\1", prose)
     canonical = f"{ARTIFACTS_DIRNAME}/{relative}"
     for candidate, is_canonical in ((canonical, True), (relative, False)):
@@ -385,6 +495,11 @@ def _document_texts(reviews: Path) -> tuple[list[str], list[Path]]:
     # os.walk reports a directory it cannot enter instead of silently skipping
     # it the way rglob does; a skipped note would turn this guard into a pass.
     for directory, _, filenames in os.walk(reviews, onerror=on_error):
+        resolved = Path(directory).resolve()
+        if resolved == artifacts or artifacts in resolved.parents:
+            # The artifacts subtree is not a document; a broken link in there
+            # is not a reason to refuse to judge the notes.
+            continue
         for name in sorted(filenames):
             path = Path(directory) / name
             if path.suffix.lower() not in DOC_SUFFIXES:
@@ -393,8 +508,6 @@ def _document_texts(reviews: Path) -> tuple[list[str], list[Path]]:
                 note_problem(path, "断链")
                 continue
             if not path.is_file():
-                continue
-            if artifacts in path.resolve().parents:
                 continue
             try:
                 texts.append(path.read_text(encoding="utf-8", errors="replace"))
@@ -419,7 +532,13 @@ def check(root: Path) -> int:
         print(f"无法判断：评审文档目录不存在：{reviews}", file=sys.stderr)
         return 2
     artifacts = reviews / ARTIFACTS_DIRNAME
-    if artifacts.exists() and not os.access(artifacts, os.R_OK | os.X_OK):
+    if artifacts.is_symlink() and not artifacts.exists():
+        print(f"无法判断：评审产物目录是断链符号链接：{artifacts}", file=sys.stderr)
+        return 2
+    if not artifacts.exists():
+        print(f"无法判断：评审产物目录不存在：{artifacts}", file=sys.stderr)
+        return 2
+    if not os.access(artifacts, os.R_OK | os.X_OK):
         print(f"无法判断：评审产物目录读不出来：{artifacts}", file=sys.stderr)
         return 2
     documents, unreadable = _document_texts(reviews)
