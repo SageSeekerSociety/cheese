@@ -354,13 +354,15 @@ def judge_known_flakes(runs: list[Run]) -> dict:
         evidenced.update(
             run.id for run in reds if (run.workflow, run.subject) in green_keys
         )
-        #: 这批红所在的入场里有没有 workflow 取不到（`--jq` 挑窄）的运行。判据对空
-        #: workflow 一律不下结论，渲染那边也就不能说「没有绿」—— 数据里可能就有，
-        #: 只是认不出来。两件事分开说，处置才不会指错方向。
+        #: 这批红有没有「认不出来」的成分，判据因此不下结论。三种都算：红自己
+        #: 缺 workflow、红自己缺入场名（`--jq` 把 head_sha/head_branch 也挑掉了），
+        #: 以及同一入场里另有一轮缺 workflow —— 那条可能就是能坐实的绿。渲染那边
+        #: 于是不能说「没有绿」：数据里可能就有，只是认不出来。两件事分开说，
+        #: 处置才不会指错方向。
         subjects = {run.subject for run in reds if run.subject}
         workflow_unknown = any(
-            not run.workflow and run.subject in subjects for run in runs
-        )
+            not red.workflow or not red.subject for red in reds
+        ) or any(not run.workflow and run.subject in subjects for run in runs)
         case_rows.append(
             {
                 "flake": flake_id,
@@ -519,7 +521,7 @@ def render(report: dict) -> str:
         if row["verdict"] == "confirmed":
             lines.append(f"  [坐实]   {row['case']}")
             lines.append(
-                "          同 SHA 红绿："
+                "          同一入场红绿："
                 + "、".join(
                     f"{subject}（绿运行 {row['greens'][subject]}）"
                     for subject in row["confirmed"]
@@ -530,10 +532,12 @@ def render(report: dict) -> str:
             lines.append(f"  [未坐实] {row['case']}")
             if row["workflow_unknown"]:
                 lines.append(
-                    "          取数里 workflow 是空的，判不了同 SHA 有没有绿：先修取数，别当偶发放行"
+                    "          取数里 workflow 或入场名是空的，判不了同 SHA 有没有绿：先修取数，别当偶发放行"
                 )
             else:
-                lines.append("          只有红、没有同 SHA 的绿：按真故障读，别当偶发放行")
+                lines.append(
+                    "          没有同一条 workflow、同一次入场上的绿：按真故障读，别当偶发放行"
+                )
         lines.append(f"          档案 {row['flake']} — {row['title']}")
         lines.append(f"          处置 {row['action']}")
         lines.append(f"          依据 {_clip(row['seen'], 96)}")
@@ -1126,8 +1130,94 @@ def _self_test_flake_criterion() -> None:
     thin_text = render(
         analyze(no_workflow, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS)
     )
-    assert "workflow 是空的，判不了同 SHA 有没有绿" in thin_text, thin_text
-    assert "只有红、没有同 SHA 的绿" not in thin_text, thin_text
+    assert "workflow 或入场名是空的，判不了同 SHA 有没有绿" in thin_text, thin_text
+    assert "没有同一条 workflow、同一次入场上的绿" not in thin_text, thin_text
+
+    # 入场身份也被 `--jq` 挑掉（head_sha/head_branch 都没了）：还是判不了。
+    # `workflow_unknown` 只看「subject 非空的红」，这一档就会漏回那句错话。
+    no_identity = [
+        failed(
+            28,
+            67,
+            "",
+            planner,
+            "AssertionError: assert 'GroupAggregate' not in plan",
+            workflow="",
+            event="merge_group",
+        )
+    ]
+    no_id = judge_known_flakes(no_identity)
+    assert no_id["cases"][0]["verdict"] == "unproven", no_id["cases"]
+    assert no_id["cases"][0]["workflow_unknown"] is True, no_id["cases"]
+    no_id_text = render(
+        analyze(no_identity, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS)
+    )
+    assert "workflow 或入场名是空的，判不了同 SHA 有没有绿" in no_id_text, no_id_text
+
+    # 同一入场在另一条 workflow 上绿过、这条 workflow 上没绿：判据是对的，
+    # 那句话也得对 —— 不能说成「没有同 SHA 的绿」，数据里就有一条。
+    other_wf_unproven = [
+        failed(
+            29,
+            68,
+            "d" * 40,
+            planner,
+            "AssertionError: assert 'GroupAggregate' not in plan",
+            head_branch=f"gh-readonly-queue/main/pr-4024-{head}",
+            event="merge_group",
+        ),
+        Run(
+            30,
+            "success",
+            "2026-10-16T10:10:00Z",
+            head_sha="e" * 40,
+            head_branch=f"gh-readonly-queue/main/pr-4024-{head}",
+            workflow=frontend,
+            event="merge_group",
+        ),
+        # 另一条入场缺 workflow，和这条红无关：过宽的写法（见空 workflow 就翻成
+        # 「判不了」）会把它算进来，这里就红。
+        Run(
+            31,
+            "success",
+            "2026-10-16T10:20:00Z",
+            workflow="",
+            event="merge_group",
+        ),
+    ]
+    unproven_wf = judge_known_flakes(other_wf_unproven)
+    assert unproven_wf["cases"][0]["verdict"] == "unproven", unproven_wf["cases"]
+    assert unproven_wf["cases"][0]["workflow_unknown"] is False, unproven_wf["cases"]
+    other_wf_text = render(
+        analyze(other_wf_unproven, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS)
+    )
+    assert "没有同一条 workflow、同一次入场上的绿" in other_wf_text, other_wf_text
+    assert "没有同 SHA 的绿" not in other_wf_text, other_wf_text
+
+    # 同一入场里那轮绿缺 workflow：它可能就是能坐实的那条，判不了，不许说成没绿。
+    unknown_green = [
+        failed(
+            32,
+            69,
+            "1" * 40,
+            planner,
+            "AssertionError: assert 'GroupAggregate' not in plan",
+            head_branch=f"gh-readonly-queue/main/pr-4025-{head}",
+            event="merge_group",
+        ),
+        Run(
+            33,
+            "success",
+            "2026-10-16T10:30:00Z",
+            head_sha="2" * 40,
+            head_branch=f"gh-readonly-queue/main/pr-4025-{head}",
+            workflow="",
+            event="merge_group",
+        ),
+    ]
+    unknown_green_case = judge_known_flakes(unknown_green)["cases"][0]
+    assert unknown_green_case["verdict"] == "unproven", unknown_green_case
+    assert unknown_green_case["workflow_unknown"] is True, unknown_green_case
 
     # 不在档案里的用例不许被认领。
     assert known_flake_for_case("tests/b.py::test_other", "AssertionError: x") is None
@@ -1141,6 +1231,10 @@ def _self_test_flake_criterion() -> None:
     text = render(analyze(runs, top=DEFAULT_TOP, min_tests=DEFAULT_CONFLICT_MIN_TESTS))
     for fragment in ("[已知偶发判据]", "[坐实]", "[未坐实]", "[运行级档案]"):
         assert fragment in text, text
+    # 这份样本的 workflow 一个不缺：未坐实那一行必须走「只是没绿」那一句。
+    # `workflow_unknown` 恒真、或宽到「数据里有任何一条空 workflow 就算」，这里就红。
+    assert "没有同一条 workflow、同一次入场上的绿" in text, text
+    assert "workflow 或入场名是空的" not in text, text
 
     def judged_with(criterion, sample: list[Run] | None = None) -> dict:
         """换掉判据再判一遍 —— 用来证明下面每份样本都真的区分得开。
