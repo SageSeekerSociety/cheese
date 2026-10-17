@@ -1,12 +1,12 @@
 """The queue's scope covers every unlanded entry, not just its last hop."""
 
+import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-
+from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("required-ci.py")
 
@@ -58,6 +58,7 @@ class QueueBaselineTests(unittest.TestCase):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "scope", self.prefix],
             cwd=cwd or self.repo,
+            check=False,
             env=env,
             capture_output=True,
             text=True,
@@ -75,6 +76,28 @@ class QueueBaselineTests(unittest.TestCase):
         result, outputs = self.scope()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_cumulative(outputs)
+        self.assertIn(f"Event base: {self.prefix}", result.stdout)
+        self.assertIn(f"Effective base: {self.landed}", result.stdout)
+        self.assertIn("unlanded queue prefix", result.stdout)
+        self.assertIn("whose changes remain in coverage", result.stdout)
+
+    def test_receipt_base_is_the_base_used_by_the_suite_diff(self):
+        result, outputs = self.scope()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt_base = next(
+            line.partition(": ")[2]
+            for line in result.stdout.splitlines()
+            if line.startswith("Effective base: ")
+        )
+        changed = set(
+            self.git("diff", "--name-only", "--no-renames", receipt_base, self.head).splitlines()
+        )
+        self.assertEqual(
+            changed,
+            {"backend/app/queued.py", ".claude/scripts/narrow.py"},
+        )
+        self.assertEqual(outputs["backend"], "true")
+        self.assertEqual(outputs["frontend"], "false")
 
     def test_non_queue_keeps_the_supplied_base(self):
         result, outputs = self.scope(event="pull_request")
@@ -110,7 +133,7 @@ class QueueBaselineTests(unittest.TestCase):
         self.assertNotEqual(
             subprocess.run(
                 ["git", "rev-parse", "--verify", "refs/remotes/origin/main"],
-                cwd=checkout, env=self.env, capture_output=True,
+                cwd=checkout, env=self.env, check=False, capture_output=True,
             ).returncode,
             0,
         )
@@ -133,6 +156,51 @@ class QueueBaselineTests(unittest.TestCase):
         result, outputs = self.scope()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(outputs, {})
+
+    def check(self, **github_values):
+        env = dict(self.env)
+        for key in ("GITHUB_SERVER_URL", "GITHUB_REPOSITORY", "GITHUB_RUN_ID"):
+            env.pop(key, None)
+        env.update(
+            GITHUB_EVENT_NAME="merge_group",
+            CI_NEEDS=json.dumps({"scope": {"result": "success", "outputs": {"tier": "full"}}}),
+            **github_values,
+        )
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), "check"],
+            cwd=self.repo,
+            check=False,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_check_failure_without_run_environment_says_no_link(self):
+        for values in (
+            {},
+            {"GITHUB_SERVER_URL": "https://github.example.test", "GITHUB_RUN_ID": ""},
+            {"GITHUB_SERVER_URL": "", "GITHUB_REPOSITORY": "owner/repo", "GITHUB_RUN_ID": "12345"},
+            {"GITHUB_SERVER_URL": "https://github.example.test", "GITHUB_REPOSITORY": "", "GITHUB_RUN_ID": "12345"},
+        ):
+            with self.subTest(values=values):
+                result = self.check(**values)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("无链接", result.stderr)
+                self.assertNotIn("runs/None", result.stderr)
+
+    def test_each_check_failure_includes_the_actions_run_url(self):
+        result = self.check(
+            GITHUB_SERVER_URL="https://github.example.test/",
+            GITHUB_REPOSITORY="owner/repo",
+            GITHUB_RUN_ID="12345",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        lines = result.stderr.splitlines()
+        self.assertTrue(lines)
+        self.assertTrue(
+            all("https://github.example.test/owner/repo/actions/runs/12345" in line for line in lines),
+            result.stderr,
+        )
 
 
 if __name__ == "__main__":
