@@ -88,16 +88,19 @@ function memberPath(node, ctx = {}) {
       const value = getter ? unwrap(argument.body) : argument
       const inner = memberPath(value, ctx)
       // `toValue(config).value` names a field: the call already unwrapped one level.
-      // A getter writes its accesses inside the callback, where they unwrap as usual
+      // What it unwrapped is the path it was given, so the depth is recorded and not
+      // just a flag: `toValue(source).topicId.value` unwrapped the scope container,
+      // not `topicId`, and the ref in `topicId` still unwraps. A getter writes its
+      // accesses inside the callback, where they unwrap as usual
       // (`computed(() => x.value)` watches x), so its path keeps its own reading.
-      if (inner && !getter) inner.unwrapped = true
+      if (inner && !getter) inner.unwrappedAt = inner.path.length
       return inner
     }
     return null
   }
   if (ts.isIdentifier(node)) {
     const alias = ctx.aliases?.get(node.text)
-    if (alias) return { root: alias.root, path: [...alias.path], unwrapped: alias.unwrapped }
+    if (alias) return { root: alias.root, path: [...alias.path], unwrappedAt: alias.unwrappedAt }
     return { root: node.text, path: [] }
   }
   if (ts.isPropertyAccessExpression(node)) {
@@ -168,15 +171,23 @@ function propertyName(node) {
 // parameter a call site handed a ref — is at the value already, so every `.value`
 // written there names a field. A `$local.` key names a local's value the same way the
 // component writes it.
-function refSegments(segments, asRef, unwrapped) {
-  if (!asRef || unwrapped || segments[0] !== 'value') return segments
+function refSegments(segments, asRef, unwrappedAt, consumed = 0) {
+  // The call unwrapped the chain as written up to `unwrappedAt` segments, so a
+  // `.value` at that depth or later names a field. `consumed` is how many segments
+  // the walk has already taken past that point: a scope's own property is taken by
+  // `memberKeys`, and the unwrap happened below it.
+  if (typeof unwrappedAt === 'number') {
+    const depth = unwrappedAt - consumed
+    if (depth >= 0 && depth < segments.length) return segments.slice(depth)
+  }
+  if (!asRef || segments[0] !== 'value') return segments
   return segments.slice(1)
 }
 
-function mapSegments(keys, segments, unwrapped) {
+function mapSegments(keys, segments, unwrappedAt, consumed = 0) {
   const out = new Set()
   for (const key of keys) {
-    const parts = refSegments(segments, key.startsWith('$local.'), unwrapped)
+    const parts = refSegments(segments, key.startsWith('$local.'), unwrappedAt, consumed)
     out.add(parts.length ? `${key}.${parts.join('.')}` : key)
   }
   return out
@@ -185,7 +196,7 @@ function mapSegments(keys, segments, unwrapped) {
 function memberKeys(node, ctx) {
   const member = memberPath(node, ctx)
   if (!member) return null
-  const { root, unwrapped } = member
+  const { root, unwrappedAt } = member
   // Both sides of the split must spell the same path for `props.config` and
   // `props.config.value` to stay apart: a prop path keeps its segments as written.
   const path = [...member.path]
@@ -195,23 +206,25 @@ function memberKeys(node, ctx) {
     if (path.length) {
       const [head, ...rest] = path
       const mapped = ctx.scopeProps?.get(head)
-      if (mapped) for (const key of mapSegments(mapped, rest, unwrapped)) out.add(key)
+      // `head` is this call's own segment, so an unwrap recorded at its depth
+      // belongs to it (the call unwrapped the property, not the container).
+      if (mapped) for (const key of mapSegments(mapped, rest, unwrappedAt, 1)) out.add(key)
       // The props object itself was handed over: the segments are prop names.
       if (ctx.scopeWholeProps) out.add(path.join('.'))
     } else if (ctx.scopeWholeProps) {
       out.add('props')
     }
     for (const [key, asRef] of ctx.scopeValue ?? []) {
-      const parts = refSegments(path, asRef, unwrapped)
+      const parts = refSegments(path, asRef, unwrappedAt)
       out.add(parts.length ? `${key}.${parts.join('.')}` : key)
     }
     if (out.size) return out
     return new Set([path.length ? `$scope.${path.join('.')}` : '$scope'])
   }
-  if (ctx.bindings?.has(root)) return mapSegments(ctx.bindings.get(root), path, unwrapped)
+  if (ctx.bindings?.has(root)) return mapSegments(ctx.bindings.get(root), path, unwrappedAt)
   // Local names get their own namespace: a ref called `topicId` must not stand in
   // for a lost `props.topicId` watch.
-  const parts = refSegments(path, true, unwrapped)
+  const parts = refSegments(path, true, unwrappedAt)
   return new Set([parts.length ? `$local.${root}.${parts.join('.')}` : `$local.${root}`])
 }
 

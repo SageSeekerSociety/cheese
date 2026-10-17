@@ -832,6 +832,62 @@ export function usePanel(sid: { value: string }) {
   assert.match(result.output, /1 checked/)
 })
 
+test('unwrapping the scope container leaves its ref properties unwrapped', (t) => {
+  // `toValue(source)` unwraps the scope object, not the refs it carries: `s.topicId`
+  // is still the ref, so the `.value` after it is its unwrap and both sides agree.
+  const script = `import { ref, watch } from 'vue'
+
+const topicId = ref('')
+const loading = ref(false)
+watch(() => topicId.value, () => { loading.value = false })`
+  const head = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topicId = ref('')
+const { loading } = usePanel(() => ({ topicId }))`
+  const composed = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch, type Ref } from 'vue'
+
+export function usePanel(source: () => { topicId: Ref<string> }) {
+  const loading = ref(false)
+  const s = toValue(source)
+  watch(() => s.topicId.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(composed.status, 0, composed.output)
+  assert.match(composed.output, /1 checked/)
+
+  // The same reading must not swallow a field: this composable watches the ref
+  // `topic`, not the field inside the object it holds, so the field is lost.
+  const fields = `import { ref, watch } from 'vue'
+
+const topic = ref({ value: '' })
+const loading = ref(false)
+watch(() => topic.value.value, () => { loading.value = false })`
+  const headFields = `import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const topic = ref({ value: '' })
+const { loading } = usePanel(() => ({ topic }))`
+  const shallow = split(t, {
+    script: fields,
+    head: headFields,
+    composableSource: `import { ref, toValue, watch, type Ref } from 'vue'
+
+export function usePanel(source: () => { topic: Ref<{ value: string }> }) {
+  const loading = ref(false)
+  const s = toValue(source)
+  watch(() => s.topic.value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(shallow.status, 1, shallow.output)
+  assert.match(shallow.output, /topic\.value/)
+})
+
 test('a local ref destructured into the composable keeps its unwrap', (t) => {
   const script = `import { ref, watch } from 'vue'
 
