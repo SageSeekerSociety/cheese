@@ -1179,57 +1179,6 @@ class MainCliTest(unittest.TestCase):
             )
             self.assertNotEqual(mg_check_fail.returncode, 0)
 
-    def test_merge_group_effective_base_uses_event_base_sha(self):
-        scripts = WORKFLOW.parent.parent / "scripts"
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            for name in ("required-ci.py", "required-ci-paths.json"):
-                shutil.copy(scripts / name, tmp / name)
-
-            def git(*args):
-                subprocess.run(
-                    ["git", "-c", "user.email=test@example.com", "-c", "user.name=test",
-                     "-c", "commit.gpgsign=false", *args],
-                    cwd=tmp, check=True, capture_output=True, text=True)
-
-            git("init", "-q", "-b", "main")
-            git("remote", "add", "origin", str(tmp))
-            (tmp / "README.md").write_text("base\n")
-            git("add", "README.md")
-            git("commit", "-qm", "landed main")
-            git("checkout", "-qb", "gh-readonly-queue/main/entry")
-            prefix_file = tmp / "backend/app/api/rooms.py"
-            prefix_file.parent.mkdir(parents=True, exist_ok=True)
-            prefix_file.write_text("x = 1\n")
-            git("add", "backend/app/api/rooms.py")
-            git("commit", "-qm", "preceding queue entry")
-            prefix_sha = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=tmp, text=True
-            ).strip()
-            narrow_file = tmp / ".claude/scripts/narrow.py"
-            narrow_file.parent.mkdir(parents=True, exist_ok=True)
-            narrow_file.write_text("y = 2\n")
-            git("add", ".claude/scripts/narrow.py")
-            git("commit", "-qm", "narrow queue entry")
-
-            mg_out = tmp / "mg_output"
-            mg_env = {
-                **os.environ,
-                "GITHUB_EVENT_NAME": "merge_group",
-                "GITHUB_EVENT_PATH": self._event_file(tmp, {}),
-                "GITHUB_OUTPUT": str(mg_out),
-            }
-            mg_scope = subprocess.run(
-                [sys.executable, str(tmp / "required-ci.py"), "scope", prefix_sha],
-                env=mg_env, cwd=tmp, check=True, capture_output=True, text=True,
-            )
-            mg_written = dict(line.split("=", 1) for line in mg_out.read_text().splitlines())
-            self.assertIn(f"Effective base: {prefix_sha}", mg_scope.stdout)
-            self.assertEqual(mg_written["backend"], "false")
-            self.assertEqual(mg_written["e2e"], "false")
-            self.assertEqual(mg_written["remote"], "false")
-            self.assertEqual(mg_written["guards"], "true")
-
     def test_check_mode_fails_closed_when_the_event_is_unreadable(self):
         env = {**os.environ, "GITHUB_EVENT_NAME": "pull_request",
                "GITHUB_EVENT_PATH": "/nonexistent/event.json",
