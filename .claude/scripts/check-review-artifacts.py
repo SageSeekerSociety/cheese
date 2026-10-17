@@ -15,22 +15,30 @@ This guard turns that reading into a check: a file under
 
 What counts as a citation:
 
-  * a Markdown link destination that resolves to the artifact — including
-    `<artifacts/2026 review.pdf>`, percent-encoded forms, a title after the
-    destination (`artifacts/kept.pdf "预览"`) and a fragment or query
-    (`artifacts/kept.pdf#page=2`);
+  * a link destination that resolves to the artifact — inline Markdown links
+    (including `<artifacts/2026 review.pdf>`, balanced parentheses, backslash
+    escapes and a title after the destination), reference definitions and
+    HTML `href` attributes. A fragment or query (`#page=2`, `?raw=1`) is not
+    part of the name. A destination that is just `kept.pdf` does not count: it
+    resolves beside the note, not inside `artifacts/`;
   * the literal path `artifacts/<name>` in prose;
   * a bare `<name>` in prose, when it stands on its own — delimited by spaces
     or punctuation. A bare name glued to Chinese prose (`详见kept.pdf`) is not
     counted, because no rule can tell it apart from a longer Chinese filename
     (`验收报告.pdf` naming `报告.pdf`). Write the `artifacts/` path there.
+    A bare name is matched wherever it stands as a whole word, so prose that
+    contains another space-separated path (`2026 review.pdf`) also names
+    `review.pdf`; link names that contain a space instead.
 
-Matching is whole-name with ASCII filename boundaries, not substring. That is
-what keeps `review.pdf` from being satisfied by `trial-review.pdf`,
-`2026.09.review.pdf`, `验收报告.pdf`, `review.pdf.bak`, `review.pdfs` or
-`artifacts/run-42/detail.pdf` — all different artifacts. Names containing
-spaces, parentheses, `+` or a literal `%` are matched literally; a path that
-percent-encodes them is decoded token by token before the comparison.
+Percent-encoded paths in prose are recognized only when they carry the
+`artifacts/` prefix (`artifacts/2026%20review.pdf`); a bare encoded name is
+ambiguous at its left edge, so write the literal name or the prefixed path.
+
+Matching is whole-name with filename boundaries, not substring. That is what
+keeps `review.pdf` from being satisfied by `trial-review.pdf`,
+`2026.09.review.pdf`, `验收报告.pdf`, `review.pdf.bak`, `review.pdfs`,
+`v1+fix.pdf` or `artifacts/run-42/detail.pdf` — all different artifacts. Names
+containing spaces, parentheses, `+` or a literal `%` are matched literally.
 
 Cannot judge is not a pass: a missing `docs/reviews/` directory or a note that
 cannot be read exits 2 and says so, because a directory move must not turn this
@@ -46,7 +54,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
-from string import ascii_letters, digits
+from string import ascii_letters, digits, punctuation
 from urllib.parse import unquote
 
 #: Where the artifacts and the notes that must cite them live.
@@ -59,47 +67,142 @@ DOC_SUFFIXES = (".md",)
 
 #: Characters that continue an ASCII filename. A match preceded or followed by
 #: one of these is a suffix/prefix of a longer name, not a citation. `%` is
-#: here so `100%fix.pdf` is not a citation of `fix.pdf`.
-NAME_CONTINUATION = frozenset(ascii_letters + digits + "_-.%")
+#: here so `100%fix.pdf` is not a citation of `fix.pdf`; `+`, `~` and `@` are
+#: here because they also appear inside filenames this repository already has.
+NAME_CONTINUATION = frozenset(ascii_letters + digits + "_-." + "%+~@")
 
-#: Markdown link destinations. The angle form may contain spaces and a title
-#: after the closing bracket; the plain form may carry a title after the
-#: destination. Both stop at the closing parenthesis.
-ANGLED_LINK = re.compile(r"\]\(\s*<([^>\n]*)>[^)\n]*\)")
-PLAIN_LINK = re.compile(r"\]\(\s*([^)\n]*?)\s*\)")
-
-#: A maximal run that could be a percent-encoded path token. Deliberately
-#: excludes whitespace and non-ASCII characters: decoding happens per token, so
-#: `2026%20review.pdf` becomes `2026 review.pdf` without inventing a space that
-#: turns the tail of a longer name into a separate citation.
-ENCODED_TOKEN = re.compile(r"[A-Za-z0-9_\-./%]+")
+#: Reference definitions (`[label]: path`) and HTML links. Their destinations
+#: resolve the same way an inline link's does.
+REF_DEFINITION = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*([^\n]*)")
+HTML_HREF = re.compile(r"""href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
 
 
-def _link_destinations(text: str):
-    for pattern in (ANGLED_LINK, PLAIN_LINK):
-        for match in pattern.finditer(text):
-            yield match.group(1)
+def _parse_destination(text: str, index: int) -> tuple[str | None, int]:
+    """Parse one Markdown link destination; return (path, end) or (None, index)."""
+    length = len(text)
+    while index < length and text[index] in " \t":
+        index += 1
+    if index < length and text[index] == "<":
+        index += 1
+        buffer = []
+        while index < length and text[index] not in ">\n":
+            if (
+                text[index] == "\\"
+                and index + 1 < length
+                and text[index + 1] in punctuation
+            ):
+                buffer.append(text[index + 1])
+                index += 2
+                continue
+            buffer.append(text[index])
+            index += 1
+        if index >= length or text[index] != ">":
+            return None, index
+        return "".join(buffer), index + 1
+
+    buffer = []
+    depth = 0
+    while index < length:
+        char = text[index]
+        if char in " \t\n":
+            break
+        if (
+            char == "\\"
+            and index + 1 < length
+            and text[index + 1] in punctuation
+        ):
+            buffer.append(text[index + 1])
+            index += 2
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            if depth == 0:
+                break
+            depth -= 1
+        buffer.append(char)
+        index += 1
+    if not buffer:
+        return None, index
+    return "".join(buffer), index
 
 
-def _without_link_destinations(text: str) -> str:
-    for pattern in (ANGLED_LINK, PLAIN_LINK):
-        text = pattern.sub(" ", text)
-    return text
+def _parse_inline_link(text: str, index: int) -> tuple[str | None, int | None]:
+    """Parse `](destination "title")` with index just after `](`."""
+    path, index = _parse_destination(text, index)
+    if path is None:
+        return None, None
+    length = len(text)
+    while index < length and text[index] in " \t":
+        index += 1
+    if index < length and text[index] in "\"'":
+        quote = text[index]
+        index += 1
+        while index < length and text[index] != quote:
+            index += 2 if text[index] == "\\" else 1
+        if index >= length:
+            return None, None
+        index += 1
+        while index < length and text[index] in " \t":
+            index += 1
+    elif index < length and text[index] == "(":
+        index += 1
+        while index < length and text[index] != ")":
+            index += 2 if text[index] == "\\" else 1
+        if index >= length:
+            return None, None
+        index += 1
+        while index < length and text[index] in " \t":
+            index += 1
+    if index < length and text[index] == ")":
+        return path, index + 1
+    return None, None
+
+
+def _link_spans(text: str):
+    """Yield (path, start, end) for every link destination in a document."""
+    index = 0
+    while True:
+        found = text.find("](", index)
+        if found < 0:
+            break
+        path, end = _parse_inline_link(text, found + 2)
+        if path is None or end is None:
+            index = found + 2
+            continue
+        yield path, found, end
+        index = end
+
+    for match in REF_DEFINITION.finditer(text):
+        path, _ = _parse_destination(text, match.start(1))
+        if path is not None:
+            yield path, match.start(), match.end()
+
+    for match in HTML_HREF.finditer(text):
+        path = match.group(1) or match.group(2) or match.group(3) or ""
+        if path:
+            yield path, match.start(), match.end()
 
 
 def _destination_path(destination: str) -> str:
-    """The path inside a link destination, without title, fragment or query."""
+    """The path inside a link destination, without fragment or query."""
     value = destination.strip()
-    if value.startswith("<") and ">" in value:
-        value = value[1 : value.index(">")]
-    else:
-        # A plain destination cannot contain a space: a space starts the
-        # optional title. An invalid space-containing path therefore cannot
-        # name an artifact.
-        parts = value.split()
-        value = parts[0] if parts else ""
     value = value.split("#", 1)[0].split("?", 1)[0]
     return value.replace("\\", "/")
+
+
+def _without_link_destinations(text: str) -> str:
+    out = []
+    last = 0
+    for _, start, end in sorted(_link_spans(text), key=lambda span: span[1]):
+        if start < last:
+            last = max(last, end)
+            continue
+        out.append(text[last:start])
+        out.append(" ")
+        last = end
+    out.append(text[last:])
+    return "".join(out)
 
 
 def _normalized(value: str, *, decode: bool = True) -> str:
@@ -108,10 +211,7 @@ def _normalized(value: str, *, decode: bool = True) -> str:
     value = value.lstrip("/")
     while value.startswith("./"):
         value = value[2:]
-    # A sentence's full stop is not part of the filename; no artifact in this
-    # repo ends in `.`, and counting `kept.pdf.` as a different name would make
-    # a plain-text citation fail.
-    return value.rstrip(".")
+    return value
 
 
 def path_names_artifact(value: str, relative: str) -> bool:
@@ -174,37 +274,55 @@ def _contains(text: str, candidate: str, *, canonical: bool) -> bool:
         start = index + 1
 
 
-def _percent_encoded_citation(prose: str, relative: str) -> bool:
-    """Whether a percent-encoded token in the prose names the artifact.
+def _decoded_prefix_matches(text: str, start: int, target: str) -> bool:
+    """Whether a percent-encoded prefix starting at `start` decodes to `target`."""
+    # A decoded character costs at most a few bytes when written as `%XX`, so
+    # a longer prefix cannot decode to this target.
+    limit = min(len(text), start + 12 * len(target) + 12)
+    end = start
+    while end < limit and not text[end].isspace():
+        end += 1
+    for stop in range(start + 1, end + 1):
+        raw = text[start:stop]
+        if "%" not in raw:
+            continue
+        if unquote(raw) == target and _right_boundary_ok(text, stop):
+            return True
+    return False
 
-    Only tokens that actually contain an escape are considered: a plain token
-    is what the raw search already handled, and decoding it here would let the
-    tail of `old\\kept.pdf` match `kept.pdf` after the tokenizer split the path.
-    """
+
+def _percent_encoded_citation(prose: str, relative: str) -> bool:
+    """Whether the prose percent-encodes a path naming the artifact."""
     canonical = f"{ARTIFACTS_DIRNAME}/{relative}"
-    for match in ENCODED_TOKEN.finditer(prose):
-        token = match.group(0)
-        if "%" not in token:
-            continue
-        decoded = unquote(token)
-        if decoded == relative:
-            canonical_match = False
-        elif decoded == canonical or decoded.endswith(f"/{canonical}"):
-            canonical_match = True
-        else:
-            continue
-        if not _left_boundary_ok(prose, match.start(), canonical=canonical_match):
-            continue
-        if not _right_boundary_ok(prose, match.end()):
-            continue
-        return True
+    prefix = f"{ARTIFACTS_DIRNAME}/"
+    index = 0
+    while True:
+        found = prose.find(prefix, index)
+        if found < 0:
+            break
+        if _left_boundary_ok(prose, found, canonical=True) and _decoded_prefix_matches(
+            prose, found, canonical
+        ):
+            return True
+        index = found + 1
+
+    index = 0
+    while True:
+        found = prose.find("%", index)
+        if found < 0:
+            break
+        if _left_boundary_ok(prose, found, canonical=False) and _decoded_prefix_matches(
+            prose, found, relative
+        ):
+            return True
+        index = found + 1
     return False
 
 
 def names_artifact(text: str, relative: str) -> bool:
     """Whether one note names `relative`, a path under the artifacts dir."""
-    for destination in _link_destinations(text):
-        if path_names_artifact(_destination_path(destination), relative):
+    for path, _, _ in _link_spans(text):
+        if path_names_artifact(_destination_path(path), relative):
             return True
     prose = _without_link_destinations(text)
     canonical = f"{ARTIFACTS_DIRNAME}/{relative}"

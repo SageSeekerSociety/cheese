@@ -83,16 +83,19 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         root = self._tree(
             {
                 "artifacts/review.pdf": b"%PDF-1.4",
-                "note.md": "[另一份](old/2026 review.pdf)\n",
+                "note.md": "[另一份](old/2026%20review.pdf)\n",
             }
         )
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_document_inside_the_artifacts_directory_does_not_count(self) -> None:
+        # README.md is cited from outside, so it is not itself an orphan; if it
+        # were treated as a document, its mention of orphan.pdf would pass.
         root = self._tree(
             {
                 "artifacts/orphan.pdf": b"%PDF-1.4",
                 "artifacts/README.md": "orphan.pdf\n",
+                "note.md": "[说明](artifacts/README.md)\n",
             }
         )
         self.assertEqual(self._run(root).returncode, ORPHAN)
@@ -322,6 +325,108 @@ class ReviewArtifactGuardTests(unittest.TestCase):
             }
         )
         self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_plain_link_with_balanced_parentheses_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/report(final).pdf": b"%PDF-1.4",
+                "note.md": "[报告](artifacts/report(final).pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_escaped_parentheses_in_a_link_pass(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/report(final).pdf": b"%PDF-1.4",
+                "note.md": "[报告](artifacts/report\\(final\\).pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_percent_encoded_plus_in_prose_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/2026 review+final.pdf": b"%PDF-1.4",
+                "note.md": "见 artifacts/2026%20review+final.pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_percent_encoded_parentheses_in_prose_pass(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/2026 review (final).pdf": b"%PDF-1.4",
+                "note.md": "见 artifacts/2026%20review%20(final).pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_mix_of_chinese_and_an_encoded_space_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/报告 2026.pdf": b"%PDF-1.4",
+                "note.md": "见 artifacts/报告%202026.pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_fully_encoded_bare_name_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/报告.pdf": b"%PDF-1.4",
+                "note.md": "见 %E6%8A%A5%E5%91%8A.pdf. Next.\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_reference_definition_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[产物][kept]\n\n[kept]: artifacts/kept.pdf\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_reference_definition_with_a_bare_name_does_not_count(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[产物][kept]\n\n[kept]: kept.pdf\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_an_html_bare_href_does_not_count(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": '<a href="kept.pdf">产物</a>\n',
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_an_html_canonical_href_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": '<a href="artifacts/kept.pdf">产物</a>\n',
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_link_with_a_trailing_ellipsis_does_not_count(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "[产物](artifacts/kept.pdf...)\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_plus_joined_longer_name_is_not_a_citation(self) -> None:
+        root = self._tree(
+            {"artifacts/fix.pdf": b"%PDF-1.4", "note.md": "看 v1+fix.pdf 这一份。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
 
     # --- cannot judge -------------------------------------------------------
 
