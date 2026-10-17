@@ -20,7 +20,7 @@ name: Architecture metrics
 #
 # WHY A SCHEDULE AND NOT A PUSH. This ran on every push to main until
 # 2026-10-17, and that trigger collected less than its name said: main moves
-# every few minutes, the concurrency group below cancels each run a later push
+# several times an hour, the concurrency group below cancels each run a later push
 # supersedes, and in the three hours to 15:25 UTC seven pushes started a run,
 # four were cancelled before writing a snapshot, and the seven cost 53.8 job
 # minutes. Every three hours is dense enough for the page's direction — its 60
@@ -63,7 +63,7 @@ jobs:
       # and never runs on a pull request, so it could not fail one either way;
       # what it must not do is fail the run it belongs to, because almost
       # everything it reads is an input somebody else owns — a git ref that ages
-      # out of the checkout, a baseline file mid-migration, a 04:23 run on a
+      # out of the checkout, a baseline file mid-migration, a 03:23 run on a
       # runner having a bad night. A red X there would say "the architecture got
       # worse", which is a claim this job is not entitled to make. The numbers
       # land in the job summary and the JSON artifact; reading them is the check.
@@ -298,9 +298,9 @@ jobs:
         with:
           name: arch-metrics
           path: ${{ runner.temp }}/arch-metrics.json
-          # A weekly board is kept to be compared with, so the artifact matters
-          # more than the retention default suggests — but not enough to fight
-          # the organization's storage policy over.
+          # A board collected every three hours is kept to be compared with, so
+          # the artifact matters more than the retention default suggests — but
+          # not enough to fight the organization's storage policy over.
           retention-days: 90
 
       # Kept at least as long as the board: a snapshot is only useful as a

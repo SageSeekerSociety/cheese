@@ -116,9 +116,9 @@ class GitHubArtifacts:
         """The newest ``limit`` artifacts named `ratchet-snapshot`, newest first.
 
         Repo-level rather than per-run: the run id of the last collection is
-        not something the platform knows (a merge it did not perform has no
-        local record), and this listing carries each artifact's run and commit,
-        which is all the archive needs.
+        not something the platform knows (it does not start these runs), and
+        this listing carries each artifact's run and commit, which is all the
+        archive needs.
         """
         out: list[Artifact] = []
         page = 1
