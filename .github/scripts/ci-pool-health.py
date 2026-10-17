@@ -91,11 +91,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         runners = fetch_runners(args.repo, args.token)
-    except urllib.error.HTTPError as error:
+    except urllib.error.URLError as error:
         # Not knowing is not the same as everything being fine, and it is also
-        # not a machine being down — say which it is.
-        print(f"::warning::could not read the runner list: HTTP {error.code}")
-        return 0
+        # not a machine being down: 2 is the "could not judge" answer the
+        # missing-credential branch above gives. Returning 0 here would report
+        # a pool nobody managed to look at as healthy. HTTPError is a URLError.
+        reason = (
+            f"HTTP {error.code}"
+            if isinstance(error, urllib.error.HTTPError)
+            else str(error.reason)
+        )
+        print(f"::warning::could not read the runner list: {reason}")
+        return 2
 
     healthy, problems = assess(runners)
     for line in healthy:
