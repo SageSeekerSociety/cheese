@@ -115,7 +115,7 @@ def client(self, server):
                     env.pop(key, None)
                 cwd = self.root
             else:
-                spec = {**self.agent_specs, **self.config["mcp_servers"]}[server]
+                spec = {**self.handed_specs, **self.config["mcp_servers"]}[server]
                 if spec.get("type", "stdio") != "stdio":
                     raise ValueError("Remote process servers require stdio transport")
                 allowed = self.server_allowed.get(server)

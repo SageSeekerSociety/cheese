@@ -34,10 +34,14 @@ DEFAULT_REPO = "SageSeekerSociety/cheese"
 CI_CHECK = "CI required"
 RED = ("failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale")
 UNREADABLE = "读不到"
-#: §4's exempt increment: 改文案. The message files only. The A tier also calls
-#: `backend/app/core/sentences.py` 文案, but that module loads the templates and formats the
-#: notices, so editing it is editing code: it needs its increment read like any other code.
-COPY = ("frontend/src/i18n/messages/",)
+#: §4's exempt increment: 改文案. The message files only — the strings a person reads. The
+#: A tier also calls `backend/app/core/sentences.py` 文案, but that module loads the templates
+#: and formats the notices, so editing it is editing code: it needs its increment read like
+#: any other code. The same holds for `catalog.ts` and the `index.ts`/`sentences.ts` beside
+#: the message files: they were exempt on the directory prefix alone, and editing the loader
+#: can drop or reword every string in the tree without any review of the increment.
+COPY = "frontend/src/i18n/messages/"
+COPY_SUFFIX = ".json"
 
 
 def gh(*args):
@@ -72,8 +76,14 @@ def ci_on(repo, sha):
 
 def exempt(path):
     """True when §4 lets this file change without a new review. Not the tier: a copy change
-    is tier A for a whole review, and still exempt as an increment."""
-    return tiers.is_test(path) or tiers.is_doc(path) or any(tiers.under(path, p) for p in COPY)
+    is tier A for a whole review, and still exempt as an increment.
+
+    The copy exemption is the message files AND the suffix, not the prefix: `catalog.ts`
+    and the `index.ts` beside the messages are loaders, and exempting them let an increment
+    that only rewires or rewords what the interface shows go unread."""
+    if tiers.is_test(path) or tiers.is_doc(path):
+        return True
+    return path.endswith(COPY_SUFFIX) and tiers.under(path, COPY)
 
 
 def _blob(repo, rev, path):
@@ -365,6 +375,27 @@ def self_test():
         check("改动落在非 ASCII 路径上：仍要补增量审",
               increment(repo, "main", docs, nonascii),
               {"needs": True, "detail": "改了 backend/app/中文模块.py"})
+        # The loader beside the message files: the path starts with the copy prefix, so it
+        # read as 改文案 and the increment went unread — a change that rewires every string in
+        # the tree waved through as the change that rewords one.
+        write("frontend/src/i18n/messages/catalog.ts", "export const load = () => ({})\n")
+        loader = commit("the message loader")
+        check("文案目录下的 .ts 是逻辑：要补增量审",
+              increment(repo, "main", nonascii, loader),
+              {"needs": True, "detail": "改了 frontend/src/i18n/messages/catalog.ts"})
+        # The other prefix. `docs/` exempted whatever was under it, so an increment that
+        # only edited the shell script the site's package.json runs read as 改文档 and went
+        # unread — a change to what the docs build executes, waved through as prose.
+        write("docs/site/gen/diagrams.sh", "#!/bin/sh\nnode cli.js\n")
+        script = commit("the diagram entry script")
+        check("docs 下的构建脚本是逻辑：要补增量审",
+              increment(repo, "main", loader, script),
+              {"needs": True, "detail": "改了 docs/site/gen/diagrams.sh"})
+        write("docs/design-system.md", "prose\n")
+        prose = commit("prose only")
+        check("docs 下只改散文：不用重审",
+              increment(repo, "main", script, prose),
+              {"needs": False, "detail": "只改了测试、文档或文案：docs/design-system.md"})
         # The base branch now changes the same file this branch changed, so the merge has to
         # be resolved by hand. That resolution is the author's code: a merge commit's own
         # diff-tree is empty, so only the tree it produced says what came in.
@@ -396,6 +427,28 @@ def self_test():
               "frontend/src/i18n/messages/en/ask.json")), (True, "A"))
     check("sentences.py 是逻辑，不是文案：不豁免",
           exempt("backend/app/core/sentences.py"), False)
+    # The exemption is the copy AND the suffix. Both directions are pinned, because each
+    # one alone leaves the same hole open from the other side: the prefix alone exempts the
+    # loader beside the messages, the suffix alone exempts any .json anywhere, which is the
+    # route table and the lock-step data files.
+    for path, want in (
+        ("frontend/src/i18n/messages/catalog.ts", False),  # the loader, not a message
+        ("frontend/src/i18n/messages/zh-CN/index.ts", False),
+        ("frontend/src/i18n/messages/zh-CN/sentences.ts", False),
+        ("frontend/src/i18n/messages/zh-CN/ask.json", True),
+        ("frontend/src/i18n/messages/en/ask.json", True),
+        ("backend/scripts/route_index.json", False),  # a .json that is not copy
+        ("docs/site/build.mjs", False),  # a .mjs that is not a doc
+        # Under docs/, the exemption is prose only. `package.json` runs the diagram build,
+        # and the first code-extension list left its `.sh` — and every `.json` — exempt, so
+        # an increment changing what the docs build executes needed no review.
+        ("docs/site/gen/diagrams.sh", False),
+        ("docs/site/package.json", False),
+        ("docs/site/diagrams/turn.sequence.json", False),  # the generator reads it
+        ("docs/design-system.md", True),
+        ("AGENTS.md", True),
+    ):
+        check(f"增量豁免看内容和后缀两头：{path}", exempt(path), want)
 
     for line in bad:
         print("FAIL " + line)

@@ -1,6 +1,6 @@
-"""The MCP servers a project declares: its committed `.mcp.json`, and its
-teammates' types — remote ones, which the platform calls, and local ones, a
-command each, which run on the room's machine.
+"""The MCP servers a project declares: its committed `.mcp.json`, its
+settings, and its teammates' types — remote ones, which the platform calls, and
+local ones, a command each, which run on the room's machine.
 
 `.mcp.json` is read from the default branch through the forge, never from a
 room's checkout: the agent can edit its checkout, and a server URL taken from
@@ -97,9 +97,10 @@ class RemoteServer:
 
 @dataclass(frozen=True)
 class LocalServer:
-    """A server that is a command, run on the room's machine. Read here only
-    to list it and to know which project secrets it may be handed: what the
-    machine runs is its own checkout's definition."""
+    """A server that is a command, run on the room's machine. Read here to
+    list it and to know which project secrets it may be handed: what the
+    machine runs is its own checkout's definition, or — for one added in
+    settings or by a type — the definition the session hands it."""
 
     name: str
     command: str
@@ -133,13 +134,14 @@ def _names(texts: Iterable[str], *, defaulted: bool) -> list[str]:
 @dataclass(frozen=True)
 class Declared:
     servers: tuple[RemoteServer, ...] = ()
-    #: The local servers, the repository's and then its teammates' types'.
+    #: The local servers: the repository's, those added in settings, and then
+    #: its teammates' types'.
     local: tuple[LocalServer, ...] = ()
     #: For each local server a type declares, the types that declare it.
     local_types: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: Every name `.mcp.json` uses, stdio entries included.
     names: tuple[str, ...] = ()
-    #: The servers added in project settings that are in `servers`.
+    #: The servers added in project settings that are in `servers` or `local`.
     added: tuple[str, ...] = ()
     #: Those added in settings whose name `.mcp.json` also uses: the
     #: repository's stands, and these are left out of `servers`.
@@ -251,19 +253,29 @@ def settings_server(name: str, url: str, header_name: str | None) -> RemoteServe
     )
 
 
-def with_settings(found: Declared, added: Iterable[RemoteServer]) -> Declared:
-    """The repository's servers and those added in project settings. A name the
-    repository's `.mcp.json` uses stays the repository's: the one added in
-    settings is shadowed, and said to be."""
-    servers, kept, shadowed = list(found.servers), [], []
+def with_settings(
+    found: Declared, added: Iterable[RemoteServer | LocalServer]
+) -> Declared:
+    """The repository's servers and those added in project settings, remote
+    and local. A name the repository's `.mcp.json` uses stays the
+    repository's: the one added in settings is shadowed, and said to be."""
+    servers, local = list(found.servers), list(found.local)
+    kept, shadowed = [], []
     for server in added:
         if server.name in found.names:
             shadowed.append(server.name)
             continue
-        servers.append(server)
+        if isinstance(server, LocalServer):
+            local.append(server)
+        else:
+            servers.append(server)
         kept.append(server.name)
     return replace(
-        found, servers=tuple(servers), added=tuple(kept), shadowed=tuple(shadowed)
+        found,
+        servers=tuple(servers),
+        local=tuple(local),
+        added=tuple(kept),
+        shadowed=tuple(shadowed),
     )
 
 

@@ -81,6 +81,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
+from app.core.work_context import parse_work_id
 from app.domain.project.models import ProjectArtifact
 from app.domain.project.ports import FileStore
 
@@ -276,7 +277,7 @@ async def reuse(
     """
     listed = await list_for_project(session, project_id, hidden=hidden)
     wanted = (artifact_id or "").strip()
-    asked = _as_uuid(wanted)
+    asked = parse_work_id(wanted)
     for row in listed:
         if row.id == asked:
             found = await session.get(ProjectArtifact, row.id)
@@ -647,13 +648,6 @@ def _what_the_list_has(listed: list[ArtifactSummary]) -> str:
         return say("artifactListEmpty")
     rows = "；".join(f"《{row.name}》 id={row.id}" for row in listed)
     return say("artifactListHas", rows=rows)
-
-
-def _as_uuid(value: str) -> uuid.UUID | None:
-    try:
-        return uuid.UUID(value)
-    except ValueError:
-        return None
 
 
 async def _by_name(

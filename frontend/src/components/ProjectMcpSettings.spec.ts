@@ -224,3 +224,20 @@ it('says why when there was no answer', async () => {
   const view = await mount(null, { error: '读不出来了' })
   expect(view.getByText('读不出来了')).toBeTruthy()
 })
+
+it('the values a command added in settings needs are filled on its row', async () => {
+  const pg: McpServer = {
+    ...search,
+    name: 'pg',
+    transport: 'stdio',
+    host: '',
+    command: "npx -y server-postgres '${DATABASE_URL}'",
+    run: { state: 'idle', log: [], owner: null },
+    added: { by: 'alice', at: new Date().toISOString(), url: null, header: null, env: {} },
+    variables: [{ name: 'DATABASE_URL', set: false, updated_by: null, updated_at: null }],
+  }
+  const view = await mount({ servers: [pg], problem: null })
+  await openValues(view)
+  expect(await view.findByLabelText('DATABASE_URL')).toBeTruthy()
+  expect(view.getByRole('button', { name: '编辑' })).toBeTruthy()
+})

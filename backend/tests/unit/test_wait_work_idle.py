@@ -3,6 +3,7 @@ import uuid
 import weakref
 from types import SimpleNamespace
 
+from app.api import deps
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from tests import conftest
 
@@ -49,7 +50,7 @@ def test_wait_work_idle_waits_for_records_but_not_an_idle_lifecycle(monkeypatch)
         _broker=SimpleNamespace(_active={str(topic): {"turn"}}),
         active_work_count=lambda: 1,
     )
-    monkeypatch.setattr(conftest, "get_work_runner", lambda: runner)
+    monkeypatch.setattr(deps, "get_work_runner", lambda: runner)
     sleeps = []
 
     async def read_and_let_go() -> None:

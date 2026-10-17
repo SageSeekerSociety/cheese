@@ -20,7 +20,7 @@ import io
 import json
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -76,12 +76,19 @@ class SnapshotRead:
 
 
 def _parse_time(raw: Any) -> datetime | None:
+    """An ISO-8601 stamp, or None when it is missing or unreadable.
+
+    A stamp with no offset is read as UTC: both columns it lands in are
+    TIMESTAMPTZ, and a naive datetime would be shifted by the session's zone
+    instead of stored as the instant the collector meant.
+    """
     if not isinstance(raw, str) or not raw:
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 class GitHubArtifacts:
