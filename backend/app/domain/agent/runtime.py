@@ -25,7 +25,7 @@ from sqlalchemy import select
 from app.core.errors import AppError
 from app.core.redis import get_redis_client
 from app.core.sentences import listing, say
-from app.domain.addressing import NOBODY, Addressed, Event, Hand, address
+from app.domain.addressing import Addressed, addressed_to_agent
 from app.domain.agent import checkout_sweep, dispatch_log, runtime_orphans
 from app.domain.agent.admission import (
     queued,
@@ -82,15 +82,6 @@ def _a_turn_was_addressed(addressed: Addressed) -> bool:
     的物理形态。平台因此发不起一轮：它可以点谁的名，点到人就是一条站内信。
     """
     return any(how_it_arrives(r.handle) is Arrival.turn for r in addressed.recipients)
-
-
-def addressed_to_agent(handle: str | None) -> Addressed:
-    """这个房间的 agent 席位被点名了 —— 调用点最常要的那一条寻址。
-
-    `asked` 而不是别的关系：房间里有人说了话、有人按了「叫它看一下」、一条活的
-    检查红了，共同点都是「芝士停在这里，接下来只有它能往下走」。
-    """
-    return address(Event(asked=handle), Hand.participant) if handle else NOBODY
 
 
 # What the room is told while a message waits for its turn. Neither is the
