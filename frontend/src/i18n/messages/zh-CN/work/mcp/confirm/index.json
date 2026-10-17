@@ -1,0 +1,8 @@
+{
+  "connectTitle": "连接 {name}？",
+  "connectBody": "连接后，项目里所有人都能通过{agent}以这个账号使用 {name}。建议用专门的机器人账号，不要用个人账号。",
+  "connect": "去授权",
+  "removeTitle": "删除 {name}？",
+  "removeBody": "删除后{agent}不能再调用它，它的连接和请求头一并清除。",
+  "remove": "删除"
+}
