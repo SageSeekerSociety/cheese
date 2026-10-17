@@ -48,7 +48,7 @@ BASELINE: dict[tuple[str, str], int] = {
     ("frontend/src/components/panels/PanelPreview.document.spec.ts", "在 output/说明.md 的 标题「配置」（「重试 3 次」）：这里也要写清楚"): 1,
     ("frontend/src/components/panels/doc/blocks/reader.spec.ts", "组会报名\n时间：周四下午三点\n地点：B201\n报名找林老师"): 1,
     ("frontend/src/lib/platformEvents.spec.ts", "这轮因运行环境存储空间不足而暂停，项目文件和已完成的改动都还在。"): 1,
-    ("deploy/tests/test_pr_watch_deploy.py", "Require images and tests for the same commit"): 1,
+    ("frontend/src/components/account/SudoDialog.spec.ts", "Enter a code from your authenticator app"): 4,
 }
 
 SKIP_DIRS = {
@@ -97,7 +97,20 @@ SHELL_COMMAND_RE = re.compile(
     re.IGNORECASE,
 )
 SQL_EXPRESSION_RE = re.compile(
-    r"\w+(?:\.\w+)?\s+IS\s+NULL\s+AND\s+\w+(?:\.\w+)?\s+IN\s*\(\{\}\)",
+    r"\w+(?:\.\w+)?\s+IS\s+(?:NOT\s+)?NULL\s+AND\s+\w+(?:\.\w+)?\s+IN\s*\(\{\}\)",
+    re.IGNORECASE,
+)
+SQL_QUERY_RE = re.compile(
+    r"SELECT\b.*\bFROM\b.*(?:\bJOIN\b|\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|"
+    r"\bIS\s+(?:NOT\s+)?NULL\b|\bIN\s*\(|\w+\s*=\s*['\"\w]).*",
+    re.IGNORECASE | re.DOTALL,
+)
+SQL_WHERE_RE = re.compile(
+    r"WHERE\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|=\s*[^,;]+).*",
+    re.IGNORECASE | re.DOTALL,
+)
+TS_TYPE_DIAGNOSTIC_RE = re.compile(
+    r"^Type ['\"][^'\"]+['\"] (?:is not assignable|has no property|does not|cannot|is missing|is incompatible)\b",
     re.IGNORECASE,
 )
 JS_ASSERTION_METHODS = {
@@ -157,7 +170,9 @@ def _is_explanatory_sentence(value: str) -> bool:
         or ":::" in value
         or value.startswith("step ")
         or SQL_EXPRESSION_RE.fullmatch(value)
-        or (value.startswith("Type '") and " is not assignable" in value)
+        or SQL_QUERY_RE.fullmatch(value)
+        or SQL_WHERE_RE.fullmatch(value)
+        or TS_TYPE_DIAGNOSTIC_RE.match(value)
         or (EMAIL_RE.search(value) and not han_count and len(WORD_RE.findall(value)) < 9)
         or IDENTIFIER_RE.fullmatch(value)
         or STATUS_CODES_RE.fullmatch(value)
@@ -190,6 +205,20 @@ def _python_string_value(node: ast.expr) -> str | None:
     return None
 
 
+def _is_name_lookup(node: ast.expr) -> bool:
+    if isinstance(node, ast.Attribute):
+        return node.attr == "name"
+    if isinstance(node, ast.Subscript):
+        return _python_string_value(node.slice) == "name"
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and bool(node.args)
+        and _python_string_value(node.args[0]) == "name"
+    )
+
+
 def _python_literals(path: Path) -> list[tuple[int, str]]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -202,9 +231,9 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
             left = node.left
             for operator, comparator in zip(node.ops, node.comparators):
                 if isinstance(operator, ast.Eq):
-                    for candidate in (left, comparator):
+                    for candidate, other in ((left, comparator), (comparator, left)):
                         value = _python_string_value(candidate)
-                        if value is not None:
+                        if value is not None and not _is_name_lookup(other):
                             literals.append((candidate.lineno, value))
                 left = comparator
         if (
@@ -212,9 +241,10 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
             and isinstance(node.func, ast.Attribute)
             and node.func.attr in {"assertEqual", "assertEquals"}
         ):
-            for candidate in node.args[:2]:
+            for index, candidate in enumerate(node.args[:2]):
+                other = node.args[1 - index] if len(node.args) > 1 else None
                 value = _python_string_value(candidate)
-                if value is not None:
+                if value is not None and not (other is not None and _is_name_lookup(other)):
                     literals.append((candidate.lineno, value))
     return literals
 
@@ -283,9 +313,9 @@ def _call_argument_strings(tokens: list[tuple[str, int]], open_index: int) -> li
             if token in {"(", "[", "{"}:
                 previous = argument[index - 1][0] if index else ""
                 is_call = token == "(" and (
-                    bool(IDENTIFIER_RE.fullmatch(previous)) or previous in {")", "]"}
+                    bool(IDENTIFIER_RE.fullmatch(previous)) or previous in {")", "]", "?.", "!"}
                 )
-                nested.append(any(nested) or token == "[" or is_call)
+                nested.append(any(nested) or is_call)
             elif token in {")", "]", "}"}:
                 if nested:
                     nested.pop()

@@ -84,6 +84,11 @@ assert path == "https://example.test/api/a-long-route"
 assert identifier == "a_long_identifier_name_that_is_not_copy"
 assert response == "429 429 429 429 429 429 429 429 429 429"
 assert status == "not found"
+assert actual == "SELECT name FROM users WHERE deleted_at IS NULL AND status IN ({})"
+assert actual == "SELECT id, title FROM topics WHERE deleted_at IS NOT NULL ORDER BY id"
+assert actual == "SELECT name FROM users WHERE deleted_at IS NOT NULL"
+assert actual == "Type 'Foo' has no property 'bar' in this version of the library"
+assert step.get("name") == "Require images and tests for the same commit"
 assert actual != "This explanatory sentence should be checked by its important parts"
 assert "archived/removed notices should preserve the relevant message for readers" in text
 ''',
@@ -135,6 +140,8 @@ assert actual == "The task can only be assigned to one person in this workspace"
 assert actual == "Please run python from the project root after the environment starts"
 assert actual == "Select one option and then continue with the next step"
 assert actual == "The dialog explains where the file should be saved after the process finishes"
+assert actual == "Select a message from the list where it belongs and continue with the next step"
+assert actual == "Type a message to continue and then press Enter to send it."
 assert actual == "The deployment failed because the gateway could not reach the upstream.\\nPlease retry after the environment has started."
 assert actual == "deleted_at IS NULL AND completion_status IN ({})"
 ''',
@@ -142,8 +149,9 @@ assert actual == "deleted_at IS NULL AND completion_status IN ({})"
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (2, 3, 4, 5, 6, 7, 8):
+        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
+        self.assertNotIn("test_copy.py:11", result.stderr)
 
     def test_python_fstrings_and_wrapped_vitest_arguments_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -161,12 +169,14 @@ assert actual == "deleted_at IS NULL AND completion_status IN ({})"
             self._write(
                 root,
                 "frontend/src/copy.spec.ts",
-                f'''let index = 0; index++ / 2;
+                f'''let index = 0; index++ / 2; const half = 3 / 4;
 const quote = /["']/;
 expect(actual).toBe(("{LONG_COPY}" as const));
 expect(actual).toEqual("{LONG_COPY}" + " suffix");
+expect(actual).toEqual(["{LONG_COPY}"]);
 expect(actual).toBe(normalize("{LONG_COPY}"));
 expect(actual).toBe(joinWords(["{LONG_COPY}", "other"]));
+expect(actual).toBe(fn?.("{LONG_COPY}"));
 ''',
             )
             result = self._run(root)
@@ -176,8 +186,10 @@ expect(actual).toBe(joinWords(["{LONG_COPY}", "other"]));
         self.assertIn("test_fstring.py:2", result.stderr)
         self.assertIn("copy.spec.ts:3", result.stderr)
         self.assertIn("copy.spec.ts:4", result.stderr)
-        self.assertNotIn("copy.spec.ts:5", result.stderr)
+        self.assertIn("copy.spec.ts:5", result.stderr)
         self.assertNotIn("copy.spec.ts:6", result.stderr)
+        self.assertNotIn("copy.spec.ts:7", result.stderr)
+        self.assertNotIn("copy.spec.ts:8", result.stderr)
 
     def test_additional_test_roots_are_scanned(self) -> None:
         roots = (".github/scripts", "backend/scripts", "deploy/gateway", "deploy/tests", "docs/site/test")
