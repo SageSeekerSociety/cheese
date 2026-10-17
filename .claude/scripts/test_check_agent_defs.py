@@ -229,6 +229,23 @@ class AgentDefinitionGuardTests(unittest.TestCase):
             self.assertNotIn("name: model-zz", result.stderr)
             self.assertIn("平台生成的模型目录", result.stderr)
 
+    def test_a_reserved_file_name_with_no_name_is_not_offered_as_the_fix(self) -> None:
+        """The missing-name hint shares the reserved-name rule's variable, and this file
+        has no `name` at all: naming its stem as the one to add would be refused by the
+        second finding."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._tree(root)
+            self._write(
+                root, "agents/model-zz.md",
+                GOOD_DEFINITION.replace("name: check-runner\n", ""),
+            )
+            result = self._run(root)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertNotIn("name: model-zz", result.stderr)
+            self.assertIn("缺 `name`", result.stderr)
+            self.assertIn("平台生成的模型目录", result.stderr)
+
     def test_an_empty_tools_line_is_reported(self) -> None:
         self._reject_definition(
             "check-runner.md",
