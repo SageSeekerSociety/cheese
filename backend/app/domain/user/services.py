@@ -239,7 +239,6 @@ async def set_teammate_remark(
     return cleaned
 
 
-
 async def set_timezone(session: AsyncSession, user_id: int, timezone: str) -> bool:
     """记下这个人浏览器所在的时区；账号不在了返回 False。取值由调用方先校验。"""
     user = await UserRepository(session).get_by_id(user_id)

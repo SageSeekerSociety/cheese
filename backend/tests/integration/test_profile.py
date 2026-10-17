@@ -453,4 +453,3 @@ def test_teammate_remark_is_viewer_scoped_across_profile_and_rosters(client, bea
     assert clear_resp.status_code == 200
     assert clear_resp.json()["data"] == {"handle": "u1", "remark": None}
     assert _profile(client, bearer, "u1", viewer="u2")["remark"] is None
-

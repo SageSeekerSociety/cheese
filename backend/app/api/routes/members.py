@@ -95,9 +95,7 @@ async def list_members(
     people = await roster(db, project_id, team=project_team)
     seated = await seats(db, project_id, [m.handle for m in people if not m.agent])
     viewer_handle = actor.handle if actor.authenticated else None
-    remarks = await remarks_by_handles(
-        db, viewer_handle, [m.handle for m in people]
-    )
+    remarks = await remarks_by_handles(db, viewer_handle, [m.handle for m in people])
     items = []
     for member in people:
         row = row_of.get(member.handle)

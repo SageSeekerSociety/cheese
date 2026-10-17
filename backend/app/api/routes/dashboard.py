@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.space_deps import get_space_service
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_access import may_read_project
@@ -209,6 +209,11 @@ class TeammateRemarkIn(BaseModel):
     remark: str | None = None
 
 
+class TeammateRemarkOut(BaseModel):
+    handle: str
+    remark: str | None = None
+
+
 @router.get("/users/{handle}/profile")
 async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -> dict:
     """个人主页 (spec §7.2): cross-project profile / portfolio.
@@ -221,7 +226,11 @@ async def user_profile(handle: str, db: DbSession, resolver: ActorResolverDep) -
     return ok(await DashboardService(db).user_profile(handle, viewer=viewer))
 
 
-@router.put("/users/{handle}/remark", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/users/{handle}/remark",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TeammateRemarkOut),
+)
 async def update_user_remark(
     handle: str,
     body: TeammateRemarkIn,
