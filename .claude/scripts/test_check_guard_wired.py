@@ -47,6 +47,24 @@ def _load_guard():
 EXCUSED = tuple(sorted(_load_guard().ON_DEMAND))
 
 
+#: The source of a stub excused guard named NAME, exiting with CODE. The guard
+#: under test runs a `.sh` entry with `sh` and a `.py` one with this
+#: interpreter, so a test writing one language for both would be wrong the day
+#: a shell guard is excused. With MARKER the stub first writes `<name>.ran`
+#: beside itself: a run that never happened cannot produce that file, which an
+#: exit code alone cannot tell you.
+def stub(name: str, code: int, marker: bool = False) -> str:
+    if name.endswith(".sh"):
+        write = f'printf %s {code} > "${{0}}.ran"\n' if marker else ""
+        return write + f"exit {code}\n"
+    write = (
+        f"Path(__file__).with_name({name + '.ran'!r}).write_text({str(code)!r})\n"
+        if marker
+        else ""
+    )
+    return "from pathlib import Path\n" + write + f"raise SystemExit({code})\n"
+
+
 def run(root: Path, script: Path = GUARD) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(script), "--root", str(root)],
@@ -251,7 +269,7 @@ class GuardWiringTests(unittest.TestCase):
         wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
         with fixture(workflow=wired) as root:
             (root / ".claude/scripts" / excused).write_text(
-                "raise SystemExit(0)\n", encoding="utf-8"
+                stub(excused, 0), encoding="utf-8"
             )
             result = run(root)
         self.assertEqual(result.returncode, 1, result.stdout)
@@ -270,18 +288,9 @@ class GuardWiringTests(unittest.TestCase):
         wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
         with fixture(workflow=wired) as root:
             for name in EXCUSED:
-                if name.endswith(".sh"):
-                    body = (
-                        f'printf 2 > "$(dirname "$0")/{name}.ran"\n'
-                        "exit 2\n"
-                    )
-                else:
-                    body = (
-                        "from pathlib import Path\n"
-                        f"Path(__file__).with_name({name + '.ran'!r}).write_text('2')\n"
-                        "raise SystemExit(2)\n"
-                    )
-                (root / ".claude/scripts" / name).write_text(body, encoding="utf-8")
+                (root / ".claude/scripts" / name).write_text(
+                    stub(name, 2, marker=True), encoding="utf-8"
+                )
             result = run(root)
             marks = [root / ".claude/scripts" / f"{name}.ran" for name in EXCUSED]
             ran = [mark.exists() for mark in marks]
@@ -319,7 +328,7 @@ class GuardWiringTests(unittest.TestCase):
         wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
         with fixture(workflow=wired) as root:
             (root / ".claude/scripts" / excused).write_text(
-                "raise SystemExit(0)\n", encoding="utf-8"
+                stub(excused, 0), encoding="utf-8"
             )
             result = subprocess.run(
                 [sys.executable, str(GUARD), "--root", root.name],

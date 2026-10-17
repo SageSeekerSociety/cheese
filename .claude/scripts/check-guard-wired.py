@@ -105,8 +105,6 @@ ON_DEMAND: dict[str, str] = {
 #: How long an excused guard gets to prove it is still red. Both entries here
 #: answer in under a second; the limit exists so that a guard which hangs fails
 #: this check instead of hanging repo-guards.yml, the only job that runs it.
-#: That job judges this tree twice — the self-test and the tree step — so two
-#: entries hanging at the limit would add four minutes to it.
 EXCUSE_TIMEOUT = 60
 
 #: A `#` starting a line, or following whitespace, begins a comment. YAML and
