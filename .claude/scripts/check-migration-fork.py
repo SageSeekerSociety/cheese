@@ -346,6 +346,12 @@ def rechain(args) -> int:
         return 1
 
     branch_graph = {revision: parse_revision(text)[1] for revision, (_, text) in sources.items()}
+    # Same non-answer as the plain check: with nothing of its own parsed, the plan
+    # below refuses with "the base head is not in this checkout, merge it first",
+    # which sends the reader to merge a branch over a tree that has no migrations
+    # at all. Nothing here can be judged, so say that, with the same code.
+    if not branch_graph:
+        return cannot_judge_tree(args.versions_dir)
 
     rewrites, reason = rechain_plan(branch_graph, base_graph)
     if rewrites is None:
@@ -706,6 +712,37 @@ def self_test() -> int:
         check("the command refuses an un-merged branch with nothing of its own", result.returncode, 1)
         check("... saying to merge the base first", "merge" in result.stdout, True)
         check("... and leaving the sentinel where it was", sentinel.read_text(encoding="utf-8"), "a\n")
+
+        # The shape the old PASS came from, and the one neither of the two cases
+        # below it can produce: the base ref has a chain and the working tree has
+        # none. The union is then the base's own graph — one head of `main` here —
+        # so an empty-union guard would still pass this tree, while a tree that
+        # really lost its migrations would go green. The other way round is what
+        # `--rechain` used to answer "merge the base first" over.
+        moved = versions.with_name("versions-away")
+        versions.rename(moved)
+        try:
+            for label, argv in (("the check", []), ("the re-chain", ["--rechain"])):
+                tree_gone = subprocess.run(
+                    [sys.executable, str(script), *argv, "--base", "main"],
+                    cwd=lab,
+                    capture_output=True,
+                    text=True,
+                    env=lab_env,
+                )
+                check(
+                    f"{label} refuses a tree with no revisions under a readable base",
+                    tree_gone.returncode,
+                    EXIT_CANNOT_JUDGE,
+                )
+                check(f"... and {label} prints no verdict", "PASS" in tree_gone.stdout, False)
+                check(
+                    f"... and {label} blames the tree, not the base",
+                    "no migration revisions under" in tree_gone.stderr,
+                    True,
+                )
+        finally:
+            moved.rename(versions)
 
         # The other way round: this branch carries a migration of its own beside the
         # base's, and has already merged the base. The merge leaves the sentinel
