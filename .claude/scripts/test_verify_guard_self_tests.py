@@ -285,6 +285,92 @@ scan() {
 scan "${1:-.}"
 '''
 
+#: A guard whose verdict is `raise SystemExit(report(root))`, with its self-test
+#: asserting only the line `report` prints. Rewriting that argument to `0`
+#: deletes the call and the print with it, so the self-test goes red for a reason
+#: that has nothing to do with the verdict.
+SIDE_EFFECT_EXIT = '''#!/usr/bin/env python3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def report(root):
+    problems = [path.name for path in sorted(Path(root).rglob("*.bad"))]
+    for name in problems:
+        print(f"{name}: 修法：删掉它", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    raise SystemExit(report(Path(argv[1]) if len(argv) > 1 else Path(".")))
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if "修法" not in done.stderr:
+            print("SELF-TEST FAIL: 报告里要说出 x.bad", file=sys.stderr)
+            return 1
+    print("PASS: 报告说出了 x.bad")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The same shape, but its self-test is about the exit code — discarding the
+#: call's result must still turn it red.
+CALL_EXIT_BITING = '''#!/usr/bin/env python3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def report(root):
+    problems = [path.name for path in sorted(Path(root).rglob("*.bad"))]
+    for name in problems:
+        print(f"{name}: 修法：删掉它", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    raise SystemExit(report(Path(argv[1]) if len(argv) > 1 else Path(".")))
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1:
+            print(f"SELF-TEST FAIL: 一个 .bad 文件必须以 1 报错，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: .bad 文件以 1 报错")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 #: A shell guard whose verdict is a variable (`exit "$CODE"`). Rewriting it means
 #: knowing what every assignment path holds, which this tool does not attempt.
 NAMED_SHELL_VERDICT = '''#!/usr/bin/env bash
@@ -639,6 +725,18 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
     def test_a_shell_guard_defined_below_its_self_test_is_still_judged(self) -> None:
         """The rule sits after the block and the child re-run still sees the silenced copy."""
         code, guard, output = self._only({"lateshell.sh": PASSES_LATE_SHELL})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_an_exit_argument_that_is_a_call_keeps_its_side_effects(self) -> None:
+        """`raise SystemExit(report(root))` must still run `report`, or its red is a lie."""
+        code, guard, output = self._only({"sideeffect.py": SIDE_EFFECT_EXIT})
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_an_exit_argument_that_is_a_call_still_loses_its_verdict(self) -> None:
+        """Discarding the call's result, not the call, is what makes this one bite."""
+        code, guard, output = self._only({"callexit.py": CALL_EXIT_BITING})
         self.assertEqual(code, 0, output)
         self.assertEqual(guard["status"], "ok", guard)
 

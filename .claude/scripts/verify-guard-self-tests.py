@@ -378,7 +378,7 @@ def _code_span(value: ast.AST, names: frozenset[str]) -> tuple[int, int] | None:
     return None
 
 
-def _exit_arg_span(call: ast.AST) -> tuple[int, int] | None:
+def _exit_arg(call: ast.AST) -> tuple[ast.expr, tuple[int, int]] | None:
     """The argument of a `sys.exit(x)` / `SystemExit(x)` that is not already 0."""
     if not isinstance(call, ast.Call) or not call.args:
         return None
@@ -393,12 +393,15 @@ def _exit_arg_span(call: ast.AST) -> tuple[int, int] | None:
     if not (is_sys_exit or is_system_exit):
         return None
     arg = call.args[0]
-    if _is_zero(arg):
+    # `SystemExit(*codes)` keeps the star: there is no expression to wrap.
+    if isinstance(arg, ast.Starred) or _is_zero(arg):
         return None
-    return (arg.col_offset, arg.end_col_offset)
+    return arg, (arg.col_offset, arg.end_col_offset)
 
 
-def _python_edits(tree: ast.Module, source: str, skip: set[int]) -> dict[int, list[tuple[int, int, bytes]]]:
+def _python_edits(
+    tree: ast.Module, source: str, skip: set[int]
+) -> dict[int, list[tuple[int, int, bytes | None]]]:
     """Byte-slice replacements that turn the guard's failure signals into nothing.
 
     Only single-line nodes inside a function are rewritten — module level set-up
@@ -406,13 +409,18 @@ def _python_edits(tree: ast.Module, source: str, skip: set[int]) -> dict[int, li
     and an outer node chosen for replacement stops the walk so a nested call is
     not also rewritten. What gets rewritten is only where the guard *emits* its
     verdict: `return`s of a non-zero code and non-zero `sys.exit`/`SystemExit`.
+    An exit argument that is a call — `raise SystemExit(main(argv))` — keeps
+    running and only its result is discarded: replacing it with `0` would delete
+    whatever that call printed or wrote, and a red caused by that proves nothing.
     """
     edits: dict[int, list[tuple[int, int, bytes]]] = {}
     skipped = skip | _main_block_lines(tree, source)
     codes = frozenset(_exit_code_names(tree))
 
-    def record(node: ast.AST, span: tuple[int, int]) -> None:
-        edits.setdefault(node.lineno, []).append((span[0], span[1], b"0"))
+    def record(node: ast.AST, span: tuple[int, int], replacement: bytes | None = b"0") -> None:
+        # `None` means "wrap the original in place": it still runs, its result is
+        # thrown away. Rewriting a call to `0` would take its side effects with it.
+        edits.setdefault(node.lineno, []).append((span[0], span[1], replacement))
 
     def visit(node: ast.AST, in_function: bool) -> None:
         single = (
@@ -423,14 +431,16 @@ def _python_edits(tree: ast.Module, source: str, skip: set[int]) -> dict[int, li
         )
         if single and in_function:
             if isinstance(node, ast.Call):
-                span = _exit_arg_span(node)
-                if span is not None:
-                    record(node, span)
+                found = _exit_arg(node)
+                if found is not None:
+                    arg, span = found
+                    record(node, span, b"0" if isinstance(arg, ast.Constant) else None)
                     return
             if isinstance(node, ast.Raise):
-                span = _exit_arg_span(node.exc) if node.exc is not None else None
-                if span is not None:
-                    record(node, span)
+                found = _exit_arg(node.exc) if node.exc is not None else None
+                if found is not None:
+                    arg, span = found
+                    record(node, span, b"0" if isinstance(arg, ast.Constant) else None)
                     return
             if isinstance(node, ast.Return) and node.value is not None:
                 span = _code_span(node.value, codes)
@@ -462,6 +472,8 @@ def mutate_python(source: str) -> tuple[str | None, str]:
         for start, end, replacement in sorted(edits[lineno], key=lambda item: -item[0]):
             if end > limit or start > end:
                 continue
+            if replacement is None:
+                replacement = b"(" + line[start:end] + b", 0)[1]"
             line = line[:start] + replacement + line[end:]
             limit = start
             count += 1
@@ -675,6 +687,7 @@ def self_test() -> int:
         "shell-fake-green-guard.sh": "self-test-does-not-bite",
         "clean-only-self-test-guard.py": "self-test-does-not-bite",
         "shell-clean-only-self-test-guard.sh": "self-test-does-not-bite",
+        "call-exit-guard.py": "self-test-does-not-bite",
         "no-self-test-guard.py": "missing-self-test",
         "not-green-guard.py": "self-test-not-green",
         "delegating-guard.py": "unverified",
@@ -693,9 +706,9 @@ def self_test() -> int:
         return 1
     print(
         "PASS: verify-guard-self-tests self-test（失败信号的每种写法都判得出咬合力——条件返回、"
-        "元组返回、裸 return、模块级命名常量、SystemExit、shell 的 exit/return；参数里的 .py 不算委派；"
-        "只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、缺自测与没变绿各自报出、"
-        "委派给旁置测试文件的判不了）"
+        "元组返回、裸 return、模块级命名常量、SystemExit、SystemExit(调用)、shell 的 exit/return；"
+        "参数里的 .py 不算委派；只查干净夹具的假绿被检出（Python 与 shell 各一）、空转假绿被检出、"
+        "缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
     )
     return 0
 
@@ -1121,6 +1134,48 @@ def self_test():
             print(f"SELF-TEST FAIL: 干净夹具里该扫到 ok.md，得到 {found}", file=sys.stderr)
             return 1
     print("PASS: 合成只查干净夹具的守卫自测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "call-exit-guard.py": '''#!/usr/bin/env python3
+"""A guard whose verdict is `raise SystemExit(report(root))`, and whose self-test
+only asserts the line `report` prints. Rewriting that argument to `0` would take
+the call and the print with it, and the red would prove nothing."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def report(root):
+    problems = [path.name for path in sorted(Path(root).rglob("*.bad"))]
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    raise SystemExit(report(Path(argv[1]) if len(argv) > 1 else Path(".")))
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if "修法" not in done.stderr:
+            print("SELF-TEST FAIL: 报告里要说出 x.bad", file=sys.stderr)
+            return 1
+    print("PASS: 合成守卫自测（报告说出了 x.bad）")
     return 0
 
 
