@@ -157,6 +157,12 @@ class Executor:
         self.clients = {}
         # Agent types' servers, by name: their definitions come with the calls.
         self.agent_specs = {}
+        # What the session's gateway hands with a local server's calls
+        # (`RemoteClient._local_start`): the values of the project secrets its
+        # definition names, and — on a member's computer — the fingerprints of
+        # the commands its owner lets run here. Read when the server starts.
+        self.server_values = {}
+        self.server_allowed = {}
         self.client_lock, self.log_lock = threading.Lock(), threading.Lock()
         self.db_lock, self.context_fs_entries = threading.Lock(), {}
         # Socket clients load this module without opening the service database.
@@ -338,6 +344,10 @@ class Executor:
     def dispatch(self, method, params):
         if isinstance(params, dict) and isinstance(params.get("spec"), dict):
             self.agent_specs[params["server"]] = params["spec"]
+        if isinstance(params, dict) and isinstance(params.get("values"), dict):
+            self.server_values[params["server"]] = params["values"]
+        if isinstance(params, dict) and "allowed" in params:
+            self.server_allowed[params["server"]] = params["allowed"]
         if method == "begin_upgrade":
             with self.admission_lock:
                 busy = not self.upgrading and (

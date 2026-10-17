@@ -505,7 +505,12 @@ class Runner(runner.Runner[Journal]):
         assert self.machine is not None
         if self.gateway is None:
             client = self.machine.client
-            self.gateway = Gateway(client.call, client.session_servers)
+            self.gateway = Gateway(
+                client.call,
+                client.session_servers,
+                observe=client.local_outcome,
+                on_close=client.local_closed,
+            )
             self.gateway.start()
 
     def mcp_servers(self) -> dict[str, dict]:

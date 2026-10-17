@@ -986,7 +986,12 @@ def gateway(config):
     that started it: the launch execs Claude Code in its place, so that is the
     session, and a gateway outliving it would hold a port nobody reads."""
     client = RemoteClient(config)
-    door = Gateway(client.call, lambda: session_servers(client.config))
+    door = Gateway(
+        client.call,
+        lambda: session_servers(client.config),
+        observe=client.local_outcome,
+        on_close=client.local_closed,
+    )
     door.start()
     print(json.dumps({"port": door.port, "secret": door.secret}), flush=True)
     parent = os.getppid()

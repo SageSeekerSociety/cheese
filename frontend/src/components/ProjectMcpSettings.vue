@@ -120,7 +120,12 @@ const groups = computed(() => {
   const servers = props.list?.servers ?? []
   return [
     { key: 'remote', title: 'work.mcp.group.remote', hint: 'work.mcp.hint', servers: servers.filter((s) => !s.run) },
-    { key: 'local', title: 'work.mcp.group.local', hint: 'work.mcp.localValues', servers: servers.filter((s) => s.run) },
+    {
+      key: 'local',
+      title: 'work.mcp.group.local',
+      hint: 'work.mcp.localValues',
+      servers: servers.filter((s) => s.run),
+    },
   ].filter((group) => group.servers.length)
 })
 
@@ -143,7 +148,14 @@ const fieldValue = (name: string) => props.values[name] ?? ''
     <div class="page-section-head">
       <v-icon size="14" class="c-faint">mdi-connection</v-icon>
       <span class="page-section-title">{{ t('work.mcp.title') }}</span>
-      <BaseButton v-if="manages" kind="secondary" size="sm" prepend-icon="mdi-plus" class="ms-auto" @click="emit('add')">
+      <BaseButton
+        v-if="manages"
+        kind="secondary"
+        size="sm"
+        prepend-icon="mdi-plus"
+        class="ms-auto"
+        @click="emit('add')"
+      >
         {{ t('work.mcp.action.add') }}
       </BaseButton>
     </div>
@@ -179,7 +191,9 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                         {{ declaredBy(server.declared_by) }}
                       </span>
                     </span>
-                    <code v-if="server.command" class="t-meta mcp-command" :title="server.command">{{ server.command }}</code>
+                    <code v-if="server.command" class="t-meta mcp-command" :title="server.command">{{
+                      server.command
+                    }}</code>
                     <span v-else class="t-meta">{{ server.host }}</span>
                   </div>
                   <div class="mcp-row__state">
@@ -188,7 +202,9 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                       <i18n-t
                         v-if="waitsOnOwner(server)"
                         scope="global"
-                        :keypath="server.run?.state === 'awaiting' ? 'work.mcp.status.awaiting' : 'work.mcp.status.refused'"
+                        :keypath="
+                          server.run?.state === 'awaiting' ? 'work.mcp.status.awaiting' : 'work.mcp.status.refused'
+                        "
                         tag="span"
                         class="t-body c-text"
                       >
@@ -243,7 +259,13 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                         :loading="busy === server.name"
                         @click="emit('connect', server)"
                       >
-                        {{ t(server.status === 'needs_reconnect' ? 'work.mcp.action.reconnect' : 'work.mcp.action.connect') }}
+                        {{
+                          t(
+                            server.status === 'needs_reconnect'
+                              ? 'work.mcp.action.reconnect'
+                              : 'work.mcp.action.connect'
+                          )
+                        }}
                       </BaseButton>
                     </template>
                     <template v-if="manages && server.added">
@@ -256,11 +278,9 @@ const fieldValue = (name: string) => props.values[name] ?? ''
                     </template>
                   </div>
                 </div>
-                <pre
-                  v-if="opened[server.name] === 'log' && server.run"
-                  class="mcp-log"
-                  data-testid="mcp-log"
-                >{{ server.run.log.join('\n') }}</pre>
+                <pre v-if="opened[server.name] === 'log' && server.run" class="mcp-log" data-testid="mcp-log">{{
+                  server.run.log.join('\n')
+                }}</pre>
                 <div v-if="opened[server.name] === 'values'" class="mcp-vars">
                   <div v-for="variable in server.variables" :key="variable.name" class="mcp-var">
                     <span class="t-meta mcp-var__name">{{ variable.name }}</span>
@@ -337,7 +357,6 @@ const fieldValue = (name: string) => props.values[name] ?? ''
 .mcp-group__title {
   font-weight: 600;
 }
-
 
 .mcp-row {
   display: grid;

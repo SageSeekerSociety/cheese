@@ -19,6 +19,7 @@ import re
 import secrets
 import time
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
@@ -31,14 +32,14 @@ from app.core.config import settings
 from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.remote_mcp import declared, oauth, upstream
+from app.domain.remote_mcp import declared, local, oauth, upstream
 from app.domain.remote_mcp.declared import Declared, RemoteServer
 from app.domain.remote_mcp.models import (
     ProjectMcpConnection,
     ProjectMcpSecret,
     ProjectMcpServer,
 )
-from app.domain.remote_mcp.ports import ProjectTypes, TypeOfSeat
+from app.domain.remote_mcp.ports import DeviceOwners, ProjectTypes, TypeOfSeat
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,22 @@ async def _seat_declared(
     )
 
 
+async def seat_declared(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    agent_handle: str | None,
+    *,
+    type_of_seat: TypeOfSeat,
+) -> Declared:
+    """The servers one teammate's sessions reach, remote and local."""
+    return await _seat_declared(db, project_id, agent_handle, type_of_seat)
+
+
+async def secret_values(db: AsyncSession, project_id: uuid.UUID) -> dict[str, str]:
+    """Every project secret's value, for the caller to pick from."""
+    return _secret_values(project_id, await _secret_rows(db, project_id))
+
+
 @dataclass(frozen=True)
 class SessionServers:
     """What a session in this project gets: the servers it can call, and the
@@ -248,12 +265,19 @@ def _when(value: datetime | None) -> str | None:
 
 
 async def settings_view(
-    db: AsyncSession, project_id: uuid.UUID, *, project_types: ProjectTypes
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    *,
+    project_types: ProjectTypes,
+    device_owners: DeviceOwners,
 ) -> dict:
-    """The settings page's list: one row per remote server, never a credential.
+    """The settings page's list: one row per server, remote and then local,
+    never a credential.
 
     Each row says where the server comes from: ``declared_by`` is None for the
-    project's `.mcp.json`, or the teammates' types that define it.
+    project's `.mcp.json`, or the teammates' types that define it. A local row
+    says how the server last fared (``run``), naming the owner of the member's
+    computer it waits on (``device_owners``: device ids to handles).
     """
 
     found: Declared = await _project_declared(db, project_id, project_types, fresh=True)
@@ -278,6 +302,8 @@ async def settings_view(
                 "name": server.name,
                 "transport": server.transport,
                 "host": _host(server.url),
+                "command": None,
+                "run": None,
                 "auth": "oauth" if server.uses_oauth else "headers",
                 "status": state,
                 "added": {
@@ -320,14 +346,26 @@ async def settings_view(
                 ],
             }
         )
+    runs = await local.runs(db, project_id)
+    owners = await device_owners(
+        db, sorted({r.device_id for r in runs.values() if r.device_id})
+    )
+    servers += local.rows(found, types, runs, owners, secret_rows)
     return {"servers": servers, "problem": found.problem}
 
 
 async def room_view(
     db: AsyncSession, project_id: uuid.UUID, *, project_types: ProjectTypes
 ) -> list[dict]:
-    """What a room's members see: each server, its state and who authorized it."""
-    view = await settings_view(db, project_id, project_types=project_types)
+    """What a room's members see: each remote server, its state and who
+    authorized it. The local ones are the settings page's."""
+
+    async def nobody(db: AsyncSession, device_ids: Sequence[str]) -> dict[str, str]:
+        return {}
+
+    view = await settings_view(
+        db, project_id, project_types=project_types, device_owners=nobody
+    )
     return [
         {
             key: server[key]
@@ -342,6 +380,7 @@ async def room_view(
             )
         }
         for server in view["servers"]
+        if server["run"] is None
     ]
 
 
@@ -711,7 +750,9 @@ async def set_secret(
     project_types: ProjectTypes,
 ) -> None:
     found = await _project_declared(db, project_id, project_types, fresh=True)
-    if not any(name in server.all_variables() for server in found.servers):
+    if not any(name in server.all_variables() for server in found.servers) and not any(
+        name in local.variables(server) for server in found.local
+    ):
         raise NotFoundError(say("mcpVariableNotUsed"))
     if not value:
         raise ValidationError(say("mcpValueRequired"))

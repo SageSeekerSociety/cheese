@@ -1,5 +1,6 @@
-"""The remote servers a project declares: its committed `.mcp.json`, and its
-teammates' types.
+"""The MCP servers a project declares: its committed `.mcp.json`, and its
+teammates' types — remote ones, which the platform calls, and local ones, a
+command each, which run on the room's machine.
 
 `.mcp.json` is read from the default branch through the forge, never from a
 room's checkout: the agent can edit its checkout, and a server URL taken from
@@ -18,6 +19,7 @@ import base64
 import json
 import logging
 import re
+import shlex
 import time
 import uuid
 from collections.abc import Iterable
@@ -94,8 +96,47 @@ class RemoteServer:
 
 
 @dataclass(frozen=True)
+class LocalServer:
+    """A server that is a command, run on the room's machine. Read here only
+    to list it and to know which project secrets it may be handed: what the
+    machine runs is its own checkout's definition."""
+
+    name: str
+    command: str
+    args: tuple[str, ...] = ()
+    env: dict[str, str] = field(default_factory=dict)
+
+    def line(self) -> str:
+        """The command as one line, as a person would type it."""
+        return shlex.join([self.command, *self.args])
+
+    def _texts(self) -> list[str]:
+        return [self.command, *self.args, *self.env.values()]
+
+    def variables(self) -> list[str]:
+        """The `${VAR}` names without a default, in first-use order."""
+        return _names(self._texts(), defaulted=False)
+
+    def all_variables(self) -> list[str]:
+        return _names(self._texts(), defaulted=True)
+
+
+def _names(texts: Iterable[str], *, defaulted: bool) -> list[str]:
+    names: list[str] = []
+    for text in texts:
+        for match in _VARIABLE.finditer(text):
+            if (defaulted or match.group(2) is None) and match.group(1) not in names:
+                names.append(match.group(1))
+    return names
+
+
+@dataclass(frozen=True)
 class Declared:
     servers: tuple[RemoteServer, ...] = ()
+    #: The local servers, the repository's and then its teammates' types'.
+    local: tuple[LocalServer, ...] = ()
+    #: For each local server a type declares, the types that declare it.
+    local_types: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: Every name `.mcp.json` uses, stdio entries included.
     names: tuple[str, ...] = ()
     #: The servers added in project settings that are in `servers`.
@@ -109,6 +150,9 @@ class Declared:
 
     def get(self, name: str) -> RemoteServer | None:
         return next((s for s in self.servers if s.name == name), None)
+
+    def get_local(self, name: str) -> LocalServer | None:
+        return next((s for s in self.local if s.name == name), None)
 
 
 def expand(text: str, values: dict[str, str]) -> str:
@@ -133,8 +177,8 @@ def canonical_resource(url: str) -> str:
 
 
 def parse(text: str) -> Declared:
-    """The remote servers in a `.mcp.json` document. stdio entries (a `command`
-    and no `url`) are the executor's and are not listed here."""
+    """The servers in a `.mcp.json` document: remote ones (a `url`), and local
+    ones (a `command`), which the executor runs."""
     try:
         document = json.loads(text)
     except ValueError:
@@ -147,7 +191,34 @@ def parse(text: str) -> Declared:
         for name, spec in entries.items()
         if isinstance(spec, dict) and isinstance(spec.get("url"), str)
     ]
-    return Declared(servers=tuple(servers), names=tuple(str(n) for n in entries))
+    local = [
+        found
+        for name, spec in entries.items()
+        if (found := local_server(str(name), spec)) is not None
+    ]
+    return Declared(
+        servers=tuple(servers),
+        local=tuple(local),
+        names=tuple(str(n) for n in entries),
+    )
+
+
+def local_server(name: str, spec: object) -> LocalServer | None:
+    """One local entry, as `.mcp.json` or an agent type writes it; None for
+    anything that is not one."""
+    if not isinstance(spec, dict) or isinstance(spec.get("url"), str):
+        return None
+    command = spec.get("command")
+    if not isinstance(command, str) or not command:
+        return None
+    args = spec.get("args") or []
+    env = spec.get("env") or {}
+    return LocalServer(
+        name=name,
+        command=command,
+        args=tuple(str(a) for a in args) if isinstance(args, list) else (),
+        env={str(k): str(v) for k, v in env.items()} if isinstance(env, dict) else {},
+    )
 
 
 def remote(name: str, spec: dict) -> RemoteServer:
@@ -197,17 +268,29 @@ def with_settings(found: Declared, added: Iterable[RemoteServer]) -> Declared:
 
 
 def with_types(found: Declared, types: Iterable) -> Declared:
-    """The project's servers and its teammates' types' remote ones, where the
-    types are ``AgentTypeDef``s. A name the project uses, in its `.mcp.json` or
-    its settings, stays the project's."""
+    """The project's servers and its teammates' types' own, where the types are
+    ``AgentTypeDef``s. A name the project uses, in its `.mcp.json` or its
+    settings, stays the project's. Several types may declare the same local
+    server; it is listed once, with every type that declares it."""
     servers, taken = list(found.servers), set(found.names) | set(found.added)
+    local, local_types = list(found.local), dict(found.local_types)
     for agent_type in types:
         for name, spec in agent_type.inline_servers().items():
-            if name in taken or not isinstance(spec.get("url"), str):
+            if name in local_types:
+                local_types[name] = (*local_types[name], agent_type.name)
                 continue
-            taken.add(name)
-            servers.append(remote(name, spec))
-    return replace(found, servers=tuple(servers))
+            if name in taken:
+                continue
+            if isinstance(spec.get("url"), str):
+                taken.add(name)
+                servers.append(remote(name, spec))
+            elif (own := local_server(name, spec)) is not None:
+                taken.add(name)
+                local.append(own)
+                local_types[name] = (agent_type.name,)
+    return replace(
+        found, servers=tuple(servers), local=tuple(local), local_types=local_types
+    )
 
 
 async def read(
@@ -284,3 +367,20 @@ async def _fetch(db: AsyncSession, project_id: uuid.UUID) -> Declared:
         raise GatewayUnavailableError(say("forgeNoFileContent"))
     text = decode_text(base64.b64decode(found.get("content") or ""))
     return parse(text) if text is not None else Declared(problem="invalid")
+
+
+async def last_author(db: AsyncSession, project_id: uuid.UUID) -> str | None:
+    """Who last changed `.mcp.json` on the default branch, as the repository
+    names them (a commit's author, not a member's handle); None when the forge
+    does not say."""
+    try:
+        found = await forge.repository_data(
+            project_id, db, "/commits?path=.mcp.json&limit=1&per_page=1"
+        )
+    except Exception:  # noqa: BLE001 — a name to show is not worth a refusal
+        return None
+    if not isinstance(found, list) or not found or not isinstance(found[0], dict):
+        return None
+    author = (found[0].get("commit") or {}).get("author") or {}
+    name = author.get("name") if isinstance(author, dict) else None
+    return str(name)[:128] if name else None

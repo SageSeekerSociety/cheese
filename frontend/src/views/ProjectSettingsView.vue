@@ -24,10 +24,10 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import DeviceSessionsSwitch from '@/components/DeviceSessionsSwitch.vue'
+import McpServerDialog from '@/components/McpServerDialog.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
-import McpServerDialog from '@/components/McpServerDialog.vue'
 import ProjectMcpSettings from '@/components/ProjectMcpSettings.vue'
 import ProjectTaskNamingSettings from '@/components/ProjectTaskNamingSettings.vue'
 import AgentTeamSettings from '@/components/settings/AgentTeamSettings.vue'
@@ -493,12 +493,12 @@ function close() {
           :error="mcp.error.value"
           :busy="mcp.busy.value"
           :values="mcp.values"
+          :manages="configuresAgents"
+          :agent-name="agentName"
           @connect="mcp.connect"
           @disconnect="mcp.disconnect"
           @save="mcp.save"
           @clear="mcp.clear"
-          :manages="configuresAgents"
-          :agent-name="agentName"
           @update:value="({ name, value }) => mcp.setValue(name, value)"
           @add="mcp.openAdd"
           @edit="mcp.openEdit"

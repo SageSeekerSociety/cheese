@@ -106,5 +106,7 @@
   "mcpServerNameInvalid": "A name can only use lowercase letters, digits and hyphens",
   "mcpHeaderNameInvalid": "A header name can only use letters, digits and hyphens",
   "mcpServerNotAdded": "This server was not added in project settings",
-  "mcpServerNameTaken": "The project already has a server named {name}"
+  "mcpServerNameTaken": "The project already has a server named {name}",
+  "mcpApprovalNotFound": "This run request no longer exists",
+  "mcpApprovalOwnerOnly": "Only the owner of this device can decide"
 }

@@ -106,5 +106,7 @@
   "mcpServerNameInvalid": "名称只能用小写字母、数字和连字符",
   "mcpHeaderNameInvalid": "请求头名称只能用字母、数字和连字符",
   "mcpServerNotAdded": "这个服务器不是在项目设置中添加的",
-  "mcpServerNameTaken": "项目里已经有名为 {name} 的服务器"
+  "mcpServerNameTaken": "项目里已经有名为 {name} 的服务器",
+  "mcpApprovalNotFound": "这条运行请求已不存在",
+  "mcpApprovalOwnerOnly": "只有这台设备的主人能决定"
 }

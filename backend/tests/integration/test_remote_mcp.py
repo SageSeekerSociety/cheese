@@ -129,7 +129,8 @@ def _rows(client, model):
 def test_a_member_connects_a_server_once_for_the_whole_project(client, upstream):
     pid = _project(client, upstream)
     before = _servers(client, pid)
-    assert set(before) == {"tracker", "search"}, "stdio servers are the machine's"
+    assert set(before) == {"tracker", "search", "local"}
+    assert before["local"]["transport"] == "stdio", "a command is listed as one"
     assert before["tracker"]["status"] == "disconnected"
     assert before["search"]["status"] == "missing_values"
 
@@ -535,7 +536,7 @@ def test_a_session_keeps_its_servers_while_the_forge_is_down(
 
 def test_the_settings_page_shows_a_committed_change_at_once(client, upstream):
     pid = _project(client, upstream)
-    assert set(_servers(client, pid)) == {"tracker", "search"}
+    assert set(_servers(client, pid)) == {"tracker", "search", "local"}
     _commit_servers(pid, {"wiki": {"type": "http", "url": f"{upstream.base}/mcp"}})
 
     assert set(_servers(client, pid)) == {"wiki"}

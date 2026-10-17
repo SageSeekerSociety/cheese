@@ -425,7 +425,11 @@ class RemoteTools:
     def gateway(self) -> Gateway:
         """The door Codex's own MCP client reaches the project's servers by."""
         return Gateway(
-            self.client.call, self.client.session_servers, tool_call=self.mcp_tool_call
+            self.client.call,
+            self.client.session_servers,
+            tool_call=self.mcp_tool_call,
+            observe=self.client.local_outcome,
+            on_close=self.client.local_closed,
         )
 
     def mcp_tool_call(self, params: dict) -> dict:

@@ -15,7 +15,7 @@ import time
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 # How long a request waits out a platform endpoint that is not listening.
 # An app deploy recreates the backend container, and the central session reaches
@@ -447,6 +447,11 @@ def register_project_hooks(config, hooks):
         )
     _replace_file(str(record), json.dumps(hooks))
     return True
+
+
+#: Starts the error the executor refuses to start a local server with, on a
+#: member's computer whose owner has not allowed its command (`runtime.py`).
+APPROVAL_REQUIRED = "MCP_APPROVAL_REQUIRED "
 
 
 def _remote_servers(target: dict) -> list[str]:
@@ -922,6 +927,101 @@ class RemoteClient:
     def remote_servers(self):
         return list((self.config.get("remote_mcp") or {}).get("servers", []))
 
+    # --- the project's local servers -------------------------------------------
+    #
+    # A local server — a command the checkout's `.mcp.json` or the teammate's
+    # type names — is started by the machine's executor from its own
+    # definition. Before its first call this session asks the platform two
+    # things to hand it with each call (`mcp_path`/<name>/start): the values of
+    # the project secrets the default branch's definition names, and, on a
+    # member's own computer, the fingerprints of the commands its owner lets
+    # run there; the executor checks the command it is about to run against
+    # those. How the server fared is said back (`report_local`) for the
+    # project's settings page. A session started without `mcp_path` (a
+    # member's own Claude Code, on their own computer) asks nothing.
+
+    def local(self, server):
+        return (
+            isinstance(server, str)
+            and server != "native"
+            and server not in self.remote_servers()
+        )
+
+    def _local_start(self, server):
+        if not self.config.get("mcp_path"):
+            return {}
+        cache = self.__dict__.setdefault("local_starts", {})
+        if server not in cache:
+            response = self.platform_request(
+                {
+                    "method": "POST",
+                    "path": f"{self.config['mcp_path']}/{quote(server, safe='')}/start",
+                    "body": {"device_id": self.config.get("device_id")},
+                }
+            )
+            cache[server] = json.loads(response["value"]["stdout"])["data"]
+        return cache[server]
+
+    def report_local(self, server, state, **more):
+        """Say how a local server fared; never fails the call it is about."""
+        if not self.config.get("mcp_path") or not self.local(server):
+            return
+        try:
+            self.platform_request(
+                {
+                    "method": "POST",
+                    "path": f"{self.config['mcp_path']}/{quote(server, safe='')}/run",
+                    "body": {
+                        "state": state,
+                        "device_id": self.config.get("device_id"),
+                        **more,
+                    },
+                }
+            )
+        except Exception:  # noqa: BLE001 — a report is not worth a failed call
+            pass
+
+    def local_outcome(self, server, error):
+        """How a local server's first list of its tools went, said back once
+        per change; answers with what to tell the session instead of the
+        executor's own words, when there is something better to say."""
+        if not self.local(server):
+            return None
+        said = self.__dict__.setdefault("local_said", {})
+        if error is None:
+            if said.get(server) != "running":
+                said[server] = "running"
+                self.report_local(server, "running")
+            return None
+        if APPROVAL_REQUIRED in error:
+            # Wherever the transport put it in its own words, on its own line.
+            line = error[error.index(APPROVAL_REQUIRED) + len(APPROVAL_REQUIRED) :]
+            asked = json.loads(line.splitlines()[0])
+            if said.get(server) != "awaiting":
+                said[server] = "awaiting"
+                self.report_local(
+                    server,
+                    "awaiting",
+                    fingerprint=asked["fingerprint"],
+                    command=asked["command"],
+                )
+            # The cached answer had none of what the owner may since allow.
+            self.__dict__.get("local_starts", {}).pop(server, None)
+            return (
+                f"{server} waits for the owner of this computer to allow its "
+                "command to run here. Nothing about it can be done from this "
+                "session."
+            )
+        said[server] = "failed"
+        self.report_local(server, "failed", log=error.splitlines()[-12:])
+        return None
+
+    def local_closed(self):
+        """The session is going: the servers it said were running are not."""
+        for server, state in list(self.__dict__.get("local_said", {}).items()):
+            if state == "running":
+                self.report_local(server, "idle")
+
     def agent_servers(self):
         return agent_servers(self.config)
 
@@ -1035,6 +1135,8 @@ class RemoteClient:
             and params.get("server") in self.agent_servers()
         ):
             params = {**params, "spec": self.config["agent_mcp"][params["server"]]}
+        if method in {"invoke", "mcp"} and params and self.local(params.get("server")):
+            params = {**params, **self._local_start(params["server"])}
         if self.config.get("kind") == "device":
             deadline = min(
                 operation_deadline, time.monotonic() + CONNECT_RETRY_WINDOW_S

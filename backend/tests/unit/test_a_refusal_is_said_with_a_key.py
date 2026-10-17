@@ -283,7 +283,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/projects_run_config.py": 3,
     "app/api/routes/questions.py": 11,
     "app/api/routes/recruitment.py": 2,
-    "app/api/routes/remote_mcp.py": 6,
+    "app/api/routes/remote_mcp.py": 3,
     "app/api/routes/routines.py": 2,
     "app/api/routes/run_records.py": 1,
     "app/api/routes/sandbox.py": 1,

@@ -24,9 +24,14 @@ from app.api.auth.resolver import ActorResolver as ActorResolver
 from app.common.auth import verify_access_token
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, ForbiddenError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+)
 from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import say
+from app.domain.conversation import services as conversations
 from app.domain.identity.actor import TokenIdentity
 from app.domain.topic_membership.services import (
     TopicMemberService as TopicMemberService,
@@ -145,6 +150,26 @@ def _endpoint_name(request: Request) -> str | None:
 # viewer_authz.py) — see app/api/routes/chat.py.
 ActorResolverDep = Annotated[ActorResolver, Depends(get_actor_resolver)]
 MediaActorResolverDep = Annotated[ActorResolver, Depends(get_media_actor_resolver)]
+
+
+async def session_in(
+    session: AsyncSession, token: str, topic_id: uuid.UUID
+) -> tuple[uuid.UUID, dict]:
+    """The project of a session's own request about the conversation it works
+    in — a room, or one of its tasks — and its credential's claims. Only that
+    conversation's credential, of that project, with its agent still seated."""
+    claims = scoped_token_claims(token)
+    if not claims or claims.get("t") != str(topic_id):
+        raise AuthenticationRequiredError("A credential for this room is required")
+    project_id = await conversations.project_of(session, topic_id)
+    if project_id is None:
+        raise NotFoundError("Topic not found")
+    if claims.get("p") != str(project_id):
+        raise ForbiddenError("This room belongs to another project")
+    await require_seated_agent(
+        session, token, project_id=project_id, topic_id=topic_id
+    )
+    return project_id, claims
 
 
 async def require_seated_agent(

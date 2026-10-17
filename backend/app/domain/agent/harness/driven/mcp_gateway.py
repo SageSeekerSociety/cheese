@@ -55,6 +55,8 @@ REVISIONS = ("2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25")
 #: Answered to a client asking for a revision not in ``REVISIONS``: the newest
 #: one Claude Code, Codex and pi all speak.
 SHARED_REVISION = "2025-06-18"
+#: How long a closing door waits to have said so.
+CLOSE_WAIT_S = 3
 #: A JSON-RPC body larger than this is refused rather than read.
 MAX_BODY = 16 * 1024 * 1024
 
@@ -70,7 +72,12 @@ class Gateway:
 
     ``tool_call`` makes a tool call; by default it goes on marked as already
     hooked. A harness that fires no hooks of its own (Codex, whose every tool
-    is the platform's) passes one that has them run around the call."""
+    is the platform's) passes one that has them run around the call.
+
+    ``observe(server, error)`` hears how each list of a server's tools went
+    (``error`` None when it went well), and may answer with what to tell the
+    client instead of the error; ``on_close`` is told the door is closing.
+    Both are `RemoteClient`'s (`local_outcome`, `local_closed`)."""
 
     def __init__(
         self,
@@ -78,9 +85,13 @@ class Gateway:
         servers: Callable[[], list[str]],
         *,
         tool_call: ToolCall | None = None,
+        observe: Callable[[str, str | None], str | None] | None = None,
+        on_close: Callable[[], None] | None = None,
     ) -> None:
         self.call = call
         self.servers = servers
+        self.observe = observe
+        self.on_close = on_close
         self.tool_call = tool_call or (
             lambda params: call("invoke", {**params, "platform": True})
         )
@@ -116,6 +127,13 @@ class Gateway:
         return {SECRET_HEADER: self.secret}
 
     def close(self) -> None:
+        if self.on_close is not None:
+            # Said, not waited on: a platform that does not answer must not
+            # hold a session's ending.
+            closing = threading.Thread(target=self.on_close, daemon=True)
+            closing.start()
+            closing.join(CLOSE_WAIT_S)
+            self.on_close = None
         if self.server is not None:
             self.server.shutdown()
             self.server.server_close()
@@ -169,9 +187,18 @@ class Gateway:
                 "content": [{"type": "text", "text": receipt.get("error", "")}],
                 "isError": True,
             }
-        return self.call(
-            "mcp", {"server": server, "method": "tools/list", "params": params}
-        )
+        try:
+            listed = self.call(
+                "mcp", {"server": server, "method": "tools/list", "params": params}
+            )
+        except Exception as exc:
+            said = self.observe(server, str(exc)) if self.observe else None
+            if said is not None:
+                raise RuntimeError(said) from exc
+            raise
+        if self.observe is not None:
+            self.observe(server, None)
+        return listed
 
 
 class _NoSuchMethod(Exception):
