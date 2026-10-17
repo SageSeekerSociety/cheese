@@ -1588,3 +1588,82 @@ def test_a_closed_tasks_failed_snapshot_does_not_fail_the_agents_command(
     cli.main()
 
     assert _told_the_room(home) == []
+
+
+def test_an_edit_to_a_tracked_file_in_an_install_directory_is_kept_on_a_persons_machine(
+    device, monkeypatch
+):
+    """A repository may commit its `node_modules`; an edit to a file it tracks
+    there is work like any other, and the closed task's checkout stays."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "node_modules").mkdir()
+    _commit(work, "node_modules/vendored.js", "v1\n")
+    cli._sync_task(task)
+    (work / "node_modules" / "vendored.js").write_text("v2, not committed\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert (work / "node_modules" / "vendored.js").read_text() == "v2, not committed\n"
+
+
+def test_a_followed_step_pushes_the_commits_on_the_latest_code(device, tmp_path):
+    """After a step lands, the sync that follows it delivers and snapshots the
+    checkout as it now is, on the latest code, not the history the landed step
+    had."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    info = tasks[task]
+    work = cli._task_worktree(task)
+    _commit(work, "same.txt", "step one\n")
+    cli._sync_task(task)
+    _land(remote, tmp_path, info, 1)
+    _commit(work, "later.txt", "step two\n")
+
+    cli._sync_task(task)
+
+    head = git(work, "rev-parse", "HEAD")
+    assert git(remote, "rev-parse", info["branch"]) == head
+    latest = json.loads((home / "backups" / task / "latest.json").read_text())
+    assert latest["head_sha"] == head
+
+
+def test_a_checkout_git_cannot_describe_is_kept_on_a_persons_machine(
+    device, monkeypatch
+):
+    """A file name git prints in bytes that are not UTF-8 (an archive unpacked
+    from another locale) leaves the sync unable to tell what is unsaved; in
+    doubt the closed task's checkout stays, since it may be the only copy."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("not committed\n")
+    blob = subprocess.run(
+        ["git", "-C", str(work), "hash-object", "-w", "--stdin"],
+        input=b"x\n",
+        capture_output=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        [
+            b"git",
+            b"-C",
+            str(work).encode(),
+            b"update-index",
+            b"--add",
+            b"--cacheinfo",
+            b"100644," + blob + b",caf\xe9.txt",
+        ],
+        check=True,
+    )
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert (work / "draft.txt").exists()

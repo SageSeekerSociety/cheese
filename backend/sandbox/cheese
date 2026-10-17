@@ -4338,6 +4338,8 @@ def _sync_task(task_id: str) -> list[str]:
                         raise RuntimeError(
                             f"Expected task branch {branch}, found {found}"
                         )
+                    # Following a landed step moves HEAD onto the new branch.
+                    head = _git_task(worktree, "rev-parse", "HEAD")
                     step = "push"
                     try:
                         _once_more_if_transient(
@@ -4378,7 +4380,8 @@ def _sync_task(task_id: str) -> list[str]:
             else:
                 try:
                     step = "snapshot"
-                    # HEAD again: following a landed step moves it.
+                    # HEAD again: following a landed step moves it, also when
+                    # the push after it failed.
                     base = _git_task(worktree, "rev-parse", "HEAD")
                     snapshot, left_out = _snapshot_commit(
                         worktree, admin, task_id, base
@@ -4432,17 +4435,21 @@ def _mark_work_only_here(admin: Path, worktree: Path) -> None:
         listed = _git_task(
             worktree, "--no-optional-locks", "status", "--porcelain", "-z", raw=True
         )
-        # What a snapshot would carry: not a generated directory, which comes
-        # back with an install.
+        # What a snapshot would carry: every change to a tracked file, and
+        # untracked files outside a generated directory, which comes back
+        # with an install.
         changed = [
-            entry[3:]
+            entry
             for entry in listed.split("\0")
-            if len(entry) > 3
-            and not set(entry[3:].rstrip("/").split("/")) & _GENERATED_DIRS
+            if entry
+            and not (
+                entry.startswith("?? ")
+                and set(entry[3:].rstrip("/").split("/")) & _GENERATED_DIRS
+            )
         ]
         unsaved = bool(changed) or _review_behind(worktree)
-    except RuntimeError:
-        unsaved = True
+    except Exception:  # noqa: BLE001 — a name git cannot decode, a timeout
+        unsaved = True  # In doubt, the checkout is kept: it may be the only copy.
     if unsaved:
         marker.touch()
     else:
