@@ -116,6 +116,9 @@ defineExpose({ scrollActiveIntoView })
               <span v-else-if="mm.kind === 'file'" class="mention-avatar mention-avatar--file">
                 <v-icon size="13">mdi-file-outline</v-icon>
               </span>
+              <span v-else-if="mm.kind === 'document'" class="mention-avatar mention-avatar--file">
+                <v-icon size="13">mdi-file-document-outline</v-icon>
+              </span>
               <span v-else class="mention-avatar mention-avatar--topic">
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
