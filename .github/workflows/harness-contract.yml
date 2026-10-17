@@ -52,6 +52,21 @@ jobs:
       # backend/ (this job's working directory) on the import path.
       - name: Verify actual provider requests with pinned binaries
         run: uv run python -m scripts.test_harness_contracts
+      # The upload takes each file at whatever size it happens to be, and on
+      # 2026-09-12 that was 4.5 GB across four artifacts (one of them 2.25 GB)
+      # — enough to fill the account's artifact storage and fail every later
+      # upload for days. Cap the files before the upload reads them.
+      #
+      # `always()` for the same reason the upload has it: the run that failed
+      # is the one that wrote a runaway log, so a cap that only runs after a
+      # green test step would miss exactly the case it exists for.
+      - name: Cap the retained logs
+        if: always()
+        # The job's defaults run every step in backend/, but the upload's
+        # `path:` is resolved from the workspace root. Pin the same root here
+        # so the script path, the log root and the upload name one directory.
+        working-directory: ${{ github.workspace }}
+        run: python3 .github/scripts/cap-retained-logs.py logs/harness-contracts
       - name: Retain synthetic requests and test logs
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

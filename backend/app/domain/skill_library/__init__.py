@@ -12,10 +12,27 @@ first needed them.
 
 import functools
 import json
+import uuid
 from pathlib import Path
+
+from app.core.config import settings
 
 #: Where the guides live: next to this file.
 SKILL_DIR = Path(__file__).parent
+
+
+def project_skills_root(project_id: uuid.UUID | str) -> Path:
+    """Where a project's confirmed skills are mirrored on disk for a session to
+    read: one directory per project under the platform's workspace.
+
+    Written by `project_skill.service`, rebuilt after every change. The
+    convention lives here, below both the writer and one of its readers —
+    `repository.service.session_dir` copies that directory into a session
+    directory — because where a path is is not worth an upward import;
+    `event_author` and `event_about` came down here for the same reason.
+    `project_skill.service` keeps its own name for the call, `mirror_root`.
+    """
+    return Path(settings.workspace_root) / ".project-skills" / str(project_id)
 
 
 def parse_frontmatter(path: Path) -> tuple[dict[str, str], str]:
