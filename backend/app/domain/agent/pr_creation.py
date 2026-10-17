@@ -8,7 +8,7 @@ watches on a card — checks failing or passing, a review, a conflict — comes
 back to the agent, and nobody is asked to accept it.
 
 Each harness refuses such a command where its shell commands pass through the
-platform: Claude Code's shell prefix (`remote_execution/client.py`), Codex's
+platform: Claude Code's shell prefix (`remote_execution/shell_prefix.py`), Codex's
 executor call (`codex/tools.py`) and pi's PreToolUse (`pi/hooks.py`). Standard
 library only: this module ships beside those runners.
 
