@@ -191,9 +191,58 @@ def test_the_agent_reads_one_row_per_turn_with_its_failure(client, projects):
     assert "没记过失败" in by_turn[str(notice)]
     assert "还在跑" in by_turn[str(running)]
     assert "投喂 2 次" in by_turn[str(running)]
+    # The open turn's last frame is said on the line: this backend reads no
+    # session for it, so it reads 未知 — and never a fabricated 0 s. Dropping
+    # the suffix from `_turns_lines` must take this assertion red.
+    assert "最近帧 未知" in by_turn[str(running)]
+    assert "0s 前" not in by_turn[str(running)]
     assert str(clean) not in listed
     # 成功不写事件：这一行只能说明平台没为这一轮记过失败。
     assert "不是记了成功" in listed
+
+
+def test_the_agent_reads_one_turn_by_id_with_its_records(client, projects):
+    """`turn_id` drills into the one turn the `turns` list showed: what it
+    left in the run records, and how it ended. This backend reads no session
+    for it, so its last frame says 未知 rather than 0."""
+    platform, _ = projects
+    topic = _room(client, platform)
+    agent = AgentHost(client, platform, topic)
+    now = datetime.now(UTC)
+    turn_id = uuid.uuid4()
+
+    async def seed() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                AgentTurn(
+                    id=turn_id,
+                    conversation_id=uuid.UUID(topic),
+                    continuation_id=turn_id,
+                    author="alice",
+                    started_at=now - timedelta(minutes=5),
+                )
+            )
+            s.add(
+                RunRecord(
+                    project_id=uuid.UUID(platform),
+                    conversation_id=uuid.UUID(topic),
+                    turn_id=turn_id,
+                    kind="environment",
+                    severity="info",
+                    content="机器连上了",
+                    created_at=now - timedelta(minutes=4),
+                )
+            )
+            await s.commit()
+
+    client.portal.call(seed)
+
+    drilled = agent.run(turn_id=str(turn_id))
+    assert str(turn_id) in drilled
+    assert "没记过失败" in drilled
+    assert "机器连上了" in drilled
+    assert "最近帧 未知" in drilled
+    assert "0s 前" not in drilled
 
 
 def test_an_agent_elsewhere_is_refused(client, projects):

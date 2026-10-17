@@ -44,12 +44,14 @@ from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent_instance.adapters import project_team
+from app.domain.block import citations
 from app.domain.block.documents import whose_document
 from app.domain.canvas.block import canvas_ids
 from app.domain.canvas.services import Settled, settle
 from app.domain.conversation import services as conversations
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab, work_edits
+from app.domain.living_doc import links as doc_links
 from app.domain.living_doc.overview import overview_document
 from app.domain.living_doc.schemas import (
     DocumentIn,
@@ -63,6 +65,7 @@ from app.domain.living_doc.schemas import (
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.mentions import (
     canonicalize_refs,
+    conversation_refs,
     dangling_refs,
     dangling_refs_warning,
 )
@@ -72,6 +75,7 @@ from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.schemas import DocEditIn
+from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 rooms = APIRouter(prefix="/topics", tags=["topics"])
@@ -273,6 +277,116 @@ async def document_about(
     """What the document is called and whose it is, even before anything is
     written in it."""
     return ok(document_row((await reach(db, resolver, document_id)).doc))
+
+
+class LinkedDocumentOut(BaseModel):
+    id: str
+    number: int | None
+    title: str
+
+
+class CitingPlaceOut(BaseModel):
+    kind: str
+    id: str
+    title: str
+    room_id: str
+    project_id: str
+
+
+class LinkedFromOut(BaseModel):
+    """A document, or a conversation's latest message, that references this
+    one. ``kind`` says which; the fields of the other kind are absent."""
+
+    kind: str
+    id: str | None = None
+    project_id: str | None = None
+    number: int | None = None
+    title: str | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+    conversation: CitingPlaceOut | None = None
+    message_id: str | None = None
+    excerpt: str | None = None
+    author: str | None = None
+    at: str | None = None
+    count: int | None = None
+
+
+class DocumentLinksOut(BaseModel):
+    links_to: list[LinkedDocumentOut]
+    linked_from: list[LinkedFromOut]
+
+
+@router.get("/{document_id}/links", **typed_response(DocumentLinksOut))
+async def document_links(
+    document_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The documents this one links to, and the documents and conversations
+    that link to it (#3827) — only those the caller may read. A conversation
+    is one entry: the latest message there that references it, and how many
+    do."""
+    reached = await reach(db, resolver, document_id)
+
+    async def readable(other: uuid.UUID) -> bool:
+        try:
+            await reach(db, resolver, other)
+        except BaseError:
+            return False
+        return True
+
+    async def title_of(doc) -> str:
+        if doc.title:
+            return doc.title
+        task = await TaskService(db).of_document(doc.id)
+        return task.title if task is not None else ""
+
+    links_to = [
+        {"id": str(d.id), "number": d.number, "title": await title_of(d)}
+        for d in await doc_links.links_of(db, document_id)
+        if await readable(d.id)
+    ]
+    linked_from: list[dict] = [
+        {
+            "kind": "document",
+            "id": str(d.id),
+            "project_id": str(d.project_id),
+            "number": d.number,
+            "title": await title_of(d),
+            "updated_by": d.author,
+            "updated_at": d.updated_at.isoformat(),
+        }
+        for d in await doc_links.linking_to(db, document_id)
+        if await readable(d.id)
+    ]
+    project_id = reached.doc.project_id
+    citing = await citations.citing_conversations(db, project_id, document_id)
+    places = await conversation_refs(db, [c.conversation_id for c in citing])
+    rooms = await TopicService(db).get_many({p.room_id for p in places.values()})
+    open_rooms = await resolver.readable_topic_ids(
+        reached.actor, project_id=project_id, topics=rooms
+    )
+    for c in citing:
+        place = places.get(c.conversation_id)
+        if place is None or place.room_id not in open_rooms:
+            continue
+        linked_from.append(
+            {
+                "kind": "conversation",
+                "conversation": {
+                    "kind": place.kind.value,
+                    "id": str(place.id),
+                    "title": place.title,
+                    "room_id": str(place.room_id),
+                    "project_id": str(project_id),
+                },
+                "message_id": str(c.block_id),
+                "excerpt": c.content[:400],
+                "author": c.author,
+                "at": c.at.isoformat(),
+                "count": c.count,
+            }
+        )
+    return ok({"links_to": links_to, "linked_from": linked_from})
 
 
 async def _own(db, resolver, document_id: uuid.UUID):

@@ -259,3 +259,29 @@ class DocumentMention(Base):
     notified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+
+
+class DocumentLink(Base):
+    """One document's text referencing another of the same project
+    (``<#id>``), as of its last stored version (#3827). Kept so a document can
+    list what links to it; rewritten on every store (``links.sync``)."""
+
+    __tablename__ = "document_links"
+
+    source_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="CASCADE",
+            name="fk_document_links_source_id_documents",
+        ),
+        primary_key=True,
+    )
+    target_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "documents.id",
+            ondelete="CASCADE",
+            name="fk_document_links_target_id_documents",
+        ),
+        primary_key=True,
+        index=True,
+    )
