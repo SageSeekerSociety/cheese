@@ -126,6 +126,15 @@ def _failure_message(offenders: list[str]) -> str:
     )
 
 
+def test_scanned_roots_all_exist():
+    missing = [root for root in SCANNED if not (REPO_ROOT / root).is_dir()]
+    assert not missing, f"事件落点守卫的扫描目录不存在：{missing}"
+
+
+def test_sources_is_not_empty():
+    assert _sources(), "事件落点守卫没有扫描到任何 Python 文件"
+
+
 def test_every_event_takes_its_landing_from_the_closed_table():
     offenders: list[str] = []
     for path, rel in _sources():
