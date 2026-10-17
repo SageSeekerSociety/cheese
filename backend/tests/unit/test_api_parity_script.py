@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import APIRouter, FastAPI
 
 from scripts import check_api_parity
 
@@ -89,38 +90,44 @@ def test_matching_routes_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     )
 
 
-def test_the_script_as_a_process_exits_nonzero_on_drift(tmp_path: Path) -> None:
-    """The point of the change: the exit status, not the printed report."""
-    root = tmp_path / "backend"
+APP_SERVING_THINGS = (
+    "from fastapi import FastAPI\n"
+    "\n"
+    "app = FastAPI()\n"
+    "\n"
+    "\n"
+    "@app.get('/things')\n"
+    "def things() -> list[str]:\n"
+    "    return []\n"
+)
+
+#: The routes ``FastAPI()`` registers on its own, so a catalog can match a fake app.
+FASTAPI_BUILTIN_ROUTES = [
+    ("GET", "/openapi.json"),
+    ("GET", "/docs"),
+    ("GET", "/docs/oauth2-redirect"),
+    ("GET", "/redoc"),
+]
+
+
+def run_as_process(
+    root: Path, catalog: list[tuple[str, str]], app_source: str
+) -> subprocess.CompletedProcess[str]:
     (root / "app").mkdir(parents=True)
     (root / "app" / "__init__.py").write_text("", encoding="utf-8")
-    (root / "app" / "main.py").write_text(
-        "from fastapi import FastAPI\n"
-        "\n"
-        "app = FastAPI()\n"
-        "\n"
-        "\n"
-        "@app.get('/things')\n"
-        "def things() -> list[str]:\n"
-        "    return []\n",
-        encoding="utf-8",
-    )
-    script = BACKEND / "scripts" / "check_api_parity.py"
+    (root / "app" / "main.py").write_text(app_source, encoding="utf-8")
     (root / "scripts").mkdir()
-    shutil.copy(script, root / "scripts" / "check_api_parity.py")
-    catalog = root / "tests" / "contract" / "api_catalog.json"
-    catalog.parent.mkdir(parents=True)
-    catalog.write_text(
-        json.dumps(
-            [
-                {"method": "GET", "path": "/things"},
-                {"method": "GET", "path": "/gone"},
-            ]
-        ),
+    shutil.copy(
+        BACKEND / "scripts" / "check_api_parity.py",
+        root / "scripts" / "check_api_parity.py",
+    )
+    catalog_path = root / "tests" / "contract" / "api_catalog.json"
+    catalog_path.parent.mkdir(parents=True)
+    catalog_path.write_text(
+        json.dumps([{"method": method, "path": path} for method, path in catalog]),
         encoding="utf-8",
     )
-
-    result = subprocess.run(
+    return subprocess.run(
         [sys.executable, "scripts/check_api_parity.py"],
         cwd=root,
         env={**os.environ, "PYTHONPATH": str(root)},
@@ -128,4 +135,42 @@ def test_the_script_as_a_process_exits_nonzero_on_drift(tmp_path: Path) -> None:
         text=True,
     )
 
+
+def test_a_router_mounted_with_include_router_is_seen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FastAPI keeps an included router as one entry; its routes are still ours."""
+    api = APIRouter()
+
+    @api.get("/things/{item_id}")
+    def read_thing(item_id: str) -> dict[str, str]:
+        return {"id": item_id}
+
+    mounted = FastAPI()
+    mounted.include_router(api, prefix="/api")
+    monkeypatch.setattr(check_api_parity, "app", mounted)
+
+    assert ("GET", "/api/things/{item_id}") in check_api_parity.collect_app_routes()
+
+
+def test_the_script_as_a_process_exits_nonzero_on_drift(tmp_path: Path) -> None:
+    """The point of the change: the exit status, not the printed report."""
+    result = run_as_process(
+        tmp_path / "backend",
+        [("GET", "/things"), ("GET", "/gone")],
+        APP_SERVING_THINGS,
+    )
+
     assert result.returncode == 1, result.stdout + result.stderr
+    assert "GET /gone" in result.stdout
+    assert "Missing exact matches: 1" in result.stdout
+
+
+def test_the_script_as_a_process_exits_zero_when_routes_match(tmp_path: Path) -> None:
+    result = run_as_process(
+        tmp_path / "backend",
+        [("GET", "/things"), *FASTAPI_BUILTIN_ROUTES],
+        APP_SERVING_THINGS,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr

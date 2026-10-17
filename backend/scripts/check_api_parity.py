@@ -34,15 +34,26 @@ def load_spec() -> set[tuple[str, str]]:
 
 
 def collect_app_routes() -> set[tuple[str, str]]:
+    """Every HTTP method and effective path the app serves.
+
+    Since FastAPI 0.137 an app keeps an included router as one
+    ``_IncludedRouter`` in ``app.routes``, and only that object's contexts carry
+    the prefixed path and methods. Reading ``app.routes`` directly would see
+    just the handful of routes declared on the app itself and call everything
+    else missing; ``scripts/route_index.py`` and ``app/api/write_access.py``
+    unwrap routers the same way.
+    """
     entries: set[tuple[str, str]] = set()
     for route in app.routes:
-        methods = getattr(route, "methods", None)
-        if not methods:
-            continue
-        for method in methods:
-            if method in {"HEAD", "OPTIONS"}:
+        contexts = getattr(route, "effective_route_contexts", None)
+        for effective in contexts() if contexts is not None else (route,):
+            methods = getattr(effective, "methods", None)
+            if not methods:
                 continue
-            entries.add((method, route.path))  # type: ignore[union-attr]
+            for method in methods:
+                if method in {"HEAD", "OPTIONS"}:
+                    continue
+                entries.add((method, effective.path))
     return entries
 
 
