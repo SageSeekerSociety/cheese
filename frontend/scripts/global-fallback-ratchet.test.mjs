@@ -65,20 +65,48 @@ const template = (body) => `<script setup lang="ts">\nconst n = 1\nvoid n\n</scr
  * rule exists to end.
  */
 const composable = {
-  'module level': [
-    'function scrollToBottom() { window.scrollTo(0, 0) }',
-    'function open() {}',
-    'export function useScrollProbe() {}',
-    '',
-  ].join('\n'),
-  'inside the composable': [
-    'export function useScrollProbe() {',
-    '  function scrollToBottom() { window.scrollTo(0, 0) }',
-    '  function open() {}',
-    '  return {}',
-    '}',
-    '',
-  ].join('\n'),
+  'module level': {
+    kept: [
+      'function scrollToBottom() { window.scrollTo(0, 0) }',
+      'function open() {}',
+      'export function useScrollProbe() {}',
+      '',
+    ].join('\n'),
+    fixed: [
+      'export function scrollToBottom() { window.scrollTo(0, 0) }',
+      'export function open() {}',
+      'export function useScrollProbe() {}',
+      '',
+    ].join('\n'),
+    // Taken by name, which is the whole repair for this shape.
+    taken: "import { open } from '../composables/__globalFallbackProbe'",
+  },
+  'inside the composable': {
+    kept: [
+      'export function useScrollProbe() {',
+      '  function scrollToBottom() { window.scrollTo(0, 0) }',
+      '  function open() {}',
+      '  return {}',
+      '}',
+      '',
+    ].join('\n'),
+    // Handed back through the composable's `return`, and taken out of the call
+    // that returns it. A `return` is not an export — the module still lists the
+    // name as internal — so the guard's own half of the repair is the `taken`
+    // line, and `vue-tsc` is what refuses a return that omits the name.
+    fixed: [
+      'export function useScrollProbe() {',
+      '  function scrollToBottom() { window.scrollTo(0, 0) }',
+      '  function open() {}',
+      '  return { open }',
+      '}',
+      '',
+    ].join('\n'),
+    taken: [
+      "import { useScrollProbe } from '../composables/__globalFallbackProbe'",
+      'const { open } = useScrollProbe()',
+    ].join('\n'),
+  },
 }
 
 // ---------------------------------------------------------------------------
@@ -349,11 +377,53 @@ describe('findGlobalFallbacks', () => {
     assert.deepEqual(found(code), [])
   })
 
+  // The same declaration written with the name quoted, or computed, or in the
+  // object the macro takes. A string is a binding when it sits where a prop
+  // name sits; the three spellings below all declare a prop called `open`, and
+  // refusing them would block a legal component in a rule that has no baseline.
+  it('leaves a prop alone however its name is written', () => {
+    for (const declaration of [
+      "const props = defineProps({ 'open': Function })",
+      "const props = defineProps({ ['open']: Function })",
+      'const props = defineProps({ open: Function })',
+      'const props = defineProps<{ open: () => void }>()',
+    ]) {
+      const code = [
+        '<script setup lang="ts">',
+        declaration,
+        'void props',
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+      assert.deepEqual(found(code), [], `reported a prop this declaration binds:\n${declaration}`)
+    }
+  })
+
+  // The Options API declares the same names in a different place, and a
+  // component written that way gets the same answer.
+  it('reads the Options API forms of the same declarations', () => {
+    const component = (options) =>
+      [
+        '<script lang="ts">',
+        `export default { ${options} }`,
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+    assert.deepEqual(found(component("props: ['open']")), [])
+    assert.deepEqual(found(component('props: { open: Function }')), [])
+    assert.deepEqual(found(component('methods: { open() {} }')), [])
+  })
+
   // The other macros' arguments are names of things, not bindings: an emit name
   // and a model name do not make a callable `open` in the template, and a rule
   // that counted their strings would answer "clean" to exactly the call it was
-  // written to find. This is the false negative the string-literal allowance
-  // used to leave in 140 components.
+  // written to find.
   it('does not let an emit name, a model name or any other string bind the call', () => {
     const code = [
       '<script setup lang="ts">',
@@ -438,11 +508,10 @@ describe('the pair a refactor leaves behind', () => {
   const MODULE_FILE = resolve(ROOT, MODULE_PATH)
   const COMPONENT_FILE = resolve(ROOT, COMPONENT_PATH)
 
-  const component = (call) =>
+  const component = (call, taking = 'const n = 1\nvoid n') =>
     [
       '<script setup lang="ts">',
-      'const n = 1',
-      'void n',
+      taking,
       '</script>',
       '<template>',
       `  <button @click="${call}">x</button>`,
@@ -473,7 +542,7 @@ describe('the pair a refactor leaves behind', () => {
   for (const [shape, source] of Object.entries(composable)) {
     it(`refuses a component calling a composable function that was never exported (${shape})`, () => {
       try {
-        write(source, component('open()'))
+        write(source.kept, component('open()'))
 
         const blocked = run()
         assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
@@ -488,17 +557,15 @@ describe('the pair a refactor leaves behind', () => {
       }
     })
 
-    it(`accepts that pair once the name is handed out and taken (${shape})`, () => {
+    it(`accepts the repaired pair (${shape})`, () => {
       try {
-        const handedOut =
-          shape === 'module level'
-            ? source.replace('function open()', 'export function open()')
-            : source.replace('  function open() {}', '  function open() {}\n  return { open }')
-        const imported = component('open()').replace(
-          'const n = 1',
-          "import { open } from '../composables/__globalFallbackProbe'\nvoid open"
-        )
-        write(handedOut, imported)
+        // What the module half of the repair is, stated where it can be read:
+        // at module level the export takes the name off the internal list,
+        // while a `return` inside the composable does not — the module still
+        // keeps it, and the component's own `taken` line is the half this rule
+        // judges. `vue-tsc` is what refuses a return that omits the name.
+        assert.deepEqual(internalDeclarations(source.fixed), shape === 'module level' ? [] : ['scrollToBottom', 'open'])
+        write(source.fixed, component('open()', source.taken))
         const clean = run()
         assert.equal(clean.status, 0, `${clean.stdout}${clean.stderr}`)
         assert.match(clean.stdout, /No call falls back/)
@@ -531,7 +598,10 @@ describe('the pair a refactor leaves behind', () => {
 
   it('refuses a call in <script setup> too, and counts both halves', () => {
     try {
-      write(composable['inside the composable'], component('open()').replace('const n = 1\nvoid n', 'scrollToBottom()'))
+      write(
+        composable['inside the composable'].kept,
+        component('open()').replace('const n = 1\nvoid n', 'scrollToBottom()')
+      )
 
       const blocked = run()
       assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
@@ -547,7 +617,7 @@ describe('the pair a refactor leaves behind', () => {
   // it says so. A rule that refused this would be `no-undef` under another name.
   it('accepts the call once the component says `window.`', () => {
     try {
-      write(composable['module level'], component('window.open()'))
+      write(composable['module level'].kept, component('window.open()'))
       const clean = run()
       assert.equal(clean.status, 0, `${clean.stdout}${clean.stderr}`)
     } finally {
@@ -562,7 +632,7 @@ describe('the pair a refactor leaves behind', () => {
   // the one thing a collector reads both of.
   it('reports one JSON record whose status agrees with the exit code', () => {
     try {
-      write(composable['module level'], component('open()'))
+      write(composable['module level'].kept, component('open()'))
       const failed = run('--json')
       assert.equal(failed.status, 1, `${failed.stdout}${failed.stderr}`)
       const record = JSON.parse(failed.stdout)
@@ -601,7 +671,7 @@ describe('the pair a refactor leaves behind', () => {
     ]
     try {
       for (const broken of unreadable) {
-        write(composable['module level'], broken)
+        write(composable['module level'].kept, broken)
         const refused = run()
         assert.equal(refused.status, 2, `${refused.stdout}${refused.stderr}`)
         assert.match(refused.stderr, /could not be parsed/)

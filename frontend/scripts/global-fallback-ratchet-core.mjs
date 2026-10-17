@@ -54,14 +54,16 @@
 // `rowTo(task)` in TasksView.vue, each a function prop of the component's own
 // `defineProps<{ … }>()`.
 //
-// What a mention must not be is a string. Every literal in the script would
-// qualify, and labels, i18n keys and event lists all spell these names: a call
-// that binds nothing reads as bound whenever some string in the file happens to
-// spell it, and the rule answers "clean" to exactly the call it exists to find.
-// Excluding literals costs nothing on today's tree — 0 findings either way,
-// measured. The macros that really do bind a name for the template to call are
-// read for what they are instead (`defineProps(['open'])` — see
-// `definePropsNames`); what stays loose is a name merely mentioned.
+// What a string may be is a name in a place that declares one: a property key,
+// or an entry in a list of prop names. Every other literal in the script would
+// qualify too, and labels, i18n values and event lists all spell these names —
+// a call that binds nothing reads as bound whenever some string in the file
+// happens to spell it, and the rule answers "clean" to exactly the call it
+// exists to find. Excluding those costs nothing on today's tree — 0 findings
+// either way, measured. `stringBindings` reads the quoted keys and the two
+// list forms (`defineProps(['open'])`, and the Options API `props: ['open']`);
+// an unquoted key was already a mention, as every identifier is. What stays
+// loose is a name merely mentioned.
 //
 // Note on which files are read: the two halves are one DSL read twice, so the
 // module and component globs, and the ignored spec files, are declared here
@@ -287,8 +289,8 @@ function* walk(node) {
  * What it deliberately does not count is a string. Every literal in the script
  * would read as a mention, and labels, i18n keys and event lists all spell
  * these names: a call that binds nothing reads as bound whenever some string in
- * the file happens to spell it. The runtime macros that really do bind a name
- * for the template are read for what they are, in `definePropsNames`.
+ * the file happens to spell it. The string forms that really do declare a name
+ * for the template are read for what they are, in `stringBindings`.
  */
 function scriptMentions(body) {
   const names = new Set()
@@ -303,24 +305,44 @@ function scriptMentions(body) {
 }
 
 /**
- * The names `defineProps(['open'])` binds in the render context — the runtime
- * form of the one macro whose argument names are bindings. `scriptMentions`
- * already counts the type form, whose property keys are identifiers in the
- * script.
+ * The names a string may still stand for, and only in the places that declare
+ * one: a property key (`{ 'open': Function }`, `{ ['open']: Function }`), the
+ * array form of the props macro (`defineProps(['open'])`), and the Options API
+ * spelling of the same thing (`props: ['open']`). `scriptMentions` already
+ * counts the unquoted key and the type form, whose keys are identifiers.
  *
- * `defineEmits(['open'])` names an event and `defineModel('open')` names a
- * model: neither makes `open` a name this component's template can call, so
- * counting them would hide exactly the call this rule is for.
+ * A string anywhere else is not a declaration. `defineEmits(['open'])` names
+ * an event — `defineModel('open')` a model, and neither makes `open` a name
+ * this component's template can call — and a label, an i18n key or a value in
+ * a lookup table only happens to spell it. Counting those would hide exactly
+ * the call this rule is for.
  */
-function definePropsNames(body) {
+function stringBindings(body) {
   const names = new Set()
-  for (const node of walk(body)) {
-    if (node.type !== 'CallExpression' || node.callee?.type !== 'Identifier') continue
-    if (node.callee.name !== 'defineProps') continue
-    const [first] = node.arguments ?? []
-    if (first?.type !== 'ArrayExpression') continue
-    for (const element of first.elements) {
+  const addStrings = (elements) => {
+    for (const element of elements ?? []) {
       if (element?.type === 'Literal' && typeof element.value === 'string') names.add(element.value)
+    }
+  }
+  for (const node of walk(body)) {
+    if (node.type === 'Property' && node.key?.type === 'Literal' && typeof node.key.value === 'string') {
+      names.add(node.key.value)
+      // `props: ['open']` — the Options API declares its names this way.
+      if (node.key.value === 'props' && node.value?.type === 'ArrayExpression') addStrings(node.value.elements)
+      continue
+    }
+    if (
+      node.type === 'Property' &&
+      node.key?.type === 'Identifier' &&
+      node.key.name === 'props' &&
+      node.value?.type === 'ArrayExpression'
+    ) {
+      addStrings(node.value.elements)
+      continue
+    }
+    if (node.type === 'CallExpression' && node.callee?.type === 'Identifier' && node.callee.name === 'defineProps') {
+      const [first] = node.arguments ?? []
+      if (first?.type === 'ArrayExpression') addStrings(first.elements)
     }
   }
   return names
@@ -422,7 +444,7 @@ export function unboundCalls(code, file) {
   if (templateBody) {
     const bound = scriptMentions(ast.body)
     for (const name of templateLocals(templateBody)) bound.add(name)
-    for (const name of definePropsNames(ast.body)) bound.add(name)
+    for (const name of stringBindings(ast.body)) bound.add(name)
     for (const node of walk(templateBody)) {
       if (node.type !== 'CallExpression') continue
       const callee = node.callee
