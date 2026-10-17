@@ -6,11 +6,11 @@
 // the measurement needs a real browser, and Playwright lives under e2e/. The
 // rule and the baseline it is judged against stay here, next to the other
 // ratchets, so `fe-contrast` is the same shape as `fe-storage` and the
-// import-boundary, palette, a11y, stylelint and tsc ratchets beside it.
+// import-boundary, palette, stylelint and tsc ratchets beside it.
 //
 // WHY A RENDERED CHECK. Every other colour gate in this repo reads source: the
-// palette ratchet reads template attributes, stylelint reads CSS, and the a11y
-// ratchet says in its own header that it cannot see colour contrast. What a
+// palette ratchet reads template attributes, stylelint reads CSS, and the
+// accessibility lint reads templates, which carry no colour contrast. What a
 // reader actually gets depends on the cascade — an inherited colour over a
 // translucent wash over whatever is behind that — and only the compositor knows
 // the answer. #1328 shipped a dark theme with text on a near-white shell and
@@ -24,8 +24,8 @@
 // glyph at 2.65:1 against a 3:1 floor, one of the two classes this check exists
 // to catch — did not appear in axe's report at all. A rule that cannot see one
 // of its two subjects is the wrong engine, so the painted runs are measured
-// here. That also makes this check and a11y-ratchet.mjs complements rather than
-// duplicates.
+// here. That also makes this check and the accessibility lint complements rather
+// than duplicates.
 //
 // WHY A RATCHET. The pages started with real sub-floor runs — the amber CTA
 // labels at 2.65:1 among them, since the brand colour is frozen and only the

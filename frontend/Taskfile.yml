@@ -83,12 +83,11 @@ tasks:
     deps: [install]
     cmds:
       - pnpm run lint:storage
-  # Accessibility rules (eslint-plugin-vuejs-accessibility) over src/**/*.vue.
-  # Ratcheted: the violations already in the tree are frozen per file in
-  # a11y-baseline.json, so only NEW ones fail. Writer: `pnpm run
-  # lint:a11y:update`, which only lowers counts. Read-only, like `lint:style`.
+  # ESLint over src/**/*.vue, which is where the accessibility rules
+  # (eslint-plugin-vuejs-accessibility, in eslint.config.mjs) apply. Plain
+  # errors, no baseline. Read-only, like `lint:style`.
   lint:a11y:
-    desc: Check accessibility rules (eslint + ratchet, check only)
+    desc: Check accessibility rules (eslint over src/**/*.vue, check only)
     deps: [install]
     cmds:
       - pnpm run lint:a11y

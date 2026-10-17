@@ -14,7 +14,7 @@ import unittest
 SCRIPT = Path(__file__).with_name("post-pull.sh")
 UV_LOCK = "backend/uv.lock"
 PNPM_LOCK = "frontend/pnpm-lock.yaml"
-BASELINES = ("frontend/import-boundary-baseline.json", "frontend/a11y-baseline.json")
+BASELINES = ("frontend/import-boundary-baseline.json",)
 
 
 class PostPullTest(unittest.TestCase):
