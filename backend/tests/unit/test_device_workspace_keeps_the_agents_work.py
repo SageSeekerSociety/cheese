@@ -1490,3 +1490,101 @@ def test_a_closed_tasks_work_only_on_a_persons_machine_survives_the_sweep(
     resource_cleanup.remove_task_checkouts(home, [task])
 
     assert (work / "draft.txt").exists() is kept
+
+
+def test_a_sync_refused_by_a_conflicting_landed_step_still_snapshots(device, tmp_path):
+    """A checkout whose unlanded work conflicts with the step that landed
+    cannot follow it, and every sync is refused until the agent resolves it;
+    the work it holds meanwhile is exactly what the snapshot keeps."""
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    info = tasks[task]
+    work = cli._task_worktree(task)
+    (work / "same.txt").write_text("step one\n")
+    git(work, "add", "same.txt")
+    git(work, "commit", "-m", "feat: step one")
+    _land(remote, tmp_path, info, 1)
+    land = tmp_path / "land"
+    (land / "same.txt").write_text("theirs\n")
+    git(land, "commit", "-qam", "other work")
+    git(land, "push", "-q", "origin", "main")
+    (work / "same.txt").write_text("mine\n")
+    (work / "precious.txt").write_text("only here\n")
+
+    with pytest.raises(SystemExit):
+        cli._sync_task(task)
+
+    latest = json.loads((home / "backups" / task / "latest.json").read_text())
+    bundle = home / "backups" / task / f"{latest['id']}.bundle"
+    recovered = home / "recovered"
+    git(home, "clone", "-q", str(remote), str(recovered))
+    git(recovered, "fetch", "-q", str(bundle), f"refs/cheese/snapshots/{task}")
+    assert git(recovered, "show", "FETCH_HEAD:precious.txt") == "only here"
+
+
+def test_a_closed_checkout_holding_only_an_install_is_swept_on_a_persons_machine(
+    device, monkeypatch
+):
+    """A dependency install comes back with the next install, so it is not
+    work only this machine holds, and the closed task's checkout still goes."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "node_modules" / "pkg").mkdir(parents=True)
+    (work / "node_modules" / "pkg" / "index.js").write_text("module.exports = 1\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert not work.exists()
+
+
+def test_a_closed_checkout_whose_work_is_all_pushed_is_swept_on_a_persons_machine(
+    device, monkeypatch
+):
+    """What only a person's machine holds is judged after the push: a commit
+    that went up is on the branch, and the closed task's checkout goes."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    _commit(work, "a.txt", "pushed\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert not work.exists()
+
+
+def test_a_failed_sync_with_nothing_unpushed_tells_the_room_nothing(device):
+    """Review is behind only when committed work is missing from the branch."""
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("not committed\n")
+    info = tasks.pop(task)  # the platform cannot answer for the task
+
+    with pytest.raises(SystemExit):
+        cli._sync_task(task)
+
+    tasks[task] = info
+    assert _told_the_room(home) == []
+
+
+def test_a_closed_tasks_failed_snapshot_does_not_fail_the_agents_command(
+    device, monkeypatch
+):
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("not committed\n")
+    tasks[task]["closed"] = True
+    (home / "upload-limit").write_text("1")
+    monkeypatch.setattr(sys, "argv", ["cheese", "sync", "--task", task])
+
+    cli.main()
+
+    assert _told_the_room(home) == []

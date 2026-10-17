@@ -4356,9 +4356,10 @@ def _sync_task(task_id: str) -> list[str]:
                         # failed still ran the entry point: its report is the
                         # reason to look.
                         _flush_pre_push_reports()
-                except Exception as exc:
+                except (Exception, SystemExit) as exc:
                     # Raised once the snapshot is taken: work the branch does
-                    # not have is exactly what the snapshot is for.
+                    # not have is exactly what the snapshot is for. SystemExit
+                    # too: following a landed step refuses a conflict with one.
                     push_failed = (step, exc)
             left_out: list[str] = []
             snapshot = None
@@ -4370,16 +4371,21 @@ def _sync_task(task_id: str) -> list[str]:
                     "not restored here yet"
                 )
             elif not _snapshots_here():
-                _mark_work_only_here(admin, worktree)
+                try:
+                    _mark_work_only_here(admin, worktree)
+                except Exception as exc:  # noqa: BLE001 — never the push's outcome
+                    note(f"marker failed {type(exc).__name__}: {exc}")
             else:
                 try:
                     step = "snapshot"
+                    # HEAD again: following a landed step moves it.
+                    base = _git_task(worktree, "rev-parse", "HEAD")
                     snapshot, left_out = _snapshot_commit(
-                        worktree, admin, task_id, head
+                        worktree, admin, task_id, base
                     )
                     step = "backup"
                     _once_more_if_transient(
-                        lambda: _backup_task_snapshot(worktree, data, head, snapshot)
+                        lambda: _backup_task_snapshot(worktree, data, base, snapshot)
                     )
                 except Exception as exc:
                     if closed:
@@ -4423,9 +4429,18 @@ _WORK_ONLY_HERE = "cheese-work-only-here"
 def _mark_work_only_here(admin: Path, worktree: Path) -> None:
     marker = admin / _WORK_ONLY_HERE
     try:
-        unsaved = bool(
-            _git_task(worktree, "--no-optional-locks", "status", "--porcelain")
-        ) or _review_behind(worktree)
+        listed = _git_task(
+            worktree, "--no-optional-locks", "status", "--porcelain", "-z", raw=True
+        )
+        # What a snapshot would carry: not a generated directory, which comes
+        # back with an install.
+        changed = [
+            entry[3:]
+            for entry in listed.split("\0")
+            if len(entry) > 3
+            and not set(entry[3:].rstrip("/").split("/")) & _GENERATED_DIRS
+        ]
+        unsaved = bool(changed) or _review_behind(worktree)
     except RuntimeError:
         unsaved = True
     if unsaved:
