@@ -1,0 +1,375 @@
+"""A seat whose turn failed on a transient model-service error goes on by itself.
+
+Before this, such a seat stayed idle until a person or another agent poked it
+(`resumable_failures` has the measurement). Now the failure is classified as it
+lands (`after_failure`, called from the hook intake right after the failure
+card is posted), and a resumable one leaves a `TurnResume` row due after a
+backoff, or at the reset the service named. A clock (`hand_due`) turns a due
+row into one instruction on the delivery ledger (`delivery.agent.record_agent`),
+so admission, leases, the closed-task check and the 30-second dispatch all stay
+the ledger's, exactly as for a timed delivery or the wake watch's catch-up.
+
+What the session hears is `RESUME_NOTE`. It reaches the same session, which
+still holds the conversation the failed turn was having, so "go on from where
+it stopped" is all it needs to be told.
+
+Why it cannot storm:
+
+- **One owed resume per seat and conversation.** A partial unique index on the
+  table; a second failure while one waits keeps the first.
+- **A streak has a cap.** Each resume in a row waits longer and the streak stops
+  after `Policy.attempts`; the row that would have exceeded it is written as
+  dropped, so the record says why the seat was left alone. A resumed turn that
+  failed more than `STREAK_WINDOW` after it was handed over made progress, and
+  starts a new streak; so does a person speaking.
+- **It stops when it no longer applies.** At its due time a row is dropped, not
+  handed over, when a person has spoken in the conversation since the failure,
+  when the seat has run another turn since (somebody already woke it), or when
+  the task closed, the room was archived or the seat left.
+"""
+
+from __future__ import annotations
+
+import logging
+import random
+import uuid
+from datetime import UTC, datetime, timedelta
+from typing import Final
+
+from sqlalchemy import and_, select, text
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.db import SessionFactory
+from app.core.obs import scrub_secrets
+from app.core.sentences import say
+from app.domain.agent.gateway_usage import OWN_ROUTE
+from app.domain.agent.models import AgentTurn, TurnResume
+from app.domain.agent.own_limit import refused_until
+from app.domain.agent.resumable_failures import (
+    SUBSCRIPTION_COOLING,
+    Resumable,
+    classify,
+)
+from app.domain.agent.service import AgentResult
+from app.domain.agent_instance.models import AgentInstance
+from app.domain.block.models import Block, BlockKind
+from app.domain.conversation.services import room_of
+from app.domain.delivery.agent import instance_for_seat, record_agent
+from app.domain.delivery_events import DeliveryEvent
+from app.domain.event_author import AuthorType
+from app.domain.identity.handles import agent_handle_column
+from app.domain.notice_meta import EVENT_TURN_FAILED, SEVERITY_WARN
+from app.domain.notification.models import NotificationType
+from app.domain.room_task.models import Task, TaskStatus
+from app.domain.topic.models import Topic, TopicStatus
+from app.domain.usage.claude_pool import read_claude_pool, snapshot_path
+
+logger = logging.getLogger(__name__)
+
+#: What the session is handed when the resume falls due. The agent reads it,
+#: not a person, as with every platform instruction.
+RESUME_NOTE: Final = say("turnResumeAfterFailure")
+
+#: A resumed turn that failed again within this long of being handed over did
+#: not get anywhere, and its next resume counts on from it. Past it, the turn
+#: worked for a while: a fresh failure starts a fresh streak.
+STREAK_WINDOW: Final = timedelta(hours=1)
+
+#: Past a reset the service named, so the first request is not refused again by
+#: a window that reopens a moment late.
+_AFTER_RESET_S: Final = 30.0
+
+#: Why a row was not handed over (`TurnResume.dropped_reason`).
+ATTEMPTS_USED_UP: Final = "attempts_used_up"
+NO_RESET: Final = "no_reset"
+PERSON_SPOKE: Final = "person_spoke"
+SEAT_RAN_AGAIN: Final = "seat_ran_again"
+CLOSED: Final = "conversation_closed"
+SEAT_GONE: Final = "seat_gone"
+
+_SAID_MAX: Final = 4000
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+#: The predicate of the two partial indexes, spelled as the migration spells it
+#: so `ON CONFLICT` names the unique one.
+_OWED_SQL: Final = "handed_at IS NULL AND dropped_at IS NULL"
+
+
+def _owed():
+    return and_(TurnResume.handed_at.is_(None), TurnResume.dropped_at.is_(None))
+
+
+async def after_failure(
+    sessions: SessionFactory,
+    *,
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    seat: str | None,
+    failed_turn_id: uuid.UUID,
+    result: AgentResult,
+    route: str | None,
+    now: datetime | None = None,
+) -> TurnResume | None:
+    """Schedule this seat's resume when its failure is one that passes by
+    itself; the row written, or None when nothing was scheduled."""
+    now = now or _now()
+    reset = refused_until(result.rate_limit, now)
+    if route == OWN_ROUTE and reset is not None:
+        # A member's own Claude Code at its account's window: `own_limit`
+        # already handed the agent a note for the reset and told the room.
+        return None
+    found = classify(
+        result.text,
+        api_error_status=result.api_error_status,
+        reset_wait_s=(reset - now).total_seconds() if reset is not None else None,
+    )
+    if found is None or not seat:
+        return None
+    async with sessions() as session:
+        instance = await instance_for_seat(session, project_id, seat)
+        if instance is None or not instance.is_active:
+            return None
+        if not await _open(session, conversation_id):
+            return None
+        owed = await session.scalar(
+            select(TurnResume).where(
+                TurnResume.conversation_id == conversation_id,
+                TurnResume.recipient_handle == seat,
+                _owed(),
+            )
+        )
+        if owed is not None:
+            logger.info(
+                "turn resume: %s in %s already owed one (due %s); keeping it",
+                seat,
+                conversation_id,
+                owed.due_at.isoformat(),
+            )
+            return owed
+        attempt = await _streak(session, conversation_id, seat, now) + 1
+        wait, dropped = _wait(found, attempt, now)
+        row = {
+            "id": uuid.uuid4(),
+            "project_id": project_id,
+            "conversation_id": conversation_id,
+            "recipient_handle": seat,
+            "agent_instance_id": instance.id,
+            "failed_turn_id": failed_turn_id,
+            "reason": found.kind,
+            "said": str(scrub_secrets(result.text or ""))[:_SAID_MAX],
+            "attempt": attempt,
+            "failed_at": now,
+            "due_at": now + timedelta(seconds=wait or 0),
+            "dropped_at": now if dropped else None,
+            "dropped_reason": dropped,
+        }
+        written = await session.scalar(
+            insert(TurnResume)
+            .values(**row)
+            .on_conflict_do_nothing(
+                index_elements=["conversation_id", "recipient_handle"],
+                index_where=text(_OWED_SQL),
+            )
+            .returning(TurnResume.id)
+        )
+        await session.commit()
+        if written is None:
+            # Another failure of the same seat got there first.
+            return None
+        stored = await session.get(TurnResume, written)
+    if dropped:
+        logger.warning(
+            "turn resume: %s in %s failed again (%s, attempt %s); not resuming: %s",
+            seat,
+            conversation_id,
+            found.kind,
+            attempt,
+            dropped,
+        )
+        return stored
+    logger.info(
+        "turn resume: %s in %s failed (%s); resuming in %ss, attempt %s",
+        seat,
+        conversation_id,
+        found.kind,
+        round(wait or 0),
+        attempt,
+    )
+    return stored
+
+
+def _wait(
+    found: Resumable, attempt: int, now: datetime
+) -> tuple[float | None, str | None]:
+    """Seconds to wait before the resume, or the reason there is none."""
+    policy = found.policy
+    if attempt > policy.attempts:
+        return None, ATTEMPTS_USED_UP
+    stated = found.wait_s
+    if stated is None and found.kind == SUBSCRIPTION_COOLING:
+        pool = read_claude_pool(snapshot_path(), now=now.timestamp())
+        stated = pool["retry_after"]
+        if stated is None and pool["reason"] is None and pool["accounts"]:
+            states = {row["state"] for row in pool["accounts"]}
+            if "cooling" not in states and "available" not in states:
+                # Every account is spent with no reset to wait for: an
+                # operator resets them, or someone moves the project off the
+                # subscription. Neither is the platform's to do.
+                return None, NO_RESET
+    if stated is not None:
+        # Spread the seats that waited on the same reset over a short span.
+        return stated + _AFTER_RESET_S + random.uniform(
+            0, min(60.0, stated * 0.1)
+        ), None
+    if policy.needs_reset:
+        return None, NO_RESET
+    backoff = min(policy.cap_s, policy.base_s * 2 ** (attempt - 1))
+    return backoff * random.uniform(0.8, 1.2), None
+
+
+async def _streak(
+    session: AsyncSession, conversation_id: uuid.UUID, seat: str, now: datetime
+) -> int:
+    """How many resumes in a row this seat already had: the previous row's
+    attempt when this failure continues its streak, else 0."""
+    previous = await session.scalar(
+        select(TurnResume)
+        .where(
+            TurnResume.conversation_id == conversation_id,
+            TurnResume.recipient_handle == seat,
+        )
+        .order_by(TurnResume.failed_at.desc())
+        .limit(1)
+    )
+    if previous is None:
+        return 0
+    if previous.dropped_reason in (PERSON_SPOKE, SEAT_RAN_AGAIN, CLOSED, SEAT_GONE):
+        return 0
+    since = previous.handed_at or previous.failed_at
+    if now - since > STREAK_WINDOW:
+        return 0
+    if await _person_spoke(session, conversation_id, previous.failed_at):
+        return 0
+    return previous.attempt
+
+
+async def hand_due(
+    sessions: SessionFactory,
+    *,
+    now: datetime | None = None,
+    limit: int = 100,
+) -> int:
+    """Hand every due resume to its seat through the delivery ledger, or drop
+    it with the reason it no longer applies; how many were handed over. The
+    timed-delivery clock dispatches them (`delivery.timer.deliver_due`)."""
+    now = now or _now()
+    handed = 0
+    async with sessions() as session:
+        rows = list(
+            await session.scalars(
+                select(TurnResume)
+                .where(_owed(), TurnResume.due_at <= now)
+                .order_by(TurnResume.due_at)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        for row in rows:
+            dropped = await _no_longer_applies(session, row)
+            if dropped is not None:
+                row.dropped_at = now
+                row.dropped_reason = dropped
+                logger.info(
+                    "turn resume: %s in %s not resumed: %s",
+                    row.recipient_handle,
+                    row.conversation_id,
+                    dropped,
+                )
+                continue
+            await record_agent(
+                session,
+                DeliveryEvent(
+                    # The resume is its own event: the dedup key follows it, so
+                    # however often this runs, the ledger holds one line.
+                    id=row.id,
+                    type=NotificationType.ROOM_NOTICE,
+                    payload={
+                        "projectId": str(row.project_id),
+                        "topicId": str(await room_of(session, row.conversation_id)),
+                        "eventType": EVENT_TURN_FAILED,
+                        "severity": SEVERITY_WARN,
+                    },
+                    occurred_at=row.failed_at,
+                ),
+                conversation_id=row.conversation_id,
+                instance_id=row.agent_instance_id,
+                content=str(RESUME_NOTE),
+            )
+            row.handed_at = now
+            handed += 1
+            logger.info(
+                "turn resume: handed %s in %s its resume (%s, attempt %s)",
+                row.recipient_handle,
+                row.conversation_id,
+                row.reason,
+                row.attempt,
+            )
+        await session.commit()
+    return handed
+
+
+async def _no_longer_applies(session: AsyncSession, row: TurnResume) -> str | None:
+    if not await _open(session, row.conversation_id):
+        return CLOSED
+    instance = await session.get(AgentInstance, row.agent_instance_id)
+    if instance is None or not instance.is_active:
+        return SEAT_GONE
+    if await _person_spoke(session, row.conversation_id, row.failed_at):
+        return PERSON_SPOKE
+    ran = await session.scalar(
+        select(AgentTurn.id)
+        .where(
+            AgentTurn.conversation_id == row.conversation_id,
+            AgentTurn.agent_handle == row.recipient_handle,
+            AgentTurn.started_at > row.failed_at,
+        )
+        .limit(1)
+    )
+    return SEAT_RAN_AGAIN if ran is not None else None
+
+
+async def _person_spoke(
+    session: AsyncSession, conversation_id: uuid.UUID, since: datetime
+) -> bool:
+    """Whether a person (not an agent, not the platform) has said anything in
+    this conversation since ``since``."""
+    said = await session.scalar(
+        select(Block.id)
+        .where(
+            Block.conversation_id == conversation_id,
+            Block.created_at > since,
+            Block.author_type == AuthorType.participant,
+            Block.kind.in_((BlockKind.message, BlockKind.attachment)),
+            ~agent_handle_column(Block.author),
+        )
+        .limit(1)
+    )
+    return said is not None
+
+
+async def _open(session: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    """Whether work can still happen here: an open task in a live room, or a
+    room that is not archived."""
+    task = await session.get(Task, conversation_id)
+    if task is not None:
+        if task.status != TaskStatus.open:
+            return False
+        room = await session.get(Topic, task.room_id)
+    else:
+        room = await session.get(Topic, await room_of(session, conversation_id))
+    return room is not None and room.status != TopicStatus.archived
