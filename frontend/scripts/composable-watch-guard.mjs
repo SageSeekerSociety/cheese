@@ -136,11 +136,14 @@ function collectAliases(root, ctx) {
     if (ts.isVariableDeclaration(node) && node.initializer) {
       const member = memberPath(node.initializer, ctx)
       if (ts.isIdentifier(node.name)) bind(node.name.text, member)
-      // `const { topicId } = props` names the prop path too.
+      // `const { topicId } = props` names the prop path too. Destructuring anything
+      // else is not a name for the value it came from: `const { value } = toValue(x)`
+      // takes a snapshot at setup, and a watch on the local never runs again, so it
+      // must not stand in for the watch on the source.
       else if (
         member &&
         ts.isObjectBindingPattern(node.name) &&
-        (member.root === 'props' || member.root === ctx.scopeParam || ctx.bindings?.has(member.root))
+        (member.root === 'props' || member.root === ctx.scopeParam)
       ) {
         for (const element of node.name.elements) {
           if (element.dotDotDotToken || !ts.isIdentifier(element.name)) continue
@@ -204,12 +207,14 @@ function mapSegments(keys, segments, unwrapped, consumed = 0) {
   return out
 }
 
-// The keys a call site actually handed over as the value itself: a key handed as a
-// getter stands for the property only when a transparent call landed on it.
-function without(keys, drop) {
-  if (!keys || !drop?.size) return keys
+// The keys that are the value the composable reads, out of the keys its call sites
+// hand over. A key is dropped only when every call site hands it over as a getter:
+// one such call site leaves the composable with the function, but a key another
+// call site passes as a ref is still read as written there.
+function readableKeys(keys, getterOf) {
+  if (!keys?.size || !getterOf) return keys
   const out = new Set()
-  for (const key of keys) if (!drop.has(key)) out.add(key)
+  for (const key of keys) if (!getterOf(key)) out.add(key)
   return out
 }
 
@@ -226,13 +231,13 @@ function memberKeys(node, ctx) {
     if (path.length) {
       const [head, ...rest] = path
       const mapped = ctx.scopeProps?.get(head)
-      // A property the call sites hand over as a getter is a function here: reading
+      // A property every call site hands over as a getter is a function here: reading
       // it without a transparent call that ends on it (`toValue(scope.x)`) yields the
-      // function, and nothing watched through it. Only the keys handed over as getters
-      // are dropped that way, so a ref another call site passes is still read as
-      // written. Any call that landed on `head` (depth 1) reaches the property's value.
+      // function, and nothing watched through it. Any call that landed on `head`
+      // (depth 1) reaches the property's value.
       const invoked = unwrapped?.has(1)
-      const keys = invoked ? mapped : without(mapped, ctx.scopePropGetter?.get(head))
+      const getterOf = ctx.scopePropGetter?.get(head)
+      const keys = invoked ? mapped : readableKeys(mapped, (key) => getterOf?.get(key))
       if (keys?.size) {
         for (const key of mapSegments(keys, rest, unwrapped, 1)) out.add(key)
       }
@@ -250,11 +255,16 @@ function memberKeys(node, ctx) {
   }
   const binding = ctx.bindings?.get(root)
   if (binding) {
-    // A destructured parameter is the property itself: a call that landed on it
-    // (`toValue(x)`) reaches its value, while a bare read only does when the call
-    // site handed a ref rather than a getter. When no key survives, nothing is
+    // A destructured parameter is the property itself. Handed as a ref, a bare read is
+    // its value; handed as a getter function, the binding *is* the function and passing
+    // it as the source is Vue's getter-source form, which tracks what the component's
+    // own getter tracked. Reading a field off it is neither — `topicId.value` on a
+    // function is `undefined` and watches nothing — so those keys are dropped once
+    // every call site hands that property as a getter. When no key survives, nothing is
     // watched through it, and the local namespace must not stand in for it.
-    const keys = unwrapped?.has(0) ? binding.keys : without(binding.keys, binding.getterKeys)
+    const whole = path.length === 0
+    const keys =
+      whole || unwrapped?.has(0) ? binding.keys : readableKeys(binding.keys, (key) => binding.getterKeys?.has(key))
     return mapSegments(keys ?? new Set(), path, unwrapped)
   }
   // Local names get their own namespace: a ref called `topicId` must not stand in
@@ -528,10 +538,12 @@ function scopeContext(found, callSites) {
         if (source === null) continue
         const mapped = callSites.scopeProps?.get(source)
         if (mapped) {
-          ctx.bindings.set(element.name.text, {
-            keys: mapped,
-            getterKeys: callSites.scopePropGetter?.get(source) ?? new Set(),
-          })
+          // A key handed as a getter by every call site is a function here; one that
+          // some call site passes as a ref is still the property's value.
+          const getterOf = callSites.scopePropGetter?.get(source)
+          const getterKeys = new Set()
+          for (const key of mapped) if (getterOf?.get(key)) getterKeys.add(key)
+          ctx.bindings.set(element.name.text, { keys: mapped, getterKeys })
         }
         // A call site that hands over the whole props object destructures the prop
         // itself, so the local name is the prop path.
@@ -559,20 +571,24 @@ function isRefArgument(node) {
 
 function callSiteMappings(vueFiles, fnName, readHead) {
   const scopeProps = new Map()
-  // Property -> the keys handed over as a function (a getter). The composable only
-  // reaches such a key's value through a call; each call site is recorded on its own
-  // so one caller's ref does not decide what another caller's getter means.
+  // Property -> its keys and whether every call site hands each one over as a
+  // function (a getter). A key one caller passes as a ref is read as written at that
+  // caller, so it is not dropped by another caller's getter.
   const scopePropGetter = new Map()
   const scopeValue = new Map()
   let scopeWholeProps = false
   const add = (key, keys, getter) => {
     if (!scopeProps.has(key)) {
       scopeProps.set(key, new Set())
-      scopePropGetter.set(key, new Set())
+      scopePropGetter.set(key, new Map())
     }
     for (const value of keys) {
       scopeProps.get(key).add(value)
-      if (getter) scopePropGetter.get(key).add(value)
+      // `!getter` counts, it is not left unknown: a plain property hands over whatever
+      // it holds, so one such call site keeps the key readable whichever file is read
+      // first.
+      const seen = scopePropGetter.get(key).get(value)
+      scopePropGetter.get(key).set(value, Boolean(getter) && seen !== false)
     }
   }
   for (const file of vueFiles) {
