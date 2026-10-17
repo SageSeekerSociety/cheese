@@ -118,6 +118,39 @@ def _planted(
     return ids
 
 
+def _converted_thread(
+    client, project_id: str, room_id: str, *, status=TaskStatus.open, closing=False
+) -> str:
+    """一条支线原地转成了活：`threads` 行留着（它挂住那条消息），活拿了它的 id，
+    登记表里这条对话是 `task`。
+
+    `closing` 是「最后一步交付已经落地、芝士正在收尾」——仍然 `open`，但已经不在
+    「还有事的活」里（`tasks_of_rooms` 同一份判据）。
+    """
+    thread = in_thread(client, room_id, "alice")
+    now = datetime.now(UTC)
+
+    async def _make() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                Task(
+                    id=uuid.UUID(thread),
+                    project_id=uuid.UUID(project_id),
+                    room_id=uuid.UUID(room_id),
+                    title="从支线转出来的活",
+                    owner_handle="alice",
+                    created_by="alice",
+                    status=status,
+                    closing_since=now if closing else None,
+                    closed_at=now if status == TaskStatus.closed else None,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_make())
+    return thread
+
+
 def _rows(client, project_id: str, handle: str) -> list[dict]:
     """这个人看到的侧栏：`GET /topics?project_id=`（侧栏读的就是这一条）。"""
     r = client.get(
@@ -941,6 +974,64 @@ def test_only_a_turn_that_reached_the_session_clears_it(client):
     row = _room_row(client, project, room, "alice")
     assert row["incomplete_since"] is None
     assert _task_row(row, ids["task"])["incomplete_since"] is None
+
+
+def test_a_closed_task_that_was_a_thread_does_not_light_the_channel(client):
+    """支线原地转成的那件活已经关了：`threads` 行还留着，但关了的活不点亮任何一行。
+
+    它没在「还有事的活」里，也不能因为那行 `threads` 又折回频道 —— 那会把一件
+    已经关掉的工作的旧错误重新挂到频道上。
+    """
+    project = _project(client)
+    room = _room(client, project)
+    task = _converted_thread(client, project, room, status=TaskStatus.closed)
+    _broke(client, project, task, ago=timedelta(minutes=9))
+
+    assert _room_row(client, project, room, "alice")["incomplete_since"] is None
+    listed = client.get(
+        f"/projects/{project}/tasks", headers=session_auth_headers("alice")
+    )
+    assert listed.status_code == 200, listed.text
+    assert _project_task_row(listed, task)["incomplete_since"] is None
+
+
+def test_a_closing_task_that_was_a_thread_does_not_light_the_channel(client):
+    """收尾窗口里的活（最后一步已落地、正在写总结）也不是频道自己的支线。"""
+    project = _project(client)
+    room = _room(client, project)
+    task = _converted_thread(client, project, room, closing=True)
+    _broke(client, project, task, ago=timedelta(minutes=9))
+
+    assert _room_row(client, project, room, "alice")["incomplete_since"] is None
+
+
+def test_an_open_task_that_was_a_thread_still_lights_the_channel(client):
+    """转成的那件活还开着：它自己的失败照旧折到频道那一行 —— 名下有一件活出事了。"""
+    project = _project(client)
+    room = _room(client, project)
+    task = _converted_thread(client, project, room)
+    at = _broke(client, project, task, ago=timedelta(minutes=9))
+
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+    assert abs(_incomplete(_task_row(row, task)) - at) < timedelta(seconds=1)
+
+
+def test_what_a_task_that_was_a_thread_says_does_not_clear_the_channel(client):
+    """活里说的话不是频道自己的话：它盖不掉频道主线上的旧失败。"""
+    project = _project(client)
+    room = _room(client, project)
+    task = _converted_thread(client, project, room)
+    at = _broke(client, project, room, ago=timedelta(minutes=9))
+    assert abs(_incomplete(_room_row(client, project, room, "alice")) - at) < (
+        timedelta(seconds=1)
+    )
+
+    _agent_wrote(client, project, task, ago=timedelta(minutes=1))
+
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+    assert _incomplete(_task_row(row, task)) is None
 
 
 def test_another_members_output_does_not_clear_it(client):

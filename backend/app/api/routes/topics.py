@@ -57,7 +57,11 @@ from app.domain.block.models import (
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import MemberWait, MemberWaits
-from app.domain.conversation.services import room_of, threads_of_rooms
+from app.domain.conversation.services import (
+    room_of,
+    threads_of_rooms,
+    threads_still_threads,
+)
 from app.domain.delivery.agent import (
     dispatch_pending,
     record_task_instruction,
@@ -194,18 +198,18 @@ async def _unresolved_failures(
 ) -> tuple[dict[uuid.UUID, datetime], dict[uuid.UUID, datetime]]:
     """尚未恢复的失败从什么时候开始：频道那一行，和它名下各件活。
 
-    返回 `(频道 → 时刻, 活 → 时刻)`。频道那一行问的是它**自己名下、此刻还没关**的
-    东西：房间自己那条线、它的支线（`threads_of_rooms`），以及它名下的每一件活
-    （`tasks_of_room`，和频道那一格的计数同一个判据「开着、还没进收尾窗口」）。频道
-    行取这当中最早的一条 —— 名下一件活报错停下来，上面那间房就是在出问题，人得看
-    得见。一件活的恢复只清它自己，不清整间房：多件活各算各的，谁都没恢复就谁都在。
+    返回 `(频道 → 时刻, 活 → 时刻)`。频道那一行问它**自己名下、此刻还没关**的东西：
+    房间自己那条线、还在当支线用的支线（`threads_still_threads`）、它名下的每一件
+    活（`tasks_of_room`，同一判据「开着、还没进收尾窗口」）。频道行取最早的一条——
+    名下一件活报错，上面的房间就是在出问题；一件活的恢复只清它自己，不清整间房：
+    多件活各算各的，谁都没恢复就谁都在。
 
-    `tasks_of_room` 只收要算的频道，只列**还没关**的活（`tasks_of_rooms` 同一份判据）
-    ——关了的活不是「没完成的活」，它自己那个错误不该再点亮任何一行。
+    `tasks_of_room` 只列**还没关**的活——关了的活自己的错误不再点亮任何一行；原地
+    转成任务的支线已按任务算，不折回频道（否则旧错误点亮它、它的话清掉它的失败）。
     """
     if not room_ids:
         return {}, {}
-    threads = await threads_of_rooms(db, room_ids)
+    threads = await threads_still_threads(db, room_ids)
     units: dict[uuid.UUID, list[uuid.UUID]] = {}
     # 频道那一条 = 它自己那条线 + 它的支线。支线说的就是这个房间的事，`_last_said`
     # 本来也把支线折回房间，所以两段一起问、答案落在频道这个键上。

@@ -182,8 +182,9 @@ class MemberWaits:
         """{row: when the earliest failure still unresolved in it began}.
 
         一行 = 频道自己那条线，或一件活。`units` 把每一行映射到它由哪几段对话组成：
-        频道是它自己那条线加上它的支线（`threads_of_rooms` 同一份判据——支线说的
-        就是这个房间的事），一件活就是它自己那条线。
+        频道是它自己那条线加上它的支线（调用方已经按「还在当支线用」筛过——原地转
+        成任务的支线算另一件活，不折回频道），一件活就是它自己那条线。谁在哪段对话
+        里开口，就只算那一行的恢复：按 `units` 折，不再自己查支线表。
 
         A failure is a platform event saying a turn ended in an error
         (`indexed_rows.FAILED_TURN_ROWS`, the same predicate the room-waits scan
@@ -237,7 +238,7 @@ class MemberWaits:
         owners = await self._turn_owners(
             conversations, since, {turn for _, turn, _ in failures if turn}
         )
-        spoke = await self._last_said(conversations, since)
+        spoke = await self._last_said(conversations, since, unit_of)
         started = await self._turn_starts(conversations, unit_of, since)
         # 按 created_at 排好，所以每一行遇到的第一条失败就是它最早的那条；那一条没
         # 恢复就是答案，恢复了就继续往后看（它之后的下一条才是现在的这一条）。
