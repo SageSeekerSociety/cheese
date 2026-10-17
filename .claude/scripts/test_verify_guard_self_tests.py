@@ -1766,6 +1766,64 @@ PY_HANDLER_RETURN_RAISED = PY_HANDLER_RETURN_INSIDE.replace(
 
 #: `1 == LIMIT` is false, so the flag takes the hand-off — but `LIMIT` cannot be
 #: read. Guessing the self-test side would drop that hand-off.
+PY_NEGATED_COUNT = '''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+LIMIT = int(os.environ.get("LIMIT", "1"))
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if not (argv.count("--self-test") == LIMIT):
+        return 1 if violations_in(argv[1] if len(argv) > 1 else ".") else 0
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+PY_UNREADABLE_BODY_HANDOFF = '''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+LIMIT = int(os.environ.get("LIMIT", "1"))
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if argv.count("--self-test") == LIMIT:
+        return check()
+    return 1 if violations_in(argv[1] if len(argv) > 1 else ".") else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 PY_UNREADABLE_COUNT = '''#!/usr/bin/env python3
 import os
 import subprocess
@@ -2483,6 +2541,25 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(guard["status"], "unverified", guard)
         self.assertIn("测试文件", guard["detail"])
 
+    def test_a_negated_unreadable_count_still_keeps_the_hand_off(self) -> None:
+        """`not (1 == LIMIT)` is false at runtime; `not None` must not settle it."""
+        code, guard, output = self._only(
+            {"negated.py": PY_NEGATED_COUNT}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_an_unsettled_test_keeps_the_hand_off_in_its_body(self) -> None:
+        """Both sides stay on the path, so the body's hand-off is not dropped."""
+        code, guard, output = self._only(
+            {"body.py": PY_UNREADABLE_BODY_HANDOFF},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
     def test_an_exit_in_an_elif_body_reaches_the_handler(self) -> None:
         """The `elif` body is what runs here, and its exit lands in the handler."""
         code, guard, output = self._only(
@@ -2508,21 +2585,21 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 1, output)
         self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
 
-    def test_a_handler_under_a_gate_is_not_the_self_test_side(self) -> None:
-        """The branch sits under `MODE`, so its handler is off the self-test path."""
+    def test_a_handler_under_an_unsettled_gate_is_left_unverified(self) -> None:
+        """The branch sits under `MODE`; its handler may run, so do not judge."""
         code, guard, output = self._only(
             {"gatedarm.py": PY_GATED_HANDLER_ARM}, {"test_counted.py": ELSE_SIBLING}
         )
-        self.assertEqual(code, 0, output)
-        self.assertEqual(guard["status"], "ok", guard)
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
 
-    def test_a_handler_tail_under_a_gate_is_not_the_self_test_side(self) -> None:
-        """The exit after the branch is gated too; the handler stays off the path."""
+    def test_a_handler_tail_under_an_unsettled_gate_is_left_unverified(self) -> None:
+        """The exit after the branch is gated too; its handler may be entered."""
         code, guard, output = self._only(
             {"gatedtail.py": PY_GATED_HANDLER_TAIL}, {"test_counted.py": ELSE_SIBLING}
         )
-        self.assertEqual(code, 0, output)
-        self.assertEqual(guard["status"], "ok", guard)
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
 
     def test_an_annotated_module_zero_is_read_as_the_scan(self) -> None:
         """`ZERO: int = 0` is the same operand as `ZERO = 0`."""

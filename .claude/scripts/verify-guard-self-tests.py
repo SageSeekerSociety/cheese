@@ -863,10 +863,11 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
             sides.append(side)
             # An exit caught by an enclosing `except` continues inside the
             # handler, so that body is on the path even when the handler ends
-            # by returning — but only if this side really runs.
+            # by returning. While it is unsettled whether the side runs, the
+            # handler may still be entered, so collect it: `unverified` is the
+            # honest verdict there, and inventing a finding is not.
             if (
-                trusted
-                and side
+                side
                 and (landed := _caught_handler_body(side[-1], parents)) is not None
             ):
                 sides.append(landed)
@@ -884,12 +885,10 @@ def _self_test_scope(tree: ast.Module) -> list[ast.AST]:
                 break
             tail = block[block.index(node) + 1 :]
             sides.append(tail)
-            # The handler is only entered if this block really runs; collecting
-            # it otherwise would put a spawn the self-test never reaches on the
-            # path.
+            # Same reading as above: an unsettled block may run, and its
+            # handler may be entered, so collect it rather than miss a spawn.
             if (
-                trusted
-                and tail
+                tail
                 and (landed := _caught_handler_body(tail[-1], parents)) is not None
             ):
                 sides.append(landed)
@@ -1757,10 +1756,12 @@ def self_test() -> int:
         "handler-return-inside-guard.py": "unverified",
         "handler-return-raised-guard.py": "unverified",
         "unreadable-count-guard.py": "unverified",
+        "negated-count-guard.py": "unverified",
+        "unreadable-body-handoff-guard.py": "unverified",
         "elif-exit-handler-guard.py": "unverified",
         "sys-argv-branch-guard.py": "self-test-does-not-bite",
-        "gated-handler-arm-guard.py": "ok",
-        "gated-handler-tail-guard.py": "ok",
+        "gated-handler-arm-guard.py": "unverified",
+        "gated-handler-tail-guard.py": "unverified",
         "bare-exit-guard.py": "self-test-does-not-bite",
     }
     failures = []
@@ -3665,6 +3666,75 @@ def main(argv):
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
+    "negated-count-guard.py": '''#!/usr/bin/env python3
+"""The count is negated against a `LIMIT` whose value cannot be read.
+
+`not (1 == LIMIT)` is false at runtime, so the self-test falls through to the
+hand-off at the sibling test. Reading the negation as if it had settled takes
+the branch body for the self-test side and calls that hand-off toothless.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+LIMIT = int(os.environ.get("LIMIT", "1"))
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if not (argv.count("--self-test") == LIMIT):
+        return 1 if violations_in(argv[1] if len(argv) > 1 else ".") else 0
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "unreadable-body-handoff-guard.py": '''#!/usr/bin/env python3
+"""The hand-off sits in the branch body of a test that cannot be settled.
+
+`LIMIT` is unreadable, so `count("--self-test") == LIMIT` may hold or not; the
+body that hands the self-test to the sibling must stay on the path even though
+the fall-through below it is the scan. Dropping the body leaves only the scan
+and calls the guard toothless.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+LIMIT = int(os.environ.get("LIMIT", "1"))
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if argv.count("--self-test") == LIMIT:
+        return check()
+    return 1 if violations_in(argv[1] if len(argv) > 1 else ".") else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
     "unreadable-count-guard.py": '''#!/usr/bin/env python3
 """The count is compared against `LIMIT`, whose value cannot be read.
 
@@ -3701,12 +3771,13 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
     "gated-handler-arm-guard.py": '''#!/usr/bin/env python3
-"""The branch side exits into a handler, but under a gate this cannot settle.
+"""The branch side exits into a handler, under a gate this tool cannot settle.
 
 The inner `if "--self-test" in argv:` sits under `os.environ.get("MODE")`, so
-its `sys.exit(0)` is not shown to run and the handler below it — which spawns a
-sibling test — is not on the path. The self-test that does run is the guard's
-own, and silencing it turns the run red.
+whether its `sys.exit(0)` runs is unknown, and the handler below it — which
+spawns a sibling test — may or may not be entered. The honest verdict is
+`unverified`: claiming the self-test does not bite would be a finding the
+environment could contradict.
 """
 import os
 import subprocess
@@ -3761,12 +3832,12 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 ''',
     "gated-handler-tail-guard.py": '''#!/usr/bin/env python3
-"""The exit after the branch is caught by a handler, but under a gate.
+"""The exit after the branch is caught by a handler, under a gate.
 
 Everything here sits under `os.environ.get("MODE")`, which this tool cannot
-settle: the `sys.exit(0)` that follows the flag test is not shown to run, so
-the handler that spawns a sibling test is not on the path either. What runs is
-the guard's own self-test, and silencing it turns the run red.
+settle: whether the `sys.exit(0)` that follows the flag test runs is unknown,
+so the handler that spawns a sibling test may be entered. The honest verdict is
+`unverified`, not a claim that the self-test does not bite.
 """
 import os
 import subprocess
