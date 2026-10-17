@@ -84,6 +84,32 @@ def enter(target_path, argv):
     os.execv(program, argv)
 
 
+def namespace_task_root(seen, task_root):
+    """`task_root`, the executor's task checkouts directory, if the session's
+    namespace can hold it as a directory of its own; otherwise None.
+
+    `enter` makes it, and the shell prefix makes each checkout in it, so it
+    has to come out of the session's own tmpfs: where it parts from the way
+    down to `seen`, nothing of this host may be there already, or what is made
+    would be made in this host's directory, bound in. The executor reports the
+    path, so it is checked as `seen` is."""
+    if (
+        not task_root.startswith("/")
+        or task_root.startswith("//")
+        or os.path.normpath(task_root) != task_root
+        or task_root == "/"
+        or task_root.split("/")[1] in ("proc", "sys", "dev")
+    ):
+        return None
+    common = os.path.commonpath([seen, task_root])
+    if common == task_root or task_root.startswith(seen + "/"):
+        return None  # Inside the project, or above it.
+    parting = task_root[len(common) :].lstrip("/").split("/")[0]
+    if os.path.lexists(os.path.join(common, parting)):
+        return None
+    return task_root
+
+
 def _unplaceable(seen, needed):
     """Why `seen` cannot hold the project in the session's namespace, or None."""
     if sys.platform != "linux":

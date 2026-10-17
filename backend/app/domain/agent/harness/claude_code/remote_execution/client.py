@@ -20,6 +20,7 @@ if __name__ == "__main__" and len(sys.argv) == 3 and sys.argv[1] == "context":
 
 import argparse
 import base64
+import contextlib
 import functools
 import hashlib
 import io
@@ -54,6 +55,7 @@ if __package__:
     )
     from app.domain.agent.harness.claude_code.remote_execution.namespace import (
         enter,
+        namespace_task_root,
     )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
         EXECUTION_CONFIG,
@@ -100,7 +102,7 @@ else:
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     from context_service import serve
-    from namespace import enter
+    from namespace import enter, namespace_task_root
     from release import (
         EXECUTION_CONFIG,
         allow_native_tools,
@@ -275,16 +277,18 @@ def prepare(
     # in it. Without them among the session's directories the build resets the
     # shell to the project after every command that ends in one, and the agent
     # resolves the checkout again before the next (`_report_directory`).
-    task_root = (
-        session_path(info["task_root"])
-        if info.get("task_root")
-        and not at_placeholder
-        and target.get("kind") != "private"
-        else None
-    )
-    if task_root and local:
-        # The build keeps a directory given at launch only if it exists then.
-        Path(task_root).mkdir(parents=True, exist_ok=True)
+    # `task_dir` is the directory the build is given, spelled as `seen` is;
+    # `task_root` is how the shell prefix compares a command's directory.
+    task_dir = task_root = None
+    if info.get("task_root") and not at_placeholder and target.get("kind") != "private":
+        if local:
+            # Its own machine's directory, which the build keeps only if it
+            # exists at launch. Not making it costs only the old reset.
+            with contextlib.suppress(OSError):
+                Path(info["task_root"]).mkdir(parents=True, exist_ok=True)
+                task_dir, task_root = info["task_root"], session_path(info["task_root"])
+        else:
+            task_dir = task_root = namespace_task_root(seen, info["task_root"])
     target = dict(
         target,
         workspace=info["workspace"],
@@ -517,7 +521,7 @@ def prepare(
         "--disallowedTools",
         "EnterWorktree,ExitWorktree",
         "--no-chrome",
-        *(["--add-dir", task_root] if task_root else []),
+        *(["--add-dir", task_dir] if task_dir else []),
         *extra_args,
     ]
     if target.get("kind") == "private":

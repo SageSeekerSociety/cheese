@@ -259,6 +259,24 @@ def test_a_bash_command_reports_the_directory_its_shell_ended_in(machine):
     assert Path(answer["cwd"]) == (machine.workspace / "sub").resolve()
 
 
+def test_a_command_whose_directory_is_gone_does_not_run_in_the_project(machine):
+    """A shell left in a task checkout that has since been swept away: what
+    was meant for that checkout (a reset, a commit, a removal) must not run
+    in the project instead. It does not run, says why, and leaves the shell
+    in the project."""
+    checkout = machine.root / "executor-home/.cheese/tasks/closed-task"
+    checkout.mkdir(parents=True)
+    checkout.rmdir()
+    machine.start(
+        "gone", "eval 'touch meant-for-the-task' < /dev/null", kind="bash", cwd=checkout
+    )
+    out, err, answer = machine.collect("gone")
+    assert answer["exit"] != 0
+    assert str(checkout) in (out + err).decode()
+    assert not (machine.workspace / "meant-for-the-task").exists()
+    assert Path(answer["cwd"]) == machine.workspace
+
+
 def test_directory_lookups_see_only_the_projects_directories(machine):
     (machine.workspace / "made/here").mkdir(parents=True)
     (machine.workspace / "file.txt").write_text("x")
@@ -1079,13 +1097,52 @@ def test_the_session_may_keep_its_shell_in_the_rooms_task_checkouts(
 ):
     """The build resets a shell that ends outside its directories, so the
     room's task checkouts are one of them, at the path the executor makes
-    them; the shell prefix reports a directory there, not the project root."""
+    them; the shell prefix reports a directory there, not the project root.
+
+    The executor here is on this very host, where its home is a directory of
+    this host's own; a session host holds no such path, which is what the
+    executor's answer is moved to."""
+    from app.domain.agent.executor_transport import RemoteClient
+
+    tasks = f"/cheese-session-host-{uuid.uuid4().hex}/home/.cheese/tasks"
+    call = RemoteClient.call
+
+    def elsewhere(self, method, params=None, **options):
+        answer = call(self, method, params, **options)
+        return {**answer, "task_root": tasks} if method == "ping" else answer
+
+    monkeypatch.setattr(RemoteClient, "call", elsewhere)
     launch, _ = _prepared(tmp_path, machine, monkeypatch)
-    tasks = str((machine.root / "executor-home/.cheese/tasks").resolve())
     command = launch["command"]
     assert command[command.index("--add-dir") + 1] == tasks
     target = json.loads(Path(launch["execution"]).read_text())
     assert target["session_task_root"] == tasks
+
+
+@pytest.mark.parametrize(
+    ("task_root", "kept"),
+    [
+        ("/session-host-has-no-such/home/.cheese/tasks", True),
+        ("{host}/.cheese/tasks", False),
+        ("relative/.cheese/tasks", False),
+        ("/srv/../home/.cheese/tasks", False),
+        ("/proc/tasks", False),
+        ("{seen}/tasks", False),
+    ],
+)
+def test_a_task_root_the_namespace_would_make_on_this_host_is_not_taken(
+    tmp_path, task_root, kept
+):
+    """The session's namespace makes the task checkouts' directory, so one
+    that would land in a directory of this host's own, bound in, is refused,
+    as is any path the project itself could not be placed at."""
+    from app.domain.agent.harness.claude_code.remote_execution.namespace import (
+        namespace_task_root,
+    )
+
+    seen = "/executor/home/room"
+    spelled = task_root.format(host=tmp_path, seen=seen)
+    assert namespace_task_root(seen, spelled) == (spelled if kept else None)
 
 
 def test_the_projects_hooks_are_registered_centrally_and_run_there(
