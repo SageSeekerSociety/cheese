@@ -40,7 +40,7 @@ from app.domain.machine.models import (
     WarmMachine,
     capacity,
 )
-from app.domain.platform_stats.ports import PreviewConnections
+from app.domain.platform_stats.ports import PreviewConnections, count
 from app.domain.project.models import Project
 from app.domain.usage import ledger
 from app.domain.usage.models import ComputeGrant, GrantSource, ResourceUsage
@@ -288,12 +288,6 @@ class GapRepository:
         分布，不是在线进程。
         """
 
-        async def _count(model: Any, *where: Any) -> int:
-            stmt = select(func.count()).select_from(model)
-            if where:
-                stmt = stmt.where(*where)
-            return int((await self._session.execute(stmt)).scalar_one() or 0)
-
         warm_rows = (
             await self._session.execute(
                 select(WarmMachine.state, func.count()).group_by(WarmMachine.state)
@@ -310,23 +304,28 @@ class GapRepository:
             )
         )
         return {
-            "devices": await _count(DeviceRow),
-            "hosted_devices": await _count(HostedDeviceRow),
-            "warm_total": await _count(WarmMachine),
+            "devices": await count(self._session, DeviceRow),
+            "hosted_devices": await count(self._session, HostedDeviceRow),
+            "warm_total": await count(self._session, WarmMachine),
             "warm_by_state": {str(s): int(n) for s, n in warm_rows},
-            "warm_error": await _count(
-                WarmMachine, WarmMachine.error.is_not(None), WarmMachine.error != ""
+            "warm_error": await count(
+                self._session,
+                WarmMachine,
+                WarmMachine.error.is_not(None),
+                WarmMachine.error != "",
             ),
-            "host_total": await _count(CloudHost),
+            "host_total": await count(self._session, CloudHost),
             "host_by_status": {str(s): int(n) for s, n in host_rows},
             "host_active": len(live),
-            "host_enroll_error": await _count(
+            "host_enroll_error": await count(
+                self._session,
                 CloudHost,
                 CloudHost.enroll_error.is_not(None),
                 CloudHost.enroll_error != "",
             ),
             # A slot is a sandbox; one being destroyed holds it until it goes.
-            "host_slots_used": await _count(
+            "host_slots_used": await count(
+                self._session,
                 SandboxHome,
                 SandboxHome.host_id.in_(
                     [host.id for host in live if not host.whole_machine]
