@@ -1,21 +1,16 @@
-"""仓库根目录卫生：跑出来的东西不进版本库。
+"""仓库根目录卫生：跑出来的东西与一次性原型不进版本库。
 
-三份一次性产物都进过 main：`skill-plaza-merged.zip`（解冲突合并包，2.5MB，内容随
+三类一次性产物都进过 main：`skill-plaza-merged.zip`（解冲突合并包，2.5MB，内容随
 构建变，快照已经在产物清单里）、`logs/cutover-bisect.out`（一次性 bisect 日志）、
-`task-source-claim-review-prototype.html`（一次性评审原型页）。三份都没有代码引用，
-删掉它们不需要改任何别的文件；难的是别再有下一份——根 `.gitignore` 当时只挡了
-`logs/harness-contracts/` 一个子目录。这条守卫把根目录的 `*.zip` 和整棵 `logs/` 变成
-版本库里的禁忌。
-
-**口径只到今天点得出的这两类**：根目录的 `*.zip`（不分大小写）和整棵 `logs/`。第三
-份是原型 HTML，但它不在口径里，也别顺手加进来——根目录已经有两份被追踪的原型页
-（`sidebar-owner-light-prototype.html`、`sidebar-task-collapse-prototype.html`），把
-HTML 当成一类产物来挡会当场红在它们身上，「哪些 HTML 算产物」是另一个决定。
+`task-source-claim-review-prototype.html` 与 `sidebar-task-collapse-prototype.html`
+（一次性评审/交互原型页）。它们都没有代码引用，删掉它们不需要改任何别的文件；难的是别
+再有下一份。这条守卫把根目录的 `*.zip`、`*-prototype.html` 和整棵 `logs/` 变成版本库里
+的禁忌。
 
 **为什么两件事分开断言**：「现在没有这类文件」和「`.gitignore` 拦得住这类文件」是
-两条会各自失效的规则。只留前一条，删掉 `.gitignore` 那两行照样是绿的，下一次有人
-`git add` 一份 2.5MB 的 zip 时也没有任何一条测试变红；只留后一条，则一份早就进了
-版本库的 zip 谁都看不见。
+两条会各自失效的规则。只留前一条，删掉 `.gitignore` 那几行照样是绿的，下一次有人
+`git add` 一份 2.5MB 的 zip 或原型 HTML 时也没有任何一条测试变红；只留后一条，则一份
+早就进了版本库的文件谁都看不见。
 """
 
 import subprocess
@@ -27,17 +22,17 @@ REPO = Path(__file__).resolve().parents[3]
 
 _THIS_FILE = Path(__file__).resolve().relative_to(REPO).as_posix()
 
-#: 根目录下这些后缀是写出来的、不是写进去的：构建包、导出包。
-_THROWAWAY_SUFFIXES = (".zip",)
+#: 根目录下这些后缀是写出来的或一次性摆看的，不进版本库：构建包、导出包、原型页。
+_THROWAWAY_SUFFIXES = (".zip", "-prototype.html")
 
 #: 整棵树都不属于版本库的目录。跑出来的东西都写在这里（harness 契约、CI 反馈采集、
 #: device-route 迁移、云机预热），所以是按树挡，不是按后缀挡。
 _THROWAWAY_DIRS = ("logs/",)
 
 _REPAIR = (
-    "修法：这份文件是跑出来的产物，别把它提交进来——它的快照属于产物清单或 CI "
-    "artifact，重建它的命令写在生成脚本里。根 .gitignore 里 `/*.zip` 与 `/logs/` "
-    "两行是它的守卫，删了这两行这条测试也会红。"
+    "修法：这份文件是跑出来的产物或一次性原型页，别把它提交进来——原型用 `cheese show` "
+    "摆出预览即可，产物快照属于产物清单或 CI artifact。根 .gitignore 里 `/*.zip`、"
+    "`/*-prototype.html` 与 `/logs/` 是它的守卫，删了这几行这条测试也会红。"
     "复查：cd backend && uv run pytest tests/unit/test_repo_root_hygiene.py -q"
 )
 
@@ -91,7 +86,7 @@ def _is_ignored(path: str) -> bool:
 
 
 def test_no_throwaway_product_is_tracked() -> None:
-    """根目录的 `*.zip` 和 `logs/` 下的任何文件都不该在版本库里。"""
+    """根目录的 `*.zip`、`*-prototype.html` 和 `logs/` 下的任何文件都不该在版本库里。"""
     leftovers = _leftovers()
     assert leftovers == [], (
         "一次性产物又进了版本库：\n"
@@ -102,8 +97,11 @@ def test_no_throwaway_product_is_tracked() -> None:
 
 
 def test_the_root_gitignore_still_bars_them() -> None:
-    """`.gitignore` 那两条规则本身：命中的要命中，正常源码不能被连坐。"""
+    """`.gitignore` 那几条规则本身：命中的要命中，正常源码不能被连坐。"""
     assert _is_ignored("foo.zip"), f"根目录的 `*.zip` 不再被忽略。\n{_REPAIR}"
+    assert _is_ignored("foo-prototype.html"), (
+        f"根目录的 `*-prototype.html` 不再被忽略。\n{_REPAIR}"
+    )
     assert _is_ignored("logs/bar.out"), f"根目录的 `logs/` 不再被忽略。\n{_REPAIR}"
     assert not _is_ignored("README.md"), (
         "`README.md` 被当成忽略对象了：规则写得太宽，会连正常源码一起挡住。\n" + _REPAIR

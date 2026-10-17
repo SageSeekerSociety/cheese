@@ -1,12 +1,17 @@
-# Dependency vulnerability scanning — visible on every run, blocking on none.
+# Dependency vulnerability scanning — visible on every run, and never green
+# unless every scan actually came back clean.
 #
 # Nothing in this repo looked for advisories against the packages it ships, so
 # a vulnerable version could stay installed for as long as nobody happened to
-# look it up. Both scans below are `continue-on-error: true` on purpose: this
-# lane's contribution is that a finding becomes visible — a summary line and a
-# warning annotation — not that it fails a pull request whose diff has nothing
-# to do with it. A blocking gate belongs in Required CI later, once the tree is
-# clean enough for it to be green.
+# look it up. Each scan below is `continue-on-error: true` so that one scan's
+# result cannot hide the other's: the summary step needs both outcomes. That
+# step exits non-zero unless every scan reported `success` — `skipped`,
+# `cancelled` and an unset outcome all mean the scan did not run, and a run
+# that did not happen cannot say the dependencies are clean.
+#
+# This lane is not a required check: it runs when the dependency set changes
+# and on a weekly schedule, so a red run is a finding to act on rather than a
+# gate on an unrelated pull request.
 #
 # Both triggers, because either alone misses a class of finding:
 #   - pull_request: the advisory shows up beside the change that introduces it.
@@ -26,6 +31,7 @@ on:
       - backend/pyproject.toml
       - backend/uv.lock
       - .github/workflows/dependency-audit.yml
+      - .github/scripts/audit_summary.py
   schedule:
     - cron: '17 6 * * 1' # Mondays 06:17 UTC
   workflow_dispatch: {}
@@ -103,39 +109,17 @@ jobs:
           uvx pip-audit --disable-pip --no-deps \
             --requirement "$RUNNER_TEMP/backend-requirements.txt"
 
-      # Neither scan can fail this job, so a finding would otherwise live only
-      # in a log nobody opens. This is what turns each one into something a
-      # person sees: a line in the run summary, and a warning annotation.
-      - name: Surface any finding
+      # Each scan is continue-on-error so this step sees both outcomes and
+      # reports them together. It also runs when an earlier step failed
+      # (`!cancelled()`), which is exactly when a scan was skipped — and a
+      # skipped scan must not read as clean. audit_summary.py writes the run
+      # summary and exits non-zero unless every scan reported success.
+      - name: Summarize the audit
         if: ${{ !cancelled() }}
         env:
           PNPM_OUTCOME: ${{ steps.pnpm_audit.outcome }}
           PIP_OUTCOME: ${{ steps.pip_audit.outcome }}
         run: |
-          pnpm_result="no high-or-worse advisory"
-          if [ "$PNPM_OUTCOME" = failure ]; then
-            pnpm_result="**findings — or the scan could not reach the registry**"
-          fi
-          pip_result="no known vulnerability"
-          if [ "$PIP_OUTCOME" = failure ]; then
-            pip_result="**findings — or the scan could not reach the index**"
-          fi
-          {
-            echo "## Dependency audit"
-            echo
-            echo "Both scans report only; nothing here fails a check."
-            echo
-            echo "| scan | covers | result |"
-            echo "| --- | --- | --- |"
-            echo "| \`pnpm audit --prod --audit-level=high\` | frontend, dependencies that ship | $pnpm_result |"
-            echo "| \`pip-audit\` over \`uv export --no-dev\` | backend, dependencies that ship | $pip_result |"
-            echo
-            echo "A non-zero scan means either a finding or an unreachable"
-            echo "registry/index — the step's own log says which."
-          } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$PNPM_OUTCOME" = failure ]; then
-            echo "::warning title=pnpm audit::the frontend's shipped dependencies came back non-zero — see the 'pnpm audit' step log"
-          fi
-          if [ "$PIP_OUTCOME" = failure ]; then
-            echo "::warning title=pip-audit::the backend's locked dependencies came back non-zero — see the 'pip-audit' step log"
-          fi
+          python3 .github/scripts/audit_summary.py \
+            --scan "pnpm audit|pnpm audit --prod --audit-level=high|frontend, dependencies that ship|$PNPM_OUTCOME" \
+            --scan "pip-audit|pip-audit over uv export --no-dev|backend, dependencies that ship|$PIP_OUTCOME"

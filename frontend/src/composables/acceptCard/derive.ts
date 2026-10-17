@@ -50,12 +50,18 @@ export function useAcceptCardDerive(host: AcceptCardDeriveHost) {
     if (!card || card.status === 'conflict') return null
     return mergeBadgeOf(card.merge_state, store.agentName)
   })
+  const needsPr = computed(() => {
+    const card = pendingCard.value
+    if (!card || !card.forge.hosts_proposals || card.pr_number !== null) return false
+    if (card.deliverable?.kind === 'file' || card.deliverable?.kind === 'link') {
+      return card.merge_state.state === 'unknown'
+    }
+    return true
+  })
   const mergeReasons = computed<MergeReason[]>(() => {
     const card = pendingCard.value
     if (!card) return []
-    return card.forge.reports_checks && card.pr_number === null
-      ? card.merge_state.reasons
-      : visibleReasons(card.merge_state)
+    return card.forge.reports_checks && needsPr.value ? card.merge_state.reasons : visibleReasons(card.merge_state)
   })
   // 读不到检查结论的托管方，采纳就是验收人自己的判断。
   const platformLane = computed(() => {
@@ -64,7 +70,6 @@ export function useAcceptCardDerive(host: AcceptCardDeriveHost) {
   })
   // 这个托管方在人点之前就说明了自己是谁（I23）；GitHub 那一档不说话，卡上有链接。
   const forgeDeclaration = computed(() => pendingCard.value?.forge.declaration || '')
-  const needsPr = computed(() => !!pendingCard.value?.forge.hosts_proposals && pendingCard.value.pr_number === null)
   // 按钮亮不亮，跟后端的采纳闸门是同一条线（domain/review/merge_state.py +
   // services.py）：`clean` 与 `unstable` 后端会合，按钮就亮；`blocked` /
   // `behind` / `dirty` / `unknown` 后端会 422 拒，按钮就灰，title 说明为什么。

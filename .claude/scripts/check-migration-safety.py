@@ -46,6 +46,10 @@ checks the ones that can be read off the source:
   unresolved-drop
       A drop or rename whose table or column is not a literal cannot be
       checked; spell the names out (or justify an exception).
+  unparseable
+      A migration file does not parse as Python. Every statement in it is
+      unjudged, so it is an error, not the warning ``unresolved`` gives a
+      statement whose SQL is merely dynamic.
   lock-retry-copy
       Lock retries come from ``migration_helpers.with_lock_retries``, not a
       pasted ``DO`` block.
@@ -119,10 +123,10 @@ ERROR_RULES = frozenset(
         "lock-retry-copy",
         "unresolved-table",
         "unresolved-drop",
+        "unparseable",
         "empty-downgrade",
     }
 )
-WARNING_RULES = frozenset({"alter-column-existing", "fk-on-add-column", "unresolved"})
 
 _PRAGMA = re.compile(
     r"#\s*migration-safety:\s*(allow|allow-file)\s+([a-z0-9,\- ]+?)\s*(?:—|--|:)\s*(\S.*)$"
@@ -924,7 +928,10 @@ def analyze(migrations: dict[str, str], base_models: dict[str, str]) -> list[Fin
         try:
             tree = ast.parse(source)
         except SyntaxError as error:
-            findings.append(Finding(path, error.lineno or 1, "unresolved", f"does not parse: {error}"))
+            # A file that does not parse was not read and cleared: every statement
+            # in it is unjudged. `unresolved` is a warning for one statement whose
+            # SQL is dynamic, so reusing it here let a broken file exit 0.
+            findings.append(Finding(path, error.lineno or 1, "unparseable", f"does not parse: {error}"))
             continue
         facts = _FileFacts()
         visitor = _Migration(path, source, base_tables, new_tables, facts)
@@ -1042,7 +1049,9 @@ def main() -> int:
         print(f"PASS: no migrations added relative to {args.base}")
         return 0
 
-    migrations = {p: Path(p).read_text(encoding="utf-8") for p in paths if Path(p).is_file()}
+    # `utf-8-sig` drops a BOM: Python's file reader tolerates one, but `ast.parse`
+    # on the decoded text rejects U+FEFF, which would now block a valid migration.
+    migrations = {p: Path(p).read_text(encoding="utf-8-sig") for p in paths if Path(p).is_file()}
     findings = analyze(migrations, base_models)
     errors = [f for f in findings if f.is_error]
     for finding in findings:
@@ -1433,6 +1442,15 @@ def self_test() -> int:
         [],
     )
 
+    # --- a file that does not parse is not a clean file ----------------------
+    # `unresolved` is a warning for one statement whose SQL is dynamic. The same
+    # name used to cover a whole file that does not parse, so a migration with a
+    # syntax error was reported as a warning and the run exited 0.
+    broken = {"m.py": _HEAD + "\ndef upgrade() -> None:\n    op.drop_column('task', 'video_url'\n"}
+    unparseable = analyze(broken, _BASE_MODELS)
+    check("a migration that does not parse", [f.rule for f in unparseable], ["unparseable"])
+    check("... is an error, not a warning", [f.is_error for f in unparseable], [True])
+
     # --- a base it cannot read is not a clean tree ---------------------------
     # The local path through `main()` that could not reach `--base` wrote a note
     # and exited 0, which the pre-commit hook read exactly as "read the added
@@ -1488,6 +1506,38 @@ def self_test() -> int:
             )
             check(f"an unavailable --base is refused {label}", unavailable.returncode, EXIT_CANNOT_JUDGE)
             check(f"... and no verdict is printed {label}", "PASS" in unavailable.stdout, False)
+
+        # Through the real command, with a base it can read: one untracked
+        # migration whose syntax is broken must exit 1 and never print PASS.
+        (versions / "broken.py").write_text(
+            _HEAD + "\ndef upgrade() -> None:\n    op.drop_column('task', 'video_url'\n",
+            encoding="utf-8",
+        )
+        broken_run = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--base", "main"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+            env=lab_env,
+        )
+        check("a migration that does not parse is refused", broken_run.returncode, 1)
+        check("... and it is named", "[unparseable]" in broken_run.stdout, True)
+        check("... and no verdict is printed", "PASS" in broken_run.stdout, False)
+
+        # A BOM is valid to Python's file reader; it must not read as unparseable.
+        (versions / "broken.py").unlink()
+        (versions / "bom.py").write_bytes(
+            b"\xef\xbb\xbf" + (_HEAD + "\ndef upgrade() -> None:\n    pass\n").encode(),
+        )
+        bom_run = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), "--base", "main"],
+            cwd=lab,
+            capture_output=True,
+            text=True,
+            env=lab_env,
+        )
+        check("a BOM-prefixed migration is read", bom_run.returncode, 0)
+        check("... and is not called unparseable", "unparseable" in bom_run.stdout, False)
     finally:
         shutil.rmtree(lab, ignore_errors=True)
 
@@ -1497,8 +1547,8 @@ def self_test() -> int:
         return 1
     print(
         "PASS: check-migration-safety self-test (drop/rename, index, constraints, columns, imports, "
-        "unreadable names, NOT VALID/VALIDATE, empty downgrade, exceptions, and the refusal of a "
-        "--base it cannot read)"
+        "unreadable names, NOT VALID/VALIDATE, empty downgrade, unparseable files, exceptions, and "
+        "the refusal of a --base it cannot read)"
     )
     return 0
 
