@@ -1,0 +1,34 @@
+ids {"project": "81d88117-e1a3-40d4-b97d-1e3103904714", "room": "026c457c-db2d-46cb-9e1e-99bc9e3ee329", "task": "1c1fa696-8b85-4ded-8074-a16dcd8c651c"} rounds=7 loadavg=69.52 60.35 51.32 22/10451 7828
+===== channel detail: 7 rounds, single request =====
+  whole loop CPU per request: 47.46 ms
+  leaf                       cum ms  self ms   calls
+  sql.execute                19.951   19.951      28
+  rail_tasks                  9.148    3.301       1
+  sql.scalars                 5.560    0.692       7
+  relevance                   4.926    1.811       1
+  member_waits                4.123    1.360       1
+  sql.get                     3.687    3.687       4
+  moving_topics               2.243    0.702       1
+  place_or_404                2.131    0.200       1
+  awaiting_answer             2.060    0.570       1
+  live_cards                  1.822    0.586       1
+  last_activity               1.701    0.665       1
+  replied_to_me               1.446    0.195       1
+  managed_ids                 0.948    0.110       1
+  unseen                      0.743    0.142       1
+  working_in_threads          0.423    0.078       1
+===== awaiting-me: 7 rounds, single request =====
+  whole loop CPU per request: 42.42 ms
+  leaf                       cum ms  self ms   calls
+  sql.execute                17.598   17.598      12
+  sql.scalars                 4.571    0.316       3
+  tasks.rows                  4.543    2.307       1
+  blocks.questions            4.386    1.389       1
+  cards.listed                3.836    1.743       1
+  topics.rows                 3.027    1.666       1
+  topics                      2.219    0.691       1
+  alerts                      1.945    0.677       1
+  running                     1.781    0.394       1
+  tasks.brief                 1.704    0.411       1
+  projects                    1.279    0.411       1
+  threads                     0.754    0.079       1

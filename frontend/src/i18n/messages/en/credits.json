@@ -96,7 +96,8 @@
     "filterKind": "Type",
     "all": "All",
     "members": "{n} members",
-    "windowed": "Time-window limits"
+    "windowed": "Time-window limits",
+    "overseas": "Approved"
   },
   "panel": {
     "close": "Close",
@@ -121,7 +122,11 @@
     "historyFailed": "Couldn't load the history",
     "logPlan": "Plan changed from {from} to {to}",
     "logGrant": "Granted {credits} pts, {expiry}",
-    "by": "{'@'}{name} · {time}"
+    "by": "{'@'}{name} · {time}",
+    "overseas": "Can use models that need approval (Claude / GPT / Gemini)",
+    "overseasFailed": "Couldn't change model approval",
+    "logOverseasOn": "Model approval: approved",
+    "logOverseasOff": "Model approval: revoked"
   },
   "grantDialog": {
     "title": "Grant credits to “{team}”",

@@ -1,0 +1,5 @@
+{
+  "body": "已取消加入团队 \"{team}\" 的请求",
+  "title": "{canceler} 取消了加入请求",
+  "title_anonymous": "加入请求已取消"
+}

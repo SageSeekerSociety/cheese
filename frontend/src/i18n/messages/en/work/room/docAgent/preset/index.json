@@ -1,0 +1,13 @@
+{
+  "check": "Check",
+  "checkAll": "Check the document",
+  "explain": "Explain",
+  "list": "Turn into list",
+  "polish": "Polish",
+  "shorten": "Shorten",
+  "structure": "Suggest structure changes",
+  "summarize": "Summarize",
+  "table": "Turn into table",
+  "toChinese": "Translate to Chinese",
+  "toEnglish": "Translate to English"
+}

@@ -10,6 +10,10 @@ What it adds over `announce()` is the retry and its own session per attempt:
 delivery is retried (0s, 5s, 30s) before giving up — a dropped inbound webhook
 is a silent hole in the topic's timeline (CI results, deploy outcomes), so a
 transient DB failure must not be the end of it.
+
+The writing itself is `announce()`'s, and that lives above this package in the
+layer table, so this package may not import it: the caller hands it in as a
+`Poster` (ports.py) — the same rule as the session factory, whoever calls gives.
 """
 
 import logging
@@ -19,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tenacity import AsyncRetrying, stop_after_attempt, wait_chain, wait_fixed
 
 from app.core.webhook_auth import mint_webhook_token, webhook_token_claims
-from app.domain.agent.announce import announce
+from app.domain.webhook.ports import Poster
 from app.domain.webhook.repositories import WebhookTokenRepository
 
 logger = logging.getLogger(__name__)
@@ -52,6 +56,7 @@ async def verify(session: AsyncSession, *, topic_id: uuid.UUID, token: str) -> b
 async def post_with_retries(
     session_factory,
     *,
+    poster: Poster,
     topic_id: uuid.UUID,
     content: str,
     source: str,
@@ -77,6 +82,11 @@ async def post_with_retries(
     named for. A notice that knows whose turn it now is names them, and naming
     them means committing with whatever changed hands, so it calls `announce`
     on the caller's own session instead of through this retry.
+
+    `poster` is the write this package cannot do itself (ports.Poster) — every
+    caller passes `announce`. Per attempt it is that same function that decides
+    whether the topic still exists: `None` back means it is gone, which no
+    amount of retrying changes.
     """
     retrying = AsyncRetrying(
         stop=stop_after_attempt(_ATTEMPTS),
@@ -87,7 +97,7 @@ async def post_with_retries(
         async for attempt in retrying:
             with attempt:
                 async with session_factory() as session:
-                    block = await announce(
+                    block = await poster(
                         session,
                         place_id=topic_id,
                         task_id=task_id,

@@ -1,0 +1,13 @@
+# 改动前后每个端点响应体的 sha256。同一行两个哈希相同 = 该端点的响应逐字节没变。
+# before 树 = /tmp/base-tree（7867ee023 的只读导出）；after 树 = 任务工作目录。
+# 生成：cd /tmp/bodies-<树> && sha256sum *  （文件名由 dump_endpoint_bodies.py 写成端点标签）
+endpoint                           before                                                           after                                                            same
+awaiting-me.json                   dc7d3c35b9e0366d330216ace9670d6797785439248ad22326a4a8c1173eafa8 dc7d3c35b9e0366d330216ace9670d6797785439248ad22326a4a8c1173eafa8 yes
+channel-blocks.json                297b4133862e36e00fddef37ce6cb88007a78d8065d01e32cb8dcf8301e41283 297b4133862e36e00fddef37ce6cb88007a78d8065d01e32cb8dcf8301e41283 yes
+channel-detail.json                c8cba65f3ae6ae8cbdcd53eeb630d5cb76b7870a1b8643d3db4b37748b279d56 c8cba65f3ae6ae8cbdcd53eeb630d5cb76b7870a1b8643d3db4b37748b279d56 yes
+channel-environment.json           0f2fe7459e8415d16f9dbc8d999bc1b6eb8e7308b13c7fca2a4a96f113096f39 0f2fe7459e8415d16f9dbc8d999bc1b6eb8e7308b13c7fca2a4a96f113096f39 yes
+channel-members.json               33eaee71c5f1155c2cd20a681650b922146928df8842b3af9b78d0a43ef3f26b 33eaee71c5f1155c2cd20a681650b922146928df8842b3af9b78d0a43ef3f26b yes
+channel-pins.json                  4b3a9b9b908f39ad12c903cdd6c91a3a97120af4291615c6de82ef35c37515ca 4b3a9b9b908f39ad12c903cdd6c91a3a97120af4291615c6de82ef35c37515ca yes
+channel-task-list.json             ae2fa144c89306eac48d5d2173f67ecc3a3999aa5e186dd839392952700b2480 ae2fa144c89306eac48d5d2173f67ecc3a3999aa5e186dd839392952700b2480 yes
+channel-threads.json               4b3a9b9b908f39ad12c903cdd6c91a3a97120af4291615c6de82ef35c37515ca 4b3a9b9b908f39ad12c903cdd6c91a3a97120af4291615c6de82ef35c37515ca yes
+project-task-list.json             c74df049124b2a7bdc377d839ad08ebc40fa4bcba244b6997af8b925d95fa97f c74df049124b2a7bdc377d839ad08ebc40fa4bcba244b6997af8b925d95fa97f yes

@@ -18,7 +18,7 @@
 
 import { mergeAttributes, Node } from '@tiptap/core'
 
-import { readContainer } from './blocks'
+import { readContainer } from './containers'
 
 /** What the id is written as before the canvas exists. */
 export const UNMADE = 'new'

@@ -28,15 +28,14 @@ const cases: { name: string; test: ContractCase; call: () => Promise<unknown> }[
     test: {
       method: 'GET',
       path: '/notifications',
-      args: [{ type: 'MENTION', read: false, pageStart: 'cursor-1', pageSize: 20 }],
+      args: [{ read: false, pageStart: 'cursor-1', pageSize: 20 }],
       query: [
-        ['type', 'MENTION'],
         ['read', 'false'],
         ['pageStart', 'cursor-1'],
         ['pageSize', '20'],
       ],
     },
-    call: () => notifications.list({ type: 'MENTION', read: false, pageStart: 'cursor-1', pageSize: 20 }),
+    call: () => notifications.list({ read: false, pageStart: 'cursor-1', pageSize: 20 }),
   },
   {
     name: 'del',

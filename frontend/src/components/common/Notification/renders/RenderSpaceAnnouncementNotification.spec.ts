@@ -50,9 +50,9 @@ it('clicking it opens that space’s announcements and marks it read', async () 
   })
 
   expect(view.getByText('期中报告改为统一提交 PDF')).toBeTruthy()
-  // 带链接的那一版要等渲染器把内容交上来才出现。
-  await waitFor(() => expect(view.container.querySelector('.v-list-item--link')).not.toBeNull())
-  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  // 渲染器把去处交上来之后，这一行才能点。
+  await view.findByRole('link')
+  await fireEvent.click(view.getByRole('link'))
 
   await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/spaces/11/announcements'))
   expect(onMarkAsRead).toHaveBeenCalledWith(7)

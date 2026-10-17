@@ -11,7 +11,8 @@
 from anyio.from_thread import BlockingPortal
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.integration.conftest import post_project, registered
+from app.domain.living_doc.overview import overview_document
+from tests.integration.conftest import post_project, project_service, registered
 
 
 async def _owner(session) -> str:
@@ -29,16 +30,15 @@ def test_intent_becomes_the_new_projects_overview(
     db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
     async def _run() -> None:
-        from app.domain.project.services import ProjectService
 
         said = "帮我把这学期的课程材料整理成一份大纲"
-        projects = ProjectService(db_session)
+        projects = project_service(db_session)
         project = await projects.create(
             name="这学期的课", intent=said, owner_handle=await _owner(db_session)
         )
 
         assert project.intent == said, "原话要存下来，下次打开项目还看得到"
-        doc = await projects.overview_document(project)
+        doc = await overview_document(db_session, project.id)
         assert doc.version > 0, "说了要做什么的项目，项目目标该带着这句话开门"
         # 署名是「system」：平台产的，不是芝士，也不是某个人。
         assert doc.author == "system"
@@ -54,15 +54,14 @@ def test_no_intent_leaves_the_overview_unwritten(
     """不答这一问是允许的：项目目标照常空着，没有半份空简报。"""
 
     async def _run() -> None:
-        from app.domain.project.services import ProjectService
 
-        projects = ProjectService(db_session)
+        projects = project_service(db_session)
         project = await projects.create(
             name="没说要做什么", owner_handle=await _owner(db_session)
         )
 
         assert project.intent == ""
-        assert (await projects.overview_document(project)).version == 0
+        assert (await overview_document(db_session, project.id)).version == 0
 
     _portal.call(_run)
 
@@ -77,14 +76,13 @@ def test_whitespace_only_intent_is_not_an_intent(
     """
 
     async def _run() -> None:
-        from app.domain.project.services import ProjectService
 
-        projects = ProjectService(db_session)
+        projects = project_service(db_session)
         project = await projects.create(
             name="空白", intent="   \n\t ", owner_handle=await _owner(db_session)
         )
 
-        assert (await projects.overview_document(project)).version == 0
+        assert (await overview_document(db_session, project.id)).version == 0
 
     _portal.call(_run)
 

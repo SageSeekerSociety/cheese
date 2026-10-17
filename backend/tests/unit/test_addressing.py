@@ -18,7 +18,7 @@
 
 import pytest
 
-from app.domain.delivery.addressing import (
+from app.domain.addressing import (
     NOBODY,
     REASON_ASKED,
     REASON_REPORTER,
@@ -27,9 +27,8 @@ from app.domain.delivery.addressing import (
     Hand,
     Recipient,
     address,
-    hand_of,
 )
-from app.domain.room_task.presentation import Column
+from app.domain.room_task.presentation import Column, hand_of
 
 # —— 下一步在平台手上：谁都不通知 ————————————————————————————————
 
@@ -121,7 +120,6 @@ def test_reason_for_answers_only_about_the_people_it_named():
 
 #: 逐列写死的期望。看板多一列，这里就得多一行，由下面那条完整性断言逼出来。
 COLUMN_HANDS = [
-    (Column.not_started, Hand.participant),
     (Column.building, Hand.platform),
     (Column.delivering, Hand.platform),
     (Column.needs_you, Hand.participant),

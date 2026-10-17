@@ -36,6 +36,7 @@ vi.mock('../../api', async () => {
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 function room(id: string, title: string): Topic {
   return {
@@ -89,6 +90,8 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('切话题时的悬停条', () => {
   it('不停在上一个话题那一行的位置上', async () => {

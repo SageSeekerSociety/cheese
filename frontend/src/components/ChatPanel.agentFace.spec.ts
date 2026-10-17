@@ -4,7 +4,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 const listTopicMembers = vi.fn()
@@ -27,6 +27,7 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 const topic: Topic = {
   id: 'agent-face-topic',
@@ -109,6 +110,8 @@ beforeEach(() => {
 
 // 队友在干活时，对话里它最近出现的那个头像跟着状态动，更早的头像不动；这一轮结束，
 // 头像不再指向现场。
+beforeAll(loadMarkdownReader)
+
 describe('对话里在动的头像', () => {
   const earlier = block('a-1', 'cheese-a1', '表格模板放好了。', 1)
   const ask = block('h-1', 'lin', '@芝士 帮我整理第三组数据', 2)

@@ -1,0 +1,5 @@
+{
+  "creditsExhausted": "额度已用完，这一轮没有执行",
+  "creditsExhaustedDetail": "联系团队管理员或额度发放方补充额度。",
+  "creditsRefused": "{reason}这一轮没有执行。"
+}

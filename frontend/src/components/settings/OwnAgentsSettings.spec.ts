@@ -20,6 +20,7 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 const SETTINGS: Settings = {
   allowed: true,
   kinds: ['subscription', 'api_key', 'model_service'],
+  service_hosts: [],
   can_manage: false,
   agents: [
     {
@@ -29,7 +30,7 @@ const SETTINGS: Settings = {
       callers: 'owner',
       owner_handle: 'alice',
       owner_name: 'alice',
-      connection: { kind: 'subscription', plan: 'max', model: null },
+      connection: { kind: 'subscription', plan: 'max', model: null, on_account: false, allowed: true },
       machine: { name: 'alice-laptop', online: true },
     },
     {
@@ -39,7 +40,7 @@ const SETTINGS: Settings = {
       callers: 'owner',
       owner_handle: 'bob',
       owner_name: 'bob',
-      connection: { kind: 'api_key', plan: null, model: null },
+      connection: { kind: 'api_key', plan: null, model: null, on_account: true, allowed: true },
       machine: null,
     },
   ],
@@ -49,6 +50,9 @@ const SETTINGS: Settings = {
       kind: 'subscription',
       plan: 'max',
       model: null,
+      name: null,
+      service_host: null,
+      on_account: false,
       machine_name: 'alice-laptop',
       online: true,
       added: true,
@@ -59,8 +63,24 @@ const SETTINGS: Settings = {
       kind: 'model_service',
       plan: null,
       model: 'kimi-k2',
+      name: null,
+      service_host: 'api.moonshot.cn',
+      on_account: false,
       machine_name: 'alice-desk',
       online: false,
+      added: false,
+      allowed: true,
+    },
+    {
+      id: '6f1c2b1e-account-key',
+      kind: 'api_key',
+      plan: null,
+      model: null,
+      name: 'work',
+      service_host: null,
+      on_account: true,
+      machine_name: null,
+      online: true,
       added: false,
       allowed: true,
     },
@@ -106,10 +126,38 @@ describe('members’ own Claude Code in project settings', () => {
     await mountSettings()
 
     const offers = screen.getAllByTestId('own-agent-offer')
-    expect(offers).toHaveLength(1)
+    expect(offers).toHaveLength(2)
     await fireEvent.click(offers[0].querySelector('[data-testid="own-agent-add"]')!)
 
     expect(ownAgents.addOwnAgent).toHaveBeenCalledWith('project', 'alice-desk')
+  })
+
+  it('adds a connection my account holds, which no machine has to be online for', async () => {
+    await mountSettings()
+
+    const offer = screen.getAllByTestId('own-agent-offer').find((el) => el.textContent?.includes('work'))!
+    await fireEvent.click(offer.querySelector('[data-testid="own-agent-add"]')!)
+
+    expect(ownAgents.addOwnAgent).toHaveBeenCalledWith('project', '6f1c2b1e-account-key')
+  })
+
+  it('lets a manager allow a provider by its host name, and sends nothing that is not one', async () => {
+    const managed = { ...SETTINGS, can_manage: true }
+    vi.mocked(ownAgents.getOwnAgents).mockResolvedValue(managed)
+    vi.mocked(ownAgents.setOwnAgentsRules).mockResolvedValue({ ...managed, service_hosts: ['api.moonshot.cn'] })
+    await mountSettings()
+
+    const input = screen.getByTestId('own-agents-host-input').querySelector('input')!
+    const addButton = screen.getByTestId('own-agents-host-add')
+    await fireEvent.update(input, 'https://api.moonshot.cn/anthropic')
+    expect(addButton.hasAttribute('disabled')).toBe(true)
+    await fireEvent.click(addButton)
+    expect(ownAgents.setOwnAgentsRules).not.toHaveBeenCalled()
+
+    await fireEvent.update(input, ' API.Moonshot.cn ')
+    await fireEvent.click(addButton)
+
+    expect(ownAgents.setOwnAgentsRules).toHaveBeenCalledWith('project', { service_hosts: ['api.moonshot.cn'] })
   })
 
   it('removes my own agent, and offers no removal on anyone else’s', async () => {

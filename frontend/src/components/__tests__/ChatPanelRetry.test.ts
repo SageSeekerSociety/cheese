@@ -35,6 +35,7 @@ vi.mock('../../api', async () => {
 import ChatPanel from '../ChatPanel.vue'
 
 import i18n, { t } from '@/i18n'
+import { loadMarkdownReader } from '@/test/markdownReader'
 
 // 按钮的名字从文案目录取：改字不该让这份测试变红。
 const RETRY = () => ({ name: t('work.room.retry.action') })
@@ -123,6 +124,8 @@ beforeEach(() => {
   summonAgent.mockReset()
   summonAgent.mockResolvedValue({ started: true })
 })
+
+beforeAll(loadMarkdownReader)
 
 describe('失败提示上的重试', () => {
   it('最新一条可以重试的失败带一个按钮，点下去重新开一轮', async () => {

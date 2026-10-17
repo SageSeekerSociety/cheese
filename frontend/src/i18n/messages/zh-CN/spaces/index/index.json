@@ -1,0 +1,18 @@
+{
+  "explore": "探索空间",
+  "firstRun": {
+    "body": "建一个项目，进去就能和芝士开工：说清楚你想做什么，它帮你查资料、写文档、拆任务。",
+    "browse": "或者浏览下面的空间，看看别人在做什么",
+    "newProject": "新建项目",
+    "title": "从这里开始"
+  },
+  "heroSubtitle": "让你的学术好奇心，在此与一个好课题相遇。",
+  "heroTitle": "在知是，灵感启航。",
+  "loadFailed": "加载空间列表失败",
+  "noSpaces": "暂无空间",
+  "sortOptions": {
+    "hot": "最热",
+    "newest": "最新"
+  },
+  "title": "空间"
+}

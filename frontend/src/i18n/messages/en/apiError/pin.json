@@ -1,0 +1,6 @@
+{
+  "channelJoinToPin": "Join the channel to pin",
+  "pinChannelsOnly": "Only a channel has pins",
+  "pinMainLineOnly": "Only a message or file in this channel's main line can be pinned",
+  "pinMessagesAndFiles": "Only a message or a file can be pinned"
+}

@@ -20,6 +20,7 @@ import { ref } from 'vue'
 
 import { useDocPeople } from '../../composables/useDocPeople'
 import { useDocThreads } from '../../composables/useDocThreads'
+import { useMentionOutside } from '../../composables/useMentionOutside'
 import { usePanelDoc } from '../../composables/usePanelDoc'
 import PanelDoc from '../panels/PanelDoc.vue'
 
@@ -77,6 +78,11 @@ const docPeople = useDocPeople({
   agentHandle: () => props.agentHandle,
   agentName: () => props.agentName,
 })
+// 评论 @ 了打不开这份文档的人：问写的人要不要把他们加进频道（和对话里一样）。
+const commentOutside = useMentionOutside({
+  place: () => docPanel.documentId.value,
+  nameOf: (handle) => docPeople.names.value[handle] ?? handle,
+})
 
 // 面板那半边的外部接口原样透出去 —— 拿着外壳的 ref 调它们（资料库文档卡上的「查看
 // 改动」、高亮某一轮、闪一下），中间多一层不该让这些线断掉。
@@ -93,6 +99,7 @@ defineExpose({
     :doc-panel="docPanel"
     :doc-threads="docThreads"
     :doc-people="docPeople"
+    :comment-outside="commentOutside"
     :topic="props.topic"
     :task-id="props.taskId"
     :document="props.document"

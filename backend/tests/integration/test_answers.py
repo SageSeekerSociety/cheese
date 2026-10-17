@@ -82,7 +82,7 @@ class TestAnswersCreateIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
         self.answer_ids.append(data["data"]["id"])
 

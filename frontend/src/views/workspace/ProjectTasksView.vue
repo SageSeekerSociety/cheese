@@ -55,12 +55,12 @@ const includesClosed = computed(() => status.value !== 'open')
 const whose = defineModel<TaskFilter>('whose', { default: 'all' })
 
 const emit = defineEmits<{
-  (e: 'open-task', task: RoomTask): void
-  (e: 'new-task'): void
-  (e: 'retry'): void
-  (e: 'pick-channel', channelId: string | null): void
+  'open-task': [task: RoomTask]
+  'new-task': []
+  retry: []
+  'pick-channel': [channelId: string | null]
   /** 已关闭的往下滚到底了：要下一页。 */
-  (e: 'more'): void
+  more: []
 }>()
 
 const stalledOpen = ref(false)
@@ -107,7 +107,7 @@ const shown = computed(() => [...shownOpen.value, ...shownClosed.value])
 // 已关闭的滚到最底下那一行露出来时要下一页。
 const sentinel = useLoadMoreSentinel(() => emit('more'))
 
-const ORDER: BoardColumn[] = ['needs_you', 'delivering', 'building', 'not_started']
+const ORDER: BoardColumn[] = ['needs_you', 'delivering', 'building']
 const groups = computed(() => {
   const openGroups = ORDER.map((column) => ({
     column,

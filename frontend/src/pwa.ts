@@ -23,6 +23,11 @@
  *   现取的（NetworkOnly），跑的已经是新版；浏览器在这次导航里顺手查 sw.js，才把
  *   同一版的新 worker 装到 waiting。所以先拿这一页自己的入口脚本去和服务器现在的
  *   index.html 比（`pageIsBehind`）：没落后就不整页加载，直接让新 worker 接管。
+ * - 问「这一页落后了吗」是有期限的（`PAGE_PROBE_WAIT_MS`）。它排在每一次跳转前面，
+ *   而手机上它可能一直不回话——从后台回来的那一瞬问出去，网络刚醒，它既不成功也不
+ *   失败。没有期限的话，之后每一次跳转（点链接、底部标签、左上角的返回）都排在它
+ *   后面等着，界面看着就是死的，只有整页重开才清得掉。等不到答案按「落后」处理：
+ *   落一次旧版，也好过停在一次点击上。
  *
  * 代价是一个一直不点任何东西的页面会一直停在旧版本上，直到下一次点击。
  */
@@ -32,27 +37,50 @@ import { registerSW } from 'virtual:pwa-register'
 
 /**
  * 有了新 worker 之后，这一页的代码是不是落后于服务器上现在那一版。为真时下一次
- * 跳转整页加载。null：还没有新 worker 的消息。
+ * 跳转整页加载。null：还没有新 worker 的消息；`undefined`：问过，但没问出来
+ * （见 `pageIsBehind`）。
  */
-let behind: Promise<boolean> | null = null
+let behind: Promise<boolean | undefined> | null = null
+
+/** 问「这一页落后了吗」最长等多久。这条问话不能没有期限（见 `fetchEntryHtml`）。 */
+const PAGE_PROBE_WAIT_MS = 3000
 
 /**
- * 这一页的入口脚本（文件名带内容哈希）还在不在服务器现在的 index.html 里。
+ * 服务器现在发的 index.html 原文；`undefined`：没问出来——断网、服务器在重启，
+ * 或者到 `PAGE_PROBE_WAIT_MS` 还没回话。
  *
  * 取的是 `/` 而不是 `/index.html`：后者在预缓存里，旧 worker 会拿它自己那份旧的
  * 顶上；`/` 不在预缓存里（vite.config.ts 的 directoryIndex: null），走网络。
- * 问不到（断网、服务器在重启、开发环境没有入口脚本）就当落后了，照原来的做法整页加载。
+ *
+ * 头和体各一个期限，都得有：手机从后台回到前台时，新 worker 刚下好、这一问正好赶在
+ * 网络刚醒的那一瞬发出去，它既不成功也不失败，可以一直不回来。而它排在每一次跳转
+ * 前面（见 `registerPwa`），没有期限就等于把整个界面锁住——点链接、点底部标签、点
+ * 左上角的返回都没反应，只有整页重开才清得掉。
  */
-async function pageIsBehind(): Promise<boolean> {
-  const own = document.querySelector('script[type="module"][src]')?.getAttribute('src')
-  if (!own) return true
+async function fetchEntryHtml(): Promise<string | undefined> {
   try {
-    const response = await fetch(import.meta.env.BASE_URL, { cache: 'no-store' })
-    if (!response.ok) return true
-    return !(await response.text()).includes(own)
+    const response = await within(PAGE_PROBE_WAIT_MS, fetch(import.meta.env.BASE_URL, { cache: 'no-store' }))
+    if (!response?.ok) return undefined
+    return await within(PAGE_PROBE_WAIT_MS, response.text())
   } catch {
-    return true
+    return undefined
   }
+}
+
+/**
+ * 这一页的入口脚本（文件名带内容哈希）还在不在服务器现在的 index.html 里。
+ * `true` 落后、`false` 没落后、`undefined` 没问出来。
+ *
+ * 「没问出来」得单独是一个答案，不能并进 `true` 里：问这句话的两处对它的做法相反——
+ * 跳转那边当落后（宁可再落一次旧版，也不把人停在一次点击上），`reloadIfBehind`
+ * 那边不动（那种连不上不是版本的事）。
+ */
+async function pageIsBehind(): Promise<boolean | undefined> {
+  const own = document.querySelector('script[type="module"][src]')?.getAttribute('src')
+  if (!own) return undefined
+  const html = await fetchEntryHtml()
+  if (html === undefined) return undefined
+  return !html.includes(own)
 }
 
 /**
@@ -118,8 +146,8 @@ export async function takeWaitingWorker({ check = false } = {}): Promise<void> {
  * 一直「未连接」：人只看到房间不动，也等不来那一次点击。这时这一页已经连不上，整页加载
  * 不多丢东西（草稿已落盘）。
  *
- * 只认问得到的答案：问不到（断网、服务器在重启）就不刷新，那种连不上不是版本的事，和
- * `pageIsBehind` 在这一点上相反。最多每 `LINK_CHECK_MS` 问一次。
+ * 只认问得到的答案：问不到（断网、服务器在重启）或者等不到（见 `fetchEntryHtml` 的期限）
+ * 都不刷新，那种连不上不是版本的事，和跳转那边相反。最多每 `LINK_CHECK_MS` 问一次。
  */
 const LINK_CHECK_MS = 5 * 60 * 1000
 let lastLinkCheckAt = -Infinity
@@ -130,15 +158,8 @@ export async function reloadIfBehind(): Promise<boolean> {
   lastLinkCheckAt = now
   const own = document.querySelector('script[type="module"][src]')?.getAttribute('src')
   if (!own) return false
-  let served: string
-  try {
-    const response = await fetch(import.meta.env.BASE_URL, { cache: 'no-store' })
-    if (!response.ok) return false
-    served = await response.text()
-  } catch {
-    return false
-  }
-  if (served.includes(own)) return false
+  const served = await fetchEntryHtml()
+  if (served === undefined || served.includes(own)) return false
   await takeWaitingWorker({ check: true })
   window.location.reload()
   return true
@@ -148,7 +169,9 @@ export async function reloadIfBehind(): Promise<boolean> {
 function onNewWorker() {
   behind = pageIsBehind()
   void behind.then((isBehind) => {
-    if (!isBehind) void takeWaitingWorker()
+    // 只有问出「没落后」才让它现在接管：`true` 下一次跳转要整页加载，`undefined`
+    // 没有答案，都轮不到这里替人做主。
+    if (isBehind === false) void takeWaitingWorker()
   })
 }
 
@@ -169,9 +192,13 @@ export function registerPwa(router: Router): void {
   })
   // 首次导航（`from` 没有匹配的路由）本来就是整页加载出来的；只换 hash 或 query
   // 的跳转不算离开这一页。
+  //
+  // 只有问出「没落后」（`false`）才照常在页面里跳；落后、或者没问出结果，都整页加载。
+  // 这条问话有期限（见 `fetchEntryHtml`），所以这一等再久也有头——它原来没有期限，
+  // 而它排在每一次跳转前面，问不回来就是把整个界面锁住。
   router.beforeEach(async (to, from) => {
     if (!behind || from.matched.length === 0 || to.path === from.path) return
-    if (!(await behind)) return
+    if ((await behind) === false) return
     await takeWaitingWorker()
     window.location.assign(router.resolve(to).href)
     return false

@@ -1,0 +1,10 @@
+{
+  "back": "Back to project settings",
+  "close": "Close project settings",
+  "closeHint": "Close project settings (Esc)",
+  "defaultComputer": "Default environment",
+  "defaultModel": "Default model",
+  "market": "Market",
+  "ownAgentsTitle": "Members' own Claude Code",
+  "title": "Project settings"
+}

@@ -28,7 +28,7 @@ from app.domain.agent import private_chat
 from app.domain.agent.chat import ChatService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
-from app.domain.topic.services import TopicService
+from app.domain.room_task.place import place_or_404
 
 router = APIRouter(tags=["agent-control"])
 
@@ -37,7 +37,7 @@ Chat = Annotated[ChatService, Depends(get_chat_service)]
 
 async def controller(topic_id: uuid.UUID, db: AsyncSession, resolver) -> Actor:
     """Whoever is in this room may look at a session here."""
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         project_id=place.project_id, topic_id=place.conversation_id
     )
@@ -94,7 +94,7 @@ async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
     Asked of the room's sessions and not of one: they lease the same executor
     today (see `api/routes/execution.py`).
     """
-    place = await TopicService(db).place_or_404(topic_id)
+    place = await place_or_404(db, topic_id)
     resource = str(place.room.resource_id or place.room.id)
     for held in await AgentSessionService(db).places_in_room(place.room_id):
         if held.lease and held.resource_id == resource:

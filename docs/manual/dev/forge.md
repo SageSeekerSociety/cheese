@@ -6,7 +6,7 @@ covers:
   - backend/app/domain/review/forge.py
   - backend/app/domain/project/forge.py
   - backend/app/domain/repository/
-  - backend/app/domain/agent/github_app.py
+  - backend/app/domain/project/github_app.py
   - backend/app/core/forge_quota.py
   - backend/app/core/forge_etags.py
   - backend/app/domain/review/events.py
@@ -48,7 +48,7 @@ covers:
 
 ## 令牌 {#tokens}
 
-**GitHub 侧只有一把长期凭据：App 私钥**，它留在主 API 上，**绝不交给沙箱**（`domain/agent/github_app.py`）。机器要写仓库时，带着自己的 scoped cheese token 调 `/sandbox/forge-token`，后端先确认这枚 token 所属的 agent 现在还在它的房间或项目里（`api/auth.py` 的 `require_seated_agent`；被移出的 agent 拿着没过期的 token 也只得到 403，经平台中转的 git 流量和隧道同样如此），再用 App 的授权在**那个绑定仓库**上签一枚安装令牌：
+**GitHub 侧只有一把长期凭据：App 私钥**，它留在主 API 上，**绝不交给沙箱**（`domain/project/github_app.py`）。机器要写仓库时，带着自己的 scoped cheese token 调 `/sandbox/forge-token`，后端先确认这枚 token 所属的 agent 现在还在它的房间或项目里（`api/auth/` 的 `require_seated_agent`；被移出的 agent 拿着没过期的 token 也只得到 403，经平台中转的 git 流量和隧道同样如此），再用 App 的授权在**那个绑定仓库**上签一枚安装令牌：
 
 - 一小时有效，缓存到剩不到 20 分钟才重签（一次密集调用只花一次上游签发）。
 - App JWT 的 TTL 是 540 秒（GitHub 的上限是 10 分钟，留出时钟偏差）。
@@ -80,7 +80,7 @@ webhook 打不到部署上（部署常常在客户网络里），所以有一个
 
 「托管方没有 webhook 时，PR / 上游轮询是这个实现内部的物理事实」——不是调度，是 review 领域自己补的一条读路径。产出落各自的卡和房间，和 webhook 送来的事件走同一条路（`forge_repository_changed`）。
 
-- 一跳一条遍历在飞的卡（每张卡一个事务，一张卡的失败不回滚别人）。
+- 一跳里同时在手 `PRS_AT_ONCE`（6）张在飞的卡（每张卡一个事务，一张卡的失败不回滚别人）：一张卡是一轮往返，串起来就是一跳的墙钟，而这个数字只随项目里的 PR 涨。还没递卡的任务那条扫同理。
 - 网络抖动**不算新闻**：同一张卡连续丢掉 `TRANSIENT_MISSES_BEFORE_ERROR`（3）跳才算错误——下一跳在一分钟后，通常自己就好了。轮询器本身的 bug 不属于这一档，第一次就报。
 - GitHub App 一个安装一小时只有一份 REST 额度，轮询、draft 扫和人递卡、合并都从里面扣。所以轮询和 draft 扫在动手前先问一句（`background_may_use_forge`）：剩下的不到 `KEPT_FOR_PEOPLE`（20%）就这一跳不碰这个项目，留给人的请求，下一跳再看。
   - 先看 GitHub 已经说过的话。每个经 `forge_client` 发出、带着平台签的安装令牌的请求，回来时都会把响应头里的额度（`x-ratelimit-*`）记到 `core/forge_quota.py`；被拒成「额度用完」（403/429 带额度头）就记下 GitHub 给的恢复时间。恢复之前，或者上一次报的余量已经不到 20% 而这一小时还没重置，后台一律不发请求，连 `GET /rate_limit` 都不问。

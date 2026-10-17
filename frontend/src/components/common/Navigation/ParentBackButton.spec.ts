@@ -416,3 +416,25 @@ describe('两颗箭头互指时，退到最外层那一页', () => {
     expect(queryByRole('button', { name: /^返回/ })).toBeNull()
   })
 })
+
+// 手机底栏三格的落点是根：底栏就是在它们之间切换的地方，根上再给一颗 ←，按下去只是
+// 换到人没想去的那一格（刚才在哪就退到哪）。
+describe('手机上底栏三格的落点是根', () => {
+  it.each(['/home', '/projects/project-a', '/inbox'])('%s 上没有 ←，哪怕是从别处点过来的', async (root) => {
+    widthIs(PHONE)
+    const router = webRouter()
+    await router.push('/projects/project-a/channels/7')
+    await router.push(root)
+    const { container } = await mount(router)
+    expect(container.querySelector('a, button')).toBeNull()
+  })
+
+  it('页面栈里的一层照常有 ←', async () => {
+    widthIs(PHONE)
+    const router = webRouter()
+    await router.push('/inbox')
+    await router.push('/projects/project-a/channels/7')
+    const { container } = await mount(router)
+    expect(container.querySelector('a, button')).not.toBeNull()
+  })
+})

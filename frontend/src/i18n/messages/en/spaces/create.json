@@ -1,0 +1,12 @@
+{
+  "avatar": "Avatar (optional)",
+  "cancel": "Cancel",
+  "failed": "Could not create the space. Please try again.",
+  "intro": "Introduction (optional)",
+  "name": "Space name",
+  "open": "New space",
+  "ownership": "A platform administrator will review your application. Once approved, you can publish and review challenges in your space.",
+  "placeholder": "e.g. Programming exercises",
+  "submit": "Submit for review",
+  "visibility": "The space will appear in the explore list after approval."
+}

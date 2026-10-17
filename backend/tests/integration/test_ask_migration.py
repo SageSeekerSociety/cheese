@@ -136,6 +136,34 @@ def _engine():
     return create_async_engine(TEST_DATABASE_URL)
 
 
+def _apply_from(module, fn_name: str) -> None:
+    """Run another migration module's ``fn_name`` against the same database."""
+    captured = _Capture()
+    import alembic.op as op_module
+
+    original = op_module.execute
+    op_module.execute = captured.execute
+    try:
+        getattr(module, fn_name)()
+    finally:
+        op_module.execute = original
+
+    async def go() -> None:
+        engine = _engine()
+        try:
+            from sqlalchemy.ext.asyncio import async_sessionmaker
+
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            for statement in captured.statements:
+                async with factory() as session:
+                    await session.execute(text(statement))
+                    await session.commit()
+        finally:
+            await engine.dispose()
+
+    anyio.run(go)
+
+
 async def _apply(fn_name: str) -> None:
     engine = _engine()
     try:
@@ -334,9 +362,20 @@ def test_the_new_reader_reads_migrated_history(client):
         finally:
             await engine.dispose()
 
+    # The reader of today also reads `asked` as a list, which a later migration
+    # (`a7c3e9d1f520`) makes of the single handle this one left in place.
+    later = importlib.util.spec_from_file_location(
+        "a7c3e9d1f520",
+        _MIGRATION_FILE.parent / "a7c3e9d1f520_a_question_asks_a_list_of_people.py",
+    )
+    assert later is not None and later.loader is not None
+    later_module = importlib.util.module_from_spec(later)
+    later.loader.exec_module(later_module)
+    _apply_from(later_module, "upgrade")
+
     waiting = anyio.run(_read)
     assert uuid.UUID(answered_room) not in waiting, "答过的题不该再挂待办"
-    assert waiting[uuid.UUID(unanswered_room)] == "user-1"
+    assert waiting[uuid.UUID(unanswered_room)].waiting() == ("user-1",)
 
 
 def test_the_scope_is_who_signed_the_question_including_a_retired_seat(client):

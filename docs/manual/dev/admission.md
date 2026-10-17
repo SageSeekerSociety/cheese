@@ -44,14 +44,14 @@ covers:
 
 ## 席位 {#seat}
 
-凭据只证明它是给哪位队友、哪个房间签的，证明不了这位队友现在还在不在房间里，而会话凭据能活好几十天。所以准入和 catch-all 每次都问一遍名册（`api/auth.py` 的 `require_seated_in_its_room`）：凭据写着房间，而它的队友已经不在那个房间的名册上，准入答 `allow=false`、`reason_kind` 为 `binding`（代理回 400、不重试，正文是名册拒绝的那句话）；catch-all 直接回 403。准入不用 HTTP 错误来拒，是因为代理把任何非 200 都当成后端连不上，按 fail-open 放行。不写房间的凭据（平台自己的项目凭据、不在任何房间里的文档的凭据）没有名册可问，照常放行。
+凭据只证明它是给哪位队友、哪个房间签的，证明不了这位队友现在还在不在房间里，而会话凭据能活好几十天。所以准入和 catch-all 每次都问一遍名册（`api/auth/` 的 `require_seated_in_its_room`）：凭据写着房间，而它的队友已经不在那个房间的名册上，准入答 `allow=false`、`reason_kind` 为 `binding`（代理回 400、不重试，正文是名册拒绝的那句话）；catch-all 直接回 403。准入不用 HTTP 错误来拒，是因为代理把任何非 200 都当成后端连不上，按 fail-open 放行。不写房间的凭据（平台自己的项目凭据、不在任何房间里的文档的凭据）没有名册可问，照常放行。
 
 队友被移出房间时，它正在跑的那一轮先被停下（`DELETE /topics/{id}/members/{handle}`），之后这枚凭据再来的请求都被拒。代理会把一次准入的答案缓存 30 秒，所以移出之后最多还有这么久，同一枚凭据可能凭缓存里那次放行再发出请求。
 
 ## 预算这一半 {#budget}
 
 - 项目来自 scoped token 的已验证 claims（`claims["p"]`），不是请求头——头是可以自称的。没有 token 或没有 `p` 就是 401。
-- `UsageService.admit_project()`（`usage/ledger.py` 的 `Ledger.admit`）答能不能跑：放行时 `reason` 是 `admitted`，拒绝时是账本的那句话（「本月额度已用完，11月1日重置。」或时间窗口满了几点恢复），见[计费流程](/dev/billing#plans)。
+- `UsageService.admit_project()`（账本 `Ledger.admit`，只读那一半，在 `usage/ledger_queries.py`）答能不能跑：放行时 `reason` 是 `admitted`，拒绝时是账本的那句话（「本月额度已用完，11月1日重置。」或时间窗口满了几点恢复），见[计费流程](/dev/billing#plans)。
 - 同一份额度，网关那把 `max_budget` 也按它折成美元——**一个预算，两个执行点**。
 - 拒绝时顺手告诉房间：`agent/credits_notice.py` 的 `note_credits_refusal` 给正在跑的那个回合（主线或它开的分身）发一条事件，说的是账本那句拒绝理由，和回合开始前被拒时房间里那句一样（#715）。它用自己的数据库会话。
 
@@ -68,8 +68,10 @@ covers:
 | 头 | 谁写 | 意思 |
 | --- | --- | --- |
 | `x-cheese-subagent: 1` | 计量代理 | 这是分身请求 |
-| `x-cheese-child-model` | 计量代理从请求体顶层 `model` 解析出来 | 指名（explicit） |
-| `x-cheese-requested-model` | 计量代理 | 请求体里的模型名，作为回退 |
+| `x-cheese-child-model` | 预加载从请求体顶层 `model` 抄来，计量代理随准入转发 | 指名（explicit）；2.1.283 起不再出现 |
+| `x-cheese-requested-model` | 计量代理从请求体顶层 `model` 解析出来 | 指名，2.1.283 起走的那条路；也是回退 |
+
+名字**永远**在请求体顶层那个 `model` 成员里，两条路的差别只在谁去读它。2.1.283 把 harness 自己的模型请求挪出了 JS 层（[harness 的 pin](/dev/harness#pins) 上 2.1.299 实测：整个回合零次 `fetch`），预加载那个 `x-cheese-child-model` 就此不再写上；计量代理于是走推迟那条路——把分身的 `/v1/messages` 整个缓冲下来（上限 `DEFER_BODY_LIMIT`，8 MiB），自己从体里读出名字，随 `x-cheese-requested-model` 带上来。后端把两个头合成同一个 `requested`（`api/routes/llm_proxy.py`），下游是同一段绑定与同一道策略门，所以指名这件事不因头消失而降级；超上限的分身体退回「按未指定绑定」。两条路的真分身请求各录了一份在 `backend/tests/fixtures/provider-recordings/`，两条用例把它们都回放进真实的计量代理。
 
 判定规则：
 

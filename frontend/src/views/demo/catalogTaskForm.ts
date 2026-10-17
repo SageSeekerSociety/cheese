@@ -18,7 +18,6 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import TaskFormClassify from '@/components/tasks/form/TaskFormClassify.vue'
-import TaskFormExternalProblem from '@/components/tasks/form/TaskFormExternalProblem.vue'
 import TaskFormMore from '@/components/tasks/form/TaskFormMore.vue'
 import TaskFormParticipation from '@/components/tasks/form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from '@/components/tasks/form/TaskFormPrivacyDialog.vue'
@@ -26,6 +25,7 @@ import TaskFormSection from '@/components/tasks/form/TaskFormSection.vue'
 import TaskFormTime from '@/components/tasks/form/TaskFormTime.vue'
 import TaskAttachmentPicker from '@/components/tasks/TaskAttachmentPicker.vue'
 import TaskForm from '@/components/tasks/TaskForm.vue'
+import TaskMentorNotice from '@/components/tasks/TaskMentorNotice.vue'
 
 /** 只吃 vuetify 的那几件。 */
 const UI: CatalogNeed[] = ['vuetify']
@@ -85,13 +85,6 @@ const classify = (extra: Record<string, unknown> = {}) => ({
   categoryId: 1,
   topics: [1],
   categoryIdControl: OK,
-  ...extra,
-})
-
-/** 「外站题」那一节的一格。 */
-const externalProblem = (extra: Record<string, unknown> = {}) => ({
-  problemNo: '1001',
-  problemNoControl: OK,
   ...extra,
 })
 
@@ -155,6 +148,19 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         expect: '报名通过后锁定',
       },
       {
+        name: '有导师',
+        note: '勾上后从空间管理员里挑导师，默认是出题人自己；领取者领取前会看到并同意。',
+        props: participation({
+          mentorsJoin: true,
+          mentors: ['zhoulq'],
+          mentorOptions: [
+            { title: '周立群（我）', value: 'zhoulq' },
+            { title: '刘洋', value: 'liuyang' },
+          ],
+        }),
+        expect: '把导师加入领取者的项目',
+      },
+      {
         name: '最多比最少还少（标红）',
         note: '跨字段的那条规矩，红字落在每队人数那一格下面。',
         props: participation({
@@ -164,6 +170,22 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
           maxTeamSizeControl: red('最多人数不能少于最少人数'),
         }),
         expect: '最多人数不能少于最少人数',
+      },
+    ],
+  },
+  {
+    id: 'task-mentor-notice',
+    title: 'TaskMentorNotice',
+    about: '领取确认框里说导师会加入项目的那一块：导师是谁、能看到什么、看不到什么、怎么移出。',
+    file: 'src/components/tasks/TaskMentorNotice.vue',
+    component: TaskMentorNotice,
+    needs: UI_T,
+    states: [
+      {
+        name: '一位导师',
+        note: '领题前说清，学生同意后才能领。',
+        props: { names: '周立群' },
+        expect: '会作为导师加入你的项目',
       },
     ],
   },
@@ -208,34 +230,6 @@ export const TASK_FORM_ENTRIES: CatalogEntry[] = [
         note: '点过发布才标红，打开页面时不红。',
         props: classify({ categoryId: undefined, categoryIdControl: red('未选择分类') }),
         expect: '未选择分类',
-      },
-    ],
-  },
-  {
-    id: 'task-form-external-problem',
-    title: 'TaskFormExternalProblem',
-    about: '「外站题」那一节：这道题在 YOJ 上是第几号（可空，空着就是不接外站）。',
-    file: 'src/components/tasks/form/TaskFormExternalProblem.vue',
-    component: TaskFormExternalProblem,
-    needs: UI_T,
-    states: [
-      {
-        name: '填了题号',
-        note: '填了之后平台就能按学号去 YOJ 核对每个领取者过没过；结果在「领取者」页签。',
-        props: externalProblem(),
-        expect: '外站题',
-      },
-      {
-        name: '没填（这道题不接外站）',
-        note: '空着和以前一样：这道题只在知是上做。',
-        props: externalProblem({ problemNo: '' }),
-        expect: 'YOJ 题号',
-      },
-      {
-        name: '填了不是数字（标红）',
-        note: '题号只收数字，和服务端同一条规矩。',
-        props: externalProblem({ problemNoControl: red('题号只能填数字') }),
-        expect: '题号只能填数字',
       },
     ],
   },

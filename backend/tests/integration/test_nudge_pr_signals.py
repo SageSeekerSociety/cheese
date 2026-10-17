@@ -75,7 +75,7 @@ def _nudges(client, topic_id: str, event_type: str) -> list[dict]:
     """房间里这一类平台提示的全部消息。
 
     读的是 `meta.event_type` 而不是文案：文案随时会改，类别码是契约
-    （`app/domain/agent/platform_notices.py`）。
+    （`app/domain/notice_meta.py`）。
     """
     return [
         b

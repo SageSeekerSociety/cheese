@@ -1,0 +1,12 @@
+{
+  "archivedNotice": "This channel is archived and read-only",
+  "browse": "All channels",
+  "describeFailed": "Couldn't save the channel description",
+  "join": "Join channel",
+  "joinFailed": "Couldn't join the channel",
+  "leave": "Leave channel",
+  "leaveFailed": "Couldn't leave the channel",
+  "notJoined": "You haven't joined this channel. Join to post in the main line, or reply in a message's thread.",
+  "privateTip": "Private channel",
+  "visibilityFailed": "Couldn't change who can see the channel"
+}

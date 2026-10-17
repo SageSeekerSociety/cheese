@@ -187,6 +187,10 @@ class DeviceClaudeLoginRow(Base):
     # The host of that model service (never its key), for its owner to tell
     # one service from another; None for a Claude account.
     service_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # What its owner named this connection on 「模型连接」; None until they do.
+    # The machine never reports it, so its reports leave it alone, and the own
+    # agents on the connection are named after it.
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

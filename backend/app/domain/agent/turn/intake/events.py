@@ -20,7 +20,7 @@ from app.domain.agent.service import AgentToolResult
 from app.domain.agent.tool_preview import tool_detail, tool_preview, work_subpath
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
 from app.domain.agent.turn.store.events import persist_action, persist_room_event
-from app.domain.block.models import AuthorType
+from app.domain.event_author import AuthorType
 
 _ACTION_LABEL = {"notify": "actionNotify"}
 

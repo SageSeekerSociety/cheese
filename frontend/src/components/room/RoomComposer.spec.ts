@@ -40,6 +40,7 @@ import { searchLibraryFiles } from '../../lib/libraryApi'
 import RoomComposer from './RoomComposer.vue'
 
 import { setLocale } from '@/i18n'
+import { fillComposer, placeCaret, typeInComposer } from '@/test/composerInput'
 
 const CHEESE_SEAT = { handle: 'cheese-topica', label: '芝士' }
 
@@ -107,6 +108,7 @@ function mount(opts: Options = {}) {
         topic: topic(),
         mentionPool: opts.pool ?? POOL,
         topicList: [],
+        refs: { mentionNames: {}, topicTitles: {} },
         agentSeat: CHEESE_SEAT,
         agentName: CHEESE_SEAT.label,
         alwaysSummon: opts.alwaysSummon ?? false,
@@ -128,7 +130,7 @@ function mount(opts: Options = {}) {
   })
 
   const utils = render(Wrapper, { global: { plugins: [createVuetify({ components, directives })] } })
-  const box = () => utils.container.querySelector('textarea')!
+  const box = () => utils.container.querySelector<HTMLElement>('.ProseMirror')!
   return { ...utils, draft, box, onSend, onFiles, onDropFiles, onPaste, onRemoveAtt, onClearReply, onAddLibraryFile }
 }
 
@@ -155,7 +157,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md'), file('img/shot.png')] as never)
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
 
     const entry = menuItems(container).find((el) => el.textContent?.includes('资料库'))
@@ -174,7 +176,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     ] as never)
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
     await fireEvent.click(menuItems(container).find((el) => el.textContent?.includes('资料库'))!)
     await flush()
@@ -188,7 +190,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, onAddLibraryFile, draft } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
     await fireEvent.click(menuItems(container).find((el) => el.textContent?.includes('资料库'))!)
     await flush()
@@ -204,7 +206,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md'), file('docs/notes.md')] as never)
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@not')
+    await fillComposer(box(), '@not')
     await flush()
 
     expect(labels(container)).toEqual(['docs/notes.md'])
@@ -216,7 +218,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, draft } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
     await fireEvent.click(menuItems(container).find((el) => el.textContent?.includes('资料库'))!)
     await flush()
@@ -236,7 +238,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockRejectedValue(new Error('offline'))
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
 
     expect(container.querySelector('.mention-menu')).toBeTruthy()
@@ -249,7 +251,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
 
     // 第一格就是回车的默认答案，而「打一个 @ 然后回车」这个产品里压倒性地是「交给
@@ -282,7 +284,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, draft, getByRole } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
     await intoLibrary(container)
 
@@ -299,7 +301,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, draft } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
     await intoLibrary(container)
     focusIn(box())
@@ -314,10 +316,10 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
     await intoLibrary(container)
-    await fireEvent.update(box(), '@pl')
+    await fillComposer(box(), '@pl')
     await flush()
     focusIn(box())
 
@@ -329,7 +331,7 @@ describe('@ 候选：资料库是往里走一层', () => {
     vi.mocked(searchLibraryFiles).mockResolvedValue([file('docs/plan.md')] as never)
     const { container, box, draft } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
     await intoLibrary(container)
     focusIn(box())
@@ -343,7 +345,7 @@ describe('@ 候选：资料库是往里走一层', () => {
   it('在一级按 ← 和退格不拦：那是挪光标、删字', async () => {
     const { box } = mount()
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
     focusIn(box())
 
@@ -363,21 +365,43 @@ describe('@ 候选：没加入频道的人', () => {
   it('频道里的人排在前面，没加入的人跟在后面', async () => {
     const { container, box } = mount({ pool: MIXED })
 
-    await fireEvent.update(box(), '@')
+    await fillComposer(box(), '@')
     await flush()
 
     expect(labels(container)).toEqual(['芝士', '所有人', '在线成员', 'Alice', 'Carol'])
   })
 
-  it('没加入的人照样挑得中，@ 写进正文', async () => {
+  it('没加入的人照样挑得中，写进正文的是他', async () => {
     const { container, box, draft } = mount({ pool: MIXED })
 
-    await fireEvent.update(box(), '@Car')
+    await fillComposer(box(), '@Car')
     await flush()
     await fireEvent.click(menuItems(container).find((el) => el.textContent?.includes('Carol'))!)
     await flush()
 
-    expect(draft.value).toBe('@Carol ')
+    expect(draft.value).toBe('<@carol> ')
+  })
+})
+
+describe('@ 写进正文的是那个人', () => {
+  it('手打完整的名字，接一个空格就变成他的标签', async () => {
+    const { container, box, draft } = mount()
+    await typeInComposer(box(), '请 @Alice')
+    expect(draft.value).toBe('请 @Alice')
+    await typeInComposer(box(), ' ')
+    await flush()
+    expect(draft.value).toBe('请 <@alice> ')
+    expect(container.querySelector('.mention')?.textContent).toBe('@Alice')
+  })
+
+  it('在一句话中间也能 @：挑中的人落在光标那里，后面的字不动', async () => {
+    const { container, box, draft } = mount({ draft: '请 看一下' })
+    placeCaret(box(), '请 '.length)
+    await typeInComposer(box(), '@Ali')
+    await flush()
+    await fireEvent.click(menuItems(container).find((el) => el.textContent?.includes('Alice'))!)
+    await flush()
+    expect(draft.value).toBe('请 <@alice> 看一下')
   })
 })
 
@@ -387,7 +411,7 @@ describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
 
     // 芝士的 label 是「芝士」，一个字都不含 topica；handle 是 cheese-topica。只按
     // 名字搜的话，人默写一遍自己的 handle 也一个候选都搜不出来。
-    await fireEvent.update(box(), '@topica')
+    await fillComposer(box(), '@topica')
     await flush()
 
     expect(labels(container)).toContain('芝士')
@@ -396,7 +420,7 @@ describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
   it('大小写不影响：handle 是 cheese-topica，打 Cheese 也命中', async () => {
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@Cheese-')
+    await fillComposer(box(), '@Cheese-')
     await flush()
 
     expect(labels(container)).toContain('芝士')
@@ -405,7 +429,7 @@ describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
   it('一个候选都没有时菜单不消失，说的是「暂无匹配」', async () => {
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@zzz')
+    await fillComposer(box(), '@zzz')
     await flush()
 
     // 整块收起来看起来像那个 @ 没生效，人会以为自己打错了。
@@ -417,7 +441,7 @@ describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
   it('空态里回车不被菜单吃掉：`@` 那半截字原样发出去', async () => {
     const { box, onSend } = mount()
 
-    await fireEvent.update(box(), '@zzz')
+    await fillComposer(box(), '@zzz')
     await flush()
     focusIn(box())
     await fireEvent.keyDown(box(), { key: 'Enter' })
@@ -428,7 +452,7 @@ describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
   it('空态里 ↑/↓ 不拦：那时候它们该去挪光标', async () => {
     const { box } = mount()
 
-    await fireEvent.update(box(), '@zzz')
+    await fillComposer(box(), '@zzz')
     await flush()
     focusIn(box())
 
@@ -441,13 +465,13 @@ describe('@ 候选：按 handle 搜，和搜不到时的那句话', () => {
   it('空态里 Esc 把它收起来，再打字又打开', async () => {
     const { container, box } = mount()
 
-    await fireEvent.update(box(), '@zzz')
+    await fillComposer(box(), '@zzz')
     await flush()
     await fireEvent.keyDown(box(), { key: 'Escape' })
     await flush()
     expect(container.querySelector('.mention-menu')).toBeNull()
 
-    await fireEvent.update(box(), '@zz')
+    await fillComposer(box(), '@zz')
     await flush()
     expect(container.querySelector('.mention-menu')).toBeTruthy()
   })
@@ -572,7 +596,7 @@ describe('动作行', () => {
     const send = container.querySelector<HTMLButtonElement>('.composer-send')!
     expect(send.disabled).toBe(true)
 
-    await fireEvent.update(box(), '看看这个')
+    await fillComposer(box(), '看看这个')
     expect(send.disabled).toBe(false)
   })
 
@@ -600,15 +624,33 @@ describe('动作行', () => {
 
   it('没输法选字时的回车发送，正文按规范形式展开', async () => {
     const { box, onSend } = mount()
-    await fireEvent.update(box(), '@Alice 你看下')
+    await fillComposer(box(), '@Alice 你看下')
     focusIn(box())
     await fireEvent.keyDown(box(), { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith({ content: '<@alice> 你看下', summon: false })
   })
 
+  it('任务里 @ 了人、没 @ AI 队友的一句是说给那个人的，不交给队友', async () => {
+    const { box, onSend } = mount({ alwaysSummon: true })
+    await fillComposer(box(), '@Alice 你看这个反馈')
+    focusIn(box())
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith({ content: '<@alice> 你看这个反馈', summon: false })
+  })
+
+  it('任务里不 @ 任何人、或 @ 了人也 @ 了队友，照样交给队友', async () => {
+    const { box, onSend } = mount({ alwaysSummon: true })
+    focusIn(box())
+    await fillComposer(box(), '接着做')
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    await fillComposer(box(), '@Alice @芝士 一起看')
+    await fireEvent.keyDown(box(), { key: 'Enter' })
+    expect(onSend.mock.calls.map(([sent]) => sent.summon)).toEqual([true, true])
+  })
+
   it('输入法正在选字时，回车是上屏那一下，不是发送', async () => {
     const { box, onSend } = mount()
-    await fireEvent.update(box(), '看看这个')
+    await fillComposer(box(), '看看这个')
     focusIn(box())
 
     await fireEvent.compositionStart(box())
@@ -618,7 +660,7 @@ describe('动作行', () => {
 
   it('输入法上屏留下的时间戳也算：那一下回车不是发送', async () => {
     const { box, onSend } = mount()
-    await fireEvent.update(box(), '看看这个')
+    await fillComposer(box(), '看看这个')
     focusIn(box())
 
     await fireEvent.compositionEnd(box())
@@ -628,7 +670,7 @@ describe('动作行', () => {
 
   it('Shift+Enter 是换行，不发送', async () => {
     const { box, onSend } = mount()
-    await fireEvent.update(box(), '看看这个')
+    await fillComposer(box(), '看看这个')
     focusIn(box())
     await fireEvent.keyDown(box(), { key: 'Enter', shiftKey: true })
     expect(onSend).not.toHaveBeenCalled()
@@ -636,29 +678,32 @@ describe('动作行', () => {
 
   it('粘贴交给房间——上传和缩略图是它那一侧的事', async () => {
     const { box, onPaste } = mount()
-    await fireEvent.paste(box())
+    box().dispatchEvent(pasteText(''))
     expect(onPaste).toHaveBeenCalled()
   })
 })
 
+/** happy-dom 里 fireEvent 传不进只读的 clipboardData，所以这一份自己造事件。 */
+function pasteText(text: string): Event {
+  const ev = new Event('paste', { bubbles: true, cancelable: true })
+  Object.defineProperty(ev, 'clipboardData', {
+    value: { getData: (type: string) => (type === 'text/plain' ? text : '') },
+  })
+  return ev
+}
+
 describe('贴一大段文字：就地给一条转成附件的路', () => {
-  /** happy-dom 里 fireEvent 传不进只读的 clipboardData，所以这一份自己造事件。 */
-  function pasteText(text: string): Event {
-    const ev = new Event('paste', { bubbles: true, cancelable: true })
-    Object.defineProperty(ev, 'clipboardData', { value: { getData: () => text } })
-    return ev
-  }
   function offerButton(container: Element, text: string): HTMLElement | undefined {
     return Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === text)
   }
 
-  it('短粘贴什么都不变，也不冒出提议', async () => {
+  it('短粘贴就是平常的粘贴：字进正文，不冒出提议', async () => {
     const { container, box, draft, onFiles } = mount()
     box().dispatchEvent(pasteText('一句普通的话'))
     await flush()
     expect(container.querySelector('.long-paste')).toBeNull()
     expect(onFiles).not.toHaveBeenCalled()
-    expect(draft.value).toBe('')
+    expect(draft.value).toBe('一句普通的话')
   })
 
   it('超过字数就冒出一条提议，正文原样留着', async () => {

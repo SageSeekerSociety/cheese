@@ -21,29 +21,29 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.auth.project_roles import may
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent_credential.services import ProjectAgentCredentialService
-from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/projects", tags=["agent-credential"])
 
 
-# Who may decide that this project hands a credential to an off-platform agent.
-# Deliberately narrower than "member": a member acts for themselves, these two
-# answer for the project, and this is a decision about the project.
+# Who may decide that this project hands a credential to an off-platform agent:
+# whoever may change the project's settings. A member acts for themselves; this
+# is a decision about the project.
 
 
-async def require_project_steward(
+async def require_credential_manager(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> None:
-    """Only a verified project owner, or an owner/admin of its team, may manage
-    credentials. An agent needs the same standing. Revocation invalidates every
-    credential in the project generation, including any issued by an authorized
-    agent.
+    """Only a verified person who may change the project's settings manages its
+    credentials; an agent never does. Revocation invalidates every credential in
+    the project generation.
     """
     actor = await resolver.resolve(project_id=project_id)
     if not actor.authenticated:
@@ -51,7 +51,9 @@ async def require_project_steward(
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
-    if await MemberService(db).manages(project_id, actor.handle):
+    if actor.via != "cheese" and await may(
+        db, project_id, actor.handle, Permission.edit_settings
+    ):
         return
     raise ForbiddenError(say("projectCredentialManagerOnly"))
 
@@ -64,7 +66,7 @@ class IssueCredentialIn(BaseModel):
 
 @router.post(
     "/{project_id}/agent-credential",
-    dependencies=[Depends(require_project_steward)],
+    dependencies=[Depends(require_credential_manager)],
 )
 async def issue_agent_credential(
     project_id: uuid.UUID, body: IssueCredentialIn, db: DbSession
@@ -88,7 +90,7 @@ async def issue_agent_credential(
 
 @router.get(
     "/{project_id}/agent-credential",
-    dependencies=[Depends(require_project_steward)],
+    dependencies=[Depends(require_credential_manager)],
 )
 async def get_agent_credential_status(project_id: uuid.UUID, db: DbSession) -> dict:
     """The project's current credential generation — never a secret. Credentials
@@ -100,7 +102,7 @@ async def get_agent_credential_status(project_id: uuid.UUID, db: DbSession) -> d
 
 @router.delete(
     "/{project_id}/agent-credential",
-    dependencies=[Depends(require_project_steward)],
+    dependencies=[Depends(require_credential_manager)],
 )
 async def revoke_agent_credentials(project_id: uuid.UUID, db: DbSession) -> dict:
     """Revoke — every credential issued for this project stops working on the

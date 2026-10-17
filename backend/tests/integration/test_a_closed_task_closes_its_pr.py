@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import update
 
 from app.core import background
-from app.domain.project import forge
+from app.domain.review import task_pr
 from app.domain.review.github_pr import GitHubPRClient
 from app.domain.room_task.models import Task
 from tests.integration.conftest import open_task, post_project, session_auth_headers
@@ -59,7 +59,7 @@ def github(monkeypatch):
                 transport=httpx.MockTransport(fake.handle),
             )
 
-        monkeypatch.setattr(forge, "proposal_client", proposal_client)
+        monkeypatch.setattr(task_pr, "proposal_client", proposal_client)
         return fake
 
     return install

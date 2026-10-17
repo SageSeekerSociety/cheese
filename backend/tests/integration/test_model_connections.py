@@ -17,7 +17,7 @@ import pytest
 from sqlalchemy import select
 
 from app.api.deps import get_chat_service
-from app.api.routes import connector
+from app.api.routes.connector import connections
 from app.domain.agent import initial_admission
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
@@ -119,7 +119,7 @@ def test_only_its_owner_sees_or_changes_a_connection(client, monkeypatch):
     machines = _Machines()
     machines.online.add(laptop)
     machines.logged_in[laptop] = True
-    monkeypatch.setattr(connector, "device_hub", machines)
+    monkeypatch.setattr(connections, "device_hub", machines)
 
     assert [c["device_id"] for c in _connections(client, alice)] == [laptop]
     assert _connections(client, bob) == []
@@ -146,7 +146,7 @@ def test_a_connection_removed_from_a_browser_logs_out_an_online_machine(
     machines = _Machines()
     machines.online.add(laptop)
     machines.logged_in[laptop] = True
-    monkeypatch.setattr(connector, "device_hub", machines)
+    monkeypatch.setattr(connections, "device_hub", machines)
 
     removed = client.delete(
         f"/connector/my/devices/{laptop}/claude-code", headers=alice
@@ -164,7 +164,7 @@ def test_a_connection_removed_while_its_machine_is_away_is_logged_out_when_it_co
     laptop = _laptop(client, "alice")
     machines = _Machines()
     machines.logged_in[laptop] = True
-    monkeypatch.setattr(connector, "device_hub", machines)
+    monkeypatch.setattr(connections, "device_hub", machines)
 
     removed = client.delete(
         f"/connector/my/devices/{laptop}/claude-code", headers=alice
@@ -190,7 +190,7 @@ def test_a_model_services_key_goes_to_the_machine_and_is_not_kept(client, monkey
     laptop = _laptop(client, "alice")
     machines = _Machines()
     machines.online.add(laptop)
-    monkeypatch.setattr(connector, "device_hub", machines)
+    monkeypatch.setattr(connections, "device_hub", machines)
     key = "sk-only-on-the-laptop-" + uuid.uuid4().hex
 
     saved = client.put(
@@ -225,7 +225,7 @@ def test_a_model_service_needs_its_machine_online(client, monkeypatch):
     alice = _bearer(seed_user(client, "alice"))
     laptop = _laptop(client, "alice")
     machines = _Machines()
-    monkeypatch.setattr(connector, "device_hub", machines)
+    monkeypatch.setattr(connections, "device_hub", machines)
 
     refused = client.put(
         f"/connector/my/devices/{laptop}/claude-code/model-service",
@@ -298,7 +298,7 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
     laptop = _laptop(client, "alice")
     machines = _Machines()
     machines.logged_in[laptop] = True
-    monkeypatch.setattr(connector, "device_hub", machines)
+    monkeypatch.setattr(connections, "device_hub", machines)
     monkeypatch.setattr(initial_admission, "device_hub", machines)
 
     assert (

@@ -10,7 +10,7 @@
 // colour contrast, what a screen reader actually announces. A green run says
 // none of the static patterns were added, not that the page is accessible.
 //
-// WHY A RATCHET. The tree breaks these rules in ~165 places across ~80 files.
+// WHY A RATCHET. The tree breaks these rules in ~159 places across ~79 files.
 // Freezing today's count per file and blocking only NEW violations makes the
 // rules enforceable now and lets the backlog be paid down file by file — the
 // reasoning behind tsc-baseline.json, stylelint-baseline.json and
@@ -22,6 +22,8 @@
 // is that fixing one violation in a file buys room for one new one there until
 // somebody runs the update.
 
+import { parseEslintJsonFor } from './eslint-ratchet-json.mjs'
+
 /** Every rule this ratchet counts carries this prefix; nothing else is counted. */
 export const A11Y_RULE_PREFIX = 'vuejs-accessibility/'
 
@@ -29,17 +31,11 @@ export const A11Y_RULE_PREFIX = 'vuejs-accessibility/'
 export const A11Y_TARGETS = ['src/**/*.vue']
 
 /**
- * Read eslint's `--format json` output.
- *
- * Keys are relative to `root` (forward slashes, no leading `./`): eslint reports
- * absolute paths, and a baseline keyed by those would only match on the machine
- * that wrote it.
- *
- * `unjudged` is non-empty when eslint could not parse a file (`"fatal": true`)
- * or reported a message with no rule id — a syntax error, a missing parser, a
- * plugin that threw. Counting those as zero is how a gate goes green over files
- * it never read, so the caller treats a non-empty `unjudged` as "could not
- * judge".
+ * Count accessibility violations per file in eslint's `--format json` output —
+ * this ratchet's share of it, which is every rule under `A11Y_RULE_PREFIX`. The
+ * parsing, the relative-path keys and the "could not judge" set are the same
+ * question every rule-counting ratchet asks, so they live in
+ * `eslint-ratchet-json.mjs`; this binds it to the plugin prefix.
  *
  * @param {string} text raw eslint JSON output
  * @param {string} root absolute path the file names are made relative to
@@ -50,31 +46,7 @@ export const A11Y_TARGETS = ['src/**/*.vue']
  * }}
  */
 export function parseEslintJson(text, root) {
-  const parsed = JSON.parse(String(text))
-  if (!Array.isArray(parsed)) {
-    throw new TypeError('eslint output is not a JSON array of file results')
-  }
-
-  const prefix = String(root).replaceAll('\\', '/').replace(/\/$/, '') + '/'
-  /** @type {Record<string, number>} */
-  const counts = {}
-  const violations = []
-  const unjudged = []
-  for (const result of parsed) {
-    const absolute = String(result.filePath ?? '').replaceAll('\\', '/')
-    const file = absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute
-    const messages = result.messages ?? []
-    if (result.fatal === true || messages.some((m) => m.ruleId == null)) {
-      unjudged.push(`${file}: ${messages.map((m) => m.message).join('; ') || 'fatal'}`)
-      continue
-    }
-    for (const m of messages) {
-      if (!String(m.ruleId).startsWith(A11Y_RULE_PREFIX)) continue
-      counts[file] = (counts[file] ?? 0) + 1
-      violations.push({ file, line: m.line, column: m.column, rule: m.ruleId, message: m.message })
-    }
-  }
-  return { counts, violations, unjudged }
+  return parseEslintJsonFor(text, root, (ruleId) => ruleId.startsWith(A11Y_RULE_PREFIX))
 }
 
 /** Violation counts per rule, for the summary line and the PR that changes them. */
@@ -88,7 +60,155 @@ export function countsByRule(violations) {
 // The ratchet arithmetic is the one the vue-tsc, stylelint and boundary
 // ratchets use: a file may not go up, an absent file starts at 0, and --update
 // can never loosen a count, so it cannot be used to launder a regression in.
-export { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
+import { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
+
+export { compare, tightenedBaseline }
+
+const sum = (counts) => Object.values(counts).reduce((a, b) => a + b, 0)
+
+/**
+ * What a baseline key looks like: `parseEslintJson` writes paths relative to the
+ * frontend root, and the rules only read `.vue` templates. A move may not invent
+ * a key outside that shape — a typo'd path would otherwise sit in the baseline
+ * forever, matching no file, and quietly widen the gate.
+ */
+export const BASELINE_KEY = /^src\/.+\.vue$/
+
+/**
+ * Re-key part of the frozen allowance from one file to another: the one edit a
+ * split needs, which neither `--update` nor `--freeze-new` can express.
+ *
+ * Splitting `src/views/A.vue` into itself plus `src/components/B.vue` moves code,
+ * and the violations in it, from one baseline key to another. The total does not
+ * change, so the per-file ratchet sees `src/components/B.vue: 0 -> 3` and fails:
+ * the code moved, the allowance did not. `--update` refuses (it only lowers, and
+ * a key that was not there before is a raise); `--freeze-new` accepts, but it
+ * accepts the whole tree at once, and a split is exactly when a violation that
+ * did not move is hardest to spot among the ones that did.
+ *
+ * So the caller names the file that gave, the file that took, and how many
+ * violations travelled. The count is stated rather than inferred because only
+ * the person who ran the split knows it: a violation sitting in the new file
+ * looks the same whether it moved there or was written there. Everything that
+ * can be checked against the run, is:
+ *
+ *   - the source froze that many, or the total would have to rise — a move may
+ *     only re-key debt that is already on the books;
+ *   - the source kept enough for what the tree still shows in it, so a count
+ *     larger than what actually left is refused, not frozen;
+ *   - the target's new allowance is exactly what the tree measures there: the
+ *     move adds allowance, and the only amounts it may add are measured ones;
+ *   - the frozen total is the same before and after.
+ *
+ * A file that only improved is not what this is for — that is `--update`.
+ *
+ * @param {Record<string, number>} baseline frozen counts, relative keys
+ * @param {Record<string, number>} current what this run measured, same keys
+ * @param {{from: string, to: string, count: number}} move
+ * @returns {{
+ *   next: Record<string, number>,
+ *   total: number,
+ *   source: {file: string, frozen: number, after: number, measured: number},
+ *   target: {file: string, frozen: number, after: number, measured: number},
+ * }}
+ */
+export function movedBaseline(baseline, current, move) {
+  const { from, to, count } = move
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new Error(`the count has to be a positive whole number, not ${JSON.stringify(count)}`)
+  }
+  if (from === to) throw new Error(`the source and the target are the same file (${from})`)
+  for (const [flag, file] of [
+    ['--move-from', from],
+    ['--move-to', to],
+  ]) {
+    if (!BASELINE_KEY.test(String(file))) {
+      throw new Error(`${flag} ${JSON.stringify(file)} is not a baseline key (src/**/*.vue)`)
+    }
+  }
+
+  const frozen = baseline[from] ?? 0
+  const before = sum(baseline)
+  if (frozen < count) {
+    throw new Error(
+      `the baseline freezes ${frozen} violation(s) in ${from}, so ${count} cannot come out of it: the ` +
+        `missing ${count - frozen} would be debt nothing paid for, and the frozen total would rise from ` +
+        `${before} to ${before + count - frozen}`
+    )
+  }
+
+  const targetFrozen = baseline[to] ?? 0
+  // The allowance the source keeps, held on its own rather than read back off
+  // `next`: when nothing is left the key is dropped, and reading it there would
+  // compare against `undefined` — a comparison that is always false, which is
+  // how the check below would stop firing on exactly the move that empties a
+  // file while the tree still measures in it.
+  const keeps = frozen - count
+  const next = { ...baseline }
+  if (keeps === 0) delete next[from]
+  else next[from] = keeps
+  next[to] = targetFrozen + count
+
+  const after = sum(next)
+  if (after !== before) {
+    // Unreachable while the checks above hold, and that is the point: this mode
+    // is named for a total that does not move, so if the arithmetic ever stops
+    // holding it, refuse to write rather than freeze the difference.
+    throw new Error(`the move would change the frozen total from ${before} to ${after}`)
+  }
+
+  const leftBehind = current[from] ?? 0
+  if (leftBehind > keeps) {
+    throw new Error(
+      `the tree still shows ${leftBehind} violation(s) in ${from}, more than the ${keeps} the move ` +
+        `would allow it: fewer violations left ${from} than the count says, and the difference would sit ` +
+        `frozen on ${to}`
+    )
+  }
+
+  const measured = current[to] ?? 0
+  if (measured !== next[to]) {
+    throw new Error(
+      `the tree measures ${measured} violation(s) in ${to}, but the move would freeze ${next[to]} there: ` +
+        `a move may only re-key violations that are there, so either the count is wrong (it is the number ` +
+        `that travelled) or those violations did not all land in ${to}`
+    )
+  }
+
+  return {
+    next,
+    count,
+    total: before,
+    source: { file: from, frozen, after: keeps, measured: leftBehind },
+    target: { file: to, frozen: targetFrozen, after: next[to], measured },
+  }
+}
+
+/**
+ * The human half of a move: what it re-keyed, what the tree measured on both
+ * sides of it, and which rules the target now carries — the last one is the
+ * evidence a reviewer checks the move against ("3 moved, same rule and same
+ * element"), and the count alone would not show it.
+ *
+ * @param {ReturnType<typeof movedBaseline>} plan
+ * @param {Array<{file: string, rule: string}>} [violations] every violation this run found
+ */
+export function formatMove(plan, violations = []) {
+  const { source, target, total, count } = plan
+  const lines = [`moved ${count} violation(s): ${source.file} -> ${target.file}`]
+  lines.push(`  ${source.file}: frozen ${source.frozen} -> ${source.after}, the tree measures ${source.measured}`)
+  lines.push(`  ${target.file}: frozen ${target.frozen} -> ${target.after}, the tree measures ${target.measured}`)
+  const byRule = countsByRule(violations.filter((v) => v.file === target.file))
+  const rules = Object.entries(byRule)
+    .map(([rule, n]) => `${rule.slice(rule.indexOf('/') + 1)} ${n}`)
+    .join(', ')
+  if (rules) lines.push(`  now measured in ${target.file} (check these are what moved): ${rules}`)
+  // The move is total-neutral by construction, so this says what the re-key does
+  // and not what lands on disk: with --update beside it, other files that
+  // improved in the same run are tightened too and the written total is lower.
+  lines.push(`frozen total: ${total} -> ${total} (the move; --update may tighten it further)`)
+  return lines.join('\n')
+}
 
 /**
  * The human-readable half. Takes what `compare()` returns and the violations in

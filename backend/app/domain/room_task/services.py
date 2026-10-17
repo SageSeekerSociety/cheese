@@ -3,8 +3,9 @@
 import uuid
 from collections.abc import Collection
 from datetime import UTC, datetime
+from functools import lru_cache
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import Select, Uuid, and_, bindparam, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -154,9 +155,18 @@ class TaskService:
             raise NotFoundError("Task not found")
 
     async def list_in_project(
-        self, project_id: uuid.UUID, *, accepted: bool | None = None
+        self,
+        project_id: uuid.UUID,
+        *,
+        accepted: bool | None = None,
+        rooms: Collection[uuid.UUID] | None = None,
+        status: str | None = None,
     ) -> list[Task]:
         """这个项目里的活，最老的在前。
+
+        `rooms` 和 `status` 是把清单收窄交给数据库的两把刀（见 `list_for_project`）：
+        给了就只装配满足的那些行。项目任务列表接口把「我看得见的房间」和 `status`
+        都给上，不再把整个项目的活读进来再用 Python 筛一遍。
 
         交出去的是 ORM 行，**暂留**：room_task 这一期还没有自己的窄读出口，项目
         侧栏就是拿这批行就地折出展示态的（`presentation.facts_for_task`），行本身
@@ -166,7 +176,9 @@ class TaskService:
         Callers authorize and own this session and its transaction. This read
         does not explicitly begin, commit or roll back.
         """
-        return await self._repo.list_for_project(project_id, accepted=accepted)
+        return await self._repo.list_for_project(
+            project_id, accepted=accepted, rooms=rooms, status=status
+        )
 
     async def list_open(self) -> list[Task]:
         """全平台还开着的任务，交出 ORM 行（同 `list_in_project`，**暂留**）。"""
@@ -282,38 +294,13 @@ class TaskService:
         """
         if not room_ids:
             return set()
-        task_read = aliased(TopicReadState)
-        room_read = aliased(TopicReadState)
-        stmt = (
-            select(
-                Task.id,
-                Task.room_id,
-                Task.accepted_at,
-                func.greatest(task_read.updated_at, room_read.updated_at),
-            )
-            .outerjoin(
-                task_read,
-                and_(
-                    task_read.topic_id == Task.id,
-                    task_read.user_handle == person,
-                ),
-            )
-            .outerjoin(
-                room_read,
-                and_(
-                    room_read.topic_id == Task.room_id,
-                    room_read.user_handle == person,
-                ),
-            )
-            .where(
-                Task.room_id.in_(room_ids),
-                Task.accepted_at.is_not(None),
-                TaskRepository.takes_part(person),
-            )
-        )
+        # 语句按看的人建一次留着，房间每次当参数给（`_unseen_deliveries_statement`）。
         unseen: set[uuid.UUID] = set()
         for task_id, room_id, accepted_at, looked_at in (
-            await self._session.execute(stmt)
+            await self._session.execute(
+                _unseen_deliveries_statement(person),
+                {"unseen_rooms": list(room_ids)},
+            )
         ).all():
             if looked_at is None or accepted_at > looked_at:
                 unseen.add(task_id)
@@ -403,49 +390,24 @@ class TaskService:
             select(Task).where(Task.document_id == document_id)
         )
 
-    async def start(
-        self, task: Task, *, by: str, reviewer_handle: str | None = None
-    ) -> Task:
-        """「开始」：written once, with who reviews its changes and what its
-        document said at that moment.
+    @staticmethod
+    def default_reviewer(
+        project: Project | None, owner_handle: str | None
+    ) -> str | None:
+        """Who reviews a new task's changes: its owner, who asked for it and so
+        should look at what changed; when the owner cannot take a review (an AI
+        teammate in a project run as a collaboration), the project's default
+        reviewer. None when neither can: the task is worked all the same, and
+        its first delivery asks for a reviewer (`review.services.reviewers`).
 
-        谁审这件事，按档取第一个：这里点名的人 > 派活时定的人 > 任务的负责人 >
-        项目默认审阅人。负责人这一档是提出这件事的人 —— 他提的，改了什么本来就
-        该他看一眼；他也审不了时（协作模式下的 AI 队友）才退到项目默认，不把审
-        阅人定成一个谁也采纳不了的人。任务建出来即开始（`api.task_instructions
-        .start_task_at_once`），所以这一档平时就是建任务的人在审。
-
-        It is written now rather than read back from the setting when changes are
-        submitted: the setting can change, and who a task was handed to for
-        review is a fact about the moment it started.
-        """
-
-        if task.started_at is not None:
-            raise UnprocessableEntityError(say("taskStartedAlready"))
-        project = await self._session.get(Project, task.project_id)
-        owner_handle = (task.owner_handle or "").strip()
-        reviewer = (
-            (reviewer_handle or "").strip()
-            or (task.reviewer_handle or "").strip()
-            or (owner_handle if can_take_review(project, owner_handle) else "")
-            or branch_protection_of(project).default_reviewer
-        )
-        if not reviewer:
-            raise UnprocessableEntityError(say("reviewerRequired"))
-        # 审阅人定成采纳不了的人（协作模式下的 AI 队友），这件事的每一次交付都没人能收。
-        if not can_take_review(project, reviewer):
-            raise UnprocessableEntityError(say("reviewerNotAPerson", handle=reviewer))
-        doc = (
-            await Documents(self._session).get(task.document_id)
-            if task.document_id is not None
-            else None
-        )
-        task.reviewer_handle = reviewer
-        task.started_at = datetime.now(UTC)
-        task.started_by = by
-        task.started_doc_version = doc.version if doc is not None else 0
-        await self._session.flush()
-        return task
+        Written when the task is made rather than read back from the setting
+        when changes are submitted: the setting can change, and who a task was
+        handed to for review is a fact about the moment it was handed over."""
+        owner = (owner_handle or "").strip()
+        if can_take_review(project, owner):
+            return owner
+        fallback = branch_protection_of(project).default_reviewer
+        return fallback if fallback and can_take_review(project, fallback) else None
 
     async def hand_over(self, task: Task, *, owner_handle: str) -> Task:
         """Another member owns the task from now. Moving it off its former
@@ -461,8 +423,8 @@ class TaskService:
     @staticmethod
     def takes_part(task: Task, handle: str | None) -> bool:
         """Whether this person works the task: its owner, or a collaborator
-        the owner brought in. Both talk to its AI teammate and write its
-        document; only the owner starts, closes or hands it over."""
+        the owner brought in. What they say is what its AI teammate acts on,
+        and they write its document; only the owner closes or hands it over."""
         return handle is not None and (
             handle == task.owner_handle or handle in (task.contributor_handles or [])
         )
@@ -484,7 +446,8 @@ class TaskService:
 
     @staticmethod
     def require_open(task: Task) -> None:
-        """Refuse what only an open task takes: a message to its session."""
+        """Refuse what only an open task takes: its first instruction given
+        again, a handover. A closed task is still talked in."""
         if task.status != TaskStatus.open:
             raise UnprocessableEntityError(say("taskClosedNoTurn"))
 
@@ -501,8 +464,12 @@ class TaskService:
         contributor_handles: list[str] | None = None,
         base_task_id: uuid.UUID | None = None,
         title_source: TaskTitleSource = TaskTitleSource.human,
+        task_id: uuid.UUID | None = None,
     ) -> Task:
-        """Record a task's branch; its executor creates the worktree on its machine."""
+        """Record a task's branch; its executor creates the worktree on its machine.
+
+        ``task_id`` is a 支线's id when the 支线 itself becomes the task: the
+        conversation keeps its id, and with it everything said in it."""
         # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
@@ -517,6 +484,10 @@ class TaskService:
                 parent.accepted_at is None and parent.delivered_head is None
             ):
                 base = parent.branch_name
+        if reviewer_handle is None:
+            reviewer_handle = self.default_reviewer(
+                await self._session.get(Project, project_id), owner_handle
+            )
         task = await self._repo.add(
             project_id=project_id,
             room_id=room_id,
@@ -525,6 +496,7 @@ class TaskService:
             reviewer_handle=reviewer_handle,
             created_by=created_by,
             title_source=title_source,
+            task_id=task_id,
         )
         await self.set_credits(
             task,
@@ -658,3 +630,49 @@ def said_title(task: Task) -> str:
     if task.title_source == TaskTitleSource.placeholder:
         return say("taskUntitled")
     return task.title
+
+
+#: `TaskService.unseen_deliveries` 那条查询的房间参数。房间按百计，走数组参数；
+#: `expanding` 让它在 SQL 里照样摊成 `IN ($1, …)` —— 和原先 `in_(room_ids)` 生成的
+#: 文本逐字节相同，执行计划不变。
+_unseen_rooms = bindparam("unseen_rooms", type_=Uuid, expanding=True)
+
+
+@lru_cache(maxsize=64)
+def _unseen_deliveries_statement(person: str) -> Select:
+    """`TaskService.unseen_deliveries` 的那条查询，按看的人建一次留着。
+
+    每个请求都来拼一遍这个双 `outerjoin` 的语句，量出来光构造本身就约 2ms
+    （2026-10-14，48 万区块的库，一次频道详情）。房间每次当参数给；**谁在看**
+    烧进了连接条件和 `takes_part` 里，所以缓存的键是人。语句是只读的，一份拿给
+    并发用安全（`block/repositories.py` 的 `_awaiting_statements` 是同一个写法）。
+    """
+    task_read = aliased(TopicReadState)
+    room_read = aliased(TopicReadState)
+    return (
+        select(
+            Task.id,
+            Task.room_id,
+            Task.accepted_at,
+            func.greatest(task_read.updated_at, room_read.updated_at),
+        )
+        .outerjoin(
+            task_read,
+            and_(
+                task_read.topic_id == Task.id,
+                task_read.user_handle == person,
+            ),
+        )
+        .outerjoin(
+            room_read,
+            and_(
+                room_read.topic_id == Task.room_id,
+                room_read.user_handle == person,
+            ),
+        )
+        .where(
+            Task.room_id.in_(_unseen_rooms),
+            Task.accepted_at.is_not(None),
+            TaskRepository.takes_part(person),
+        )
+    )

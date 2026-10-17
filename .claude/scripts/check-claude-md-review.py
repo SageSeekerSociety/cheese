@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A change to AGENTS.md needs a human's approval before it can merge.
+"""A change to root AGENTS.md or CLAUDE.md needs sign-off before it can merge.
 
 WHY: AGENTS.md is loaded in full on every turn of every session, on every
 machine, for every topic. A bad line there is not one bad file — it is a
@@ -28,16 +28,24 @@ than an agent mid-task, decided this line belongs in every future session.
 
   check-claude-md-review.py --self-test    prove the decision logic
   check-claude-md-review.py --pr <n>       judge a PR (needs GITHUB_TOKEN)
+  check-claude-md-review.py --apply-label <n>  record sign-off (authenticated gh)
+
+Checking a PR never adds a label. --apply-label is an explicit sign-off action;
+use it only once the instruction change has been reviewed.
 """
 
+import argparse
 import json
 import os
+import shlex
+import subprocess
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "SageSeekerSociety/cheese")
-GUARDED = "AGENTS.md"
+GUARDED = ("AGENTS.md", "CLAUDE.md")
 #: A human signal the PR's own author can actually give. GitHub refuses to let
 #: an author approve their own PR, and in this repo every PR is opened by the
 #: same account the agents act through — so requiring a non-author approval made
@@ -48,9 +56,8 @@ SIGNOFF_LABEL = "claude-md-ok"
 
 
 def guards_this_change(paths: list[str]) -> bool:
-    """Only the root AGENTS.md. A nested one (frontend/AGENTS.md) is scoped to
-    its own directory and does not load on every turn everywhere."""
-    return GUARDED in paths
+    """Only root instruction files; nested files keep their directory scope."""
+    return any(path in GUARDED for path in paths)
 
 
 def signed_off(labels: list[str]) -> bool:
@@ -81,7 +88,7 @@ def human_approvals(reviews: list[dict], author: str) -> list[str]:
     return sorted(k for k, v in latest.items() if v.get("state") == "APPROVED")
 
 
-def _api(path: str) -> list[dict]:
+def _api(path: str) -> dict | list[dict]:
     token = os.environ.get("GITHUB_TOKEN", "")
     req = urllib.request.Request(
         f"https://api.github.com/repos/{REPO}/{path}",
@@ -95,101 +102,128 @@ def _api(path: str) -> list[dict]:
         return json.loads(resp.read())
 
 
-def judge(pr: int) -> int:
-    files = [f["filename"] for f in _api(f"pulls/{pr}/files?per_page=100")]
-    if not guards_this_change(files):
-        print(f"AGENTS.md untouched by #{pr} — gate does not apply.")
-        return 0
+def _pages(path: str) -> list[dict]:
+    rows: list[dict] = []
+    page = 1
+    while True:
+        batch = _api(f"{path}?per_page=100&page={page}")
+        if not isinstance(batch, list):
+            raise TypeError("GitHub returned a non-list response")
+        rows.extend(batch)
+        if len(batch) < 100:
+            return rows
+        page += 1
 
-    detail = _api(f"pulls/{pr}")  # type: ignore[assignment]
-    labels = [
-        lbl.get("name", "")
-        for lbl in (detail.get("labels") or [])  # type: ignore[union-attr]
+
+def label_command(pr: int) -> list[str]:
+    # POST adds this label without removing any existing labels. REST also avoids
+    # gh pr edit's unrelated GraphQL project lookups and their permission needs.
+    return [
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        f"repos/{REPO}/issues/{pr}/labels",
+        "-f",
+        f"labels[]={SIGNOFF_LABEL}",
     ]
+
+
+def apply_label(pr: int) -> int:
+    try:
+        result = subprocess.run(label_command(pr), timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"FAIL: could not add {SIGNOFF_LABEL}: {exc}")
+        return 1
+    if result.returncode:
+        print(f"FAIL: gh could not add {SIGNOFF_LABEL}; check its error above.")
+        return 1
+    print(f"Added {SIGNOFF_LABEL} to {REPO}#{pr}; wait for the review gate to recheck.")
+    return 0
+
+
+def judge(pr: int) -> int:
+    files = [
+        path
+        for file in _pages(f"pulls/{pr}/files")
+        for path in (file["filename"], file.get("previous_filename", ""))
+    ]
+    if not guards_this_change(files):
+        print(f"Root instruction files untouched by #{pr} — gate does not apply.")
+        return 0
+
+    changed = ", ".join(path for path in GUARDED if path in files)
+    detail = _api(f"pulls/{pr}")
+    if not isinstance(detail, dict):
+        raise TypeError("GitHub returned a non-object PR response")
+    labels = [lbl.get("name", "") for lbl in (detail.get("labels") or [])]
     if signed_off(labels):
-        print(f"AGENTS.md change signed off with the {SIGNOFF_LABEL} label.")
+        print(f"{changed} change signed off with the {SIGNOFF_LABEL} label.")
         return 0
 
-    author = (detail.get("user") or {}).get("login", "")  # type: ignore[union-attr]
-    approvals = human_approvals(_api(f"pulls/{pr}/reviews?per_page=100"), author)
+    author = (detail.get("user") or {}).get("login", "")
+    approvals = human_approvals(_pages(f"pulls/{pr}/reviews"), author)
     if approvals:
-        print(f"AGENTS.md change approved by {', '.join(approvals)}.")
+        print(f"{changed} change approved by {', '.join(approvals)}.")
         return 0
 
-    print(f"FAIL: #{pr} changes {GUARDED} and no human has signed it off.")
-    print("")
+    print(f"FAIL: #{pr} changes {changed} and no human has signed it off.")
+    print()
     print("  This file is injected into every turn of every session. A wrong line")
     print("  in it steers every agent until a person happens to notice, and")
     print("  nothing else in CI will notice for you.")
-    print("")
-    print("  Either is enough:")
-    print(f"    gh pr edit {pr} --add-label {SIGNOFF_LABEL}      (the author can do this)")
-    print(f"    someone other than the author approves #{pr}")
-    print("")
-    print("  A bot approval (CodeRabbit) does not count either way.")
-    print(f"::error::{GUARDED} changed without a human approving review")
+    print()
+    print("  Once the instruction change has been reviewed, record sign-off:")
+    print(f"    {shlex.join(label_command(pr))}")
+    print("  Or use the one-step helper (authenticated gh required):")
+    print(
+        f"    GITHUB_REPOSITORY={shlex.quote(REPO)} python3 "
+        f".claude/scripts/check-claude-md-review.py --apply-label {pr}"
+    )
+    print(f"  Alternatively, someone other than the author approves #{pr}.")
+    print()
+    print("  The author can add the label. A bot approval does not count.")
+    print(f"::error::{changed} changed without sign-off")
     return 1
 
 
 def self_test() -> int:
-    def check(cond: bool, msg: str) -> None:
-        if not cond:
-            print(f"SELF-TEST FAIL: {msg}")
-            sys.exit(1)
+    tests = Path(__file__).with_name("test_check_claude_md_review.py")
+    return subprocess.run([sys.executable, str(tests)], check=False).returncode
 
-    check(guards_this_change(["AGENTS.md"]), "the root AGENTS.md must be guarded")
-    check(
-        not guards_this_change(["docs/README.md", "frontend/AGENTS.md"]),
-        "a nested AGENTS.md is scoped to its directory and must not trip this",
+
+def positive_pr(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("PR must be a positive integer") from exc
+    if number <= 0:
+        raise argparse.ArgumentTypeError("PR must be a positive integer")
+    return number
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    action = parser.add_mutually_exclusive_group(required=True)
+    action.add_argument("--self-test", action="store_true")
+    action.add_argument("--pr", type=positive_pr)
+    action.add_argument(
+        "--apply-label",
+        type=positive_pr,
+        help="explicitly record reviewed instruction changes with the sign-off label",
     )
-
-    check(signed_off([SIGNOFF_LABEL]), "the sign-off label must count")
-    check(not signed_off([]), "no label means no sign-off")
-    check(not signed_off(["bug", "docs"]), "an unrelated label must not count")
-
-    bot = {"user": {"login": "coderabbitai[bot]", "type": "Bot"}, "state": "APPROVED"}
-    author = {"user": {"login": "me", "type": "User"}, "state": "APPROVED"}
-    human = {"user": {"login": "lisi", "type": "User"}, "state": "APPROVED"}
-
-    check(human_approvals([human], "me") == ["lisi"], "a human approval must count")
-    check(human_approvals([bot], "me") == [], "a bot approval must NOT count")
-    check(human_approvals([author], "me") == [], "self-approval must NOT count")
-    check(
-        human_approvals([bot, author], "me") == [],
-        "bot + self must still leave the gate shut",
-    )
-    # Order matters: the LAST verdict per reviewer wins.
-    withdrawn = {"user": {"login": "lisi", "type": "User"}, "state": "CHANGES_REQUESTED"}
-    check(
-        human_approvals([human, withdrawn], "me") == [],
-        "an approval later changed to CHANGES_REQUESTED must not keep the gate open",
-    )
-    check(
-        human_approvals([withdrawn, human], "me") == ["lisi"],
-        "and re-approving after that must reopen it",
-    )
-    commented = {"user": {"login": "lisi", "type": "User"}, "state": "COMMENTED"}
-    check(
-        human_approvals([human, commented], "me") == ["lisi"],
-        "a later comment must not silently revoke an approval",
-    )
-
-    print("PASS: check-claude-md-review self-test (scope, label, bots, self, withdrawal)")
-    return 0
-
-
-def main() -> int:
-    args = sys.argv[1:]
-    if "--self-test" in args:
+    args = parser.parse_args(argv)
+    if args.self_test:
         return self_test()
-    if "--pr" in args:
-        try:
-            return judge(int(args[args.index("--pr") + 1]))
-        except urllib.error.HTTPError as exc:
-            print(f"FAIL: GitHub API {exc.code} — cannot verify review state.")
-            return 1
-    print(__doc__)
-    return 2
+    if args.apply_label is not None:
+        return apply_label(args.apply_label)
+    try:
+        return judge(args.pr)
+    except urllib.error.HTTPError as exc:
+        print(f"FAIL: GitHub API {exc.code} — cannot verify review state.")
+    except (urllib.error.URLError, OSError, ValueError, TypeError) as exc:
+        print(f"FAIL: cannot verify review state: {exc}")
+    return 1
 
 
 if __name__ == "__main__":

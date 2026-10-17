@@ -78,15 +78,13 @@ async function mount() {
 describe('反馈中心的筛选', () => {
   it('清掉作者筛选之后不炸，筛选真的回到不限作者', async () => {
     vi.useFakeTimers()
-    const { baseElement, findByText } = await mount()
+    const { baseElement, findByText, getByRole } = await mount()
     vi.useRealTimers()
 
     await findByText('导出报表偶发 502')
 
-    // 「作者」按 id 取：筛选条现在是一排手写的药丸加输入框（不再是四个 v-select 加一个
-    // v-text-field），这一条钉的是「那颗输入框和 store 接上了」。
-    const field = baseElement.querySelector('#fb-author')
-    expect(field, '筛选行里应当有一个作者输入框').toBeTruthy()
+    // 按可访问名称找控件，同时验证外置标签确实关联了作者输入框。
+    const field = getByRole('textbox', { name: /^(作者|Author)$/ })
 
     vi.useFakeTimers()
     // 先填上，坐实 store 真的收到了这个筛选（否则下面「清掉之后回到 null」可能

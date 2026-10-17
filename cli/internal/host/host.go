@@ -142,7 +142,58 @@ func (h *Host) Run(ctx context.Context) error {
 		}
 	}()
 
+	go h.closeExitedScreens(ctx)
+
 	return h.conn.Run(ctx, h.onMsg)
+}
+
+// How long a screen whose program has ended is kept, and how often the host
+// looks for ones kept longer. A pane outlives its program (`remain-on-exit`) so
+// that whoever opens the screen can still read why it ended; nothing else reads
+// it. But nothing closed one either unless the server came back to the same
+// seat, which a finished task never does: on dev's session host on 2026-10-13
+// that was 900 dead screens back to 09-28 beside 9 running ones, each holding
+// its launch message, credentials included, in the tmux server's memory, and
+// each adopted again by every restart of this connector. Variables so a test
+// can reach the same behaviour in milliseconds.
+var (
+	exitedScreenGrace = time.Hour
+	exitedScreenCheck = 10 * time.Minute
+)
+
+// closeExitedScreens closes, now and then every exitedScreenCheck until ctx
+// ends, every screen this backend launched whose program ended at least
+// exitedScreenGrace ago. A screen whose program is still running is never one
+// of them, whatever its age. Runs unattended for the life of the connector, so
+// a failed look is logged and the next one tried.
+func (h *Host) closeExitedScreens(ctx context.Context) {
+	if h.tm == nil {
+		return
+	}
+	ticker := time.NewTicker(exitedScreenCheck)
+	defer ticker.Stop()
+	for {
+		names, err := h.tm.Exited(h.base, exitedScreenGrace)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cheese: looking for ended screens: %v\n", err)
+		}
+		closed := 0
+		for _, name := range names {
+			if err := h.closeSession(name); err != nil {
+				fmt.Fprintf(os.Stderr, "cheese: closing ended screen %s: %v\n", name, err)
+				continue
+			}
+			closed++
+		}
+		if closed > 0 {
+			fmt.Fprintf(os.Stderr, "cheese: closed %d screens whose program ended over %s ago\n", closed, exitedScreenGrace)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 // performUpdate updates the `cheese` binary in place and hands this process off to

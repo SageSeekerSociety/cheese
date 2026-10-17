@@ -1,0 +1,8 @@
+{
+  "taskClosed": "The task “{title}” was closed",
+  "taskCompleted": "The task “{title}” was closed: {conclusion}",
+  "taskQuiet": "No progress on the task \"{title}\" for {days} days",
+  "taskReopened": "{actor} reopened the task “{title}”",
+  "taskUntitled": "New task",
+  "threadBecameTask": "Turned into a task. {owner} owns it"
+}

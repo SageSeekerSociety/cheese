@@ -1,6 +1,7 @@
 """The 两阶段采纳 (PR迭代式) client, `HttpxGitHubPrClient` — specifically
-`check_state`'s handling of "zero check-runs" (see `github_pr.py`'s
-`_resolve_zero_checks` docstring for the full reasoning).
+`check_state`'s handling of "zero check-runs" (see
+`github_pr/httpx_client.py`'s `_resolve_zero_checks` docstring for the full
+reasoning).
 
 These tests drive the real `HttpxGitHubPrClient.check_state` through a mocked
 HTTP transport — never a monkeypatched `check_state` — so the actual

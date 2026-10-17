@@ -183,6 +183,10 @@ jobs:
       # coupling instead of re-deriving ci-fast's rules here and drifting.
       # This prep runs before ci-fast's budget starts: it is outside that
       # budget, bounded only by this job's timeout.
+      # The frontend type check this job can select needs the backend set as
+      # well now, for the same reason — it builds the OpenAPI document out of
+      # the app. That widens who needs the two sets, not why they are
+      # unconditional.
       - name: Install dependencies
         run: |
           (cd backend && uv sync --frozen --all-extras)

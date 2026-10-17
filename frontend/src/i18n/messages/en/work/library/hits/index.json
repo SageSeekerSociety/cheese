@@ -1,0 +1,8 @@
+{
+  "keep": "Save as a doc",
+  "library": "Docs in the library",
+  "libraryCount": "Library · {n}",
+  "roomDoc": "Doc of “{room}”",
+  "rooms": "Docs in conversations",
+  "roomsCount": "Docs in conversations · {n}"
+}

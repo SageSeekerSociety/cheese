@@ -229,6 +229,18 @@ export async function canonicalAddress(to: RouteLocationNormalized): Promise<tru
   if (typeof ref !== 'string' || !ref) return true
   // 走到这里的人已经登录了：没登录时记下的「要登录」不再作数，这一次没问到也不能留着它。
   if (refusedByRef.get(ref) === 'unauthenticated') refusedByRef.delete(ref)
+  // 地址里是 UUID 的那些东西（频道、任务、文档）现在就出发：它们认的是自己的 UUID
+  // （`addresses/of/<种类>/<UUID>`），和「这个项目是哪一个」无关，所以能和下面那一问并排
+  // 走。串着问要多等一趟 —— 实测冷开一个任务页，项目那一问回到 570 毫秒，这一趟再到
+  // 677 才回，页面自己的数据全排在这两趟后面。
+  //
+  // 项目根本不存在时这一趟就白问了，一次 GET 换常用路径上的一趟串行，划算。
+  const addressed = new Map<string, Promise<ThingAddress | null>>()
+  for (const [param, kind] of PARAM_KINDS) {
+    const value = to.params[param]
+    if (typeof value === 'string' && isUuid(value)) addressed.set(param, thingById(kind, value))
+  }
+
   const project = await projectOf(ref)
   if (!project) return true
 
@@ -254,7 +266,7 @@ export async function canonicalAddress(to: RouteLocationNormalized): Promise<tru
     const value = params[param]
     if (value === undefined) continue
     if (isUuid(value)) {
-      const found = await thingById(kind, value)
+      const found = await (addressed.get(param) ?? thingById(kind, value))
       if (found?.number != null && found.project_id === project.id) {
         params[param] = String(found.number)
         changed = true

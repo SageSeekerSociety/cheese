@@ -11,6 +11,7 @@ from datetime import datetime
 
 from app.core.config import settings
 from app.core.db import async_session_factory
+from app.core.device_failures import DeviceCallError
 from app.core.sandbox_auth import bind_resource_token, token_agent_handle
 from app.core.sentences import say
 from app.domain.agent import execution, private_chat
@@ -21,7 +22,7 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent_instance.services import agent_stdio_servers
+from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.remote_mcp import service as remote_mcp
 from app.domain.topic.services import TopicService
@@ -111,6 +112,13 @@ class CentralChannel(DeviceChannel):
             await execution.call(
                 lease, "ping", {}, hub=self._hub, timeout=MACHINE_PROBE_TIMEOUT_S
             )
+        except DeviceCallError:
+            # The machine answered, and its executor is not up: one that sat
+            # idle stops itself (`runtime_core.EXECUTOR_IDLE_EXIT_S`). The
+            # session's own take of its hands at launch starts it again, and a
+            # take that cannot be had now starts the session at the placeholder
+            # (`client._take_leased_machine`).
+            return True
         except Exception:  # noqa: BLE001 — any failure means not now, and is logged
             logger.info(
                 "central_session_stays_deferred topic=%s device=%s",
@@ -268,9 +276,8 @@ class CentralChannel(DeviceChannel):
         # Its credential names that lease, as the one the lease hands out does:
         # the executor route admits nothing else, and this is the one the
         # session's calls carry again after each turn rewrites it.
-        # ``scratch``: a 支线, or a task its owner has not started, whose work
-        # stays on the machine and never reaches the project
-        # (`routes/execution.py`).
+        # ``scratch``: a 支线, whose work stays on the machine and never
+        # reaches the project (`routes/execution.py`).
         token = bind_resource_token(
             token,
             str(resource),
@@ -326,7 +333,11 @@ class CentralChannel(DeviceChannel):
         # relaunches an idle session with it (`screen_identity.launch_identity`).
         async with factory() as db:
             remote = await remote_mcp.session_target(
-                db, project_id, topic_id, agent_handle
+                db,
+                project_id,
+                topic_id,
+                agent_handle,
+                type_of_seat=type_of_seat,
             )
             own = await agent_stdio_servers(db, project_id, agent_handle)
         if remote is not None:

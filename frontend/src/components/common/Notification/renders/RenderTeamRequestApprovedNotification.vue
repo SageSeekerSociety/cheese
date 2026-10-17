@@ -1,7 +1,7 @@
 <template>
   <div class="notification-content">
-    <div class="text-subtitle-2 font-weight-medium">{{ title }}</div>
-    <div class="text-body-2 text-medium-emphasis mt-1">
+    <div class="n-title">{{ title }}</div>
+    <div class="n-sub">
       <i18n-t v-if="approver" scope="global" keypath="notifications.TEAM_REQUEST_APPROVED.body" tag="span">
         <template #approver><UserRef :handle="approver.handle" :name="approver.name" :project-id="null" /></template>
         <template #team>{{ team?.name || t('notifications.common.unknownTeam') }}</template>
@@ -66,11 +66,6 @@ defineExpose({
 </script>
 
 <style scoped>
-.notification-content {
-  display: flex;
-  flex-direction: column;
-}
-
 .success-box {
   border-left: 3px solid var(--v-theme-success);
 }

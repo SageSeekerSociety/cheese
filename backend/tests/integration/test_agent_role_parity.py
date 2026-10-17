@@ -176,32 +176,23 @@ def test_removing_all_credentials_cannot_bypass_membership(client):
 
 
 @pytest.mark.parametrize("is_agent", [False, True])
-def test_team_standing_controls_management_for_both_identities(client, is_agent):
-    """Managing the project is being an owner or admin of its team — the same
-    rule for a person and for an agent's credential."""
+def test_team_standing_lets_a_person_manage_but_never_an_agent(client, is_agent):
+    """Managing the project's people is its owner's and admins' — an admin of
+    its team is one. A person who becomes one may invite; an agent's credential
+    never manages, wherever its seat sits (#3830)."""
     project, origin, _ = _rooms(client)
     handle = _seated_agent(client, origin) if is_agent else "bob"
     auth = _agent(client, project, origin) if is_agent else session_auth_headers(handle)
     invitations = f"/projects/{project['id']}/invitations"
     join_project_team(client, project["id"], handle)
-    join_project_team(client, project["id"], "carol")
     assert (
         client.post(invitations, json={"user_handle": "dave"}, headers=auth).status_code
         == 403
     )
     _promote(client, project["id"], handle)
-    assert (
-        client.post(invitations, json={"user_handle": "dave"}, headers=auth).status_code
-        == 200
-    )
-    assert (
-        client.put(
-            f"/projects/{project['id']}/owner",
-            json={"owner_handle": "carol"},
-            headers=auth,
-        ).status_code
-        == 200
-    )
+    assert client.post(
+        invitations, json={"user_handle": "dave"}, headers=auth
+    ).status_code == (403 if is_agent else 200)
 
 
 def _promote(client, pid: str, handle: str) -> None:
@@ -286,6 +277,7 @@ def test_project_membership_never_opens_someone_elses_private_chat(
 ):
     project, origin, _ = _rooms(client)
     owner = session_auth_headers("alice")
+    join_project_team(client, project["id"], "bob")
     # 两个人之间的私聊：这个项目的芝士不是其中任何一方，所以「它是不是这间房的
     # 参与者」是真的在问，而不是在问一间它本来就坐在里面的房。
     private = client.get(
@@ -319,8 +311,14 @@ def test_project_membership_never_opens_someone_elses_private_chat(
         ).status_code
         == 403
     )
-    _join(client, private, handle)
-    assert client.get(f"/topics/{private}/blocks", headers=auth).status_code == 200
+    # Nor can anyone seat it there: a DM keeps its two.
+    assert (
+        client.post(
+            f"/topics/{private}/members", json={"handle": handle}, headers=owner
+        ).status_code
+        == 422
+    )
+    assert client.get(f"/topics/{private}/blocks", headers=auth).status_code == 403
 
 
 def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
@@ -339,24 +337,28 @@ def test_room_management_uses_authenticated_role_not_a_claimed_actor(client):
         ).status_code
         == 403
     )
-    # Once it manages the project — as an admin of its team, the way a person
-    # would — it manages the channel too.
+    # Sitting where a person would manage the project — an admin of its team —
+    # changes nothing: an agent acts in a channel, it does not bring people in.
     join_project_team(client, project["id"], handle, admin=True)
     assert (
-        client.post(endpoint, json={"handle": "bob"}, headers=auth).status_code == 200
+        client.post(endpoint, json={"handle": "bob"}, headers=auth).status_code == 403
     )
 
 
-def test_manager_agent_can_issue_credentials_and_revocation_retires_them_all(client):
+def test_an_agent_never_issues_credentials_and_revocation_retires_them_all(client):
     project, origin, _ = _rooms(client)
     endpoint = f"/projects/{project['id']}/agent-credential"
     owner = session_auth_headers("alice")
-    # The agent answers for the project the same way a person would: as an
-    # admin of its team.
+    # Even sitting where a person would manage the project — an admin of its
+    # team — an agent does not hand out credentials.
     join_project_team(client, project["id"], _seated_agent(client, origin), admin=True)
-    issued = client.post(endpoint, json={}, headers=_agent(client, project, origin))
+    refused = client.post(endpoint, json={}, headers=_agent(client, project, origin))
+    assert refused.status_code == 403, refused.text
+    issued = client.post(endpoint, json={}, headers=owner)
+    assert issued.status_code == 200, issued.text
     auth = {"X-Cheese-Token": issued.json()["data"]["token"]}
-    second = client.post(endpoint, json={}, headers=auth)
+    assert client.post(endpoint, json={}, headers=auth).status_code == 403
+    second = client.post(endpoint, json={}, headers=owner)
     assert second.status_code == 200, second.text
     assert client.delete(endpoint, headers=owner).status_code == 200
     for token in (issued.json()["data"]["token"], second.json()["data"]["token"]):

@@ -120,6 +120,21 @@ describe('AccountService.init()', () => {
     expect(account.loggedIn).toBe(true)
   })
 
+  it('令牌还新鲜：不等最新的用户资料回来就算恢复完，资料回来后再换上', async () => {
+    localStorage.setItem('accessToken', jwtWithExp(Date.now() / 1000 + 600))
+    localStorage.setItem('user', JSON.stringify(USER))
+    let answerProfile: (value: unknown) => void = () => {}
+    getCurrentUser.mockReturnValue(new Promise((resolve) => (answerProfile = resolve)))
+
+    const account = await freshService()
+    const restored = await Promise.race([account.init().then(() => 'restored'), new Promise((r) => setTimeout(r, 50))])
+
+    expect(restored).toBe('restored')
+    expect(account.user?.nickname).toBe('爱丽丝')
+    answerProfile({ user: { ...USER, nickname: 'Alice' } })
+    await vi.waitFor(() => expect(account.user?.nickname).toBe('Alice'))
+  })
+
   it('令牌已过期：先续签，拿到新令牌后才 loggedIn=true', async () => {
     const stale = jwtWithExp(Date.now() / 1000 - 60)
     const fresh = jwtWithExp(Date.now() / 1000 + 900)

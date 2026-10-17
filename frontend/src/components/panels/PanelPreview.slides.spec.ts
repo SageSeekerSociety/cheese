@@ -14,6 +14,7 @@ import TopicChatColumn from '../../views/workspace/TopicChatColumn.vue'
 import PanelPreviewView from './PanelPreviewView.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { composerText, fillComposer } from '@/test/composerInput'
 import { previewBundles } from '@/test/panelBundles'
 
 const text = 'Whole page original PDF text '.repeat(30)
@@ -390,8 +391,8 @@ it('editing a refused question keeps its frozen quote outside the composer text 
   await waitFor(() => expect(ui.container.querySelector('.outbox-fail')).toBeTruthy())
   const first = ui.posted[0].body
   await fireEvent.click(ui.container.querySelectorAll('.outbox-fail button')[1])
-  const draft = ui.container.querySelector('textarea')!
-  expect(draft.value).toBe('<@cheese-current> explain this page')
+  const draft = ui.container.querySelector<HTMLElement>('.composer .ProseMirror')!
+  expect(composerText(draft)).toBe('<@cheese-current> explain this page')
   expect(ui.container.querySelector('.composer-quote .message-quote__text')?.textContent).toBe(
     '  @评审 <@cheese-other> 原页\n'
   )
@@ -399,8 +400,8 @@ it('editing a refused question keeps its frozen quote outside the composer text 
   await waitFor(() => expect(ui.container.querySelector('.composer-quote')).toBeNull())
   ui.chatTopic.value = room('room-edit-quote')
   await waitFor(() => expect(ui.container.querySelector('.composer-quote')).toBeTruthy())
-  const restored = ui.container.querySelector('textarea')!
-  await fireEvent.update(restored, '<@cheese-current> explain again')
+  const restored = ui.container.querySelector<HTMLElement>('.composer .ProseMirror')!
+  await fillComposer(restored, '<@cheese-current> explain again')
   await fireEvent.keyDown(restored, { key: 'Enter' })
   await waitFor(() => expect(ui.posted).toHaveLength(2))
   expect(ui.posted[1].body.content).toBe('<@cheese-current> explain again')
@@ -426,7 +427,7 @@ it('removing a refused-question reference sends only the edited authored message
   await fireEvent.click(ui.container.querySelectorAll('.outbox-fail button')[1])
   await fireEvent.click(ui.getByText('移除引用'))
   expect(ui.container.querySelector('.composer-quote')).toBeNull()
-  await fireEvent.keyDown(ui.container.querySelector('textarea')!, { key: 'Enter' })
+  await fireEvent.keyDown(ui.container.querySelector('.composer .ProseMirror')!, { key: 'Enter' })
   await waitFor(() => expect(ui.posted).toHaveLength(2))
   expect(ui.posted[1].body.content).toBe('<@cheese-current> explain this page')
   expect(ui.posted[1].body.quoted_context).toBeUndefined()
@@ -443,7 +444,9 @@ it('editing a different refused quote leaves the existing quote and failed messa
   await fireEvent.click(ui.container.querySelectorAll('.outbox-fail')[0].querySelectorAll('button')[1])
   await fireEvent.click(ui.container.querySelector('.outbox-fail')!.querySelectorAll('button')[1])
   expect(ui.container.querySelector('.composer-quote .message-quote__text')?.textContent).toBe('原页 A')
-  expect(ui.container.querySelector('textarea')?.value).toBe('<@cheese-current> question A')
+  expect(composerText(ui.container.querySelector<HTMLElement>('.composer .ProseMirror')!)).toBe(
+    '<@cheese-current> question A'
+  )
   expect(ui.container.querySelector('.outbox-fail')).toBeTruthy()
   expect(ui.container.textContent).toContain('输入框中已有另一份引用，请先发送或移除它。')
 })

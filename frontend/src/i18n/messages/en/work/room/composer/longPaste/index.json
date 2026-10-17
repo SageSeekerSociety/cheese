@@ -1,0 +1,6 @@
+{
+  "keep": "Keep as text",
+  "md": "Save as .md",
+  "offer": "This paste is {count} characters. Send it as a file instead?",
+  "txt": "Save as .txt"
+}

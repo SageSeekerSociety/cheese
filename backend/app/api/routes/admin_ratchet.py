@@ -20,12 +20,15 @@ from fastapi import APIRouter
 from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.domain.ratchet.board import build_board
 from app.domain.ratchet.ingest import ingest_once
 from app.domain.ratchet.store import RatchetSnapshots
 
-router = APIRouter(prefix="/admin/ratchet", tags=["admin"])
+router = APIRouter(
+    prefix="/admin/ratchet", tags=["admin"], dependencies=[ROUTE_DECIDES]
+)
 
 
 async def _current_board(db) -> dict:

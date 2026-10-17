@@ -5,6 +5,7 @@
 
 import logging
 import re
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -36,9 +37,6 @@ from app.core.sentences import say
 from app.domain.legal.documents import check_current
 from app.domain.legal.services import CONSENT_METHODS
 from app.domain.user.login_security import ClientFailureBudget
-from app.domain.user.models import (
-    UserTrustedDevice,
-)
 from app.domain.user.trusted_devices import TrustedDeviceService
 from app.domain.user.verification_service import EmailVerificationService
 
@@ -134,15 +132,20 @@ class CreateInviteCodeRequest(BaseModel):
     note: str | None = None
 
 
-async def _trusted_device(
+async def _trusted_device_id(
     request: Request, db: AsyncSession, user_id: int
-) -> UserTrustedDevice | None:
-    """The live trust this browser holds for ``user_id``, if any. Only the
-    server decides: a cookie for another account, or one revoked or expired,
-    finds nothing."""
-    return await TrustedDeviceService(db).find(
+) -> uuid.UUID | None:
+    """The id of the live trust this browser holds for ``user_id``, if any.
+    Only the server decides: a cookie for another account, or one revoked or
+    expired, finds nothing.
+
+    The id rather than the row: a route module may not name a domain's models
+    (C2), and the id is all a caller needs — ``issue_session`` records the
+    sign-in against it, and refuses when it names no device."""
+    trust = await TrustedDeviceService(db).find(
         request.cookies.get(TRUST_COOKIE), user_id
     )
+    return trust.id if trust else None
 
 
 logger = logging.getLogger(__name__)

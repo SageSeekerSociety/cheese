@@ -2,8 +2,9 @@
 
 import asyncio
 
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 

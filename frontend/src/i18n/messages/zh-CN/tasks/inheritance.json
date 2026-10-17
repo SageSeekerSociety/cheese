@@ -1,0 +1,20 @@
+{
+  "avoid": "暂不使用",
+  "credits": "{n} 点算力",
+  "from": {
+    "category": "来自项目集",
+    "project": "来自项目",
+    "space": "来自空间",
+    "task": "来自这道题"
+  },
+  "guidance": "给 AI 队友的指导",
+  "guidanceNone": "这一题没有指导",
+  "materialCount": "{n} 份",
+  "materials": "会被带上的资料",
+  "materialsNone": "这个空间还没有资料",
+  "pack": "资源包",
+  "packNone": "没有算力额度",
+  "title": "将继承什么",
+  "topics": "本周范围",
+  "week": "第 {n} 周"
+}

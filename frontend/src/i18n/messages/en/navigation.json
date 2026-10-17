@@ -11,7 +11,6 @@
     "general": "General",
     "routines": "Routines",
     "skills": "Skills",
-    "channelFiles": "Channel files",
     "pages": "Project pages",
     "overview": "Overview",
     "tasks": "All tasks"
@@ -39,7 +38,6 @@
     "spaces": "Space applications",
     "members": "Members",
     "integrations": "Feishu app",
-    "externalProblem": "External problem account",
     "featureStats": "Feature data",
     "ratchet": "Ratchet",
     "credits": "Plans & credits",

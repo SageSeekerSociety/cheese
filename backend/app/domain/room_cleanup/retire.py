@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import SessionFactory
+from app.core.device_failures import DeviceOffline
 from app.domain.agent import resource_cleanup
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_storage import (
@@ -404,12 +405,18 @@ async def _sweep_once(
                     changed = operation is None or _held_back(operation, reason)
                     if operation is not None:
                         await session.commit()
-                    if isinstance(exc, resource_cleanup.StillRunning):
+                    if isinstance(exc, resource_cleanup.StillRunning | DeviceOffline):
                         # Something still has the room open: the sweep waits it
                         # out, as it does before the claim (`_advance`), and says
                         # so when what it waits on changes. At ERROR this was an
                         # alert a minute for every room whose last process took
                         # a few minutes to leave, each of which then finished.
+                        #
+                        # A machine that is away is waited for the same way: it
+                        # is the ordinary reason an archived room waits, before
+                        # the claim (the inventory, in `_advance`) and after it.
+                        # At ERROR a claimed room on a laptop that stayed shut
+                        # was an alert every retry, for days (dev, 2026-10-13).
                         logger.log(
                             logging.WARNING if changed else logging.DEBUG,
                             "cleanup waiting operation=%s reason=%s",

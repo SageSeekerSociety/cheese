@@ -1,13 +1,16 @@
 <script setup lang="ts">
 // 项目总览（画面）：进项目落在这一页。它答的是「这个项目怎么样了」——
 //
-// - 项目总览：人写的那一份文档，只读地显示开头，改它去文档页；
+// - 现状：AI 队友读项目写下的几句，最上面一整行（后端定什么时候重写）；
+// - 项目目标：人写的那一份文档，只读地显示开头，改它去文档页；还空着时可以让 AI 队友
+//   起草第一版；
 // - 最近进展：最近两周发生了什么，按天排（后端从已有的事实算，`project_progress`）；
 // - 谁在做什么：还在进行的任务按负责人分，等你的那几件用暖色写出来；
 // - 做出了什么：交出去的东西，和网站。
 //
 // 「需要我处理」不在这一页另列一份：它只在首页「待办」一处，这里只在行上标出来。
 // 数据和去处都由容器 ProjectOverview 给。
+import type { ProjectSituation } from '@/api/projectProgress'
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { RoomTask } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
@@ -20,6 +23,8 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import OverviewDraftForm from '@/components/overview/OverviewDraftForm.vue'
+import SituationCard from '@/components/overview/SituationCard.vue'
 import { t } from '@/i18n'
 import { myPhraseLabel, phraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
@@ -53,17 +58,27 @@ const props = defineProps<{
   avatars: Record<string, string>
   me: string
   artifactApi: ArtifactApi
+  /** 现状；还没读到是 null。 */
+  situation?: ProjectSituation | null
+  agentName?: string
+  agentHandle?: string | null
+  /** 正在把起草的材料放进资料库、准备跳去起草。 */
+  drafting?: boolean
+  /** 上一次没起成的原因。 */
+  draftError?: string | null
 }>()
 
 const emit = defineEmits<{
-  (e: 'edit-overview'): void
-  (e: 'open-task', task: { taskId: string; roomId: string }): void
+  'edit-overview': []
+  /** 让 AI 队友起草项目目标：补充说明和要放进资料库的材料，两样都可以是空的。 */
+  'draft-overview': [draft: { note: string; files: File[] }]
+  'open-task': [task: { taskId: string; roomId: string }]
   // 鼠标左键按下去了：任务页的代码是懒加载的，等松开再下就白等这几十毫秒
   //（和侧栏任务行的 `press` 同一条）。
-  (e: 'press-task', task: { taskId: string; roomId: string }): void
-  (e: 'open-artifact', artifactId: string): void
-  (e: 'all-tasks'): void
-  (e: 'retry-progress'): void
+  'press-task': [task: { taskId: string; roomId: string }]
+  'open-artifact': [artifactId: string]
+  'all-tasks': []
+  'retry-progress': []
 }>()
 
 const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
@@ -75,6 +90,12 @@ const deadlineText = computed(() => {
   const when = dayjs(d.at).format(t('tasks.roster.dateTimeFormat'))
   return d.mine ? t('work.overview.myDeadline', { when }) : t('work.overview.taskDeadline', { when })
 })
+
+// ---- 现状：写成过、或者正在写，才有这一块 ----
+const situationShown = computed(() => !!props.situation && (!!props.situation.content || props.situation.writing))
+
+// ---- 起草项目目标：还空着时，点了才展开补充说明那一小块 ----
+const draftOpen = ref(false)
 
 // ---- 项目总览：只显示开头，长了可以展开 ----
 const overviewOpen = ref(false)
@@ -144,6 +165,15 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
 
 <template>
   <AppPage :title="projectName" width="wide">
+    <SituationCard
+      v-if="situationShown && situation"
+      class="ov-situation"
+      :content="situation.content"
+      :written-at="situation.written_at"
+      :writing="situation.writing"
+      :agent-name="agentName ?? ''"
+      :agent-handle="agentHandle ?? null"
+    />
     <div class="overview">
       <div class="overview__main">
         <!-- 项目目标：人写的那一份。显示文档本身，不替它排成字段。 -->
@@ -175,12 +205,34 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
               {{ overviewOpen ? t('work.overview.collapse') : t('work.overview.expand') }}
             </button>
           </template>
-          <div v-else-if="overviewText !== null" class="ov-empty">
-            <span class="t-body c-muted">{{ t('work.overview.noDocument') }}</span>
-            <button type="button" class="ov-link" data-testid="overview-write" @click="emit('edit-overview')">
-              {{ t('work.overview.write') }}
-            </button>
-          </div>
+          <template v-else-if="overviewText !== null">
+            <div class="ov-unwritten">
+              <p class="ov-unwritten__text t-body c-muted">{{ t('work.overview.noDocument') }}</p>
+              <p class="ov-unwritten__text t-body c-muted">{{ t('work.overview.documentHelps') }}</p>
+              <div v-if="!draftOpen" class="ov-unwritten__actions">
+                <button type="button" class="ov-link" data-testid="overview-write" @click="emit('edit-overview')">
+                  {{ t('work.overview.write') }}
+                </button>
+                <button
+                  v-if="agentName"
+                  type="button"
+                  class="ov-link"
+                  data-testid="overview-draft"
+                  @click="draftOpen = true"
+                >
+                  {{ t('work.overview.draft', { agent: agentName }) }}
+                </button>
+              </div>
+            </div>
+            <OverviewDraftForm
+              v-if="draftOpen && agentName"
+              :agent-name="agentName"
+              :busy="!!drafting"
+              :error="draftError ?? null"
+              @start="emit('draft-overview', $event)"
+              @cancel="draftOpen = false"
+            />
+          </template>
         </section>
 
         <!-- 最近进展：最近两周的事，按天排。 -->
@@ -366,6 +418,23 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
 .ov-deadline {
   margin: 0 0 8px;
   color: var(--muted);
+}
+.ov-situation {
+  margin-bottom: 32px;
+}
+.ov-unwritten {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 0;
+}
+.ov-unwritten__text {
+  margin: 0;
+}
+.ov-unwritten__actions {
+  display: flex;
+  gap: 20px;
+  margin-top: 4px;
 }
 .ov-empty {
   display: flex;

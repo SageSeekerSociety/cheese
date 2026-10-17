@@ -4,10 +4,9 @@
 `POST /topics/{conversation}/teammate-tasks` is an AI teammate creating one
 from where it is talking: those are the room's. Everything about one task is
 addressed by the task's own conversation id — `GET|PATCH /topics/{task}/task`
-(the task, handing it over), `POST /topics/{task}/start`, `/close` and
-`/reopen`. Talking in a task, naming it and reading its
-document go through the same routes as a room's (`/messages`, `/title`,
-`/document`), with the task's id.
+(the task, handing it over), `POST /topics/{task}/close` and `/reopen`.
+Talking in a task, naming it and reading its document go through the same
+routes as a room's (`/messages`, `/title`, `/document`), with the task's id.
 
 `_actor_in_place`, `DbSession` and the block/project/usage repositories come from
 `app.api.topics_deps` (they lived in `topics.py` until that module's siblings
@@ -30,6 +29,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
+from app.api.doc_access import require_role
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -41,8 +41,6 @@ from app.api.room_task_rows import (
 )
 from app.api.task_instructions import (
     dispatch,
-    say_task_started,
-    start_task_at_once,
     teammate_source_text,
     tell_task,
 )
@@ -53,6 +51,7 @@ from app.api.task_origin import (
     materials_text,
     related_of,
 )
+from app.api.thread_task import turn_into_task
 from app.api.topics_deps import (
     BlockRepository,
     ProjectRepository,
@@ -64,11 +63,18 @@ from app.core.errors import (
     UnprocessableEntityError,
 )
 from app.core.sentences import say
+from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
-from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
+from app.domain.agent.harness.prompt import task_opening_prompt
 from app.domain.agent.opening import opening_content
+from app.domain.agent.staleness import announce_stale
+from app.domain.agent_instance.adapters import (
+    project_team,
+    seat_project,
+    task_teammate,
+)
 from app.domain.agent_instance.own import may_work_for
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.idempotency import store as idem
@@ -76,9 +82,12 @@ from app.domain.idempotency.keys import action_key
 from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
+from app.domain.project_permissions import Permission
 from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
+from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task.closing import close_task
+from app.domain.room_task.place import place_or_404
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
@@ -240,7 +249,11 @@ async def conclude_task(
     text = (body.conclusion or "").strip()
     conclusion = (
         await canonicalize_refs(
-            db, place.project_id, text, exclude_topic_id=place.room_id
+            db,
+            place.project_id,
+            text,
+            team=project_team,
+            exclude_topic_id=place.room_id,
         )
         if text
         else None
@@ -262,7 +275,11 @@ async def conclude_task(
     # Its own session closing it is the turn that would be stopped, and it
     # ends by itself.
     task = await close_task(
-        db, task, None if actor.via == "cheese" else chat, conclusion=conclusion
+        db,
+        task,
+        None if actor.via == "cheese" else chat,
+        conclusion=conclusion,
+        machines=checkout_sweep.sweep,
     )
     close_pr_after_commit(db, task)
     # The task's own conversation hears how it ended, and so does the
@@ -279,7 +296,9 @@ async def conclude_task(
         content=ended,
         meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
     )
-    await tell_origin(db, task, ended)
+    # The 支线 line under the message the task was made from is said by its AI
+    # teammate, so whose teammate it is comes in here too.
+    await tell_origin(db, task, ended, task_teammate=task_teammate)
     out = await task_out(db, chat, task)
     await db.commit()
     return ok(out)
@@ -310,16 +329,11 @@ async def reopen_task(
     return ok(out)
 
 
-# —— 创建、开始、转交 ——————————————————————————————————————————————————
+# —— 创建、转交 ——————————————————————————————————————————————————
 
 
 class TaskCreateIn(BaseModel):
     title: str | None = Field(default=None, max_length=300)
-
-
-class TaskStartIn(BaseModel):
-    #: Who reviews the task's changes, when the project names nobody by default.
-    reviewer_handle: str | None = Field(default=None, max_length=64)
 
 
 class TaskUpdateIn(BaseModel):
@@ -337,8 +351,9 @@ async def create_task(
     resolver: ActorResolverDep,
 ) -> dict:
     """新建任务：a task owned by whoever creates it, empty until they say what
-    it is for. Its agent starts on the owner's first message."""
-    place = await TopicService(db).place_or_404(topic_id)
+    it is for. Its agent starts on the owner's first message; its owner
+    reviews its changes (`TaskService.default_reviewer`)."""
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -347,40 +362,17 @@ async def create_task(
     )
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("taskCreatedByPerson"))
-    task = await TopicService(db).create_task(
-        room_id=place.room_id, created_by=actor.handle, title=body.title
+    await require_role(db, actor, place.project_id, Permission.tasks)
+    task = await task_dispatch.create_task(
+        db,
+        room_id=place.room_id,
+        created_by=actor.handle,
+        title=body.title,
+        seat_project=seat_project,
+        team=project_team,
     )
-    # 建出来即已开始：审阅人默认就是建它的人。没有那两档可退时留在讨论中，
-    # 负责人在任务页点「开始」时看到的是同一句话。
-    await start_task_at_once(db, task, by=actor.handle)
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
-    return ok(out)
-
-
-@router.post("/{topic_id}/start")
-async def start_task(
-    topic_id: uuid.UUID,
-    body: TaskStartIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-    chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> dict:
-    """开始：the owner says the task is discussed enough. From here its agent may
-    change the project, and what the document says now is what its changes are
-    reviewed against."""
-    place, actor, task = await task_conversation(db, resolver, topic_id)
-    if not actor.authenticated or actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
-    TaskService.require_open(task)
-    task = await TaskService(db).start(
-        task, by=actor.handle, reviewer_handle=body.reviewer_handle
-    )
-    await say_task_started(db, task, actor=actor.handle)
-    await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
-    out = await task_out(db, chat, task)
-    await db.commit()
-    await dispatch(chat)
     return ok(out)
 
 
@@ -416,7 +408,9 @@ async def update_task(
     if "owner_handle" in body.model_fields_set and body.owner_handle:
         # Work is handed to anyone in the project, and whoever takes it is in
         # its channel from then on.
-        if body.owner_handle not in await members.project_people(place.project_id):
+        if body.owner_handle not in await members.project_people(
+            place.project_id, team=project_team
+        ):
             raise UnprocessableEntityError(say("taskOwnerNotInProject"))
         await members.take_in(place.room_id, body.owner_handle)
         await _move_off_former_owners_computer(
@@ -431,15 +425,29 @@ async def update_task(
             db, place.project_id, given, task.owner_handle, settings_now
         ):
             raise ForbiddenError(say("ownAgentOtherOwnersTask"))
-        await TopicService(db).give_task_teammate(task, given)
+        await task_dispatch.give_task_teammate(
+            db,
+            task,
+            given,
+            by=actor.handle,
+            seat_project=seat_project,
+            team=project_team,
+        )
     elif not await may_work_for(
         db, place.project_id, task.agent_handle, task.owner_handle, settings_now
     ):
         # Handed to someone whose own agent it is not (#2991): the task goes
         # back to the project's teammate, and its new owner may give it theirs.
-        await TopicService(db).give_task_teammate(task, None)
+        await task_dispatch.give_task_teammate(
+            db,
+            task,
+            None,
+            by=actor.handle,
+            seat_project=seat_project,
+            team=project_team,
+        )
     if body.contributor_handles is not None:
-        people = await members.project_people(place.project_id)
+        people = await members.project_people(place.project_id, team=project_team)
         wanted = list(dict.fromkeys(body.contributor_handles))
         if any(h not in people for h in wanted):
             raise UnprocessableEntityError(say("contributorNotInProject"))
@@ -490,14 +498,17 @@ async def _move_off_former_owners_computer(db, actor, place, task, owner) -> Non
 
 class TeammateTaskIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
-    #: What the task is for, in the teammate's words: the start of its document.
-    summary: str = Field(min_length=1, max_length=20000)
-    #: The person the task is for: who asked for it. Defaults to whoever wrote
-    #: the message the 支线 hangs under.
+    #: What the task is for, in the teammate's words: what its session starts
+    #: from. Not asked for a 支线 turned into the task (``here``), whose
+    #: session carries the conversation on.
+    summary: str = Field(default="", max_length=20000)
+    #: The person the task is for. Defaults to the person whose message the
+    #: teammate is answering — who asked for it, or who answered 「转为任务」 —
+    #: and failing that whoever wrote the message the 支线 hangs under.
     owner_handle: str | None = Field(default=None, max_length=64)
-    #: Someone asked for it to be done: start it as well. A teammate's own idea
-    #: stays in discussion until its owner starts it.
-    start: bool = False
+    #: The 支线 the teammate is in becomes the task, in place, rather than a
+    #: new task being made from it.
+    here: bool = False
 
 
 @router.post("/{topic_id}/teammate-tasks", dependencies=[ROUTE_DECIDES])
@@ -508,11 +519,11 @@ async def create_teammate_task(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """An AI teammate creates a task (`cheese_task`) from the conversation it
-    is in. Made in a 支线, the task hangs under the message the 支线 is under.
-    Started at once when ``start`` says someone asked for it; otherwise it
-    waits for its owner, whom the teammate asks."""
-    place = await TopicService(db).place_or_404(topic_id)
+    """An AI teammate makes a task (`cheese_task`) on someone's word, from the
+    conversation it is in: the 支线 itself (``here``), or a new task that hangs
+    under the message the 支线 is under. A teammate whose own idea it is asks
+    first (`cheese_ask`), and the person who answers is who it does it for."""
+    place = await place_or_404(db, topic_id)
     actor = await resolver.resolve(
         topic_id=place.conversation_id, project_id=place.project_id
     )
@@ -521,7 +532,11 @@ async def create_teammate_task(
     )
     if actor.via != "cheese":
         raise ForbiddenError(say("teammateTaskByTeammate"))
-    TopicService.refuse_tasks_in_private(place.room)
+    task_dispatch.refuse_tasks_in_private(place.room)
+    if body.here and place.thread is None:
+        raise UnprocessableEntityError(say("teammateTaskHereOnlyInThread"))
+    if not body.here and not body.summary.strip():
+        raise UnprocessableEntityError(say("teammateTaskSummaryRequired"))
     # A title nobody can read is not a title. Refused here, with the limit in
     # the words, so the teammate writes a shorter one and calls again — cutting
     # it instead would leave half a phrase in the sidebar and no one the wiser.
@@ -549,10 +564,9 @@ async def create_teammate_task(
     )
     named = (body.owner_handle or "").strip().lstrip("@")
     if named and named not in await TopicMemberService(db).project_people(
-        place.project_id
+        place.project_id, team=project_team
     ):
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
-    owner = named or (origin.author if origin is not None else None)
     # What the person said that this turn answers is where the task came from;
     # in a 支线 that is usually a reply, not the message the 支线 hangs under.
     asked = await asked_in(
@@ -561,7 +575,30 @@ async def create_teammate_task(
         actor.handle,
         main_line=place.thread is None and place.task is None,
     )
-    task = await TopicService(db).create_task(
+    owner = (
+        named
+        or (asked.author if asked is not None else None)
+        or (origin.author if origin is not None else None)
+    )
+    if body.here:
+        assert place.thread is not None
+        task, _ = await turn_into_task(
+            db,
+            place.thread,
+            owner=owner,
+            by=actor.handle,
+            title=body.title,
+            named_by_teammate=True,
+            source_block_id=asked.id if asked is not None else None,
+        )
+        out = {**TaskOut.model_validate(task).model_dump(mode="json"), "here": True}
+        if key is not None:
+            await idem.record_result(db, key, out)
+        await db.commit()
+        await announce_stale(place.room_id, "topics", id=place.room_id)
+        return ok(out)
+    task = await task_dispatch.create_task(
+        db,
         room_id=place.room_id,
         created_by=actor.handle,
         title=body.title,
@@ -570,14 +607,10 @@ async def create_teammate_task(
         named_by_teammate=True,
         origin_block_id=origin.id if origin is not None else None,
         source_block_id=asked.id if asked is not None else None,
+        seat_project=seat_project,
+        team=project_team,
     )
     blocks = (await discussion(db, task))[1]
-    why_not = (
-        await start_task_at_once(db, task, by=task.owner_handle)
-        if body.start and task.owner_handle
-        else None
-    )
-    started = task.started_at is not None
     await tell_task(
         db,
         task,
@@ -586,16 +619,11 @@ async def create_teammate_task(
             owner=task.owner_handle,
             source=teammate_source_text(actor.handle, body.summary, blocks),
             materials=materials_text(materials(blocks)),
-            started=started,
             reviewer=task.reviewer_handle,
         ),
         opening=True,
     )
-    out = {
-        **TaskOut.model_validate(task).model_dump(mode="json"),
-        "started": started,
-        "not_started_because": why_not,
-    }
+    out = {**TaskOut.model_validate(task).model_dump(mode="json"), "here": False}
     if key is not None:
         await idem.record_result(db, key, out)
     await db.commit()

@@ -1,18 +1,17 @@
-"""一条事件的作者：参与者，还是平台自己。
+"""一条事件的作者：「这条是参与者写的吗」的两个孪生。
 
-`AuthorType` 曾经分三档 —— human / ai / system —— 而前两档是同一件事：有人说了
-一句话。人和 agent 是同一种参与者（结论 1），区别只在**是哪一个**参与者，而那是
-署名（`Block.author`，一条 handle）的事：一个房间坐得下好几个人和好几个 agent，
-一个三档枚举说不出是哪一个，只说得出最粗的那一层，于是每个读它的地方都在用一个
-答不了自己问题的字段。
+档位本身 `AuthorType` 住在第 1 层的 `app.domain.event_author` —— 判这一列的还有
+够不到第 4 层的读者（`topic` 的裸表读法），而读法要求按枚举成员读。留在这里的是
+同一句话在 ORM 这一侧的两种写法：读一行用 `is_participant`，写 `WHERE` 用
+`participant_blocks`。
 
-所以这里只答一个问题：**这条事件是参与者写的，还是平台自己写的。**「是不是芝士
-说的」去问署名（`app.domain.identity.handles`）。
+「是不是芝士说的」去问署名（`app.domain.identity.handles`）。
 """
 
 from sqlalchemy import ColumnElement
 
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.models import Block
+from app.domain.event_author import AuthorType
 
 
 def is_participant(author_type: AuthorType) -> bool:

@@ -1,0 +1,10 @@
+{
+  "by": "{actor} {action}",
+  "count": "1 change | {n} changes",
+  "created": "created “{title}”",
+  "edited": "edited “{title}”",
+  "editedDoc": "edited the document",
+  "sep": ", ",
+  "suggested": "suggested {n} changes to “{title}”",
+  "suggestedDoc": "suggested {n} changes to the document"
+}

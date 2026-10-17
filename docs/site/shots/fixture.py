@@ -29,7 +29,8 @@ import app.models  # noqa: E402,F401 — every table
 from sqlalchemy import delete, select, update  # noqa: E402
 
 from app.core.db import async_session_factory  # noqa: E402
-from app.domain.block.models import AuthorType, Block, BlockKind  # noqa: E402
+from app.domain.block.models import Block, BlockKind  # noqa: E402
+from app.domain.event_author import AuthorType  # noqa: E402
 from app.domain.library.service import library_root  # noqa: E402
 from app.domain.project.models import Project  # noqa: E402
 from app.domain.review.models import AcceptCard, AcceptStatus  # noqa: E402
@@ -229,8 +230,8 @@ async def main() -> None:
     )
 
     def task(title: str, document: str) -> str:
-        """A task the way a person makes one: created, its document written,
-        started."""
+        """A task the way a person makes one: created, and its document
+        written."""
         made = api("POST", f"/topics/{form}/tasks", alice, json={"title": title})
         path = f"/topics/{made['id']}"
         doc = api("GET", f"{path}/document", alice)["id"]
@@ -240,7 +241,6 @@ async def main() -> None:
             alice,
             json={"content": document, "expected_version": 0},
         )
-        api("POST", f"{path}/start", alice, json={"reviewer_handle": "alice"})
         return made["id"]
 
     tasks = [

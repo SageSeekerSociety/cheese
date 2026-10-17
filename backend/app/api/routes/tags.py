@@ -14,6 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -45,7 +46,7 @@ async def list_tags(
         page_start=page_start,
         page_size=page_size,
     )
-    return {"code": 200, "message": "OK", "data": {"topics": tags, "page": page}}
+    return ok({"topics": tags, "page": page})
 
 
 @router.get(
@@ -58,7 +59,7 @@ async def get_tag(
     service: TagService = Depends(get_tag_service),
 ) -> dict:
     tag = await service.get_tag(tag_id)
-    return {"code": 200, "message": "OK", "data": {"topic": tag}}
+    return ok({"topic": tag})
 
 
 @router.post(
@@ -75,4 +76,4 @@ async def create_tag(
     if not isinstance(name, str) or not name.strip():
         raise BadRequestError("name is required")
     result = await service.create_tag(name=name, created_by_id=auth_user.user_id)
-    return {"code": 201, "message": "Created", "data": result}
+    return ok(result)

@@ -19,6 +19,9 @@ from app.domain.oauth.services import (
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
 
+#: provider 的实现住在 `oauth/services/providers.py`，所以 patch 点也在这个子模块上。
+HTTPX_CLIENT = "app.domain.oauth.services.providers.httpx.AsyncClient"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -199,9 +202,7 @@ class TestGitHubProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("my-code")
 
         assert result == {"access_token": "tok123"}
@@ -233,9 +234,7 @@ class TestGitHubProviderRefreshAccessToken:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.refresh_access_token("old-refresh")
 
         assert result["access_token"] == "new-tok"
@@ -287,7 +286,7 @@ async def _github_info(profile_email, emails_status, emails) -> OAuthUserInfo:
             _GH_EMAILS: (emails_status, emails),
         }
     )
-    with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=client):
+    with patch(HTTPX_CLIENT, return_value=client):
         return await GitHubProvider(_github_config()).get_user_info("token123")
 
 
@@ -361,9 +360,7 @@ class TestGoogleProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("goog-code")
 
         assert result == {"access_token": "goog-tok"}
@@ -381,7 +378,7 @@ async def _google_info(profile: dict) -> OAuthUserInfo:
     client = _routed_client(
         {"https://www.googleapis.com/oauth2/v2/userinfo": (200, profile)}
     )
-    with patch("app.domain.oauth.services.httpx.AsyncClient", return_value=client):
+    with patch(HTTPX_CLIENT, return_value=client):
         return await GoogleProvider(_google_config()).get_user_info("goog-token")
 
 
@@ -460,9 +457,7 @@ class TestRUCProviderExchangeCode:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             result = await provider.exchange_code("ruc-code")
 
         assert result == {"access_token": "ruc-tok"}
@@ -494,9 +489,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             info = await provider.get_user_info("ruc-token")
 
         # uid coerced to str; primary identity's stno used as username
@@ -519,9 +512,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-        ):
+        with patch(HTTPX_CLIENT, return_value=mock_client):
             info = await provider.get_user_info("ruc-token")
 
         assert info.id == "u-9"
@@ -542,9 +533,7 @@ class TestRUCProviderGetUserInfo:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch(
-                "app.domain.oauth.services.httpx.AsyncClient", return_value=mock_client
-            ),
+            patch(HTTPX_CLIENT, return_value=mock_client),
             pytest.raises(BadRequestError),
         ):
             await provider.get_user_info("ruc-token")
@@ -1144,10 +1133,25 @@ class TestGetGithubUserToken:
             refresh_token=None,
         )
 
-        with caplog.at_level(logging.ERROR, logger="app.domain.oauth.services"):
+        with caplog.at_level(logging.ERROR):
             assert await svc.get_github_user_token(42) is None
 
-        assert "could not be" in caplog.text
+        # 判的是这条记录自己的 logger 名，不只看文本。caplog 的 handler 挂在根上，
+        # 记录会一路传上来，所以 `at_level(logger=...)` 里写哪个名字都是绿的 —— 真正
+        # 钉住「这句话是从 `services/tokens.py` 发出来的」的是下面这一条：这条日志跟着
+        # `_decrypt_stored_token` 搬了家，名字对不上就红。
+        #
+        # 挑记录用的 `could not be` 同时也把这句日志的措辞固定住了：改措辞也会红，报
+        # 错信息看着像 logger 名不对。两条一起固定是有意的 —— 这句是给运维看的降级
+        # 说明，`test_a_refusal_is_said_with_a_key.py` 按同一句话数着它的语料。
+        logs = [
+            record.name
+            for record in caplog.records
+            if "could not be" in record.getMessage()
+        ]
+        assert logs == ["app.domain.oauth.services.tokens"], (
+            f"降级日志的来源/措辞变了：{logs}；期望 tokens 子模块里那一句"
+        )
 
     # "an undecryptable stored refresh_token degrades cleanly, without
     # writing" is covered against a real database in

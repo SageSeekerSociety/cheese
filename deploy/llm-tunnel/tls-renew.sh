@@ -54,14 +54,21 @@ cp -L "$live/privkey.pem" "$target/privkey.pem.new"
 chmod 600 "$target/privkey.pem.new"
 mv -f "$target/fullchain.pem.new" "$target/fullchain.pem"
 mv -f "$target/privkey.pem.new" "$target/privkey.pem"
-bash "$HERE/configure-frontend.sh" "$ACTIVE_DIR" 18086 "$FRONTEND_PROXY_PORT"
+# The preview owner the deploy last routed the tunnel to (configure-preview.sh
+# writes its port, or app-router's 18085 when previews stay on the backend).
+# Re-rendered without it, the front door would send preview tunnels back to the
+# rolling frontend until the next deploy.
+owner_port="$(sed -n 's/^[[:space:]]*default "127\.0\.0\.1:\([0-9]*\)";.*/\1/p' \
+  "$ACTIVE_DIR/preview-routing.conf" 2>/dev/null | head -n 1)"
+[ "$owner_port" != 18085 ] || owner_port=""
+bash "$HERE/configure-frontend.sh" "$ACTIVE_DIR" 18086 "$FRONTEND_PROXY_PORT" "$owner_port"
 if ! docker exec "$API_FRONT_CONTAINER" nginx -t; then
   if [[ -f "$backup/fullchain.pem" ]]; then
     cp -a "$backup/." "$target/"
   else
     rm -f "$target/fullchain.pem" "$target/privkey.pem"
   fi
-  bash "$HERE/configure-frontend.sh" "$ACTIVE_DIR" 18086 "$FRONTEND_PROXY_PORT"
+  bash "$HERE/configure-frontend.sh" "$ACTIVE_DIR" 18086 "$FRONTEND_PROXY_PORT" "$owner_port"
   rm -rf "$backup"
   echo "api-front rejected the new certificate; restored the previous files" >&2
   exit 1

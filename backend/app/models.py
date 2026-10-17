@@ -24,7 +24,6 @@ from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
 from app.domain.docs_site import models as docs_site  # noqa: F401
-from app.domain.external_problem import models as external_problem  # noqa: F401
 from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.idempotency import models as idempotency  # noqa: F401
@@ -47,6 +46,7 @@ from app.domain.oauth import models as oauth  # noqa: F401
 from app.domain.passkey import models as passkey  # noqa: F401
 from app.domain.pin import models as pin  # noqa: F401
 from app.domain.project import models as project  # noqa: F401
+from app.domain.project_situation import models as project_situation  # noqa: F401
 from app.domain.project_skill import models as project_skill  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401
 from app.domain.remote_mcp import models as remote_mcp  # noqa: F401
@@ -65,4 +65,5 @@ from app.domain.thread import models as thread  # noqa: F401
 from app.domain.topic import models as topic  # noqa: F401
 from app.domain.usage import models as usage  # noqa: F401
 from app.domain.user import models as user  # noqa: F401
+from app.domain.web_snippet import models as web_snippet  # noqa: F401
 from app.domain.webhook import models as webhook  # noqa: F401

@@ -10,7 +10,7 @@
  * 这里只出数据（外加一个把顶层评论和回复拼成一栋楼的小函数），不引任何运行时依赖：
  * 哪一份配哪个组件、每一格看什么，在 `catalogFeedback.ts`。
  */
-import type { FeedbackComment, FeedbackStatus, FeedbackTimelineEntry } from '@/cx_types'
+import type { FeedbackCard, FeedbackComment, FeedbackMeta, FeedbackStatus, FeedbackTimelineEntry } from '@/cx_types'
 
 // ---- 一条评论（FeedbackCommentItem）------------------------------------------
 
@@ -101,3 +101,64 @@ export const DECLINED: FeedbackTimelineEntry[] = [
   { status: 'in_progress', by_handle: 'admin', at: '2026-09-29T09:12:00Z', note: null },
   { status: 'declined', by_handle: 'admin', at: '2026-09-30T09:12:00Z', note: null },
 ]
+
+// ---- 反馈列表页的那半张画面（FeedbackCenterPageView / FeedbackMinePageView）----
+//
+// 两页共用的三种行状态：还没人支持的、支持过的、办完了的。照 `FeedbackCard` 那一组
+// —— 页面把同一行摆进更大的骨架里，所以这里只额外要「凑够一屏」「有多页」这两种列表。
+
+function listRow(over: Partial<FeedbackCard> = {}): FeedbackCard {
+  return {
+    id: 'fb-2001',
+    display_id: 'FB-2001',
+    kind: 'bug',
+    title: '导出一个月的数据要等四十秒',
+    summary: '每次导出都要重跑一遍全量聚合，数据一多就卡在那儿转。',
+    status: 'received',
+    priority: 'normal',
+    visibility: 'public',
+    security: false,
+    author_handle: 'andylizf',
+    author_is_agent: false,
+    author_avatar_id: null,
+    submitted_by_handle: null,
+    assignee_handle: null,
+    tags: [],
+    supports: 0,
+    comments: 0,
+    supported: false,
+    last_activity_at: null,
+    created_at: '2026-10-12T09:12:00Z',
+    ...over,
+  }
+}
+
+/** 一屏行：公开、一条已支持、一条芝士提的、一条办完了的，顺手凑够「不只一条」。 */
+export const CENTER_ROWS: FeedbackCard[] = [
+  listRow(),
+  listRow({ id: 'fb-2002', title: '通知偶尔迟到十几分钟', supported: true, supports: 7, comments: 3 }),
+  listRow({
+    id: 'fb-2003',
+    kind: 'suggestion',
+    title: '反馈列表能按标签筛一下吗',
+    author_handle: 'cheese',
+    author_is_agent: true,
+  }),
+  listRow({ id: 'fb-2004', title: '手机上底栏会盖住最后一行', status: 'deployed', supports: 12, comments: 4 }),
+]
+
+/** 服务端的词表（`GET /feedback/meta`）：给页签的取值和「热门」那句说明用。 */
+export const FEEDBACK_META: FeedbackMeta = {
+  kinds: ['bug', 'suggestion', 'other'],
+  statuses: ['received', 'in_progress', 'resolved', 'deployed', 'declined'],
+  priorities: ['low', 'normal', 'high', 'urgent'],
+  visibilities: ['public', 'private'],
+  status_ladder: ['received', 'in_progress', 'resolved', 'deployed'],
+  tabs: ['all', 'hot', 'active', 'resolved'],
+  admin_tabs: ['public', 'private', 'agent', 'security'],
+  hot_score: 10,
+  hot_half_life_days: 2,
+  hot_min_items: 5,
+  is_admin: false,
+  is_platform_admin: false,
+}

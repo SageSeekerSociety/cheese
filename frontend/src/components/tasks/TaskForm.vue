@@ -19,7 +19,6 @@ import { useTaskForm } from '@/composables/useTaskForm'
 
 import TaskFormClassify from './form/TaskFormClassify.vue'
 import TaskFormContent from './form/TaskFormContent.vue'
-import TaskFormExternalProblem from './form/TaskFormExternalProblem.vue'
 import TaskFormMore from './form/TaskFormMore.vue'
 import TaskFormParticipation from './form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from './form/TaskFormPrivacyDialog.vue'
@@ -37,8 +36,10 @@ const props = withDefaults(
     parametersOnly?: boolean
     /** 这道题有没有单独写 AI 指导（「更多设置」收起时那一行要说）。 */
     teachingCustom?: boolean
-    /** 要不要画「外站题」那一节。默认画（见 `useTaskForm.ts` 里这个 prop 的说明）。 */
-    externalProblemEnabled?: boolean
+    /** 能当导师的人：出题人和空间管理员。 */
+    mentorOptions?: { title: string; value: string }[]
+    /** 新发一道题时导师默认是谁。 */
+    defaultMentor?: string
   }>(),
   {
     initialData: null,
@@ -48,7 +49,8 @@ const props = withDefaults(
     domainGroups: () => [],
     parametersOnly: false,
     teachingCustom: false,
-    externalProblemEnabled: true,
+    mentorOptions: () => [],
+    defaultMentor: undefined,
   }
 )
 
@@ -96,14 +98,14 @@ const {
   categoryId,
   categoryIdProps,
   requireRealName,
-  externalProblemNo,
-  externalProblemNoProps,
   participantLimit,
   participantLimitProps,
   teamLockingPolicy,
   accessControlEnabled,
   accessDomainGroupIds,
   participantLimitUnlimited,
+  mentorsJoin,
+  mentors,
   description,
   isSubmitting,
   submitForm,
@@ -142,6 +144,9 @@ defineExpose({
       v-model:team-locking-policy="teamLockingPolicy"
       v-model:min-team-size="minTeamSize"
       v-model:max-team-size="maxTeamSize"
+      v-model:mentors-join="mentorsJoin"
+      v-model:mentors="mentors"
+      :mentor-options="mentorOptions"
       :is-editing="isEditing"
       :submitter-type-control="submitterTypeProps"
       :rank-control="rankProps"
@@ -165,12 +170,6 @@ defineExpose({
       :category-items="categoryItems"
       :topic-items="topicItems"
       :category-id-control="categoryIdProps"
-    />
-
-    <TaskFormExternalProblem
-      v-if="externalProblemEnabled && !parametersOnly"
-      v-model:problem-no="externalProblemNo"
-      :problem-no-control="externalProblemNoProps"
     />
 
     <TaskFormMore

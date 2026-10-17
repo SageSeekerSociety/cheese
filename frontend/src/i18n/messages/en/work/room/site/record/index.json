@@ -1,0 +1,9 @@
+{
+  "compact": "Compaction",
+  "delivery": "Delivery",
+  "environment": "Environment",
+  "memory": "Memory",
+  "queue": "Queue",
+  "retry": "Retry",
+  "wakeWatch": "Wake"
+}
