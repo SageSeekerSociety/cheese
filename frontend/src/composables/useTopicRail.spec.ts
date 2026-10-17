@@ -181,3 +181,44 @@ describe('侧栏自己的慢钟把红灯拨亮', () => {
     expect(rail.taskLight(task)).toEqual({ kind: 'red', breathe: false, why: 'unfinished' })
   })
 })
+
+// 收起来的折叠开关替里面的行说了它们的状态（`toggleTitle`）。两种红是两件事，收起来
+// 的那盏红说的是哪一件，开关就得说哪一件 —— 别把已经停下来报错的活说成还在跑。断的是
+// 那句话的关键含义（在跑 vs 停下报错），不是整句原文。
+describe('折叠开关替收起来的行说话', () => {
+  beforeEach(() => {
+    setLocale('zh-CN')
+  })
+
+  it('里面是「停下报错」的红，开关不说它「在跑」', async () => {
+    const base = Date.now()
+    const { rail } = await mountRail([
+      topic('p', {}),
+      // 子行收在 p 里面：它坏在这里，p 的灯和折叠开关都得替它说话。
+      topic('c-stopped', {
+        parent_id: 'p',
+        incomplete_since: new Date(base - 10 * 60_000).toISOString(),
+      }),
+    ])
+
+    const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
+    expect(title).not.toContain('在跑')
+    expect(title).toContain('报错')
+  })
+
+  it('里面是「在跑却没动静」的红，开关照旧说它没动静（没被上一条带偏）', async () => {
+    const base = Date.now()
+    const { rail } = await mountRail([
+      topic('p', {}),
+      topic('c-quiet', {
+        parent_id: 'p',
+        moving: true,
+        last_output_at: new Date(base - 10 * 60_000).toISOString(),
+      }),
+    ])
+
+    const title = rail.toggleTitle(rail.railRows.value.find((r) => r.topic.id === 'p')!)
+    expect(title).toContain('在跑')
+    expect(title).toContain('没动静')
+  })
+})
