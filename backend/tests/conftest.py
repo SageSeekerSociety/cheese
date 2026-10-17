@@ -95,7 +95,7 @@ _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (ser
 # The runner slot this run is on, empty everywhere but a pool machine with more
 # than one. Two runs sharing a machine otherwise share every name below, and the
 # harness drops its databases WITH (FORCE) — see tests/isolation.py.
-_SLOT = os.environ.get("CHEESE_CI_SLOT", "")
+_SLOT = os.environ.get("CHEESEX_TEST_SLOT", os.environ.get("CHEESE_CI_SLOT", ""))
 _INTG_DB_NAME, _CLIENT_DB_NAME = isolation.database_names(_XDIST_WORKER, _SLOT)
 # Postgres server root (no database). Defaults to the TEST server the repo-root
 # docker-compose.yml publishes on :5433 (separate from the dev database on
@@ -116,7 +116,13 @@ settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 # block of them so two runs sharing a machine cannot land on the same index.
 _REDIS_BASE = re.sub(r"/\d*$", "", os.environ.get("REDIS_URL", settings.redis_url))
 _REDIS_DB = isolation.redis_database(
-    _XDIST_WORKER, int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0"))
+    _XDIST_WORKER,
+    int(os.environ.get("CHEESE_CI_REDIS_BASE_DB", "0")),
+    database_count=int(
+        os.environ.get(
+            "CHEESEX_REDIS_DB_COUNT", os.environ.get("CHEESE_CI_VALKEY_DATABASES", "16")
+        )
+    ),
 )
 settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
 os.environ["REDIS_URL"] = settings.redis_url
@@ -2357,7 +2363,19 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
 
 
 @pytest.fixture(scope="session")
-def _pg_schema():
+def _database_slot(testrun_uid):
+    """Only DB users claim resources; xdist workers share this run's identity."""
+    with isolation.claim_slot(
+        slot=_SLOT,
+        owner=testrun_uid,
+        postgres_urls=(settings.database_url, TEST_DATABASE_URL),
+        redis_url=settings.redis_url,
+    ):
+        yield
+
+
+@pytest.fixture(scope="session")
+def _pg_schema(_database_slot):
     """Create + migrate THIS worker's two dedicated databases once per session:
     the integration DB (settings.database_url, bound by the app engines) and the
     client/python_client DB (TEST_DATABASE_URL). Reached via the ``_pg_schema_gate``
