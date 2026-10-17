@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,31 +12,18 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).with_name("check-review-artifacts.py")
+ORPHAN = 1
+CANNOT_JUDGE = 2
 
 
 class ReviewArtifactGuardTests(unittest.TestCase):
+    # --- the orphan verdict -------------------------------------------------
+
     def test_unreferenced_artifact_is_rejected(self) -> None:
         root = self._tree({"artifacts/orphan.pdf": b"%PDF-1.4", "note.md": "# 评审\n"})
         result = self._run(root)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(result.returncode, ORPHAN, result.stderr)
         self.assertIn("orphan.pdf", result.stderr)
-
-    def test_artifact_linked_from_a_note_passes(self) -> None:
-        root = self._tree(
-            {
-                "artifacts/kept.pdf": b"%PDF-1.4",
-                "note.md": "[产物](artifacts/kept.pdf)\n",
-            }
-        )
-        result = self._run(root)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_bare_filename_mention_passes(self) -> None:
-        root = self._tree(
-            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "验收看 kept.pdf 这一份。\n"}
-        )
-        result = self._run(root)
-        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_a_hyphenated_longer_name_is_not_a_citation(self) -> None:
         root = self._tree(
@@ -44,9 +32,7 @@ class ReviewArtifactGuardTests(unittest.TestCase):
                 "note.md": "[另一份](artifacts/trial-review.pdf)\n",
             }
         )
-        result = self._run(root)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn("review.pdf", result.stderr)
+        self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_dot_separated_longer_name_is_not_a_citation(self) -> None:
         root = self._tree(
@@ -55,8 +41,7 @@ class ReviewArtifactGuardTests(unittest.TestCase):
                 "note.md": "[旧版](artifacts/2026.09.review.pdf)\n",
             }
         )
-        result = self._run(root)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_chinese_longer_name_is_not_a_citation(self) -> None:
         # `验收报告.pdf` must not satisfy the orphan `报告.pdf`.
@@ -66,8 +51,7 @@ class ReviewArtifactGuardTests(unittest.TestCase):
                 "note.md": "[验收](artifacts/验收报告.pdf)\n",
             }
         )
-        result = self._run(root)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_longer_extension_is_not_a_citation(self) -> None:
         # `review.pdf.bak` must not satisfy `review.pdf`.
@@ -77,8 +61,13 @@ class ReviewArtifactGuardTests(unittest.TestCase):
                 "note.md": "备份在 review.pdf.bak。\n",
             }
         )
-        result = self._run(root)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_longer_word_is_not_a_citation(self) -> None:
+        root = self._tree(
+            {"artifacts/review.pdf": b"%PDF-1.4", "note.md": "看 review.pdfs。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_the_same_basename_in_another_directory_is_not_a_citation(self) -> None:
         root = self._tree(
@@ -87,45 +76,17 @@ class ReviewArtifactGuardTests(unittest.TestCase):
                 "note.md": "[细节](artifacts/run-42/detail.pdf)\n",
             }
         )
-        result = self._run(root)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self._run(root).returncode, ORPHAN)
 
-    def test_artifact_in_a_subdirectory_is_matched_by_full_path(self) -> None:
+    def test_a_different_space_joined_path_is_not_a_citation(self) -> None:
+        # `review.pdf` is the tail of `old/2026 review.pdf`, a different path.
         root = self._tree(
             {
-                "artifacts/run-42/detail.pdf": b"%PDF-1.4",
-                "note.md": "[细节](artifacts/run-42/detail.pdf)\n",
+                "artifacts/review.pdf": b"%PDF-1.4",
+                "note.md": "[另一份](old/2026 review.pdf)\n",
             }
         )
-        result = self._run(root)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_percent_encoded_link_passes(self) -> None:
-        root = self._tree(
-            {
-                "artifacts/2026 review.pdf": b"%PDF-1.4",
-                "note.md": "[预览](artifacts/2026%20review.pdf)\n",
-            }
-        )
-        result = self._run(root)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_a_sentence_period_is_not_part_of_the_name(self) -> None:
-        root = self._tree(
-            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "See artifacts/kept.pdf.\n"}
-        )
-        result = self._run(root)
-        self.assertEqual(result.returncode, 0, result.stderr)
-
-    def test_a_citation_in_a_nested_note_counts(self) -> None:
-        root = self._tree(
-            {
-                "artifacts/kept.pdf": b"%PDF-1.4",
-                "2026-09-28-review/note.md": "[产物](artifacts/kept.pdf)\n",
-            }
-        )
-        result = self._run(root)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self._run(root).returncode, ORPHAN)
 
     def test_a_document_inside_the_artifacts_directory_does_not_count(self) -> None:
         root = self._tree(
@@ -134,18 +95,126 @@ class ReviewArtifactGuardTests(unittest.TestCase):
                 "artifacts/README.md": "orphan.pdf\n",
             }
         )
-        result = self._run(root)
-        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    # --- citations that must pass ------------------------------------------
+
+    def test_artifact_linked_from_a_note_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[产物](artifacts/kept.pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_bare_filename_mention_passes(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "验收看 kept.pdf 这一份。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_path_glued_to_chinese_prose_passes(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "详见artifacts/kept.pdf这一份。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_artifact_in_a_subdirectory_is_matched_by_full_path(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/run-42/detail.pdf": b"%PDF-1.4",
+                "note.md": "[细节](artifacts/run-42/detail.pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_percent_encoded_link_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/2026 review.pdf": b"%PDF-1.4",
+                "note.md": "[预览](artifacts/2026%20review.pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_literal_space_in_an_angled_link_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/2026 review.pdf": b"%PDF-1.4",
+                "note.md": "[预览](<artifacts/2026 review.pdf>)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_literal_parenthesis_in_an_angled_link_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/report(final).pdf": b"%PDF-1.4",
+                "note.md": "[报告](<artifacts/report(final).pdf>)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_literal_plus_in_a_path_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/v1+fix.pdf": b"%PDF-1.4",
+                "note.md": "[修复](<artifacts/v1+fix.pdf>)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_literal_percent_in_a_name_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/discount%20off.pdf": b"%PDF-1.4",
+                "note.md": "[价格](artifacts/discount%20off.pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_sentence_period_is_not_part_of_the_name(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "See artifacts/kept.pdf.\n"}
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_citation_in_a_nested_note_counts(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "2026-09-28-review/note.md": "[产物](artifacts/kept.pdf)\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    # --- cannot judge -------------------------------------------------------
 
     def test_a_missing_reviews_directory_cannot_be_judged(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = self._run(Path(directory))
-        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
+        self.assertIn("无法判断", result.stderr)
+
+    def test_an_unreadable_note_cannot_be_judged(self) -> None:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root can read a mode-000 file")
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "[产物](artifacts/kept.pdf)\n"}
+        )
+        note = root / "docs" / "reviews" / "note.md"
+        note.chmod(0)
+        self.addCleanup(note.chmod, 0o644)
+        result = self._run(root)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
         self.assertIn("无法判断", result.stderr)
 
     def test_real_repository_passes_through_the_default_root(self) -> None:
         result = self._run()
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    # --- helpers ------------------------------------------------------------
 
     def _tree(self, files: dict[str, bytes | str]) -> Path:
         directory = tempfile.TemporaryDirectory()

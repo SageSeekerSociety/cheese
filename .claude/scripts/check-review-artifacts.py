@@ -13,12 +13,22 @@ This guard turns that reading into a check: a file under
 `docs/reviews/artifacts/` must be named by at least one document under
 `docs/reviews/` (the `artifacts/` subtree itself is not a document).
 
-Citations are matched as whole path tokens, not substrings. That is what keeps
-`review.pdf` from being satisfied by `trial-review.pdf`, `2026.09.review.pdf`,
-`验收报告.pdf`, `review.pdf.bak` or `artifacts/run-42/detail.pdf` — all of them
-are different artifacts, and a substring match would call every one of them a
-citation. A percent-encoded link (`2026%20review.pdf`) is decoded before the
-comparison, so a correctly linked name is not reported as an orphan.
+What counts as a citation:
+
+  * a Markdown link destination that resolves to the artifact, including
+    `<artifacts/2026 review.pdf>` and percent-encoded forms;
+  * the literal path `artifacts/<name>` in prose;
+  * a bare `<name>` in prose, when it stands on its own — delimited by spaces
+    or punctuation. A bare name glued to Chinese prose (`详见kept.pdf`) is not
+    counted, because no rule can tell it apart from a longer Chinese filename
+    (`验收报告.pdf` naming `报告.pdf`). Write the `artifacts/` path there.
+
+Matching is whole-name with ASCII filename boundaries, not substring. That is
+what keeps `review.pdf` from being satisfied by `trial-review.pdf`,
+`2026.09.review.pdf`, `验收报告.pdf`, `review.pdf.bak`, `review.pdfs` or
+`artifacts/run-42/detail.pdf` — all different artifacts. Names containing
+spaces, parentheses, `+` or a literal `%` are matched literally; a link that
+percent-encodes them is decoded before the comparison.
 
 Cannot judge is not a pass: a missing `docs/reviews/` directory or a note that
 cannot be read exits 2 and says so, because a directory move must not turn this
@@ -31,8 +41,10 @@ Usage: check-review-artifacts.py             check the tree
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
+from string import ascii_letters, digits
 from urllib.parse import unquote
 
 #: Where the artifacts and the notes that must cite them live.
@@ -43,33 +55,32 @@ ARTIFACTS_DIRNAME = "artifacts"
 #: `docs/reviews/` (the PDFs themselves) is not a document.
 DOC_SUFFIXES = (".md",)
 
-#: Punctuation that continues a path token. Letters and digits of any script
-#: join via `str.isalnum()`, so `验收报告.pdf` stays one token and cannot
-#: satisfy `报告.pdf`.
-PATH_PUNCTUATION = frozenset("_-./%")
+#: Characters that keep an ASCII filename going. A match preceded or followed
+#: by one of these is a suffix/prefix of a longer name, not a citation.
+ASCII_NAME = frozenset(ascii_letters + digits + "_-.")
+
+#: Markdown link destinations, angle-bracketed first (the only valid form when
+#: the destination contains a space or a parenthesis).
+ANGLED_LINK = re.compile(r"\]\(\s*<([^>\n]*)>\s*\)")
+PLAIN_LINK = re.compile(r"\]\(\s*([^)\s][^)\n]*?)\s*\)")
 
 
-def _is_path_char(character: str) -> bool:
-    return character.isalnum() or character in PATH_PUNCTUATION
+def _link_destinations(text: str):
+    for pattern in (ANGLED_LINK, PLAIN_LINK):
+        for match in pattern.finditer(text):
+            yield match.group(1)
 
 
-def path_tokens(text: str):
-    """The maximal path-shaped runs in `text`."""
-    start = None
-    for index, character in enumerate(text):
-        if _is_path_char(character):
-            if start is None:
-                start = index
-        elif start is not None:
-            yield text[start:index]
-            start = None
-    if start is not None:
-        yield text[start:]
+def _without_link_destinations(text: str) -> str:
+    for pattern in (ANGLED_LINK, PLAIN_LINK):
+        text = pattern.sub(" ", text)
+    return text
 
 
-def _normalized(token: str) -> str:
-    """A token without a leading slash or `./`, percent-decoding applied."""
-    value = unquote(token).lstrip("/")
+def _normalized(value: str, *, decode: bool = True) -> str:
+    """A path without a leading slash or `./`, percent-decoding applied."""
+    value = unquote(value.strip()) if decode else value.strip()
+    value = value.lstrip("/")
     while value.startswith("./"):
         value = value[2:]
     # A sentence's full stop is not part of the filename; no artifact in this
@@ -78,13 +89,72 @@ def _normalized(token: str) -> str:
     return value.rstrip(".")
 
 
-def cites(token: str, relative: str) -> bool:
-    """Whether one path token names `relative`, a path under the artifacts dir."""
-    value = _normalized(token)
-    if value == relative:
-        return True
+def path_names_artifact(value: str, relative: str) -> bool:
+    """Whether a link destination names `relative`, a path under the artifacts dir."""
     canonical = f"{ARTIFACTS_DIRNAME}/{relative}"
-    return value == canonical or value.endswith(f"/{canonical}")
+    # Percent-decoding is what matches `2026%20review.pdf`; keeping the raw
+    # form is what matches a filename that literally contains `%20`.
+    for candidate in (_normalized(value), _normalized(value, decode=False)):
+        if (
+            candidate == relative
+            or candidate == canonical
+            or candidate.endswith(f"/{canonical}")
+        ):
+            return True
+    return False
+
+
+def _left_boundary_ok(text: str, index: int, *, canonical: bool) -> bool:
+    if index == 0:
+        return True
+    previous = text[index - 1]
+    if canonical:
+        # `artifacts/` gives the match its shape, so Chinese prose may run
+        # straight into it (`详见artifacts/kept.pdf`); only an ASCII filename
+        # character means this is the tail of a longer path (`myartifacts/…`).
+        return previous not in ASCII_NAME
+    # A bare name must stand alone: no filename character and no directory
+    # separator (`artifacts/run-42/detail.pdf` is not a citation of detail.pdf).
+    return previous != "/" and not previous.isalnum() and previous not in "_-."
+
+
+def _right_boundary_ok(text: str, end: int) -> bool:
+    if end >= len(text):
+        return True
+    # Chinese after the name (`kept.pdf这一份`) is prose, not a longer
+    # extension; only an ASCII filename character continues the name.
+    following = text[end]
+    if following not in ASCII_NAME:
+        return True
+    # A full stop that ends the sentence, rather than one that starts another
+    # extension: `kept.pdf.` is a citation, `kept.pdf.bak` is not.
+    return following == "." and (end + 1 >= len(text) or text[end + 1] not in ASCII_NAME)
+
+
+def _contains(text: str, candidate: str, *, canonical: bool) -> bool:
+    start = 0
+    while True:
+        index = text.find(candidate, start)
+        if index < 0:
+            return False
+        if _left_boundary_ok(text, index, canonical=canonical) and _right_boundary_ok(
+            text, index + len(candidate)
+        ):
+            return True
+        start = index + 1
+
+
+def names_artifact(text: str, relative: str) -> bool:
+    """Whether one note names `relative`, a path under the artifacts dir."""
+    if any(path_names_artifact(destination, relative) for destination in _link_destinations(text)):
+        return True
+    prose = _without_link_destinations(text)
+    canonical = f"{ARTIFACTS_DIRNAME}/{relative}"
+    for candidate, is_canonical in ((canonical, True), (relative, False)):
+        for variant in (prose, unquote(prose)):
+            if _contains(variant, candidate, canonical=is_canonical):
+                return True
+    return False
 
 
 def _artifact_paths(reviews: Path) -> list[Path]:
@@ -116,11 +186,7 @@ def unreferenced(reviews: Path, documents: list[str]) -> list[Path]:
     missing = []
     for artifact in _artifact_paths(reviews):
         relative = artifact.relative_to(reviews / ARTIFACTS_DIRNAME).as_posix()
-        if not any(
-            cites(token, relative)
-            for text in documents
-            for token in path_tokens(text)
-        ):
+        if not any(names_artifact(text, relative) for text in documents):
             missing.append(artifact)
     return missing
 
