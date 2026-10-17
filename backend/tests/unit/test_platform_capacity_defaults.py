@@ -30,9 +30,10 @@ def test_the_pool_may_hold_ten_hosts() -> None:
 
 
 def test_the_pool_keeps_a_whole_hosts_slots_free() -> None:
-    """The sweep adds a host while a whole host's slots are still free, so the
-    session that arrives after that finds one instead of waiting for a host to
-    be created. A host of the deployment's default size runs four sandboxes."""
+    """The sweep adds a host when the free slots fall below a whole host's
+    worth, so the session that arrives after that finds one instead of waiting
+    for a host to be created. A host of the deployment's default size runs four
+    sandboxes."""
     host = CloudHost(
         cores=settings.microcloud_default_cores,
         memory_mb=settings.microcloud_default_memory_mb,

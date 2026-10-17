@@ -540,21 +540,26 @@ def test_the_pool_adds_a_host_before_its_free_slots_run_out(pool, monkeypatch):
     assert len(pool.cloud.created) == 2
 
 
-def test_the_pool_adds_a_host_while_three_of_four_slots_are_free(pool, monkeypatch):
-    """A host of the default size runs four sandboxes. One session on it
-    leaves three free — less than a whole host's worth — so the sweep adds a
-    host then, instead of waiting until the pool is full and the next session
-    has to wait for it."""
+def _with_the_default_host_size(monkeypatch) -> None:
+    """A host runs four sandboxes, and the floor is what a deployment that
+    leaves `cloud_pool_min_free_slots` alone gets. The fixture turns
+    pre-scaling off, so the tests about it set both back."""
     monkeypatch.setattr(settings, "cloud_host_slots_per_core", 2)
     monkeypatch.setattr(settings, "microcloud_default_memory_mb", 16384)
     monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 3072)
-    # The fixture turns pre-scaling off; this is what a deployment that leaves
-    # `cloud_pool_min_free_slots` alone gets.
     monkeypatch.setattr(
         settings,
         "cloud_pool_min_free_slots",
         Settings.model_fields["cloud_pool_min_free_slots"].default,
     )
+
+
+def test_the_pool_adds_a_host_while_three_of_four_slots_are_free(pool, monkeypatch):
+    """A host of the default size runs four sandboxes. One session on it
+    leaves three free — less than a whole host's worth — so the sweep adds a
+    host then, instead of waiting until the pool is full and the next session
+    has to wait for it."""
+    _with_the_default_host_size(monkeypatch)
     [alice] = pool.room("alice", 1)
     host_id = pool.place("alice", alice)
     pool.up(host_id)
@@ -562,6 +567,25 @@ def test_the_pool_adds_a_host_while_three_of_four_slots_are_free(pool, monkeypat
     pool.pool("maintain")
 
     assert len(pool.cloud.created) == 2
+
+
+def test_the_pool_at_a_whole_hosts_slots_adds_no_host(pool, monkeypatch):
+    """One empty host of the default size leaves exactly a whole host's slots
+    free, which is not below the floor: the sweep leaves the pool there."""
+    _with_the_default_host_size(monkeypatch)
+
+    pool.pool("maintain")  # no host yet: no free slots, below the floor
+
+    async def hosts():
+        async with pool.client.test_request_factory() as db:
+            return list(await db.scalars(select(CloudHost.id)))
+
+    [host_id] = pool.run(hosts)
+    pool.up(host_id)
+
+    pool.pool("maintain")
+
+    assert len(pool.cloud.created) == 1
 
 
 def test_a_full_pool_tells_the_session_to_try_later(pool, monkeypatch):

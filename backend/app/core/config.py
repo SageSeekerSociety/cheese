@@ -776,8 +776,9 @@ class Settings(BaseSettings, SandboxSettings):
     # Pre-scale: when the free slots of the pool's live hosts fall below this,
     # the pool sweep claims (or creates) the next host before anyone waits on it.
     # The default host (four cores, 16 GiB, 40 GB) runs four sandboxes, so the
-    # floor is one host's worth: the next host is already on its way while four
-    # slots remain, instead of starting only once the pool is full.
+    # floor is one host's worth: the next host is under way once fewer than four
+    # slots are free, instead of only once the pool is full. A deployment that
+    # creates a different host size sets this to that host's capacity.
     cloud_pool_min_free_slots: int = Field(default=4, ge=0, le=64)
     # How long a host that has no sandbox on it is kept before it is released.
     cloud_host_idle_hold_s: int = Field(default=1800, ge=0, le=86400)
