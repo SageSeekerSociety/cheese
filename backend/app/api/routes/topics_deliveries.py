@@ -20,6 +20,7 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.delivery.timer import deliver_at
@@ -29,7 +30,7 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.post("/{topic_id}/deliveries")
+@router.post("/{topic_id}/deliveries", dependencies=[ROUTE_DECIDES])
 async def ask_for_a_delivery(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

@@ -24,6 +24,7 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
@@ -71,7 +72,7 @@ async def _acting_recipient(
     )
 
 
-@router.post("/projects/{project_id}/alerts")
+@router.post("/projects/{project_id}/alerts", dependencies=[ROUTE_DECIDES])
 async def create_notification(
     project_id: uuid.UUID,
     body: NotificationCreate,
@@ -226,7 +227,7 @@ async def notifications_unread_count(
     return ok({"unread": count})
 
 
-@router.post("/projects/{project_id}/alerts/read-all")
+@router.post("/projects/{project_id}/alerts/read-all", dependencies=[ROUTE_DECIDES])
 async def mark_all_notifications_read(
     project_id: uuid.UUID,
     db: DbSession,
@@ -248,7 +249,7 @@ async def mark_all_notifications_read(
     return ok({"marked": marked})
 
 
-@router.post("/alerts/{notification_id}/read")
+@router.post("/alerts/{notification_id}/read", dependencies=[ROUTE_DECIDES])
 async def mark_notification_read(
     notification_id: int, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -260,7 +261,7 @@ async def mark_notification_read(
     return ok(_dump(read))
 
 
-@router.post("/alerts/{notification_id}/resolve")
+@router.post("/alerts/{notification_id}/resolve", dependencies=[ROUTE_DECIDES])
 async def resolve_notification(
     notification_id: int,
     body: ResolveIn,

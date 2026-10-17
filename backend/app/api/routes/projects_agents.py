@@ -80,6 +80,7 @@ from app.api.auth import ActorResolverDep
 from app.api.member_settings import say_agent_changes
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
@@ -163,7 +164,7 @@ async def list_project_agents(
     return ok(page(items, len(items)))
 
 
-@router.post("/{project_id}/agents")
+@router.post("/{project_id}/agents", dependencies=[ROUTE_DECIDES])
 async def create_project_agent(
     project_id: uuid.UUID,
     body: AgentInstanceCreate,
@@ -235,7 +236,7 @@ async def update_project_agent(
     )
 
 
-@router.delete("/{project_id}/agents/{agent_id}")
+@router.delete("/{project_id}/agents/{agent_id}", dependencies=[ROUTE_DECIDES])
 async def deactivate_project_agent(
     project_id: uuid.UUID,
     agent_id: uuid.UUID,
@@ -260,7 +261,7 @@ async def deactivate_project_agent(
     return ok({"deleted": True})
 
 
-@router.put("/{project_id}/default-agent")
+@router.put("/{project_id}/default-agent", dependencies=[ROUTE_DECIDES])
 async def set_project_default_agent(
     project_id: uuid.UUID,
     body: ProjectDefaultAgentIn,
