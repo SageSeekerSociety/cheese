@@ -332,7 +332,8 @@ def cgroup_dirs():
 
     A sandbox usually does not own the cgroup namespace, so the files under
     `/sys/fs/cgroup` describe the host; only the path named in
-    `/proc/self/cgroup` is the box's own.
+    `/proc/self/cgroup` is the box's own. A cgroup v1 controller is mounted
+    under a directory of its own, so its path carries that directory.
     """
     directories = []
     for line in read_text(PROC_SELF_CGROUP).splitlines():
@@ -340,16 +341,28 @@ def cgroup_dirs():
         if len(parts) != 3:
             continue
         hierarchy, controllers, relative = parts
-        if hierarchy == "0" or "memory" in controllers.split(","):
-            directories.append(CGROUP_ROOT / relative.strip("/"))
+        relative = relative.strip("/")
+        if hierarchy == "0":
+            directories.append(CGROUP_ROOT / relative)
+        elif "memory" in controllers.split(","):
+            directories.append(CGROUP_ROOT / "memory" / relative)
     directories.append(CGROUP_ROOT)
     return directories
 
 
-def _cgroup_int(relative):
-    for directory in cgroup_dirs():
+def cgroup_ancestors(directory):
+    """`directory` and every cgroup above it, up to the hierarchy root."""
+    directories = [directory]
+    while directory != CGROUP_ROOT and CGROUP_ROOT in directory.parents:
+        directory = directory.parent
+        directories.append(directory)
+    return directories
+
+
+def _cgroup_int(directory, names):
+    for name in names:
         try:
-            value = (directory / relative).read_text().strip()
+            value = (directory / name).read_text().strip()
         except OSError:
             continue
         return int(value) if value.isdigit() else None
@@ -358,23 +371,33 @@ def _cgroup_int(relative):
 
 def cgroup_memory_usage():
     """Bytes this cgroup uses, when the box exposes one (v2, then v1)."""
-    for relative in ("memory.current", "memory/memory.usage_in_bytes"):
-        if (value := _cgroup_int(relative)) is not None:
+    for directory in cgroup_dirs():
+        value = _cgroup_int(directory, ("memory.current", "memory.usage_in_bytes"))
+        if value is not None:
             return value
     return None
 
 
 def cgroup_memory_limit(mem_total_bytes):
-    """The cgroup's memory cap, when it is a real cap rather than 'max'."""
-    for relative in ("memory.max", "memory/memory.limit_in_bytes"):
-        value = _cgroup_int(relative)
-        if value is None:
-            continue
-        # cgroup v1 spells "unlimited" as a number just under 2**63; anything
-        # at or above the machine's memory is no cap at all.
-        if mem_total_bytes is None or value < mem_total_bytes:
-            return value
-    return None
+    """The tightest memory cap on this process's cgroup path.
+
+    cgroup v2 enforces the minimum along the path from the cgroup to the
+    root, so a child whose own `memory.max` says "max" is still capped by an
+    ancestor.
+    """
+    limits = []
+    for directory in cgroup_dirs():
+        for ancestor in cgroup_ancestors(directory):
+            for name in ("memory.max", "memory.limit_in_bytes"):
+                try:
+                    value = int((ancestor / name).read_text().strip())
+                except (OSError, ValueError):
+                    continue
+                # cgroup v1 spells "unlimited" as a number just under 2**63;
+                # anything at or above the machine's memory is no cap at all.
+                if mem_total_bytes is None or value < mem_total_bytes:
+                    limits.append(value)
+    return min(limits) if limits else None
 
 
 def memory_limit_bytes(mem_total_bytes=None):
