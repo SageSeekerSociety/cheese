@@ -296,6 +296,7 @@ jobs:
     uses: ./.github/workflows/test.yml
     with:
       integration: ${{ needs.scope.outputs.branch_heavy == 'true' }}
+      coverage-job: false
 
   # ci-fast's black-box tests are their own suite: they used to run inside
   # scope, which put their ~65–121s on the serial path of every Required run.
@@ -391,6 +392,21 @@ jobs:
         env:
           CI_NEEDS: ${{ toJSON(needs) }}
         run: python3 .github/scripts/required-ci.py check
+      # test.yml's `Backend coverage complete`, run here instead of as a job of
+      # its own (the backend job passes coverage-job: false): every case the
+      # independent collection names ran on exactly one shard. One runner hop
+      # fewer on the critical path. `needs.backend.result == 'success'` already
+      # says no shard failed, and an integration layer skipped when it was due
+      # leaves its cases missing from the shards, which this step fails on.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.backend.result == 'success'
+        with:
+          pattern: backend-*
+          path: ${{ runner.temp }}/backend-artifacts
+      - name: Backend coverage complete
+        if: needs.backend.result == 'success'
+        working-directory: backend
+        run: python3 -m scripts.assert_shards_complete "$RUNNER_TEMP/backend-artifacts" --plan backend-expected
       # This repo's own commit convention (docs/workflows.md §5); the platform
       # leaves a hosted repo's titles to that repo. In the merge queue it reads
       # the squash commits about to land, which is what main will say. On a PR
@@ -423,6 +439,33 @@ jobs:
             api "pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
             python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
+
+  # Merge queue only: fails `CI required` on the entry's sha as soon as any job
+  # of this run fails, instead of after the slowest suite, so the queue drops
+  # the entry and rebuilds the ones behind it right away (2026-10-17: 10-50
+  # minutes saved per failed entry). What it posts, and why it never fails the
+  # run, is .github/scripts/merge-group-fail-fast.py. Not in `required`'s
+  # needs: the aggregator must not wait for it. A hosted runner, not the
+  # cheese-ci pool: it is alive for the whole run, and four queue entries would
+  # hold four of the pool's six slots the aggregators need.
+  fail-fast:
+    name: Fail fast
+    if: github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 130
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Fail CI required on this run's first failed job
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: python3 .github/scripts/merge-group-fail-fast.py
 
   required-draft:
     name: CI required (draft quick)
