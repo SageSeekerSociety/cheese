@@ -381,10 +381,8 @@ def test_a_stealth_team_is_named_only_to_its_members(client, bearer):
 
 def test_teammate_remark_is_viewer_scoped_across_profile_and_rosters(client, bearer):
     p1, _ = _seed_u1_with_two_projects(client)
-    topics = client.get(f"/projects/{p1}/topics", headers=bearer("u2")).json()["data"][
-        "items"
-    ]
-    topic_id = topics[0]["id"]
+    add_external_member(client, p1, "u2", by="u1")
+    topic_id = _topic(client, p1, "协作话题")
 
     # Initially no remark is set.
     assert _profile(client, bearer, "u1", viewer="u2")["remark"] is None
@@ -425,7 +423,7 @@ def test_teammate_remark_is_viewer_scoped_across_profile_and_rosters(client, bea
         m["user_handle"]: m["remark"]
         for m in client.get(f"/projects/{p1}/members", headers=bearer("u2")).json()[
             "data"
-        ]["items"]
+        ]["data"]
     }
     assert members_for_u2["u1"] == "老王 · 后端"
     assert members_for_u2["u2"] is None
@@ -434,7 +432,7 @@ def test_teammate_remark_is_viewer_scoped_across_profile_and_rosters(client, bea
         m["user_handle"]: m["remark"]
         for m in client.get(f"/projects/{p1}/members", headers=bearer("u1")).json()[
             "data"
-        ]["items"]
+        ]["data"]
     }
     assert members_for_u1["u1"] is None
 
@@ -442,7 +440,7 @@ def test_teammate_remark_is_viewer_scoped_across_profile_and_rosters(client, bea
         m["member_handle"]: m["remark"]
         for m in client.get(f"/topics/{topic_id}/members", headers=bearer("u2")).json()[
             "data"
-        ]["items"]
+        ]["data"]
     }
     assert topic_members_for_u2["u1"] == "老王 · 后端"
 
