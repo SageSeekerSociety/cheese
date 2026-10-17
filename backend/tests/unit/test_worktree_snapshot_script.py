@@ -13,6 +13,8 @@
   * 交给人的恢复命令必须是完整任务 id——`cheese worktree` 只认 UUID；
   * 接回来时本地合法地可能比远端多几个没推上去的提交，这不是失败；落后或分叉
     才是，而且要在动更多东西之前停下；
+  * 分支一次都没推到远端（东西只在平台快照里）时，恢复要成功，并让人先跑 save；
+  * 平台把快照放到独立目录、没套进工作区时，不许说「接回来了」；
   * 未提交的改动不许被它推进任务分支——那是 PR 的内容，不是备份的内容；
   * 换机模拟：整个工作目录删掉，从远端接回来，未提交的东西也在。
 
@@ -59,10 +61,19 @@ snapshot_ref() {
 
 case ${1:-} in
   sync)
+    if [ "${FAKE_SYNC_FAIL:-}" = 1 ]; then
+      echo "[cheese] 同步失败：远端拒绝了这次推送" >&2
+      exit 1
+    fi
     [ "${FAKE_SYNC_NOOP:-}" = 1 ] && exit 0
     root=$(git rev-parse --show-toplevel)
     cd "$root"
     branch=$(git symbolic-ref --quiet --short HEAD)
+    if [ "${FAKE_SYNC_SWITCHES:-}" = 1 ]; then
+      # 多步任务的下一步换了分支（task/<id>-2）：平台把目录跟过去，推的是新那条。
+      branch="task/${CHEESE_TOPIC%%-*}-2"
+      git switch -q -C "$branch"
+    fi
     head=$(git rev-parse HEAD)
     idx="$root/.git/fake-snapshot-index"
     rm -f "$idx"
@@ -86,11 +97,30 @@ case ${1:-} in
     }
     short=${id%%-*}
     dir=${FAKE_WORKTREE_DIR:?}
+    if [ "${FAKE_WORKTREE_FAIL:-}" = 1 ]; then
+      echo "[cheese] 任务 $id 取不下来：平台说这条任务不在这台机器上" >&2
+      exit 1
+    fi
     [ -d "$dir/.git" ] || git clone -q "$FAKE_REMOTE" "$dir"
     cd "$dir"
-    git checkout -q -B "task/$short" "origin/task/$short"
+    # _task_worktree：远端有这条分支就接它，没有就从 base 建一条本地分支——推送
+    # 失败或中断过的任务正是后一种，这是它该恢复的场景，不是 CLI 的失败。
+    if git ls-remote --heads origin "task/$short" | grep -q .; then
+      git checkout -q -B "task/$short" "origin/task/$short"
+    else
+      git checkout -q -B "task/$short" origin/main
+    fi
     if [ "${FAKE_WORKTREE_CHATTER:-}" = 1 ]; then
       echo "[cheese] 新环境，正在接回任务 $id 的备份" >&2
+    fi
+    if [ "${FAKE_WORKTREE_SET_ASIDE:-}" = 1 ]; then
+      # _apply_snapshot 拒绝套用时：退出码仍是 0，快照放到独立目录，只写 stderr。
+      aside="$HOME/.cheese/recovered/$id-0123456789ab"
+      mkdir -p "$aside"
+      echo "[cheese] 任务 $id 在平台上有一份快照，但分支已经前进，" >&2
+      echo "没有自动套用，免得覆盖这里的东西。快照原样放在独立目录 $aside。" >&2
+      pwd
+      exit 0
     fi
     if [ "${FAKE_WORKTREE_STALE:-}" = 1 ]; then
       # 接回来的状态落后于远端：脚本必须停下来，不能再改这个目录。
@@ -108,6 +138,10 @@ case ${1:-} in
         git read-tree -m -u "$head" "$saved" 2>/dev/null || true
         git reset -q
       fi
+    fi
+    if [ "${FAKE_WORKTREE_UNREACHABLE:-}" = 1 ]; then
+      # 目录建好了，远端却连不上：恢复本身成功，核对时取不到远端。
+      git remote set-url origin "$FAKE_REMOTE-missing"
     fi
     pwd
     ;;
@@ -259,6 +293,25 @@ class Machine:
             cwd=self.worktree,
         )
 
+    def another_checkout_pushes_further(self) -> str:
+        """另一个 checkout 把同一条任务分支推得更远——平台允许这种写入者。
+
+        它的 HEAD 是本地 HEAD 的子提交：本地这个提交确实已经在远端上了。
+        """
+        other = self.tmp / "other-checkout"
+        subprocess.run(
+            ["git", "clone", "-q", str(self.remote), str(other)],
+            env=_env(),
+            check=True,
+            capture_output=True,
+        )
+        git("switch", "-q", "-C", BRANCH, f"origin/{BRANCH}", cwd=other)
+        (other / "later.py").write_text("print(3)\n")
+        git("add", "later.py", cwd=other)
+        git("commit", "-q", "-m", "later", cwd=other)
+        git("push", "-q", "origin", f"HEAD:refs/heads/{BRANCH}", cwd=other)
+        return git("rev-parse", "HEAD", cwd=other)
+
 
 @pytest.fixture
 def machine(tmp_path: Path) -> Machine:
@@ -303,6 +356,49 @@ def test_save_refuses_when_the_push_did_not_land(machine: Machine) -> None:
     assert machine.remote_tip(f"refs/heads/{BRANCH}") == ""
 
 
+def test_save_reports_a_sync_that_fails(machine: Machine) -> None:
+    """同步自己失败：原样把 CLI 说的话给出来，不能顺水推舟说「存好了」。"""
+    machine.commit("step.py", "print(1)\n")
+
+    result = machine.run("save", FAKE_SYNC_FAIL="1")
+
+    refused(result, 1, "cheese sync 失败")
+    # CLI 说的原话原样打出来，别让跑的人只看到一句概述。
+    assert "远端拒绝了这次推送" in result.stdout
+    assert "换机后接回来" not in result.stdout
+
+
+def test_save_accepts_a_branch_another_checkout_pushed_further(
+    machine: Machine,
+) -> None:
+    """远端走得更远是正常的：本地这个提交在远端的历史里，就算核对通过。
+
+    平台自己的 `_deliver_task_branch` 在这种情况下直接成功返回（不推、也不报
+    错），所以「远端顶端恰好等于本地 HEAD」会被判成一次假失败。
+    """
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    further = machine.another_checkout_pushes_further()
+
+    out = ran(machine.run("save", FAKE_SYNC_NOOP="1"))
+
+    assert machine.remote_tip(f"refs/heads/{BRANCH}") == further
+    assert "包含本地" in out
+
+
+def test_save_checks_the_branch_the_sync_moved_to(machine: Machine) -> None:
+    """多步任务的下一步换了分支，`cheese sync` 会把目录跟过去。
+
+    跟着旧名字核对，会在推成功之后报「远端没有这个提交」。
+    """
+    machine.commit("step.py", "print(1)\n")
+
+    out = ran(machine.run("save", FAKE_SYNC_SWITCHES="1"))
+
+    assert f"refs/heads/{BRANCH}-2" in out
+    assert machine.remote_tip(f"refs/heads/{BRANCH}-2") == machine.head()
+
+
 def test_save_refuses_when_the_remote_cannot_be_reached(
     machine: Machine,
 ) -> None:
@@ -343,6 +439,10 @@ def test_save_names_what_a_machine_swap_would_take_with_it(
 ) -> None:
     notes = machine.home / "room" / "notes.md"
     notes.write_text("研究笔记\n")
+    # 平台每次都在动的运行时状态不是谁的活；列出来只会盖住上面那条。
+    runtime = machine.home / ".cheese-environment" / "status.json"
+    runtime.parent.mkdir()
+    runtime.write_text("{}\n")
     machine.commit("step.py", "print(1)\n")
 
     result = machine.run("save")
@@ -350,6 +450,7 @@ def test_save_names_what_a_machine_swap_would_take_with_it(
     ran(result)
     assert str(notes) in result.stderr
     assert "任务目录以外" in result.stderr
+    assert str(runtime) not in result.stderr
 
 
 def test_save_keeps_the_advisory_list_out_of_stdout(machine: Machine) -> None:
@@ -370,12 +471,26 @@ def test_save_does_not_scan_shared_tmp(machine: Machine) -> None:
     try:
         machine.commit("step.py", "print(1)\n")
 
-        result = machine.run("save")
+        # 列表要长到不会被截断：/tmp 里别的文件比它排得靠前，截断会把这条规则
+        # 的用例变成「碰巧没列出来」。
+        result = machine.run("save", MAX_LISTED="1000")
 
         ran(result)
         assert str(stray) not in result.stderr
     finally:
         stray.unlink(missing_ok=True)
+
+
+def test_save_still_passes_when_the_advisory_scan_fails(machine: Machine) -> None:
+    """提醒扫不动（权限、没有 $HOME）不能把已经核对过的成功改成失败。"""
+    fake_find = machine.bin / "find"
+    fake_find.write_text("#!/usr/bin/env bash\nexit 1\n")
+    fake_find.chmod(0o755)
+    machine.commit("step.py", "print(1)\n")
+
+    out = ran(machine.run("save"))
+
+    assert f"cheese worktree {TASK}" in out
 
 
 def test_the_machine_is_wiped_and_the_work_comes_back(machine: Machine) -> None:
@@ -394,6 +509,64 @@ def test_the_machine_is_wiped_and_the_work_comes_back(machine: Machine) -> None:
     assert (machine.worktree / "scratch.txt").read_text() == "half done\n"
     assert (machine.worktree / "step.py").read_text() == "print(2)\n"
     assert git("status", "--porcelain", cwd=machine.worktree) != ""
+    assert "工作区没提交的文件：2 个" in out
+
+
+def test_restore_brings_back_a_branch_that_never_reached_the_remote(
+    machine: Machine,
+) -> None:
+    """要救的正是这种：分支从没推上去，东西只在平台快照里。
+
+    `cheese worktree` 会从 base 建一条本地分支、再把快照快进上去，所以远端仍然
+    是空的——这不是「对不上」，是「还没推」。
+    """
+    machine.commit("step.py", "print(1)\n")
+    (machine.worktree / "scratch.txt").write_text("half done\n")
+    machine.snapshot_without_pushing_the_branch()
+    assert machine.remote_tip(f"refs/heads/{BRANCH}") == ""
+
+    machine.wipe()
+
+    out = ran(machine.run("restore", "--task", TASK))
+
+    assert (machine.worktree / "step.py").read_text() == "print(1)\n"
+    assert (machine.worktree / "scratch.txt").read_text() == "half done\n"
+    assert "还没有提交" in out
+    assert "先跑 save" in out
+
+
+def test_restore_refuses_when_the_backup_was_set_aside(
+    machine: Machine,
+) -> None:
+    """故意违规：CLI 退出码是 0，但快照没套进工作区。
+
+    平台这时把快照原样放到 ~/.cheese/recovered/<任务 id>-<快照>，只往 stderr
+    写一句。分支和远端对得上，不代表未提交的活回来了。
+    """
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+
+    machine.wipe()
+
+    result = machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1")
+
+    refused(result, 3, "没套进", ".cheese/recovered")
+    assert "与远端一致" not in result.stdout
+
+
+def test_restore_refuses_when_the_remote_cannot_be_reached(
+    machine: Machine,
+) -> None:
+    """目录接回来了，远端却连不上：没法核对的不能当成核对通过。"""
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+
+    machine.wipe()
+
+    result = machine.run("restore", "--task", TASK, FAKE_WORKTREE_UNREACHABLE="1")
+
+    refused(result, 3, "取不到远端")
+    assert "与远端一致" not in result.stdout
 
 
 def test_restore_accepts_commits_the_snapshot_put_back_on_the_branch(
@@ -442,11 +615,28 @@ def test_restore_reports_failure_instead_of_pretending(machine: Machine) -> None
     machine.commit("step.py", "print(1)\n")
     machine.wipe()
 
-    # 远端根本没有这条任务：假 cheese 的 clone/branch 会失败。
-    result = machine.run("restore", "--task", "11111111-2222-3333-4444-555555555555")
+    result = machine.run(
+        "restore",
+        "--task",
+        "11111111-2222-3333-4444-555555555555",
+        FAKE_WORKTREE_FAIL="1",
+    )
 
     assert result.returncode != 0
     assert "失败" in result.stderr
+    assert "取不下来" in result.stderr
+
+
+def test_restore_refuses_a_missing_task_value(machine: Machine) -> None:
+    """故意违规：`--task` 后面没东西时静悄悄退出，跑的人不知道发生了什么。"""
+    refused(machine.run("restore", "--task"), 2, "--task")
+    # 空值会退回 CHEESE_TOPIC，可能把别的任务接回来。
+    refused(machine.run("restore", "--task", ""), 2, "--task")
+
+
+def test_refuses_two_subcommands(machine: Machine) -> None:
+    """故意违规：`save restore` 按最后一个跑，等于没按人说的做。"""
+    refused(machine.run("save", "restore"), 2, "一次只跑一个")
 
 
 def test_restore_reads_the_worktree_out_of_the_cli_output(
