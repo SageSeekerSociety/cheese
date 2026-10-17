@@ -220,11 +220,15 @@ async def test_a_turn_the_session_was_woken_into_is_its_own_work(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_a_person_heard_during_a_woken_turn_gets_a_turn_of_their_own(tmp_path):
+@pytest.mark.parametrize("ending", ["interrupted", "completed"])
+async def test_a_person_heard_during_a_woken_turn_gets_a_turn_of_their_own(
+    tmp_path, ending
+):
     """A person's message that arrives with the room's own work while a turn a
     monitor woke is running is not refused: that turn ends as its own work and
     the message starts the room's, so each turn's records name the work the
-    room opened for it."""
+    room opened for it. Whether the woken turn stops for it or was finishing
+    anyway, the person's turn still owes them a reply."""
     sent = []
 
     async def send(text):
@@ -241,7 +245,7 @@ async def test_a_person_heard_during_a_woken_turn_gets_a_turn_of_their_own(tmp_p
                     "method": "turn/completed",
                     "params": {
                         "threadId": "thread",
-                        "turn": {"id": turn, "status": "interrupted"},
+                        "turn": {"id": turn, "status": ending},
                     },
                 }
             )
@@ -270,7 +274,9 @@ async def test_a_person_heard_during_a_woken_turn_gets_a_turn_of_their_own(tmp_p
             }
         )
         woken = (await runner.dispatch("events", {}))["events"][-1]["record"]
-        await runner.send("input", "from a person", work_id="platform-work")
+        await runner.send(
+            "input", "from a person", work_id="platform-work", owes_reply=True
+        )
         assert sent == ["<task-notification>line</task-notification>", "from a person"]
         records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
         ended = next(r for r in records if r.get("method") == "turn/completed")
@@ -284,6 +290,7 @@ async def test_a_person_heard_during_a_woken_turn_gets_a_turn_of_their_own(tmp_p
         theirs = (await runner.dispatch("events", {}))["events"][-1]["record"]
         assert theirs["cheese"]["work_id"] == "platform-work"
         assert "unsolicited" not in theirs["cheese"]
+        assert runner.owed == "input"
     finally:
         await runner.close()
 

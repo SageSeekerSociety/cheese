@@ -46,6 +46,8 @@ class Runner(runner.Runner[Journal]):
         self.on_tool = on_tool
         self.skills = skills
         self.syncing: asyncio.Future[bool] | None = None
+        # A woken turn is being ended for a person's message (`_end_woken_turn`).
+        self.ending_woken = False
         self.cwd = ""
         self.session: Session | None = None
         self.submit_lock = asyncio.Lock()
@@ -105,9 +107,14 @@ class Runner(runner.Runner[Journal]):
         # has nothing that keeps a turn open, so its ending is held back and a
         # new turn in the same work carries the reminder. The room sees one
         # piece of work, ending when that turn does.
+        # A woken turn ended for a person's message is not held to their
+        # reply, and does not settle it: their own turn, next, owes it.
+        handed_on = ends and self.ending_woken
         reason = (
             self.insist()
-            if ends and (params.get("turn") or {}).get("status") == "completed"
+            if ends
+            and not handed_on
+            and (params.get("turn") or {}).get("status") == "completed"
             else None
         )
         if reason is None:
@@ -119,7 +126,8 @@ class Runner(runner.Runner[Journal]):
         elif ends:
             # Codex takes a message said mid-turn into that turn (`turn/steer`
             # needs one in progress), so a finished turn has read every one.
-            self.reply_settled()
+            if not handed_on:
+                self.reply_settled()
             self.turn_ended()
 
     async def _hold_to_reply(self, reason: str, ending: dict) -> None:
@@ -277,17 +285,21 @@ class Runner(runner.Runner[Journal]):
         `record` journals under that turn's own work."""
         session = self.session
         assert session is not None
-        await session.interrupt()
-        deadline = asyncio.get_running_loop().time() + WOKEN_TURN_END_S
-        while session.turn_id is not None:
-            left = deadline - asyncio.get_running_loop().time()
-            if left <= 0:
-                raise RuntimeError("A different room work item is still active")
-            news = self.news
-            try:
-                await asyncio.wait_for(news.wait(), min(left, 0.2))
-            except TimeoutError:
-                pass
+        self.ending_woken = True
+        try:
+            await session.interrupt()
+            deadline = asyncio.get_running_loop().time() + WOKEN_TURN_END_S
+            while session.turn_id is not None:
+                left = deadline - asyncio.get_running_loop().time()
+                if left <= 0:
+                    raise RuntimeError("A different room work item is still active")
+                news = self.news
+                try:
+                    await asyncio.wait_for(news.wait(), min(left, 0.2))
+                except TimeoutError:
+                    pass
+        finally:
+            self.ending_woken = False
 
     async def yield_foreground(self) -> None:
         """Nothing to send: the session's Bash waits in this process
