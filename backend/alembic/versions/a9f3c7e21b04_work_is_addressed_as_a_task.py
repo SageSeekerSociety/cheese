@@ -186,13 +186,13 @@ def upgrade() -> None:
     for table in _THREADED:
         bind.execute(
             sa.text(
-                f"UPDATE {table} SET task_id = topic_id "  # fixed names
+                f"UPDATE {table} SET task_id = topic_id "  # noqa: S608 — fixed names
                 "WHERE topic_id IN (SELECT id FROM tasks)"
             )
         )
         bind.execute(
             sa.text(
-                f"UPDATE {table} SET topic_id = t.room_id "  # fixed names
+                f"UPDATE {table} SET topic_id = t.room_id "  # noqa: S608 — fixed names
                 "FROM tasks t WHERE t.id = "
                 f"{table}.task_id"
             )
@@ -233,7 +233,9 @@ def upgrade() -> None:
     #    room. Nothing inherits them.
     for table in _ROOM_ONLY:
         bind.execute(
-            sa.text(f"DELETE FROM {table} WHERE topic_id IN (SELECT id FROM tasks)")
+            sa.text(
+                f"DELETE FROM {table} WHERE topic_id IN (SELECT id FROM tasks)"  # noqa: S608
+            )
         )
 
     # 4. Only now: the work topics themselves. Nested work (a task whose parent
@@ -244,7 +246,7 @@ def upgrade() -> None:
     # 5. Say what happened. `strays` and `orphans` must both be 0; the other
     #    numbers are there so a human can check the map by hand.
     row = bind.execute(sa.text(RECONCILE)).mappings().one()
-    print(f"[a9f3c7e21b04] {dict(row)}")  # migration output is the receipt
+    print(f"[a9f3c7e21b04] {dict(row)}")  # noqa: T201 — migration output is the receipt
 
 
 # Both halves of the map, counted after the fact.

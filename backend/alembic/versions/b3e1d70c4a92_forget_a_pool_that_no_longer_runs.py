@@ -24,16 +24,16 @@ def upgrade() -> None:
     # switch, never by anyone picking. Writing today's default instead would
     # freeze them onto it and outlive the next change of default.
     op.execute(
-        f"UPDATE topics SET compute_profile = NULL WHERE compute_profile IN {GONE}"  # literal tuple above
+        f"UPDATE topics SET compute_profile = NULL WHERE compute_profile IN {GONE}"  # noqa: S608 — literal tuple above
     )
     op.execute(
-        f"UPDATE team SET compute_profile = NULL WHERE compute_profile IN {GONE}"
+        f"UPDATE team SET compute_profile = NULL WHERE compute_profile IN {GONE}"  # noqa: S608
     )
     # `settings` is json, not jsonb, and the key-delete operator is jsonb-only.
     op.execute(
         "UPDATE projects "
         "SET settings = (settings::jsonb - 'compute_profile')::json "
-        f"WHERE settings ->> 'compute_profile' IN {GONE}"
+        f"WHERE settings ->> 'compute_profile' IN {GONE}"  # noqa: S608
     )
 
 

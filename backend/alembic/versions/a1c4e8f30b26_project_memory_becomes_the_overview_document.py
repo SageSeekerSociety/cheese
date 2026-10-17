@@ -169,7 +169,7 @@ def upgrade() -> None:
         + " — their doc_node trees are stale until the next edit_doc"
     )
     logger.info("%s", receipt)
-    print(receipt)  # migration output is the receipt
+    print(receipt)  # noqa: T201 — migration output is the receipt
     _rekey_personal_memory()
 
 

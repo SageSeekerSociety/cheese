@@ -114,6 +114,10 @@ ignore = ["UP042", "E501"]
 # those were live in the contract data factory when this rule was switched on.
 "tests/**" = ["DTZ001"]
 
+# A migration on main is immutable (.claude/rules/migrations.md), so its
+# now-inert `# noqa` comments stay as they were written.
+"alembic/versions/*" = ["RUF100"]
+
 # FastAPI's dependency-injection markers are CALLED in parameter defaults
 # (`x = Depends(dep)`, `q = Query(...)`) — that's the framework's idiom, not the
 # B008 "mutable/expensive default" anti-pattern. Whitelist them so B008 flags

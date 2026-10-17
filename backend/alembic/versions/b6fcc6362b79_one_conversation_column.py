@@ -54,7 +54,9 @@ SEARCHED_KINDS = ("message", "doc", "doc_node", "comment", "decision", "weekly")
 
 def _fold(table: str) -> None:
     op.add_column(table, sa.Column("conversation_id", sa.Uuid(), nullable=True))
-    op.execute(f"UPDATE {table} SET conversation_id = COALESCE(task_id, topic_id)")
+    op.execute(
+        f"UPDATE {table} SET conversation_id = COALESCE(task_id, topic_id)"  # noqa: S608
+    )
     op.drop_column(table, "task_id")
     op.drop_column(table, "topic_id")
 
