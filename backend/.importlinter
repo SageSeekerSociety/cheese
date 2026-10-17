@@ -536,6 +536,32 @@ unmatched_ignore_imports_alerting = warn
 # 「现状」 (`project_situation`, which also needs `agent.harness.prompt.WRITING`
 # and so sits above `agent`) and the document agent drafting the overview
 # (`agent`, layer 3). It sits below both so that neither reaches up.
+# `repository` lost its last three upward edges (2026-10-17). They were one
+# mistake in two shapes. Three of them read a task's row — is it still open,
+# which branch and last landed head, what did the card's declared work turn out
+# to be — through `room_task.models.Task` and `room_task.services.TaskService`,
+# because `repository` is layer 3 and `room_task` is layer 4 and nobody had
+# written down what it actually needed: columns. So `repository/task_rows.py`
+# declares those columns as a bare `table(...)`, the way
+# `topic/repositories/statements.py` declares `tasks`, `threads` and `blocks`,
+# and the three readers take it from there. Only reads go through the copy; a
+# write or a decision still comes from `room_task.services`, which owns the
+# table. `tests/unit/test_repository_task_rows_match_their_rows.py` pins the
+# copy to the real table, and its opposite number in `topic` does the same
+# there — both compare which table a statement's columns belong to, because
+# `find_tables` hands back an annotated copy of an ORM table that `is` never
+# matches, which is also why the `topic` guard's "borrowed a model table"
+# assertion had never been able to go red until now.
+#
+# The fourth was a path, not a row: `repository.service.session_dir` copies a
+# project's confirmed skills out of `project_skill`'s mirror directory and
+# therefore imported `project_skill.service.mirror_root` to learn where that
+# directory is. Where a path is is a convention, not a query, and it now sits
+# at layer 1 in `skill_library.project_skills_root` — the same move as
+# `event_author` and `event_about`, for the same reason: one writer and one
+# other reader, three layers apart, needing one string. `mirror_root` stays in
+# `project_skill.service` as a one-line wrapper; it is the name its own callers
+# and the tests that patch it use.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
