@@ -57,12 +57,16 @@ class _Chat(WorkChat):
         # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在 meta.detail。
         self.notices: list[tuple[uuid.UUID, str]] = []
         self.retryable: list[bool] = []
+        # The turn each event is about, in step with `events`: the run-record
+        # page can only attribute a failure to a turn when this is set.
+        self.turn_ids: list[uuid.UUID | None] = []
         self.converse_calls: list[dict] = []
 
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         self.events.append((topic_id, text))
         self.notices.append((topic_id, text + ((meta or {}).get("detail") or "")))
         self.retryable.append(bool((meta or {}).get("retryable")))
+        self.turn_ids.append(turn_id)
         return {"id": "b1", "content": text}
 
     def has_live_screen(self, topic_id, agent_handle=None):
@@ -322,6 +326,36 @@ async def test_a_wedged_turn_is_cancelled_and_never_re_run(db_factory, monkeypat
     # promising the platform will pick it back up.
     assert len(chat.events) == 1
     assert chat.retryable == [True]
+    # The notice names the turn it is about. Without the id the run-record page
+    # reads a turn that timed out as one that never failed (`run_record/turns.py`).
+    assert chat.turn_ids == [turn]
+
+
+@pytest.mark.anyio
+async def test_a_stranded_turn_is_announced_with_its_turn_id(db_factory, monkeypatch):
+    """The deploy-interrupted notice is about one turn — the newest stranded
+    one — and carries its id for the same reason as the wedged notice: a turn
+    whose only failure event has no `turn_id` looks like it never failed."""
+    _instant_sleep(monkeypatch)
+    topic = await a_topic(db_factory)
+    # A re-send that the deploy interrupted: nothing will re-send it again, so
+    # the room is handed the decision instead of a silent retry.
+    turn = await open_turn(
+        db_factory,
+        topic,
+        content="重发的一轮",
+        age_s=90,
+        is_resume=True,
+        resendable=False,
+    )
+    chat = _Chat(db_factory)
+    runner = AgentWorkRunner(InProcessBroker())
+
+    assert await runner.resume_orphans(chat) == 0
+    await _drain(chat, rounds=50)
+    assert chat.converse_calls == []  # no automatic re-run
+    assert len(chat.events) == 1
+    assert chat.turn_ids == [turn]
 
 
 @pytest.mark.parametrize(
