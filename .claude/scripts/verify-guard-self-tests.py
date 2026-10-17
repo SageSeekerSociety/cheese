@@ -76,27 +76,48 @@ nothing, or stops printing the success line while still exiting 0 — there the
 run went quiet instead of red, so neither verdict is earned. Give such a guard an
 inline `--self-test` that judges the guard in its own process to be checked.
 
+A self-test that needs something the lane does not install is a separate case:
+it does not start at all, and the run comes back `self-test-not-green`, which is
+also the shape of a broken self-test. This tool cannot tell those apart by
+looking, so it does not guess — a lane that cannot run a guard's self-test names
+that guard with `--allow-unjudgeable` (see below), and the guard's own lane still
+runs the self-test.
+
     python3 .claude/scripts/verify-guard-self-tests.py
     python3 .claude/scripts/verify-guard-self-tests.py --guard check-file-sizes.py
     python3 .claude/scripts/verify-guard-self-tests.py --json
     python3 .claude/scripts/verify-guard-self-tests.py --self-test
     python3 .claude/scripts/verify-guard-self-tests.py \
-        --allow-unverified scene-debt-ratchet.py
+        --allow-unjudgeable scene-debt-ratchet.py
 
-AN ALLOWED EXCUSE IS A CLAIM THIS TOOL CHECKS. `--allow-unverified NAME` is
-for a guard whose self-test hands its judgement to another process, which the
-silencing pass cannot reach: the run is a real `unverified`, not a pass, and it
-is tolerated by name only. The allowance is validated like every other claim
-here — naming a guard the run did not judge, a guard that is verified now, or
-a guard with a finding, is itself a finding, so a stale or overbroad excuse
-cannot outlive its reason. What it may not do is excuse `missing-self-test`,
-`self-test-not-green` or `self-test-does-not-bite`: those are the failures this
-tool exists to raise, and a flag that waives them would be the empty check.
+AN ALLOWED GUARD IS AN EXCUSE THIS TOOL CHECKS, NOT A WAIVER. Some guards
+cannot be judged where this runs, for a reason that is about the lane and not
+about the guard:
 
-Exit code: 0 every guard in scope is covered and biting (an allowed
-`unverified` is reported, not counted); 1 at least one finding, including a
-spent or unknown allowance; 2 nothing to report but something could not be
-judged.
+  * the self-test hands the judgement to another process (`scene-debt-ratchet.py`
+    runs `test_scene_debt_ratchet.py`, which spawns the guard by its real file
+    name), so silencing a copy cannot reach it — the run is `unverified`;
+  * the self-test needs what the judging lane does not install. The same guard's
+    self-test shells out to a node scan over `frontend/node_modules`, which a
+    commit and the repo-guards job do not have, so there the self-test cannot
+    even start — the run is `self-test-not-green`, the shape of a broken
+    self-test reached for a reason that is the lane's.
+
+`--allow-unjudgeable NAME` tolerates exactly those two statuses for exactly that
+named guard; both mean "this lane could not establish the bite", and neither is
+a pass. Everything else about the entry is still checked, so it cannot rot into
+a blanket excuse: a name no guard in scope carries, or a guard that is green
+and biting now, is a finding that says delete the entry; and
+`self-test-does-not-bite` is never waived for any name, because that verdict
+*is* this lane's own judgement — the self-test ran, printed its success line,
+and stayed green on a silenced guard. `missing-self-test` is never waived
+either: the lane can always see that much. A guard excused for a missing
+install is still covered where the install is: frontend.yml runs
+scene-debt-ratchet.py --self-test, which is the lane that can answer for it.
+
+Exit code: 0 every guard in scope is covered and biting, or allowed by name;
+1 at least one finding, including an entry that is spent or names nothing;
+2 nothing to report but something could not be judged.
 """
 
 from __future__ import annotations
@@ -121,6 +142,14 @@ SUCCESS_RE = re.compile(r"^(?:PASS|OK)\b")
 
 #: Statuses that are a finding (a guard that must be fixed).
 FINDING_STATUSES = frozenset({"missing-self-test", "self-test-not-green", "self-test-does-not-bite"})
+
+#: Statuses a named guard may be excused under: the lane could not establish the
+#: bite, for a reason about the lane rather than the guard — the self-test hands
+#: the judgement to another process (`unverified`), or it needs an install this
+#: lane does not have (`self-test-not-green` where the self-test cannot start).
+#: `self-test-does-not-bite` is deliberately absent: there the self-test ran on
+#: this tree and stayed green, which is this lane's own judgement, not a gap.
+ALLOWABLE_STATUSES = frozenset({"unverified", "self-test-not-green"})
 
 #: One repair instruction per finding, so a red run says what to do next.
 HINTS = {
@@ -2010,13 +2039,15 @@ def evaluate(
 def allowance_problems(
     results: list[tuple[str, Path, Outcome, bool]], allowed: set[str]
 ) -> list[str]:
-    """Every way an `--allow-unverified` entry fails to be a true excuse.
+    """Every way an `--allow-unjudgeable` entry fails to be a true excuse.
 
-    The flag names a guard whose run is `unverified` for a reason this tool
-    cannot see past. Naming one it did not judge, one that is verified now, or
-    one with a finding is a problem rather than a waiver: an excuse that stays
-    after its reason is gone is how a list of exceptions becomes the place the
-    next real failure hides.
+    The flag names a guard this lane could not judge. It is checked like any
+    other claim here, so it cannot rot into a blanket excuse: a name no guard in
+    scope carries, or a guard that is green and biting now, is a problem that
+    says delete the entry. The verdicts that are this lane's own judgement are
+    never waived — `self-test-does-not-bite` because the self-test ran and
+    stayed green on a silenced guard, `missing-self-test` because the lane can
+    always see that much.
     """
     judged = {path.name: outcome for _, path, outcome, in_scope in results if in_scope}
     problems: list[str] = []
@@ -2024,16 +2055,16 @@ def allowance_problems(
         outcome = judged.get(name)
         if outcome is None:
             problems.append(
-                f"--allow-unverified names {name}, but no guard of that name was judged: delete it"
+                f"--allow-unjudgeable names {name}, but no guard of that name was judged: delete it"
             )
         elif outcome.status == "ok":
             problems.append(
-                f"--allow-unverified excuses {name}, but it is verified now: delete the entry"
+                f"--allow-unjudgeable excuses {name}, but it is verified now: delete the entry"
             )
-        elif outcome.status in FINDING_STATUSES:
+        elif outcome.status not in ALLOWABLE_STATUSES:
             problems.append(
-                f"--allow-unverified excuses {name}, but that is a finding "
-                f"({outcome.status}), not a judgement this flag may waive"
+                f"--allow-unjudgeable excuses {name}, but {outcome.status} is this lane's own "
+                f"judgement of the guard, not something the lane could not judge"
             )
     return problems
 
@@ -2051,13 +2082,15 @@ def report(
     findings = 0
     unverified = 0
     for _hook, path, outcome, _ in checked:
-        excused = outcome.status == "unverified" and path.name in allowed
-        label = "UNVERIFIED (allowed)" if excused else outcome.status.upper()
+        excused = path.name in allowed and outcome.status in ALLOWABLE_STATUSES
+        label = f"{outcome.status.upper()} (allowed)" if excused else outcome.status.upper()
         print(f"{label:<22} {path.name:<{width}}  {outcome.detail}")
+        if excused:
+            continue
         if outcome.status in FINDING_STATUSES:
             findings += 1
             print(f"  {'':<20} 修法：{HINTS[outcome.status]}")
-        elif outcome.status == "unverified" and not excused:
+        elif outcome.status == "unverified":
             unverified += 1
     if skipped:
         print(f"（另有 {len(skipped)} 个本地钩子的脚本不在 .claude/scripts 下，未核验：{', '.join(path.name for _, path, _, _ in skipped)}）")
@@ -4822,11 +4855,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="按 JSON 输出，供机器读")
     parser.add_argument("--self-test", action="store_true", help="证明核验器本身能区分真假自测")
     parser.add_argument(
-        "--allow-unverified",
+        "--allow-unjudgeable",
         action="append",
         default=[],
         metavar="SCRIPT",
-        help="按名字容忍一个判不了的守卫（只认 unverified，不认发现），可重复；条目会自检",
+        help="按名字容忍一个本车道判不了的守卫（只认 unverified / 自测起不来），可重复；条目会自检",
     )
     args = parser.parse_args(argv)
 
@@ -4835,12 +4868,15 @@ def main(argv: list[str] | None = None) -> int:
 
     root = args.root.resolve()
     config = (args.config or (root / CONFIG_NAME)).resolve()
-    allowed = set(args.allow_unverified)
+    allowed = set(args.allow_unjudgeable)
     results = evaluate(config, root, args.timeout, set(args.guard) or None)
     excuses = allowance_problems(results, allowed)
     if excuses:
         for problem in excuses:
             print(problem, file=sys.stderr)
+
+    def excused(path: Path, outcome: Outcome) -> bool:
+        return path.name in allowed and outcome.status in ALLOWABLE_STATUSES
 
     if args.json:
         print(
@@ -4852,7 +4888,7 @@ def main(argv: list[str] | None = None) -> int:
                             "script": path.name,
                             "status": outcome.status,
                             "detail": outcome.detail,
-                            "allowed": outcome.status == "unverified" and path.name in allowed,
+                            "allowed": excused(path, outcome),
                         }
                         for hook, path, outcome, _ in results
                     ]
@@ -4865,11 +4901,15 @@ def main(argv: list[str] | None = None) -> int:
             print("没有在 .pre-commit-config.yaml 里找到 .claude/scripts 下的本地守卫", file=sys.stderr)
             unverified = 1
         else:
-            findings = sum(1 for item in in_scope if item[2].status in FINDING_STATUSES)
+            findings = sum(
+                1
+                for item in in_scope
+                if item[2].status in FINDING_STATUSES and not excused(item[1], item[2])
+            )
             unverified = sum(
                 1
                 for item in in_scope
-                if item[2].status == "unverified" and item[1].name not in allowed
+                if item[2].status == "unverified" and not excused(item[1], item[2])
             )
     else:
         findings, unverified = report(results, allowed)

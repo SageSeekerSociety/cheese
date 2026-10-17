@@ -254,8 +254,9 @@ jobs:
       # to prevent. It silences a copy of each guard and requires its self-test
       # to go red. It runs through pre-commit like the tree guards below, so a
       # developer's commit and this job run the same hook with the same
-      # allowance (scene-debt-ratchet.py, whose self-test judges the guard in
-      # another process; see the hook's comment).
+      # allowance (scene-debt-ratchet.py: its self-test judges the guard in
+      # another process, and needs frontend/node_modules, which this job does
+      # not install — frontend.yml runs that self-test where the install is).
       - name: Guard self-tests bite
         run: uvx pre-commit run --all-files guard-self-tests
 
