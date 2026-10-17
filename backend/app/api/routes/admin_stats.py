@@ -23,6 +23,7 @@ router」，同一个文件里的第二个 `APIRouter` 会被静默丢掉，理�
 `/integrations` 故意**没有 `days`**：凭据与投递是存量问题，不是「这七天怎么变的」。
 """
 
+import asyncio
 import logging
 from typing import Annotated
 
@@ -45,7 +46,10 @@ logger = logging.getLogger(__name__)
 
 #: How long one reading of the session host's memory may take. The reading goes
 #: over the host's link: this process's own ``/proc/meminfo`` describes its
-#: container, not the machine every project's sessions share.
+#: container, not the machine every project's sessions share. The bound is on
+#: the whole read, not just the wait for an answer — ``exec`` itself also waits
+#: out a reconnect grace and, over the RPC facade, retries an owner being
+#: replaced, so passing it as the exec timeout alone would not bound the request.
 SESSION_HOST_READ_TIMEOUT_S = 5.0
 
 
@@ -189,32 +193,40 @@ async def session_host_snapshot() -> dict[str, int | None]:
     ``sessions_active`` counts the screens the hub has open on the session host.
     A screen is one agent, i.e. one session, and "open on this device" is the
     same 口径 the connector's device view uses
-    (``connector/connections.py:_device_screens``).
+    (``connector/connections.py:_device_screens``). The hub only lists screens
+    on a device that is online, so a host that is away answers ``None`` rather
+    than 0: sessions running there did not stop because the link dropped.
 
     The memory numbers come from the host's own ``/proc/meminfo`` over its
     link: this process's file describes its container, not the machine every
-    project's sessions share. An unread host answers ``None`` for both instead
-    of failing the request — someone looking at latency must not lose the board
-    because the session host is away, and the admission gate already treats an
-    unread host as holding nobody.
+    project's sessions share. An unread host answers ``None`` for all three
+    instead of failing the request — someone looking at latency must not lose
+    the board because the session host is away, and the admission gate already
+    treats an unread host as holding nobody.
     """
     host = settings.agent_session_device_id
+    if not host:
+        return {
+            "mem_total_mib": None,
+            "mem_available_mib": None,
+            "sessions_active": None,
+        }
     sessions = (
         sum(1 for screen in device_hub.all_online_screens() if screen.device_id == host)
-        if host
-        else 0
+        if device_hub.is_online(host)
+        else None
     )
     total = available = None
-    if host:
-        try:
+    try:
+        async with asyncio.timeout(SESSION_HOST_READ_TIMEOUT_S):
             result = await device_hub.exec(
                 host, ["cat", "/proc/meminfo"], timeout=SESSION_HOST_READ_TIMEOUT_S
             )
-        except Exception:  # noqa: BLE001 — an unreadable host is not a broken board
-            logger.warning("session host memory unreadable", exc_info=True)
-        else:
-            if result.get("exit") == 0:
-                total, available = meminfo_mib(result.get("stdout") or "")
+    except Exception:  # noqa: BLE001 — an unreadable host is not a broken board
+        logger.warning("session host memory unreadable", exc_info=True)
+    else:
+        if result.get("exit") == 0:
+            total, available = meminfo_mib(result.get("stdout") or "")
     return {
         "mem_total_mib": total,
         "mem_available_mib": available,
