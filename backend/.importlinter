@@ -410,6 +410,11 @@ unmatched_ignore_imports_alerting = warn
 # a document's mini-apps are part of the document, it keeps its pictures in the
 # `library` blob store on the same layer, and only routes import it.
 #
+# `project_material_rows` joined at layer 1 (2026-10-17), by the same move one step
+# further: `project_material` (layer 4) reads tasks and accept cards, and both
+# `room_task` and `review` read back into this side, so importing their models
+# from there is a C3 cycle. The columns it reads come down; the readers stay.
+#
 # `review_note_codes` joined at layer 1 (2026-10-17): the note code and the level it
 # renders as are read by `room_task.presentation` (layer 4) to place a card on the
 # board, and `review` reads `room_task` the other way — each importing the other is
@@ -578,7 +583,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet : project_material
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : event_about : event_author : project_permissions
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions
 containers =
     app.domain
 exhaustive = true
