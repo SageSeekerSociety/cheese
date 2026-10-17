@@ -2072,7 +2072,24 @@ SOURCE = Path(mod.__file__).read_text()
 SQUASH_SPEC_READER = '''\
 import importlib.util
 
-SPEC = importlib.util.spec_from_file_location("app.foo", "somewhere/foo.py")
+from app import foo
+
+SPEC = importlib.util.spec_from_file_location("app.foo", foo.__spec__.origin)
+'''
+
+SQUASH_SPEC_LITERAL = '''\
+import importlib.util
+
+SPEC = importlib.util.spec_from_file_location("app.foo", "vendor/foo.py")
+'''
+
+SQUASH_IMPORT_MODULE_READER = '''\
+import importlib
+from pathlib import Path
+
+mod = importlib.import_module("app.foo")
+
+SOURCE = Path(mod.__file__).read_text()
 '''
 
 SQUASH_RELATIVE_READER = '''\
@@ -2086,9 +2103,32 @@ SOURCE = Path(foo.__file__).read_text()
 SQUASH_OTHER_READER = '''\
 from pathlib import Path
 
-from app import bar
+from app import bar, foo
 
 SOURCE = Path(bar.__file__).read_text()
+'''
+
+SQUASH_PACKAGE_RELATIVE_READER = '''\
+from pathlib import Path
+
+from .. import foo
+
+SOURCE = Path(foo.__file__).read_text()
+'''
+
+SQUASH_SHADOWED_READER = '''\
+from pathlib import Path
+
+from app import foo
+
+
+def describe(foo):
+    return Path(foo.__file__).read_text()
+
+
+def describe_each(items):
+    for foo in items:
+        print(Path(foo.__file__).read_text())
 '''
 
 SQUASH_WRITER = '''\
@@ -2176,7 +2216,7 @@ class WholeFileReadTests(unittest.TestCase):
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("backend/scripts/tool.py", result.stdout)
-        self.assertIn("整份读取目标已拆包: app.foo", result.stdout)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
 
     def test_an_aliased_module_read_is_blocked(self) -> None:
         """`import app.foo as mod` binds the module under another name; the
@@ -2185,18 +2225,36 @@ class WholeFileReadTests(unittest.TestCase):
         fixture.split()
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("整份读取目标已拆包: app.foo", result.stdout)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
 
-    def test_a_spec_loaded_by_module_name_is_blocked(self) -> None:
-        """`spec_from_file_location("app.foo", ...)` builds a spec for the
-        package's `__init__.py` and still succeeds; nothing else in the tree
-        notices that the module's source is no longer what is loaded."""
+    def test_a_module_imported_by_name_is_followed(self) -> None:
+        """`importlib.import_module("app.foo")` hands back the module under a
+        new name; the read follows that binding, not the import line."""
+        fixture = SquashFixture(self.root, SQUASH_IMPORT_MODULE_READER)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
+
+    def test_a_spec_loaded_from_the_modules_own_spec_is_blocked(self) -> None:
+        """`spec_from_file_location("app.foo", foo.__spec__.origin)` loads
+        whatever `foo` resolves to, so after the split it loads the package's
+        `__init__.py` and still succeeds."""
         fixture = SquashFixture(self.root, SQUASH_SPEC_READER)
         fixture.split()
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("整份读取目标已拆包: app.foo", result.stdout)
-        self.assertIn("spec_from_file_location", result.stdout)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
+        self.assertIn("location 取自该模块", result.stdout)
+
+    def test_a_spec_loaded_from_a_literal_location_still_passes(self) -> None:
+        """The location, not the module name, decides which file is loaded: a
+        literal path keeps loading the same file before and after the split."""
+        fixture = SquashFixture(self.root, SQUASH_SPEC_LITERAL)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("模块文件路径已改指", result.stdout)
 
     def test_a_relative_module_import_is_followed(self) -> None:
         """`from . import foo` inside the package names the same module without
@@ -2207,7 +2265,18 @@ class WholeFileReadTests(unittest.TestCase):
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("backend/app/use.py", result.stdout)
-        self.assertIn("整份读取目标已拆包: app.foo", result.stdout)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
+
+    def test_a_relative_import_from_a_package_init_is_followed(self) -> None:
+        """The caller may itself be a package: `from .. import foo` in
+        `app/use/__init__.py` resolves to `app.foo` too."""
+        fixture = SquashFixture(self.root)
+        fixture.caller(SQUASH_PACKAGE_RELATIVE_READER, "backend/app/use/__init__.py")
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("backend/app/use/__init__.py", result.stdout)
+        self.assertIn("模块文件路径已改指: app.foo", result.stdout)
 
     def test_an_ordinary_import_of_a_split_module_still_passes(self) -> None:
         fixture = SquashFixture(self.root, SQUASH_ORDINARY_CALLER)
@@ -2218,12 +2287,22 @@ class WholeFileReadTests(unittest.TestCase):
 
     def test_reading_another_modules_file_is_not_this_break(self) -> None:
         """Only the module that became a package changed meaning; a `__file__`
-        read of a sibling the change did not touch is exactly what it was."""
+        read of a sibling the change did not touch is exactly what it was.
+        The caller names `foo` as well, so the cheap sieve does not skip it."""
         fixture = SquashFixture(self.root, SQUASH_OTHER_READER)
         fixture.split()
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("整份读取目标已拆包", result.stdout)
+        self.assertNotIn("模块文件路径已改指", result.stdout)
+
+    def test_a_local_of_the_same_name_is_not_the_module(self) -> None:
+        """A parameter or loop variable that happens to be called `foo` holds
+        something else; reporting it would fail a split that broke nothing."""
+        fixture = SquashFixture(self.root, SQUASH_SHADOWED_READER)
+        fixture.split()
+        result = fixture.run_tool()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("模块文件路径已改指", result.stdout)
 
     def test_writing_the_file_attribute_is_not_a_read(self) -> None:
         """`module.__file__ = ...` sets a string attribute and works the same
@@ -2232,7 +2311,7 @@ class WholeFileReadTests(unittest.TestCase):
         fixture.split()
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("整份读取目标已拆包", result.stdout)
+        self.assertNotIn("模块文件路径已改指", result.stdout)
 
     def test_a_read_before_the_split_is_not_this_break(self) -> None:
         """The guard is about the module becoming a package, not about the
@@ -2244,7 +2323,7 @@ class WholeFileReadTests(unittest.TestCase):
         )
         result = fixture.run_tool()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("整份读取目标已拆包", result.stdout)
+        self.assertNotIn("模块文件路径已改指", result.stdout)
 
 
 class ShadowCopyTests(unittest.TestCase):
