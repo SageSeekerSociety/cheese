@@ -2072,6 +2072,7 @@ def allowance_problems(
 def report(
     results: list[tuple[str, Path, Outcome, bool]],
     allowed: set[str] | frozenset[str] = frozenset(),
+    excuses: int = 0,
 ) -> tuple[int, int]:
     checked = [item for item in results if item[3]]
     skipped = [item for item in results if not item[3]]
@@ -2094,7 +2095,11 @@ def report(
             unverified += 1
     if skipped:
         print(f"（另有 {len(skipped)} 个本地钩子的脚本不在 .claude/scripts 下，未核验：{', '.join(path.name for _, path, _, _ in skipped)}）")
-    print(f"共 {len(checked)} 个守卫：有发现 {findings} 个，判不了 {unverified} 个")
+    print(
+        f"共 {len(checked)} 个守卫：有发现 {findings + excuses} 个，判不了 {unverified} 个"
+    )
+    # The excuse count is folded in by the caller, which adds it to the exit
+    # code; returning it here as well would count it twice.
     return findings, unverified
 
 
@@ -4912,7 +4917,7 @@ def main(argv: list[str] | None = None) -> int:
                 if item[2].status == "unverified" and not excused(item[1], item[2])
             )
     else:
-        findings, unverified = report(results, allowed)
+        findings, unverified = report(results, allowed, len(excuses))
     findings += len(excuses)
     if findings:
         return 1

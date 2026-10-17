@@ -448,9 +448,35 @@ repos:
       # machine), which is not a price a commit that cannot have changed a
       # guard should pay. CI runs it against all files, as it does for every
       # hook here.
+      #
+      # The interpreter is picked from PATH the way `module-split` above picks
+      # its own, and for the same reason: the verifier needs 3.10
+      # (`zip(strict=True)`), and so do two guards it runs the self-tests of
+      # (`check-migration-fork.py`, `check-migration-safety.py` evaluate `X | Y`
+      # at runtime). `uvx pre-commit` puts its tool venv first on the hooks'
+      # PATH, and this hook runs on every commit touching the guard tree, so a
+      # 3.9 traceback would red the commit with a message about `zip()` rather
+      # than about the guard. With no 3.10+ found it is exit 2 — cannot judge —
+      # instead of a red that misnames the cause.
       - id: guard-self-tests
         name: every guard's self-test goes red when the guard is silenced
-        entry: python3 .claude/scripts/verify-guard-self-tests.py --allow-unjudgeable scene-debt-ratchet.py
+        entry: |
+          bash -c '
+          set -u
+          py=
+          for candidate in python3 python3.13 python3.12 python3.11 python3.10; do
+            if command -v "$candidate" >/dev/null 2>&1 \
+               && "$candidate" -c "import sys; raise SystemExit(sys.version_info < (3, 10))" >/dev/null 2>&1; then
+              py=$candidate
+              break
+            fi
+          done
+          if [ -z "$py" ]; then
+            printf "cannot judge: no Python 3.10+ on PATH for verify-guard-self-tests.py\n" >&2
+            exit 2
+          fi
+          "$py" .claude/scripts/verify-guard-self-tests.py --allow-unjudgeable scene-debt-ratchet.py
+          '
         language: system
         pass_filenames: false
         files: ^(\.claude/scripts/|\.pre-commit-config\.yaml$)
