@@ -1092,24 +1092,31 @@ def test_only_whole_trusted_commands_run_on_this_host(tmp_path, machine, monkeyp
     assert (machine.workspace / "project-hook").exists()
 
 
+@pytest.mark.parametrize("executor", ["posix", "windows"])
 def test_the_session_may_keep_its_shell_in_the_rooms_task_checkouts(
-    tmp_path, machine, monkeypatch
+    tmp_path, machine, monkeypatch, executor
 ):
     """The build resets a shell that ends outside its directories, so the
-    room's task checkouts are one of them, at the path the executor makes
-    them; the shell prefix reports a directory there, not the project root.
+    room's task checkouts are one of them, at the path the session sees the
+    executor make them (a Windows machine's in Git Bash spelling, as the
+    session sees its project); the shell prefix reports a directory there,
+    not the project root.
 
     The executor here is on this very host, where its home is a directory of
     this host's own; a session host holds no such path, which is what the
     executor's answer is moved to."""
     from app.domain.agent.executor_transport import RemoteClient
 
-    tasks = f"/cheese-session-host-{uuid.uuid4().hex}/home/.cheese/tasks"
+    name = f"cheese-session-host-{uuid.uuid4().hex}"
+    reported, tasks = {
+        "posix": (f"/{name}/home/.cheese/tasks", f"/{name}/home/.cheese/tasks"),
+        "windows": (f"Q:\\{name}\\.cheese\\tasks", f"/q/{name}/.cheese/tasks"),
+    }[executor]
     call = RemoteClient.call
 
     def elsewhere(self, method, params=None, **options):
         answer = call(self, method, params, **options)
-        return {**answer, "task_root": tasks} if method == "ping" else answer
+        return {**answer, "task_root": reported} if method == "ping" else answer
 
     monkeypatch.setattr(RemoteClient, "call", elsewhere)
     launch, _ = _prepared(tmp_path, machine, monkeypatch)

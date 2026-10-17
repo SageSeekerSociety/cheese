@@ -288,7 +288,9 @@ def prepare(
                 Path(info["task_root"]).mkdir(parents=True, exist_ok=True)
                 task_dir, task_root = info["task_root"], session_path(info["task_root"])
         else:
-            task_dir = task_root = namespace_task_root(seen, info["task_root"])
+            task_dir = task_root = namespace_task_root(
+                seen, session_path(info["task_root"])
+            )
     target = dict(
         target,
         workspace=info["workspace"],
