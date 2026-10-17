@@ -12,7 +12,7 @@ import json
 import logging
 import time
 import uuid
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 import httpx
 import pytest
@@ -104,6 +104,25 @@ def _connect(client, pid, name="tracker", handle="alice") -> httpx.Response:
         "http://cheese.test/api/mcp/oauth/callback"
     )
     return client.get("/mcp/oauth/callback?" + back.query, follow_redirects=False)
+
+
+def test_a_callback_that_does_not_name_its_issuer_is_refused(client, upstream):
+    """The authorization server says it names itself in every response (RFC
+    9207), so a callback without `iss` is not one of its own: nothing is
+    connected on it."""
+    pid = _project(client, upstream)
+    started = client.post(
+        f"/projects/{pid}/mcp/servers/tracker/connect",
+        headers=session_auth_headers("alice"),
+    )
+    consent = httpx.get(started.json()["data"]["authorization_url"])
+    query = dict(parse_qsl(urlsplit(consent.headers["location"]).query))
+    query.pop("iss")
+
+    client.get("/mcp/oauth/callback?" + urlencode(query), follow_redirects=False)
+
+    assert _servers(client, pid)["tracker"]["status"] == "disconnected"
+    assert _rows(client, ProjectMcpConnection) == []
 
 
 def _call(client, tid, pid, name, method, params=None) -> dict:

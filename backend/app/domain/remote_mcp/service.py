@@ -449,6 +449,7 @@ async def begin_connect(
                 "app": in_app,
                 "verifier": verifier,
                 "issuer": found.issuer,
+                "names_itself": found.names_itself,
                 "token_endpoint": found.token_endpoint,
                 "revocation_endpoint": found.revocation_endpoint,
                 "client_id": registration.client_id,
@@ -482,8 +483,11 @@ async def finish_connect(
     """The authorization server sent the browser back with a code."""
     if not await single_use_state.claim(_STATE_SCOPE, flow["jti"]):
         raise ValidationError(say("mcpAuthAlreadyUsed"))
-    # RFC 9207: a response naming another issuer is a mix-up, not ours.
+    # RFC 9207: a response naming another issuer is a mix-up, not ours; so is
+    # one naming none from a server that said it always names itself.
     if issuer and issuer.rstrip("/") != flow["issuer"].rstrip("/"):
+        raise ValidationError(say("mcpIssuerMismatch"))
+    if not issuer and flow.get("names_itself"):
         raise ValidationError(say("mcpIssuerMismatch"))
     tokens = await oauth.exchange(
         token_endpoint=flow["token_endpoint"],
