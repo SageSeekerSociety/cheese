@@ -374,7 +374,7 @@ mv "$stub/lib/plpgsql.so.away" "$stub/lib/plpgsql.so"; mv "$stub/lib/plpgsql.dyl
 
 # `servers` is for a stack that runs the app: both servers and where psql is,
 # and no harness builds, so a tool cache without them is not touched.
-d="$(new_data_dir servers)"; port="$(free_port)"
+d="$(new_data_dir servers)"; port="$(free_port)"; redis_port="$(free_port)"
 saved_tools="$tools"; tools="$sandbox/no-harness"
 dev_db "$d" "$port" servers
 tools="$saved_tools"
@@ -383,9 +383,13 @@ check servers "stdout carries only export lines" stdout_is_only_exports
 check servers "it says where psql is" grep -q "^export PG_BIN=" "$sandbox/out"
 check servers "no harness build is exported" bash -c '! grep -q CHEESE_TEST_ "$1"' _ "$sandbox/out"
 check servers "nothing was installed into the tool cache" [ ! -e "$sandbox/no-harness/harness" ]
-check servers "postgres is up" alive "$(server_pid "$d/pg17" 2>/dev/null || echo 0)"
-check servers "redis is up" alive "$(cat "$d/redis.pid" 2>/dev/null || echo 0)"
+# From the pid file itself: `alive 0` is true (kill -0 0 is this shell's own group).
+pid_file_alive() { [ -s "$1" ] && kill -0 "$(head -1 "$1")" 2>/dev/null; }
+check servers "postgres is up" pid_file_alive "$d/pg17/postmaster.pid"
+# The Valkey stand-in records each server it starts in $state.
+check servers "redis is up" [ -e "$state/redis-$redis_port" ]
 dev_db "$d" "$port" stop
+unset redis_port
 
 cat >"$stub/fake_redis_server.py" <<'PY'
 import os, signal, socket, sys
