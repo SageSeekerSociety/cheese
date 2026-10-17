@@ -19,7 +19,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Protocol, TypeVar
 
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -34,19 +34,15 @@ from app.domain.block.models import (
 from app.domain.block.ports import Dispatcher, Notifier, RecordInstruction
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+
+# The task an edit belongs to: its id and the room it is in. A bare table —
+# `room_task` imports this domain, so reaching its service from here closes a
+# C3 cycle.
+from app.domain.block.task_rows import _tasks
 from app.domain.conversation.services import is_task
 from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.event_about import EventAbout, landing
 from app.domain.event_author import AuthorType
-
-# The task an edit belongs to: its id and the room it is in. A bare table —
-# `room_task` imports this domain, so reaching its service from here closes a
-# C3 cycle. `documents.py` reads the same table the same way.
-_tasks = table(
-    "tasks",
-    column("id", Uuid),
-    column("room_id", Uuid),
-)
 
 
 class EditedText(Protocol):
