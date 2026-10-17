@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""Compare a module against the package it was split into.
+"""Compare a module against the package it was split into, or a directory of
+modules against the same directory in the base ref.
 
     .claude/scripts/verify-module-split.py \\
         --check-facade backend/app/domain/review/polling --base-ref origin/main
     .claude/scripts/verify-module-split.py \\
         --check-facade app.domain.review.polling --base-ref origin/main
+    .claude/scripts/verify-module-split.py \\
+        --check-moves backend/app/domain/review --base-ref origin/main
     .claude/scripts/verify-module-split.py --self-test
 
-    0 = nothing to report        1 = a difference a split introduced
+    0 = nothing to report        1 = a difference the change introduced
     2 = cannot judge (not a package, the old file is not in the base ref, a
-        file that does not parse) — never a pass
+        file that does not parse, a second copy of the module importable
+        somewhere) — never a pass
 
 WHY. Turning `a/foo.py` into `a/foo/__init__.py` plus submodules is mechanical
 until it isn't. The facade checks cover these three ways it goes wrong:
@@ -27,6 +31,19 @@ until it isn't. The facade checks cover these three ways it goes wrong:
   freezes function-body imports per file, which means a split resets the count
   for every file it creates: moving an import into a new module and adding one
   there is indistinguishable, from the baseline's side, from moving it alone.
+
+MOVES. `--check-moves DIR` asks the other half of the same question. A split
+creates a package where one file stood; a move leaves every file where it was
+and takes a name out of one of them for a sibling — `ClaudeLaunch` out of
+`session_launch.py` into `device_launch.py` — and the callers that imported it
+from the module it left break at import where no local gate looks. So every
+`.py` under DIR whose content differs from the base ref is compared with its
+base-ref self: a name it no longer offers that a repository caller still
+imports from it is a blocker, and where a sibling picked the name up the report
+names that sibling so the reader sees the move rather than a deletion. A module
+the change deletes outright counts the same way, unless a package of the same
+name took its place — that is `--check-facade`'s question, and answering it
+twice would read as two findings for one break.
 
 WHAT IS COMPARED. The old side is the pre-split single file, read from git
 (`git show <ref>:<path>`) so the working tree may already hold the package. The
@@ -65,6 +82,18 @@ once per statement. That file stays the authority on the rule; the self-test
 compares this script's count against its `deferred_imports_in` on the same
 source so the two cannot drift apart silently.
 
+SHADOW COPIES. Comparing one module against one package means exactly one copy
+of that module may be in reach. A pre-split file left beside the package, or a
+copy of the module parked under the system temp directory, is a second module
+under the same name: `--runtime-identity` imports whichever one it reaches
+first, and the checks around this tool — eslint, a ratchet, test collection —
+read the tree as it stands. Neither is a difference the change introduced, so
+the run says which copy to delete and exits 2 instead of reporting on two
+modules at once. Beside the package the name decides, since one directory
+cannot hold both; under a temp directory the text does, because a file named
+like the module but holding something else is somebody else's work, not a copy
+of this one. The move check reads no such copy and does not look.
+
 CONSUMERS. Git-tracked and unignored new Python files across the repository
 (including cli/, scripts/, backend/scripts/ and .claude/scripts/) are scanned
 for imports from the package and literal setattr / monkeypatch.setattr /
@@ -76,8 +105,7 @@ checked for package-qualified targets. The convention `tests replace this name
 on <module>` is compared with the adjacent import's source, not interpreted as
 an arbitrary natural-language claim about what tests actually do.
 
-This is an explicit CLI check of a single file becoming a package, not an
-automatic CI gate or a checker for moves between sibling files. Dynamic patch
+This is an explicit CLI check, not an automatic CI gate. Dynamic patch
 targets, external object attributes and arbitrary prose are outside its static
 coverage. No application module is imported by the consumer check.
 
@@ -97,6 +125,7 @@ import tokenize
 import subprocess
 import symtable
 import sys
+import tempfile
 import textwrap
 from collections import Counter
 from dataclasses import dataclass, field
@@ -485,6 +514,14 @@ class Package:
     root: Path
     #: "" is `__init__.py`; anything else is the dotted path inside the package
     modules: dict[str, ModuleFacts]
+    #: Which entry is the module under inspection, when the table is a whole
+    #: package. A caller's `from app.foo import x` walks down the table from
+    #: there — read as "from the top" it would take the module's own directory
+    #: siblings for submodules of it. Empty in facade mode, where the table is
+    #: the package and the module under inspection is its `""`.
+    key: str = ""
+    #: The package's dotted name, for naming the modules the table holds.
+    name: str = ""
 
     @property
     def facade(self) -> ModuleFacts:
@@ -511,7 +548,7 @@ def read_package(package_dir: Path, module_name: str = "") -> Package:
         )
     if "" not in modules:
         raise ValueError(f"{package_dir} has no __init__.py, so it is not a package")
-    return Package(root=package_dir, modules=modules)
+    return Package(root=package_dir, modules=modules, name=module_name)
 
 
 def _resolve(
@@ -944,7 +981,7 @@ def _target_exists(package: Package, dotted: str, target: str) -> bool:
     if not target.startswith(dotted + "."):
         return True
     parts = target[len(dotted) + 1 :].split(".")
-    key = ""
+    key = package.key
     while parts and ".".join(filter(None, (key, parts[0]))) in package.modules:
         key = ".".join(filter(None, (key, parts.pop(0))))
     if not parts:
@@ -985,8 +1022,8 @@ def _moved_lookup(old: ModuleFacts, package: Package, name: str) -> str | None:
             before, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
         ):
             continue
-        hit = _resolve(package, "", public)
-        if not hit or not hit[0]:
+        hit = _resolve(package, package.key, public)
+        if not hit or hit[0] == package.key:
             continue
         after = package.modules[hit[0]].defined.get(hit[1])
         if after and name in _global_reads(before) & _global_reads(after):
@@ -1160,12 +1197,15 @@ def check_consumers(
         check=True,
     )
     logger_names: set[str] = set()
+    # The table can be a whole package, so a module in it is named from the
+    # package rather than from the module this check is about.
+    owner = package.name or dotted
     for key, facts in package.modules.items():
         for node in facts.defined.values():
             if _scaffolding(node) and node.value.args:
                 arg = node.value.args[0]
                 if isinstance(arg, ast.Name) and arg.id == "__name__":
-                    logger_names.add(dotted + ("." + key if key else ""))
+                    logger_names.add(owner + ("." + key if key else ""))
                 elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     logger_names.add(arg.value)
     scanned = 0
@@ -1226,7 +1266,291 @@ def check_consumers(
                                     f"理由句失指: {target}，导入实际来自 {actual}",
                                 )
         scanned += 1
-    findings.summary.append(f"仓内 Python 调用方: 检查 {scanned} 个文件（含包外脚本）")
+    findings.summary.append(
+        f"仓内 Python 调用方（{dotted}）: 检查 {scanned} 个文件（含包外脚本）"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Names that moved between the files of one directory
+# ---------------------------------------------------------------------------
+
+
+def offered_names(facts: ModuleFacts | None) -> set[str]:
+    """Every name `from <this module> import X` could bind.
+
+    `defined` is what the file made itself; `imported` covers the name it only
+    forwarded, which a caller reaching through the module saw just the same.
+    Comparing two sides with this is what turns "the file lost a name" into a
+    statement about callers instead of about the file's text.
+    """
+    if facts is None:
+        return set()
+    return set(facts.defined) | facts.imported
+
+
+def changed_module_paths(repo_root: Path, base_ref: str, directory: str) -> list[str]:
+    """Repo-relative `.py` paths under `directory` that differ from `base_ref`.
+
+    An edited module and a deleted one both lost something, so both are listed;
+    so is an untracked new file, which is where a move's destination shows up
+    before anyone has committed it. `--no-renames` keeps a move reading as one
+    deletion and one addition rather than as a rename this would have to undo.
+    """
+
+    def run(subcommand: str, *args: str) -> list[str]:
+        proc = subprocess.run(
+            ["git", subcommand, "-z", *args, "--", directory],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        if proc.returncode != 0:
+            raise ValueError(f"git {subcommand} failed: {proc.stderr.strip()}")
+        return proc.stdout.split("\0")
+
+    found = run("diff", "--name-only", "--no-renames", base_ref) + run(
+        "ls-files", "--others", "--exclude-standard"
+    )
+    return sorted({path for path in found if path and path.endswith(".py")})
+
+
+def _containing_package(path: Path, root: Path) -> Path | None:
+    """The outermost package directory `path` sits in, or None if it sits in none."""
+    top: Path | None = None
+    here = path.parent
+    while here != root and (here / "__init__.py").is_file():
+        top = here
+        here = here.parent
+    return top
+
+
+def module_package(
+    module_path: Path,
+    root: Path,
+    dotted: str,
+    facts: ModuleFacts | None,
+    cache: dict[Path, Package],
+) -> Package:
+    """`_target_exists`'s view of one module: the package it sits in, and where
+    the module is inside it.
+
+    The table is the whole package's, because that is what a caller's import
+    walks down — `from app.foo import sub` and `from app.foo.sub import name`
+    both need `app/foo/sub.py` in the table — and because a name this module
+    re-exports has to be followed to the file it really comes from, which only
+    the package's own reader can place. The price is that the walk has to be
+    told which entry is the module under inspection: read from the top, it
+    would take the module's own directory siblings for its submodules and pass
+    a caller that imports a name the module no longer binds.
+    """
+    if facts is None:
+        return Package(root=module_path.parent, modules={})
+    package_dir = _containing_package(module_path, root)
+    if package_dir is None:
+        return Package(root=module_path.parent, modules={"": facts})
+    package_name = _dotted_name(package_dir, root)
+    if package_dir not in cache:
+        cache[package_dir] = read_package(package_dir, package_name)
+    inside = dotted[len(package_name) + 1 :] if package_name else dotted
+    if inside not in cache[package_dir].modules:
+        return Package(root=module_path.parent, modules={"": facts})
+    return Package(
+        root=module_path.parent,
+        modules=cache[package_dir].modules,
+        key=inside,
+        name=package_name,
+    )
+
+
+def check_moves(
+    repo_root: Path, directory: Path, base_ref: str, findings: Findings
+) -> None:
+    """Names every changed file under `directory` gave up, and who still wants them.
+
+    The consumer check does the deciding, module by module: it is the same
+    question as for a split — is the name a caller imports still bound where
+    the caller imports it from — and the same answer set, so a name that left
+    for a sibling, a name deleted outright and a name moved to another package
+    are all reported the same way, with the destination named where one file
+    under `directory` took it.
+    """
+    before: dict[str, ModuleFacts | None] = {}
+    after: dict[str, ModuleFacts | None] = {}
+    where: dict[str, Path] = {}
+    roots: dict[str, Path] = {}
+    packages: dict[Path, Package] = {}
+    for relative in changed_module_paths(repo_root, base_ref, str(directory)):
+        on_disk = repo_root / relative
+        if not on_disk.is_file() and (
+            repo_root / relative[: -len(".py")] / "__init__.py"
+        ).is_file():
+            # A package stands where the file did: that is the facade check's
+            # question, and a second answer here would read as a second break.
+            continue
+        # Per file, not per directory: `--check-moves backend` has to name the
+        # same modules `app.foo` that `--check-moves backend/app` does, or a
+        # caller's import matches nothing and the run passes over the break.
+        root = _import_root(on_disk.parent)
+        try:
+            dotted = _dotted_name(on_disk, root)
+        except ValueError:
+            continue  # outside the import root: no caller can spell its name
+        roots[dotted] = root
+        old_source = show_in_ref(base_ref, relative, repo_root)
+        new_source = (
+            on_disk.read_text(encoding="utf-8") if on_disk.is_file() else None
+        )
+        before[dotted] = (
+            read_source(old_source, f"{base_ref}:{relative}", dotted)
+            if old_source is not None
+            else None
+        )
+        after[dotted] = (
+            read_source(new_source, relative, dotted)
+            if new_source is not None
+            else None
+        )
+        where[dotted] = on_disk
+
+    lost = {d: offered_names(before[d]) - offered_names(after[d]) for d in before}
+    gained = {d: offered_names(after[d]) - offered_names(before[d]) for d in before}
+    moved = 0
+    for dotted in sorted(before):
+        for name in sorted(lost[dotted]):
+            destination = next(
+                (
+                    other
+                    for other in sorted(gained)
+                    if other != dotted and name in gained[other]
+                ),
+                "",
+            )
+            if destination:
+                moved += 1
+                findings.note(f"符号搬移: {dotted}.{name} → {destination}")
+
+    checked = 0
+    for dotted in sorted(before):
+        if not lost[dotted] or before[dotted] is None:
+            continue
+        facts = after[dotted]
+        check_consumers(
+            repo_root,
+            before[dotted],
+            module_package(
+                where[dotted], roots[dotted], dotted, facts, packages
+            ),
+            dotted,
+            findings,
+        )
+        checked += 1
+
+    findings.summary.append(
+        f"包内搬移: 对比 {len(before)} 个改动模块, 搬移 {moved} 个符号, "
+        f"查调用方 {checked} 个模块"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shadow copies: a second module under the same name
+# ---------------------------------------------------------------------------
+
+#: Where a copy of a module lands when someone parks one to work against it:
+#: `<root>/<name>.py` and `<root>/<something>/<name>.py` are what a scratch
+#: harness leaves behind. Deeper is another checkout's tree, not a copy. The
+#: machine's own temp directory is read through `tempfile`, so a TMPDIR that
+#: is not `/tmp` is looked in too rather than silently passed over.
+SCRATCH_ROOTS = tuple(dict.fromkeys((Path("/tmp"), Path(tempfile.gettempdir()))))
+SCRATCH_DEPTH = 2
+
+
+def _shadow_in(directory: Path, name: str, depth: int) -> list[Path]:
+    """`<name>.py` or a `__init__.py`-bearing `<name>/` under `directory`."""
+    if depth < 1:
+        return []
+    found: list[Path] = []
+    try:
+        entries = sorted(directory.iterdir())
+    except OSError:
+        return []
+    for entry in entries:
+        if entry.name.startswith(".") or entry.name == "__pycache__":
+            continue
+        if entry.is_dir():
+            if entry.name == name and (entry / "__init__.py").is_file():
+                found.append(entry)
+            elif not entry.is_symlink():
+                found.extend(_shadow_in(entry, name, depth - 1))
+        elif entry.suffix == ".py" and entry.stem == name:
+            found.append(entry)
+    return found
+
+
+def shadow_beside(package_dir: Path) -> list[Path]:
+    """The pre-split file someone put back where the package now stands.
+
+    `<package>.py` beside `<package>/` is this module and no other — one
+    directory cannot hold two — so the name is the whole question, and the
+    check can run before anything is read.
+    """
+    beside = package_dir.with_suffix(".py")
+    return [beside] if beside.is_file() else []
+
+
+def _text_of(entry: Path) -> str | None:
+    """The source of a `__init__.py`-bearing directory or of a file, if readable."""
+    path = entry / "__init__.py" if entry.is_dir() else entry
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def package_texts(package_dir: Path) -> set[str]:
+    """Every text the package holds, so a copy of any of them is recognisable.
+
+    Empty files are left out. A package's blank `__init__.py` is the commonest
+    file there is, and its text is no evidence at all: matched on it, any
+    unrelated blank `/tmp/<name>.py` would refuse the run.
+    """
+    texts: set[str] = set()
+    for path in sorted(package_dir.rglob("*.py")):
+        text = _text_of(path)
+        if text is not None and text.strip():
+            texts.add(text)
+    return texts
+
+
+def shadow_copies(package_dir: Path, texts: set[str]) -> list[Path]:
+    """Copies of this module parked under a scratch root, recognised by content.
+
+    The name alone is not the question here: `/tmp/foo.py` is an ordinary name
+    for an ordinary file, and a run that refused on it would refuse whenever
+    anybody else had one — the self-test of this tool lost 62 of 68 cases to a
+    single unrelated `/tmp/foo.py` left by another agent on 2026-10-16. What
+    the check is about is the copy the change was worked against, so a
+    candidate counts when its text is one of this module's own: the package's
+    files, or the pre-split file it was split from.
+    """
+    found: list[Path] = []
+    for root in SCRATCH_ROOTS:
+        for candidate in _shadow_in(root, package_dir.name, SCRATCH_DEPTH):
+            text = _text_of(candidate)
+            if text is not None and text.strip() and text in texts:
+                found.append(candidate)
+    return found
+
+
+def refuse_shadow(shadows: list[Path]) -> int:
+    """Say which copy is in the way and refuse to compare two modules at once."""
+    print(
+        "cannot judge: duplicate module shadow in sys.path: "
+        + ", ".join(str(path) for path in shadows)
+        + " — the package is the copy that counts; delete the other and run again",
+        file=sys.stderr,
+    )
+    return EXIT_CANNOT_JUDGE
 
 
 # ---------------------------------------------------------------------------
@@ -1463,6 +1787,29 @@ def show_in_ref(ref: str, path: str, repo_root: Path) -> str | None:
         raise ValueError(f"{ref}:{path} is not UTF-8 ({exc})") from None
 
 
+def report(findings: Findings, header: list[str]) -> int:
+    """Print one run and turn it into an exit code. Nothing verdicts as a pass
+    unless the checks that could not run have already returned their own code:
+    reaching here with an empty finding list means they all ran and agreed."""
+    print("== verify-module-split ==")
+    for line in header:
+        print(line)
+    print("-" * 68)
+    rendered = findings.render()
+    if rendered:
+        print(rendered)
+    if findings.summary:
+        print("-" * 68)
+        for line in findings.summary:
+            print(f"      {line}")
+    print("-" * 68)
+    if findings.blockers:
+        print(f"结论: 发现 {len(findings.blockers)} 处差异")
+        return EXIT_DIFFERENT
+    print("结论: 通过")
+    return EXIT_OK
+
+
 def run_check(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve() if args.repo_root else repo_root_of()
     if repo_root is None:
@@ -1478,6 +1825,9 @@ def run_check(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"cannot judge: {exc}", file=sys.stderr)
         return EXIT_CANNOT_JUDGE
+
+    if shadows := shadow_beside(package_dir):
+        return refuse_shadow(shadows)
 
     old_path = args.old_file or derived_old
     if old_path is None:
@@ -1499,6 +1849,12 @@ def run_check(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_CANNOT_JUDGE
+    if shadows := shadow_copies(
+        package_dir,
+        package_texts(package_dir)
+        | ({old_source} if old_source.strip() else set()),
+    ):
+        return refuse_shadow(shadows)
 
     try:
         root = _import_root(package_dir)
@@ -1531,23 +1887,46 @@ def run_check(args: argparse.Namespace) -> int:
     if args.runtime_identity:
         check_runtime_identity(package, findings)
 
-    print("== verify-module-split ==")
-    print(f"old : {old_path} @ {base_ref}")
-    print(f"new : {package_dir}")
-    print("-" * 68)
-    rendered = findings.render()
-    if rendered:
-        print(rendered)
-    if findings.summary:
-        print("-" * 68)
-        for line in findings.summary:
-            print(f"      {line}")
-    print("-" * 68)
-    if findings.blockers:
-        print(f"结论: 发现 {len(findings.blockers)} 处差异")
-        return EXIT_DIFFERENT
-    print("结论: 通过")
-    return EXIT_OK
+    return report(findings, [f"old : {old_path} @ {base_ref}", f"new : {package_dir}"])
+
+
+def run_check_moves(args: argparse.Namespace) -> int:
+    repo_root = Path(args.repo_root).resolve() if args.repo_root else repo_root_of()
+    if repo_root is None:
+        print(
+            "cannot judge: not inside a git repository (see --repo-root)",
+            file=sys.stderr,
+        )
+        return EXIT_CANNOT_JUDGE
+
+    base_ref = args.base_ref or DEFAULT_BASE_REF
+    directory = Path(args.check_moves)
+    if not directory.is_absolute():
+        # Relative to where the run was typed first: `--check-moves app/x` from
+        # inside the package is the same intent as the repo-relative spelling.
+        for base in (Path.cwd(), repo_root):
+            if (base / directory).is_dir():
+                directory = base / directory
+                break
+    directory = directory.resolve()
+    if not directory.is_dir():
+        print(f"cannot judge: {directory} is not a directory", file=sys.stderr)
+        return EXIT_CANNOT_JUDGE
+
+    findings = Findings()
+    try:
+        check_moves(repo_root, directory, base_ref, findings)
+    except (
+        OSError,
+        ValueError,
+        SyntaxError,
+        UnicodeDecodeError,
+        subprocess.CalledProcessError,
+    ) as exc:
+        print(f"cannot judge: {exc}", file=sys.stderr)
+        return EXIT_CANNOT_JUDGE
+
+    return report(findings, [f"dir : {directory}", f"base : {base_ref}"])
 
 
 def run_self_test(argv: list[str]) -> int:
@@ -1574,8 +1953,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="verify-module-split.py",
         description=(
-            "Compare a module with the package it was split into: exported names, "
-            "signatures, deferred imports."
+            "Compare a module with the package it was split into, or a directory "
+            "of modules with its base-ref self: exported names, signatures, "
+            "deferred imports, names that moved to a sibling."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
@@ -1584,6 +1964,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--check-facade",
         metavar="PACKAGE",
         help="the new package: a directory, its __init__.py, or a dotted module",
+    )
+    parser.add_argument(
+        "--check-moves",
+        metavar="DIR",
+        help=(
+            "a directory of modules: report names that left one of its files "
+            "while a caller still imports them from the file they left"
+        ),
     )
     parser.add_argument(
         "--base-ref",
@@ -1622,21 +2010,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_test:
         # Only ever on its own: a run that reports the self-test green and
         # exits 0 is a green light for work that did not happen if a package
-        # name was mistaken for this flag.
-        if args.check_facade:
+        # name was mistaken for this flag. The same goes for a mode: two modes
+        # in one run would have to pick which answer the exit code carries.
+        if args.check_facade or args.check_moves:
             parser.print_usage(sys.stderr)
             print(
-                "cannot judge: --self-test runs the tests and checks no package; "
-                "pass one or the other",
+                "cannot judge: --self-test runs the tests and checks nothing "
+                "else; pass one or the other",
                 file=sys.stderr,
             )
             return EXIT_CANNOT_JUDGE
         return run_self_test(["-v"] if args.verbose else [])
-    if not args.check_facade:
+    if bool(args.check_facade) == bool(args.check_moves):
         parser.print_usage(sys.stderr)
-        print("cannot judge: pass --check-facade, or --self-test", file=sys.stderr)
+        print(
+            "cannot judge: pass exactly one of --check-facade, --check-moves, "
+            "or --self-test",
+            file=sys.stderr,
+        )
         return EXIT_CANNOT_JUDGE
     try:
+        if args.check_moves:
+            return run_check_moves(args)
         return run_check(args)
     except BrokenPipeError:  # pragma: no cover - piping into head
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())

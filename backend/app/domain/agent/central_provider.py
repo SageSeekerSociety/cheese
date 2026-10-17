@@ -11,6 +11,7 @@ from datetime import datetime
 
 from app.core.config import settings
 from app.core.db import async_session_factory
+from app.core.device_failures import DeviceCallError
 from app.core.sandbox_auth import bind_resource_token, token_agent_handle
 from app.core.sentences import say
 from app.domain.agent import execution, private_chat
@@ -111,6 +112,13 @@ class CentralChannel(DeviceChannel):
             await execution.call(
                 lease, "ping", {}, hub=self._hub, timeout=MACHINE_PROBE_TIMEOUT_S
             )
+        except DeviceCallError:
+            # The machine answered, and its executor is not up: one that sat
+            # idle stops itself (`runtime_core.EXECUTOR_IDLE_EXIT_S`). The
+            # session's own take of its hands at launch starts it again, and a
+            # take that cannot be had now starts the session at the placeholder
+            # (`client._take_leased_machine`).
+            return True
         except Exception:  # noqa: BLE001 — any failure means not now, and is logged
             logger.info(
                 "central_session_stays_deferred topic=%s device=%s",

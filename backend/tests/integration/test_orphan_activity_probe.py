@@ -12,9 +12,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import update
 
-from app.domain.block.models import AuthorType, Block
+from app.domain.block.models import Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.services import last_block_at
+from app.domain.event_author import AuthorType
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import project_service, registered
 

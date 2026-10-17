@@ -1,8 +1,13 @@
 """Two of three machines were down for hours and the check said the pool was up."""
 
+import contextlib
 import importlib.util
+import io
+import os
 import pathlib
 import unittest
+import urllib.error
+from unittest import mock
 
 _HERE = pathlib.Path(__file__).resolve().parent
 _spec = importlib.util.spec_from_file_location("pool", _HERE / "ci-pool-health.py")
@@ -63,6 +68,45 @@ class PoolHealth(unittest.TestCase):
                "labels": [{"name": "cheese-dev"}]}
         _healthy, problems = pool.assess([runner("r1", "1"), dev])
         self.assertEqual(problems, [])
+
+    def _main_when_the_api_fails(self, error: BaseException) -> int:
+        """Run main([]) with credentials present and the runner API failing.
+
+        The credentials are what make these tests bite: without them main
+        returns 2 before it ever asks the API, and a check that reported every
+        API failure as healthy would still pass.
+        """
+        fetch = mock.Mock(side_effect=error)
+        with (
+            mock.patch.dict(os.environ, {"REPO": "owner/repo", "GH_TOKEN": "token"}),
+            mock.patch.object(pool, "fetch_runners", fetch),
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            code = pool.main([])
+        fetch.assert_called_once()
+        return code
+
+    def test_a_forbidden_runner_list_is_not_a_healthy_pool(self) -> None:
+        """The API refusing to answer is the check failing to see the pool. It
+        is neither a healthy pool nor a missing machine, so it must not exit 0
+        (reported fine) or 1 (a machine is down)."""
+        code = self._main_when_the_api_fails(
+            urllib.error.HTTPError(
+                "https://api.github.com/repos/owner/repo/actions/runners",
+                403,
+                "Forbidden",
+                None,
+                None,
+            )
+        )
+        self.assertEqual(code, 2)
+
+    def test_an_unreachable_runner_api_is_not_a_healthy_pool(self) -> None:
+        code = self._main_when_the_api_fails(
+            urllib.error.URLError(OSError("connection refused"))
+        )
+        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":

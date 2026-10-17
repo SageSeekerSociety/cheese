@@ -10,7 +10,8 @@ leaks into another room, even one the same member sits in.
 import asyncio
 import uuid
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from tests.integration.conftest import (
     in_thread,
     join_project_team,

@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 
 from app.domain.agent_instance.adapters import project_team
-from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.notice_meta import (
     EVENT_ROUTINE_STOPPED,
     SEVERITY_INFO,

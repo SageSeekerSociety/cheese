@@ -4,15 +4,120 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentProject:
+    id: uuid.UUID
+    settings: dict | None
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentRoom:
+    id: uuid.UUID
+    title: str
+    resource_id: uuid.UUID | None
+    archived_at: datetime | None
+    is_overview: bool
+    environment: dict | None
+
+
+# Membership supplies this read so project data access does not compose services.
+VisibleRooms = Callable[[list[Topic]], Awaitable[list[Topic]]]
+
+
+def _room(row: Topic) -> EnvironmentRoom:
+    return EnvironmentRoom(
+        id=row.id,
+        title=row.title,
+        resource_id=row.resource_id,
+        archived_at=row.archived_at,
+        is_overview=row.kind == TopicKind.root,
+        environment=row.environment,
+    )
+
+
+async def load_environment_project(
+    session: AsyncSession, project_id: uuid.UUID
+) -> EnvironmentProject:
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    return EnvironmentProject(project.id, project.settings)
+
+
+async def save_project_environment(
+    session: AsyncSession, project_id: uuid.UUID, config: dict
+) -> None:
+    project = await session.scalar(
+        select(Project).where(Project.id == project_id).with_for_update(key_share=True)
+    )
+    if project is None:
+        raise NotFoundError("Project not found")
+    project.settings = {**(project.settings or {}), "environment": config}
+    await session.flush()
+
+
+async def load_environment_room(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    lock: bool = False,
+    visible: VisibleRooms | None = None,
+) -> EnvironmentRoom:
+    statement = select(Topic).where(
+        Topic.id == topic_id,
+        Topic.project_id == project_id,
+        Topic.is_private.is_(False),
+    )
+    if lock:
+        # The session keeps objects across commit; a locked re-read must refresh.
+        statement = statement.with_for_update().execution_options(
+            populate_existing=True
+        )
+    topic = await session.scalar(statement)
+    if topic is None or (visible is not None and not await visible([topic])):
+        raise NotFoundError("Room not found")
+    return _room(topic)
+
+
+async def rooms_with_environment(
+    session: AsyncSession, project_id: uuid.UUID, *, visible: VisibleRooms
+) -> list[EnvironmentRoom]:
+    topics = await session.scalars(
+        select(Topic)
+        .where(
+            Topic.project_id == project_id,
+            Topic.is_private.is_(False),
+            Topic.kind != TopicKind.root,
+            Topic.status != TopicStatus.archived,
+        )
+        .order_by(Topic.created_at)
+    )
+    return [_room(topic) for topic in await visible(list(topics))]
+
+
+async def set_room_environment(
+    session: AsyncSession, topic_id: uuid.UUID, config: dict
+) -> None:
+    """Write the pin after the caller locks the room and checks it is idle."""
+    await session.execute(
+        update(Topic).where(Topic.id == topic_id).values(environment=config)
+    )
+    await session.flush()
 
 
 class EnvironmentConfig(BaseModel):

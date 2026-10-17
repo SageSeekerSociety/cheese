@@ -27,9 +27,10 @@ from sqlalchemy import event, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateIndex
 
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.waits import MemberWaits, StuckCard
+from app.domain.event_author import AuthorType
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task
 from app.domain.room_task.repositories import TaskRepository

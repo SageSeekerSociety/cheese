@@ -15,8 +15,9 @@ import uuid
 import sqlalchemy as sa
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import seed_user

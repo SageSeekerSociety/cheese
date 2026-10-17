@@ -14,7 +14,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
-from app.domain.block.models import AuthorType, Block, BlockKind, BlockReaction
+from app.domain.block.models import Block, BlockKind, BlockReaction
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput
@@ -24,6 +24,7 @@ from app.domain.delivery.receipts import (
     record_receipt,
     register_input,
 )
+from app.domain.event_author import AuthorType
 from tests.integration.test_same_handle_note_and_timed_delivery import _project, _room
 
 

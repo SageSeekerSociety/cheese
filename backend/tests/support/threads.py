@@ -4,8 +4,8 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
 from app.domain.thread.services import open_thread
 from app.domain.topic.models import Topic
 

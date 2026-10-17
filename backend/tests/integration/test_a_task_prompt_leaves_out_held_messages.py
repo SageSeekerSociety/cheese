@@ -16,13 +16,14 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
 from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.models import NativeInput
 from app.domain.delivery.receipts import (
     register_input,
     terminate_inputs_of_dead_works,
 )
+from app.domain.event_author import AuthorType
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import open_task, post_message, post_project

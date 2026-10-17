@@ -32,7 +32,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import Block, BlockKind
+from app.domain.event_author import AuthorType
 from app.domain.room_task import naming
 from app.domain.room_task.models import Task, TaskTitle
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
