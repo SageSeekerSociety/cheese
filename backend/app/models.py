@@ -37,6 +37,7 @@ from app.domain.local_fs import models as local_fs  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
 from app.domain.materials import models as materials  # noqa: F401
 from app.domain.memory import models as memory  # noqa: F401
+from app.domain.model_behavior import models as model_behavior  # noqa: F401
 from app.domain.notification import models as notification  # noqa: F401
 from app.domain.notification import (
     preferences_models as notification_prefs,  # noqa: F401
