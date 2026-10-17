@@ -12,7 +12,8 @@ The rules, as stated before the code was written:
   turn, and counts as delivered once the session has read it;
 - a platform instruction does not move the turn's foreground work aside; a
   person naming the agent does, as their own message would;
-- a finished task's write-up still waits for a turn of its own;
+- a finished task's write-up, and a routine's run, still wait for a turn of
+  their own;
 - a delivery the running turn did not take is not lost: it is tried again.
 """
 
@@ -28,6 +29,7 @@ from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.mention import BY_PERSON
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import EVENT_ROUTINE_RUN
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.closing import CLOSES_TASK
 from tests.conftest import stub_compute
@@ -178,21 +180,26 @@ async def test_a_person_naming_a_busy_agent_moves_its_work_aside(world):
 
 
 @pytest.mark.anyio
-async def test_a_task_write_up_still_waits_for_a_turn_of_its_own(world):
+@pytest.mark.parametrize(
+    "own_turn",
+    [{CLOSES_TASK: True}, {"eventType": EVENT_ROUTINE_RUN}],
+    ids=["task write-up", "routine run"],
+)
+async def test_a_delivery_that_is_its_own_turn_still_waits_for_one(world, own_turn):
     await world.busy()
     delivery_id = await _delivery(
         world.factory,
         world.conversation,
         world.instance_id,
         "write the task up",
-        payload={CLOSES_TASK: True},
+        payload=own_turn,
     )
 
     assert await world.dispatch(delivery_id) == 1
 
     row = await _settled(world.factory, delivery_id, {"pending", "failed"})
     assert row.state == "pending" and row.sent_at is None
-    assert len(world.screen.handed) == 1, "the write-up was put into another turn"
+    assert len(world.screen.handed) == 1, "it was put into another turn"
 
 
 @pytest.mark.anyio

@@ -38,7 +38,7 @@ from app.domain.delivery.input_identity import (
 from app.domain.delivery.mention import BY_PERSON
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
-from app.domain.notification.models import NotificationType
+from app.domain.notice_meta import EVENT_ROUTINE_RUN
 from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs
@@ -287,8 +287,12 @@ class LiveInput:
         to 2026-10-16. Joined, it is read at the turn's next tool boundary.
 
         ``None``: there is no such turn, or this delivery takes a turn of its
-        own — a finished task's write-up, which the close keys on by its
-        attempt's turn (`room_task.closing`). The caller starts one as before.
+        own. A finished task's write-up does: the close keys on its attempt's
+        turn (`room_task.closing`). So does a routine's run: its settlement
+        reads the run's progress off its attempt's turn
+        (`routine.service.settlement`), and that turn is assembled with the
+        routine owner's memory (`turn_speakers.routine_owner`). The caller
+        starts one as before.
         ``False``: there is one and the input did not reach it; nothing was
         sent (`receipts.withdraw_input` puts the attempt back to ``claimed``),
         so the attempt is refused and retried like any other. ``True``: the
@@ -306,11 +310,13 @@ class LiveInput:
         """
         async with self._sessions() as session:
             row = await session.get(Delivery, delivery_id)
+        payload = (row.payload or {}) if row is not None else {}
         if (
             row is None
             or row.attempt_id != attempt_id
             or row.conversation_id is None
-            or (row.payload or {}).get(CLOSES_TASK)
+            or payload.get(CLOSES_TASK)
+            or payload.get("eventType") == EVENT_ROUTINE_RUN
         ):
             return None
         seat = row.recipient_handle
@@ -324,13 +330,12 @@ class LiveInput:
         if matched is None:
             return None
         consuming_turn_id, state = matched
-        content = str((row.payload or {}).get("content") or "")
-        by_person = (row.payload or {}).get("eventType") == BY_PERSON
-        line = (
-            publication_prompt(strip_platform_notice(content))
-            if row.type == NotificationType.MENTION.value
-            else platform_prompt(content)
-        )
+        # Framed as the turn it would otherwise have started frames it: the
+        # ledger's content is platform-written (a person's words inside a
+        # mention are quoted in it), and a platform turn reads it under the
+        # platform marker (`turn.intake.preparation.prompt`).
+        line = platform_prompt(str(payload.get("content") or ""))
+        by_person = payload.get("eventType") == BY_PERSON
         registrar = self._input_registrar(
             InputEffects(delivery_id=delivery_id, attempt_id=attempt_id),
             fence_delivery=True,
