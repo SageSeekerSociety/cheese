@@ -100,27 +100,14 @@ NARROWING = frozenset({"kind", "kinds", "author", "meta", "event_type", "reply_t
 #: kind, which is exactly the slice a new announcement lands in.
 EVENT_MARKERS = ("BlockKind.event", '"event"', "'event'")
 
-#: What a filter on the returned rows looks like, for a helper that narrows
-#: inside itself instead of at its call site. Matched against `ast.unparse`,
-#: which prints a string constant with single quotes.
+#: The keys that say which blocks a read means, read off the column a filter
+#: compares rather than off the text of the whole filter — in
+#: `Block.conversation_id == topic.id` the `.id` belongs to the argument.
 #:
 #: `id` and `content` are here for the same reason as `kind`: `[b for b in
 #: blocks if b["id"] == said]` has said which block it means, and one more
-#: platform line cannot join that slice. The keys are matched against the whole
-#: filter source, so they also cover `if b.content == …` and `if b["turn_id"]`.
-ROW_KEYS = (
-    "'kind'", ".kind", "'author'", ".author",
-    "'meta'", ".meta", "'id'", ".id", "'content'", ".content",
-    "'turn_id'", ".turn_id", "'reactions'", ".reactions",
-    "'run_id'", ".run_id", "'tasks'", ".tasks",
-    "event_type", "event_types", "BlockKind",
-)
-
-#: The same keys as bare names, for reading a filter as an expression instead of
-#: as text. `ROW_KEYS` is for the spellings a comparison is written in; this is
-#: for asking which column a `Compare` is about — `.id` anywhere in the text is
-#: also `topic.id` on the right of a conversation pin, which narrows nothing.
-ROW_KEY_NAMES = frozenset({
+#: platform line cannot join that slice.
+ROW_KEYS = frozenset({
     "kind", "kinds", "author", "meta", "event_type", "event_types",
     "reply_to", "id", "content", "turn_id", "reactions", "run_id", "tasks",
 })
@@ -370,11 +357,11 @@ def _narrowing_column(node: ast.AST) -> bool:
     and not as a filter on something unnamed.
     """
     if isinstance(node, ast.Attribute):
-        return node.attr in ROW_KEY_NAMES or _narrowing_column(node.value)
+        return node.attr in ROW_KEYS or _narrowing_column(node.value)
     if isinstance(node, ast.Subscript):
         key = node.slice
         if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            return key.value in ROW_KEY_NAMES
+            return key.value in ROW_KEYS
         return _narrowing_column(node.value)
     if isinstance(node, ast.Call):
         return _narrowing_column(node.func)
