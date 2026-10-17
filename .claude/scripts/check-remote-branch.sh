@@ -240,6 +240,13 @@ if [ "$SELF_TEST" = 1 ]; then
   [ "$CODE" -eq 1 ] || self_fail "an absent branch must exit 1 even when the fetch fails (exit $CODE, got: $OUT)"
   says "EXISTS: no" "the failed fetch must not change the branch answer"
 
+  # A remote that is configured but cannot be read is "cannot judge" too.
+  git -C "$tmp/clone" remote set-url origin "$tmp/not-a-repo"
+  verdict "$tmp/clone" main
+  [ "$CODE" -eq 2 ] || self_fail "an unreachable remote must exit 2, not 1 (exit $CODE, got: $OUT)"
+  says "EXISTS: unknown" "an unreachable remote must read as unknown"
+  says_not "EXISTS: no" "an unreachable remote must not be reported as an absent branch"
+
   echo "PASS: check-remote-branch self-test (remote-only branch, absent branch,"
   echo "      unreadable remote, name forms, stale base, --fetch that moves the"
   echo "      cache, a tag named main, a checkout that did not track main, a"
