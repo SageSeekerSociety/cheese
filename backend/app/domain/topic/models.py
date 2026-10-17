@@ -173,10 +173,11 @@ class Topic(UuidPk, Timestamps, Base):
     )
 
 
-# Whether a room is a private chat is asked here and nowhere else: in Python of a
-# loaded room, in SQL of a row, and once more where one is created.
-# `tests/unit/test_is_private_read_points.py` fails on any other read of the
-# column, so a place that needs private chats to differ calls one of these.
+# Whether a room is a private chat is asked through these: in Python of a loaded
+# room, in SQL of a row, and once more where one is created.
+# `tests/unit/test_is_private_read_points.py` fails on any other Python read of
+# the attribute. Raw SQL text is outside what it sees: `agent/project_feed.py`'s
+# `_PLACE` still selects `t.is_private` as text.
 
 
 def is_private_chat(room: Topic) -> bool:
