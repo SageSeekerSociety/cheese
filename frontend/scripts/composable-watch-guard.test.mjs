@@ -512,9 +512,9 @@ export function usePanel(sid: Ref<string>) {
   assert.match(dropped.output, /local to the component/)
 })
 
-test('keeps a ref held inside a prop unwrapped', (t) => {
-  // DocEditLayer watches `props.rewrite.phase.value`: only the first `value` names a
-  // prop, the deeper one unwraps a ref.
+test('keeps a nested prop path whole on both sides', (t) => {
+  // DocEditLayer watches `props.rewrite.phase.value`, a ref held inside a prop. The
+  // port has to name the same path, so both sides spell out the trailing `.value`.
   const script = `import { ref, watch } from 'vue'
 
 const props = defineProps<{ rewrite: { phase: { value: string } } }>()
@@ -602,6 +602,69 @@ export function usePanel(scope: { topicId: () => string }) {
   const dropped = split(t, { script, head: head('props.state.topicId'), composableSource }).run()
   assert.equal(dropped.status, 1, dropped.output)
   assert.match(dropped.output, /state\.value\.topicId/)
+})
+
+test('a destructured scope binding keeps the .value it watches', (t) => {
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel({ config: () => props.config })`
+  const carried = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel({ config }: { config: () => { value: string } }) {
+  const loading = ref(false)
+  watch(() => toValue(config).value, () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, {
+    script,
+    head,
+    composableSource: `import { ref, toValue, watch } from 'vue'
+
+export function usePanel({ config }: { config: () => { value: string } }) {
+  const loading = ref(false)
+  watch(() => toValue(config), () => { loading.value = false })
+  return { loading }
+}`,
+  }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /config\.value/)
+})
+
+test('a value parameter handed a prop expression holds the value, not a ref', (t) => {
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel(() => props.config)`
+  const composable = (watched) => `import { ref, toValue, watch } from 'vue'
+
+export function usePanel(config: () => { value: string }) {
+  const loading = ref(false)
+  watch(() => ${watched}, () => { loading.value = false })
+  return { loading }
+}`
+  const carried = split(t, { script, head, composableSource: composable('toValue(config).value') }).run()
+  assert.equal(carried.status, 0, carried.output)
+
+  const dropped = split(t, { script, head, composableSource: composable('toValue(config)') }).run()
+  assert.equal(dropped.status, 1, dropped.output)
+  assert.match(dropped.output, /config\.value/)
 })
 
 test('follows a prop destructured into a local before watching it', (t) => {

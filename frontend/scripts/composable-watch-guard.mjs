@@ -19,12 +19,12 @@
 // composable taking the value itself (`fn(() => props.x)`) matches `toValue(x)`; refs,
 // `computed(() => props.x)` and local aliases (`const s = toValue(scope)`) are
 // unwrapped, and array sources are compared element by element. A ref's `.value` is
-// dropped where the root is a ref (a local, a destructured binding, or a parameter
-// that is the value itself); a prop or scope path is kept as written, so `props.x` and
-// `props.x.value` do not stand in for each other. Keys rooted outside props and the
-// scope live under `$local.`, so a local ref never stands in for a lost prop. A
-// renamed or restructured source can be reported even though it survived; waive that
-// one with --allow.
+// dropped where the root is a ref: a local name, or a parameter handed a ref. A prop
+// path, a scope path, and a destructured binding keep their segments as written, so
+// `props.x` and `props.x.value` do not stand in for each other. Keys rooted outside
+// props and the scope live under `$local.`, so a local ref never stands in for a lost
+// prop. A renamed or restructured source can be reported even though it survived;
+// waive that one with --allow.
 import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -151,20 +151,35 @@ function propertyName(node) {
 //                    not a scope object (`fn(() => props.sid)`)
 //   bindings         destructured scope names -> source keys the call sites pass
 //   aliases          local names bound to a member chain inside the scope
+// A parameter that is the watched value itself unwraps when the call site handed it a
+// ref (`fn(topicId)`). When every call site hands a prop expression instead
+// (`fn(() => props.x)`, `fn(props.x)`), the parameter holds the prop's value, so
+// `.value` on it names a field rather than unwrapping a ref.
+function isRefParameter(ctx) {
+  if (!ctx.scopeValue?.size) return false
+  return [...ctx.scopeValue].every((key) => key.startsWith('$local.'))
+}
+
 function memberKeys(node, ctx) {
   const member = memberPath(node, ctx)
   if (!member) return null
   const { root } = member
-  // `.value` unwraps a ref only where the root is one: a local, a destructured
-  // binding, or a parameter that is the value itself (`fn(topicId)`, watched as
-  // `sid.value`). `props` and a scope object hold plain values, so their segments are
-  // kept as written: `props.config` and `props.config.value` watch different things.
-  const keepsValue = root === 'props' || (root === ctx.scopeParam && !ctx.scopeValue?.size)
+  // `.value` unwraps a ref only where the root is one: a local name, or a parameter
+  // that is the value itself and was handed a ref (`fn(topicId)`, watched as
+  // `sid.value`). A prop path, a scope path, and a destructured binding all name a
+  // place in the parent's props, so they keep their segments as written; both sides of
+  // the split must spell the same path for `props.config` and `props.config.value` to
+  // stay apart.
+  const keepsValue =
+    root === 'props' || Boolean(ctx.bindings?.has(root)) || (root === ctx.scopeParam && !isRefParameter(ctx))
   const segments = keepsValue ? [...member.path] : member.path.filter((segment) => segment !== 'value')
   if (root === 'props') return new Set([segments.length ? segments.join('.') : 'props'])
   if (ctx.scopeParam && root === ctx.scopeParam) {
+    if (ctx.scopeValue?.size) {
+      if (!segments.length) return new Set(ctx.scopeValue)
+      return new Set([...ctx.scopeValue].map((key) => `${key}.${segments.join('.')}`))
+    }
     if (!segments.length) {
-      if (ctx.scopeValue?.size) return new Set(ctx.scopeValue)
       if (ctx.scopeWholeProps) return new Set(['props'])
       return new Set(['$scope'])
     }
