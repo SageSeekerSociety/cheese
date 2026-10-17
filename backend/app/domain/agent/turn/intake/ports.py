@@ -75,6 +75,10 @@ class MessageService(Protocol):
         owes_reply: bool = True,
     ) -> bool | InputReconciliationPending | None: ...
 
+    async def join_running_turn(
+        self, delivery_id: uuid.UUID, attempt_id: uuid.UUID
+    ) -> bool | InputReconciliationPending | None: ...
+
     def converse(
         self,
         *,

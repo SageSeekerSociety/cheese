@@ -185,6 +185,16 @@ def arguments(model: str) -> list[str]:
         # this; the runner names both.
         "--no-skills",
         "--no-extensions",
+        # Of pi's own extensions, its MCP client (the project's servers, at the
+        # session's gateway), the codemode tool its scripts call them through,
+        # and the search that finds a server's tools. The platform's extension
+        # follows (`runner.py`).
+        "--extension",
+        "builtin:mcp",
+        "--extension",
+        "builtin:codemode",
+        "--extension",
+        "builtin:tool-search",
         "--no-prompt-templates",
         "--no-themes",
         # Nothing a room waits on may depend on reaching pi.dev.

@@ -140,6 +140,13 @@ describe('桌面上话题头的 ⋯', () => {
     expect(archiveTopic).toHaveBeenCalledWith('topic-1')
   })
 
+  it('频道里还有进行中的任务时不显示归档', async () => {
+    mountHeader({ can_manage: true, my_tasks: { shown: [], open: 1 } })
+
+    await openMore()
+    expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
+  })
+
   it('用量还在菜单里：它是这段的口径，不是一件能做的事', async () => {
     mountHeader()
 

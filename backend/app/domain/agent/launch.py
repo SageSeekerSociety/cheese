@@ -1,0 +1,198 @@
+"""一次启动的两半：机器说「在哪」，harness 说「跑什么」。
+
+A launch is the one moment the two axes have to meet. A channel knows where a
+screen keeps its files and what the session's cwd is; it does not know what
+belongs there — and a channel that decides can only ever host the one harness it
+was written against. A harness knows the command, the environment and the files
+that must be on disk before the process starts; it does not know where any
+machine put them.
+
+So neither side answers alone. The channel hands over a ``MachinePlace``, the
+harness hands back a ``MachineLaunch``, and ``MachinePlan.on`` is the sentence
+between them: *tell me what to run, now that I have said where*.
+
+Nothing below mentions Claude Code, which is why it lives here — beside
+`machine_launcher`, outside `harness` — and not inside the adapter that happens
+to be the first thing to satisfy it. The whole point of the seam is that a
+transport can hold a launch without being able to read it, and the platform
+half must be able to name the two halves without importing the harness package
+that implements one of them.
+"""
+
+from dataclasses import dataclass, field
+from typing import Protocol, runtime_checkable
+
+
+class ExecutorLaunch(Protocol):
+    """Harness-owned installation and history transfer over a device transport."""
+
+    def can_prepare(self, info: dict, sandbox: bool | None = None) -> bool: ...
+
+    def payload_for(
+        self,
+        project_id,
+        resource_id,
+        env: dict,
+        known_files: dict | None = None,
+        *,
+        sandbox: bool,
+        platform_machine: bool,
+    ) -> dict: ...
+
+    def script(
+        self,
+        project_id,
+        resource_id,
+        env: dict,
+        *,
+        sandbox: bool,
+        platform_machine: bool,
+    ) -> str: ...
+
+    def private_script(self, target: dict, env: dict) -> str: ...
+
+    async def transfer_history(
+        self, hub, source, center, project, resource, resume: str
+    ) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class MachinePlace:
+    """机器说「在哪」—— 一台设备这一侧的那一半。
+
+    Everything here is a fact about the room and the machine, never an
+    instruction about what to do with it: this room belongs to a project, has an
+    execution target, a CA to trust. One
+    harness turns those into a settings file and a version floor; the next one
+    ignores most of them. A channel that decided which is which could only ever
+    host the harness it was written against.
+
+    ``home`` and ``workdir`` are as the SESSION sees them; ``state`` is as the
+    CONNECTOR resolves it (a literal ``$HOME/...``), because that is the string
+    the backend records and later derives a socket from.
+
+    ``store`` is the room's project's shared dependency store on this machine —
+    outside ``home``, because its whole point is to outlive any one room and be
+    found by the next. No harness reads it; the platform half of the launcher
+    points the package managers at it.
+    """
+
+    home: str
+    workdir: str
+    store: str
+    state: str
+    api_base: str
+    project_id: str
+    topic_id: str
+    agent_handle: str
+    execution_target: dict | None = None
+    ca_pem: str = ""
+    #: Which seat of the room this session takes (`place.seat_key`): empty is
+    #: the agent's own, a task's session names its task.
+    seat: str = ""
+    #: A member's own coding agent on their own machine (#2991): it signs in
+    #: with the login its owner gave the platform on this machine, not the
+    #: platform's.
+    own_login: bool = False
+    #: A member's own coding agent on a connection its owner's account holds
+    #: (#2991): it calls the model with that connection, which the session's
+    #: environment carries (`place.OWN_MODEL_*`), on the session host.
+    own_key: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class MachineLaunch:
+    """跑什么 —— 平台骨架上那几段，加上只有这个 harness 自己读的 env。
+
+    The四段 are named for WHEN they run on the machine, which is the only thing
+    the platform half knows about them; ``machine_launcher`` documents each.
+    ``env`` is the harness's own: a channel merges it into the one environment
+    the session is started with, without having to read a line of it.
+
+    ``contract`` is not shell: it is everything about this launch that a process
+    already running could not be made to adopt — the build, the argv, the
+    environment, and every file the launch writes or process it starts that is
+    read once and kept. The room's own system prompt is not in it. The channel
+    folds it into what a live session is compared against, so changing any of
+    it closes the sessions holding the old one instead of leaving them running
+    something the code no longer describes.
+    """
+
+    command: str
+    contract: str = ""
+    configure: str = ""
+    credentials: str = ""
+    prepare: str = ""
+    env: dict[str, str] = field(default_factory=dict)
+
+
+@runtime_checkable
+class MachinePlan(Protocol):
+    """跑什么 —— 在任何机器说「在哪」之前。
+
+    Handed to a channel in place of the loose values it used to take and turn
+    into a command itself. ``on`` is the whole of it: the channel calls it with
+    the one thing it knows, and gets back a launch it never has to understand —
+    which is what lets the same channel host whichever harness was asked for.
+
+    The three read-only values below are readable at all only because a
+    transport whose launch is not a command still has to put the same three
+    things into the script it writes. Writing them was never on the table: a
+    transport that could edit the prompt or swap the model would make what ran
+    differ from what the turn asked for, with nothing left to say where the
+    change came from.
+
+    This is everything a MACHINE needs. What a room running on an assigned
+    executor needs on top of it is ``LaunchPlan`` below — a harness that runs
+    where the files are does not have to answer for an executor it never uses.
+    """
+
+    # WHICH harness this plan is for. A channel reads it to NAME things — the
+    # directory a machine keeps this session's state in, the row that says what
+    # is running there — never to decide what to do, which is the whole point of
+    # the two methods below.
+    @property
+    def harness(self) -> str: ...
+
+    @property
+    def system_prompt(self) -> str: ...
+
+    @property
+    def model(self) -> str | None: ...
+
+    @property
+    def resume_session_id(self) -> str | None: ...
+
+    def on(self, place: MachinePlace) -> MachineLaunch:
+        """The launch, for a machine whose launch is a shell script.
+
+        A harness that has to FIND its binary and decide what resuming means
+        can only do that on the machine, so what a device gets is a script it
+        runs rather than a command we assembled."""
+        ...
+
+
+@runtime_checkable
+class ExecutorPlan(Protocol):
+    """在一台单独的执行机上开工，需要的那一半。
+
+    A room whose work happens on an assigned executor needs its harness to
+    install one and to move a conversation onto it. A harness that runs where
+    the files already are has neither to offer, and saying so by not satisfying
+    this is more honest than a method that raises.
+
+    Deliberately smaller than ``LaunchPlan``: Codex prepares an executor and
+    then starts its own runner over ``hub.exec``, never opening a screen, so
+    what it hands this route is these two values and nothing else.
+    """
+
+    @property
+    def execution(self) -> ExecutorLaunch: ...
+
+    @property
+    def resume_session_id(self) -> str | None: ...
+
+
+@runtime_checkable
+class LaunchPlan(MachinePlan, ExecutorPlan, Protocol):
+    """两边都答得上来的计划：一台机器要的，加上一台执行机要的。"""

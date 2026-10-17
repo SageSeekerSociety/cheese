@@ -32,7 +32,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.claude_code.remote_execution import release
 from app.domain.agent.harness.claude_code.runner import LAUNCH
 from app.domain.agent.harness.claude_code.session_launch import session_settings
-from app.domain.agent.harness.launch import ExecutorLaunch, MachineLaunch, MachinePlace
+from app.domain.agent.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.place import (
     CLAUDE_LOGIN_DIR,
     MODEL_SERVICE_FILE,

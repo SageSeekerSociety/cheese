@@ -1,12 +1,12 @@
 """An instruction that waited for its agent's seat goes in when the seat frees.
 
-A delivery whose agent is still working on an earlier input is not sent: the
-seat holds that input until the work ends, so the attempt goes back to the
-ledger with a backoff. The work ending is what it was waiting for — the
-messages a person sent meanwhile are woken by that same ending. On dev
-(2026-10-15) an orchestrator's instructions waited out their backoff past the
-gaps between its turns, and 48 of them in eight days were given up after half
-an hour without ever meeting a free seat.
+A delivery that takes a turn of its own, whose agent is still working on an
+earlier input, is not sent: the seat holds that input until the work ends, so
+the attempt goes back to the ledger with a backoff. The work ending is what it
+was waiting for — the messages a person sent meanwhile are woken by that same
+ending. On dev (2026-10-15) an orchestrator's instructions waited out their
+backoff past the gaps between its turns, and 48 of them in eight days were
+given up after half an hour without ever meeting a free seat.
 """
 
 import asyncio
@@ -23,6 +23,7 @@ from app.domain.delivery.agent import RETRY_SECONDS, dispatch_pending
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
+from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from tests.conftest import StubChannel, stub_compute
@@ -60,7 +61,7 @@ async def _room_with_agent(factory):
     return conversation, seat, agent.instance_id
 
 
-async def _instruction_for(factory, conversation, instance_id, content):
+async def _instruction_for(factory, conversation, instance_id, content, **payload):
     async with factory() as session:
         stamp = datetime.now(UTC)
         delivery = Delivery(
@@ -70,7 +71,7 @@ async def _instruction_for(factory, conversation, instance_id, content):
             conversation_id=conversation,
             dedup_key=f"{uuid.uuid4()}:freed-seat",
             type=NotificationType.ROOM_NOTICE.value,
-            payload={"content": content},
+            payload={"content": content, **payload},
             event_at=stamp,
             recorded_at=stamp,
         )
@@ -113,9 +114,16 @@ async def test_the_instruction_goes_in_when_the_work_it_waited_for_ends(
         await asyncio.wait_for(screen.handed_one.wait(), HANG_S)
         screen.handed_one.clear()
 
-        # An instruction for the same agent arrives meanwhile and is tried once.
+        # An instruction for the same agent arrives meanwhile and is tried
+        # once. It is one that takes a turn of its own — a finished task's
+        # write-up — so it waits rather than joining the turn running there
+        # (`test_a_delivery_joins_the_running_turn`).
         delivery_id = await _instruction_for(
-            factory, conversation, instance_id, "check the open pull requests"
+            factory,
+            conversation,
+            instance_id,
+            "check the open pull requests",
+            **{CLOSES_TASK: True},
         )
         assert await dispatch_pending(factory, chat=chat, runner=runner) == 1
         async with asyncio.timeout(HANG_S):

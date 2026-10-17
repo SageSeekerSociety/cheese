@@ -18,11 +18,13 @@ from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.device import mcp_machines
 from app.domain.membership.services import (
     pending_invitations_for,
     pending_transfers_for,
 )
 from app.domain.project.services import ProjectService
+from app.domain.remote_mcp import local as mcp_local
 from app.domain.team import membership_services as team_applications
 from app.domain.team.models import TeamMembershipApplication
 from app.domain.team.services import team_service
@@ -188,3 +190,77 @@ async def membership_asks(
             asks.append(ask)
     asks.sort(key=lambda ask: ask.at, reverse=True)
     return asks
+
+
+@dataclass(frozen=True, slots=True)
+class RunAsk:
+    """一个项目要在我自己的电脑上运行一条命令（一个本地 MCP 服务器），等我允许。
+    同一条命令允许过就不再问，命令改了再问（`remote_mcp/local.py`）。"""
+
+    id: str
+    project_id: str
+    project_name: str
+    server: str
+    command: str
+    #: 我的哪台电脑。
+    device: str
+    #: 命令写在哪：仓库的 `.mcp.json`（repository）、项目设置（settings）
+    #: 或队友类型（type）。
+    source: str
+    #: 谁写的：`.mcp.json` 是最近改它的人，按仓库里写的名字；项目设置是添加它的
+    #: 成员；读不出来没有。
+    author: Face | None
+    at: datetime
+
+    def as_dict(self) -> dict:
+        return {
+            "kind": "mcp_run",
+            "id": self.id,
+            "projectId": self.project_id,
+            "projectName": self.project_name,
+            "server": self.server,
+            "command": self.command,
+            "device": self.device,
+            "source": self.source,
+            "author": self.author.as_dict() if self.author else None,
+            "at": self.at.isoformat(),
+        }
+
+
+async def run_asks(db: AsyncSession, *, handle: str) -> list[RunAsk]:
+    """等 `handle` 允许在自己电脑上运行的命令，新的在前。"""
+    owned = await mcp_machines.owned(db, handle)
+    waiting = await mcp_local.waiting_for(db, owned)
+    if not waiting:
+        return []
+    projects = await ProjectService(db).get_projects_by_ids(
+        list({a.project_id for a in waiting})
+    )
+    names = await mcp_machines.names(db, owned)
+    people = await faces_by_handle(
+        db, [a.author for a in waiting if a.source == "settings" and a.author]
+    )
+
+    def author(a) -> Face | None:
+        if not a.author:
+            return None
+        if a.source != "settings":
+            return Face(a.author, None, None)
+        nickname, avatar_id = people.get(a.author, (None, None))
+        return Face(nickname or a.author, a.author, _avatar(avatar_id))
+
+    return [
+        RunAsk(
+            id=str(a.id),
+            project_id=str(a.project_id),
+            project_name=projects[a.project_id].name,
+            server=a.name,
+            command=a.command,
+            device=names.get(a.device_id, a.device_id),
+            source=a.source,
+            author=author(a),
+            at=a.created_at,
+        )
+        for a in waiting
+        if a.project_id in projects
+    ]

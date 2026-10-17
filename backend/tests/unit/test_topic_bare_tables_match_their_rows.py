@@ -191,8 +191,9 @@ def _tables_in(statement: object) -> list[object]:
     """这条语句由哪几张表拼出来，按**调用那一份对象**给出。
 
     `find_tables` 把语句里每一处 `FROM` / `JOIN` 的元素原样交出来，于是「用的是
-    `statements.py` 里那份裸表，还是别人家模型的 `__table__`」比得出来 —— 光看
-    名字比不出来：两者都叫 `blocks`，SQL 文本里长得一样。
+    `statements.py` 里那份裸表」比得出来（裸表是 `TableClause`，`is` 一比就是它）
+    —— 光看名字比不出来：两者都叫 `blocks`，SQL 文本里长得一样。反过来的那一头
+    （够回了别人家模型的真表）不能这么比，见 `_borrowed_models`。
     """
     return list(find_tables(statement))  # type: ignore[arg-type]
 
@@ -200,12 +201,22 @@ def _tables_in(statement: object) -> list[object]:
 def _borrowed_models(statement: object) -> list[str]:
     """这条语句够回了哪几张别人家模型的真表 —— 按对象比，不按表名。
 
-    退回模型时语句里会多出 `Block.__table__` 这一份，而 `_mentions` 这类判据闭包
-    里还留着裸表，所以只断「裸表出现过」抓不住那一步（照样绿）。这一条断的是反面：
-    那几张真表一份都不该出现 —— 它们正是这一档要清掉的向上边的落点。
+    退回模型时语句里会多出别人家真表这一份，而 `_mentions` 这类判据闭包里还留着
+    裸表，所以只断「裸表出现过」抓不住那一步（照样绿）。这一条断的是反面：那几张
+    真表一份都不该出现 —— 它们正是这一档要清掉的向上边的落点。
+
+    比的是这些表的**列**属于谁，不是 `find_tables` 交回的那张表：ORM 语句里它交回
+    的是带注解的副本（`AnnotatedTable`），和 `Block.__table__` 不是同一个对象，
+    `is` 比不上 —— 直接拿表对象比，这条断言对「退回模型」这一类改动永远不红。
+
+    `check_columns=True` 同样不能省：默认只收 `FROM` / `JOIN` 上的表节点，
+    `WHERE`、`ORDER BY` 里单独出现的列不算 —— 表还用着副本、排序却拿了别人家模型
+    的列，这种退法不开这个开关看不见。
     """
-    tables = _tables_in(statement)
-    return [t.name for t in FOREIGN_TABLES if any(t is other for other in tables)]
+    # 开了 `check_columns`，没有所属表的列（字面量、`label`）会交回 `None`，跳过。
+    tables = [t for t in find_tables(statement, check_columns=True) if t is not None]  # type: ignore[arg-type]
+    columns = [c for table in tables for c in table.c]  # type: ignore[attr-defined]
+    return [t.name for t in FOREIGN_TABLES if any(c.table is t for c in columns)]
 
 
 def test_the_replied_to_me_statement_still_reads_the_bare_block_table() -> None:

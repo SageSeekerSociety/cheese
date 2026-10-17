@@ -25,7 +25,8 @@ Usage:
     check-migration-fork.py --self-test
 
 Exit 0 the chain is intact, 1 it would fork (or a re-chain was refused), 2 the
-base could not be read, so nothing was judged.
+base could not be read, a migration could not be parsed, or this tree holds no
+revisions at all, so nothing was judged.
 """
 
 import argparse
@@ -54,11 +55,11 @@ MERGE_ADVICE = (
 )
 
 # Exit 2 is this directory's "could not judge" (check-file-sizes.py, test-changed.py
-# and the ratchets all use it). A guard that could not read its comparison base has
-# judged no tree at all, so exiting 0 there is indistinguishable from a tree it read
-# and cleared — and it is the one failure this file exists to prevent. Distinct from
-# 1, which means the tree was read and refused, so a caller can tell "could not
-# answer" from "answered no".
+# and the ratchets all use it). A guard that could not read its comparison base — or
+# a tree with no revisions in it — has judged nothing at all, so exiting 0 there is
+# indistinguishable from a tree it read and cleared, and it is the one failure this
+# file exists to prevent. Distinct from 1, which means the tree was read and refused,
+# so a caller can tell "could not answer" from "answered no".
 EXIT_CANNOT_JUDGE = 2
 
 
@@ -77,6 +78,29 @@ def cannot_judge(base: str) -> int:
     return EXIT_CANNOT_JUDGE
 
 
+def cannot_judge_tree(versions_dir: str) -> int:
+    """Refuse to answer when ``versions_dir`` yields no revisions at all.
+
+    An empty graph from ``collect(None, ...)`` is not "a chain with no fork". It is
+    a ``--versions-dir`` that does not exist, an empty one, a checkout without the
+    migrations, or files none of which declares a ``revision`` — and the union with
+    the base is then the base's own graph, which has exactly one head, so this used
+    to print the same PASS as a branch it had read. Reported on stderr with the same
+    code as an unreadable ``--base``: nothing was judged.
+    """
+    print(
+        f"cannot judge: no migration revisions under {versions_dir}, so this tree has "
+        "no chain to check.",
+        file=sys.stderr,
+    )
+    print("Check --versions-dir, or that this checkout has the migrations.", file=sys.stderr)
+    return EXIT_CANNOT_JUDGE
+
+
+class UnparseableMigrations(Exception):
+    """Files whose syntax prevents judging the complete revision graph."""
+
+
 def parse_revision(source: str) -> tuple[str | None, list[str]]:
     """Return (revision, parents) for one alembic version file.
 
@@ -87,10 +111,7 @@ def parse_revision(source: str) -> tuple[str | None, list[str]]:
     """
     revision: str | None = None
     parents: list[str] = []
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return None, []
+    tree = ast.parse(source)
 
     for node in tree.body:
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
@@ -143,10 +164,17 @@ def collect(ref: str | None, versions_dir: str) -> dict[str, list[str]]:
         paths = [p for p in listing.splitlines() if p.endswith(".py")]
         sources = {p: _git("show", f"{ref}:{p}") for p in paths}
 
-    for source in sources.values():
-        revision, parents = parse_revision(source)
+    unparseable: list[str] = []
+    for path, source in sources.items():
+        try:
+            revision, parents = parse_revision(source)
+        except SyntaxError as error:
+            unparseable.append(f"  {ref + ':' if ref else ''}{path}: {error}")
+            continue
         if revision:
             graph[revision] = parents
+    if unparseable:
+        raise UnparseableMigrations("\n".join(unparseable))
     return graph
 
 
@@ -307,11 +335,16 @@ def rechain(args) -> int:
 
     sources: dict[str, tuple[Path, str]] = {}
     duplicates: list[str] = []
+    unparseable: list[str] = []
     for path in sorted(Path(args.versions_dir).glob("*.py")):
         # Bytes, not text: a file read with universal newlines would come back
         # with every line ending rewritten.
         text = path.read_bytes().decode("utf-8")
-        revision, _ = parse_revision(text)
+        try:
+            revision, _ = parse_revision(text)
+        except SyntaxError as error:
+            unparseable.append(f"  {path}: {error}")
+            continue
         if not revision:
             continue
         if revision in sources:
@@ -319,6 +352,8 @@ def rechain(args) -> int:
             continue
         sources[revision] = (path, text)
 
+    if unparseable:
+        raise UnparseableMigrations("\n".join(unparseable))
     if duplicates:
         print("FAIL: two files declare the same revision id, so there is no one file to rewrite:")
         for duplicate in duplicates:
@@ -326,6 +361,12 @@ def rechain(args) -> int:
         return 1
 
     branch_graph = {revision: parse_revision(text)[1] for revision, (_, text) in sources.items()}
+    # Same non-answer as the plain check: with nothing of its own parsed, the plan
+    # below refuses with "the base head is not in this checkout, merge it first",
+    # which sends the reader to merge a branch over a tree that has no migrations
+    # at all. Nothing here can be judged, so say that, with the same code.
+    if not branch_graph:
+        return cannot_judge_tree(args.versions_dir)
 
     rewrites, reason = rechain_plan(branch_graph, base_graph)
     if rewrites is None:
@@ -391,15 +432,28 @@ def main() -> int:
         print("::error::--base is behind its upstream")
         return 1
 
-    if args.rechain:
-        return rechain(args)
+    try:
+        if args.rechain:
+            return rechain(args)
+        return check(args)
+    except UnparseableMigrations as error:
+        print(f"cannot judge: migration files do not parse:\n{error}", file=sys.stderr)
+        return EXIT_CANNOT_JUDGE
 
+
+def check(args) -> int:
     try:
         base_graph = collect(args.base, args.versions_dir)
     except subprocess.CalledProcessError:
         return cannot_judge(args.base)
 
     branch_graph = collect(None, args.versions_dir)
+    # An unreadable tree gets the same answer as an unreadable base. `collect(None,
+    # ...)` returns {} for a missing directory just as quietly as for an empty one,
+    # and the union below would then be the base's graph alone — one head, a PASS,
+    # and no indication that this side was never read.
+    if not branch_graph:
+        return cannot_judge_tree(args.versions_dir)
 
     # --- HEAD sentinel -----------------------------------------------------
     # The chain's tip, duplicated into ONE shared file (backend/alembic/HEAD).
@@ -428,7 +482,9 @@ def main() -> int:
             print("Every migration PR must move backend/alembic/HEAD to its new revision id")
             print("(one line). That is what makes two concurrent migration PRs collide in git")
             print("instead of silently forking alembic. See .claude/rules/migrations.md.")
-            print(f"Fix: echo {tip} > {sentinel_path}")
+            print(
+                "Fix: uv run --project backend python .claude/scripts/reanchor-migration-head.py"
+            )
             print("::error::backend/alembic/HEAD does not name the migration chain's tip")
             return 1
 
@@ -451,7 +507,10 @@ def main() -> int:
     print("Both sides added a migration on top of the same parent. `alembic upgrade head`")
     print("refuses a forked chain, so this would red main and abort the deploy.")
     print(f"Fix: merge {args.base} into this branch, then run")
-    print("  python3 .claude/scripts/check-migration-fork.py --rechain")
+    print(
+        "  uv run --project backend python .claude/scripts/reanchor-migration-head.py"
+        f" --base {args.base}"
+    )
     print("which re-points this branch's migrations at its head and moves the sentinel.")
     print("A fork this branch made itself still needs `uv run alembic merge heads` or a split.")
     print("See .claude/rules/migrations.md.")
@@ -676,6 +735,37 @@ def self_test() -> int:
         check("... saying to merge the base first", "merge" in result.stdout, True)
         check("... and leaving the sentinel where it was", sentinel.read_text(encoding="utf-8"), "a\n")
 
+        # The shape the old PASS came from, and the one neither of the two cases
+        # below it can produce: the base ref has a chain and the working tree has
+        # none. The union is then the base's own graph — one head of `main` here —
+        # so an empty-union guard would still pass this tree, while a tree that
+        # really lost its migrations would go green. The other way round is what
+        # `--rechain` used to answer "merge the base first" over.
+        moved = versions.with_name("versions-away")
+        versions.rename(moved)
+        try:
+            for label, argv in (("the check", []), ("the re-chain", ["--rechain"])):
+                tree_gone = subprocess.run(
+                    [sys.executable, str(script), *argv, "--base", "main"],
+                    cwd=lab,
+                    capture_output=True,
+                    text=True,
+                    env=lab_env,
+                )
+                check(
+                    f"{label} refuses a tree with no revisions under a readable base",
+                    tree_gone.returncode,
+                    EXIT_CANNOT_JUDGE,
+                )
+                check(f"... and {label} prints no verdict", "PASS" in tree_gone.stdout, False)
+                check(
+                    f"... and {label} blames the tree, not the base",
+                    "no migration revisions under" in tree_gone.stderr,
+                    True,
+                )
+        finally:
+            moved.rename(versions)
+
         # The other way round: this branch carries a migration of its own beside the
         # base's, and has already merged the base. The merge leaves the sentinel
         # conflicted, which is the state the command exists for.
@@ -714,6 +804,41 @@ def self_test() -> int:
         )
         check("... leaving a chain the plain check accepts", settled.returncode, 0)
 
+        # A broken intermediate migration must not disappear from the graph while
+        # the base supplies its old revision and makes the remaining chain pass.
+        originals = {path: path.read_bytes() for path in (versions / "a.py", versions / "m.py", sentinel)}
+        broken = versions / "broken.py"
+        (versions / "a.py").write_text("<<<<<<< HEAD\n", encoding="utf-8")
+        broken.write_text("def upgrade(\n", encoding="utf-8")
+        try:
+            for label, argv in (("the check", []), ("the re-chain", ["--rechain"])):
+                if argv:
+                    # A late refusal must be caught even when re-chaining would
+                    # change both a migration and the sentinel.
+                    (versions / "m.py").write_text('revision = "m"\ndown_revision = "a"\n', encoding="utf-8")
+                    sentinel.write_text("n\n", encoding="utf-8")
+                before = {path: path.read_bytes() for path in (*versions.glob("*.py"), sentinel)}
+                invalid = subprocess.run(
+                    [sys.executable, str(script), *argv, "--base", "main"],
+                    cwd=lab,
+                    capture_output=True,
+                    text=True,
+                    env=lab_env,
+                )
+                check(f"{label} refuses unparsable migrations", invalid.returncode, EXIT_CANNOT_JUDGE)
+                check(f"... and {label} prints no PASS", "PASS" in invalid.stdout, False)
+                for path in (versions / "a.py", broken):
+                    check(f"... and {label} names {path.name}", str(path.relative_to(lab)) in invalid.stderr, True)
+                check(
+                    f"... and {label} leaves migrations and sentinel unchanged",
+                    {path: path.read_bytes() for path in before},
+                    before,
+                )
+        finally:
+            for path, original in originals.items():
+                path.write_bytes(original)
+            broken.unlink()
+
         # An unavailable --base is not a clean tree. `collect()` cannot read the
         # ref at all, and exiting 0 there prints the same PASS as a tree that was
         # read and cleared — which is how a checkout with no origin/main used to
@@ -733,6 +858,32 @@ def self_test() -> int:
                 EXIT_CANNOT_JUDGE,
             )
             check(f"... and {label} prints no verdict", "PASS" in unavailable.stdout, False)
+
+        # A tree with no revisions in it is not a clean tree either. `collect(None,
+        # ...)` returns {} for a --versions-dir that is missing just as quietly as
+        # for one that is empty, and the union is then the base's own graph — one
+        # head — which used to print the same PASS as a branch that was read. The
+        # base is readable in both cases here, so a 2 can only come from the tree,
+        # and the message has to name the tree rather than the base.
+        (alembic / "versions-empty").mkdir()
+        for label, versions_dir in (
+            ("an empty versions directory", "backend/alembic/versions-empty"),
+            ("a versions directory that does not exist", "backend/alembic/versions-missing"),
+        ):
+            unreadable_tree = subprocess.run(
+                [sys.executable, str(script), "--base", "main", "--versions-dir", versions_dir],
+                cwd=lab,
+                capture_output=True,
+                text=True,
+                env=lab_env,
+            )
+            check(f"the check refuses {label}", unreadable_tree.returncode, EXIT_CANNOT_JUDGE)
+            check(f"... and {label} prints no verdict", "PASS" in unreadable_tree.stdout, False)
+            check(
+                f"... and {label} is blamed on the tree, not the base",
+                "no migration revisions under" in unreadable_tree.stderr,
+                True,
+            )
     finally:
         shutil.rmtree(lab, ignore_errors=True)
 
@@ -743,7 +894,7 @@ def self_test() -> int:
     print(
         "PASS: check-migration-fork self-test (parser variants, merge parents, head "
         "detection, re-chain splice, re-chain decisions, the re-chain itself, and the "
-        "refusal of a --base it cannot read)"
+        "refusal of unparsable migrations, a --base it cannot read, or a tree with no revisions in it)"
     )
     return 0
 

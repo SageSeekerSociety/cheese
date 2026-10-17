@@ -11,7 +11,7 @@
 这里却已经替谁也没读过的一格印好了答案。
 """
 
-from app.domain.agent.capability import BuiltIn, Declaration, Difference
+from app.domain.agent.declaration import BuiltIn, Declaration, Difference
 from app.domain.agent.harness.pi.launch import VERSION
 
 #: 见 ``claude_code/behaviour.py`` 同名常量：升级 pin 就要重新读一遍再改这里。
@@ -22,8 +22,10 @@ VERIFIED_AGAINST = "1.0.0"
 # （read、bash、powershell、edit、write、grep、find、ls，和 0.85.1 同一个）；
 # 内建扩展是 builtin:mcp、builtin:llama.cpp、builtin:codemode、builtin:tool-search
 # （docs/settings.md）；而 ``--no-extensions``（launch.py 的 arguments()）把发现
-# 到的、配置的、内建的扩展一起关掉（docs/cli.md），examples/extensions/ 下那些
-# 示例扩展我们一律不加载。0.85.1 时 ASK 与 AUTO_SYNC 填的是「未核」；这一次读了，
+# 到的、配置的、内建的扩展一起关掉（docs/cli.md），之后再用 ``--extension`` 显式加载
+# builtin:mcp、builtin:codemode、builtin:tool-search 三个（项目的 MCP 服务器经会话的
+# 网关递给 pi 自己的 MCP 客户端）；examples/extensions/ 下那些示例扩展我们一律
+# 不加载。0.85.1 时 ASK 与 AUTO_SYNC 填的是「未核」；这一次读了，
 # 两格都读得出结论，所以下面写的是读到的。
 
 

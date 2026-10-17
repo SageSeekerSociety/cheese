@@ -13,7 +13,8 @@
       "decide": "待你决定",
       "read": "变更提醒",
       "invited": "待你答复",
-      "joinRequest": "待你审批"
+      "joinRequest": "待你审批",
+      "allow": "待你允许"
     },
     "markRead": "标为已读",
     "answerLabel": "写下你的决定",
@@ -35,6 +36,14 @@
       "ADMIN": "管理员",
       "OWNER": "所有者",
       "mentor": "导师"
+    },
+    "mcpRun": {
+      "title": "在你的设备 {device} 上运行 MCP 服务器 {server}",
+      "from": "来自项目的 {file}，最近由 {name} 修改",
+      "once": "允许后，这条命令以后不再询问；命令改了会再问你",
+      "allow": "允许运行",
+      "refuse": "不允许",
+      "added": "{name} 在项目设置中添加"
     }
   },
   "nav": {

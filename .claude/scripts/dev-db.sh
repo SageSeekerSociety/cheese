@@ -27,9 +27,24 @@ set -euo pipefail
 # a server that is up but fails those queries; and macOS's
 # dirhelper deletes files under $TMPDIR that are older than three days, every
 # night at 03:35, data files of a running cluster included.
-DATA_DIR="${CHEESEX_DEV_DB_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-db}"
-SERVER_HOME="${CHEESEX_DEV_SERVER_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-servers}"
+log() { printf '%s\n' "$*" >&2; }
+die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
+
 PG_PORT="${CHEESEX_DEV_PG_PORT:-5433}"
+if [ -n "${CHEESEX_DEV_DB_DIR:-}" ]; then
+    DATA_DIR="$CHEESEX_DEV_DB_DIR"
+else
+    DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-db"
+    socket_path="$DATA_DIR/pg17/.s.PGSQL.$PG_PORT"
+    socket_path_bytes="$(LC_ALL=C printf '%s' "$socket_path" | wc -c | tr -d '[:space:]')"
+    # macOS sun_path is 104 bytes; keep the full Postgres socket path below it
+    # on both macOS and Linux, including room for its terminating NUL byte.
+    if [ "$socket_path_bytes" -gt 100 ]; then
+        DATA_DIR="/tmp/cheesex-dev-db-$(id -u)"
+        log "default data directory is too deep; using $DATA_DIR"
+    fi
+fi
+SERVER_HOME="${CHEESEX_DEV_SERVER_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/cheesex-dev-servers}"
 REDIS_PORT="${CHEESEX_DEV_REDIS_PORT:-6379}"
 TOOL_CACHE="${CHEESEX_DEV_TOOL_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cheesex-dev-db}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -52,9 +67,6 @@ REDIS_DIR="$DATA_DIR/redis"
 PG_LOG="$DATA_DIR/pg.log"
 REDIS_LOG="$DATA_DIR/redis.log"
 REDIS_PID="$DATA_DIR/redis.pid"
-
-log() { printf '%s\n' "$*" >&2; }
-die() { printf 'dev-db: %s\n' "$*" >&2; exit 1; }
 
 # The Postgres build must ship contrib: the migrations run
 # `CREATE EXTENSION pg_trgm`, which a core-only build (such as the `pgserver`
@@ -744,6 +756,19 @@ cmd_start() {
     print_env
 }
 
+# Only the two servers, for a stack that runs the app rather than the suite
+# (e2e/dev-stack.mjs): it needs no harness builds, which are the slowest part
+# of a first start. PG_BIN is where createdb and psql are.
+cmd_servers() {
+    resolve_bins
+    mkdir -p "$DATA_DIR"
+    start_pg
+    start_redis
+    echo "export TEST_PG_BASE=postgresql+asyncpg://$PG_USER:$PG_PASSWORD@127.0.0.1:$PG_PORT"
+    echo "export REDIS_URL=redis://127.0.0.1:$REDIS_PORT/0"
+    printf 'export PG_BIN=%q\n' "$PG_BIN"
+}
+
 # stop and status touch no install: they read the pid files the servers wrote
 # into $DATA_DIR, so they work offline, and when the install the servers run
 # from is damaged, which is when they are needed most.
@@ -815,16 +840,19 @@ cmd_status() {
 pick_redis_kind
 case "${1:-start}" in
     start)  cmd_start ;;
+    servers) cmd_servers ;;
     stop)   cmd_stop "${2:-}" ;;
     status) cmd_status ;;
     env)    resolve_harness; print_env ;;
     *)
         cat >&2 <<EOF
-usage: bash .claude/scripts/dev-db.sh <start|stop [--purge]|status|env>
+usage: bash .claude/scripts/dev-db.sh <start|servers|stop [--purge]|status|env>
 
   start           start postgres + redis (fakeredis where Valkey cannot be
                   built: no cc), install the pinned
                   harness builds, print export lines on stdout
+  servers         start postgres + redis only, no harness builds; print
+                  TEST_PG_BASE, REDIS_URL and PG_BIN (where psql is)
   stop            stop the servers; --purge also deletes $DATA_DIR
                   (the servers in $SERVER_HOME and downloads in
                   $TOOL_CACHE are kept)

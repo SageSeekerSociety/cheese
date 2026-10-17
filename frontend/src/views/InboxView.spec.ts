@@ -18,6 +18,7 @@ const resolveAlert = vi.fn()
 const markRead = vi.fn()
 const markAllAlertsRead = vi.fn()
 const respondToInvitation = vi.fn()
+const decideMcpRun = vi.fn()
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
@@ -27,6 +28,7 @@ vi.mock('@/api', async () => {
     markRead: (...a: unknown[]) => markRead(...a),
     markAllAlertsRead: (...a: unknown[]) => markAllAlertsRead(...a),
     respondToInvitation: (...a: unknown[]) => respondToInvitation(...a),
+    decideMcpRun: (...a: unknown[]) => decideMcpRun(...a),
   }
 })
 
@@ -427,5 +429,55 @@ describe('等你回答的邀请和申请', () => {
     await waitFor(() => expect(respondToInvitation).toHaveBeenCalled())
     expect(screen.getByText('课程设计')).toBeTruthy()
     expect(refreshProjects).not.toHaveBeenCalled()
+  })
+})
+
+/** 项目要在你自己的电脑上运行一条命令：在「等你处理」里，就地允许或不允许，答完离开清单。 */
+describe('等你允许在自己电脑上运行的命令', () => {
+  const run = {
+    kind: 'mcp_run',
+    id: 'run-1',
+    projectId: 'p9',
+    projectName: '标注工具选型',
+    server: 'zotero',
+    command: 'uvx zotero-mcp',
+    device: 'MacBook Pro',
+    source: 'repository',
+    author: null,
+    at: '2026-10-07T10:00:00Z',
+  }
+
+  it('写明要在哪台电脑上运行什么命令', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [run], total: 1 })
+    await mount()
+    expect(await screen.findByText('uvx zotero-mcp')).toBeTruthy()
+    expect(screen.getByText(/MacBook Pro/)).toBeTruthy()
+  })
+
+  it('不允许：答复交上去，这一行离开清单', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [run], total: 1 })
+    decideMcpRun.mockResolvedValue({ id: 'run-1', allowed: false })
+    await mount()
+    await screen.findByText('uvx zotero-mcp')
+
+    await fireEvent.click(screen.getByRole('button', { name: t('home.inbox.mcpRun.refuse') }))
+
+    expect(decideMcpRun).toHaveBeenCalledWith('run-1', false)
+    await waitFor(() => expect(screen.queryByText('uvx zotero-mcp')).toBeNull())
+  })
+
+  it('交不上去时这一行留着，并说出来', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [run], total: 1 })
+    decideMcpRun.mockRejectedValue(new Error('网络错误'))
+    await mount()
+    await screen.findByText('uvx zotero-mcp')
+
+    await fireEvent.click(screen.getByRole('button', { name: t('home.inbox.mcpRun.allow') }))
+
+    await waitFor(() => expect(screen.getByText('网络错误')).toBeTruthy())
+    expect(screen.getByText('uvx zotero-mcp')).toBeTruthy()
   })
 })

@@ -60,6 +60,9 @@ async def send_email(sessions, item):
         body_text=render_text(letter),
     ):
         raise RuntimeError("SMTP delivery returned false")
+    # Nothing is retired here: an address that bounces is a failed attempt, not
+    # a subscription that went away. The count exists for the push driver.
+    return 0
 
 
 async def drain_email_queue(sessions: SessionFactory) -> dict[str, int]:
@@ -75,6 +78,7 @@ async def drain_email_queue(sessions: SessionFactory) -> dict[str, int]:
     result = await drain_channel(
         sessions,
         channel="email",
+        sender=send_email,
         batch_size=settings.notification_email_batch_size,
         max_attempts=max(1, settings.notification_email_max_retries),
     )

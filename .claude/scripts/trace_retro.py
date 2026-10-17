@@ -414,7 +414,7 @@ def _seconds(a: str, b: str) -> float | None:
 
 
 def merge_group_runs(repo: str, since: datetime, until: datetime) -> dict[int, list[dict]]:
-    """Merge-queue workflow runs created in the window, keyed by PR number.
+    """Required CI merge-queue runs created in the window, keyed by PR number.
 
     A merge_queue run's branch is `gh-readonly-queue/main/pr-<N>-<base>`, so the
     PR number is read off the branch. `created` bounds the query to the window;
@@ -432,7 +432,10 @@ def merge_group_runs(repo: str, since: datetime, until: datetime) -> dict[int, l
         data = _gh(
             [
                 "api",
-                f"repos/{repo}/actions/runs?event=merge_group&created={spread}&per_page=100&page={page}",
+                # Required CI's runs only: queue-dedupe.yml also runs on every
+                # merge_group event, and its run always succeeds.
+                f"repos/{repo}/actions/workflows/required-ci.yml/runs"
+                f"?event=merge_group&created={spread}&per_page=100&page={page}",
             ]
         )
         batch = (data or {}).get("workflow_runs", []) if isinstance(data, dict) else []

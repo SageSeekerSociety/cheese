@@ -6,7 +6,7 @@ import type { EnvironmentFailure } from './types/environment'
 export type { AgentControlState } from './types/agentControl'
 export type { AskAnswerEntry, AskOption } from './types/ask'
 export type { DeviceScreen } from './types/deviceSessions'
-export type { WaitingAsk, WaitingFace, WaitingItem, WaitingWork } from './types/waiting'
+export type { WaitingAsk, WaitingFace, WaitingItem, WaitingRun, WaitingWork } from './types/waiting'
 // 下面这四节领域类型搬去了 ./types/ 里各自一个模块（采纳卡/验收、资源池市场/节点看板/
 // 算力额度、self-hosted 设备连接器、反馈）。这里只把名字转出去，`@/cx_types` 对外的
 // 名字一个都没变 —— 模式同下面 profile 那一节；搬出去是因为本文件顶在行数上限上。
@@ -115,6 +115,12 @@ export interface Topic {
   // 此刻没有在跑的轮次，或者那个戳没记着——后端不编，前端也不编，「显示在跑、但五
   // 分钟没动静」的红灯就靠它（`lib/roomLight.ts`）。只有 list/get 话题时才带。
   last_output_at?: string | null
+  // 这间房里**还没恢复**的轮次失败从什么时候开始（后端 `block/waits.py` 的
+  // `unresolved_failures`）：这间房自己那条线、它的支线，或者它名下一件还没关的活里
+  // 最早的一条。None = 没有未恢复的失败。侧栏红灯的另一半看它——不只「在跑却没动静」，
+  // 也包括「停下报错、五分钟没人接手」（`lib/roomLight.ts` 判那五分钟）。只有 list/get
+  // 话题时才带。
+  incomplete_since?: string | null
   // 这间房（或它名下的活）「交付完了、而**我**从那以后还没点开看过」——侧栏的长绿看它
   // （`lib/roomLight.ts`）。点开会推已读位，服务端下一份就不再这么说，之前由本地先灭
   // （`stores/workspace` 的 `forgetReadLights`）。只对负责人和协作者算，没登录一律 false。
@@ -175,6 +181,13 @@ export interface BlockMeta extends AskBlockMeta {
   // 更早的清单消息这里只有一个 `true`，照普通消息画。
   checklist?: ChecklistMeta | boolean
   quoted_context?: import('./lib/quotedContext').QuotedContext
+}
+
+/** 一段脚本里调过的一样工具（pi 的 codemode），记在脚本那一步的 `meta.calls` 上。 */
+export interface ScriptCall {
+  tool: string
+  arg: string
+  failed?: boolean
 }
 
 export interface ChecklistMeta {
@@ -297,6 +310,11 @@ export interface RoomTask {
   // 来源、同一个形状。None = 没有在跑的轮次，或者那个进程说不了——那种「不知道」不
   // 当成「很新」用，也不当成卡住（不画红）。
   last_output_at?: string | null
+  // 这条活上**还没恢复**的轮次失败从什么时候开始（侧栏这份行才带；`block/waits.py`
+  // 的 `unresolved_failures`）：一条活停下来报错、五分钟还没人接手，也和「在跑却没
+  // 动静」一样画红灯（`lib/roomLight.ts` 判那五分钟）。判据是「那一轮的队友又说话了」
+  // 或者「这里又开了一轮」，不是「过了多久」。别的调用方不带这一位，读作 null——不亮。
+  incomplete_since?: string | null
   // 这条活在不在往前走（侧栏这份行才带）：有一轮在跑，或者走在交付链路上。判据在
   // 后端 `presentation.work_moving`，和频道行那一头同一个来源。别的调用方不带这一位，
   // 读作 false——不亮，不是「亮着但说不清」。

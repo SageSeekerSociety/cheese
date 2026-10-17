@@ -147,6 +147,16 @@ CONFIG = (
     "Taskfile.yml",
 )
 DOCS = (".claude/rules/", ".claude/skills/", ".claude/agents/", ".agents/", "docs/")
+#: What under `docs/` is prose a person reads: the site's pages, plain text, tabular data and
+#: images. Everything else there is machinery a build or a checker reads or runs — the site
+#: generator (`.mjs`), its entry script (`.sh`), the npm and task files (`.json`, `.yml`), the
+#: diagram sources — so a change to one is read like code. A list of what stays doc rather
+#: than of what is code, because the code side is open-ended: the first list
+#: (`.js/.mjs/.ts/.py/.css/.vue`) still left the `.sh` that `docs/site/package.json` calls in
+#: the doc tier, and §4 stops re-reading that tier after a review. Only the `docs/` prefix is
+#: matched: the other DOCS entries hold rule and skill text, where a stray script is still
+#: documentation about how to do something.
+DOC_PROSE = (".md", ".html", ".txt", ".csv", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf")
 LOCKED = (
     "pnpm-lock.yaml",
     "package-lock.json",
@@ -223,7 +233,20 @@ def is_test(path):
 
 
 def is_doc(path):
-    return path.endswith(".md") or any(under(path, p) for p in DOCS)
+    """Whether this path is read as documentation. A `.md` always is. Under `docs/`, only the
+    formats a person reads are (DOC_PROSE): judging by the prefix alone put the site
+    generator and its entry scripts in the doc tier, which §4 also stops re-reading after a
+    review — the same hole as the copy prefix in ready.py, reached through a different
+    door. Naming the code extensions instead does not close it: the first such list missed
+    the `.sh` that runs the site's diagram build, which is why the list here is the one of
+    what stays doc."""
+    if path.endswith(".md"):
+        return True
+    if not any(under(path, p) for p in DOCS):
+        return False
+    if under(path, "docs/"):
+        return path.endswith(DOC_PROSE)
+    return True
 
 
 def tier_of_path(path):
@@ -543,6 +566,36 @@ def self_test():
         (".claude/rules/migrations.md", "E"),
         ("docs/accept-is-merge.md", "E"),
         ("deploy/README-backup.md", "A"),  # deploy/ wins over .md: A is tested first
+        # A prefix is not enough: the copy and doc prefixes hold code too, and a file
+        # judged by its prefix alone lands in a tier that is also an exemption (§4 stops
+        # re-reading it after a review) while CI keeps reading it as code. The generator
+        # under docs/ is the pointed case — .claude/scripts/check-i18n-lists.py reads it as
+        # build machinery. The loaders beside the message files stay in A, where the copy
+        # prefix already put them: heavier is the safe direction. What was wrong is the
+        # increment exemption, and that lives in ready.exempt()'s self-test.
+        ("frontend/src/i18n/messages/catalog.ts", "A"),  # the loader, not a message file
+        ("frontend/src/i18n/messages/zh-CN/index.ts", "A"),
+        ("frontend/src/i18n/messages/zh-CN/sentences.ts", "A"),
+        ("docs/site/build.mjs", "B"),
+        ("docs/site/src/arch.mjs", "B"),
+        ("docs/site/gen/prompt.py", "B"),
+        ("docs/evidence/preview-copy/rows-for-pdf.mjs", "B"),
+        # The code side of `docs/` is open-ended, so a list of code extensions leaves the
+        # next one out: `.sh` and `.yml` were missing, and `docs/site/package.json` runs
+        # `bash gen/diagrams.sh`. The rule is a list of prose formats instead, and every
+        # extension nobody listed — including one this table does not name — is code.
+        ("docs/site/gen/diagrams.sh", "B"),
+        ("docs/site/Taskfile.yml", "B"),
+        ("docs/site/package.json", "B"),
+        ("docs/site/diagrams/turn.sequence.json", "B"),  # read by the generator
+        ("docs/evidence/preview-copy/manifest.json", "B"),
+        ("frontend/src/i18n/messages/zh-CN/ask.json", "A"),  # a message file still is copy
+        ("docs/site/diagrams/overview.html", "E"),  # generated page, still prose
+        ("docs/evidence/ci-rounds-followup-2026-10-14.csv", "E"),  # tabular, a person reads it
+        (".claude/rules/frontend.md", "E"),
+        # Only `docs/` gets the prose list. The same extension under a rule or skill tree is
+        # documentation about how to do something, not code the repo runs.
+        (".claude/skills/cheese/scripts/setup.sh", "E"),
     ):
         check(f"按路径定档：{path}", tier_of_path(path), want)
 
