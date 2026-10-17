@@ -218,7 +218,9 @@ const titleDraft = ref(props.document?.title ?? '')
 const titleEditing = ref(false)
 watch(
   () => [props.document?.id, props.document?.title] as const,
-  ([id, name], [beforeId]) => {
+  ([id, name], [beforeId, beforeName]) => {
+    // 外层每次重画都递来一个新的 document 对象：编号和名字都没变就不是「文档改名了」。
+    if (id === beforeId && name === beforeName) return
     if (id !== beforeId || !titleEditing.value) titleDraft.value = name ?? ''
   }
 )
