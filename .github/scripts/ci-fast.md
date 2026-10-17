@@ -268,10 +268,11 @@ everything is still allowed to answer unknown.
   carries that content is read from the paths the scope map routed into frontend
   scope, not from the whole diff: a change that also touches the backend brings
   its `.py` files along, and they are not frontend content the suite can
-  execute. A backend-only change does not reach the frontend at all here, not
-  even its type check: whether it moved the API document the frontend's types
-  are generated from is decided only by Required CI's `api` job, so a route
-  change that breaks those types passes this tier and goes red there. A config outside the watched list does not widen by
+  execute. A backend change does not reach the frontend type check here
+  either: whether it moved the API document the frontend's types are
+  generated from is decided only by Required CI's `api` job, so a route
+  change that breaks those types passes this tier and goes red there. A
+  config outside the watched list does not widen by
   itself: `frontend/collab/vitest.config.ts` beside a changed source file still
   stays `related`. The full run must be shown to have
   executed both i18n guard specs. Everything else stays narrow: a deletion

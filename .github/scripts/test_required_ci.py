@@ -701,13 +701,19 @@ class ApiSurfaceTest(unittest.TestCase):
         self.assertEqual(gate.failures(needs, "quick"), [])
 
     @staticmethod
-    def _holds(expression, outputs, moved):
+    def _holds(expression, outputs, moved, needs_succeeded):
         """Whether an ``if:`` over scope outputs and ``needs.api.outputs.moved``
-        holds. Only the operators these two conditions use are read; anything
+        holds, given whether every job it needs succeeded.
+
+        A condition with no status function gets GitHub's implicit
+        ``success()``: a skipped or failed need skips the job whatever the rest
+        says. Only the operators these two conditions use are read; anything
         else raises, so a rewritten condition fails here instead of passing."""
         expr = expression.strip()
         match = re.fullmatch(r"\$\{\{(.*)\}\}", expr, re.S)
         expr = (match.group(1) if match else expr).strip()
+        if not re.search(r"\b(?:success|failure|always|cancelled)\(\)", expr):
+            expr = f"{needs_succeeded!r} && ({expr})"
         expr = re.sub(r"needs\.scope\.outputs\.(\w+)",
                       lambda m: repr(outputs.get(m.group(1), "")), expr)
         expr = expr.replace("needs.api.outputs.moved", repr(moved))
@@ -733,11 +739,14 @@ class ApiSurfaceTest(unittest.TestCase):
                                           frontend=frontend, moved=moved):
                             outputs = {suite: "false" for suite in gate.PATHS}
                             outputs.update(tier=tier, backend=backend, frontend=frontend)
-                            api_runs = self._holds(api_if, outputs, "")
+                            api_runs = self._holds(api_if, outputs, "", True)
                             self.assertEqual(api_runs, gate.api_selected(outputs, tier))
                             # A skipped job's outputs are empty strings.
                             api_moved = moved if api_runs else ""
-                            frontend_runs = self._holds(frontend_if, outputs, api_moved)
+                            # frontend needs scope (succeeded) and api, which
+                            # succeeded only if it ran.
+                            frontend_runs = self._holds(frontend_if, outputs, api_moved,
+                                                        api_runs)
                             needs = {
                                 "scope": {"result": "success", "outputs": outputs},
                                 "fast": {"result": "success" if tier == "quick" else "skipped"},
@@ -749,6 +758,20 @@ class ApiSurfaceTest(unittest.TestCase):
                                         else tier == "full" and outputs[suite] == "true")
                                 needs[suite] = {"result": "success" if runs else "skipped"}
                             self.assertEqual(gate.failures(needs, tier), [])
+
+    def test_the_api_output_is_the_one_the_compare_step_writes(self):
+        # The frontend's `if:` reads `needs.api.outputs.moved`; the job maps it
+        # from a step's output. A renamed step id or output key leaves it empty,
+        # and an empty `moved` is a judge-red run on every backend change.
+        text = jobs_of(WORKFLOW.read_text())["api"]["text"]
+        mapped = re.search(r"^      moved: \$\{\{ steps\.([\w-]+)\.outputs\.(\w+) \}\}$",
+                           text, re.M)
+        self.assertIsNotNone(mapped, "the api job does not map `moved` from a step output")
+        step_id, key = mapped.groups()
+        self.assertEqual(key, "moved")
+        self.assertRegex(text, rf"(?m)^        id: {re.escape(step_id)}$")
+        step = text[text.index(f"id: {step_id}"):]
+        self.assertIn("export_openapi --stdout", step.split("\n      - ")[0])
 
     def run_compare(self, head_doc, base_doc, base_exit=0):
         """Run the api job's real comparison shell against stub git and uv.
@@ -765,10 +788,14 @@ class ApiSurfaceTest(unittest.TestCase):
             bindir.mkdir()
             _stub(bindir, "git",
                   'if [ "$1" = worktree ]; then mkdir -p "${@: -2:1}/backend"; fi\n')
+            # Prints only from the two backend/ directories the step must run
+            # it in; anywhere else is a step that changed directory wrongly.
             _stub(bindir, "uv",
-                  'case "$PWD" in "$RUNNER_TEMP/base"*)'
-                  ' printf "%s" "$BASE_DOC"; exit "$BASE_EXIT";; esac\n'
-                  'printf "%s" "$HEAD_DOC"\n')
+                  'case "$PWD" in\n'
+                  '  "$RUNNER_TEMP/base/backend") printf "%s" "$BASE_DOC"; exit "$BASE_EXIT";;\n'
+                  '  */repo/backend) printf "%s" "$HEAD_DOC";;\n'
+                  '  *) echo "uv run from $PWD" >&2; exit 3;;\n'
+                  'esac\n')
             output = tmp / "github_output"
             env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
                    "RUNNER_TEMP": str(tmp / "runner"), "GITHUB_OUTPUT": str(output),

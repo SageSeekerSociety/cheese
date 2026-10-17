@@ -58,9 +58,6 @@ tmp_frontend.log
 # 三次退队都有它）；前端套件跑不跑改由 Required CI 的 `api` job 比较基点和改动
 # 上的两份文档来定。这条留着是防有人把文档重定向到这里。
 /backend/openapi.json
-# 摘要同理：还改着它的分支合并 main 时会在这里删/改冲突，留下自己那一边就把一个谁
-# 都不读的文件带回 main；忽略它之后，解冲突时 `git add` 会拒绝它，要删掉才能提交。
-/backend/openapi.sha256
 # 根目录的一次性产物，三份都进过 main：`skill-plaza-merged.zip` 是 skill-plaza 的
 # 解冲突合并包（2.5MB，内容随构建变，快照在产物清单里）、`logs/cutover-bisect.out`
 # 是一次性 bisect 日志、`task-source-claim-review-prototype.html` 是一次性评审原型
