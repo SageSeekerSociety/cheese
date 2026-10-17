@@ -143,6 +143,38 @@ class UserRealNameService:
             module_entity_id=module_entity_id,
         )
 
+    async def log_accesses(
+        self,
+        *,
+        accessor_id: int,
+        target_ids: Sequence[int],
+        access_reason: str,
+        access_type: str,
+        ip_address: str,
+        module_type: str | None = None,
+        module_entity_id: int | None = None,
+    ) -> list[int]:
+        """``log_access`` for many targets: the accessor is checked once and the
+        targets in one query, so a roster export costs two user reads, not two
+        per person. Returns the target ids that no longer exist (skipped, no log)."""
+        await self._ensure_user_exists(accessor_id)
+        existing = await self._user_repo.get_by_ids(target_ids)
+        missing: list[int] = []
+        for target_id in target_ids:
+            if target_id not in existing:
+                missing.append(target_id)
+                continue
+            await self._realname_repo.create_access_log(
+                accessor_id=accessor_id,
+                target_id=target_id,
+                access_reason=access_reason,
+                ip_address=ip_address,
+                access_type=access_type,
+                module_type=module_type,
+                module_entity_id=module_entity_id,
+            )
+        return missing
+
     async def get_access_logs(
         self,
         *,

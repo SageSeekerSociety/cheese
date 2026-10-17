@@ -1,6 +1,6 @@
 """题目级「给 AI 队友的指导」(#944) 的读写胶水。
 
-这一层同时要看 task（读/写 `protocol_override["teaching"]`）与 knowledge /
+这一层同时要看 task（读/写 `protocol_override["teaching"]`）与团队文档 /
 materials（引用校验）,所以它按 `ensure_teaching_references` 交代的口径落在 api 层
 —— api 可以同时 import 两个域，不用给 domain 之间加一条边。抽成单独模块只是因为
 `tasks.py` 早已越过体积帽（超帽的文件只许缩不许涨），不是因为这一层该有新规矩。

@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.response import ok
 from app.api.teams_deps import get_team_service
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_optional_user_id
@@ -218,7 +219,11 @@ async def list_recruitment_posts(
     )
 
 
-@router.patch("/recruitment/{postId}", summary="Edit Recruitment Post")
+@router.patch(
+    "/recruitment/{postId}",
+    summary="Edit Recruitment Post",
+    dependencies=[ROUTE_DECIDES],
+)
 async def edit_recruitment_post(
     post_id: Annotated[int, Path(ge=1, alias="postId")],
     payload: PatchRecruitmentPostRequest,
@@ -279,6 +284,7 @@ async def edit_recruitment_post(
     "/recruitment/{postId}",
     summary="Delete Recruitment Post",
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[ROUTE_DECIDES],
 )
 async def delete_recruitment_post(
     post_id: Annotated[int, Path(ge=1, alias="postId")],
@@ -300,6 +306,7 @@ team_recruitment_router = APIRouter(prefix="/teams", tags=["Teams", "Recruitment
     "/{teamId}/recruitment",
     summary="Create Recruitment Post",
     status_code=status.HTTP_201_CREATED,
+    dependencies=[ROUTE_DECIDES],
 )
 async def create_recruitment_post(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],

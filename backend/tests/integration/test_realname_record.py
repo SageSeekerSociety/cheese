@@ -78,7 +78,9 @@ def _board(admin: _Owner, client: TestClient, *, name: str) -> dict:
     return resp.json()["data"]["space"]
 
 
-def _task_requiring_real_name(admin: _Owner, client: TestClient, space: dict) -> int:
+def _task_requiring_real_name(
+    admin: _Owner, client: TestClient, space: dict, *, required: bool = True
+) -> int:
     resp = client.post(
         "/tasks",
         json={
@@ -92,7 +94,7 @@ def _task_requiring_real_name(admin: _Owner, client: TestClient, space: dict) ->
             "editable": True,
             "defaultDeadline": 30,
             "deadline": int(time.time() * 1000) + 7 * 86400 * 1000,
-            "requireRealName": True,
+            "requireRealName": required,
         },
         headers=admin.headers,
     )
@@ -229,3 +231,52 @@ class TestTheAccessLog:
         (entry,) = _logs(owner, api_client)
 
         assert "ipAddress" not in entry
+
+
+class TestAnExportOfManyPeople:
+    def test_the_audit_reads_users_in_bulk_not_one_by_one(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        db_session,
+    ):
+        from sqlalchemy import event
+
+        admin = _Owner(user_client)
+        space = _board(admin, api_client, name=f"Algorithms ({unique_int()})")
+        task_id = _task_requiring_real_name(admin, api_client, space, required=False)
+        people = [_Owner(user_client) for _ in range(30)]
+        for person in people:
+            _join(admin, api_client, space, person)
+            applied = api_client.post(
+                f"/tasks/{task_id}/participants", json={}, headers=person.headers
+            )
+            assert applied.status_code == 200, applied.text
+        statements: list[str] = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+            statements.append(statement)
+
+        engine = db_session.bind.sync_engine
+        event.listen(engine, "before_cursor_execute", record)
+        try:
+            export = api_client.get(
+                f"/spaces/{space['id']}/analytics/participants/export",
+                headers=admin.headers,
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", record)
+        assert export.status_code == 200, export.text
+
+        # The request reads users four times whatever the roster size: sign-in,
+        # the roster itself, the accessor, and every audited target at once.
+        # Checking each person one by one would add 60 more, so a little slack
+        # for unrelated reads still tells the two apart.
+        user_reads = [
+            s
+            for s in statements
+            if s.lstrip().upper().startswith("SELECT") and 'FROM "user"' in s
+        ]
+        assert len(user_reads) <= 8, [q[-60:] for q in user_reads]
+        for person in people:
+            assert len(_logs(person, api_client)) == 1
