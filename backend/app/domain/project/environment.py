@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
@@ -113,11 +113,10 @@ async def rooms_with_environment(
 async def set_room_environment(
     session: AsyncSession, topic_id: uuid.UUID, config: dict
 ) -> None:
-    """Write the room's pin in the caller's transaction, after its idle check."""
-    topic = await session.get(Topic, topic_id)
-    if topic is None:
-        raise NotFoundError("Room not found")
-    topic.environment = config
+    """Write the pin after the caller locks the room and checks it is idle."""
+    await session.execute(
+        update(Topic).where(Topic.id == topic_id).values(environment=config)
+    )
     await session.flush()
 
 
