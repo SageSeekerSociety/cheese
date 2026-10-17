@@ -2,6 +2,7 @@
 
 import asyncio
 import errno
+import hashlib
 import json
 import logging
 import uuid
@@ -11,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -61,6 +62,7 @@ from app.domain.machine.sandbox_wait import (
     _home_removed,
 )
 from app.domain.machine.services import (
+    ACTIVE_STEP,
     CloudKeepsFailing,
     CloudPoolFull,
     HostPool,
@@ -708,6 +710,114 @@ PREPARING_POLL_S = 1.0
 ENVIRONMENT_POLL_S = 5.0
 # An environment in one of these states will not become ready by waiting.
 ENVIRONMENT_SETTLED = {"failed", "stopped"}
+# How long a machine that was checked end to end — pinged, prepared, its
+# project environment read, pinged again (`_install`) — is handed out again
+# without checking it (`_verified`). Every file tool and command start asks for
+# hands, and that check is a whole round trip to the machine under the room's
+# row lock: 1.2 s at the median on dev, and every call in flight in the room
+# queued behind each other's. A failed call on those hands ends it at once
+# (`distrust`), so what the window can leave unnoticed is only what does not
+# fail a call: an executor release or a project environment that changed, and
+# the setup a `prepare` refreshes. One minute is the step the sandbox's idle
+# clock moves at anyway (`ACTIVE_STEP`, which `HostPool.holds` reads); in the
+# 10-12..10-17 traces it lets 78% of machine tool calls skip the check (30 s:
+# 67%, 120 s: 86%).
+VERIFIED_FOR = ACTIVE_STEP
+
+
+def _setup_digest(env: dict) -> str:
+    """What the caller asked its executor to be set up with, as a lease
+    records it: a session relaunched with other variables is checked again."""
+    return hashlib.sha256(json.dumps(env, sort_keys=True).encode()).hexdigest()
+
+
+async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
+    """The hands this session already holds, when they were checked within
+    ``VERIFIED_FOR`` and nothing since says otherwise; None sends the caller
+    through the whole check (`_attempt`), which also gives every refusal.
+
+    Read without the room's lock, and writes nothing. That lock orders
+    admissions that *write* a lease against archival (`writes.lock`): either
+    the lease is recorded before the room is archived, and the room's cleanup
+    stops it, or the admission sees the room archived. These hands are the
+    lease already recorded, so whatever archival reads it reads with them on
+    it; and the lock is released before the machine runs any call, so a call
+    admitted the moment before archival commits runs after it here just as it
+    does through the lock. An archived room, a rotated room resource (an
+    unarchive), a sandbox given up with its host (``LOST_KEY``), a lease being
+    re-checked or replaced (its ``verified_at`` is dropped, `_attempt`), a
+    sandbox being destroyed or not touched for ``ACTIVE_STEP``, and a machine
+    the hub does not reach are all left to the whole check."""
+    topic = await TopicService(db).get(topic_id)
+    if topic is None or topic.status == TopicStatus.archived:
+        return None
+    resource = str(topic.resource_id or topic.id)
+    row = await AgentSessionService(db).by_id(session_id)
+    if row is None:
+        return None
+    lease = row.work_lease or {}
+    request = row.execution_request or {}
+    location = row.runtime_location or {}
+    verified = lease.get("verified_at")
+    if (
+        not verified
+        or datetime.now(UTC) - datetime.fromisoformat(verified) >= VERIFIED_FOR
+        or lease.get("kind") != "device"
+        or lease.get("status", "ready") != "ready"
+        or not lease.get("generation")
+        or lease["generation"] != request.get("generation")
+        or lease.get("room_resource_id") != resource
+        or lease.get("setup_digest") != _setup_digest(env)
+        or request.get(LOST_KEY)
+        or claims.get("session") != str(row.id)
+        or claims.get("p") != str(topic.project_id)
+        or claims.get("t") != str(row.conversation_id)
+        or claims.get("r") != resource
+        or (
+            location.get("channel") != OWNER_CHANNEL
+            and lease.get("device_id") == location.get("device_id")
+        )
+        or not _reachable(hub, lease["device_id"])
+    ):
+        return None
+    if await room_of(db, row.conversation_id) != topic_id:
+        return None
+    if lease.get("own") and not await HostPool(db, hub=hub).holds(
+        session_id, lease["device_id"]
+    ):
+        return None
+    if await user_by_handle(db, claims.get("a", "")) is None:
+        return None
+    await db.commit()
+    return {
+        "target": lease,
+        "token": bind_resource_token(
+            token,
+            resource,
+            session_id=str(session_id),
+            lease_generation=lease["generation"],
+        ),
+    }
+
+
+async def distrust(db, session_id: uuid.UUID, generation: str | None) -> None:
+    """A call on the session's hands failed on the machine's side: the next
+    request for them checks them whole (`_verified`). Only this session's row
+    is taken, and only its lease column read and written — the execution route
+    calls this, and it is served by the device connection owner
+    (`device/owner_reads.py` says why it names its columns)."""
+    lease = await db.scalar(
+        select(AgentSession.work_lease)
+        .where(AgentSession.id == session_id)
+        .with_for_update()
+    )
+    if lease and "verified_at" in lease and lease.get("generation") == generation:
+        await db.execute(
+            update(AgentSession)
+            .where(AgentSession.id == session_id)
+            .values(work_lease={k: v for k, v in lease.items() if k != "verified_at"})
+        )
+    await db.commit()
 
 
 @dataclass(frozen=True, slots=True)
@@ -774,6 +884,17 @@ async def ensure(
     calls that has a new one, not on a hook's call that nobody reads.
     """
     hub = hub or device_hub
+    held = await _verified(
+        db,
+        topic_id=topic_id,
+        session_id=session_id,
+        claims=claims,
+        token=token,
+        env=env,
+        hub=hub,
+    )
+    if held is not None:
+        return held
     clock = asyncio.get_running_loop().time
     deadline = clock() + wait_s
     while True:
@@ -1012,9 +1133,11 @@ async def _attempt(
     # flight on them. The execution route admits only a ready lease, so these
     # hands stay ready while they are re-checked: marking them preparing
     # refused every one of those calls for the length of the check.
+    # While they are re-checked they are not handed out unchecked
+    # (`_verified`): the check is running because something may have changed.
     holding = (
         {
-            **lease,
+            **{key: value for key, value in lease.items() if key != "verified_at"},
             "claim": reservation["claim"],
             "claim_until": reservation["claim_until"],
         }
@@ -1270,6 +1393,10 @@ async def _install(
             or str(current.resource_id or current.id) != resource
         ):
             raise ConflictError("Execution allocation changed while preparing")
+        if target["status"] == "ready":
+            # Checked end to end just now: what `_verified` hands out again.
+            target["verified_at"] = datetime.now(UTC).isoformat()
+            target["setup_digest"] = _setup_digest(env)
         row.work_lease = target
         lost = (
             tells_agent

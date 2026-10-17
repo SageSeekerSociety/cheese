@@ -27,6 +27,7 @@ from io import BytesIO
 import httpx
 
 from app.core.sentences import listing, say
+from app.domain.documents.convert import suffix_of
 
 #: Only `.xlsx`. Recomputing something with no formulas in it is a request
 #: that cannot be meant, and `.xlsm` is left out for the opposite reason: the
@@ -124,12 +125,6 @@ def cells_that_did_not_compute(raw: bytes) -> list[BadCell]:
                 if text in FORMULA_ERRORS:
                     found.append(BadCell(sheet=sheet, cell=cell, value=text))
     return found
-
-
-def suffix_of(path: str) -> str:
-    name = path.rsplit("/", 1)[-1]
-    dot = name.rfind(".")
-    return name[dot:].lower() if dot > 0 else ""
 
 
 async def recalculate(
