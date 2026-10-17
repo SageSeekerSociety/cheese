@@ -147,7 +147,7 @@ async def _cached(url: str) -> Attempt | None:
         return None
     try:
         raw = await redis.get(_cache_key(url))
-    except Exception:  # noqa: BLE001 — a cache that is down is a miss
+    except Exception:  # a cache that is down is a miss
         logger.warning("fetch cache read failed", exc_info=True)
         return None
     if not raw:
@@ -166,7 +166,7 @@ async def _remember(url: str, won: Attempt) -> None:
             json.dumps({"rung": won.rung, "text": won.text[:MAX_RAW_CHARS]}),
             ex=CACHE_SECONDS,
         )
-    except Exception:  # noqa: BLE001
+    except Exception:
         logger.warning("fetch cache write failed", exc_info=True)
 
 

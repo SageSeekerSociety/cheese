@@ -205,7 +205,7 @@ async def rung_markdown_native(url: str, timeout: float = 8.0) -> Attempt:
             r = await client.get(twin)
     except NotPublic:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return Attempt(
             "markdown-native",
             False,
