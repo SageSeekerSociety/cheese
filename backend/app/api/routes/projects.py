@@ -540,7 +540,7 @@ async def list_project_tasks(
             db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
         )
         last = page_rows[-1] if page_rows and has_more else None
-        return conditional_json(
+        return await conditional_json(
             ok(
                 {
                     **page(items, len(items)),
@@ -558,7 +558,7 @@ async def list_project_tasks(
     items = await project_task_rows(
         db, chat, actor.handle or "", tasks, incomplete_of=incomplete.get
     )
-    return conditional_json(ok(page(items, len(items))), if_none_match)
+    return await conditional_json(ok(page(items, len(items))), if_none_match)
 
 
 def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:
