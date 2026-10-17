@@ -445,7 +445,8 @@ class NotificationRepository:
             .execution_options(synchronize_session="fetch")
         )
         result = await self._session.execute(stmt)
-        return result.rowcount
+        # UPDATE returns a CursorResult which has rowcount at runtime.
+        return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def still_open(
         self, project_ids: list[uuid.UUID], *, recipient_handle: str
