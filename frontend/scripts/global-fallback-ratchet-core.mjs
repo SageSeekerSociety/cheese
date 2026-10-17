@@ -354,12 +354,52 @@ function propertyName(key) {
   return undefined
 }
 
-/** The object literal a name in this file is initialised with. */
-function initializerOf(name, body) {
-  for (const node of walk(body)) {
-    if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && node.id.name === name && node.init) {
-      return node.init
+/**
+ * The initializer of a name declared directly in `statements`.
+ *
+ * Only declarations at that level count. `export default options` can only name
+ * a top-level binding, and a `const options` inside some function must not be
+ * mistaken for it — that would bind a name the template cannot reach and hide
+ * the very call this rule is for.
+ */
+function initializerOf(name, statements) {
+  for (const node of Array.isArray(statements) ? statements : statements?.body ?? []) {
+    if (node.type !== 'VariableDeclaration') continue
+    for (const declarator of node.declarations) {
+      if (declarator.id?.type === 'Identifier' && declarator.id.name === name && declarator.init) {
+        return declarator.init
+      }
     }
+  }
+  return undefined
+}
+
+/**
+ * The value a node stands for once the indirection is peeled off: a variable
+ * this module declares, a call that wraps it (`defineComponent(…)`,
+ * `withInstall(defineComponent(…))`, `Vue.extend(…)`, an alias of any of them),
+ * or an assertion.
+ *
+ * Calls are followed by their shape, not by name, and that is the loose
+ * direction on purpose: an unrecognised builder would make a legal component
+ * red, and this rule has no baseline to absorb that. The price is that
+ * `export default registerSomething({ … })` also reads what it wraps — a name
+ * it would have to spell.
+ */
+function resolveValue(node, statements, seen = new Set()) {
+  let current = unassert(node)
+  while (current) {
+    if (current.type === 'Identifier') {
+      if (seen.has(current.name)) return undefined
+      seen.add(current.name)
+      current = unassert(initializerOf(current.name, statements))
+      continue
+    }
+    if (current.type === 'CallExpression') {
+      current = unassert((current.arguments ?? [])[0])
+      continue
+    }
+    return current
   }
   return undefined
 }
@@ -369,21 +409,19 @@ function initializerOf(name, body) {
  * export hands over, and the one `defineOptions` wraps.
  *
  * The default export hands it over plainly (`export default { … }`), through a
- * variable in this file, or through a call that builds a component from it
- * (`defineComponent`, aliased or on a namespace, or `Vue.extend`) — and any of
- * those may carry an assertion. Nothing else is this component's options:
- * `{ props: […] }` in a component registered under `components:` is another
- * component's, and its props are not names this template can call.
+ * variable in this file, or through a call that builds a component from it —
+ * and any of those may carry an assertion. Nothing else is this component's
+ * options: `{ props: […] }` in a component registered under `components:` is
+ * another component's, and its props are not names this template can call.
  */
 function componentOptions(body) {
+  const statements = Array.isArray(body) ? body : body.body ?? []
   const options = []
   const take = (node) => {
-    let current = unassert(node)
-    if (current?.type === 'Identifier') current = unassert(initializerOf(current.name, body))
-    if (current?.type === 'CallExpression') current = unassert((current.arguments ?? [])[0])
-    if (current?.type === 'ObjectExpression') options.push(current)
+    const value = resolveValue(node, statements)
+    if (value?.type === 'ObjectExpression') options.push(value)
   }
-  for (const node of Array.isArray(body) ? body : body.body ?? []) {
+  for (const node of statements) {
     if (node.type === 'ExportDefaultDeclaration') take(node.declaration)
   }
   for (const node of walk(body)) {
@@ -395,8 +433,8 @@ function componentOptions(body) {
 }
 
 /** The names an options container declares: a list of names, or an object's keys. */
-function containerNames(node) {
-  const value = unassert(node)
+function containerNames(node, statements) {
+  const value = resolveValue(node, statements)
   const names = quotedKeys(value)
   if (value?.type === 'ArrayExpression') {
     for (const element of value.elements) {
@@ -407,36 +445,47 @@ function containerNames(node) {
 }
 
 /** The keys of what a `data` or `setup` function hands back. */
-function returnedNames(node) {
+function returnedNames(node, body) {
   const fn = unassert(node)
   if (fn?.type !== 'FunctionExpression' && fn?.type !== 'ArrowFunctionExpression') return []
+  const scope = fn.body?.type === 'BlockStatement' ? fn.body.body : []
   const returned =
     fn.body?.type === 'BlockStatement'
       ? fn.body.body.flatMap((statement) => (statement.type === 'ReturnStatement' ? [statement.argument] : []))
       : [fn.body]
-  return returned.flatMap((expression) => quotedKeys(expression))
+  return returned.flatMap((expression) => {
+    // `setup() { const vm = { 'open': … }; return vm }` — the local is named in
+    // this function, not at module level.
+    let value = unassert(expression)
+    for (let hops = 0; hops < 4 && value?.type === 'Identifier'; hops += 1) {
+      value = unassert(initializerOf(value.name, scope) ?? initializerOf(value.name, body))
+    }
+    return quotedKeys(value)
+  })
 }
 
 const OPTION_CONTAINERS = new Set(['props', 'methods', 'computed', 'inject'])
 
 /** The quoted names an options object declares to its template. */
-function collectOptions(options, into) {
+function collectOptions(options, into, body, seen) {
+  if (seen.has(options)) return
+  seen.add(options)
   for (const property of options.properties) {
     if (property.type !== 'Property') continue
     const name = propertyName(property.key)
     if (name === undefined) continue
     if (OPTION_CONTAINERS.has(name)) {
-      for (const declared of containerNames(property.value)) into.add(declared)
+      for (const declared of containerNames(property.value, body)) into.add(declared)
     } else if (name === 'data' || name === 'setup') {
-      for (const declared of returnedNames(property.value)) into.add(declared)
+      for (const declared of returnedNames(property.value, body)) into.add(declared)
     } else if (name === 'mixins' || name === 'extends') {
       // A mixin's props merge into this component's, so the template can call
-      // them; one written inline here is the only spelling this can see.
-      const value = unassert(property.value)
+      // them. A mixin is often a variable, so resolve each one first.
+      const value = resolveValue(property.value, body)
       const mixins = value?.type === 'ArrayExpression' ? value.elements : [value]
       for (const mixin of mixins) {
-        const object = unassert(mixin)
-        if (object?.type === 'ObjectExpression') collectOptions(object, into)
+        const resolved = resolveValue(mixin, body)
+        if (resolved?.type === 'ObjectExpression') collectOptions(resolved, into, body, seen)
       }
     }
   }
@@ -448,7 +497,9 @@ function collectOptions(options, into) {
  * the names; `defineModel('open')`, which compiles to a prop of that name; and
  * the same names in the component's own options object — the quoted keys of its
  * `props`, `methods`, `computed` and `inject`, what `data` or `setup` hands
- * back, and the props of a mixin or an extended component.
+ * back, and the props of a mixin or an extended component. A container or a
+ * mixin written as a variable elsewhere in this file is resolved to it, so
+ * `const props = ['open']` counts as the props it is.
  *
  * A string anywhere else is not a declaration. `defineEmits(['open'])` names an
  * event — you cannot call an event — and a label, an i18n key, a key in a
@@ -462,7 +513,7 @@ function stringBindings(body) {
     if (node.type !== 'CallExpression' || node.callee?.type !== 'Identifier') continue
     const [first] = node.arguments ?? []
     if (node.callee.name === 'defineProps') {
-      for (const declared of containerNames(first)) names.add(declared)
+      for (const declared of containerNames(first, body)) names.add(declared)
     }
     // `defineModel('open')` declares a prop named `open` (and the emit beside
     // it), so the template's `open()` reaches that prop and is bound. The
@@ -473,7 +524,7 @@ function stringBindings(body) {
       if (name?.type === 'Literal' && typeof name.value === 'string') names.add(name.value)
     }
   }
-  for (const options of componentOptions(body)) collectOptions(options, names)
+  for (const options of componentOptions(body)) collectOptions(options, names, body, new Set())
   return names
 }
 

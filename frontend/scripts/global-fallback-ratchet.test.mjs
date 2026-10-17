@@ -463,6 +463,74 @@ describe('findGlobalFallbacks', () => {
     }
   })
 
+  // The same declarations reach the template through one more hop of ordinary
+  // code: a container or a mixin held in a variable, an options object passed to
+  // `defineComponent`, a builder wrapped around it, or the object a `setup`
+  // function returns by name. Every one of those still binds the name, so every
+  // one of them must answer "clean" — an extra binding only loses a finding,
+  // while failing to see one turns a legal component red.
+  it('follows a declaration through the variable or wrapper it is written as', () => {
+    const component = (script) =>
+      [
+        '<script lang="ts">',
+        script,
+        'void defineComponent',
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+    for (const script of [
+      "const propsDef = ['open']\nexport default { props: propsDef }",
+      "const Base = defineComponent({ props: ['open'] })\nexport default { extends: Base }",
+      "const Base = defineComponent({ props: ['open'] })\nexport default { mixins: [Base] }",
+      "const options = { props: ['open'] }\nexport default defineComponent(options)",
+      "export default withInstall(defineComponent({ props: ['open'] }))",
+      "export default { data: () => ({ 'open': 1 }) }",
+      "export default { 'methods': { 'open'() {} } }",
+      "export default { setup() { const vm = { 'open': () => {} }; return vm } }",
+    ]) {
+      assert.deepEqual(found(component(script)), [], `reported options that reach the template:\n${script}`)
+    }
+    const inSetup = [
+      '<script setup lang="ts">',
+      "defineOptions({ methods: { 'open'() {} } })",
+      '</script>',
+      '<template>',
+      '  <button @click="open()">x</button>',
+      '</template>',
+      '',
+    ].join('\n')
+    assert.deepEqual(found(inSetup), [], 'reported a name defineOptions declares')
+  })
+
+  // Resolving those variables must not reach into a scope the default export
+  // cannot name: a `const options` inside some unrelated function is not the
+  // module-level binding the export refers to, and counting it would hide a
+  // call in exactly the case this rule exists for.
+  it('does not take a local of the same name for the exported one', () => {
+    const code = [
+      '<script lang="ts">',
+      "import { options } from './elsewhere'",
+      'export default options',
+      'function unrelated() {',
+      "  const options = { methods: { 'open'() {} } }",
+      '  return options',
+      '}',
+      'void unrelated',
+      '</script>',
+      '<template>',
+      '  <button @click="open()">x</button>',
+      '</template>',
+      '',
+    ].join('\n')
+    assert.deepEqual(
+      found(code).map((hit) => [hit.name, hit.where]),
+      [['open', TEMPLATE]]
+    )
+  })
+
   // A component registered under `components:` declares its own props, which
   // are that component's render context — not this component's. Reading them as
   // bindings would answer "clean" to a call this template cannot resolve.
