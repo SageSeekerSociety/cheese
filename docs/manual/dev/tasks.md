@@ -102,6 +102,9 @@ covers:
 3. `git worktree add` 到 `/work/<task_id>`，起点是远端分支（还没开出来就是基准分支）。
 4. 写两个钩子：`post-commit` → `cheese sync`，`prepare-commit-msg` → `cheese git-attribution`。钩子装在裸仓上，同一裸仓的每个工作目录都会跑它们，包括在任务目录旁边用 `git worktree add` 另开的那种；只有带任务标记（`cheese-task.json`）的任务目录才署名、才同步，其余目录照普通 git 提交，不碰任何任务。
 5. 这个环境里第一次建出这个目录时，把平台上这条任务最新的快照恢复进来（[新环境里的自动恢复](#restore)），在准备依赖之前：恢复回来的改动可能改了要装什么。
+6. 跑项目的启动脚本准备依赖（环境准备脚本的 `task` 模式）。成功后在任务的 git 目录里记下 `cheese-environment-prepared`：跑之前房间钉住的环境配置加每个依赖文件（`_DEPENDENCY_FILES`：各生态的锁文件和清单，如 `uv.lock`、`pyproject.toml`、`setup.cfg`、`requirements/**`、`environment.yml`、`package.json`、`pnpm-lock.yaml`、`go.mod`、`Gemfile`，树里任何位置、提交没提交都算，被 git 忽略的不算）内容的摘要，以及跑完后检出里没跟踪的安装目录（`node_modules`、`.venv`、`venv`、`vendor`）。下次打开时摘要一样、这些目录都还在就不再跑；改了依赖文件、切到依赖文件不同的分支、换了环境配置、删了装好的目录（`rm -rf node_modules`、`git clean -xdf`），都会再跑一次；`cheese worktree <id> --prepare` 不看这些再跑一次（机器上有环境准备脚本时）。失败时删掉记录，下次一定重跑。
+
+再次打开一个已经在任务当前分支上、远端地址没变、没有待恢复快照的目录（`_opened_as_left`），跳过第 2、3 步对托管平台的 `ls-remote` 和 `fetch`：agent 的 shell 每条命令都回到房间目录，几乎每条命令都要 `cd "$(cheese worktree …)"`，dev 上 10-12 到 10-17 十分钟内的重开中位数 16 s、p90 76 s，却什么都没改。这样打开时 `refs/remotes/origin/*` 停在这个检出上次 fetch 或推送时的样子，要最新的自己 `git fetch`。任务的分支变了（一步合并了）、远端地址变了，照旧走完整流程。
 
 两处守卫写在注释里：创建期要拿 `<project>.lock` 串行化（同一台机器上几条会话会并发要工作目录，一个被打断的 clone 会被当成完整仓库）；这台机器上有 `~/.cheese-environment/config.json` 却找不到准备脚本时**直接失败**——静默跳过会交出一个依赖从没装过的工作目录。
 
@@ -111,6 +114,8 @@ covers:
 
 1. **备份未提交的文件**：用另一个索引文件（`GIT_INDEX_FILE=…/cheese-snapshot-index`）`read-tree HEAD` + `add -u`，再加上该带的未跟踪文件，`write-tree`，把树写成一个挂在当前 HEAD 上的临时提交（`commit-tree`）。工作树自己的暂存区不受影响。带哪些见下面的[备份里有什么](#backup-contents)。
 2. **推 HEAD**（`_deliver_task_branch`）：HEAD 已在本检出上次推送或 fetch 时记下的分支尖（`refs/remotes/origin/<branch>`）里，就不问托管平台、什么都不推：托管平台一时连不上时，问一句只会把它已经有的工作报成「没能推回」，而且每次 sync 都报一遍。否则先读托管平台上这条分支的尖。HEAD 已在其中——同一任务的另一个检出走得更远——就什么都不推；尖在 HEAD 的历史里就普通推送；两边分叉而那个尖是本检出自己在这条分支上有过、后来 amend/rebase 掉的提交，就以它为 lease 替换（`--force-with-lease`），整理本任务的提交（比如移除依赖）本来就是工作的一部分；尖里有本检出从没有过的提交就拒绝，替换会把别人的工作从 PR 上删掉。
+
+手动跑的 `cheese sync`（不带 `--all`）先看这个检出有没有要做的（`_synced_already`）：没有未提交的改动、HEAD 已在本检出上次推送或 fetch 时记下的分支尖里、也没有待恢复的快照，就只问一次平台这条任务现在在哪条分支：还是检出所在的这条（或任务已结束），就直接退出 0，不探托管平台、不问快照。前两条和 `sync --all` 跳过没有东西要同步的任务（`_has_work_to_sync`）是同一个判断；分支那一条是因为一步合并后任务换到新分支，完整的 sync 会把检出带过去、在新分支上交付，交卡（`cheese_accept_request`）走的正是这条 `cheese sync --task`。agent 常在 `git commit` 后面再手动跑一次 `cheese sync`，而提交的钩子刚同步完。
 
 任务的 PR 在合并队列里时（任务数据里的 `merge_queued_pr`），托管平台锁着这条分支：有新东西要推就不推，只备份，房间里说清楚这些提交为什么不在 PR 里——重试推不上去，合并后在新任务里交付，或由验收人退回、PR 撤出队列。
 

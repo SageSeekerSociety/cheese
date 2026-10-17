@@ -20,9 +20,9 @@ merge queue entry is the FULL tier (the real gate), never the fast one.
 import fnmatch
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 PATHS = json.loads(Path(__file__).with_name("required-ci-paths.json").read_text())
 
@@ -145,9 +145,10 @@ def failures(needs, expected_tier):
     return errors
 
 
-def changed_files(base, head="HEAD"):
+def effective_base(event_base, head="HEAD"):
+    """Resolve the one base both the receipt and suite diff must use."""
     if os.environ.get("GITHUB_EVENT_NAME") == "merge_group":
-        # The supplied base may be the preceding queue entry's synthetic tree.
+        # The event base may be the preceding queue entry's synthetic tree.
         # Only landed main can exclude a prefix from this run's coverage.
         main_ref = "+refs/heads/main:refs/remotes/origin/main"
         subprocess.check_call(["git", "fetch", "--no-tags", "origin", main_ref])
@@ -166,6 +167,19 @@ def changed_files(base, head="HEAD"):
         base = subprocess.check_output(
             ["git", "merge-base", "refs/remotes/origin/main", head]
         ).decode().strip()
+        reason = (
+            "merge_group uses the landed origin/main ancestor; the event base may "
+            "contain an unlanded queue prefix, whose changes remain in coverage"
+        )
+    else:
+        base = subprocess.check_output(
+            ["git", "rev-parse", "--verify", f"{event_base}^{{commit}}"]
+        ).decode().strip()
+        reason = "uses the event-provided base"
+    return base, reason
+
+
+def changed_files(base, head="HEAD"):
     # No rename detection: moving code must test both the old and new area.
     # Fetch/ancestry failures propagate; never fall back to a narrower diff.
     return subprocess.check_output(
@@ -173,16 +187,33 @@ def changed_files(base, head="HEAD"):
     ).decode().split("\0")
 
 
+def actions_run_url():
+    """Return this workflow run's URL, or an explicit marker outside Actions."""
+    server = os.environ.get("GITHUB_SERVER_URL", "").strip()
+    repository = os.environ.get("GITHUB_REPOSITORY", "").strip()
+    run_id = os.environ.get("GITHUB_RUN_ID", "").strip()
+    if not server or not repository or not run_id:
+        return "无链接"
+    return f"{server.rstrip('/')}/{repository}/actions/runs/{run_id}"
+
+
 def main():
     if sys.argv[1] == "scope":
         event_name, event = _read_event()
-        changed = changed_files(sys.argv[2])
+        event_base, reason = effective_base(sys.argv[2])
+        changed = changed_files(event_base)
         tier = tier_for(event_name, event)
         # The raw select() flags are kept whatever the tier: the fast job reads
         # them to decide which dependency sets to install, and the aggregation
         # expects every selected FULL suite to be skipped on a draft.
-        outputs = {suite: str(sel).lower() for suite, sel in select(changed).items()}
+        selected = select(changed)
+        outputs = {suite: str(sel).lower() for suite, sel in selected.items()}
         outputs["tier"] = tier
+        print(f"Event base: {sys.argv[2]}")
+        print(f"Effective base: {event_base}")
+        print(f"Base reason: {reason}")
+        suites = ", ".join(suite for suite, is_selected in selected.items() if is_selected)
+        print(f"Selected suites: {suites or 'none'}")
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
             for name, value in outputs.items():
                 line = f"{name}={value}"
@@ -193,7 +224,8 @@ def main():
         expected_tier = tier_for(os.environ.get("GITHUB_EVENT_NAME", ""), event)
         errors = failures(json.loads(os.environ["CI_NEEDS"]), expected_tier)
         if errors:
-            raise SystemExit("\n".join(errors))
+            run_url = actions_run_url()
+            raise SystemExit("\n".join(f"{error} (run: {run_url})" for error in errors))
         print(f"Every selected suite passed (tier: {expected_tier}).")
     else:
         raise SystemExit("Usage: required-ci.py scope BASE_SHA | check")

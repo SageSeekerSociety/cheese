@@ -1,7 +1,7 @@
 """host_readings and sandbox_usages: what each platform host and sandbox uses
 
 Revision ID: 4e8b1d6a2c90
-Revises: 7c3e5a1f9b24
+Revises: c7d41e9a2f05
 Create Date: 2026-10-16
 
 The disk guard's reading of a host, kept for the admin machines page: one
@@ -18,7 +18,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision: str = "4e8b1d6a2c90"
-down_revision: str | Sequence[str] | None = "7c3e5a1f9b24"
+down_revision: str | Sequence[str] | None = "c7d41e9a2f05"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

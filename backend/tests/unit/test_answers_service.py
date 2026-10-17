@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
-from app.domain.answers.services import AnswersService, _answer_to_dto, _profile_to_dto
+from app.domain.answers.services import AnswersService, _answer_to_dto
 
 NOW = datetime(2025, 6, 1, 12, 0, 0, tzinfo=UTC)
 NOW_MS = int(NOW.timestamp() * 1000)
@@ -75,7 +75,7 @@ def _make_service(
     repo.is_favorited.return_value = False
     repo.get_user_vote.return_value = None
     profile_repo.get_profiles_by_user_ids.return_value = {}
-    # _profile_to_dto 现在按 chosen 判据取头像（契约 §3.14）：没人挑过时回空映射，
+    # profile_to_author 现在按 chosen 判据取头像（契约 §3.14）：没人挑过时回空映射，
     # 测试里默认没人挑过，dto 的 avatarId 就是 None。
     profile_repo.chosen_avatar_ids.return_value = {}
     svc = AnswersService(
@@ -85,7 +85,7 @@ def _make_service(
 
 
 # ---------------------------------------------------------------------------
-# _answer_to_dto / _profile_to_dto (pure helpers)
+# _answer_to_dto (pure helper)
 # ---------------------------------------------------------------------------
 
 
@@ -111,22 +111,6 @@ class TestAnswerToDto:
     def test_none_author(self):
         dto = _answer_to_dto(_answer(), author=None)
         assert dto["author"] is None
-
-
-class TestProfileToDto:
-    def test_non_none_profile(self):
-        p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
-        # avatarId 走 chosen 判据，由调用方查过再传进来（契约 §3.14）。
-        dto = _profile_to_dto(p, chosen_avatar_id=7)
-        assert dto == {"id": 3, "nickname": "bob", "avatarId": 7, "intro": "hey"}
-
-    def test_unchosen_avatar_is_null(self):
-        p = _profile(user_id=3, nickname="bob", avatar_id=7, intro="hey")
-        # 没传 chosen（= 没挑过）时回 None，不把档案里那张全局默认照原样吐出来。
-        assert _profile_to_dto(p)["avatarId"] is None
-
-    def test_none_profile(self):
-        assert _profile_to_dto(None) is None
 
 
 # ---------------------------------------------------------------------------

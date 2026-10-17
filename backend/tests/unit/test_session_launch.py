@@ -13,7 +13,7 @@ from app.domain.agent.harness.claude_code import ClaudeLaunch, device_launch
 from app.domain.agent.harness.claude_code.session_launch import (
     session_settings,
 )
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.agent.place import seat_dir
 from app.domain.project_skill.service import session_skill_bundle
 from app.domain.skill_library import native_skill_files

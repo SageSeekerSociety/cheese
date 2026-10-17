@@ -264,7 +264,10 @@ async def sweep_orphans(
             chat_service,
             topic_id,
             say("turnWedged", minutes=round(age_s / 60)),
-            notice(
+            # The turn this notice is about, so the run-record page can answer
+            # "did this turn fail" from the event alone (turns.py).
+            turn_id=turn_id,
+            meta=notice(
                 EVENT_TURN_TIMEOUT,
                 severity=SEVERITY_WARN,
                 # 平台不再自动重试 —— 要有人看一眼、再 @ 它。
@@ -326,16 +329,23 @@ async def _post_orphan_event(
     chat_service,
     topic_id: uuid.UUID,
     text: str,
+    turn_id: uuid.UUID | None = None,
     meta: dict | None = None,
 ) -> None:
     """Persist + broadcast an orphan verdict. Best-effort by design: for a
     resumed orphan the resume matters more than the notice, and for a dropped
     one there is nothing left to fail into.
 
+    ``turn_id`` is the turn the notice is about, when the sweep knows one: the
+    run-record page counts a turn as failed only by an event bearing its id
+    (`run_record/turns.py`). Notices about the topic as a whole pass none.
+
     ``meta`` is the 平台提示统一契约 payload — chiefly `who`, which is what
     lets someone decide "does this need me?" without reading the sentence."""
     try:
-        block = await chat_service.post_system_event(topic_id, text, meta=meta)
+        block = await chat_service.post_system_event(
+            topic_id, text, turn_id=turn_id, meta=meta
+        )
         if block is not None:
             await self._broker.publish(
                 str(topic_id), {"type": "event_block", "block": block}
@@ -365,7 +375,8 @@ async def _recover_silent_turn(
         chat_service,
         topic_id,
         say("toolsRecovered"),
-        self._TOOLS_RECOVERED_META,
+        # Topic-wide: the tools came back for the room, not for one turn.
+        meta=self._TOOLS_RECOVERED_META,
     )
     # 重新投递，不是新起一轮：收件人还是上一条消息点的那个席位，平台只是把没送
     # 到的那一次送完（I12）。席位没了就没有收件人，这一次也就不再重发。

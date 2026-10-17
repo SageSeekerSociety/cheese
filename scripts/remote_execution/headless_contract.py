@@ -54,6 +54,21 @@ _spec = importlib.util.spec_from_file_location(
 _cli = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_cli)
 DRIVER = _cli.LAUNCH_ARGS
+
+
+def _execution_client():
+    """The session helper (`client.py`), loaded as `acceptance` loads it: only
+    a launch's MCP gateway is asked of it here, so the backend is not needed
+    until a remote session is."""
+    spec = importlib.util.spec_from_file_location(
+        "execution_client",
+        HERE.parents[1]
+        / "backend/app/domain/agent/harness/claude_code/remote_execution/client.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 STREAM = [
     "-p",
     "--input-format",
@@ -264,6 +279,13 @@ class Session:
             **(launch["env"] if launch else {}),
             **(env or {}),
         }
+        # The helper's `bootstrap` starts the session's MCP gateway before it
+        # execs Claude Code; a launch run here directly starts it here.
+        self.gateway = None
+        if launch and launch.get("execution"):
+            environment, self.gateway = _execution_client().start_gateway(
+                launch["execution"], environment
+            )
         self.started = time.monotonic()
         self.events = []
         # stdout bytes read up to and including each event, so a turn's share
@@ -398,6 +420,9 @@ class Session:
                     pass
                 self.process.wait()
         self.reader.join(5)
+        if self.gateway is not None:
+            self.gateway.terminate()
+            self.gateway.wait(10)
         self.server.shutdown()
         self.server.server_close()
         self.transcript.close()

@@ -100,6 +100,7 @@ const { open: joinOpen, busy: joinBusy, error: joinError, join: joinSpace } = us
       @dismiss="waiting.dismiss"
       @dismiss-all="waiting.dismissAll"
       @reply="waiting.reply"
+      @allow="waiting.allow"
     />
     <NotificationFeed />
     <JoinSpaceDialog v-model="joinOpen" :busy="joinBusy" :error="joinError" @submit="joinSpace" />

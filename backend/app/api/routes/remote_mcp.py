@@ -17,9 +17,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
-from app.api.auth import ActorResolver, ActorResolverDep, require_seated_agent
+from app.api.auth import ActorResolver, ActorResolverDep, session_in
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES
 from app.auth.project_roles import require
 from app.core.config import settings
 from app.core.errors import (
@@ -28,15 +29,15 @@ from app.core.errors import (
     BaseError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableEntityError,
     ValidationError,
     message_key,
 )
-from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import exception_text, say
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import project_types, type_of_seat
 from app.domain.authz import policy
-from app.domain.conversation import services as conversations
+from app.domain.device import mcp_machines
 from app.domain.identity.services import IdentityService
 from app.domain.membership.roster import roster
 from app.domain.project.models import Project
@@ -89,7 +90,14 @@ async def list_servers(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await member(db, project_id, resolver)
-    return ok(await service.settings_view(db, project_id, project_types=project_types))
+    return ok(
+        await service.settings_view(
+            db,
+            project_id,
+            project_types=project_types,
+            device_owners=mcp_machines.owners,
+        )
+    )
 
 
 @router.post("/projects/{project_id}/mcp/servers/{name}/connect")
@@ -119,6 +127,81 @@ async def disconnect(
     await manager(db, project_id, resolver)
     await service.disconnect(db, project_id, name)
     return ok(None)
+
+
+class ServerIn(BaseModel):
+    name: str = Field(min_length=1, max_length=64)
+    url: str = Field(min_length=1, max_length=2048)
+    auth: str = Field(pattern="^(oauth|headers)$")
+    header: str | None = Field(default=None, max_length=128)
+    value: str | None = Field(default=None, max_length=8192)
+
+
+class ServerChanged(BaseModel):
+    """The server an add, change or removal was about."""
+
+    name: str
+
+
+@router.post(
+    "/projects/{project_id}/mcp/servers",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ServerChanged),
+)
+async def add_server(
+    project_id: uuid.UUID, body: ServerIn, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """Add a remote server in project settings, beside the repository's."""
+    handle = await manager(db, project_id, resolver)
+    await service.add_server(
+        db,
+        project_id,
+        name=body.name,
+        url=body.url,
+        header_name=body.header if body.auth == "headers" else None,
+        header_value=body.value if body.auth == "headers" else None,
+        handle=handle,
+        project_types=project_types,
+    )
+    return ok({"name": body.name})
+
+
+@router.put(
+    "/projects/{project_id}/mcp/servers/{name}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ServerChanged),
+)
+async def update_server(
+    project_id: uuid.UUID,
+    name: str,
+    body: ServerIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    handle = await manager(db, project_id, resolver)
+    await service.update_server(
+        db,
+        project_id,
+        name=name,
+        url=body.url,
+        header_name=body.header if body.auth == "headers" else None,
+        header_value=body.value if body.auth == "headers" else None,
+        handle=handle,
+    )
+    return ok({"name": name})
+
+
+@router.delete(
+    "/projects/{project_id}/mcp/servers/{name}",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ServerChanged),
+)
+async def remove_server(
+    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    await manager(db, project_id, resolver)
+    await service.remove_server(db, project_id, name)
+    return ok({"name": name})
 
 
 class SecretIn(BaseModel):
@@ -184,7 +267,7 @@ async def callback(
     base = settings.frontend_url.rstrip("/")
     try:
         flow = service.read_state(state)
-    except ValidationError as exc:
+    except UnprocessableEntityError as exc:
         return RedirectResponse(f"{base}/?{urlencode(_failure(exc))}", 302)
     back = f"{base}/projects/{flow['project']}/settings"
     query = {"mcp": flow["server"]}
@@ -213,20 +296,8 @@ async def proxy(
 ) -> dict:
     """A session's request to one of its project's remote servers. Authenticated
     by the room's credential; the credential for the server is attached here."""
-    claims = scoped_token_claims(request.headers.get("x-cheese-token", ""))
-    if not claims or claims.get("t") != str(topic_id):
-        raise AuthenticationRequiredError("A credential for this room is required")
-    # The conversation the credential works: a room, or one of its tasks.
-    project_id = await conversations.project_of(db, topic_id)
-    if project_id is None:
-        raise NotFoundError("Topic not found")
-    if claims.get("p") != str(project_id):
-        raise ForbiddenError("This room belongs to another project")
-    await require_seated_agent(
-        db,
-        request.headers.get("x-cheese-token", ""),
-        project_id=project_id,
-        topic_id=topic_id,
+    project_id, claims = await session_in(
+        db, request.headers.get("x-cheese-token", ""), topic_id
     )
     try:
         result = await service.call(

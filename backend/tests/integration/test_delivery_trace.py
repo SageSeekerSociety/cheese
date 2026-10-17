@@ -260,7 +260,7 @@ def test_work_still_running_is_not_signed_onto_the_batch_going_out_now(client):
 def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatch):
     """Best-effort, like every other part of attribution: whatever else is wrong,
     a trailer must never be the reason a delivery fails to land."""
-    from app.domain.room_task.services import TaskService
+    from app.domain.repository import task_rows
 
     pid = _project(client)
     room = _room(client, pid)
@@ -268,13 +268,12 @@ def test_unreadable_work_costs_the_trailers_and_not_the_merge(client, monkeypatc
     machine_commits(uuid.UUID(pid), uuid.UUID(mine), {"a.txt": "one\n"})
     card = _deliver(client, room, "feat: land when the batch is unreadable", [mine])
 
-    class _Unreadable(TaskService):
-        async def list_by_ids(self, task_ids):
-            raise RuntimeError("the batch could not be read")
+    async def _unreadable(_session, task_ids):
+        raise RuntimeError("the batch could not be read")
 
     # Where the trailers read the batch from: that read fails, the card the
     # accept answers with is still rendered from the tasks it names.
-    monkeypatch.setattr("app.domain.room_task.services.TaskService", _Unreadable)
+    monkeypatch.setattr(task_rows, "many", _unreadable)
     _accept(client, card["id"])
 
     body = _landed_body(client)

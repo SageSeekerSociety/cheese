@@ -36,6 +36,7 @@ import uuid
 from pathlib import Path
 
 from app.domain.agent.harness.driven.journal import PAGE
+from app.domain.agent.harness.driven.mcp_gateway import SECRET_ENV
 from app.domain.agent.harness.pi.rpc import LINE_LIMIT, Connection
 
 #: The supply a pi can reach its model through. A subscription model is minted
@@ -193,6 +194,8 @@ class Subagent:
             **runner.env,
             "PI_CODING_AGENT_DIR": str(config),
             "CHEESE_PI_EXTENSION": str(extension),
+            # The project's MCP servers are its parent's, at the same gateway.
+            **({SECRET_ENV: runner.gateway.secret} if runner.gateway else {}),
         }
         return argv, env
 
