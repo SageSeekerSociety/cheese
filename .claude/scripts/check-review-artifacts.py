@@ -90,7 +90,7 @@ ESCAPED_PUNCTUATION = re.compile(r"\\([%s])" % re.escape(punctuation))
 
 #: Reference definitions (`[label]: path`) and HTML links. Their destinations
 #: resolve the same way an inline link's does.
-REF_DEFINITION = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*([^\n]*)")
+REF_DEFINITION = re.compile(r"(?m)^(?: {0,3}> ?)? {0,3}\[[^\]\n]+\]:[ \t]*([^\n]*)")
 HTML_HREF = re.compile(r"""href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
 
 
@@ -169,7 +169,10 @@ def _parse_inline_link(text: str, index: int) -> tuple[str | None, int, bool]:
         while index < length and text[index] != quote:
             index += 2 if text[index] == "\\" else 1
         if index >= length:
-            return path, after, False
+            # The destination itself is well formed; only the title runs on.
+            # Take the destination and stop at the end of its line, so a
+            # `](path)` inside the broken title is not read as a link.
+            return path, _line_end(text, after), True
         index += 1
         while index < length and text[index] in " \t\n":
             index += 1
@@ -192,6 +195,19 @@ def _line_end(text: str, index: int) -> int:
     return len(text) if newline < 0 else newline
 
 
+def _reference_end(text: str, after: int) -> int:
+    """End of a reference definition's destination and optional title."""
+    index = after
+    while index < len(text) and text[index] in " \t":
+        index += 1
+    if index < len(text) and text[index] in "\"'(":
+        closing = ")" if text[index] == "(" else text[index]
+        stop = text.find(closing, index + 1)
+        if stop >= 0 and stop < _line_end(text, index):
+            return stop + 1
+    return after
+
+
 def _link_spans(text: str):
     """Yield (path, start, end) for every link destination in a document.
 
@@ -203,12 +219,16 @@ def _link_spans(text: str):
         found = text.find("](", index)
         if found < 0:
             break
+        if text.rfind("[", 0, found) < 0:
+            # `](path)` without an opening bracket is not a link.
+            index = found + 2
+            continue
         path, end, ok = _parse_inline_link(text, found + 2)
         if not ok:
-            # Hide the rest of the line — but resume right after `](`, so a
-            # valid link later on that line is still found. The hidden span
-            # only removes prose; link destinations are read separately.
-            yield "", found, _line_end(text, found + 2)
+            # Hide the malformed destination, then resume right after `](` so
+            # a valid link inside it is still found. Prose after the
+            # destination on the same line is left alone.
+            yield "", found, max(end, found + 2)
             index = found + 2
             continue
         yield path, found, end
@@ -216,9 +236,9 @@ def _link_spans(text: str):
 
     for match in REF_DEFINITION.finditer(text):
         path, after = _parse_destination(text, match.start(1))
-        # Hide the label and the destination only: the rest of the line may be
-        # prose naming an artifact (`[^1]: 见 artifacts/kept.pdf`).
-        yield path or "", match.start(), max(after, match.start(1))
+        # Hide the label, the destination and a title, but not the rest of the
+        # line: it may be prose naming an artifact (`[^1]: 见 artifacts/kept.pdf`).
+        yield path or "", match.start(), _reference_end(text, after)
 
     for match in HTML_HREF.finditer(text):
         path = match.group(1) or match.group(2) or match.group(3) or ""
@@ -317,10 +337,9 @@ def _left_boundary_ok(text: str, index: int, *, canonical: bool) -> bool:
     )
 
 
-def _right_boundary_ok(text: str, end: int, *, canonical: bool) -> bool:
-    if end >= len(text):
-        return True
-    following = text[end]
+def _right_boundary_text_ok(tail: str, *, canonical: bool) -> bool:
+    """Whether the text after a name ends it; `tail` is what comes next."""
+    following = tail[0]
     if following in ELLIPSIS:
         # `kept.pdf…` is a name cut short, not the name itself.
         return False
@@ -329,9 +348,9 @@ def _right_boundary_ok(text: str, end: int, *, canonical: bool) -> bool:
         # another extension: `kept.pdf.` is a citation, `kept.pdf.bak` is not.
         if following != ".":
             return False
-        if end + 1 >= len(text):
+        if len(tail) < 2:
             return True
-        after_period = text[end + 1]
+        after_period = tail[1]
         return (
             after_period not in NAME_CONTINUATION
             and after_period not in "/\\"
@@ -340,6 +359,26 @@ def _right_boundary_ok(text: str, end: int, *, canonical: bool) -> bool:
     # A bare name glued to a word of another script (`报告.pdf验收`) is
     # ambiguous with a longer name; the `artifacts/` form is not.
     return canonical or not following.isalnum()
+
+
+def _right_boundary_ok(text: str, end: int, *, canonical: bool) -> bool:
+    if end >= len(text):
+        return True
+    return _right_boundary_text_ok(text[end:], canonical=canonical)
+
+
+def _decoded_right_boundary_ok(text: str, index: int, *, canonical: bool) -> bool:
+    """Right boundary for a percent-encoded name: judge the decoded next char."""
+    if index >= len(text):
+        return True
+    if (
+        text[index] == "%"
+        and index + 2 < len(text)
+        and text[index + 1] in HEX_DIGITS
+        and text[index + 2] in HEX_DIGITS
+    ):
+        return _right_boundary_text_ok(unquote(text[index : index + 12]), canonical=canonical)
+    return _right_boundary_ok(text, index, canonical=canonical)
 
 
 def _contains(text: str, candidate: str, *, canonical: bool) -> bool:
@@ -364,9 +403,9 @@ def _decoded_prefix_matches(
     scan stops at the first character that cannot match the target. Anything
     else is quadratic on a note full of stray `%`.
     """
-    # A decoded character costs at most nine raw characters when written as
-    # three `%XX` escapes (one UTF-8 byte in this repository's names).
-    limit = min(len(text), start + 9 * len(target) + 12)
+    # A decoded character costs at most twelve raw characters when written as
+    # four three-character `%XX` escapes (a four-byte UTF-8 character).
+    limit = min(len(text), start + 12 * len(target) + 12)
     decoded: list[str] = []
     pending = bytearray()
     index = start
@@ -401,8 +440,13 @@ def _decoded_prefix_matches(
         if len(prefix) > len(target) or not target.startswith(prefix):
             return False
         if len(prefix) == len(target):
-            return _right_boundary_ok(text, index, canonical=canonical)
+            return _decoded_right_boundary_ok(text, index, canonical=canonical)
     return False
+
+
+def _in_name_run(char: str) -> bool:
+    """Whether `char` can sit inside a name whose literal part is Chinese."""
+    return char in NAME_CONTINUATION or char.isalnum()
 
 
 def _percent_encoded_citation(prose: str, relative: str) -> bool:
@@ -425,12 +469,12 @@ def _percent_encoded_citation(prose: str, relative: str) -> bool:
     index = 0
     length = len(prose)
     while index < length:
-        if prose[index] not in NAME_CONTINUATION:
+        if not _in_name_run(prose[index]):
             index += 1
             continue
         start = index
         encoded = False
-        while index < length and prose[index] in NAME_CONTINUATION:
+        while index < length and _in_name_run(prose[index]):
             if prose[index] == "%":
                 encoded = True
             index += 1
@@ -537,6 +581,9 @@ def check(root: Path) -> int:
         return 2
     if not artifacts.exists():
         print(f"无法判断：评审产物目录不存在：{artifacts}", file=sys.stderr)
+        return 2
+    if not artifacts.is_dir():
+        print(f"无法判断：评审产物路径不是目录：{artifacts}", file=sys.stderr)
         return 2
     if not os.access(artifacts, os.R_OK | os.X_OK):
         print(f"无法判断：评审产物目录读不出来：{artifacts}", file=sys.stderr)

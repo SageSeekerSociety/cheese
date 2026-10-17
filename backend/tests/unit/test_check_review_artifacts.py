@@ -650,6 +650,78 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         result = self._run(root)
         self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
 
+    def test_a_bare_name_glued_to_chinese_on_the_left_is_not_a_citation(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "详见kept.pdf。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_an_encoded_space_after_an_encoded_name_ends_it(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/报告.pdf": b"%PDF-1.4",
+                "note.md": "见 artifacts/%E6%8A%A5%E5%91%8A.pdf%20next 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_bare_chinese_prefix_with_an_encoded_rest_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/报告 v2.pdf": b"%PDF-1.4",
+                "note.md": "见 报告%20v2.pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_four_byte_characters_in_an_encoded_path_pass(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/🚀🚀.pdf": b"%PDF-1.4",
+                "note.md": "见 artifacts/%F0%9F%9A%80%F0%9F%9A%80.pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_prose_after_a_malformed_link_still_counts(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "坏链 [x]( 后面见 artifacts/kept.pdf\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_reference_definition_title_does_not_count(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": '[k]: other.md "see artifacts/kept.pdf"\n',
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_an_unterminated_title_does_not_expose_its_inner_link(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/other.pdf": b"%PDF-1.4",
+                "note.md": '[a](artifacts/kept.pdf "x ](artifacts/other.pdf)\n',
+            }
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_blockquoted_reference_definition_does_not_count(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "> [k]: kept.pdf\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_an_artifacts_path_that_is_not_a_directory_cannot_be_judged(self) -> None:
+        root = self._tree({"note.md": "# 评审\n"})
+        (root / "docs" / "reviews" / "artifacts").write_bytes(b"not a directory")
+        result = self._run(root)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
+
     def test_a_broken_symlink_note_cannot_be_judged(self) -> None:
         root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4"})
         link = root / "docs" / "reviews" / "note.md"
