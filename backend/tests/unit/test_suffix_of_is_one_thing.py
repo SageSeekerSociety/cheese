@@ -20,6 +20,7 @@ def test_both_modules_read_the_suffix_with_one_function():
     [
         ("预算.xlsx", ".xlsx"),
         ("faq.csv", ".csv"),
+        ("预算.XLSX", ".xlsx"),
         ("README", ""),
         ("a.b.c", ".c"),
     ],
