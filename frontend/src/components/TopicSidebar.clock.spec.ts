@@ -116,12 +116,12 @@ describe('侧栏那只慢钟', () => {
     vi.useFakeTimers()
     const { container } = mount({ topics: waitingTopic(4.5) })
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('[data-state="stalled"]')).toBeNull()
+    expect(rowFor(container, 'a').querySelector('.row-light--red')).toBeNull()
 
     // 没有换过任何一份数据，只是钟往前走了 —— 灯要自己亮。
     await vi.advanceTimersByTimeAsync(60_000)
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('[data-state="stalled"]')).not.toBeNull()
+    expect(rowFor(container, 'a').querySelector('.row-light--red')).not.toBeNull()
   })
 
   it('还没到点就不亮：钟走过去之前，多拨几下也还是暗的', async () => {
@@ -131,7 +131,7 @@ describe('侧栏那只慢钟', () => {
     // 三次滴答 = 三十秒，离五分钟还远。
     await vi.advanceTimersByTimeAsync(30_000)
     await nextTick()
-    expect(rowFor(container, 'a').querySelector('[data-state="stalled"]')).toBeNull()
+    expect(rowFor(container, 'a').querySelector('.row-light--red')).toBeNull()
   })
 
   it('没在等的话题不受影响：拨多久都不会亮', async () => {
@@ -139,16 +139,17 @@ describe('侧栏那只慢钟', () => {
     const { container } = mount({ topics: waitingTopic(4.5) })
     await vi.advanceTimersByTimeAsync(10 * 60_000)
     await nextTick()
-    expect(rowFor(container, 'b').querySelector('[data-state="stalled"]')).toBeNull()
+    expect(rowFor(container, 'b').querySelector('.row-light--red')).toBeNull()
   })
 
-  it('红灯那一句说的是谁在等、等了多久', async () => {
+  it('唯一红灯仍保留成员等待时长的说明', async () => {
     vi.useFakeTimers()
     const { container } = mount({ topics: waitingTopic(10) })
     await nextTick()
-    const dot = rowFor(container, 'a').querySelector('[data-state="stalled"]') as HTMLElement
+    const dot = rowFor(container, 'a').querySelector('.row-light--red') as HTMLElement
     expect(dot.title).toContain('分钟')
-    expect(dot.title).not.toBe('')
+    expect(dot.title).toContain('等')
+    expect(dot.getAttribute('aria-label')).toBe(dot.title)
   })
 
   it('卸载之后那只钟就停了', async () => {

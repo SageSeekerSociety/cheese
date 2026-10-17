@@ -1,9 +1,8 @@
 /**
- * 频道行右边那个折叠加手：点一下，把挂在它下面的一整块任务收起来。
+ * 频道名前的任务折叠箭头：点一下，把挂在它下面的一整块任务收起来。
  *
- * 收起来的是画法，不是数据——这个频道里进行中的条数和那盏灯挪到频道行上（不然收起来
- * 就成了一条没有信息量的空白）。整块放下，里面一条都不留：正开着的那条任务也一起走，
- * 你回到这个频道的页面。
+ * 收起来的是画法，不是数据：频道行不显示任务数量，折叠任务的灯与频道自身的灯合成一盏。
+ * 整块放下，里面一条都不留：正开着的那条任务也一起走，你回到这个频道的页面。
  *
  * 用的是真的项目框路由、真的 ProjectSidebar 和 TopicSidebar、真的 store 和缓存，只把
  * 接口换成替身。
@@ -49,6 +48,7 @@ vi.mock('@/api', async (importOriginal) => ({
   listProjectTasks: api.listProjectTasks,
 }))
 
+import { t } from '@/i18n'
 import { rememberNumbered, rememberProject } from '@/lib/addresses'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -138,16 +138,20 @@ beforeEach(() => {
 })
 
 describe('频道下面那一整块任务，收得起来', () => {
-  it('收起来：任务行走光，频道行上留下进行中的条数；再点一下回来', async () => {
+  it('收起来：任务行走光但不显示数量；再点一下回来', async () => {
     await openProject([channel('topic-a', [task(K1, '任务一'), task(K2, '任务二')], 5)])
     expect(screen.getByText('任务二')).toBeTruthy()
+    expect(fold().getAttribute('aria-expanded')).toBe('true')
 
     await fireEvent.click(fold())
     await settle()
 
     expect(screen.queryByText('任务一')).toBeNull()
     expect(screen.queryByText('任务二')).toBeNull()
-    expect(screen.getByTitle('5 tasks under way').textContent).toBe('5')
+    expect(unfold().getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByTitle('5 tasks under way')).toBeNull()
+    const row = document.querySelector('[data-room-id="topic-a"]') as HTMLElement
+    expect(row.textContent?.trim()).toBe('topic-a')
 
     await fireEvent.click(unfold())
     await settle()
@@ -157,19 +161,25 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.queryByTitle('5 tasks under way')).toBeNull()
   })
 
-  it('收起时频道行挂上那一档：行尾变宽了，⋯ 要让开', async () => {
-    await openProject([channel('topic-a', [task(K1, '任务一')], 5)])
-    const row = () => document.querySelector('.topic-row--tasks') as HTMLElement
+  it('任务箭头在频道名前，点击只折叠任务、不打开频道', async () => {
+    const router = await openProject([
+      channel('topic-a', [task(K1, '任务一')], 5),
+      channel('topic-b', [task(K2, '任务二', 'topic-b')], 1),
+    ])
+    rememberTask(K2, 'topic-b', 2)
+    await router.push(`/projects/p/tasks/${K2}`)
+    await settle()
+    const row = document.querySelector('[data-room-id="topic-a"]') as HTMLElement
+    const title = row.querySelector('[data-user-content="topic-a"]') as HTMLElement
+    const arrow = foldIn('topic-a')
+    expect(arrow.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
 
-    expect(row().classList.contains('topic-row--tasks-collapsed')).toBe(false)
-
-    await fireEvent.click(fold())
+    await fireEvent.click(arrow)
     await settle()
 
-    // 收起之后行尾多出灯和条数，把手比展开时宽了 35px；⋯ 是浮在行尾的一层，
-    // 让多少写在这条 class 对应的 CSS 里。这一层量不出排版，只能钉住挂在
-    // 哪一档上——档位掉了，⋯ 就会重新压在那颗条数上（2026-10-13 量到的 21px）。
-    expect(row().classList.contains('topic-row--tasks-collapsed')).toBe(true)
+    expect(here(router)).toEqual({ name: 'workspace-task', projectId: 'p', taskId: K2 })
+    expect(screen.queryByText('任务一')).toBeNull()
+    expect(screen.getByText('任务二')).toBeTruthy()
   })
 
   it('「展开其余 N 个」那一行跟着那一块一起收起来', async () => {
@@ -232,33 +242,34 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.getByText('任务一')).toBeTruthy()
   })
 
-  it('收起后那一块的灯只说里面的任务，不重复频道自己那盏', async () => {
-    // 这个频道自己在等我（黄灯）；挂在它下面那一条没什么事。
-    await openProject([channel('topic-a', [task(K1, '任务一')], 3, { awaits_me: true })])
+  it.each([
+    { room: { awaits_me: true }, task: {}, label: 'yellow' },
+    { room: { awaits_me: true }, task: { awaits_me: true }, label: 'yellow' },
+    { room: {}, task: {}, label: 'mine' },
+    { room: {}, task: { moving: true }, label: 'moving' },
+    {
+      room: { awaits_me: true },
+      task: { moving: true, last_output_at: new Date(Date.now() - 6 * 60_000).toISOString() },
+      label: 'red',
+    },
+  ])('频道与收起任务合成一盏灯：$label', async ({ room, task: facts, label }) => {
+    await openProject([channel('topic-a', [task(K1, '任务一', 'topic-a', facts)], 3, room)])
 
     await fireEvent.click(fold())
     await settle()
 
-    const rollup = document.querySelector('.task-fold__rollup') as HTMLElement
-    // 频道行左边那盏已经说了「有事等你」；这一块里没有一条任务有事，就不该再画一颗黄的。
-    // 剩下这一颗是蓝的：里面那条是我的活，蓝灯说的是「这条归我」，和频道那盏不是一件事。
-    const lights = rollup.querySelectorAll('.row-light')
+    const row = document.querySelector('[data-room-id="topic-a"]') as HTMLElement
+    const lights = row.querySelectorAll('[role="img"]')
     expect(lights).toHaveLength(1)
-    expect(lights[0]!.classList.contains('row-light--blue')).toBe(true)
-    expect(rollup.textContent).toBe('3')
-  })
+    expect(lights[0]!.getAttribute('aria-label')).toBe(t(`work.sidebar.light.${label}`))
+    expect(row.textContent?.trim()).toBe('topic-a')
 
-  it('收起后那一块的灯：里面真有活等着，就亮它那一颗', async () => {
-    await openProject([
-      channel('topic-a', [task(K1, '任务一', 'topic-a', { awaits_me: true })], 3, { awaits_me: true }),
-    ])
-
-    await fireEvent.click(fold())
+    await fireEvent.click(unfold())
     await settle()
 
-    const lights = (document.querySelector('.task-fold__rollup') as HTMLElement).querySelectorAll('.row-light')
-    expect(lights).toHaveLength(1)
-    expect(lights[0]!.classList.contains('row-light--yellow')).toBe(true)
+    // 展开之后不再用任务替频道说话：任务的状态回到任务行上。
+    expect(row.querySelectorAll('.row-light')).toHaveLength(room.awaits_me ? 1 : 0)
+    expect(screen.getByRole('button', { name: /任务一/ }).querySelectorAll('.row-light')).toHaveLength(1)
   })
 
   it('没有任务挂着的频道没有这个把手', async () => {

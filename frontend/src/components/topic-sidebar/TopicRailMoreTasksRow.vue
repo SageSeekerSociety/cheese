@@ -22,7 +22,7 @@ const emit = defineEmits<{
   <button
     type="button"
     class="rail-more"
-    :style="{ paddingInlineStart: 40 + props.depth * 20 + 'px', '--guide-x': 16 + props.depth * 20 + 'px' }"
+    :style="{ '--task-indent': 40 + props.depth * 20 + 'px', '--guide-x': 16 + props.depth * 20 + 'px' }"
     :aria-expanded="expanded"
     @click="emit('toggle', channelId)"
   >
@@ -42,6 +42,7 @@ const emit = defineEmits<{
   width: 100%;
   min-height: 32px;
   padding-block: 0;
+  padding-inline-start: calc(var(--task-indent) + 20px);
   padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
@@ -75,5 +76,19 @@ const emit = defineEmits<{
 }
 .rail-more__chevron {
   color: var(--faint);
+}
+.topic-rail--page .rail-more {
+  padding-inline-start: calc(var(--task-indent) + 76px);
+}
+.topic-rail--page .rail-more::before {
+  left: calc(var(--guide-x) + 14px);
+}
+@media (hover: none) {
+  .rail-more {
+    padding-inline-start: calc(var(--task-indent) + 76px);
+  }
+  .rail-more::before {
+    left: calc(var(--guide-x) + 14px);
+  }
 }
 </style>
