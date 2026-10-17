@@ -1,12 +1,12 @@
 """A room's session calls a connected remote MCP server, and never holds its token.
 
-The session side is what each harness runs on its machine: for Claude Code the
-real bridge it starts from its MCP config (`remote_execution/client.py
-bridge`), run as its own process on stdio, with the execution target the
-platform hands a session; for pi its runner answering the extension's `mcp`
-request, started with the launch `PiChannel` hands the machine. Both reach the
-backend over HTTP, as they do on the machine; the backend answers from the
-in-process app, which calls the fake upstream on a real port.
+The session side is what each harness's own MCP client reaches: the session's
+gateway — for Claude Code the one its launch starts (`remote_execution/client.py
+gateway`), run as its own process with the execution target the platform hands
+a session; for pi the one its runner opens, started with the launch
+`PiChannel` hands the machine. Both reach the backend over HTTP, as they do on
+the machine; the backend answers from the in-process app, which calls the fake
+upstream on a real port.
 """
 
 import asyncio
@@ -27,6 +27,7 @@ from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from app.domain.agent_instance.services import type_of_seat
 from app.domain.remote_mcp import service
 from tests.integration import test_remote_mcp as base
+from tests.support.mcp_gateway_client import call_tool, text_of, tool_names
 from tests.support.room_machine import room_machine
 
 # The same upstream and project as the settings tests.
@@ -96,19 +97,30 @@ def _target(client, pid, tid, tmp_path) -> Path:
     return path
 
 
-def _bridge(target: Path, name: str, api: str, token: str, messages: list[dict]):
+class _Door:
+    """A gateway process, as `mcp_gateway_client` reaches one."""
+
+    def __init__(self, port: int, secret: str):
+        self.port, self.secret = port, secret
+
+    def url(self, server: str) -> str:
+        return f"http://127.0.0.1:{self.port}/mcp/{server}"
+
+
+def _gateway(target: Path, api: str, token: str, log: Path):
+    """The gateway a Claude Code launch starts, as its own process."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("CHEESE_", "HTTP"))}
     env.update(CHEESE_API=api, CHEESE_TOKEN=token, NO_PROXY="127.0.0.1")
-    done = subprocess.run(
-        [sys.executable, str(CLIENT), "bridge", str(target), name],
-        input="".join(json.dumps(m) + "\n" for m in messages),
-        capture_output=True,
+    process = subprocess.Popen(
+        [sys.executable, str(CLIENT), "gateway", str(target)],
+        stdout=subprocess.PIPE,
+        stderr=log.open("w"),
         text=True,
         env=env,
-        timeout=60,
     )
-    replies = [json.loads(line) for line in done.stdout.splitlines() if line.strip()]
-    return {reply["id"]: reply for reply in replies}, done
+    assert process.stdout is not None
+    where = json.loads(process.stdout.readline())
+    return _Door(where["port"], where["secret"]), process
 
 
 def test_a_session_calls_the_server_without_ever_holding_its_token(
@@ -127,31 +139,21 @@ def test_a_session_calls_the_server_without_ever_holding_its_token(
     assert json.loads(target.read_text())["remote_mcp"]["servers"] == ["tracker"]
 
     room = mint_scoped_token(project_id=str(pid), topic_id=tid)
-    replies, done = _bridge(
-        target,
-        "tracker",
-        api,
-        room,
-        [
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-            {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {"name": "whoami", "arguments": {"note": "from a room"}},
-            },
-        ],
-    )
-    assert replies[2]["result"]["tools"][0]["name"] == "whoami", done.stderr
-    text = replies[3]["result"]["content"][0]["text"]
-    assert text == "reached with oauth; note=from a room"
+    log = tmp_path / "gateway.log"
+    door, process = _gateway(target, api, room, log)
+    try:
+        assert tool_names(door, "tracker") == ["whoami"]
+        answer = call_tool(door, "tracker", "whoami", {"note": "from a room"})
+    finally:
+        process.terminate()
+        process.wait(10)
+    assert text_of(answer) == "reached with oauth; note=from a room"
 
     token = upstream.issued[-1]
     assert upstream.seen_credentials[-1] == f"Bearer {token}"
     # Nothing the session holds or receives carries it.
     assert token not in target.read_text()
-    assert token not in done.stdout and token not in done.stderr
+    assert token not in json.dumps(answer) and token not in log.read_text()
     assert token not in room
     # And no machine was taken for it: every request went to the proxy route.
     assert requests and all(path == f"/topics/{tid}/mcp/tracker" for path in requests)
@@ -207,12 +209,26 @@ def _pi_room(client, upstream, api: str, tmp_path, monkeypatch):
     return tid, remote, work
 
 
+async def _as_pi_calls(runner: PiRunner, gateway, index: int, call: dict):
+    """One MCP tool call as pi makes it: the extension asks the runner for the
+    project's hooks before it and after it (`applyProjectHooks`), and pi's own
+    MCP client makes the call at the gateway in between. A refused call comes
+    back as the refusal."""
+    server, tool = call["tool"].removeprefix("mcp__").split("__")
+    asked = {"tool": call["tool"], "id": f"call-{index}", "input": call["arguments"]}
+    before = await runner.dispatch("hooks", {"event": "PreToolUse", **asked})
+    if "denied" in before:
+        return before
+    result = await asyncio.to_thread(call_tool, gateway, server, tool, before["input"])
+    await runner.dispatch("hooks", {"event": "PostToolUse", **asked, "result": result})
+    return result
+
+
 def _pi_calls(
     runner: PiRunner, tmp_path: Path, work: Path, remote: dict, calls: list[dict]
 ):
     """Open the runner's servers on a room machine whose checkout runs one stdio
-    server, then answer the extension's `mcp` requests; an answer that failed
-    comes back as its exception."""
+    server, then make each call as pi would."""
     stdio = {"command": sys.executable, "args": [str(work / "notes.py")]}
 
     async def session():
@@ -226,16 +242,11 @@ def _pi_calls(
             try:
                 await runner.open_servers()
                 home = runner.write_extension(EXTENSION)
+                gateway = runner.gateway
+                assert gateway is not None
                 answers: list[object] = []
                 for index, call in enumerate(calls):
-                    try:
-                        answers.append(
-                            await runner.dispatch(
-                                "mcp", {"id": f"call-{index}", **call}
-                            )
-                        )
-                    except Exception as error:  # noqa: BLE001 — the answer under test
-                        answers.append(error)
+                    answers.append(await _as_pi_calls(runner, gateway, index, call))
                 return (home / "platform.json").read_text(), answers
             finally:
                 await runner.close()
@@ -246,9 +257,9 @@ def _pi_calls(
 def test_a_pi_session_calls_the_projects_servers_without_their_token(
     client, upstream, backend_over_http, tmp_path, monkeypatch
 ):
-    """pi has no MCP client; its runner is one. It lists the machine's stdio
-    server and the connected remote one as `mcp__<server>__<tool>`, calls each
-    where it is served, and holds nothing that carries the upstream token."""
+    """pi's own MCP client reaches the machine's stdio server and the connected
+    remote one at the session's gateway, each called where it is served, and
+    nothing it holds carries the upstream token."""
     api, requests = backend_over_http
     tid, remote, work = _pi_room(client, upstream, api, tmp_path, monkeypatch)
     # Only the connected server: `search` still needs a value set.
@@ -264,19 +275,10 @@ def test_a_pi_session_calls_the_projects_servers_without_their_token(
             {"tool": "mcp__tracker__whoami", "arguments": {"note": "from pi"}},
         ],
     )
-    assert sorted(tool["name"] for tool in json.loads(manifest)["mcp"]) == [
-        "mcp__notes__where",
-        "mcp__tracker__whoami",
-    ]
+    assert sorted(json.loads(manifest)["mcp"]) == ["notes", "tracker"]
     # The stdio server ran on the machine, in its checkout.
-    assert local == {
-        "content": [{"type": "text", "text": f"{work} hi"}],
-        "isError": False,
-    }
-    assert tracked == {
-        "content": [{"type": "text", "text": "reached with oauth; note=from pi"}],
-        "isError": False,
-    }
+    assert text_of(local) == f"{work} hi"
+    assert text_of(tracked) == "reached with oauth; note=from pi"
 
     token = upstream.issued[-1]
     assert upstream.seen_credentials[-1] == f"Bearer {token}"
@@ -301,9 +303,10 @@ if event['tool_input'].get('note') == 'forbidden':
 def test_a_pi_sessions_mcp_calls_run_the_projects_hooks(
     client, upstream, backend_over_http, tmp_path, monkeypatch
 ):
-    """pi fires no project hooks, so the room's machine runs them around every
-    MCP call of its session, stdio or remote: PreToolUse before, and a deny
-    means the server is never called; PostToolUse after, with the result."""
+    """pi asks for the project's hooks around every MCP call of its session,
+    stdio or remote, and the room's machine runs them: PreToolUse before, and a
+    deny means the server is never called; PostToolUse after, with the result.
+    The gateway runs none again: each event is logged once."""
     api, _ = backend_over_http
     _, remote, work = _pi_room(client, upstream, api, tmp_path, monkeypatch)
     # One line per event: the event as the hook received it.
@@ -352,10 +355,12 @@ def test_a_pi_sessions_mcp_calls_run_the_projects_hooks(
         ],
     )
 
-    assert [type(answer) for answer in answers[:2]] == [dict, dict]
+    assert [text_of(answer) for answer in answers[:2]] == [
+        f"{work} hi",
+        "reached with oauth; note=from pi",
+    ]
     for denied in answers[2:]:
-        assert isinstance(denied, RuntimeError)
-        assert "notes like that stay out of the tracker" in str(denied)
+        assert "notes like that stay out of the tracker" in denied["denied"]
     # A denied call reached neither server.
     assert (work / "calls.txt").read_text() == "hi\n"
     assert [c["arguments"]["note"] for c in upstream.tool_calls[reached_upstream:]] == [
@@ -376,9 +381,8 @@ def test_a_pi_sessions_mcp_calls_run_the_projects_hooks(
         ("PreToolUse", "mcp__notes__where", "forbidden"),
         ("PreToolUse", "mcp__tracker__whoami", "forbidden"),
     ]
-    # Paired by one id, which names the session as well as the call.
+    # Paired by one id, the call's.
     assert events[0]["tool_use_id"] == events[1]["tool_use_id"]
-    assert events[0]["tool_use_id"].endswith("-call-0")
 
 
 def test_a_stdio_server_still_goes_to_the_rooms_machine(tmp_path):

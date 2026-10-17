@@ -28,6 +28,8 @@ app.domain.agent.device_hub.link`` 落在兄弟上，``from . import sessions`` 
 import ast
 from pathlib import Path
 
+from tests.unit._import_anchor import absolute_module, package_of
+
 MODULE = "app.domain.agent.device_hub"
 PARENT = "app.domain.agent"
 PACKAGE = (
@@ -66,27 +68,16 @@ def _is_type_checking(test: ast.expr, names: set[str]) -> bool:
     return called in names
 
 
-def _package_at(level: int) -> str | None:
-    """相对导入第 ``level`` 级落在哪个包上。本文件是包的直接子模块。"""
-    parts = MODULE.split(".")
-    if level - 1 >= len(parts):
-        return None
-    return ".".join(parts[: len(parts) - (level - 1)])
-
-
-def _is_the_facade(node: ast.AST) -> bool:
+def _is_the_facade(node: ast.AST, package: str | None) -> bool:
     """这一句导的是门面吗。先解析它落在哪个模块上，再看那个模块是不是门面。"""
     if isinstance(node, ast.Import):
         # `import a.b.c` 导的是 a.b.c 这个模块本身；带上兄弟的名字就不是门面。
         return any(alias.name == MODULE for alias in node.names)
     if not isinstance(node, ast.ImportFrom):
         return False
-    target = node.module
-    if node.level:
-        package = _package_at(node.level)
-        if package is None:
-            return False
-        target = f"{package}.{node.module}" if node.module else package
+    target = absolute_module(node, package)
+    if target is None:
+        return False
     if target == MODULE:
         # 从门面里取名字。取到的是兄弟模块（`from . import sessions`）才不算。
         return any(alias.name not in SIBLINGS for alias in node.names)
@@ -117,11 +108,15 @@ def _runtime_imports(source: str, where: str) -> list[ast.Import | ast.ImportFro
     ]
 
 
-def _reaching_back(source: str, where: str) -> list[str]:
+def _reaching_back(source: str, where: str, package: str | None = MODULE) -> list[str]:
+    """这段源码里运行时会建到门面上的那些写法。
+
+    ``package`` 是被扫那份源码的 ``__package__``，合成源码默认按包根算。
+    """
     return [
         ast.unparse(node)
         for node in _runtime_imports(source, where)
-        if _is_the_facade(node)
+        if _is_the_facade(node, package)
     ]
 
 
@@ -134,7 +129,7 @@ def test_no_hub_submodule_imports_the_facade_at_runtime():
         (path.name, node.lineno, ast.unparse(node))
         for path in pieces
         for node in _runtime_imports(path.read_text(encoding="utf-8"), str(path))
-        if _is_the_facade(node)
+        if _is_the_facade(node, package_of(path))
     ]
 
     assert not reaching_back, (

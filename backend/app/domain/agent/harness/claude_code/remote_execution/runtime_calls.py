@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import runpy
 import select
+import shlex
 import subprocess
 import sys
 import uuid
@@ -38,6 +40,45 @@ project_hooks = core.project_hooks
 resolve_program = core.resolve_program
 socket_directory = core.socket_directory
 write_json = core.write_json
+
+
+#: What starts the error a local server's start is refused with on a member's
+#: computer whose owner has not allowed its command; a JSON object follows.
+APPROVAL_REQUIRED = "MCP_APPROVAL_REQUIRED "
+_VARIABLE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+def server_fingerprint(spec):
+    """What tells one local server's command from another: its definition as
+    written, `${VAR}` unexpanded, so a secret changing is not a new command."""
+    written = {
+        "command": spec.get("command"),
+        "args": list(spec.get("args", [])),
+        "cwd": spec.get("cwd"),
+        "env": dict(spec.get("env", {})),
+    }
+    return hashlib.sha256(json.dumps(written, sort_keys=True).encode()).hexdigest()
+
+
+def expand_variables(text, values):
+    """`${VAR}` and `${VAR:-default}`, as `.mcp.json` writes them; a variable
+    with neither a value nor a default is left as written."""
+
+    def replace(match):
+        name, default = match.group(1), match.group(2)
+        if name in values:
+            return values[name]
+        return default if default is not None else match.group(0)
+
+    return _VARIABLE.sub(replace, text)
+
+
+def log_tail(path, lines=12):
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return ""
+    return "\n".join(text.splitlines()[-lines:])
 
 
 def client(self, server):
@@ -74,12 +115,39 @@ def client(self, server):
                     env.pop(key, None)
                 cwd = self.root
             else:
-                spec = {**self.agent_specs, **self.config["mcp_servers"]}[server]
+                spec = {**self.handed_specs, **self.config["mcp_servers"]}[server]
                 if spec.get("type", "stdio") != "stdio":
                     raise ValueError("Remote process servers require stdio transport")
-                command = [spec["command"], *spec.get("args", [])]
-                env = dict(self.env, **spec.get("env", {}))
-                cwd = spec.get("cwd", str(self.root))
+                allowed = self.server_allowed.get(server)
+                if isinstance(allowed, list):
+                    # A member's own computer runs only the commands its owner
+                    # allowed, told apart by what is written.
+                    fingerprint = server_fingerprint(spec)
+                    if fingerprint not in allowed:
+                        raise RuntimeError(
+                            APPROVAL_REQUIRED
+                            + json.dumps(
+                                {
+                                    "fingerprint": fingerprint,
+                                    "command": shlex.join(
+                                        [spec["command"], *spec.get("args", [])]
+                                    ),
+                                }
+                            )
+                        )
+                known = {**self.env, **self.server_values.get(server, {})}
+                command = [
+                    expand_variables(part, known)
+                    for part in [spec["command"], *spec.get("args", [])]
+                ]
+                env = dict(
+                    self.env,
+                    **{
+                        key: expand_variables(str(value), known)
+                        for key, value in spec.get("env", {}).items()
+                    },
+                )
+                cwd = expand_variables(spec.get("cwd", str(self.root)), known)
             log = (
                 self.state
                 / ("mcp-" + hashlib.sha256(server.encode()).hexdigest()[:12] + ".log")
@@ -87,6 +155,12 @@ def client(self, server):
             try:
                 process = beside("mcp_process")["MCPProcess"]
                 self.clients[server] = process(command, cwd, env, log)
+            except Exception as exc:
+                # What it printed before it gave up says why; the session
+                # shows the end of it.
+                log.close()
+                # i18n-exempt: runner bundle: execution machine, stdlib only
+                raise RuntimeError(f"{exc}\n{log_tail(Path(log.name))}") from exc
             finally:
                 log.close()
         return self.clients[server]

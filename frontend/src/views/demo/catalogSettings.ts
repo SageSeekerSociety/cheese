@@ -44,6 +44,7 @@ import {
 import ArchiveProjectDialog from '@/components/ArchiveProjectDialog.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import EnvironmentPicker from '@/components/EnvironmentPicker.vue'
+import McpServerDialog from '@/components/McpServerDialog.vue'
 import ArchiveProjectSection from '@/components/settings/ArchiveProjectSection.vue'
 import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
@@ -358,6 +359,59 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
         note: '后端那句理由原样画在框里，框不关，可以改了再试。',
         props: { error: ARCHIVE_REFUSED },
         expect: ARCHIVE_REFUSED,
+      },
+    ],
+  },
+  {
+    id: 'settings-mcp-server-dialog',
+    title: 'McpServerDialog',
+    about:
+      '「添加 MCP 服务器」/「编辑」那张表：远程服务器（名称、地址、登录方式）或在项目机器上运行的命令（名称、命令、环境变量）。',
+    file: 'src/components/McpServerDialog.vue',
+    component: McpServerDialog,
+    needs: UI_I18N,
+    teleport: true,
+    args: { modelValue: true, initial: null, agentName: '芝士', saving: false, error: '' },
+    states: [
+      {
+        name: '添加',
+        note: '名称、地址都填对之前「添加」是灰的；默认用账号登录。',
+        props: {},
+        expectSelector: '.v-btn--disabled',
+      },
+      {
+        name: '编辑一条填请求头的',
+        note: '名称不能改；请求头的值不回显，留空就是不改。',
+        props: {
+          initial: {
+            kind: 'remote',
+            name: 'sentry',
+            url: 'https://mcp.sentry.dev/mcp',
+            auth: 'headers',
+            header: 'Authorization',
+            value: null,
+          },
+        },
+        expect: '编辑 sentry',
+      },
+      {
+        name: '编辑一条命令',
+        note: '类型不能改；命令和环境变量照原样回显，密钥写成变量。',
+        props: {
+          initial: {
+            kind: 'command',
+            name: 'postgres',
+            command: 'npx -y @modelcontextprotocol/server-postgres ${DATABASE_URL}',
+            env: { PGSSLMODE: 'require' },
+          },
+        },
+        expect: '编辑 postgres',
+      },
+      {
+        name: '保存被拒',
+        note: '服务端的原话留在框里，框不关。',
+        props: { error: '地址必须是 https' },
+        expect: '地址必须是 https',
       },
     ],
   },

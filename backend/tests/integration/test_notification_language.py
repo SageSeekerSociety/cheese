@@ -101,7 +101,11 @@ def _pushed(client, monkeypatch, deliveries: list[NotificationDelivery]) -> dict
             ).send_batch(deliveries)
             await session.commit()
         await drain_channel(
-            factory, channel="push", batch_size=len(deliveries), max_attempts=1
+            factory,
+            channel="push",
+            sender=push_delivery.send_push,
+            batch_size=len(deliveries),
+            max_attempts=1,
         )
 
     client.portal.call(go)

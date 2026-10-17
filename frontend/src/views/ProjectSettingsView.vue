@@ -24,6 +24,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import DeviceSessionsSwitch from '@/components/DeviceSessionsSwitch.vue'
+import McpServerDialog from '@/components/McpServerDialog.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
 import ProjectDefaultModelSettings from '@/components/ProjectDefaultModelSettings.vue'
 import ProjectEnvironmentSettings from '@/components/ProjectEnvironmentSettings.vue'
@@ -240,7 +241,9 @@ const environment = useProjectEnvironmentSettings(() => props.projectId, {
   room: () => (typeof query.room === 'string' ? query.room : undefined),
   diagnoseRoom: (roomId) => diagnoseRoomEnvironment(props.projectId, roomId),
 })
+const configuresAgents = computed(() => mayIn(projectRead.data.value, 'configure_agents'))
 const mcp = useProjectMcpSettings(() => props.projectId, {
+  agentName: () => agentName.value,
   revealGate: gate,
   enabled: () => section.value === 'mcp',
 })
@@ -490,11 +493,25 @@ function close() {
           :error="mcp.error.value"
           :busy="mcp.busy.value"
           :values="mcp.values"
+          :manages="configuresAgents"
+          :agent-name="agentName"
           @connect="mcp.connect"
           @disconnect="mcp.disconnect"
           @save="mcp.save"
           @clear="mcp.clear"
           @update:value="({ name, value }) => mcp.setValue(name, value)"
+          @add="mcp.openAdd"
+          @edit="mcp.openEdit"
+          @remove="mcp.remove"
+        />
+        <McpServerDialog
+          v-if="section === 'mcp'"
+          v-model="mcp.form.open"
+          :initial="mcp.editing.value"
+          :agent-name="agentName"
+          :saving="mcp.form.saving"
+          :error="mcp.form.error"
+          @save="mcp.submit"
         />
 
         <!-- Exporting is for everyone who can read the project; the archive follows the

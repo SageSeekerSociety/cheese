@@ -48,6 +48,7 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentRetrying,
+    AgentStepCalls,
     AgentStepFailed,
     AgentStepOutput,
     AgentToolResult,
@@ -56,6 +57,7 @@ from app.domain.agent.service import (
     AgentUserEntry,
     step_error,
 )
+from app.domain.agent.tool_preview import call_line
 
 # pi stops for a tool call and keeps going; every other reason ends the turn,
 # except a failed call, which ends it only once pi gives up on it (``GAVE_UP``).
@@ -235,6 +237,7 @@ class Assembler:
                 steps.append(AgentStepFailed(call_id=call, text=step_error(returned)))
             if returned.strip():
                 steps.append(AgentStepOutput(call_id=call, text=returned))
+            steps.extend(_script_calls(call, message))
             return steps
         if role != "assistant":
             return []
@@ -296,6 +299,7 @@ class Assembler:
                 steps.append(AgentStepFailed(call_id=call, text=step_error(returned)))
             if returned.strip():
                 steps.append(AgentStepOutput(call_id=call, text=returned))
+            steps.extend(_script_calls(call, message))
             return steps
         if role != "assistant" or message.get("stopReason") == FAILED:
             return []
@@ -344,3 +348,29 @@ class Assembler:
             api_error_status=int(status[1]) if status else None,
             harness=self.harness,
         )
+
+
+def _script_calls(call: str, message: dict) -> list[AgentEvent]:
+    """The tools a codemode script called, which pi records on the script's
+    result (``nestedCalls``: each call's name, arguments and how it ended;
+    a call's arguments are left out when they were too long to keep)."""
+    record = message.get("nestedCalls")
+    calls = record.get("calls") if isinstance(record, dict) else None
+    if not isinstance(calls, list) or not calls:
+        return []
+    return [
+        AgentStepCalls(
+            call_id=call,
+            calls=[
+                {
+                    "tool": str(nested.get("name") or ""),
+                    "arg": call_line(
+                        str(nested.get("name") or ""), nested.get("arguments")
+                    ),
+                    "failed": nested.get("status") == "error",
+                }
+                for nested in calls
+                if isinstance(nested, dict)
+            ],
+        )
+    ]

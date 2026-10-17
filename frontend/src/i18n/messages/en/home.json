@@ -13,7 +13,8 @@
       "decide": "Awaiting your decision",
       "read": "Change alert",
       "invited": "Awaiting your reply",
-      "joinRequest": "Awaiting your approval"
+      "joinRequest": "Awaiting your approval",
+      "allow": "Needs your permission"
     },
     "markRead": "Mark as read",
     "answerLabel": "Write your decision",
@@ -35,6 +36,14 @@
       "ADMIN": "admin",
       "OWNER": "owner",
       "mentor": "mentor"
+    },
+    "mcpRun": {
+      "title": "Run the MCP server {server} on your device {device}",
+      "from": "From the project's {file}, last changed by {name}",
+      "once": "Once allowed, this command is not asked about again; you are asked again if it changes",
+      "allow": "Allow",
+      "refuse": "Don't allow",
+      "added": "Added by {name} in project settings"
     }
   },
   "nav": {

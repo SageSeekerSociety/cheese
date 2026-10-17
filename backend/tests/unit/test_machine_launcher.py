@@ -21,7 +21,7 @@ import pytest
 
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness.claude_code import ClaudeLaunch
-from app.domain.agent.harness.launch import MachinePlace
+from app.domain.agent.launch import MachinePlace
 from app.domain.project.environment import EnvironmentConfig
 
 
@@ -364,13 +364,21 @@ def _fake_upstream(tmp_path):
     served = tmp_path / "served"
     served.mkdir()
     payload = tmp_path / "payload"
+    # One archive per tool, holding every program placed from it (uv's holds
+    # uvx too). A tree keeps its programs under bin/, as node's does.
+    programs: dict[str, list[str]] = {}
     for tool, _, kind, name in machine_launcher.toolchain.PLACEMENTS:
-        if kind != "bin":
-            continue
+        if kind == "bin":
+            programs.setdefault(tool, []).append(name)
+        elif kind == "tree":
+            programs.setdefault(tool, []).extend(f"bin/{n}" for n in (name, "npx"))
+    for tool, names in programs.items():
         directory = payload / f"{tool}-some-vendor-layout"
-        directory.mkdir(parents=True)
-        (directory / name).write_text(f"#!/bin/sh\necho {name}\n")
-        (directory / name).chmod(0o755)
+        for name in names:
+            program = directory / name
+            program.parent.mkdir(parents=True, exist_ok=True)
+            program.write_text(f"#!/bin/sh\necho {program.name}\n")
+            program.chmod(0o755)
         with tarfile.open(served / tool, "w:gz") as tar:
             tar.add(directory, arcname=directory.name)
     (served / "font-sans").write_bytes(b"OTTO sans")
@@ -474,6 +482,48 @@ def test_a_raw_artifact_is_placed_without_unpacking(tmp_path):
     assert result.returncode == 0, result.stderr
     assert report.read_text(), "the agent gave up waiting for the placement"
     assert (chain / "bin" / "agent-browser").exists()
+
+
+def test_a_machine_without_node_gets_one_behind_its_own(tmp_path):
+    """A project's local MCP servers start with `npx` or `uvx`. A machine with
+    neither gets ours; a member's computer that has its own node keeps using
+    it, because ours sits after the machine's PATH."""
+    home, env, _log = _machine_with_upstream(tmp_path)
+    chain = home / ".cheese" / "toolchain"
+    node_bin = chain / "node" / machine_launcher.toolchain.NODE_VERSION / "bin"
+    own = tmp_path / "own-node"
+    own.mkdir()
+    (own / "node").write_text("#!/bin/sh\necho own node\n")
+    (own / "node").chmod(0o755)
+    # Whatever node this test runs beside is not the machine under test: the
+    # directories that hold one are replaced by links to everything else in them.
+    hidden = {"node", "npm", "npx", "uv", "uvx"}
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    kept = []
+    for d in env["PATH"].split(":"):
+        if not any(os.path.exists(os.path.join(d, name)) for name in hidden):
+            kept.append(d)
+            continue
+        for entry in os.listdir(d) if os.path.isdir(d) else []:
+            if entry not in hidden and not (shim / entry).exists():
+                (shim / entry).symlink_to(os.path.join(d, entry))
+    env["PATH"] = ":".join([*kept, str(shim), str(own)])
+
+    report = tmp_path / "which"
+    agent = tmp_path / "agent-node.sh"
+    agent.write_text(
+        "#!/bin/sh\n"
+        "i=0\n"
+        f'while [ $i -lt 150 ] && {{ [ ! -e "{node_bin / "npx"}" ] '
+        f'|| [ ! -e "{chain / "bin" / "uvx"}" ]; }}; do i=$((i+1)); sleep 0.1; done\n'
+        f'{{ npx; uvx; node; }} > "{report}"\n'
+    )
+    agent.chmod(0o755)
+    result = _run(tmp_path, env, prepare=f'AGENT="{agent}"\n', command='"$AGENT"')
+
+    assert result.returncode == 0, result.stderr
+    assert report.read_text().splitlines() == ["npx", "uvx", "own node"]
 
 
 def test_a_toolchain_that_cannot_be_fetched_never_fails_the_launch(tmp_path):

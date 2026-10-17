@@ -17,6 +17,10 @@ name: Warm dependency caches
 #   pnpm-hosted-v2-*                   frontend.yml
 # Changing a key or an install step in one of those suites means changing it
 # here in the same PR.
+#
+# The `plan` job reads the push's own commit range and skips the jobs whose
+# dependency did not move, so a guard-only push starts one runner instead of
+# six. Anything it cannot establish starts all six.
 on:
   push:
     branches: [main]
@@ -36,6 +40,10 @@ on:
       - frontend/pnpm-lock.yaml
       - frontend/package.json
       - .github/workflows/warm-caches.yml
+      # The selector and its test: a change to either can change which jobs a
+      # push warms, so it re-plans against everything.
+      - .github/scripts/warm-cache-plan.py
+      - .github/scripts/test_warm_cache_plan.py
   # Re-saves a key that eviction removed while no dependency changed.
   schedule:
     - cron: "17 3 * * *"
@@ -44,14 +52,61 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: warm-caches
-  cancel-in-progress: true
-
 jobs:
+  # Planning costs seconds; every job below waits on it. There is no
+  # workflow-wide concurrency group: one arriving push must not cancel the
+  # half of the previous push's warm that is still useful, and a job-level
+  # group cannot be named after `github.job` (it is not available there), so
+  # each job spells out its own domain.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: warm-caches-plan-${{ github.ref }}
+      cancel-in-progress: false
+    outputs:
+      backend: ${{ steps.plan.outputs.backend }}
+      harness_bins: ${{ steps.plan.outputs.harness_bins }}
+      guards: ${{ steps.plan.outputs.guards }}
+      remote_execution_npm: ${{ steps.plan.outputs.remote_execution_npm }}
+      go: ${{ steps.plan.outputs.go }}
+      pnpm: ${{ steps.plan.outputs.pnpm }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The pushed commit is all the checkout has to give; the base comes
+          # from the fetch below, which is also where its absence is noticed.
+          fetch-depth: 1
+
+      # Fetching by raw SHA asks for the commit, not a ref, and the server may
+      # refuse it. The planner reads the failure as "cannot establish a base"
+      # and selects everything, so this step must not fail the job first.
+      - name: Fetch the push's base commit
+        if: github.event_name == 'push'
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: git fetch --no-tags --depth=1 origin "$BASE_SHA"
+
+      - name: Plan the dependency domains this push invalidated
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          BASE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: python3 .github/scripts/warm-cache-plan.py
+
   backend:
+    needs: plan
+    # `always()` is what makes a failed plan run this job: its outputs are then
+    # empty, which is not the literal `false`, so the domain still warms.
+    if: always() && !cancelled() && needs.plan.outputs.backend != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: warm-caches-backend-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -108,8 +163,13 @@ jobs:
   # matched, and every one of them pulled both packages from the registry on
   # every run.
   harness-bins:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.harness_bins != 'false'
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
+    concurrency:
+      group: warm-caches-harness-bins-${{ github.ref }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: backend
@@ -198,8 +258,13 @@ jobs:
           tar -xzf "$archive" -C "$bins/pi"
 
   guards:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.guards != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: warm-caches-guards-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -213,23 +278,39 @@ jobs:
         run: uvx pre-commit --version
 
   remote-execution-npm:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.remote_execution_npm != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: warm-caches-remote-execution-npm-${{ github.ref }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: npm-cache
         with:
           path: ~/.npm
           key: npm-remote-execution-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/remote_execution/package-lock.json') }}
+      # An exact hit here is the key that already exists, and actions/cache
+      # never replaces an existing key — so this job has nothing left to warm
+      # and reinstalling would only spend a runner. Partial and empty hits
+      # still install: those fill the key the suites will look for.
       - name: Install scripts/remote_execution the way mcp-contract.yml does
+        if: steps.npm-cache.outputs.cache-hit != 'true'
         run: npm ci --prefix scripts/remote_execution --no-audit --no-fund
 
   go:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.go != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: warm-caches-go-${{ github.ref }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: cli
@@ -240,6 +321,7 @@ jobs:
           go-version-file: cli/go.mod
           cache: false
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: go-cache
         with:
           path: |
             ~/go/pkg/mod
@@ -248,7 +330,13 @@ jobs:
           restore-keys: go-${{ runner.os }}-${{ runner.arch }}-
       # Builds what cli.yml builds; `-run '^$'` compiles the test binaries and
       # runs none of them.
+      #
+      # On an exact hit this key is already stored and cannot be rewritten, so
+      # the warmed artifacts are the ones the suites will get anyway. It skips
+      # a compile that is not a gate (this workflow runs no tests); cli.yml
+      # still builds and vets the change itself.
       - name: Build the module, its vet targets and its test binaries
+        if: steps.go-cache.outputs.cache-hit != 'true'
         run: |
           go mod download
           go build ./...
@@ -258,8 +346,13 @@ jobs:
           go test -tags claudee2e -run '^$' ./e2e/
 
   pnpm:
+    needs: plan
+    if: always() && !cancelled() && needs.plan.outputs.pnpm != 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: warm-caches-pnpm-${{ github.ref }}
+      cancel-in-progress: false
     defaults:
       run:
         working-directory: frontend
@@ -273,9 +366,11 @@ jobs:
       - name: Enable corepack
         run: corepack enable
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: pnpm-cache
         with:
           path: ${{ github.workspace }}/.pnpm-store
           key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
           restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
       - name: Install dependencies the way frontend.yml does
+        if: steps.pnpm-cache.outputs.cache-hit != 'true'
         run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"

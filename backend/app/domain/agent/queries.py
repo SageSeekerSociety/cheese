@@ -432,6 +432,7 @@ async def _say_memory_change(
             diff=part.diff,
             refused=part.refused,
             rejected=part.rejected,
+            unindexed=part.unindexed,
         )
         if for_writer := meta.pop(AGENT_NOTICE_META_KEY, None):
             told.append((content, for_writer))

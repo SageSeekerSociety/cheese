@@ -261,9 +261,9 @@ def test_a_types_stdio_server_is_handed_only_to_its_teammates_sessions(
     plain = _teammate(client, pid, "plain-1", "plain")
 
     own = _central_target(client, monkeypatch, pid, tid, "tracer-1", tracer)
-    assert own["agent_mcp"] == {"lint": LINT}
+    assert own["mcp_commands"] == {"lint": LINT}
     other = _central_target(client, monkeypatch, pid, tid, "plain-1", plain)
-    assert "agent_mcp" not in other
+    assert "mcp_commands" not in other
 
 
 def _private_target(client, monkeypatch, pid, tid, handle, seat) -> dict:
@@ -295,11 +295,33 @@ def test_a_private_chat_keeps_the_teammates_type_servers(
 
     own = _private_target(client, monkeypatch, pid, tid, "tracer-1", tracer)
     assert own["kind"] == "private"
-    assert own["agent_mcp"] == {"lint": LINT}
+    assert own["mcp_commands"] == {"lint": LINT}
     assert "ticket" in own["remote_mcp"]["servers"]
     assert own["remote_mcp"]["path"] == f"/topics/{tid}/mcp"
 
     other = _private_target(client, monkeypatch, pid, tid, "plain-1", plain)
     assert other["kind"] == "private"
-    assert "agent_mcp" not in other
+    assert "mcp_commands" not in other
     assert "ticket" not in (other.get("remote_mcp") or {}).get("servers", [])
+
+
+def test_a_command_added_in_settings_reaches_every_teammates_session(
+    client, room, types, monkeypatch
+):
+    """Added in settings, a command is the project's: every teammate's session
+    is handed it, and a type's own server of the same name gives way."""
+    pid, tid = room
+    added = client.post(
+        f"/projects/{pid}/mcp/servers",
+        json={"name": "lint", "kind": "command", "command": "ruff-mcp --fix"},
+        headers=session_auth_headers("alice"),
+    )
+    assert added.status_code == 200, added.text
+    tracer = _teammate(client, pid, "tracer-1", "tracer")
+    plain = _teammate(client, pid, "plain-1", "plain")
+
+    for handle, seat in (("tracer-1", tracer), ("plain-1", plain)):
+        target = _central_target(client, monkeypatch, pid, tid, handle, seat)
+        assert target["mcp_commands"] == {
+            "lint": {"command": "ruff-mcp", "args": ["--fix"]}
+        }

@@ -21,6 +21,7 @@ import pytest
 from app.domain.agent import execution, executor_transport
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.executor_transport import (
+    RemoteClient,
     read_file_on_the_machine,
     stat_file_on_the_machine,
 )
@@ -32,8 +33,10 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     send_user_file,
 )
 from app.domain.agent.harness.codex.tools import RemoteTools
+from app.domain.agent.harness.driven.mcp_gateway import Gateway
 from tests.pinned_claude import claude_binary
 from tests.support import executor_release, wire
+from tests.support.mcp_gateway_client import call_tool, text_of, tool_names
 
 
 def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch):
@@ -2051,8 +2054,11 @@ def _wait(check, timeout=30):
 
 @pytest.mark.parametrize("executor", ["project-mcp"], indirect=True)
 def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
-    tmp_path, executor
+    tmp_path, executor, monkeypatch
 ):
+    """A project server's call through the session's gateway runs on the work
+    machine, in its checkout, never where the session runs; and each call
+    carries an identity of its own, which the machine keeps its answer by."""
     _, work, state = executor
     calls = []
 
@@ -2063,7 +2069,6 @@ def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
         def do_POST(self):
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             calls.append(payload)
-            assert payload["method"] == "mcp"
             assert payload["params"]["server"] == "repo"
             reply = runtime.request(state, payload["method"], payload["params"])
             data = json.dumps(reply).encode()
@@ -2075,63 +2080,33 @@ def test_project_mcp_calls_remain_on_work_machine_and_have_dispatch_identity(
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    config = tmp_path / "project-tools.json"
-    config.write_text(
-        json.dumps(
-            {
-                "kind": "device",
-                "url": f"http://127.0.0.1:{server.server_port}/execution",
-                "workspace": "/remote-project",
-                "mcp_servers": ["repo"],
-            }
-        )
+    monkeypatch.setenv("CHEESE_TOKEN", "session-credential")
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1")
+    client = RemoteClient(
+        {
+            "kind": "device",
+            "url": f"http://127.0.0.1:{server.server_port}/execution",
+            "workspace": "/remote-project",
+            "mcp_servers": ["repo"],
+        }
     )
-    with (tmp_path / "transport.log").open("w") as log:
-        process = mcp_process.MCPProcess(
-            [sys.executable, central.__file__, "transport", str(config)],
-            str(tmp_path),
-            {
-                **os.environ,
-                "CHEESE_TOKEN": "session-credential",
-                "NO_PROXY": "127.0.0.1",
-            },
-            log,
-        )
-        try:
-            assert "project_tools" in {
-                tool["name"] for tool in process.call("tools/list")["tools"]
-            }
-
-            def invoke(**args):
-                response = process.call(
-                    "tools/call",
-                    {
-                        "name": "project_tools",
-                        "arguments": {
-                            "id": "mutation-id",
-                            "session_id": "native-session",
-                            **args,
-                        },
-                    },
-                )
-                return json.loads(response["content"][0]["text"])
-
-            assert invoke()["result"]["servers"] == ["repo"]
-            assert calls == []
-            assert invoke(server="repo")["result"]["tools"][0]["name"] == "publish"
-            assert "id" not in calls[-1]["params"]
-            assert invoke(
-                server="repo", name="publish", arguments={"value": "literal"}
-            )["result"]["content"][0]["text"] == str(work)
-            assert (work / "published.txt").read_text() == "literal"
-            assert not (tmp_path / "published.txt").exists()
-            assert calls[-1]["params"]["id"] == "mutation-id"
-            assert calls[-1]["params"]["tool"] == "mcp__repo__publish"
-        finally:
-            process.close()
-            server.shutdown()
-            server.server_close()
-            thread.join()
+    gateway = Gateway(client.call, client.session_servers)
+    gateway.start()
+    try:
+        assert tool_names(gateway, "repo") == ["publish"]
+        first = call_tool(gateway, "repo", "publish", {"value": "literal"})
+        assert text_of(first) == str(work)
+        assert (work / "published.txt").read_text() == "literal"
+        assert not (tmp_path / "published.txt").exists()
+        call_tool(gateway, "repo", "publish", {"value": "again"})
+        identities = [c["params"]["id"] for c in calls if c["method"] == "invoke"]
+        assert len(identities) == len(set(identities)) == 2
+        assert (work / "published.txt").read_text() == "again"
+    finally:
+        gateway.close()
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def test_a_burst_of_calls_reaches_an_executor_that_is_slow_to_accept(executor):
