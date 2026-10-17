@@ -547,8 +547,14 @@ describe('findGlobalFallbacks', () => {
       // it, whether it is an IIFE or a helper called by name.
       "let options = { props: [] }\n;(() => { options = { props: ['open'] } })()\nexport default options",
       "let options = { props: [] }\nfunction init() { options = { props: ['open'] } }\ninit()\nexport default options",
+      // A read inside such a call takes the value the name holds at the call,
+      // not the one a module-level write later leaves behind.
+      "let options = { props: ['open'] }\nlet alias\n;(() => { alias = options })()\noptions = { props: [] }\nexport default alias",
+      // Only a call runs a function: handing it to `setTimeout` does not.
+      "let options = { props: ['open'] }\nfunction init() { options = { props: [] } }\nsetTimeout(init)\nexport default options",
       // An instance field initializer runs only when an instance is made.
       "let options = { props: ['open'] }\nclass Holder { current = (options = { props: [] }) }\nexport default options",
+      "let options = { props: ['open'] }\nclass Holder { current = (options = { props: [] }) }\nnew Other()\nexport default options",
       // An arrow function is a function: a write inside one that is never
       // called has not happened, and one whose `setup` is an arrow runs it.
       "const options = { props: ['open'] }\nconst reset = () => { options = { props: [] } }\nvoid reset\nexport default options",
@@ -557,6 +563,15 @@ describe('findGlobalFallbacks', () => {
       // carry every name the original had.
       "let options = { props: ['open'] }\noptions ??= { props: [] }\nexport default options",
       "let options = null\noptions ??= { props: ['open'] }\nexport default options",
+      // A binding with no initializer holds `undefined`, which `||=` replaces;
+      // an object it already holds is truthy, which `||=` keeps.
+      "let options\noptions ||= { props: ['open'] }\nexport default options",
+      "let options = { props: ['open'] }\noptions ||= { props: [] }\nexport default options",
+      // An arrow is truthy too, so `&&=` replaces it.
+      "let options = () => 1\noptions &&= { props: ['open'] }\nexport default options",
+      // The same object spread twice is not a cycle: the second spread puts
+      // back what the property between them took away.
+      "const a = { props: ['open'] }\nexport default { ...a, props: [], ...a }",
       "const options = { props: ['open'] }\noptions = { ...options }\nexport default options",
       "const options = { props: [] }\noptions = { ...options, props: ['open'] }\nexport default options",
       "const options = { props: ['open'] }\noptions = Object.assign({}, options)\nexport default options",
@@ -741,6 +756,47 @@ describe('findGlobalFallbacks', () => {
         'init()',
         'export default options',
       ],
+      // And a helper called by a helper runs at the outer call.
+      [
+        "let options = { props: ['open'] }",
+        'function outer() { function init() { options = { props: [] } } init() }',
+        'outer()',
+        'export default options',
+      ],
+      // An instance field runs at `new Holder()`, which is above the export.
+      [
+        "let options = { props: ['open'] }",
+        'class Holder { current = (options = { props: [] }) }',
+        'new Holder()',
+        'export default options',
+      ],
+      // A static field runs where the class is defined, like a module-level
+      // statement, so the same write counts without a `new`.
+      [
+        "let options = { props: ['open'] }",
+        'class Holder { static current = (options = { props: [] }) }',
+        'export default options',
+      ],
+      // A read inside an IIFE takes the value at the call, so a module-level
+      // write below the call comes too late.
+      [
+        'let options = { props: [] }',
+        'let alias',
+        ';(() => { alias = options })()',
+        "options = { props: ['open'] }",
+        'export default alias',
+      ],
+      // `||=` on a binding with no value assigns, and keeps an object.
+      ['let options', 'options ||= { props: [] }', 'export default options'],
+      ['let options = { props: [] }', "options ||= { props: ['open'] }", 'export default options'],
+      // `??=` keeps what it is given when that is already non-nullish.
+      ['let options', 'options = { props: [] }', "options ??= { props: ['open'] }", 'export default options'],
+      // `Object.assign` writes its sources into the target in order.
+      [
+        "let options = { props: ['open'] }",
+        "options = Object.assign({ props: ['open'] }, { props: [] })",
+        'export default options',
+      ],
     ].entries()) {
       assert.deepEqual(
         found(exported(...lines)).map((hit) => [hit.name, hit.where]),
@@ -799,6 +855,7 @@ describe('findGlobalFallbacks', () => {
       'const a = b\nconst b = a\nexport default { props: a }',
       'const A = { mixins: [B] }\nconst B = { mixins: [A] }\nexport default { mixins: [A] }',
       'const A = defineComponent({ mixins: [A] })\nexport default A',
+      'const A = { ...B }\nconst B = { ...A }\nexport default A',
     ]) {
       assert.deepEqual(
         found(component(script)).map((hit) => [hit.name, hit.where]),
@@ -806,6 +863,67 @@ describe('findGlobalFallbacks', () => {
         `did not settle on the cycle:\n${script}`
       )
     }
+  })
+
+  // The value a name holds follows execution, and execution is not the order
+  // the text sits in and not a pattern match on the syntax either. Each of
+  // these four answered wrong before the fix named beside it, so each stands
+  // on its own: a mutation that takes that fix away turns this one red.
+  describe('where and when a write happens', () => {
+    const exported = (...lines) =>
+      [
+        '<script lang="ts">',
+        ...lines,
+        '</script>',
+        '<template>',
+        '  <button @click="open()">x</button>',
+        '</template>',
+        '',
+      ].join('\n')
+    const hits = (...lines) => found(exported(...lines)).map((hit) => [hit.name, hit.where])
+
+    it('runs an instance field at the `new` that makes the instance', () => {
+      assert.deepEqual(
+        hits(
+          "let options = { props: ['open'] }",
+          'class Holder { current = (options = { props: [] }) }',
+          'new Holder()',
+          'export default options'
+        ),
+        [['open', TEMPLATE]],
+        'a field written by `new Holder()` was not seen as having run'
+      )
+    })
+
+    it('runs a read inside a call at that call, not at its own line', () => {
+      assert.deepEqual(
+        hits(
+          'let options = { props: [] }',
+          'let alias',
+          ';(() => { alias = options })()',
+          "options = { props: ['open'] }",
+          'export default alias'
+        ),
+        [['open', TEMPLATE]],
+        'took a module-level write below the call for one the read already saw'
+      )
+    })
+
+    it('treats an uninitialised binding as falsy for `||=`', () => {
+      assert.deepEqual(
+        hits('let options', "options ||= { props: ['open'] }", 'export default options'),
+        [],
+        'did not apply `||=` to a `let` with no value, so the prop it declares went unseen'
+      )
+    })
+
+    it('expands the same object spread twice without calling it a cycle', () => {
+      assert.deepEqual(
+        hits("const a = { props: ['open'] }", 'export default { ...a, props: [], ...a }'),
+        [],
+        'the second spread of `a` was dropped as a repeat, hiding the prop it puts back'
+      )
+    })
   })
 
   // A component registered under `components:` declares its own props, which

@@ -352,6 +352,10 @@ function objectEntries(node, resolve, depth = 0, seen = new Set()) {
     return (value.arguments ?? []).flatMap((argument) => objectEntries(argument, resolve, depth + 1, seen))
   }
   if (value.type !== 'ObjectExpression' || seen.has(value)) return []
+  // `seen` is the objects on the path being expanded, not every object met so
+  // far: `{ ...a, props: [], ...a }` spreads the same object twice and the
+  // second one restores what the middle property took away, so it is not a
+  // cycle and must be expanded again.
   seen.add(value)
   const entries = []
   for (const property of value.properties ?? []) {
@@ -366,6 +370,7 @@ function objectEntries(node, resolve, depth = 0, seen = new Set()) {
       value: property.value,
     })
   }
+  seen.delete(value)
   return entries
 }
 
@@ -425,6 +430,7 @@ function isObjectAssign(node) {
 function bindingResolver(scopeManager) {
   const bindings = new Map()
   const functionVariables = new Map()
+  const classVariables = new Map()
   const isFunction = (node) =>
     node?.type === 'FunctionDeclaration' ||
     node?.type === 'FunctionExpression' ||
@@ -438,6 +444,13 @@ function bindingResolver(scopeManager) {
       for (const def of variable.defs ?? []) {
         const node = def.type === 'FunctionName' ? def.node : def.node?.init
         if (isFunction(node)) functionVariables.set(node, variable)
+        // A class it can construct by name, to find the `new` that makes one.
+        // The class's own scope declares the same name again, with no calls of
+        // its own, so keep the binding that has the references.
+        if (def.type === 'ClassName' && !classVariables.get(def.node)?.references?.length) {
+          classVariables.set(def.node, variable)
+        }
+        if (node?.type === 'ClassExpression') classVariables.set(node, variable)
       }
     }
   }
@@ -493,11 +506,28 @@ function bindingResolver(scopeManager) {
       .map((identifier) => identifier.parent)
   }
 
+  /** The `new X(…)` calls that run a class's instance field initializers. */
+  const constructions = (field) => {
+    let owner = field?.parent
+    while (owner && owner.type !== 'ClassDeclaration' && owner.type !== 'ClassExpression') owner = owner.parent
+    const variable = owner ? classVariables.get(owner) : undefined
+    if (!variable) return []
+    return (variable.references ?? [])
+      .map((reference) => reference.identifier)
+      .filter((identifier) => identifier?.parent?.type === 'NewExpression' && identifier.parent.callee === identifier)
+      .map((identifier) => identifier.parent)
+  }
+
+  /** Every call in this file that runs a deferred scope. */
+  const invocationSites = (scope) => (scope.type === 'PropertyDefinition' ? constructions(scope) : invocations(scope))
+
   /**
    * Where a write inside a function actually happens: the call that enters the
    * innermost function it sits in, and — when that call is itself inside a
-   * function — the call that enters that one. A function nothing calls leaves
-   * no site, so a write it holds has not happened by the time the read runs.
+   * function — the call that enters that one. An instance field runs when an
+   * instance is made, so `new Holder(…)` is what enters it. A function nothing
+   * calls leaves no site, so a write it holds has not happened by the time the
+   * read runs.
    */
   const executionSites = (node, seen = new Set()) => {
     const scopes = scopesAround(node)
@@ -505,13 +535,33 @@ function bindingResolver(scopeManager) {
     const fn = scopes[0]
     if (seen.has(fn)) return []
     seen.add(fn)
-    return invocations(fn).flatMap((call) => executionSites(call, seen))
+    return invocationSites(fn).flatMap((call) => executionSites(call, seen))
+  }
+
+  /**
+   * The calls that enter each function the read sits in, innermost first: the
+   * call into the innermost one sits inside the next one out, so a write in
+   * that outer function is only in place when it is above the call. Empty when
+   * this file does not make exactly one such call, and then the read's own
+   * position is the only order there is.
+   */
+  const entryChain = (node) => {
+    const scopes = scopesAround(node)
+    const chain = []
+    for (let index = 0; index < scopes.length; index += 1) {
+      const calls = invocationSites(scopes[index])
+      if (calls.length !== 1) return []
+      chain.push({ scopes: scopes.slice(index + 1), at: calls[0].range?.[0] ?? Number.NEGATIVE_INFINITY })
+    }
+    return chain
   }
 
   /** And the question a logical assignment asks of the value on its left. */
   const isNullish = (node) =>
     node === undefined || (node?.type === 'Literal' && (node.value === null || node.value === undefined))
-  const isFalsy = (node) => node?.type === 'Literal' && !node.value
+  // A binding with no initializer this file can see holds `undefined`, which is
+  // falsy: `let options; options ||= { … }` does assign.
+  const isFalsy = (node) => node === undefined || (node?.type === 'Literal' && !node.value)
   const isTruthy = (node) => {
     if (!node) return false
     if (
@@ -533,11 +583,26 @@ function bindingResolver(scopeManager) {
     const readScopes = scopesAround(identifier)
     let value
     let taken = null
+    // Where the read runs, when this file calls the functions that hold it: a
+    // read inside an IIFE runs at the call, not at its own line, so a write
+    // between the two has not happened yet.
+    const readEntry = entryChain(identifier)
+    /**
+     * The position a write in `scopes` has to be above to be in place: the read
+     * itself in its own function, else the call that enters the function the
+     * write sits in. `null` when that call is not this file's to see.
+     */
+    const edgeAt = (scopes) => {
+      if (scopes.length === readScopes.length) return readAt
+      const entry = readEntry[readScopes.length - scopes.length - 1]
+      return entry ? entry.at : null
+    }
     const consider = (node, scopes, at) => {
       // Same function: source order is execution order. An enclosing function
       // runs this one, so its writes are in place whatever their position;
       // a deeper function is the read's own code and runs later.
-      if (scopes.length === readScopes.length && !(at < readAt)) return
+      const edge = edgeAt(scopes)
+      if (edge !== null && !(at < edge)) return
       if (!taken || scopes.length > taken.length || (scopes.length === taken.length && at > taken.at)) {
         taken = { length: scopes.length, at }
         value = node
@@ -552,7 +617,8 @@ function bindingResolver(scopeManager) {
       const scopes = scopesAround(node)
       if (before(scopes, readScopes)) {
         const at = node.range?.[0] ?? Number.NEGATIVE_INFINITY
-        if (scopes.length === readScopes.length && at >= readAt) return null
+        const edge = edgeAt(scopes)
+        if (edge !== null && at >= edge) return null
         return { scopes, at }
       }
       // A write in a function this file calls — an IIFE, a helper called from
@@ -560,7 +626,8 @@ function bindingResolver(scopeManager) {
       let best = null
       for (const site of executionSites(node)) {
         if (!before(site.scopes, readScopes)) continue
-        if (site.scopes.length === readScopes.length && site.at >= readAt) continue
+        const edge = edgeAt(site.scopes)
+        if (edge !== null && site.at >= edge) continue
         if (!best || site.scopes.length > best.scopes.length || site.at > best.at) best = site
       }
       return best
