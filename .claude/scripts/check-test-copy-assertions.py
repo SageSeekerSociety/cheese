@@ -101,16 +101,17 @@ SQL_EXPRESSION_RE = re.compile(
     re.IGNORECASE,
 )
 SQL_QUERY_RE = re.compile(
-    r"SELECT\b.*\bFROM\b.*(?:\bJOIN\b|\bORDER\s+BY\b|\bGROUP\s+BY\b|\bLIMIT\b|"
-    r"\bIS\s+(?:NOT\s+)?NULL\b|\bIN\s*\(|\w+\s*=\s*['\"\w]).*",
-    re.IGNORECASE | re.DOTALL,
+    r"SELECT\b.*\bFROM\b.*(?:\bIS\s+(?:NOT\s+)?NULL\b|\bIN\s*\(|"
+    r"\w+\s*=\s*(?:['\"\d:$?]|\b(?:NULL|TRUE|FALSE)\b)).*",
+    re.DOTALL,
 )
 SQL_WHERE_RE = re.compile(
-    r"WHERE\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|=\s*[^,;]+).*",
-    re.IGNORECASE | re.DOTALL,
+    r"WHERE\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|"
+    r"=\s*(?:['\"\d:$?]|\b(?:NULL|TRUE|FALSE)\b)).*",
+    re.DOTALL,
 )
 TS_TYPE_DIAGNOSTIC_RE = re.compile(
-    r"^Type ['\"][^'\"]+['\"] (?:is not assignable|has no property|does not|cannot|is missing|is incompatible)\b",
+    r"""^Type ['\"][^'\"]+['\"] (?:is not assignable(?: to type)?|has no property|does not satisfy the constraint|is missing the following properties|has no properties in common with type)\b""",
     re.IGNORECASE,
 )
 JS_ASSERTION_METHODS = {

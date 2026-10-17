@@ -141,7 +141,10 @@ assert actual == "Please run python from the project root after the environment 
 assert actual == "Select one option and then continue with the next step"
 assert actual == "The dialog explains where the file should be saved after the process finishes"
 assert actual == "Select a message from the list where it belongs and continue with the next step"
+assert actual == "Select a message from the list and join the discussion in the main room"
+assert actual == "Select the option from the menu where name = weekly and continue with the next step"
 assert actual == "Type a message to continue and then press Enter to send it."
+assert actual == "Type 'Save' does not work in this browser, choose another option to continue"
 assert actual == "The deployment failed because the gateway could not reach the upstream.\\nPlease retry after the environment has started."
 assert actual == "deleted_at IS NULL AND completion_status IN ({})"
 ''',
@@ -149,9 +152,9 @@ assert actual == "deleted_at IS NULL AND completion_status IN ({})"
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10):
+        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
-        self.assertNotIn("test_copy.py:11", result.stderr)
+        self.assertNotIn("test_copy.py:14", result.stderr)
 
     def test_python_fstrings_and_wrapped_vitest_arguments_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -169,7 +172,7 @@ assert actual == "deleted_at IS NULL AND completion_status IN ({})"
             self._write(
                 root,
                 "frontend/src/copy.spec.ts",
-                f'''let index = 0; index++ / 2; const half = 3 / 4;
+                f'''let index = 0; index++ / 2; expect(actual).toBe("{LONG_COPY}"); const half = 3 / 4;
 const quote = /["']/;
 expect(actual).toBe(("{LONG_COPY}" as const));
 expect(actual).toEqual("{LONG_COPY}" + " suffix");
@@ -177,6 +180,8 @@ expect(actual).toEqual(["{LONG_COPY}"]);
 expect(actual).toBe(normalize("{LONG_COPY}"));
 expect(actual).toBe(joinWords(["{LONG_COPY}", "other"]));
 expect(actual).toBe(fn?.("{LONG_COPY}"));
+expect(actual).toBe(!(flag ? "{LONG_COPY}" : "x"));
+expect(actual).toBe(fn!("{LONG_COPY}"));
 ''',
             )
             result = self._run(root)
@@ -184,12 +189,15 @@ expect(actual).toBe(fn?.("{LONG_COPY}"));
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("test_fstring.py:1", result.stderr)
         self.assertIn("test_fstring.py:2", result.stderr)
+        self.assertIn("copy.spec.ts:1", result.stderr)
         self.assertIn("copy.spec.ts:3", result.stderr)
         self.assertIn("copy.spec.ts:4", result.stderr)
         self.assertIn("copy.spec.ts:5", result.stderr)
         self.assertNotIn("copy.spec.ts:6", result.stderr)
         self.assertNotIn("copy.spec.ts:7", result.stderr)
         self.assertNotIn("copy.spec.ts:8", result.stderr)
+        self.assertNotIn("copy.spec.ts:9", result.stderr)
+        self.assertNotIn("copy.spec.ts:10", result.stderr)
 
     def test_additional_test_roots_are_scanned(self) -> None:
         roots = (".github/scripts", "backend/scripts", "deploy/gateway", "deploy/tests", "docs/site/test")
