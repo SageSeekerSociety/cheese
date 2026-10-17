@@ -146,7 +146,10 @@ def _FROZEN(
 #: whitespace collapsed, so reindenting a statement does not make an entry read
 #: as stale. Renaming a local variable does: its name is part of the source.
 #: That is deliberate — the entry is meant to be deleted only by fixing the
-#: test it names, and a rename is an edit somebody should look at.
+#: test it names, and a rename is an edit somebody should look at. Quotes are
+#: not part of it: `compare` re-spells both sides under the running
+#: interpreter, because `ast.unparse` quotes an f-string differently on 3.12
+#: and 3.13 and this file has to read the same on both.
 BASELINE: tuple[tuple[str, str, str], ...] = (
     # A thread's conversation: each of these says the thread holds exactly the
     # blocks the test posted into it.
@@ -803,6 +806,25 @@ def _source(node: ast.AST) -> str:
     return " ".join(ast.unparse(node).split())
 
 
+def _canonical(source: str) -> str:
+    """`source` as the interpreter running this guard spells it.
+
+    `ast.unparse` writes the strings inside an expression with quotes of its
+    own choosing, and that choice has moved between minor versions: an
+    f-string whose replacement field holds `['id']` comes out double-quoted on
+    3.13 and single-quoted on 3.12. The baseline is a literal in this file, so
+    on an interpreter other than the one it was written on every entry with a
+    nested quote reads as one stale entry plus one new one — the same site,
+    reported as a violation. CI's `python3` is not the one this file was
+    written under. Parsing both sides here makes the comparison depend on the
+    expression, not on who wrote it down.
+    """
+    try:
+        return _source(ast.parse(source, mode="eval").body)
+    except SyntaxError:
+        return source
+
+
 def _own_nodes(func: ast.AST):
     """A function's own body, in source order, without the bodies of functions
     defined inside it.
@@ -994,10 +1016,17 @@ def compare(
     """(findings the baseline does not cover, frozen entries nothing matches).
 
     Multisets: a file that already holds one frozen expression and gains a
-    second copy of it has one finding the baseline does not cover.
+    second copy of it has one finding the baseline does not cover. Both sides
+    go through `_canonical` first, so an entry written under a different
+    interpreter still names the same expression.
     """
-    frozen = Counter(baseline)
-    return sorted((rejected - frozen).elements()), sorted((frozen - rejected).elements())
+    frozen = Counter(
+        (path, kind, _canonical(source)) for path, kind, source in baseline
+    )
+    found = Counter(
+        (path, kind, _canonical(source)) for path, kind, source in rejected.elements()
+    )
+    return sorted((found - frozen).elements()), sorted((frozen - found).elements())
 
 
 def main() -> int:

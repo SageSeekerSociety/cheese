@@ -5,16 +5,30 @@ the frozen baseline."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import subprocess
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
-
 
 SCRIPT = Path(__file__).with_name("check-test-dialogue-assumptions.py")
 REPOSITORY = SCRIPT.parents[2]
+
+
+def _load_guard():
+    """The guard as a module, for the comparisons the command line cannot show."""
+    spec = importlib.util.spec_from_file_location(
+        "check_test_dialogue_assumptions", SCRIPT
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+guard = _load_guard()
 
 #: The read the tests below are written against, as the tree writes it.
 READERS = '''
@@ -614,6 +628,21 @@ def test_sorts_the_numbers(client, topic):
 """
         )
         self.assertEqual(findings, [])
+
+    def test_a_frozen_entry_matches_however_the_interpreter_spells_it(self) -> None:
+        # `ast.unparse` quotes an f-string holding `['id']` with double quotes
+        # on 3.13 and single ones on 3.12; CI runs the tree's guards under
+        # 3.12 and this file was written under 3.13. Both spellings name the
+        # same expression, so the entry must cover both.
+        tail = """.json()['data']['data'][0]"""
+        double = f"""client.get(f"/topics/{{a['id']}}/transcript"){tail}"""
+        single = f"""client.get(f'/topics/{{a['id']}}/transcript'){tail}"""
+        path = "backend/tests/integration/test_tool_event_meta.py"
+        new, stale = guard.compare(
+            Counter({(path, "index", single): 1}), ((path, "index", double),)
+        )
+        self.assertEqual(new, [])
+        self.assertEqual(stale, [])
 
     def test_a_test_file_that_will_not_parse_is_not_a_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
