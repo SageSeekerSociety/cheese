@@ -157,7 +157,8 @@ def machine() -> dict:
     """What this machine uses: its memory from /proc/meminfo, which in a
     MicroCloud LXC is the container's own (lxcfs); the CPU time its processes
     have taken, from its cgroup root, a counter the platform turns into a
-    share between two readings; its one-minute load."""
+    share between two readings; the one-minute load, which in an LXC is the
+    physical node's, since the container shares the node's kernel."""
     found = {}
     total = _number(MEMINFO, "MemTotal:")
     available = _number(MEMINFO, "MemAvailable:")

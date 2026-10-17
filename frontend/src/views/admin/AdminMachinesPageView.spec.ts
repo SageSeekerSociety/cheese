@@ -68,6 +68,7 @@ function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]
   return {
     configured: true,
     now: NOW,
+    node_load1: null,
     pool: {
       hosts: hosts.length,
       vms: 0,
@@ -136,7 +137,6 @@ function usage(fields: Partial<HostUsage> = {}): HostUsage {
     memory_bytes: 16 * GIB,
     memory_used_bytes: 6 * GIB,
     cpu_busy: 0.25,
-    load1: 1.2,
     sandboxes: 1,
     memory_history: [0.3, 0.35, null, 0.375],
     cpu_history: [0.1, 0.2, null, 0.25],
@@ -196,6 +196,12 @@ describe('机器', () => {
     const old = usage({ read_at: '2026-10-12T09:50:00Z' })
     const { queryByText } = mount({ overview: overview({}, [host({ usage: old })]) })
     expect(queryByText(/Stale|已过期/)).not.toBeNull()
+  })
+
+  it('负载是物理节点的，整页只出现一次，不挂在哪台宿主机下面', () => {
+    const two = [host({ usage: usage() }), host({ id: 'h2', hostname: 'pool-b', usage: usage() })]
+    const { container } = mount({ overview: { ...overview({}, two), node_load1: 25.65 } })
+    expect(container.textContent?.split('25.65').length).toBe(2)
   })
 
   it('点开宿主机，每个沙箱的内存和它的 3 GiB 上限放在一起', async () => {

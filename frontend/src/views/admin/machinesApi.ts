@@ -38,7 +38,6 @@ export interface HostUsage {
   memory_used_bytes: number | null
   /** 两次读数之间占满了几成核（0–1）；只读到一次时为 null。 */
   cpu_busy: number | null
-  load1: number | null
   sandboxes: number | null
   memory_history: (number | null)[]
   cpu_history: (number | null)[]
@@ -106,6 +105,8 @@ export interface WarmMachineRow {
 export interface MachinesOverview {
   configured: boolean
   now: string
+  /** 物理节点的 1 分钟负载：宿主机是共用节点内核的 LXC 容器，每台读到的都是它；没有读数时为 null。 */
+  node_load1: number | null
   pool: {
     hosts: number
     vms: number

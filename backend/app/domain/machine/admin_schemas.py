@@ -22,7 +22,6 @@ class HostUsageOut(BaseModel):
     memory_bytes: int | None
     memory_used_bytes: int | None
     cpu_busy: float | None
-    load1: float | None
     sandboxes: int | None
     memory_history: list[float | None]
     cpu_history: list[float | None]
@@ -140,6 +139,8 @@ class MachineHistoryOut(BaseModel):
 class MachinesOverviewOut(BaseModel):
     configured: bool
     now: str
+    # The physical node's one-minute load; every host on it reads the same.
+    node_load1: float | None
     pool: MachinePoolOut
     config: MachineConfigOut
     hosts: list[MachineHostOut]

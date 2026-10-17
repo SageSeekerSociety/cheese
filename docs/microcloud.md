@@ -69,10 +69,12 @@ on any check that finds the disk below a floor.
 ### What hosts and sandboxes use is shown and alerted
 
 `backend/app/domain/machine/readings.py`. The same reading also carries a host's memory
-(`/proc/meminfo`, the container's own under lxcfs), the CPU time of its cgroup root, its load,
-and each sandbox cgroup's `memory.current` and `memory.peak`. A platform host's reading is kept
-(`host_readings`, six hours) with each sandbox's latest memory and disk (`sandbox_usages`), and
-the admin page `/admin/machines` shows them beside the sandbox limits, with each reading's age.
+(`/proc/meminfo`, the container's own under lxcfs), the CPU time of its cgroup root, the
+one-minute load, and each sandbox cgroup's `memory.current` and `memory.peak`. The load is the
+physical node's, not the host's: the container shares the node's kernel, so every host on it reads
+the same figure. A platform host's reading is kept (`host_readings`, six hours) with each
+sandbox's latest memory and disk (`sandbox_usages`), and the admin page `/admin/machines` shows
+them beside the sandbox limits, with each reading's age; it shows the load once, as the node's.
 A host past 85% of its disk, 90% of its inodes or 90% of its memory on two readings running is
 sent to the alert group, keyed per host and resource, so the alert path's backoff (an hour,
 four hours, a day) repeats it while it lasts. A person's computer's reading is not kept.

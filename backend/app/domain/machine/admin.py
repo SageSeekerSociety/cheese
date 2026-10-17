@@ -249,6 +249,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
     usage = await readings.hosts_now(
         session, [h for h in hosts if h.released_at is None], now
     )
+    node_load1 = await readings.node_load1(
+        session, [h.id for h in hosts if h.released_at is None], now
+    )
     sandbox_usage = await readings.sandboxes_now(session, [h.id for h in homes])
 
     def online(device_id: str | None) -> bool:
@@ -328,6 +331,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
             settings.microcloud_base_url and settings.microcloud_tenant_secret
         ),
         "now": now.isoformat(),
+        "node_load1": node_load1,
         "pool": {
             "hosts": len(pool),
             "vms": len(live) - len(pool),

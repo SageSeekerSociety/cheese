@@ -113,6 +113,8 @@
       "waitingNote": "The longest has waited {for}",
       "failures": "Provider failures",
       "failuresNote": "Hosts the provider broke in the last {minutes} minutes; at {limit} the platform stops opening machines and tries one every {probe} minutes",
+      "nodeLoad": "Physical node load",
+      "nodeLoadNote": "1-minute average. Hosts share their physical node's kernel, so each reads this same figure; it is not any one host's",
       "hostsNote": "Whole VMs count toward the cap; given-up and releasing hosts do not."
     },
     "alert": {
@@ -209,7 +211,6 @@
       "cpu": "CPU",
       "gb": "{used} / {total} GB",
       "gib": "{used} / {total} GiB",
-      "load": "load {n}",
       "read": "Read {ago} ago",
       "readStale": "Stale: read {ago} ago",
       "history": "lines show the last {span}, peak per step",

@@ -113,6 +113,8 @@
       "waitingNote": "等得最久的已经 {for}",
       "failures": "provider 失败",
       "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台",
+      "nodeLoad": "物理节点负载",
+      "nodeLoadNote": "1 分钟平均，宿主机共用所在物理节点的内核，读到的都是这个数，不是单台宿主机的",
       "hostsNote": "整机虚拟机也算在上限里；已放弃、释放中的不算"
     },
     "alert": {
@@ -209,7 +211,6 @@
       "cpu": "CPU",
       "gb": "{used} / {total} GB",
       "gib": "{used} / {total} GiB",
-      "load": "负载 {n}",
       "read": "{ago}前读到",
       "readStale": "读数已过期：{ago}前读到",
       "history": "折线为过去 {span}，每段取最高",
