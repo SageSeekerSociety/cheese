@@ -11,7 +11,7 @@
 这里却已经替谁也没读过的一格印好了答案。
 """
 
-from app.domain.agent.capability import BuiltIn, Declaration, Difference
+from app.domain.agent.declaration import BuiltIn, Declaration, Difference
 from app.domain.agent.harness.pi.launch import VERSION
 
 #: 见 ``claude_code/behaviour.py`` 同名常量：升级 pin 就要重新读一遍再改这里。

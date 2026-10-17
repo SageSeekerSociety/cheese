@@ -44,7 +44,7 @@ from app.domain.agent import (
     preview_tunnel,
     toolchain,
 )
-from app.domain.agent.harness.launch import MachineLaunch, MachinePlace
+from app.domain.agent.launch import MachineLaunch, MachinePlace
 from app.domain.agent.place import seat_name
 from app.domain.agent.resource_cleanup import SESSION_TMP
 
