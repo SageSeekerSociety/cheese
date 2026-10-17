@@ -321,6 +321,25 @@ class CheckRemoteBranchTest(unittest.TestCase):
         self.assertEqual(1, result.returncode, result.stdout + result.stderr)
         self.assertEqual("no", self.fields(result.stdout).get("EXISTS"), result.stdout)
 
+    def test_a_failed_fetch_keeps_an_existing_branch_at_exit_3(self) -> None:
+        # The other half of the exit-code rule: the branch answer is "yes",
+        # so the unanswered base question is what exit 3 reports.
+        self.commit("two")
+        self.git(self.seed, "push", "-q", "origin", "main")
+        lock = self.clone / ".git" / "refs" / "remotes" / "origin" / "main.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("held", encoding="utf-8")
+        try:
+            result = self.check("--fetch", BRANCH)
+        finally:
+            lock.unlink()
+        self.assertEqual(3, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("yes", self.fields(result.stdout).get("EXISTS"), result.stdout)
+
+    def test_a_second_branch_after_a_double_dash_is_rejected(self) -> None:
+        result = self.check("--", "one", "two")
+        self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+
     # --- the script's own self-test ---------------------------------------
 
     def test_the_scripts_self_test_passes(self) -> None:

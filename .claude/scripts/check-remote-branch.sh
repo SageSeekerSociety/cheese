@@ -77,6 +77,11 @@ while [ "$#" -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --)
       shift
+      # Everything after `--` is positional, so a second one is the same
+      # malformed invocation the `*` arm below rejects.
+      if [ "$#" -gt 1 ]; then
+        echo "FAIL: one branch at a time (got '$1' and '$2')" >&2; exit 2
+      fi
       if [ "$#" -gt 0 ]; then
         [ -z "$BRANCH" ] || { echo "FAIL: one branch at a time (got '$BRANCH' and '$1')" >&2; exit 2; }
         BRANCH="$1"; shift
@@ -121,10 +126,9 @@ if [ "$SELF_TEST" = 1 ]; then
     OUT="$(cd "$dir" && bash "$me" "$@" 2>&1)" && CODE=0 || CODE=$?
   }
   says() {
-    case "$OUT" in
-      *"$1"*) ;;
-      *) self_fail "$2 (exit $CODE, got: $OUT)" ;;
-    esac
+    # The whole line has to match: a line that merely starts with the
+    # expected key must not satisfy an assertion about its value.
+    printf '%s\n' "$OUT" | grep -qxF -- "$1" || self_fail "$2 (exit $CODE, got: $OUT)"
   }
   says_not() {
     case "$OUT" in
@@ -144,7 +148,7 @@ if [ "$SELF_TEST" = 1 ]; then
   verdict "$tmp/clone" feature/never-pushed
   [ "$CODE" -eq 1 ] || self_fail "a branch absent from the remote must exit 1 (exit $CODE)"
   says "EXISTS: no" "the report must say the branch is absent"
-  says "NEXT: git push -u origin HEAD:feature/never-pushed" "the report must name the push that creates it"
+  says "NEXT: git push -u origin HEAD:feature/never-pushed   # to create it" "the report must name the push that creates it"
 
   # A remote that cannot be read is not an absent branch.
   verdict "$tmp/clone" --remote no-such-remote main
@@ -220,7 +224,7 @@ if [ "$SELF_TEST" = 1 ]; then
   verdict "$tmp/nomainclone" feature/trunk
   [ "$CODE" -eq 3 ] || self_fail "a remote without main must exit 3, not 0 (exit $CODE, got: $OUT)"
   says "ORIGIN_MAIN: absent" "a remote without main must read as absent"
-  says "NEXT: git ls-remote --symref origin HEAD" "the report must name the default-branch probe"
+  says "NEXT: git ls-remote --symref origin HEAD   # which branch is the default?" "the report must name the default-branch probe"
 
   # A cache that was never written is as stale as a disagreeing one.
   git -C "$tmp/clone" update-ref -d refs/remotes/origin/main
@@ -239,6 +243,15 @@ if [ "$SELF_TEST" = 1 ]; then
   rm -f "$tmp/clone/.git/refs/remotes/origin/main.lock"
   [ "$CODE" -eq 1 ] || self_fail "an absent branch must exit 1 even when the fetch fails (exit $CODE, got: $OUT)"
   says "EXISTS: no" "the failed fetch must not change the branch answer"
+
+  # The other half of that rule: when the branch does exist, a failed fetch
+  # still exits 3, because the base question is the one left unanswered.
+  mkdir -p "$tmp/clone/.git/refs/remotes/origin"
+  : > "$tmp/clone/.git/refs/remotes/origin/main.lock"
+  verdict "$tmp/clone" --fetch feature/only-on-remote
+  rm -f "$tmp/clone/.git/refs/remotes/origin/main.lock"
+  [ "$CODE" -eq 3 ] || self_fail "an existing branch with a failed fetch must exit 3 (exit $CODE, got: $OUT)"
+  says "EXISTS: yes" "the failed fetch must not change the branch answer"
 
   # A remote that is configured but cannot be read is "cannot judge" too.
   git -C "$tmp/clone" remote set-url origin "$tmp/not-a-repo"
