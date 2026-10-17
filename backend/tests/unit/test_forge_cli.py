@@ -9,6 +9,7 @@ import os
 import sys
 import tarfile
 import threading
+import time
 import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -430,12 +431,25 @@ def test_gh_keeps_its_credential_until_shortly_before_it_expires(monkeypatch, tm
     assert minted == ["session-one", "session-one", "session-two"]
 
 
+@pytest.fixture
+def east_of_utc(monkeypatch):
+    """A machine whose local time is eight hours ahead of UTC."""
+    monkeypatch.setenv("TZ", "Asia/Shanghai")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="time.tzset is POSIX-only")
+@pytest.mark.parametrize("gmt", [True, False], ids=["GMT", "-0000"])
 def test_a_machine_whose_clock_is_behind_does_not_keep_an_expired_credential(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, gmt, east_of_utc
 ):
     """The platform said what time it was when it handed the credential out;
     a machine whose clock is a quarter of an hour behind drops it as early, by
-    the token's own lifetime, as one whose clock is right."""
+    the token's own lifetime, as one whose clock is right — in any time zone,
+    however the date is spelled."""
     minted, clock = _platform(monkeypatch, tmp_path)
     platform_now = clock[0]
     clock[0] -= 15 * 60
@@ -443,7 +457,7 @@ def test_a_machine_whose_clock_is_behind_does_not_keep_an_expired_credential(
 
     def dated(request, *args, **kwargs):
         response = real(request, *args, **kwargs)
-        response.headers = {"Date": email.utils.formatdate(platform_now, usegmt=True)}
+        response.headers = {"Date": email.utils.formatdate(platform_now, usegmt=gmt)}
         return response
 
     monkeypatch.setattr(forge_cli.urllib.request, "urlopen", dated)

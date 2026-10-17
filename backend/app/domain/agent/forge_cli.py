@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -194,10 +194,15 @@ def credentials():
         # How long it has left is read on the platform's clock and counted on
         # this machine's: a machine whose clock is behind would otherwise go
         # on presenting a token the forge has already expired.
-        try:
-            platform_now = parsedate_to_datetime(said).timestamp()
-        except (TypeError, ValueError):
-            platform_now = time.time()
+        platform_now = time.time()
+        if said:
+            with contextlib.suppress(TypeError, ValueError):
+                said_at = parsedate_to_datetime(said)
+                # An HTTP date is GMT whatever it is spelled with (RFC 9110).
+                # timezone.utc, not datetime.UTC: this runs on the machine's
+                # own Python, which may predate 3.11.
+                utc = timezone.utc  # noqa: UP017
+                platform_now = said_at.replace(tzinfo=said_at.tzinfo or utc).timestamp()
         left = expires.timestamp() - platform_now
         _keep(path, {"until": time.time() + left - CREDENTIAL_MARGIN_S, "value": data})
     return data
