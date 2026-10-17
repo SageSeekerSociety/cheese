@@ -481,6 +481,16 @@ keeps `cheese-dev` exclusively for what genuinely needs it (deploy, drift,
 heartbeat, backup checks) — its single slot used to serialize every heavy job
 (measured: 61% of CI time was queueing).
 
+- **Serial aggregation jobs run here too** (2026-10-17): `scope`, `CI required`,
+  `CI required (draft quick)` and `Backend coverage complete` take
+  `[self-hosted, cheese-ci]` for same-repo PRs and the merge queue, and stay on
+  `ubuntu-latest` for fork PRs. They run seconds of work and used to wait 7-12
+  min in the shared hosted queue. The boxes have python3, git and curl but no
+  gh, jq or node, so those jobs must not call them. #2257 did this on 09-30 and
+  #2439 reverted it because two slots on one box shared the `ci` user's
+  pre-commit cache ("database is locked"); these four jobs never run
+  `uvx pre-commit` (`guards` does, and stays hosted). Anything added to them
+  that writes under `~/.cache` must point its cache at `$RUNNER_TEMP`.
 - **Memory**: 8G per box, shared by its two runner slots, plus 4G of swap
   (`/swapfile`, in `/etc/fstab`, applied by `runner-swap.yml`). Without the swap
   two jobs that together want more than 8G did not slow down — the kernel killed
