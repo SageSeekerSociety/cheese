@@ -101,19 +101,21 @@ SQL_EXPRESSION_RE = re.compile(
     re.IGNORECASE,
 )
 SQL_QUERY_RE = re.compile(
-    r"SELECT\b.*\bFROM\b.*(?:\bIS\s+(?:NOT\s+)?NULL\b|\bIN\s*\(|"
-    r"\w+\s*=\s*(?:['\"\d:$?]|\b(?:NULL|TRUE|FALSE)\b)).*",
+    r"(?:(?:SELECT|select)\b.*\b(?:FROM|from)\b.*"
+    r"(?:\b(?:JOIN|join)\b.*\b(?:ON|on)\b|\b(?:ORDER|order)\s+(?:BY|by)\b|"
+    r"\b(?:GROUP|group)\s+(?:BY|by)\b|\b(?:LIMIT|limit)\b|"
+    r"\b(?:IS|is)\s+(?:NOT\s+)?(?:NULL|null)\b|\b(?:IN|in)\s*\(|\w+\s*=\s*[\w.]+)).*",
     re.DOTALL,
 )
 SQL_WHERE_RE = re.compile(
-    r"WHERE\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|"
-    r"=\s*(?:['\"\d:$?]|\b(?:NULL|TRUE|FALSE)\b)).*",
+    r"(?:WHERE|where)\s+[\w.]+\s*(?:IS\s+(?:NOT\s+)?NULL|IN\s*\([^)]*\)|=\s*[\w.]+).*",
     re.DOTALL,
 )
 TS_TYPE_DIAGNOSTIC_RE = re.compile(
-    r"""^Type ['\"][^'\"]+['\"] (?:is not assignable(?: to type)?|has no property|does not satisfy the constraint|is missing the following properties|has no properties in common with type)\b""",
+    r"""^Type ['\"][^'\"]+['\"] (?:is not assignable(?: to type)?|has no property|does not satisfy the constraint|is missing the following properties|has no properties in common with type|cannot be used as an index type|does not have any construct or call signatures|is incompatible with type)\b""",
     re.IGNORECASE,
 )
+WORKFLOW_NAME_LABEL_RE = re.compile(r"^(?:Require|Ensure|Check|Run|Use|Add|Remove|Enter|Click|Select|Build|Deploy|Test)\b", re.IGNORECASE)
 JS_ASSERTION_METHODS = {
     "toBe",
     "toEqual",
@@ -206,17 +208,22 @@ def _python_string_value(node: ast.expr) -> str | None:
     return None
 
 
-def _is_name_lookup(node: ast.expr) -> bool:
-    if isinstance(node, ast.Attribute):
-        return node.attr == "name"
-    if isinstance(node, ast.Subscript):
-        return _python_string_value(node.slice) == "name"
-    return (
-        isinstance(node, ast.Call)
+def _is_name_lookup(node: ast.expr, value: str) -> bool:
+    is_lookup = (
+        isinstance(node, ast.Attribute) and node.attr == "name"
+        or isinstance(node, ast.Subscript) and _python_string_value(node.slice) == "name"
+        or isinstance(node, ast.Call)
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "get"
         and bool(node.args)
         and _python_string_value(node.args[0]) == "name"
+    )
+    return (
+        is_lookup
+        and len(value) < 64
+        and len(WORD_RE.findall(value)) <= 9
+        and not re.search(r"[.!?;:]", value)
+        and WORKFLOW_NAME_LABEL_RE.match(value) is not None
     )
 
 
@@ -234,7 +241,7 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
                 if isinstance(operator, ast.Eq):
                     for candidate, other in ((left, comparator), (comparator, left)):
                         value = _python_string_value(candidate)
-                        if value is not None and not _is_name_lookup(other):
+                        if value is not None and not _is_name_lookup(other, value):
                             literals.append((candidate.lineno, value))
                 left = comparator
         if (
@@ -245,7 +252,9 @@ def _python_literals(path: Path) -> list[tuple[int, str]]:
             for index, candidate in enumerate(node.args[:2]):
                 other = node.args[1 - index] if len(node.args) > 1 else None
                 value = _python_string_value(candidate)
-                if value is not None and not (other is not None and _is_name_lookup(other)):
+                if value is not None and not (
+                    other is not None and _is_name_lookup(other, value)
+                ):
                     literals.append((candidate.lineno, value))
     return literals
 
@@ -316,7 +325,10 @@ def _call_argument_strings(tokens: list[tuple[str, int]], open_index: int) -> li
                 is_call = token == "(" and (
                     bool(IDENTIFIER_RE.fullmatch(previous)) or previous in {")", "]", "?.", "!"}
                 )
-                nested.append(any(nested) or is_call)
+                is_subscript = token == "[" and index > 0 and (
+                    bool(IDENTIFIER_RE.fullmatch(previous)) or previous in {")", "]", "?.", "!"}
+                )
+                nested.append(any(nested) or is_call or is_subscript)
             elif token in {")", "]", "}"}:
                 if nested:
                     nested.pop()

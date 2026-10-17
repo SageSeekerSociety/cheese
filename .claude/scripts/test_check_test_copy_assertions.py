@@ -87,8 +87,24 @@ assert status == "not found"
 assert actual == "SELECT name FROM users WHERE deleted_at IS NULL AND status IN ({})"
 assert actual == "SELECT id, title FROM topics WHERE deleted_at IS NOT NULL ORDER BY id"
 assert actual == "SELECT name FROM users WHERE deleted_at IS NOT NULL"
+assert actual == "SELECT id, email FROM users WHERE status = active ORDER BY id"
+assert actual == "SELECT id, email, display_name FROM users ORDER BY created_at DESC LIMIT 20"
+assert actual == "SELECT id, email FROM users u JOIN profiles p ON u.id = p.user_id"
+assert actual == "SELECT id, email FROM users GROUP BY team_id ORDER BY team_id"
+assert actual == "SELECT id FROM events WHERE created_at = now() - interval '1 day'"
+assert actual == "select id, email from users where status = active order by id"
+assert actual == "WHERE users.owner_id = topics.author_id AND users.created_at = topics.updated_at"
 assert actual == "Type 'Foo' has no property 'bar' in this version of the library"
+assert actual == "Type 'SaveResult' does not satisfy the constraint of type 'Save': ok"
+assert actual == "Type 'Foo' is missing the following properties from type 'Save': ok, id"
+assert actual == "Type 'Record' has no properties in common with type 'Save'"
+assert actual == "Type 'Foo' cannot be used as an index type."
+assert actual == "Type 'Foo' does not have any construct or call signatures."
+assert actual == "Type 'Foo' is incompatible with type 'Bar'."
 assert step.get("name") == "Require images and tests for the same commit"
+assert row["name"] == "Run smoke tests before deployment"
+assert job.name == "Ensure package metadata is valid"
+assert config["workflow"]["name"] == "Build release package before upload"
 assert actual != "This explanatory sentence should be checked by its important parts"
 assert "archived/removed notices should preserve the relevant message for readers" in text
 ''',
@@ -140,6 +156,7 @@ assert actual == "The task can only be assigned to one person in this workspace"
 assert actual == "Please run python from the project root after the environment starts"
 assert actual == "Select one option and then continue with the next step"
 assert actual == "The dialog explains where the file should be saved after the process finishes"
+assert response.name == "The dialog explains where the file should be saved after the process finishes"
 assert actual == "Select a message from the list where it belongs and continue with the next step"
 assert actual == "Select a message from the list and join the discussion in the main room"
 assert actual == "Select the option from the menu where name = weekly and continue with the next step"
@@ -152,9 +169,9 @@ assert actual == "deleted_at IS NULL AND completion_status IN ({})"
             result = self._run(root)
 
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13):
+        for line in (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14):
             self.assertIn(f"test_copy.py:{line}", result.stderr)
-        self.assertNotIn("test_copy.py:14", result.stderr)
+        self.assertNotIn("test_copy.py:15", result.stderr)
 
     def test_python_fstrings_and_wrapped_vitest_arguments_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -182,6 +199,7 @@ expect(actual).toBe(joinWords(["{LONG_COPY}", "other"]));
 expect(actual).toBe(fn?.("{LONG_COPY}"));
 expect(actual).toBe(!(flag ? "{LONG_COPY}" : "x"));
 expect(actual).toBe(fn!("{LONG_COPY}"));
+expect(actual).toBe(mapping["{LONG_COPY}"]);
 ''',
             )
             result = self._run(root)
@@ -198,6 +216,7 @@ expect(actual).toBe(fn!("{LONG_COPY}"));
         self.assertNotIn("copy.spec.ts:8", result.stderr)
         self.assertNotIn("copy.spec.ts:9", result.stderr)
         self.assertNotIn("copy.spec.ts:10", result.stderr)
+        self.assertNotIn("copy.spec.ts:11", result.stderr)
 
     def test_additional_test_roots_are_scanned(self) -> None:
         roots = (".github/scripts", "backend/scripts", "deploy/gateway", "deploy/tests", "docs/site/test")
