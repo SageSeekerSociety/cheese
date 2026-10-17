@@ -700,6 +700,104 @@ class ApiSurfaceTest(unittest.TestCase):
         needs["api"] = {"result": "skipped"}
         self.assertEqual(gate.failures(needs, "quick"), [])
 
+    @staticmethod
+    def _holds(expression, outputs, moved):
+        """Whether an ``if:`` over scope outputs and ``needs.api.outputs.moved``
+        holds. Only the operators these two conditions use are read; anything
+        else raises, so a rewritten condition fails here instead of passing."""
+        expr = expression.strip()
+        match = re.fullmatch(r"\$\{\{(.*)\}\}", expr, re.S)
+        expr = (match.group(1) if match else expr).strip()
+        expr = re.sub(r"needs\.scope\.outputs\.(\w+)",
+                      lambda m: repr(outputs.get(m.group(1), "")), expr)
+        expr = expr.replace("needs.api.outputs.moved", repr(moved))
+        expr = expr.replace("!cancelled()", "True")
+        expr = expr.replace("&&", " and ").replace("||", " or ")
+        if re.search(r"[&|]|![^=]|needs\.", expr):
+            raise AssertionError(f"unsupported condition: {expression!r} -> {expr}")
+        return bool(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307
+
+    def test_the_workflow_conditions_produce_what_the_judge_requires(self):
+        # Run every combination through the two `if:`s exactly as written in
+        # required-ci.yml, give each job the result GitHub would, and ask the
+        # judge. A condition that drifted from the judge — api asked when the
+        # paths already chose the frontend, or the frontend left out when api
+        # saw the surface move — leaves a combination the judge refuses.
+        jobs = jobs_of(WORKFLOW.read_text())
+        api_if, frontend_if = jobs["api"]["if"], jobs["frontend"]["if"]
+        for tier in ("full", "quick"):
+            for backend in ("true", "false"):
+                for frontend in ("true", "false"):
+                    for moved in ("true", "false"):
+                        with self.subTest(tier=tier, backend=backend,
+                                          frontend=frontend, moved=moved):
+                            outputs = {suite: "false" for suite in gate.PATHS}
+                            outputs.update(tier=tier, backend=backend, frontend=frontend)
+                            api_runs = self._holds(api_if, outputs, "")
+                            self.assertEqual(api_runs, gate.api_selected(outputs, tier))
+                            # A skipped job's outputs are empty strings.
+                            api_moved = moved if api_runs else ""
+                            frontend_runs = self._holds(frontend_if, outputs, api_moved)
+                            needs = {
+                                "scope": {"result": "success", "outputs": outputs},
+                                "fast": {"result": "success" if tier == "quick" else "skipped"},
+                                "api": ({"result": "success", "outputs": {"moved": moved}}
+                                        if api_runs else {"result": "skipped"}),
+                            }
+                            for suite in gate.PATHS:
+                                runs = (frontend_runs if suite == "frontend"
+                                        else tier == "full" and outputs[suite] == "true")
+                                needs[suite] = {"result": "success" if runs else "skipped"}
+                            self.assertEqual(gate.failures(needs, tier), [])
+
+    def run_compare(self, head_doc, base_doc, base_exit=0):
+        """Run the api job's real comparison shell against stub git and uv.
+
+        The stub uv prints ``head_doc`` from the change's backend/ and
+        ``base_doc`` from the base worktree's, and exits ``base_exit`` there.
+        Returns the process and what the step wrote to $GITHUB_OUTPUT.
+        """
+        body = run_body_containing(WORKFLOW.read_text(), "export_openapi --stdout")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "repo" / "backend").mkdir(parents=True)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "git",
+                  'if [ "$1" = worktree ]; then mkdir -p "${@: -2:1}/backend"; fi\n')
+            _stub(bindir, "uv",
+                  'case "$PWD" in "$RUNNER_TEMP/base"*)'
+                  ' printf "%s" "$BASE_DOC"; exit "$BASE_EXIT";; esac\n'
+                  'printf "%s" "$HEAD_DOC"\n')
+            output = tmp / "github_output"
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp / "runner"), "GITHUB_OUTPUT": str(output),
+                   "BASE_SHA": "0" * 40, "HEAD_DOC": head_doc, "BASE_DOC": base_doc,
+                   "BASE_EXIT": str(base_exit)}
+            (tmp / "runner").mkdir()
+            # `bash -e`: the shell GitHub gives a Linux `run:` step.
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp / "repo",
+                                  capture_output=True, text=True)
+            written = output.read_text() if output.exists() else ""
+        return proc, written
+
+    def test_the_compare_step_reports_a_moved_document(self):
+        proc, written = self.run_compare('{"paths": {"/a": {}}}\n', '{"paths": {}}\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(written.splitlines(), ["moved=true"])
+
+    def test_the_compare_step_reports_an_unmoved_document(self):
+        proc, written = self.run_compare('{"paths": {}}\n', '{"paths": {}}\n')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(written.splitlines(), ["moved=false"])
+
+    def test_a_base_that_cannot_print_its_document_fails_the_step(self):
+        # No document at the base is no answer: the step must fail (which the
+        # judge reads as red) rather than call an empty file "moved" or not.
+        proc, written = self.run_compare('{"paths": {}}\n', "", base_exit=1)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn("moved=", written)
+
 
 def run_bodies(text):
     """The body of every ``run:`` in a workflow, block or inline."""
