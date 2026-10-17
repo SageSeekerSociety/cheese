@@ -104,8 +104,10 @@ ENV = {
 class FakeApi:
     """GitHub as `gh api` would answer: listed runs, and the cancels asked for."""
 
-    def __init__(self, runs, fail_cancel=(), fail_list=False, entry_sha=NEW_SHA):
+    def __init__(self, runs, fail_cancel=(), fail_list=False, entry_sha=NEW_SHA,
+                 number=4097):
         self.runs = runs
+        self.number = number
         self.entry_sha = entry_sha
         self.fail_cancel = set(fail_cancel)
         self.fail_list = fail_list
@@ -113,7 +115,13 @@ class FakeApi:
 
     def __call__(self, *args):
         if args[0] == "graphql":
-            assert "number=4097" in args
+            # The exact call GitHub accepts: Int typing for the number, the
+            # repo split into owner and name, the full oid.
+            _, _, query, *variables = args
+            assert query.startswith("query=") and "headCommit { oid }" in query
+            assert variables == [
+                "-f", "owner=o", "-f", "name=r", "-F", f"number={self.number}"
+            ], variables
             entry = {"headCommit": {"oid": self.entry_sha}} if self.entry_sha else None
             return {"data": {"repository": {"pullRequest": {"mergeQueueEntry": entry}}}}
         path = args[-1]
@@ -160,6 +168,12 @@ class CancelTests(unittest.TestCase):
         late = {**ENV, "HEAD_REF": f"refs/heads/{old_branch()}", "HEAD_SHA": OLD_SHA}
         dedupe.cancel_superseded(api, late)
         self.assertEqual(api.cancelled, [])
+
+    def test_the_entry_is_looked_up_for_this_events_pr(self):
+        api = FakeApi([run(1, old_branch(4098), OLD_SHA)], number=4098)
+        env = {**ENV, "HEAD_REF": f"gh-readonly-queue/main/pr-4098-{NEW_SHA}"}
+        dedupe.cancel_superseded(api, env)
+        self.assertEqual(api.cancelled, [1])
 
     def test_nothing_is_cancelled_when_the_pr_has_left_the_queue(self):
         api = FakeApi([run(1, old_branch(), OLD_SHA)], entry_sha=None)
