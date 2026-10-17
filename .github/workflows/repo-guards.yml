@@ -166,9 +166,10 @@ jobs:
       #     in Guards self-test;
       #   * the self-test of every guard check-guard-wired.py excuses, read from
       #     that guard rather than written out here: a guard with no lane to run
-      #     in has no lane for its self-test either, and test_check_seam_tests.py
-      #     asserts the repository is clean, so collecting it would report the
-      #     exemption as a failure of this step. One list, both sides;
+      #     in has no lane for its self-test either. One list, both sides. An
+      #     entry deleted from ON_DEMAND takes its self-test out of this skip
+      #     along with it, which is how check-seam-tests.py's came back when
+      #     #4082 made that guard green;
       #   * the two that need an install this job does not have, both of them
       #     found red by the first full run of this step. test_scene_debt_ratchet.py
       #     shells out to a node scan and needs frontend/node_modules; its lane
