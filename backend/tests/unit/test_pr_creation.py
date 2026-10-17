@@ -65,7 +65,8 @@ def test_unbalanced_quotes_fall_back_to_the_plain_spelling():
 
 
 def test_claude_code_shell_prefix_refuses_before_reaching_the_machine(capsys):
-    # The build's own wrapping of a Bash command (`shell_prefix._SNAPSHOT` / `_CWD_FILE`).
+    # The build's own wrapping of a Bash command (`shell_prefix._SNAPSHOT`,
+    # `_CWD_FILE`).
     command = (
         "source /tmp/snap.sh 2>/dev/null || true && eval 'gh pr create --fill'"
         " < /dev/null && pwd -P >| /tmp/claude-1-cwd"
