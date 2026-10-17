@@ -1,8 +1,9 @@
 /**
  * 机器这一屏：provider 连续失败、平台在拒绝新会话时，页面要说出来；点开一台宿主机就看见
- * 它上面的沙箱；接口读失败不画成「一台宿主机都没有」。
+ * 它上面的沙箱；接口读失败不画成「一台宿主机都没有」；每台宿主机用了多少内存、读数多旧
+ * 看得见，旧到不能当此刻看的要说出来；每个沙箱的内存和它的上限放在一起。
  */
-import type { MachineHost, MachinesOverview } from '@/views/admin/machinesApi'
+import type { HostUsage, MachineHost, MachinesOverview } from '@/views/admin/machinesApi'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -41,6 +42,7 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
     released_at: null,
     enroll_attempts: 1,
     enroll_error: null,
+    usage: null,
     sandboxes: [
       {
         id: 's1',
@@ -55,6 +57,7 @@ function host(fields: Partial<MachineHost> = {}): MachineHost {
         active_at: '2026-10-12T09:59:30Z',
         stopped_at: null,
         idle_deadline: null,
+        usage: null,
       },
     ],
     ...fields,
@@ -91,6 +94,13 @@ function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]
       sandbox_idle_s: 600,
       host_idle_hold_s: 1800,
       vm_idle_s: 1800,
+      sandbox_disk_budget_gb: 12,
+      sandbox_inode_budget: 600000,
+      near_cap: 0.8,
+      check_s: 60,
+      walk_s: 300,
+      alert_used: { disk: 0.85, inodes: 0.9, memory: 0.9 },
+      history_step_s: 300,
     },
     hosts,
     warm: [],
@@ -111,6 +121,26 @@ function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]
       hosts_lost_by_reason: {},
       sandboxes_lost: 0,
     },
+  }
+}
+
+const GIB = 2 ** 30
+
+function usage(fields: Partial<HostUsage> = {}): HostUsage {
+  return {
+    read_at: '2026-10-12T09:59:30Z',
+    disk_bytes: 40e9,
+    disk_used_bytes: 10e9,
+    inodes: 2_600_000,
+    inodes_used: 300_000,
+    memory_bytes: 16 * GIB,
+    memory_used_bytes: 6 * GIB,
+    cpu_busy: 0.25,
+    load1: 1.2,
+    sandboxes: 1,
+    memory_history: [0.3, 0.35, null, 0.375],
+    cpu_history: [0.1, 0.2, null, 0.25],
+    ...fields,
   }
 }
 
@@ -154,5 +184,37 @@ describe('机器', () => {
     expect(empty.queryByText(none)).not.toBeNull()
     empty.unmount()
     expect(mount({ overview: null, failed: true }).queryByText(none)).toBeNull()
+  })
+
+  it('每台宿主机的内存用了多少、对总量多少，读数多久前读到', () => {
+    const { getByText, queryByText } = mount({ overview: overview({}, [host({ usage: usage() })]) })
+    expect(getByText('6.0 / 16.0 GiB')).toBeTruthy()
+    expect(queryByText(/Stale|已过期/)).toBeNull()
+  })
+
+  it('读数旧过三次巡检，页面说它过期了，不当此刻的数', () => {
+    const old = usage({ read_at: '2026-10-12T09:50:00Z' })
+    const { queryByText } = mount({ overview: overview({}, [host({ usage: old })]) })
+    expect(queryByText(/Stale|已过期/)).not.toBeNull()
+  })
+
+  it('点开宿主机，每个沙箱的内存和它的 3 GiB 上限放在一起', async () => {
+    const sandbox = {
+      ...host().sandboxes[0],
+      usage: {
+        memory_bytes: 2.7 * GIB,
+        memory_peak_bytes: 2.9 * GIB,
+        memory_read_at: '2026-10-12T09:59:30Z',
+        disk_bytes: 4e9,
+        disk_inodes: 120_000,
+        disk_read_at: '2026-10-12T09:57:00Z',
+      },
+    }
+    const { getByText, queryByText } = mount({
+      overview: overview({}, [host({ usage: usage(), sandboxes: [sandbox] })]),
+    })
+    await fireEvent.click(getByText('pool-a'))
+    expect(queryByText(/2\.7 \/ 3\.0 GiB/)).not.toBeNull()
+    expect(queryByText(/4\.0 \/ 12 GB/)).not.toBeNull()
   })
 })

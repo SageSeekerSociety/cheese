@@ -279,7 +279,7 @@ def release_abandoned_views():
 
 def sources():
     # deferred-import: this file also runs on the machine, with no `app` package
-    from app.domain.agent import executor_transport
+    from app.domain.agent import executor_transport, pr_creation
 
     # deferred-import: this file also runs on the machine, with no `app` package
     from app.domain.agent.harness.driven import mcp_gateway
@@ -326,6 +326,7 @@ def sources():
                 Path(__file__).resolve().parents[6] / "sandbox/cheese"
             ).read_text(),
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
+            "pr_creation.py": Path(pr_creation.__file__).read_text(),
             # The door its Claude Code reaches the project's MCP servers by.
             "mcp_gateway.py": Path(mcp_gateway.__file__).read_text(),
         }
@@ -370,6 +371,45 @@ def allow_native_tools(settings: dict, platform_tools: list[str]) -> None:
         tool = "mcp__native__" + name
         if tool not in allowed:
             allowed.append(tool)
+
+
+# Remote flags the build would otherwise never see. It offers some tools only
+# when a GrowthBook flag says so, and it fetches those flags only for some
+# logins: a session started with an OAuth token in the environment, as every
+# session here is, fetches none, so Monitor was simply absent and agents waited
+# with `sleep N; tail` instead (2.1.282, measured on the central host: 0 flags
+# fetched; seeding this one entry offers Monitor and the build keeps it across
+# restarts). Monitor's command goes through the shell prefix like Bash, so it
+# runs on the executor. The same flag also makes Bash refuse a foreground
+# command that starts with `sleep` of 25 s or more and point at Monitor
+# (2.1.299), which is the waiting it replaces. The flag name and both effects
+# belong to the pinned build: when the pin moves, `headless_contract.py`'s
+# `remotemonitor` says whether they still hold.
+SEEDED_FLAGS = {"tengu_amber_sentinel": True}
+
+
+def write_claude_state(config: Path, seen: str) -> None:
+    """The build's own state file, `.claude.json`, as a session needs it: no
+    first-run gate to answer, and the flags it would not fetch."""
+    gates = {
+        "hasCompletedOnboarding": True,
+        "autoUpdates": False,
+        "bypassPermissionsModeAccepted": True,
+        "projects": {
+            seen: {
+                "hasTrustDialogAccepted": True,
+                "hasCompletedProjectOnboarding": True,
+            }
+        },
+    }
+    gate_file = config / ".claude.json"
+    previous = json.loads(gate_file.read_text()) if gate_file.exists() else {}
+    # Into the build's own cache, beside whatever flags it did fetch.
+    gates["cachedGrowthBookFeatures"] = {
+        **previous.get("cachedGrowthBookFeatures", {}),
+        **SEEDED_FLAGS,
+    }
+    gate_file.write_text(json.dumps({**previous, **gates}))
 
 
 def launch_only(sources):

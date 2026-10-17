@@ -824,7 +824,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     seed = remote.parent / "seed"
     for directory in ("backend", "frontend"):
         (seed / directory).mkdir()
-        (seed / directory / "dependency-version").write_text("1")
+        (seed / directory / "uv.lock").write_text("1")
     git(seed, "add", ".")
     git(seed, "commit", "-m", "Add dependency fixtures")
     git(seed, "push", str(remote), "main")
@@ -839,7 +839,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
         setup_script=(
             'echo setup >> "$HOME/setup-count"\n'
             'mkdir -p "$HOME/.local/bin"\n'
-            "printf '#!/bin/sh\\ncat dependency-version\\n' "
+            "printf '#!/bin/sh\\ncat uv.lock\\n' "
             '> "$HOME/.local/bin/install-dependencies"\n'
             'chmod +x "$HOME/.local/bin/install-dependencies"\n'
             "export ONLY_SETUP=yes"
@@ -891,7 +891,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
             assert (work / directory / "installed-version").read_text() == "1"
         assert (work / "project-value").read_text() == config.variables["PROJECT_VALUE"]
         assert not (work / "injected").exists()
-    (first_work / "backend/dependency-version").write_text("2")
+    (first_work / "backend/uv.lock").write_text("2")
     (first_work / "draft.txt").write_text("unfinished work")
     assert open_task(first).returncode == 0
     assert (first_work / "backend/installed-version").read_text() == "2"
@@ -899,6 +899,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     assert (first_work / "startup-count").read_text() == "startup\nstartup\n"
 
     (first_work / "fail-install").touch()
+    (first_work / "backend/uv.lock").write_text("3")
     failed = open_task(first)
     assert failed.returncode == 23
     assert not failed.stdout.strip(), "A failed task must not be returned as ready"
@@ -914,8 +915,253 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     assert open_task(first).returncode == 0
     task_status = environment_runner.read_status(root / "tasks" / first)
     assert task_status["state"] == "complete"
+    assert (first_work / "backend/installed-version").read_text() == "3"
     assert (home / "setup-count").read_text() == "setup\n"
     assert (first_work / "draft.txt").read_text() == "unfinished work"
+
+
+def _prepared_room(home, startup_script):
+    """A room whose environment runner prepares each task checkout with
+    `startup_script`, as a machine the platform launched has it."""
+    room = home / "room"
+    room.mkdir()
+    helpers = home / ".cheese"
+    helpers.mkdir(exist_ok=True)
+    shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
+    config = EnvironmentConfig(startup_script=startup_script)
+    started = subprocess.run(
+        [sys.executable, environment_runner.__file__, "true"],
+        env={
+            **os.environ,
+            "CHEESE_WORK": str(room),
+            "CHEESE_ENVIRONMENT": json.dumps(config.snapshot()),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert started.returncode == 0, started.stderr
+
+
+def test_reopening_a_task_left_as_it_was_needs_neither_the_forge_nor_an_install(
+    device,
+):
+    """An agent's shell starts each command in the room again, so it opens the
+    task again for nearly every command it runs there. A checkout already on the
+    task's branch, whose dependency files are the ones last installed from,
+    comes back as it is: with the forge out of reach, and without the startup
+    script running again."""
+    cli, tasks, remote, home = device
+    _prepared_room(home, "echo startup >> startup-count")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("unfinished\n")
+    _commit(work, "a.txt", "committed\n")
+    remote.rename(remote.with_name("unreachable.git"))
+
+    assert cli._task_worktree(task) == work
+    assert cli._task_worktree(task) == work
+
+    assert (work / "startup-count").read_text() == "startup\n"
+    assert (work / "draft.txt").read_text() == "unfinished\n"
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["a lock file edited", "a dependency file added", "a branch with other locks"],
+)
+def test_a_reopen_installs_again_once_the_dependency_files_change(device, change):
+    cli, tasks, _, home = device
+    _prepared_room(
+        home, "cat uv.lock >> installed 2>/dev/null || echo none >> installed"
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    if change == "a dependency file added":
+        (work / "uv.lock").write_text("added\n")
+        wanted = "none\nadded\n"
+    else:
+        (work / "uv.lock").write_text("first\n")
+        _commit(work, "uv.lock", "first\n")
+        assert cli._task_worktree(task) == work
+        if change == "a lock file edited":
+            (work / "uv.lock").write_text("second\n")
+            wanted = "none\nfirst\nsecond\n"
+        else:
+            git(work, "reset", "-q", "--hard", "HEAD~1")
+            wanted = "none\nfirst\nnone\n"
+
+    assert cli._task_worktree(task) == work
+
+    assert (work / "installed").read_text() == wanted
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    ["requirements/base.txt", "setup.cfg", "environment.yml", "go.mod", "Gemfile"],
+)
+def test_a_reopen_installs_again_once_a_manifest_changes(device, manifest):
+    """Projects name their dependencies in many places; a hosted repository
+    does not rename its files for the platform."""
+    cli, tasks, _, home = device
+    _prepared_room(home, f"cat {manifest} >> installed 2>/dev/null || true")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / manifest).parent.mkdir(parents=True, exist_ok=True)
+    _commit(work, manifest, "first\n")
+    # The first open had nothing to read yet; this one installs from it.
+    (work / "installed").unlink(missing_ok=True)
+    cli._task_worktree(task)
+    (work / manifest).write_text("second\n")
+
+    cli._task_worktree(task)
+
+    assert (work / "installed").read_text() == "first\nsecond\n"
+
+
+@pytest.mark.parametrize("how", ["removed by hand", "cleaned by git"])
+def test_a_reopen_installs_again_once_what_it_installed_is_gone(device, how):
+    cli, tasks, _, home = device
+    _prepared_room(home, "mkdir -p .venv && echo ran >> .venv/../installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / ".gitignore").write_text(".venv/\ninstalls\n")
+    _commit(work, ".gitignore", ".venv/\ninstalls\n")
+    assert cli._task_worktree(task) == work
+    runs = (work / "installs").read_text()
+    if how == "removed by hand":
+        shutil.rmtree(work / ".venv")
+    else:
+        git(work, "clean", "-q", "-x", "-d", "-f", "-e", "installs")
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == runs + "ran\n"
+    assert (work / ".venv").is_dir()
+
+
+def test_a_reopen_installs_again_once_the_room_has_a_new_environment(device):
+    cli, tasks, _, home = device
+    _prepared_room(home, "echo ran >> installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    config = home / ".cheese-environment/config.json"
+    pinned = json.loads(config.read_text())
+    config.write_text(json.dumps({**pinned, "startup_script": "echo new >> installs"}))
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == "ran\nnew\n"
+
+
+def test_a_reopen_after_a_failed_install_installs_again(device):
+    """An install that failed partway leaves the checkout half prepared, even
+    once its dependency files are back as they were when it last succeeded."""
+    cli, tasks, _, home = device
+    _prepared_room(
+        home,
+        "echo ran >> installs\ntest ! -f fail-install",
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "uv.lock").write_text("broken\n")
+    (work / "fail-install").touch()
+    with pytest.raises(SystemExit):
+        cli._task_worktree(task)
+    (work / "uv.lock").unlink()
+    (work / "fail-install").unlink()
+    before = (work / "installs").read_text()
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == before + "ran\n"
+
+
+def test_a_reopen_after_an_open_killed_mid_install_installs_again(device):
+    """An open killed while it installs (the machine reclaimed, a timeout)
+    never gets to say the install failed."""
+    cli, tasks, _, home = device
+    _prepared_room(
+        home,
+        "echo ran >> installs\n"
+        # The `cheese worktree` that started this install, killed outright.
+        'test ! -f kill-open || kill -9 "$(ps -o ppid= -p "$PPID")"\n'
+        "sleep 1",
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "uv.lock").write_text("half installed\n")
+    (work / "kill-open").touch()
+    killed = subprocess.run(
+        [sys.executable, str(CLI), "worktree", task],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert killed.returncode == -9, killed.stderr
+    (work / "uv.lock").unlink()
+    (work / "kill-open").unlink()
+    before = (work / "installs").read_text()
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == before + "ran\n"
+
+
+def test_a_reopen_installs_again_when_asked_to(device):
+    cli, tasks, _, home = device
+    _prepared_room(home, "echo ran >> installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+
+    opened = subprocess.run(
+        [sys.executable, str(CLI), "worktree", task, "--prepare"],
+        cwd=work,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert opened.returncode == 0, opened.stderr
+    assert opened.stdout.strip() == str(work)
+    assert (work / "installs").read_text() == "ran\nran\n"
+
+
+def test_a_reopen_follows_the_task_to_its_new_forge(device, tmp_path):
+    """A project moved to another forge: the reopen reads the task's base
+    from there, not from what the old one last had."""
+    cli, tasks, remote, _ = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    moved = tmp_path / "moved.git"
+    git(tmp_path, "clone", "-q", "--bare", str(remote), str(moved))
+    remote.rename(remote.with_name("retired.git"))
+    tasks[task]["remote"] = str(moved)
+    elsewhere = tmp_path / "elsewhere"
+    git(tmp_path, "clone", "-q", str(moved), str(elsewhere))
+    git(elsewhere, "config", "user.name", "someone")
+    git(elsewhere, "config", "user.email", "someone@example.com")
+    _commit(elsewhere, "new.txt", "landed on the new forge\n")
+    git(elsewhere, "push", "-q", "origin", "HEAD:main")
+
+    assert cli._task_worktree(task) == work
+
+    assert git(work, "rev-parse", "origin/main") == git(moved, "rev-parse", "main")
+
+
+def test_a_reopen_brings_back_a_snapshot_still_waiting_for_its_checkout(device):
+    cli, tasks, _, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    admin = Path(git(work, "rev-parse", "--absolute-git-dir"))
+    (admin / cli._RESTORE_PENDING).write_text("")
+    (home / "requests.log").unlink(missing_ok=True)
+
+    cli._task_worktree(task)
+
+    assert f"/git/tasks/{task}/snapshots/latest" in (home / "requests.log").read_text()
+    assert not (admin / cli._RESTORE_PENDING).exists()
 
 
 def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(

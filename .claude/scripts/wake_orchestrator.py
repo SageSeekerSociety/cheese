@@ -60,16 +60,19 @@ the mention; the 递卡 format's #任务 does the same job for that label.
 """
 import contextlib
 import io
-import json
 import os
 import re
 import sys
 import urllib.error
-import urllib.request
 import uuid
 
-API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
-USER = os.environ.get("OKCHEESE_USER", "wangchangxin")
+# The client sits beside this file; a caller that loads the script by file location
+# does not get its directory on sys.path, so name it here.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import platform_api  # noqa: E402
+from platform_api import USER, call, login, unwrap  # noqa: E402
+
 #: #1343, the dispatcher's own task. Overridable to rehearse against a scratch topic.
 TARGET = os.environ.get("OKCHEESE_DISPATCHER", "998a4d26-a7d7-4313-b3f5-b22304182d5d")
 #: 《总调度工作流 v2》§8: the four labels a line points at the dispatcher with.
@@ -100,30 +103,6 @@ TAG_WORD = re.compile(r"^【([^】\n]{1,24})】")
 #: enough that another line's message can land between the post and the read; 20 leaves
 #: room for that without paging.
 READ_BACK = 20
-
-
-def call(method, path, token=None, body=None, timeout=30):
-    """One platform call. Raises OSError/HTTPError; returns the parsed JSON body."""
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(API + path, data=data, method=method)
-    req.add_header("Content-Type", "application/json")
-    if token:
-        req.add_header("Authorization", "Bearer " + token)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8", "replace")
-    return json.loads(raw) if raw.strip() else {}
-
-
-def unwrap(x):
-    """The payload of a platform response: `{"data": …}`, however many times nested."""
-    while isinstance(x, dict) and "data" in x:
-        x = x["data"]
-    return x
-
-
-def login(user, password):
-    return unwrap(call("POST", "/users/auth/login",
-                       body={"username": user, "password": password}))["accessToken"]
 
 
 def seat_of(topic, token):
@@ -367,8 +346,12 @@ def self_test():
                 raise back
             return {"data": [{"id": "m1"}] if back is None else back}
 
-        real_call, real_password = call, os.environ.get("OKCHEESE_PASS")
+        # `login` resolves `call` in `platform_api`'s globals, so the module's own
+        # binding alone would leave the login call on the network.
+        real_call, real_platform_call = call, platform_api.call
+        real_password = os.environ.get("OKCHEESE_PASS")
         globals()["call"] = fake_call
+        platform_api.call = fake_call
         os.environ["OKCHEESE_PASS"] = password
         err = io.StringIO()
         try:
@@ -379,6 +362,7 @@ def self_test():
                     rc = f"raised {type(e).__name__}"
         finally:
             globals()["call"] = real_call
+            platform_api.call = real_platform_call
             if real_password is None:
                 os.environ.pop("OKCHEESE_PASS", None)
             else:

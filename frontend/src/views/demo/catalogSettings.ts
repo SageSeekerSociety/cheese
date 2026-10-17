@@ -365,7 +365,8 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
   {
     id: 'settings-mcp-server-dialog',
     title: 'McpServerDialog',
-    about: '「添加 MCP 服务器」/「编辑」那张表：只收远程服务器，名称、地址和登录方式；改了地址要重新填请求头的值。',
+    about:
+      '「添加 MCP 服务器」/「编辑」那张表：远程服务器（名称、地址、登录方式）或在项目机器上运行的命令（名称、命令、环境变量）。',
     file: 'src/components/McpServerDialog.vue',
     component: McpServerDialog,
     needs: UI_I18N,
@@ -383,6 +384,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
         note: '名称不能改；请求头的值不回显，留空就是不改。',
         props: {
           initial: {
+            kind: 'remote',
             name: 'sentry',
             url: 'https://mcp.sentry.dev/mcp',
             auth: 'headers',
@@ -391,6 +393,19 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
           },
         },
         expect: '编辑 sentry',
+      },
+      {
+        name: '编辑一条命令',
+        note: '类型不能改；命令和环境变量照原样回显，密钥写成变量。',
+        props: {
+          initial: {
+            kind: 'command',
+            name: 'postgres',
+            command: 'npx -y @modelcontextprotocol/server-postgres ${DATABASE_URL}',
+            env: { PGSSLMODE: 'require' },
+          },
+        },
+        expect: '编辑 postgres',
       },
       {
         name: '保存被拒',

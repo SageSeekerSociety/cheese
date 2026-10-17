@@ -200,6 +200,27 @@
       "claimFailed": "Claim failed",
       "deleting": "Deleting",
       "cleanupFailed": "Delete failed"
+    },
+    "usage": {
+      "label": "Usage of {host}",
+      "disk": "Disk",
+      "inodes": "Inodes",
+      "memory": "Memory",
+      "cpu": "CPU",
+      "gb": "{used} / {total} GB",
+      "gib": "{used} / {total} GiB",
+      "load": "load {n}",
+      "read": "Read {ago} ago",
+      "readStale": "Stale: read {ago} ago",
+      "history": "lines show the last {span}, peak per step",
+      "none": "Not read yet",
+      "ago": "{ago} ago",
+      "sandboxMemory": "Memory {used} / {cap} GiB",
+      "sandboxMemoryPeak": "Memory {used} / {cap} GiB (peak {peak})",
+      "sandboxDisk": "Disk {used} / {cap} GB",
+      "sandboxFiles": "Files {used} / {cap}",
+      "sandboxRead": "Memory read {memory} · disk read {disk}",
+      "foot": "Usage is read every {check}, a sandbox's disk every {walk}. A host past {disk} disk, {inodes} inodes or {memory} memory on two readings running is sent to the alert group; a sandbox at {near} of a limit is highlighted."
     }
   }
 }

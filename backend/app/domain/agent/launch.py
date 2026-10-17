@@ -11,9 +11,12 @@ So neither side answers alone. The channel hands over a ``MachinePlace``, the
 harness hands back a ``MachineLaunch``, and ``MachinePlan.on`` is the sentence
 between them: *tell me what to run, now that I have said where*.
 
-Nothing below mentions Claude Code, which is why it lives here and not inside
-the adapter that happens to be the first thing to satisfy it. The whole point of
-the seam is that a transport can hold a launch without being able to read it.
+Nothing below mentions Claude Code, which is why it lives here — beside
+`machine_launcher`, outside `harness` — and not inside the adapter that happens
+to be the first thing to satisfy it. The whole point of the seam is that a
+transport can hold a launch without being able to read it, and the platform
+half must be able to name the two halves without importing the harness package
+that implements one of them.
 """
 
 from dataclasses import dataclass, field

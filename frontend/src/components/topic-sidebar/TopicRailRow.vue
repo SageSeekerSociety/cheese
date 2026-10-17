@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 频道行只收 props、发事件；隐藏后代和收起任务的状态共用行尾一盏灯。
 // 子话题和任务是两种折叠，保留各自的箭头，均放在名称前。
+// 状态及红灯原因沿用 lib/roomLight.ts；这里只合并显示既有信号。
 import type { MenuCommand } from '@/commands'
 import type { Topic } from '@/cx_types'
 import type { RailMemberMark } from '@/lib/memberActivity'

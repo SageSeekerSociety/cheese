@@ -20,6 +20,43 @@ bash .claude/scripts/dev-db.sh stop --purge      # 停掉并删数据目录
 - `tests/unit/` 不需要 Postgres（`conftest.py` 只给主动要的测试建 schema），但其中一部分要 Redis，例如 `test_consumptions.py`、`test_admission.py`。`tests/unit/` 以外的一律是 DB-backed。
 - `task guards` 只跑静态守卫，不跑 pytest；要真正跑套件就用上面的方子。
 
+## 整套跑起来看：`task dev:sandbox`
+
+要在浏览器里看一个改动、手上又没有 Docker（`task dev` 要 `docker compose`）时用它。没装 Task 就直接跑 `node e2e/dev-stack.mjs`：
+
+```bash
+task dev:sandbox      # 前台运行；Ctrl-C 停掉它起的服务
+```
+
+它依次做这几件事，全部只监听 127.0.0.1：
+
+1. `dev-db.sh servers` 起 Postgres 和 Redis。只起这两个，不装测试用的 Claude Code、Codex 和 pi。
+2. 在这个 Postgres 里建 `cheese_dev_sandbox` 库，`uv sync`、`pnpm install`，再单独跑一次 `vite optimize`。
+3. 跑迁移；库里还一个项目都没有时，再跑 `seed_fusion_demo --without-repository`，种出 alice 的三个演示项目。
+4. 照 `e2e/stack.mjs` 起 stub 网关、后端、协作服务和 Vite 开发服务器。这份清单 e2e 也在用，那边加了服务这里跟着有。
+
+最后打印 `FRONTEND_PORT=3000`。浏览器只要这一个端口，`/api`、`/connector`、`/collab` 由 Vite 转给后面的服务。用 alice / demo12345 登录；新库第一次登录会弹「协议已更新」，点同意。
+
+- **不连任何外部服务。** 没有模型：stub 网关只回答有哪些模型，对话起不了轮次。没有 forge：演示项目没有仓库，任务、PR 走不通。也没有邮件和对象存储。`backend/.env` 存在时直接退出，因为后端会读它，连上里面配的服务。传给各服务的环境变量只留 `PATH`、`HOME` 这一类，调用方环境里的模型密钥、代理都传不进去。
+- **已经有项目就不再种数据**：种子会删掉同名项目重建，连同在里面做过的事。要从头来，先 `bash .claude/scripts/dev-db.sh stop --purge`。停掉 `dev:sandbox` 之后 Postgres 和 Redis 还在跑，也用 `dev-db.sh stop` 停。
+- 端口被占时它退出并说是哪个端口；换端口用 e2e 那组变量 `E2E_FRONTEND_PORT`、`E2E_BACKEND_PORT`、`E2E_COLLAB_PORT`、`E2E_STUB_GATEWAY_PORT`。
+- 要 node 22、pnpm 和 uv。Redis 是 fakeredis 时（没有 `cc`，见上），协作服务不接 Redis：它的客户端一连上就发 `INFO`，fakeredis 不认这条命令。一个协作服务实例本来也用不着 Redis。
+- **`vite optimize` 单独跑是为了内存。** Vite 第一次启动时要预打包依赖，放在开发服务器里跟其他服务一起跑，整套峰值到 2698 MiB，限 2.5 GiB 时 Vite 被杀；单独先跑完，峰值降到 1332–1759 MiB，开发服务器只读它留下的缓存。
+
+下表是在 Linux 容器里量的：cgroup 限内存、无 swap、2 核、没有 Docker、没有 `cc`，每秒读一次 cgroup 的匿名内存(anon)。冷启动是新容器，所有下载缓存都是空的；热启动是同一个容器里停掉再起，依赖和 Vite 缓存都在。「浏览」是浏览器登录后走一遍项目、频道、资料库、`/spaces`、`/market`、`/admin`、`/settings`。表里不含 agent 自己的进程，一个 Claude Code 进程本身约占 0.4–0.5 GB。
+
+| 内存上限 | 冷启动就绪 | 冷：启动时峰值 | 冷：运行中峰值 | 冷：闲置 | 热启动就绪 | 热：运行中峰值 | 被 OOM 杀 |
+|---|---|---|---|---|---|---|---|
+| 6 GiB | 37 s | 1625 MiB | 1310 MiB | 819 MiB | 7 s | 1274 MiB | 无 |
+| 4 GiB | 36 s | 1349 MiB | 1295 MiB | 824 MiB | 8 s | 1290 MiB | 无 |
+| 3 GiB | 38 s | 1759 MiB | 1260 MiB | 813 MiB | 7 s | 1265 MiB | 无 |
+| 2.5 GiB | 44 s | 1332 MiB | 1210 MiB | 808 MiB | 8 s | 1235 MiB | 无 |
+| 2 GiB | 39 s | 1598 MiB | 1222 MiB | 818 MiB | 8 s | 1243 MiB | 无 |
+
+「启动时」是从运行到打印端口，峰值都落在 `vite optimize` 跑完、迁移开始的那一两秒；「运行中」是之后 Vite 起来的头一分钟加上浏览那一趟，取两者大的那个；「闲置」是浏览之前那一分钟的最后 20 秒。预打包还放在开发服务器里的时候，同样的冷启动在 3 GiB 下运行中峰值 2698 MiB、闲置 2310 MiB,2.5 GiB 和 2 GiB 都在 Vite 预打包时被杀。3 GiB 下另起一个占住 512 MiB 的进程（顶替 agent 自己）再跑一遍，冷启动峰值 2265 MiB（含那 512 MiB），冷、热都没有被杀。
+
+冷启动的时间主要花在下载上（Postgres 和 pg_search 约 85 MB，加上 Python 和前端依赖），网速慢的机器会更久。装完以后家目录里：`backend/.venv` 537 MB、`frontend/node_modules` 1.1 GB（7.5 万个文件）、Postgres 安装 193 MB、数据 91 MB。
+
 ## 唯一要自己补的:provider 凭据
 
 **别再花时间重新诊断它**:`test_market_api.py::test_market_lists_ai_and_compute_pools` 那一条红是缺环境,不是代码有 bug。一个 profile 的 `available` 是 `bool(auth_token or oauth_token)`（`app/domain/agent/profiles.py`）,所以 `settings.anthropic_auth_token` 没设时,默认 AI 池诚实地报告不可用。随便给个非空值就解决——`ANTHROPIC_AUTH_TOKEN=dummy-for-test uv run pytest tests/integration/test_market_api.py` 就绿了,过程中不会真去调 provider。

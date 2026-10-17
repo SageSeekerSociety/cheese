@@ -116,7 +116,16 @@
               </template>
               <code class="waiting__command">{{ item.command }}</code>
               <i18n-t
-                v-if="item.author"
+                v-if="item.author && item.source === 'settings'"
+                scope="global"
+                keypath="home.inbox.mcpRun.added"
+                tag="span"
+                class="waiting__where"
+              >
+                <template #name>{{ item.author.name }}</template>
+              </i18n-t>
+              <i18n-t
+                v-else-if="item.author && item.source === 'repository'"
                 scope="global"
                 keypath="home.inbox.mcpRun.from"
                 tag="span"
