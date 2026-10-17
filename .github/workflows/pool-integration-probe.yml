@@ -1,0 +1,332 @@
+name: Pool integration probe
+
+# Measures what one backend integration shard costs when it runs on the
+# cheese-ci self-hosted pool instead of a GitHub-hosted runner: wall time, peak
+# memory, and whether a box survives both of its slots running a shard at once.
+# It answers whether Required CI could move its `test` job onto the pool; it
+# moves nothing. No existing workflow is modified, and nothing here is selected
+# by Required CI.
+#
+# Dispatch-only, with `pair` deciding whether the second slot of the same box
+# runs too. Both jobs pin `cheese-ci-box-1` on purpose: one slot measured alone
+# and two slots measured together must be the same machine, or the difference
+# between the two runs is machine variance rather than contention.
+on:
+  workflow_dispatch:
+    inputs:
+      pair:
+        description: Run both slots of the box at once instead of one
+        type: boolean
+        default: false
+      shard:
+        description: Integration shard to run, index/count
+        type: string
+        default: "0/5"
+  # TEMPORARY, and removed before this file is delivered: GitHub only offers
+  # `workflow_dispatch` for a workflow that is already on the default branch, so
+  # a workflow still under measurement cannot be dispatched from its branch.
+  # These probe branches exist only to start it during the measurement.
+  push:
+    branches: [probe/integration-single, probe/integration-pair]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  shard:
+    name: integration shard (replica ${{ matrix.replica }})
+    # Replica 1 is the single-slot baseline. Replica 2 runs only in pair mode:
+    # on a dispatch whose `pair` is true, or on the temporary pair branch.
+    if: >-
+      ${{ matrix.replica == 1
+          || (github.event_name == 'workflow_dispatch' && inputs.pair)
+          || (github.event_name == 'push' && github.ref_name == 'probe/integration-pair') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        replica: [1, 2]
+    runs-on: [self-hosted, cheese-ci, cheese-ci-box-1]
+    timeout-minutes: 75
+    env:
+      # The environment test.yml's `test` job gives the integration layer. The
+      # resident Postgres and Valkey hold the same images on 5442/6389 that a
+      # hosted runner's service containers hold, so only the URL differs.
+      REDIS_URL: redis://localhost:6389/0
+      JWT_SECRET: test-secret
+      ENVIRONMENT: test
+      OPENAI_API_KEY: test-key
+      ANTHROPIC_AUTH_TOKEN: test-token
+      # The resident Valkey runs with 64 databases (resident-services.sh), one
+      # 16-database block per slot. The tests' default capacity is 16, which
+      # would reject the slot-1 block at collection time before any test ran.
+      CHEESEX_REDIS_DB_COUNT: "64"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Describe the box before the run
+        run: |
+          mkdir -p "$RUNNER_TEMP/probe"
+          {
+            echo "at=$(date -u +%FT%TZ)"
+            echo "host=$(hostname)"
+            echo "slot=${CHEESE_CI_SLOT:-0}"
+            echo "workers=${CHEESE_CI_TEST_WORKERS:-auto}"
+            echo "cores=$(nproc)"
+            lscpu 2>/dev/null | grep -E 'Model name|^CPU\(s\)' || true
+            free -m
+            swapon --show || echo "(no swap configured)"
+            df -h / "$RUNNER_TEMP" /tmp || true
+            echo "--- runner identities on this machine"
+            grep -h '"agentName"' "$HOME"/actions-runner*/.runner 2>/dev/null || true
+            echo "--- resident services"
+            docker ps --format '{{.Names}} {{.Status}}' || true
+            echo "--- kernel OOM kills before this run"
+            grep -E '^oom_kill ' /proc/vmstat || true
+          } | tee "$RUNNER_TEMP/probe/before.txt"
+
+      # The same slot scoping as test.yml. The slot number comes from the
+      # runner installation's own .env (provision.sh writes it), so two slots on
+      # this box never share a Postgres database or a Valkey index block.
+      - name: Scope this run to its runner slot
+        run: |
+          slot="${CHEESE_CI_SLOT:-0}"
+          echo "CHEESE_CI_SLOT=$slot" >> "$GITHUB_ENV"
+          echo "CHEESE_CI_REDIS_BASE_DB=$((slot * 16))" >> "$GITHUB_ENV"
+          # provision.sh writes half the cores into a two-slot runner's .env.
+          # When it did not (slot 0 can be provisioned before slot 1 exists),
+          # `auto` would give each slot the whole machine's cores, which is
+          # twice the box; the same half is what provision.sh intends.
+          cores="$(nproc 2>/dev/null || echo 8)"
+          workers="${CHEESE_CI_TEST_WORKERS:-$((cores / 2 > 0 ? cores / 2 : 1))}"
+          echo "CHEESE_CI_TEST_WORKERS=$workers" >> "$GITHUB_ENV"
+          root="postgresql+asyncpg://postgres:postgres@localhost:5442"
+          echo "TEST_PG_BASE=$root" >> "$GITHUB_ENV"
+          echo "DATABASE_URL=$root/cheese_test_$slot" >> "$GITHUB_ENV"
+
+      # Everything below is the integration shard's own work in test.yml,
+      # minus the two prerequisites that the pool must not acquire for this
+      # probe: `ensure-apt.sh` (bubblewrap and friends) and the npm-installed
+      # pinned harness binaries. Tests that need those fail at their own
+      # prerequisite check; the resource profile is the measurement, so their
+      # count is recorded rather than hidden.
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # A helper so every timed step reports the same way. /usr/bin/time is not
+      # guaranteed on the pool (the `time` package is not in deps.sh), so the
+      # fallback measures the same thing from Python's own child rusage.
+      - name: Prepare the measurement helpers
+        run: |
+          mkdir -p "$RUNNER_TEMP/probe"
+          cat > "$RUNNER_TEMP/timed.py" <<'PY'
+          import resource
+          import subprocess
+          import sys
+          import time
+
+          out, *command = sys.argv[1:]
+          started = time.monotonic()
+          status = subprocess.run(command).returncode
+          usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+          with open(out, "a", encoding="utf-8") as handle:
+              handle.write(
+                  f"fallback=true max_rss_kb={usage.ru_maxrss} "
+                  f"wall_s={time.monotonic() - started:.1f} exit={status}\n"
+              )
+          raise SystemExit(status)
+          PY
+          cat > "$RUNNER_TEMP/timed.sh" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          out="$1"; shift
+          if [ -x /usr/bin/time ]; then
+            /usr/bin/time -v -o "$out" -- "$@"
+          else
+            python3 "$RUNNER_TEMP/timed.py" "$out" "$@"
+          fi
+          SH
+          cat > "$RUNNER_TEMP/summarize.py" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+
+          def junit(path):
+              try:
+                  root = ET.parse(path).getroot()
+              except (OSError, ET.ParseError) as error:
+                  print(f"no JUnit result: {error}")
+                  return
+              suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+              total = sum(int(s.get("tests", 0)) for s in suites)
+              failures = sum(int(s.get("failures", 0)) for s in suites)
+              errors = sum(int(s.get("errors", 0)) for s in suites)
+              skipped = sum(int(s.get("skipped", 0)) for s in suites)
+              seconds = sum(float(s.get("time", 0)) for s in suites)
+              print(
+                  f"tests={total} failures={failures} errors={errors} "
+                  f"skipped={skipped} suite_seconds={seconds:.1f}"
+              )
+
+
+          def memory(path):
+              samples = []
+              try:
+                  with open(path, encoding="utf-8") as handle:
+                      for line in handle:
+                          fields = line.split()
+                          if len(fields) < 2:
+                              continue
+                          samples.append(
+                              dict(
+                                  (key, int(value))
+                                  for key, value in (
+                                      item.split("=", 1)
+                                      for item in fields[1:]
+                                      if "=" in item
+                                  )
+                              )
+                          )
+              except OSError as error:
+                  print(f"no memory samples: {error}")
+                  return
+              if not samples:
+                  print("no memory samples")
+                  return
+              total = max(sample.get("MemTotal:", 0) for sample in samples)
+              available = min(
+                  sample.get("MemAvailable:", total) for sample in samples
+              )
+              swap_total = max(sample.get("SwapTotal:", 0) for sample in samples)
+              swap_free = min(
+                  sample.get("SwapFree:", swap_total) for sample in samples
+              )
+              first, last = samples[0], samples[-1]
+              print(f"samples={len(samples)}")
+              print(
+                  f"MemTotal_kb={total} MemAvailable_min_kb={available} "
+                  f"peak_used_kb={total - available}"
+              )
+              print(
+                  f"SwapTotal_kb={swap_total} SwapFree_min_kb={swap_free} "
+                  f"swap_used_peak_kb={swap_total - swap_free}"
+              )
+              print(
+                  f"oom_kill_delta={last.get('oom_kill=', 0) - first.get('oom_kill=', 0)} "
+                  f"oom_kill_total={last.get('oom_kill=', 0)}"
+              )
+
+
+          kind, path = sys.argv[1], sys.argv[2]
+          {"junit": junit, "memory": memory}[kind](path)
+          PY
+          chmod +x "$RUNNER_TEMP/timed.sh"
+
+      - name: Install dependencies (timed)
+        run: |
+          mkdir -p "$RUNNER_TEMP/probe"
+          "$RUNNER_TEMP/timed.sh" "$RUNNER_TEMP/probe/sync-time.txt" \
+            uv sync --frozen --all-extras
+
+      # test.yml's step proves a fresh database by dropping and recreating the
+      # service container's copy. The resident Postgres outlives the run, so
+      # the same emptiness is made explicitly here, per slot.
+      - name: Give this run an empty database
+        run: |
+          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "DROP DATABASE IF EXISTS \"cheese_test_$CHEESE_CI_SLOT\" WITH (FORCE)"
+          docker exec cheese-ci-postgres psql -U postgres -v ON_ERROR_STOP=1 -c \
+            "CREATE DATABASE \"cheese_test_$CHEESE_CI_SLOT\""
+
+      - name: Run database migrations (timed)
+        run: |
+          "$RUNNER_TEMP/timed.sh" "$RUNNER_TEMP/probe/migrate-time.txt" \
+            uv run alembic upgrade head
+
+      # The shard command is test.yml's, verbatim, with three additions around
+      # it: /usr/bin/time's peak RSS, a box-wide memory sample every two
+      # seconds (the runner cgroup cannot see the resident Postgres, and in pair
+      # mode it cannot see the other slot either), and the exit status written
+      # down so a failing prerequisite is data rather than a failed probe.
+      - name: Run one integration shard (timed, resource-observed)
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          TEST_LAYER: integration
+          TEST_SHARD: ${{ inputs.shard || '0/5' }}
+        run: |
+          set -o pipefail
+          results="$RUNNER_TEMP/probe/results"
+          mkdir -p "$results"
+          (
+            while :; do
+              printf '%s ' "$(date -u +%FT%TZ)"
+              awk '/^MemTotal:|^MemAvailable:|^SwapTotal:|^SwapFree:/{printf "%s=%s ", $1, $2}' /proc/meminfo
+              printf 'oom_kill=%s\n' "$(awk '$1=="oom_kill"{print $2}' /proc/vmstat)"
+              sleep 2
+            done
+          ) > "$RUNNER_TEMP/probe/box-memory.log" &
+          sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
+
+          "$RUNNER_TEMP/timed.sh" "$results/time.txt" \
+            uv run python -m scripts.observe_ci_resources --output "$results/resources" -- \
+            uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+              --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
+              -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
+              --ci-selection-output="$results" \
+              -p scripts.ci_evidence --ci-evidence-dir="$results" \
+              --reruns 1 --reruns-delay 1 \
+              --dist loadfile --no-loadscope-reorder --tb=short --durations=30 \
+              --junitxml="$results/results.xml" 2>&1 \
+            | tee "$results/pytest.log" || status=$?
+          echo "pytest_exit=${status:-0}" | tee "$results/status.txt"
+
+      - name: Summarize the measurement
+        if: ${{ always() }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/probe/results"
+          {
+            echo "=== timing"
+            cat "$RUNNER_TEMP/probe/sync-time.txt" 2>/dev/null || true
+            cat "$RUNNER_TEMP/probe/migrate-time.txt" 2>/dev/null || true
+            cat "$RUNNER_TEMP/probe/results/time.txt" 2>/dev/null || true
+            echo "=== exit status"
+            cat "$RUNNER_TEMP/probe/results/status.txt" 2>/dev/null || true
+            echo "=== JUnit counts"
+            python3 "$RUNNER_TEMP/summarize.py" junit "$RUNNER_TEMP/probe/results/results.xml"
+            echo "=== box memory (MemAvailable low-water mark is the peak use)"
+            python3 "$RUNNER_TEMP/summarize.py" memory "$RUNNER_TEMP/probe/box-memory.log"
+            echo "=== kernel OOM kills after this run"
+            { dmesg -T 2>/dev/null || journalctl -k --no-pager -q 2>/dev/null; } \
+              | grep -iE 'out of memory|oom-kill|killed process' | tail -10 \
+              || echo "(none found, or the ring buffer is not readable)"
+            echo "=== resident services after this run"
+            docker stats --no-stream --format '{{.Name}} {{.MemUsage}} {{.CPUPerc}}' 2>/dev/null || true
+          } | tee "$RUNNER_TEMP/probe/summary.txt"
+
+      - name: Preserve the measurement
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pool-integration-probe-replica-${{ matrix.replica }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/probe/
+          if-no-files-found: warn
+          retention-days: 14
