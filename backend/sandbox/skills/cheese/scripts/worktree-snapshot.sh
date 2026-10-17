@@ -172,6 +172,17 @@ read_set_aside() {
   fi
 }
 
+# 这次同步有没有东西可存：工作区干净、HEAD 也已经在远端分支上时没有。平台自己
+# 的 turn-end 同步会跳过这种检出（backend/sandbox/cheese 的 _has_work_to_sync），
+# 只有这里显式跑的 sync 才会照样做一份新的备份。
+nothing_to_sync() {
+  local branch pushed
+  [ -z "$(git status --porcelain 2>/dev/null)" ] || return 1
+  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || return 1
+  pushed=$(git rev-parse --verify -q "refs/remotes/origin/$branch") || return 1
+  git merge-base --is-ancestor HEAD "$pushed" 2>/dev/null
+}
+
 # 平台连快照都没能套用（下载、解包、快进失败）时，只把原因写到 stderr，退出码
 # 仍是 0；它留着这个标记，下次 `cheese worktree` 或 `cheese sync` 再试
 # （backend/sandbox/cheese 的 _RESTORE_PENDING）。标记还在，就是没接回来。
@@ -240,17 +251,22 @@ if [ "$sub" = save ]; then
   else
     reentry="cheese worktree <任务 id>（完整 id 见任务卡；也可以在任务目录里用 CHEESE_TOPIC 再跑一次）"
   fi
-  # 平台明确不套用的快照还在独立目录里时，这次同步会把当前检出做成新的最近
-  # 一版，那份快照不再是最近一版（_sync_task 与 _apply_snapshot）——平台自己
-  # 也是这么设计的（test_a_replaced_sandbox_comes_back_with_its_work）。拦下来
-  # 只会挡住这次推送，挡不住这个行为，所以在推送之前把它说清楚。
+  # 平台明确不套用的快照还在独立目录里时，`cheese sync` 会把当前检出做成新的
+  # 最近一版，那份快照不再是最近一版（_sync_task 与 _apply_snapshot）。平台自己
+  # 的 turn-end 同步在干净检出上会跳过（_has_work_to_sync），这里显式跑的不会：
+  # 没有新东西要存时拒绝，因为这一次同步唯一的后果就是顶掉平台那份；有东西要
+  # 存时先说清后果再同步，那份快照本来也会在这一步之后不再是最新一版。
   aside_before=""
   if uuid_like "$task_id"; then
     read_set_aside "$task_id"
     aside_before=$ASIDE
     if [ "${ASIDE_UNKNOWN:-}" = yes ]; then
-      printf '  没法确认平台有没有把这个任务的快照放到 %s/.cheese/recovered（扫描失败）。\n' "$HOME" >&2
-    elif [ -n "$aside_before" ]; then
+      die 3 "没法确认平台有没有把这个任务的快照放到 $HOME/.cheese/recovered（扫描失败）。现在同步可能顶掉一份没接回来的快照；先别同步，把上面的输出原样报上来，说清没能确认到哪一步。"
+    fi
+    if [ -n "$aside_before" ]; then
+      if nothing_to_sync; then
+        die 3 "平台有一份快照没套进这个目录，它原样放在 $aside_before。现在没有新东西要同步，跑 sync 只会把当前检出做成新备份，把平台那份顶掉；先去把它取回来（或者确认不需要），删掉那个目录，再 save。"
+      fi
       printf '  平台有一份快照没套进这个目录，它原样放在 %s。\n' "$aside_before" >&2
       printf '  这次同步之后，这里的内容会成为最近一版备份，那份快照里的改动不会。\n' >&2
       printf '  先把 %s 里的东西取回来（或者确认不需要），再删掉那个目录。\n' "$aside_before" >&2

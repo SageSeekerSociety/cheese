@@ -436,6 +436,8 @@ def test_save_says_the_set_aside_backup_will_not_be_the_latest_one(
         3,
         ".cheese/recovered",
     )
+    # 有新的工作要存：这时同步确实会顶掉平台那份，只能提醒。
+    machine.commit("step2.py", "print(2)\n")
     mark = machine.tmp / "sync-ran"
 
     result = machine.run("save", FAKE_SYNC_MARK=str(mark))
@@ -667,6 +669,8 @@ def test_save_keeps_naming_the_set_aside_after_a_second_scan_fails(
         f'#!/usr/bin/env bash\n[ -e "{mark}" ] && exit 1\nexec "{real_find}" "$@"\n'
     )
     fake_find.chmod(0o755)
+    # 有东西要存才走得到同步之后的那次扫描。
+    machine.commit("step2.py", "print(2)\n")
 
     result = machine.run("save", FAKE_SYNC_MARK=str(mark))
 
@@ -675,6 +679,52 @@ def test_save_keeps_naming_the_set_aside_after_a_second_scan_fails(
     assert f"{TASK}-0123456789ab" in out
     assert "那份快照在" in out
     assert "要自己取" in out
+
+
+def test_save_refuses_when_the_set_aside_backup_is_the_only_copy(
+    machine: Machine,
+) -> None:
+    """故意违规：干净检出上跑 save 的唯一后果是把平台那份快照顶掉。
+
+    平台自己的 turn-end 同步会跳过这种检出（_has_work_to_sync），只有 save
+    里这条显式同步会照样备份；这一下就把恢复时没套进工作区的那份挤掉了。
+    """
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    tip = machine.remote_tip(f"refs/heads/{BRANCH}")
+    machine.wipe()
+    refused(
+        machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1"),
+        3,
+        ".cheese/recovered",
+    )
+    mark = machine.tmp / "sync-ran"
+
+    result = machine.run("save", FAKE_SYNC_MARK=str(mark))
+
+    refused(result, 3, ".cheese/recovered", "顶掉")
+    assert not mark.exists(), "没有东西要存时不该同步"
+    assert machine.remote_tip(f"refs/heads/{BRANCH}") == tip
+    assert "换机后接回来" not in result.stdout
+
+
+def test_save_refuses_when_the_backup_directory_cannot_be_scanned(
+    machine: Machine,
+) -> None:
+    """扫不动时不能同步：那目录里可能是唯一一份没备份的活。"""
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+    (machine.home / ".cheese" / "recovered").mkdir()
+    fake_find = machine.bin / "find"
+    fake_find.write_text("#!/usr/bin/env bash\nexit 1\n")
+    fake_find.chmod(0o755)
+    mark = machine.tmp / "sync-ran"
+
+    result = machine.run("save", FAKE_SYNC_MARK=str(mark))
+
+    refused(result, 3, "扫描", "没法确认")
+    assert not mark.exists(), "没法确认时不该同步"
+    assert "换机后接回来" not in result.stdout
 
 
 def test_restore_still_refuses_after_a_set_aside_the_run_before(
