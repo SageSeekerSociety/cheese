@@ -17,7 +17,7 @@ import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker
 import type { Block, Topic } from '../../../cx_types'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocLinkTarget } from '../../../lib/docLinks'
-import type { RefItem } from '../../../lib/docMentionMenu'
+import type { LinkableDocument, RefItem } from '../../../lib/docMentionMenu'
 import type { ThreadPlace } from '../../../lib/docThreadTypes'
 import type { CanvasData } from '../../../types/canvas'
 
@@ -73,6 +73,10 @@ const props = withDefaults(
     notifiedMentions?: string[]
     /** 打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
+    /** 打 # 时能引用的文档（读的人能读的）。 */
+    documentList?: LinkableDocument[]
+    /** 这一份自己的 id：不引用自己。 */
+    documentId?: string | null
     /** 能写评论（归档话题的文档不能）。 */
     canComment?: boolean
     /** 没解决的评论串：它们评的那几个字标出来。 */
@@ -100,6 +104,8 @@ const props = withDefaults(
     mentionNames: () => ({}),
     notifiedMentions: () => [],
     mentionPeople: () => [],
+    documentList: () => [],
+    documentId: null,
     canComment: true,
     openThreads: () => new Set<string>(),
     activeThread: null,
@@ -260,7 +266,12 @@ function onHover(e: MouseEvent) {
 const displayTick = ref(0)
 
 // 打 @ 挑人、打 # 挑话题（composables/useDocRefMenu.ts）。
-const refMenu = useDocRefMenu({ people: () => props.mentionPeople, topics: () => props.topicList })
+const refMenu = useDocRefMenu({
+  people: () => props.mentionPeople,
+  topics: () => props.topicList,
+  documents: () => props.documentList,
+  self: () => props.documentId,
+})
 
 // 编辑器绑在这一份协同文档上：文档换了（换房间、重连拿到的是另一份）就整个重建，
 // 因为 Collaboration 扩展只在建编辑器时认一次文档。
