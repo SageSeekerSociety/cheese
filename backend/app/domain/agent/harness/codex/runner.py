@@ -17,6 +17,9 @@ from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.monitor import Monitors
 from app.domain.agent.harness.driven.runner import SessionStart
 
+# How long a person's message waits for an interrupted woken turn to end.
+WOKEN_TURN_END_S = 15.0
+
 # How long a new turn waits to see the project's skills as they are now before
 # it starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
@@ -246,29 +249,45 @@ class Runner(runner.Runner[Journal]):
             if work_id is not None:
                 thread_id = self.session.thread_id
                 previous = self.journal.recall(f"work:{thread_id}")
-                # A turn the session started for itself (`tell`) may not be one
-                # the room steers into yet, so a person's message can come with
-                # other work: it goes into that turn, which stays its own work
-                # — the room keeps the seat on the turn it saw start, and a
-                # message said mid-turn ends with that turn.
+                # A turn the session started for itself (`tell`) that the room
+                # has not steered into: the room sends a person's message then
+                # as work of its own, and closes each work by the records that
+                # name it. So that turn is stopped and ends as its own work,
+                # and the message starts the room's turn.
                 woken = (
-                    self.session.turn_id is not None
-                    and previous is not None
+                    previous is not None
                     and self.journal.recall(f"unsolicited:{previous}") is not None
                 )
                 if self.session.turn_id is not None and previous != work_id:
                     if not woken:
                         raise RuntimeError("A different room work item is still active")
-                else:
-                    # Persist attribution before the call: notifications can
-                    # arrive before app-server acknowledges turn/start.
-                    self.journal.remember(f"work:{thread_id}", work_id)
+                    await self._end_woken_turn()
+                # Persist attribution before the call: notifications can
+                # arrive before app-server acknowledges turn/start.
+                self.journal.remember(f"work:{thread_id}", work_id)
             turn = (
                 await self.session.send(text, images=images)
                 if images
                 else await self.session.send(text)
             )
         return {"turn_id": turn, "input_id": identifier}
+
+    async def _end_woken_turn(self) -> None:
+        """Interrupt the turn a monitor woke and wait for its ending, which
+        `record` journals under that turn's own work."""
+        session = self.session
+        assert session is not None
+        await session.interrupt()
+        deadline = asyncio.get_running_loop().time() + WOKEN_TURN_END_S
+        while session.turn_id is not None:
+            left = deadline - asyncio.get_running_loop().time()
+            if left <= 0:
+                raise RuntimeError("A different room work item is still active")
+            news = self.news
+            try:
+                await asyncio.wait_for(news.wait(), min(left, 0.2))
+            except TimeoutError:
+                pass
 
     async def yield_foreground(self) -> None:
         """Nothing to send: the session's Bash waits in this process

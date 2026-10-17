@@ -220,46 +220,70 @@ async def test_a_turn_the_session_was_woken_into_is_its_own_work(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_a_person_heard_during_a_woken_turn_joins_it(tmp_path):
-    """A person's message that arrives with other work while a turn a monitor
-    woke is running goes into that turn instead of being refused, and the turn
-    stays the work the room saw start."""
+async def test_a_person_heard_during_a_woken_turn_gets_a_turn_of_their_own(tmp_path):
+    """A person's message that arrives with the room's own work while a turn a
+    monitor woke is running is not refused: that turn ends as its own work and
+    the message starts the room's, so each turn's records name the work the
+    room opened for it."""
     sent = []
 
     async def send(text):
         sent.append(text)
-        runner.session.turn_id = "turn"
-        return "turn"
+        runner.session.turn_id = f"turn-{len(sent)}"
+        return runner.session.turn_id
+
+    async def interrupt():
+        turn = runner.session.turn_id
+
+        async def ends():
+            await runner.record(
+                {
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "thread",
+                        "turn": {"id": turn, "status": "interrupted"},
+                    },
+                }
+            )
+
+        asyncio.get_running_loop().call_later(0.05, asyncio.ensure_future, ends())
+        return True
+
+    def observe(event):
+        if event.get("method") == "turn/completed":
+            runner.session.turn_id = None
 
     runner = Runner(tmp_path, AsyncMock())
     runner.session = SimpleNamespace(
         send=AsyncMock(side_effect=send),
+        interrupt=AsyncMock(side_effect=interrupt),
         thread_id="thread",
         turn_id=None,
-        observe=lambda event: None,
+        observe=observe,
     )
     try:
         await runner.tell("<task-notification>line</task-notification>")
         await runner.record(
             {
                 "method": "turn/started",
-                "params": {"threadId": "thread", "turn": {"id": "turn"}},
+                "params": {"threadId": "thread", "turn": {"id": "turn-1"}},
             }
         )
-        started = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        woken = (await runner.dispatch("events", {}))["events"][-1]["record"]
         await runner.send("input", "from a person", work_id="platform-work")
         assert sent == ["<task-notification>line</task-notification>", "from a person"]
+        records = [e["record"] for e in (await runner.dispatch("events", {}))["events"]]
+        ended = next(r for r in records if r.get("method") == "turn/completed")
+        assert ended["cheese"]["work_id"] == woken["cheese"]["work_id"]
         await runner.record(
             {
-                "method": "turn/completed",
-                "params": {
-                    "threadId": "thread",
-                    "turn": {"id": "turn", "status": "interrupted"},
-                },
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "turn-2"}},
             }
         )
-        ended = (await runner.dispatch("events", {}))["events"][-1]["record"]
-        assert ended["cheese"]["work_id"] == started["cheese"]["work_id"]
+        theirs = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        assert theirs["cheese"]["work_id"] == "platform-work"
+        assert "unsolicited" not in theirs["cheese"]
     finally:
         await runner.close()
 
