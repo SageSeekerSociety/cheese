@@ -1187,6 +1187,8 @@ async def test_a_session_on_a_gateway_model_is_told_the_window_the_gateway_decla
         row("gemini-4-argon", max_input_tokens=1_048_576),
         # Claude Code knows a claude- model's window itself.
         row("claude-sonnet-5-5", max_input_tokens=1_000_000),
+        # Routed but not a menu item: no session runs on it.
+        row("glm-4.5", cheese_selectable=False, max_input_tokens=128_000),
     ]
     answering = gw.LlmGateway(
         "http://gw",
@@ -1222,3 +1224,7 @@ async def test_a_session_on_a_gateway_model_is_told_the_window_the_gateway_decla
     assert compaction["kimi-k3"] == {"autoCompactWindow": 200_000}
     assert compaction["gemini-4-argon"] == {"autoCompactWindow": 1_000_000}
     assert "claude-sonnet-5-5" not in compaction
+    assert "glm-4.5" not in compaction
+    # The settings are part of what a launch is compared by; the gateway's row
+    # order (not by id above) must not change them.
+    assert list(compaction) == sorted(compaction)
