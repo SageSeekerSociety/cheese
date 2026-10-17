@@ -5,6 +5,9 @@ Outputs:
 - missing endpoints (by method + path)
 - extra endpoints (registered in FastAPI but not present in spec)
 - parameter-name mismatches (same canonical path shape but different placeholder names)
+
+Exits 1 when there is anything to report, so a caller can fail on drift instead of
+reading a report that always succeeds.
 """
 
 import json
@@ -50,7 +53,7 @@ def group_by_canonical(entries: Iterable[tuple[str, str]]):
     return grouped
 
 
-def main() -> None:
+def main() -> int:
     spec = load_spec()
     app_routes = collect_app_routes()
 
@@ -96,6 +99,8 @@ def main() -> None:
     else:
         print("\nNo placeholder naming mismatches detected.")
 
+    return 1 if missing or extra or canonical_mismatches else 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
