@@ -1092,6 +1092,90 @@ class WorkflowTextTest(unittest.TestCase):
             )
             self.assertNotEqual(mg_fail.returncode, 0)
 
+    def test_the_title_step_asks_curl_for_a_retry_and_keeps_the_body(self):
+        # #4144: one TLS reset on the API GET reddened a merge-queue entry. The
+        # shell cannot retry the request itself, so it asks curl for a retry
+        # budget; run the step's real shell against a curl stub that records its
+        # arguments and succeeds, and the request must arrive with that budget
+        # and the body must still reach the checker verbatim.
+        body = run_body_containing(self.text, "api()")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            curl_args = tmp / "curl_args"
+            _stub(bindir, "curl", (
+                'out=""\n'
+                'prev=""\n'
+                'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+                'printf "%s\\n" "$*" >> "$CURL_ARGS"\n'
+                'printf "%s" \'{"number":7}\' > "$out"\n'
+                'printf 200\n'
+            ))
+            _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_ARGS"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp), "CURL_ARGS": str(curl_args),
+                   "PY_ARGS": str(tmp / "py_args"), "GITHUB_REPOSITORY": "owner/repo",
+                   "PR_NUMBER": "7", "GH_TOKEN": "x",
+                   "GITHUB_EVENT_NAME": "pull_request"}
+            subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp, check=True,
+                           capture_output=True, text=True)
+            args = curl_args.read_text()
+            self.assertIn("--retry-all-errors", args, f"no retry budget: {args}")
+            self.assertIn("--max-time", args, f"no bound on a hung read: {args}")
+            self.assertEqual((tmp / "pull.json").read_text(), '{"number":7}',
+                             "the response did not reach the checker verbatim")
+
+    def test_the_title_step_does_not_hand_python_an_empty_body(self):
+        # A read that really fails is reported where it happened and exits
+        # there. The merge_group branch used to pipe curl straight into python,
+        # which turned the network error into a JSONDecodeError on "".
+        body = run_body_containing(self.text, "api()")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            _stub(bindir, "curl",
+                  'printf "curl: (35) TLS connect error\\n" >&2\nexit 35\n')
+            _stub(bindir, "python3", 'printf "%s\\n" "$*" >> "$PY_ARGS"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "RUNNER_TEMP": str(tmp), "PY_ARGS": str(tmp / "py_args"),
+                   "GITHUB_REPOSITORY": "owner/repo", "GH_TOKEN": "x",
+                   "BASE_SHA": "b" * 40, "HEAD_SHA": "h" * 40,
+                   "GITHUB_EVENT_NAME": "merge_group"}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertNotEqual(proc.returncode, 0, "a failed read did not fail the step")
+            self.assertFalse((tmp / "py_args").exists(),
+                             "python was reached after a failed read")
+            self.assertIn("curl exit 35", proc.stderr)
+            self.assertIn("HTTP", proc.stderr)
+
+    def test_the_scope_step_retries_a_failed_base_fetch(self):
+        # The base fetch is the same single shot on the same pool, and every
+        # selected suite waits on it: a transient network error there reddens
+        # the whole run.
+        body = run_body_containing(self.text, "required-ci.py scope")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            git_calls = tmp / "git_calls"
+            _stub(bindir, "git", (
+                'n=$(cat "$GIT_CALLS" 2>/dev/null || echo 0)\n'
+                'n=$((n + 1))\n'
+                'printf "%s" "$n" > "$GIT_CALLS"\n'
+                '[ "$n" -ge 2 ] || { echo "fatal: unable to access" >&2; exit 128; }\n'
+            ))
+            _stub(bindir, "python3", "exit 0\n")
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "GIT_CALLS": str(git_calls), "BASE_SHA": "b" * 40}
+            proc = subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp,
+                                  capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(git_calls.read_text(), "2",
+                             "the base fetch was not retried")
+
 
 class MainCliTest(unittest.TestCase):
     """The ``scope``/``check`` wiring that the runner actually invokes."""
