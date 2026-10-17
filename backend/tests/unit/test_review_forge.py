@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError, ValidationError
 from app.domain.review import forge as forge_mod
 
 
@@ -239,8 +239,10 @@ async def test_pr_less_file_or_link_card_renders_clean_and_accepts_without_pr(
         rendered_with_commits["merge_state"]["reasons"][0]["detail"]
         == "PR 尚未创建，检查状态未知"
     )
-    service._stop_accept_no_branch = AsyncMock(side_effect=ValidationError("no branch"))
-    with pytest.raises(ValidationError, match="no branch"):
+    service._stop_accept_no_branch = AsyncMock(
+        side_effect=UnprocessableEntityError("no branch")
+    )
+    with pytest.raises(UnprocessableEntityError, match="no branch"):
         await service._accept_github(card_with_commits, topic, "alice", seen_head=None)
     published.assert_awaited_once_with(card_with_commits, topic)
     assert card_with_commits.status == AcceptStatus.pending
