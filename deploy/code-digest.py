@@ -46,13 +46,13 @@ for name, module in sorted(sys.modules.items()):
     try:
         with open(path, "rb") as handle:
             content = handle.read()
-    except OSError:
-        continue
+    except OSError as error:
+        raise OSError(f"cannot read source for imported module {name!r} at {path!r}") from error
     digest.update(name.encode() + b"\0" + content + b"\0")
 for path in ("/etc/os-release", "/var/lib/dpkg/status"):
     try:
         with open(path, "rb") as handle:
             digest.update(path.encode() + b"\0" + handle.read() + b"\0")
-    except OSError:
-        pass
+    except OSError as error:
+        raise OSError(f"cannot read system input {path!r}") from error
 print(f"code-digest {digest.hexdigest()}")
