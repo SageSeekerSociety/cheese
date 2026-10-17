@@ -102,7 +102,7 @@ async def watch_loop_lag(
             now = time.monotonic()
             if timer_fired:
                 _last_dump_at = now
-            if lag < stall_s or not should_report:
+            if (lag < stall_s and not timer_fired) or not should_report:
                 continue
             _last_dump_at = now
             logger.warning(

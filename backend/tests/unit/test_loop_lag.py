@@ -232,7 +232,7 @@ async def test_a_dump_below_the_lag_threshold_consumes_the_rate_limit(
     time.sleep(0.2)  # noqa: ASYNC251 — the second short stall
     await watching
 
-    assert _stall_count(caplog, capsys) == 0
+    assert _stall_count(caplog, capsys) == 1
     assert loop_lag.lag_status()["worst_ms"] < 100
     assert dump_calls == 1
     assert fired_count == 1
