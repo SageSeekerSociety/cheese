@@ -138,6 +138,7 @@ const props = withDefaults(
     topicList: () => [],
     memberNames: () => ({}),
     tab: undefined,
+    routineId: null,
     cardPhase: undefined,
     withChat: false,
     compact: false,

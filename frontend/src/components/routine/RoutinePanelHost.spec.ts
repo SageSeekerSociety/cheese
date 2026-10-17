@@ -27,14 +27,8 @@ vi.mock('../../api/routines', () => ({
 
 import RoutinePanelHost from './RoutinePanelHost.vue'
 
-const {
-  createRoutine,
-  createRoutineTemplate,
-  getRoutine,
-  listProjectRoutines,
-  listRoutineTemplates,
-  updateRoutine,
-} = await import('../../api/routines')
+const { createRoutine, createRoutineTemplate, getRoutine, listProjectRoutines, listRoutineTemplates, updateRoutine } =
+  await import('../../api/routines')
 
 const vuetify = createVuetify({ components, directives })
 
