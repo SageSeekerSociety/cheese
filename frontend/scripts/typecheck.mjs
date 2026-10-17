@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 // Type-checks the frontend, after generating the API types it compiles against.
 //
-//   node scripts/typecheck.mjs            check (exit 1 on any new error)
-//   node scripts/typecheck.mjs --update   rewrite the baseline downward
+//   node scripts/typecheck.mjs            check (exit 1 on any type error)
 //
-// Every argument is handed to scripts/tsc-ratchet.mjs, which does the judging
-// and owns tsc-baseline.json.
+// Every argument is handed to scripts/tsc-ratchet.mjs, which does the judging.
 //
 // src/api/openapi.d.ts is generated (scripts/gen-api-types.mjs) and is NOT
 // committed, and the document it is generated from is not committed either:
@@ -23,7 +21,7 @@
 // not, gen-api-types.mjs says so in those words rather than reporting errors in
 // types that were never generated.
 //
-// Everything that runs the ratchet goes through this file, because everything
+// Everything that runs the type check goes through this file, because everything
 // that runs it needs the types present: `pnpm run typecheck` (the CI job, the
 // pre-commit hook, `task fe:check`), the narrow changed-files project the fast
 // tier builds in .github/scripts/ci_fast_checks.py, and the post-merge

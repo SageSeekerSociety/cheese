@@ -309,8 +309,8 @@ everything is still allowed to answer unknown.
   self-test rather than quietly leaving the tuple. The
   narrow type project
   extends the real `frontend/tsconfig.json`,
-  bridges `node_modules`, and checks only the surviving changed files against the
-  existing tsc-ratchet baseline, after the type check builds the backend's
+  bridges `node_modules`, and checks only the surviving changed files — any
+  type error in them fails — after the type check builds the backend's
   OpenAPI document and generates the API types from it
   (`frontend/scripts/typecheck.mjs` — neither half is committed); a deleted non-spec source file forces the full
   typecheck instead, since only the whole project sees its dangling importers.
