@@ -290,6 +290,7 @@ def _pytest_probe(tmp_path, env, *args, expected_status=0):
 @pytest.mark.parametrize("workers", [0, 2])
 def test_real_fixture_locks_before_creation_through_teardown(tmp_path, workers):
     env = _probe(tmp_path, workers=workers)
+    env["CHEESE_CI_SLOT"] = "fallback"
     (tmp_path / "test_probe.py").write_text(
         textwrap.dedent(f"""
         import time
@@ -308,7 +309,12 @@ def test_real_fixture_locks_before_creation_through_teardown(tmp_path, workers):
     """)
     )
     _pytest_probe(tmp_path, env, "-n", str(workers))
-    assert len(list(tmp_path.glob("created-*"))) == (4 if workers else 2)
+    suffixes = ("_gw0", "_gw1") if workers else ("",)
+    assert {path.name for path in tmp_path.glob("created-*")} == {
+        f"created-cheesex_test_probe{worker}{client}"
+        for worker in suffixes
+        for client in ("", "_c")
+    }
     # The whole fixture graph finished; a subsequent run can take the slot.
     with isolation.claim_slot(
         slot="probe",
@@ -351,10 +357,16 @@ def test_pure_tests_and_collection_do_not_claim_resources(tmp_path, collect_only
     assert not list(tmp_path.glob("created-*"))
 
 
+@pytest.mark.parametrize(
+    "variable", ["CHEESEX_REDIS_DB_COUNT", "CHEESE_CI_VALKEY_DATABASES"]
+)
 @pytest.mark.parametrize("count", [16, 64])
-def test_harness_uses_the_declared_instance_capacity(tmp_path, count):
+def test_harness_uses_the_declared_instance_capacity(tmp_path, count, variable):
     env = _probe(tmp_path)
-    env.update(CHEESEX_REDIS_DB_COUNT=str(count), CHEESE_CI_REDIS_BASE_DB="16")
+    env.pop("CHEESEX_REDIS_DB_COUNT")
+    # The explicit override must win even when the resident setting disagrees.
+    env["CHEESE_CI_VALKEY_DATABASES"] = "64" if count == 16 else "16"
+    env.update({variable: str(count), "CHEESE_CI_REDIS_BASE_DB": "16"})
     result = subprocess.run(
         [
             sys.executable,
