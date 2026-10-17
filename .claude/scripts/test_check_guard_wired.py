@@ -270,12 +270,18 @@ class GuardWiringTests(unittest.TestCase):
         wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
         with fixture(workflow=wired) as root:
             for name in EXCUSED:
-                (root / ".claude/scripts" / name).write_text(
-                    "from pathlib import Path\n"
-                    f"Path(__file__).with_name({name + '.ran'!r}).write_text('2')\n"
-                    "raise SystemExit(2)\n",
-                    encoding="utf-8",
-                )
+                if name.endswith(".sh"):
+                    body = (
+                        f'printf 2 > "$(dirname "$0")/{name}.ran"\n'
+                        "exit 2\n"
+                    )
+                else:
+                    body = (
+                        "from pathlib import Path\n"
+                        f"Path(__file__).with_name({name + '.ran'!r}).write_text('2')\n"
+                        "raise SystemExit(2)\n"
+                    )
+                (root / ".claude/scripts" / name).write_text(body, encoding="utf-8")
             result = run(root)
             marks = [root / ".claude/scripts" / f"{name}.ran" for name in EXCUSED]
             ran = [mark.exists() for mark in marks]
@@ -303,6 +309,28 @@ class GuardWiringTests(unittest.TestCase):
         self.assertEqual(code, 1, problems)
         self.assertTrue(
             any("cannot be started" in problem for problem in problems), problems
+        )
+
+    def test_a_relative_root_is_resolved_before_the_guard_is_run(self) -> None:
+        """`--root repo` must not resolve twice and honour a green excuse."""
+        excused = EXCUSED[0] if EXCUSED else None
+        if excused is None:
+            self.skipTest("the guard excuses nothing")
+        wired = "      - run: python3 .claude/scripts/check-unwired.py\n"
+        with fixture(workflow=wired) as root:
+            (root / ".claude/scripts" / excused).write_text(
+                "raise SystemExit(0)\n", encoding="utf-8"
+            )
+            result = subprocess.run(
+                [sys.executable, str(GUARD), "--root", root.name],
+                cwd=root.parent,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn(
+            f"{excused} is green now: delete the ON_DEMAND entry", result.stderr
         )
 
     def test_an_excuse_that_never_finishes_is_not_honoured(self) -> None:
