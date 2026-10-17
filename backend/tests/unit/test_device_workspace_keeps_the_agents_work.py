@@ -1667,3 +1667,22 @@ def test_a_checkout_git_cannot_describe_is_kept_on_a_persons_machine(
     resource_cleanup.remove_task_checkouts(home, [task])
 
     assert (work / "draft.txt").exists()
+
+
+def test_untracked_work_a_persons_git_config_hides_is_kept_on_their_machine(
+    device, monkeypatch
+):
+    """`status.showUntrackedFiles=no` in a person's git config hides new files
+    from `git status`; they are work all the same, and the checkout stays."""
+    cli, tasks, _remote, home = device
+    monkeypatch.setenv("CHEESE_MACHINE_SUPPLY", "self_hosted")
+    (home / ".gitconfig").write_text("[status]\n\tshowUntrackedFiles = no\n")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("not committed\n")
+    cli._sync_task(task)
+    tasks[task]["closed"] = True
+
+    resource_cleanup.remove_task_checkouts(home, [task])
+
+    assert (work / "draft.txt").exists()

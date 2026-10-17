@@ -4380,8 +4380,9 @@ def _sync_task(task_id: str) -> list[str]:
             else:
                 try:
                     step = "snapshot"
-                    # HEAD again: following a landed step moves it, also when
-                    # the push after it failed.
+                    # HEAD again: following a landed step moves it, and a
+                    # failure after the move (setting up the new branch's
+                    # environment) skips the re-read before the push.
                     base = _git_task(worktree, "rev-parse", "HEAD")
                     snapshot, left_out = _snapshot_commit(
                         worktree, admin, task_id, base
@@ -4433,7 +4434,15 @@ def _mark_work_only_here(admin: Path, worktree: Path) -> None:
     marker = admin / _WORK_ONLY_HERE
     try:
         listed = _git_task(
-            worktree, "--no-optional-locks", "status", "--porcelain", "-z", raw=True
+            worktree,
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "-z",
+            # Whatever the person's git config hides from `git status`.
+            "--untracked-files=normal",
+            "--ignore-submodules=none",
+            raw=True,
         )
         # What a snapshot would carry: every change to a tracked file, and
         # untracked files outside a generated directory, which comes back
