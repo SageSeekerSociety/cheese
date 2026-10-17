@@ -10,6 +10,7 @@ from pathlib import Path
 from app.domain.agent.harness.codex.runner import Runner
 from app.domain.agent.harness.codex.tools import RemoteTools, mcp_config
 from app.domain.agent.harness.driven.mcp_gateway import SECRET_ENV
+from app.domain.agent.harness.driven.monitor import Monitors
 from app.domain.agent.harness.driven.runner import SessionStart, reply_owed_path
 
 
@@ -25,6 +26,12 @@ async def serve(state: Path, config: dict) -> None:
     # as the Claude Code and pi launches carry them (`session_skill_files`).
     await asyncio.to_thread(tools.ship_skills, config.get("skills") or {})
     runner = Runner(state, tools, skills=tools)
+    tools.monitors = runner.monitors = Monitors(
+        tools.client.control,
+        runner.tell,
+        cwd=lambda: tools.client.config["workspace"],
+        place=lambda command: tools.on_the_machine({"command": command})["command"],
+    )
     runner.checkpointer = tools.client.checkpoint
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
