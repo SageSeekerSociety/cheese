@@ -87,20 +87,22 @@ const emit = defineEmits<{
       @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press-topic', rootTopic.id)"
     >
       <template #prepend>
-        <!-- 「综合」的槽里画 #：它是频道，和下面的频道行同一个记号。 -->
-        <TopicRailTaskFold
-          v-if="taskCount"
-          :collapsed="tasksCollapsed === true"
-          :page="page"
-          @toggle="emit('toggle-tasks')"
-        />
-        <span v-else class="row-slot">
-          <v-icon
-            size="16"
-            class="row-glyph"
-            :class="{ 'row-glyph--unread': unreadOf(rootTopic.id) > 0 || freshOf?.(rootTopic.id) }"
-            icon="mdi-pound"
+        <span class="row-leading">
+          <!-- 「综合」的槽里画 #：它是频道，和下面的频道行同一个记号。 -->
+          <TopicRailTaskFold
+            v-if="taskCount"
+            :collapsed="tasksCollapsed === true"
+            :page="page"
+            @toggle="emit('toggle-tasks')"
           />
+          <span v-else class="row-slot">
+            <v-icon
+              size="16"
+              class="row-glyph"
+              :class="{ 'row-glyph--unread': unreadOf(rootTopic.id) > 0 || freshOf?.(rootTopic.id) }"
+              icon="mdi-pound"
+            />
+          </span>
         </span>
       </template>
       <v-list-item-title

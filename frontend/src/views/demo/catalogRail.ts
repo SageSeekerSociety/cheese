@@ -12,7 +12,7 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { RAIL_ACTIONS, RAIL_PAGES, RAIL_ROOT_TOPIC, RAIL_ROWS, RAIL_TERMS } from './catalogFixtures'
+import { RAIL_ACTIONS, RAIL_MARKS, RAIL_PAGES, RAIL_ROOT_TOPIC, RAIL_ROWS, RAIL_TERMS } from './catalogFixtures'
 
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
@@ -165,7 +165,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       {
         name: '一位成员卡住了',
         note: '原来成员头像上的卡住提示并入行尾唯一的灯，现有卡住判据不变。',
-        props: rowProps({ row: RAIL_ROWS.stalled, stalled: true }),
+        props: rowProps({ row: RAIL_ROWS.stalled, stalled: true, marks: RAIL_MARKS.stalled }),
         expect: '把成绩单导出成 CSV',
       },
       {
@@ -209,6 +209,33 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           taskLight: { kind: 'yellow', breathe: false },
         }),
         expectSelector: '.row-light--yellow',
+      },
+      {
+        name: '同层：子频道和任务都能折叠',
+        note: '两个独立箭头共用固定宽度的前置区域，名称与同层其他频道对齐。',
+        props: rowProps({ row: { ...RAIL_ROWS.working, hasChildren: true, collapsed: false }, taskCount: 5 }),
+        expectSelector: '.subtree-toggle',
+      },
+      {
+        name: '同层：只有子频道',
+        note: '没有任务箭头时，前置区域宽度仍保持不变。',
+        props: rowProps({ row: { ...RAIL_ROWS.working, hasChildren: true, collapsed: false } }),
+        expectSelector: '.subtree-toggle',
+      },
+      {
+        name: '同层：只有任务',
+        note: '任务箭头在名称前，与只有子频道或没有子项的频道对齐。',
+        props: rowProps({ row: RAIL_ROWS.working, taskCount: 5 }),
+        expectSelector: '.task-fold__btn',
+      },
+      {
+        name: '私密频道有任务',
+        note: '任务箭头不替代锁；私密频道的标记与提示仍然可见。',
+        props: rowProps({
+          row: { ...RAIL_ROWS.working, topic: { ...RAIL_ROWS.working.topic, members_only: true } },
+          taskCount: 1,
+        }),
+        expectSelector: '.mdi-lock-outline',
       },
     ],
   },
@@ -285,6 +312,21 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           lightOf: () => ({ kind: 'green', breathe: true }),
         },
         expectSelector: '.row-light--breathe',
+      },
+      {
+        name: '综合只汇总收起的任务',
+        note: '频道自身没有状态时，收起的任务仍通过唯一状态灯提示。',
+        props: {
+          rootTopic: RAIL_ROOT_TOPIC,
+          selectedTopicId: null,
+          page: false,
+          unreadOf: () => 0,
+          lightOf: () => null,
+          taskCount: 1,
+          tasksCollapsed: true,
+          taskLight: { kind: 'blue', breathe: false },
+        },
+        expectSelector: '.row-light--blue',
       },
     ],
   },

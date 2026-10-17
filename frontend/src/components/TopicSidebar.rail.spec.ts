@@ -519,6 +519,86 @@ describe('C6 等你的那一盏黄灯', () => {
   })
 })
 
+// 名称前那一格同时可能站着频道记号、子话题箭头和任务箭头。合成一格以后，任何一样
+// 都不能因为另一样在就消失——私密频道的锁说的是「谁能进来」，它比「这个频道有几条
+// 活」更不能被省略；两个箭头各管一层，也不能互相替代。
+describe('名称前的记号与两种折叠并存', () => {
+  it('私密频道挂着任务时，锁和私密提示仍在，任务箭头只收任务、不选中频道', async () => {
+    const onToggleTasksFold = vi.fn()
+    const onSelectTopic = vi.fn()
+    const secret = { ...topic('secret', 'root'), members_only: true }
+    const { container } = mount({
+      topics: [topic('root', null, 'root'), secret],
+      roomTaskTotals: { secret: 2 },
+      onToggleTasksFold,
+      onSelectTopic,
+    })
+    const row = container.querySelector('[data-row-actions="secret"]') as HTMLElement
+    expect(row).not.toBeNull()
+
+    // 成员可见性是这一行的前提，不能拿折叠箭头把它换掉。
+    const glyph = row.querySelector('.row-glyph')
+    expect(glyph).not.toBeNull()
+    expect(glyph?.classList.contains('mdi-lock-outline')).toBe(true)
+    expect(glyph?.getAttribute('title')).toBe(t('work.channel.privateTip'))
+
+    const fold = row.querySelector('button.task-fold__btn')
+    expect(fold).not.toBeNull()
+    await fireEvent.click(fold as Element)
+
+    expect(onToggleTasksFold).toHaveBeenCalledExactlyOnceWith('secret')
+    expect(onSelectTopic).not.toHaveBeenCalled()
+  })
+
+  it('公共频道挂着任务时不再补一个多余的 #，任务箭头就是那一格里的记号', () => {
+    const { container } = mount({
+      topics: [topic('root', null, 'root'), topic('a', 'root')],
+      roomTaskTotals: { a: 2 },
+    })
+    const row = container.querySelector('[data-row-actions="a"]') as HTMLElement
+    expect(row.querySelector('.row-glyph')).toBeNull()
+    expect(row.querySelector('button.task-fold__btn')).not.toBeNull()
+  })
+})
+
+// 「综合」自己没话说时，收起来的任务仍然要在那一行上说出来。状态灯只有一盏，
+// 所以蓝/绿/红都得能穿过 taskLight 的合并落到 rowLight 上；去掉那次合并，这一组
+// 会只剩 0 盏灯。
+describe('综合自身无灯时，收起来的任务灯仍落在唯一那盏灯上', () => {
+  function task(over: Record<string, unknown>): Record<string, unknown> {
+    return {
+      id: 'task-root',
+      room_id: 'root',
+      title: 'Task',
+      title_source: 'user',
+      status: 'open',
+      presentation: { column: 'todo' },
+      ...over,
+    }
+  }
+
+  it.each([
+    ['蓝：这条归我', task({ owner_handle: null }), '.row-light--blue'],
+    ['绿：有活在往前走', task({ moving: true }), '.row-light--green.row-light--breathe'],
+    [
+      '红：显示在跑但没动静',
+      task({ moving: true, last_output_at: new Date(Date.now() - 10 * 60_000).toISOString() }),
+      '.row-light--red',
+    ],
+  ])('%s', (_name, foldedTask, selector) => {
+    const { container } = mount({
+      // 「综合」自身没有任何状态事实，灯只能来自收起来的任务块。
+      topics: [topic('root', null, 'root')],
+      roomTaskTotals: { root: 1 },
+      roomTasks: { root: [foldedTask] },
+      foldedChannels: { root: true },
+    })
+    const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
+    expect(row.querySelectorAll('.row-light')).toHaveLength(1)
+    expect(row.querySelector(selector)).not.toBeNull()
+  })
+})
+
 // 整页形态：手机上话题列表是页面栈的一层，占满内容区。抽屉和"拖宽度"这两样
 // 在手机上都不成立——但列表本身一条不能少。
 describe('整页形态', () => {

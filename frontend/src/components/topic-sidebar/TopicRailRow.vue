@@ -148,37 +148,37 @@ function onMenuToggle(open: boolean) {
     @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press', row.topic.id)"
     @contextmenu="openMenuAt"
   >
-    <!-- 左边一个 16px 槽：有子话题是折叠开关，否则画频道记号（# / 锁 / 文档），和
-         「# 综合」同一个记号——没有它，频道名和「综合」的字就对不齐。种类标签不要
-         （缩进表达层级），操作 hover 才浮现。 -->
+    <!-- Independent fold controls share a fixed leading slot; private/type markers stay visible. -->
     <template #prepend>
-      <button
-        v-if="row.hasChildren"
-        type="button"
-        class="row-slot subtree-toggle"
-        :title="toggleTitle"
-        :aria-label="toggleTitle"
-        :aria-expanded="!row.collapsed"
-        @click.stop="emit('toggle-collapse', row.topic.id)"
-      >
-        <v-icon size="15">
-          {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
-        </v-icon>
-      </button>
-      <TopicRailTaskFold
-        v-if="taskCount"
-        :collapsed="tasksCollapsed === true"
-        :page="page"
-        @toggle="emit('toggle-tasks', row.topic.id)"
-      />
-      <span v-if="!row.hasChildren && !taskCount" class="row-slot">
-        <v-icon
-          size="16"
-          class="row-glyph"
-          :class="{ 'row-glyph--unread': row.unreadTotal > 0 || fresh }"
-          :icon="channelGlyph(row.topic)"
-          :title="row.topic.members_only ? t('work.channel.privateTip') : undefined"
+      <span class="row-leading">
+        <button
+          v-if="row.hasChildren"
+          type="button"
+          class="row-slot subtree-toggle"
+          :title="toggleTitle"
+          :aria-label="toggleTitle"
+          :aria-expanded="!row.collapsed"
+          @click.stop="emit('toggle-collapse', row.topic.id)"
+        >
+          <v-icon size="15">
+            {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+          </v-icon>
+        </button>
+        <TopicRailTaskFold
+          v-if="taskCount"
+          :collapsed="tasksCollapsed === true"
+          :page="page"
+          @toggle="emit('toggle-tasks', row.topic.id)"
         />
+        <span v-if="!row.hasChildren && (!taskCount || channelGlyph(row.topic) !== 'mdi-pound')" class="row-slot">
+          <v-icon
+            size="16"
+            class="row-glyph"
+            :class="{ 'row-glyph--unread': row.unreadTotal > 0 || fresh }"
+            :icon="channelGlyph(row.topic)"
+            :title="row.topic.members_only ? t('work.channel.privateTip') : undefined"
+          />
+        </span>
       </span>
     </template>
     <v-list-item-title class="d-flex align-center topic-title">

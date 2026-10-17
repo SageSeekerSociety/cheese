@@ -77,7 +77,7 @@ const emit = defineEmits<{
   width: 100%;
   min-height: 32px;
   padding-block: 0;
-  padding-inline-start: var(--task-indent);
+  padding-inline-start: calc(var(--task-indent) + 20px);
   padding-inline-end: 12px;
   border: 0;
   border-radius: var(--radius-md);
@@ -135,14 +135,14 @@ const emit = defineEmits<{
   color: var(--ink);
 }
 .topic-rail--page .rail-task {
-  padding-inline-start: calc(var(--task-indent) + 28px);
+  padding-inline-start: calc(var(--task-indent) + 76px);
 }
 .topic-rail--page .rail-task::before {
   left: calc(var(--guide-x) + 14px);
 }
 @media (hover: none) {
   .rail-task {
-    padding-inline-start: calc(var(--task-indent) + 28px);
+    padding-inline-start: calc(var(--task-indent) + 76px);
   }
   .rail-task::before {
     left: calc(var(--guide-x) + 14px);

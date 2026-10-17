@@ -17,7 +17,16 @@
 }
 
 .rail-channel [class~='v-list-item__prepend'] {
+  gap: 0;
+}
+
+/* Two independent 16px controls and a 4px gap, regardless of which are present. */
+.rail-channel .row-leading {
+  display: flex;
+  flex: none;
+  align-items: center;
   gap: 4px;
+  width: 36px;
 }
 
 .rail-channel .row-actions {
@@ -55,7 +64,16 @@
   min-height: 44px;
 }
 
+/* Touch controls reserve two independent 44px targets and their gap. */
+.rail-channel-page .row-leading {
+  width: 92px;
+}
+
 @media (hover: none) {
+  .rail-channel .row-leading {
+    width: 92px;
+  }
+
   .rail-channel {
     min-height: 44px;
   }

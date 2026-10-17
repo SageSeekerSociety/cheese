@@ -137,6 +137,95 @@ test.describe('sidebar channel row geometry', () => {
       expectStationary(boxes[2], await boxOf(light));
     });
   });
+
+  // 触屏不等于「整页形态」。桌面宽度、但输入是手指的机器（触屏笔记本）上，⋯ 也必须
+  // 常驻、两个控件各自撑到 44×44——不能靠 page fixture 改写出来的 44px 规则通过。
+  // 媒体查询用 CDP 明确置为 hover:none，而不是假设某个 Playwright 设备描述符会顺带
+  // 让它成立。
+  test.describe('desktop-width touch', () => {
+    test.use({ viewport: { width: 1280, height: 800 }, hasTouch: true, isMobile: false });
+
+    test('hover:none at desktop width keeps ⋯ resident and both 44px targets separate', async ({ page }) => {
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send('Emulation.setEmulatedMedia', {
+        features: [
+          { name: 'hover', value: 'none' },
+          { name: 'pointer', value: 'coarse' },
+        ],
+      });
+
+      const row = await catalogRow(page, 13);
+      await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+
+      expect(
+        await page.evaluate(() => matchMedia('(hover: none)').matches),
+        'this contract is about touch input, not page form'
+      ).toBe(true);
+      expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+      // The row is NOT the page form: page remains false at desktop width.
+      await expect(row).not.toHaveClass(/rail-channel-page/);
+
+      const actions = row.locator('.row-actions');
+      const arrow = row.locator('.task-fold__btn');
+      const title = row.locator('.topic-title');
+      const light = row.locator('.row-light');
+      const more = row.locator('.row-actions__btn');
+
+      await expect(actions).toHaveCSS('opacity', '1');
+      await expect(arrow).toHaveAttribute('aria-expanded', 'false');
+      const boxes = await Promise.all([arrow, title, light, more].map(boxOf));
+      expect(boxes[0].x + boxes[0].width).toBeLessThanOrEqual(boxes[1].x + 0.5);
+      for (const target of [boxes[0], boxes[3]]) {
+        expect(target.width).toBeGreaterThanOrEqual(44);
+        expect(target.height).toBeGreaterThanOrEqual(44);
+      }
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) expectSeparate(boxes[i], boxes[j]);
+      }
+      for (const target of [arrow, more]) await expectHitSurface(target);
+      // A public channel with tasks gets no redundant #; the task arrow is the only mark.
+      await expect(row.locator('.row-glyph')).toHaveCount(0);
+    });
+  });
+
+  // 名称前的记号换成了「有子话题 / 有任务」的控件，但同层标题必须仍然从同一条竖线
+  // 开始——参差只出现在层级之间，不因为这一行多了哪一个控件而变化。
+  // Catalog 11=子频道+任务，12=仅子频道，13=仅任务，0=都没有。
+  test('same-level titles share one left edge with children, tasks, both or neither', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const cases = [
+      { state: 0, children: false, tasks: false },
+      { state: 11, children: true, tasks: true },
+      { state: 12, children: true, tasks: false },
+      { state: 13, children: false, tasks: true },
+    ];
+    const lefts: number[] = [];
+    for (const item of cases) {
+      const row = await catalogRow(page, item.state);
+      await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+      await expect(row.locator('.subtree-toggle')).toHaveCount(item.children ? 1 : 0);
+      await expect(row.locator('.task-fold__btn')).toHaveCount(item.tasks ? 1 : 0);
+      lefts.push((await boxOf(row.locator('.topic-title'))).x);
+    }
+    expect(Math.max(...lefts) - Math.min(...lefts), `title left edges: ${lefts.join(', ')}`).toBeLessThanOrEqual(0.5);
+  });
+
+  // 私密频道的锁说的是「谁能进来」，有任务时不能拿任务箭头把它换掉；悬停说明也还在。
+  // Catalog 14=私密+任务。
+  test('private channel keeps its lock and its private hint while tasks are collapsible', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    const row = await catalogRow(page, 14);
+    await page.locator('.frame-page').evaluate(el => { (el as HTMLElement).style.width = '280px'; });
+
+    const glyph = row.locator('.row-glyph');
+    await expect(glyph).toHaveCount(1);
+    await expect(glyph).toHaveClass(/mdi-lock-outline/);
+    await expect(glyph).toHaveAttribute('title', '私密频道');
+    const arrow = row.locator('.task-fold__btn');
+    await expect(arrow).toHaveCount(1);
+    const [glyphBox, arrowBox] = await Promise.all([boxOf(glyph), boxOf(arrow)]);
+    expectSeparate(glyphBox, arrowBox);
+  });
 });
 
 // 表单字段的几何不变量。
