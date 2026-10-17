@@ -1764,6 +1764,140 @@ PY_HANDLER_RETURN_RAISED = PY_HANDLER_RETURN_INSIDE.replace(
     "            exit(0)", "            raise SystemExit(0)"
 )
 
+#: `1 == LIMIT` is false, so the flag takes the hand-off — but `LIMIT` cannot be
+#: read. Guessing the self-test side would drop that hand-off.
+PY_UNREADABLE_COUNT = '''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+LIMIT = int(os.environ.get("LIMIT", "0"))
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1 or "修法" not in done.stderr:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: 合成守卫自测（.bad 文件被报出并给了修法）")
+    return 0
+
+
+def scan(argv):
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    if argv.count("--self-test") == LIMIT:
+        return self_test()
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The exit sits in an `elif` body and lands in a handler that returns the
+#: hand-off.
+PY_ELIF_EXIT_HANDLER = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        if "--self-test" not in argv:
+            return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+        elif len(sys.argv) > 1:
+            print("PASS: 什么都没测")
+            sys.exit(0)
+        else:
+            return 0
+    except SystemExit:
+        return check()
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: `main(sys.argv)` is the same command line, so `len(sys.argv) > 1` holds and
+#: the inner `sys.exit(0)` ends the run for `--self-test`.
+PY_SYS_ARGV_BRANCH = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def scan(root):
+    return 1 if violations_in(root) else 0
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    try:
+        if "--self-test" in argv:
+            if len(sys.argv) > 1:
+                print("PASS: 什么都没测")
+                sys.exit(0)
+        else:
+            return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+    except SystemExit:
+        raise
+    return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
 #: The self-test ends through the bare builtin `exit(0)`, so `check` below is
 #: dead. Missing that call keeps the hand-off on the path.
 PY_BARE_EXIT = '''#!/usr/bin/env python3
@@ -1789,6 +1923,120 @@ def main(argv):
     if violations_in(Path(argv[1]) if len(argv) > 1 else Path(".")):
         return 1
     return check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The branch sits under an unreadable gate, so its exit does not settle. The
+#: handler below it — which spawns a sibling test — is therefore not on the
+#: self-test path, and the guard's own self-test does bite.
+PY_GATED_HANDLER_ARM = '''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1 or "修法" not in done.stderr:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: 合成守卫自测（.bad 文件被报出并给了修法）")
+    return 0
+
+
+def scan(argv):
+    if "--self-test" in argv:
+        return self_test()
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    if os.environ.get("MODE") == "1":
+        try:
+            if "--self-test" in argv:
+                print("PASS: 什么都没测")
+                sys.exit(0)
+        except SystemExit:
+            return subprocess.call(
+                [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+            )
+    return scan(argv)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: Same gate, but the exit after the branch is what the handler catches. The
+#: handler is again off the path, so the sibling spawn must not be read.
+PY_GATED_HANDLER_TAIL = '''#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1 or "修法" not in done.stderr:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: 合成守卫自测（.bad 文件被报出并给了修法）")
+    return 0
+
+
+def scan(argv):
+    if "--self-test" in argv:
+        return self_test()
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    return 1 if problems else 0
+
+
+def main(argv):
+    if os.environ.get("MODE") == "1":
+        try:
+            if "--self-test" not in argv:
+                return scan(Path(argv[1]) if len(argv) > 1 else Path("."))
+            print("PASS: 什么都没测")
+            sys.exit(0)
+        except SystemExit:
+            return subprocess.call(
+                [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+            )
+    return scan(argv)
 
 
 if __name__ == "__main__":
@@ -2226,6 +2474,32 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(guard["status"], "unverified", guard)
         self.assertIn("测试文件", guard["detail"])
 
+    def test_a_count_compared_against_an_unreadable_name_keeps_the_hand_off(self) -> None:
+        """`1 == LIMIT` is false, so the flag takes the hand-off; guessing stops the walk."""
+        code, guard, output = self._only(
+            {"unreadable.py": PY_UNREADABLE_COUNT}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_an_exit_in_an_elif_body_reaches_the_handler(self) -> None:
+        """The `elif` body is what runs here, and its exit lands in the handler."""
+        code, guard, output = self._only(
+            {"elifhandler.py": PY_ELIF_EXIT_HANDLER}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
+    def test_sys_argv_is_read_as_the_self_test_command_line(self) -> None:
+        """`main(sys.argv)` carries the same argv, so the inner block runs."""
+        code, guard, output = self._only(
+            {"sysargv.py": PY_SYS_ARGV_BRANCH}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
     def test_a_bare_exit_call_ends_the_path(self) -> None:
         """The builtin `exit(0)` ends the run just as `sys.exit(0)` does."""
         code, guard, output = self._only(
@@ -2233,6 +2507,22 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         )
         self.assertEqual(code, 1, output)
         self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_handler_under_a_gate_is_not_the_self_test_side(self) -> None:
+        """The branch sits under `MODE`, so its handler is off the self-test path."""
+        code, guard, output = self._only(
+            {"gatedarm.py": PY_GATED_HANDLER_ARM}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_handler_tail_under_a_gate_is_not_the_self_test_side(self) -> None:
+        """The exit after the branch is gated too; the handler stays off the path."""
+        code, guard, output = self._only(
+            {"gatedtail.py": PY_GATED_HANDLER_TAIL}, {"test_counted.py": ELSE_SIBLING}
+        )
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
 
     def test_an_annotated_module_zero_is_read_as_the_scan(self) -> None:
         """`ZERO: int = 0` is the same operand as `ZERO = 0`."""
