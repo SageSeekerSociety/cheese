@@ -137,12 +137,18 @@ async def after_failure(
             return None
         if not await _open(session, conversation_id):
             return None
+        # Locked: a `hand_due` pass may be handing this row over or dropping
+        # it right now. Waiting on its lock re-reads the row, and a row it
+        # settled no longer matches, so this failure writes a row of its own
+        # instead of moving one that is no longer owed.
         owed = await session.scalar(
-            select(TurnResume).where(
+            select(TurnResume)
+            .where(
                 TurnResume.conversation_id == conversation_id,
                 TurnResume.recipient_handle == seat,
                 _owed(),
             )
+            .with_for_update()
         )
         if owed is not None:
             # Something woke the seat before its resume was due (a person, a

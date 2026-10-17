@@ -250,7 +250,7 @@ async def test_a_seat_that_fails_again_after_being_woken_still_resumes(
     )
     screen.failing = 2
     try:
-        assert await _owed_resumes(factory, conversation)
+        [first] = await _owed_resumes(factory, conversation)
         await runner.receive_message(
             chat, conversation, author="u", content=f"<@{seat}> try again please"
         )
@@ -260,7 +260,14 @@ async def test_a_seat_that_fails_again_after_being_woken_still_resumes(
         async with asyncio.timeout(HANG_S):
             while await _failure_cards(factory, conversation) < 2:
                 await asyncio.sleep(0.05)
-        await asyncio.sleep(1)  # scheduling follows the card in the same step
+        # Scheduling follows the card in the same step; give it as long as
+        # anything else to land. Without the fix nothing ever changes here and
+        # the assertion below is what reports it.
+        for _ in range(HANG_S * 10):
+            rows = await _resumes(factory, conversation)
+            if any(r.failed_at > first.failed_at for r in rows):
+                break
+            await asyncio.sleep(0.1)
 
         # Long after any backoff the second failure could have asked for.
         later = datetime.now(UTC) + timedelta(hours=2)
