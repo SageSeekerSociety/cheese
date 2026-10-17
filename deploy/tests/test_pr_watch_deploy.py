@@ -169,20 +169,31 @@ CLOSED = {"data": {"repository": {"pullRequest": {
     "mergeCommit": None, "mergeQueueEntry": None, "timelineItems": {"nodes": []}}}}}
 
 
+# `pr-review.sh ready <PR>`, answering in turn from review-<n>.txt/.exit in $FAKE.
+FAKE_REVIEW = r"""#!/usr/bin/env bash
+[ "$1 $2" = "ready 3426" ] || { echo "usage: ready DIR|PR" >&2; exit 2; }
+n=$(cat "$FAKE/review-calls" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/review-calls"
+while [ "$n" -gt 0 ] && [ ! -f "$FAKE/review-$n.txt" ]; do n=$((n - 1)); done
+cat "$FAKE/review-$n.txt"; exit "$(cat "$FAKE/review-$n.exit")"
+"""
+
+
 class AnOpenPRWaitingForTheQueue(unittest.TestCase):
-    def watch(self, polls, quiet="3600", review="可递：head aaaaaaaa", review_done=True):
+    def watch(self, polls, quiet="3600", reviews=(("可递：head aaaaaaaa", True),)):
         """Run the watcher with --enqueue over successive GitHub answers; return it and whether it merged.
 
-        `review` and `review_done` are what `pr-review.sh ready` prints and whether it says 可递."""
+        `reviews` are what successive `pr-review.sh ready 3426` calls print and whether each says
+        可递; the last one repeats."""
         with tempfile.TemporaryDirectory() as directory:
             fake = Path(directory)
             (fake / "gh").write_text(FAKE_GH)
             (fake / "gh").chmod(0o755)
             # The watcher asks the pr-review.sh beside it, so it runs from a copy with a fake one there.
             shutil.copy(WATCH, fake / "pr-watch.sh")
-            (fake / "review.txt").write_text(review + "\n")
-            (fake / "pr-review.sh").write_text(
-                f'#!/usr/bin/env bash\ncat "$FAKE/review.txt"\nexit {0 if review_done else 1}\n')
+            for n, (text, done) in enumerate(reviews):
+                (fake / f"review-{n}.txt").write_text(text + "\n")
+                (fake / f"review-{n}.exit").write_text("0" if done else "1")
+            (fake / "pr-review.sh").write_text(FAKE_REVIEW)
             (fake / "pr-review.sh").chmod(0o755)
             for n, answer in enumerate(polls):
                 (fake / f"pr-{n}.json").write_text(json.dumps(answer))
@@ -235,10 +246,36 @@ class AnOpenPRWaitingForTheQueue(unittest.TestCase):
         self.assertFalse(merged, result.stdout)
 
     def test_a_green_pr_whose_review_is_not_done_is_not_enqueued_and_says_what_is_missing(self):
-        result, merged = self.watch([open_pr(), open_pr(), CLOSED],
-                                    review="还不能递\n缺增量审查", review_done=False)
+        result, merged = self.watch([open_pr(), open_pr(), CLOSED], quiet="0",
+                                    reviews=[("还不能递\n缺增量审查", False)])
         self.assertFalse(merged, result.stdout)
         self.assertIn("not enqueued, review is not done: 还不能递; 缺增量审查", result.stdout)
+        self.assertIn("not in the queue, review not done", result.stdout)
+
+    def test_a_pr_is_enqueued_once_its_review_is_done_with_nothing_else_changed(self):
+        waiting = open_pr()
+        result, merged = self.watch([waiting, waiting, waiting, waiting, CLOSED],
+                                    reviews=[("还不能递", False), ("还不能递", False), ("可递", True)])
+        self.assertTrue(merged, result.stdout)
+        self.assertIn("enqueue requested", result.stdout)
+
+    def test_a_pr_the_queue_dropped_is_not_put_back_while_its_review_is_not_done(self):
+        result, merged = self.watch([open_pr(queue=QUEUED),
+                                     open_pr(removed=removal("github-merge-queue", "timed_out")), CLOSED],
+                                    reviews=[("还不能递", False)])
+        self.assertFalse(merged, result.stdout)
+
+    def test_a_pr_the_queue_dropped_before_any_poll_saw_it_queued_is_put_back(self):
+        # The watcher enqueued it, and the queue let it go within the minute.
+        result, _ = self.watch([open_pr(), open_pr(removed=removal("github-merge-queue", "manual")), CLOSED])
+        self.assertIn("re-enqueue requested once", result.stdout)
+
+    def test_a_pr_the_queue_dropped_for_a_failing_rule_is_not_put_back(self):
+        for reason in ("failed_checks", "branch_protection_failure"):
+            with self.subTest(reason=reason):
+                result, merged = self.watch([open_pr(queue=QUEUED),
+                                             open_pr(removed=removal("github-merge-queue", reason)), CLOSED])
+                self.assertFalse(merged, result.stdout)
 
     def test_a_pr_stuck_in_one_state_is_still_reported(self):
         stuck = open_pr(auto=True)

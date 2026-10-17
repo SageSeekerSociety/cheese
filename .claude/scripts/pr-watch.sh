@@ -184,6 +184,7 @@ while :; do
     key="$ci|${queue% *}|$removed|$auto|$rv"   # the position alone changing is not news
     if [ "${last[$p]:-}" = "$key" ]; then
       where="not in the queue"; [ -n "$queue" ] && where="queue: ${queue% *}"
+      [ -n "$rv" ] && [ "$rv" != 可递 ] && where="$where, review not done"
       quiet "$p" "CI required: $ci; $where${auto:+, $auto}; merge state $mstate"
       continue
     fi
@@ -211,7 +212,10 @@ while :; do
     if [ -n "$rv" ] && [ "$rv" != 可递 ]; then
       say "$p" "not enqueued, review is not done: ${rv#not ready: }"
     elif [ "$rv" = 可递 ]; then
-      gh pr merge "$p" -R "$REPO" >/dev/null 2>&1 && say "$p" "enqueue requested" || say "$p" "enqueue failed"
+      # The queue can drop it again before the next poll sees it there, so the
+      # head it was queued at is recorded now.
+      if gh pr merge "$p" -R "$REPO" >/dev/null 2>&1; then qhead[$p]=$head; say "$p" "enqueue requested"
+      else say "$p" "enqueue failed"; fi
     fi
   done
   [ "$open" = 1 ] || break
