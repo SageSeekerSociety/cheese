@@ -135,10 +135,7 @@ CHECKS: tuple[Check, ...] = (
             "frontend/eslint.config.mjs",
             "frontend/scripts/import-boundary-ratchet.mjs",
             "frontend/scripts/import-boundary-ratchet-core.mjs",
-            # Shared with the tsc and stylelint ratchets: `compare()` and
-            # `tightenedBaseline()` are what turns counts into a verdict.
-            "frontend/scripts/tsc-ratchet-core.mjs",
-            # BETTER and the status mapping both live here, for all three.
+            # BETTER, the status mapping and the plain verdict live here.
             "frontend/scripts/ratchet-report.mjs",
             # Reading eslint's JSON output into per-file counts, shared with the
             # a11y and storage ratchets — the boundary's counts come from it.
@@ -161,7 +158,6 @@ CHECKS: tuple[Check, ...] = (
             # change to its API is a change to the fix the ratchet asks for.
             "frontend/src/lib/browserStorage.ts",
             "frontend/scripts/eslint-ratchet-json.mjs",
-            "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
         ),
     ),
@@ -231,9 +227,7 @@ CHECKS: tuple[Check, ...] = (
         #
         # The wrapper spawns both of its halves by name, and the closure follows
         # that (see `_JS_SCRIPT`), so the guard still walks everything this
-        # check reads. The ratchet's baseline — frontend/tsc-baseline.json, the
-        # frozen per-file error counts — is the measured debt, not a rule, and
-        # stays excused in NOT_A_RULE.
+        # check reads.
         argv=("node", "scripts/typecheck.mjs", "--json"),
         cwd="frontend",
         rules=(
@@ -273,14 +267,14 @@ CHECKS: tuple[Check, ...] = (
         # reading of the source can decide. The driver starts the frontend and a
         # headless Chromium itself, so this is still one command whose stdout is
         # one record. It is the same walk the e2e gate runs on a pull request —
-        # e2e/contrast-walk.mjs, shared — so the number frozen here and the
+        # e2e/contrast-walk.mjs, shared — so the number recorded here and the
         # verdict that blocks a change come out of one piece of code.
         argv=("node", "contrast-ratchet.mjs", "--json"),
         cwd="e2e",
         rules=(
             "e2e/contrast-ratchet.mjs",
             "e2e/contrast-walk.mjs",
-            # The rule itself: the floors, the ratio, the ratchet logic and the
+            # The rule itself: the floors, the ratio, the verdict and the
             # walker that runs inside the page.
             "frontend/scripts/contrast-ratchet-core.mjs",
             # The record's shape and the cannot-judge path, shared with the
@@ -598,14 +592,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     **{check_id: {
         "frontend/scene-debt-baseline.json": "baseline: exact child, route and network debt sets",
     } for check_id in ("scene-non-a-children", "scene-use-route", "legacy-network")},
-    "fe-boundary": {
-        "frontend/import-boundary-baseline.json": "baseline: the frozen boundary violations",
-    },
-    "fe-storage": {
-        "frontend/browser-storage-baseline.json": (
-            "baseline: the frozen direct Web Storage references"
-        ),
-    },
     "be-contracts": {
         "backend/scripts/__init__.py": (
             "not read: the checker asks whether a package marker exists, and the "
@@ -623,19 +609,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "stylelint-tokens": {
         "frontend/stylelint-baseline.json": "baseline: the frozen token counts",
-    },
-    "vue-tsc": {
-        "frontend/tsc-baseline.json": "baseline: the frozen per-file error counts",
-        # `backend/openapi.json` was the second entry here — a subject, the
-        # schema the generated types are judged against. It stopped being a file
-        # in the repository (2026-10-14), so there is nothing left to excuse: the
-        # generator asks the backend to build it, and the guard below requires
-        # every excused path to exist.
-    },
-    "fe-contrast": {
-        "frontend/contrast-baseline.json": (
-            "baseline: the frozen rendered-contrast debt on the public pages"
-        ),
     },
 }
 

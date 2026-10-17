@@ -53,7 +53,7 @@ from app.api.task_deps import get_task_submission_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.client_address import resolved_client_address
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.space.analytics_view_service import SpaceAnalyticsViewService
 from app.domain.space.learning_service import SpaceLearningService
@@ -260,29 +260,21 @@ async def export_space_analytics_participants(
         f"completionStatus={completionStatus}, realName={realName}"
     )
     ip_address = resolved_client_address(request) or ""
-    seen_target_ids: set[int] = set()
-    for m in memberships:
-        if m.is_team:
-            continue
-        if m.member_id in seen_target_ids:
-            continue
-        seen_target_ids.add(m.member_id)
-        try:
-            await realname_service.log_access(
-                accessor_id=auth_user.user_id,
-                target_id=m.member_id,
-                access_reason=access_reason,
-                access_type="EXPORT",
-                ip_address=ip_address,
-                module_type="SPACE",
-                module_entity_id=space_id,
-            )
-        except NotFoundError:
-            # Target user may have been soft-deleted; skip audit but continue export.
-            _logger.warning(
-                "Skip participant export audit: user not found",
-                extra={"space_id": space_id, "target_id": m.member_id},
-            )
+    target_ids = list(dict.fromkeys(m.member_id for m in memberships if not m.is_team))
+    # Targets may have been soft-deleted; skip their audit but continue export.
+    for missing_id in await realname_service.log_accesses(
+        accessor_id=auth_user.user_id,
+        target_ids=target_ids,
+        access_reason=access_reason,
+        access_type="EXPORT",
+        ip_address=ip_address,
+        module_type="SPACE",
+        module_entity_id=space_id,
+    ):
+        _logger.warning(
+            "Skip participant export audit: user not found",
+            extra={"space_id": space_id, "target_id": missing_id},
+        )
 
     return Response(
         content=csv_text,

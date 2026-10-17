@@ -6,7 +6,7 @@
 // fails on all of them from day one does not get the backlog fixed; it gets the
 // gate deleted. Freezing today's count per file and blocking only NEW violations
 // makes the rule enforceable immediately and lets the backlog be paid down file
-// by file. Exactly the reasoning behind tsc-baseline.json.
+// by file.
 //
 // WHY ONLY THE COLOUR RULES: stylelint reports 3379 warnings on this tree, but 2842 of
 // them are things like property ORDER and class-name casing — rules that have
