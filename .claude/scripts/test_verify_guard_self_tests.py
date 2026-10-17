@@ -159,6 +159,75 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv))
 '''
 
+#: A biting guard whose only failure signal is a bare `return 1`.
+PLAIN_RETURN = '''#!/usr/bin/env python3
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def report(root):
+    problems = violations_in(root)
+    for name in problems:
+        print(f"{name}: 修法：删掉它", file=sys.stderr)
+    if problems:
+        return 1
+    return 0
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    return report(Path(argv[1]) if len(argv) > 1 else Path("."))
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)], capture_output=True, text=True
+        )
+        if done.returncode != 1:
+            print("SELF-TEST FAIL: 没有以 1 报出 .bad", file=sys.stderr)
+            return 1
+    print("PASS: 「.bad」被报出")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: The same, with the code named at module level but returned, not raised.
+NAMED_RETURN = (
+    PLAIN_RETURN.replace("    if problems:\n        return 1", "    if problems:\n        return EXIT_FOUND")
+    .replace("from pathlib import Path", "from pathlib import Path\n\nEXIT_FOUND = 1")
+)
+
+#: The same biting guard, passing a `.py` fixture name as an argument to itself.
+FOREIGN_ARG = BITING.replace(
+    '[sys.executable, str(Path(__file__).resolve()), str(root)]',
+    '[sys.executable, str(Path(__file__).resolve()), str(root), "fixture.py"]',
+)
+
+#: An inline self-test that runs a different `.py` file: the copy is not judged.
+FOREIGN_SCRIPT = BITING.replace(
+    '[sys.executable, str(Path(__file__).resolve()), str(root)]',
+    '[sys.executable, str(Path(__file__).with_name("test_biting.py")), str(root)]',
+)
+
+#: Stands in for the file `FOREIGN_SCRIPT` runs: it exits the way the guard's
+#: self-test expects, and nothing this tool writes can reach it.
+FOREIGN_SCRIPT_SIBLING = '''#!/usr/bin/env python3
+raise SystemExit(1)
+'''
+
 #: A shell guard: its rule lives in `scan`, and the self-test is below it.
 BITING_SHELL = '''#!/usr/bin/env bash
 set -u
@@ -181,6 +250,36 @@ if [ "$SELF_TEST" = 1 ]; then
   echo "PASS: 「.bad」被报出"
   exit 0
 fi
+
+scan "${1:-.}"
+'''
+
+#: A shell guard whose rules sit *after* its self-test block, which re-runs the
+#: script in a child (`bash "$0"`). There is no function before the block, so
+#: nothing can be silenced soundly and the tool declines instead of guessing.
+PASSES_LATE_SHELL = '''#!/usr/bin/env bash
+set -u
+SELF_TEST=0
+[ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+
+if [ "$SELF_TEST" = 1 ]; then
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  : > "$tmp/x.bad"
+  if bash "$0" "$tmp" >/dev/null 2>&1; then
+    echo "SELF-TEST FAIL: 一个 .bad 文件必须报错" >&2
+    exit 1
+  fi
+  echo "PASS: 「.bad」被报出"
+  exit 0
+fi
+
+scan() {
+  local root="$1" bad
+  bad="$(find "$root" -name '*.bad' -print 2>/dev/null || true)"
+  [ -z "$bad" ] && return 0
+  echo "$bad: 修法：删掉它" >&2
+  return 1
+}
 
 scan "${1:-.}"
 '''
@@ -425,10 +524,44 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 0, output)
         self.assertEqual(guard["status"], "ok", guard)
 
+    def test_a_guard_whose_only_signal_is_a_bare_return_is_not_flagged(self) -> None:
+        """The plain `return 1` shape is what most guards use; it must be silenced."""
+        code, guard, output = self._only({"plain.py": PLAIN_RETURN})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_guard_that_returns_a_named_code_is_not_flagged(self) -> None:
+        """`return EXIT_FOUND` is the same signal as `return 1`, and must be reached."""
+        code, guard, output = self._only({"namedreturn.py": NAMED_RETURN})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_a_py_argument_to_a_self_rerun_does_not_make_the_guard_foreign(self) -> None:
+        """A fixture path after the program is a command-line argument, not a script."""
+        code, guard, output = self._only({"fixturearg.py": FOREIGN_ARG})
+        self.assertEqual(code, 0, output)
+        self.assertEqual(guard["status"], "ok", guard)
+
+    def test_an_inline_self_test_that_runs_another_py_file_is_unverified(self) -> None:
+        """Only `spawns_foreign_file` catches this one: no `if` mentions self-test."""
+        code, guard, output = self._only(
+            {"foreignscript.py": FOREIGN_SCRIPT}, {"test_biting.py": FOREIGN_SCRIPT_SIBLING}
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("测试文件", guard["detail"])
+
     def test_a_shell_guard_is_judged_by_its_rule_function(self) -> None:
         code, guard, output = self._only({"biting.sh": BITING_SHELL})
         self.assertEqual(code, 0, output)
         self.assertEqual(guard["status"], "ok", guard)
+
+    def test_silencing_stops_at_the_shell_self_test_block(self) -> None:
+        """A rule defined inside the block must keep firing, or its red is lost."""
+        code, guard, output = self._only({"lateshell.sh": PASSES_LATE_SHELL})
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+        self.assertIn("自测块之前没有可以静音的函数", guard["detail"])
 
     def test_a_guard_that_marks_success_with_OK_is_green(self) -> None:
         """unittest prints `OK`, not `PASS`; that is still a green self-test."""

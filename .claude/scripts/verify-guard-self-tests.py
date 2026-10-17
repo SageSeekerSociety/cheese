@@ -45,9 +45,12 @@ rule function, which is how its rules stop firing; the whole file from
 still reports the red.
 
 A copy that goes green on a *silenced* guard is reported as a finding — unless
-the guard hands the work to another script file (a literal `.py` name that is
-not its own, or a spawn under a self-test condition), because there the mutation
-never reaches the process that judges. A guard that only re-runs *itself*
+the guard hands the work to another script file: a `.py` name that is not its
+own in the command position of a spawn (the program a `subprocess`/`os.exec*`
+call runs, `-m`/`-c` included), or a spawn under a self-test condition. There
+the mutation never reaches the process that judges. Arguments *after* the
+program are the guard's own command line — a `.py` fixture passed as input does
+not make the guard foreign — and a guard that re-runs *itself*
 (`Path(__file__)`) is judged normally: the copy is what runs, so the mutation
 travels with it.
 
@@ -111,6 +114,9 @@ HINTS = {
 
 #: The `subprocess` entry points that start another program.
 _SUBPROCESS_CALLS = frozenset({"run", "call", "check_call", "check_output", "Popen"})
+
+#: Names that run a Python script: `python`, `python3`, `python3.12`.
+_PYTHON_RE = re.compile(r"^python(\d+(\.\d+)?)?$")
 
 #: A shell function definition, at the start of a line: `name() {`.
 _SHELL_FUNC_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\(\)\s*\{\s*$")
@@ -242,24 +248,82 @@ def delegated_self_test(tree: ast.Module, source: str) -> bool:
     return False
 
 
+def _spawned_script(node: ast.Call) -> ast.AST | None:
+    """The expression naming the file a spawn call executes, if it runs one.
+
+    Only the program in the command position counts. Everything after it is the
+    guard's own command line — a `--root <dir>` and any fixture name ending in
+    `.py` are arguments, not scripts — and a non-Python program such as
+    `git ls-files '*.py'` runs no script at all. For `python -m` / `python -c`
+    the constant itself comes back, since what runs is a module or inline code.
+    """
+    if not isinstance(node, ast.Call) or not node.args:
+        return None
+    command = node.args[0]
+    if not isinstance(command, (ast.List, ast.Tuple)):
+        return command
+    parts = list(command.elts)
+    if not parts:
+        return None
+    program, rest = parts[0], parts[1:]
+    if not (isinstance(program, ast.Constant) and isinstance(program.value, str)):
+        # `sys.executable`, or a path assembled at run time: the script follows.
+        return _skip_interpreter_flags(rest)
+    if _PYTHON_RE.match(Path(program.value).name):
+        return _skip_interpreter_flags(rest)
+    return program if program.value.endswith(".py") else None
+
+
+def _skip_interpreter_flags(rest: list[ast.expr]) -> ast.AST | None:
+    """The first element that is not an interpreter flag.
+
+    `-m` and `-c` are handed back as themselves: they run a module or inline
+    code rather than this file, which is what `_runs_foreign_script` reports.
+    """
+    for part in rest:
+        if not (isinstance(part, ast.Constant) and isinstance(part.value, str)):
+            return part
+        if part.value in ("-m", "-c"):
+            return part
+        if part.value.startswith("-"):
+            continue
+        return part
+    return None
+
+
+def _runs_foreign_script(script: ast.AST | None, own_name: str) -> bool:
+    """Does this expression name a `.py` file other than the guard itself?"""
+    if script is None:
+        return False
+    if isinstance(script, ast.Constant) and isinstance(script.value, str):
+        if script.value in ("-m", "-c"):
+            return True
+        return script.value.endswith(".py") and Path(script.value).name != own_name
+    # `str(Path(__file__).with_name("test_x.py"))` names another file inside the
+    # expression; `str(Path(__file__).resolve())` names this one and holds no
+    # literal at all. Only the file *name* is compared, as the path around it
+    # makes no difference to which file Python loads.
+    for inner in ast.walk(script):
+        if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
+            if inner.value.endswith(".py") and Path(inner.value).name != own_name:
+                return True
+    return False
+
+
 def spawns_foreign_file(tree: ast.Module, own_name: str) -> bool:
     """Does the guard run another script file, rather than re-running itself?
 
     A guard that spawns `Path(__file__)` re-runs the copy this tool silences, so
     the mutation travels into the child and the self-test still sees it. One that
-    names a different `.py` — a sibling test file, `unittest discover -p …` —
-    runs the real script in a fresh process where the mutation does not exist, so
-    its green says nothing. Only the file *name* is compared; the path around it
-    makes no difference to which file Python loads.
+    names a different `.py` in the command position — a sibling test file,
+    `python -m unittest` — runs the real script in a fresh process where the
+    mutation does not exist, so its green says nothing of this copy.
     """
-    for node in ast.walk(tree):
-        if not _spawn_target(node):
-            continue
-        for inner in ast.walk(node):
-            if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
-                if inner.value.endswith(".py") and Path(inner.value).name != own_name:
-                    return True
-    return False
+    return any(
+        _runs_foreign_script(_spawned_script(node), own_name)
+        for node in ast.walk(tree)
+        if _spawn_target(node)
+    )
 
 
 def _exit_code_names(tree: ast.Module) -> set[str]:
@@ -580,6 +644,9 @@ def self_test() -> int:
         "biting-guard.py": "ok",
         "tuple-return-guard.py": "ok",
         "named-exit-guard.py": "ok",
+        "plain-return-guard.py": "ok",
+        "named-return-guard.py": "ok",
+        "fixture-arg-guard.py": "ok",
         "shell-biting-guard.sh": "ok",
         "fake-green-guard.py": "self-test-does-not-bite",
         "shell-fake-green-guard.sh": "self-test-does-not-bite",
@@ -601,7 +668,8 @@ def self_test() -> int:
     if failures:
         return 1
     print(
-        "PASS: verify-guard-self-tests self-test（失败信号的每种写法都判得出咬合力、"
+        "PASS: verify-guard-self-tests self-test（失败信号的每种写法都判得出咬合力——条件返回、"
+        "元组返回、裸 return、模块级命名常量、SystemExit；参数里的 .py 不算委派；"
         "只查干净夹具的假绿被检出、空转假绿被检出、缺自测与没变绿各自报出、委派给旁置测试文件的判不了）"
     )
     return 0
@@ -735,6 +803,136 @@ def self_test():
             print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
             return 1
     print("PASS: 合成命名退出码守卫自测（.bad 文件被报出）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "plain-return-guard.py": '''#!/usr/bin/env python3
+"""A guard whose only failure signal is a bare `return 1`."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def report(root):
+    problems = violations_in(root)
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    if problems:
+        return 1
+    return 0
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    return report(Path(argv[1]) if len(argv) > 1 else Path("."))
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)], capture_output=True, text=True
+        )
+        if done.returncode != 1:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: 合成裸 return 守卫自测（.bad 文件被报出）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "named-return-guard.py": '''#!/usr/bin/env python3
+"""A guard that returns a named constant instead of raising it."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+EXIT_FOUND = 1
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def report(root):
+    problems = violations_in(root)
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    if problems:
+        return EXIT_FOUND
+    return 0
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    return report(Path(argv[1]) if len(argv) > 1 else Path("."))
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root)], capture_output=True, text=True
+        )
+        if done.returncode != 1:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: 合成命名 return 守卫自测（.bad 文件被报出）")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+''',
+    "fixture-arg-guard.py": '''#!/usr/bin/env python3
+"""A guard that passes a `.py` fixture name to itself as an argument."""
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def violations_in(root):
+    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
+
+
+def main(argv):
+    if "--self-test" in argv:
+        return self_test()
+    problems = violations_in(Path(argv[1]) if len(argv) > 1 else Path("."))
+    for name in problems:
+        print(f"{name}: 修法：删掉这个文件", file=sys.stderr)
+    return 0 if not problems else 1
+
+
+def self_test():
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        (root / "x.bad").write_text("", encoding="utf-8")
+        done = subprocess.run(
+            [sys.executable, str(Path(__file__).resolve()), str(root), "fixture.py"],
+            capture_output=True,
+            text=True,
+        )
+        if done.returncode != 1:
+            print(f"SELF-TEST FAIL: 本该以 1 报出 x.bad，得到 {done.returncode}", file=sys.stderr)
+            return 1
+    print("PASS: 合成带 .py 参数的守卫自测（.bad 文件被报出）")
     return 0
 
 
