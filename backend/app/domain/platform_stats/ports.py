@@ -10,7 +10,17 @@
 """
 
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
+
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+async def count(session: AsyncSession, model: Any, *where: Any) -> int:
+    stmt = select(func.count()).select_from(model)
+    if where:
+        stmt = stmt.where(*where)
+    return int((await session.execute(stmt)).scalar_one() or 0)
 
 
 class PreviewConnections(Protocol):
