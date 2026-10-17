@@ -1,9 +1,22 @@
-"""Check every independently collected required case ran on exactly one runner."""
+"""Check every case a plan names ran on exactly one runner or report.
+
+Two callers. CI passes the artifacts directory its shards uploaded and the name
+of the independent collection plan; each partition is judged against the cases
+it was assigned. A local run has no artifact tree and no shard assignment: give
+it the JUnit reports (files, or directories holding them) and the plan of cases
+the run promised, and it judges the reports together.
+"""
 
 import argparse
 from pathlib import Path
 
-from scripts.assert_suite_ran import SuiteDidNotRun, assert_suite_ran, read_selection
+from scripts.assert_suite_ran import (
+    SuiteDidNotRun,
+    assert_suite_ran,
+    executed_nodeids,
+    read_plan,
+    read_selection,
+)
 
 
 def assert_complete(artifacts: Path, plan: str) -> int:
@@ -49,16 +62,92 @@ def assert_complete(artifacts: Path, plan: str) -> int:
     return len(seen)
 
 
+def find_reports(results: list[Path]) -> list[Path]:
+    """Every JUnit report named, or found directly in a named directory.
+
+    A local sharded run keeps one report in each shard's directory, so the
+    directory itself is read; a report named twice is only read once.
+    """
+    reports: list[Path] = []
+    for result in results:
+        if result.is_dir():
+            found = sorted(result.glob("*.xml"))
+            if not found:
+                raise SuiteDidNotRun(f"{result} holds no JUnit report (*.xml)")
+        elif result.exists():
+            found = [result]
+        else:
+            raise SuiteDidNotRun(f"{result} does not exist")
+        for path in found:
+            if path not in reports:
+                reports.append(path)
+    return reports
+
+
+def assert_reports_complete(results: list[Path], expected: Path) -> int:
+    """Every case the plan names ran on exactly one of these reports, and no
+    report held a case the plan does not name.
+
+    The local counterpart of ``assert_complete``: no artifact tree, no shard
+    assignment, just the reports a run produced and the plan it meant to run.
+    """
+    reports = find_reports(results)
+    if not reports:
+        raise SuiteDidNotRun("no JUnit report to judge")
+    planned = read_plan(expected)
+    seen: set[str] = set()
+    for report in reports:
+        for nodeid in executed_nodeids(report):
+            if nodeid in seen:
+                raise SuiteDidNotRun(
+                    f"cases ran in more than one report: {nodeid} "
+                    "(a duplicate means the plan was not partitioned)"
+                )
+            seen.add(nodeid)
+    missing = sorted(set(planned) - seen)
+    unexpected = sorted(seen - set(planned))
+    if missing or unexpected:
+        raise SuiteDidNotRun(
+            "the reports do not cover the plan: "
+            f"{len(missing)} missing {missing}, "
+            f"{len(unexpected)} unexpected {unexpected}"
+        )
+    return len(seen)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("artifacts", type=Path)
-    parser.add_argument("--plan", required=True)
+    parser.add_argument(
+        "artifacts", type=Path, nargs="?", help="the CI partition artifact directory"
+    )
+    parser.add_argument(
+        "--plan",
+        help=(
+            "with the CI artifacts directory: the independent collection plan's "
+            "artifact name; with --results: the path to the plan to judge against"
+        ),
+    )
+    parser.add_argument(
+        "--results",
+        type=Path,
+        nargs="+",
+        help="offline mode: JUnit reports (or directories of them) judged together",
+    )
     args = parser.parse_args()
     try:
-        count = assert_complete(args.artifacts, args.plan)
+        if args.results is not None:
+            if args.artifacts is not None:
+                parser.error("--results replaces the CI artifacts directory")
+            if args.plan is None:
+                parser.error("--results needs --plan")
+            count = assert_reports_complete(args.results, Path(args.plan))
+        else:
+            if args.artifacts is None or args.plan is None:
+                parser.error("give the artifacts directory and --plan, or --results")
+            count = assert_complete(args.artifacts, args.plan)
     except SuiteDidNotRun as exc:
         raise SystemExit(f"::error::{exc}") from exc
-    print(f"All {count} independently collected cases ran on exactly one runner.")
+    print(f"All {count} planned cases ran on exactly one runner.")
 
 
 if __name__ == "__main__":
