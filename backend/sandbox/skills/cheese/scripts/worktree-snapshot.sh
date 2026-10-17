@@ -145,12 +145,25 @@ restore_stop() {
 # 平台没能把快照套进工作区时，不覆盖任何东西，把它原样检出到
 # ~/.cheese/recovered/<任务 id>-<快照>，只往 stderr 说一句，`cheese worktree` 的
 # 退出码仍是 0（平台 backend/sandbox/cheese 的 _apply_snapshot 与 _recovery_dir）。
-# 这次新出现这么一份，就是「东西没接回来」的凭据；早就在的旧目录不算。
+# 这个目录会一直留着，直到人把东西取走或删掉：它在，就不能说「东西接回来了」。
 snapshot_set_aside() {
-  local task=$1 marker=$2 out
-  out=$(find "$HOME/.cheese/recovered" -maxdepth 1 -name "$task-*" \
-    -newer "$marker" 2>/dev/null) || true
+  local task=$1 out
+  out=$(find "$HOME/.cheese/recovered" -maxdepth 1 -name "$task-*" 2>/dev/null) || true
   printf '%s' "${out%%$'\n'*}"
+}
+
+# 平台连快照都没能套用（下载、解包、快进失败）时，只把原因写到 stderr，退出码
+# 仍是 0；它留着这个标记，下次 `cheese worktree` 或 `cheese sync` 再试
+# （backend/sandbox/cheese 的 _RESTORE_PENDING）。标记还在，就是没接回来。
+restore_pending_mark() {
+  local mark
+  mark=$(git rev-parse --git-path cheese-restore-pending 2>/dev/null) || return 1
+  case $mark in
+    /*) ;;
+    *) mark="$PWD/$mark" ;;
+  esac
+  [ -e "$mark" ] && printf '%s' "$mark"
+  return 0
 }
 
 if [ $# -gt 0 ]; then
@@ -269,9 +282,6 @@ fi
 uuid_like "$task_id" ||
   die 2 "「$task_id」不是完整的任务 id；cheese worktree 只认完整 UUID。用 --task <任务 id> 再跑"
 
-started=$(mktemp) || die 1 "建不了临时文件（mktemp）"
-trap 'rm -f "$started"' EXIT
-
 printf '%s: cheese worktree %s\n' "$PROG" "$task_id" >&2
 worktree_out=$(cheese worktree "$task_id") ||
   die 1 "cheese worktree $task_id 失败（上面是它说的）"
@@ -286,10 +296,17 @@ cd "$root"
 branch=$(checked_out_branch) || die 2 "$root 里是分离头指针，接回来的状态不对"
 head_sha=$(git rev-parse HEAD)
 
-aside=$(snapshot_set_aside "$task_id" "$started")
+# 两个「没接回来」的信号都要看：平台套用失败时留标记，明确不套用时把快照放到
+# 独立目录。两者的退出码都是 0，只往 stderr 说一句。
+pending_mark=$(restore_pending_mark) || pending_mark=""
+if [ -n "$pending_mark" ]; then
+  restore_stop "平台没能把最近的备份接回来，重试标记还在（$pending_mark）" \
+    "这里只有分支上已推送的内容；下次 cheese worktree 或 cheese sync 会再试。在那之前别把这里当成接回来了。"
+fi
+aside=$(snapshot_set_aside "$task_id")
 if [ -n "$aside" ]; then
   restore_stop "平台有一份快照没套进这个目录，它原样放在 $aside" \
-    "cheese worktree 的退出码是 0，只把这件事写在上面的 stderr 里：这里接回来的只有分支上已推送的内容。先在 $aside 里取要的东西，再跑一次这个命令会重试恢复。"
+    "这里只有分支上已推送的内容。先把 $aside 里的东西取回来；都取到了、或者确认不需要，就删掉那个目录，再接着改。别直接 sync：同步会做一份新备份，平台就不会再把那份快照当最近一版恢复。"
 fi
 
 remote_tip "$branch"
@@ -304,7 +321,7 @@ if [ -z "$REMOTE_TIP" ]; then
   printf '工作目录 %s\n' "$root"
   printf '分支 %s，HEAD %s\n' "$branch" "${head_sha:0:8}"
   printf '远端 refs/heads/%s 上还没有提交：这条分支没推上去过（或者上次推送中断了）。\n' "$branch"
-  printf '这一份是平台快照接回来的，没有远端可以对照；先跑 save 推上去，别等下一次换机。\n'
+  printf '没有远端可以对照。先跑 save 把它推上去，别等下一次换机。\n'
   printf '工作区没提交的文件：%s 个\n' "$(dirty_count)"
   printf '回不来的：依赖与缓存、生成目录、任务目录以外的文件（含 /tmp）、当时在跑的进程。\n'
   exit 0

@@ -122,6 +122,13 @@ case ${1:-} in
       pwd
       exit 0
     fi
+    if [ "${FAKE_WORKTREE_RESTORE_FAILED:-}" = 1 ]; then
+      # _restore_snapshot 的半途失败：留着重试标记，只往 stderr 说一句，退出 0。
+      : > "$(git rev-parse --git-path cheese-restore-pending)"
+      echo "[cheese] 任务 $id：没能从平台快照恢复上次没推送的工作。" >&2
+      pwd
+      exit 0
+    fi
     if [ "${FAKE_WORKTREE_STALE:-}" = 1 ]; then
       # 接回来的状态落后于远端：脚本必须停下来，不能再改这个目录。
       git reset -q --hard HEAD~1
@@ -551,6 +558,42 @@ def test_restore_refuses_when_the_backup_was_set_aside(
     result = machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1")
 
     refused(result, 3, "没套进", ".cheese/recovered")
+    assert "与远端一致" not in result.stdout
+
+
+def test_restore_still_refuses_after_a_set_aside_the_run_before(
+    machine: Machine,
+) -> None:
+    """独立目录会一直留着：第二次跑不能因为「这次没有新目录」就说接回来了。
+
+    平台在明确不套用时已经把重试标记删掉了，所以第二次 `cheese worktree` 什么
+    都不做；再说一次「接回来了」，人就会以为未提交的活已经在了。
+    """
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+
+    machine.wipe()
+
+    first = machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1")
+    second = machine.run("restore", "--task", TASK, FAKE_WORKTREE_SET_ASIDE="1")
+
+    refused(first, 3, ".cheese/recovered")
+    refused(second, 3, ".cheese/recovered")
+    assert "与远端一致" not in second.stdout
+
+
+def test_restore_refuses_when_the_platform_could_not_apply_the_snapshot(
+    machine: Machine,
+) -> None:
+    """故意违规：套用半途失败时平台也 exit 0，只留下重试标记和一句 stderr。"""
+    machine.commit("step.py", "print(1)\n")
+    ran(machine.run("save"))
+
+    machine.wipe()
+
+    result = machine.run("restore", "--task", TASK, FAKE_WORKTREE_RESTORE_FAILED="1")
+
+    refused(result, 3, "没能把最近的备份接回来")
     assert "与远端一致" not in result.stdout
 
 
