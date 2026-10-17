@@ -14,6 +14,22 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+GIB = 1024**3
+
+# The sandbox ends a session at its memory cap instead of slowing it down
+# (docs/remote-execution.md: 3 GiB, no swap by default). A run within a tenth
+# of the cap is one allocation from disappearing, so that is the line reported.
+SANDBOX_MEMORY_LIMIT_BYTES = 3 * GIB
+MEMORY_HEADROOM_RATIO = 0.1
+
+# Runnable processes beyond the CPUs are queued, and steal time says the box's
+# neighbours are spending the vCPUs this run was promised.
+CPU_STEAL_LIMIT_PERCENT = 5.0
+
+# PostgreSQL keeps this many of `max_connections` for superusers; once the
+# rest are taken, new clients wait. `SHOW` reports the real value when known.
+SUPERUSER_RESERVED_CONNECTIONS = 3
+
 
 def record(stream, **fields):
     stream.write(json.dumps({"at": datetime.now(UTC).isoformat(), **fields}) + "\n")
@@ -38,7 +54,20 @@ async def sample_postgres():
                 server_settings={"application_name": "cheese-ci-resource-observer"},
             )
             if not settings_recorded:
-                record(sys.stdout, fsync=await connection.fetchval("SHOW fsync"))
+                record(
+                    sys.stdout,
+                    settings={
+                        "fsync": await connection.fetchval("SHOW fsync"),
+                        "max_connections": int(
+                            await connection.fetchval("SHOW max_connections")
+                        ),
+                        "superuser_reserved_connections": int(
+                            await connection.fetchval(
+                                "SHOW superuser_reserved_connections"
+                            )
+                        ),
+                    },
+                )
                 settings_recorded = True
             rows = await connection.fetch(
                 "SELECT backend_type, wait_event_type, wait_event, count(*) AS count "
@@ -112,6 +141,295 @@ def observed_disks():
     return list(dict.fromkeys(path for path in paths if path))
 
 
+def read_jsonl(path):
+    """The objects a sampler wrote, ignoring a line it did not finish."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return []
+    samples = []
+    for line in lines:
+        try:
+            sample = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(sample, dict):
+            samples.append(sample)
+    return samples
+
+
+def read_text(path):
+    try:
+        return path.read_text()
+    except OSError:
+        return ""
+
+
+VMSTAT_COLUMNS = (
+    "r",
+    "b",
+    "swpd",
+    "free",
+    "buff",
+    "cache",
+    "si",
+    "so",
+    "bi",
+    "bo",
+    "in",
+    "cs",
+    "us",
+    "sy",
+    "id",
+    "wa",
+    "st",
+)
+
+
+def parse_vmstat(text):
+    """vmstat's numeric rows as dicts keyed by its column names."""
+    rows = []
+    for line in text.splitlines():
+        values = line.split()
+        if len(values) < len(VMSTAT_COLUMNS):
+            continue
+        try:
+            numbers = [int(value) for value in values[: len(VMSTAT_COLUMNS)]]
+        except ValueError:
+            continue  # the two header lines
+        rows.append(dict(zip(VMSTAT_COLUMNS, numbers, strict=True)))
+    return rows
+
+
+def read_mem_total(meminfo):
+    for line in read_text(meminfo).splitlines():
+        if line.startswith("MemTotal:"):
+            return int(line.split()[1]) * 1024
+    return None
+
+
+def memory_peak_bytes(storage_samples, vmstat_rows, mem_total_bytes):
+    """The highest memory use any sample saw, or None if none measured it."""
+    if mem_total_bytes is None:
+        return None
+    peaks = [
+        max(0, mem_total_bytes - (row["free"] + row["buff"] + row["cache"]) * 1024)
+        for row in vmstat_rows
+    ]
+    peaks += [
+        max(0, mem_total_bytes - sample["mem_available_bytes"])
+        for sample in storage_samples
+        if isinstance(sample.get("mem_available_bytes"), int)
+    ]
+    return max(peaks) if peaks else None
+
+
+def cpu_peak(vmstat_rows):
+    """The runnable queue and the steal share at their worst."""
+    if not vmstat_rows:
+        return None, None
+    return (
+        max(row["r"] for row in vmstat_rows),
+        float(max(row["st"] for row in vmstat_rows)),
+    )
+
+
+def database_peak(postgres_samples):
+    """The most client backends and the server's usable connection slots."""
+    limit = None
+    peak = None
+    for sample in postgres_samples:
+        settings = sample.get("settings")
+        if isinstance(settings, dict):
+            try:
+                max_connections = int(settings["max_connections"])
+                reserved = int(
+                    settings.get(
+                        "superuser_reserved_connections",
+                        SUPERUSER_RESERVED_CONNECTIONS,
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
+            else:
+                limit = max_connections - reserved
+        waits = sample.get("waits")
+        if isinstance(waits, list):
+            clients = sum(
+                row["count"]
+                for row in waits
+                if isinstance(row, dict)
+                and row.get("backend_type") == "client backend"
+                and isinstance(row.get("count"), int)
+            )
+            peak = clients if peak is None else max(peak, clients)
+    return peak, limit
+
+
+def memory_limit_bytes():
+    """The cap to compare against: the sandbox's, or the one set for this box."""
+    try:
+        return int(os.environ["CHEESE_CI_SANDBOX_MEMORY_BYTES"])
+    except (KeyError, ValueError):
+        return SANDBOX_MEMORY_LIMIT_BYTES
+
+
+def summarize(output):
+    """One observation of the run's peak memory, CPU queue and connections."""
+    output = Path(output)
+    lifecycle = read_jsonl(output / "lifecycle.jsonl")
+    start = next((event for event in lifecycle if event.get("event") == "start"), {})
+    storage = read_jsonl(output / "storage.log")
+    vmstat_rows = parse_vmstat(read_text(output / "vmstat.log"))
+    postgres = read_jsonl(output / "postgres.log")
+    mem_total_bytes = read_mem_total(output / "meminfo")
+    runnable_peak, steal_peak = cpu_peak(vmstat_rows)
+    backends_peak, connection_limit = database_peak(postgres)
+    return {
+        "cpu_count": start.get("cpu_count") or os.cpu_count() or 1,
+        "memory_total_bytes": mem_total_bytes,
+        "memory_peak_bytes": memory_peak_bytes(storage, vmstat_rows, mem_total_bytes),
+        "memory_limit_bytes": memory_limit_bytes(),
+        "runnable_peak": runnable_peak,
+        "steal_peak_percent": steal_peak,
+        "client_backends_peak": backends_peak,
+        "db_connection_limit": connection_limit,
+        "samples": {
+            "storage": len(storage),
+            "vmstat": len(vmstat_rows),
+            "postgres": len(postgres),
+        },
+    }
+
+
+def _state(observed, threshold):
+    if observed is None or threshold is None:
+        return "unknown"
+    return "over" if observed > threshold else "ok"
+
+
+def _conclusion(total, crossed, unknown):
+    if crossed:
+        return f"{len(crossed)} of {total} checks crossed: {', '.join(crossed)}"
+    if len(unknown) == total:
+        return "not judged: no sample for any threshold"
+    if unknown:
+        return f"no threshold crossed; not judged: {', '.join(unknown)}"
+    return "no threshold crossed"
+
+
+def _next_steps(crossed, unknown):
+    steps = []
+    if "memory" in crossed:
+        steps.append("narrow the run: fewer selected files or workers")
+    if "cpu" in crossed:
+        steps.append("rerun on another shard or a quieter runner")
+    if "database" in crossed:
+        steps.append("narrow the run or raise the database's connection budget")
+    if crossed:
+        steps.append("hand the run to CI when the local box is shared")
+    if not crossed and unknown:
+        steps.append("collect a sample before judging the missing checks")
+    if not crossed and not unknown:
+        steps.append("no action needed")
+    return steps
+
+
+def evaluate(summary):
+    """Judge the summary against the sandbox, CPU and connection thresholds."""
+    memory_threshold = int(summary["memory_limit_bytes"] * (1 - MEMORY_HEADROOM_RATIO))
+    cpu_over = (
+        summary["runnable_peak"] is not None
+        and summary["runnable_peak"] > summary["cpu_count"]
+    ) or (
+        summary["steal_peak_percent"] is not None
+        and summary["steal_peak_percent"] > CPU_STEAL_LIMIT_PERCENT
+    )
+    if cpu_over:
+        cpu_state = "over"
+    elif summary["runnable_peak"] is None and summary["steal_peak_percent"] is None:
+        cpu_state = "unknown"
+    else:
+        cpu_state = "ok"
+    checks = [
+        {
+            "metric": "memory",
+            "state": _state(summary["memory_peak_bytes"], memory_threshold),
+            "observed": summary["memory_peak_bytes"],
+            "threshold": memory_threshold,
+        },
+        {
+            "metric": "cpu",
+            "state": cpu_state,
+            "observed": summary["runnable_peak"],
+            "threshold": summary["cpu_count"],
+        },
+        {
+            "metric": "database",
+            "state": _state(
+                summary["client_backends_peak"], summary["db_connection_limit"]
+            ),
+            "observed": summary["client_backends_peak"],
+            "threshold": summary["db_connection_limit"],
+        },
+    ]
+    crossed = [check["metric"] for check in checks if check["state"] == "over"]
+    unknown = [check["metric"] for check in checks if check["state"] == "unknown"]
+    return {
+        "checks": checks,
+        "crossed": crossed,
+        "unknown": unknown,
+        "conclusion": _conclusion(len(checks), crossed, unknown),
+        "next_steps": _next_steps(crossed, unknown),
+    }
+
+
+def _gib(value):
+    return f"{value / GIB:.2f} GiB"
+
+
+def _describe(check, summary):
+    state = check["state"]
+    if check["metric"] == "memory":
+        if state == "unknown":
+            return "memory: unknown — no memory sample"
+        return (
+            f"memory: {state} — peak {_gib(check['observed'])}, "
+            f"threshold {_gib(check['threshold'])} "
+            f"(cap {_gib(summary['memory_limit_bytes'])})"
+        )
+    if check["metric"] == "cpu":
+        steal = summary["steal_peak_percent"]
+        steal_text = (
+            "no steal sample"
+            if steal is None
+            else f"steal {steal:.1f}% (limit {CPU_STEAL_LIMIT_PERCENT:.1f}%)"
+        )
+        if check["observed"] is None:
+            return f"cpu: {state} — no runnable sample; {steal_text}"
+        return (
+            f"cpu: {state} — peak {check['observed']} runnable on "
+            f"{summary['cpu_count']} CPUs; {steal_text}"
+        )
+    if state == "unknown":
+        return "database: unknown — no connection sample"
+    return (
+        f"database: {state} — peak {check['observed']} client backends, "
+        f"limit {check['threshold']}"
+    )
+
+
+def report_lines(summary, verdict):
+    lines = [f"resources: {verdict['conclusion']}"]
+    lines += [f"  {_describe(check, summary)}" for check in verdict["checks"]]
+    lines.append(f"resources next: {'; '.join(verdict['next_steps'])}")
+    return lines
+
+
+def print_report(summary, verdict):
+    print("\n".join(report_lines(summary, verdict)))
+
+
 def stop(process):
     if process.poll() is None:
         process.terminate()
@@ -128,11 +446,12 @@ def observe(output, command, *, postgres=True):
     streams = []
     command_process = None
     previous_handlers = {}
+    cpu_count = os.cpu_count()
     with (output / "lifecycle.jsonl").open("x") as events:
         record(
             events,
             event="start",
-            cpu_count=os.cpu_count(),
+            cpu_count=cpu_count,
             machine=platform.machine(),
             system=platform.system(),
             release=platform.release(),
@@ -221,6 +540,20 @@ def observe(output, command, *, postgres=True):
                 )
             for stream in streams:
                 stream.close()
+            # Judge the run only after its samples are closed, and never let
+            # the judgement itself change the command's result.
+            try:
+                summary = summarize(output)
+                verdict = evaluate(summary)
+                record(
+                    events,
+                    event="resources_summary",
+                    summary=summary,
+                    verdict=verdict,
+                )
+                print_report(summary, verdict)
+            except Exception as error:
+                record(events, event="summary_failed", error=type(error).__name__)
             for signum, handler in previous_handlers.items():
                 signal.signal(signum, handler)
             record(events, event="finished")
