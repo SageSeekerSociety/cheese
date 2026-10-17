@@ -89,6 +89,9 @@ class TreeSync:
     held: tuple[str, ...] = ()
     #: 新的索引底稿（路径 → 正文），和 `baseline` 一起存起来给下一次合并用。
     bases: dict[str, str] = field(default_factory=dict)
+    #: `rejected` 里那几个新文件中，这一轮加进索引的那一行也被拿掉的（路径），按
+    #: 路径序。只有它们该听「把索引那一行加回去」：别的被拒的文件，索引没动过。
+    unindexed: tuple[str, ...] = ()
 
 
 def prefixes_of(
@@ -191,13 +194,15 @@ def sync_tree(
         settled[path] = requested[path]
         baseline_after[path] = digest(requested[path])
         refused.pop(path, None)
+    unindexed: set[str] = set()
     for path, content in list(settled.items()):
         prefix, name = _split(path)
         if name != INDEX_NAME:
             continue
-        kept = _without_dangling(
+        kept, missing = _without_dangling(
             content, requested.get(path), prefix, settled, rejected
         )
+        unindexed |= {f"{prefix}/{target}" for target in missing}
         if kept != content:
             settled[path] = kept
             baseline_after[path] = digest(kept)
@@ -207,6 +212,7 @@ def sync_tree(
         baseline=baseline_after,
         rejected=rejected,
         held=tuple(sorted(held)),
+        unindexed=tuple(sorted(unindexed)),
         bases={
             path: content
             for path, content in settled.items()
@@ -221,8 +227,10 @@ def _without_dangling(
     prefix: str,
     settled: dict[str, str],
     rejected: dict[str, str],
-) -> str:
+) -> tuple[str, set[str]]:
     """这一次新加进索引、指向这一轮被拒收的新文件的那几行，不收。
+
+    返回收下的索引和被拿掉的行指向的文件名。
 
     最常见的来路是上面那条上限：一条新记忆超长被拒，它在同一轮里加进索引的那一
     行却照收，于是平台的索引指向一个不存在的文件，每次同步铺到所有房间，读它的
@@ -250,13 +258,13 @@ def _without_dangling(
         and f"{prefix}/{target}" not in settled
     }
     if not missing:
-        return index
+        return index, missing
     kept_old = [
         line
         for line in index.splitlines()
         if line in old or without_entries(line, missing) == line
     ]
-    return "\n".join(kept_old) + ("\n" if index.endswith("\n") else "")
+    return "\n".join(kept_old) + ("\n" if index.endswith("\n") else ""), missing
 
 
 def _too_many_to_delete(requested: dict[str, str], dropped: list[str]) -> list[str]:

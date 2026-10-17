@@ -5,6 +5,7 @@
 「文件不存在」。只管被拒收的文件；别人早先留下的行不动，哪怕它也指空。
 """
 
+from app.domain.agent.platform_notices import memory_rejected_notice
 from app.domain.memory.files import digest
 from app.domain.memory.tree import sync_tree
 
@@ -80,3 +81,35 @@ def test_a_private_scope_follows_the_same_rule():
     )
     assert "private/someone/b.md" in result.rejected
     assert result.files["private/someone/MEMORY.md"] == _INDEX
+
+
+def _told(result) -> str:
+    """What the agent that wrote this round reads about its rejected memories."""
+    return memory_rejected_notice(
+        where="项目共享", reasons=result.rejected, unindexed=result.unindexed
+    )
+
+
+def test_the_agent_is_asked_to_add_back_the_index_line_that_was_dropped():
+    index = _INDEX + "- [b](b.md) — 新记的一条\n"
+    result = _round(
+        "team",
+        {"MEMORY.md": index, "a.md": _A, "b.md": _note("字" * 1001)},
+        {"MEMORY.md": _INDEX, "a.md": _A},
+    )
+    told = _told(result)
+    assert "MEMORY.md" in told and "b.md" in told.split("MEMORY.md", 1)[1], told
+
+
+def test_a_rejected_edit_leaves_the_index_alone_and_asks_for_no_index_line():
+    # An existing memory grown past the cap: its index line was never touched,
+    # so asking the agent to add it back would only duplicate it.
+    a_long = _A.replace("原来那一版。", "字" * 1001)
+    result = _round(
+        "team",
+        {"MEMORY.md": _INDEX, "a.md": a_long},
+        {"MEMORY.md": _INDEX, "a.md": _A},
+    )
+    assert "team/a.md" in result.rejected
+    assert result.files["team/MEMORY.md"] == _INDEX
+    assert "MEMORY.md" not in _told(result), _told(result)
