@@ -24,7 +24,7 @@ from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
-from app.api.topics_deps import _actor_in_place, _parse_moment
+from app.api.topics_deps import _actor_in_place, _parse_moment, require_person_speaks
 from app.api.topics_rows import CardRow, TopicRow
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
@@ -1167,20 +1167,20 @@ async def write_topic_progress(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
     if not actor.authenticated:
-        # The global development token opens the room but is nobody, and a
-        # message needs an author.
+        # The global development token is nobody, and a message needs an author.
         raise ForbiddenError("Sign in to write a checklist")
-    # A task's checklist is written by the task's own session, and shown as its
-    # progress; a room's or a 支线's by an agent seated in the room, as a
-    # message in that conversation.
+    # A task's checklist is its own session's, shown as its progress; a room's or
+    # a 支线's is a seated agent's, or a person's said like any message of theirs.
     inner_id = place.task_id
     plans_the_turn = (
         resolver.credential_conversation() == inner_id
         if inner_id is not None
         else await TopicMemberService(db).holds_an_agent_seat(place.room, actor.handle)
     )
-    if inner_id is not None and not plans_the_turn:
-        raise ForbiddenError("A task's checklist is written by its session")
+    if not plans_the_turn:
+        if inner_id is not None:
+            raise ForbiddenError("A task's checklist is written by its session")
+        await require_person_speaks(db, actor, place)
     if body.new and body.message is not None:
         raise ValidationError("message and new cannot both be given")
     current = None

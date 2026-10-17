@@ -310,11 +310,14 @@ def _shared_room(client) -> str:
     """A room of alice's project that bob is also in."""
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     join_project_team(client, project["id"], "bob")
-    return client.post(
+    room = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "话题"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
+    joined = client.post(f"/topics/{room}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
+    return room
 
 
 def _messages_by(client, topic_id: str, author: str) -> list[dict]:
@@ -426,6 +429,43 @@ def test_a_person_outside_the_room_cannot_post_one(client):
         _write(client, room, session_auth_headers("mallory"), PLAN).status_code == 403
     )
     assert _messages_by(client, room, "mallory") == []
+
+
+def test_a_person_posts_no_checklist_in_an_archived_room(client):
+    """A person's checklist is a message of theirs, and an archived channel is
+    read, not spoken in."""
+    room = _shared_room(client)
+    archived = client.post(
+        f"/topics/{room}/archive",
+        json={"by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert archived.status_code == 200, archived.text
+
+    refused = _write(client, room, session_auth_headers("alice"), PLAN)
+
+    assert refused.status_code == 403, refused.text
+    assert _messages_by(client, room, "alice") == []
+
+
+def test_a_person_whose_role_does_not_speak_posts_no_checklist(client):
+    """A project may take speaking away from a role; a checklist is speaking."""
+    room = _shared_room(client)
+    project = client.get(f"/topics/{room}").json()["data"]["project_id"]
+    grants = client.get(
+        f"/projects/{project}/roles", headers=session_auth_headers("alice")
+    ).json()["data"]["grants"]
+    changed = client.put(
+        f"/projects/{project}/roles",
+        json={"grants": {"member": [g for g in grants["member"] if g != "speak"]}},
+        headers=session_auth_headers("alice"),
+    )
+    assert changed.status_code == 200, changed.text
+
+    refused = _write(client, room, session_auth_headers("bob"), PLAN)
+
+    assert refused.status_code == 403, refused.text
+    assert _messages_by(client, room, "bob") == []
 
 
 def test_a_persons_checklist_is_not_the_agents_plan(client, stub_hooks):
