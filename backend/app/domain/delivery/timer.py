@@ -227,7 +227,7 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
     conversation where a person's message went unanswered: whoever waits there
     sees it, and 「重试」 starts a turn again. Returns how many gave up."""
     stamp = _utcnow()
-    told: dict[uuid.UUID, str] = {}
+    told: dict[tuple[uuid.UUID, str, uuid.UUID | None], None] = {}
     async with sessions() as session:
         rows = list(
             await session.scalars(
@@ -260,12 +260,13 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
                 row.conversation_id is not None
                 and row.type == NotificationType.MENTION.value
             ):
-                told.setdefault(row.conversation_id, row.recipient_handle)
+                told[(row.conversation_id, row.recipient_handle, row.attempt_id)] = None
         await session.commit()
-    for conversation_id, seat in told.items():
+    for conversation_id, seat, turn_id in told:
         await chat.post_system_event(
             conversation_id,
             say("deliveryGaveUp", agent=f"<@{seat}>"),
+            turn_id=turn_id,
             meta=notice(
                 EVENT_TURN_FAILED,
                 severity=SEVERITY_ERROR,
