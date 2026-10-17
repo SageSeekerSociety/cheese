@@ -2144,6 +2144,161 @@ if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
 '''
 
+#: The same name bound by a module-level assignment rather than an import.
+PY_ASSIGNED_GLOBAL_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+argv = sys.argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(params):
+    if len(argv) > 1:
+        if "--self-test" in params:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+#: `main` takes its own parameter named `argv`, which shadows the module-level
+#: name, so the entry call still says what the gate reads.
+PY_SHADOWED_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: A walrus inside a comprehension binds in the scope around it, so `argv`
+#: really is trimmed before the gate reads it.
+PY_COMPREHENSION_WALRUS = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(argv):
+    [None for _ in [0] if (argv := sys.argv[1:])]
+    if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+#: `from sys import *` binds `argv` too, so the bare name is not the parameter
+#: the entry call hands over.
+PY_STAR_IMPORT = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import *
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(params):
+    if len(argv) > 1:
+        if "--self-test" in params:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
+#: The gate tests the bare name for truth, and the name is not settled: reading
+#: it as false would put a hand-off off the path and invent a finding.
+PY_TRUTHY_UNSETTLED_ARGV = '''#!/usr/bin/env python3
+import subprocess
+import sys
+from pathlib import Path
+from sys import argv
+
+
+def check():
+    return subprocess.call(
+        [sys.executable, str(Path(__file__).with_name("test_counted.py"))]
+    )
+
+
+def main(params):
+    if argv:
+        if "--self-test" in params:
+            print("PASS: 什么都没测")
+        try:
+            sys.exit(1)
+        except SystemExit:
+            return check()
+    print("PASS: 什么都没测")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+'''
+
 #: The entry call passes the command line as a keyword argument; it is the same
 #: full argv as `main(sys.argv)`, so the gate on it is false during a self-test.
 PY_KEYWORD_ENTRY = '''#!/usr/bin/env python3
@@ -3020,6 +3175,51 @@ class VerifyGuardSelfTestsTest(unittest.TestCase):
         self.assertEqual(code, 2, output)
         self.assertEqual(guard["status"], "unverified", guard)
         self.assertIn("测试文件", guard["detail"])
+
+    def test_a_module_level_assignment_is_not_the_trimmed_parameter(self) -> None:
+        """`argv = sys.argv` at module level holds the process command line."""
+        code, guard, output = self._only(
+            {"assigned.py": PY_ASSIGNED_GLOBAL_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_main_parameter_shadows_the_module_level_name(self) -> None:
+        """`main(argv)`'s own parameter leaves the entry call the one to settle."""
+        code, guard, output = self._only(
+            {"shadowed.py": PY_SHADOWED_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 1, output)
+        self.assertEqual(guard["status"], "self-test-does-not-bite", guard)
+
+    def test_a_walrus_in_a_comprehension_rebinds_the_parameter(self) -> None:
+        """A comprehension's own target stays inside; a `:=` writes outside it."""
+        code, guard, output = self._only(
+            {"walrus.py": PY_COMPREHENSION_WALRUS},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_a_star_import_binds_the_name_as_well(self) -> None:
+        """`from sys import *` may bind `argv`, so the bare name stays unsettled."""
+        code, guard, output = self._only(
+            {"star.py": PY_STAR_IMPORT},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
+
+    def test_an_unsettled_name_read_for_truth_keeps_the_hand_off(self) -> None:
+        """Reading the name itself as false would settle a gate that is unknown."""
+        code, guard, output = self._only(
+            {"truthy.py": PY_TRUTHY_UNSETTLED_ARGV},
+            {"test_counted.py": ELSE_SIBLING},
+        )
+        self.assertEqual(code, 2, output)
+        self.assertEqual(guard["status"], "unverified", guard)
 
     def test_a_keyword_entry_call_is_read_like_a_positional_one(self) -> None:
         """`main(argv=sys.argv)` hands over the full command line, so the gate is false."""

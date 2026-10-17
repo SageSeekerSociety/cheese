@@ -505,22 +505,15 @@ def _name_is_reassigned(scope: ast.AST, name: str) -> bool:
     walrus, a `for argv in ...`. Those change what the name holds, and the
     entry call alone cannot say what is left. Nested functions, lambdas, class
     bodies and comprehensions have scopes of their own: a store inside one
-    leaves the outer name alone, so the walk stops at them.
+    leaves the outer name alone, so the walk stops at them — except for a
+    walrus, which a comprehension writes back to the enclosing scope.
     """
     for child in ast.iter_child_nodes(scope):
-        if isinstance(
-            child,
-            (
-                ast.FunctionDef,
-                ast.AsyncFunctionDef,
-                ast.Lambda,
-                ast.ClassDef,
-                ast.ListComp,
-                ast.SetComp,
-                ast.DictComp,
-                ast.GeneratorExp,
-            ),
-        ):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if isinstance(child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            if _walrus_binds(child, name):
+                return True
             continue
         if isinstance(child, ast.Name) and child.id == name and isinstance(child.ctx, ast.Store):
             return True
@@ -529,11 +522,39 @@ def _name_is_reassigned(scope: ast.AST, name: str) -> bool:
     return False
 
 
+def _walrus_binds(scope: ast.AST, name: str) -> bool:
+    """True when a `:=` inside `scope` binds `name` outside it.
+
+    A comprehension's own `for` target stays in its scope, but an assignment
+    expression writes to the scope around the comprehension, so it still
+    rebinds the parameter there.
+    """
+    for child in ast.iter_child_nodes(scope):
+        if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            continue
+        if (
+            isinstance(child, ast.NamedExpr)
+            and isinstance(child.target, ast.Name)
+            and child.target.id == name
+        ):
+            return True
+        if _walrus_binds(child, name):
+            return True
+    return False
+
+
 def _imports_name(scope: ast.Module, name: str) -> bool:
-    """True when a top-level `import` binds `name`: `from sys import argv`."""
+    """True when a top-level `import` may bind `name`.
+
+    `from sys import argv` names it; `from sys import *` could bind anything,
+    so it counts too — treating it as unreadable only makes the verdict more
+    conservative.
+    """
     for statement in scope.body:
         if isinstance(statement, (ast.Import, ast.ImportFrom)):
             for alias in statement.names:
+                if alias.name == "*":
+                    return True
                 if (alias.asname or alias.name.split(".")[0]) == name:
                     return True
     return False
@@ -564,6 +585,37 @@ def _argv_from_argument(node: ast.expr) -> str | None:
     return None
 
 
+def _a_main_parameter_shadows_argv(nodes: list[ast.AST]) -> bool:
+    """True when every bare `argv` read in the module is `main`'s own parameter.
+
+    A module that binds `argv` at top level makes the name mean the process
+    command line. `main(argv)` shadows that for its own body, so the entry
+    call settles what it holds there; but a helper reading the same name sees
+    the module binding, and then the entry call does not settle it everywhere.
+    Only when no read escapes such a `main` is the module binding harmless.
+    """
+    mains = [
+        node
+        for node in nodes
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "main"
+    ]
+    if not mains:
+        return False
+    for function in mains:
+        arguments = function.args
+        parameters = (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs)
+        if not any(argument.arg == "argv" for argument in parameters):
+            return False
+    inside = {id(node) for function in mains for node in ast.walk(function)}
+    return all(
+        id(node) in inside
+        for node in nodes
+        if isinstance(node, ast.Name)
+        and node.id == "argv"
+        and isinstance(node.ctx, ast.Load)
+    )
+
+
 def _self_test_argv(tree: ast.Module) -> list[str] | None:
     """The argv the guard's entry point receives from the `--self-test` command.
 
@@ -573,15 +625,20 @@ def _self_test_argv(tree: ast.Module) -> list[str] | None:
     `main` may be the one this function finds, `main()` hands over no argv at
     all, and a `main` that reassigns `argv` replaces whatever it was given.
     A module that binds `argv` itself — `from sys import argv`, `argv =
-    sys.argv` — reads that name from the process command line wherever no
-    parameter shadows it, so the entry call does not say what it holds either.
-    Each of those comes back `None`, and the name `argv` then stays unsettled —
+    sys.argv` — reads that name from the process command line unless `main`
+    takes a parameter of its own named `argv`: that parameter shadows the
+    module-level name for the whole body, so the entry call still says what
+    the gate sees. Everything else above comes back `None`, and the name
+    `argv` then stays unsettled —
     an unsettled gate keeps the block on the path instead of inventing a
     finding from it. `sys.argv` is not affected: it is the process command
     line, the same two words whatever the entry call passes.
     """
     nodes = list(ast.walk(tree))
-    if _name_is_reassigned(tree, "argv") or _imports_name(tree, "argv"):
+    binds_argv_at_module_level = _name_is_reassigned(tree, "argv") or _imports_name(
+        tree, "argv"
+    )
+    if binds_argv_at_module_level and not _a_main_parameter_shadows_argv(nodes):
         return None
     if any(
         _name_is_reassigned(node, "argv")
@@ -4019,10 +4076,6 @@ import sys
 from pathlib import Path
 
 
-def violations_in(root):
-    return [path.name for path in sorted(Path(root).rglob("*.bad"))]
-
-
 def helper(items):
     argv = items[1:]
     return argv
@@ -4036,18 +4089,12 @@ def check():
 
 def main(argv):
     if len(argv) == 1:
+        if "--self-test" in argv:
+            print("PASS: 什么都没测")
         try:
             sys.exit(1)
         except SystemExit:
             return check()
-    problems = violations_in(argv[1] if len(argv) > 1 else ".")
-    if "--self-test" in argv:
-        print("PASS: 什么都没测")
-        return 0
-    for name in problems:
-        print(f"{name}: 修法：删掉它", file=sys.stderr)
-    if problems:
-        return 1
     print("PASS: 什么都没测")
     return 0
 
