@@ -728,7 +728,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     seed = remote.parent / "seed"
     for directory in ("backend", "frontend"):
         (seed / directory).mkdir()
-        (seed / directory / "dependency-version").write_text("1")
+        (seed / directory / "uv.lock").write_text("1")
     git(seed, "add", ".")
     git(seed, "commit", "-m", "Add dependency fixtures")
     git(seed, "push", str(remote), "main")
@@ -743,7 +743,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
         setup_script=(
             'echo setup >> "$HOME/setup-count"\n'
             'mkdir -p "$HOME/.local/bin"\n'
-            "printf '#!/bin/sh\\ncat dependency-version\\n' "
+            "printf '#!/bin/sh\\ncat uv.lock\\n' "
             '> "$HOME/.local/bin/install-dependencies"\n'
             'chmod +x "$HOME/.local/bin/install-dependencies"\n'
             "export ONLY_SETUP=yes"
@@ -795,7 +795,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
             assert (work / directory / "installed-version").read_text() == "1"
         assert (work / "project-value").read_text() == config.variables["PROJECT_VALUE"]
         assert not (work / "injected").exists()
-    (first_work / "backend/dependency-version").write_text("2")
+    (first_work / "backend/uv.lock").write_text("2")
     (first_work / "draft.txt").write_text("unfinished work")
     assert open_task(first).returncode == 0
     assert (first_work / "backend/installed-version").read_text() == "2"
@@ -803,6 +803,7 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     assert (first_work / "startup-count").read_text() == "startup\nstartup\n"
 
     (first_work / "fail-install").touch()
+    (first_work / "backend/uv.lock").write_text("3")
     failed = open_task(first)
     assert failed.returncode == 23
     assert not failed.stdout.strip(), "A failed task must not be returned as ready"
@@ -818,8 +819,85 @@ def test_room_starts_before_task_dependencies_and_worktree_prepares_each_branch(
     assert open_task(first).returncode == 0
     task_status = environment_runner.read_status(root / "tasks" / first)
     assert task_status["state"] == "complete"
+    assert (first_work / "backend/installed-version").read_text() == "3"
     assert (home / "setup-count").read_text() == "setup\n"
     assert (first_work / "draft.txt").read_text() == "unfinished work"
+
+
+def _prepared_room(home, startup_script):
+    """A room whose environment runner prepares each task checkout with
+    `startup_script`, as a machine the platform launched has it."""
+    room = home / "room"
+    room.mkdir()
+    helpers = home / ".cheese"
+    helpers.mkdir(exist_ok=True)
+    shutil.copy(environment_runner.__file__, helpers / "cheese-environment.py")
+    config = EnvironmentConfig(startup_script=startup_script)
+    started = subprocess.run(
+        [sys.executable, environment_runner.__file__, "true"],
+        env={
+            **os.environ,
+            "CHEESE_WORK": str(room),
+            "CHEESE_ENVIRONMENT": json.dumps(config.snapshot()),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert started.returncode == 0, started.stderr
+
+
+def test_reopening_a_task_left_as_it_was_needs_neither_the_forge_nor_an_install(
+    device,
+):
+    """An agent's shell starts each command in the room again, so it opens the
+    task again for nearly every command it runs there. A checkout already on the
+    task's branch, whose dependency files are the ones last installed from,
+    comes back as it is: with the forge out of reach, and without the startup
+    script running again."""
+    cli, tasks, remote, home = device
+    _prepared_room(home, "echo startup >> startup-count")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / "draft.txt").write_text("unfinished\n")
+    _commit(work, "a.txt", "committed\n")
+    remote.rename(remote.with_name("unreachable.git"))
+
+    assert cli._task_worktree(task) == work
+    assert cli._task_worktree(task) == work
+
+    assert (work / "startup-count").read_text() == "startup\n"
+    assert (work / "draft.txt").read_text() == "unfinished\n"
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["a lock file edited", "a dependency file added", "a branch with other locks"],
+)
+def test_a_reopen_installs_again_once_the_dependency_files_change(device, change):
+    cli, tasks, _, home = device
+    _prepared_room(
+        home, "cat uv.lock >> installed 2>/dev/null || echo none >> installed"
+    )
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    if change == "a dependency file added":
+        (work / "uv.lock").write_text("added\n")
+        wanted = "none\nadded\n"
+    else:
+        (work / "uv.lock").write_text("first\n")
+        _commit(work, "uv.lock", "first\n")
+        assert cli._task_worktree(task) == work
+        if change == "a lock file edited":
+            (work / "uv.lock").write_text("second\n")
+            wanted = "none\nfirst\nsecond\n"
+        else:
+            git(work, "reset", "-q", "--hard", "HEAD~1")
+            wanted = "none\nfirst\nnone\n"
+
+    assert cli._task_worktree(task) == work
+
+    assert (work / "installed").read_text() == wanted
 
 
 def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(

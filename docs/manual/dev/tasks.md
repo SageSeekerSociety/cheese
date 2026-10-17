@@ -102,6 +102,9 @@ covers:
 3. `git worktree add` 到 `/work/<task_id>`，起点是远端分支（还没开出来就是基准分支）。
 4. 写两个钩子：`post-commit` → `cheese sync`，`prepare-commit-msg` → `cheese git-attribution`。钩子装在裸仓上，同一裸仓的每个工作目录都会跑它们，包括在任务目录旁边用 `git worktree add` 另开的那种；只有带任务标记（`cheese-task.json`）的任务目录才署名、才同步，其余目录照普通 git 提交，不碰任何任务。
 5. 这个环境里第一次建出这个目录时，把平台上这条任务最新的快照恢复进来（[新环境里的自动恢复](#restore)），在准备依赖之前：恢复回来的改动可能改了要装什么。
+6. 跑项目的启动脚本准备依赖（环境准备脚本的 `task` 模式）。成功后在任务的 git 目录里记下 `cheese-environment-prepared`：房间钉住的环境配置，加上每个依赖文件（`_DEPENDENCY_FILES`：`uv.lock`、`pyproject.toml`、`package.json`、`pnpm-lock.yaml` 等，树里任何位置、提交没提交都算）此刻内容的摘要。下次打开时摘要一样就不再跑；改了锁文件、切到锁文件不同的分支、换了环境配置，都会再跑一次。失败时先删掉旧记录，下次一定重跑。
+
+再次打开一个已经在任务当前分支上、远端地址没变、没有待恢复快照的目录（`_opened_as_left`），跳过第 2、3 步对托管平台的 `ls-remote` 和 `fetch`：agent 的 shell 每条命令都回到房间目录，几乎每条命令都要 `cd "$(cheese worktree …)"`，dev 上 10-12 到 10-17 十分钟内的重开中位数 16 s、p90 76 s，却什么都没改。这样打开时 `refs/remotes/origin/*` 停在这个检出上次 fetch 或推送时的样子，要最新的自己 `git fetch`。任务的分支变了（一步合并了）、远端地址变了，照旧走完整流程。
 
 两处守卫写在注释里：创建期要拿 `<project>.lock` 串行化（同一台机器上几条会话会并发要工作目录，一个被打断的 clone 会被当成完整仓库）；这台机器上有 `~/.cheese-environment/config.json` 却找不到准备脚本时**直接失败**——静默跳过会交出一个依赖从没装过的工作目录。
 
