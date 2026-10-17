@@ -30,9 +30,10 @@ What counts as a citation:
     contains another space-separated path (`2026 review.pdf`) also names
     `review.pdf`; link names that contain a space instead.
 
-Percent-encoded paths in prose are recognized only when they carry the
-`artifacts/` prefix (`artifacts/2026%20review.pdf`); a bare encoded name is
-ambiguous at its left edge, so write the literal name or the prefixed path.
+Percent-encoded paths in prose are decoded and matched too
+(`artifacts/2026%20review.pdf`, `2026%20review.pdf`, `%E6%8A%A5%E5%91%8A.pdf`),
+as long as the decoded name stands on its own. A literal backslash escape in
+prose (`artifacts/report\\(final\\).pdf`) is resolved before matching.
 
 Matching is whole-name with filename boundaries, not substring. That is what
 keeps `review.pdf` from being satisfied by `trial-review.pdf`,
@@ -51,6 +52,7 @@ Usage: check-review-artifacts.py             check the tree
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -69,7 +71,12 @@ DOC_SUFFIXES = (".md",)
 #: one of these is a suffix/prefix of a longer name, not a citation. `%` is
 #: here so `100%fix.pdf` is not a citation of `fix.pdf`; `+`, `~` and `@` are
 #: here because they also appear inside filenames this repository already has.
-NAME_CONTINUATION = frozenset(ascii_letters + digits + "_-." + "%+~@")
+NAME_CONTINUATION = frozenset(
+    ascii_letters + digits + "_-." + "%+~@" + "％＋／＼～＠"
+)
+
+#: Backslash escapes resolve in prose as well as in link destinations.
+ESCAPED_PUNCTUATION = re.compile(r"\\([%s])" % re.escape(punctuation))
 
 #: Reference definitions (`[label]: path`) and HTML links. Their destinations
 #: resolve the same way an inline link's does.
@@ -129,11 +136,14 @@ def _parse_destination(text: str, index: int) -> tuple[str | None, int]:
 
 def _parse_inline_link(text: str, index: int) -> tuple[str | None, int | None]:
     """Parse `](destination "title")` with index just after `](`."""
-    path, index = _parse_destination(text, index)
+    path, after = _parse_destination(text, index)
     if path is None:
         return None, None
     length = len(text)
-    while index < length and text[index] in " \t":
+    index = after
+    # A title may sit on the next line, and a malformed link must still hide
+    # its destination: otherwise `[x](kept.pdf` becomes a prose mention.
+    while index < length and text[index] in " \t\n":
         index += 1
     if index < length and text[index] in "\"'":
         quote = text[index]
@@ -141,22 +151,22 @@ def _parse_inline_link(text: str, index: int) -> tuple[str | None, int | None]:
         while index < length and text[index] != quote:
             index += 2 if text[index] == "\\" else 1
         if index >= length:
-            return None, None
+            return path, after
         index += 1
-        while index < length and text[index] in " \t":
+        while index < length and text[index] in " \t\n":
             index += 1
     elif index < length and text[index] == "(":
         index += 1
         while index < length and text[index] != ")":
             index += 2 if text[index] == "\\" else 1
         if index >= length:
-            return None, None
+            return path, after
         index += 1
-        while index < length and text[index] in " \t":
+        while index < length and text[index] in " \t\n":
             index += 1
     if index < length and text[index] == ")":
         return path, index + 1
-    return None, None
+    return path, after
 
 
 def _link_spans(text: str):
@@ -311,8 +321,13 @@ def _percent_encoded_citation(prose: str, relative: str) -> bool:
         found = prose.find("%", index)
         if found < 0:
             break
-        if _left_boundary_ok(prose, found, canonical=False) and _decoded_prefix_matches(
-            prose, found, relative
+        # The name may start before the escape (`2026%20review.pdf`), so walk
+        # back to the start of the word and decode from there.
+        start = found
+        while start > 0 and prose[start - 1] in NAME_CONTINUATION:
+            start -= 1
+        if _left_boundary_ok(prose, start, canonical=False) and _decoded_prefix_matches(
+            prose, start, relative
         ):
             return True
         index = found + 1
@@ -325,42 +340,74 @@ def names_artifact(text: str, relative: str) -> bool:
         if path_names_artifact(_destination_path(path), relative):
             return True
     prose = _without_link_destinations(text)
+    unescaped = ESCAPED_PUNCTUATION.sub(r"\1", prose)
     canonical = f"{ARTIFACTS_DIRNAME}/{relative}"
     for candidate, is_canonical in ((canonical, True), (relative, False)):
-        if _contains(prose, candidate, canonical=is_canonical):
-            return True
-    return _percent_encoded_citation(prose, relative)
+        for haystack in (prose, unescaped):
+            if _contains(haystack, candidate, canonical=is_canonical):
+                return True
+    return _percent_encoded_citation(prose, relative) or _percent_encoded_citation(
+        unescaped, relative
+    )
 
 
-def _artifact_paths(reviews: Path) -> list[Path]:
+def _artifact_paths(reviews: Path) -> tuple[list[Path], list[Path]]:
     artifacts = reviews / ARTIFACTS_DIRNAME
     if not artifacts.is_dir():
-        return []
-    return sorted(path for path in artifacts.rglob("*") if path.is_file())
+        return [], []
+    paths = []
+    unreadable = []
+
+    def on_error(exc: OSError) -> None:
+        print(f"{exc.filename}: 无法读取: {exc}", file=sys.stderr)
+        unreadable.append(Path(exc.filename or artifacts))
+
+    for directory, _, filenames in os.walk(artifacts, onerror=on_error):
+        for name in filenames:
+            path = Path(directory) / name
+            if path.is_file():
+                paths.append(path)
+    return sorted(paths), unreadable
 
 
 def _document_texts(reviews: Path) -> tuple[list[str], list[Path]]:
     artifacts = (reviews / ARTIFACTS_DIRNAME).resolve()
     texts = []
     unreadable = []
-    for path in sorted(reviews.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in DOC_SUFFIXES:
-            continue
-        if artifacts in path.resolve().parents:
-            continue
-        try:
-            texts.append(path.read_text(encoding="utf-8", errors="replace"))
-        except OSError as exc:
-            print(f"{path}: 无法读取: {exc}", file=sys.stderr)
-            unreadable.append(path)
+
+    def note_problem(path: Path, reason: str) -> None:
+        print(f"{path}: 无法读取: {reason}", file=sys.stderr)
+        unreadable.append(path)
+
+    def on_error(exc: OSError) -> None:
+        note_problem(Path(exc.filename or reviews), str(exc))
+
+    # os.walk reports a directory it cannot enter instead of silently skipping
+    # it the way rglob does; a skipped note would turn this guard into a pass.
+    for directory, _, filenames in os.walk(reviews, onerror=on_error):
+        for name in sorted(filenames):
+            path = Path(directory) / name
+            if path.suffix.lower() not in DOC_SUFFIXES:
+                continue
+            if path.is_symlink() and not path.exists():
+                note_problem(path, "断链")
+                continue
+            if not path.is_file():
+                continue
+            if artifacts in path.resolve().parents:
+                continue
+            try:
+                texts.append(path.read_text(encoding="utf-8", errors="replace"))
+            except OSError as exc:
+                note_problem(path, str(exc))
     return texts, unreadable
 
 
-def unreferenced(reviews: Path, documents: list[str]) -> list[Path]:
+def unreferenced(artifacts_dir: Path, artifacts: list[Path], documents: list[str]) -> list[Path]:
     """Artifacts no note under `docs/reviews/` names."""
     missing = []
-    for artifact in _artifact_paths(reviews):
-        relative = artifact.relative_to(reviews / ARTIFACTS_DIRNAME).as_posix()
+    for artifact in artifacts:
+        relative = artifact.relative_to(artifacts_dir).as_posix()
         if not any(names_artifact(text, relative) for text in documents):
             missing.append(artifact)
     return missing
@@ -371,11 +418,22 @@ def check(root: Path) -> int:
     if not reviews.is_dir():
         print(f"无法判断：评审文档目录不存在：{reviews}", file=sys.stderr)
         return 2
+    artifacts = reviews / ARTIFACTS_DIRNAME
+    if artifacts.exists() and not os.access(artifacts, os.R_OK | os.X_OK):
+        print(f"无法判断：评审产物目录读不出来：{artifacts}", file=sys.stderr)
+        return 2
     documents, unreadable = _document_texts(reviews)
     if unreadable:
-        print(f"无法判断：{len(unreadable)} 篇评审文档读不出来", file=sys.stderr)
+        print(f"无法判断：评审目录里有 {len(unreadable)} 处读不出来", file=sys.stderr)
         return 2
-    missing = unreferenced(reviews, documents)
+    artifacts_paths, artifact_unreadable = _artifact_paths(reviews)
+    if artifact_unreadable:
+        print(
+            f"无法判断：评审产物目录里有 {len(artifact_unreadable)} 处读不出来",
+            file=sys.stderr,
+        )
+        return 2
+    missing = unreferenced(reviews / ARTIFACTS_DIRNAME, artifacts_paths, documents)
     for artifact in missing:
         print(
             f"{artifact}: 没有被 docs/reviews/ 下任何文档引用；"

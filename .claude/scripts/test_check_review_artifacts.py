@@ -464,6 +464,83 @@ class ReviewArtifactGuardTests(unittest.TestCase):
         )
         self.assertEqual(self._run(root).returncode, ORPHAN)
 
+    def test_a_title_on_the_next_line_still_hides_a_bare_destination(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": '[x](kept.pdf\n"t")\n'}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_title_on_the_next_line_after_an_angled_destination(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": '[x](<kept.pdf>\n"t")\n'}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_partially_encoded_bare_name_with_a_prefix_passes(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/2026 review.pdf": b"%PDF-1.4",
+                "note.md": "见 2026%20review.pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_full_width_percent_does_not_delimit_a_bare_name(self) -> None:
+        root = self._tree(
+            {"artifacts/fix.pdf": b"%PDF-1.4", "note.md": "折扣 100％fix.pdf 生效。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_a_full_width_slash_does_not_delimit_a_bare_name(self) -> None:
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "见 kept.pdf／x 这一份。\n"}
+        )
+        self.assertEqual(self._run(root).returncode, ORPHAN)
+
+    def test_escaped_parentheses_in_prose_pass(self) -> None:
+        root = self._tree(
+            {
+                "artifacts/report(final).pdf": b"%PDF-1.4",
+                "note.md": "见 artifacts/report\\(final\\).pdf 这一份。\n",
+            }
+        )
+        self.assertEqual(self._run(root).returncode, 0)
+
+    def test_a_broken_symlink_note_cannot_be_judged(self) -> None:
+        root = self._tree({"artifacts/kept.pdf": b"%PDF-1.4"})
+        link = root / "docs" / "reviews" / "note.md"
+        link.symlink_to(root / "docs" / "reviews" / "missing.md")
+        result = self._run(root)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
+
+    def test_an_unreadable_subdirectory_cannot_be_judged(self) -> None:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root can read a mode-000 directory")
+        root = self._tree(
+            {
+                "artifacts/kept.pdf": b"%PDF-1.4",
+                "note.md": "[产物](artifacts/kept.pdf)\n",
+                "sub/other.md": "nothing\n",
+            }
+        )
+        sub = root / "docs" / "reviews" / "sub"
+        sub.chmod(0)
+        self.addCleanup(sub.chmod, 0o755)
+        result = self._run(root)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
+
+    def test_an_unreadable_artifacts_directory_cannot_be_judged(self) -> None:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            self.skipTest("root can read a mode-000 directory")
+        root = self._tree(
+            {"artifacts/kept.pdf": b"%PDF-1.4", "note.md": "[产物](artifacts/kept.pdf)\n"}
+        )
+        artifacts = root / "docs" / "reviews" / "artifacts"
+        artifacts.chmod(0)
+        self.addCleanup(artifacts.chmod, 0o755)
+        result = self._run(root)
+        self.assertEqual(result.returncode, CANNOT_JUDGE, result.stderr)
+
     # --- cannot judge -------------------------------------------------------
 
     def test_a_missing_reviews_directory_cannot_be_judged(self) -> None:
