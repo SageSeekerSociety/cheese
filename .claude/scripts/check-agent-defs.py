@@ -40,9 +40,9 @@ to fix it>`, and the exit code is the verdict. Nothing here is a warning.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import re
 import sys
+import types
 from pathlib import Path
 from typing import NamedTuple
 
@@ -60,9 +60,16 @@ NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 #: A top-level `key: value` line of the frontmatter.
 KEY_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*):(.*)$")
 
-#: A `description:` whose value is one of these is a block scalar: the text is the
-#: indented lines under it, so the marker alone is not a description.
-BLOCK_MARKERS = frozenset({">", "|", ">-", "|-", ">+", "|+"})
+#: A `description:` whose value is a block-scalar header is not a description: the text is
+#: the indented lines under it, so the header alone says nothing. The header may carry a
+#: chomping sign and an indentation indicator (`>`, `|-`, `|2`, `>2-`), so it is matched as
+#: a shape rather than listed.
+BLOCK_MARKER_RE = re.compile(r"^[|>][+-]?\d*[+-]?$")
+
+#: A byte-order mark, which an editor may leave in front of the opening `---`. `str.strip()`
+#: does not remove it, so a file that is otherwise well formed would read as having no
+#: frontmatter at all — a finding about a file that has nothing wrong with it.
+BOM = chr(0xFEFF)
 
 
 class Finding(NamedTuple):
@@ -71,13 +78,30 @@ class Finding(NamedTuple):
     message: str
 
 
+def scalar(raw: str) -> str:
+    """A plain frontmatter value: quotes removed, a trailing `#` comment dropped.
+
+    Both are ordinary YAML — `model: "sonnet"` and `model: sonnet  # why` name the same
+    alias — so reading them as text without this would report a legal definition. A `#`
+    that no space precedes is part of the value, as YAML says."""
+    value = raw.strip()
+    if value[:1] in ("'", '"'):
+        close = value.find(value[0], 1)
+        if close != -1:
+            return value[1:close]  # a `#` inside the quotes is part of the value
+    comment = re.search(r"(?:^|\s)#", value)
+    if comment:
+        value = value[: comment.start()].strip()
+    return value
+
+
 def frontmatter(text: str) -> dict[str, dict] | None:
     """The `---`-fenced frontmatter as `{key: {"value", "line", "body"}}`, or None when the
     file has no such block. The values are read as text rather than through a YAML
     parser: no `.claude/scripts` guard may need a dependency to run, and the shape here —
     a flat mapping whose keys are simple and whose only block values are descriptions — is
     exactly what a session's definitions use."""
-    lines = text.splitlines()
+    lines = text.removeprefix(BOM).splitlines()
     if not lines or lines[0].strip() != "---":
         return None
     end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
@@ -98,38 +122,64 @@ def frontmatter(text: str) -> dict[str, dict] | None:
         match = KEY_RE.match(line)
         if match:
             current = match.group(1)
-            keys[current] = {"value": match.group(2).strip(), "line": offset, "body": []}
+            keys[current] = {"value": scalar(match.group(2)), "line": offset, "body": []}
     return keys
 
 
 def has_text(entry: dict) -> bool:
-    """True when a frontmatter key carries text, inline or as a block scalar."""
-    if entry["value"] and entry["value"] not in BLOCK_MARKERS:
+    """True when a frontmatter key carries text, inline or as a block scalar. A block
+    header with nothing indented under it, and an empty quoted value, both say nothing."""
+    if entry["body"]:
         return True
-    return bool(entry["body"])
+    value = entry["value"]
+    return bool(value) and BLOCK_MARKER_RE.match(value) is None
+
+
+def read_definition(path: Path, rel: str) -> tuple[str | None, Finding | None]:
+    """The file's text, or the finding that says why it could not be read. A definition
+    that is not UTF-8 is reported like any other problem and the rest of the tree is still
+    judged: one bad byte must not turn the run into a traceback that hides the others."""
+    try:
+        return path.read_text(encoding="utf-8"), None
+    except UnicodeDecodeError:
+        return None, Finding(rel, 1, "这个文件不是 UTF-8：守卫读不出它的内容，判不了。"
+                                     "用 UTF-8 重存一遍（编辑器里通常是「以 UTF-8 保存」）")
 
 
 def check_definition(path: Path, rel: str) -> list[Finding]:
     findings: list[Finding] = []
-    keys = frontmatter(path.read_text(encoding="utf-8"))
+    text, unreadable = read_definition(path, rel)
+    if unreadable is not None:
+        return [unreadable]
+    keys = frontmatter(text or "")
     if keys is None:
         return [Finding(rel, 1, "没有 `---` 围起来的 frontmatter：补上 name 和 description 两行，"
                                 "如 `name: <文件名>`、`description: <这个类型什么时候该用>`")]
 
+    # A fix that is itself refused is no fix: when the file name is not a slug either,
+    # naming it as the one to write sends the reader straight at a second finding.
+    slug_fix = (
+        f"改成 `name: {path.stem}`"
+        if NAME_RE.match(path.stem)
+        else f"这个名字和文件名 {path.name} 都要改：两边都只能用小写字母、数字和连字符"
+    )
     name = keys.get("name")
     if name is None or not has_text(name):
-        findings.append(Finding(rel, 1, "缺 `name`：它就是这个定义的 subagent_type，"
-                                        f"补一行 `name: {path.stem}`"))
+        hint = (
+            f"补一行 `name: {path.stem}`"
+            if NAME_RE.match(path.stem)
+            else f"补一行 `name: <slug>`，并把文件名 {path.name} 一起改成同一个 slug"
+        )
+        findings.append(Finding(rel, 1, "缺 `name`：它就是这个定义的 subagent_type，" + hint))
     else:
         value = name["value"]
         if not NAME_RE.match(value):
             findings.append(Finding(rel, name["line"],
-                                    f"`name: {value}` 不是 slug：只能用小写字母、数字和连字符，"
-                                    f"改成 `name: {path.stem}`"))
+                                    f"`name: {value}` 不是 slug：只能用小写字母、数字和连字符，{slug_fix}"))
         elif value != path.stem:
             findings.append(Finding(rel, name["line"],
                                     f"`name: {value}` 和文件名 {path.name} 不一致："
-                                    f"两个名字指同一个定义，任选一边改齐（通常改为 `name: {path.stem}`）"))
+                                    f"两个名字指同一个定义，任选一边改齐（{slug_fix}）"))
 
     description = keys.get("description")
     if description is None or not has_text(description):
@@ -166,7 +216,10 @@ def duplicate_names(root: Path, paths: list[Path]) -> list[Finding]:
     seen: dict[str, str] = {}
     findings: list[Finding] = []
     for path in paths:
-        keys = frontmatter(path.read_text(encoding="utf-8"))
+        text, unreadable = read_definition(path, path.relative_to(root).as_posix())
+        if unreadable is not None:
+            continue  # `check_definition` already reported this file
+        keys = frontmatter(text or "")
         if not keys or not has_text(keys.get("name", {"value": "", "body": []})):
             continue
         name = keys["name"]["value"]
@@ -194,13 +247,17 @@ def check_definitions(root: Path) -> list[Finding]:
 
 
 def load_tiers(path: Path):
-    """The review tiering module, imported by path. It is a module of constants and pure
-    functions and does nothing at import time, so reading it here is safe."""
-    spec = importlib.util.spec_from_file_location("_agent_defs_tiers", path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"读不了 {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    """The review tiering module, executed from its source held in memory.
+
+    Not through an import loader: a loader leaves a `__pycache__` beside the file it reads,
+    and — because Python invalidates that cache on the source's mtime and size — an edit
+    that keeps the size and lands inside the same second as the last run would be answered
+    from the bytecode of the version before it. The guard would then read the topology from
+    before the widening and pass the one change it exists to refuse. Executing the text it
+    just read leaves no cache to be stale, and writes nothing into the tree it examines."""
+    module = types.ModuleType("_agent_defs_tiers")
+    module.__file__ = str(path)
+    exec(compile(path.read_text(encoding="utf-8"), str(path), "exec"), module.__dict__)
     return module
 
 
