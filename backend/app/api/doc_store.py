@@ -31,6 +31,7 @@ from app.domain.block.documents import (
 from app.domain.block.models import Block
 from app.domain.block.schemas import BlockOut
 from app.domain.living_doc import collab
+from app.domain.living_doc import links as doc_links
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.schemas import document_snapshot
 from app.domain.living_doc.services import DocumentJournal
@@ -157,6 +158,8 @@ async def store(
         turn_id=turn_id,
     )
     changed = recorded is not None
+    if changed:
+        await doc_links.sync(db, doc, content)
     outside = (
         await tell_new_mentions(db, doc, before=before, after=content, actors=actors)
         if changed and not quiet
