@@ -1121,7 +1121,11 @@ class WorkflowTextTest(unittest.TestCase):
             subprocess.run(["bash", "-e", "-c", body], env=env, cwd=tmp, check=True,
                            capture_output=True, text=True)
             args = curl_args.read_text()
-            self.assertIn("--retry-all-errors", args, f"no retry budget: {args}")
+            # --retry-all-errors alone retries nothing: curl's default retry
+            # count is zero, so the count is what makes a TLS reset retry.
+            self.assertRegex(args, r"--retry(?:=|\s+)[1-9]\d*",
+                             f"no retry count, so nothing is retried: {args}")
+            self.assertIn("--retry-all-errors", args, f"no all-errors switch: {args}")
             self.assertIn("--max-time", args, f"no bound on a hung read: {args}")
             self.assertEqual((tmp / "pull.json").read_text(), '{"number":7}',
                              "the response did not reach the checker verbatim")
