@@ -1379,10 +1379,11 @@ export function usePanel({ topic }: { topic: { field: string } }) {
 })
 
 test('a destructuring inside a callback does not make the setup one live', (t) => {
-  // The same name is destructured twice: inside `onMounted`, where the callback reruns
-  // it and the read is live, and at setup, where it is a snapshot. The watch reads the
-  // setup local, so the base watch is lost. Resolving the name by scope, not by which
-  // destructuring was seen last, is what keeps the two apart.
+  // The same name is destructured twice: inside an `onMounted` callback and at setup.
+  // Both callbacks run once, so both locals are snapshots, and the watch reads the
+  // setup one — the base watch is lost. A flat table keyed by name used to record the
+  // callback's local anyway and answer for the setup read; scoped aliases keep each
+  // read with the declaration that is actually in scope.
   const script = `import { ref, watch } from 'vue'
 
 const props = defineProps<{ config: { value: string } }>()
@@ -1575,6 +1576,141 @@ export function usePanel({ topicId }: { topicId: () => string }) {
 }`,
   }).run()
   assert.equal(field.status, 1, field.output)
+})
+
+test('a renamed vue watch import is still the call that reruns its getter', (t) => {
+  // The live/snapshot decision is made on the call, and a file is free to import the
+  // same function under another name. Reading only the local name turns the live
+  // destructuring into a snapshot and reports a watch that works as lost.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { computed } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel({ config: computed(() => props.config) })`
+  const composed = `import { ref, toValue, watch as w, type ComputedRef } from 'vue'
+
+export function usePanel({ config }: { config: ComputedRef<{ value: string }> }) {
+  const loading = ref(false)
+  w(
+    () => {
+      const { value } = toValue(config)
+      return value
+    },
+    () => { loading.value = false }
+  )
+  return { loading }
+}`
+  const result = split(t, { script, head, composableSource: composed }).run()
+  assert.equal(result.status, 0, result.output)
+  assert.match(result.output, /1 checked/)
+
+  const mutated = mutatedGuard(
+    t,
+    '    return RERUNNING_IMPORTS.has(imports.bindings.get(callee.text) ?? callee.text)',
+    '    return RERUNNING_IMPORTS.has(callee.text)'
+  )
+  const weakened = split(t, { script, head, composableSource: composed, cli: mutated }).run()
+  assert.equal(weakened.status, 1, weakened.output)
+})
+
+test('a same-named import that runs its callback once is not a vue watch', (t) => {
+  // `watch` imported from another module is that module's function. Only a call that
+  // reruns its callback makes a destructured local follow its source; treating the
+  // name alone as Vue's accepts a snapshot as the live read.
+  const script = `import { ref, watch } from 'vue'
+
+const props = defineProps<{ config: { value: string } }>()
+const loading = ref(false)
+watch(() => props.config.value, () => { loading.value = false })`
+  const head = `import { computed } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ config: { value: string } }>()
+const { loading } = usePanel({ config: computed(() => props.config) })`
+  const composed = `import { toValue, watch as vueWatch, type ComputedRef } from 'vue'
+import { watch } from './poll'
+
+export function usePanel({ config }: { config: ComputedRef<{ value: string }> }) {
+  let loading = false
+  watch(() => {
+    const { value } = toValue(config)
+    vueWatch(() => value, () => { loading = true })
+  })
+  return { loading }
+}`
+  const result = split(t, { script, head, composableSource: composed }).run()
+  assert.equal(result.status, 1, result.output)
+  assert.match(result.output, /props\.config\.value/)
+
+  const mutated = mutatedGuard(
+    t,
+    '    if (imports.foreign.has(callee.text)) return false',
+    '    if (false) return false'
+  )
+  const weakened = split(t, { script, head, composableSource: composed, cli: mutated }).run()
+  assert.equal(weakened.status, 0, weakened.output)
+})
+
+test('a caller the change never touched does not stand in for a deleted watch', (t) => {
+  // The judged component dropped both its watch and its call to the composable, so
+  // there is nothing of its own to read. Another SFC exists that calls the composable
+  // with the same option, but this change never touched it: the watch is gone, and
+  // borrowing that caller's scope would pass it.
+  const f = fixture(
+    t,
+    `import { watch } from 'vue'
+
+const props = defineProps<{ topicId: string }>()
+watch(() => props.topicId, () => {})`
+  )
+  f.write(
+    'frontend/src/components/Other.vue',
+    sfc(`import { ref } from 'vue'
+import { usePanel } from '@/composables/usePanel'
+
+const props = defineProps<{ topicId: string }>()
+const { loading } = usePanel({ topicId: () => props.topicId })`)
+  )
+  f.write(
+    composable,
+    `export function usePanel(scope: { topicId: () => string }) {
+  return { loading: false }
+}`
+  )
+  f.git('add', 'frontend/src/components/Other.vue')
+  f.git('add', composable)
+  f.git('commit', '--quiet', '-m', 'other caller')
+  const base = f.git('rev-parse', 'HEAD')
+  f.write(component, sfc(`const props = defineProps<{ topicId: string }>()`))
+  f.write(
+    composable,
+    `import { toValue, watch } from 'vue'
+
+export function usePanel(scope: { topicId: () => string }) {
+  watch(() => toValue(scope.topicId), () => {})
+  return { loading: false }
+}`
+  )
+  const result = runGuard(f.repo, base)
+  assert.equal(result.status, 1, result.output)
+  assert.match(result.output, /props\.topicId/)
+
+  const mutated = mutatedGuard(
+    t,
+    '  const vueFiles = listVueFiles(repo, target, options.staged).filter((file) => changedVue.has(file))',
+    '  const vueFiles = listVueFiles(repo, target, options.staged)'
+  )
+  const weakened = spawnSync(process.execPath, [mutated, '--repo', f.repo, '--base', base], {
+    env,
+    encoding: 'utf8',
+    cwd: os.tmpdir(),
+  })
+  assert.equal(weakened.status, 0, weakened.stdout + weakened.stderr)
 })
 
 test('the judged component decides whether its own key was a getter', (t) => {

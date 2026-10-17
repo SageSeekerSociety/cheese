@@ -158,13 +158,19 @@ function aliasAt(ctx, name, pos) {
 // in one of these names a fresh value each time. The rest of setup (`onMounted`,
 // `setTimeout`, a helper called once) runs its callback once, so the same
 // destructuring there is a snapshot.
-const RERUNNING_CALLS = new Set(['watch', 'watchEffect', 'watchPostEffect', 'watchSyncEffect', 'computed'])
+const RERUNNING_IMPORTS = new Set(['watch', 'watchEffect', 'watchPostEffect', 'watchSyncEffect', 'computed'])
 
-function calleeName(call) {
+// A renamed import still names the same call, so the local name is resolved through the
+// file's vue imports first and only read as written when it is not one (auto-imports).
+function rerunningCall(call, imports) {
   const callee = unwrap(call.expression)
-  if (ts.isIdentifier(callee)) return callee.text
-  if (ts.isPropertyAccessExpression(callee)) return callee.name.text
-  return null
+  if (ts.isIdentifier(callee)) {
+    if (imports.foreign.has(callee.text)) return false
+    return RERUNNING_IMPORTS.has(imports.bindings.get(callee.text) ?? callee.text)
+  }
+  if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression))
+    return imports.namespaces.has(callee.expression.text) && RERUNNING_IMPORTS.has(callee.name.text)
+  return false
 }
 
 function isFunctionNode(node) {
@@ -194,7 +200,11 @@ function collectAliases(root, ctx) {
         end: scope.getEnd(),
       })
   }
-  const visit = (node, scope, live) => {
+  const sourceFile = ts.isSourceFile(root) ? root : root.getSourceFile?.()
+  const imports = sourceFile
+    ? vueWatchBindings(sourceFile)
+    : { bindings: new Map(), namespaces: new Set(), foreign: new Set() }
+  const visit = (node, scope, live, call) => {
     if (ts.isVariableDeclaration(node) && node.initializer) {
       const member = memberPath(node.initializer, ctx)
       if (ts.isIdentifier(node.name)) bind(node.name, member, scope)
@@ -228,14 +238,16 @@ function collectAliases(root, ctx) {
         }
       }
     }
+    // A function is handed to the innermost call above it, through wrappers and array
+    // elements: `watch(() => ...)`, `watch((() => ...) as any)`, `watch([() => a, () => b])`.
+    const enclosing = ts.isCallExpression(node) ? node : call
     ts.forEachChild(node, (child) => {
-      if (isFunctionNode(child)) {
-        const reruns = ts.isCallExpression(node) && RERUNNING_CALLS.has(calleeName(node))
-        visit(child, child, reruns)
-      } else visit(child, scope, live)
+      const inner = unwrap(child)
+      if (isFunctionNode(inner)) visit(inner, inner, enclosing ? rerunningCall(enclosing, imports) : false, null)
+      else visit(child, scope, live, enclosing)
     })
   }
-  visit(root, root, false)
+  visit(root, root, false, null)
 }
 
 function propertyName(node) {
@@ -472,21 +484,31 @@ function canonical(node, ctx = {}) {
 function vueWatchBindings(sourceFile) {
   const bindings = new Map()
   const namespaces = new Set()
+  // A name this file imports from somewhere else is that module's function, whatever
+  // it is called: a local `watch` that runs its callback once must not be read as Vue's.
+  const foreign = new Set()
   for (const statement of sourceFile.statements) {
     if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
-    if (statement.moduleSpecifier.text !== 'vue' && statement.moduleSpecifier.text !== 'vue-demi') continue
     const clause = statement.importClause
     if (!clause?.namedBindings) continue
+    const fromVue = statement.moduleSpecifier.text === 'vue' || statement.moduleSpecifier.text === 'vue-demi'
     if (ts.isNamespaceImport(clause.namedBindings)) {
-      namespaces.add(clause.namedBindings.name.text)
+      if (fromVue) namespaces.add(clause.namedBindings.name.text)
+      else foreign.add(clause.namedBindings.name.text)
       continue
     }
     for (const element of clause.namedBindings.elements) {
       const imported = (element.propertyName ?? element.name).text
-      if (imported === 'watch' || imported === 'watchEffect') bindings.set(element.name.text, imported)
+      if (!fromVue) {
+        foreign.add(element.name.text)
+        continue
+      }
+      // `computed` and the effect variants are not watch sources, but a getter handed
+      // to them reruns the same way, so the local name is recorded for that decision.
+      if (RERUNNING_IMPORTS.has(imported)) bindings.set(element.name.text, imported)
     }
   }
-  return { bindings, namespaces }
+  return { bindings, namespaces, foreign }
 }
 
 function keysToItems(keys, node) {
@@ -854,7 +876,11 @@ function check(options) {
   for (const { status, file } of changed) {
     if ((status === 'A' || status === 'M') && isComposableFile(file)) targets.add(file)
   }
-  const vueFiles = listVueFiles(repo, target, options.staged)
+  // Only an SFC this change touched can carry a watch that left the judged component:
+  // a caller the change never touched says nothing about where this change's watch went.
+  const changedVue = new Set()
+  for (const { status, file } of changed) if (status !== 'D' && file.endsWith('.vue')) changedVue.add(file)
+  const vueFiles = listVueFiles(repo, target, options.staged).filter((file) => changedVue.has(file))
   const mappingCache = new Map()
   const mappingFor = (fnName) => {
     if (!mappingCache.has(fnName)) mappingCache.set(fnName, callSiteMappings(vueFiles, fnName, readHead))
