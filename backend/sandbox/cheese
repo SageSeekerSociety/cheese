@@ -3920,46 +3920,129 @@ def _task_worktree(task_id: str) -> Path:
         # Read before the run: a dependency file changed while it installs is
         # one this preparation may have missed, so the next open prepares again.
         wanted = _prepared_from(task_dir, config)
-        if not (stamp.exists() and stamp.read_text() == wanted):
+        if not _still_prepared(task_dir, stamp, wanted):
             stamp.unlink(missing_ok=True)
             result = subprocess.run(
                 [sys.executable, str(runner), "task", str(task_dir)]
             )
             if result.returncode:
+                # Again: another open's run may have finished in between.
+                stamp.unlink(missing_ok=True)
                 raise SystemExit(result.returncode)
-            stamp.write_text(wanted)
+            stamp.write_text(
+                json.dumps({"from": wanted, "made": _installed_dirs(task_dir)})
+            )
     return task_dir
 
 
-# In a task checkout's git directory: `_prepared_from` as it was when the
-# environment runner last prepared the checkout and succeeded.
+# In a task checkout's git directory, after the environment runner last
+# prepared the checkout and succeeded: `_prepared_from` as it was before that
+# run, and the installed directories there after it (`_installed_dirs`).
 _PREPARED_STAMP = "cheese-environment-prepared"
+
+
+#: What an install leaves behind, by directory name. Caches (`__pycache__`,
+#: `.pytest_cache`) are not: removing one is no reason to install again.
+_INSTALLED_DIRS = frozenset({"node_modules", ".venv", "venv", "vendor"})
+
+
+def _installed_dirs(task_dir: Path) -> list[str]:
+    """The installed directories the checkout does not track (`node_modules/`,
+    `backend/.venv/`), each named once at its top."""
+    listed = _git_task(
+        task_dir,
+        "ls-files",
+        "-z",
+        # Ignored or not: no exclude rules, so nothing is told apart.
+        "--others",
+        "--directory",
+        raw=True,
+    )
+    return sorted(
+        name
+        for name in listed.split("\0")
+        if name.endswith("/")
+        and name.rstrip("/").rsplit("/", 1)[-1] in _INSTALLED_DIRS
+    )
+
+
+def _still_prepared(task_dir: Path, stamp: Path, wanted: str) -> bool:
+    """Whether the last successful preparation was from `wanted`, and what it
+    left behind is all still there: a `rm -rf node_modules` or a `git clean
+    -xdf` since then prepares the checkout again."""
+    try:
+        last = json.loads(stamp.read_text())
+        return last["from"] == wanted and all(
+            (task_dir / name).is_dir() for name in last["made"]
+        )
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 # The files a project's dependencies are installed from, by name, wherever in
 # the tree they sit. Which of them a project's startup script reads is the
 # project's to know; a change to any one prepares the checkout again.
 _DEPENDENCY_FILES = (
+    # Python
     "uv.lock",
     "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
     "poetry.lock",
+    "pdm.lock",
+    "Pipfile",
     "Pipfile.lock",
     "requirements*.txt",
+    "requirements*.in",
+    "requirements*/**",
+    "constraints*.txt",
+    "environment.yml",
+    "environment.yaml",
+    "conda-lock.yml",
+    "pixi.toml",
+    "pixi.lock",
     ".python-version",
+    # JavaScript
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
     "package-lock.json",
+    "npm-shrinkwrap.json",
     "yarn.lock",
+    ".yarnrc.yml",
     "bun.lock",
     "bun.lockb",
+    "deno.json",
+    "deno.jsonc",
+    "deno.lock",
     ".npmrc",
     ".nvmrc",
     ".node-version",
-    ".tool-versions",
+    # Other ecosystems
+    "Cargo.toml",
     "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    "go.mod",
     "go.sum",
+    "go.work",
+    "Gemfile",
     "Gemfile.lock",
+    "composer.json",
     "composer.lock",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "gradle.properties",
+    "*.csproj",
+    "Directory.Packages.props",
+    "packages.lock.json",
+    "flake.nix",
+    "flake.lock",
+    ".tool-versions",
+    "mise.toml",
+    ".mise.toml",
     "*.patch",
 )
 

@@ -900,6 +900,64 @@ def test_a_reopen_installs_again_once_the_dependency_files_change(device, change
     assert (work / "installed").read_text() == wanted
 
 
+@pytest.mark.parametrize(
+    "manifest",
+    ["requirements/base.txt", "setup.cfg", "environment.yml", "go.mod", "Gemfile"],
+)
+def test_a_reopen_installs_again_once_a_manifest_changes(device, manifest):
+    """Projects name their dependencies in many places; a hosted repository
+    does not rename its files for the platform."""
+    cli, tasks, _, home = device
+    _prepared_room(home, f"cat {manifest} >> installed 2>/dev/null || true")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / manifest).parent.mkdir(parents=True, exist_ok=True)
+    _commit(work, manifest, "first\n")
+    # The first open had nothing to read yet; this one installs from it.
+    (work / "installed").unlink(missing_ok=True)
+    cli._task_worktree(task)
+    (work / manifest).write_text("second\n")
+
+    cli._task_worktree(task)
+
+    assert (work / "installed").read_text() == "first\nsecond\n"
+
+
+@pytest.mark.parametrize("how", ["removed by hand", "cleaned by git"])
+def test_a_reopen_installs_again_once_what_it_installed_is_gone(device, how):
+    cli, tasks, _, home = device
+    _prepared_room(home, "mkdir -p .venv && echo ran >> .venv/../installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    (work / ".gitignore").write_text(".venv/\ninstalls\n")
+    _commit(work, ".gitignore", ".venv/\ninstalls\n")
+    assert cli._task_worktree(task) == work
+    runs = (work / "installs").read_text()
+    if how == "removed by hand":
+        shutil.rmtree(work / ".venv")
+    else:
+        git(work, "clean", "-q", "-x", "-d", "-f", "-e", "installs")
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == runs + "ran\n"
+    assert (work / ".venv").is_dir()
+
+
+def test_a_reopen_installs_again_once_the_room_has_a_new_environment(device):
+    cli, tasks, _, home = device
+    _prepared_room(home, "echo ran >> installs")
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    config = home / ".cheese-environment/config.json"
+    pinned = json.loads(config.read_text())
+    config.write_text(json.dumps({**pinned, "startup_script": "echo new >> installs"}))
+
+    cli._task_worktree(task)
+
+    assert (work / "installs").read_text() == "ran\nnew\n"
+
+
 def test_a_closed_task_checkout_moved_off_its_branch_is_backed_up_not_reported(
     device,
 ):
