@@ -8,7 +8,7 @@ messages are answered where they were said.
 
 import uuid
 
-from sqlalchemy import Boolean, String, Uuid, column, or_, select, table
+from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,17 +24,8 @@ from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.conversation.services import of_room
 from app.domain.identity.handles import recipient_seat
 from app.domain.thread.models import Thread
-from app.domain.topic.models import not_a_private_chat
+from app.domain.topic.models import Topic, not_a_private_chat
 from app.domain.topic_membership.services import TopicMemberService
-
-# The channel a message is in. A bare table: ``topic`` and ``room_task`` resolve
-# 支线 (`room_task.place`), and importing them back would make a cycle.
-_rooms = table(
-    "topics",
-    column("id", Uuid),
-    column("is_private", Boolean),
-    column("status", String),
-)
 
 
 async def _main_line_room(session: AsyncSession, block: Block):
@@ -48,8 +39,8 @@ async def _main_line_room(session: AsyncSession, block: Block):
     # A private chat has no 支线: only a channel's main line does.
     return (
         await session.execute(
-            select(_rooms.c.id, _rooms.c.status).where(
-                _rooms.c.id == block.conversation_id, not_a_private_chat(_rooms.c)
+            select(Topic.id, Topic.status).where(
+                Topic.id == block.conversation_id, not_a_private_chat()
             )
         )
     ).first()

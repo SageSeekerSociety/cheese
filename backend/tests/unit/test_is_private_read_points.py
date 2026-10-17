@@ -6,10 +6,12 @@
 ``private_chat`` / ``not_a_private_chat``（SQL 里的一行）、``new_private_chat``（建
 一间）。别处要区别私聊，就调这几个；直接碰这个属性，在任何一个文件里都红，没有登记表。
 
-数的是 AST 里叫 ``is_private`` 的节点（属性、名字、实参、形参），不是文本出现次
-数：注释和 docstring 里说到它不算一次声明，说清楚反而是该做的事。也因此，写在 SQL
-文本里的 ``is_private``（``text("... t.is_private ...")``）这里看不见：
-``agent/project_feed.py`` 的 ``_PLACE`` 就是这样一处，它不在这条守卫之内。
+数的是 AST 里叫 ``is_private`` 的节点（属性、名字、实参、形参），以及整个就是
+``"is_private"`` 的字符串（``getattr(t, "is_private")``、``c["is_private"]``、
+``column("is_private", …)``），不是文本出现次数：注释和 docstring 里说到它不算一次
+声明，说清楚反而是该做的事。也因此，夹在一段 SQL 文本里的 ``is_private``
+（``text("... t.is_private ...")``）这里看不见：``agent/project_feed.py`` 的
+``_PLACE`` 就是这样一处，它不在这条守卫之内。
 """
 
 import ast
@@ -39,16 +41,21 @@ def _naming_it(tree: ast.AST) -> list[ast.AST]:
             found.append(node)
         elif isinstance(node, ast.arg) and node.arg == "is_private":
             found.append(node)
+        elif isinstance(node, ast.Constant) and node.value == "is_private":
+            found.append(node)
     return found
 
 
 def _calls_of(tree: ast.AST, name: str) -> list[ast.Call]:
+    """Calls of ``name``, bare or through a module (``models.name(...)``)."""
     return [
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == name
+        and (
+            (isinstance(node.func, ast.Name) and node.func.id == name)
+            or (isinstance(node.func, ast.Attribute) and node.func.attr == name)
+        )
     ]
 
 

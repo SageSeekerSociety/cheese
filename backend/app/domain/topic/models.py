@@ -186,16 +186,14 @@ def is_private_chat(room: Topic) -> bool:
     return room.is_private
 
 
-def private_chat(rooms: Any = Topic) -> ColumnElement[bool]:
-    """SQL: the row is a private chat. ``rooms`` is the mapped ``Topic`` or a
-    bare ``topics`` table's columns, for a module that cannot import the model's
-    package without a cycle."""
-    return rooms.is_private.is_(True)
+def private_chat() -> ColumnElement[bool]:
+    """SQL: the ``Topic`` row is a private chat."""
+    return Topic.is_private.is_(True)
 
 
-def not_a_private_chat(rooms: Any = Topic) -> ColumnElement[bool]:
-    """SQL: the row is any room but a private chat."""
-    return rooms.is_private.is_(False)
+def not_a_private_chat() -> ColumnElement[bool]:
+    """SQL: the ``Topic`` row is any room but a private chat."""
+    return Topic.is_private.is_(False)
 
 
 def new_private_chat(**columns: Any) -> Topic:
