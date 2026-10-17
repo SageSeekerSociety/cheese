@@ -89,11 +89,12 @@ IDENTIFIER_RE = re.compile(r"[A-Za-z_$][\w$]*\Z")
 STATUS_CODES_RE = re.compile(r"(?:HTTP\s*)?\d{3}(?:\s+\d{3})*\Z", re.IGNORECASE)
 WORKFLOW_EXPRESSION_RE = re.compile(
     r"(?:\$\{\{.*\}\}|(?:needs|steps|github|matrix|env|vars|inputs)\.[\w.-]+"
-    r"(?:\s*(?:==|!=|&amp;&amp;|\|\|).*)?)\Z",
+    r"(?:\s*(?:==|!=|&&|\|\|).*)?)\Z",
     re.IGNORECASE | re.DOTALL,
 )
 SHELL_COMMAND_RE = re.compile(
-    r"(?:^|&&\s*)(?:git\s+(?:fetch|merge|checkout|switch|status|diff)\b|"
+    r"(?:^|&&\s*)(?:/(?:[\w.-]+/)*(?:git|npm|pnpm|python3?|sh|bash)\s+\S+|"
+    r"git\s+(?:fetch|merge|checkout|switch|status|diff)\b|"
     r"(?:npm|pnpm)\s+(?:install|ci|test|run|exec)\b|"
     r"python3?\s+(?:-[mcu]\b|\S+\.py\b)|(?:sh|bash)\s+\S+)|^workflow\s+run\b",
     re.IGNORECASE,
@@ -116,13 +117,14 @@ SQL_WHERE_RE = re.compile(
     re.DOTALL,
 )
 SQL_SELECT_PREFIX_RE = re.compile(r"(?:SELECT|select)\s+(.+?)\s+(?:FROM|from)\s+([\w.]+)", re.DOTALL)
-SQL_PROSE_WORDS = {
-    "the", "a", "an", "this", "that", "these", "those", "because", "please", "you", "your",
-    "we", "they", "it", "should", "can", "could", "will", "must", "then", "continue", "to", "next",
-    "option",
-}
+SQL_PROSE_WORD_RE = re.compile(
+    r"(?<![A-Za-z0-9_.])(?:the|an|this|that|these|those|because|please|you|your|we|they|it|"
+    r"should|could|will|must|continue)(?![A-Za-z0-9_.])",
+    re.IGNORECASE,
+)
+SQL_ARTICLE_PROSE_RE = re.compile(r"^\s*a\s+[A-Za-z]+\b", re.IGNORECASE)
 TS_TYPE_DIAGNOSTIC_RE = re.compile(
-    r"""^Type ['\"][^'\"]+['\"] (?:is not assignable(?: to type)?|has no property|does not satisfy the constraint|is missing the following properties|has no properties in common with type|cannot be used as an index type|does not have any construct or call signatures|is incompatible with type)\b""",
+    r"""^Type ['\"][^'\"]+['\"] (?:is not assignable(?: to type)?|has no property|does not satisfy the constraint|is missing the following properties|has no properties in common with type|cannot be used as an index type|does not have any construct or call signatures|is incompatible with type|is not comparable(?: to type)?|has no call signatures)\b""",
     re.IGNORECASE,
 )
 JS_ASSERTION_METHODS = {
@@ -167,16 +169,21 @@ def _test_files(root: Path) -> list[Path]:
 
 
 def _is_sql_value(value: str) -> bool:
-    words = [word.casefold() for word in WORD_RE.findall(re.sub(r"'[^']*'|\"[^\"]*\"", " ", value))]
+    sql_text = re.sub(r"'[^']*'|\"[^\"]*\"", " ", value)
+    sql_text = re.sub(r"\b[A-Za-z_]\w*\.[A-Za-z_]\w*\b", " ", sql_text)
+    sql_text = re.sub(r"\b(?:FROM|from|JOIN|join)\s+([\w.]+)\s+[A-Za-z]\b", r"\1", sql_text)
     select = SQL_SELECT_PREFIX_RE.match(value)
     if select is not None:
         projection = select.group(1).strip()
-        prose_words = SQL_PROSE_WORDS.intersection(words)
         structured_projection = "," in projection or projection == "*"
-        if not prose_words and (SQL_QUERY_RE.fullmatch(value) or structured_projection):
+        if (
+            not SQL_PROSE_WORD_RE.search(sql_text)
+            and not SQL_ARTICLE_PROSE_RE.match(projection)
+            and (SQL_QUERY_RE.fullmatch(value) or structured_projection)
+        ):
             return True
     if SQL_WHERE_RE.fullmatch(value):
-        return len(words) >= 4 and not SQL_PROSE_WORDS.intersection(words[1:])
+        return not SQL_PROSE_WORD_RE.search(sql_text)
     return False
 
 
