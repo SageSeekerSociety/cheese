@@ -87,6 +87,8 @@ class NoteCode(enum.StrEnum):
     force_merged = "force_merged"
     #: 话题归档时卡被收尾或关闭。
     archived = "archived"
+    #: 卡挂着的活已经关了，审阅随之关闭。
+    task_closed = "task_closed"
 
 
 #: 停住了的那一半。新增的码**必须**在这里表态：漏掉就默认 info，也就是和「还在

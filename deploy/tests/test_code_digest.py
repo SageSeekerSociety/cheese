@@ -31,6 +31,51 @@ def digest(path: Path, module: str) -> str:
     return result.stdout.strip()
 
 
+def digest_with_unreadable_input(
+    path: Path, module: str, unreadable: str
+) -> subprocess.CompletedProcess:
+    runner = """
+import builtins
+import io
+import os
+import runpy
+import sys
+
+script, module, unreadable = sys.argv[1:]
+real_builtin_open = builtins.open
+real_io_open = io.open
+real_os_open = os.open
+
+def guarded_open(file, *args, **kwargs):
+    if os.fsdecode(file) == unreadable:
+        raise PermissionError(f"permission denied: {unreadable}")
+    return real_builtin_open(file, *args, **kwargs)
+
+def guarded_io_open(file, *args, **kwargs):
+    if os.fsdecode(file) == unreadable:
+        raise PermissionError(f"permission denied: {unreadable}")
+    return real_io_open(file, *args, **kwargs)
+
+def guarded_os_open(file, *args, **kwargs):
+    if os.fsdecode(file) == unreadable:
+        raise PermissionError(f"permission denied: {unreadable}")
+    return real_os_open(file, *args, **kwargs)
+
+# Simulate a permission error through Python's standard file APIs.
+builtins.open = guarded_open
+io.open = guarded_io_open
+os.open = guarded_os_open
+sys.argv = [script, module]
+runpy.run_path(script, run_name="__main__")
+"""
+    return subprocess.run(
+        [sys.executable, "-c", runner, str(SCRIPT), module, unreadable],
+        cwd=path,
+        capture_output=True,
+        text=True,
+    )
+
+
 class CodeDigestTest(unittest.TestCase):
     def test_moves_with_the_service_code_and_nothing_else(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -48,6 +93,73 @@ class CodeDigestTest(unittest.TestCase):
 
             (root / "svc" / "dep.py").write_text("VALUE = 2\n")
             self.assertNotEqual(digest(root, "svc.app"), first, "a change to imported code kept the digest")
+
+    def test_stdin_main_alias_is_not_treated_as_a_missing_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "svc").mkdir()
+            (root / "svc" / "__init__.py").write_text("")
+            (root / "svc" / "app.py").write_text("import multiprocessing\nVALUE = 1\n")
+
+            result = subprocess.run(
+                [sys.executable, "-", "svc.app"],
+                input=SCRIPT.read_text(),
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(result.stdout.startswith("code-digest "))
+
+    def test_real_module_named_mp_main_is_in_the_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "svc").mkdir()
+            (root / "svc" / "__init__.py").write_text("")
+            (root / "svc" / "app.py").write_text("import __mp_main__\n")
+            (root / "__mp_main__.py").write_text("VALUE = 1\n")
+
+            first = digest(root, "svc.app")
+            (root / "__mp_main__.py").write_text("VALUE = 2\n")
+
+            self.assertNotEqual(digest(root, "svc.app"), first)
+
+    def test_missing_module_source_fails_without_printing_a_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "svc").mkdir()
+            (root / "svc" / "__init__.py").write_text("")
+            (root / "svc" / "app.py").write_text("from svc import dep\n")
+            (root / "svc" / "dep.py").write_text(
+                "from pathlib import Path\nPath(__file__).unlink()\nVALUE = 1\n"
+            )
+
+            result = subprocess.run(
+                [sys.executable, "-", "svc.app"],
+                input=SCRIPT.read_text(),
+                cwd=root,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("code-digest ", result.stdout)
+            self.assertIn(str(root / "svc" / "dep.py"), result.stderr)
+
+    def test_unreadable_system_inputs_fail_without_printing_a_digest(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "svc").mkdir()
+            (root / "svc" / "__init__.py").write_text("")
+            (root / "svc" / "app.py").write_text("VALUE = 1\n")
+
+            for path in ("/etc/os-release", "/var/lib/dpkg/status"):
+                with self.subTest(path=path):
+                    result = digest_with_unreadable_input(root, "svc.app", path)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertNotIn("code-digest ", result.stdout)
+                    self.assertIn(path, result.stderr)
 
     def test_the_relay_imports_everything_it_runs_up_front(self):
         # The digest sees what importing the relay loads. A module the relay

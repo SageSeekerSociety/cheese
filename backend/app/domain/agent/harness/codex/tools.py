@@ -28,6 +28,7 @@ from app.domain.agent.harness.driven.mcp_gateway import (
     Gateway,
 )
 from app.domain.agent.harness.driven.runner import reply_owed
+from app.domain.agent.pr_creation import REFUSAL, opens_pull_request
 
 # The executor implements these tools. The platform's own tools are not the
 # executor's to list: they are the constant table (`platform_tools`).
@@ -558,6 +559,13 @@ class RemoteTools:
         notice: io.StringIO,
         session_call: bool,
     ) -> dict:
+        # The platform opens the task's PR (`pr_creation`).
+        if (
+            server == "native"
+            and tool == "Bash"
+            and opens_pull_request(str(params["arguments"].get("command") or ""))
+        ):
+            return {"error": REFUSAL}
         await self.find_shipped(params["arguments"])
         params = {**params, "arguments": self.on_the_machine(params["arguments"])}
         invoked = asyncio.ensure_future(
