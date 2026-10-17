@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.core.work_context import parse_work_id
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.output_effects import append_output
 from app.domain.block.queries import client_delivery_bundle, message_reply_target
@@ -63,15 +64,6 @@ class HumanEffects(Protocol):
         quoted_context: dict | None,
         /,
     ) -> list[Block]: ...
-
-
-def _parse_uuid(raw: str | None) -> uuid.UUID | None:
-    if not raw:
-        return None
-    try:
-        return uuid.UUID(raw)
-    except ValueError:
-        return None
 
 
 async def persist_human_message(
@@ -161,7 +153,7 @@ async def persist_human_message(
         # reply cue renders) and wrong in the data that 记忆/摘要 rebuild
         # from. Drop the edge, keep the message: losing the thread link is
         # recoverable, refusing the send is not.
-        reply_uuid = _parse_uuid(reply_to)
+        reply_uuid = parse_work_id(reply_to)
         reply_author: str | None = None
         if reply_uuid is not None:
             parent = await message_reply_target(session, reply_uuid)

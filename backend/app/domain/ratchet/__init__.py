@@ -3,7 +3,7 @@
 The admin 棘轮 page answers one question — 还债了没有 — and it answers it from
 snapshots this platform COLLECTED, not from anything it re-measures. A snapshot
 is one commit's worth of verdicts (`.claude/scripts/ratchet-snapshot.py`, run by
-`arch-metrics.yml` after every merge into main), uploaded as a CI artifact named
+`arch-metrics.yml` on main every three hours), uploaded as a CI artifact named
 `ratchet-snapshot`.
 
 Why the numbers are copied out of GitHub and into a table: an artifact expires

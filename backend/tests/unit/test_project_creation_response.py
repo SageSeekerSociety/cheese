@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import get_actor_resolver
 from app.api.routes import projects
@@ -17,7 +18,7 @@ from app.domain.team.services import TeamLabel
 
 @pytest.mark.parametrize("commit_fails", [False, True])
 async def test_project_response_waits_for_commit(monkeypatch, commit_fails):
-    class Session:
+    class Session(AsyncSession):
         committed = False
         rolled_back = False
 

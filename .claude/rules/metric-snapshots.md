@@ -8,8 +8,11 @@ paths:
 Read [`../../AGENTS.md`](../../AGENTS.md) first.
 
 For published main-branch numbers, use a matching main run of
-`.github/workflows/arch-metrics.yml` and state which revision it measured. Its
-`arch-metrics` and `ratchet-snapshot` are separate artifacts; check for a
+`.github/workflows/arch-metrics.yml` and state which revision it measured. The
+workflow collects every three hours rather than on every merge, so a revision no
+run has covered is collected by dispatching it on main while main is at that
+revision (Actions → Architecture metrics → Run workflow). Its `arch-metrics` and
+`ratchet-snapshot` are separate artifacts; check for a
 `ratchet-snapshot.failed.txt` instead of treating a failed collection as zero.
 A local branch measurement answers a different question and must be labelled so.
 

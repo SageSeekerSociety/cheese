@@ -14,7 +14,7 @@ conventions no machine holds and (b) the landing points other files point at.
 
 A check cannot say whether the tree is getting *better*: a ratchet against a
 frozen baseline holds still and reports success forever. That half is the board,
-`arch-metrics.py`, and the per-commit ratchet snapshot beside it; the board
+`arch-metrics.py`, and the ratchet snapshot beside it; the board
 reports and never fails. Counts, history and per-contract reasoning:
 `docs/manual/dev/architecture.md`, `docs/manual/dev/arch-metrics.md`,
 `docs/topics/棘轮页方案`, `backend/.importlinter`.
