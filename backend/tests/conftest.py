@@ -259,7 +259,7 @@ def _topics_with_pending_records() -> set[str]:
     return pending
 
 
-def wait_work_idle() -> None:
+def wait_work_idle(runner=None) -> None:
     """Block until background turns (e.g. a new task's kickoff)
     finish: they run on the TestClient portal loop and write to this worker's DB —
     if a turn is still writing when the next test clears it, the test flakes.
@@ -270,10 +270,14 @@ def wait_work_idle() -> None:
     work teardown can drain. Waiting on idle lifecycles and giving up silently
     combined once to hide the suite's largest single cost: a test that stranded
     a turn paid the whole ceiling here and left no trace but a slower run.
-    """
-    from app.api.deps import get_work_runner
 
-    runner = get_work_runner()
+    The `client` fixture passes the runner it started with: by its teardown the
+    test may have replaced `app.api.deps.get_work_runner` with a stand-in.
+    """
+    if runner is None:
+        from app.api.deps import get_work_runner
+
+        runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
         moving = len(runner._tasks) or len(_topics_with_pending_records())
         if not moving:
@@ -1470,6 +1474,9 @@ def client(
     # binding — seeded by the migration in prod, re-seeded here after the clear.
     asyncio.run(_clear_client_db(seed_agent_user=True))
     get_broker().reset()  # channel ids reset with the DB; drop stale buffered frames
+    # Taken now, not in teardown: by then the test may have replaced
+    # `app.api.deps.get_work_runner` (monkeypatch undoes it after this fixture).
+    work_runner = get_work_runner()
 
     async def override_get_db():
         async with test_factory() as session:
@@ -1481,7 +1488,7 @@ def client(
                 raise
 
     chat_service = ChatService(
-        work_runner=get_work_runner(),
+        work_runner=work_runner,
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
@@ -1518,7 +1525,7 @@ def client(
                 # Drain background turns BEFORE leaving the TestClient context:
                 # disposing the engine under a running kickoff turn makes flakes.
                 try:
-                    wait_work_idle()
+                    wait_work_idle(work_runner)
                 finally:
                     # Both pools were used on the portal loop. Close them before
                     # TestClient closes that loop, otherwise asyncpg connections
@@ -1533,8 +1540,8 @@ def client(
         # Leaving the app hands its work over and holds the runner's turns, which
         # is right for a process that exits next. This one goes on to run tests
         # that drive the same runner without an app around it.
-        get_work_runner().start_turns()
-        get_work_runner().own_sessions(True)
+        work_runner.start_turns()
+        work_runner.own_sessions(True)
         asyncio.run(setup_engine.dispose())
 
 
