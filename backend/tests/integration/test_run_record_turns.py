@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
+from app.domain.run_record.models import RunRecord
 from tests.integration.conftest import (
     post_project,
     room_agent_headers,
@@ -55,10 +56,11 @@ def _seed(client, project: str, room: str, specs: list[dict]) -> list[uuid.UUID]
     """Turns, the terminal events they left, and the prompts that carried them.
 
     A spec is `started_at`, optional `stopped_at`, `events` (the terminal events
-    the platform posted, in that order — a code, or `meta` to write verbatim)
-    and `prompted` (extra `meta` for the message blocks this turn's prompt batch
-    was built from — the claim is filled in, since a block fed to a turn is
-    claimed by it).
+    the platform posted, in that order — a code, or `meta` to write verbatim),
+    `prompted` (extra `meta` for the message blocks this turn's prompt batch was
+    built from — the claim is filled in, since a block fed to a turn is claimed
+    by it) and `records` (the run records this turn left — `kind`, optional
+    `severity` and `content`).
     """
     turn_ids: list[uuid.UUID] = []
 
@@ -107,6 +109,18 @@ def _seed(client, project: str, room: str, specs: list[dict]) -> list[uuid.UUID]
                             content=f"做点事 {i}",
                             meta={"prompted_turn": str(turn_id), **extra},
                             created_at=started - timedelta(seconds=i + 1),
+                        )
+                    )
+                for i, record in enumerate(spec.get("records", [])):
+                    session.add(
+                        RunRecord(
+                            project_id=uuid.UUID(project),
+                            conversation_id=uuid.UUID(room),
+                            turn_id=turn_id,
+                            kind=record["kind"],
+                            severity=record.get("severity", "info"),
+                            content=record.get("content", ""),
+                            created_at=started + timedelta(seconds=i + 1),
                         )
                     )
             await session.commit()
@@ -376,5 +390,131 @@ def test_a_room_in_another_project_is_refused(client, platform_room):
         params={"topic": elsewhere},
         headers=room_agent_headers(client, elsewhere),
     )
+    assert response.status_code == 403, response.text
+    assert "知是代码仓库" in response.text
+
+
+def _one_turn(client, topic: str, turn_id):
+    return client.get(
+        f"/run-records/turns/{turn_id}",
+        params={"topic": topic},
+        headers=room_agent_headers(client, topic),
+    )
+
+
+def test_one_turn_answers_with_its_records_and_how_it_ended(client, platform_room):
+    project, room = platform_room
+    now = datetime.now(UTC)
+    (turn_id,) = _seed(
+        client,
+        project,
+        room,
+        [
+            {
+                "started_at": now - timedelta(hours=2),
+                "stopped_at": now - timedelta(hours=1),
+                "events": [{"event_type": "turn_failed", "severity": "error"}],
+                "prompted": [{"prompt_attempts": 2}],
+                "records": [
+                    {"kind": "queue", "content": "排队"},
+                    {
+                        "kind": "turn_failed",
+                        "severity": "error",
+                        "content": "这一轮没跑完",
+                    },
+                ],
+            }
+        ],
+    )
+
+    response = _one_turn(client, room, turn_id)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+
+    assert data["turn_id"] == str(turn_id)
+    assert data["conversation_id"] == room
+    assert data["status"] == "failed"
+    assert data["failure_event"] == "turn_failed"
+    assert data["prompt_attempts"] == 2
+    assert data["stopped_at"] is not None
+    # Only this turn's records, oldest first, and only the fields a reader
+    # needs to see what happened.
+    assert [(r["kind"], r["severity"], r["content"]) for r in data["records"]] == [
+        ("queue", "info", "排队"),
+        ("turn_failed", "error", "这一轮没跑完"),
+    ]
+
+
+def test_a_closed_turn_without_a_failure_event_is_unfinished(client, platform_room):
+    """`stopped_at` says the row closed, not that the turn succeeded.
+
+    Success writes no event, so the only honest answer for a closed turn with
+    no terminal failure is `unfinished`: the read proves nothing was recorded
+    against it, which is not the same thing as a clean finish.
+    """
+    project, room = platform_room
+    now = datetime.now(UTC)
+    (turn_id,) = _seed(
+        client,
+        project,
+        room,
+        [
+            {
+                "started_at": now - timedelta(hours=3),
+                "stopped_at": now - timedelta(hours=2, minutes=55),
+                "records": [{"kind": "environment", "content": "机器连上了"}],
+            }
+        ],
+    )
+
+    response = _one_turn(client, room, turn_id)
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+
+    assert data["status"] == "unfinished"
+    assert data["status"] != "done"
+    assert data["failure_event"] is None
+    assert data["stopped_at"] is not None
+
+
+def test_an_unknown_turn_id_is_not_found(client, platform_room):
+    _, room = platform_room
+
+    response = _one_turn(client, room, uuid.uuid4())
+
+    assert response.status_code == 404, response.text
+
+
+def test_a_turn_id_that_is_not_a_full_uuid_is_refused(client, platform_room):
+    """A short prefix names nothing the turn table can answer, and the shared
+    validation handler makes that a 400 rather than a lookup."""
+    project, room = platform_room
+    now = datetime.now(UTC)
+    (turn_id,) = _seed(
+        client, project, room, [{"started_at": now - timedelta(minutes=5)}]
+    )
+
+    response = _one_turn(client, room, str(turn_id)[:8])
+
+    assert response.status_code == 400, response.text
+
+
+def test_another_projects_room_cannot_read_one_turn(client, platform_room):
+    project, room = platform_room
+    now = datetime.now(UTC)
+    (turn_id,) = _seed(
+        client, project, room, [{"started_at": now - timedelta(minutes=5)}]
+    )
+    other = post_project(
+        client, json={"name": "别的"}, headers=session_auth_headers(DEV)
+    ).json()["data"]["id"]
+    elsewhere = _room(client, other)
+
+    response = client.get(
+        f"/run-records/turns/{turn_id}",
+        params={"topic": elsewhere},
+        headers=room_agent_headers(client, elsewhere),
+    )
+
     assert response.status_code == 403, response.text
     assert "知是代码仓库" in response.text

@@ -19,7 +19,7 @@ from app.core.sentences import say
 from app.domain.feedback.claims import is_platform_project
 from app.domain.room_task.place import place_or_404
 from app.domain.run_record import admin, turns
-from app.domain.run_record.turns import TurnListOut
+from app.domain.run_record.turns import TurnDetailOut, TurnListOut
 
 router = APIRouter(prefix="/run-records", tags=["run-records"])
 
@@ -66,6 +66,26 @@ async def run_records_turns(
     `app.domain.run_record.turns` 的模块 docstring 上。"""
     await _from_platform_room(db, resolver, topic)
     return ok(await turns.in_window(db, window=window, limit=limit))
+
+
+@router.get("/turns/{turn_id}", **typed_response(TurnDetailOut))
+async def run_records_turn(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    turn_id: uuid.UUID,
+    topic: uuid.UUID,
+) -> dict:
+    """一轮的下钻：它怎么了，和它落到运行记录里的那几件事。
+
+    `turn_id` 是完整的一轮号：路径参数按 `uuid.UUID` 收，短前缀进不来（本仓的
+    校验错误统一是 400）。找不到这一轮是 404 —— 行是关掉不是删掉，所以「没有」
+    只会是号不对。
+    """
+    await _from_platform_room(db, resolver, topic)
+    found = await turns.of_turn(db, turn_id)
+    if found is None:
+        raise NotFoundError("No such turn")
+    return ok(found)
 
 
 @router.get("/detail")
