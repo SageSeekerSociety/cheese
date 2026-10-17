@@ -137,7 +137,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = "frontend/src"
 ROUTER_DIR = "frontend/src/router"
 VIEWS_DIR = "frontend/src/views/"
-PANELS_DIR = "frontend/src/components/panels"
 
 #: Where the frozen set is read from: the merge base with this ref.
 DEFAULT_BASE = "origin/main"

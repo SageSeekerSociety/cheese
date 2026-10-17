@@ -122,7 +122,6 @@ ERROR_RULES = frozenset(
         "empty-downgrade",
     }
 )
-WARNING_RULES = frozenset({"alter-column-existing", "fk-on-add-column", "unresolved"})
 
 _PRAGMA = re.compile(
     r"#\s*migration-safety:\s*(allow|allow-file)\s+([a-z0-9,\- ]+?)\s*(?:—|--|:)\s*(\S.*)$"
