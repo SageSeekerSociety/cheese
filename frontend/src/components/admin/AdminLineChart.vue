@@ -366,6 +366,7 @@ const tooltipLeft = computed(() => {
           </text>
           <!-- 整块绘图区是一张点击面，放在最后（在最上层才收得到指针）。它同时管 hover
                竖线：竖线本身是 1px、收不到指针，只能由这一层算。 -->
+          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/mouse-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- a pointer layer inside an aria-hidden chart; the numbers it reads out are in the data table below -->
           <rect
             class="alc__hit"
             x="0"

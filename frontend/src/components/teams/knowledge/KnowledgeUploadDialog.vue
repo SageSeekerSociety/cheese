@@ -11,7 +11,7 @@
 import type { KnowledgeDraft } from '@/lib/knowledgeDraft'
 import type { KnowledgeType } from '@/types'
 
-import { ref, watch } from 'vue'
+import { ref, useId, watch } from 'vue'
 import { VForm } from 'vuetify/lib/components/index.mjs'
 
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
@@ -60,6 +60,9 @@ function pickType(type: KnowledgeType) {
   form.value.type = type
 }
 
+// Names the group of type buttons below.
+const typeLabelId = useId()
+
 /** 校验过的草稿才出去；原件不递（交一份快照，免得外面改到里面这一份）。 */
 async function submitUpload() {
   if (!uploadForm.value || !(await uploadForm.value.validate()).valid) {
@@ -94,23 +97,26 @@ async function submitUpload() {
       ></v-text-field>
 
       <div class="type-selector mb-5">
-        <label class="text-body-2 text-medium-emphasis mb-3 d-block">{{
-          t('teams.knowledge.resourceTypeLabel')
-        }}</label>
+        <div :id="typeLabelId" class="text-body-2 text-medium-emphasis mb-3 d-block">
+          {{ t('teams.knowledge.resourceTypeLabel') }}
+        </div>
 
-        <div class="type-options">
-          <div
+        <!-- Buttons, so the type can be picked with Tab and Enter; aria-pressed says which one is picked. -->
+        <div class="type-options" role="group" :aria-labelledby="typeLabelId">
+          <button
             v-for="type in KNOWLEDGE_TYPE_OPTIONS"
             :key="type"
+            type="button"
             class="type-option"
             :class="{ 'type-option-active': form.type === type }"
+            :aria-pressed="form.type === type"
             @click="pickType(type)"
           >
-            <div class="type-icon-wrapper">
+            <span class="type-icon-wrapper">
               <v-icon :icon="uploadTypeIcon(type)" size="18"></v-icon>
-            </div>
-            <div class="type-label">{{ knowledgeTypeLabel(type) }}</div>
-          </div>
+            </span>
+            <span class="type-label">{{ knowledgeTypeLabel(type) }}</span>
+          </button>
         </div>
       </div>
 

@@ -56,6 +56,7 @@ function moveFocus(event: KeyboardEvent) {
 </script>
 
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- the ARIA toolbar pattern: arrow keys bubble here from the focused button and move focus to the next one -->
   <div
     ref="toolbar"
     class="rt-toolbar"

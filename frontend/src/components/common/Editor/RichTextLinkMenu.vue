@@ -54,6 +54,7 @@ function removeLink() {
       </button>
     </template>
     <form class="rt-pop rt-pop--form" @submit.prevent="applyLink">
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person pressed the link button to type an address; focus moves into the popover's field -->
       <v-text-field
         v-model="link.href"
         :label="label('linkHref')"
@@ -64,6 +65,7 @@ function removeLink() {
         autofocus
         autocomplete="off"
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
       <v-checkbox v-model="link.newTab" :label="label('linkNewTab')" density="compact" hide-details />
       <div class="rt-pop__actions">
         <BaseButton v-if="state.link" kind="ghost" size="sm" @click="removeLink">{{ label('unlink') }}</BaseButton>
