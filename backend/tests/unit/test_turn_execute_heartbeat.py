@@ -21,6 +21,7 @@ import pytest
 from app.api.routes import run_records
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code import runner as claude_runner
+from app.domain.agent.harness.driven import subscription as subscription_module
 from app.domain.agent.harness.driven.subscription import Subscription
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent.turn.state.execution import ExecutionPolicy, ExecutionState
@@ -191,13 +192,25 @@ async def test_the_runner_heartbeat_names_the_frame_and_its_work(tmp_path) -> No
 
 
 @pytest.mark.anyio
-async def test_every_read_path_keeps_the_heartbeat() -> None:
+async def test_every_read_path_keeps_the_heartbeat(monkeypatch) -> None:
     """The heartbeat is taken at the one public entry, not only at a helper:
     an ordinary read, a held (asking) read, a hurried read and a read given
     way to (cancelled from outside and re-read) all carry it. `drain` clears
-    `heard` at the start of every pass; the frame must survive that too."""
+    `heard` at the start of every pass; the frame must survive that too.
+
+    The subscription's own clock is a controlled stand-in (`subscription.time`,
+    not the loop's): the runner reports an age of 4 s, this backend hears it,
+    then 7 s pass here — the age must read exactly 11, not merely "between 4
+    and 6". A version that drops the local elapsed term reads 4 and fails.
+    """
     calls: list[dict] = []
     held = asyncio.Event()
+    clock = [100.0]
+    monkeypatch.setattr(
+        subscription_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock[0]),
+    )
 
     async def call(method: str, params: dict) -> dict:
         calls.append(dict(params))
@@ -251,22 +264,36 @@ async def test_every_read_path_keeps_the_heartbeat() -> None:
         assert subscription.hurry is False
         assert subscription.frame()["work_id"] == "turn-3"
 
-        # Given way (the `unpark` path): the held read is cancelled from
-        # outside and the same call is made again without the wait.
+        # Given way: the production entry for this is `unpark`, which sets
+        # `hurry` and cancels the held read. The cancelled read then re-reads
+        # at once without the wait. A direct `parked.cancel()` would skip the
+        # `hurry` half the next drain depends on.
         subscription.asking = {"wait": 25, "hold": True}
         task = asyncio.ensure_future(subscription.read("events", {"after": 0}))
         await asyncio.wait_for(held.wait(), 1)
         assert subscription.parked is not None
-        subscription.parked.cancel()
+        subscription.unpark()
+        assert subscription.hurry is True
         await asyncio.wait_for(task, 1)
         assert calls[-1] == {"after": 0}
+        assert subscription.frame()["work_id"] == f"turn-{len(calls)}"
+        # The hurried state outlives the cancelled read: the next asking read
+        # is answered at once too, and only then clears it.
+        assert subscription.hurry is True
+        subscription.asking = {"wait": 25}
+        await subscription.read("events", {"after": 0})
+        assert calls[-1] == {"after": 0}
+        assert subscription.hurry is False
         assert subscription.frame()["work_id"] == f"turn-{len(calls)}"
 
         frame = subscription.frame()
         assert frame["last_frame_kind"] == "assistant_block"
-        # The age grew by the time spent here; it was never recomputed by
-        # subtracting another machine's monotonic from this one's.
-        assert 4.0 <= frame["last_frame_age_s"] < 6.0
+        # The runner said 4 s at the moment this backend heard it; 7 s pass on
+        # this clock, so exactly 11. One machine's monotonic is never
+        # subtracted from another's — only local elapsed time is added.
+        assert frame["last_frame_age_s"] == 4.0
+        clock[0] += 7.0
+        assert subscription.frame()["last_frame_age_s"] == 11.0
     finally:
         subscription.disk.shutdown(wait=True)
 
